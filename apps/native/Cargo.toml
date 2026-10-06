@@ -1,0 +1,16 @@
+[package]
+name = "drift"
+description = "Drift: parametric 2D sketching (desktop)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+drift-app.workspace = true
+eframe.workspace = true
+env_logger = "0.11"
+
+[lints]
+workspace = true

@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "drift-web",
+      "runtimeExecutable": "trunk",
+      "runtimeArgs": ["serve", "--config", "apps/web/Trunk.toml"],
+      "port": 8080
+    }
+  ]
+}

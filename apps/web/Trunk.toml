@@ -1,0 +1,12 @@
+[build]
+target = "index.html"
+dist = "dist"
+
+[serve]
+addresses = ["127.0.0.1"]
+port = 8080
+open = false
+
+[watch]
+# Rebuild when the shared crates change, not just this one.
+watch = [".", "../../crates"]

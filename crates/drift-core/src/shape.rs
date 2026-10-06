@@ -13,10 +13,8 @@ pub enum LineKind {
     Center,
 }
 
-/// A primitive sketch shape in world space.
-///
-/// This is the pre-solver geometry representation used by the M0 renderer. In M1 it is
-/// replaced by parameter-backed entities, and shapes become derived output of the solver.
+/// A resolved geometric shape in world space, derived from document entities for rendering,
+/// picking and snapping.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Shape {
     Point(DVec2),
@@ -80,11 +78,25 @@ fn arc_bounds(center: DVec2, radius: f64, start: f64, sweep: f64) -> Bounds {
     bounds
 }
 
+/// Interaction state that changes how an item is drawn.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Emphasis {
+    #[default]
+    Normal,
+    Hovered,
+    Selected,
+    /// Geometry a tool is about to create.
+    Preview,
+}
+
 /// A shape plus its display properties.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SketchItem {
     pub shape: Shape,
     pub kind: LineKind,
+    pub emphasis: Emphasis,
+    /// For points: drawn as a small endpoint marker of a curve rather than a sketch point.
+    pub vertex: bool,
 }
 
 impl SketchItem {
@@ -92,11 +104,23 @@ impl SketchItem {
         Self {
             shape,
             kind: LineKind::Solid,
+            emphasis: Emphasis::Normal,
+            vertex: false,
         }
     }
 
     pub fn with_kind(mut self, kind: LineKind) -> Self {
         self.kind = kind;
+        self
+    }
+
+    pub fn with_emphasis(mut self, emphasis: Emphasis) -> Self {
+        self.emphasis = emphasis;
+        self
+    }
+
+    pub fn as_vertex(mut self) -> Self {
+        self.vertex = true;
         self
     }
 }

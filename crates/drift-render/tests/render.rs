@@ -140,7 +140,7 @@ fn renders_demo_plate() {
         eprintln!("no GPU adapter available; skipping render test");
         return;
     };
-    let items = demo::mounting_plate();
+    let items = demo::document_items(&demo::mounting_plate());
     let bounds = items.iter().map(|i| i.shape.bounds()).collect();
     let mut camera = Camera::default();
     camera.fit(bounds, viewport().size_px, 40.0);
@@ -163,9 +163,9 @@ fn renders_demo_plate() {
         "expected background at ({x}, {y}), got {inside:?}"
     );
 
-    // The bore centre is drawn as a point.
+    // The bore centre is a circle's centre point, drawn as a vertex marker in the line colour.
     let (x, y) = to_pixel(&camera, DVec2::new(70.0, 40.0));
-    assert!(close(pixel(&pixels, x, y), palette.point, 40));
+    assert!(close(pixel(&pixels, x, y), palette.solid, 40));
 }
 
 #[test]

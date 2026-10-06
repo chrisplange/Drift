@@ -427,11 +427,29 @@ written but hasn't run yet (no GitHub repo).*
 - An eframe app running natively and in the browser (WebGPU and WebGL2 verified).
 - Camera pan/zoom, procedural grid, and the instanced line/circle/arc SDF pipelines.
 
-**M1 — Geometry without constraints (2–3 wks)**
+**M1 — Geometry without constraints (2–3 wks)** — *done locally on 2026-10-06.*
 - Document model, line/circle/arc/point/rectangle tools, selection, move, undo/redo.
 - Save/load through `drift-platform` (native dialogs; web File System Access API or download), plus
   IndexedDB autosave.
 - R-tree picking and basic snapping (endpoint, midpoint, center).
+
+*M1 as built, and where it differs from the above:*
+- **Model:** curves reference shared point entities (points own `x`/`y`, circles own `radius`).
+  These are the solver unknowns; M2 maps them to a parameter vector instead of storing
+  `ParamId`s in the document. Arcs are centre/start/end points, with the end kept on the circle.
+- **Connectivity before constraints:** snapping onto an existing point reuses it, and dropping
+  a dragged end point on another merges them. This is the "coincident by aliasing" the solver's
+  substitution pass would produce anyway.
+- **Undo:** transactions record the before/after of each touched entity. Drags are one step.
+- **Snapping** also covers quadrants, nearest-on-curve and an optional grid, with Alt to
+  suppress it.
+- **Web save is a download**, and open uses a file picker. The File System Access API (save in
+  place on Chromium) is deferred.
+- **Autosave / session restore** uses eframe's storage (a file natively, `localStorage` on the
+  web) every 10 s and on exit, instead of IndexedDB. This is fine up to roughly 30k entities.
+  Revisit IndexedDB if documents outgrow `localStorage`.
+- **Testing:** headless end-to-end UI tests (`egui_kittest` + wgpu) drive the real app, in
+  addition to unit tests for the model, geometry, file format and each tool.
 
 **M2 — Solver core (4–6 wks, highest risk)**
 - Parameter/equation framework, Newton–LM, substitution of coincident/horizontal/vertical, and
@@ -521,8 +539,6 @@ title-block template syntax.
 
 1. Create the `drift` GitHub repo and push, so CI runs and Pages deploys. Enable Pages with
    "GitHub Actions" as the source.
-2. M1: document model with parameter-backed entities (replacing `drift_core::Shape` as the source
-   of truth), drawing tools, selection, undo/redo, and `.drift` save/load through `drift-platform`.
-3. Spike the solver early, in parallel with M1: a standalone `drift-solver` test that solves a
-   constrained rectangle + tangent arc, benchmarked natively and in WASM. This de-risks the
-   hardest part first.
+2. M2: `drift-solver`. Start with a standalone test that solves a constrained rectangle plus a
+   tangent arc, benchmarked natively and in WASM, then wire constraint-preserving drag and DOF
+   colouring into the select tool.

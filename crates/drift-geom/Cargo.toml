@@ -1,0 +1,15 @@
+[package]
+name = "drift-geom"
+description = "Exact 2D geometry for Drift: projections, hit testing, spatial indexing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+drift-core.workspace = true
+rstar = "0.13"
+
+[lints]
+workspace = true

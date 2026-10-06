@@ -28,7 +28,7 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets
       - name: Clippy (wasm32)
-        run: cargo clippy --target wasm32-unknown-unknown -p drift-core -p drift-render -p drift-app -p drift-web
+        run: cargo clippy --target wasm32-unknown-unknown -p drift-core -p drift-geom -p drift-io -p drift-platform -p drift-render -p drift-app -p drift-web
 
   test:
     name: Test (${{ matrix.os }})

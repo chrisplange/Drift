@@ -1,76 +1,84 @@
-//! A sample drawing used until the document model and drawing tools land (M1).
+//! Example documents.
 
-use std::f64::consts::{FRAC_PI_2, FRAC_PI_4, PI, TAU};
+use std::f64::consts::{FRAC_PI_2, FRAC_PI_4, TAU};
 
 use glam::DVec2;
 
-use crate::{LineKind, Shape, SketchItem};
+use crate::{Document, LineKind, Shape, SketchItem};
 
 /// A 120 × 80 mm mounting plate with filleted corners, a central bore, a bolt circle and a slot.
-pub fn mounting_plate() -> Vec<SketchItem> {
+/// The outline and slot are closed chains that share their end points.
+pub fn mounting_plate() -> Document {
+    let mut doc = Document::new();
     let v = DVec2::new;
-    let line = |a: DVec2, b: DVec2| SketchItem::new(Shape::Line { a, b });
-    let arc = |center: DVec2, radius: f64, start: f64, sweep: f64| {
-        SketchItem::new(Shape::Arc {
-            center,
-            radius,
-            start,
-            sweep,
-        })
-    };
-    let circle = |center: DVec2, radius: f64| SketchItem::new(Shape::Circle { center, radius });
-
     let (w, h, r) = (120.0, 80.0, 10.0);
-    let mut items = vec![
-        // Outline with filleted corners.
-        line(v(r, 0.0), v(w - r, 0.0)),
-        line(v(w, r), v(w, h - r)),
-        line(v(w - r, h), v(r, h)),
-        line(v(0.0, h - r), v(0.0, r)),
-        arc(v(w - r, r), r, -FRAC_PI_2, FRAC_PI_2),
-        arc(v(w - r, h - r), r, 0.0, FRAC_PI_2),
-        arc(v(r, h - r), r, FRAC_PI_2, FRAC_PI_2),
-        arc(v(r, r), r, PI, FRAC_PI_2),
-    ];
 
-    // Central bore and bolt circle.
+    // Outline: four lines joined by four fillet arcs, counter-clockwise from the bottom edge.
+    let corners = [
+        (v(w - r, r), -FRAC_PI_2),
+        (v(w - r, h - r), 0.0),
+        (v(r, h - r), FRAC_PI_2),
+        (v(r, r), 2.0 * FRAC_PI_2),
+    ];
+    let mut tangent_points = Vec::new();
+    for (center, start_angle) in corners {
+        let start = center + r * DVec2::from_angle(start_angle);
+        let end = center + r * DVec2::from_angle(start_angle + FRAC_PI_2);
+        let c = doc.add_point(center);
+        let s = doc.add_point(start);
+        let e = doc.add_point(end);
+        doc.add_arc(c, s, e).expect("valid fillet");
+        doc.set_style(c, LineKind::Construction);
+        tangent_points.push((s, e));
+    }
+    for i in 0..4 {
+        let from = tangent_points[(i + 3) % 4].1;
+        let to = tangent_points[i].0;
+        doc.add_line(from, to).expect("valid edge");
+    }
+
+    // Central bore, bolt circle and holes.
     let bore = v(70.0, 40.0);
     let bolt_radius = 26.0;
-    items.push(circle(bore, 14.0));
-    items.push(circle(bore, bolt_radius).with_kind(LineKind::Construction));
+    let bore_center = doc.add_point(bore);
+    doc.add_circle(bore_center, 14.0).expect("valid bore");
+    let bolt = doc
+        .add_circle(bore_center, bolt_radius)
+        .expect("valid bolt circle");
+    doc.set_style(bolt, LineKind::Construction);
     for i in 0..4 {
-        let center = bore + bolt_radius * DVec2::from_angle(FRAC_PI_4 + f64::from(i) * FRAC_PI_2);
-        items.push(circle(center, 3.2));
-        items.push(SketchItem::new(Shape::Point(center)));
+        let at = bore + bolt_radius * DVec2::from_angle(FRAC_PI_4 + f64::from(i) * FRAC_PI_2);
+        let center = doc.add_point(at);
+        doc.add_circle(center, 3.2).expect("valid hole");
     }
-    items.push(SketchItem::new(Shape::Point(bore)));
 
     // Centre lines through the bore.
     let reach = bolt_radius + 8.0;
-    items.push(line(bore - v(reach, 0.0), bore + v(reach, 0.0)).with_kind(LineKind::Center));
-    items.push(line(bore - v(0.0, reach), bore + v(0.0, reach)).with_kind(LineKind::Center));
+    for dir in [v(1.0, 0.0), v(0.0, 1.0)] {
+        let a = doc.add_point(bore - dir * reach);
+        let b = doc.add_point(bore + dir * reach);
+        let line = doc.add_line(a, b).expect("valid centre line");
+        doc.set_style(line, LineKind::Center);
+    }
 
-    // Vertical slot on the left.
-    let (slot_x, slot_lo, slot_hi, slot_r) = (20.0, 25.0, 55.0, 4.0);
-    items.push(line(
-        v(slot_x - slot_r, slot_hi),
-        v(slot_x - slot_r, slot_lo),
-    ));
-    items.push(line(
-        v(slot_x + slot_r, slot_lo),
-        v(slot_x + slot_r, slot_hi),
-    ));
-    items.push(arc(v(slot_x, slot_lo), slot_r, PI, PI));
-    items.push(arc(v(slot_x, slot_hi), slot_r, 0.0, PI));
-    items.push(
-        line(
-            v(slot_x, slot_lo - slot_r - 4.0),
-            v(slot_x, slot_hi + slot_r + 4.0),
-        )
-        .with_kind(LineKind::Center),
-    );
+    // Vertical slot on the left: two lines and two semicircular ends sharing points.
+    let (x, lo, hi, sr) = (20.0, 25.0, 55.0, 4.0);
+    let bl = doc.add_point(v(x - sr, lo));
+    let br = doc.add_point(v(x + sr, lo));
+    let tr = doc.add_point(v(x + sr, hi));
+    let tl = doc.add_point(v(x - sr, hi));
+    let bc = doc.add_point(v(x, lo));
+    let tc = doc.add_point(v(x, hi));
+    doc.add_line(br, tr).expect("valid slot side");
+    doc.add_line(tl, bl).expect("valid slot side");
+    doc.add_arc(bc, bl, br).expect("valid slot end");
+    doc.add_arc(tc, tr, tl).expect("valid slot end");
+    let a = doc.add_point(v(x, lo - sr - 4.0));
+    let b = doc.add_point(v(x, hi + sr + 4.0));
+    let slot_axis = doc.add_line(a, b).expect("valid slot axis");
+    doc.set_style(slot_axis, LineKind::Center);
 
-    items
+    doc
 }
 
 /// A tiny feature a kilometre from the origin, for checking precision at large coordinates.
@@ -94,4 +102,46 @@ pub fn far_feature() -> Vec<SketchItem> {
         .with_kind(LineKind::Center),
         SketchItem::new(Shape::Point(far)),
     ]
+}
+
+/// Plain shapes of a document, for rendering without interaction state.
+pub fn document_items(doc: &Document) -> Vec<SketchItem> {
+    let referenced = doc.referenced_points();
+    doc.iter()
+        .filter_map(|(id, entity)| {
+            let item = SketchItem::new(doc.shape(id)?).with_kind(entity.style);
+            Some(if referenced.contains(&id) {
+                item.as_vertex()
+            } else {
+                item
+            })
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::EntityKind;
+
+    #[test]
+    fn plate_outline_is_connected() {
+        let doc = mounting_plate();
+        // Every outline/slot end point is shared by exactly two curves.
+        let mut uses = std::collections::HashMap::new();
+        for (_, e) in doc.iter() {
+            if matches!(e.kind, EntityKind::Line { .. } | EntityKind::Arc { .. }) {
+                let ends: Vec<_> = match e.kind {
+                    EntityKind::Line { a, b } => vec![a, b],
+                    EntityKind::Arc { start, end, .. } => vec![start, end],
+                    _ => unreachable!(),
+                };
+                for p in ends {
+                    *uses.entry(p).or_insert(0) += 1;
+                }
+            }
+        }
+        let shared = uses.values().filter(|&&n| n == 2).count();
+        assert_eq!(shared, 8 + 4, "8 outline joints and 4 slot joints");
+    }
 }

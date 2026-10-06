@@ -7,7 +7,7 @@
 use std::f64::consts::TAU;
 
 use bytemuck::{Pod, Zeroable};
-use drift_core::{DVec2, LineKind, Shape, SketchItem};
+use drift_core::{DVec2, Emphasis, LineKind, Shape, SketchItem};
 
 use crate::{Camera, Palette};
 
@@ -178,27 +178,49 @@ impl Builder<'_> {
         }
     }
 
-    fn style(&self, kind: LineKind) -> ([u8; 4], f64, [f64; 3]) {
+    fn style(&self, item: &SketchItem) -> ([u8; 4], f64, [f64; 3]) {
         let ppp = self.ppp();
         let p = self.palette;
-        match kind {
+        let (color, half_width, dash) = match item.kind {
             LineKind::Solid => (p.solid, 0.8 * ppp, [0.0; 3]),
             LineKind::Construction => (p.construction, 0.5 * ppp, [6.0 * ppp, 4.0 * ppp, 0.0]),
             LineKind::Center => (p.center, 0.5 * ppp, [16.0 * ppp, 3.0 * ppp, 2.0 * ppp]),
+        };
+        match item.emphasis {
+            Emphasis::Normal => (color, half_width, dash),
+            Emphasis::Hovered => (p.hover, half_width + 0.5 * ppp, dash),
+            Emphasis::Selected => (p.selected, half_width + 0.5 * ppp, dash),
+            Emphasis::Preview => (p.preview, half_width, dash),
+        }
+    }
+
+    fn point_style(&self, item: &SketchItem) -> ([u8; 4], f64) {
+        let ppp = self.ppp();
+        let p = self.palette;
+        let (color, radius) = if item.vertex {
+            (p.solid, 1.75 * ppp)
+        } else {
+            (p.point, 2.5 * ppp)
+        };
+        match item.emphasis {
+            Emphasis::Normal => (color, radius),
+            Emphasis::Hovered => (p.hover, 3.5 * ppp),
+            Emphasis::Selected => (p.selected, 3.5 * ppp),
+            Emphasis::Preview => (p.preview, radius),
         }
     }
 
     fn add(&mut self, item: &SketchItem) {
-        let (color, half_width, dash) = self.style(item.kind);
+        let (color, half_width, dash) = self.style(item);
         match item.shape {
             Shape::Point(p) => {
                 let c = self.to_px(p);
                 if self.visible(c, DVec2::ZERO) {
-                    let radius = 2.5 * self.ppp();
+                    let (color, radius) = self.point_style(item);
                     self.frame.arcs.push(ArcInstance {
                         center: to_f32(c),
                         params: [0.0, radius as f32, 0.0, TAU as f32],
-                        color: self.palette.point,
+                        color,
                         pattern: [0.0; 4],
                     });
                 }

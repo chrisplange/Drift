@@ -13,9 +13,11 @@ drift-geom.workspace = true
 drift-io.workspace = true
 drift-platform.workspace = true
 drift-render.workspace = true
+drift-solver.workspace = true
 eframe.workspace = true
 glam.workspace = true
 log.workspace = true
+web-time = "1"
 
 [lints]
 workspace = true

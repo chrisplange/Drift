@@ -6,6 +6,23 @@
       "runtimeExecutable": "trunk",
       "runtimeArgs": ["serve", "--config", "apps/web/Trunk.toml"],
       "port": 8080
+    },
+    {
+      "name": "drift-web-release",
+      "runtimeExecutable": "trunk",
+      "runtimeArgs": [
+        "serve",
+        "--config",
+        "apps/web/Trunk.toml",
+        "--release",
+        "--cargo-profile",
+        "web-release",
+        "--port",
+        "8081",
+        "--dist",
+        "../../target/dist-release"
+      ],
+      "port": 8081
     }
   ]
 }

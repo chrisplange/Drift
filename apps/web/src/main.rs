@@ -9,8 +9,14 @@ fn main() {
 
     let window = web_sys::window().expect("no window");
     let mut web_options = eframe::WebOptions::default();
-    // `?backend=webgl` forces the WebGL2 fallback, for testing browsers without WebGPU.
     let search = window.location().search().unwrap_or_default();
+    // `?bench` logs solver timings to the console at startup (works even in a hidden tab).
+    if search.contains("bench") {
+        for line in drift_app::run_benchmark() {
+            log::info!("solver benchmark: {line}");
+        }
+    }
+    // `?backend=webgl` forces the WebGL2 fallback, for testing browsers without WebGPU.
     if search.contains("backend=webgl")
         && let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) =
             &mut web_options.wgpu_options.wgpu_setup

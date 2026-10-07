@@ -7,7 +7,7 @@
 use std::f64::consts::TAU;
 
 use bytemuck::{Pod, Zeroable};
-use drift_core::{DVec2, Emphasis, LineKind, Shape, SketchItem};
+use drift_core::{DVec2, DofState, Emphasis, LineKind, Shape, SketchItem};
 
 use crate::{Camera, Palette};
 
@@ -181,10 +181,21 @@ impl Builder<'_> {
     fn style(&self, item: &SketchItem) -> ([u8; 4], f64, [f64; 3]) {
         let ppp = self.ppp();
         let p = self.palette;
+        let solid = match item.dof {
+            DofState::Under => p.under,
+            DofState::Over => p.over,
+            DofState::Full | DofState::Unknown => p.solid,
+        };
         let (color, half_width, dash) = match item.kind {
-            LineKind::Solid => (p.solid, 0.8 * ppp, [0.0; 3]),
+            LineKind::Solid => (solid, 0.8 * ppp, [0.0; 3]),
             LineKind::Construction => (p.construction, 0.5 * ppp, [6.0 * ppp, 4.0 * ppp, 0.0]),
             LineKind::Center => (p.center, 0.5 * ppp, [16.0 * ppp, 3.0 * ppp, 2.0 * ppp]),
+        };
+        // Conflicts show in red whatever the line style.
+        let color = if item.dof == DofState::Over {
+            p.over
+        } else {
+            color
         };
         match item.emphasis {
             Emphasis::Normal => (color, half_width, dash),
@@ -197,10 +208,16 @@ impl Builder<'_> {
     fn point_style(&self, item: &SketchItem) -> ([u8; 4], f64) {
         let ppp = self.ppp();
         let p = self.palette;
+        let state = match item.dof {
+            DofState::Under => Some(p.under),
+            DofState::Over => Some(p.over),
+            DofState::Full => Some(p.solid),
+            DofState::Unknown => None,
+        };
         let (color, radius) = if item.vertex {
-            (p.solid, 1.75 * ppp)
+            (state.unwrap_or(p.solid), 1.75 * ppp)
         } else {
-            (p.point, 2.5 * ppp)
+            (state.unwrap_or(p.point), 2.5 * ppp)
         };
         match item.emphasis {
             Emphasis::Normal => (color, radius),

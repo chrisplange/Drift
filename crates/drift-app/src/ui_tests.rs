@@ -216,3 +216,64 @@ fn session_restores_document_and_unsaved_state() {
     );
     assert_eq!(fresh.state().file.name, crate::UNTITLED);
 }
+
+#[test]
+fn constrain_a_line_from_the_properties_panel() {
+    use eframe::egui::accesskit::Role;
+
+    let Some(mut h) = harness() else { return };
+    h.key_press(Key::L);
+    h.run();
+    click_world(&mut h, DVec2::new(-30.0, -10.0));
+    click_world(&mut h, DVec2::new(20.0, 15.0));
+    h.key_press(Key::Escape); // finish the chain
+    h.run();
+    h.key_press(Key::Escape); // back to Select
+    h.run();
+    click_world(&mut h, DVec2::new(-5.0, 2.5)); // middle of the line
+    assert_eq!(h.state().editor.selection.len(), 1);
+
+    h.get_by_role_and_label(Role::Button, "Horizontal").click();
+    h.run();
+    assert_eq!(h.state().editor.doc.constraint_count(), 1);
+
+    h.get_by_role_and_label(Role::Button, "Length").click();
+    h.run();
+    assert_eq!(h.state().editor.doc.constraint_count(), 2);
+    // The new dimension's field has focus: type a value and press Enter.
+    h.event(Event::Key {
+        key: Key::A,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: EguiModifiers::COMMAND,
+    });
+    h.event(Event::Text("42".into()));
+    h.run();
+    h.key_press(Key::Enter);
+    h.run();
+
+    let app = h.state();
+    let (_, line) = app
+        .editor
+        .doc
+        .iter()
+        .find(|(_, e)| matches!(e.kind, EntityKind::Line { .. }))
+        .unwrap();
+    let EntityKind::Line { a, b } = line.kind else {
+        unreachable!()
+    };
+    let (pa, pb) = (
+        app.editor.doc.point(a).unwrap(),
+        app.editor.doc.point(b).unwrap(),
+    );
+    assert!(
+        (pa.distance(pb) - 42.0).abs() < 1e-9,
+        "length {}",
+        pa.distance(pb)
+    );
+    assert!((pa.y - pb.y).abs() < 1e-12);
+    // Two DOF left: the line can still slide.
+    assert_eq!(app.editor.analysis().dof, Some(2));
+    save_png("drift_ui_constrained.png", &mut h);
+}

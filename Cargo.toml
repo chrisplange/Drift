@@ -16,6 +16,7 @@ drift-app = { path = "crates/drift-app" }
 drift-geom = { path = "crates/drift-geom" }
 drift-io = { path = "crates/drift-io" }
 drift-platform = { path = "crates/drift-platform" }
+drift-solver = { path = "crates/drift-solver" }
 
 bytemuck = { version = "1.23", features = ["derive"] }
 eframe = { version = "0.36.2", default-features = false, features = ["wgpu", "default_fonts", "persistence"] }
@@ -39,3 +40,8 @@ opt-level = "z"
 lto = true
 codegen-units = 1
 panic = "abort"
+
+# The solver's numeric loops are hot and small: optimise them for speed even in the size-tuned
+# web build. Costs little download size.
+[profile.web-release.package.drift-solver]
+opt-level = 3

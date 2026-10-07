@@ -89,6 +89,18 @@ pub enum Emphasis {
     Preview,
 }
 
+/// How completely an entity is determined by constraints, for colouring (SolidWorks style:
+/// blue = can still move, black/white = fully defined, red = conflicting).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DofState {
+    /// Not analysed; drawn in the normal colour.
+    #[default]
+    Unknown,
+    Under,
+    Full,
+    Over,
+}
+
 /// A shape plus its display properties.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SketchItem {
@@ -97,6 +109,7 @@ pub struct SketchItem {
     pub emphasis: Emphasis,
     /// For points: drawn as a small endpoint marker of a curve rather than a sketch point.
     pub vertex: bool,
+    pub dof: DofState,
 }
 
 impl SketchItem {
@@ -106,6 +119,7 @@ impl SketchItem {
             kind: LineKind::Solid,
             emphasis: Emphasis::Normal,
             vertex: false,
+            dof: DofState::Unknown,
         }
     }
 
@@ -116,6 +130,11 @@ impl SketchItem {
 
     pub fn with_emphasis(mut self, emphasis: Emphasis) -> Self {
         self.emphasis = emphasis;
+        self
+    }
+
+    pub fn with_dof(mut self, dof: DofState) -> Self {
+        self.dof = dof;
         self
     }
 

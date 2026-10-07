@@ -2,14 +2,15 @@
 //!
 //! Curves reference [`EntityKind::Point`] entities for their defining points, so connected
 //! geometry shares points. Each point's `x`/`y` and each circle's radius are the unknowns the
-//! constraint solver (M2) will solve for.
+//! constraint solver solves for; [`Constraint`]s relate them.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::f64::consts::TAU;
 
 use glam::DVec2;
 
-use crate::{LineKind, Shape};
+use crate::constraint::Slot;
+use crate::{Constraint, ConstraintId, LineKind, Shape};
 
 /// Stable identifier of an entity within a document. Never reused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -107,27 +108,52 @@ impl Entity {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DocumentError {
     Missing(EntityId),
+    MissingConstraint(ConstraintId),
     NotAPoint(EntityId),
+    /// A constraint refers to an entity of the wrong kind.
+    WrongKind {
+        id: EntityId,
+        expected: &'static str,
+    },
     Degenerate(&'static str),
+    InvalidValue,
 }
 
 impl std::fmt::Display for DocumentError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             DocumentError::Missing(id) => write!(f, "entity {id} does not exist"),
+            DocumentError::MissingConstraint(id) => write!(f, "constraint {id} does not exist"),
             DocumentError::NotAPoint(id) => write!(f, "entity {id} is not a point"),
+            DocumentError::WrongKind { id, expected } => {
+                write!(f, "entity {id} is not {expected}")
+            }
             DocumentError::Degenerate(what) => write!(f, "degenerate {what}"),
+            DocumentError::InvalidValue => write!(f, "invalid value"),
         }
     }
 }
 
 impl std::error::Error for DocumentError {}
 
-/// One undoable step: the before and after state of every entity it touched.
+/// Something the journal tracks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+enum Key {
+    Entity(EntityId),
+    Constraint(ConstraintId),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Record {
+    Entity(Entity),
+    Constraint(Constraint),
+}
+
+/// One undoable step: the before and after state of everything it touched.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Transaction {
     pub label: String,
-    changes: Vec<(EntityId, Option<Entity>, Option<Entity>)>,
+    changes: Vec<(Key, Option<Record>, Option<Record>)>,
 }
 
 impl Transaction {
@@ -139,16 +165,18 @@ impl Transaction {
 #[derive(Clone, Debug)]
 pub struct Document {
     entities: BTreeMap<EntityId, Entity>,
+    constraints: BTreeMap<ConstraintId, Constraint>,
     next_id: u32,
+    next_constraint_id: u32,
     /// Incremented on every change, so caches (spatial index, autosave) can tell when to refresh.
     revision: u64,
-    /// Pre-images of entities touched by the open transaction.
-    journal: Option<HashMap<EntityId, Option<Entity>>>,
+    /// Pre-images of everything touched by the open transaction.
+    journal: Option<HashMap<Key, Option<Record>>>,
 }
 
 impl PartialEq for Document {
     fn eq(&self, other: &Self) -> bool {
-        self.entities == other.entities
+        self.entities == other.entities && self.constraints == other.constraints
     }
 }
 
@@ -156,8 +184,10 @@ impl Default for Document {
     fn default() -> Self {
         Self {
             entities: BTreeMap::new(),
-            // Ids start at 1; `e0` is not a valid id in `.drift` files.
+            constraints: BTreeMap::new(),
+            // Ids start at 1; `e0` and `c0` are not valid ids in `.drift` files.
             next_id: 1,
+            next_constraint_id: 1,
             revision: 0,
             journal: None,
         }
@@ -173,17 +203,32 @@ impl Document {
     pub fn from_entities(
         entities: impl IntoIterator<Item = (EntityId, Entity)>,
     ) -> Result<Self, DocumentError> {
+        Self::from_parts(entities, [])
+    }
+
+    /// Rebuild a document from stored entities and constraints. Validates references.
+    pub fn from_parts(
+        entities: impl IntoIterator<Item = (EntityId, Entity)>,
+        constraints: impl IntoIterator<Item = (ConstraintId, Constraint)>,
+    ) -> Result<Self, DocumentError> {
         let entities: BTreeMap<_, _> = entities.into_iter().collect();
+        let constraints: BTreeMap<_, _> = constraints.into_iter().collect();
         let next_id = entities.keys().last().map_or(1, |id| id.0 + 1);
+        let next_constraint_id = constraints.keys().last().map_or(1, |id| id.0 + 1);
         let doc = Self {
             entities,
+            constraints,
             next_id,
+            next_constraint_id,
             ..Self::default()
         };
         for entity in doc.entities.values() {
             for point in entity.kind.points() {
                 doc.point(point)?;
             }
+        }
+        for constraint in doc.constraints.values() {
+            doc.validate(constraint)?;
         }
         Ok(doc)
     }
@@ -276,12 +321,12 @@ impl Document {
         let journal = self.journal.take().unwrap_or_default();
         let mut changes: Vec<_> = journal
             .into_iter()
-            .filter_map(|(id, before)| {
-                let after = self.entities.get(&id).copied();
-                (before != after).then_some((id, before, after))
+            .filter_map(|(key, before)| {
+                let after = self.record(key);
+                (before != after).then_some((key, before, after))
             })
             .collect();
-        changes.sort_by_key(|(id, ..)| *id);
+        changes.sort_by_key(|(key, ..)| *key);
         Transaction {
             label: label.into(),
             changes,
@@ -291,35 +336,58 @@ impl Document {
     /// Abandon the open transaction, restoring every touched entity.
     pub fn rollback(&mut self) {
         if let Some(journal) = self.journal.take() {
-            for (id, before) in journal {
-                self.restore(id, before);
+            for (key, before) in journal {
+                self.restore(key, before);
             }
             self.revision += 1;
         }
     }
 
-    fn touch(&mut self, id: EntityId) {
-        if let Some(journal) = &mut self.journal {
-            let current = self.entities.get(&id).copied();
-            journal.entry(id).or_insert(current);
+    fn record(&self, key: Key) -> Option<Record> {
+        match key {
+            Key::Entity(id) => self.entities.get(&id).copied().map(Record::Entity),
+            Key::Constraint(id) => self.constraints.get(&id).copied().map(Record::Constraint),
+        }
+    }
+
+    fn touch_key(&mut self, key: Key) {
+        if self.journal.is_some() {
+            let current = self.record(key);
+            if let Some(journal) = &mut self.journal {
+                journal.entry(key).or_insert(current);
+            }
         }
         self.revision += 1;
     }
 
-    fn restore(&mut self, id: EntityId, entity: Option<Entity>) {
-        match entity {
-            Some(e) => {
+    fn touch(&mut self, id: EntityId) {
+        self.touch_key(Key::Entity(id));
+    }
+
+    fn touch_constraint(&mut self, id: ConstraintId) {
+        self.touch_key(Key::Constraint(id));
+    }
+
+    fn restore(&mut self, key: Key, record: Option<Record>) {
+        match (key, record) {
+            (Key::Entity(id), Some(Record::Entity(e))) => {
                 self.entities.insert(id, e);
             }
-            None => {
+            (Key::Entity(id), _) => {
                 self.entities.remove(&id);
+            }
+            (Key::Constraint(id), Some(Record::Constraint(c))) => {
+                self.constraints.insert(id, c);
+            }
+            (Key::Constraint(id), _) => {
+                self.constraints.remove(&id);
             }
         }
     }
 
     fn apply(&mut self, tx: &Transaction, forward: bool) {
-        for (id, before, after) in &tx.changes {
-            self.restore(*id, if forward { *after } else { *before });
+        for (key, before, after) in &tx.changes {
+            self.restore(*key, if forward { *after } else { *before });
         }
         self.revision += 1;
     }
@@ -389,6 +457,27 @@ impl Document {
             },
         );
         Ok(())
+    }
+
+    /// Set a circle's radius.
+    pub fn set_radius(&mut self, id: EntityId, radius: f64) -> Result<(), DocumentError> {
+        match self.entities.get(&id).map(|e| e.kind) {
+            Some(EntityKind::Circle { center, .. }) => {
+                if !(radius > 0.0 && radius.is_finite()) {
+                    return Err(DocumentError::Degenerate("circle"));
+                }
+                self.touch(id);
+                if let Some(e) = self.entities.get_mut(&id) {
+                    e.kind = EntityKind::Circle { center, radius };
+                }
+                Ok(())
+            }
+            Some(_) => Err(DocumentError::WrongKind {
+                id,
+                expected: "a circle",
+            }),
+            None => Err(DocumentError::Missing(id)),
+        }
     }
 
     /// Every point that defines the given entities (points themselves included).
@@ -482,6 +571,17 @@ impl Document {
                 self.entities.remove(&point);
             }
         }
+        // Constraints on anything that no longer exists go too.
+        let dangling: Vec<_> = self
+            .constraints
+            .iter()
+            .filter(|(_, c)| c.entities().any(|e| !self.entities.contains_key(&e)))
+            .map(|(id, _)| *id)
+            .collect();
+        for id in dangling {
+            self.touch_constraint(id);
+            self.constraints.remove(&id);
+        }
     }
 
     /// Merge point `from` into point `into`: every reference to `from` is redirected and `from`
@@ -513,10 +613,131 @@ impl Document {
                 e.kind.replace_point(from, into);
             }
         }
+        let constrained: Vec<_> = self
+            .constraints
+            .iter()
+            .filter(|(_, c)| c.entities().any(|e| e == from))
+            .map(|(id, c)| (*id, *c))
+            .collect();
+        for (id, mut c) in constrained {
+            self.touch_constraint(id);
+            c.replace_point(from, into);
+            if c.is_degenerate() {
+                // e.g. a coincidence between the two merged points: now implied.
+                self.constraints.remove(&id);
+            } else {
+                self.constraints.insert(id, c);
+            }
+        }
         self.touch(from);
         self.entities.remove(&from);
         self.normalize_arcs_using(&BTreeSet::from([into]));
         Ok(())
+    }
+
+    // ----- Constraints -----------------------------------------------------------------------
+
+    pub fn constraint(&self, id: ConstraintId) -> Option<&Constraint> {
+        self.constraints.get(&id)
+    }
+
+    /// All constraints in id order.
+    pub fn constraints(&self) -> impl Iterator<Item = (ConstraintId, &Constraint)> {
+        self.constraints.iter().map(|(id, c)| (*id, c))
+    }
+
+    pub fn constraint_count(&self) -> usize {
+        self.constraints.len()
+    }
+
+    /// Constraints that refer to `entity`.
+    pub fn constraints_on(&self, entity: EntityId) -> impl Iterator<Item = ConstraintId> + '_ {
+        self.constraints
+            .iter()
+            .filter(move |(_, c)| c.entities().any(|e| e == entity))
+            .map(|(id, _)| *id)
+    }
+
+    /// Check that a constraint refers to existing entities of the right kinds.
+    pub fn validate(&self, constraint: &Constraint) -> Result<(), DocumentError> {
+        if constraint.is_degenerate() {
+            return Err(DocumentError::Degenerate("constraint"));
+        }
+        if !constraint.value_is_valid() {
+            return Err(DocumentError::InvalidValue);
+        }
+        let mut kinds = Vec::new();
+        for (id, slot) in constraint.slots() {
+            let kind = self
+                .entities
+                .get(&id)
+                .ok_or(DocumentError::Missing(id))?
+                .kind;
+            let ok = match slot {
+                Slot::Point => kind.is_point(),
+                Slot::Line => matches!(kind, EntityKind::Line { .. }),
+                Slot::Circular => {
+                    matches!(kind, EntityKind::Circle { .. } | EntityKind::Arc { .. })
+                }
+                Slot::LineOrCircular => !kind.is_point(),
+            };
+            if !ok {
+                return Err(DocumentError::WrongKind {
+                    id,
+                    expected: slot.describe(),
+                });
+            }
+            kinds.push(kind);
+        }
+        // Equal needs two lines or two circular curves.
+        if let Constraint::Equal { b, .. } = constraint {
+            let first_is_line = matches!(kinds[0], EntityKind::Line { .. });
+            if first_is_line != matches!(kinds[1], EntityKind::Line { .. }) {
+                return Err(DocumentError::WrongKind {
+                    id: *b,
+                    expected: if first_is_line {
+                        "a line"
+                    } else {
+                        "a circle or arc"
+                    },
+                });
+            }
+        }
+        Ok(())
+    }
+
+    pub fn add_constraint(
+        &mut self,
+        constraint: Constraint,
+    ) -> Result<ConstraintId, DocumentError> {
+        self.validate(&constraint)?;
+        let id = ConstraintId(self.next_constraint_id);
+        self.next_constraint_id += 1;
+        self.touch_constraint(id);
+        self.constraints.insert(id, constraint);
+        Ok(id)
+    }
+
+    /// Replace a constraint (e.g. to change a dimension's value).
+    pub fn set_constraint(
+        &mut self,
+        id: ConstraintId,
+        constraint: Constraint,
+    ) -> Result<(), DocumentError> {
+        if !self.constraints.contains_key(&id) {
+            return Err(DocumentError::MissingConstraint(id));
+        }
+        self.validate(&constraint)?;
+        self.touch_constraint(id);
+        self.constraints.insert(id, constraint);
+        Ok(())
+    }
+
+    pub fn remove_constraint(&mut self, id: ConstraintId) {
+        if self.constraints.contains_key(&id) {
+            self.touch_constraint(id);
+            self.constraints.remove(&id);
+        }
     }
 }
 
@@ -710,6 +931,87 @@ mod tests {
         doc.delete([l[1]]);
         doc.rollback();
         assert_eq!(doc, before);
+    }
+
+    #[test]
+    fn constraints_are_validated_undoable_and_cascade_on_delete() {
+        let mut doc = Document::new();
+        let mut history = History::default();
+        let (p, l) = square(&mut doc);
+
+        assert_eq!(
+            doc.add_constraint(Constraint::Horizontal { line: p[0] }),
+            Err(DocumentError::WrongKind {
+                id: p[0],
+                expected: "a line"
+            })
+        );
+        assert_eq!(
+            doc.add_constraint(Constraint::Distance {
+                a: p[0],
+                b: p[1],
+                value: -1.0
+            }),
+            Err(DocumentError::InvalidValue)
+        );
+
+        doc.begin();
+        let h = doc
+            .add_constraint(Constraint::Horizontal { line: l[0] })
+            .unwrap();
+        let d = doc
+            .add_constraint(Constraint::Distance {
+                a: p[0],
+                b: p[1],
+                value: 1.0,
+            })
+            .unwrap();
+        history.push(doc.commit("Constrain"));
+        assert_eq!(h, ConstraintId(1));
+        assert_eq!(doc.constraints_on(l[0]).collect::<Vec<_>>(), vec![h]);
+
+        // Deleting the line removes its relation; the distance on its (still used) points stays.
+        doc.begin();
+        doc.delete([l[0]]);
+        history.push(doc.commit("Delete"));
+        assert!(doc.constraint(h).is_none());
+        assert!(doc.constraint(d).is_some());
+
+        assert!(history.undo(&mut doc));
+        assert!(doc.constraint(h).is_some());
+        assert!(history.undo(&mut doc));
+        assert_eq!(doc.constraint_count(), 0);
+    }
+
+    #[test]
+    fn merging_points_redirects_constraints_and_drops_implied_ones() {
+        let mut doc = Document::new();
+        let a = doc.add_point(v(0.0, 0.0));
+        let b = doc.add_point(v(1.0, 0.0));
+        let c = doc.add_point(v(1.0, 0.0));
+        let d = doc.add_point(v(1.0, 2.0));
+        doc.add_line(a, b).unwrap();
+        doc.add_line(c, d).unwrap();
+        let coincident = doc
+            .add_constraint(Constraint::Coincident { a: b, b: c })
+            .unwrap();
+        let dist = doc
+            .add_constraint(Constraint::Distance {
+                a: c,
+                b: d,
+                value: 2.0,
+            })
+            .unwrap();
+        doc.merge_points(c, b).unwrap();
+        assert!(doc.constraint(coincident).is_none());
+        assert_eq!(
+            doc.constraint(dist),
+            Some(&Constraint::Distance {
+                a: b,
+                b: d,
+                value: 2.0
+            })
+        );
     }
 
     #[test]

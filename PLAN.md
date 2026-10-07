@@ -451,13 +451,55 @@ written but hasn't run yet (no GitHub repo).*
 - **Testing:** headless end-to-end UI tests (`egui_kittest` + wgpu) drive the real app, in
   addition to unit tests for the model, geometry, file format and each tool.
 
-**M2 — Solver core (4–6 wks, highest risk)**
+**M2 — Solver core (4–6 wks, highest risk)** — *done locally on 2026-10-06.*
 - Parameter/equation framework, Newton–LM, substitution of coincident/horizontal/vertical, and
   component decomposition.
 - Constraints: coincident, H/V, parallel, perpendicular, equal, fix, distance, radius, and angle.
 - Constraint-preserving drag, plus DOF coloring.
 - Jacobian finite-difference tests and a property-test harness.
 - Benchmarks run **in the browser** too: the WASM single-thread numbers are the ones that count.
+
+*M2 as built (2026-10-06), and what changed from the design in §4:*
+- **Step formulation:** each Newton step solves `(JᵀJ + μ·M⁻¹) Δ = −JᵀF` in parameter space.
+  As μ → 0 this is the weighted minimum-norm step from §4.2. The first version used the
+  equation-space form `J M Jᵀ`, but substitution merges parameters into widely shared unknowns
+  (e.g. one y for a long run of horizontal edges), and each of those turned `J M Jᵀ` into a dense
+  clique. In parameter space they are single hub nodes instead.
+- **Linear algebra:** pure Rust (no faer). It uses a Reverse Cuthill–McKee ordering with hubs
+  ordered last, envelope (skyline) Cholesky for the steps, and row-wise Givens QR of the
+  equilibrated Jacobian for rank/DOF analysis. Rank decisions on `JᵀJ` proved unreliable for
+  nearly-parallel constraints (cond² error growth), which a property test caught.
+- **Measured** (native, release; one connected component unless noted):
+
+  | Sketch | Solve | DOF analysis |
+  |---|---|---|
+  | 1,000 entities, 750 constraints (125 independent rectangles) | 0.8 ms | 0.5 ms |
+  | 1,600 entities, 1,598 constraints | 3.6 ms | 4.8 ms |
+  | 4,000 entities, 3,998 constraints | 6.9 ms | 22 ms |
+
+  Before the sparse rewrite, the 4,000-entity case took 11.8 s to solve and 1.5 s to analyse.
+
+  In the browser (release WASM in Chromium/WebGPU, after warm-up, via `?bench` or
+  Help → Run solver benchmark), chained rectangles in one component:
+
+  | Entities | Solve | DOF analysis |
+  |---|---|---|
+  | 200 | 0.9 ms | 4.4 ms |
+  | 800 | 5.8 ms | 6.9 ms |
+  | 2,000 | 9.6 ms | 24 ms |
+
+  That is about 2.5–3.5× native. The solver crate is built with `opt-level = 3` inside the
+  size-tuned web profile. The 2,000-entity row misses the "full solve < 5 ms" target in the
+  browser (it is met natively). The DOF analysis only runs after an edit, never per drag frame.
+- **Editing rules:**
+  - Adding constraints is refused when it conflicts, is redundant (adds a dependency or removes
+    no freedom), or collapses geometry (e.g. horizontal plus vertical on one line).
+  - Dimensions are created at the current measured value, so adding one never moves anything.
+    The value is then typed into the focused field.
+  - Driven/reference dimensions are M4.
+- **Not yet:** tangent and the other M4 relations, so the example plate's fillets can't be
+  fully constrained yet. Constraints have no on-canvas glyphs (M3); they are listed in the
+  properties panel.
 
 **M3 — Sketching UX (3–4 wks)**
 - Inference lines and auto-relations, typed input during drawing, and the Smart Dimension tool
@@ -539,6 +581,5 @@ title-block template syntax.
 
 1. Create the `drift` GitHub repo and push, so CI runs and Pages deploys. Enable Pages with
    "GitHub Actions" as the source.
-2. M2: `drift-solver`. Start with a standalone test that solves a constrained rectangle plus a
-   tangent arc, benchmarked natively and in WASM, then wire constraint-preserving drag and DOF
-   colouring into the select tool.
+2. M3: inference lines and auto-relations while drawing, typed input, Smart Dimension with
+   on-canvas dimension rendering and editing, and relation glyphs.

@@ -4,13 +4,15 @@
 //! following the usual CAD convention.
 
 pub mod bounds;
+pub mod constraint;
 pub mod demo;
 pub mod document;
 pub mod shape;
 
 pub use bounds::Bounds;
+pub use constraint::{Constraint, ConstraintId, Slot};
 pub use document::{
     Document, DocumentError, Entity, EntityId, EntityKind, History, Transaction, arc_shape,
 };
 pub use glam::DVec2;
-pub use shape::{Emphasis, LineKind, Shape, SketchItem};
+pub use shape::{DofState, Emphasis, LineKind, Shape, SketchItem};

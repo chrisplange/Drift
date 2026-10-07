@@ -7,8 +7,9 @@ constraints, built for technical drawings and design exploration. It is written 
 on the GPU with [wgpu](https://wgpu.rs), and runs natively on Windows, macOS and Linux and in the
 browser (WebGPU, with a WebGL2 fallback).
 
-> **Status: early development (milestone M1).** You can draw, select, move, snap, undo and save
-> sketches. Constraints and dimensions come next (M2–M4). See [PLAN.md](PLAN.md) for the roadmap.
+> **Status: early development (milestone M2).** You can draw, snap, constrain, dimension, drag
+> and save sketches. Sketching UX (auto-relations, Smart Dimension, on-canvas dimensions) is next.
+> See [PLAN.md](PLAN.md) for the roadmap.
 
 ## What works today
 
@@ -19,6 +20,15 @@ browser (WebGPU, with a WebGL2 fallback).
 - **Selection and editing:** click, Shift-click and Ctrl-click; drag right for a window selection
   and left for a crossing selection. Drag to move. Drop an end point on another to join them.
   Delete, construction toggle (X), and solid / construction / centre line styles.
+- **Constraints:** coincident, horizontal, vertical, parallel, perpendicular, equal and fix
+  relations, plus distance/length, radius and angle dimensions. Pick them in the properties panel
+  for the current selection; dimension values can be typed and edited. Conflicting, redundant or
+  collapsing constraints are refused with an explanation.
+- **Constraint solver:** the geometry moves as little as possible to satisfy the constraints.
+  Dragging keeps every constraint satisfied while the grabbed geometry follows the pointer.
+  Under-defined geometry is blue, fully defined is white (or black in the light theme), and
+  conflicting is red, with a remaining-DOF count in the status bar. Sketches of thousands of
+  entities solve in milliseconds (Help → Run solver benchmark measures it in your browser).
 - **Undo and redo** for every edit, with drags recorded as a single step.
 - **Files:** native `.drift` JSON with one entity per line, so files diff cleanly in git. Saving
   and loading round-trips numbers exactly. Open/save dialogs on desktop; open and download in
@@ -63,6 +73,7 @@ cargo test --workspace
 |---|---|
 | `crates/drift-core` | Document model, transactions and undo history (`f64`, mm, y-up) |
 | `crates/drift-geom` | Exact geometry: nearest points, intersections, R-tree picking and snapping |
+| `crates/drift-solver` | Constraint solver: substitution, sparse weighted least-norm Newton, DOF analysis |
 | `crates/drift-io` | The `.drift` file format (versioned JSON) |
 | `crates/drift-platform` | File dialogs and saving on desktop and web |
 | `crates/drift-render` | wgpu canvas renderer: camera, frame builder, SDF shaders (WebGL2-compatible) |
@@ -70,8 +81,7 @@ cargo test --workspace
 | `apps/native` | Desktop binary |
 | `apps/web` | Browser entry point and Trunk config |
 
-The constraint solver and drafting crates described in the plan are added in the milestones
-where they are needed.
+The drafting crate described in the plan is added in the milestone where it is needed.
 
 ## Licence
 

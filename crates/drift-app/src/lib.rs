@@ -12,7 +12,7 @@ mod ui_tests;
 
 use std::f64::consts::TAU;
 
-use drift_core::{Bounds, DVec2, Document, LineKind, Shape, demo};
+use drift_core::{Bounds, Constraint, ConstraintId, DVec2, Document, LineKind, Shape, demo};
 use drift_geom::SnapOptions;
 use drift_io::Metadata;
 use drift_platform::{FileEvent, FilePath, FileType, Files};
@@ -95,6 +95,12 @@ pub struct DriftApp {
     window_title: String,
     /// Where the canvas was laid out last frame.
     canvas_rect: egui::Rect,
+    /// Text being typed into dimension value fields.
+    dimension_text: std::collections::HashMap<ConstraintId, String>,
+    /// A dimension field to focus next frame (e.g. right after creating the dimension).
+    focus_dimension: Option<ConstraintId>,
+    /// Results of Help → Run solver benchmark.
+    benchmark: Option<Vec<String>>,
 }
 
 impl DriftApp {
@@ -133,6 +139,9 @@ impl DriftApp {
             backend,
             window_title: String::new(),
             canvas_rect: egui::Rect::NOTHING,
+            dimension_text: Default::default(),
+            focus_dimension: None,
+            benchmark: None,
         };
         if let Some(storage) = cc.storage {
             app.restore_session(storage);
@@ -501,6 +510,9 @@ impl DriftApp {
                 if ui.button("Keyboard shortcuts").clicked() {
                     self.show_shortcuts = true;
                 }
+                if ui.button("Run solver benchmark").clicked() {
+                    self.benchmark = Some(run_benchmark());
+                }
             });
         });
     }
@@ -599,6 +611,152 @@ impl DriftApp {
                 self.editor.delete_selection();
             }
         }
+
+        self.constraint_buttons(ui);
+        self.constraint_list(ui);
+    }
+
+    /// Buttons for the relations and dimensions that fit the selection.
+    fn constraint_buttons(&mut self, ui: &mut egui::Ui) {
+        let relations = self.editor.relation_options();
+        let dimensions = self.editor.dimension_options();
+        let now = ui.input(|i| i.time);
+        for (heading, options, is_dimension) in [
+            ("Add relation", relations, false),
+            ("Add dimension", dimensions, true),
+        ] {
+            if options.is_empty() {
+                continue;
+            }
+            ui.add_space(10.0);
+            ui.label(heading);
+            let mut chosen = None;
+            ui.horizontal_wrapped(|ui| {
+                for option in &options {
+                    if ui.button(option.label).clicked() {
+                        chosen = Some(option.clone());
+                    }
+                }
+            });
+            if let Some(option) = chosen {
+                match self
+                    .editor
+                    .add_constraints(option.label, &option.constraints)
+                {
+                    Ok(ids) => {
+                        if is_dimension {
+                            // Let the user type the value straight away.
+                            self.focus_dimension = ids.first().copied();
+                        }
+                    }
+                    Err(e) => self.set_status(format!("{}: {e}", option.label), true, now),
+                }
+            }
+        }
+    }
+
+    /// Constraints on the selection (or all of them when nothing is selected), with editable
+    /// dimension values.
+    fn constraint_list(&mut self, ui: &mut egui::Ui) {
+        let ed = &self.editor;
+        let constraints: Vec<(ConstraintId, Constraint)> = if ed.selection.is_empty() {
+            ed.doc.constraints().map(|(id, c)| (id, *c)).collect()
+        } else {
+            // Include constraints on the selection's points: a line's length is a distance
+            // between its end points.
+            let mut relevant = ed.doc.defining_points(ed.selection.iter().copied());
+            relevant.extend(ed.selection.iter().copied());
+            ed.doc
+                .constraints()
+                .filter(|(_, c)| c.entities().any(|e| relevant.contains(&e)))
+                .map(|(id, c)| (id, *c))
+                .collect()
+        };
+        if constraints.is_empty() {
+            return;
+        }
+        let conflicts = ed.analysis().conflicts.clone();
+        ui.add_space(10.0);
+        ui.label(format!("Constraints ({})", constraints.len()));
+        let now = ui.input(|i| i.time);
+        let mut remove = None;
+        let mut select = None;
+        let mut apply = None;
+        egui::ScrollArea::vertical()
+            .max_height(260.0)
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                egui::Grid::new("constraints")
+                    .num_columns(3)
+                    .striped(true)
+                    .show(ui, |ui| {
+                        for (id, c) in &constraints {
+                            let mut name = egui::RichText::new(constraint_label(&ed.doc, c));
+                            if conflicts.contains(id) {
+                                name = name.color(ui.visuals().error_fg_color);
+                            }
+                            if ui
+                                .add(egui::Label::new(name).sense(egui::Sense::click()))
+                                .on_hover_text(format!("{id}: click to select its geometry"))
+                                .clicked()
+                            {
+                                select = Some(*c);
+                            }
+                            match c.value() {
+                                Some(value) => {
+                                    let field = egui::Id::new(("dimension", id.0));
+                                    let mut text = self
+                                        .dimension_text
+                                        .get(id)
+                                        .cloned()
+                                        .unwrap_or_else(|| format_value(value));
+                                    let response = ui.add(
+                                        egui::TextEdit::singleline(&mut text)
+                                            .id(field)
+                                            .desired_width(90.0)
+                                            .hint_text(c.unit()),
+                                    );
+                                    if self.focus_dimension == Some(*id) {
+                                        response.request_focus();
+                                        self.focus_dimension = None;
+                                    }
+                                    if response.has_focus() {
+                                        self.dimension_text.insert(*id, text.clone());
+                                    }
+                                    if response.lost_focus() {
+                                        if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                                            apply = Some((*id, text.clone()));
+                                        }
+                                        self.dimension_text.remove(id);
+                                    }
+                                }
+                                None => {
+                                    ui.label("");
+                                }
+                            }
+                            if ui.small_button("Remove").clicked() {
+                                remove = Some(*id);
+                            }
+                            ui.end_row();
+                        }
+                    });
+            });
+        if let Some(c) = select {
+            self.editor.selection = c.entities().collect();
+        }
+        if let Some(id) = remove {
+            self.editor.remove_constraint(id);
+        }
+        if let Some((id, text)) = apply {
+            match parse_value(&text) {
+                Some(value) => {
+                    if let Err(e) = self.editor.set_dimension(id, value) {
+                        self.set_status(format!("Can't use {text}: {e}"), true, now);
+                    }
+                }
+                None => self.set_status(format!("\"{text}\" is not a number"), true, now),
+            }
+        }
     }
 
     fn status_bar(&mut self, ui: &mut egui::Ui, now: f64) {
@@ -619,6 +777,28 @@ impl DriftApp {
             ));
             ui.toggle_value(&mut self.grid_snap, "Snap to grid");
             ui.separator();
+            if !self.editor.doc.is_empty() {
+                let analysis = self.editor.analysis();
+                let (text, color) = if !analysis.converged {
+                    (
+                        format!("Over defined ({} conflicting)", analysis.conflicts.len()),
+                        ui.visuals().error_fg_color,
+                    )
+                } else if analysis.dof == Some(0) {
+                    ("Fully defined".to_owned(), ui.visuals().strong_text_color())
+                } else {
+                    (
+                        format!("Under defined: {} DOF", analysis.dof.unwrap_or(0)),
+                        if ui.visuals().dark_mode {
+                            egui::Color32::from_rgb(0x5f, 0xa8, 0xf5)
+                        } else {
+                            egui::Color32::from_rgb(0x15, 0x65, 0xc0)
+                        },
+                    )
+                };
+                ui.label(egui::RichText::new(text).color(color));
+                ui.separator();
+            }
             match &self.status {
                 Some(status) if now < status.until => {
                     let text = egui::RichText::new(&status.text);
@@ -847,6 +1027,21 @@ impl DriftApp {
             }
         }
 
+        let mut open = self.benchmark.is_some();
+        egui::Window::new("Solver benchmark")
+            .open(&mut open)
+            .resizable(false)
+            .collapsible(false)
+            .show(ctx, |ui| {
+                ui.label(format!("Running on {}", self.backend));
+                for line in self.benchmark.iter().flatten() {
+                    ui.monospace(line);
+                }
+            });
+        if !open {
+            self.benchmark = None;
+        }
+
         egui::Window::new("Keyboard shortcuts")
             .open(&mut self.show_shortcuts)
             .resizable(false)
@@ -875,6 +1070,7 @@ impl DriftApp {
             self.editor.hovered,
             self.grid_snap,
             self.pending,
+            self.editor.doc.constraint_count(),
         )
     }
 
@@ -893,6 +1089,73 @@ impl DriftApp {
             self.window_title = title;
         }
     }
+}
+
+/// Time the solver on chained-rectangle sketches (one connected component each).
+pub fn run_benchmark() -> Vec<String> {
+    use web_time::Instant;
+    // Warm up so WASM engines have compiled the solver with their optimising tier.
+    for _ in 0..3 {
+        let mut doc = drift_solver::bench::chained_rectangles(50);
+        drift_solver::solve(&mut doc, &drift_solver::SolveOptions::default());
+        drift_solver::analyze(&doc);
+    }
+    [25, 100, 250]
+        .into_iter()
+        .map(|n| {
+            let mut doc = drift_solver::bench::chained_rectangles(n);
+            let start = Instant::now();
+            let report = drift_solver::solve(&mut doc, &drift_solver::SolveOptions::default());
+            let solve = start.elapsed();
+            let start = Instant::now();
+            let analysis = drift_solver::analyze(&doc);
+            let analyze = start.elapsed();
+            format!(
+                "{:>5} entities {:>5} constraints  solve {:>7.2} ms  DOF {:>7.2} ms  {}",
+                doc.len(),
+                doc.constraint_count(),
+                solve.as_secs_f64() * 1e3,
+                analyze.as_secs_f64() * 1e3,
+                if report.converged && analysis.dof == Some(2) {
+                    "ok"
+                } else {
+                    "FAILED"
+                },
+            )
+        })
+        .collect()
+}
+
+/// A readable name for a constraint: a distance between a line's end points is its length.
+fn constraint_label(doc: &Document, c: &Constraint) -> &'static str {
+    if let Constraint::Distance { a, b, .. } = c {
+        let is_line = doc.iter().any(|(_, e)| {
+            matches!(e.kind, drift_core::EntityKind::Line { a: la, b: lb }
+                if (la == *a && lb == *b) || (la == *b && lb == *a))
+        });
+        if is_line {
+            return "Length";
+        }
+    }
+    c.type_name()
+}
+
+/// Dimension values as shown in fields: up to 6 decimals, without trailing zeros.
+fn format_value(value: f64) -> String {
+    let s = format!("{value:.6}");
+    let s = s.trim_end_matches('0').trim_end_matches('.');
+    s.to_owned()
+}
+
+/// Parse a typed dimension value, accepting a trailing unit.
+fn parse_value(text: &str) -> Option<f64> {
+    let t = text.trim();
+    let t = t
+        .strip_suffix("mm")
+        .or_else(|| t.strip_suffix('°'))
+        .unwrap_or(t)
+        .trim();
+    t.parse::<f64>().ok().filter(|v| v.is_finite())
 }
 
 /// Where `button` was released this frame, from the raw input events.
@@ -980,6 +1243,9 @@ impl eframe::App for DriftApp {
         let now = ctx.input(|i| i.time);
         let before = self.ui_signature();
         self.handle_file_events(now);
+        if let Some(notice) = self.editor.notice.take() {
+            self.set_status(notice, true, now);
+        }
         if self.pending.is_none() {
             self.shortcuts(&ctx);
         }
@@ -1041,6 +1307,24 @@ fn format_length(value: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::format_length;
+
+    #[test]
+    fn parses_and_formats_dimension_values() {
+        use super::{format_value, parse_value};
+        assert_eq!(parse_value(" 12.5 mm"), Some(12.5));
+        assert_eq!(parse_value("30°"), Some(30.0));
+        assert_eq!(parse_value("abc"), None);
+        assert_eq!(format_value(10.0), "10");
+        assert_eq!(format_value(0.1 + 0.2), "0.3");
+        assert_eq!(format_value(12.3456789), "12.345679");
+    }
+
+    #[test]
+    fn benchmark_sketches_solve() {
+        let lines = super::run_benchmark();
+        assert_eq!(lines.len(), 3);
+        assert!(lines.iter().all(|l| l.ends_with("ok")), "{lines:#?}");
+    }
 
     #[test]
     fn formats_grid_lengths() {

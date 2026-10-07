@@ -1,31 +1,42 @@
 //! The native `.drift` file format.
 //!
-//! A `.drift` file is UTF-8 JSON with one entity per line, so files diff and merge cleanly in
-//! version control:
+//! A `.drift` file is UTF-8 JSON with one entity or constraint per line, so files diff and
+//! merge cleanly in version control:
 //!
 //! ```json
 //! {
 //!   "format": "drift",
-//!   "version": 1,
+//!   "version": 2,
 //!   "meta": {"title":"Bracket","units":"mm","generator":"Drift 0.1.0"},
 //!   "entities": [
 //!     {"type":"point","id":"e1","at":[0.0,0.0]},
 //!     {"type":"point","id":"e2","at":[120.0,0.0]},
 //!     {"type":"line","id":"e3","a":"e1","b":"e2"}
+//!   ],
+//!   "constraints": [
+//!     {"type":"horizontal","id":"c1","line":"e3"},
+//!     {"type":"distance","id":"c2","a":"e1","b":"e2","value":120.0}
 //!   ]
 //! }
 //! ```
 //!
+//! Angles are stored in degrees, as the user typed them.
+//!
 //! Numbers use the shortest representation that round-trips exactly, so save → load is
 //! bit-exact. Older versions are upgraded by [`migrate`] before parsing.
 
-use drift_core::{Document, DocumentError, Entity, EntityId, EntityKind, LineKind};
+use drift_core::{
+    Constraint, ConstraintId, DVec2, Document, DocumentError, Entity, EntityId, EntityKind,
+    LineKind,
+};
 use serde::{Deserialize, Serialize};
 
 /// File extension, without the dot.
 pub const EXTENSION: &str = "drift";
 /// The version this build writes. Files with a higher version are rejected.
-pub const FORMAT_VERSION: u32 = 1;
+///
+/// History: 1 = entities only (M1); 2 = adds `constraints` (M2).
+pub const FORMAT_VERSION: u32 = 2;
 const FORMAT_TAG: &str = "drift";
 
 /// Document-level properties stored alongside the geometry.
@@ -161,6 +172,240 @@ enum EntityRecord {
     },
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+enum ConstraintRecord {
+    Coincident {
+        id: String,
+        a: String,
+        b: String,
+    },
+    Horizontal {
+        id: String,
+        line: String,
+    },
+    Vertical {
+        id: String,
+        line: String,
+    },
+    HorizontalPoints {
+        id: String,
+        a: String,
+        b: String,
+    },
+    VerticalPoints {
+        id: String,
+        a: String,
+        b: String,
+    },
+    Parallel {
+        id: String,
+        a: String,
+        b: String,
+    },
+    Perpendicular {
+        id: String,
+        a: String,
+        b: String,
+    },
+    Equal {
+        id: String,
+        a: String,
+        b: String,
+    },
+    Fix {
+        id: String,
+        point: String,
+        at: [f64; 2],
+    },
+    FixRadius {
+        id: String,
+        curve: String,
+        radius: f64,
+    },
+    Distance {
+        id: String,
+        a: String,
+        b: String,
+        value: f64,
+    },
+    Radius {
+        id: String,
+        curve: String,
+        value: f64,
+    },
+    Angle {
+        id: String,
+        a: String,
+        b: String,
+        degrees: f64,
+    },
+}
+
+fn constraint_record(id: ConstraintId, c: &Constraint) -> ConstraintRecord {
+    let id = id.to_string();
+    let s = id_string;
+    match *c {
+        Constraint::Coincident { a, b } => ConstraintRecord::Coincident {
+            id,
+            a: s(a),
+            b: s(b),
+        },
+        Constraint::Horizontal { line } => ConstraintRecord::Horizontal { id, line: s(line) },
+        Constraint::Vertical { line } => ConstraintRecord::Vertical { id, line: s(line) },
+        Constraint::HorizontalPoints { a, b } => ConstraintRecord::HorizontalPoints {
+            id,
+            a: s(a),
+            b: s(b),
+        },
+        Constraint::VerticalPoints { a, b } => ConstraintRecord::VerticalPoints {
+            id,
+            a: s(a),
+            b: s(b),
+        },
+        Constraint::Parallel { a, b } => ConstraintRecord::Parallel {
+            id,
+            a: s(a),
+            b: s(b),
+        },
+        Constraint::Perpendicular { a, b } => ConstraintRecord::Perpendicular {
+            id,
+            a: s(a),
+            b: s(b),
+        },
+        Constraint::Equal { a, b } => ConstraintRecord::Equal {
+            id,
+            a: s(a),
+            b: s(b),
+        },
+        Constraint::Fix { point, at } => ConstraintRecord::Fix {
+            id,
+            point: s(point),
+            at: at.to_array(),
+        },
+        Constraint::FixRadius { curve, radius } => ConstraintRecord::FixRadius {
+            id,
+            curve: s(curve),
+            radius,
+        },
+        Constraint::Distance { a, b, value } => ConstraintRecord::Distance {
+            id,
+            a: s(a),
+            b: s(b),
+            value,
+        },
+        Constraint::Radius { curve, value } => ConstraintRecord::Radius {
+            id,
+            curve: s(curve),
+            value,
+        },
+        Constraint::Angle { a, b, degrees } => ConstraintRecord::Angle {
+            id,
+            a: s(a),
+            b: s(b),
+            degrees,
+        },
+    }
+}
+
+fn parse_constraint_id(s: &str) -> Result<ConstraintId, LoadError> {
+    s.strip_prefix('c')
+        .and_then(|n| n.parse::<u32>().ok())
+        .filter(|n| *n > 0)
+        .map(ConstraintId)
+        .ok_or_else(|| LoadError::BadId(s.to_owned()))
+}
+
+fn parse_constraint(rec: ConstraintRecord) -> Result<(ConstraintId, Constraint), LoadError> {
+    let e = |s: &str| parse_id(s);
+    let (id, c) = match rec {
+        ConstraintRecord::Coincident { id, a, b } => (
+            id,
+            Constraint::Coincident {
+                a: e(&a)?,
+                b: e(&b)?,
+            },
+        ),
+        ConstraintRecord::Horizontal { id, line } => {
+            (id, Constraint::Horizontal { line: e(&line)? })
+        }
+        ConstraintRecord::Vertical { id, line } => (id, Constraint::Vertical { line: e(&line)? }),
+        ConstraintRecord::HorizontalPoints { id, a, b } => (
+            id,
+            Constraint::HorizontalPoints {
+                a: e(&a)?,
+                b: e(&b)?,
+            },
+        ),
+        ConstraintRecord::VerticalPoints { id, a, b } => (
+            id,
+            Constraint::VerticalPoints {
+                a: e(&a)?,
+                b: e(&b)?,
+            },
+        ),
+        ConstraintRecord::Parallel { id, a, b } => (
+            id,
+            Constraint::Parallel {
+                a: e(&a)?,
+                b: e(&b)?,
+            },
+        ),
+        ConstraintRecord::Perpendicular { id, a, b } => (
+            id,
+            Constraint::Perpendicular {
+                a: e(&a)?,
+                b: e(&b)?,
+            },
+        ),
+        ConstraintRecord::Equal { id, a, b } => (
+            id,
+            Constraint::Equal {
+                a: e(&a)?,
+                b: e(&b)?,
+            },
+        ),
+        ConstraintRecord::Fix { id, point, at } => (
+            id,
+            Constraint::Fix {
+                point: e(&point)?,
+                at: DVec2::from(at),
+            },
+        ),
+        ConstraintRecord::FixRadius { id, curve, radius } => (
+            id,
+            Constraint::FixRadius {
+                curve: e(&curve)?,
+                radius,
+            },
+        ),
+        ConstraintRecord::Distance { id, a, b, value } => (
+            id,
+            Constraint::Distance {
+                a: e(&a)?,
+                b: e(&b)?,
+                value,
+            },
+        ),
+        ConstraintRecord::Radius { id, curve, value } => (
+            id,
+            Constraint::Radius {
+                curve: e(&curve)?,
+                value,
+            },
+        ),
+        ConstraintRecord::Angle { id, a, b, degrees } => (
+            id,
+            Constraint::Angle {
+                a: e(&a)?,
+                b: e(&b)?,
+                degrees,
+            },
+        ),
+    };
+    Ok((parse_constraint_id(&id)?, c))
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct FileRecord {
@@ -173,6 +418,8 @@ struct FileRecord {
     meta: Metadata,
     #[serde(default)]
     entities: Vec<EntityRecord>,
+    #[serde(default)]
+    constraints: Vec<ConstraintRecord>,
 }
 
 fn id_string(id: EntityId) -> String {
@@ -226,17 +473,35 @@ pub fn save(doc: &Document, meta: &Metadata) -> String {
     out.push_str(&format!("  \"version\": {FORMAT_VERSION},\n"));
     let meta = serde_json::to_string(meta).expect("metadata serializes");
     out.push_str(&format!("  \"meta\": {meta},\n"));
-    out.push_str("  \"entities\": [");
-    let mut first = true;
-    for (id, entity) in doc.iter() {
-        out.push_str(if first { "\n    " } else { ",\n    " });
-        first = false;
-        let line = serde_json::to_string(&record(id, entity)).expect("entity serializes");
-        out.push_str(&line);
-    }
-    out.push_str(if first { "]\n" } else { "\n  ]\n" });
+    let entities: Vec<String> = doc
+        .iter()
+        .map(|(id, entity)| serde_json::to_string(&record(id, entity)).expect("entity serializes"))
+        .collect();
+    let constraints: Vec<String> = doc
+        .constraints()
+        .map(|(id, c)| {
+            serde_json::to_string(&constraint_record(id, c)).expect("constraint serializes")
+        })
+        .collect();
+    push_array(&mut out, "entities", &entities, true);
+    push_array(&mut out, "constraints", &constraints, false);
     out.push_str("}\n");
     out
+}
+
+/// Write `"name": [ ... ]` with one item per line.
+fn push_array(out: &mut String, name: &str, items: &[String], more: bool) {
+    out.push_str(&format!("  \"{name}\": ["));
+    if items.is_empty() {
+        out.push(']');
+    } else {
+        for (i, item) in items.iter().enumerate() {
+            out.push_str(if i == 0 { "\n    " } else { ",\n    " });
+            out.push_str(item);
+        }
+        out.push_str("\n  ]");
+    }
+    out.push_str(if more { ",\n" } else { "\n" });
 }
 
 /// Parse `.drift` JSON, upgrading older versions.
@@ -325,7 +590,16 @@ pub fn load(text: &str) -> Result<(Document, Metadata), LoadError> {
         }
         entities.push((id, entity));
     }
-    let doc = Document::from_entities(entities).map_err(LoadError::Document)?;
+    let mut constraints = Vec::with_capacity(file.constraints.len());
+    let mut seen_constraints = std::collections::HashSet::new();
+    for rec in file.constraints {
+        let (id, c) = parse_constraint(rec)?;
+        if !seen_constraints.insert(id) {
+            return Err(LoadError::DuplicateId(id.to_string()));
+        }
+        constraints.push((id, c));
+    }
+    let doc = Document::from_parts(entities, constraints).map_err(LoadError::Document)?;
     Ok((doc, file.meta))
 }
 
@@ -342,7 +616,12 @@ pub fn migrate(value: serde_json::Value) -> Result<serde_json::Value, LoadError>
     if version == 0 || version > FORMAT_VERSION {
         return Err(LoadError::UnsupportedVersion(version));
     }
-    // Version 1 is current; future upgrades chain here: `if version < 2 { value = v1_to_v2(value) }`.
+    let mut value = value;
+    if version < 2 {
+        // v1 → v2: constraints were introduced; a v1 file simply has none.
+        value["constraints"] = serde_json::Value::Array(Vec::new());
+    }
+    value["version"] = FORMAT_VERSION.into();
     Ok(value)
 }
 
@@ -377,15 +656,23 @@ mod tests {
         let b = doc.add_point(DVec2::new(10.5, 0.0));
         let l = doc.add_line(a, b).unwrap();
         doc.set_style(l, LineKind::Construction);
+        doc.add_constraint(Constraint::Horizontal { line: l })
+            .unwrap();
+        doc.add_constraint(Constraint::Distance { a, b, value: 10.5 })
+            .unwrap();
         let text = save(&doc, &Metadata::default());
         let expected = r#"{
   "format": "drift",
-  "version": 1,
+  "version": 2,
   "meta": {"units":"mm"},
   "entities": [
     {"type":"point","id":"e1","at":[0.0,0.0]},
     {"type":"point","id":"e2","at":[10.5,0.0]},
     {"type":"line","id":"e3","a":"e1","b":"e2","style":"construction"}
+  ],
+  "constraints": [
+    {"type":"horizontal","id":"c1","line":"e3"},
+    {"type":"distance","id":"c2","a":"e1","b":"e2","value":10.5}
   ]
 }
 "#;
@@ -404,9 +691,82 @@ mod tests {
     #[test]
     fn empty_document_round_trips() {
         let text = save(&Document::new(), &Metadata::default());
-        assert!(text.contains("\"entities\": []"));
+        assert!(text.contains("\"entities\": [],"));
+        assert!(text.contains("\"constraints\": []"));
         let (doc, _) = load(&text).unwrap();
         assert!(doc.is_empty());
+    }
+
+    #[test]
+    fn every_constraint_kind_round_trips() {
+        let mut doc = Document::new();
+        let p = [(0.0, 0.0), (10.0, 0.0), (10.0, 5.0), (0.0, 5.0)]
+            .map(|(x, y)| doc.add_point(DVec2::new(x, y)));
+        let l1 = doc.add_line(p[0], p[1]).unwrap();
+        let l2 = doc.add_line(p[1], p[2]).unwrap();
+        let l3 = doc.add_line(p[2], p[3]).unwrap();
+        let c = doc.add_point(DVec2::new(20.0, 0.0));
+        let circle = doc.add_circle(c, 2.5).unwrap();
+        let c2 = doc.add_point(DVec2::new(30.0, 0.0));
+        let circle2 = doc.add_circle(c2, 2.5).unwrap();
+        for constraint in [
+            Constraint::Coincident { a: p[3], b: c },
+            Constraint::Horizontal { line: l1 },
+            Constraint::Vertical { line: l2 },
+            Constraint::HorizontalPoints { a: p[0], b: c },
+            Constraint::VerticalPoints { a: p[2], b: p[1] },
+            Constraint::Parallel { a: l1, b: l3 },
+            Constraint::Perpendicular { a: l1, b: l2 },
+            Constraint::Equal {
+                a: circle,
+                b: circle2,
+            },
+            Constraint::Fix {
+                point: p[0],
+                at: DVec2::new(0.0, 0.0),
+            },
+            Constraint::FixRadius {
+                curve: circle,
+                radius: 2.5,
+            },
+            Constraint::Distance {
+                a: p[0],
+                b: p[1],
+                value: 10.0,
+            },
+            Constraint::Radius {
+                curve: circle2,
+                value: 2.5,
+            },
+            Constraint::Angle {
+                a: l1,
+                b: l2,
+                degrees: 90.0,
+            },
+        ] {
+            doc.add_constraint(constraint).unwrap();
+        }
+        let text = save(&doc, &Metadata::default());
+        let (loaded, _) = load(&text).unwrap();
+        assert_eq!(loaded, doc);
+        assert_eq!(loaded.constraint_count(), 13);
+    }
+
+    #[test]
+    fn version_1_files_still_load() {
+        let v1 = r#"{"format":"drift","version":1,"meta":{"units":"mm"},"entities":[
+            {"type":"point","id":"e1","at":[1.5,2.0]}]}"#;
+        let (doc, _) = load(v1).unwrap();
+        assert_eq!(doc.len(), 1);
+        assert_eq!(doc.constraint_count(), 0);
+    }
+
+    #[test]
+    fn rejects_constraints_on_the_wrong_kind_of_entity() {
+        let bad = r#"{"format":"drift","version":2,"entities":[
+            {"type":"point","id":"e1","at":[0,0]}],
+            "constraints":[{"type":"horizontal","id":"c1","line":"e1"}]}"#;
+        assert!(matches!(load(bad), Err(LoadError::Document(_))));
     }
 
     #[test]

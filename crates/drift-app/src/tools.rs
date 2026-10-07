@@ -7,6 +7,8 @@ use std::f64::consts::{PI, TAU};
 
 use drift_core::{Bounds, DVec2, Emphasis, EntityId, Shape, SketchItem, arc_shape};
 
+use drift_solver::Param;
+
 use crate::editor::{Anchor, Editor, Pointer};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -254,9 +256,23 @@ impl Tool for SelectTool {
                 Some(SelectDrag::Move { last, point }) => {
                     let target = if point.is_some() { p.pos() } else { p.raw };
                     let delta = target - *last;
-                    *last = target;
-                    ed.doc.translate(ed.selection.iter().copied(), delta);
-                    ed.sync();
+                    if delta != DVec2::ZERO {
+                        let ids: Vec<EntityId> = ed.selection.iter().copied().collect();
+                        // The grabbed geometry follows the pointer; constraints move the rest.
+                        let dragged: Vec<Param> = ed
+                            .doc
+                            .defining_points(ids.iter().copied())
+                            .into_iter()
+                            .flat_map(Param::point)
+                            .collect();
+                        if ed.drag(&ids, delta, &dragged) {
+                            // Track where the geometry actually went (constraints may hold it).
+                            *last = match point {
+                                Some(pt) => ed.doc.point(*pt).unwrap_or(target),
+                                None => target,
+                            };
+                        }
+                    }
                 }
                 None => {}
             },

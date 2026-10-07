@@ -539,13 +539,24 @@ written but hasn't run yet (no GitHub repo).*
   - Typed sizes become dimensions.
   - Keys are routed to the tool before shortcuts. Keyboard focus that Tab moved onto a button
     is released while a tool takes typed values.
+- **Midpoints (added after the user asked):**
+  - Line midpoints can be hovered and picked in Select and Smart Dimension, within 60% of the
+    normal pick radius so clicking elsewhere on the line still picks the line.
+  - A **Midpoint** relation keeps a point at a line's midpoint. It is offered for a point plus
+    a midpoint or line, and added automatically when a new point snaps to a midpoint or a
+    dragged end point is dropped on one.
+  - Distance dimensions (aligned / horizontal / vertical, and the point side of point–line)
+    can reference a midpoint by putting the *line's* id in a point slot
+    (`Slot::PointOrMidpoint`). The solver adds a hidden midpoint (two unknowns plus two
+    equations, so no extra DOF), and a small triangle marks it on the canvas.
 - **Not yet:** dimension text uses egui's font in the overlay (fine on screen; PDF output in M8
   will draw dimensions itself). There are no witness-line gaps or arrow flipping for very short
   dimensions beyond a simple "arrows inside/outside" rule. Angles are always measured
   counter-clockwise from the first line picked.
 
 **M4 — Full relations and diagnostics (3–4 wks)**
-- Tangent, concentric, midpoint, symmetric, collinear, point-on-curve, and coradial.
+- Tangent, concentric, symmetric, collinear, point-on-curve, and coradial (midpoint was done in
+  M3).
 - Redundancy/conflict detection and the driven-dimension prompt.
 
 **M5 — Parametrics and exploration (3 wks)**
@@ -619,6 +630,6 @@ title-block template syntax.
 
 1. Create the `drift` GitHub repo and push, so CI runs and Pages deploys. Enable Pages with
    "GitHub Actions" as the source.
-2. M4: tangent, concentric, midpoint, symmetric, collinear, point-on-curve and coradial
+2. M4: tangent, concentric, symmetric, collinear, point-on-curve and coradial
    relations (so the example's fillets can be fully defined), and driven (reference)
    dimensions with the "make it driven?" prompt for redundant dimensions.

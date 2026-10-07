@@ -501,10 +501,48 @@ written but hasn't run yet (no GitHub repo).*
   fully constrained yet. Constraints have no on-canvas glyphs (M3); they are listed in the
   properties panel.
 
-**M3 — Sketching UX (3–4 wks)**
+**M3 — Sketching UX (3–4 wks)** — *done locally on 2026-10-07.*
 - Inference lines and auto-relations, typed input during drawing, and the Smart Dimension tool
   with an on-canvas editor.
 - Relation glyphs, the property panel, and the status bar DOF count.
+
+*M3 as built:*
+- **New dimension kinds:** diameter, horizontal distance, vertical distance, and point-to-line
+  distance.
+  - Horizontal/vertical and point–line distances record which side the geometry is on, so
+    solutions can't flip over.
+  - Dimension labels store an offset from an anchor on the measured geometry, so they move
+    with it.
+  - File format v3 (v1/v2 still load).
+- **Smart Dimension (D):** click a line, circle, arc, two points, two lines, or a point and a
+  line. Where you place the label chooses aligned vs horizontal vs vertical, as in SolidWorks.
+  The value field opens straight away. Redundant dimensions are refused with a message (driven
+  dimensions are M4).
+- **Dimensions on the canvas:** extension lines, arrows, and text with a background. Drag the
+  text to move it (one undo step); double-click it to edit the value in place.
+- **Relation glyphs:** small vector icons for H, V, ∥, ⊥, =, fix and coincident, stacked per
+  entity. Hover or click one to highlight its geometry; Delete removes the picked one.
+- **Automatic relations:**
+  - Lines within the pick tolerance of horizontal/vertical are snapped straight and get the
+    relation.
+  - Rectangles get their four H/V relations.
+  - Typed angles that are multiples of 90° add H/V relations, and use exact unit directions
+    so already-placed points don't shift by round-off.
+  - On/off in the View menu.
+- **Inference lines:** new points align horizontally or vertically with the last few points the
+  pointer snapped to (SolidWorks-style "wake up" points), shown as dashed guides. They add no
+  relation.
+- **Typed input in every drawing tool:**
+  - First point: X/Y.
+  - Line: length/angle (Tab switches field). Rectangle: width/height. Circle: diameter.
+    Arc: radius, then sweep.
+  - Typed sizes become dimensions.
+  - Keys are routed to the tool before shortcuts. Keyboard focus that Tab moved onto a button
+    is released while a tool takes typed values.
+- **Not yet:** dimension text uses egui's font in the overlay (fine on screen; PDF output in M8
+  will draw dimensions itself). There are no witness-line gaps or arrow flipping for very short
+  dimensions beyond a simple "arrows inside/outside" rule. Angles are always measured
+  counter-clockwise from the first line picked.
 
 **M4 — Full relations and diagnostics (3–4 wks)**
 - Tangent, concentric, midpoint, symmetric, collinear, point-on-curve, and coradial.
@@ -581,5 +619,6 @@ title-block template syntax.
 
 1. Create the `drift` GitHub repo and push, so CI runs and Pages deploys. Enable Pages with
    "GitHub Actions" as the source.
-2. M3: inference lines and auto-relations while drawing, typed input, Smart Dimension with
-   on-canvas dimension rendering and editing, and relation glyphs.
+2. M4: tangent, concentric, midpoint, symmetric, collinear, point-on-curve and coradial
+   relations (so the example's fillets can be fully defined), and driven (reference)
+   dimensions with the "make it driven?" prompt for redundant dimensions.

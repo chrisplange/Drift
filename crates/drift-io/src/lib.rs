@@ -6,7 +6,7 @@
 //! ```json
 //! {
 //!   "format": "drift",
-//!   "version": 2,
+//!   "version": 3,
 //!   "meta": {"title":"Bracket","units":"mm","generator":"Drift 0.1.0"},
 //!   "entities": [
 //!     {"type":"point","id":"e1","at":[0.0,0.0]},
@@ -35,8 +35,9 @@ use serde::{Deserialize, Serialize};
 pub const EXTENSION: &str = "drift";
 /// The version this build writes. Files with a higher version are rejected.
 ///
-/// History: 1 = entities only (M1); 2 = adds `constraints` (M2).
-pub const FORMAT_VERSION: u32 = 2;
+/// History: 1 = entities only (M1); 2 = adds `constraints` (M2); 3 = adds diameter,
+/// horizontal/vertical and point–line distances, and dimension `label` offsets (M3).
+pub const FORMAT_VERSION: u32 = 3;
 const FORMAT_TAG: &str = "drift";
 
 /// Document-level properties stored alongside the geometry.
@@ -72,6 +73,8 @@ pub enum LoadError {
     UnsupportedVersion(u32),
     UnsupportedUnits(String),
     BadId(String),
+    MissingField { id: String, field: &'static str },
+    UnknownConstraint(String),
     DuplicateId(String),
     NonFinite(String),
     Document(DocumentError),
@@ -89,6 +92,8 @@ impl std::fmt::Display for LoadError {
             ),
             LoadError::UnsupportedUnits(u) => write!(f, "unsupported units \"{u}\""),
             LoadError::BadId(id) => write!(f, "invalid entity id \"{id}\""),
+            LoadError::MissingField { id, field } => write!(f, "{id} is missing \"{field}\""),
+            LoadError::UnknownConstraint(kind) => write!(f, "unknown constraint type \"{kind}\""),
             LoadError::DuplicateId(id) => write!(f, "duplicate entity id \"{id}\""),
             LoadError::NonFinite(id) => write!(f, "entity {id} has a non-finite value"),
             LoadError::Document(e) => write!(f, "invalid geometry: {e}"),
@@ -172,140 +177,120 @@ enum EntityRecord {
     },
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
-enum ConstraintRecord {
-    Coincident {
-        id: String,
-        a: String,
-        b: String,
-    },
-    Horizontal {
-        id: String,
-        line: String,
-    },
-    Vertical {
-        id: String,
-        line: String,
-    },
-    HorizontalPoints {
-        id: String,
-        a: String,
-        b: String,
-    },
-    VerticalPoints {
-        id: String,
-        a: String,
-        b: String,
-    },
-    Parallel {
-        id: String,
-        a: String,
-        b: String,
-    },
-    Perpendicular {
-        id: String,
-        a: String,
-        b: String,
-    },
-    Equal {
-        id: String,
-        a: String,
-        b: String,
-    },
-    Fix {
-        id: String,
-        point: String,
-        at: [f64; 2],
-    },
-    FixRadius {
-        id: String,
-        curve: String,
-        radius: f64,
-    },
-    Distance {
-        id: String,
-        a: String,
-        b: String,
-        value: f64,
-    },
-    Radius {
-        id: String,
-        curve: String,
-        value: f64,
-    },
-    Angle {
-        id: String,
-        a: String,
-        b: String,
-        degrees: f64,
-    },
+/// One constraint, as a flat record: `type` and `id` plus whichever fields that type uses.
+/// Field order is fixed (struct order), so files stay stable and diff cleanly.
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ConstraintRecord {
+    #[serde(rename = "type")]
+    kind: String,
+    id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    a: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    b: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    line: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    point: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    curve: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    at: Option<[f64; 2]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    radius: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    value: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    degrees: Option<f64>,
+    /// Dimension label offset from its anchor, in mm.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    label: Option<[f64; 2]>,
 }
 
-fn constraint_record(id: ConstraintId, c: &Constraint) -> ConstraintRecord {
-    let id = id.to_string();
-    let s = id_string;
-    match *c {
-        Constraint::Coincident { a, b } => ConstraintRecord::Coincident {
-            id,
-            a: s(a),
-            b: s(b),
-        },
-        Constraint::Horizontal { line } => ConstraintRecord::Horizontal { id, line: s(line) },
-        Constraint::Vertical { line } => ConstraintRecord::Vertical { id, line: s(line) },
-        Constraint::HorizontalPoints { a, b } => ConstraintRecord::HorizontalPoints {
-            id,
-            a: s(a),
-            b: s(b),
-        },
-        Constraint::VerticalPoints { a, b } => ConstraintRecord::VerticalPoints {
-            id,
-            a: s(a),
-            b: s(b),
-        },
-        Constraint::Parallel { a, b } => ConstraintRecord::Parallel {
-            id,
-            a: s(a),
-            b: s(b),
-        },
-        Constraint::Perpendicular { a, b } => ConstraintRecord::Perpendicular {
-            id,
-            a: s(a),
-            b: s(b),
-        },
-        Constraint::Equal { a, b } => ConstraintRecord::Equal {
-            id,
-            a: s(a),
-            b: s(b),
-        },
-        Constraint::Fix { point, at } => ConstraintRecord::Fix {
-            id,
-            point: s(point),
-            at: at.to_array(),
-        },
-        Constraint::FixRadius { curve, radius } => ConstraintRecord::FixRadius {
-            id,
-            curve: s(curve),
-            radius,
-        },
-        Constraint::Distance { a, b, value } => ConstraintRecord::Distance {
-            id,
-            a: s(a),
-            b: s(b),
-            value,
-        },
-        Constraint::Radius { curve, value } => ConstraintRecord::Radius {
-            id,
-            curve: s(curve),
-            value,
-        },
-        Constraint::Angle { a, b, degrees } => ConstraintRecord::Angle {
-            id,
-            a: s(a),
-            b: s(b),
-            degrees,
-        },
-    }
+fn constraint_record(id: ConstraintId, c: &Constraint, label: Option<DVec2>) -> ConstraintRecord {
+    let s = |e: EntityId| Some(id_string(e));
+    let mut r = ConstraintRecord {
+        id: id.to_string(),
+        label: label.map(|l| l.to_array()),
+        ..Default::default()
+    };
+    let kind = match *c {
+        Constraint::Coincident { a, b } => {
+            (r.a, r.b) = (s(a), s(b));
+            "coincident"
+        }
+        Constraint::Horizontal { line } => {
+            r.line = s(line);
+            "horizontal"
+        }
+        Constraint::Vertical { line } => {
+            r.line = s(line);
+            "vertical"
+        }
+        Constraint::HorizontalPoints { a, b } => {
+            (r.a, r.b) = (s(a), s(b));
+            "horizontal_points"
+        }
+        Constraint::VerticalPoints { a, b } => {
+            (r.a, r.b) = (s(a), s(b));
+            "vertical_points"
+        }
+        Constraint::Parallel { a, b } => {
+            (r.a, r.b) = (s(a), s(b));
+            "parallel"
+        }
+        Constraint::Perpendicular { a, b } => {
+            (r.a, r.b) = (s(a), s(b));
+            "perpendicular"
+        }
+        Constraint::Equal { a, b } => {
+            (r.a, r.b) = (s(a), s(b));
+            "equal"
+        }
+        Constraint::Midpoint { point, line } => {
+            (r.line, r.point) = (s(line), s(point));
+            "midpoint"
+        }
+        Constraint::Fix { point, at } => {
+            (r.point, r.at) = (s(point), Some(at.to_array()));
+            "fix"
+        }
+        Constraint::FixRadius { curve, radius } => {
+            (r.curve, r.radius) = (s(curve), Some(radius));
+            "fix_radius"
+        }
+        Constraint::Distance { a, b, value } => {
+            (r.a, r.b, r.value) = (s(a), s(b), Some(value));
+            "distance"
+        }
+        Constraint::HorizontalDistance { a, b, value } => {
+            (r.a, r.b, r.value) = (s(a), s(b), Some(value));
+            "horizontal_distance"
+        }
+        Constraint::VerticalDistance { a, b, value } => {
+            (r.a, r.b, r.value) = (s(a), s(b), Some(value));
+            "vertical_distance"
+        }
+        Constraint::PointLineDistance { point, line, value } => {
+            (r.point, r.line, r.value) = (s(point), s(line), Some(value));
+            "point_line_distance"
+        }
+        Constraint::Radius { curve, value } => {
+            (r.curve, r.value) = (s(curve), Some(value));
+            "radius"
+        }
+        Constraint::Diameter { curve, value } => {
+            (r.curve, r.value) = (s(curve), Some(value));
+            "diameter"
+        }
+        Constraint::Angle { a, b, degrees } => {
+            (r.a, r.b, r.degrees) = (s(a), s(b), Some(degrees));
+            "angle"
+        }
+    };
+    r.kind = kind.to_owned();
+    r
 }
 
 fn parse_constraint_id(s: &str) -> Result<ConstraintId, LoadError> {
@@ -316,94 +301,84 @@ fn parse_constraint_id(s: &str) -> Result<ConstraintId, LoadError> {
         .ok_or_else(|| LoadError::BadId(s.to_owned()))
 }
 
-fn parse_constraint(rec: ConstraintRecord) -> Result<(ConstraintId, Constraint), LoadError> {
-    let e = |s: &str| parse_id(s);
-    let (id, c) = match rec {
-        ConstraintRecord::Coincident { id, a, b } => (
-            id,
-            Constraint::Coincident {
-                a: e(&a)?,
-                b: e(&b)?,
-            },
-        ),
-        ConstraintRecord::Horizontal { id, line } => {
-            (id, Constraint::Horizontal { line: e(&line)? })
-        }
-        ConstraintRecord::Vertical { id, line } => (id, Constraint::Vertical { line: e(&line)? }),
-        ConstraintRecord::HorizontalPoints { id, a, b } => (
-            id,
-            Constraint::HorizontalPoints {
-                a: e(&a)?,
-                b: e(&b)?,
-            },
-        ),
-        ConstraintRecord::VerticalPoints { id, a, b } => (
-            id,
-            Constraint::VerticalPoints {
-                a: e(&a)?,
-                b: e(&b)?,
-            },
-        ),
-        ConstraintRecord::Parallel { id, a, b } => (
-            id,
-            Constraint::Parallel {
-                a: e(&a)?,
-                b: e(&b)?,
-            },
-        ),
-        ConstraintRecord::Perpendicular { id, a, b } => (
-            id,
-            Constraint::Perpendicular {
-                a: e(&a)?,
-                b: e(&b)?,
-            },
-        ),
-        ConstraintRecord::Equal { id, a, b } => (
-            id,
-            Constraint::Equal {
-                a: e(&a)?,
-                b: e(&b)?,
-            },
-        ),
-        ConstraintRecord::Fix { id, point, at } => (
-            id,
-            Constraint::Fix {
-                point: e(&point)?,
-                at: DVec2::from(at),
-            },
-        ),
-        ConstraintRecord::FixRadius { id, curve, radius } => (
-            id,
-            Constraint::FixRadius {
-                curve: e(&curve)?,
-                radius,
-            },
-        ),
-        ConstraintRecord::Distance { id, a, b, value } => (
-            id,
-            Constraint::Distance {
-                a: e(&a)?,
-                b: e(&b)?,
-                value,
-            },
-        ),
-        ConstraintRecord::Radius { id, curve, value } => (
-            id,
-            Constraint::Radius {
-                curve: e(&curve)?,
-                value,
-            },
-        ),
-        ConstraintRecord::Angle { id, a, b, degrees } => (
-            id,
-            Constraint::Angle {
-                a: e(&a)?,
-                b: e(&b)?,
-                degrees,
-            },
-        ),
+/// A parsed constraint and its label offset, if any.
+type ParsedConstraint = (ConstraintId, Constraint, Option<DVec2>);
+
+fn parse_constraint(r: ConstraintRecord) -> Result<ParsedConstraint, LoadError> {
+    let missing = |field: &'static str| LoadError::MissingField {
+        id: r.id.clone(),
+        field,
     };
-    Ok((parse_constraint_id(&id)?, c))
+    let entity = |v: &Option<String>, field| -> Result<EntityId, LoadError> {
+        parse_id(v.as_deref().ok_or_else(|| missing(field))?)
+    };
+    let number = |v: Option<f64>, field| v.ok_or_else(|| missing(field));
+    let (a, b) = (|| entity(&r.a, "a"), || entity(&r.b, "b"));
+    let constraint = match r.kind.as_str() {
+        "coincident" => Constraint::Coincident { a: a()?, b: b()? },
+        "horizontal" => Constraint::Horizontal {
+            line: entity(&r.line, "line")?,
+        },
+        "vertical" => Constraint::Vertical {
+            line: entity(&r.line, "line")?,
+        },
+        "horizontal_points" => Constraint::HorizontalPoints { a: a()?, b: b()? },
+        "vertical_points" => Constraint::VerticalPoints { a: a()?, b: b()? },
+        "parallel" => Constraint::Parallel { a: a()?, b: b()? },
+        "perpendicular" => Constraint::Perpendicular { a: a()?, b: b()? },
+        "equal" => Constraint::Equal { a: a()?, b: b()? },
+        "midpoint" => Constraint::Midpoint {
+            point: entity(&r.point, "point")?,
+            line: entity(&r.line, "line")?,
+        },
+        "fix" => Constraint::Fix {
+            point: entity(&r.point, "point")?,
+            at: DVec2::from(r.at.ok_or_else(|| missing("at"))?),
+        },
+        "fix_radius" => Constraint::FixRadius {
+            curve: entity(&r.curve, "curve")?,
+            radius: number(r.radius, "radius")?,
+        },
+        "distance" => Constraint::Distance {
+            a: a()?,
+            b: b()?,
+            value: number(r.value, "value")?,
+        },
+        "horizontal_distance" => Constraint::HorizontalDistance {
+            a: a()?,
+            b: b()?,
+            value: number(r.value, "value")?,
+        },
+        "vertical_distance" => Constraint::VerticalDistance {
+            a: a()?,
+            b: b()?,
+            value: number(r.value, "value")?,
+        },
+        "point_line_distance" => Constraint::PointLineDistance {
+            point: entity(&r.point, "point")?,
+            line: entity(&r.line, "line")?,
+            value: number(r.value, "value")?,
+        },
+        "radius" => Constraint::Radius {
+            curve: entity(&r.curve, "curve")?,
+            value: number(r.value, "value")?,
+        },
+        "diameter" => Constraint::Diameter {
+            curve: entity(&r.curve, "curve")?,
+            value: number(r.value, "value")?,
+        },
+        "angle" => Constraint::Angle {
+            a: a()?,
+            b: b()?,
+            degrees: number(r.degrees, "degrees")?,
+        },
+        other => return Err(LoadError::UnknownConstraint(other.to_owned())),
+    };
+    let label = r.label.map(DVec2::from);
+    if label.is_some_and(|l| !l.is_finite()) {
+        return Err(LoadError::NonFinite(r.id));
+    }
+    Ok((parse_constraint_id(&r.id)?, constraint, label))
 }
 
 #[derive(Debug, Deserialize)]
@@ -480,7 +455,8 @@ pub fn save(doc: &Document, meta: &Metadata) -> String {
     let constraints: Vec<String> = doc
         .constraints()
         .map(|(id, c)| {
-            serde_json::to_string(&constraint_record(id, c)).expect("constraint serializes")
+            serde_json::to_string(&constraint_record(id, c, doc.placement(id)))
+                .expect("constraint serializes")
         })
         .collect();
     push_array(&mut out, "entities", &entities, true);
@@ -592,14 +568,21 @@ pub fn load(text: &str) -> Result<(Document, Metadata), LoadError> {
     }
     let mut constraints = Vec::with_capacity(file.constraints.len());
     let mut seen_constraints = std::collections::HashSet::new();
+    let mut labels = Vec::new();
     for rec in file.constraints {
-        let (id, c) = parse_constraint(rec)?;
+        let (id, c, label) = parse_constraint(rec)?;
         if !seen_constraints.insert(id) {
             return Err(LoadError::DuplicateId(id.to_string()));
         }
         constraints.push((id, c));
+        if let Some(label) = label {
+            labels.push((id, label));
+        }
     }
-    let doc = Document::from_parts(entities, constraints).map_err(LoadError::Document)?;
+    let mut doc = Document::from_parts(entities, constraints).map_err(LoadError::Document)?;
+    for (id, label) in labels {
+        doc.set_placement(id, label).map_err(LoadError::Document)?;
+    }
     Ok((doc, file.meta))
 }
 
@@ -621,6 +604,7 @@ pub fn migrate(value: serde_json::Value) -> Result<serde_json::Value, LoadError>
         // v1 → v2: constraints were introduced; a v1 file simply has none.
         value["constraints"] = serde_json::Value::Array(Vec::new());
     }
+    // v2 → v3 only added optional fields and constraint types: nothing to convert.
     value["version"] = FORMAT_VERSION.into();
     Ok(value)
 }
@@ -663,7 +647,7 @@ mod tests {
         let text = save(&doc, &Metadata::default());
         let expected = r#"{
   "format": "drift",
-  "version": 2,
+  "version": 3,
   "meta": {"units":"mm"},
   "entities": [
     {"type":"point","id":"e1","at":[0.0,0.0]},
@@ -743,13 +727,64 @@ mod tests {
                 b: l2,
                 degrees: 90.0,
             },
+            Constraint::Diameter {
+                curve: circle,
+                value: 5.0,
+            },
+            Constraint::HorizontalDistance {
+                a: p[0],
+                b: p[2],
+                value: 10.0,
+            },
+            Constraint::VerticalDistance {
+                a: p[0],
+                b: p[2],
+                value: 5.0,
+            },
+            Constraint::PointLineDistance {
+                point: p[3],
+                line: l1,
+                value: 5.0,
+            },
+            Constraint::Midpoint { point: c, line: l3 },
         ] {
-            doc.add_constraint(constraint).unwrap();
+            let id = doc.add_constraint(constraint).unwrap();
+            if constraint.is_dimension() {
+                doc.set_placement(id, DVec2::new(1.5, -2.25)).unwrap();
+            }
         }
         let text = save(&doc, &Metadata::default());
         let (loaded, _) = load(&text).unwrap();
         assert_eq!(loaded, doc);
-        assert_eq!(loaded.constraint_count(), 13);
+        assert_eq!(loaded.constraint_count(), 18);
+        assert!(text.contains(r#""label":[1.5,-2.25]"#));
+    }
+
+    #[test]
+    fn version_2_files_still_load() {
+        let v2 = r#"{"format":"drift","version":2,"entities":[
+            {"type":"point","id":"e1","at":[0,0]},{"type":"point","id":"e2","at":[3,4]},
+            {"type":"line","id":"e3","a":"e1","b":"e2"}],
+            "constraints":[{"type":"distance","id":"c1","a":"e1","b":"e2","value":5.0}]}"#;
+        let (doc, _) = load(v2).unwrap();
+        assert_eq!(doc.constraint_count(), 1);
+    }
+
+    #[test]
+    fn reports_missing_fields_and_unknown_types() {
+        let missing = r#"{"format":"drift","version":3,"entities":[
+            {"type":"point","id":"e1","at":[0,0]}],
+            "constraints":[{"type":"distance","id":"c1","a":"e1","value":5.0}]}"#;
+        assert!(matches!(
+            load(missing),
+            Err(LoadError::MissingField { field: "b", .. })
+        ));
+        let unknown = r#"{"format":"drift","version":3,"entities":[],
+            "constraints":[{"type":"tangent_ish","id":"c1"}]}"#;
+        assert!(matches!(
+            load(unknown),
+            Err(LoadError::UnknownConstraint(_))
+        ));
     }
 
     #[test]

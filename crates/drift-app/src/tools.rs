@@ -5,11 +5,12 @@
 
 use std::f64::consts::{PI, TAU};
 
-use drift_core::{Bounds, DVec2, Emphasis, EntityId, Shape, SketchItem, arc_shape};
-
+use drift_core::{
+    Bounds, Constraint, DVec2, Emphasis, EntityId, EntityKind, Shape, SketchItem, arc_shape,
+};
 use drift_solver::Param;
 
-use crate::editor::{Anchor, Editor, Pointer};
+use crate::editor::{Anchor, Editor, Guide, GuideKind, Pointer};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Modifiers {
@@ -47,16 +48,18 @@ pub enum ToolKind {
     Circle,
     Arc,
     Point,
+    Dimension,
 }
 
 impl ToolKind {
-    pub const ALL: [ToolKind; 6] = [
+    pub const ALL: [ToolKind; 7] = [
         ToolKind::Select,
         ToolKind::Line,
         ToolKind::Rectangle,
         ToolKind::Circle,
         ToolKind::Arc,
         ToolKind::Point,
+        ToolKind::Dimension,
     ];
 
     pub fn label(self) -> &'static str {
@@ -67,6 +70,7 @@ impl ToolKind {
             ToolKind::Circle => "Circle",
             ToolKind::Arc => "Arc",
             ToolKind::Point => "Point",
+            ToolKind::Dimension => "Dimension",
         }
     }
 
@@ -78,6 +82,7 @@ impl ToolKind {
             ToolKind::Circle => 'C',
             ToolKind::Arc => 'A',
             ToolKind::Point => 'P',
+            ToolKind::Dimension => 'D',
         }
     }
 
@@ -89,6 +94,7 @@ impl ToolKind {
             ToolKind::Circle => Box::<CircleTool>::default(),
             ToolKind::Arc => Box::<ArcTool>::default(),
             ToolKind::Point => Box::<PointTool>::default(),
+            ToolKind::Dimension => Box::<DimensionTool>::default(),
         }
     }
 }
@@ -131,6 +137,29 @@ pub trait Tool {
     fn snap_excludes(&self, _ed: &Editor, _id: EntityId) -> bool {
         false
     }
+
+    /// Adjust the pointer after snapping (e.g. lock a line horizontal).
+    fn refine_pointer(&self, _pointer: &mut Pointer) {}
+
+    /// Labels of the values the user can type right now (at most two), e.g. length and angle.
+    fn fields(&self) -> &'static [&'static str] {
+        &[]
+    }
+
+    /// The values typed so far (`None` = not typed), for previews and measurements.
+    fn set_typed(&mut self, _values: [Option<f64>; 2]) {}
+
+    /// Enter was pressed while typing: apply the typed values.
+    fn commit_typed(&mut self, _pointer: &Pointer, _ed: &mut Editor) {}
+
+    /// A dimension being placed (and its label offset), for the overlay to preview.
+    fn pending_dimension(
+        &self,
+        _ed: &Editor,
+        _pointer: Option<&Pointer>,
+    ) -> Option<(Constraint, DVec2)> {
+        None
+    }
 }
 
 fn preview(shape: Shape) -> SketchItem {
@@ -147,6 +176,46 @@ fn format_len(v: f64) -> String {
 
 // ---------------------------------------------------------------------------------------------
 // Select
+
+/// What the select tool would pick under the pointer: points first, then line midpoints,
+/// then curves.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Target {
+    Entity(EntityId),
+    Midpoint(EntityId),
+}
+
+impl Target {
+    /// The id a dimension uses for this pick when it's a point-like reference: a point, or a
+    /// line standing for its midpoint.
+    fn point_ref(self, ed: &Editor) -> Option<EntityId> {
+        match self {
+            Target::Midpoint(line) => Some(line),
+            Target::Entity(id) => ed.doc.get(id).filter(|e| e.kind.is_point()).map(|_| id),
+        }
+    }
+}
+
+/// Midpoints are picked within this fraction of the normal pick radius.
+const MIDPOINT_PICK: f64 = 0.6;
+
+fn pick_target(ed: &Editor, p: &Pointer) -> Option<Target> {
+    let is_point = |id: EntityId| ed.doc.get(id).is_some_and(|e| e.kind.is_point());
+    if let Some(id) = ed.index.pick(p.raw, p.tolerance, is_point) {
+        return Some(Target::Entity(id));
+    }
+    // A tighter radius than for picking, so clicking near (not on) the middle of a line still
+    // picks the line.
+    if let Some(line) = ed
+        .index
+        .pick_midpoint(p.raw, MIDPOINT_PICK * p.tolerance, |_| true)
+    {
+        return Some(Target::Midpoint(line));
+    }
+    ed.index
+        .pick(p.raw, p.tolerance, |_| true)
+        .map(Target::Entity)
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum SelectDrag {
@@ -202,13 +271,38 @@ impl Tool for SelectTool {
     fn handle(&mut self, input: Input, ed: &mut Editor) {
         match input {
             Input::Hover(p) => {
+                ed.hovered_midpoint = None;
                 ed.hovered = match self.drag {
                     Some(SelectDrag::Box { .. }) => None,
                     Some(SelectDrag::Move { point, .. }) => point,
-                    None => ed.index.pick(p.raw, p.tolerance, |_| true),
+                    None => match pick_target(ed, &p) {
+                        Some(Target::Entity(id)) => Some(id),
+                        Some(Target::Midpoint(line)) => {
+                            ed.hovered_midpoint = Some(line);
+                            None
+                        }
+                        None => None,
+                    },
                 };
             }
             Input::Click(p, mods) => {
+                if let Some(Target::Midpoint(line)) = pick_target(ed, &p) {
+                    if mods.command {
+                        if !ed.selected_midpoints.remove(&line) {
+                            ed.selected_midpoints.insert(line);
+                        }
+                    } else {
+                        if !mods.shift {
+                            ed.selection.clear();
+                            ed.selected_midpoints.clear();
+                        }
+                        ed.selected_midpoints.insert(line);
+                    }
+                    return;
+                }
+                if !mods.shift && !mods.command {
+                    ed.selected_midpoints.clear();
+                }
                 let hit = ed.index.pick(p.raw, p.tolerance, |_| true);
                 match hit {
                     Some(id) if mods.command => {
@@ -294,6 +388,17 @@ impl Tool for SelectTool {
                     {
                         ed.selection = [into].into();
                     }
+                    // Dropped on a midpoint: keep it there.
+                    if let (Some(from), Some(line)) = (point, p.midpoint_of())
+                        && ed.doc.constraints_on(from).all(|c| {
+                            ed.doc.constraint(c)
+                                != Some(&Constraint::Midpoint { point: from, line })
+                        })
+                    {
+                        let _ = ed
+                            .doc
+                            .add_constraint(Constraint::Midpoint { point: from, line });
+                    }
                     ed.commit("Move");
                 }
                 None => {}
@@ -309,8 +414,9 @@ impl Tool for SelectTool {
                 true
             }
             Some(SelectDrag::Box { .. }) => true,
-            None if !ed.selection.is_empty() => {
+            None if !ed.selection.is_empty() || !ed.selected_midpoints.is_empty() => {
                 ed.selection.clear();
+                ed.selected_midpoints.clear();
                 true
             }
             None => false,
@@ -348,17 +454,107 @@ impl Tool for SelectTool {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Shared helpers for drawing tools
+
+/// Field labels for typing the first point of a shape.
+const XY: &[&str] = &["X", "Y"];
+
+/// The typed coordinates, falling back to the pointer for any not typed.
+fn typed_point(typed: [Option<f64>; 2], p: &Pointer) -> DVec2 {
+    let at = p.pos();
+    DVec2::new(typed[0].unwrap_or(at.x), typed[1].unwrap_or(at.y))
+}
+
+fn any_typed(typed: [Option<f64>; 2]) -> bool {
+    typed.iter().any(Option::is_some)
+}
+
+/// A pointer at an exact location, without snaps (typed input creates new points).
+fn exact(p: &Pointer, at: DVec2) -> Pointer {
+    Pointer::new(at, p.tolerance)
+}
+
+/// Add a relation if automatic relations are on; failures (e.g. redundancy) are ignored and
+/// the commit's solve decides whether the whole step is acceptable.
+fn auto_relation(ed: &mut Editor, relation: Option<GuideKind>, line: EntityId) {
+    if !ed.auto_relations {
+        return;
+    }
+    let constraint = match relation {
+        Some(GuideKind::Horizontal) => Constraint::Horizontal { line },
+        Some(GuideKind::Vertical) => Constraint::Vertical { line },
+        _ => return,
+    };
+    let _ = ed.doc.add_constraint(constraint);
+}
+
+/// Unit vector at `degrees`, exact for multiples of 90° (where `cos`/`sin` would leave ~1e-16
+/// residue that the solver would then spread onto already-placed points).
+fn exact_direction(degrees: f64) -> DVec2 {
+    let quarter = degrees / 90.0;
+    if (quarter - quarter.round()).abs() <= 1e-12 {
+        match (quarter.round() as i64).rem_euclid(4) {
+            0 => DVec2::X,
+            1 => DVec2::Y,
+            2 => -DVec2::X,
+            _ => -DVec2::Y,
+        }
+    } else {
+        DVec2::from_angle(degrees.to_radians())
+    }
+}
+
+/// Horizontal/vertical relation implied by a typed angle that is a multiple of 90°.
+fn relation_for_angle(degrees: f64) -> Option<GuideKind> {
+    let quarter = degrees / 90.0;
+    if (quarter - quarter.round()).abs() > 1e-12 {
+        return None;
+    }
+    Some(if (quarter.round() as i64).rem_euclid(2) == 0 {
+        GuideKind::Horizontal
+    } else {
+        GuideKind::Vertical
+    })
+}
+
+// ---------------------------------------------------------------------------------------------
 // Line (polyline chain)
 
 #[derive(Default)]
 pub struct LineTool {
     last: Option<Anchor>,
     chain_start: Option<EntityId>,
+    typed: [Option<f64>; 2],
 }
 
 impl LineTool {
-    fn place(&mut self, p: &Pointer, ed: &mut Editor) {
-        let anchor = p.anchor();
+    /// Where the next point goes: typed length/angle from the last point, else the pointer.
+    fn target(&self, p: &Pointer) -> DVec2 {
+        let Some(last) = self.last else {
+            return typed_point(self.typed, p);
+        };
+        if !any_typed(self.typed) {
+            return p.pos();
+        }
+        let d = p.pos() - last.pos;
+        let len = self.typed[0].unwrap_or(d.length());
+        let dir = match self.typed[1] {
+            Some(degrees) => exact_direction(degrees),
+            None if d.length() > 0.0 => d.normalize(),
+            None => DVec2::X,
+        };
+        last.pos + dir * len
+    }
+
+    /// Place the next point at `anchor`. `length` adds a length dimension; `relation` an
+    /// automatic horizontal/vertical relation.
+    fn place(
+        &mut self,
+        anchor: Anchor,
+        relation: Option<GuideKind>,
+        length: Option<f64>,
+        ed: &mut Editor,
+    ) {
         let Some(last) = self.last else {
             self.last = Some(anchor);
             self.chain_start = None;
@@ -370,12 +566,18 @@ impl LineTool {
         ed.doc.begin();
         let a = last.resolve(&mut ed.doc);
         let b = anchor.resolve(&mut ed.doc);
-        if ed.doc.add_line(a, b).is_err() {
+        let Ok(line) = ed.doc.add_line(a, b) else {
             ed.doc.rollback();
             ed.sync();
             return;
+        };
+        auto_relation(ed, relation, line);
+        if let Some(value) = length {
+            let _ = ed.doc.add_constraint(Constraint::Distance { a, b, value });
         }
-        ed.commit("Line");
+        if !ed.commit("Line") {
+            return;
+        }
         let start = *self.chain_start.get_or_insert(a);
         if b == start {
             // Closed the loop.
@@ -383,10 +585,16 @@ impl LineTool {
             self.chain_start = None;
         } else {
             self.last = Some(Anchor {
-                pos: anchor.pos,
+                pos: ed.doc.point(b).unwrap_or(anchor.pos),
                 existing: Some(b),
+                midpoint_of: None,
             });
         }
+    }
+
+    fn finish(&mut self) {
+        self.last = None;
+        self.chain_start = None;
     }
 }
 
@@ -401,26 +609,79 @@ impl Tool for LineTool {
 
     fn hint(&self) -> String {
         match self.last {
-            None => "Click the start point".into(),
-            Some(_) => "Click the next point · double-click, right-click or Enter to finish".into(),
+            None => "Click the start point, or type X / Y".into(),
+            Some(_) => "Click the next point, or type a length (Tab: angle) · double-click, \
+                        right-click or Enter to finish"
+                .into(),
         }
     }
 
     fn handle(&mut self, input: Input, ed: &mut Editor) {
         match input {
-            Input::Click(p, _) | Input::DragEnd(p, _) => self.place(&p, ed),
-            Input::DragStart(p, _) if self.last.is_none() => self.place(&p, ed),
-            Input::DoubleClick(_) | Input::Finish => {
-                self.last = None;
-                self.chain_start = None;
+            Input::Click(p, _) | Input::DragEnd(p, _) => {
+                self.place(p.anchor(), p.auto_relation(), None, ed)
             }
+            Input::DragStart(p, _) if self.last.is_none() => self.place(p.anchor(), None, None, ed),
+            Input::DoubleClick(_) | Input::Finish => self.finish(),
             _ => {}
         }
     }
 
     fn cancel(&mut self, _ed: &mut Editor) -> bool {
-        self.chain_start = None;
-        self.last.take().is_some()
+        let had = self.last.is_some();
+        self.finish();
+        had
+    }
+
+    fn refine_pointer(&self, p: &mut Pointer) {
+        let Some(last) = self.last else { return };
+        if p.snapped_point().is_some() {
+            return;
+        }
+        let at = p.pos();
+        let d = at - last.pos;
+        let tol = p.tolerance;
+        let (kind, at) = if d.y.abs() <= tol && d.x.abs() > tol {
+            (GuideKind::Horizontal, DVec2::new(at.x, last.pos.y))
+        } else if d.x.abs() <= tol && d.y.abs() > tol {
+            (GuideKind::Vertical, DVec2::new(last.pos.x, at.y))
+        } else {
+            return;
+        };
+        let other = p.guide.and_then(|g| g.from[0]);
+        p.guide = Some(Guide {
+            at,
+            kind,
+            from: [Some(last.pos), other],
+        });
+    }
+
+    fn fields(&self) -> &'static [&'static str] {
+        if self.last.is_some() {
+            &["Length", "Angle"]
+        } else {
+            XY
+        }
+    }
+
+    fn set_typed(&mut self, values: [Option<f64>; 2]) {
+        self.typed = values;
+    }
+
+    fn commit_typed(&mut self, p: &Pointer, ed: &mut Editor) {
+        let target = self.target(p);
+        let anchor = Anchor::at(target);
+        if self.last.is_none() {
+            self.place(anchor, None, None, ed);
+        } else {
+            let relation = match self.typed[1] {
+                Some(degrees) => relation_for_angle(degrees),
+                None => p.auto_relation(),
+            };
+            let length = self.typed[0].filter(|v| *v > 0.0);
+            self.place(anchor, relation, length, ed);
+        }
+        self.typed = [None; 2];
     }
 
     fn preview(&self, pointer: Option<&Pointer>) -> Vec<SketchItem> {
@@ -428,7 +689,7 @@ impl Tool for LineTool {
             (Some(last), Some(p)) => vec![
                 preview(Shape::Line {
                     a: last.pos,
-                    b: p.pos(),
+                    b: self.target(p),
                 }),
                 preview_vertex(last.pos),
             ],
@@ -438,7 +699,7 @@ impl Tool for LineTool {
 
     fn measurement(&self, p: &Pointer) -> Option<String> {
         let last = self.last?;
-        let d = p.pos() - last.pos;
+        let d = self.target(p) - last.pos;
         let angle = d.y.atan2(d.x).to_degrees();
         Some(format!("L {}  A {angle:.2}°", format_len(d.length())))
     }
@@ -450,6 +711,71 @@ impl Tool for LineTool {
 #[derive(Default)]
 pub struct RectangleTool {
     first: Option<Anchor>,
+    typed: [Option<f64>; 2],
+}
+
+impl RectangleTool {
+    fn second_corner(&self, p: &Pointer) -> DVec2 {
+        let Some(first) = self.first else {
+            return typed_point(self.typed, p);
+        };
+        let d = p.pos() - first.pos;
+        let sign = |v: f64| if v < 0.0 { -1.0 } else { 1.0 };
+        DVec2::new(
+            self.typed[0].map_or(d.x, |w| sign(d.x) * w.abs()),
+            self.typed[1].map_or(d.y, |h| sign(d.y) * h.abs()),
+        ) + first.pos
+    }
+
+    fn create(&mut self, second: Anchor, dims: [Option<f64>; 2], ed: &mut Editor) {
+        let Some(first) = self.first else { return };
+        let (a, c) = (first.pos, second.pos);
+        if a.x == c.x || a.y == c.y {
+            return;
+        }
+        ed.doc.begin();
+        let p0 = first.resolve(&mut ed.doc);
+        let p1 = ed.doc.add_point(DVec2::new(c.x, a.y));
+        let p2 = second.resolve(&mut ed.doc);
+        let p3 = ed.doc.add_point(DVec2::new(a.x, c.y));
+        let corners = [p0, p1, p2, p3];
+        let mut lines = Vec::new();
+        for i in 0..4 {
+            match ed.doc.add_line(corners[i], corners[(i + 1) % 4]) {
+                Ok(l) => lines.push(l),
+                Err(_) => {
+                    ed.doc.rollback();
+                    ed.sync();
+                    self.first = None;
+                    return;
+                }
+            }
+        }
+        for (i, line) in lines.iter().enumerate() {
+            let relation = if i % 2 == 0 {
+                GuideKind::Horizontal
+            } else {
+                GuideKind::Vertical
+            };
+            auto_relation(ed, Some(relation), *line);
+        }
+        if let Some(w) = dims[0] {
+            let _ = ed.doc.add_constraint(Constraint::Distance {
+                a: p0,
+                b: p1,
+                value: w.abs(),
+            });
+        }
+        if let Some(h) = dims[1] {
+            let _ = ed.doc.add_constraint(Constraint::Distance {
+                a: p1,
+                b: p2,
+                value: h.abs(),
+            });
+        }
+        ed.commit("Rectangle");
+        self.first = None;
+    }
 }
 
 impl Tool for RectangleTool {
@@ -463,8 +789,8 @@ impl Tool for RectangleTool {
 
     fn hint(&self) -> String {
         match self.first {
-            None => "Click the first corner".into(),
-            Some(_) => "Click the opposite corner".into(),
+            None => "Click the first corner, or type X / Y".into(),
+            Some(_) => "Click the opposite corner, or type a width (Tab: height)".into(),
         }
     }
 
@@ -474,40 +800,45 @@ impl Tool for RectangleTool {
             Input::DragStart(p, _) if self.first.is_none() => p,
             _ => return,
         };
-        let Some(first) = self.first else {
+        if self.first.is_none() {
             self.first = Some(p.anchor());
-            return;
-        };
-        let second = p.anchor();
-        let (a, c) = (first.pos, second.pos);
-        if a.x == c.x || a.y == c.y {
-            return;
-        }
-        ed.doc.begin();
-        let p0 = first.resolve(&mut ed.doc);
-        let p1 = ed.doc.add_point(DVec2::new(c.x, a.y));
-        let p2 = second.resolve(&mut ed.doc);
-        let p3 = ed.doc.add_point(DVec2::new(a.x, c.y));
-        let corners = [p0, p1, p2, p3];
-        let ok = (0..4).all(|i| ed.doc.add_line(corners[i], corners[(i + 1) % 4]).is_ok());
-        if ok {
-            ed.commit("Rectangle");
         } else {
-            ed.doc.rollback();
-            ed.sync();
+            self.create(p.anchor(), [None; 2], ed);
         }
-        self.first = None;
     }
 
     fn cancel(&mut self, _ed: &mut Editor) -> bool {
         self.first.take().is_some()
     }
 
+    fn fields(&self) -> &'static [&'static str] {
+        if self.first.is_some() {
+            &["Width", "Height"]
+        } else {
+            XY
+        }
+    }
+
+    fn set_typed(&mut self, values: [Option<f64>; 2]) {
+        self.typed = values;
+    }
+
+    fn commit_typed(&mut self, p: &Pointer, ed: &mut Editor) {
+        let corner = self.second_corner(p);
+        if self.first.is_none() {
+            self.first = Some(exact(p, corner).anchor());
+        } else {
+            let dims = self.typed.map(|v| v.filter(|x| *x != 0.0));
+            self.create(exact(p, corner).anchor(), dims, ed);
+        }
+        self.typed = [None; 2];
+    }
+
     fn preview(&self, pointer: Option<&Pointer>) -> Vec<SketchItem> {
         let (Some(first), Some(p)) = (self.first, pointer) else {
             return Vec::new();
         };
-        let (a, c) = (first.pos, p.pos());
+        let (a, c) = (first.pos, self.second_corner(p));
         let corners = [a, DVec2::new(c.x, a.y), c, DVec2::new(a.x, c.y)];
         (0..4)
             .map(|i| {
@@ -520,7 +851,7 @@ impl Tool for RectangleTool {
     }
 
     fn measurement(&self, p: &Pointer) -> Option<String> {
-        let d = p.pos() - self.first?.pos;
+        let d = self.second_corner(p) - self.first?.pos;
         Some(format!(
             "{} × {}",
             format_len(d.x.abs()),
@@ -535,6 +866,42 @@ impl Tool for RectangleTool {
 #[derive(Default)]
 pub struct CircleTool {
     center: Option<Anchor>,
+    typed: [Option<f64>; 2],
+}
+
+impl CircleTool {
+    fn radius(&self, p: &Pointer) -> f64 {
+        match (self.center, self.typed[0]) {
+            (Some(_), Some(diameter)) => diameter.abs() / 2.0,
+            (Some(c), None) => p.pos().distance(c.pos),
+            (None, _) => 0.0,
+        }
+    }
+
+    fn create(&mut self, radius: f64, dimension: bool, ed: &mut Editor) {
+        let Some(center) = self.center else { return };
+        if radius == 0.0 {
+            return;
+        }
+        ed.doc.begin();
+        let c = center.resolve(&mut ed.doc);
+        match ed.doc.add_circle(c, radius) {
+            Ok(circle) => {
+                if dimension {
+                    let _ = ed.doc.add_constraint(Constraint::Diameter {
+                        curve: circle,
+                        value: 2.0 * radius,
+                    });
+                }
+                ed.commit("Circle");
+            }
+            Err(_) => {
+                ed.doc.rollback();
+                ed.sync();
+            }
+        }
+        self.center = None;
+    }
 }
 
 impl Tool for CircleTool {
@@ -548,8 +915,8 @@ impl Tool for CircleTool {
 
     fn hint(&self) -> String {
         match self.center {
-            None => "Click the centre".into(),
-            Some(_) => "Click a point on the circle".into(),
+            None => "Click the centre, or type X / Y".into(),
+            Some(_) => "Click a point on the circle, or type the diameter".into(),
         }
     }
 
@@ -559,27 +926,40 @@ impl Tool for CircleTool {
             Input::DragStart(p, _) if self.center.is_none() => p,
             _ => return,
         };
-        let Some(center) = self.center else {
-            self.center = Some(p.anchor());
-            return;
-        };
-        let radius = p.pos().distance(center.pos);
-        if radius == 0.0 {
-            return;
+        match self.center {
+            None => self.center = Some(p.anchor()),
+            Some(center) => {
+                let radius = p.pos().distance(center.pos);
+                self.create(radius, false, ed);
+            }
         }
-        ed.doc.begin();
-        let c = center.resolve(&mut ed.doc);
-        if ed.doc.add_circle(c, radius).is_ok() {
-            ed.commit("Circle");
-        } else {
-            ed.doc.rollback();
-            ed.sync();
-        }
-        self.center = None;
     }
 
     fn cancel(&mut self, _ed: &mut Editor) -> bool {
         self.center.take().is_some()
+    }
+
+    fn fields(&self) -> &'static [&'static str] {
+        if self.center.is_some() {
+            &["Diameter"]
+        } else {
+            XY
+        }
+    }
+
+    fn set_typed(&mut self, values: [Option<f64>; 2]) {
+        self.typed = values;
+    }
+
+    fn commit_typed(&mut self, p: &Pointer, ed: &mut Editor) {
+        match self.center {
+            None => self.center = Some(exact(p, typed_point(self.typed, p)).anchor()),
+            Some(_) => {
+                let radius = self.radius(p);
+                self.create(radius, self.typed[0].is_some(), ed);
+            }
+        }
+        self.typed = [None; 2];
     }
 
     fn preview(&self, pointer: Option<&Pointer>) -> Vec<SketchItem> {
@@ -589,14 +969,15 @@ impl Tool for CircleTool {
         vec![
             preview(Shape::Circle {
                 center: center.pos,
-                radius: p.pos().distance(center.pos),
+                radius: self.radius(p),
             }),
             preview_vertex(center.pos),
         ]
     }
 
     fn measurement(&self, p: &Pointer) -> Option<String> {
-        let r = p.pos().distance(self.center?.pos);
+        self.center?;
+        let r = self.radius(p);
         Some(format!("R {}  Ø {}", format_len(r), format_len(2.0 * r)))
     }
 }
@@ -611,6 +992,9 @@ pub struct ArcTool {
     /// Signed angle the pointer has swept around the centre since the start was placed.
     swept: f64,
     last_angle: f64,
+    typed: [Option<f64>; 2],
+    /// A radius typed for the start point, to add as a dimension when the arc is created.
+    radius_dimension: Option<f64>,
 }
 
 impl ArcTool {
@@ -633,21 +1017,99 @@ impl ArcTool {
         }
     }
 
+    /// Where the start point goes for a pointer position (typed radius, pointer direction).
+    fn start_for(&self, p: &Pointer) -> DVec2 {
+        let center = self.center.map_or(DVec2::ZERO, |c| c.pos);
+        match self.typed[0] {
+            Some(r) => {
+                let d = p.pos() - center;
+                let dir = if d.length() > 0.0 {
+                    d.normalize()
+                } else {
+                    DVec2::X
+                };
+                center + dir * r.abs()
+            }
+            None => p.pos(),
+        }
+    }
+
     /// Centre, start and end of the arc for the pointer position, ordered counter-clockwise.
-    fn geometry(&self, at: DVec2) -> Option<(DVec2, DVec2, DVec2)> {
+    fn geometry(&self, p: &Pointer) -> Option<(DVec2, DVec2, DVec2)> {
         let center = self.center?.pos;
         let start = self.start?.pos;
         let radius = start.distance(center);
-        let dir = at - center;
-        if dir == DVec2::ZERO {
-            return None;
-        }
-        let end = center + dir.normalize() * radius;
-        Some(if self.swept < 0.0 {
+        let end = match self.typed[0] {
+            // Typed sweep (degrees, negative = clockwise) from the start.
+            Some(sweep) => {
+                let a = (start - center).y.atan2((start - center).x) + sweep.to_radians();
+                center + radius * DVec2::from_angle(a)
+            }
+            None => {
+                let dir = p.pos() - center;
+                if dir == DVec2::ZERO {
+                    return None;
+                }
+                center + dir.normalize() * radius
+            }
+        };
+        let clockwise = match self.typed[0] {
+            Some(sweep) => sweep < 0.0,
+            None => self.swept < 0.0,
+        };
+        Some(if clockwise {
             (center, end, start)
         } else {
             (center, start, end)
         })
+    }
+
+    fn create(&mut self, p: &Pointer, ed: &mut Editor) {
+        let (Some(center), Some(start)) = (self.center, self.start) else {
+            return;
+        };
+        let Some((_, s, e)) = self.geometry(p) else {
+            return;
+        };
+        let clockwise = s != start.pos;
+        let radius = start.pos.distance(center.pos);
+        // Reuse a snapped point for the free end only if it lies exactly on the circle.
+        let free = Anchor {
+            pos: if clockwise { s } else { e },
+            existing: p
+                .snapped_point()
+                .filter(|_| self.typed[0].is_none())
+                .filter(|_| {
+                    (p.pos().distance(center.pos) - radius).abs() <= 1e-9 * radius.max(1.0)
+                }),
+            midpoint_of: None,
+        };
+        ed.doc.begin();
+        let c = center.resolve(&mut ed.doc);
+        let st = start.resolve(&mut ed.doc);
+        let fr = free.resolve(&mut ed.doc);
+        let (first, last) = if clockwise { (fr, st) } else { (st, fr) };
+        match ed.doc.add_arc(c, first, last) {
+            Ok(arc) => {
+                if let Some(value) = self.radius_dimension {
+                    let _ = ed
+                        .doc
+                        .add_constraint(Constraint::Radius { curve: arc, value });
+                }
+                ed.commit("Arc");
+            }
+            Err(_) => {
+                ed.doc.rollback();
+                ed.sync();
+            }
+        }
+        self.reset();
+    }
+
+    fn set_start(&mut self, anchor: Anchor) {
+        self.start = Some(anchor);
+        self.swept = 0.0;
+        self.last_angle = self.angle_of(anchor.pos);
     }
 
     fn reset(&mut self) {
@@ -666,9 +1128,11 @@ impl Tool for ArcTool {
 
     fn hint(&self) -> String {
         match (self.center, self.start) {
-            (None, _) => "Click the arc centre".into(),
-            (Some(_), None) => "Click the start point (sets the radius)".into(),
-            _ => "Click the end point · move around the centre to choose the direction".into(),
+            (None, _) => "Click the arc centre, or type X / Y".into(),
+            (Some(_), None) => "Click the start point (sets the radius), or type the radius".into(),
+            _ => "Click the end point, or type the sweep angle · move around the centre to choose \
+                  the direction"
+                .into(),
         }
     }
 
@@ -683,41 +1147,15 @@ impl Tool for ArcTool {
             _ => return,
         };
         self.track(p.pos());
-        let Some(center) = self.center else {
-            self.center = Some(p.anchor());
-            return;
-        };
-        let Some(start) = self.start else {
-            if p.pos() != center.pos {
-                self.start = Some(p.anchor());
-                self.swept = 0.0;
-                self.last_angle = self.angle_of(p.pos());
+        match (self.center, self.start) {
+            (None, _) => self.center = Some(p.anchor()),
+            (Some(center), None) => {
+                if p.pos() != center.pos {
+                    self.set_start(p.anchor());
+                }
             }
-            return;
-        };
-        let Some((_, s, e)) = self.geometry(p.pos()) else {
-            return;
-        };
-        let radius = start.pos.distance(center.pos);
-        // Reuse a snapped point for the free end only if it lies exactly on the circle.
-        let free = Anchor {
-            pos: if self.swept < 0.0 { s } else { e },
-            existing: p.snapped_point().filter(|_| {
-                (p.pos().distance(center.pos) - radius).abs() <= 1e-9 * radius.max(1.0)
-            }),
-        };
-        ed.doc.begin();
-        let c = center.resolve(&mut ed.doc);
-        let st = start.resolve(&mut ed.doc);
-        let fr = free.resolve(&mut ed.doc);
-        let (first, last) = if self.swept < 0.0 { (fr, st) } else { (st, fr) };
-        if ed.doc.add_arc(c, first, last).is_ok() {
-            ed.commit("Arc");
-        } else {
-            ed.doc.rollback();
-            ed.sync();
+            _ => self.create(&p, ed),
         }
-        self.reset();
     }
 
     fn cancel(&mut self, _ed: &mut Editor) -> bool {
@@ -726,23 +1164,50 @@ impl Tool for ArcTool {
         had
     }
 
+    fn fields(&self) -> &'static [&'static str] {
+        match (self.center, self.start) {
+            (None, _) => XY,
+            (Some(_), None) => &["Radius"],
+            _ => &["Sweep"],
+        }
+    }
+
+    fn set_typed(&mut self, values: [Option<f64>; 2]) {
+        self.typed = values;
+    }
+
+    fn commit_typed(&mut self, p: &Pointer, ed: &mut Editor) {
+        match (self.center, self.start) {
+            (None, _) => self.center = Some(exact(p, typed_point(self.typed, p)).anchor()),
+            (Some(_), None) => {
+                let at = self.start_for(p);
+                self.radius_dimension = self.typed[0].map(f64::abs).filter(|r| *r > 0.0);
+                self.typed = [None; 2];
+                self.set_start(Anchor::at(at));
+            }
+            _ => self.create(p, ed),
+        }
+        self.typed = [None; 2];
+    }
+
     fn preview(&self, pointer: Option<&Pointer>) -> Vec<SketchItem> {
         let (Some(center), Some(p)) = (self.center, pointer) else {
             return Vec::new();
         };
         let mut items = vec![preview_vertex(center.pos)];
-        match self.geometry(p.pos()) {
-            Some((c, s, e)) if s != e => {
-                items.push(preview(arc_shape(c, s, e)));
-                items.push(preview_vertex(s));
-                items.push(preview_vertex(e));
-            }
-            _ => {
-                items.push(preview(Shape::Line {
-                    a: center.pos,
-                    b: p.pos(),
-                }));
-            }
+        if self.start.is_none() {
+            items.push(preview(Shape::Line {
+                a: center.pos,
+                b: self.start_for(p),
+            }));
+            return items;
+        }
+        if let Some((c, s, e)) = self.geometry(p)
+            && s != e
+        {
+            items.push(preview(arc_shape(c, s, e)));
+            items.push(preview_vertex(s));
+            items.push(preview_vertex(e));
         }
         items
     }
@@ -750,10 +1215,13 @@ impl Tool for ArcTool {
     fn measurement(&self, p: &Pointer) -> Option<String> {
         let center = self.center?.pos;
         match self.start {
-            None => Some(format!("R {}", format_len(p.pos().distance(center)))),
+            None => Some(format!(
+                "R {}",
+                format_len(self.start_for(p).distance(center))
+            )),
             Some(start) => {
                 let r = start.pos.distance(center);
-                let (c, s, e) = self.geometry(p.pos())?;
+                let (c, s, e) = self.geometry(p)?;
                 let Shape::Arc { sweep, .. } = arc_shape(c, s, e) else {
                     return None;
                 };
@@ -767,7 +1235,9 @@ impl Tool for ArcTool {
 // Point
 
 #[derive(Default)]
-pub struct PointTool;
+pub struct PointTool {
+    typed: [Option<f64>; 2],
+}
 
 impl Tool for PointTool {
     fn is_busy(&self) -> bool {
@@ -779,7 +1249,7 @@ impl Tool for PointTool {
     }
 
     fn hint(&self) -> String {
-        "Click to place a point".into()
+        "Click to place a point, or type X / Y".into()
     }
 
     fn handle(&mut self, input: Input, ed: &mut Editor) {
@@ -794,6 +1264,226 @@ impl Tool for PointTool {
 
     fn cancel(&mut self, _ed: &mut Editor) -> bool {
         false
+    }
+
+    fn fields(&self) -> &'static [&'static str] {
+        XY
+    }
+
+    fn set_typed(&mut self, values: [Option<f64>; 2]) {
+        self.typed = values;
+    }
+
+    fn commit_typed(&mut self, p: &Pointer, ed: &mut Editor) {
+        let at = typed_point(self.typed, p);
+        ed.doc.begin();
+        ed.doc.add_point(at);
+        ed.commit("Point");
+        self.typed = [None; 2];
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Smart Dimension
+
+/// What a dimension measures, before its exact type is chosen by where the label goes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum DimBase {
+    /// Two points (or a line's ends): aligned, horizontal or vertical by label position.
+    Points(EntityId, EntityId),
+    /// A circle (diameter) or an arc (radius).
+    Circular(EntityId, bool),
+    Angle(EntityId, EntityId),
+    PointLine(EntityId, EntityId),
+}
+
+#[derive(Default)]
+pub struct DimensionTool {
+    /// The first entity (or midpoint) clicked, waiting for a possible second.
+    first: Option<Target>,
+    /// The dimension being placed.
+    base: Option<DimBase>,
+}
+
+impl DimensionTool {
+    /// The base implied by clicking one thing alone (a midpoint needs a second pick).
+    fn single(ed: &Editor, t: Target) -> Option<DimBase> {
+        let Target::Entity(e) = t else { return None };
+        match ed.doc.get(e)?.kind {
+            EntityKind::Line { a, b } => Some(DimBase::Points(a, b)),
+            EntityKind::Circle { .. } => Some(DimBase::Circular(e, true)),
+            EntityKind::Arc { .. } => Some(DimBase::Circular(e, false)),
+            EntityKind::Point(_) => None,
+        }
+    }
+
+    /// The base implied by clicking `first` then `second`. Midpoints act as points.
+    fn pair(ed: &Editor, first: Target, second: Target) -> Option<DimBase> {
+        let line_of = |t: Target| match t {
+            Target::Entity(id) => match ed.doc.get(id)?.kind {
+                EntityKind::Line { a, b } => Some((id, a, b)),
+                _ => None,
+            },
+            Target::Midpoint(_) => None,
+        };
+        match (
+            first.point_ref(ed),
+            second.point_ref(ed),
+            line_of(first),
+            line_of(second),
+        ) {
+            (Some(p), Some(q), ..) if p != q => Some(DimBase::Points(p, q)),
+            (.., Some((l1, ..)), Some((l2, ..))) => Some(DimBase::Angle(l1, l2)),
+            (Some(p), None, None, Some((l, a, b))) | (None, Some(p), Some((l, a, b)), None)
+                if p != l && p != a && p != b =>
+            {
+                Some(DimBase::PointLine(p, l))
+            }
+            _ => None,
+        }
+    }
+
+    /// The dimension for `base` with its label at `at`, at the geometry's current value.
+    fn dimension(ed: &Editor, base: DimBase, at: DVec2) -> Option<Constraint> {
+        let c = match base {
+            DimBase::Points(a, b) => {
+                let (pa, pb) = (ed.doc.ref_point(a)?, ed.doc.ref_point(b)?);
+                let (lo, hi) = (pa.min(pb), pa.max(pb));
+                let inside_x = at.x >= lo.x && at.x <= hi.x;
+                let inside_y = at.y >= lo.y && at.y <= hi.y;
+                if inside_x && !inside_y {
+                    Constraint::HorizontalDistance { a, b, value: 0.0 }
+                } else if inside_y && !inside_x {
+                    Constraint::VerticalDistance { a, b, value: 0.0 }
+                } else {
+                    Constraint::Distance { a, b, value: 0.0 }
+                }
+            }
+            DimBase::Circular(curve, true) => Constraint::Diameter { curve, value: 0.0 },
+            DimBase::Circular(curve, false) => Constraint::Radius { curve, value: 0.0 },
+            DimBase::Angle(a, b) => Constraint::Angle { a, b, degrees: 0.0 },
+            DimBase::PointLine(point, line) => Constraint::PointLineDistance {
+                point,
+                line,
+                value: 0.0,
+            },
+        };
+        let value = drift_solver::measure(&ed.doc, &c)?;
+        Some(c.with_value(value))
+    }
+
+    fn place(&mut self, ed: &mut Editor, base: DimBase, at: DVec2) {
+        self.reset(ed);
+        let Some(c) = Self::dimension(ed, base, at) else {
+            return;
+        };
+        let offset = crate::annotations::dimension_anchor(&ed.doc, &c).map(|anchor| at - anchor);
+        match ed.add_dimension(c, offset) {
+            Ok(id) => ed.pending_edit = Some(id),
+            Err(e) => ed.notice = Some(format!("{}: {e}", c.type_name())),
+        }
+    }
+
+    fn reset(&mut self, ed: &mut Editor) {
+        self.first = None;
+        self.base = None;
+        ed.highlight.clear();
+        ed.selected_midpoints.clear();
+    }
+
+    /// Show what has been picked: entities highlighted, midpoints marked.
+    fn show_pick(ed: &mut Editor, t: Target, first: bool) {
+        if first {
+            ed.highlight.clear();
+            ed.selected_midpoints.clear();
+        }
+        match t {
+            Target::Entity(id) => {
+                ed.highlight.insert(id);
+            }
+            Target::Midpoint(line) => {
+                ed.selected_midpoints.insert(line);
+            }
+        }
+    }
+}
+
+impl Tool for DimensionTool {
+    fn kind(&self) -> ToolKind {
+        ToolKind::Dimension
+    }
+
+    fn is_busy(&self) -> bool {
+        self.first.is_some() || self.base.is_some()
+    }
+
+    fn hint(&self) -> String {
+        match (self.first, self.base) {
+            (None, None) => {
+                "Click a line, circle or arc, or two points / lines / a point and a line".into()
+            }
+            (Some(_), None) => "Click a second point or line".into(),
+            _ => "Click to place the dimension, or click another entity to change it".into(),
+        }
+    }
+
+    fn handle(&mut self, input: Input, ed: &mut Editor) {
+        match input {
+            Input::Hover(p) => {
+                ed.hovered = None;
+                ed.hovered_midpoint = None;
+                match pick_target(ed, &p) {
+                    Some(Target::Entity(id)) => ed.hovered = Some(id),
+                    Some(Target::Midpoint(line)) => ed.hovered_midpoint = Some(line),
+                    None => {}
+                }
+            }
+            Input::Click(p, _) => {
+                let picked = pick_target(ed, &p);
+                // A second pick combines with the first; otherwise a click places.
+                if let (Some(first), Some(t)) = (self.first, picked)
+                    && t != first
+                    && let Some(base) = Self::pair(ed, first, t)
+                {
+                    self.base = Some(base);
+                    self.first = None;
+                    Self::show_pick(ed, t, false);
+                    return;
+                }
+                if let Some(base) = self.base {
+                    self.place(ed, base, p.raw);
+                    return;
+                }
+                if let Some(t) = picked {
+                    self.first = Some(t);
+                    self.base = Self::single(ed, t);
+                    Self::show_pick(ed, t, true);
+                }
+            }
+            Input::Finish => self.reset(ed),
+            _ => {}
+        }
+    }
+
+    fn cancel(&mut self, ed: &mut Editor) -> bool {
+        let had = self.is_busy();
+        self.reset(ed);
+        had
+    }
+
+    fn wants_snap(&self) -> bool {
+        false
+    }
+
+    fn pending_dimension(
+        &self,
+        ed: &Editor,
+        pointer: Option<&Pointer>,
+    ) -> Option<(Constraint, DVec2)> {
+        let at = pointer?.raw;
+        let c = Self::dimension(ed, self.base?, at)?;
+        let anchor = crate::annotations::dimension_anchor(&ed.doc, &c)?;
+        Some((c, at - anchor))
     }
 }
 
@@ -823,6 +1513,7 @@ mod tests {
                 |id| tool.snap_excludes(ed, id),
             );
         }
+        tool.refine_pointer(&mut p);
         p
     }
 
@@ -948,7 +1639,7 @@ mod tests {
         let m = Modifiers::default();
 
         // Click the bottom edge.
-        click(&mut ed, &mut sel, v(5.0, 0.1));
+        click(&mut ed, &mut sel, v(3.0, 0.1));
         assert_eq!(ed.selection.len(), 1);
 
         // Window-select everything (drag right).
@@ -1009,5 +1700,370 @@ mod tests {
         assert!(sel.cancel(&mut ed));
         assert_eq!(ed.doc, before);
         assert!(!ed.history.can_undo() || ed.history.undo_label() == Some("Circle"));
+    }
+
+    // ---- M3: automatic relations, typed input, Smart Dimension ----
+
+    fn constraints(ed: &Editor) -> Vec<Constraint> {
+        ed.doc.constraints().map(|(_, c)| *c).collect()
+    }
+
+    fn with_auto_relations() -> Editor {
+        Editor::new(Document::new())
+    }
+
+    #[test]
+    fn near_horizontal_line_snaps_and_gets_a_relation() {
+        let mut ed = with_auto_relations();
+        let mut tool = LineTool::default();
+        click(&mut ed, &mut tool, v(0.0, 0.0));
+        click(&mut ed, &mut tool, v(10.0, 0.3)); // within tolerance of horizontal
+        let (_, line) = ed
+            .doc
+            .iter()
+            .find(|(_, e)| matches!(e.kind, EntityKind::Line { .. }))
+            .unwrap();
+        let EntityKind::Line { a, b } = line.kind else {
+            unreachable!()
+        };
+        assert_eq!(ed.doc.point(b).unwrap().y, ed.doc.point(a).unwrap().y);
+        assert!(matches!(
+            constraints(&ed)[..],
+            [Constraint::Horizontal { .. }]
+        ));
+        // Without automatic relations the line is still drawn straight, but unconstrained.
+        let mut ed = Editor::default();
+        let mut tool = LineTool::default();
+        click(&mut ed, &mut tool, v(0.0, 0.0));
+        click(&mut ed, &mut tool, v(10.0, 0.3));
+        assert_eq!(ed.doc.constraint_count(), 0);
+    }
+
+    #[test]
+    fn typed_length_and_angle_make_an_exact_dimensioned_line() {
+        let mut ed = with_auto_relations();
+        let mut tool = LineTool::default();
+        click(&mut ed, &mut tool, v(0.0, 0.0));
+        tool.set_typed([Some(25.0), Some(90.0)]);
+        let p = ptr(&ed, &tool, v(3.0, 3.0));
+        tool.commit_typed(&p, &mut ed);
+        assert_eq!(lines(&ed.doc), 1);
+        let end = ed
+            .doc
+            .iter()
+            .filter_map(|(_, e)| match e.kind {
+                EntityKind::Point(p) if p != v(0.0, 0.0) => Some(p),
+                _ => None,
+            })
+            .next()
+            .unwrap();
+        assert_eq!(end, v(0.0, 25.0));
+        assert!(
+            ed.doc
+                .iter()
+                .any(|(_, e)| e.kind == EntityKind::Point(v(0.0, 0.0)))
+        );
+        let cs = constraints(&ed);
+        assert!(cs.iter().any(|c| matches!(c, Constraint::Vertical { .. })));
+        assert!(
+            cs.iter()
+                .any(|c| matches!(c, Constraint::Distance { value, .. } if *value == 25.0))
+        );
+        // The chain continues from the new end.
+        assert!(tool.is_busy());
+    }
+
+    #[test]
+    fn typed_coordinates_place_points_exactly() {
+        let mut ed = Editor::default();
+        let mut tool = PointTool::default();
+        tool.set_typed([Some(12.5), Some(-3.25)]);
+        let p = ptr(&ed, &tool, v(100.0, 100.0));
+        tool.commit_typed(&p, &mut ed);
+        let (_, point) = ed.doc.iter().next().unwrap();
+        assert_eq!(point.kind, EntityKind::Point(v(12.5, -3.25)));
+    }
+
+    #[test]
+    fn rectangle_is_constrained_square_and_typed_size_is_dimensioned() {
+        let mut ed = with_auto_relations();
+        let mut tool = RectangleTool::default();
+        click(&mut ed, &mut tool, v(0.0, 0.0));
+        tool.set_typed([Some(40.0), Some(25.0)]);
+        let p = ptr(&ed, &tool, v(10.0, 10.0));
+        tool.commit_typed(&p, &mut ed);
+        assert_eq!(ed.bounds().max, v(40.0, 25.0));
+        let cs = constraints(&ed);
+        assert_eq!(
+            cs.iter()
+                .filter(|c| matches!(c, Constraint::Horizontal { .. }))
+                .count(),
+            2
+        );
+        assert_eq!(
+            cs.iter()
+                .filter(|c| matches!(c, Constraint::Vertical { .. }))
+                .count(),
+            2
+        );
+        assert_eq!(
+            cs.iter()
+                .filter(|c| matches!(c, Constraint::Distance { .. }))
+                .count(),
+            2
+        );
+        // Only the position is left free.
+        assert_eq!(ed.analysis().dof, Some(2));
+    }
+
+    #[test]
+    fn smart_dimension_picks_the_type_from_the_label_position() {
+        let mut ed = Editor::default();
+        ed.doc.begin();
+        let a = ed.doc.add_point(v(0.0, 0.0));
+        let b = ed.doc.add_point(v(10.0, 5.0));
+        ed.doc.add_line(a, b).unwrap();
+        ed.commit("Line");
+        let mut tool = DimensionTool::default();
+        let on_line = v(2.0, 1.0); // on the line, away from its midpoint
+
+        // Label above the line, within its x range: horizontal distance.
+        click(&mut ed, &mut tool, on_line);
+        click(&mut ed, &mut tool, v(5.0, 20.0));
+        assert!(matches!(
+            constraints(&ed)[..],
+            [Constraint::HorizontalDistance { value, .. }] if value == 10.0
+        ));
+        let id = ed.pending_edit.take().expect("value editor requested");
+        assert_eq!(ed.doc.placement(id), Some(v(0.0, 17.5)));
+
+        // Label to the right, within its y range: vertical distance.
+        click(&mut ed, &mut tool, on_line);
+        click(&mut ed, &mut tool, v(30.0, 2.0));
+        assert!(matches!(
+            constraints(&ed)[1],
+            Constraint::VerticalDistance { value, .. } if value == 5.0
+        ));
+
+        // Now the length is implied: an aligned dimension is refused as redundant.
+        click(&mut ed, &mut tool, on_line);
+        click(&mut ed, &mut tool, v(12.0, -4.0));
+        assert_eq!(ed.doc.constraint_count(), 2);
+        assert!(
+            ed.notice
+                .take()
+                .is_some_and(|n| n.contains("already implied"))
+        );
+    }
+
+    #[test]
+    fn smart_dimension_angles_diameters_and_point_line_distances() {
+        let mut ed = Editor::default();
+        ed.doc.begin();
+        let o = ed.doc.add_point(v(0.0, 0.0));
+        let x = ed.doc.add_point(v(20.0, 0.0));
+        let y = ed.doc.add_point(v(10.0, 10.0));
+        let l1 = ed.doc.add_line(o, x).unwrap();
+        let l2 = ed.doc.add_line(o, y).unwrap();
+        let c = ed.doc.add_point(v(50.0, 0.0));
+        let circle = ed.doc.add_circle(c, 4.0).unwrap();
+        let q = ed.doc.add_point(v(30.0, 7.0));
+        ed.commit("Setup");
+        let mut tool = DimensionTool::default();
+
+        click(&mut ed, &mut tool, v(14.0, 0.0)); // on l1
+        click(&mut ed, &mut tool, v(7.0, 7.0)); // on l2
+        click(&mut ed, &mut tool, v(8.0, 3.0)); // place
+        assert!(constraints(&ed).iter().any(|c| matches!(c,
+            Constraint::Angle { a, b, degrees } if *a == l1 && *b == l2 && (degrees - 45.0).abs() < 1e-9)));
+
+        click(&mut ed, &mut tool, v(54.0, 0.0)); // on the circle
+        click(&mut ed, &mut tool, v(60.0, 6.0));
+        assert!(constraints(&ed).iter().any(|cc| matches!(cc,
+            Constraint::Diameter { curve, value } if *curve == circle && *value == 8.0)));
+
+        click(&mut ed, &mut tool, v(30.0, 7.0)); // the point
+        click(&mut ed, &mut tool, v(16.0, 0.0)); // l1
+        click(&mut ed, &mut tool, v(35.0, 3.0));
+        assert!(constraints(&ed).iter().any(|cc| matches!(cc,
+            Constraint::PointLineDistance { point, line, value } if *point == q && *line == l1 && *value == 7.0)));
+    }
+
+    // ---- Midpoints ----
+
+    /// A horizontal line 0..20 and a separate slanted line; returns (base, base midpoint pos,
+    /// slanted line's end points).
+    fn midpoint_fixture() -> (Editor, EntityId, [EntityId; 2]) {
+        let mut ed = Editor::default();
+        ed.doc.begin();
+        let a = ed.doc.add_point(v(0.0, 0.0));
+        let b = ed.doc.add_point(v(20.0, 0.0));
+        let base = ed.doc.add_line(a, b).unwrap();
+        let c = ed.doc.add_point(v(13.0, 6.0));
+        let d = ed.doc.add_point(v(25.0, 14.0));
+        ed.doc.add_line(c, d).unwrap();
+        ed.commit("Setup");
+        (ed, base, [c, d])
+    }
+
+    #[test]
+    fn midpoints_can_be_hovered_picked_and_constrained() {
+        let (mut ed, base, [c, _]) = midpoint_fixture();
+        let mut sel = SelectTool::default();
+        let near_mid = v(10.1, 0.1);
+        sel.handle(Input::Hover(ptr(&ed, &sel, near_mid)), &mut ed);
+        assert_eq!(ed.hovered_midpoint, Some(base));
+        assert_eq!(ed.hovered, None);
+        click(&mut ed, &mut sel, near_mid);
+        assert_eq!(ed.selected_midpoints, [base].into());
+        // Shift-click the other line's end point.
+        let p = ptr(&ed, &sel, v(13.1, 6.1));
+        sel.handle(
+            Input::Click(
+                p,
+                Modifiers {
+                    shift: true,
+                    command: false,
+                },
+            ),
+            &mut ed,
+        );
+        assert_eq!(ed.selection, [c].into());
+        let midpoint = ed
+            .relation_options()
+            .into_iter()
+            .find(|o| o.label == "Midpoint")
+            .expect("Midpoint offered");
+        ed.add_constraints("Midpoint", &midpoint.constraints)
+            .unwrap();
+        // Nothing is fixed, so the smallest change moves both: check the relation holds.
+        let EntityKind::Line { a, b } = ed.doc.get(base).unwrap().kind else {
+            unreachable!()
+        };
+        let mid = (ed.doc.point(a).unwrap() + ed.doc.point(b).unwrap()) * 0.5;
+        assert!((ed.doc.point(c).unwrap() - mid).length() < 1e-12);
+        // Esc clears both kinds of selection.
+        assert!(sel.cancel(&mut ed));
+        assert!(ed.selection.is_empty() && ed.selected_midpoints.is_empty());
+    }
+
+    #[test]
+    fn point_and_line_selection_offers_midpoint() {
+        let (mut ed, base, [c, _]) = midpoint_fixture();
+        ed.selection = [base, c].into();
+        assert!(ed.relation_options().iter().any(|o| o.label == "Midpoint"));
+    }
+
+    #[test]
+    fn starting_a_line_on_a_midpoint_adds_the_relation() {
+        let (mut ed, base, _) = midpoint_fixture();
+        let mut tool = LineTool::default();
+        click(&mut ed, &mut tool, v(10.1, 0.2)); // snaps to the base's midpoint
+        click(&mut ed, &mut tool, v(10.0, -15.0));
+        let Some(Constraint::Midpoint { point, line }) = ed
+            .doc
+            .constraints()
+            .map(|(_, c)| *c)
+            .find(|c| matches!(c, Constraint::Midpoint { .. }))
+        else {
+            panic!("no midpoint relation")
+        };
+        assert_eq!(line, base);
+        // Dragging the base (weighting its points, as the select tool does) carries the new
+        // line's start along with its midpoint.
+        let EntityKind::Line { a, b } = ed.doc.get(base).unwrap().kind else {
+            unreachable!()
+        };
+        let dragged: Vec<Param> = [a, b].into_iter().flat_map(Param::point).collect();
+        ed.doc.begin();
+        assert!(ed.drag(&[base], v(4.0, 0.0), &dragged));
+        ed.commit("Move");
+        let mid = (ed.doc.point(a).unwrap() + ed.doc.point(b).unwrap()) * 0.5;
+        assert!((mid - v(14.0, 0.0)).length() < 1e-5, "{mid}");
+        assert!((ed.doc.point(point).unwrap() - mid).length() < 1e-9);
+    }
+
+    #[test]
+    fn dropping_an_end_point_on_a_midpoint_constrains_it() {
+        let (mut ed, base, [c, _]) = midpoint_fixture();
+        let mut sel = SelectTool::default();
+        let m = Modifiers::default();
+        let grab = ptr(&ed, &sel, v(13.0, 6.0));
+        sel.handle(Input::DragStart(grab, m), &mut ed);
+        let to = ptr(&ed, &sel, v(10.2, 0.2));
+        assert_eq!(to.midpoint_of(), Some(base));
+        sel.handle(Input::Drag(to), &mut ed);
+        sel.handle(Input::DragEnd(to, m), &mut ed);
+        assert_eq!(ed.doc.point(c).unwrap(), v(10.0, 0.0));
+        assert!(ed.doc.constraints().any(|(_, k)| *k
+            == Constraint::Midpoint {
+                point: c,
+                line: base
+            }));
+    }
+
+    #[test]
+    fn smart_dimension_measures_to_midpoints() {
+        // Base 0..20 on the x axis (midpoint (10, 0)); a second line from (13, 6) to (25, 14),
+        // midpoint (19, 10).
+        let (mut ed, base, [c, _]) = midpoint_fixture();
+        let other = ed
+            .doc
+            .iter()
+            .find(|(id, e)| matches!(e.kind, EntityKind::Line { .. }) && *id != base)
+            .map(|(id, _)| id)
+            .unwrap();
+        let mut tool = DimensionTool::default();
+        let base_mid = v(10.1, 0.1);
+
+        // Midpoint -> point, label above both (inside their x range): horizontal distance.
+        click(&mut ed, &mut tool, base_mid);
+        assert_eq!(
+            ed.selected_midpoints,
+            [base].into(),
+            "picked midpoint is marked"
+        );
+        click(&mut ed, &mut tool, v(13.1, 6.1));
+        click(&mut ed, &mut tool, v(11.0, 20.0));
+        assert!(constraints(&ed).contains(&Constraint::HorizontalDistance {
+            a: base,
+            b: c,
+            value: 3.0
+        }));
+        assert!(
+            ed.selected_midpoints.is_empty(),
+            "pick marks cleared after placing"
+        );
+
+        // Midpoint -> midpoint, aligned.
+        click(&mut ed, &mut tool, base_mid);
+        click(&mut ed, &mut tool, v(19.05, 10.05));
+        click(&mut ed, &mut tool, v(25.0, -5.0)); // outside both ranges: aligned
+        let expected = v(10.0, 0.0).distance(v(19.0, 10.0));
+        assert!(constraints(&ed).iter().any(|k| matches!(k,
+            Constraint::Distance { a, b, value } if *a == base && *b == other
+                && (value - expected).abs() < 1e-12)));
+
+        // Midpoint -> another line: perpendicular distance.
+        click(&mut ed, &mut tool, v(19.05, 10.05)); // other's midpoint
+        click(&mut ed, &mut tool, v(4.0, 0.0)); // the base line (away from its midpoint)
+        click(&mut ed, &mut tool, v(25.0, 5.0));
+        assert!(constraints(&ed).iter().any(|k| matches!(k,
+            Constraint::PointLineDistance { point, line, value } if *point == other
+                && *line == base && (value - 10.0).abs() < 1e-12)));
+    }
+
+    #[test]
+    fn panel_offers_distances_to_selected_midpoints() {
+        let (mut ed, base, [c, _]) = midpoint_fixture();
+        ed.selected_midpoints = [base].into();
+        ed.selection = [c].into();
+        let labels: Vec<_> = ed.dimension_options().iter().map(|o| o.label).collect();
+        assert_eq!(
+            labels,
+            ["Distance", "Horizontal distance", "Vertical distance"]
+        );
+        let distance = &ed.dimension_options()[0].constraints[0];
+        assert_eq!(distance.value(), Some(v(10.0, 0.0).distance(v(13.0, 6.0))));
     }
 }

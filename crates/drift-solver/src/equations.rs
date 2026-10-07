@@ -55,6 +55,24 @@ pub enum Equation {
     LengthValue { length: Length, value: f64 },
     /// `a − b = 0`
     EqualLength { a: Length, b: Length },
+    /// `sign·(b − a) − value = 0` for two scalar parameters (horizontal / vertical distances).
+    /// `sign` (±1) records which side `b` was on, so the solution doesn't flip over.
+    Difference {
+        a: usize,
+        b: usize,
+        sign: f64,
+        value: f64,
+    },
+    /// Signed perpendicular distance from point `[px, py]` to the line through
+    /// `[ax, ay, bx, by]`: `sign·cross(b − a, p − a)/|b − a| − value = 0`.
+    PointLine {
+        point: [usize; 2],
+        line: [usize; 4],
+        sign: f64,
+        value: f64,
+    },
+    /// `p − (a + b)/2 = 0` for one coordinate: a point at the midpoint of two others.
+    Midpoint { p: usize, a: usize, b: usize },
     /// `sin(θ − φ) = 0`, where θ is the angle from line 1 to line 2. Params are
     /// `[ax, ay, bx, by]` for each line.
     Angle {
@@ -89,6 +107,9 @@ impl Equation {
                 p
             }
             Equation::Angle { l1, l2, .. } => l1.iter().chain(l2).copied().collect(),
+            Equation::Difference { a, b, .. } => vec![*a, *b],
+            Equation::Midpoint { p, a, b } => vec![*p, *a, *b],
+            Equation::PointLine { point, line, .. } => point.iter().chain(line).copied().collect(),
         }
     }
 
@@ -98,6 +119,41 @@ impl Equation {
         match *self {
             Equation::LengthValue { length, value } => length.eval(val, 1.0, grad) - value,
             Equation::EqualLength { a, b } => a.eval(val, 1.0, grad) - b.eval(val, -1.0, grad),
+            Equation::Midpoint { p, a, b } => {
+                grad.extend([(p, 1.0), (a, -0.5), (b, -0.5)]);
+                val(p) - 0.5 * (val(a) + val(b))
+            }
+            Equation::Difference { a, b, sign, value } => {
+                grad.extend([(a, -sign), (b, sign)]);
+                sign * (val(b) - val(a)) - value
+            }
+            Equation::PointLine {
+                point: [px, py],
+                line: [ax, ay, bx, by],
+                sign,
+                value,
+            } => {
+                let d = (val(bx) - val(ax), val(by) - val(ay));
+                let w = (val(px) - val(ax), val(py) - val(ay));
+                let len = d.0.hypot(d.1).max(1e-300);
+                let cross = d.0 * w.1 - d.1 * w.0;
+                let f = cross / len;
+                // ∂f/∂d and ∂f/∂w; then a = −(d + w) terms, b = d terms, p = w terms.
+                let gd = (
+                    w.1 / len - f * d.0 / (len * len),
+                    -w.0 / len - f * d.1 / (len * len),
+                );
+                let gw = (-d.1 / len, d.0 / len);
+                grad.extend([
+                    (px, sign * gw.0),
+                    (py, sign * gw.1),
+                    (ax, -sign * (gd.0 + gw.0)),
+                    (ay, -sign * (gd.1 + gw.1)),
+                    (bx, sign * gd.0),
+                    (by, sign * gd.1),
+                ]);
+                sign * f - value
+            }
             Equation::Angle {
                 l1,
                 l2,
@@ -198,6 +254,25 @@ mod tests {
             Equation::angle(line1, line2, -2.3),
             // Lines sharing a point.
             Equation::angle([0, 1, 2, 3], [2, 3, 4, 5], 1.1),
+            Equation::Difference {
+                a: 0,
+                b: 2,
+                sign: -1.0,
+                value: 2.5,
+            },
+            Equation::Midpoint { p: 4, a: 0, b: 2 },
+            Equation::PointLine {
+                point: [4, 5],
+                line: line1,
+                sign: 1.0,
+                value: 1.0,
+            },
+            Equation::PointLine {
+                point: [6, 7],
+                line: line1,
+                sign: -1.0,
+                value: 3.0,
+            },
         ];
         for eq in eqs {
             check_gradient(eq, &X);

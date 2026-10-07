@@ -521,3 +521,122 @@ fn nearly_parallel_independent_columns_keep_the_right_rank() {
     assert_eq!(rank, 2);
     assert_eq!(movable, vec![true; 6]);
 }
+
+#[test]
+fn horizontal_vertical_and_point_line_distances() {
+    let mut doc = Document::new();
+    let a = doc.add_point(v(0.0, 0.0));
+    let b = doc.add_point(v(7.0, 3.0));
+    let c = doc.add_point(v(-2.0, 0.0));
+    let d = doc.add_point(v(10.0, 1.0));
+    let line = doc.add_line(c, d).unwrap();
+    let p = doc.add_point(v(4.0, 6.0));
+    let center = doc.add_point(v(20.0, 0.0));
+    let circle = doc.add_circle(center, 2.0).unwrap();
+    for constraint in [
+        Constraint::HorizontalDistance { a, b, value: 12.0 },
+        Constraint::VerticalDistance { a, b, value: 5.0 },
+        Constraint::PointLineDistance {
+            point: p,
+            line,
+            value: 2.5,
+        },
+        Constraint::Diameter {
+            curve: circle,
+            value: 9.0,
+        },
+    ] {
+        doc.add_constraint(constraint).unwrap();
+    }
+    assert!(solved(&mut doc).converged);
+    let (pa, pb) = (doc.point(a).unwrap(), doc.point(b).unwrap());
+    assert!(((pb.x - pa.x) - 12.0).abs() < 1e-9, "b stays to the right");
+    assert!(((pb.y - pa.y) - 5.0).abs() < 1e-9, "b stays above");
+    for (_, c) in doc.constraints() {
+        let want = c.value().unwrap();
+        let got = measure(&doc, c).unwrap();
+        assert!((got - want).abs() < 1e-9, "{c:?}: {got}");
+    }
+    // The point stays on the same side of the line.
+    let (pc, pd, pp) = (
+        doc.point(c).unwrap(),
+        doc.point(d).unwrap(),
+        doc.point(p).unwrap(),
+    );
+    assert!((pd - pc).perp_dot(pp - pc) > 0.0);
+}
+
+#[test]
+fn midpoint_relation_keeps_a_point_centred() {
+    let mut doc = Document::new();
+    let a = doc.add_point(v(0.0, 0.0));
+    let b = doc.add_point(v(10.0, 4.0));
+    let line = doc.add_line(a, b).unwrap();
+    let c = doc.add_point(v(3.0, 9.0));
+    let d = doc.add_point(v(-4.0, 9.0));
+    doc.add_line(c, d).unwrap();
+    let mid = Constraint::Midpoint { point: c, line };
+    doc.add_constraint(mid).unwrap();
+    let report = solved(&mut doc);
+    assert!(report.converged);
+    let m = (doc.point(a).unwrap() + doc.point(b).unwrap()) * 0.5;
+    assert!((doc.point(c).unwrap() - m).length() < 1e-12);
+    // Two equations: removes two degrees of freedom (8 - 2).
+    assert_eq!(report.dof, Some(6));
+    // A line's own end point can't be its midpoint.
+    assert!(
+        doc.add_constraint(Constraint::Midpoint { point: a, line })
+            .is_err()
+    );
+}
+
+#[test]
+fn dimensions_can_measure_to_midpoints() {
+    let mut doc = Document::new();
+    let a = doc.add_point(v(0.0, 0.0));
+    let b = doc.add_point(v(20.0, 0.0));
+    let base = doc.add_line(a, b).unwrap();
+    let c = doc.add_point(v(3.0, 9.0));
+    let d = doc.add_point(v(15.0, 30.0));
+    let other = doc.add_line(c, d).unwrap();
+    let before = analyze(&doc).dof;
+    for constraint in [
+        // From the base's midpoint to a point, horizontally and vertically.
+        Constraint::HorizontalDistance {
+            a: base,
+            b: c,
+            value: 4.0,
+        },
+        Constraint::VerticalDistance {
+            a: base,
+            b: c,
+            value: 12.0,
+        },
+        // Midpoint to midpoint.
+        Constraint::Distance {
+            a: base,
+            b: other,
+            value: 25.0,
+        },
+    ] {
+        doc.add_constraint(constraint).unwrap();
+    }
+    let report = solved(&mut doc);
+    assert!(report.converged, "{report:?}");
+    // Three dimensions remove three degrees of freedom; the hidden midpoints add none.
+    assert_eq!(report.dof, before.map(|n| n - 3));
+    let mid = |l| doc.ref_point(l).unwrap();
+    let pc = doc.point(c).unwrap();
+    // The point started left of the midpoint and stays on that side.
+    assert!(((pc.x - mid(base).x) + 4.0).abs() < 1e-9);
+    assert!(((pc.y - mid(base).y) - 12.0).abs() < 1e-9);
+    assert!((mid(base).distance(mid(other)) - 25.0).abs() < 1e-9);
+    for (_, k) in doc.constraints() {
+        assert!((measure(&doc, k).unwrap() - k.value().unwrap()).abs() < 1e-9);
+    }
+    // Midpoints of lines aren't valid in relations that need real points.
+    assert!(
+        doc.add_constraint(Constraint::Coincident { a: base, b: c })
+            .is_err()
+    );
+}

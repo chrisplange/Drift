@@ -113,10 +113,41 @@ impl System {
                 _ => {}
             }
         }
+        // Lines that dimensions measure to the midpoint of get a hidden midpoint: two unknowns
+        // tied to the line's ends by two equations, so they add no freedom.
+        let mut midpoint_lines = Vec::new();
+        for (_, c) in doc.constraints() {
+            for (id, slot) in c.slots() {
+                if slot == drift_core::Slot::PointOrMidpoint
+                    && let Some(EntityKind::Line { .. }) = doc.get(id).map(|e| e.kind)
+                    && !midpoint_lines.contains(&id)
+                {
+                    midpoint_lines.push(id);
+                }
+            }
+        }
+        for &line in &midpoint_lines {
+            let m = doc.ref_point(line).unwrap_or_default();
+            params.push(Param::MidX(line));
+            values.push(m.x);
+            params.push(Param::MidY(line));
+            values.push(m.y);
+        }
         let param_index: HashMap<Param, usize> =
             params.iter().enumerate().map(|(i, p)| (*p, i)).collect();
-        let x = |id: EntityId| param_index[&Param::X(id)];
-        let y = |id: EntityId| param_index[&Param::Y(id)];
+        // A point's coordinates, or (for a line in a dimension slot) its hidden midpoint's.
+        let x = |id: EntityId| {
+            param_index
+                .get(&Param::X(id))
+                .copied()
+                .unwrap_or_else(|| param_index[&Param::MidX(id)])
+        };
+        let y = |id: EntityId| {
+            param_index
+                .get(&Param::Y(id))
+                .copied()
+                .unwrap_or_else(|| param_index[&Param::MidY(id)])
+        };
         let point = |id: EntityId| [x(id), y(id)];
         let line = |id: EntityId| match doc.get(id).map(|e| e.kind) {
             Some(EntityKind::Line { a, b }) => [x(a), y(a), x(b), y(b)],
@@ -207,6 +238,61 @@ impl System {
                     },
                     source: Some(cid),
                 }),
+                Constraint::Midpoint { point: m, line: l } => {
+                    let [ax, ay, bx, by] = line(l);
+                    let [mx, my] = point(m);
+                    for (p, a, b) in [(mx, ax, bx), (my, ay, by)] {
+                        rows.push(Row {
+                            equation: Equation::Midpoint { p, a, b },
+                            source: Some(cid),
+                        });
+                    }
+                }
+                Constraint::Diameter { curve, value } => rows.push(Row {
+                    equation: Equation::LengthValue {
+                        length: radius(curve),
+                        value: value / 2.0,
+                    },
+                    source: Some(cid),
+                }),
+                Constraint::HorizontalDistance { a, b, value }
+                | Constraint::VerticalDistance { a, b, value } => {
+                    let (pa, pb) = if matches!(constraint, Constraint::HorizontalDistance { .. }) {
+                        (x(a), x(b))
+                    } else {
+                        (y(a), y(b))
+                    };
+                    let sign = if values[pb] >= values[pa] { 1.0 } else { -1.0 };
+                    rows.push(Row {
+                        equation: Equation::Difference {
+                            a: pa,
+                            b: pb,
+                            sign,
+                            value,
+                        },
+                        source: Some(cid),
+                    });
+                }
+                Constraint::PointLineDistance {
+                    point: p,
+                    line: l,
+                    value,
+                } => {
+                    let pp = point(p);
+                    let ll = line(l);
+                    let cross = (values[ll[2]] - values[ll[0]]) * (values[pp[1]] - values[ll[1]])
+                        - (values[ll[3]] - values[ll[1]]) * (values[pp[0]] - values[ll[0]]);
+                    let sign = if cross >= 0.0 { 1.0 } else { -1.0 };
+                    rows.push(Row {
+                        equation: Equation::PointLine {
+                            point: pp,
+                            line: ll,
+                            sign,
+                            value,
+                        },
+                        source: Some(cid),
+                    });
+                }
             }
             for (p, q) in &equalities {
                 if uf.union(*p, *q) {
@@ -215,6 +301,19 @@ impl System {
             }
             if !equalities.is_empty() && joined == 0 {
                 redundant.push(cid);
+            }
+        }
+
+        for &l in &midpoint_lines {
+            let [ax, ay, bx, by] = line(l);
+            for (p, a, b) in [
+                (param_index[&Param::MidX(l)], ax, bx),
+                (param_index[&Param::MidY(l)], ay, by),
+            ] {
+                rows.push(Row {
+                    equation: Equation::Midpoint { p, a, b },
+                    source: None,
+                });
             }
         }
 

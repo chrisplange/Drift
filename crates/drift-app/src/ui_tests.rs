@@ -2,7 +2,7 @@
 //! through wgpu. Skipped when no graphics adapter is available.
 
 use drift_core::{DVec2, EntityKind};
-use eframe::egui::{Event, Key, Modifiers as EguiModifiers, PointerButton, Pos2};
+use eframe::egui::{self, Event, Key, Modifiers as EguiModifiers, PointerButton, Pos2};
 use eframe::egui_wgpu::wgpu;
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable as _;
@@ -124,7 +124,7 @@ fn draw_select_delete_undo() {
     // Select the bottom edge and delete it.
     h.key_press(Key::Escape);
     h.run();
-    click_world(&mut h, DVec2::new(0.0, -20.0));
+    click_world(&mut h, DVec2::new(-20.0, -20.0));
     assert_eq!(h.state().editor.selection.len(), 1);
     save_png("drift_ui_selected.png", &mut h);
     h.key_press(Key::Delete);
@@ -230,7 +230,7 @@ fn constrain_a_line_from_the_properties_panel() {
     h.run();
     h.key_press(Key::Escape); // back to Select
     h.run();
-    click_world(&mut h, DVec2::new(-5.0, 2.5)); // middle of the line
+    click_world(&mut h, DVec2::new(5.0, 7.5)); // on the line, away from its middle
     assert_eq!(h.state().editor.selection.len(), 1);
 
     h.get_by_role_and_label(Role::Button, "Horizontal").click();
@@ -276,4 +276,345 @@ fn constrain_a_line_from_the_properties_panel() {
     // Two DOF left: the line can still slide.
     assert_eq!(app.editor.analysis().dof, Some(2));
     save_png("drift_ui_constrained.png", &mut h);
+}
+
+// ---- M3: typed input, Smart Dimension, on-canvas annotations ----
+
+fn type_text(h: &mut Harness<'_, DriftApp>, text: &str) {
+    h.event(Event::Text(text.into()));
+    h.run();
+}
+
+fn screen_map(h: &Harness<'_, DriftApp>) -> crate::overlay::ScreenMap {
+    let app = h.state();
+    crate::overlay::ScreenMap {
+        rect: app.canvas_rect,
+        camera: app.camera,
+    }
+}
+
+fn the_line(h: &Harness<'_, DriftApp>) -> (DVec2, DVec2) {
+    let doc = &h.state().editor.doc;
+    let (_, line) = doc
+        .iter()
+        .find(|(_, e)| matches!(e.kind, EntityKind::Line { .. }))
+        .expect("a line");
+    let EntityKind::Line { a, b } = line.kind else {
+        unreachable!()
+    };
+    (doc.point(a).unwrap(), doc.point(b).unwrap())
+}
+
+/// Layout of the first dimension, as the canvas draws it.
+fn first_dimension(h: &Harness<'_, DriftApp>) -> crate::annotations::DimLayout {
+    let app = h.state();
+    let painter = egui::Painter::new(h.ctx.clone(), egui::LayerId::background(), app.canvas_rect);
+    app.layout_dimensions(&painter, &screen_map(h))
+        .into_iter()
+        .next()
+        .expect("a dimension")
+}
+
+#[test]
+fn type_a_start_point_and_a_length() {
+    let Some(mut h) = harness() else { return };
+    h.key_press(Key::L);
+    h.run();
+    h.hover_at(screen(&h, DVec2::new(30.0, 20.0)));
+    h.run();
+    type_text(&mut h, "10");
+    h.key_press(Key::Tab);
+    h.run();
+    type_text(&mut h, "5");
+    h.key_press(Key::Enter);
+    h.run();
+    // Now type a length; the pointer (to the right) gives the direction.
+    type_text(&mut h, "50");
+    h.key_press(Key::Enter);
+    h.run();
+    let (a, b) = the_line(&h);
+    assert_eq!(a, DVec2::new(10.0, 5.0));
+    assert!((a.distance(b) - 50.0).abs() < 1e-9);
+    assert!(h.state().editor.doc.constraints().any(|(_, c)| matches!(
+        c,
+        drift_core::Constraint::Distance { value, .. } if *value == 50.0
+    )));
+}
+
+#[test]
+fn smart_dimension_place_type_drag_and_delete_relation() {
+    use crate::annotations::layout_glyphs;
+
+    let Some(mut h) = harness() else { return };
+    // A near-horizontal line gets an automatic horizontal relation.
+    h.key_press(Key::L);
+    h.run();
+    click_world(&mut h, DVec2::new(-20.0, 0.0));
+    click_world(&mut h, DVec2::new(20.0, 0.5));
+    h.key_press(Key::Escape);
+    h.run();
+    assert_eq!(h.state().editor.doc.constraint_count(), 1);
+
+    // Smart Dimension: click the line, place above, type the value.
+    h.key_press(Key::D);
+    h.run();
+    click_world(&mut h, DVec2::new(-10.0, 0.125)); // on the line, away from its midpoint
+    click_world(&mut h, DVec2::new(5.0, 15.0));
+    assert_eq!(h.state().editor.doc.constraint_count(), 2);
+    assert!(h.state().dimension_edit.is_some(), "value editor opened");
+    type_text(&mut h, "30");
+    h.key_press(Key::Enter);
+    h.run();
+    let (a, b) = the_line(&h);
+    assert!(
+        (a.distance(b) - 30.0).abs() < 1e-9,
+        "length {}",
+        a.distance(b)
+    );
+    save_png("drift_ui_dimensioned.png", &mut h);
+
+    // Drag the dimension label 60 px to the right: one undo step.
+    h.key_press(Key::Escape);
+    h.run();
+    h.key_press(Key::Escape);
+    h.run();
+    let dim = first_dimension(&h);
+    let id = dim.id.unwrap();
+    let before = h.state().editor.doc.placement(id);
+    let from = dim.text_rect.center();
+    let to = from + egui::vec2(60.0, 0.0);
+    h.hover_at(from);
+    h.run();
+    button(&h, from, true);
+    h.run();
+    h.hover_at(from + egui::vec2(20.0, 0.0));
+    h.run();
+    h.hover_at(to);
+    h.run();
+    button(&h, to, false);
+    h.run();
+    let after = h.state().editor.doc.placement(id).unwrap();
+    assert!(Some(after) != before, "label moved");
+    assert!((first_dimension(&h).text_rect.center().x - to.x).abs() < 2.0);
+    h.key_press_modifiers(EguiModifiers::COMMAND, Key::Z);
+    h.run();
+    assert_eq!(h.state().editor.doc.placement(id), before);
+
+    // Pick the horizontal relation's glyph and delete it.
+    let glyph = layout_glyphs(&h.state().editor.doc, &screen_map(&h))
+        .into_iter()
+        .next()
+        .expect("a relation glyph");
+    let at = glyph.rect.center();
+    h.hover_at(at);
+    h.run();
+    button(&h, at, true);
+    h.run();
+    button(&h, at, false);
+    h.run();
+    assert_eq!(h.state().selected_constraint, Some(glyph.id));
+    save_png("drift_ui_relation_picked.png", &mut h);
+    h.key_press(Key::Delete);
+    h.run();
+    assert!(h.state().editor.doc.constraint(glyph.id).is_none());
+    assert_eq!(h.state().editor.doc.constraint_count(), 1);
+}
+
+#[test]
+fn every_annotation_kind_renders() {
+    use drift_core::Constraint as C;
+
+    let Some(mut h) = harness() else { return };
+    let v = DVec2::new;
+    {
+        let ed = &mut h.state_mut().editor;
+        ed.doc.begin();
+        let doc = &mut ed.doc;
+        let p = [v(-60.0, -30.0), v(0.0, -30.0), v(0.0, 10.0), v(-60.0, 10.0)]
+            .map(|q| doc.add_point(q));
+        let l: Vec<_> = (0..4)
+            .map(|i| doc.add_line(p[i], p[(i + 1) % 4]).unwrap())
+            .collect();
+        let o = doc.add_point(v(20.0, -30.0));
+        let tip = doc.add_point(v(50.0, -10.0));
+        let slanted = doc.add_line(o, tip).unwrap();
+        let base_end = doc.add_point(v(55.0, -30.0));
+        let base = doc.add_line(o, base_end).unwrap();
+        let c = doc.add_point(v(-30.0, 30.0));
+        let circle = doc.add_circle(c, 8.0).unwrap();
+        let ac = doc.add_point(v(30.0, 30.0));
+        let s = doc.add_point(v(42.0, 30.0));
+        let e = doc.add_point(v(30.0, 42.0));
+        let arc = doc.add_arc(ac, s, e).unwrap();
+        let q = doc.add_point(v(-30.0, -10.0));
+        for constraint in [
+            C::Horizontal { line: l[0] },
+            C::Vertical { line: l[1] },
+            C::Parallel { a: l[0], b: l[2] },
+            C::Perpendicular { a: l[2], b: l[3] },
+            C::Fix {
+                point: p[0],
+                at: v(-60.0, -30.0),
+            },
+            C::Distance {
+                a: p[0],
+                b: p[1],
+                value: 60.0,
+            },
+            C::VerticalDistance {
+                a: p[1],
+                b: p[2],
+                value: 40.0,
+            },
+            C::HorizontalDistance {
+                a: p[2],
+                b: o,
+                value: 20.0,
+            },
+            C::PointLineDistance {
+                point: q,
+                line: l[0],
+                value: 20.0,
+            },
+            C::Diameter {
+                curve: circle,
+                value: 16.0,
+            },
+            C::Radius {
+                curve: arc,
+                value: 12.0,
+            },
+            C::Angle {
+                a: base,
+                b: slanted,
+                degrees: 33.690067525979785,
+            },
+            C::Equal { a: l[1], b: l[3] },
+        ] {
+            doc.add_constraint(constraint).unwrap();
+        }
+        ed.commit("Setup");
+        let bounds = ed.bounds();
+        h.state_mut().fit_target = Some(bounds);
+    }
+    h.run();
+    assert!(h.state().editor.analysis().converged);
+    let painter = egui::Painter::new(
+        h.ctx.clone(),
+        egui::LayerId::background(),
+        h.state().canvas_rect,
+    );
+    assert_eq!(
+        h.state().layout_dimensions(&painter, &screen_map(&h)).len(),
+        7
+    );
+    save_png("drift_ui_annotations.png", &mut h);
+}
+
+#[test]
+fn pick_a_midpoint_and_constrain_an_end_point_to_it() {
+    use eframe::egui::accesskit::Role;
+
+    let Some(mut h) = harness() else { return };
+    h.state_mut().auto_relations = false; // draw freely
+    h.key_press(Key::L);
+    h.run();
+    click_world(&mut h, DVec2::new(-40.0, 0.0));
+    click_world(&mut h, DVec2::new(40.0, 0.0));
+    h.key_press(Key::Escape);
+    h.run();
+    click_world(&mut h, DVec2::new(5.0, 20.0));
+    click_world(&mut h, DVec2::new(30.0, 45.0));
+    h.key_press(Key::Escape);
+    h.run();
+    h.key_press(Key::Escape);
+    h.run();
+
+    // Hover then click the first line's midpoint.
+    click_world(&mut h, DVec2::new(0.5, 0.3));
+    assert_eq!(h.state().editor.selected_midpoints.len(), 1);
+    // Shift-click the second line's start point.
+    let at = screen(&h, DVec2::new(5.0, 20.0));
+    h.hover_at(at);
+    h.run();
+    h.event_modifiers(
+        Event::PointerButton {
+            pos: at,
+            button: PointerButton::Primary,
+            pressed: true,
+            modifiers: EguiModifiers::SHIFT,
+        },
+        EguiModifiers::SHIFT,
+    );
+    h.run();
+    h.event_modifiers(
+        Event::PointerButton {
+            pos: at,
+            button: PointerButton::Primary,
+            pressed: false,
+            modifiers: EguiModifiers::SHIFT,
+        },
+        EguiModifiers::SHIFT,
+    );
+    h.run();
+    assert_eq!(h.state().editor.selection.len(), 1);
+    save_png("drift_ui_midpoint_picked.png", &mut h);
+
+    h.get_by_role_and_label(Role::Button, "Midpoint").click();
+    h.run();
+    let doc = &h.state().editor.doc;
+    let Some(drift_core::Constraint::Midpoint { point, line }) = doc
+        .constraints()
+        .map(|(_, c)| *c)
+        .find(|c| matches!(c, drift_core::Constraint::Midpoint { .. }))
+    else {
+        panic!("no midpoint relation")
+    };
+    let EntityKind::Line { a, b } = doc.get(line).unwrap().kind else {
+        unreachable!()
+    };
+    let mid = (doc.point(a).unwrap() + doc.point(b).unwrap()) * 0.5;
+    assert!((doc.point(point).unwrap() - mid).length() < 1e-9);
+    save_png("drift_ui_midpoint_constrained.png", &mut h);
+}
+
+#[test]
+fn smart_dimension_from_a_midpoint() {
+    let Some(mut h) = harness() else { return };
+    h.state_mut().auto_relations = false;
+    h.key_press(Key::L);
+    h.run();
+    click_world(&mut h, DVec2::new(-40.0, 0.0));
+    click_world(&mut h, DVec2::new(40.0, 0.0));
+    h.key_press(Key::Escape);
+    h.run();
+    h.key_press(Key::P);
+    h.run();
+    click_world(&mut h, DVec2::new(15.0, 25.0));
+
+    h.key_press(Key::D);
+    h.run();
+    click_world(&mut h, DVec2::new(0.4, 0.2)); // the line's midpoint
+    click_world(&mut h, DVec2::new(15.0, 25.0)); // the point
+    click_world(&mut h, DVec2::new(30.0, 12.0)); // label to the right: vertical distance
+    assert!(h.state().dimension_edit.is_some());
+    type_text(&mut h, "30");
+    h.key_press(Key::Enter);
+    h.run();
+
+    let doc = &h.state().editor.doc;
+    let Some((_, dim)) = doc.constraints().next() else {
+        panic!("no dimension")
+    };
+    let drift_core::Constraint::VerticalDistance { a, b, value } = *dim else {
+        panic!("expected a vertical distance, got {dim:?}")
+    };
+    assert_eq!(value, 30.0);
+    let (ma, pb) = (doc.ref_point(a).unwrap(), doc.ref_point(b).unwrap());
+    assert!(((pb.y - ma.y) - 30.0).abs() < 1e-9);
+    assert!(
+        matches!(doc.get(a).unwrap().kind, EntityKind::Line { .. }),
+        "measured from the midpoint"
+    );
+    save_png("drift_ui_midpoint_dimension.png", &mut h);
 }

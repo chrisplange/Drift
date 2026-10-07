@@ -7,21 +7,33 @@ constraints, built for technical drawings and design exploration. It is written 
 on the GPU with [wgpu](https://wgpu.rs), and runs natively on Windows, macOS and Linux and in the
 browser (WebGPU, with a WebGL2 fallback).
 
-> **Status: early development (milestone M2).** You can draw, snap, constrain, dimension, drag
-> and save sketches. Sketching UX (auto-relations, Smart Dimension, on-canvas dimensions) is next.
-> See [PLAN.md](PLAN.md) for the roadmap.
+> **Status: early development (milestone M3).** You can draw with typed values and automatic
+> relations, dimension with Smart Dimension, see and edit dimensions and relations on the
+> canvas, drag constrained sketches, and save them. More relation types (tangent, concentric…)
+> come next. See [PLAN.md](PLAN.md) for the roadmap.
 
 ## What works today
 
 - **Drawing tools:** polyline (L), rectangle (R), circle (C), centre-point arc (A) and point (P).
-  Click point by point, or press, drag and release.
+  Click point by point, or press, drag and release. Or type exact values while drawing:
+  X/Y for the first point, then length/angle, width/height, diameter, radius or sweep (Tab
+  switches field, Enter applies). Typed sizes become dimensions.
+- **Automatic relations and inference:** nearly horizontal or vertical lines snap straight and
+  get the relation; rectangles come with their H/V relations. Dashed inference lines align new
+  points with points you've just hovered.
+- **Smart Dimension (D):** click a line, circle, arc, two points, two lines, or a point and a
+  line, then place the label. Its position chooses aligned, horizontal or vertical. Type the
+  value straight away.
+- **Dimensions and relations on the canvas:** drag dimension labels to move them, double-click
+  to edit the value, and click relation symbols to pick them (Delete removes them).
 - **Snapping:** end points, centres, midpoints, quadrants and nearest-on-curve, plus optional grid
   snapping (G). Hold Alt to place freely. Snapping onto an existing point connects to it.
 - **Selection and editing:** click, Shift-click and Ctrl-click; drag right for a window selection
   and left for a crossing selection. Drag to move. Drop an end point on another to join them.
   Delete, construction toggle (X), and solid / construction / centre line styles.
 - **Constraints:** coincident, horizontal, vertical, parallel, perpendicular, equal and fix
-  relations, plus distance/length, radius and angle dimensions. Pick them in the properties panel
+  relations, plus length, distance (aligned, horizontal, vertical, point-to-line), radius,
+  diameter and angle dimensions. Pick them in the properties panel
   for the current selection; dimension values can be typed and edited. Conflicting, redundant or
   collapsing constraints are refused with an explanation.
 - **Constraint solver:** the geometry moves as little as possible to satisfy the constraints.

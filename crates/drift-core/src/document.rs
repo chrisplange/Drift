@@ -141,12 +141,14 @@ impl std::error::Error for DocumentError {}
 enum Key {
     Entity(EntityId),
     Constraint(ConstraintId),
+    Placement(ConstraintId),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Record {
     Entity(Entity),
     Constraint(Constraint),
+    Placement(DVec2),
 }
 
 /// One undoable step: the before and after state of everything it touched.
@@ -166,6 +168,9 @@ impl Transaction {
 pub struct Document {
     entities: BTreeMap<EntityId, Entity>,
     constraints: BTreeMap<ConstraintId, Constraint>,
+    /// Where dimension labels sit: an offset in world units from the dimension's anchor
+    /// (e.g. the midpoint of a measured line). Missing means "default placement".
+    placements: BTreeMap<ConstraintId, DVec2>,
     next_id: u32,
     next_constraint_id: u32,
     /// Incremented on every change, so caches (spatial index, autosave) can tell when to refresh.
@@ -176,7 +181,9 @@ pub struct Document {
 
 impl PartialEq for Document {
     fn eq(&self, other: &Self) -> bool {
-        self.entities == other.entities && self.constraints == other.constraints
+        self.entities == other.entities
+            && self.constraints == other.constraints
+            && self.placements == other.placements
     }
 }
 
@@ -185,6 +192,7 @@ impl Default for Document {
         Self {
             entities: BTreeMap::new(),
             constraints: BTreeMap::new(),
+            placements: BTreeMap::new(),
             // Ids start at 1; `e0` and `c0` are not valid ids in `.drift` files.
             next_id: 1,
             next_constraint_id: 1,
@@ -269,6 +277,15 @@ impl Document {
         }
     }
 
+    /// The location a dimension slot refers to: a point's position, or a line's midpoint.
+    pub fn ref_point(&self, id: EntityId) -> Option<DVec2> {
+        match self.entities.get(&id)?.kind {
+            EntityKind::Point(p) => Some(p),
+            EntityKind::Line { a, b } => Some((self.point(a).ok()? + self.point(b).ok()?) * 0.5),
+            _ => None,
+        }
+    }
+
     /// Entities that reference `point`.
     pub fn users_of(&self, point: EntityId) -> impl Iterator<Item = EntityId> + '_ {
         self.entities
@@ -347,6 +364,7 @@ impl Document {
         match key {
             Key::Entity(id) => self.entities.get(&id).copied().map(Record::Entity),
             Key::Constraint(id) => self.constraints.get(&id).copied().map(Record::Constraint),
+            Key::Placement(id) => self.placements.get(&id).copied().map(Record::Placement),
         }
     }
 
@@ -381,6 +399,12 @@ impl Document {
             }
             (Key::Constraint(id), _) => {
                 self.constraints.remove(&id);
+            }
+            (Key::Placement(id), Some(Record::Placement(p))) => {
+                self.placements.insert(id, p);
+            }
+            (Key::Placement(id), _) => {
+                self.placements.remove(&id);
             }
         }
     }
@@ -579,8 +603,7 @@ impl Document {
             .map(|(id, _)| *id)
             .collect();
         for id in dangling {
-            self.touch_constraint(id);
-            self.constraints.remove(&id);
+            self.remove_constraint(id);
         }
     }
 
@@ -675,6 +698,7 @@ impl Document {
                 .kind;
             let ok = match slot {
                 Slot::Point => kind.is_point(),
+                Slot::PointOrMidpoint => kind.is_point() || matches!(kind, EntityKind::Line { .. }),
                 Slot::Line => matches!(kind, EntityKind::Line { .. }),
                 Slot::Circular => {
                     matches!(kind, EntityKind::Circle { .. } | EntityKind::Arc { .. })
@@ -688,6 +712,13 @@ impl Document {
                 });
             }
             kinds.push(kind);
+        }
+        // A line's own end point can't sit at its midpoint.
+        if let Constraint::Midpoint { point, .. } = constraint
+            && let EntityKind::Line { a, b } = kinds[1]
+            && (*point == a || *point == b)
+        {
+            return Err(DocumentError::Degenerate("midpoint"));
         }
         // Equal needs two lines or two circular curves.
         if let Constraint::Equal { b, .. } = constraint {
@@ -738,6 +769,29 @@ impl Document {
             self.touch_constraint(id);
             self.constraints.remove(&id);
         }
+        if self.placements.contains_key(&id) {
+            self.touch_key(Key::Placement(id));
+            self.placements.remove(&id);
+        }
+    }
+
+    /// Where a dimension's label sits, as an offset from its anchor (see [`Document`]).
+    pub fn placement(&self, id: ConstraintId) -> Option<DVec2> {
+        self.placements.get(&id).copied()
+    }
+
+    pub fn set_placement(&mut self, id: ConstraintId, offset: DVec2) -> Result<(), DocumentError> {
+        if !self.constraints.contains_key(&id) {
+            return Err(DocumentError::MissingConstraint(id));
+        }
+        if !offset.is_finite() {
+            return Err(DocumentError::InvalidValue);
+        }
+        if self.placements.get(&id) != Some(&offset) {
+            self.touch_key(Key::Placement(id));
+            self.placements.insert(id, offset);
+        }
+        Ok(())
     }
 }
 
@@ -770,6 +824,25 @@ impl History {
         if !tx.is_empty() {
             self.undo.push(tx);
             self.redo.clear();
+        }
+    }
+
+    /// Append a transaction's changes to the most recent undo step (so they undo together).
+    /// With nothing to merge into, it is pushed as its own step.
+    pub fn merge_into_last(&mut self, tx: Transaction) {
+        if tx.is_empty() {
+            return;
+        }
+        match self.undo.last_mut() {
+            Some(last) => {
+                for (key, before, after) in tx.changes {
+                    match last.changes.iter_mut().find(|(k, ..)| *k == key) {
+                        Some(existing) => existing.2 = after,
+                        None => last.changes.push((key, before, after)),
+                    }
+                }
+            }
+            None => self.undo.push(tx),
         }
     }
 

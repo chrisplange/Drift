@@ -3,6 +3,7 @@
 //! The same [`DriftApp`] runs natively and in the browser via eframe. Editing logic lives in
 //! [`editor`] and [`tools`], which don't depend on egui.
 
+mod annotations;
 mod canvas;
 pub mod editor;
 mod overlay;
@@ -19,8 +20,9 @@ use drift_platform::{FileEvent, FilePath, FileType, Files};
 use drift_render::{Camera, grid_info};
 use eframe::egui::{self, Key, KeyboardShortcut, Modifiers as EguiModifiers, PointerButton};
 
+use crate::annotations::{AnnotationColors, AnnotationState, DimLayout, GlyphKind};
 use crate::canvas::CanvasPainter;
-use crate::editor::{Editor, Pointer};
+use crate::editor::{Editor, Guide, GuideKind, Pointer};
 use crate::overlay::{OverlayColors, ScreenMap};
 use crate::tools::{Input, Modifiers, Overlay, Tool, ToolKind};
 
@@ -66,6 +68,35 @@ enum Pending {
     Example,
 }
 
+/// A dimension value being edited in place on the canvas.
+struct DimensionEdit {
+    id: ConstraintId,
+    text: String,
+    /// Focus (and select all) on the next frame.
+    focus: bool,
+}
+
+/// Numbers being typed into the active drawing tool.
+struct Typing {
+    fields: &'static [&'static str],
+    values: [String; 2],
+    active: usize,
+}
+
+impl Typing {
+    fn new(fields: &'static [&'static str]) -> Self {
+        Self {
+            fields,
+            values: Default::default(),
+            active: 0,
+        }
+    }
+
+    fn parsed(&self) -> [Option<f64>; 2] {
+        [0, 1].map(|i| parse_value(&self.values[i]))
+    }
+}
+
 struct Status {
     text: String,
     error: bool,
@@ -101,6 +132,18 @@ pub struct DriftApp {
     focus_dimension: Option<ConstraintId>,
     /// Results of Help → Run solver benchmark.
     benchmark: Option<Vec<String>>,
+    show_dimensions: bool,
+    show_relations: bool,
+    auto_relations: bool,
+    /// A relation or dimension picked on the canvas (Delete removes it).
+    selected_constraint: Option<ConstraintId>,
+    hovered_constraint: Option<ConstraintId>,
+    /// A dimension label being dragged, and the grab offset from the label (world units).
+    label_drag: Option<(ConstraintId, DVec2)>,
+    dimension_edit: Option<DimensionEdit>,
+    typing: Option<Typing>,
+    /// Points the pointer recently snapped to; new points can align with them.
+    inference_points: Vec<DVec2>,
 }
 
 impl DriftApp {
@@ -117,7 +160,7 @@ impl DriftApp {
         let files = Files::new(move || ctx.request_repaint());
 
         let mut app = Self {
-            editor: Editor::default(),
+            editor: Editor::new(Document::new()),
             tool: ToolKind::Select.create(),
             camera: Camera::default(),
             painter,
@@ -142,6 +185,15 @@ impl DriftApp {
             dimension_text: Default::default(),
             focus_dimension: None,
             benchmark: None,
+            show_dimensions: true,
+            show_relations: true,
+            auto_relations: true,
+            selected_constraint: None,
+            hovered_constraint: None,
+            label_drag: None,
+            dimension_edit: None,
+            typing: None,
+            inference_points: Vec::new(),
         };
         if let Some(storage) = cc.storage {
             app.restore_session(storage);
@@ -300,6 +352,9 @@ impl DriftApp {
     fn set_tool(&mut self, kind: ToolKind) {
         if self.tool.kind() != kind {
             self.abort_operation();
+            self.typing = None;
+            self.inference_points.clear();
+            self.editor.highlight.clear();
             self.tool = kind.create();
             self.editor.hovered = None;
         }
@@ -355,7 +410,7 @@ impl DriftApp {
             self.request(Pending::Open);
         }
 
-        if ctx.egui_wants_keyboard_input() {
+        if ctx.text_edit_focused() {
             return;
         }
         if consume(cmd(Key::A)) {
@@ -365,14 +420,21 @@ impl DriftApp {
         let plain = ctx.input(|i| i.modifiers.is_none());
         let pressed = |key| plain && ctx.input(|i| i.key_pressed(key));
 
-        if pressed(Key::Escape) && !self.tool.cancel(&mut self.editor) {
-            self.set_tool(ToolKind::Select);
+        if pressed(Key::Escape) {
+            if self.selected_constraint.take().is_some() {
+                // First Esc just clears a picked relation or dimension.
+            } else if !self.tool.cancel(&mut self.editor) {
+                self.set_tool(ToolKind::Select);
+            }
         }
         if pressed(Key::Enter) {
             self.tool.handle(Input::Finish, &mut self.editor);
         }
         if (pressed(Key::Delete) || pressed(Key::Backspace)) && !self.tool.is_busy() {
-            self.editor.delete_selection();
+            match self.selected_constraint.take() {
+                Some(id) => self.editor.remove_constraint(id),
+                None => self.editor.delete_selection(),
+            }
         }
         if pressed(Key::X) {
             self.editor.toggle_construction();
@@ -390,6 +452,73 @@ impl DriftApp {
                 self.set_tool(kind);
             }
         }
+    }
+
+    /// Route number keys to the active tool's typed fields. Runs before other shortcuts so
+    /// Enter, Esc, Tab and Backspace go to the typing when it is active.
+    fn handle_typing(&mut self, ctx: &egui::Context) {
+        let fields = self.tool.fields();
+        // egui moves keyboard focus between widgets on Tab before we see the key. While a
+        // tool takes typed values, Tab belongs to it, so release focus that landed on a
+        // button (otherwise Enter would also click that button).
+        if !fields.is_empty()
+            && !ctx.text_edit_focused()
+            && let Some(id) = ctx.memory(|m| m.focused())
+        {
+            ctx.memory_mut(|m| m.surrender_focus(id));
+        }
+        if fields.is_empty() || ctx.text_edit_focused() {
+            self.typing = None;
+            self.tool.set_typed([None; 2]);
+            return;
+        }
+        if self.typing.as_ref().is_some_and(|t| t.fields != fields) {
+            self.typing = None;
+        }
+        let typed: String = ctx.input_mut(|i| {
+            let mut typed = String::new();
+            i.events.retain(|e| match e {
+                egui::Event::Text(t)
+                    if t.chars().all(|c| c.is_ascii_digit() || ".,-".contains(c)) =>
+                {
+                    typed.push_str(&t.replace(',', "."));
+                    false
+                }
+                _ => true,
+            });
+            typed
+        });
+        let consume = |key| ctx.input_mut(|i| i.consume_key(EguiModifiers::NONE, key));
+        if !typed.is_empty() {
+            let t = self.typing.get_or_insert_with(|| Typing::new(fields));
+            t.values[t.active].push_str(&typed);
+        } else if self.typing.is_none() && fields.len() > 1 && consume(Key::Tab) {
+            // Tab first: start with the second field (e.g. angle).
+            let mut t = Typing::new(fields);
+            t.active = 1;
+            self.typing = Some(t);
+        }
+        if let Some(t) = &mut self.typing {
+            if consume(Key::Tab) {
+                t.active = (t.active + 1) % t.fields.len();
+            }
+            if consume(Key::Backspace) {
+                t.values[t.active].pop();
+            }
+            if consume(Key::Escape) {
+                self.typing = None;
+            } else if consume(Key::Enter) {
+                let values = t.parsed();
+                self.typing = None;
+                let pointer = self.pointer.unwrap_or_else(|| {
+                    Pointer::new(self.camera.center, PICK_RADIUS / self.camera.scale)
+                });
+                self.tool.set_typed(values);
+                self.tool.commit_typed(&pointer, &mut self.editor);
+            }
+        }
+        let values = self.typing.as_ref().map_or([None; 2], Typing::parsed);
+        self.tool.set_typed(values);
     }
 
     fn fit_bounds(&self) -> Bounds {
@@ -498,6 +627,9 @@ impl DriftApp {
                     self.fit_target = Some(self.fit_bounds());
                 }
                 ui.checkbox(&mut self.grid_snap, "Snap to grid (G)");
+                ui.checkbox(&mut self.auto_relations, "Automatic relations");
+                ui.checkbox(&mut self.show_dimensions, "Show dimensions");
+                ui.checkbox(&mut self.show_relations, "Show relations");
                 let wide = ui.ctx().content_rect().width() >= WIDE_LAYOUT;
                 let mut show = self.show_properties.unwrap_or(wide);
                 if ui.checkbox(&mut show, "Properties panel").changed() {
@@ -542,7 +674,17 @@ impl DriftApp {
         ui.separator();
         let ed = &self.editor;
         let selection: Vec<_> = ed.selection.iter().copied().collect();
+        for line in &ed.selected_midpoints {
+            if let Some(drift_core::Shape::Line { a, b }) = ed.index.shape(*line) {
+                let m = (*a + *b) * 0.5;
+                ui.strong(format!("Midpoint of {line}"));
+                // `+ 0.0` turns -0.0 into 0.0 so it doesn't display as "-0.0000".
+                ui.monospace(format!("{:.4}, {:.4}", m.x + 0.0, m.y + 0.0));
+                ui.add_space(4.0);
+            }
+        }
         match selection.as_slice() {
+            [] if !ed.selected_midpoints.is_empty() => {}
             [] => {
                 ui.label(egui::RichText::new("Nothing selected").weak());
                 ui.add_space(8.0);
@@ -659,19 +801,21 @@ impl DriftApp {
     /// dimension values.
     fn constraint_list(&mut self, ui: &mut egui::Ui) {
         let ed = &self.editor;
-        let constraints: Vec<(ConstraintId, Constraint)> = if ed.selection.is_empty() {
-            ed.doc.constraints().map(|(id, c)| (id, *c)).collect()
-        } else {
-            // Include constraints on the selection's points: a line's length is a distance
-            // between its end points.
-            let mut relevant = ed.doc.defining_points(ed.selection.iter().copied());
-            relevant.extend(ed.selection.iter().copied());
-            ed.doc
-                .constraints()
-                .filter(|(_, c)| c.entities().any(|e| relevant.contains(&e)))
-                .map(|(id, c)| (id, *c))
-                .collect()
-        };
+        let constraints: Vec<(ConstraintId, Constraint)> =
+            if ed.selection.is_empty() && ed.selected_midpoints.is_empty() {
+                ed.doc.constraints().map(|(id, c)| (id, *c)).collect()
+            } else {
+                // Include constraints on the selection's points: a line's length is a distance
+                // between its end points.
+                let mut relevant = ed.doc.defining_points(ed.selection.iter().copied());
+                relevant.extend(ed.selection.iter().copied());
+                relevant.extend(ed.selected_midpoints.iter().copied());
+                ed.doc
+                    .constraints()
+                    .filter(|(_, c)| c.entities().any(|e| relevant.contains(&e)))
+                    .map(|(id, c)| (id, *c))
+                    .collect()
+            };
         if constraints.is_empty() {
             return;
         }
@@ -829,6 +973,7 @@ impl DriftApp {
     fn make_pointer(&self, map: &ScreenMap, pos: egui::Pos2, snap: bool) -> Pointer {
         let raw = map.to_world(pos);
         let mut pointer = Pointer::new(raw, PICK_RADIUS / self.camera.scale);
+        pointer.relations = self.auto_relations;
         if snap && self.tool.wants_snap() {
             let options = SnapOptions {
                 tolerance: pointer.tolerance,
@@ -837,8 +982,208 @@ impl DriftApp {
             let ed = &self.editor;
             let tool = &self.tool;
             pointer.snap = ed.index.snap(raw, options, |id| tool.snap_excludes(ed, id));
+            if pointer.snapped_point().is_none() {
+                pointer.guide = self.inference(raw, pointer.tolerance);
+            }
+        }
+        if snap {
+            self.tool.refine_pointer(&mut pointer);
         }
         pointer
+    }
+
+    /// Align `at` horizontally / vertically with recently snapped points (inference lines).
+    fn inference(&self, at: DVec2, tol: f64) -> Option<Guide> {
+        let mut x_ref: Option<(f64, DVec2)> = None;
+        let mut y_ref: Option<(f64, DVec2)> = None;
+        for &q in &self.inference_points {
+            if (at - q).length() <= tol {
+                continue;
+            }
+            let (dx, dy) = ((at.x - q.x).abs(), (at.y - q.y).abs());
+            if dx <= tol && x_ref.is_none_or(|(d, _)| dx < d) {
+                x_ref = Some((dx, q));
+            }
+            if dy <= tol && y_ref.is_none_or(|(d, _)| dy < d) {
+                y_ref = Some((dy, q));
+            }
+        }
+        if x_ref.is_none() && y_ref.is_none() {
+            return None;
+        }
+        Some(Guide {
+            at: DVec2::new(
+                x_ref.map_or(at.x, |(_, q)| q.x),
+                y_ref.map_or(at.y, |(_, q)| q.y),
+            ),
+            kind: GuideKind::Aligned,
+            from: [x_ref.map(|r| r.1), y_ref.map(|r| r.1)],
+        })
+    }
+
+    fn layout_dimensions(&self, painter: &egui::Painter, map: &ScreenMap) -> Vec<DimLayout> {
+        let doc = &self.editor.doc;
+        doc.constraints()
+            .filter(|(_, c)| c.is_dimension())
+            .filter_map(|(id, c)| {
+                annotations::layout_dimension(painter, doc, Some(id), c, doc.placement(id), map)
+            })
+            .collect()
+    }
+
+    /// Hover, pick, drag and double-click dimensions and relation glyphs. Returns true if the
+    /// pointer input was used here (so the tool shouldn't see it).
+    fn annotation_input(
+        &mut self,
+        ui: &egui::Ui,
+        response: &egui::Response,
+        map: &ScreenMap,
+        dims: &[DimLayout],
+        glyphs: &[annotations::GlyphLayout],
+        pos: Option<egui::Pos2>,
+    ) -> bool {
+        let idle = self.tool.kind() == ToolKind::Select && !self.tool.is_busy();
+        let dim_at = |p: egui::Pos2| dims.iter().rev().find(|d| d.text_rect.contains(p));
+        let glyph_at = |p: egui::Pos2| glyphs.iter().rev().find(|g| g.rect.contains(p));
+        let hit = |p: egui::Pos2| {
+            dim_at(p)
+                .and_then(|d| d.id)
+                .or_else(|| glyph_at(p).map(|g| g.id))
+        };
+
+        self.hovered_constraint = if idle && self.label_drag.is_none() {
+            pos.and_then(hit)
+        } else {
+            None
+        };
+
+        // Dragging a dimension label.
+        if idle
+            && self.label_drag.is_none()
+            && response.drag_started_by(PointerButton::Primary)
+            && let Some(origin) = ui.input(|i| i.pointer.press_origin())
+            && let Some(dim) = dim_at(origin)
+            && let Some(id) = dim.id
+        {
+            let label = dim.anchor
+                + self.editor.doc.placement(id).unwrap_or_else(|| {
+                    annotations::default_offset(
+                        &self.editor.doc,
+                        &dim.constraint,
+                        self.camera.scale,
+                    )
+                });
+            self.label_drag = Some((id, map.to_world(origin) - label));
+            self.selected_constraint = Some(id);
+            self.editor.doc.begin();
+        }
+        if let Some((id, grab)) = self.label_drag {
+            if let (Some(p), Some(c)) = (
+                response.interact_pointer_pos(),
+                self.editor.doc.constraint(id).copied(),
+            ) && let Some(anchor) = annotations::dimension_anchor(&self.editor.doc, &c)
+            {
+                let offset = map.to_world(p) - grab - anchor;
+                self.editor.place_dimension(id, offset);
+            }
+            if !response.dragged_by(PointerButton::Primary) {
+                self.label_drag = None;
+                self.editor.commit("Move dimension");
+            }
+            return true;
+        }
+        if !idle {
+            return false;
+        }
+        let at = release_pos(ui, PointerButton::Primary).or(pos);
+        if response.double_clicked_by(PointerButton::Primary)
+            && let Some(id) = at.and_then(|p| dim_at(p).and_then(|d| d.id))
+        {
+            self.open_dimension_edit(id);
+            return true;
+        }
+        if response.clicked_by(PointerButton::Primary) {
+            if let Some(id) = at.and_then(hit) {
+                self.selected_constraint = Some(id);
+                self.editor.selection.clear();
+                return true;
+            }
+            self.selected_constraint = None;
+        }
+        false
+    }
+
+    fn open_dimension_edit(&mut self, id: ConstraintId) {
+        if let Some(value) = self.editor.doc.constraint(id).and_then(|c| c.value()) {
+            self.dimension_edit = Some(DimensionEdit {
+                id,
+                text: format_value(value),
+                focus: true,
+            });
+        }
+    }
+
+    /// The in-place dimension value editor.
+    fn dimension_editor(&mut self, ctx: &egui::Context, dims: &[DimLayout], now: f64) {
+        let Some(mut edit) = self.dimension_edit.take() else {
+            return;
+        };
+        let Some(at) = dims
+            .iter()
+            .find(|d| d.id == Some(edit.id))
+            .map(|d| d.text_rect.center())
+            .or_else(|| self.pointer.map(|_| self.canvas_rect.center()))
+        else {
+            return;
+        };
+        let field = egui::Id::new("dimension_edit_field");
+        let mut keep = true;
+        egui::Area::new(egui::Id::new("dimension_edit"))
+            .fixed_pos(at - egui::vec2(45.0, 11.0))
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                let response = ui.add(
+                    egui::TextEdit::singleline(&mut edit.text)
+                        .id(field)
+                        .desired_width(90.0)
+                        .horizontal_align(egui::Align::Center),
+                );
+                if edit.focus {
+                    response.request_focus();
+                    if let Some(mut state) = egui::TextEdit::load_state(ctx, field) {
+                        let all = egui::text::CCursorRange::two(
+                            egui::text::CCursor::new(0),
+                            egui::text::CCursor::new(edit.text.chars().count()),
+                        );
+                        state.cursor.set_char_range(Some(all));
+                        state.store(ctx, field);
+                    }
+                    edit.focus = false;
+                } else if response.lost_focus() {
+                    keep = false;
+                    if ui.input(|i| i.key_pressed(Key::Enter)) {
+                        match parse_value(&edit.text) {
+                            Some(value) => {
+                                if let Err(e) = self.editor.set_dimension(edit.id, value) {
+                                    self.set_status(
+                                        format!("Can't use {}: {e}", edit.text),
+                                        true,
+                                        now,
+                                    );
+                                }
+                            }
+                            None => self.set_status(
+                                format!("\"{}\" is not a number", edit.text),
+                                true,
+                                now,
+                            ),
+                        }
+                    }
+                }
+            });
+        if keep {
+            self.dimension_edit = Some(edit);
+        }
     }
 
     fn canvas(&mut self, ui: &mut egui::Ui) {
@@ -870,6 +1215,19 @@ impl DriftApp {
         });
         let snap = !alt; // hold Alt to place freely
 
+        // Annotations are laid out first so they can take pointer input before the tool.
+        let annotation_painter = ui.painter_at(rect);
+        let dims = if self.show_dimensions {
+            self.layout_dimensions(&annotation_painter, &map)
+        } else {
+            Vec::new()
+        };
+        let glyphs = if self.show_relations {
+            annotations::layout_glyphs(&self.editor.doc, &map)
+        } else {
+            Vec::new()
+        };
+
         // Feed pointer input to the active tool.
         let dragging = response.dragged_by(PointerButton::Primary);
         let pos = if dragging {
@@ -877,15 +1235,22 @@ impl DriftApp {
         } else {
             response.hover_pos()
         };
-        if response.drag_started_by(PointerButton::Primary)
+        let consumed = self.annotation_input(ui, &response, &map, &dims, &glyphs, pos);
+        if consumed {
+            self.pointer = pos.map(|pos| self.make_pointer(&map, pos, snap));
+        } else if response.drag_started_by(PointerButton::Primary)
             && let Some(origin) = ui.input(|i| i.pointer.press_origin())
         {
             let p = self.make_pointer(&map, origin, snap);
             self.tool
                 .handle(Input::DragStart(p, mods), &mut self.editor);
         }
-        self.pointer = pos.map(|pos| self.make_pointer(&map, pos, snap));
-        if let Some(p) = self.pointer {
+        if !consumed {
+            self.pointer = pos.map(|pos| self.make_pointer(&map, pos, snap));
+        }
+        if consumed {
+            // The annotation took this frame's input.
+        } else if let Some(p) = self.pointer {
             if dragging {
                 self.tool.handle(Input::Drag(p), &mut self.editor);
             } else {
@@ -914,6 +1279,28 @@ impl DriftApp {
         }
         // Tool events may have changed the document (and the pointer's snap targets).
         self.editor.sync();
+        if let Some(id) = self.editor.pending_edit.take() {
+            self.open_dimension_edit(id);
+        }
+        // Remember points the pointer snapped to, for inference lines.
+        if let Some(snap) = self.pointer.and_then(|p| p.snap)
+            && snap.kind.is_point()
+            && !self.inference_points.contains(&snap.at)
+        {
+            self.inference_points.push(snap.at);
+            if self.inference_points.len() > 4 {
+                self.inference_points.remove(0);
+            }
+        }
+        // Show what a hovered or picked relation/dimension applies to.
+        if self.tool.kind() != ToolKind::Dimension {
+            self.editor.highlight = self
+                .hovered_constraint
+                .or(self.selected_constraint)
+                .and_then(|id| self.editor.doc.constraint(id))
+                .map(|c| c.entities().collect())
+                .unwrap_or_default();
+        }
         if self.tool.kind() != ToolKind::Select && response.hovered() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
         }
@@ -941,6 +1328,10 @@ impl DriftApp {
         if let Some(Overlay::SelectionBox { rect: r, crossing }) = self.tool.overlay() {
             overlay::selection_box(&painter, &map, &r, crossing, &colors);
         }
+        self.paint_annotations(&painter, &map, &dims, &glyphs, ui.visuals().dark_mode);
+        let ctx = ui.ctx().clone();
+        let now = ctx.input(|i| i.time);
+        self.dimension_editor(&ctx, &dims, now);
         if let (Some(p), Some(pos)) = (self.pointer, pos) {
             let mut label = Vec::new();
             if let Some(snap) = p.snap {
@@ -950,7 +1341,124 @@ impl DriftApp {
             if let Some(m) = self.tool.measurement(&p) {
                 label.push(m);
             }
+            if let Some(t) = &self.typing {
+                for (i, field) in t.fields.iter().enumerate() {
+                    let marker = if i == t.active { ">" } else { " " };
+                    label.push(format!("{marker} {field}: {}", t.values[i]));
+                }
+            } else if !self.tool.fields().is_empty() && self.tool.kind() != ToolKind::Select {
+                label.push(format!("Type {}", self.tool.fields().join(" / ")));
+            }
             overlay::cursor_label(&painter, pos, &label, &colors);
+        }
+    }
+
+    fn paint_annotations(
+        &self,
+        painter: &egui::Painter,
+        map: &ScreenMap,
+        dims: &[DimLayout],
+        glyphs: &[annotations::GlyphLayout],
+        dark: bool,
+    ) {
+        let colors = AnnotationColors::new(dark);
+        let conflicts = &self.editor.analysis().conflicts;
+        let state = |id: ConstraintId| {
+            if self.selected_constraint == Some(id) || self.label_drag.is_some_and(|d| d.0 == id) {
+                AnnotationState::Selected
+            } else if self.hovered_constraint == Some(id) {
+                AnnotationState::Hovered
+            } else if conflicts.contains(&id) {
+                AnnotationState::Conflict
+            } else {
+                AnnotationState::Normal
+            }
+        };
+        for dim in dims {
+            if let Some(id) = dim.id
+                && self.dimension_edit.as_ref().is_none_or(|e| e.id != id)
+            {
+                annotations::paint_dimension(painter, dim, state(id), &colors);
+                // Mark midpoints the dimension measures to (a line in a point slot).
+                for (e, slot) in dim.constraint.slots() {
+                    if slot == drift_core::Slot::PointOrMidpoint
+                        && matches!(
+                            self.editor.doc.get(e).map(|x| x.kind),
+                            Some(drift_core::EntityKind::Line { .. })
+                        )
+                        && let Some(m) = self.editor.doc.ref_point(e)
+                    {
+                        let color = match state(id) {
+                            AnnotationState::Normal => colors.normal,
+                            AnnotationState::Hovered => colors.hovered,
+                            AnnotationState::Selected => colors.selected,
+                            AnnotationState::Conflict => colors.conflict,
+                            AnnotationState::Preview => colors.preview,
+                        };
+                        annotations::paint_midpoint_marker(painter, map.to_screen(m), color, false);
+                    }
+                }
+            }
+        }
+        if let Some((c, offset)) = self
+            .tool
+            .pending_dimension(&self.editor, self.pointer.as_ref())
+            && let Some(dim) = annotations::layout_dimension(
+                painter,
+                &self.editor.doc,
+                None,
+                &c,
+                Some(offset),
+                map,
+            )
+        {
+            annotations::paint_dimension(painter, &dim, AnnotationState::Preview, &colors);
+        }
+        for glyph in glyphs {
+            annotations::paint_glyph(painter, glyph.rect, glyph.kind, state(glyph.id), &colors);
+        }
+        // Picked and hovered line midpoints.
+        let ed = &self.editor;
+        let midpoint_at = |line| match ed.index.shape(line) {
+            Some(drift_core::Shape::Line { a, b }) => Some(map.to_screen((*a + *b) * 0.5)),
+            _ => None,
+        };
+        for line in &ed.selected_midpoints {
+            if let Some(at) = midpoint_at(*line) {
+                annotations::paint_midpoint_marker(painter, at, colors.selected, true);
+            }
+        }
+        if let Some(at) = ed.hovered_midpoint.and_then(midpoint_at) {
+            annotations::paint_midpoint_marker(painter, at, colors.hovered, false);
+        }
+        // Inference guide lines and the automatic relation about to be added.
+        if let Some(p) = self.pointer
+            && let Some(guide) = p.guide
+            && p.snapped_point().is_none()
+        {
+            let at = map.to_screen(guide.at);
+            let stroke = egui::Stroke::new(1.0, colors.preview.gamma_multiply(0.8));
+            for from in guide.from.iter().flatten() {
+                painter.extend(egui::Shape::dashed_line(
+                    &[map.to_screen(*from), at],
+                    stroke,
+                    4.0,
+                    3.0,
+                ));
+            }
+            let kind = match guide.kind {
+                GuideKind::Horizontal => Some(GlyphKind::Horizontal),
+                GuideKind::Vertical => Some(GlyphKind::Vertical),
+                GuideKind::Aligned => None,
+            };
+            if let Some(kind) = kind.filter(|_| self.auto_relations) {
+                annotations::paint_auto_relation(
+                    painter,
+                    at + egui::vec2(-14.0, -16.0),
+                    kind,
+                    &colors,
+                );
+            }
         }
     }
 
@@ -1071,6 +1579,11 @@ impl DriftApp {
             self.grid_snap,
             self.pending,
             self.editor.doc.constraint_count(),
+            self.selected_constraint,
+            self.hovered_constraint,
+            self.editor.hovered_midpoint,
+            self.editor.selected_midpoints.len(),
+            self.typing.as_ref().map(|t| (t.values.clone(), t.active)),
         )
     }
 
@@ -1180,9 +1693,23 @@ const SHORTCUTS: &[(&str, &str)] = &[
     ("C", "Circle"),
     ("A", "Arc (centre, start, end)"),
     ("P", "Point"),
+    ("D", "Smart Dimension"),
+    (
+        "Click near a line's middle",
+        "Pick its midpoint (e.g. point + midpoint -> Midpoint)",
+    ),
+    (
+        "0-9 . -  (while drawing)",
+        "Type exact values; Tab switches field, Enter applies",
+    ),
+    ("Double-click a dimension", "Edit its value"),
+    ("Drag a dimension", "Move its label"),
     ("Enter / right-click", "Finish polyline"),
     ("Esc", "Cancel operation / clear selection"),
-    ("Del", "Delete selection"),
+    (
+        "Del",
+        "Delete selection, or the picked relation / dimension",
+    ),
     ("X", "Toggle construction"),
     ("Ctrl+A", "Select all"),
     ("Ctrl+Z / Ctrl+Y", "Undo / redo"),
@@ -1201,8 +1728,8 @@ fn property_rows(ui: &mut egui::Ui, shape: &Shape) {
         ui.monospace(value);
         ui.end_row();
     };
-    let pt = |p: DVec2| format!("{:.4}, {:.4}", p.x, p.y);
-    let len = |v: f64| format!("{v:.4} mm");
+    let pt = |p: DVec2| format!("{:.4}, {:.4}", p.x + 0.0, p.y + 0.0);
+    let len = |v: f64| format!("{:.4} mm", v + 0.0);
     let deg = |a: f64| format!("{:.4}°", a.to_degrees());
     match *shape {
         Shape::Point(p) => {
@@ -1246,7 +1773,9 @@ impl eframe::App for DriftApp {
         if let Some(notice) = self.editor.notice.take() {
             self.set_status(notice, true, now);
         }
+        self.editor.auto_relations = self.auto_relations;
         if self.pending.is_none() {
+            self.handle_typing(&ctx);
             self.shortcuts(&ctx);
         }
 

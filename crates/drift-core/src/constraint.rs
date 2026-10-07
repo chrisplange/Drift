@@ -18,6 +18,8 @@ impl std::fmt::Display for ConstraintId {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Slot {
     Point,
+    /// A point, or a line standing for its midpoint (dimensions can measure to midpoints).
+    PointOrMidpoint,
     Line,
     /// A circle or an arc.
     Circular,
@@ -29,6 +31,7 @@ impl Slot {
     pub fn describe(self) -> &'static str {
         match self {
             Slot::Point => "a point",
+            Slot::PointOrMidpoint => "a point or a line's midpoint",
             Slot::Line => "a line",
             Slot::Circular => "a circle or arc",
             Slot::LineOrCircular => "a line, circle or arc",
@@ -72,6 +75,11 @@ pub enum Constraint {
         a: EntityId,
         b: EntityId,
     },
+    /// A point kept at the midpoint of a line.
+    Midpoint {
+        point: EntityId,
+        line: EntityId,
+    },
     /// A point locked at a location.
     Fix {
         point: EntityId,
@@ -83,6 +91,7 @@ pub enum Constraint {
         radius: f64,
     },
     /// Driving dimension: distance between two points (a line's length uses its end points).
+    /// Either may be a line, meaning its midpoint.
     Distance {
         a: EntityId,
         b: EntityId,
@@ -91,6 +100,29 @@ pub enum Constraint {
     /// Driving dimension: radius of a circle or arc.
     Radius {
         curve: EntityId,
+        value: f64,
+    },
+    /// Driving dimension: diameter of a circle or arc.
+    Diameter {
+        curve: EntityId,
+        value: f64,
+    },
+    /// Driving dimension: horizontal (x) distance between two points.
+    HorizontalDistance {
+        a: EntityId,
+        b: EntityId,
+        value: f64,
+    },
+    /// Driving dimension: vertical (y) distance between two points.
+    VerticalDistance {
+        a: EntityId,
+        b: EntityId,
+        value: f64,
+    },
+    /// Driving dimension: perpendicular distance from a point to a line (extended infinitely).
+    PointLineDistance {
+        point: EntityId,
+        line: EntityId,
         value: f64,
     },
     /// Driving dimension: angle between two lines, in degrees, measured from `a` to `b`
@@ -109,8 +141,17 @@ impl Constraint {
         match *self {
             Constraint::Coincident { a, b }
             | Constraint::HorizontalPoints { a, b }
-            | Constraint::VerticalPoints { a, b }
-            | Constraint::Distance { a, b, .. } => vec![(a, Point), (b, Point)],
+            | Constraint::VerticalPoints { a, b } => vec![(a, Point), (b, Point)],
+            // Distance dimensions may measure to a line's midpoint: a line id in a point slot.
+            Constraint::Distance { a, b, .. }
+            | Constraint::HorizontalDistance { a, b, .. }
+            | Constraint::VerticalDistance { a, b, .. } => {
+                vec![(a, PointOrMidpoint), (b, PointOrMidpoint)]
+            }
+            Constraint::PointLineDistance { point, line, .. } => {
+                vec![(point, PointOrMidpoint), (line, Line)]
+            }
+            Constraint::Midpoint { point, line } => vec![(point, Point), (line, Line)],
             Constraint::Horizontal { line } | Constraint::Vertical { line } => {
                 vec![(line, Line)]
             }
@@ -119,9 +160,9 @@ impl Constraint {
             | Constraint::Angle { a, b, .. } => vec![(a, Line), (b, Line)],
             Constraint::Equal { a, b } => vec![(a, LineOrCircular), (b, LineOrCircular)],
             Constraint::Fix { point, .. } => vec![(point, Point)],
-            Constraint::FixRadius { curve, .. } | Constraint::Radius { curve, .. } => {
-                vec![(curve, Circular)]
-            }
+            Constraint::FixRadius { curve, .. }
+            | Constraint::Radius { curve, .. }
+            | Constraint::Diameter { curve, .. } => vec![(curve, Circular)],
         }
     }
 
@@ -133,22 +174,36 @@ impl Constraint {
     pub fn type_name(&self) -> &'static str {
         match self {
             Constraint::Coincident { .. } => "Coincident",
+            Constraint::Midpoint { .. } => "Midpoint",
             Constraint::Horizontal { .. } | Constraint::HorizontalPoints { .. } => "Horizontal",
             Constraint::Vertical { .. } | Constraint::VerticalPoints { .. } => "Vertical",
             Constraint::Parallel { .. } => "Parallel",
             Constraint::Perpendicular { .. } => "Perpendicular",
             Constraint::Equal { .. } => "Equal",
             Constraint::Fix { .. } | Constraint::FixRadius { .. } => "Fix",
-            Constraint::Distance { .. } => "Distance",
+            Constraint::Distance { .. } | Constraint::PointLineDistance { .. } => "Distance",
             Constraint::Radius { .. } => "Radius",
+            Constraint::Diameter { .. } => "Diameter",
+            Constraint::HorizontalDistance { .. } => "Horizontal distance",
+            Constraint::VerticalDistance { .. } => "Vertical distance",
             Constraint::Angle { .. } => "Angle",
         }
+    }
+
+    /// Dimensions have a value and are drawn with a label; relations are not.
+    pub fn is_dimension(&self) -> bool {
+        self.value().is_some()
     }
 
     /// The driving value of a dimension (mm, or degrees for angles).
     pub fn value(&self) -> Option<f64> {
         match *self {
-            Constraint::Distance { value, .. } | Constraint::Radius { value, .. } => Some(value),
+            Constraint::Distance { value, .. }
+            | Constraint::Radius { value, .. }
+            | Constraint::Diameter { value, .. }
+            | Constraint::HorizontalDistance { value, .. }
+            | Constraint::VerticalDistance { value, .. }
+            | Constraint::PointLineDistance { value, .. } => Some(value),
             Constraint::Angle { degrees, .. } => Some(degrees),
             _ => None,
         }
@@ -165,7 +220,12 @@ impl Constraint {
     /// A copy with a new dimension value. Non-dimensions are returned unchanged.
     pub fn with_value(mut self, new: f64) -> Self {
         match &mut self {
-            Constraint::Distance { value, .. } | Constraint::Radius { value, .. } => *value = new,
+            Constraint::Distance { value, .. }
+            | Constraint::Radius { value, .. }
+            | Constraint::Diameter { value, .. }
+            | Constraint::HorizontalDistance { value, .. }
+            | Constraint::VerticalDistance { value, .. }
+            | Constraint::PointLineDistance { value, .. } => *value = new,
             Constraint::Angle { degrees, .. } => *degrees = new,
             _ => {}
         }
@@ -175,9 +235,12 @@ impl Constraint {
     /// Whether a dimension value is acceptable.
     pub fn value_is_valid(&self) -> bool {
         match *self {
-            Constraint::Distance { value, .. } | Constraint::Radius { value, .. } => {
-                value.is_finite() && value > 0.0
-            }
+            Constraint::Distance { value, .. }
+            | Constraint::Radius { value, .. }
+            | Constraint::Diameter { value, .. }
+            | Constraint::HorizontalDistance { value, .. }
+            | Constraint::VerticalDistance { value, .. }
+            | Constraint::PointLineDistance { value, .. } => value.is_finite() && value > 0.0,
             Constraint::Angle { degrees, .. } => degrees.is_finite(),
             Constraint::Fix { at, .. } => at.is_finite(),
             Constraint::FixRadius { radius, .. } => radius.is_finite() && radius > 0.0,
@@ -196,11 +259,15 @@ impl Constraint {
             Constraint::Coincident { a, b }
             | Constraint::HorizontalPoints { a, b }
             | Constraint::VerticalPoints { a, b }
-            | Constraint::Distance { a, b, .. } => {
+            | Constraint::Distance { a, b, .. }
+            | Constraint::HorizontalDistance { a, b, .. }
+            | Constraint::VerticalDistance { a, b, .. } => {
                 swap(a);
                 swap(b);
             }
-            Constraint::Fix { point, .. } => swap(point),
+            Constraint::Fix { point, .. }
+            | Constraint::PointLineDistance { point, .. }
+            | Constraint::Midpoint { point, .. } => swap(point),
             _ => {}
         }
     }
@@ -212,6 +279,8 @@ impl Constraint {
             | Constraint::HorizontalPoints { a, b }
             | Constraint::VerticalPoints { a, b }
             | Constraint::Distance { a, b, .. }
+            | Constraint::HorizontalDistance { a, b, .. }
+            | Constraint::VerticalDistance { a, b, .. }
             | Constraint::Parallel { a, b }
             | Constraint::Perpendicular { a, b }
             | Constraint::Equal { a, b }

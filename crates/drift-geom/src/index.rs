@@ -143,6 +143,25 @@ impl SceneIndex {
             .map(|(id, ..)| id)
     }
 
+    /// The line whose midpoint is nearest to `p` within `tolerance`, if any.
+    pub fn pick_midpoint(
+        &self,
+        p: DVec2,
+        tolerance: f64,
+        accept: impl Fn(EntityId) -> bool,
+    ) -> Option<EntityId> {
+        let rect = Bounds::from_center_half_size(p, DVec2::splat(tolerance));
+        self.query(rect)
+            .filter(|id| accept(*id))
+            .filter_map(|id| match self.shapes.get(&id) {
+                Some(Shape::Line { a, b }) => Some((id, ((*a + *b) * 0.5).distance(p))),
+                _ => None,
+            })
+            .filter(|(_, d)| *d <= tolerance)
+            .min_by(|x, y| x.1.total_cmp(&y.1))
+            .map(|(id, _)| id)
+    }
+
     /// Box selection of curves and standalone points. A crossing selection takes anything that
     /// touches the box; a window selection only what lies fully inside.
     pub fn select_in_rect(&self, rect: &Bounds, crossing: bool) -> Vec<EntityId> {
@@ -196,6 +215,9 @@ mod tests {
         assert_eq!(index.pick(v(5.0, 0.4), 1.0, |_| true), Some(line));
         // On the circle.
         assert_eq!(index.pick(v(5.0, 7.1), 0.5, |_| true), Some(circle));
+        // Midpoints are pickable separately.
+        assert_eq!(index.pick_midpoint(v(5.2, 0.3), 1.0, |_| true), Some(line));
+        assert_eq!(index.pick_midpoint(v(2.0, 0.0), 1.0, |_| true), None);
         // Excluded candidates are skipped.
         assert_eq!(index.pick(v(0.3, 0.2), 1.0, |id| id != a), Some(line));
         assert_eq!(index.pick(v(50.0, 50.0), 1.0, |_| true), None);

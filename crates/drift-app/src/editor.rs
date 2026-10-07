@@ -41,6 +41,26 @@ pub struct ConstraintOption {
     pub constraints: Vec<Constraint>,
 }
 
+/// Why the pointer was moved off its raw position other than by a snap.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GuideKind {
+    /// Aligned horizontally and/or vertically with recently hovered points (inference lines).
+    Aligned,
+    /// Made exactly horizontal from the previous point; the new line gets a Horizontal relation.
+    Horizontal,
+    /// Made exactly vertical from the previous point; the new line gets a Vertical relation.
+    Vertical,
+}
+
+/// An inference: the adjusted position and the points the dotted guide lines run from.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Guide {
+    pub at: DVec2,
+    pub kind: GuideKind,
+    /// Up to two reference points (for drawing guide lines).
+    pub from: [Option<DVec2>; 2],
+}
+
 /// Where the pointer is, in world coordinates, with its snap target (if any).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Pointer {
@@ -49,6 +69,10 @@ pub struct Pointer {
     pub snap: Option<Snap>,
     /// Picking tolerance in world units.
     pub tolerance: f64,
+    /// Inference adjustment, used unless the pointer snapped to an existing point.
+    pub guide: Option<Guide>,
+    /// Whether snapping onto a midpoint should add a Midpoint relation (automatic relations).
+    pub relations: bool,
 }
 
 impl Pointer {
@@ -57,12 +81,35 @@ impl Pointer {
             raw,
             snap: None,
             tolerance,
+            guide: None,
+            relations: true,
         }
     }
 
-    /// The snapped position, or the raw position if nothing snapped.
+    /// The line whose midpoint the pointer snapped to, if it should get a Midpoint relation.
+    pub fn midpoint_of(&self) -> Option<EntityId> {
+        self.snap
+            .filter(|s| s.kind == drift_geom::SnapKind::Midpoint && self.relations)
+            .and_then(|s| s.entity)
+    }
+
+    /// The effective position: an existing point snapped to, else an inference, else a snap
+    /// (curve / grid), else the raw position.
     pub fn pos(&self) -> DVec2 {
-        self.snap.map_or(self.raw, |s| s.at)
+        match (self.snap, self.guide) {
+            (Some(s), _) if s.kind.is_point() => s.at,
+            (_, Some(g)) => g.at,
+            (Some(s), None) => s.at,
+            (None, None) => self.raw,
+        }
+    }
+
+    /// The automatic relation implied by the guide, if any.
+    pub fn auto_relation(&self) -> Option<GuideKind> {
+        self.guide
+            .map(|g| g.kind)
+            .filter(|k| *k != GuideKind::Aligned)
+            .filter(|_| self.snapped_point().is_none())
     }
 
     /// The existing point entity under the pointer, if it snapped to one.
@@ -76,6 +123,7 @@ impl Pointer {
         Anchor {
             pos: self.pos(),
             existing: self.snapped_point(),
+            midpoint_of: self.midpoint_of(),
         }
     }
 }
@@ -85,14 +133,32 @@ impl Pointer {
 pub struct Anchor {
     pub pos: DVec2,
     pub existing: Option<EntityId>,
+    /// A new point here should be kept at this line's midpoint.
+    pub midpoint_of: Option<EntityId>,
 }
 
 impl Anchor {
-    /// The point entity for this anchor, creating it if needed. Call inside a transaction.
+    /// A new point at an exact position.
+    pub fn at(pos: DVec2) -> Self {
+        Self {
+            pos,
+            existing: None,
+            midpoint_of: None,
+        }
+    }
+
+    /// The point entity for this anchor, creating it if needed (with its Midpoint relation, if
+    /// it was snapped to a midpoint). Call inside a transaction.
     pub fn resolve(&self, doc: &mut Document) -> EntityId {
         match self.existing {
             Some(id) if doc.contains(id) => id,
-            _ => doc.add_point(self.pos),
+            _ => {
+                let point = doc.add_point(self.pos);
+                if let Some(line) = self.midpoint_of {
+                    let _ = doc.add_constraint(Constraint::Midpoint { point, line });
+                }
+                point
+            }
         }
     }
 }
@@ -103,18 +169,29 @@ pub struct Editor {
     pub history: History,
     pub selection: BTreeSet<EntityId>,
     pub hovered: Option<EntityId>,
+    /// Lines whose midpoints are selected (midpoints aren't entities, but can be picked).
+    pub selected_midpoints: BTreeSet<EntityId>,
+    /// The line whose midpoint is under the pointer.
+    pub hovered_midpoint: Option<EntityId>,
     pub index: SceneIndex,
     /// Degrees-of-freedom analysis of the document at `analyzed`.
     analysis: SolveReport,
     analyzed: Option<u64>,
     /// A message for the UI explaining a refused edit.
     pub notice: Option<String>,
+    /// Entities to emphasise because a related constraint is hovered or selected.
+    pub highlight: BTreeSet<EntityId>,
+    /// A dimension just created by a tool, whose value the UI should let the user type.
+    pub pending_edit: Option<ConstraintId>,
+    /// Whether drawing tools add relations they infer (horizontal / vertical lines, rectangles).
+    pub auto_relations: bool,
 }
 
 impl Editor {
     pub fn new(doc: Document) -> Self {
         let mut editor = Self {
             doc,
+            auto_relations: true,
             ..Default::default()
         };
         editor.sync();
@@ -130,6 +207,12 @@ impl Editor {
         }
         let doc = &self.doc;
         self.selection.retain(|id| doc.contains(*id));
+        let is_line =
+            |id: &EntityId| matches!(doc.get(*id).map(|e| e.kind), Some(EntityKind::Line { .. }));
+        self.selected_midpoints.retain(is_line);
+        if self.hovered_midpoint.is_some_and(|id| !is_line(&id)) {
+            self.hovered_midpoint = None;
+        }
         if self.hovered.is_some_and(|id| !doc.contains(id)) {
             self.hovered = None;
         }
@@ -247,6 +330,34 @@ impl Editor {
         Ok(ids)
     }
 
+    /// Add a dimension with its label placed at `placement` (offset from its anchor), as one
+    /// undoable step.
+    pub fn add_dimension(
+        &mut self,
+        constraint: Constraint,
+        placement: Option<DVec2>,
+    ) -> Result<ConstraintId, EditError> {
+        let id = *self
+            .add_constraints(constraint.type_name(), &[constraint])?
+            .first()
+            .expect("one constraint added");
+        if let Some(offset) = placement {
+            // Fold the placement into the step that added the dimension.
+            let tx_label = constraint.type_name();
+            self.doc.begin();
+            let _ = self.doc.set_placement(id, offset);
+            let tx = self.doc.commit(tx_label);
+            self.history.merge_into_last(tx);
+            self.sync();
+        }
+        Ok(id)
+    }
+
+    /// Move a dimension's label (inside an open transaction while dragging).
+    pub fn place_dimension(&mut self, id: ConstraintId, offset: DVec2) {
+        let _ = self.doc.set_placement(id, offset);
+    }
+
     /// Change a dimension's value, moving geometry to match.
     pub fn set_dimension(&mut self, id: ConstraintId, value: f64) -> Result<(), EditError> {
         let Some(current) = self.doc.constraint(id).copied() else {
@@ -290,6 +401,23 @@ impl Editor {
         let sel = self.classify_selection();
         let mut out = Vec::new();
         let opt = |label, constraints: Vec<Constraint>| ConstraintOption { label, constraints };
+        if let ([point], [line], [], []) | ([point], [], [], [line]) = (
+            sel.points.as_slice(),
+            sel.lines.as_slice(),
+            sel.circulars.as_slice(),
+            sel.midpoints.as_slice(),
+        ) {
+            out.push(opt(
+                "Midpoint",
+                vec![Constraint::Midpoint {
+                    point: *point,
+                    line: *line,
+                }],
+            ));
+        }
+        if !sel.midpoints.is_empty() {
+            return out;
+        }
         match (
             sel.points.as_slice(),
             sel.lines.as_slice(),
@@ -364,6 +492,20 @@ impl Editor {
     /// Dimensions that fit the current selection, at the geometry's current values.
     pub fn dimension_options(&self) -> Vec<ConstraintOption> {
         let sel = self.classify_selection();
+        // Points and midpoints (a line id standing for its midpoint) both count as points.
+        let mut refs = sel.points.clone();
+        refs.extend(sel.midpoints.iter().copied());
+        let lines = if sel.midpoints.is_empty() {
+            sel.lines.clone()
+        } else {
+            // A picked midpoint's own line in the selection is a reference, not a line to
+            // measure.
+            sel.lines
+                .iter()
+                .copied()
+                .filter(|l| !sel.midpoints.contains(l))
+                .collect()
+        };
         let measured =
             |c: Constraint| drift_solver::measure(&self.doc, &c).map(|v| c.with_value(v));
         let mut out = Vec::new();
@@ -377,16 +519,24 @@ impl Editor {
                 });
             }
         };
-        match (
-            sel.points.as_slice(),
-            sel.lines.as_slice(),
-            sel.circulars.as_slice(),
-        ) {
-            ([a, b], [], []) => push(
+        match (refs.as_slice(), lines.as_slice(), sel.circulars.as_slice()) {
+            ([a, b], [], []) => {
+                let (a, b) = (*a, *b);
+                push("Distance", Constraint::Distance { a, b, value: 0.0 });
+                push(
+                    "Horizontal distance",
+                    Constraint::HorizontalDistance { a, b, value: 0.0 },
+                );
+                push(
+                    "Vertical distance",
+                    Constraint::VerticalDistance { a, b, value: 0.0 },
+                );
+            }
+            ([point], [line], []) => push(
                 "Distance",
-                Constraint::Distance {
-                    a: *a,
-                    b: *b,
+                Constraint::PointLineDistance {
+                    point: *point,
+                    line: *line,
                     value: 0.0,
                 },
             ),
@@ -394,6 +544,20 @@ impl Editor {
                 if let Some(EntityKind::Line { a, b }) = self.doc.get(*line).map(|e| e.kind) {
                     push("Length", Constraint::Distance { a, b, value: 0.0 });
                 }
+            }
+            ([], [], [curve])
+                if matches!(
+                    self.doc.get(*curve).map(|e| e.kind),
+                    Some(EntityKind::Circle { .. })
+                ) =>
+            {
+                push(
+                    "Diameter",
+                    Constraint::Diameter {
+                        curve: *curve,
+                        value: 0.0,
+                    },
+                )
             }
             ([], [a, b], []) => push(
                 "Angle",
@@ -432,7 +596,10 @@ impl Editor {
     }
 
     fn classify_selection(&self) -> SelectionKinds {
-        let mut kinds = SelectionKinds::default();
+        let mut kinds = SelectionKinds {
+            midpoints: self.selected_midpoints.iter().copied().collect(),
+            ..Default::default()
+        };
         for id in &self.selection {
             match self.doc.get(*id).map(|e| e.kind) {
                 Some(EntityKind::Point(_)) => kinds.points.push(*id),
@@ -539,7 +706,7 @@ impl Editor {
             }
             let emphasis = if self.selection.contains(&id) {
                 Emphasis::Selected
-            } else if self.hovered == Some(id) {
+            } else if self.hovered == Some(id) || self.highlight.contains(&id) {
                 Emphasis::Hovered
             } else {
                 Emphasis::Normal
@@ -558,6 +725,7 @@ impl Editor {
 
 #[derive(Default)]
 struct SelectionKinds {
+    midpoints: Vec<EntityId>,
     points: Vec<EntityId>,
     lines: Vec<EntityId>,
     circulars: Vec<EntityId>,
@@ -725,7 +893,15 @@ mod tests {
         ed.selection = [a, b].into();
         assert_eq!(
             labels(&ed),
-            ["Coincident", "Horizontal", "Vertical", "Fix", "Distance"]
+            [
+                "Coincident",
+                "Horizontal",
+                "Vertical",
+                "Fix",
+                "Distance",
+                "Horizontal distance",
+                "Vertical distance"
+            ]
         );
         // The dimension is created at the current value, so adding it changes nothing.
         let dim = &ed.dimension_options()[0].constraints[0];

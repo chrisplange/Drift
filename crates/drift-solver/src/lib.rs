@@ -31,6 +31,9 @@ pub enum Param {
     X(EntityId),
     Y(EntityId),
     Radius(EntityId),
+    /// Midpoint of a line that a dimension measures to (internal; never written back).
+    MidX(EntityId),
+    MidY(EntityId),
 }
 
 impl Param {
@@ -148,20 +151,40 @@ pub fn degenerate_entities(doc: &Document) -> Vec<EntityId> {
         .collect()
 }
 
+/// Radius of a circle or arc.
+pub fn radius_of(doc: &Document, curve: EntityId) -> Option<f64> {
+    match doc.get(curve)?.kind {
+        EntityKind::Circle { radius, .. } => Some(radius),
+        EntityKind::Arc { center, start, .. } => {
+            Some(doc.point(center).ok()?.distance(doc.point(start).ok()?))
+        }
+        _ => None,
+    }
+}
+
 /// The current value of a dimension in the document's geometry (mm, or degrees in [0, 180)).
 pub fn measure(doc: &Document, constraint: &Constraint) -> Option<f64> {
-    let point = |id| doc.point(id).ok();
+    let point = |id| doc.ref_point(id);
     let line = |id| match doc.get(id)?.kind {
         EntityKind::Line { a, b } => Some(point(b)? - point(a)?),
         _ => None,
     };
     match *constraint {
         Constraint::Distance { a, b, .. } => Some(point(a)?.distance(point(b)?)),
-        Constraint::Radius { curve, .. } => match doc.get(curve)?.kind {
-            EntityKind::Circle { radius, .. } => Some(radius),
-            EntityKind::Arc { center, start, .. } => Some(point(center)?.distance(point(start)?)),
-            _ => None,
-        },
+        Constraint::Radius { curve, .. } => radius_of(doc, curve),
+        Constraint::Diameter { curve, .. } => radius_of(doc, curve).map(|r| 2.0 * r),
+        Constraint::HorizontalDistance { a, b, .. } => Some((point(b)?.x - point(a)?.x).abs()),
+        Constraint::VerticalDistance { a, b, .. } => Some((point(b)?.y - point(a)?.y).abs()),
+        Constraint::PointLineDistance {
+            point: p, line: l, ..
+        } => {
+            let EntityKind::Line { a, b } = doc.get(l)?.kind else {
+                return None;
+            };
+            let (pa, pb, pp) = (point(a)?, point(b)?, point(p)?);
+            let d = pb - pa;
+            (d.length() > 0.0).then(|| d.perp_dot(pp - pa).abs() / d.length())
+        }
         Constraint::Angle { a, b, .. } => {
             let (d1, d2) = (line(a)?, line(b)?);
             let degrees = d1.perp_dot(d2).atan2(d1.dot(d2)).to_degrees();
@@ -636,6 +659,7 @@ fn write_back(doc: &mut Document, sys: &System) {
         match *param {
             Param::X(id) => points.entry(id).or_insert(DVec2::ZERO).x = v,
             Param::Y(id) => points.entry(id).or_insert(DVec2::ZERO).y = v,
+            Param::MidX(_) | Param::MidY(_) => {}
             Param::Radius(id) => {
                 if let Some(EntityKind::Circle { radius, .. }) = doc.get(id).map(|e| e.kind)
                     && radius != v

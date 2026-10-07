@@ -6,6 +6,28 @@ use eframe::egui;
 
 use crate::DriftApp;
 use crate::editor::Editor;
+use crate::icons::{self, Glyph};
+
+/// A small icon toggle: full colour when on, faint (and struck through for `strike`) when off.
+fn icon_toggle(ui: &mut egui::Ui, on: &mut bool, glyph: Glyph, strike: bool, tip: &str) {
+    let r = icons::button(ui, 24.0, false, tip, |painter, rect, color| {
+        let color = if *on {
+            color
+        } else {
+            color.gamma_multiply(0.4)
+        };
+        icons::glyph(painter, rect, glyph, color);
+        if strike && !*on {
+            painter.line_segment(
+                [rect.left_bottom(), rect.right_top()],
+                egui::Stroke::new(1.5, color),
+            );
+        }
+    });
+    if r.on_hover_text(tip).clicked() {
+        *on = !*on;
+    }
+}
 
 impl Editor {
     pub fn add_layer(&mut self, name: &str) -> LayerId {
@@ -177,12 +199,28 @@ impl DriftApp {
         let current = self.editor.doc.current_layer();
         let has_selection = !self.editor.selection.is_empty();
         let mut status = None;
+        let accent = crate::theme::accent(dark);
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
+                crate::theme::section(ui, &format!("Layers · {}", layers.len()));
                 for (id, layer) in layers {
                     let mut edited = layer.clone();
-                    ui.horizontal(|ui| {
+                    let is_current = current == id;
+                    egui::Frame::new()
+                        .fill(ui.visuals().faint_bg_color)
+                        .corner_radius(8.0)
+                        .stroke(egui::Stroke::new(
+                            1.0,
+                            if is_current {
+                                accent
+                            } else {
+                                egui::Color32::TRANSPARENT
+                            },
+                        ))
+                        .inner_margin(egui::Margin::symmetric(8, 6))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
                         if ui
                             .radio(current == id, "")
                             .on_hover_text("Current layer: new geometry goes here")
@@ -196,7 +234,8 @@ impl DriftApp {
                             .or_insert_with(|| layer.name.clone());
                         let r = ui.add_enabled(
                             id != LayerId::DEFAULT,
-                            egui::TextEdit::singleline(name).desired_width(110.0),
+                            egui::TextEdit::singleline(name)
+                                .desired_width(ui.available_width() - 112.0),
                         );
                         if r.lost_focus() && !name.trim().is_empty() {
                             edited.name = name.trim().to_owned();
@@ -204,63 +243,84 @@ impl DriftApp {
                         if !r.has_focus() && !r.lost_focus() {
                             *name = layer.name.clone();
                         }
-                        if id != LayerId::DEFAULT
-                            && ui
-                                .small_button("×")
-                                .on_hover_text("Delete layer (its geometry moves to 0)")
-                                .clicked()
-                        {
-                            if let Err(e) = self.editor.remove_layer(id) {
-                                status = Some(e);
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if id != LayerId::DEFAULT
+                                && ui
+                                    .add(egui::Button::new(
+                                        egui::RichText::new("×")
+                                            .size(16.0)
+                                            .color(ui.visuals().weak_text_color()),
+                                    )
+                                    .frame(false))
+                                    .on_hover_text("Delete layer (its geometry moves to 0)")
+                                    .clicked()
+                            {
+                                if let Err(e) = self.editor.remove_layer(id) {
+                                    status = Some(e);
+                                }
+                                self.layer_names.remove(&id);
                             }
-                            self.layer_names.remove(&id);
-                        }
+                            icon_toggle(
+                                ui,
+                                &mut edited.printable,
+                                Glyph::Print,
+                                true,
+                                "Printable: included when printing or exporting",
+                            );
+                            let mut locked = edited.locked;
+                            let lock_glyph = if locked { Glyph::Lock } else { Glyph::Unlock };
+                            icon_toggle(
+                                ui,
+                                &mut locked,
+                                lock_glyph,
+                                false,
+                                "Locked geometry can be snapped to but not edited, and stays fixed",
+                            );
+                            edited.locked = locked;
+                            icon_toggle(ui, &mut edited.visible, Glyph::Eye, true, "Show or hide");
+                        });
                     });
-                    ui.horizontal(|ui| {
-                        ui.add_space(22.0);
-                        ui.checkbox(&mut edited.visible, "Show");
-                        ui.checkbox(&mut edited.locked, "Lock").on_hover_text(
-                            "Locked geometry can be snapped to but not edited, and stays fixed",
-                        );
-                        ui.checkbox(&mut edited.printable, "Print");
-                    });
-                    ui.horizontal(|ui| {
-                        ui.add_space(22.0);
-                        if let Some(c) = color_choice(ui, edited.color, "Auto colour", dark) {
-                            edited.color = c;
-                        }
-                    });
-                    ui.horizontal(|ui| {
-                        ui.add_space(22.0);
-                        let mut w = Some(edited.weight);
-                        if weight_combo(ui, ("layer_weight", id.0), &mut w, false) {
-                            edited.weight = w.unwrap_or_default();
-                        }
-                        let mut t = Some(edited.line_type);
-                        if line_type_combo(ui, ("layer_type", id.0), &mut t, false) {
-                            edited.line_type = t.unwrap_or_default();
-                        }
-                    });
-                    ui.horizontal(|ui| {
-                        ui.add_space(22.0);
-                        if ui.small_button("Select all").clicked() {
-                            self.editor.select_layer(id);
-                        }
-                        if ui
-                            .add_enabled(
-                                has_selection,
-                                egui::Button::new("Move selection here").small(),
-                            )
-                            .clicked()
-                        {
-                            self.editor.move_selection_to_layer(id);
-                        }
-                    });
+                            ui.horizontal(|ui| {
+                                ui.add_space(22.0);
+                                if let Some(c) = color_choice(ui, edited.color, "Auto colour", dark)
+                                {
+                                    edited.color = c;
+                                }
+                            });
+                            ui.horizontal(|ui| {
+                                ui.add_space(22.0);
+                                let mut w = Some(edited.weight);
+                                if weight_combo(ui, ("layer_weight", id.0), &mut w, false) {
+                                    edited.weight = w.unwrap_or_default();
+                                }
+                                let mut t = Some(edited.line_type);
+                                if line_type_combo(ui, ("layer_type", id.0), &mut t, false) {
+                                    edited.line_type = t.unwrap_or_default();
+                                }
+                            });
+                            ui.horizontal(|ui| {
+                                ui.add_space(22.0);
+                                if ui.small_button("Select all").clicked() {
+                                    self.editor.select_layer(id);
+                                }
+                                if ui
+                                    .add_enabled(
+                                        has_selection,
+                                        egui::Button::new("Move here").small(),
+                                    )
+                                    .on_hover_text("Move the selected geometry onto this layer")
+                                    .clicked()
+                                {
+                                    self.editor.move_selection_to_layer(id);
+                                }
+                            });
+                        });
                     if edited != layer {
                         self.editor.update_layer(id, edited);
                     }
-                    ui.separator();
+                    ui.add_space(4.0);
                 }
+                ui.add_space(6.0);
                 ui.horizontal(|ui| {
                     ui.add(
                         egui::TextEdit::singleline(&mut self.new_layer_name)

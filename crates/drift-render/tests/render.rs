@@ -127,6 +127,8 @@ fn viewport() -> Viewport {
         srgb_target: false,
         imperial_grid: false,
         thin_lines: false,
+        show_grid: true,
+        show_axes: true,
     }
 }
 

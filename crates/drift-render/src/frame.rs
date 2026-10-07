@@ -75,6 +75,10 @@ pub struct Viewport {
     pub imperial_grid: bool,
     /// Draw every curve one device pixel wide, whatever its weight (Revit's thin lines).
     pub thin_lines: bool,
+    /// Draw the grid lines.
+    pub show_grid: bool,
+    /// Draw the x and y axes through the origin.
+    pub show_axes: bool,
 }
 
 /// Everything needed to draw one frame of the canvas.
@@ -200,9 +204,28 @@ impl Builder<'_> {
                 if self.viewport.srgb_target { 1.0 } else { 0.0 },
                 0.0,
             ],
-            grid_minor: [minor_px as f32, minor_x, minor_y, minor_alpha as f32],
-            grid_major: [(grid.major * scale_px) as f32, major_x, major_y, 0.0],
-            axes: [origin.x as f32, origin.y as f32, 1.0, 0.0],
+            grid_minor: [
+                minor_px as f32,
+                minor_x,
+                minor_y,
+                if self.viewport.show_grid {
+                    minor_alpha as f32
+                } else {
+                    0.0
+                },
+            ],
+            grid_major: [
+                (grid.major * scale_px) as f32,
+                major_x,
+                major_y,
+                if self.viewport.show_grid { 1.0 } else { 0.0 },
+            ],
+            axes: [
+                origin.x as f32,
+                origin.y as f32,
+                if self.viewport.show_axes { 1.0 } else { 0.0 },
+                0.0,
+            ],
             background: rgba_f32(palette.background),
             minor_color: rgba_f32(palette.grid_minor),
             major_color: rgba_f32(palette.grid_major),
@@ -508,6 +531,8 @@ mod tests {
             srgb_target: false,
             imperial_grid: false,
             thin_lines: false,
+            show_grid: true,
+            show_axes: true,
         }
     }
 

@@ -7,10 +7,12 @@ mod annotations;
 mod app;
 mod canvas;
 pub mod editor;
+mod icons;
 mod layers_ui;
 pub mod modify;
 mod overlay;
 mod parameters;
+mod theme;
 pub mod tools;
 #[cfg(test)]
 mod ui_tests;
@@ -56,6 +58,8 @@ const KEY_DOCUMENT: &str = "drift.document";
 const KEY_NAME: &str = "drift.name";
 const KEY_PATH: &str = "drift.path";
 const KEY_DIRTY: &str = "drift.dirty";
+/// View preferences (grid, axes, snapping, thin lines, colours, annotations).
+const KEY_VIEW: &str = "drift.view";
 
 /// The open file and whether it has unsaved changes.
 struct FileState {
@@ -193,6 +197,8 @@ pub struct DriftApp {
     /// Layer names being edited in the Layers tab.
     layer_names: std::collections::HashMap<drift_core::LayerId, String>,
     new_layer_name: String,
+    show_grid: bool,
+    show_axes: bool,
 }
 
 impl DriftApp {
@@ -249,7 +255,11 @@ impl DriftApp {
             status_colors: true,
             layer_names: Default::default(),
             new_layer_name: String::new(),
+            show_grid: true,
+            show_axes: true,
         };
+        theme::install_fonts(&cc.egui_ctx);
+        theme::apply(&cc.egui_ctx);
         if let Some(storage) = cc.storage {
             app.restore_session(storage);
         }
@@ -387,9 +397,10 @@ const SHORTCUTS: &[(&str, &str)] = &[
     ("Ctrl+A", "Select all"),
     ("Ctrl+Z / Ctrl+Y", "Undo / redo"),
     ("Ctrl+S / Ctrl+Shift+S", "Save / save as"),
-    ("Ctrl+O", "Open"),
+    ("Ctrl+N / Ctrl+O", "New / open"),
     ("F / double middle-click", "Zoom to fit"),
     ("Shift+G", "Toggle grid snapping"),
+    ("Ctrl+'", "Show or hide the grid"),
     ("W", "Thin lines: draw every line one pixel wide"),
     (
         "G (with a selection)",
@@ -403,9 +414,9 @@ const SHORTCUTS: &[(&str, &str)] = &[
 
 fn property_rows(ui: &mut egui::Ui, shape: &Shape, units: Units) {
     let row = |ui: &mut egui::Ui, name: &str, value: String| {
-        ui.label(name);
-        ui.monospace(value);
-        ui.end_row();
+        theme::row(ui, name, |ui| {
+            ui.monospace(value);
+        });
     };
     let pt = |p: DVec2| {
         format!(
@@ -464,17 +475,28 @@ impl eframe::App for DriftApp {
             self.shortcuts(&ctx);
         }
 
-        egui::Panel::top("menu").show(ui, |ui| self.menu_bar(ui));
-        egui::Panel::bottom("status").show(ui, |ui| self.status_bar(ui, now));
+        let style = ui.style().clone();
+        let frame = |x: i8, y: i8| {
+            egui::Frame::side_top_panel(&style).inner_margin(egui::Margin::symmetric(x, y))
+        };
+        egui::Panel::top("menu")
+            .frame(frame(8, 3))
+            .show(ui, |ui| self.menu_bar(ui));
+        egui::Panel::bottom("status")
+            .frame(frame(12, 4))
+            .show(ui, |ui| self.status_bar(ui, now));
         let wide = ctx.content_rect().width() >= WIDE_LAYOUT;
         egui::Panel::left("tools")
             .resizable(false)
-            .exact_size(if wide { 112.0 } else { 84.0 })
+            .frame(frame(8, 6))
+            .exact_size(if wide { 98.0 } else { 56.0 })
             .show(ui, |ui| self.toolbar(ui, wide));
         if self.show_properties.unwrap_or(wide) {
             egui::Panel::right("properties")
                 .resizable(true)
-                .default_size(240.0)
+                .frame(frame(14, 6))
+                .default_size(290.0)
+                .min_size(240.0)
                 .show(ui, |ui| self.properties(ui));
         }
         egui::CentralPanel::no_frame().show(ui, |ui| self.canvas(ui));
@@ -501,6 +523,7 @@ impl eframe::App for DriftApp {
             .unwrap_or_default();
         storage.set_string(KEY_PATH, path);
         storage.set_string(KEY_DIRTY, if self.is_dirty() { "1" } else { "0" }.into());
+        storage.set_string(KEY_VIEW, self.view_prefs());
     }
 
     fn auto_save_interval(&self) -> std::time::Duration {

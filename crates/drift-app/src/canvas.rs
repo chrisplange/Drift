@@ -13,6 +13,8 @@ pub struct CanvasOptions {
     pub dark_mode: bool,
     pub imperial_grid: bool,
     pub thin_lines: bool,
+    pub show_grid: bool,
+    pub show_axes: bool,
 }
 
 pub struct CanvasPainter {
@@ -52,6 +54,8 @@ impl CanvasPainter {
             srgb_target: self.srgb_target,
             imperial_grid: options.imperial_grid,
             thin_lines: options.thin_lines,
+            show_grid: options.show_grid,
+            show_axes: options.show_axes,
         };
         let frame = build_frame(items, camera, viewport, &palette);
         egui_wgpu::Callback::new_paint_callback(rect, CanvasCallback { frame })

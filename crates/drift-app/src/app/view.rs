@@ -365,6 +365,8 @@ impl DriftApp {
                 dark_mode: ui.visuals().dark_mode,
                 imperial_grid: self.imperial(),
                 thin_lines: self.thin_lines,
+                show_grid: self.show_grid,
+                show_axes: self.show_axes,
             },
         );
         ui.painter().add(callback);
@@ -376,7 +378,12 @@ impl DriftApp {
             overlay::canvas_hint(
                 &painter,
                 rect,
-                "Choose a tool on the left, or open an example from the File menu",
+                "Start a sketch",
+                &[
+                    "Pick a tool on the left: L draws lines, R rectangles, C circles.",
+                    "Type exact values while drawing; dimension with D.",
+                    "Or open the example from the File menu.",
+                ],
                 ui.visuals().weak_text_color(),
             );
         }
@@ -395,6 +402,29 @@ impl DriftApp {
         }
         self.paint_annotations(&painter, &map, &dims, &glyphs, ui.visuals().dark_mode);
         self.paint_free_directions(&painter, &map);
+        if let Some(status) = &self.status {
+            let now = ui.input(|i| i.time);
+            if now < status.until {
+                let fade = ((status.until - now) / 0.4).clamp(0.0, 1.0) as f32;
+                overlay::toast(
+                    &painter,
+                    rect,
+                    &status.text,
+                    status.error,
+                    ui.visuals().dark_mode,
+                    fade,
+                );
+                // Sleep until the fade starts, then animate it.
+                let remaining = status.until - now;
+                let wait = if remaining > 0.4 {
+                    remaining - 0.4
+                } else {
+                    0.016
+                };
+                ui.ctx()
+                    .request_repaint_after(std::time::Duration::from_secs_f64(wait));
+            }
+        }
         let ctx = ui.ctx().clone();
         let now = ctx.input(|i| i.time);
         self.dimension_editor(&ctx, &dims, now);

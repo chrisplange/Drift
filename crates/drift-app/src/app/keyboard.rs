@@ -25,6 +25,13 @@ impl DriftApp {
         if consume(cmd(Key::O)) {
             self.request(Pending::Open);
         }
+        if consume(cmd(Key::N)) {
+            self.request(Pending::New);
+        }
+        // ⌘' / Ctrl+': show or hide the grid (as in Apple's apps).
+        if consume(cmd(Key::Quote)) {
+            self.show_grid = !self.show_grid;
+        }
 
         if ctx.text_edit_focused() {
             return;

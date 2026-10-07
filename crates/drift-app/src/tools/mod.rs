@@ -194,6 +194,28 @@ impl ToolKind {
         }
     }
 
+    /// One line on what the tool does, for tooltips.
+    pub fn description(self) -> &'static str {
+        match self {
+            ToolKind::Select => "Pick, drag and box-select geometry; G moves the selection",
+            ToolKind::Line => "Draw connected lines; type a length, X / Y lock an axis",
+            ToolKind::Rectangle => "Two opposite corners, or type the width and height",
+            ToolKind::Circle => "Centre, then a point on the circle (or type the diameter)",
+            ToolKind::Arc => "Centre, start, end. Press A again for other arc types",
+            ToolKind::ThreePointArc => "Start, end, then a point on the arc",
+            ToolKind::TangentArc => "Continues tangent from the end of a line or arc",
+            ToolKind::Point => "A sketch point, for reference or construction",
+            ToolKind::Dimension => "Click geometry, then place the label: the type follows",
+            ToolKind::Trim => "Remove a piece up to the curves that cut it; drag to trim several",
+            ToolKind::Extend => "Lengthen a line or arc to the next curve",
+            ToolKind::Split => "Cut a line or arc in two at a point",
+            ToolKind::Fillet => "Round the corner where two lines meet",
+            ToolKind::Chamfer => "Cut the corner where two lines meet",
+            ToolKind::Offset => "A parallel copy of a curve and the curves connected to it",
+            ToolKind::Mirror => "Mirror the selection about a line, kept symmetric",
+        }
+    }
+
     pub fn shortcut(self) -> Option<char> {
         Some(match self {
             ToolKind::Select => 'S',

@@ -617,15 +617,20 @@ pub fn paint_glyph(
     colors: &AnnotationColors,
 ) {
     let color = colors.color(state);
-    painter.rect_filled(rect, 3.0, colors.glyph_background);
-    painter.rect_stroke(
-        rect,
-        3.0,
-        Stroke::new(1.0, color.gamma_multiply(0.7)),
-        StrokeKind::Inside,
-    );
+    // Quiet by default: a soft tile without a border; framed when hovered or picked.
+    painter.rect_filled(rect, 4.0, colors.glyph_background.gamma_multiply(0.9));
+    if state != AnnotationState::Normal {
+        painter.rect_stroke(rect, 4.0, Stroke::new(1.0, color), StrokeKind::Inside);
+    }
     let c = rect.center();
-    let s = Stroke::new(1.4, color);
+    let s = Stroke::new(
+        1.3,
+        if state == AnnotationState::Normal {
+            color.gamma_multiply(0.85)
+        } else {
+            color
+        },
+    );
     let line = |a: (f32, f32), b: (f32, f32)| {
         painter.line_segment([c + vec2(a.0, a.1), c + vec2(b.0, b.1)], s);
     };

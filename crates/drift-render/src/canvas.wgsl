@@ -7,7 +7,7 @@
 struct Globals {
     viewport: vec4<f32>,      // width px, height px, srgb target, unused
     grid_minor: vec4<f32>,    // spacing px, phase x, phase y, alpha
-    grid_major: vec4<f32>,    // spacing px, phase x, phase y, unused
+    grid_major: vec4<f32>,    // spacing px, phase x, phase y, visibility (0 or 1)
     axes: vec4<f32>,          // origin x px, origin y px, show axes, unused
     background: vec4<f32>,
     minor_color: vec4<f32>,
@@ -110,7 +110,7 @@ fn fs_grid(in: GridOut) -> @location(0) vec4<f32> {
     let major = max(
         grid_line(p.x, g.grid_major.y, g.grid_major.x, 0.5),
         grid_line(p.y, g.grid_major.z, g.grid_major.x, 0.5),
-    );
+    ) * g.grid_major.w;
     color = mix(color, g.major_color.rgb, major * g.major_color.a);
 
     if (g.axes.z > 0.5) {

@@ -89,10 +89,14 @@ impl DriftApp {
             .show(ctx, |ui| {
                 egui::Grid::new("shortcuts")
                     .num_columns(2)
-                    .striped(true)
+                    .spacing([18.0, 6.0])
                     .show(ui, |ui| {
                         for (keys, action) in SHORTCUTS {
-                            ui.monospace(*keys);
+                            ui.label(
+                                egui::RichText::new(*keys)
+                                    .monospace()
+                                    .color(ui.visuals().weak_text_color()),
+                            );
                             ui.label(*action);
                             ui.end_row();
                         }

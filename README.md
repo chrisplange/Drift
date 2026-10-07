@@ -97,6 +97,10 @@ browser (WebGPU, with a WebGL2 fallback).
 - **Live readouts:** cursor coordinates, the length, angle or radius of what you're drawing, and
   exact values of the selection in the properties panel.
 
+- **Native-feeling interface:** system fonts, light and dark themes, an icon toolbar with
+  descriptive tooltips, and a segmented Inspector / Parameters / Layers sidebar. The status bar
+  carries grid, axes, snap and thin-line toggles; the grid can also be hidden with Ctrl/⌘+'.
+
 See **Help → Keyboard shortcuts** in the app for the full list.
 
 ## Running

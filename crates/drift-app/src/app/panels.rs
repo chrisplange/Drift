@@ -1,23 +1,39 @@
-//! Menu bar, toolbar, properties panel and status bar.
+//! Menu bar, toolbar, inspector (properties) and status bar.
 
+use crate::icons::{self, Glyph};
 use crate::*;
+
+/// A shortcut as the platform writes it: ⌘ / ⇧ on macOS, Ctrl / Shift elsewhere.
+pub(crate) fn shortcut(key: &str, shift: bool) -> String {
+    if cfg!(target_os = "macos") {
+        format!("{}⌘{key}", if shift { "⇧" } else { "" })
+    } else {
+        format!("Ctrl+{}{key}", if shift { "Shift+" } else { "" })
+    }
+}
+
+/// A checkbox-style menu item with a shortcut hint.
+fn toggle_item(ui: &mut egui::Ui, value: &mut bool, label: &str, keys: &str) {
+    if ui
+        .add(egui::Button::selectable(*value, label).shortcut_text(keys))
+        .clicked()
+    {
+        *value = !*value;
+    }
+}
 
 impl DriftApp {
     pub(crate) fn menu_bar(&mut self, ui: &mut egui::Ui) {
-        let command = |key: &str| {
-            if cfg!(target_os = "macos") {
-                format!("Cmd+{key}")
-            } else {
-                format!("Ctrl+{key}")
-            }
-        };
         egui::MenuBar::new().ui(ui, |ui| {
             ui.menu_button("File", |ui| {
-                if ui.button("New").clicked() {
+                if ui
+                    .add(egui::Button::new("New").shortcut_text(shortcut("N", false)))
+                    .clicked()
+                {
                     self.request(Pending::New);
                 }
                 if ui
-                    .add(egui::Button::new("Open…").shortcut_text(command("O")))
+                    .add(egui::Button::new("Open…").shortcut_text(shortcut("O", false)))
                     .clicked()
                 {
                     self.request(Pending::Open);
@@ -27,13 +43,13 @@ impl DriftApp {
                 }
                 ui.separator();
                 if ui
-                    .add(egui::Button::new("Save").shortcut_text(command("S")))
+                    .add(egui::Button::new("Save").shortcut_text(shortcut("S", false)))
                     .clicked()
                 {
                     self.save();
                 }
                 if ui
-                    .add(egui::Button::new("Save as…").shortcut_text(command("Shift+S")))
+                    .add(egui::Button::new("Save as…").shortcut_text(shortcut("S", true)))
                     .clicked()
                 {
                     self.save_as();
@@ -51,7 +67,7 @@ impl DriftApp {
                 if ui
                     .add_enabled(
                         self.editor.history.can_undo(),
-                        egui::Button::new(undo).shortcut_text(command("Z")),
+                        egui::Button::new(undo).shortcut_text(shortcut("Z", false)),
                     )
                     .clicked()
                 {
@@ -60,7 +76,7 @@ impl DriftApp {
                 if ui
                     .add_enabled(
                         self.editor.history.can_redo(),
-                        egui::Button::new(redo).shortcut_text(command("Y")),
+                        egui::Button::new(redo).shortcut_text(shortcut("Z", true)),
                     )
                     .clicked()
                 {
@@ -71,7 +87,11 @@ impl DriftApp {
                 if ui
                     .add_enabled(
                         has_selection,
-                        egui::Button::new("Delete").shortcut_text("Del"),
+                        egui::Button::new("Delete").shortcut_text(if cfg!(target_os = "macos") {
+                            "⌫"
+                        } else {
+                            "Del"
+                        }),
                     )
                     .clicked()
                 {
@@ -86,8 +106,9 @@ impl DriftApp {
                 {
                     self.editor.toggle_construction();
                 }
+                ui.separator();
                 if ui
-                    .add(egui::Button::new("Select all").shortcut_text(command("A")))
+                    .add(egui::Button::new("Select all").shortcut_text(shortcut("A", false)))
                     .clicked()
                 {
                     self.set_tool(ToolKind::Select);
@@ -100,25 +121,34 @@ impl DriftApp {
                     .clicked()
                 {
                     self.fit_target = Some(self.fit_bounds());
+                    ui.close();
                 }
-                ui.checkbox(&mut self.grid_snap, "Snap to grid (Shift+G)");
-                ui.checkbox(&mut self.auto_relations, "Automatic relations");
-                ui.checkbox(&mut self.thin_lines, "Thin lines (W)")
-                    .on_hover_text("Draw every line one pixel wide, whatever its weight");
-                ui.checkbox(&mut self.status_colors, "Constraint status colours")
-                    .on_hover_text("Off: show layer colours");
-                ui.checkbox(&mut self.show_dimensions, "Show dimensions");
-                ui.checkbox(&mut self.show_relations, "Show relations");
-                ui.checkbox(&mut self.params.show_free, "Show free directions")
-                    .on_hover_text("Arrows on points that can still move, showing how");
-                ui.checkbox(&mut self.params.show_ghosts, "Show variants as ghosts");
+                ui.separator();
+                toggle_item(ui, &mut self.show_grid, "Grid", &shortcut("'", false));
+                toggle_item(ui, &mut self.show_axes, "Origin axes", "");
+                toggle_item(ui, &mut self.grid_snap, "Snap to grid", "⇧G");
+                ui.separator();
+                toggle_item(ui, &mut self.thin_lines, "Thin lines", "W");
+                toggle_item(ui, &mut self.status_colors, "Constraint status colours", "");
+                ui.separator();
+                toggle_item(ui, &mut self.show_dimensions, "Dimensions", "");
+                toggle_item(ui, &mut self.show_relations, "Relations", "");
+                toggle_item(ui, &mut self.params.show_free, "Free directions", "");
+                toggle_item(ui, &mut self.params.show_ghosts, "Variant ghosts", "");
+                ui.separator();
+                toggle_item(ui, &mut self.auto_relations, "Automatic relations", "");
                 let wide = ui.ctx().content_rect().width() >= WIDE_LAYOUT;
                 let mut show = self.show_properties.unwrap_or(wide);
-                if ui.checkbox(&mut show, "Properties panel").changed() {
+                let before = show;
+                toggle_item(ui, &mut show, "Inspector", "");
+                if show != before {
                     self.show_properties = Some(show);
                 }
                 ui.separator();
-                egui::widgets::global_theme_preference_buttons(ui);
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("Appearance").weak());
+                    egui::widgets::global_theme_preference_buttons(ui);
+                });
             });
             ui.menu_button("Help", |ui| {
                 if ui.button("Keyboard shortcuts").clicked() {
@@ -127,139 +157,187 @@ impl DriftApp {
                 if ui.button("Run solver benchmark").clicked() {
                     self.benchmark = Some(run_benchmark());
                 }
+                ui.separator();
+                ui.label(
+                    egui::RichText::new(format!(
+                        "Drift {} · {}",
+                        env!("CARGO_PKG_VERSION"),
+                        self.backend
+                    ))
+                    .small()
+                    .weak(),
+                );
             });
         });
     }
 
+    /// The tool palette: icon buttons in groups (draw, annotate, modify), with tooltips that
+    /// name the tool, its shortcut and what it does.
     pub(crate) fn toolbar(&mut self, ui: &mut egui::Ui, wide: bool) {
+        let columns = if wide { 2 } else { 1 };
+        let size = 38.0;
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 ui.add_space(6.0);
-                let mut group = 0;
-                for kind in ToolKind::ALL {
-                    if kind.group() != group {
-                        group = kind.group();
+                let groups: [Vec<ToolKind>; 3] = [0u8, 1, 2].map(|g| {
+                    ToolKind::ALL
+                        .into_iter()
+                        .filter(|k| k.group() == g)
+                        .collect()
+                });
+                for (i, group) in groups.iter().enumerate() {
+                    if i > 0 {
                         ui.add_space(4.0);
-                        ui.label(
-                            egui::RichText::new(if group == 1 { "Annotate" } else { "Modify" })
-                                .small()
-                                .weak(),
-                        );
+                        ui.separator();
+                        ui.add_space(2.0);
                     }
-                    let selected = self.tool.kind() == kind;
-                    let (label, width) = if wide {
-                        let label = match kind.shortcut() {
-                            Some(c) => format!("{}  {c}", kind.label()),
-                            None => kind.label().to_owned(),
-                        };
-                        (label, 96.0)
-                    } else {
-                        (kind.label().to_owned(), 68.0)
-                    };
-                    let hover = match kind.shortcut() {
-                        Some(c) => format!("{} ({c})", kind.label()),
-                        None => kind.label().to_owned(),
-                    };
-                    if ui
-                        .add_sized([width, 24.0], egui::Button::selectable(selected, label))
-                        .on_hover_text(hover)
-                        .clicked()
-                    {
-                        self.switch_tool(kind);
+                    for chunk in group.chunks(columns) {
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 4.0;
+                            for &kind in chunk {
+                                let selected = self.tool.kind() == kind;
+                                let response =
+                                    icons::button(ui, size, selected, kind.label(), |p, r, c| {
+                                        icons::tool(p, r, kind, c)
+                                    });
+                                let response = response.on_hover_ui(|ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.label(
+                                            egui::RichText::new(kind.label()).family(theme::bold()),
+                                        );
+                                        if let Some(c) = kind.shortcut() {
+                                            ui.label(
+                                                egui::RichText::new(c.to_string())
+                                                    .monospace()
+                                                    .weak(),
+                                            );
+                                        }
+                                    });
+                                    ui.label(egui::RichText::new(kind.description()).weak());
+                                });
+                                if response.clicked() {
+                                    self.switch_tool(kind);
+                                }
+                            }
+                        });
                     }
                 }
             });
     }
 
     pub(crate) fn properties(&mut self, ui: &mut egui::Ui) {
-        ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            use parameters::RightTab;
-            for (tab, label) in [
-                (RightTab::Properties, "Properties"),
+        ui.add_space(8.0);
+        use parameters::RightTab;
+        if let Some(tab) = theme::segmented(
+            ui,
+            self.params.tab,
+            &[
+                (RightTab::Properties, "Inspector"),
                 (RightTab::Parameters, "Parameters"),
                 (RightTab::Layers, "Layers"),
-            ] {
-                let text = egui::RichText::new(label).strong().size(15.0);
-                if ui
-                    .add(egui::Button::selectable(self.params.tab == tab, text).frame(false))
-                    .clicked()
-                {
-                    self.params.tab = tab;
-                }
-            }
-        });
-        ui.separator();
-        if self.params.tab == parameters::RightTab::Parameters {
+            ],
+        ) {
+            self.params.tab = tab;
+        }
+        ui.add_space(4.0);
+        if self.params.tab == RightTab::Parameters {
             let now = ui.input(|i| i.time);
             self.parameters_panel(ui, now);
             return;
         }
-        if self.params.tab == parameters::RightTab::Layers {
+        if self.params.tab == RightTab::Layers {
             let now = ui.input(|i| i.time);
             self.layers_panel(ui, now);
             return;
         }
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| self.inspector(ui));
+    }
+
+    fn inspector(&mut self, ui: &mut egui::Ui) {
         if let Some(region) = self.editor.region() {
             let units = self.editor.doc.units();
-            ui.strong("Region");
-            egui::Grid::new("region").num_columns(2).show(ui, |ui| {
-                let mut row = |name: &str, value: String| {
-                    ui.label(name);
-                    ui.monospace(value);
-                    ui.end_row();
-                };
-                row("Area", units.format_area(region.area));
-                row("Perimeter", units.format_readout(region.perimeter));
-                row(
-                    "Centroid",
+            theme::section(ui, "Region");
+            let mono = |ui: &mut egui::Ui, text: String| {
+                ui.monospace(text);
+            };
+            theme::row(ui, "Area", |ui| mono(ui, units.format_area(region.area)));
+            theme::row(ui, "Perimeter", |ui| {
+                mono(ui, units.format_readout(region.perimeter))
+            });
+            theme::row(ui, "Centroid", |ui| {
+                mono(
+                    ui,
                     format!(
                         "{}, {}",
                         units.format_readout(region.centroid.x),
                         units.format_readout(region.centroid.y)
                     ),
-                );
-                row("Holes", region.holes.len().to_string());
+                )
             });
-            ui.add_space(8.0);
+            theme::row(ui, "Holes", |ui| mono(ui, region.holes.len().to_string()));
         }
         let ed = &self.editor;
         let selection: Vec<_> = ed.selection.iter().copied().collect();
         for line in &ed.selected_midpoints {
             if let Some(drift_core::Shape::Line { a, b }) = ed.index.shape(*line) {
                 let m = (*a + *b) * 0.5;
-                ui.strong(format!("Midpoint of {line}"));
                 let units = ed.doc.units();
-                ui.monospace(format!(
-                    "{}, {}",
-                    units.format_readout(m.x),
-                    units.format_readout(m.y)
-                ));
-                ui.add_space(4.0);
+                theme::section(ui, "Midpoint");
+                theme::row(ui, "Of", |ui| {
+                    ui.label(format!("{line}"));
+                });
+                theme::row(ui, "At", |ui| {
+                    ui.monospace(format!(
+                        "{}, {}",
+                        units.format_readout(m.x),
+                        units.format_readout(m.y)
+                    ));
+                });
             }
         }
         match selection.as_slice() {
             [] if !ed.selected_midpoints.is_empty() => {}
             [] if ed.selected_region.is_some() => {}
             [] => {
-                ui.label(egui::RichText::new("Nothing selected").weak());
-                ui.add_space(8.0);
+                ui.add_space(18.0);
+                ui.vertical_centered(|ui| {
+                    ui.label(egui::RichText::new("No selection").size(15.0).weak());
+                    ui.add_space(4.0);
+                    ui.label(
+                        egui::RichText::new(
+                            "Click geometry to inspect it, or inside a closed area to measure it.",
+                        )
+                        .small()
+                        .weak(),
+                    );
+                });
+                theme::section(ui, "Document");
                 let curves = ed.doc.iter().filter(|(_, e)| !e.kind.is_point()).count();
-                ui.label(format!("{curves} curves, {} entities", ed.doc.len()));
+                theme::row(ui, "Curves", |ui| {
+                    ui.label(curves.to_string());
+                });
+                theme::row(ui, "Relations", |ui| {
+                    ui.label(ed.doc.constraint_count().to_string());
+                });
             }
             [id] => {
                 let (Some(entity), Some(shape)) = (ed.doc.get(*id), ed.index.shape(*id)) else {
                     return;
                 };
-                ui.strong(format!("{} {id}", entity.kind.type_name()));
-                ui.add_space(4.0);
-                egui::Grid::new("props")
-                    .num_columns(2)
-                    .striped(true)
-                    .show(ui, |ui| {
-                        property_rows(ui, shape, ed.doc.units());
-                    });
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new(entity.kind.type_name())
+                            .family(theme::bold())
+                            .size(15.0),
+                    );
+                    ui.label(egui::RichText::new(id.to_string()).weak());
+                });
+                theme::section(ui, "Geometry");
+                property_rows(ui, shape, ed.doc.units());
             }
             many => {
                 let mut counts = std::collections::BTreeMap::new();
@@ -268,10 +346,17 @@ impl DriftApp {
                         *counts.entry(e.kind.type_name()).or_insert(0) += 1;
                     }
                 }
-                ui.strong(format!("{} selected", many.len()));
-                for (name, n) in counts {
-                    ui.label(format!("{n} × {name}"));
-                }
+                ui.add_space(6.0);
+                ui.label(
+                    egui::RichText::new(format!("{} selected", many.len()))
+                        .family(theme::bold())
+                        .size(15.0),
+                );
+                let summary: Vec<String> = counts
+                    .iter()
+                    .map(|(name, n)| format!("{n} {name}"))
+                    .collect();
+                ui.label(egui::RichText::new(summary.join(" · ")).weak());
             }
         }
 
@@ -281,44 +366,43 @@ impl DriftApp {
             .filter(|e| !e.kind.is_point())
             .collect();
         if !curves.is_empty() {
-            ui.add_space(10.0);
-            ui.label("Line style");
+            theme::section(ui, "Appearance");
             let current = curves[0].style;
             let uniform = curves.iter().all(|e| e.style == current);
-            let mut chosen = None;
-            ui.horizontal(|ui| {
-                for (style, label) in [
-                    (LineKind::Solid, "Solid"),
+            let shown = if uniform { current } else { LineKind::Solid };
+            if let Some(style) = theme::segmented(
+                ui,
+                shown,
+                &[
+                    (LineKind::Solid, "Geometry"),
                     (LineKind::Construction, "Construction"),
-                    (LineKind::Center, "Center"),
-                ] {
-                    if ui
-                        .selectable_label(uniform && current == style, label)
-                        .clicked()
-                    {
-                        chosen = Some(style);
-                    }
-                }
-            });
-            if let Some(style) = chosen {
+                    (LineKind::Center, "Centre line"),
+                ],
+            ) {
                 self.set_selection_style(style);
             }
             self.appearance_panel(ui);
-        }
-        if !selection.is_empty() {
-            ui.add_space(10.0);
-            if ui.button("Delete").clicked() {
-                self.editor.delete_selection();
-            }
         }
 
         self.constraint_buttons(ui);
         let now = ui.input(|i| i.time);
         self.pattern_panel(ui, now);
         self.constraint_list(ui);
+
+        if !self.editor.selection.is_empty() {
+            ui.add_space(14.0);
+            let delete = egui::Button::new(
+                egui::RichText::new("Delete selection").color(ui.visuals().error_fg_color),
+            )
+            .min_size(egui::vec2(ui.available_width(), 26.0));
+            if ui.add(delete).clicked() {
+                self.editor.delete_selection();
+            }
+        }
+        ui.add_space(10.0);
     }
 
-    /// Buttons for the relations and dimensions that fit the selection.
+    /// Relations and dimensions that fit the selection, as chips.
     pub(crate) fn constraint_buttons(&mut self, ui: &mut egui::Ui) {
         let relations = self.editor.relation_options();
         let dimensions = self.editor.dimension_options();
@@ -331,12 +415,13 @@ impl DriftApp {
             if options.is_empty() {
                 continue;
             }
-            ui.add_space(10.0);
-            ui.label(heading);
+            theme::section(ui, heading);
             let mut chosen = None;
             ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
                 for option in &options {
-                    if ui.button(option.label).clicked() {
+                    let chip = egui::Button::new(option.label).corner_radius(12.0);
+                    if ui.add(chip).clicked() {
                         chosen = Some(option.clone());
                     }
                 }
@@ -358,17 +443,20 @@ impl DriftApp {
             }
         }
         if !pins.is_empty() {
-            ui.add_space(6.0);
+            ui.add_space(4.0);
             let mut chosen = None;
-            egui::CollapsingHeader::new("Pin measurement")
+            egui::CollapsingHeader::new(egui::RichText::new("Pin measurement").weak())
                 .default_open(false)
                 .show(ui, |ui| {
                     ui.label(
-                        egui::RichText::new("Keep a live measurement in the Parameters tab").weak(),
+                        egui::RichText::new("Keep a live measurement in the Parameters tab")
+                            .small()
+                            .weak(),
                     );
                     ui.horizontal_wrapped(|ui| {
                         for option in &pins {
-                            if ui.button(option.label).clicked() {
+                            let chip = egui::Button::new(option.label).corner_radius(12.0);
+                            if ui.add(chip).clicked() {
                                 chosen = option.constraints.first().copied();
                             }
                         }
@@ -384,7 +472,8 @@ impl DriftApp {
     }
 
     /// Constraints on the selection (or all of them when nothing is selected), with editable
-    /// dimension values.
+    /// dimension values. Each row: the name (click to select its geometry), the value, a
+    /// "reference" toggle for dimensions, and a delete button that shows on hover.
     pub(crate) fn constraint_list(&mut self, ui: &mut egui::Ui) {
         let ed = &self.editor;
         let constraints: Vec<(ConstraintId, Constraint)> =
@@ -406,113 +495,143 @@ impl DriftApp {
             return;
         }
         let conflicts = ed.analysis().conflicts.clone();
-        ui.add_space(10.0);
-        ui.label(format!("Constraints ({})", constraints.len()));
+        let everything = ed.selection.is_empty() && ed.selected_midpoints.is_empty();
+        theme::section(
+            ui,
+            &format!("Relations & dimensions · {}", constraints.len()),
+        );
+        // With nothing selected this lists the whole sketch: folded away unless asked for (or
+        // something conflicts).
+        if everything && conflicts.is_empty() {
+            let key = ui.make_persistent_id("all_constraints_open");
+            let mut open = ui.data(|d| d.get_temp::<bool>(key)).unwrap_or(false);
+            if ui
+                .add(egui::Button::new(if open { "Hide list" } else { "Show all" }).small())
+                .clicked()
+            {
+                open = !open;
+                ui.data_mut(|d| d.insert_temp(key, open));
+            }
+            if !open {
+                return;
+            }
+        }
         let now = ui.input(|i| i.time);
         let mut remove = None;
         let mut select = None;
         let mut apply = None;
         let mut toggle_driven = None;
-        egui::ScrollArea::vertical()
-            .max_height(260.0)
-            .auto_shrink([false, true])
-            .show(ui, |ui| {
-                egui::Grid::new("constraints")
-                    .num_columns(3)
-                    .striped(true)
-                    .show(ui, |ui| {
-                        for (id, c) in &constraints {
-                            let mut name = egui::RichText::new(constraint_label(&ed.doc, c));
-                            if conflicts.contains(id) {
-                                name = name.color(ui.visuals().error_fg_color);
-                            }
-                            if ui
-                                .add(egui::Label::new(name).sense(egui::Sense::click()))
-                                .on_hover_text(format!("{id}: click to select its geometry"))
-                                .clicked()
-                            {
-                                select = Some(*c);
-                            }
-                            match c.value() {
-                                Some(_) if ed.doc.is_driven(*id) => {
-                                    ui.horizontal(|ui| {
-                                        let value = ed.dimension_value(*id).unwrap_or_default();
-                                        ui.add_sized(
-                                            [90.0, 18.0],
-                                            egui::Label::new(
-                                                egui::RichText::new(format!(
-                                                    "({})",
-                                                    ed.doc.units().format(
-                                                        drift_core::dimension_kind(c),
-                                                        value
-                                                    )
-                                                ))
-                                                .weak(),
-                                            ),
-                                        )
-                                        .on_hover_text("Driven: follows the geometry");
-                                        let mut driven = true;
-                                        if ui
-                                            .checkbox(&mut driven, "Driven")
-                                            .on_hover_text("Untick to make it drive the geometry")
-                                            .changed()
-                                        {
-                                            toggle_driven = Some((*id, false));
-                                        }
-                                    });
-                                }
-                                Some(_) => {
-                                    ui.horizontal(|ui| {
-                                        let field = egui::Id::new(("dimension", id.0));
-                                        let mut text = self
-                                            .dimension_text
-                                            .get(id)
-                                            .cloned()
-                                            .or_else(|| ed.dimension_edit_text(*id))
-                                            .unwrap_or_default();
-                                        let response = ui.add(
-                                            egui::TextEdit::singleline(&mut text)
-                                                .id(field)
-                                                .desired_width(90.0)
-                                                .hint_text(c.unit()),
-                                        );
-                                        if self.focus_dimension == Some(*id) {
-                                            response.request_focus();
-                                            self.focus_dimension = None;
-                                        }
-                                        if response.has_focus() {
-                                            self.dimension_text.insert(*id, text.clone());
-                                        }
-                                        if response.lost_focus() {
-                                            if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                                                apply = Some((*id, text.clone()));
-                                            }
-                                            self.dimension_text.remove(id);
-                                        }
-                                        let mut driven = false;
-                                        if ui
-                                            .checkbox(&mut driven, "Driven")
-                                            .on_hover_text(
-                                                "Make it a reference that follows the geometry",
-                                            )
-                                            .changed()
-                                        {
-                                            toggle_driven = Some((*id, true));
-                                        }
-                                    })
-                                    .inner
-                                }
-                                None => {
-                                    ui.label("");
-                                }
-                            }
-                            if ui.small_button("Remove").clicked() {
-                                remove = Some(*id);
-                            }
-                            ui.end_row();
+        let weak = ui.visuals().weak_text_color();
+        for (id, c) in &constraints {
+            let row = ui.horizontal(|ui| {
+                let mut name = egui::RichText::new(constraint_label(&ed.doc, c));
+                if conflicts.contains(id) {
+                    name = name.color(ui.visuals().error_fg_color);
+                }
+                let label = ui
+                    .allocate_ui_with_layout(
+                        egui::vec2(100.0, 22.0),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            ui.set_min_width(100.0);
+                            ui.add(
+                                egui::Label::new(name)
+                                    .sense(egui::Sense::click())
+                                    .truncate(),
+                            )
+                        },
+                    )
+                    .inner
+                    .on_hover_text(format!("{id}: click to select its geometry"));
+                if label.clicked() {
+                    select = Some(*c);
+                }
+                match c.value() {
+                    Some(_) if ed.doc.is_driven(*id) => {
+                        let value = ed.dimension_value(*id).unwrap_or_default();
+                        ui.add_sized(
+                            [86.0, 22.0],
+                            egui::Label::new(
+                                egui::RichText::new(format!(
+                                    "({})",
+                                    ed.doc.units().format(drift_core::dimension_kind(c), value)
+                                ))
+                                .color(weak),
+                            ),
+                        )
+                        .on_hover_text("Reference (driven): follows the geometry");
+                        let mut driven = true;
+                        if ui
+                            .toggle_value(&mut driven, egui::RichText::new("Ref").small())
+                            .on_hover_text("Make it drive the geometry")
+                            .changed()
+                        {
+                            toggle_driven = Some((*id, false));
                         }
-                    });
+                    }
+                    Some(_) => {
+                        let field = egui::Id::new(("dimension", id.0));
+                        let mut text = self
+                            .dimension_text
+                            .get(id)
+                            .cloned()
+                            .or_else(|| ed.dimension_edit_text(*id))
+                            .unwrap_or_default();
+                        let response = ui.add(
+                            egui::TextEdit::singleline(&mut text)
+                                .id(field)
+                                .desired_width(86.0)
+                                .hint_text(c.unit()),
+                        );
+                        if self.focus_dimension == Some(*id) {
+                            response.request_focus();
+                            self.focus_dimension = None;
+                        }
+                        if response.has_focus() {
+                            self.dimension_text.insert(*id, text.clone());
+                        }
+                        if response.lost_focus() {
+                            if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                                apply = Some((*id, text.clone()));
+                            }
+                            self.dimension_text.remove(id);
+                        }
+                        let mut driven = false;
+                        if ui
+                            .toggle_value(&mut driven, egui::RichText::new("Ref").small())
+                            .on_hover_text("Make it a reference that follows the geometry")
+                            .changed()
+                        {
+                            toggle_driven = Some((*id, true));
+                        }
+                    }
+                    None => {}
+                }
+                // The delete button sits at the row's end, clear of the scroll bar; it is
+                // faint until the row is hovered.
+                ui.add_space((ui.available_width() - 30.0).max(0.0));
+                let hovered = ui.ui_contains_pointer();
+                let x = egui::Button::new(egui::RichText::new("×").size(16.0).color(if hovered {
+                    ui.visuals().text_color()
+                } else {
+                    weak.gamma_multiply(0.5)
+                }))
+                .frame(false)
+                .small();
+                if ui.add(x).on_hover_text("Delete").clicked() {
+                    remove = Some(*id);
+                }
             });
+            // A hairline between rows.
+            let r = row.response.rect;
+            ui.painter().line_segment(
+                [
+                    r.left_bottom() + egui::vec2(0.0, 3.0),
+                    r.right_bottom() + egui::vec2(0.0, 3.0),
+                ],
+                egui::Stroke::new(0.5, ui.visuals().widgets.noninteractive.bg_stroke.color),
+            );
+        }
         if let Some(c) = select {
             self.editor.selection = c.entities().collect();
         }
@@ -532,113 +651,139 @@ impl DriftApp {
         }
     }
 
-    pub(crate) fn status_bar(&mut self, ui: &mut egui::Ui, now: f64) {
+    /// The status bar: cursor position, the tool's hint, then view toggles, units, the
+    /// sketch's definition status and zoom. Messages appear as toasts over the canvas.
+    pub(crate) fn status_bar(&mut self, ui: &mut egui::Ui, _now: f64) {
         ui.horizontal(|ui| {
-            match self.pointer {
+            ui.spacing_mut().item_spacing.x = 10.0;
+            let units = self.editor.doc.units();
+            let (x, y) = match self.pointer {
                 Some(p) => {
                     let at = p.pos();
-                    let units = self.editor.doc.units();
-                    ui.monospace(format!(
-                        "X {:>14}  Y {:>14}",
-                        units.format_readout(at.x),
-                        units.format_readout(at.y)
-                    ));
+                    (units.format_readout(at.x), units.format_readout(at.y))
                 }
-                None => {
-                    ui.monospace(format!("{:35}", ""));
-                }
-            }
-            ui.separator();
-            let units = self.editor.doc.units();
-            let minor = grid_info(&self.camera, self.imperial()).minor;
-            let grid = if units.length.is_metric() {
-                format!("{} mm", format_length(minor))
-            } else {
-                Units {
-                    decimals: 4,
-                    fraction: 64,
-                    ..units
-                }
-                .format_length(minor)
+                None => (String::new(), String::new()),
             };
-            ui.monospace(format!("Grid {grid}"));
-            ui.toggle_value(&mut self.grid_snap, "Snap to grid");
-            ui.toggle_value(&mut self.thin_lines, "Thin")
-                .on_hover_text("Thin lines (W): every line one pixel wide");
-            ui.separator();
-            let mut units = self.editor.doc.units();
-            let short = |f: drift_core::LengthFormat| match f {
-                drift_core::LengthFormat::Architectural => "ft-in",
-                f => f.symbol(),
-            };
-            egui::ComboBox::from_id_salt("status_units")
-                .selected_text(short(units.length))
-                .width(60.0)
-                .show_ui(ui, |ui| {
-                    for f in drift_core::LengthFormat::METRIC
-                        .into_iter()
-                        .chain(drift_core::LengthFormat::IMPERIAL)
-                    {
-                        ui.selectable_value(&mut units.length, f, f.label());
-                    }
-                })
-                .response
-                .on_hover_text("Display units (more in the Parameters tab)");
-            if units != self.editor.doc.units() {
-                self.editor.set_units(units);
-            }
-            ui.separator();
-            if !self.editor.doc.is_empty() {
-                let analysis = self.editor.analysis();
-                let (text, color) = if !analysis.converged {
-                    (
-                        format!("Over defined ({} conflicting)", analysis.conflicts.len()),
-                        ui.visuals().error_fg_color,
-                    )
-                } else if analysis.dof == Some(0) {
-                    ("Fully defined".to_owned(), ui.visuals().strong_text_color())
-                } else {
-                    (
-                        format!("Under defined: {} DOF", analysis.dof.unwrap_or(0)),
-                        if ui.visuals().dark_mode {
-                            egui::Color32::from_rgb(0x5f, 0xa8, 0xf5)
-                        } else {
-                            egui::Color32::from_rgb(0x15, 0x65, 0xc0)
-                        },
-                    )
-                };
-                ui.label(egui::RichText::new(text).color(color));
-                ui.separator();
-            }
-            match &self.status {
-                Some(status) if now < status.until => {
-                    let text = egui::RichText::new(&status.text);
-                    ui.label(if status.error {
-                        text.color(ui.visuals().error_fg_color)
+            ui.allocate_ui_with_layout(
+                egui::vec2(250.0, 20.0),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.set_min_width(250.0);
+                    ui.label(
+                        egui::RichText::new(format!("X {x:>13}   Y {y:>13}"))
+                            .monospace()
+                            .color(ui.visuals().weak_text_color()),
+                    );
+                },
+            );
+            // Right-hand cluster first, so the hint takes what is left.
+            let right = ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                // Zoom as a percentage of real size on a 96 dpi screen.
+                let zoom = self.camera.scale * 25.4 / 96.0 * 100.0;
+                ui.label(
+                    egui::RichText::new(format!("{zoom:.0}%"))
+                        .monospace()
+                        .color(ui.visuals().weak_text_color()),
+                )
+                .on_hover_text(format!("{:.4} px/mm", self.camera.scale));
+                if !self.editor.doc.is_empty() {
+                    let analysis = self.editor.analysis();
+                    let dark = ui.visuals().dark_mode;
+                    let (text, color) = if !analysis.converged {
+                        (
+                            format!("{} conflicting", analysis.conflicts.len()),
+                            ui.visuals().error_fg_color,
+                        )
+                    } else if analysis.dof == Some(0) {
+                        ("Fully defined".to_owned(), theme::ok_color(dark))
                     } else {
-                        text
-                    });
+                        (
+                            format!("{} DOF free", analysis.dof.unwrap_or(0)),
+                            theme::under_color(dark),
+                        )
+                    };
+                    theme::pill(ui, &text, color)
+                        .on_hover_text("Degrees of freedom: how much the sketch can still move");
                 }
-                _ => {
-                    // Leave room for the readouts on the right; long hints are cut short
-                    // (the full text shows on hover).
-                    let width = (ui.available_width() - 190.0).max(40.0);
-                    let hint = self.tool.hint();
-                    ui.allocate_ui(egui::vec2(width, ui.available_height()), |ui| {
-                        ui.add(egui::Label::new(egui::RichText::new(&hint).weak()).truncate())
-                            .on_hover_text(&hint);
-                    });
+                let mut units = self.editor.doc.units();
+                let short = |f: drift_core::LengthFormat| match f {
+                    drift_core::LengthFormat::Architectural => "ft-in",
+                    f => f.symbol(),
+                };
+                egui::ComboBox::from_id_salt("status_units")
+                    .selected_text(short(units.length))
+                    .width(56.0)
+                    .show_ui(ui, |ui| {
+                        for f in drift_core::LengthFormat::METRIC
+                            .into_iter()
+                            .chain(drift_core::LengthFormat::IMPERIAL)
+                        {
+                            ui.selectable_value(&mut units.length, f, f.label());
+                        }
+                    })
+                    .response
+                    .on_hover_text("Display units (more in the Parameters tab)");
+                if units != self.editor.doc.units() {
+                    self.editor.set_units(units);
                 }
-            }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(egui::RichText::new(&self.backend).weak().small());
-                ui.separator();
-                ui.monospace(format!("{:.4} px/mm", self.camera.scale));
+                let minor = grid_info(&self.camera, self.imperial()).minor;
+                let grid = if units.length.is_metric() {
+                    format!("{} mm", format_length(minor))
+                } else {
+                    Units {
+                        decimals: 4,
+                        fraction: 64,
+                        ..units
+                    }
+                    .format_length(minor)
+                };
+                for (glyph, value, tip) in [
+                    (
+                        Glyph::Thin,
+                        &mut self.thin_lines,
+                        "Thin lines (W)".to_owned(),
+                    ),
+                    (
+                        Glyph::Snap,
+                        &mut self.grid_snap,
+                        format!("Snap to grid ({grid}) · Shift+G"),
+                    ),
+                    (Glyph::Axes, &mut self.show_axes, "Origin axes".to_owned()),
+                    (
+                        Glyph::Grid,
+                        &mut self.show_grid,
+                        format!("Grid: {grid} spacing · {}", shortcut("'", false)),
+                    ),
+                ] {
+                    if icons::button(ui, 22.0, *value, &tip, |p, r, c| {
+                        icons::glyph(p, r, glyph, c)
+                    })
+                    .on_hover_text(tip)
+                    .clicked()
+                    {
+                        *value = !*value;
+                    }
+                }
             });
+            let _ = right;
         });
-        if self.status.as_ref().is_some_and(|s| now < s.until) {
-            ui.ctx()
-                .request_repaint_after(std::time::Duration::from_millis(500));
+        // The hint, in whatever space is left between the readout and the right cluster.
+        let hint = self.tool.hint();
+        let rect = ui.min_rect();
+        let left = rect.left() + 262.0;
+        let right = rect.right() - 420.0;
+        if right - left > 40.0 {
+            let area = egui::Rect::from_min_max(
+                egui::pos2(left, rect.top()),
+                egui::pos2(right, rect.bottom()),
+            );
+            ui.scope_builder(egui::UiBuilder::new().max_rect(area), |ui| {
+                ui.centered_and_justified(|ui| {
+                    ui.add(egui::Label::new(egui::RichText::new(&hint).weak().small()).truncate())
+                        .on_hover_text(&hint);
+                });
+            });
         }
     }
 }

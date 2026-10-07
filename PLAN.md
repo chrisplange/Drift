@@ -917,6 +917,37 @@ written but hasn't run yet (no GitHub repo).*
   - Pattern copies aren't linked to the pattern spacing.
   - Dual units and line-weight scale settings.
 
+**M6.5 — UI cleanup pass**
+
+*As built (2026-10-07):* make Drift feel like a native Apple app without hiding any capability.
+- **Theme (`theme.rs`):**
+  - System fonts on desktop (SF Pro / Segoe UI / Noto, with SF Mono / Consolas / Menlo for
+    numbers); egui's fonts stay as fallbacks, and the web build keeps them.
+  - macOS-style light and dark palettes, the system accent blue, soft rounded controls, hairline
+    separators and quiet shadows.
+  - Shared helpers: section headers, label / value rows, segmented controls and status pills.
+- **Toolbar:** vector icons for every tool (`icons.rs`), grouped by draw, dimension and modify.
+  Tooltips give the name, shortcut and a one-line description.
+- **Inspector:** a segmented Inspector / Parameters / Layers switch.
+  - An empty selection shows document counts.
+  - A single entity shows its geometry in aligned rows.
+  - The sketch-wide constraint list folds away behind "Show all" unless something conflicts.
+- **Parameters:** a Metric / Imperial segmented control, with aligned rows for format and
+  precision.
+- **Layers:** each layer is a card with eye, lock and print icon toggles; the current layer is
+  outlined in the accent colour.
+- **Status bar:**
+  - Coordinates on the left; the hint, truncated, in the middle.
+  - On the right: icon toggles for grid, axes, snap and thin lines, the units menu, a DOF pill
+    (Fully defined / N DOF free / conflicting) and the zoom percentage.
+- **Messages:** shown as a toast at the bottom of the canvas that fades out.
+- **Empty canvas:** a short "Start a sketch" guide.
+- **Grid and axes:** both can be hidden from the View menu or the status bar, and Ctrl/⌘+' toggles
+  the grid. View settings (grid, axes, snap, thin lines, overlays) persist between sessions.
+- **Menus:** use platform shortcut glyphs (⌘ / ⇧ on macOS). Ctrl/⌘+N starts a new sketch.
+- **Accessibility:** icon buttons and segments carry accessible labels.
+- **Tests:** UI tests render the light theme, the hidden grid and the Parameters and Layers tabs.
+
 **M7 — Drafting, fills and hatches (5–6 wks)**
 - ISO/ASME dimension styles, tolerances, baseline/chain/ordinate dimensions, and hole and chamfer
   callouts.

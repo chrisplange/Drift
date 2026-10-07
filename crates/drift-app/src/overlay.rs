@@ -217,9 +217,96 @@ pub fn cursor_label(painter: &egui::Painter, at: Pos2, lines: &[String], colors:
 }
 
 /// Centered hint text, wrapped to the canvas width, e.g. for an empty document.
-pub fn canvas_hint(painter: &egui::Painter, rect: Rect, text: &str, color: Color32) {
-    let wrap = (rect.width() - 32.0).max(80.0);
-    let galley = painter.layout(text.to_owned(), FontId::proportional(15.0), color, wrap);
-    let pos = rect.center() - galley.size() / 2.0;
-    painter.galley(pos, galley, color);
+pub fn canvas_hint(
+    painter: &egui::Painter,
+    rect: Rect,
+    title: &str,
+    lines: &[&str],
+    color: Color32,
+) {
+    let wrap = (rect.width() - 48.0).clamp(80.0, 420.0);
+    let title = painter.layout(
+        title.to_owned(),
+        FontId::new(20.0, crate::theme::bold()),
+        color,
+        wrap,
+    );
+    let body: Vec<_> = lines
+        .iter()
+        .map(|l| painter.layout((*l).to_owned(), FontId::proportional(13.5), color, wrap))
+        .collect();
+    let height = title.size().y + 10.0 + body.iter().map(|g| g.size().y + 4.0).sum::<f32>();
+    let mut y = rect.center().y - height / 2.0;
+    painter.galley(
+        egui::pos2(rect.center().x - title.size().x / 2.0, y),
+        title.clone(),
+        color,
+    );
+    y += title.size().y + 10.0;
+    for g in body {
+        painter.galley(
+            egui::pos2(rect.center().x - g.size().x / 2.0, y),
+            g.clone(),
+            color,
+        );
+        y += g.size().y + 4.0;
+    }
+}
+
+/// A transient message at the bottom of the canvas (macOS-style toast), fading out as
+/// `fade` goes from 1 to 0.
+pub fn toast(painter: &egui::Painter, rect: Rect, text: &str, error: bool, dark: bool, fade: f32) {
+    let fg = if dark {
+        Color32::from_rgb(0xee, 0xee, 0xf0)
+    } else {
+        Color32::from_rgb(0x1d, 0x1d, 0x1f)
+    };
+    let bg = if dark {
+        Color32::from_rgb(0x2e, 0x30, 0x36)
+    } else {
+        Color32::WHITE
+    };
+    let wrap = (rect.width() * 0.7).clamp(120.0, 560.0);
+    let galley = painter.layout(
+        text.to_owned(),
+        FontId::proportional(13.0),
+        fg.gamma_multiply(fade),
+        wrap,
+    );
+    let size = galley.size() + vec2(44.0, 18.0);
+    let at = egui::pos2(
+        rect.center().x - size.x / 2.0,
+        rect.bottom() - size.y - 24.0,
+    );
+    let r = Rect::from_min_size(at, size);
+    painter.add(egui::Shape::Rect(egui::epaint::RectShape::filled(
+        r.translate(vec2(0.0, 3.0)),
+        12.0,
+        Color32::from_black_alpha((50.0 * fade) as u8),
+    )));
+    painter.rect_filled(r, 12.0, bg.gamma_multiply(fade));
+    painter.rect_stroke(
+        r,
+        12.0,
+        Stroke::new(
+            1.0,
+            Color32::from_gray(if dark { 0x44 } else { 0xd8 }).gamma_multiply(fade),
+        ),
+        StrokeKind::Inside,
+    );
+    let dot = if error {
+        Color32::from_rgb(0xff, 0x45, 0x3a)
+    } else {
+        crate::theme::accent(dark)
+    };
+    painter.circle_filled(
+        r.left_center() + vec2(16.0, 0.0),
+        4.0,
+        dot.gamma_multiply(fade),
+    );
+    painter.galley(
+        r.left_top() + vec2(28.0, 9.0),
+        galley,
+        fg.gamma_multiply(fade),
+    );
 }

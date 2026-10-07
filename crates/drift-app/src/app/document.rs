@@ -28,7 +28,49 @@ impl DriftApp {
         };
     }
 
+    /// View preferences as `key=0|1` pairs (unknown keys are ignored when reading).
+    pub(crate) fn view_prefs(&self) -> String {
+        let flags = [
+            ("grid", self.show_grid),
+            ("axes", self.show_axes),
+            ("snap", self.grid_snap),
+            ("thin", self.thin_lines),
+            ("status", self.status_colors),
+            ("dims", self.show_dimensions),
+            ("rels", self.show_relations),
+            ("auto", self.auto_relations),
+        ];
+        flags
+            .iter()
+            .map(|(k, v)| format!("{k}={}", u8::from(*v)))
+            .collect::<Vec<_>>()
+            .join(";")
+    }
+
+    pub(crate) fn apply_view_prefs(&mut self, text: &str) {
+        for pair in text.split(';') {
+            let Some((key, value)) = pair.split_once('=') else {
+                continue;
+            };
+            let on = value == "1";
+            match key {
+                "grid" => self.show_grid = on,
+                "axes" => self.show_axes = on,
+                "snap" => self.grid_snap = on,
+                "thin" => self.thin_lines = on,
+                "status" => self.status_colors = on,
+                "dims" => self.show_dimensions = on,
+                "rels" => self.show_relations = on,
+                "auto" => self.auto_relations = on,
+                _ => {}
+            }
+        }
+    }
+
     pub(crate) fn restore_session(&mut self, storage: &dyn eframe::Storage) {
+        if let Some(prefs) = storage.get_string(KEY_VIEW) {
+            self.apply_view_prefs(&prefs);
+        }
         let Some(text) = storage.get_string(KEY_DOCUMENT) else {
             return;
         };

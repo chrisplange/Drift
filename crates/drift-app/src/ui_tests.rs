@@ -9,6 +9,7 @@ use egui_kittest::kittest::Queryable as _;
 
 use crate::DriftApp;
 use crate::overlay::ScreenMap;
+use crate::parameters::RightTab;
 use crate::tools::ToolKind;
 
 fn gpu_available() -> bool {
@@ -84,7 +85,7 @@ fn save_png(name: &str, h: &mut Harness<'_, DriftApp>) {
 #[test]
 fn toolbar_switches_tools_and_highlights_immediately() {
     let Some(mut h) = harness() else { return };
-    h.get_by_label("Rectangle  R").click();
+    h.get_by_label("Rectangle").click();
     h.run();
     assert_eq!(h.state().tool.kind(), ToolKind::Rectangle);
     h.key_press(Key::L);
@@ -98,7 +99,7 @@ fn toolbar_switches_tools_and_highlights_immediately() {
 #[test]
 fn draw_select_delete_undo() {
     let Some(mut h) = harness() else { return };
-    h.get_by_label("Rectangle  R").click();
+    h.get_by_label("Rectangle").click();
     h.run();
     click_world(&mut h, DVec2::new(-40.0, -20.0));
     click_world(&mut h, DVec2::new(40.0, 30.0));
@@ -1067,4 +1068,60 @@ fn layers_colour_weight_and_thin_lines() {
     h.run();
     assert!(h.state().thin_lines);
     save_png("drift_ui_thin_lines.png", &mut h);
+}
+
+#[test]
+fn light_theme_toast_and_grid_toggle() {
+    let Some(mut h) = harness() else { return };
+    h.ctx.set_theme(egui::Theme::Light);
+    h.get_by_label("File").click();
+    h.run();
+    h.get_by_label("Open example").click();
+    h.run();
+    let now = h.ctx.input(|i| i.time);
+    h.state_mut()
+        .set_status("Pinned (see the Parameters tab)".into(), false, now);
+    // A toast schedules its own fade, so step frames rather than waiting for idle.
+    h.run_steps(3);
+    save_png("drift_ui_light.png", &mut h);
+    assert!(h.state().show_grid);
+    h.event(Event::Key {
+        key: Key::Quote,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: EguiModifiers::COMMAND,
+    });
+    h.run_steps(2);
+    assert!(!h.state().show_grid, "Ctrl+' hides the grid");
+    // The preference survives a restart.
+    let mut storage = MemoryStorage::default();
+    eframe::App::save(h.state_mut(), &mut storage);
+    let Some(mut fresh) = harness() else { return };
+    fresh.state_mut().restore_session(&storage);
+    assert!(!fresh.state().show_grid);
+    fresh.ctx.set_theme(egui::Theme::Dark);
+    fresh.run();
+    fresh.run();
+    save_png("drift_ui_no_grid.png", &mut fresh);
+}
+
+#[test]
+fn parameters_and_layers_tabs_render() {
+    let Some(mut h) = harness() else { return };
+    h.get_by_label("File").click();
+    h.run();
+    h.get_by_label("Open example").click();
+    h.run();
+    h.state_mut().params.tab = RightTab::Parameters;
+    h.run();
+    save_png("drift_ui_parameters.png", &mut h);
+    let id = h.state_mut().editor.add_layer("Notes");
+    let mut layer = h.state().editor.doc.layer(id).cloned().expect("added");
+    layer.visible = false;
+    layer.locked = true;
+    h.state_mut().editor.update_layer(id, layer);
+    h.state_mut().params.tab = RightTab::Layers;
+    h.run();
+    save_png("drift_ui_layers.png", &mut h);
 }

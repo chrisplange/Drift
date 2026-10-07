@@ -57,46 +57,41 @@ impl DriftApp {
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 self.units_section(ui);
-                ui.add_space(10.0);
                 self.variables_section(ui, now);
-                ui.add_space(10.0);
                 self.variants_section(ui, now);
-                ui.add_space(10.0);
                 self.snapshots_section(ui);
-                ui.add_space(10.0);
                 self.measurements_section(ui);
             });
     }
 
     fn units_section(&mut self, ui: &mut egui::Ui) {
-        ui.strong("Units");
+        crate::theme::section(ui, "Units");
         let mut units = self.editor.doc.units();
         let before = units;
-        ui.horizontal(|ui| {
-            let mut metric = units.length.is_metric();
-            if ui.radio_value(&mut metric, true, "Metric").changed() {
-                units.length = LengthFormat::Millimetre;
-            }
-            if ui.radio_value(&mut metric, false, "Imperial").changed() {
-                units.length = LengthFormat::Inch;
-            }
-        });
+        let metric = units.length.is_metric();
+        match crate::theme::segmented(ui, metric, &[(true, "Metric"), (false, "Imperial")]) {
+            Some(true) if !metric => units.length = LengthFormat::Millimetre,
+            Some(false) if metric => units.length = LengthFormat::Inch,
+            _ => {}
+        }
+        ui.add_space(4.0);
         let formats = if units.length.is_metric() {
             LengthFormat::METRIC
         } else {
             LengthFormat::IMPERIAL
         };
-        egui::ComboBox::from_id_salt("length_format")
-            .selected_text(units.length.label())
-            .width(180.0)
-            .show_ui(ui, |ui| {
-                for f in formats {
-                    ui.selectable_value(&mut units.length, f, f.label());
-                }
-            });
-        ui.horizontal(|ui| {
-            if units.length == LengthFormat::Architectural {
-                ui.label("Round to");
+        crate::theme::row(ui, "Format", |ui| {
+            egui::ComboBox::from_id_salt("length_format")
+                .selected_text(units.length.label())
+                .width(ui.available_width() - 4.0)
+                .show_ui(ui, |ui| {
+                    for f in formats {
+                        ui.selectable_value(&mut units.length, f, f.label());
+                    }
+                });
+        });
+        if units.length == LengthFormat::Architectural {
+            crate::theme::row(ui, "Round to", |ui| {
                 egui::ComboBox::from_id_salt("fraction")
                     .selected_text(format!("1/{}\"", units.fraction))
                     .show_ui(ui, |ui| {
@@ -105,14 +100,15 @@ impl DriftApp {
                         }
                     });
                 ui.checkbox(&mut units.zero_feet, "Show 0'");
-            } else {
-                ui.label("Decimals");
+            });
+        } else {
+            crate::theme::row(ui, "Decimals", |ui| {
                 ui.add(egui::DragValue::new(&mut units.decimals).range(0..=8));
-            }
-        });
-        ui.horizontal(|ui| {
-            ui.label("Angle decimals");
+            });
+        }
+        crate::theme::row(ui, "Angles", |ui| {
             ui.add(egui::DragValue::new(&mut units.angle_decimals).range(0..=8));
+            ui.label(egui::RichText::new("decimals").weak());
         });
         if units != before {
             self.editor.set_units(units);
@@ -120,7 +116,7 @@ impl DriftApp {
     }
 
     fn variables_section(&mut self, ui: &mut egui::Ui, now: f64) {
-        ui.strong("Variables");
+        crate::theme::section(ui, "Variables");
         let units = self.editor.doc.units();
         let vars: Vec<_> = self
             .editor
@@ -216,22 +212,25 @@ impl DriftApp {
         }
         // Add a variable.
         ui.add_space(4.0);
+        let mut enter = false;
         ui.horizontal(|ui| {
             ui.add(
                 egui::TextEdit::singleline(&mut self.params.new_name)
                     .hint_text("name")
-                    .desired_width(70.0),
+                    .desired_width(80.0),
             );
             ui.label("=");
             let r = ui.add(
                 egui::TextEdit::singleline(&mut self.params.new_expr)
-                    .hint_text("value")
-                    .desired_width(100.0),
+                    .hint_text("value or expression")
+                    .desired_width(ui.available_width() - 6.0),
             );
-            let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        });
+        ui.horizontal(|ui| {
             egui::ComboBox::from_id_salt("new_kind")
                 .selected_text(self.params.new_kind.label())
-                .width(70.0)
+                .width(100.0)
                 .show_ui(ui, |ui| {
                     for k in Kind::ALL {
                         ui.selectable_value(&mut self.params.new_kind, k, k.label());
@@ -280,7 +279,7 @@ impl DriftApp {
     }
 
     fn variants_section(&mut self, ui: &mut egui::Ui, now: f64) {
-        ui.strong("Variants");
+        crate::theme::section(ui, "Variants");
         let active = self.editor.active_variant();
         let variants: Vec<_> = self
             .editor
@@ -342,7 +341,7 @@ impl DriftApp {
     }
 
     fn snapshots_section(&mut self, ui: &mut egui::Ui) {
-        ui.strong("Snapshots");
+        crate::theme::section(ui, "Snapshots");
         let names: Vec<String> = self
             .editor
             .snapshots
@@ -390,7 +389,7 @@ impl DriftApp {
     }
 
     fn measurements_section(&mut self, ui: &mut egui::Ui) {
-        ui.strong("Pinned measurements");
+        crate::theme::section(ui, "Pinned measurements");
         let units = self.editor.doc.units();
         let pinned: Vec<_> = self
             .editor
@@ -400,7 +399,8 @@ impl DriftApp {
             .collect();
         if pinned.is_empty() {
             ui.label(
-                egui::RichText::new("Select geometry and use Pin in the Properties tab.").weak(),
+                egui::RichText::new("Select geometry and use Pin measurement in the Inspector.")
+                    .weak(),
             );
         }
         let mut unpin = None;

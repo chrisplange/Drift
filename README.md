@@ -7,11 +7,11 @@ constraints, built for technical drawings and design exploration. It is written 
 on the GPU with [wgpu](https://wgpu.rs), and runs natively on Windows, macOS and Linux and in the
 browser (WebGPU, with a WebGL2 fallback).
 
-> **Status: early development (milestone M4).** You can draw with typed values and automatic
-> relations, constrain with the full set of SolidWorks-style relations (tangent, concentric,
-> symmetric…), dimension with Smart Dimension (including driven reference dimensions), drag
-> constrained sketches, and save them. Variables and equations come next. See
-> [PLAN.md](PLAN.md) for the roadmap.
+> **Status: early development (milestone M5).** You can draw with typed values and automatic
+> relations, constrain with the full set of SolidWorks-style relations, dimension with Smart
+> Dimension, drive dimensions from variables and expressions, scrub variables with sliders,
+> switch between variants, work in metric or imperial (including feet-inches with fractions),
+> and save it all. Modify tools and layers come next. See [PLAN.md](PLAN.md) for the roadmap.
 
 ## What works today
 
@@ -30,6 +30,20 @@ browser (WebGPU, with a WebGL2 fallback).
   value straight away.
 - **Dimensions and relations on the canvas:** drag dimension labels to move them, double-click
   to edit the value, and click relation symbols to pick them (Delete removes them).
+- **Parameters (Parameters tab):**
+  - Variables such as `width = 120` and `hole = width / 10`, with sliders that re-solve the
+    sketch live.
+  - Dimensions linked to expressions (type `=width/2` into a dimension; it shows `Σ`).
+  - Named variants you can switch between, or show as ghosts.
+  - Snapshots to return to, and pinned measurements that update as you edit.
+- **Units:**
+  - Metric (mm, cm, m) or imperial: decimal inches or feet, or architectural feet-inches with
+    fractions (`1'-6 1/2"`).
+  - Any value can be typed in any unit (`2in`, `25mm`, `1'-6"`, `30deg`) or as an expression.
+  - The grid follows the units (1/16", 1", 1').
+  - Changing units never moves geometry, and rounded labels are marked `~`.
+- **Free directions:** View → Show free directions draws arrows showing how each
+  under-defined point can still move.
 - **Snapping:** end points, centres, midpoints, quadrants and nearest-on-curve, plus optional grid
   snapping (Shift+G). Hold Alt to place freely. Snapping onto an existing point connects to it.
 - **Blender-style keys:**

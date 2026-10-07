@@ -40,6 +40,7 @@ fn main() {
         size_px: DVec2::new(2560.0, 1440.0),
         pixels_per_point: 2.0,
         srgb_target: false,
+        imperial_grid: false,
     };
     let bounds = items.iter().map(|i| i.shape.bounds()).collect();
     let mut camera = Camera::default();

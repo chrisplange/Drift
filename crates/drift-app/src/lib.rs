@@ -7,13 +7,16 @@ mod annotations;
 mod canvas;
 pub mod editor;
 mod overlay;
+mod parameters;
 pub mod tools;
 #[cfg(test)]
 mod ui_tests;
 
 use std::f64::consts::TAU;
 
-use drift_core::{Bounds, Constraint, ConstraintId, DVec2, Document, LineKind, Shape, demo};
+use drift_core::{
+    Bounds, Constraint, ConstraintId, DVec2, Document, Kind, LineKind, Shape, Units, demo,
+};
 use drift_geom::SnapOptions;
 use drift_io::Metadata;
 use drift_platform::{FileEvent, FilePath, FileType, Files};
@@ -92,8 +95,40 @@ impl Typing {
         }
     }
 
-    fn parsed(&self) -> [Option<f64>; 2] {
-        [0, 1].map(|i| parse_value(&self.values[i]))
+    /// Each field's typed text evaluated with the document's variables and units: the value,
+    /// and the expression text if it uses variables (so created dimensions can link to it).
+    fn evaluate(&self, editor: &Editor) -> [FieldResult; 2] {
+        [0, 1].map(|i| {
+            let text = self.values[i].trim();
+            if text.is_empty() || i >= self.fields.len() {
+                return Ok(None);
+            }
+            editor
+                .evaluate_text(text, field_kind(self.fields[i]))
+                .map(|e| Some((e.value, (!e.references.is_empty()).then_some(e.text))))
+                .map_err(|e| e.to_string())
+        })
+    }
+
+    fn parsed(&self, editor: &Editor) -> [Option<f64>; 2] {
+        self.evaluate(editor)
+            .map(|r| r.ok().flatten().map(|(v, _)| v))
+    }
+
+    fn expressions(&self, editor: &Editor) -> [Option<String>; 2] {
+        self.evaluate(editor)
+            .map(|r| r.ok().flatten().and_then(|(_, e)| e))
+    }
+}
+
+/// A typed field's value and its expression text if it uses variables; `None` if empty.
+type FieldResult = Result<Option<(f64, Option<String>)>, String>;
+
+/// The kind of value a typed field takes.
+fn field_kind(label: &str) -> Kind {
+    match label {
+        "Angle" | "Sweep" => Kind::Angle,
+        _ => Kind::Length,
     }
 }
 
@@ -144,6 +179,8 @@ pub struct DriftApp {
     typing: Option<Typing>,
     /// Points the pointer recently snapped to; new points can align with them.
     inference_points: Vec<DVec2>,
+    /// The Parameters tab's state.
+    params: parameters::ParamUi,
 }
 
 impl DriftApp {
@@ -194,6 +231,7 @@ impl DriftApp {
             dimension_edit: None,
             typing: None,
             inference_points: Vec::new(),
+            params: Default::default(),
         };
         if let Some(storage) = cc.storage {
             app.restore_session(storage);
@@ -343,6 +381,11 @@ impl DriftApp {
     }
 
     /// Abort the active tool's operation in progress, keeping the selection.
+    /// True if the document shows imperial units (for grid steps).
+    fn imperial(&self) -> bool {
+        !self.editor.doc.units().length.is_metric()
+    }
+
     fn abort_operation(&mut self) {
         if self.tool.is_busy() {
             self.tool.cancel(&mut self.editor);
@@ -521,21 +564,48 @@ impl DriftApp {
         if self.typing.as_ref().is_some_and(|t| t.fields != fields) {
             self.typing = None;
         }
+        // Typing starts with a digit, `.`, `-`, `(`, or `=` (to start with a variable name).
+        // Once it has started, any text goes into the field (units, `'`, `"`, variables), and
+        // letter keys no longer act as shortcuts.
+        let active = self.typing.is_some();
+        let in_call = self
+            .typing
+            .as_ref()
+            .is_some_and(|t| t.values[t.active].contains('('));
         let typed: String = ctx.input_mut(|i| {
             let mut typed = String::new();
             i.events.retain(|e| match e {
                 egui::Event::Text(t)
-                    if t.chars().all(|c| c.is_ascii_digit() || ".,-".contains(c)) =>
+                    if active || t.chars().all(|c| c.is_ascii_digit() || ".,-(=".contains(c)) =>
                 {
-                    typed.push_str(&t.replace(',', "."));
+                    // A decimal comma, except between function arguments.
+                    let t = if in_call {
+                        t.clone()
+                    } else {
+                        t.replace(',', ".")
+                    };
+                    typed.push_str(&t);
+                    false
+                }
+                egui::Event::Key { key, modifiers, .. }
+                    if active
+                        && !modifiers.command
+                        && !matches!(key, Key::Tab | Key::Enter | Key::Escape | Key::Backspace) =>
+                {
                     false
                 }
                 _ => true,
             });
             typed
         });
+        let starting = !active && typed.starts_with('=');
+        let typed = if active {
+            typed
+        } else {
+            typed.trim_start_matches('=').to_owned()
+        };
         let consume = |key| ctx.input_mut(|i| i.consume_key(EguiModifiers::NONE, key));
-        if !typed.is_empty() {
+        if !typed.is_empty() || starting {
             let t = self.typing.get_or_insert_with(|| Typing::new(fields));
             t.values[t.active].push_str(&typed);
         } else if self.typing.is_none() && fields.len() > 1 && consume(Key::Tab) {
@@ -554,16 +624,29 @@ impl DriftApp {
             if consume(Key::Escape) {
                 self.typing = None;
             } else if consume(Key::Enter) {
-                let values = t.parsed();
-                self.typing = None;
-                let pointer = self.pointer.unwrap_or_else(|| {
-                    Pointer::new(self.camera.center, PICK_RADIUS / self.camera.scale)
-                });
-                self.tool.set_typed(values);
-                self.tool.commit_typed(&pointer, &mut self.editor);
+                if let Some(error) = t.evaluate(&self.editor).into_iter().find_map(Result::err) {
+                    // Keep the typing so it can be fixed.
+                    self.editor.notice = Some(error);
+                } else {
+                    let values = t.parsed(&self.editor);
+                    self.editor.typed_exprs = t.expressions(&self.editor);
+                    self.typing = None;
+                    let pointer = self.pointer.unwrap_or_else(|| {
+                        let mut p =
+                            Pointer::new(self.camera.center, PICK_RADIUS / self.camera.scale);
+                        p.units = self.editor.doc.units();
+                        p
+                    });
+                    self.tool.set_typed(values);
+                    self.tool.commit_typed(&pointer, &mut self.editor);
+                    self.editor.typed_exprs = [None, None];
+                }
             }
         }
-        let values = self.typing.as_ref().map_or([None; 2], Typing::parsed);
+        let values = self
+            .typing
+            .as_ref()
+            .map_or([None; 2], |t| t.parsed(&self.editor));
         self.tool.set_typed(values);
     }
 
@@ -676,6 +759,9 @@ impl DriftApp {
                 ui.checkbox(&mut self.auto_relations, "Automatic relations");
                 ui.checkbox(&mut self.show_dimensions, "Show dimensions");
                 ui.checkbox(&mut self.show_relations, "Show relations");
+                ui.checkbox(&mut self.params.show_free, "Show free directions")
+                    .on_hover_text("Arrows on points that can still move, showing how");
+                ui.checkbox(&mut self.params.show_ghosts, "Show variants as ghosts");
                 let wide = ui.ctx().content_rect().width() >= WIDE_LAYOUT;
                 let mut show = self.show_properties.unwrap_or(wide);
                 if ui.checkbox(&mut show, "Properties panel").changed() {
@@ -716,16 +802,39 @@ impl DriftApp {
 
     fn properties(&mut self, ui: &mut egui::Ui) {
         ui.add_space(6.0);
-        ui.heading("Properties");
+        ui.horizontal(|ui| {
+            use parameters::RightTab;
+            for (tab, label) in [
+                (RightTab::Properties, "Properties"),
+                (RightTab::Parameters, "Parameters"),
+            ] {
+                let text = egui::RichText::new(label).heading();
+                if ui
+                    .add(egui::Button::selectable(self.params.tab == tab, text).frame(false))
+                    .clicked()
+                {
+                    self.params.tab = tab;
+                }
+            }
+        });
         ui.separator();
+        if self.params.tab == parameters::RightTab::Parameters {
+            let now = ui.input(|i| i.time);
+            self.parameters_panel(ui, now);
+            return;
+        }
         let ed = &self.editor;
         let selection: Vec<_> = ed.selection.iter().copied().collect();
         for line in &ed.selected_midpoints {
             if let Some(drift_core::Shape::Line { a, b }) = ed.index.shape(*line) {
                 let m = (*a + *b) * 0.5;
                 ui.strong(format!("Midpoint of {line}"));
-                // `+ 0.0` turns -0.0 into 0.0 so it doesn't display as "-0.0000".
-                ui.monospace(format!("{:.4}, {:.4}", m.x + 0.0, m.y + 0.0));
+                let units = ed.doc.units();
+                ui.monospace(format!(
+                    "{}, {}",
+                    units.format_readout(m.x),
+                    units.format_readout(m.y)
+                ));
                 ui.add_space(4.0);
             }
         }
@@ -747,7 +856,7 @@ impl DriftApp {
                     .num_columns(2)
                     .striped(true)
                     .show(ui, |ui| {
-                        property_rows(ui, shape);
+                        property_rows(ui, shape, ed.doc.units());
                     });
             }
             many => {
@@ -809,6 +918,7 @@ impl DriftApp {
         let relations = self.editor.relation_options();
         let dimensions = self.editor.dimension_options();
         let now = ui.input(|i| i.time);
+        let pins = dimensions.clone();
         for (heading, options, is_dimension) in [
             ("Add relation", relations, false),
             ("Add dimension", dimensions, true),
@@ -839,6 +949,30 @@ impl DriftApp {
                         }
                     }
                     Err(e) => self.set_status(format!("{}: {e}", option.label), true, now),
+                }
+            }
+        }
+        if !pins.is_empty() {
+            ui.add_space(6.0);
+            let mut chosen = None;
+            egui::CollapsingHeader::new("Pin measurement")
+                .default_open(false)
+                .show(ui, |ui| {
+                    ui.label(
+                        egui::RichText::new("Keep a live measurement in the Parameters tab").weak(),
+                    );
+                    ui.horizontal_wrapped(|ui| {
+                        for option in &pins {
+                            if ui.button(option.label).clicked() {
+                                chosen = option.constraints.first().copied();
+                            }
+                        }
+                    });
+                });
+            if let Some(c) = chosen {
+                match self.editor.pin_measurement(c) {
+                    Ok(_) => self.set_status("Pinned (see the Parameters tab)".into(), false, now),
+                    Err(e) => self.set_status(format!("Can't pin it: {e}"), true, now),
                 }
             }
         }
@@ -903,7 +1037,10 @@ impl DriftApp {
                                             egui::Label::new(
                                                 egui::RichText::new(format!(
                                                     "({})",
-                                                    format_value(value)
+                                                    ed.doc.units().format(
+                                                        drift_core::dimension_kind(c),
+                                                        value
+                                                    )
                                                 ))
                                                 .weak(),
                                             ),
@@ -919,14 +1056,15 @@ impl DriftApp {
                                         }
                                     });
                                 }
-                                Some(value) => {
+                                Some(_) => {
                                     ui.horizontal(|ui| {
                                         let field = egui::Id::new(("dimension", id.0));
                                         let mut text = self
                                             .dimension_text
                                             .get(id)
                                             .cloned()
-                                            .unwrap_or_else(|| format_value(value));
+                                            .or_else(|| ed.dimension_edit_text(*id))
+                                            .unwrap_or_default();
                                         let response = ui.add(
                                             egui::TextEdit::singleline(&mut text)
                                                 .id(field)
@@ -981,15 +1119,11 @@ impl DriftApp {
         {
             self.set_status(format!("Can't make it driving: it {e}"), true, now);
         }
-        if let Some((id, text)) = apply {
-            match parse_value(&text) {
-                Some(value) => {
-                    if let Err(e) = self.editor.set_dimension(id, value) {
-                        self.set_status(format!("Can't use {text}: {e}"), true, now);
-                    }
-                }
-                None => self.set_status(format!("\"{text}\" is not a number"), true, now),
-            }
+        if let Some((id, text)) = apply
+            && Some(&text) != self.editor.dimension_edit_text(id).as_ref()
+            && let Err(e) = self.editor.set_dimension_text(id, &text)
+        {
+            self.set_status(format!("Can't use {text}: {e}"), true, now);
         }
     }
 
@@ -998,18 +1132,54 @@ impl DriftApp {
             match self.pointer {
                 Some(p) => {
                     let at = p.pos();
-                    ui.monospace(format!("X {:>12.4}  Y {:>12.4}", at.x, at.y));
+                    let units = self.editor.doc.units();
+                    ui.monospace(format!(
+                        "X {:>14}  Y {:>14}",
+                        units.format_readout(at.x),
+                        units.format_readout(at.y)
+                    ));
                 }
                 None => {
-                    ui.monospace(format!("{:31}", ""));
+                    ui.monospace(format!("{:35}", ""));
                 }
             }
             ui.separator();
-            ui.monospace(format!(
-                "Grid {} mm",
-                format_length(grid_info(&self.camera).minor)
-            ));
+            let units = self.editor.doc.units();
+            let minor = grid_info(&self.camera, self.imperial()).minor;
+            let grid = if units.length.is_metric() {
+                format!("{} mm", format_length(minor))
+            } else {
+                Units {
+                    decimals: 4,
+                    fraction: 64,
+                    ..units
+                }
+                .format_length(minor)
+            };
+            ui.monospace(format!("Grid {grid}"));
             ui.toggle_value(&mut self.grid_snap, "Snap to grid");
+            ui.separator();
+            let mut units = self.editor.doc.units();
+            let short = |f: drift_core::LengthFormat| match f {
+                drift_core::LengthFormat::Architectural => "ft-in",
+                f => f.symbol(),
+            };
+            egui::ComboBox::from_id_salt("status_units")
+                .selected_text(short(units.length))
+                .width(60.0)
+                .show_ui(ui, |ui| {
+                    for f in drift_core::LengthFormat::METRIC
+                        .into_iter()
+                        .chain(drift_core::LengthFormat::IMPERIAL)
+                    {
+                        ui.selectable_value(&mut units.length, f, f.label());
+                    }
+                })
+                .response
+                .on_hover_text("Display units (more in the Parameters tab)");
+            if units != self.editor.doc.units() {
+                self.editor.set_units(units);
+            }
             ui.separator();
             if !self.editor.doc.is_empty() {
                 let analysis = self.editor.analysis();
@@ -1064,10 +1234,13 @@ impl DriftApp {
         let raw = map.to_world(pos);
         let mut pointer = Pointer::new(raw, PICK_RADIUS / self.camera.scale);
         pointer.relations = self.auto_relations;
+        pointer.units = self.editor.doc.units();
         if snap && self.tool.wants_snap() {
             let options = SnapOptions {
                 tolerance: pointer.tolerance,
-                grid: self.grid_snap.then(|| grid_info(&self.camera).minor),
+                grid: self
+                    .grid_snap
+                    .then(|| grid_info(&self.camera, self.imperial()).minor),
             };
             let ed = &self.editor;
             let tool = &self.tool;
@@ -1212,10 +1385,10 @@ impl DriftApp {
             );
             return;
         }
-        if let Some(value) = self.editor.doc.constraint(id).and_then(|c| c.value()) {
+        if let Some(text) = self.editor.dimension_edit_text(id) {
             self.dimension_edit = Some(DimensionEdit {
                 id,
-                text: format_value(value),
+                text,
                 focus: true,
             });
         }
@@ -1259,23 +1432,11 @@ impl DriftApp {
                     edit.focus = false;
                 } else if response.lost_focus() {
                     keep = false;
-                    if ui.input(|i| i.key_pressed(Key::Enter)) {
-                        match parse_value(&edit.text) {
-                            Some(value) => {
-                                if let Err(e) = self.editor.set_dimension(edit.id, value) {
-                                    self.set_status(
-                                        format!("Can't use {}: {e}", edit.text),
-                                        true,
-                                        now,
-                                    );
-                                }
-                            }
-                            None => self.set_status(
-                                format!("\"{}\" is not a number", edit.text),
-                                true,
-                                now,
-                            ),
-                        }
+                    if ui.input(|i| i.key_pressed(Key::Enter))
+                        && Some(&edit.text) != self.editor.dimension_edit_text(edit.id).as_ref()
+                        && let Err(e) = self.editor.set_dimension_text(edit.id, &edit.text)
+                    {
+                        self.set_status(format!("Can't use {}: {e}", edit.text), true, now);
                     }
                 }
             });
@@ -1412,9 +1573,14 @@ impl DriftApp {
         let mut items = self.editor.items();
         items.extend(self.tool.preview(self.pointer.as_ref()));
         let ppp = f64::from(ui.ctx().pixels_per_point());
-        let callback =
-            self.painter
-                .callback(rect, ppp, &items, &self.camera, ui.visuals().dark_mode);
+        let callback = self.painter.callback(
+            rect,
+            ppp,
+            &items,
+            &self.camera,
+            ui.visuals().dark_mode,
+            self.imperial(),
+        );
         ui.painter().add(callback);
 
         // Overlays (egui).
@@ -1437,7 +1603,9 @@ impl DriftApp {
             }
             None => {}
         }
+        self.paint_ghosts(&painter, &map);
         self.paint_annotations(&painter, &map, &dims, &glyphs, ui.visuals().dark_mode);
+        self.paint_free_directions(&painter, &map);
         let ctx = ui.ctx().clone();
         let now = ctx.input(|i| i.time);
         self.dimension_editor(&ctx, &dims, now);
@@ -1451,9 +1619,23 @@ impl DriftApp {
                 label.push(m);
             }
             if let Some(t) = &self.typing {
+                let results = t.evaluate(&self.editor);
+                let units = self.editor.doc.units();
                 for (i, field) in t.fields.iter().enumerate() {
                     let marker = if i == t.active { ">" } else { " " };
-                    label.push(format!("{marker} {field}: {}", t.values[i]));
+                    let note = match &results[i] {
+                        // Show what an expression comes to.
+                        Ok(Some((v, _)))
+                            if t.values[i]
+                                .chars()
+                                .any(|c| c.is_ascii_alphabetic() || "*/+^('\"".contains(c)) =>
+                        {
+                            format!("  = {}", units.format(field_kind(field), *v))
+                        }
+                        Err(e) if !t.values[i].trim().is_empty() => format!("  ({e})"),
+                        _ => String::new(),
+                    };
+                    label.push(format!("{marker} {field}: {}{note}", t.values[i]));
                 }
             } else if !self.tool.fields().is_empty() && self.tool.kind() != ToolKind::Select {
                 label.push(format!("Type {}", self.tool.fields().join(" / ")));
@@ -1811,23 +1993,6 @@ fn constraint_label(doc: &Document, c: &Constraint) -> &'static str {
 }
 
 /// Dimension values as shown in fields: up to 6 decimals, without trailing zeros.
-fn format_value(value: f64) -> String {
-    let s = format!("{value:.6}");
-    let s = s.trim_end_matches('0').trim_end_matches('.');
-    s.to_owned()
-}
-
-/// Parse a typed dimension value, accepting a trailing unit.
-fn parse_value(text: &str) -> Option<f64> {
-    let t = text.trim();
-    let t = t
-        .strip_suffix("mm")
-        .or_else(|| t.strip_suffix('°'))
-        .unwrap_or(t)
-        .trim();
-    t.parse::<f64>().ok().filter(|v| v.is_finite())
-}
-
 /// Where `button` was released this frame, from the raw input events.
 fn release_pos(ui: &egui::Ui, button: PointerButton) -> Option<egui::Pos2> {
     ui.input(|i| {
@@ -1863,8 +2028,16 @@ const SHORTCUTS: &[(&str, &str)] = &[
         "Pick its midpoint (e.g. point + midpoint -> Midpoint)",
     ),
     (
-        "0-9 . -  (while drawing)",
+        "0-9 . - (  (while drawing)",
         "Type exact values; Tab switches field, Enter applies",
+    ),
+    (
+        "=  (while drawing)",
+        "Start with a variable name or expression, e.g. =width/2",
+    ),
+    (
+        "Units in typed values",
+        "25mm, 2in, 3\", 1'-6 1/2\", 30deg; bare numbers use the display unit",
     ),
     ("Double-click a dimension", "Edit its value"),
     ("Drag a dimension", "Move its label"),
@@ -1895,14 +2068,20 @@ const SHORTCUTS: &[(&str, &str)] = &[
     ("Scroll / pinch", "Zoom at cursor"),
 ];
 
-fn property_rows(ui: &mut egui::Ui, shape: &Shape) {
+fn property_rows(ui: &mut egui::Ui, shape: &Shape, units: Units) {
     let row = |ui: &mut egui::Ui, name: &str, value: String| {
         ui.label(name);
         ui.monospace(value);
         ui.end_row();
     };
-    let pt = |p: DVec2| format!("{:.4}, {:.4}", p.x + 0.0, p.y + 0.0);
-    let len = |v: f64| format!("{:.4} mm", v + 0.0);
+    let pt = |p: DVec2| {
+        format!(
+            "{}, {}",
+            units.format_readout(p.x),
+            units.format_readout(p.y)
+        )
+    };
+    let len = |v: f64| units.format_readout(v);
     let deg = |a: f64| format!("{:.4}°", a.to_degrees());
     match *shape {
         Shape::Point(p) => {
@@ -2009,17 +2188,6 @@ fn format_length(value: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::format_length;
-
-    #[test]
-    fn parses_and_formats_dimension_values() {
-        use super::{format_value, parse_value};
-        assert_eq!(parse_value(" 12.5 mm"), Some(12.5));
-        assert_eq!(parse_value("30°"), Some(30.0));
-        assert_eq!(parse_value("abc"), None);
-        assert_eq!(format_value(10.0), "10");
-        assert_eq!(format_value(0.1 + 0.2), "0.3");
-        assert_eq!(format_value(12.3456789), "12.345679");
-    }
 
     #[test]
     fn benchmark_sketches_solve() {

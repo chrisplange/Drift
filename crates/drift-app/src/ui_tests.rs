@@ -893,3 +893,71 @@ fn a_cycles_arc_tools_and_switches_mid_polyline() {
     assert!(h.state().editor.analysis().conflicts.is_empty());
     save_png("drift_ui_line_arc_line.png", &mut h);
 }
+
+#[test]
+fn variables_drive_typed_dimensions_and_units_change_display() {
+    use eframe::egui::accesskit::Role;
+
+    let Some(mut h) = harness() else { return };
+    let v = DVec2::new;
+    let w = h
+        .state_mut()
+        .editor
+        .add_variable("w", "40", drift_core::Kind::Length)
+        .unwrap();
+    // Draw a line whose length is typed as the variable: `=` starts typing a name.
+    h.key_press(Key::L);
+    h.run();
+    click_world(&mut h, v(-20.0, 0.0));
+    h.hover_at(screen(&h, v(10.0, 1.0)));
+    h.run();
+    type_text(&mut h, "=");
+    type_text(&mut h, "w");
+    save_png("drift_ui_typed_variable.png", &mut h);
+    h.key_press(Key::Enter);
+    h.run();
+    h.key_press(Key::Escape);
+    h.run();
+    h.key_press(Key::Escape);
+    h.run();
+    let (a, b) = the_line(&h);
+    assert!((a.distance(b) - 40.0).abs() < 1e-9, "{}", a.distance(b));
+    let linked = h
+        .state()
+        .editor
+        .doc
+        .expressions()
+        .map(|(_, e)| e.to_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(linked, ["w"]);
+
+    // Changing the variable moves the line.
+    h.state_mut().editor.set_variable(w, "2.5 in").unwrap();
+    h.run();
+    let (a, b) = the_line(&h);
+    assert!((a.distance(b) - 63.5).abs() < 1e-9);
+
+    // The Parameters tab, in architectural units, with free directions shown.
+    h.state_mut()
+        .editor
+        .set_units(drift_core::Units::architectural());
+    h.state_mut().params.show_free = true;
+    h.get_by_role_and_label(Role::Button, "Parameters").click();
+    h.run();
+    h.run();
+    let dims = first_dimension(&h);
+    assert_eq!(dims.text, "Σ2 1/2\"");
+    save_png("drift_ui_parameters.png", &mut h);
+
+    // Variants: the other one shows as a ghost.
+    let small = h.state_mut().editor.save_variant("Small");
+    h.state_mut().editor.set_variable(w, "4 in").unwrap();
+    h.state_mut().editor.save_variant("Large");
+    h.state_mut().editor.apply_variant(small).unwrap();
+    h.state_mut().params.show_ghosts = true;
+    h.run();
+    h.run();
+    let (a, b) = the_line(&h);
+    assert!((a.distance(b) - 63.5).abs() < 1e-9);
+    save_png("drift_ui_variant_ghosts.png", &mut h);
+}

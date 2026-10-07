@@ -125,6 +125,7 @@ fn viewport() -> Viewport {
         size_px: DVec2::new(f64::from(WIDTH), f64::from(HEIGHT)),
         pixels_per_point: 1.0,
         srgb_target: false,
+        imperial_grid: false,
     }
 }
 

@@ -10,6 +10,7 @@ use std::f64::consts::TAU;
 use glam::DVec2;
 
 use crate::constraint::Slot;
+use crate::units::{Kind, Units};
 use crate::{Constraint, ConstraintId, LineKind, Shape};
 
 /// Stable identifier of an entity within a document. Never reused.
@@ -89,6 +90,51 @@ impl EntityKind {
     }
 }
 
+/// Stable identifier of a variable.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct VariableId(pub u32);
+
+impl std::fmt::Display for VariableId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "v{}", self.0)
+    }
+}
+
+/// A named value defined by an expression (`width = 120 mm`, `hole = width / 10`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Variable {
+    pub name: String,
+    pub expr: String,
+    pub kind: Kind,
+}
+
+/// Stable identifier of a variant (configuration).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct VariantId(pub u32);
+
+impl std::fmt::Display for VariantId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "k{}", self.0)
+    }
+}
+
+/// A named set of variable expressions that can be applied in one step.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Variant {
+    pub name: String,
+    pub values: BTreeMap<VariableId, String>,
+}
+
+/// Stable identifier of a pinned measurement.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct MeasurementId(pub u32);
+
+impl std::fmt::Display for MeasurementId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "m{}", self.0)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Entity {
     pub kind: EntityKind,
@@ -117,6 +163,12 @@ pub enum DocumentError {
     },
     Degenerate(&'static str),
     InvalidValue,
+    MissingVariable(VariableId),
+    /// A variable name that is invalid, reserved or already used.
+    BadName(String),
+    /// A variable still used by expressions (their owners are listed).
+    InUse(String),
+    MissingVariant(VariantId),
 }
 
 impl std::fmt::Display for DocumentError {
@@ -130,6 +182,10 @@ impl std::fmt::Display for DocumentError {
             }
             DocumentError::Degenerate(what) => write!(f, "degenerate {what}"),
             DocumentError::InvalidValue => write!(f, "invalid value"),
+            DocumentError::MissingVariable(id) => write!(f, "variable {id} does not exist"),
+            DocumentError::BadName(why) => f.write_str(why),
+            DocumentError::InUse(by) => write!(f, "still used by {by}"),
+            DocumentError::MissingVariant(id) => write!(f, "variant {id} does not exist"),
         }
     }
 }
@@ -144,14 +200,25 @@ enum Key {
     Placement(ConstraintId),
     /// Present (with `Record::Driven`) when the dimension is driven.
     Driven(ConstraintId),
+    Variable(VariableId),
+    /// The expression a dimension's value is linked to.
+    Expression(ConstraintId),
+    Variant(VariantId),
+    Measurement(MeasurementId),
+    Units,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 enum Record {
     Entity(Entity),
     Constraint(Constraint),
     Placement(DVec2),
     Driven,
+    Variable(Variable),
+    Expression(String),
+    Variant(Variant),
+    Measurement(Constraint),
+    Units(Units),
 }
 
 /// One undoable step: the before and after state of everything it touched.
@@ -176,8 +243,17 @@ pub struct Document {
     placements: BTreeMap<ConstraintId, DVec2>,
     /// Driven (reference) dimensions: they show a measurement but don't constrain.
     driven: BTreeSet<ConstraintId>,
+    variables: BTreeMap<VariableId, Variable>,
+    /// Dimensions whose value comes from an expression (e.g. `width / 2`).
+    expressions: BTreeMap<ConstraintId, String>,
+    variants: BTreeMap<VariantId, Variant>,
+    /// Pinned measurements: dimension definitions that are only measured, never solved.
+    measurements: BTreeMap<MeasurementId, Constraint>,
+    units: Units,
     next_id: u32,
     next_constraint_id: u32,
+    /// Next id for variables, variants and measurements (one counter, ids never reused).
+    next_param_id: u32,
     /// Incremented on every change, so caches (spatial index, autosave) can tell when to refresh.
     revision: u64,
     /// Pre-images of everything touched by the open transaction.
@@ -190,6 +266,11 @@ impl PartialEq for Document {
             && self.constraints == other.constraints
             && self.placements == other.placements
             && self.driven == other.driven
+            && self.variables == other.variables
+            && self.expressions == other.expressions
+            && self.variants == other.variants
+            && self.measurements == other.measurements
+            && self.units == other.units
     }
 }
 
@@ -200,9 +281,15 @@ impl Default for Document {
             constraints: BTreeMap::new(),
             placements: BTreeMap::new(),
             driven: BTreeSet::new(),
+            variables: BTreeMap::new(),
+            expressions: BTreeMap::new(),
+            variants: BTreeMap::new(),
+            measurements: BTreeMap::new(),
+            units: Units::default(),
             // Ids start at 1; `e0` and `c0` are not valid ids in `.drift` files.
             next_id: 1,
             next_constraint_id: 1,
+            next_param_id: 1,
             revision: 0,
             journal: None,
         }
@@ -373,6 +460,11 @@ impl Document {
             Key::Constraint(id) => self.constraints.get(&id).copied().map(Record::Constraint),
             Key::Placement(id) => self.placements.get(&id).copied().map(Record::Placement),
             Key::Driven(id) => self.driven.contains(&id).then_some(Record::Driven),
+            Key::Variable(id) => self.variables.get(&id).cloned().map(Record::Variable),
+            Key::Expression(id) => self.expressions.get(&id).cloned().map(Record::Expression),
+            Key::Variant(id) => self.variants.get(&id).cloned().map(Record::Variant),
+            Key::Measurement(id) => self.measurements.get(&id).copied().map(Record::Measurement),
+            Key::Units => Some(Record::Units(self.units)),
         }
     }
 
@@ -420,12 +512,45 @@ impl Document {
             (Key::Driven(id), None) => {
                 self.driven.remove(&id);
             }
+            (Key::Variable(id), Some(Record::Variable(v))) => {
+                self.variables.insert(id, v);
+            }
+            (Key::Variable(id), _) => {
+                self.variables.remove(&id);
+            }
+            (Key::Expression(id), Some(Record::Expression(e))) => {
+                self.expressions.insert(id, e);
+            }
+            (Key::Expression(id), _) => {
+                self.expressions.remove(&id);
+            }
+            (Key::Variant(id), Some(Record::Variant(v))) => {
+                self.variants.insert(id, v);
+            }
+            (Key::Variant(id), _) => {
+                self.variants.remove(&id);
+            }
+            (Key::Measurement(id), Some(Record::Measurement(m))) => {
+                self.measurements.insert(id, m);
+            }
+            (Key::Measurement(id), _) => {
+                self.measurements.remove(&id);
+            }
+            (Key::Units, Some(Record::Units(u))) => self.units = u,
+            (Key::Units, _) => {}
         }
     }
 
     fn apply(&mut self, tx: &Transaction, forward: bool) {
         for (key, before, after) in &tx.changes {
-            self.restore(*key, if forward { *after } else { *before });
+            self.restore(
+                *key,
+                if forward {
+                    after.clone()
+                } else {
+                    before.clone()
+                },
+            );
         }
         self.revision += 1;
     }
@@ -619,6 +744,15 @@ impl Document {
         for id in dangling {
             self.remove_constraint(id);
         }
+        let dangling: Vec<_> = self
+            .measurements
+            .iter()
+            .filter(|(_, c)| c.entities().any(|e| !self.entities.contains_key(&e)))
+            .map(|(id, _)| *id)
+            .collect();
+        for id in dangling {
+            self.remove_measurement(id);
+        }
     }
 
     /// Merge point `from` into point `into`: every reference to `from` is redirected and `from`
@@ -664,6 +798,21 @@ impl Document {
                 self.constraints.remove(&id);
             } else {
                 self.constraints.insert(id, c);
+            }
+        }
+        let measured: Vec<_> = self
+            .measurements
+            .iter()
+            .filter(|(_, c)| c.entities().any(|e| e == from))
+            .map(|(id, c)| (*id, *c))
+            .collect();
+        for (id, mut c) in measured {
+            self.touch_key(Key::Measurement(id));
+            c.replace_point(from, into);
+            if c.is_degenerate() {
+                self.measurements.remove(&id);
+            } else {
+                self.measurements.insert(id, c);
             }
         }
         self.touch(from);
@@ -812,6 +961,7 @@ impl Document {
             self.touch_key(Key::Driven(id));
             self.driven.remove(&id);
         }
+        self.set_expression(id, None);
     }
 
     /// Whether a dimension is driven (a reference that reports but doesn't constrain).
@@ -856,6 +1006,335 @@ impl Document {
             self.placements.insert(id, offset);
         }
         Ok(())
+    }
+
+    // ----- Parameters: units, variables, expressions, variants, measurements -----------------
+
+    /// Every journal key with content in this document.
+    fn keys(&self) -> Vec<Key> {
+        let mut keys: Vec<Key> = Vec::new();
+        keys.extend(self.entities.keys().map(|id| Key::Entity(*id)));
+        keys.extend(self.constraints.keys().map(|id| Key::Constraint(*id)));
+        keys.extend(self.placements.keys().map(|id| Key::Placement(*id)));
+        keys.extend(self.driven.iter().map(|id| Key::Driven(*id)));
+        keys.extend(self.variables.keys().map(|id| Key::Variable(*id)));
+        keys.extend(self.expressions.keys().map(|id| Key::Expression(*id)));
+        keys.extend(self.variants.keys().map(|id| Key::Variant(*id)));
+        keys.extend(self.measurements.keys().map(|id| Key::Measurement(*id)));
+        keys.push(Key::Units);
+        keys
+    }
+
+    /// Make this document's content equal to `other`'s, as journalled changes (so it can be
+    /// undone). Used to restore snapshots.
+    pub fn restore_from(&mut self, other: &Document) {
+        let mut keys = self.keys();
+        keys.extend(other.keys());
+        keys.sort();
+        keys.dedup();
+        for key in keys {
+            let theirs = other.record(key);
+            if self.record(key) != theirs {
+                self.touch_key(key);
+                self.restore(key, theirs);
+            }
+        }
+        self.next_id = self.next_id.max(other.next_id);
+        self.next_constraint_id = self.next_constraint_id.max(other.next_constraint_id);
+        self.next_param_id = self.next_param_id.max(other.next_param_id);
+    }
+
+    pub fn units(&self) -> Units {
+        self.units
+    }
+
+    pub fn set_units(&mut self, units: Units) {
+        if self.units != units {
+            self.touch_key(Key::Units);
+            self.units = units;
+        }
+    }
+
+    fn next_param(&mut self) -> u32 {
+        let id = self.next_param_id;
+        self.next_param_id += 1;
+        id
+    }
+
+    /// Make sure later ids don't collide with `id` (when loading stored ids).
+    fn reserve_param(&mut self, id: u32) {
+        self.next_param_id = self.next_param_id.max(id + 1);
+    }
+
+    /// All variables in id order.
+    pub fn variables(&self) -> impl Iterator<Item = (VariableId, &Variable)> {
+        self.variables.iter().map(|(id, v)| (*id, v))
+    }
+
+    pub fn variable(&self, id: VariableId) -> Option<&Variable> {
+        self.variables.get(&id)
+    }
+
+    pub fn variable_named(&self, name: &str) -> Option<VariableId> {
+        self.variables
+            .iter()
+            .find(|(_, v)| v.name == name)
+            .map(|(id, _)| *id)
+    }
+
+    fn check_name(&self, name: &str, except: Option<VariableId>) -> Result<(), DocumentError> {
+        crate::expr::valid_name(name).map_err(|e| DocumentError::BadName(e.0))?;
+        match self.variable_named(name) {
+            Some(other) if Some(other) != except => Err(DocumentError::BadName(format!(
+                "there is already a variable called `{name}`"
+            ))),
+            _ => Ok(()),
+        }
+    }
+
+    /// Add a variable. The expression isn't evaluated here (see [`crate::params`]).
+    pub fn add_variable(&mut self, variable: Variable) -> Result<VariableId, DocumentError> {
+        let id = VariableId(self.next_param_id);
+        self.insert_variable(id, variable)?;
+        Ok(id)
+    }
+
+    /// Add a variable with a given id (when loading a file).
+    pub fn insert_variable(
+        &mut self,
+        id: VariableId,
+        variable: Variable,
+    ) -> Result<(), DocumentError> {
+        self.check_name(&variable.name, None)?;
+        self.reserve_param(id.0);
+        self.touch_key(Key::Variable(id));
+        self.variables.insert(id, variable);
+        Ok(())
+    }
+
+    pub fn set_variable_expr(&mut self, id: VariableId, expr: &str) -> Result<(), DocumentError> {
+        let v = self
+            .variables
+            .get(&id)
+            .ok_or(DocumentError::MissingVariable(id))?;
+        if v.expr != expr {
+            self.touch_key(Key::Variable(id));
+            if let Some(v) = self.variables.get_mut(&id) {
+                v.expr = expr.to_owned();
+            }
+        }
+        Ok(())
+    }
+
+    pub fn set_variable_kind(&mut self, id: VariableId, kind: Kind) -> Result<(), DocumentError> {
+        let v = self
+            .variables
+            .get(&id)
+            .ok_or(DocumentError::MissingVariable(id))?;
+        if v.kind != kind {
+            self.touch_key(Key::Variable(id));
+            if let Some(v) = self.variables.get_mut(&id) {
+                v.kind = kind;
+            }
+        }
+        Ok(())
+    }
+
+    /// Rename a variable, updating every expression that uses it.
+    pub fn rename_variable(&mut self, id: VariableId, name: &str) -> Result<(), DocumentError> {
+        let old = self
+            .variables
+            .get(&id)
+            .ok_or(DocumentError::MissingVariable(id))?
+            .name
+            .clone();
+        if old == name {
+            return Ok(());
+        }
+        self.check_name(name, Some(id))?;
+        let rename = |text: &str| crate::expr::rename(text, &old, name);
+        let vars: Vec<_> = self.variables.keys().copied().collect();
+        for v in vars {
+            let mut var = self.variables[&v].clone();
+            let expr = rename(&var.expr);
+            if v == id || expr != var.expr {
+                if v == id {
+                    var.name = name.to_owned();
+                }
+                var.expr = expr;
+                self.touch_key(Key::Variable(v));
+                self.variables.insert(v, var);
+            }
+        }
+        let exprs: Vec<_> = self
+            .expressions
+            .iter()
+            .map(|(c, e)| (*c, rename(e)))
+            .filter(|(c, e)| self.expressions[c] != *e)
+            .collect();
+        for (c, e) in exprs {
+            self.touch_key(Key::Expression(c));
+            self.expressions.insert(c, e);
+        }
+        let variants: Vec<_> = self.variants.keys().copied().collect();
+        for k in variants {
+            let mut variant = self.variants[&k].clone();
+            for e in variant.values.values_mut() {
+                *e = rename(e);
+            }
+            if variant != self.variants[&k] {
+                self.touch_key(Key::Variant(k));
+                self.variants.insert(k, variant);
+            }
+        }
+        Ok(())
+    }
+
+    /// What uses variable `id`: names of other variables and ids of dimensions.
+    pub fn users_of_variable(&self, id: VariableId) -> Vec<String> {
+        let Some(name) = self.variables.get(&id).map(|v| v.name.as_str()) else {
+            return Vec::new();
+        };
+        let uses = |text: &str| {
+            crate::expr::parse(text).is_ok_and(|e| e.identifiers().iter().any(|i| i == name))
+        };
+        let mut users: Vec<String> = self
+            .variables
+            .iter()
+            .filter(|(v, var)| **v != id && uses(&var.expr))
+            .map(|(_, var)| var.name.clone())
+            .collect();
+        users.extend(
+            self.expressions
+                .iter()
+                .filter(|(_, e)| uses(e))
+                .map(|(c, _)| format!("dimension {c}")),
+        );
+        users
+    }
+
+    /// Remove a variable that nothing uses (variant values for it go too).
+    pub fn remove_variable(&mut self, id: VariableId) -> Result<(), DocumentError> {
+        if !self.variables.contains_key(&id) {
+            return Err(DocumentError::MissingVariable(id));
+        }
+        let users = self.users_of_variable(id);
+        if !users.is_empty() {
+            return Err(DocumentError::InUse(users.join(", ")));
+        }
+        self.touch_key(Key::Variable(id));
+        self.variables.remove(&id);
+        let variants: Vec<_> = self
+            .variants
+            .iter()
+            .filter(|(_, v)| v.values.contains_key(&id))
+            .map(|(k, _)| *k)
+            .collect();
+        for k in variants {
+            self.touch_key(Key::Variant(k));
+            if let Some(v) = self.variants.get_mut(&k) {
+                v.values.remove(&id);
+            }
+        }
+        Ok(())
+    }
+
+    /// The expression a dimension's value is linked to, if any.
+    pub fn expression(&self, id: ConstraintId) -> Option<&str> {
+        self.expressions.get(&id).map(String::as_str)
+    }
+
+    /// All dimension expressions.
+    pub fn expressions(&self) -> impl Iterator<Item = (ConstraintId, &str)> {
+        self.expressions.iter().map(|(id, e)| (*id, e.as_str()))
+    }
+
+    /// Link a dimension to an expression, or unlink it (`None`).
+    pub fn set_expression(&mut self, id: ConstraintId, expr: Option<String>) {
+        if self.expressions.get(&id) != expr.as_ref() {
+            self.touch_key(Key::Expression(id));
+            match expr {
+                Some(e) => {
+                    self.expressions.insert(id, e);
+                }
+                None => {
+                    self.expressions.remove(&id);
+                }
+            }
+        }
+    }
+
+    pub fn variants(&self) -> impl Iterator<Item = (VariantId, &Variant)> {
+        self.variants.iter().map(|(id, v)| (*id, v))
+    }
+
+    pub fn variant(&self, id: VariantId) -> Option<&Variant> {
+        self.variants.get(&id)
+    }
+
+    pub fn add_variant(&mut self, variant: Variant) -> VariantId {
+        let id = VariantId(self.next_param());
+        self.touch_key(Key::Variant(id));
+        self.variants.insert(id, variant);
+        id
+    }
+
+    /// Add or replace a variant with a given id.
+    pub fn set_variant(&mut self, id: VariantId, variant: Variant) {
+        self.reserve_param(id.0);
+        if self.variants.get(&id) != Some(&variant) {
+            self.touch_key(Key::Variant(id));
+            self.variants.insert(id, variant);
+        }
+    }
+
+    pub fn remove_variant(&mut self, id: VariantId) {
+        if self.variants.contains_key(&id) {
+            self.touch_key(Key::Variant(id));
+            self.variants.remove(&id);
+        }
+    }
+
+    pub fn measurements(&self) -> impl Iterator<Item = (MeasurementId, &Constraint)> {
+        self.measurements.iter().map(|(id, c)| (*id, c))
+    }
+
+    /// Pin a measurement (a dimension definition that is only measured).
+    pub fn add_measurement(&mut self, c: Constraint) -> Result<MeasurementId, DocumentError> {
+        let id = MeasurementId(self.next_param_id);
+        self.insert_measurement(id, c)?;
+        Ok(id)
+    }
+
+    pub fn insert_measurement(
+        &mut self,
+        id: MeasurementId,
+        c: Constraint,
+    ) -> Result<(), DocumentError> {
+        if !c.is_dimension() {
+            return Err(DocumentError::InvalidValue);
+        }
+        // The value is irrelevant: validate the references only.
+        self.validate(&c.with_value(1.0))?;
+        self.reserve_param(id.0);
+        self.touch_key(Key::Measurement(id));
+        self.measurements.insert(id, c);
+        Ok(())
+    }
+
+    pub fn remove_measurement(&mut self, id: MeasurementId) {
+        if self.measurements.contains_key(&id) {
+            self.touch_key(Key::Measurement(id));
+            self.measurements.remove(&id);
+        }
+    }
+}
+
+/// The kind of value a dimension holds.
+pub fn dimension_kind(c: &Constraint) -> Kind {
+    match c {
+        Constraint::Angle { .. } => Kind::Angle,
+        _ => Kind::Length,
     }
 }
 

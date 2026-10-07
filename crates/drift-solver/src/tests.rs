@@ -810,3 +810,51 @@ fn arcs_tangent_at_a_shared_end_point() {
     let (u, w) = (p(c1) - p(t), p(c2) - p(t));
     assert!(u.perp_dot(w).abs() < 1e-9 * u.length() * w.length());
 }
+
+#[test]
+fn free_directions_follow_the_null_space() {
+    let mut doc = Document::new();
+    let lone = doc.add_point(v(50.0, 50.0));
+    // A horizontal line with a fixed start: the end slides along X.
+    let a = doc.add_point(v(0.0, 0.0));
+    let b = doc.add_point(v(10.0, 0.0));
+    let line = doc.add_line(a, b).unwrap();
+    doc.add_constraint(Constraint::Horizontal { line }).unwrap();
+    doc.add_constraint(Constraint::Fix {
+        point: a,
+        at: v(0.0, 0.0),
+    })
+    .unwrap();
+    // A fixed-length arm from a fixed pivot: the tip moves on a circle (tangent direction).
+    let pivot = doc.add_point(v(0.0, 20.0));
+    let tip = doc.add_point(v(3.0, 24.0));
+    doc.add_line(pivot, tip).unwrap();
+    doc.add_constraint(Constraint::Fix {
+        point: pivot,
+        at: v(0.0, 20.0),
+    })
+    .unwrap();
+    doc.add_constraint(Constraint::Distance {
+        a: pivot,
+        b: tip,
+        value: 5.0,
+    })
+    .unwrap();
+    let free = free_directions(&doc);
+    assert_eq!(free.get(&lone), Some(&Freedom::Plane));
+    assert_eq!(free.get(&a), None, "fixed");
+    assert_eq!(free.get(&pivot), None, "fixed");
+    let Some(Freedom::Line(d)) = free.get(&b) else {
+        panic!("end should slide: {:?}", free.get(&b))
+    };
+    assert!((d.x.abs() - 1.0).abs() < 1e-9 && d.y.abs() < 1e-9, "{d}");
+    let Some(Freedom::Line(t)) = free.get(&tip) else {
+        panic!("tip should swing: {:?}", free.get(&tip))
+    };
+    // Perpendicular to the arm (3, 4).
+    assert!(t.dot(v(3.0, 4.0)).abs() < 1e-9, "{t}");
+    // Fully define the slider: nothing left for it.
+    doc.add_constraint(Constraint::Distance { a, b, value: 10.0 })
+        .unwrap();
+    assert_eq!(free_directions(&doc).get(&b), None);
+}

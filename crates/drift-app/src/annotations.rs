@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::f32::consts::TAU as TAU32;
 
-use drift_core::{Constraint, ConstraintId, DVec2, Document, EntityId, EntityKind};
+use drift_core::{Constraint, ConstraintId, DVec2, Document, EntityId, EntityKind, Units};
 use eframe::egui::{self, Color32, FontId, Pos2, Rect, Stroke, StrokeKind, Vec2, pos2, vec2};
 
 use crate::overlay::ScreenMap;
@@ -212,22 +212,23 @@ pub struct DimLayout {
     pub driven: bool,
 }
 
-/// The text a dimension shows.
-pub fn dimension_text(c: &Constraint) -> String {
+/// The text a dimension shows, in the document's units. A value the display rounds gets a
+/// `~` prefix, so a rounded label is never mistaken for the exact value.
+pub fn dimension_text(c: &Constraint, units: &Units) -> String {
     let v = c.value().unwrap_or(0.0);
-    let n = format_number(v);
+    let (n, exact) = match c {
+        Constraint::Angle { .. } => {
+            let scale = 10f64.powi(i32::from(units.angle_decimals));
+            (units.format_angle(v), (v * scale).round() / scale == v)
+        }
+        _ => (units.format_length(v), units.is_exact(v)),
+    };
+    let n = if exact { n } else { format!("~{n}") };
     match c {
         Constraint::Radius { .. } => format!("R{n}"),
         Constraint::Diameter { .. } => format!("Ø{n}"),
-        Constraint::Angle { .. } => format!("{n}°"),
         _ => n,
     }
-}
-
-/// Up to 3 decimals, without trailing zeros.
-pub fn format_number(v: f64) -> String {
-    let s = format!("{v:.3}");
-    s.trim_end_matches('0').trim_end_matches('.').to_owned()
 }
 
 fn dir(a: Pos2, b: Pos2) -> Vec2 {
@@ -334,9 +335,12 @@ pub fn layout_dimension(
         let measured = drift_solver::measure(doc, c)
             .map(|v| c.with_value(v))
             .unwrap_or(*c);
-        format!("({})", dimension_text(&measured))
+        format!("({})", dimension_text(&measured, &doc.units()))
+    } else if id.is_some_and(|id| doc.expression(id).is_some()) {
+        // Linked to an expression (as SolidWorks marks equation-driven dimensions).
+        format!("Σ{}", dimension_text(c, &doc.units()))
     } else {
-        dimension_text(c)
+        dimension_text(c, &doc.units())
     };
     let galley = painter.layout_no_wrap(text.clone(), FontId::proportional(13.0), Color32::WHITE);
     let text_rect = Rect::from_center_size(text_pos, galley.size()).expand2(vec2(3.0, 1.0));
@@ -723,32 +727,34 @@ mod tests {
     use super::*;
 
     #[test]
-    fn numbers_are_trimmed() {
-        assert_eq!(format_number(42.0), "42");
-        assert_eq!(format_number(12.5), "12.5");
-        assert_eq!(format_number(0.1 + 0.2), "0.3");
-        assert_eq!(format_number(12.34567), "12.346");
-    }
-
-    #[test]
     fn dimension_texts() {
         let e = EntityId(1);
+        let mm = Units::default();
+        let text = |c: Constraint| dimension_text(&c, &mm);
+        let distance = |value| Constraint::Distance { a: e, b: e, value };
+        assert_eq!(text(distance(42.0)), "42");
+        // Round-off is not rounding.
+        assert_eq!(text(distance(0.1 + 0.2)), "0.3");
+        assert_eq!(text(distance(12.34567)), "~12.346");
+        let arch = Units::architectural();
+        assert_eq!(dimension_text(&distance(18.5 * 25.4), &arch), "1'-6 1/2\"");
+        assert_eq!(dimension_text(&distance(100.0), &arch), "~3 15/16\"");
         assert_eq!(
-            dimension_text(&Constraint::Diameter {
+            text(Constraint::Diameter {
                 curve: e,
                 value: 25.0
             }),
             "Ø25"
         );
         assert_eq!(
-            dimension_text(&Constraint::Radius {
+            text(Constraint::Radius {
                 curve: e,
                 value: 2.5
             }),
             "R2.5"
         );
         assert_eq!(
-            dimension_text(&Constraint::Angle {
+            text(Constraint::Angle {
                 a: e,
                 b: e,
                 degrees: 30.0

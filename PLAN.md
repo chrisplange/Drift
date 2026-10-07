@@ -423,7 +423,7 @@ fix/lock, equal curvature (G2, spline ↔ curve), horizontal/vertical alignment 
 - **Undo and files:**
   - Layer edits and assignments are ordinary journalled changes.
   - The file gains a `layers` table and optional per-entity `layer` / `color` / `weight` /
-    `linetype` (absent = by layer). This is format v5; older files load onto layer "0".
+    `linetype` (absent = by layer). This is format v6; older files load onto layer "0".
 - **Rendering:** a width and colour per instance (the SDF line/arc pipelines already take
   per-instance attributes). Dash patterns follow arclength and scale with the weight.
 - **Interop:** DXF layers map one-to-one, with weights rounded to the nearest DXF lineweight and
@@ -748,12 +748,78 @@ written but hasn't run yet (no GitHub repo).*
   - **UI:** a status-bar/View-menu selector, with a document setting in File → Document
     properties. A user preference sets the default for new documents.
 
+*M5 as built (2026-10-07):*
+- **Expressions (`drift-core::expr`):**
+  - A recursive-descent parser with `+ - * / ^`, the functions `sqrt abs min max hypot round
+    floor ceil sin cos tan asin acos atan atan2`, and the constant `pi`.
+  - Quantities carry dimensions (length / angle / number exponents), so mixing them is an error
+    with a plain message ("can't add a number and a length").
+  - Base units are mm and **degrees**. Degrees rather than radians, so a typed 30° stays exactly
+    30 through evaluation.
+  - A unit after a term applies to the whole product before it (`100/2 mm` = 50 mm, `pi/4
+    rad`), except right before `^` (`3mm^2`).
+  - Architectural forms (`1'-6 1/2"`, `6-1/2"`, `3/8"`) are lexed as single literals, so `1'-6"`
+    isn't a subtraction; with spaces (`2' - 6"`) it is.
+  - **Bare numbers** take the context's unit: the display unit for lengths (inches for
+    architectural), degrees for angles. Stored text gets the unit made explicit (`5` → `5 in`),
+    so changing the display unit never changes a value.
+- **Variables and linked dimensions (`drift-core::params`):**
+  - A journalled variables table (name, expression, kind: length / angle / number). Dimensions
+    can link to an expression; their stored value is its last result.
+  - Evaluation runs in dependency order with cycle detection ("circular reference: a → b →
+    a"). Invalid results, such as a negative length, are refused.
+  - Renaming rewrites every expression token-wise; deleting refuses while the variable is
+    used.
+- **Units (`drift-core::units`):** mm / cm / m, decimal inches or feet, and feet-inches with
+  fractions (1/2–1/64, reduced, optional `0'-`). Readouts use fixed decimals with the unit.
+  Dimension labels trim zeros and get a `~` when the display rounds the value (float
+  round-off doesn't count).
+  - **Imperial grid:** 1/64"–1/2", 1", 6", 1', then tens of feet.
+- **Editor:**
+  - Every parameter edit re-evaluates, pushes linked values into the dimensions, solves, and
+    commits as one undo step, or rolls back with the reason.
+  - Sliders scrub plain-valued variables live in one open transaction. A value the sketch
+    can't take is skipped, keeping the last good one, and release commits.
+  - Loading re-applies expressions.
+- **Typed input:**
+  - Every tool field accepts expressions. `=` starts typing with a variable name, and once
+    typing has started letters go to the field rather than shortcuts.
+  - The cursor label shows `= result` or the error.
+  - Dimensions created from typed expressions that use variables stay linked
+    (`Editor::add_typed_dimension`).
+  - Linked dimensions show `Σ` and edit as their expression.
+- **Variants:** named sets of variable expressions, applied as one step; the matching one is
+  shown as active. Other variants can be drawn as ghosts, solved on a copy and cached per
+  revision.
+- **Snapshots:** named document copies for the session. Restoring is one undoable step via
+  `Document::restore_from`, which journals every differing key.
+- **Free directions (View → Show free directions):**
+  - `drift_solver::free_directions` takes the null space of each component's equilibrated
+    Jacobian by dense RREF (components up to 400 unknowns). Each point's 2×k motion block then
+    gives fixed / one direction / plane, and a rotation shows as the tangent direction.
+  - Drawn as small arrows.
+- **Pinned measurements:** measured-only dimension definitions in the document, listed with
+  live values in the Parameters tab. They're removed with their geometry.
+- **File format v5:**
+  - `display` (only non-default settings), `variables`, a dimension `expr`, `measurements` and
+    `variants`. Sections are written only when used.
+  - `meta.units` still names the storage unit (always mm). v1–v4 load unchanged.
+- **UI:**
+  - The right panel has Properties / Parameters tabs.
+  - The Parameters tab has: units, variables with sliders, variants, snapshots, and pinned
+    measurements.
+  - A units picker sits in the status bar; Pin measurement (collapsed) is in Properties.
+- **Not yet:**
+  - Variables can't reference measurements. Snapshots aren't saved in the file.
+  - There's no user preference for the default units of new documents (they start metric).
+  - There's no dual-unit display.
+
 **M6 — Modify tools, layers and line weights (6–7 wks)**
 - Robust intersections in drift-geom, then trim/extend/split, fillet/chamfer, offset, mirror, and
   linear/circular patterns.
 - Region detection with area properties (the basis for fills in M7).
 - Layers, colours, line weights and line types, and the thin-lines toggle (§5.11). File
-  format v5.
+  format v6.
 
 **M7 — Drafting, fills and hatches (5–6 wks)**
 - ISO/ASME dimension styles, tolerances, baseline/chain/ordinate dimensions, and hole and chamfer
@@ -817,7 +883,7 @@ title-block template syntax.
 
 1. Create the `drift` GitHub repo and push, so CI runs and Pages deploys. Enable Pages with
    "GitHub Actions" as the source.
-2. M5: global variables and expressions with units, an equations panel, sliders with live
-   re-solve, and free-DOF arrows. Also add metric / imperial unit selection, with engineering
-   (decimal) and architectural (ft-in with fractions) display. Also fully constrain the example plate with M4's tangent
+2. M6: modify tools (trim/extend, fillet/chamfer, offset, mirror, patterns), region detection,
+   and layers with line weights, colours and the thin-lines toggle. Also fully constrain the
+   example plate with M4's tangent relations. Also fully constrain the example plate with M4's tangent
    relations.

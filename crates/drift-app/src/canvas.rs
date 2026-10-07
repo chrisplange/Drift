@@ -31,6 +31,7 @@ impl CanvasPainter {
         items: &[SketchItem],
         camera: &Camera,
         dark_mode: bool,
+        imperial_grid: bool,
     ) -> egui::PaintCallback {
         let palette = if dark_mode {
             Palette::dark()
@@ -42,6 +43,7 @@ impl CanvasPainter {
                 * pixels_per_point,
             pixels_per_point,
             srgb_target: self.srgb_target,
+            imperial_grid,
         };
         let frame = build_frame(items, camera, viewport, &palette);
         egui_wgpu::Callback::new_paint_callback(rect, CanvasCallback { frame })

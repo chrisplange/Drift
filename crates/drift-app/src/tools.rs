@@ -257,10 +257,6 @@ fn preview_vertex(at: DVec2) -> SketchItem {
     preview(Shape::Point(at)).as_vertex()
 }
 
-fn format_len(v: f64) -> String {
-    format!("{v:.4}")
-}
-
 // ---------------------------------------------------------------------------------------------
 // Select
 
@@ -510,7 +506,7 @@ impl Tool for SelectTool {
         }
     }
 
-    fn measurement(&self, _p: &Pointer) -> Option<String> {
+    fn measurement(&self, p: &Pointer) -> Option<String> {
         let grab = self.grab.as_ref()?;
         if grab.picking_base {
             return Some("Base point".into());
@@ -521,9 +517,9 @@ impl Tool for SelectTool {
             .map_or(String::new(), |axis| format!("  [{axis:?} locked]"));
         Some(format!(
             "dX {}  dY {}  D {}{lock}",
-            format_len(d.x),
-            format_len(d.y),
-            format_len(d.length())
+            p.units.format_readout(d.x),
+            p.units.format_readout(d.y),
+            p.units.format_readout(d.length())
         ))
     }
 
@@ -934,7 +930,7 @@ impl LineTool {
             None => auto_relation(ed, relation, line),
         }
         if let Some(value) = length {
-            let _ = ed.doc.add_constraint(Constraint::Distance { a, b, value });
+            ed.add_typed_dimension(0, Constraint::Distance { a, b, value });
         }
         if !ed.commit("Line") {
             return;
@@ -994,8 +990,7 @@ impl Tool for LineTool {
                     "Locked to the {axis:?} axis ({axis:?} again to unlock) · click the next point \
                      or type a length"
                 ),
-                None => "Click the next point, or type a length (Tab: angle) · X / Y: lock to \
-                         an axis · double-click, right-click or Enter to finish"
+                None => "Click the next point or type a length (Tab: angle) · X/Y: lock axis · Enter: finish"
                     .into(),
             },
         }
@@ -1138,7 +1133,10 @@ impl Tool for LineTool {
         let lock = self
             .lock
             .map_or(String::new(), |axis| format!("  [{axis:?} locked]"));
-        Some(format!("L {}  A {angle:.2}°{lock}", format_len(d.length())))
+        Some(format!(
+            "L {}  A {angle:.2}°{lock}",
+            p.units.format_readout(d.length())
+        ))
     }
 }
 
@@ -1197,18 +1195,24 @@ impl RectangleTool {
             auto_relation(ed, Some(relation), *line);
         }
         if let Some(w) = dims[0] {
-            let _ = ed.doc.add_constraint(Constraint::Distance {
-                a: p0,
-                b: p1,
-                value: w.abs(),
-            });
+            ed.add_typed_dimension(
+                0,
+                Constraint::Distance {
+                    a: p0,
+                    b: p1,
+                    value: w.abs(),
+                },
+            );
         }
         if let Some(h) = dims[1] {
-            let _ = ed.doc.add_constraint(Constraint::Distance {
-                a: p1,
-                b: p2,
-                value: h.abs(),
-            });
+            ed.add_typed_dimension(
+                1,
+                Constraint::Distance {
+                    a: p1,
+                    b: p2,
+                    value: h.abs(),
+                },
+            );
         }
         ed.commit("Rectangle");
         self.first = None;
@@ -1291,8 +1295,8 @@ impl Tool for RectangleTool {
         let d = self.second_corner(p) - self.first?.pos;
         Some(format!(
             "{} × {}",
-            format_len(d.x.abs()),
-            format_len(d.y.abs())
+            p.units.format_readout(d.x.abs()),
+            p.units.format_readout(d.y.abs())
         ))
     }
 }
@@ -1325,10 +1329,13 @@ impl CircleTool {
         match ed.doc.add_circle(c, radius) {
             Ok(circle) => {
                 if dimension {
-                    let _ = ed.doc.add_constraint(Constraint::Diameter {
-                        curve: circle,
-                        value: 2.0 * radius,
-                    });
+                    ed.add_typed_dimension(
+                        0,
+                        Constraint::Diameter {
+                            curve: circle,
+                            value: 2.0 * radius,
+                        },
+                    );
                 }
                 ed.commit("Circle");
             }
@@ -1415,7 +1422,11 @@ impl Tool for CircleTool {
     fn measurement(&self, p: &Pointer) -> Option<String> {
         self.center?;
         let r = self.radius(p);
-        Some(format!("R {}  Ø {}", format_len(r), format_len(2.0 * r)))
+        Some(format!(
+            "R {}  Ø {}",
+            p.units.format_readout(r),
+            p.units.format_readout(2.0 * r)
+        ))
     }
 }
 
@@ -1432,6 +1443,8 @@ pub struct ArcTool {
     typed: [Option<f64>; 2],
     /// A radius typed for the start point, to add as a dimension when the arc is created.
     radius_dimension: Option<f64>,
+    /// The typed radius expression, if it used variables.
+    radius_expr: Option<String>,
 }
 
 impl ArcTool {
@@ -1529,10 +1542,13 @@ impl ArcTool {
         let (first, last) = if clockwise { (fr, st) } else { (st, fr) };
         match ed.doc.add_arc(c, first, last) {
             Ok(arc) => {
-                if let Some(value) = self.radius_dimension {
-                    let _ = ed
+                if let Some(value) = self.radius_dimension
+                    && let Ok(id) = ed
                         .doc
-                        .add_constraint(Constraint::Radius { curve: arc, value });
+                        .add_constraint(Constraint::Radius { curve: arc, value })
+                    && let Some(expr) = self.radius_expr.take()
+                {
+                    ed.doc.set_expression(id, Some(expr));
                 }
                 ed.commit("Arc");
             }
@@ -1620,6 +1636,9 @@ impl Tool for ArcTool {
             (Some(_), None) => {
                 let at = self.start_for(p);
                 self.radius_dimension = self.typed[0].map(f64::abs).filter(|r| *r > 0.0);
+                self.radius_expr = ed.typed_exprs[0]
+                    .clone()
+                    .filter(|_| self.typed[0].is_some_and(|r| r > 0.0));
                 self.typed = [None; 2];
                 self.set_start(Anchor::at(at));
             }
@@ -1655,7 +1674,7 @@ impl Tool for ArcTool {
         match self.start {
             None => Some(format!(
                 "R {}",
-                format_len(self.start_for(p).distance(center))
+                p.units.format_readout(self.start_for(p).distance(center))
             )),
             Some(start) => {
                 let r = start.pos.distance(center);
@@ -1663,7 +1682,11 @@ impl Tool for ArcTool {
                 let Shape::Arc { sweep, .. } = arc_shape(c, s, e) else {
                     return None;
                 };
-                Some(format!("R {}  {:.2}°", format_len(r), sweep.to_degrees()))
+                Some(format!(
+                    "R {}  {:.2}°",
+                    p.units.format_readout(r),
+                    sweep.to_degrees()
+                ))
             }
         }
     }
@@ -1767,9 +1790,7 @@ impl ThreePointArcTool {
         match ed.doc.add_arc(c, first, last) {
             Ok(arc) => {
                 if let Some(value) = radius {
-                    let _ = ed
-                        .doc
-                        .add_constraint(Constraint::Radius { curve: arc, value });
+                    ed.add_typed_dimension(0, Constraint::Radius { curve: arc, value });
                 }
                 if let Some(point) = through
                     && point != s
@@ -1886,7 +1907,7 @@ impl Tool for ThreePointArcTool {
             let d = self.end_for(p) - start;
             return Some(format!(
                 "Chord {}  A {:.2}°",
-                format_len(d.length()),
+                p.units.format_readout(d.length()),
                 d.y.atan2(d.x).to_degrees()
             ));
         }
@@ -1896,7 +1917,7 @@ impl Tool for ThreePointArcTool {
         };
         Some(format!(
             "R {}  {:.2}°",
-            format_len(c.distance(s)),
+            p.units.format_readout(c.distance(s)),
             sweep.to_degrees()
         ))
     }
@@ -2050,9 +2071,7 @@ impl TangentArcTool {
             .doc
             .add_constraint(Constraint::Tangent { a: curve, b: arc });
         if let Some(value) = radius {
-            let _ = ed
-                .doc
-                .add_constraint(Constraint::Radius { curve: arc, value });
+            ed.add_typed_dimension(0, Constraint::Radius { curve: arc, value });
         }
         if !ed.commit("Tangent arc") {
             return;
@@ -2159,7 +2178,7 @@ impl Tool for TangentArcTool {
         let sweep = if left { sweep } else { -sweep };
         Some(format!(
             "R {}  {:.2}°",
-            format_len(center.distance(from)),
+            p.units.format_readout(center.distance(from)),
             sweep.to_degrees()
         ))
     }

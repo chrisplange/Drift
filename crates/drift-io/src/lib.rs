@@ -6,8 +6,12 @@
 //! ```json
 //! {
 //!   "format": "drift",
-//!   "version": 4,
+//!   "version": 5,
 //!   "meta": {"title":"Bracket","units":"mm","generator":"Drift 0.1.0"},
+//!   "display": {"length":"architectural","fraction":16},
+//!   "variables": [
+//!     {"id":"v1","name":"width","expr":"120 mm","kind":"length"}
+//!   ],
 //!   "entities": [
 //!     {"type":"point","id":"e1","at":[0.0,0.0]},
 //!     {"type":"point","id":"e2","at":[120.0,0.0]},
@@ -15,19 +19,25 @@
 //!   ],
 //!   "constraints": [
 //!     {"type":"horizontal","id":"c1","line":"e3"},
-//!     {"type":"distance","id":"c2","a":"e1","b":"e2","value":120.0}
+//!     {"type":"distance","id":"c2","a":"e1","b":"e2","value":120.0,"expr":"width"}
 //!   ]
 //! }
 //! ```
+//!
+//! `display` (how lengths are shown), `variables`, `measurements` (pinned, measured-only
+//! dimensions) and `variants` (named sets of variable expressions) are written only when used.
+//! Coordinates are always millimetres (`meta.units`), whatever the display units.
 //!
 //! Angles are stored in degrees, as the user typed them.
 //!
 //! Numbers use the shortest representation that round-trips exactly, so save → load is
 //! bit-exact. Older versions are upgraded by [`migrate`] before parsing.
 
+use std::collections::BTreeMap;
+
 use drift_core::{
-    Constraint, ConstraintId, DVec2, Document, DocumentError, Entity, EntityId, EntityKind,
-    LineKind,
+    Constraint, ConstraintId, DVec2, Document, DocumentError, Entity, EntityId, EntityKind, Kind,
+    LengthFormat, LineKind, MeasurementId, Units, Variable, VariableId, Variant, VariantId,
 };
 use serde::{Deserialize, Serialize};
 
@@ -38,8 +48,9 @@ pub const EXTENSION: &str = "drift";
 /// History: 1 = entities only (M1); 2 = adds `constraints` (M2); 3 = adds diameter,
 /// horizontal/vertical and point–line distances, and dimension `label` offsets (M3);
 /// 4 = adds tangent, concentric, coradial, collinear, point-on-curve and symmetric relations,
-/// and `driven` dimensions (M4).
-pub const FORMAT_VERSION: u32 = 4;
+/// and `driven` dimensions (M4); 5 = adds `display` units, `variables`, dimension `expr`,
+/// `measurements` and `variants` (M5).
+pub const FORMAT_VERSION: u32 = 5;
 const FORMAT_TAG: &str = "drift";
 
 /// Document-level properties stored alongside the geometry.
@@ -211,6 +222,118 @@ struct ConstraintRecord {
     /// A driven (reference) dimension: shown but not enforced.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     driven: bool,
+    /// The expression the dimension's value comes from (the value is its last result).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    expr: Option<String>,
+}
+
+/// How lengths and angles are displayed. Every field is optional (defaults apply).
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DisplayRecord {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    length: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    decimals: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    fraction: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    zero_feet: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    angle_decimals: Option<u8>,
+}
+
+const LENGTH_FORMATS: [(LengthFormat, &str); 6] = [
+    (LengthFormat::Millimetre, "mm"),
+    (LengthFormat::Centimetre, "cm"),
+    (LengthFormat::Metre, "m"),
+    (LengthFormat::Inch, "in"),
+    (LengthFormat::Foot, "ft"),
+    (LengthFormat::Architectural, "architectural"),
+];
+
+impl DisplayRecord {
+    /// Only the settings that differ from the defaults.
+    fn from_units(u: Units) -> Self {
+        fn diff<T: PartialEq>(a: T, b: T) -> Option<T> {
+            (a != b).then_some(a)
+        }
+        let d = Units::default();
+        Self {
+            length: (u.length != d.length).then(|| {
+                LENGTH_FORMATS
+                    .iter()
+                    .find(|(f, _)| *f == u.length)
+                    .map_or("mm", |(_, n)| n)
+                    .to_owned()
+            }),
+            decimals: diff(u.decimals, d.decimals),
+            fraction: diff(u.fraction, d.fraction),
+            zero_feet: diff(u.zero_feet, d.zero_feet),
+            angle_decimals: diff(u.angle_decimals, d.angle_decimals),
+        }
+    }
+
+    fn to_units(&self) -> Result<Units, LoadError> {
+        let d = Units::default();
+        let length = match &self.length {
+            None => d.length,
+            Some(name) => LENGTH_FORMATS
+                .iter()
+                .find(|(_, n)| n == name)
+                .map(|(f, _)| *f)
+                .ok_or_else(|| LoadError::UnsupportedUnits(name.clone()))?,
+        };
+        Ok(Units {
+            length,
+            decimals: self.decimals.unwrap_or(d.decimals).min(10),
+            fraction: self
+                .fraction
+                .filter(|f| drift_core::units::FRACTIONS.contains(f))
+                .unwrap_or(d.fraction),
+            zero_feet: self.zero_feet.unwrap_or(d.zero_feet),
+            angle_decimals: self.angle_decimals.unwrap_or(d.angle_decimals).min(10),
+        })
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct VariableRecord {
+    id: String,
+    name: String,
+    expr: String,
+    kind: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct VariantRecord {
+    id: String,
+    name: String,
+    /// Variable id → expression.
+    values: BTreeMap<String, String>,
+}
+
+const KINDS: [(Kind, &str); 3] = [
+    (Kind::Length, "length"),
+    (Kind::Angle, "angle"),
+    (Kind::Number, "number"),
+];
+
+fn kind_name(kind: Kind) -> &'static str {
+    KINDS
+        .iter()
+        .find(|(k, _)| *k == kind)
+        .map_or("length", |(_, n)| n)
+}
+
+/// Parse a prefixed id like `v12`.
+fn parse_prefixed(s: &str, prefix: char) -> Result<u32, LoadError> {
+    s.strip_prefix(prefix)
+        .and_then(|n| n.parse::<u32>().ok())
+        .filter(|n| *n > 0)
+        .ok_or_else(|| LoadError::BadId(s.to_owned()))
 }
 
 fn constraint_record(
@@ -224,6 +347,7 @@ fn constraint_record(
         id: id.to_string(),
         label: label.map(|l| l.to_array()),
         driven,
+        expr: None,
         ..Default::default()
     };
     let kind = match *c {
@@ -440,9 +564,17 @@ struct FileRecord {
     #[serde(default)]
     meta: Metadata,
     #[serde(default)]
+    display: Option<DisplayRecord>,
+    #[serde(default)]
+    variables: Vec<VariableRecord>,
+    #[serde(default)]
     entities: Vec<EntityRecord>,
     #[serde(default)]
     constraints: Vec<ConstraintRecord>,
+    #[serde(default)]
+    measurements: Vec<ConstraintRecord>,
+    #[serde(default)]
+    variants: Vec<VariantRecord>,
 }
 
 fn id_string(id: EntityId) -> String {
@@ -496,6 +628,26 @@ pub fn save(doc: &Document, meta: &Metadata) -> String {
     out.push_str(&format!("  \"version\": {FORMAT_VERSION},\n"));
     let meta = serde_json::to_string(meta).expect("metadata serializes");
     out.push_str(&format!("  \"meta\": {meta},\n"));
+    if doc.units() != Units::default() {
+        let display = serde_json::to_string(&DisplayRecord::from_units(doc.units()))
+            .expect("display serializes");
+        out.push_str(&format!("  \"display\": {display},\n"));
+    }
+    let variables: Vec<String> = doc
+        .variables()
+        .map(|(id, v)| {
+            serde_json::to_string(&VariableRecord {
+                id: id.to_string(),
+                name: v.name.clone(),
+                expr: v.expr.clone(),
+                kind: kind_name(v.kind).to_owned(),
+            })
+            .expect("variable serializes")
+        })
+        .collect();
+    if !variables.is_empty() {
+        push_array(&mut out, "variables", &variables, true);
+    }
     let entities: Vec<String> = doc
         .iter()
         .map(|(id, entity)| serde_json::to_string(&record(id, entity)).expect("entity serializes"))
@@ -503,17 +655,45 @@ pub fn save(doc: &Document, meta: &Metadata) -> String {
     let constraints: Vec<String> = doc
         .constraints()
         .map(|(id, c)| {
-            serde_json::to_string(&constraint_record(
-                id,
-                c,
-                doc.placement(id),
-                doc.is_driven(id),
-            ))
-            .expect("constraint serializes")
+            let mut r = constraint_record(id, c, doc.placement(id), doc.is_driven(id));
+            r.expr = doc.expression(id).map(str::to_owned);
+            serde_json::to_string(&r).expect("constraint serializes")
         })
         .collect();
+    let measurements: Vec<String> = doc
+        .measurements()
+        .map(|(id, c)| {
+            let mut r = constraint_record(ConstraintId(1), c, None, false);
+            r.id = id.to_string();
+            // Measurements have no value of their own.
+            (r.value, r.degrees) = (None, None);
+            serde_json::to_string(&r).expect("measurement serializes")
+        })
+        .collect();
+    let variants: Vec<String> = doc
+        .variants()
+        .map(|(id, v)| {
+            serde_json::to_string(&VariantRecord {
+                id: id.to_string(),
+                name: v.name.clone(),
+                values: v
+                    .values
+                    .iter()
+                    .map(|(var, e)| (var.to_string(), e.clone()))
+                    .collect(),
+            })
+            .expect("variant serializes")
+        })
+        .collect();
+    let tail = [("measurements", &measurements), ("variants", &variants)];
+    let last = tail.iter().rposition(|(_, items)| !items.is_empty());
     push_array(&mut out, "entities", &entities, true);
-    push_array(&mut out, "constraints", &constraints, false);
+    push_array(&mut out, "constraints", &constraints, last.is_some());
+    for (i, (name, items)) in tail.iter().enumerate() {
+        if !items.is_empty() {
+            push_array(&mut out, name, items, Some(i) != last);
+        }
+    }
     out.push_str("}\n");
     out
 }
@@ -623,8 +803,13 @@ pub fn load(text: &str) -> Result<(Document, Metadata), LoadError> {
     let mut seen_constraints = std::collections::HashSet::new();
     let mut labels = Vec::new();
     let mut driven = Vec::new();
-    for rec in file.constraints {
+    let mut exprs = Vec::new();
+    for mut rec in file.constraints {
+        let expr = rec.expr.take();
         let (id, c, label, is_driven) = parse_constraint(rec)?;
+        if let Some(e) = expr {
+            exprs.push((id, e));
+        }
         if is_driven {
             driven.push(id);
         }
@@ -642,6 +827,68 @@ pub fn load(text: &str) -> Result<(Document, Metadata), LoadError> {
     }
     for id in driven {
         doc.set_driven(id, true).map_err(LoadError::Document)?;
+    }
+    if let Some(display) = &file.display {
+        doc.set_units(display.to_units()?);
+    }
+    for v in file.variables {
+        let id = VariableId(parse_prefixed(&v.id, 'v')?);
+        let kind = KINDS
+            .iter()
+            .find(|(_, n)| *n == v.kind)
+            .map(|(k, _)| *k)
+            .ok_or_else(|| LoadError::MissingField {
+                id: v.id.clone(),
+                field: "kind",
+            })?;
+        if doc.variable(id).is_some() {
+            return Err(LoadError::DuplicateId(v.id));
+        }
+        doc.insert_variable(
+            id,
+            Variable {
+                name: v.name,
+                expr: v.expr,
+                kind,
+            },
+        )
+        .map_err(LoadError::Document)?;
+    }
+    for (id, e) in exprs {
+        let is_dimension = doc.constraint(id).is_some_and(Constraint::is_dimension);
+        if is_dimension && !doc.is_driven(id) {
+            doc.set_expression(id, Some(e));
+        }
+    }
+    for mut rec in file.measurements {
+        let id_text = std::mem::replace(&mut rec.id, "c1".to_owned());
+        let id = MeasurementId(parse_prefixed(&id_text, 'm')?);
+        // Parse as a dimension with a placeholder value (measurements store none).
+        if rec.kind == "angle" {
+            rec.degrees = Some(1.0);
+        } else {
+            rec.value = Some(1.0);
+        }
+        let (_, c, ..) = parse_constraint(rec)?;
+        doc.insert_measurement(id, c).map_err(LoadError::Document)?;
+    }
+    for v in file.variants {
+        let id = VariantId(parse_prefixed(&v.id, 'k')?);
+        let mut values = BTreeMap::new();
+        for (var, e) in v.values {
+            let var_id = VariableId(parse_prefixed(&var, 'v')?);
+            if doc.variable(var_id).is_none() {
+                return Err(LoadError::Document(DocumentError::MissingVariable(var_id)));
+            }
+            values.insert(var_id, e);
+        }
+        doc.set_variant(
+            id,
+            Variant {
+                name: v.name,
+                values,
+            },
+        );
     }
     Ok((doc, file.meta))
 }
@@ -664,7 +911,7 @@ pub fn migrate(value: serde_json::Value) -> Result<serde_json::Value, LoadError>
         // v1 → v2: constraints were introduced; a v1 file simply has none.
         value["constraints"] = serde_json::Value::Array(Vec::new());
     }
-    // v2 → v3 and v3 → v4 only added optional fields and constraint types: nothing to convert.
+    // v2 → v5 only added optional fields, sections and constraint types: nothing to convert.
     value["version"] = FORMAT_VERSION.into();
     Ok(value)
 }
@@ -707,7 +954,7 @@ mod tests {
         let text = save(&doc, &Metadata::default());
         let expected = r#"{
   "format": "drift",
-  "version": 4,
+  "version": 5,
   "meta": {"units":"mm"},
   "entities": [
     {"type":"point","id":"e1","at":[0.0,0.0]},
@@ -841,6 +1088,86 @@ mod tests {
         assert_eq!(loaded.constraint_count(), 24);
         assert!(text.contains(r#""label":[1.5,-2.25]"#));
         assert!(text.contains(r#""driven":true"#));
+    }
+
+    #[test]
+    fn parameters_round_trip() {
+        let mut doc = Document::new();
+        let p = doc.add_point(DVec2::ZERO);
+        let q = doc.add_point(DVec2::new(10.0, 0.0));
+        let r = doc.add_point(DVec2::new(10.0, 5.0));
+        let line = doc.add_line(p, q).unwrap();
+        let other = doc.add_line(q, r).unwrap();
+        let d = doc
+            .add_constraint(Constraint::Distance {
+                a: p,
+                b: q,
+                value: 10.0,
+            })
+            .unwrap();
+        let w = doc
+            .add_variable(Variable {
+                name: "width".into(),
+                expr: "10 mm".into(),
+                kind: Kind::Length,
+            })
+            .unwrap();
+        doc.add_variable(Variable {
+            name: "tilt".into(),
+            expr: "30 deg".into(),
+            kind: Kind::Angle,
+        })
+        .unwrap();
+        doc.set_expression(d, Some("width".into()));
+        doc.add_measurement(Constraint::Angle {
+            a: line,
+            b: other,
+            degrees: 0.0,
+        })
+        .unwrap();
+        doc.add_measurement(Constraint::Distance {
+            a: p,
+            b: r,
+            value: 0.0,
+        })
+        .unwrap();
+        doc.add_variant(Variant {
+            name: "Small".into(),
+            values: [(w, "5 mm".to_owned())].into(),
+        });
+        doc.set_units(Units {
+            length: LengthFormat::Architectural,
+            fraction: 32,
+            ..Units::default()
+        });
+        let text = save(&doc, &Metadata::default());
+        assert!(text.contains(r#""display": {"length":"architectural","fraction":32}"#));
+        assert!(text.contains(r#""expr":"width""#));
+        let (loaded, _) = load(&text).unwrap();
+        // Measurements store no value, so compare the rest field by field.
+        assert_eq!(loaded.units(), doc.units());
+        assert_eq!(
+            loaded.variables().collect::<Vec<_>>(),
+            doc.variables().collect::<Vec<_>>()
+        );
+        assert_eq!(loaded.expression(d), Some("width"));
+        assert_eq!(
+            loaded.variants().collect::<Vec<_>>(),
+            doc.variants().collect::<Vec<_>>()
+        );
+        assert_eq!(loaded.measurements().count(), 2);
+        assert_eq!(save(&loaded, &Metadata::default()), text);
+        // New ids don't collide with loaded ones.
+        let mut loaded = loaded;
+        let v = loaded
+            .add_variable(Variable {
+                name: "h".into(),
+                expr: "1 mm".into(),
+                kind: Kind::Length,
+            })
+            .unwrap();
+        assert!(loaded.variables().filter(|(id, _)| *id == v).count() == 1);
+        assert!(v.0 > 5);
     }
 
     #[test]

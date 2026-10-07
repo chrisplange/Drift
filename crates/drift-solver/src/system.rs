@@ -172,6 +172,8 @@ impl System {
         let mut conflicts = Vec::new();
         let mut redundant = Vec::new();
         let mut rows = Vec::new();
+        // Collinear relations are built after all merges are known (see below).
+        let mut collinear = Vec::new();
 
         let center = |id: EntityId| match doc.get(id).map(|e| e.kind) {
             Some(EntityKind::Circle { center, .. } | EntityKind::Arc { center, .. }) => center,
@@ -261,22 +263,7 @@ impl System {
                         });
                     }
                 }
-                Constraint::Collinear { a, b } => {
-                    let lb = line(b);
-                    rows.push(Row {
-                        equation: Equation::PointLine {
-                            point: [lb[0], lb[1]],
-                            line: line(a),
-                            sign: 1.0,
-                            value: 0.0,
-                        },
-                        source: Some(cid),
-                    });
-                    rows.push(Row {
-                        equation: Equation::angle(line(a), lb, 0.0),
-                        source: Some(cid),
-                    });
-                }
+                Constraint::Collinear { a, b } => collinear.push((cid, a, b)),
                 Constraint::PointOnCurve { point: p, curve } => {
                     let equation = match doc.get(curve).map(|e| e.kind) {
                         Some(EntityKind::Line { .. }) => Equation::PointLine {
@@ -457,6 +444,38 @@ impl System {
             }
             // Entirely implied: every equality was already merged and nothing else was added.
             if !equalities.is_empty() && joined == 0 && rows.len() == rows_before {
+                redundant.push(cid);
+            }
+        }
+
+        // Collinear: each end of `b` not shared with (or merged into) an end of `a` lies on
+        // `a`'s line. Connected lines (a polyline corner) need one equation, separate lines
+        // two; an equation for a shared end would be identically zero and read as redundant.
+        for (cid, a, b) in collinear {
+            let la = line(a);
+            let lb = line(b);
+            let same = |uf: &mut UnionFind, p: [usize; 2], q: [usize; 2]| {
+                uf.find(p[0]) == uf.find(q[0]) && uf.find(p[1]) == uf.find(q[1])
+            };
+            let mut added = 0;
+            for end in [[lb[0], lb[1]], [lb[2], lb[3]]] {
+                let shared =
+                    same(&mut uf, end, [la[0], la[1]]) || same(&mut uf, end, [la[2], la[3]]);
+                if !shared {
+                    rows.push(Row {
+                        equation: Equation::PointLine {
+                            point: end,
+                            line: la,
+                            sign: 1.0,
+                            value: 0.0,
+                        },
+                        source: Some(cid),
+                    });
+                    added += 1;
+                }
+            }
+            if added == 0 {
+                // Both ends shared: the lines coincide already.
                 redundant.push(cid);
             }
         }

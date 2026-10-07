@@ -3,9 +3,11 @@
 
 use std::collections::BTreeSet;
 
+use drift_core::params::{self, Evaluation};
 use drift_core::{
     Bounds, Constraint, ConstraintId, DVec2, Document, DofState, Emphasis, EntityId, EntityKind,
-    History, LineKind, Shape, SketchItem,
+    History, Kind, LineKind, MeasurementId, Shape, SketchItem, Units, Variable, VariableId,
+    Variant, VariantId, dimension_kind,
 };
 use drift_geom::{PointRole, SceneIndex, Snap};
 use drift_solver::{Definition, Param, SolveOptions, SolveReport};
@@ -74,6 +76,8 @@ pub struct Pointer {
     /// Whether snapping onto a midpoint or a curve should add a Midpoint / On curve relation
     /// (automatic relations).
     pub relations: bool,
+    /// How to show lengths in readouts.
+    pub units: Units,
 }
 
 impl Pointer {
@@ -84,6 +88,7 @@ impl Pointer {
             tolerance,
             guide: None,
             relations: true,
+            units: Units::default(),
         }
     }
 
@@ -205,6 +210,16 @@ pub struct Editor {
     pub pending_driven: Option<(Constraint, Option<DVec2>)>,
     /// Whether drawing tools add relations they infer (horizontal / vertical lines, rectangles).
     pub auto_relations: bool,
+    /// Variable and linked-dimension values as of the last [`sync`](Self::sync).
+    evaluation: Evaluation,
+    evaluated: Option<u64>,
+    /// Expressions typed into a tool's fields (index = field) that use variables, so the
+    /// dimensions the tool creates can stay linked to them.
+    pub typed_exprs: [Option<String>; 2],
+    /// Named copies of the document to return to (kept for the session).
+    pub snapshots: Vec<(String, Document)>,
+    /// A variable being scrubbed with a slider: its expression before the scrub started.
+    scrubbing: Option<(VariableId, String)>,
 }
 
 impl Editor {
@@ -214,6 +229,12 @@ impl Editor {
             auto_relations: true,
             ..Default::default()
         };
+        // Bring linked dimensions up to date with their expressions (not an undo step).
+        editor.doc.begin();
+        if editor.apply_parameters().is_ok() {
+            editor.solve(&[]);
+        }
+        editor.doc.commit("Load");
         editor.sync();
         editor
     }
@@ -224,6 +245,10 @@ impl Editor {
         if self.analyzed != Some(self.doc.revision()) && !self.doc.in_transaction() {
             self.analysis = drift_solver::analyze(&self.doc);
             self.analyzed = Some(self.doc.revision());
+        }
+        if self.evaluated != Some(self.doc.revision()) {
+            self.evaluation = params::evaluate(&self.doc);
+            self.evaluated = Some(self.doc.revision());
         }
         let doc = &self.doc;
         self.selection.retain(|id| doc.contains(*id));
@@ -467,6 +492,7 @@ impl Editor {
         };
         if driven {
             self.doc.begin();
+            self.doc.set_expression(id, None);
             if let Err(e) = self.doc.set_driven(id, true) {
                 self.doc.rollback();
                 return Err(EditError::Invalid(e.to_string()));
@@ -487,6 +513,409 @@ impl Editor {
     /// Move a dimension's label (inside an open transaction while dragging).
     pub fn place_dimension(&mut self, id: ConstraintId, offset: DVec2) {
         let _ = self.doc.set_placement(id, offset);
+    }
+
+    // ----- Parameters ------------------------------------------------------------------------
+
+    /// Variable and linked-dimension values.
+    pub fn evaluation(&self) -> &Evaluation {
+        &self.evaluation
+    }
+
+    /// Evaluate typed text as a value of `kind`, with the document's variables and units.
+    pub fn evaluate_text(
+        &self,
+        text: &str,
+        kind: Kind,
+    ) -> Result<drift_core::expr::Evaluated, EditError> {
+        params::evaluate_text(&self.doc, &self.evaluation, text, kind)
+            .map_err(|e| EditError::Invalid(e.0))
+    }
+
+    /// Re-evaluate variables and push linked dimension values into the constraints (inside a
+    /// transaction). Fails on any evaluation error.
+    fn apply_parameters(&mut self) -> Result<(), EditError> {
+        let eval = params::evaluate(&self.doc);
+        if let Some(e) = eval.first_error(&self.doc) {
+            return Err(EditError::Invalid(e));
+        }
+        for (id, value) in &eval.dimensions {
+            let (Ok(value), Some(c)) = (value, self.doc.constraint(*id).copied()) else {
+                continue;
+            };
+            if c.value() != Some(*value) {
+                self.doc
+                    .set_constraint(*id, c.with_value(*value))
+                    .map_err(|e| EditError::Invalid(e.to_string()))?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Apply parameters, solve and commit the open transaction, or roll it back.
+    fn finish_parameter_edit(
+        &mut self,
+        label: &str,
+        degenerate_before: &[EntityId],
+    ) -> Result<(), EditError> {
+        let result = self.apply_parameters().and_then(|()| {
+            let report = self.solve(&[]);
+            if self.new_conflicts(&report) {
+                Err(EditError::Conflict)
+            } else if self.new_degeneracy(degenerate_before) {
+                Err(EditError::Degenerate)
+            } else {
+                Ok(())
+            }
+        });
+        match result {
+            Ok(()) => {
+                self.commit(label);
+                Ok(())
+            }
+            Err(e) => {
+                self.doc.rollback();
+                self.sync();
+                Err(e)
+            }
+        }
+    }
+
+    /// Run `f` in a transaction and finish it as a parameter edit.
+    fn parameter_edit(
+        &mut self,
+        label: &str,
+        f: impl FnOnce(&mut Document) -> Result<(), EditError>,
+    ) -> Result<(), EditError> {
+        let degenerate_before = drift_solver::degenerate_entities(&self.doc);
+        self.doc.begin();
+        if let Err(e) = f(&mut self.doc) {
+            self.doc.rollback();
+            self.sync();
+            return Err(e);
+        }
+        self.finish_parameter_edit(label, &degenerate_before)
+    }
+
+    /// Add a variable from typed text (bare numbers in the document's unit).
+    pub fn add_variable(
+        &mut self,
+        name: &str,
+        text: &str,
+        kind: Kind,
+    ) -> Result<VariableId, EditError> {
+        let evaluated = self.evaluate_text(text, kind)?;
+        let mut id = None;
+        self.parameter_edit("Add variable", |doc| {
+            id = Some(
+                doc.add_variable(Variable {
+                    name: name.trim().to_owned(),
+                    expr: evaluated.text,
+                    kind,
+                })
+                .map_err(|e| EditError::Invalid(e.to_string()))?,
+            );
+            Ok(())
+        })?;
+        Ok(id.expect("added"))
+    }
+
+    /// Change a variable's expression; everything that uses it updates.
+    pub fn set_variable(&mut self, id: VariableId, text: &str) -> Result<(), EditError> {
+        let Some(var) = self.doc.variable(id).cloned() else {
+            return Err(EditError::Invalid(format!("{id} no longer exists")));
+        };
+        let evaluated = self.evaluate_text(text, var.kind)?;
+        if evaluated.references.contains(&var.name) {
+            return Err(EditError::Invalid(format!(
+                "`{}` can't use itself",
+                var.name
+            )));
+        }
+        let label = format!("Change {}", var.name);
+        self.parameter_edit(&label, |doc| {
+            doc.set_variable_expr(id, &evaluated.text)
+                .map_err(|e| EditError::Invalid(e.to_string()))
+        })
+    }
+
+    pub fn set_variable_kind(&mut self, id: VariableId, kind: Kind) -> Result<(), EditError> {
+        self.parameter_edit("Change variable type", |doc| {
+            doc.set_variable_kind(id, kind)
+                .map_err(|e| EditError::Invalid(e.to_string()))
+        })
+    }
+
+    pub fn rename_variable(&mut self, id: VariableId, name: &str) -> Result<(), EditError> {
+        self.parameter_edit("Rename variable", |doc| {
+            doc.rename_variable(id, name.trim())
+                .map_err(|e| EditError::Invalid(e.to_string()))
+        })
+    }
+
+    pub fn remove_variable(&mut self, id: VariableId) -> Result<(), EditError> {
+        self.parameter_edit("Delete variable", |doc| {
+            doc.remove_variable(id)
+                .map_err(|e| EditError::Invalid(e.to_string()))
+        })
+    }
+
+    /// True if a variable is a plain value (no references), so a slider can drive it.
+    pub fn is_scrubbable(&self, id: VariableId) -> bool {
+        self.doc.variable(id).is_some_and(|v| {
+            drift_core::expr::parse(&v.expr).is_ok_and(|e| e.identifiers().is_empty())
+        })
+    }
+
+    /// Set a variable to `value` (in its kind's stored unit) live while a slider is dragged.
+    /// The first call opens a transaction that [`end_scrub`](Self::end_scrub) commits.
+    /// Returns false (keeping the last good value) if the sketch can't take the value.
+    pub fn scrub_variable(&mut self, id: VariableId, value: f64) -> bool {
+        let Some(var) = self.doc.variable(id).cloned() else {
+            return false;
+        };
+        if self.scrubbing.is_none() {
+            self.doc.begin();
+            self.scrubbing = Some((id, var.expr.clone()));
+        }
+        let degenerate_before = drift_solver::degenerate_entities(&self.doc);
+        let previous = var.expr.clone();
+        let literal = self.doc.units().literal(var.kind, value);
+        let _ = self.doc.set_variable_expr(id, &literal);
+        let ok = self.apply_parameters().is_ok() && {
+            let report = self.solve(&[]);
+            !self.new_conflicts(&report) && !self.new_degeneracy(&degenerate_before)
+        };
+        if !ok {
+            let _ = self.doc.set_variable_expr(id, &previous);
+            let _ = self.apply_parameters();
+            self.solve(&[]);
+        }
+        self.index.update(&self.doc);
+        self.evaluation = params::evaluate(&self.doc);
+        ok
+    }
+
+    /// Finish a slider drag as one undo step.
+    pub fn end_scrub(&mut self) {
+        if let Some((id, _)) = self.scrubbing.take() {
+            let name = self
+                .doc
+                .variable(id)
+                .map_or("variable".into(), |v| v.name.clone());
+            self.commit(&format!("Change {name}"));
+        }
+    }
+
+    pub fn is_scrubbing(&self) -> bool {
+        self.scrubbing.is_some()
+    }
+
+    /// Set a dimension from typed text: a constant sets the value; an expression that uses
+    /// variables links the dimension to it.
+    pub fn set_dimension_text(&mut self, id: ConstraintId, text: &str) -> Result<(), EditError> {
+        let Some(c) = self.doc.constraint(id).copied() else {
+            return Err(EditError::Invalid(format!("{id} no longer exists")));
+        };
+        if self.doc.is_driven(id) {
+            return Err(EditError::Invalid(
+                "a driven dimension follows the geometry; make it driving to set it".into(),
+            ));
+        }
+        let evaluated = self.evaluate_text(text, dimension_kind(&c))?;
+        if evaluated.references.is_empty() {
+            self.doc.begin();
+            self.doc.set_expression(id, None);
+            let tx = self.doc.commit("Unlink");
+            let unlinked = !tx.is_empty();
+            let result = self.set_dimension(id, evaluated.value);
+            if unlinked {
+                match &result {
+                    Ok(()) => self.history.merge_into_last(tx),
+                    // Nothing else changed: keep the unlink as its own step.
+                    Err(_) => self.history.push(tx),
+                }
+            }
+            return result;
+        }
+        self.parameter_edit("Change dimension", |doc| {
+            doc.set_expression(id, Some(evaluated.text));
+            Ok(())
+        })
+    }
+
+    /// The text to edit a dimension with: its expression if linked, else its value.
+    pub fn dimension_edit_text(&self, id: ConstraintId) -> Option<String> {
+        if let Some(e) = self.doc.expression(id) {
+            return Some(e.to_owned());
+        }
+        let c = self.doc.constraint(id)?;
+        let units = self.doc.units();
+        Some(match dimension_kind(c) {
+            Kind::Length => units.format_length(c.value()?),
+            kind => units.format(kind, c.value()?),
+        })
+    }
+
+    /// Change the display units (an undoable document setting; no geometry moves).
+    pub fn set_units(&mut self, units: Units) {
+        self.doc.begin();
+        self.doc.set_units(units);
+        self.commit("Change units");
+    }
+
+    /// Save the current variable values as a new variant.
+    pub fn save_variant(&mut self, name: &str) -> VariantId {
+        let values = self
+            .doc
+            .variables()
+            .map(|(id, v)| (id, v.expr.clone()))
+            .collect();
+        self.doc.begin();
+        let id = self.doc.add_variant(Variant {
+            name: name.trim().to_owned(),
+            values,
+        });
+        self.commit("Save variant");
+        id
+    }
+
+    /// Overwrite a variant with the current variable values.
+    pub fn update_variant(&mut self, id: VariantId) {
+        let Some(mut variant) = self.doc.variant(id).cloned() else {
+            return;
+        };
+        variant.values = self
+            .doc
+            .variables()
+            .map(|(v, var)| (v, var.expr.clone()))
+            .collect();
+        self.doc.begin();
+        self.doc.set_variant(id, variant);
+        self.commit("Update variant");
+    }
+
+    pub fn rename_variant(&mut self, id: VariantId, name: &str) {
+        let Some(mut variant) = self.doc.variant(id).cloned() else {
+            return;
+        };
+        variant.name = name.trim().to_owned();
+        self.doc.begin();
+        self.doc.set_variant(id, variant);
+        self.commit("Rename variant");
+    }
+
+    pub fn remove_variant(&mut self, id: VariantId) {
+        self.doc.begin();
+        self.doc.remove_variant(id);
+        self.commit("Delete variant");
+    }
+
+    /// Apply a variant's variable values (one undo step; refused if the sketch can't take them).
+    pub fn apply_variant(&mut self, id: VariantId) -> Result<(), EditError> {
+        let Some(variant) = self.doc.variant(id).cloned() else {
+            return Err(EditError::Invalid(format!("{id} no longer exists")));
+        };
+        let label = format!("Apply {}", variant.name);
+        self.parameter_edit(&label, |doc| {
+            for (var, expr) in &variant.values {
+                if doc.variable(*var).is_some() {
+                    doc.set_variable_expr(*var, expr)
+                        .map_err(|e| EditError::Invalid(e.to_string()))?;
+                }
+            }
+            Ok(())
+        })
+    }
+
+    /// The variant whose values match the current variables, if any.
+    pub fn active_variant(&self) -> Option<VariantId> {
+        self.doc.variants().find_map(|(id, v)| {
+            (!v.values.is_empty()
+                && v.values
+                    .iter()
+                    .all(|(var, e)| self.doc.variable(*var).is_none_or(|x| x.expr == *e)))
+            .then_some(id)
+        })
+    }
+
+    /// The geometry of each variant (solved on a copy), for drawing ghosts.
+    pub fn variant_geometry(&self, id: VariantId) -> Option<Vec<SketchItem>> {
+        let variant = self.doc.variant(id)?;
+        let mut copy = Editor {
+            doc: self.doc.clone(),
+            ..Default::default()
+        };
+        copy.doc.begin();
+        for (var, expr) in &variant.values {
+            let _ = copy.doc.set_variable_expr(*var, expr);
+        }
+        copy.apply_parameters().ok()?;
+        let report = copy.solve(&[]);
+        report.converged.then(|| {
+            copy.doc
+                .iter()
+                .filter(|(_, e)| !e.kind.is_point() && e.style != LineKind::Construction)
+                .filter_map(|(id, _)| copy.doc.shape(id))
+                .map(SketchItem::new)
+                .collect()
+        })
+    }
+
+    /// Pin a live measurement (a dimension definition that is only measured).
+    pub fn pin_measurement(&mut self, c: Constraint) -> Result<MeasurementId, EditError> {
+        self.doc.begin();
+        match self.doc.add_measurement(c) {
+            Ok(id) => {
+                self.commit("Pin measurement");
+                Ok(id)
+            }
+            Err(e) => {
+                self.doc.rollback();
+                Err(EditError::Invalid(e.to_string()))
+            }
+        }
+    }
+
+    pub fn unpin_measurement(&mut self, id: MeasurementId) {
+        self.doc.begin();
+        self.doc.remove_measurement(id);
+        self.commit("Unpin measurement");
+    }
+
+    /// Keep a named copy of the document to return to later.
+    pub fn take_snapshot(&mut self, name: &str) {
+        self.snapshots
+            .push((name.trim().to_owned(), self.doc.clone()));
+    }
+
+    /// Return the document to a snapshot (one undo step).
+    pub fn restore_snapshot(&mut self, index: usize) {
+        let Some((name, snapshot)) = self.snapshots.get(index).cloned() else {
+            return;
+        };
+        self.doc.begin();
+        self.doc.restore_from(&snapshot);
+        self.commit(&format!("Restore {name}"));
+        self.selection.clear();
+        self.selected_midpoints.clear();
+        self.sync();
+    }
+
+    /// Add a dimension a tool created from typed field `field`, linked to the typed
+    /// expression if it used variables. Call inside a transaction.
+    pub fn add_typed_dimension(&mut self, field: usize, c: Constraint) -> Option<ConstraintId> {
+        let id = self.doc.add_constraint(c).ok()?;
+        if let Some(expr) = self.typed_exprs.get(field).cloned().flatten() {
+            // Only if it still evaluates to this value (tools may take an absolute value).
+            let matches = self
+                .evaluate_text(&expr, dimension_kind(&c))
+                .is_ok_and(|e| Some(e.value) == c.value());
+            if matches {
+                self.doc.set_expression(id, Some(expr));
+            }
+        }
+        Some(id)
     }
 
     /// Change a dimension's value, moving geometry to match.
@@ -1236,5 +1665,233 @@ mod tests {
         ed.undo();
         ed.undo();
         assert!(ed.doc.is_driven(driven));
+    }
+
+    /// A horizontal line with a length dimension: (editor, dimension, start, end).
+    fn dimensioned_line() -> (Editor, ConstraintId, EntityId, EntityId) {
+        let (mut ed, line, a, b) = with_line();
+        ed.add_constraints("Horizontal", &[Constraint::Horizontal { line }])
+            .unwrap();
+        let length = length(&ed, a, b);
+        let d = ed
+            .add_dimension(
+                Constraint::Distance {
+                    a,
+                    b,
+                    value: length,
+                },
+                None,
+            )
+            .unwrap();
+        (ed, d, a, b)
+    }
+
+    #[test]
+    fn variables_drive_linked_dimensions() {
+        let (mut ed, d, a, b) = dimensioned_line();
+        let w = ed.add_variable("w", "25", Kind::Length).unwrap();
+        assert_eq!(
+            ed.doc.variable(w).unwrap().expr,
+            "25 mm",
+            "unit made explicit"
+        );
+        ed.set_dimension_text(d, "w * 2").unwrap();
+        assert_eq!(ed.doc.expression(d), Some("w * 2"));
+        assert!((length(&ed, a, b) - 50.0).abs() < 1e-9);
+        ed.set_variable(w, "30mm").unwrap();
+        assert!((length(&ed, a, b) - 60.0).abs() < 1e-9);
+        assert_eq!(ed.doc.constraint(d).unwrap().value(), Some(60.0));
+        assert_eq!(ed.dimension_edit_text(d).as_deref(), Some("w * 2"));
+        // Each edit is one undo step.
+        ed.undo();
+        assert!((length(&ed, a, b) - 50.0).abs() < 1e-9);
+        // A constant unlinks it.
+        ed.set_dimension_text(d, "12").unwrap();
+        assert_eq!(ed.doc.expression(d), None);
+        assert!((length(&ed, a, b) - 12.0).abs() < 1e-9);
+        // Now the variable can be deleted.
+        ed.remove_variable(w).unwrap();
+    }
+
+    #[test]
+    fn bad_parameter_edits_are_refused_and_rolled_back() {
+        let (mut ed, d, ..) = dimensioned_line();
+        let w = ed.add_variable("w", "25", Kind::Length).unwrap();
+        ed.set_dimension_text(d, "w").unwrap();
+        let before = ed.doc.clone();
+        let err = |r: Result<(), EditError>| match r {
+            Err(EditError::Invalid(m)) => m,
+            other => panic!("expected a refusal, got {other:?}"),
+        };
+        assert!(err(ed.set_variable(w, "0")).contains("isn't a valid value"));
+        assert!(err(ed.set_variable(w, "5deg")).contains("expected a length"));
+        assert!(err(ed.set_variable(w, "w + 1mm")).contains("itself"));
+        let v = ed.add_variable("v", "w", Kind::Length).unwrap();
+        assert!(err(ed.set_variable(w, "v")).contains("circular"));
+        assert!(matches!(ed.remove_variable(w), Err(EditError::Invalid(_))));
+        assert!(err(ed.set_dimension_text(d, "nope")).contains("unknown variable"));
+        assert!(
+            ed.add_variable("w", "1", Kind::Length).is_err(),
+            "duplicate name"
+        );
+        ed.remove_variable(v).unwrap();
+        assert_eq!(ed.doc, before);
+    }
+
+    #[test]
+    fn sliders_scrub_in_one_undo_step() {
+        let (mut ed, d, a, b) = dimensioned_line();
+        let w = ed.add_variable("w", "25", Kind::Length).unwrap();
+        ed.set_dimension_text(d, "w").unwrap();
+        assert!(ed.is_scrubbable(w));
+        for value in [26.0, 30.0, 41.5] {
+            assert!(ed.scrub_variable(w, value));
+            assert!((length(&ed, a, b) - value).abs() < 1e-9);
+        }
+        // An impossible value is skipped, keeping the last good one.
+        assert!(!ed.scrub_variable(w, 0.0));
+        assert!((length(&ed, a, b) - 41.5).abs() < 1e-9);
+        ed.end_scrub();
+        assert_eq!(ed.doc.variable(w).unwrap().expr, "41.5 mm");
+        ed.undo();
+        assert_eq!(ed.doc.variable(w).unwrap().expr, "25 mm");
+        assert!((length(&ed, a, b) - 25.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn variants_store_and_apply_variable_sets() {
+        let (mut ed, d, a, b) = dimensioned_line();
+        let w = ed.add_variable("w", "25", Kind::Length).unwrap();
+        ed.set_dimension_text(d, "w").unwrap();
+        let small = ed.save_variant("Small");
+        assert_eq!(ed.active_variant(), Some(small));
+        ed.set_variable(w, "80").unwrap();
+        assert_eq!(ed.active_variant(), None);
+        let large = ed.save_variant("Large");
+        ed.apply_variant(small).unwrap();
+        assert!((length(&ed, a, b) - 25.0).abs() < 1e-9);
+        assert_eq!(ed.active_variant(), Some(small));
+        // Ghost geometry of the other variant.
+        let ghost = ed.variant_geometry(large).unwrap();
+        assert!(ghost.iter().any(|item| matches!(item.shape,
+            Shape::Line { a, b } if (a.distance(b) - 80.0).abs() < 1e-9)));
+        ed.undo();
+        assert!((length(&ed, a, b) - 80.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn snapshots_restore_as_an_undoable_step() {
+        let (mut ed, d, a, b) = dimensioned_line();
+        let original = length(&ed, a, b);
+        ed.take_snapshot("Before");
+        ed.set_dimension(d, 40.0).unwrap();
+        ed.add_variable("w", "1", Kind::Length).unwrap();
+        ed.restore_snapshot(0);
+        assert_eq!(length(&ed, a, b), original);
+        assert_eq!(ed.doc.variables().count(), 0);
+        ed.undo();
+        assert!((length(&ed, a, b) - 40.0).abs() < 1e-9);
+        assert_eq!(ed.doc.variables().count(), 1);
+    }
+
+    #[test]
+    fn units_change_display_only() {
+        let (mut ed, d, a, b) = dimensioned_line();
+        ed.set_dimension(d, 25.4 * 18.5).unwrap();
+        let before = length(&ed, a, b);
+        ed.set_units(Units::architectural());
+        assert_eq!(length(&ed, a, b), before);
+        assert_eq!(ed.dimension_edit_text(d).as_deref(), Some("1'-6 1/2\""));
+        // Bare numbers are now inches.
+        ed.set_dimension_text(d, "12").unwrap();
+        assert!((length(&ed, a, b) - 12.0 * 25.4).abs() < 1e-9);
+        ed.set_dimension_text(d, "2'-0\"").unwrap();
+        assert!((length(&ed, a, b) - 24.0 * 25.4).abs() < 1e-9);
+        ed.undo();
+        ed.undo();
+        ed.undo();
+        assert_eq!(ed.doc.units(), Units::default());
+    }
+
+    #[test]
+    fn pinned_measurements_follow_geometry() {
+        let (mut ed, d, a, b) = dimensioned_line();
+        let m = ed
+            .pin_measurement(Constraint::Distance { a, b, value: 0.0 })
+            .unwrap();
+        ed.set_dimension(d, 33.0).unwrap();
+        let (_, c) = ed.doc.measurements().find(|(id, _)| *id == m).unwrap();
+        assert!((drift_solver::measure(&ed.doc, c).unwrap() - 33.0).abs() < 1e-9);
+        // Deleting the geometry removes the measurement.
+        ed.selection = ed.doc.iter().map(|(id, _)| id).collect();
+        ed.delete_selection();
+        assert_eq!(ed.doc.measurements().count(), 0);
+        ed.undo();
+        assert_eq!(ed.doc.measurements().count(), 1);
+    }
+}
+
+#[cfg(test)]
+mod collinear_tests {
+    use super::*;
+
+    /// Line (0,0)–(10,0) and a second line from `c` (a new point, or the first line's end
+    /// when `connected`) to (20, 4). Returns the editor, both lines and all end points.
+    fn two_lines(connected: bool) -> (Editor, [EntityId; 2], [EntityId; 4]) {
+        let mut ed = Editor::default();
+        ed.doc.begin();
+        let a = ed.doc.add_point(DVec2::new(0.0, 0.0));
+        let b = ed.doc.add_point(DVec2::new(10.0, 0.0));
+        let l1 = ed.doc.add_line(a, b).unwrap();
+        let c = if connected {
+            b
+        } else {
+            ed.doc.add_point(DVec2::new(12.0, 1.0))
+        };
+        let d = ed.doc.add_point(DVec2::new(20.0, 4.0));
+        let l2 = ed.doc.add_line(c, d).unwrap();
+        ed.commit("Lines");
+        (ed, [l1, l2], [a, b, c, d])
+    }
+
+    fn assert_collinear(ed: &Editor, pts: [EntityId; 4]) {
+        let p = pts.map(|id| ed.doc.point(id).unwrap());
+        let u = (p[1] - p[0]).normalize();
+        for q in &p[2..] {
+            assert!((*q - p[0]).perp_dot(u).abs() < 1e-9, "{p:?}");
+        }
+    }
+
+    #[test]
+    fn collinear_works_for_separate_and_connected_lines() {
+        for connected in [false, true] {
+            let (mut ed, [l1, l2], pts) = two_lines(connected);
+            let dof = ed.analysis().dof.unwrap();
+            ed.add_constraints("Collinear", &[Constraint::Collinear { a: l1, b: l2 }])
+                .unwrap_or_else(|e| panic!("connected = {connected}: {e}"));
+            assert_collinear(&ed, pts);
+            // Separate lines lose two freedoms (direction and offset); connected ones one.
+            let lost = if connected { 1 } else { 2 };
+            assert_eq!(
+                ed.analysis().dof,
+                Some(dof - lost),
+                "connected = {connected}"
+            );
+            // Adding it again is redundant.
+            assert_eq!(
+                ed.add_constraints("Collinear", &[Constraint::Collinear { a: l2, b: l1 }]),
+                Err(EditError::Redundant)
+            );
+        }
+    }
+
+    #[test]
+    fn collinear_works_for_lines_joined_by_a_coincident_relation() {
+        let (mut ed, [l1, l2], [a, b, c, d]) = two_lines(false);
+        ed.add_constraints("Coincident", &[Constraint::Coincident { a: b, b: c }])
+            .unwrap();
+        ed.add_constraints("Collinear", &[Constraint::Collinear { a: l1, b: l2 }])
+            .unwrap();
+        assert_collinear(&ed, [a, b, c, d]);
     }
 }

@@ -11,7 +11,6 @@
 
 pub mod bench;
 mod equations;
-#[cfg(test)]
 mod linalg;
 mod sparse;
 mod system;
@@ -20,7 +19,6 @@ use std::collections::{HashMap, HashSet};
 
 use drift_core::{Constraint, ConstraintId, DVec2, Document, EntityId, EntityKind};
 
-#[cfg(test)]
 use crate::linalg::{Matrix, rref};
 use crate::sparse::{Skyline, qr_rank};
 use crate::system::{EntityShape, System};
@@ -650,6 +648,159 @@ fn analyze_dof(
             },
         );
     }
+}
+
+/// How a point can still move with every constraint kept.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Freedom {
+    /// Free along one direction (unit vector; a rotation shows as the tangent direction).
+    Line(DVec2),
+    /// Free in every direction.
+    Plane,
+}
+
+/// Components larger than this are skipped by [`free_directions`] (dense analysis).
+const FREEDOM_LIMIT: usize = 400;
+
+/// The directions in which each under-defined point can move, from the null space of the
+/// constraint Jacobian. Fully defined points are omitted, as are points in very large
+/// components (see [`FREEDOM_LIMIT`]).
+pub fn free_directions(doc: &Document) -> HashMap<EntityId, Freedom> {
+    let options = SolveOptions::default();
+    let sys = System::build(doc, &[], &options.tolerances);
+    let (comps, _) = components(&sys);
+    let values: Vec<f64> = sys.groups.iter().map(|g| g.value).collect();
+    // Null-space basis vectors, as group → component, indexed by the groups they touch.
+    let mut basis: Vec<HashMap<usize, f64>> = Vec::new();
+    let mut skipped: HashSet<usize> = HashSet::new();
+    let in_component: HashSet<usize> = comps
+        .iter()
+        .flat_map(|c| c.unknowns.iter().copied())
+        .collect();
+    for g in 0..sys.groups.len() {
+        if !sys.groups[g].fixed && !in_component.contains(&g) {
+            basis.push(HashMap::from([(g, 1.0)]));
+        }
+    }
+    for comp in &comps {
+        let n = comp.unknowns.len();
+        if n > FREEDOM_LIMIT {
+            skipped.extend(&comp.unknowns);
+            continue;
+        }
+        let col_of: HashMap<usize, usize> = comp
+            .unknowns
+            .iter()
+            .enumerate()
+            .map(|(c, g)| (*g, c))
+            .collect();
+        let (_, jac) = evaluate(&sys, &comp.rows, &values, &col_of);
+        // Equilibrate like the rank analysis, keeping the column scales to undo them.
+        let rows: Vec<Vec<(usize, f64)>> = jac
+            .iter()
+            .map(|row| {
+                let max = row.iter().fold(0.0f64, |m, (_, g)| m.max(g.abs()));
+                let kept: Vec<_> = row
+                    .iter()
+                    .copied()
+                    .filter(|(_, g)| g.abs() > 1e-12 * max)
+                    .collect();
+                let norm = kept.iter().map(|(_, g)| g * g).sum::<f64>().sqrt();
+                kept.into_iter().map(|(c, g)| (c, g / norm)).collect()
+            })
+            .collect();
+        let mut col_norm = vec![0.0f64; n];
+        for row in &rows {
+            for &(c, g) in row {
+                col_norm[c] += g * g;
+            }
+        }
+        let col_norm: Vec<f64> = col_norm
+            .iter()
+            .map(|s| if *s > 0.0 { s.sqrt() } else { 1.0 })
+            .collect();
+        let mut m = Matrix::zeros(rows.len(), n);
+        for (i, row) in rows.iter().enumerate() {
+            for &(c, g) in row {
+                *m.at_mut(i, c) += g / col_norm[c];
+            }
+        }
+        let pivots = rref(&mut m, 1e-9);
+        let pivot_row: HashMap<usize, usize> =
+            pivots.iter().enumerate().map(|(r, c)| (*c, r)).collect();
+        for free in (0..n).filter(|c| !pivot_row.contains_key(c)) {
+            // x_free = 1, x_pivot = -R[row, free]; undo the column scaling.
+            let mut v = HashMap::new();
+            v.insert(comp.unknowns[free], 1.0 / col_norm[free]);
+            for (&pc, &r) in &pivot_row {
+                let x = -m.at(r, free);
+                if x != 0.0 {
+                    v.insert(comp.unknowns[pc], x / col_norm[pc]);
+                }
+            }
+            basis.push(v);
+        }
+    }
+    let mut by_group: HashMap<usize, Vec<usize>> = HashMap::new();
+    for (i, v) in basis.iter().enumerate() {
+        for g in v.keys() {
+            by_group.entry(*g).or_default().push(i);
+        }
+    }
+    let group = |p: Param| sys.param_index.get(&p).map(|&i| sys.group_of[i]);
+    let mut out = HashMap::new();
+    for (id, entity) in doc.iter() {
+        if !entity.kind.is_point() {
+            continue;
+        }
+        let (Some(gx), Some(gy)) = (group(Param::X(id)), group(Param::Y(id))) else {
+            continue;
+        };
+        if skipped.contains(&gx) || skipped.contains(&gy) {
+            continue;
+        }
+        let mut vectors: Vec<usize> = by_group
+            .get(&gx)
+            .into_iter()
+            .chain(by_group.get(&gy))
+            .flatten()
+            .copied()
+            .collect();
+        vectors.sort_unstable();
+        vectors.dedup();
+        // A = M Mᵀ for the 2 × k matrix of motions; its eigenvalues give the rank.
+        let (mut a, mut b, mut c) = (0.0, 0.0, 0.0);
+        for i in vectors {
+            let mx = basis[i].get(&gx).copied().unwrap_or(0.0);
+            let my = basis[i].get(&gy).copied().unwrap_or(0.0);
+            let norm = basis[i].values().map(|x| x * x).sum::<f64>();
+            let (mx, my) = (mx / norm.sqrt(), my / norm.sqrt());
+            a += mx * mx;
+            b += mx * my;
+            c += my * my;
+        }
+        let trace = a + c;
+        if trace < 1e-12 {
+            continue;
+        }
+        let disc = (((a - c) / 2.0).powi(2) + b * b).sqrt();
+        let (l1, l2) = (trace / 2.0 + disc, trace / 2.0 - disc);
+        let freedom = if l2 > 1e-6 * l1 {
+            Freedom::Plane
+        } else {
+            // Eigenvector of the larger eigenvalue.
+            let dir = if b.abs() > 1e-15 {
+                DVec2::new(l1 - c, b)
+            } else if a >= c {
+                DVec2::X
+            } else {
+                DVec2::Y
+            };
+            Freedom::Line(dir.normalize())
+        };
+        out.insert(id, freedom);
+    }
+    out
 }
 
 fn write_back(doc: &mut Document, sys: &System) {

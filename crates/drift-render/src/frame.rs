@@ -71,6 +71,8 @@ pub struct Viewport {
     pub pixels_per_point: f64,
     /// True if the render target is an sRGB format, so colours must be linearised.
     pub srgb_target: bool,
+    /// Use imperial grid steps (fractions of an inch, inches, feet) instead of powers of ten.
+    pub imperial_grid: bool,
 }
 
 /// Everything needed to draw one frame of the canvas.
@@ -117,10 +119,39 @@ pub fn build_frame(
     builder.frame
 }
 
-/// Grid spacing for a camera: the smallest power of ten that is at least
-/// [`MIN_GRID_SPACING_PT`] on screen.
-pub fn grid_info(camera: &Camera) -> GridInfo {
-    let minor = 10f64.powf((MIN_GRID_SPACING_PT / camera.scale).log10().ceil());
+/// Imperial grid steps in inches: (minor, major).
+const IMPERIAL_STEPS: [(f64, f64); 9] = [
+    (1.0 / 64.0, 1.0 / 8.0),
+    (1.0 / 32.0, 1.0 / 4.0),
+    (1.0 / 16.0, 1.0),
+    (1.0 / 8.0, 1.0),
+    (1.0 / 4.0, 1.0),
+    (1.0 / 2.0, 6.0),
+    (1.0, 12.0),
+    (6.0, 60.0),
+    (12.0, 120.0),
+];
+
+/// Grid spacing for a camera: the smallest step that is at least [`MIN_GRID_SPACING_PT`] on
+/// screen. Metric steps are powers of ten (major every 10); imperial steps follow
+/// [`IMPERIAL_STEPS`] up to a foot, then powers of ten feet.
+pub fn grid_info(camera: &Camera, imperial: bool) -> GridInfo {
+    let min = MIN_GRID_SPACING_PT / camera.scale;
+    if imperial {
+        const INCH: f64 = 25.4;
+        if let Some(&(minor, major)) = IMPERIAL_STEPS.iter().find(|(m, _)| m * INCH >= min) {
+            return GridInfo {
+                minor: minor * INCH,
+                major: major * INCH,
+            };
+        }
+        let feet = 10f64.powf((min / (12.0 * INCH)).log10().ceil());
+        return GridInfo {
+            minor: feet * 12.0 * INCH,
+            major: feet * 120.0 * INCH,
+        };
+    }
+    let minor = 10f64.powf(min.log10().ceil());
     GridInfo {
         minor,
         major: minor * 10.0,
@@ -143,7 +174,7 @@ impl Builder<'_> {
     fn globals(&self) -> Globals {
         let palette = self.palette;
         let scale_px = self.scale_px();
-        let grid = grid_info(self.camera);
+        let grid = grid_info(self.camera, self.viewport.imperial_grid);
         let center = self.camera.center;
         let phase = |spacing: f64| {
             [
@@ -441,7 +472,29 @@ mod tests {
             size_px: DVec2::new(800.0, 600.0),
             pixels_per_point: 1.0,
             srgb_target: false,
+            imperial_grid: false,
         }
+    }
+
+    #[test]
+    fn imperial_grid_uses_inch_fractions_and_feet() {
+        for scale in [1e-4, 0.05, 0.37, 4.0, 123.0, 1e6] {
+            let camera = Camera {
+                center: DVec2::ZERO,
+                scale,
+            };
+            let grid = grid_info(&camera, true);
+            assert!(grid.minor * scale >= MIN_GRID_SPACING_PT - 1e-9 || grid.minor == 25.4 / 64.0);
+            assert!(grid.major > grid.minor);
+            // Every step is a whole number of 1/64 inches.
+            let n = grid.minor / 25.4 * 64.0;
+            assert!((n - n.round()).abs() < 1e-6, "{}", grid.minor);
+        }
+        let camera = Camera {
+            center: DVec2::ZERO,
+            scale: 1.0,
+        };
+        assert_eq!(grid_info(&camera, true).minor, 12.7); // 1/2"
     }
 
     #[test]
@@ -548,7 +601,7 @@ mod tests {
                 center: DVec2::ZERO,
                 scale,
             };
-            let grid = grid_info(&camera);
+            let grid = grid_info(&camera, false);
             let on_screen = grid.minor * scale;
             assert!(on_screen >= MIN_GRID_SPACING_PT - 1e-9);
             assert!(on_screen < MIN_GRID_SPACING_PT * 10.0 + 1e-9);

@@ -1,0 +1,230 @@
+//! Shortcuts and typed values for tools.
+
+use crate::*;
+
+impl DriftApp {
+    pub(crate) fn shortcuts(&mut self, ctx: &egui::Context) {
+        let cmd = |key| KeyboardShortcut::new(EguiModifiers::COMMAND, key);
+        let cmd_shift =
+            |key| KeyboardShortcut::new(EguiModifiers::COMMAND | EguiModifiers::SHIFT, key);
+        let consume = |shortcut: KeyboardShortcut| ctx.input_mut(|i| i.consume_shortcut(&shortcut));
+
+        // Order matters: check the more specific (Shift) variants first.
+        if consume(cmd_shift(Key::Z)) || consume(cmd(Key::Y)) {
+            self.redo();
+        }
+        if consume(cmd(Key::Z)) {
+            self.undo();
+        }
+        if consume(cmd_shift(Key::S)) {
+            self.save_as();
+        }
+        if consume(cmd(Key::S)) {
+            self.save();
+        }
+        if consume(cmd(Key::O)) {
+            self.request(Pending::Open);
+        }
+
+        if ctx.text_edit_focused() {
+            return;
+        }
+        if consume(cmd(Key::A)) {
+            self.set_tool(ToolKind::Select);
+            self.editor.select_all();
+        }
+        let plain = ctx.input(|i| i.modifiers.is_none());
+        let pressed = |key| plain && ctx.input(|i| i.key_pressed(key));
+
+        // Modal keys go to the tool first: X / Y lock an axis, G grabs (moves) the selection,
+        // B picks a move's base point.
+        let mut claimed = |key, tool_key| {
+            pressed(key)
+                && self
+                    .tool
+                    .key(tool_key, self.pointer.as_ref(), &mut self.editor)
+        };
+        let x_claimed = claimed(Key::X, ToolKey::X);
+        claimed(Key::Y, ToolKey::Y);
+        claimed(Key::G, ToolKey::G);
+        claimed(Key::B, ToolKey::B);
+        if ctx.input(|i| i.modifiers.shift_only() && i.key_pressed(Key::G)) {
+            self.grid_snap = !self.grid_snap;
+        }
+        if self.tool.is_modal() {
+            // Only Esc and Enter (and the modal keys above) act during a grab.
+            if pressed(Key::Escape) {
+                self.tool.cancel(&mut self.editor);
+            }
+            if pressed(Key::Enter) {
+                self.tool.handle(Input::Finish, &mut self.editor);
+            }
+            return;
+        }
+
+        if pressed(Key::Escape) {
+            if self.selected_constraint.take().is_some() {
+                // First Esc just clears a picked relation or dimension.
+            } else if !self.tool.cancel(&mut self.editor) {
+                self.set_tool(ToolKind::Select);
+            }
+        }
+        if pressed(Key::Enter) {
+            self.tool.handle(Input::Finish, &mut self.editor);
+        }
+        if (pressed(Key::Delete) || pressed(Key::Backspace)) && !self.tool.is_busy() {
+            match self.selected_constraint.take() {
+                Some(id) => self.editor.remove_constraint(id),
+                None => self.editor.delete_selection(),
+            }
+        }
+        // X toggles construction unless a tool used it (an axis lock).
+        if pressed(Key::X) && !x_claimed {
+            self.editor.toggle_construction();
+        }
+        if pressed(Key::F) {
+            self.fit_target = Some(self.fit_bounds());
+        }
+        let requested = ToolKind::ALL
+            .into_iter()
+            .find(|kind| Key::from_name(&kind.shortcut().to_string()).is_some_and(pressed));
+        if let Some(mut kind) = requested {
+            let current = self.tool.kind();
+            if kind == ToolKind::Arc {
+                kind = if let Some(i) = ToolKind::ARCS.iter().position(|k| *k == current) {
+                    // A again: the next arc type.
+                    ToolKind::ARCS[(i + 1) % ToolKind::ARCS.len()]
+                } else if current == ToolKind::Line && self.tool.chain_end().is_some() {
+                    // Mid-polyline: continue with a tangent arc (SolidWorks-style).
+                    ToolKind::TangentArc
+                } else {
+                    ToolKind::Arc
+                };
+            }
+            self.switch_tool(kind);
+        }
+    }
+
+    /// Change tool, continuing a polyline / tangent-arc chain across the switch.
+    pub(crate) fn switch_tool(&mut self, kind: ToolKind) {
+        let chain = self.tool.chain_end();
+        self.set_tool(kind);
+        if let Some(point) = chain
+            && matches!(kind, ToolKind::Line | ToolKind::TangentArc)
+        {
+            self.tool.continue_from(point, &mut self.editor);
+        }
+    }
+
+    /// Route number keys to the active tool's typed fields. Runs before other shortcuts so
+    /// Enter, Esc, Tab and Backspace go to the typing when it is active.
+    pub(crate) fn handle_typing(&mut self, ctx: &egui::Context) {
+        let fields = self.tool.fields();
+        // egui moves keyboard focus between widgets on Tab before we see the key. While a
+        // tool takes typed values, Tab belongs to it, so release focus that landed on a
+        // button (otherwise Enter would also click that button).
+        if !fields.is_empty()
+            && !ctx.text_edit_focused()
+            && let Some(id) = ctx.memory(|m| m.focused())
+        {
+            ctx.memory_mut(|m| m.surrender_focus(id));
+        }
+        if fields.is_empty() || ctx.text_edit_focused() {
+            self.typing = None;
+            self.tool.set_typed([None; 2]);
+            return;
+        }
+        if self.typing.as_ref().is_some_and(|t| t.fields != fields) {
+            self.typing = None;
+        }
+        // Typing starts with a digit, `.`, `-`, `(`, or `=` (to start with a variable name).
+        // Once it has started, any text goes into the field (units, `'`, `"`, variables), and
+        // letter keys no longer act as shortcuts.
+        let active = self.typing.is_some();
+        let in_call = self
+            .typing
+            .as_ref()
+            .is_some_and(|t| t.values[t.active].contains('('));
+        let typed: String = ctx.input_mut(|i| {
+            let mut typed = String::new();
+            i.events.retain(|e| match e {
+                egui::Event::Text(t)
+                    if active || t.chars().all(|c| c.is_ascii_digit() || ".,-(=".contains(c)) =>
+                {
+                    // A decimal comma, except between function arguments.
+                    let t = if in_call {
+                        t.clone()
+                    } else {
+                        t.replace(',', ".")
+                    };
+                    typed.push_str(&t);
+                    false
+                }
+                egui::Event::Key { key, modifiers, .. }
+                    if active
+                        && !modifiers.command
+                        && !matches!(key, Key::Tab | Key::Enter | Key::Escape | Key::Backspace) =>
+                {
+                    false
+                }
+                _ => true,
+            });
+            typed
+        });
+        let starting = !active && typed.starts_with('=');
+        let typed = if active {
+            typed
+        } else {
+            typed.trim_start_matches('=').to_owned()
+        };
+        let consume = |key| ctx.input_mut(|i| i.consume_key(EguiModifiers::NONE, key));
+        if !typed.is_empty() || starting {
+            let t = self.typing.get_or_insert_with(|| Typing::new(fields));
+            t.values[t.active].push_str(&typed);
+        } else if self.typing.is_none() && fields.len() > 1 && consume(Key::Tab) {
+            // Tab first: start with the second field (e.g. angle).
+            let mut t = Typing::new(fields);
+            t.active = 1;
+            self.typing = Some(t);
+        }
+        if let Some(t) = &mut self.typing {
+            if consume(Key::Tab) {
+                t.active = (t.active + 1) % t.fields.len();
+            }
+            if consume(Key::Backspace) {
+                t.values[t.active].pop();
+            }
+            if consume(Key::Escape) {
+                self.typing = None;
+            } else if consume(Key::Enter) {
+                if let Some(error) = t.evaluate(&self.editor).into_iter().find_map(Result::err) {
+                    // Keep the typing so it can be fixed.
+                    self.editor.notice = Some(error);
+                } else {
+                    let values = t.parsed(&self.editor);
+                    self.editor.typed_exprs = t.expressions(&self.editor);
+                    self.typing = None;
+                    let pointer = self.pointer.unwrap_or_else(|| {
+                        let mut p =
+                            Pointer::new(self.camera.center, PICK_RADIUS / self.camera.scale);
+                        p.units = self.editor.doc.units();
+                        p
+                    });
+                    self.tool.set_typed(values);
+                    self.tool.commit_typed(&pointer, &mut self.editor);
+                    self.editor.typed_exprs = [None, None];
+                }
+            }
+        }
+        let values = self
+            .typing
+            .as_ref()
+            .map_or([None; 2], |t| t.parsed(&self.editor));
+        self.tool.set_typed(values);
+    }
+
+    pub(crate) fn fit_bounds(&self) -> Bounds {
+        let b = self.editor.bounds();
+        if b.is_empty() { EMPTY_VIEW } else { b }
+    }
+}

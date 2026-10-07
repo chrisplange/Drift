@@ -421,7 +421,9 @@ impl DriftApp {
 
     /// Free-direction arrows on under-defined points.
     pub(crate) fn paint_free_directions(&mut self, painter: &egui::Painter, map: &ScreenMap) {
-        if !self.params.show_free {
+        // Hidden mid-drag (and mid-scrub): they would be stale, and recomputing them every
+        // frame would slow the drag on large sketches.
+        if !self.params.show_free || self.editor.doc.in_transaction() {
             return;
         }
         let revision = self.editor.doc.revision();

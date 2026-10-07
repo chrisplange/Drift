@@ -133,14 +133,16 @@ Data flow:
 - **Entities:** Point, Line, Circle, Arc, Ellipse, EllipticalArc, Spline (B-spline via control
   points; "fit" splines through points), Text (outline-driven, positioned by an anchor point
   and angle).
-- **Flags per entity:** `construction`, `locked`, layer, style.
+- **Flags per entity:** `construction`, `locked`, layer, and appearance overrides (colour,
+  line weight, line type; "by layer" by default). See §5.11.
 - **Constraints:** an enum, each variant referencing entity IDs and (for dimensions) a
   `Value = Literal(f64) | Expr(ExprId)` plus a `driving: bool`.
 - **Global variables and equations:** named parameters (`width = 120 mm`,
   `hole_d = width / 10`) evaluated by a small expression engine with units. This is what makes
   sketches truly *parametric*.
 - **Units:** internal base unit is mm. Display and input support mm, cm, m, in, ft, and deg/rad,
-  with mixed input like `1in + 3mm`.
+  with mixed input like `1in + 3mm`. Each document has a unit system (metric or imperial) and a
+  display style; see M5 for the imperial engineering vs architectural formats.
 
 ### 3.2 Undo/redo
 - Command pattern: every edit is a reversible `Command`. Drags coalesce into one command.
@@ -191,7 +193,8 @@ Data flow:
 - The top-level object holds:
   - `"format": "drift"` and `"version": <int>`.
   - Document metadata (title, author, units, created/modified).
-  - `variables`, `entities`, `constraints`, `layers`, `styles`, `sheets`, and `variants`.
+  - `variables`, `entities`, `constraints`, `layers`, `fills`, `styles`, `sheets`, and
+    `variants`.
 - **IDs:** short stable string IDs (`"e12"`, `"c40"`) rather than array indices, so edits don't
   renumber everything.
 - **Numbers:** `f64` values are written with shortest round-trip formatting (Rust's default
@@ -326,7 +329,7 @@ fix/lock, equal curvature (G2, spline ↔ curve), horizontal/vertical alignment 
 
 ### 5.7 Profiles and regions
 - Automatic closed-loop detection (planar graph faces) for shading, area properties, and export.
-- Optional fills and hatch patterns for drawings.
+- Regions are the boundaries for fills and hatches (§5.12).
 
 ### 5.8 Technical drawing (drift-draft) — primary use case
 - **Dimension styles:** ISO 129 and ASME Y14.5 presets, covering:
@@ -339,10 +342,9 @@ fix/lock, equal curvature (G2, spline ↔ curve), horizontal/vertical alignment 
 - **Annotations:** notes (multi-line text), leaders with arrow or dot ends, balloons, centre
   marks and centrelines (auto-generated for circles and arcs), surface-finish symbols, and
   datum labels.
-- **Hatching:** ANSI31, ISO patterns and solid fill, with angle and scale per region. Hatches are
-  associative, so they follow region changes.
-- **Line types and weights:** ISO 128 line types (continuous, dashed, chain, phantom) and weights
-  (0.25 / 0.35 / 0.5 / 0.7 mm), assignable per layer or entity, and output at true weight in PDF.
+- **Hatching and fills:** see §5.12.
+- **Line types and weights:** ISO 128 line types and weights, by layer or per entity, output at
+  true weight in PDF. See §5.11.
 - **Sheets:** A-series and ANSI sheet sizes, a drawing scale per sheet, editable title-block
   templates with fields (author, date, scale, revision) bound to document properties, and a
   revision table.
@@ -365,12 +367,115 @@ fix/lock, equal curvature (G2, spline ↔ curve), horizontal/vertical alignment 
   you drag.
 
 ### 5.10 Document and organization
-- Layers (visibility, lock, color), line styles (solid, dashed, center), and stroke weights.
+- Layers with colours, line weights and line types (§5.11).
 - Global variables/equations table.
 - Native file plus autosave and crash recovery.
 - Import DXF (lines, arcs, circles, polylines with bulges, splines, and text). Import SVG paths
   (converting Béziers to splines/arcs).
 - Export DXF, SVG, PDF (true vector, 1:1 scale), and PNG.
+
+### 5.11 Layers, line weights, colours and thin lines
+*Added at the user's request (2026-10-07).*
+
+- **Layers** are a document table. Each layer has:
+  - A name, colour, line weight and line type.
+  - Visible, locked and printable flags.
+  - A draw order.
+
+  Layer "0" always exists and can't be deleted or renamed. The current layer is chosen in the
+  layers panel; new geometry goes on it.
+- **By layer, with overrides:** entities take colour, weight and line type from their layer
+  unless overridden per entity (the AutoCAD/Revit "ByLayer" model). Overrides are set in the
+  properties panel, which has a layer dropdown and an "x by layer" reset.
+- **Construction is a role, not a style:**
+  - Construction geometry keeps its own thin dashed look whatever the layer.
+  - It is excluded from regions, never printed, and has no weight.
+  - The current Solid / Construction / Centre choice splits into this construction flag and
+    the line type (centre becomes a line type).
+- **Line weights:** the ISO 128 series 0.13 / 0.18 / 0.25 / 0.35 / 0.5 / 0.7 / 1.0 / 1.4 / 2.0 mm,
+  plus a thin "hairline" default.
+  - A weight is a *paper* width. On screen it is drawn at the width it would print at the
+    current zoom/scale (constant screen width in model view at 1:1, scaled by the sheet scale
+    once sheets exist in M8), with a minimum of 1 device pixel.
+  - PDF output is at true weight.
+- **Thin lines toggle (as in Revit):**
+  - A view setting that draws every curve at 1 device pixel regardless of weight, for precise
+    editing of dense or heavy drawings.
+  - It is per window and remembered as a user preference. It never changes the document or
+    output.
+  - Hatch lines follow it; dimension and annotation lines are already thin. It lives in the
+    View menu and as a status-bar toggle, with a shortcut (proposed `W`, remappable).
+- **Colours:**
+  - Per layer and per entity, as RGB.
+  - A "foreground" colour flips between black and white with the theme (like AutoCAD colour
+    7), and other colours too close to the background are nudged for contrast on screen only.
+  - Selection, hover, preselection and conflict highlights always override.
+  - View → "Constraint status colours" (on by default while sketching) shows the SolidWorks
+    under/fully-defined colouring. Turned off, it shows layer colours for a drawing view.
+- **Visibility and locking:**
+  - Hidden layers are not drawn, picked or snapped to, but their geometry and constraints still
+    solve.
+  - Locked layers are drawn, can be snapped to and dimensioned against, but can't be selected for
+    editing. The solver treats their parameters as fixed, so dragging connected geometry can't
+    move them.
+  - Isolate (show only this layer), "select all on layer" and "move selection to layer" are in
+    the layers panel and context menu.
+- **Undo and files:**
+  - Layer edits and assignments are ordinary journalled changes.
+  - The file gains a `layers` table and optional per-entity `layer` / `color` / `weight` /
+    `linetype` (absent = by layer). This is format v5; older files load onto layer "0".
+- **Rendering:** a width and colour per instance (the SDF line/arc pipelines already take
+  per-instance attributes). Dash patterns follow arclength and scale with the weight.
+- **Interop:** DXF layers map one-to-one, with weights rounded to the nearest DXF lineweight and
+  colours written as true colour plus the nearest ACI. SVG and PDF use stroke width and colour.
+
+### 5.12 Fills and hatches
+*Added at the user's request (2026-10-07).*
+
+- **Prerequisite:** region detection (M6): faces of the planar graph of non-construction curves,
+  with islands (holes) found by containment. Arcs and circles stay exact; later splines and
+  ellipses join in M9.
+- **Fill objects are associative.** A fill stores its boundary as curve ids, orientation, and a
+  seed point inside, and is recomputed when the geometry changes.
+  - If the boundary breaks (a curve deleted, or a gap opened), the fill keeps its last valid
+    shape, is flagged "boundary lost" in the panel, and can be re-picked.
+- **Creating:**
+  - A Fill / Hatch tool: click inside a closed area to use its smallest enclosing face, with
+    islands excluded (like AutoCAD BHATCH "pick points").
+  - Or select closed boundary curves and choose Fill.
+  - The preview highlights the region before you click.
+- **Kinds:**
+  - **Solid fill:** colour and opacity.
+  - **Hatch patterns:** ANSI31–38, common ISO / architectural patterns (concrete, brick,
+    insulation, earth, steel, wood, glass) and user patterns imported from AutoCAD `.pat`
+    definitions.
+  - **Background colour:** a hatch can have one behind its lines.
+  - Gradients are a later extra.
+- **Pattern scaling (the Revit distinction):**
+  - *Drafting* patterns keep a constant size on paper (scaled by the sheet scale).
+  - *Model* patterns have real-world size (e.g. brick courses of 75 mm) and scale with the
+    geometry.
+  - Each hatch has an angle, scale and origin, and its own colour, line weight and layer
+    (by layer by default).
+- **Draw order:** fills draw beneath curves, layered by layer order, with "bring to front / send
+  to back" within a layer.
+- **Selection and area:**
+  - Clicking inside a fill selects it at a lower priority than curves.
+  - Hatch lines aren't snap targets.
+  - A selected fill shows its area, perimeter and centroid in the properties panel.
+- **Rendering:**
+  - Solid fills are tessellated with lyon from the region (arcs flattened to a tolerance tied
+    to zoom), cached per region revision and level of detail.
+  - Hatch lines are clipped to the exact boundary on the CPU in `f64` (pattern line families
+    against lines and arcs), then drawn through the existing SDF line pipeline, so they stay
+    crisp and exact far from the origin.
+  - Hatches too dense for the current zoom fade to a tinted fill to avoid moiré.
+  - Counts are capped per frame with progressive refinement.
+- **Files and interop:**
+  - The file gains a `fills` table: boundary, seed, kind, pattern, scale, angle, origin and
+    appearance.
+  - DXF HATCH is written with boundary paths, associative where possible. PDF writes true
+    filled paths and clipped hatch lines; SVG writes `<pattern>` or clipped paths.
 
 ---
 
@@ -615,21 +720,47 @@ written but hasn't run yet (no GitHub repo).*
   - Rotate (R) / scale modal ops would follow the same pattern. R and S are currently tool
     shortcuts.
 
-**M5 — Parametrics and exploration (3 wks)**
+**M5 — Parametrics and exploration (3–4 wks)**
 - Global variables, the expression engine with units, and the equations panel.
 - Variable sliders with live re-solve, variants/configurations, snapshots, free-DOF arrows, and
   pinned measurements.
+- **Unit selection** (added at the user's request): a per-document unit system, metric or
+  imperial, saved in the file's `meta.units`. Geometry stays in mm internally, so switching
+  units never moves anything.
+  - **Metric:** mm, cm or m, with configurable decimal places.
+  - **Imperial engineering:** decimal inches (`12.375"`) or decimal feet (`1.031'`), with
+    configurable decimal places.
+  - **Imperial architectural:** feet-inches with fractions (`1'-0 3/8"`).
+    - Fractions are rounded to a chosen denominator (1/2 … 1/64) and reduced (`4/8` → `1/2`).
+    - Zero feet is omitted or shown, by option (`0'-6"` vs `6"`).
+  - **Everywhere it applies:**
+    - Dimension labels, typed input fields, the properties panel, cursor readouts and the
+      status bar.
+    - The grid's minor/major spacing follows the unit system: e.g. 1/16", 1", 1' steps for
+      imperial instead of 1/10/100 mm.
+  - **Input accepts any unit regardless of the display setting:**
+    - Unit suffixes: `25.4mm`, `1in`, `3"`, `2'`.
+    - Architectural forms: `1'6"`, `1'-6 1/2"`, `6-1/2"`, `3/8"`.
+    - Bare numbers are read in the document's current unit (inches for architectural).
+  - **Rounding vs precision:** display rounding never changes stored values. Converted values
+    round-trip losslessly (the inch is exactly 25.4 mm). A dimension shows a `~` marker when its
+    displayed value is rounded (e.g. a metric dimension shown in fractional inches).
+  - **UI:** a status-bar/View-menu selector, with a document setting in File → Document
+    properties. A user preference sets the default for new documents.
 
-**M6 — Modify tools (4–5 wks)**
+**M6 — Modify tools, layers and line weights (6–7 wks)**
 - Robust intersections in drift-geom, then trim/extend/split, fillet/chamfer, offset, mirror, and
   linear/circular patterns.
-- Region detection with area properties.
+- Region detection with area properties (the basis for fills in M7).
+- Layers, colours, line weights and line types, and the thin-lines toggle (§5.11). File
+  format v5.
 
-**M7 — Drafting (4–5 wks)**
+**M7 — Drafting, fills and hatches (5–6 wks)**
 - ISO/ASME dimension styles, tolerances, baseline/chain/ordinate dimensions, and hole and chamfer
   callouts.
-- Notes, leaders, centre marks, centrelines, and hatching.
-- ISO 128 line types and weights, plus layers.
+- Notes, leaders, centre marks and centrelines.
+- Fills and hatches (§5.12): associative boundaries, solid fills, built-in and `.pat` patterns,
+  drafting vs model scaling, and draw order.
 
 **M8 — Sheets and output (3 wks)**
 - Sheets with a scale, title-block templates, and a revision table.
@@ -646,7 +777,7 @@ written but hasn't run yet (no GitHub repo).*
   Flatpak).
 - Docs site, example gallery, and a 1.0 release.
 
-**Rough total to a solid v1:** about 8–10 months for one experienced developer. Open-source
+**Rough total to a solid v1:** about 9–11 months for one experienced developer. Open-source
 contributors can parallelise M6–M9 once the M2–M4 core is stable.
 
 ---
@@ -687,5 +818,6 @@ title-block template syntax.
 1. Create the `drift` GitHub repo and push, so CI runs and Pages deploys. Enable Pages with
    "GitHub Actions" as the source.
 2. M5: global variables and expressions with units, an equations panel, sliders with live
-   re-solve, and free-DOF arrows. Also fully constrain the example plate with M4's tangent
+   re-solve, and free-DOF arrows. Also add metric / imperial unit selection, with engineering
+   (decimal) and architectural (ft-in with fractions) display. Also fully constrain the example plate with M4's tangent
    relations.

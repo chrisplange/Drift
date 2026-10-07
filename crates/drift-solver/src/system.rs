@@ -173,7 +173,16 @@ impl System {
         let mut redundant = Vec::new();
         let mut rows = Vec::new();
 
+        let center = |id: EntityId| match doc.get(id).map(|e| e.kind) {
+            Some(EntityKind::Circle { center, .. } | EntityKind::Arc { center, .. }) => center,
+            _ => unreachable!("validated constraint refers to a circle or arc"),
+        };
         for (cid, constraint) in doc.constraints() {
+            if doc.is_driven(cid) {
+                // Driven (reference) dimensions only report; they don't constrain.
+                continue;
+            }
+            let rows_before = rows.len();
             let mut joined = 0;
             let mut equalities = Vec::new();
             match *constraint {
@@ -238,6 +247,153 @@ impl System {
                     },
                     source: Some(cid),
                 }),
+                Constraint::Concentric { a, b } | Constraint::Coradial { a, b } => {
+                    let (ca, cb) = (center(a), center(b));
+                    equalities.push((x(ca), x(cb)));
+                    equalities.push((y(ca), y(cb)));
+                    if matches!(constraint, Constraint::Coradial { .. }) {
+                        rows.push(Row {
+                            equation: Equation::EqualLength {
+                                a: radius(a),
+                                b: radius(b),
+                            },
+                            source: Some(cid),
+                        });
+                    }
+                }
+                Constraint::Collinear { a, b } => {
+                    let lb = line(b);
+                    rows.push(Row {
+                        equation: Equation::PointLine {
+                            point: [lb[0], lb[1]],
+                            line: line(a),
+                            sign: 1.0,
+                            value: 0.0,
+                        },
+                        source: Some(cid),
+                    });
+                    rows.push(Row {
+                        equation: Equation::angle(line(a), lb, 0.0),
+                        source: Some(cid),
+                    });
+                }
+                Constraint::PointOnCurve { point: p, curve } => {
+                    let equation = match doc.get(curve).map(|e| e.kind) {
+                        Some(EntityKind::Line { .. }) => Equation::PointLine {
+                            point: point(p),
+                            line: line(curve),
+                            sign: 1.0,
+                            value: 0.0,
+                        },
+                        _ => {
+                            let c = center(curve);
+                            Equation::EqualLength {
+                                a: Length::Points([x(c), y(c), x(p), y(p)]),
+                                b: radius(curve),
+                            }
+                        }
+                    };
+                    rows.push(Row {
+                        equation,
+                        source: Some(cid),
+                    });
+                }
+                Constraint::Symmetric { a, b, axis } => {
+                    let (pa, pb, ax) = (point(a), point(b), line(axis));
+                    rows.push(Row {
+                        equation: Equation::SymmetricPerpendicular {
+                            a: pa,
+                            b: pb,
+                            axis: ax,
+                        },
+                        source: Some(cid),
+                    });
+                    rows.push(Row {
+                        equation: Equation::SymmetricMidpoint {
+                            a: pa,
+                            b: pb,
+                            axis: ax,
+                        },
+                        source: Some(cid),
+                    });
+                }
+                Constraint::Tangent { a, b } => {
+                    let cb = center(b);
+                    // Curves that share an end point (fillets) are tangent *at* that point.
+                    // Saying so directly (radius ⟂ line, or both centres in line with the
+                    // point) is well conditioned; the general "distance = radius" form has a
+                    // double root there and only converges to about √(tolerance·r).
+                    let ends = |id: EntityId| -> Vec<EntityId> {
+                        match doc.get(id).map(|e| e.kind) {
+                            Some(EntityKind::Line { a, b }) => vec![a, b],
+                            Some(EntityKind::Arc { start, end, .. }) => vec![start, end],
+                            _ => Vec::new(),
+                        }
+                    };
+                    let shared = ends(a).into_iter().find(|p| ends(b).contains(p));
+                    let kind_a = doc.get(a).map(|e| e.kind);
+                    let at_shared = shared.map(|t| match kind_a {
+                        Some(EntityKind::Line { .. }) => Equation::SymmetricPerpendicular {
+                            a: point(t),
+                            b: point(cb),
+                            axis: line(a),
+                        },
+                        _ => {
+                            let (t, ca) = (point(t), point(center(a)));
+                            Equation::PointLine {
+                                point: point(cb),
+                                line: [t[0], t[1], ca[0], ca[1]],
+                                sign: 1.0,
+                                value: 0.0,
+                            }
+                        }
+                    });
+                    let equation = match kind_a {
+                        _ if at_shared.is_some() => at_shared.expect("checked"),
+                        Some(EntityKind::Line { .. }) => {
+                            let ll = line(a);
+                            let c = point(cb);
+                            let cross = (values[ll[2]] - values[ll[0]])
+                                * (values[c[1]] - values[ll[1]])
+                                - (values[ll[3]] - values[ll[1]]) * (values[c[0]] - values[ll[0]]);
+                            Equation::TangentLine {
+                                center: c,
+                                line: ll,
+                                sign: if cross >= 0.0 { 1.0 } else { -1.0 },
+                                radius: radius(b),
+                            }
+                        }
+                        _ => {
+                            // Two circles: outside (|c₁c₂| = r₁ + r₂) or inside
+                            // (|c₁c₂| = |r₁ − r₂|), whichever the geometry is closer to.
+                            let ca = center(a);
+                            let r1 = crate::radius_of(doc, a).unwrap_or(0.0);
+                            let r2 = crate::radius_of(doc, b).unwrap_or(0.0);
+                            let dist = doc
+                                .point(ca)
+                                .ok()
+                                .zip(doc.point(cb).ok())
+                                .map_or(0.0, |(p, q)| p.distance(q));
+                            let between = Length::Points([x(ca), y(ca), x(cb), y(cb)]);
+                            let outside =
+                                (dist - (r1 + r2)).abs() <= (dist - (r1 - r2).abs()).abs();
+                            let (k1, k2) = if outside {
+                                (-1.0, -1.0)
+                            } else if r1 >= r2 {
+                                (-1.0, 1.0)
+                            } else {
+                                (1.0, -1.0)
+                            };
+                            Equation::LengthSum {
+                                terms: [(between, 1.0), (radius(a), k1), (radius(b), k2)],
+                            }
+                        }
+                    };
+                    rows.push(Row {
+                        equation,
+                        source: Some(cid),
+                    });
+                }
                 Constraint::Midpoint { point: m, line: l } => {
                     let [ax, ay, bx, by] = line(l);
                     let [mx, my] = point(m);
@@ -299,7 +455,8 @@ impl System {
                     joined += 1;
                 }
             }
-            if !equalities.is_empty() && joined == 0 {
+            // Entirely implied: every equality was already merged and nothing else was added.
+            if !equalities.is_empty() && joined == 0 && rows.len() == rows_before {
                 redundant.push(cid);
             }
         }

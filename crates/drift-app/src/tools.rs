@@ -3,6 +3,7 @@
 //! Tools receive pointer input already converted to world space and snapped, so they are
 //! independent of the UI toolkit and can be tested by feeding them events.
 
+use std::collections::BTreeSet;
 use std::f64::consts::{PI, TAU};
 
 use drift_core::{
@@ -37,7 +38,54 @@ pub enum Input {
 /// What the overlay should draw for the tool, beyond its preview geometry.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Overlay {
-    SelectionBox { rect: Bounds, crossing: bool },
+    SelectionBox {
+        rect: Bounds,
+        crossing: bool,
+    },
+    /// A modal move: the base point and where it has been moved to (`None` while the user is
+    /// picking a new base point).
+    Move {
+        base: DVec2,
+        to: Option<DVec2>,
+    },
+}
+
+/// Keys that tools can claim (Blender-style modal keys). Unclaimed keys keep their global
+/// meaning (e.g. X toggles construction).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ToolKey {
+    /// Lock to the X axis.
+    X,
+    /// Lock to the Y axis.
+    Y,
+    /// Grab: move the selection.
+    G,
+    /// Pick the base point of a move.
+    B,
+}
+
+/// A world axis a drawing tool can lock the segment being drawn to (Blender-style X / Y keys).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Axis {
+    X,
+    Y,
+}
+
+impl Axis {
+    pub fn dir(self) -> DVec2 {
+        match self {
+            Axis::X => DVec2::X,
+            Axis::Y => DVec2::Y,
+        }
+    }
+
+    /// The relation a segment locked to this axis gets.
+    fn relation(self) -> GuideKind {
+        match self {
+            Axis::X => GuideKind::Horizontal,
+            Axis::Y => GuideKind::Vertical,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -46,21 +94,29 @@ pub enum ToolKind {
     Line,
     Rectangle,
     Circle,
+    /// Centre-point arc.
     Arc,
+    ThreePointArc,
+    TangentArc,
     Point,
     Dimension,
 }
 
 impl ToolKind {
-    pub const ALL: [ToolKind; 7] = [
+    pub const ALL: [ToolKind; 9] = [
         ToolKind::Select,
         ToolKind::Line,
         ToolKind::Rectangle,
         ToolKind::Circle,
         ToolKind::Arc,
+        ToolKind::ThreePointArc,
+        ToolKind::TangentArc,
         ToolKind::Point,
         ToolKind::Dimension,
     ];
+
+    /// The arc tools, in the order pressing A cycles through them.
+    pub const ARCS: [ToolKind; 3] = [ToolKind::Arc, ToolKind::ThreePointArc, ToolKind::TangentArc];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -69,6 +125,8 @@ impl ToolKind {
             ToolKind::Rectangle => "Rectangle",
             ToolKind::Circle => "Circle",
             ToolKind::Arc => "Arc",
+            ToolKind::ThreePointArc => "3-pt arc",
+            ToolKind::TangentArc => "Tangent arc",
             ToolKind::Point => "Point",
             ToolKind::Dimension => "Dimension",
         }
@@ -80,7 +138,8 @@ impl ToolKind {
             ToolKind::Line => 'L',
             ToolKind::Rectangle => 'R',
             ToolKind::Circle => 'C',
-            ToolKind::Arc => 'A',
+            // A selects the centre arc; pressed again it cycles through the arc tools.
+            ToolKind::Arc | ToolKind::ThreePointArc | ToolKind::TangentArc => 'A',
             ToolKind::Point => 'P',
             ToolKind::Dimension => 'D',
         }
@@ -93,6 +152,8 @@ impl ToolKind {
             ToolKind::Rectangle => Box::<RectangleTool>::default(),
             ToolKind::Circle => Box::<CircleTool>::default(),
             ToolKind::Arc => Box::<ArcTool>::default(),
+            ToolKind::ThreePointArc => Box::<ThreePointArcTool>::default(),
+            ToolKind::TangentArc => Box::<TangentArcTool>::default(),
             ToolKind::Point => Box::<PointTool>::default(),
             ToolKind::Dimension => Box::<DimensionTool>::default(),
         }
@@ -140,6 +201,32 @@ pub trait Tool {
 
     /// Adjust the pointer after snapping (e.g. lock a line horizontal).
     fn refine_pointer(&self, _pointer: &mut Pointer) {}
+
+    /// A modal key was pressed with the pointer at `pointer` (if over the canvas). Returns
+    /// false if the tool doesn't use the key, so it can do something else.
+    fn key(&mut self, _key: ToolKey, _pointer: Option<&Pointer>, _ed: &mut Editor) -> bool {
+        false
+    }
+
+    /// True during a modal operation (a grab): other shortcuts are suspended and right-click
+    /// cancels it.
+    fn is_modal(&self) -> bool {
+        false
+    }
+
+    /// The existing point a chain of curves (polyline, tangent arcs) currently ends at, so
+    /// switching between line and tangent arc can continue from it.
+    fn chain_end(&self) -> Option<EntityId> {
+        None
+    }
+
+    /// Continue a chain from an existing point (after switching tools mid-chain).
+    fn continue_from(&mut self, _point: EntityId, _ed: &mut Editor) {}
+
+    /// The active axis lock and the point the locked segment runs from, for the overlay.
+    fn axis_lock(&self) -> Option<(DVec2, Axis)> {
+        None
+    }
 
     /// Labels of the values the user can type right now (at most two), e.g. length and angle.
     fn fields(&self) -> &'static [&'static str] {
@@ -231,12 +318,116 @@ enum SelectDrag {
     },
 }
 
+/// A Blender-style modal move (G): the selection follows the pointer from a base point until a
+/// click or Enter confirms it, or Esc / right-click cancels. X / Y lock an axis, numbers give
+/// the exact offset, and B picks a new base point.
+struct Grab {
+    ids: Vec<EntityId>,
+    /// Defining points of the selection: these move rigidly with the offset.
+    points: BTreeSet<EntityId>,
+    base: DVec2,
+    /// Where the pointer is (the move's target before locks and typed values).
+    target: DVec2,
+    picking_base: bool,
+    lock: Option<Axis>,
+    typed: [Option<f64>; 2],
+    /// The offset the geometry has been moved by so far in the open transaction.
+    applied: DVec2,
+}
+
+impl Grab {
+    /// The offset for the pointer at `target`, honouring the lock and typed values.
+    fn offset(&self, target: DVec2) -> DVec2 {
+        let d = target - self.base;
+        match self.lock {
+            Some(axis) => {
+                let u = axis.dir();
+                u * self.typed[0].unwrap_or(d.dot(u))
+            }
+            None if any_typed(self.typed) => {
+                DVec2::new(self.typed[0].unwrap_or(0.0), self.typed[1].unwrap_or(0.0))
+            }
+            None => d,
+        }
+    }
+
+    fn dragged(&self) -> Vec<Param> {
+        self.points.iter().copied().flat_map(Param::point).collect()
+    }
+
+    /// Move the geometry to `offset` (live, in steps from the last offset so constraints
+    /// follow smoothly).
+    fn apply(&mut self, offset: DVec2, ed: &mut Editor) {
+        let step = offset - self.applied;
+        if step != DVec2::ZERO && ed.drag(&self.ids, step, &self.dragged()) {
+            self.applied = offset;
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct SelectTool {
     drag: Option<SelectDrag>,
+    grab: Option<Grab>,
 }
 
 impl SelectTool {
+    /// Start a modal move of the selection from the pointer.
+    fn start_grab(&mut self, p: &Pointer, ed: &mut Editor) -> bool {
+        if self.drag.is_some() || self.grab.is_some() {
+            return false;
+        }
+        if ed.selection.is_empty() {
+            ed.notice = Some("Select something to move first".into());
+            return true;
+        }
+        let ids: Vec<EntityId> = ed.selection.iter().copied().collect();
+        let points = ed.doc.defining_points(ids.iter().copied());
+        ed.doc.begin();
+        self.grab = Some(Grab {
+            ids,
+            points,
+            base: p.pos(),
+            target: p.pos(),
+            picking_base: false,
+            lock: None,
+            typed: [None; 2],
+            applied: DVec2::ZERO,
+        });
+        true
+    }
+
+    /// Confirm the move for the pointer at `target`. The final offset is applied again in one
+    /// step from the original geometry, so typed and snapped moves land exactly.
+    fn confirm_grab(&mut self, target: DVec2, ed: &mut Editor) {
+        let Some(grab) = self.grab.take() else { return };
+        let offset = grab.offset(target);
+        ed.doc.rollback();
+        if offset == DVec2::ZERO {
+            ed.sync();
+            return;
+        }
+        ed.doc.begin();
+        let dragged = grab.dragged();
+        if !ed.drag(&grab.ids, offset, &dragged) {
+            // Too far for one solve (constraints pull the rest along): go in steps.
+            const STEPS: u32 = 16;
+            for _ in 0..STEPS {
+                ed.drag(&grab.ids, offset / f64::from(STEPS), &dragged);
+            }
+        }
+        ed.commit("Move");
+    }
+
+    fn cancel_grab(&mut self, ed: &mut Editor) -> bool {
+        if self.grab.take().is_none() {
+            return false;
+        }
+        ed.doc.rollback();
+        ed.sync();
+        true
+    }
+
     fn dragged_point(&self) -> Option<EntityId> {
         match self.drag {
             Some(SelectDrag::Move { point, .. }) => point,
@@ -247,14 +438,109 @@ impl SelectTool {
 
 impl Tool for SelectTool {
     fn is_busy(&self) -> bool {
-        self.drag.is_some()
+        self.drag.is_some() || self.grab.is_some()
     }
 
     fn kind(&self) -> ToolKind {
         ToolKind::Select
     }
 
+    fn is_modal(&self) -> bool {
+        self.grab.is_some()
+    }
+
+    fn key(&mut self, key: ToolKey, pointer: Option<&Pointer>, ed: &mut Editor) -> bool {
+        match (key, &mut self.grab) {
+            (ToolKey::G, None) => match pointer {
+                Some(p) => self.start_grab(p, ed),
+                None => false,
+            },
+            (ToolKey::X | ToolKey::Y, Some(grab)) if !grab.picking_base => {
+                let axis = if key == ToolKey::X { Axis::X } else { Axis::Y };
+                grab.lock = (grab.lock != Some(axis)).then_some(axis);
+                let offset = grab.offset(grab.target);
+                grab.apply(offset, ed);
+                true
+            }
+            (ToolKey::B, Some(grab)) => {
+                // Put the geometry back while the new base is picked.
+                grab.apply(DVec2::ZERO, ed);
+                grab.picking_base = true;
+                true
+            }
+            // Swallow other modal keys during a grab.
+            (_, Some(_)) => true,
+            _ => false,
+        }
+    }
+
+    fn axis_lock(&self) -> Option<(DVec2, Axis)> {
+        let grab = self.grab.as_ref()?;
+        Some((grab.base, grab.lock?))
+    }
+
+    fn fields(&self) -> &'static [&'static str] {
+        match &self.grab {
+            Some(grab) if !grab.picking_base => {
+                if grab.lock.is_some() {
+                    &["Distance"]
+                } else {
+                    &["dX", "dY"]
+                }
+            }
+            _ => &[],
+        }
+    }
+
+    fn set_typed(&mut self, values: [Option<f64>; 2]) {
+        if let Some(grab) = &mut self.grab {
+            grab.typed = values;
+        }
+    }
+
+    fn commit_typed(&mut self, p: &Pointer, ed: &mut Editor) {
+        if let Some(grab) = &self.grab {
+            // The pointer may be off the canvas while typing: keep the last target.
+            let target = if grab.typed.iter().any(Option::is_some) {
+                grab.target
+            } else {
+                p.pos()
+            };
+            self.confirm_grab(target, ed);
+        }
+    }
+
+    fn measurement(&self, _p: &Pointer) -> Option<String> {
+        let grab = self.grab.as_ref()?;
+        if grab.picking_base {
+            return Some("Base point".into());
+        }
+        let d = grab.offset(grab.target);
+        let lock = grab
+            .lock
+            .map_or(String::new(), |axis| format!("  [{axis:?} locked]"));
+        Some(format!(
+            "dX {}  dY {}  D {}{lock}",
+            format_len(d.x),
+            format_len(d.y),
+            format_len(d.length())
+        ))
+    }
+
     fn hint(&self) -> String {
+        if let Some(grab) = &self.grab {
+            return if grab.picking_base {
+                "Click the base point (snaps to points) · Esc: cancel".into()
+            } else {
+                let lock = match grab.lock {
+                    Some(axis) => format!("{axis:?} locked"),
+                    None => "X / Y: lock".into(),
+                };
+                format!(
+                    "Move: click / Enter to place · type offset · {lock} · B: base · Esc: cancel"
+                )
+            };
+        }
         match self.drag {
             Some(SelectDrag::Box { .. }) => {
                 "Drag right for window selection, left for crossing selection".into()
@@ -269,6 +555,34 @@ impl Tool for SelectTool {
     }
 
     fn handle(&mut self, input: Input, ed: &mut Editor) {
+        if let Some(grab) = &mut self.grab {
+            ed.hovered = None;
+            ed.hovered_midpoint = None;
+            match input {
+                Input::Hover(p) | Input::Drag(p) => {
+                    grab.target = p.pos();
+                    if !grab.picking_base {
+                        grab.apply(grab.offset(p.pos()), ed);
+                    }
+                }
+                // Blender confirms on press; a click that turned into a drag still counts.
+                Input::Click(p, _) | Input::DragStart(p, _) => {
+                    if grab.picking_base {
+                        grab.base = p.pos();
+                        grab.target = p.pos();
+                        grab.picking_base = false;
+                    } else {
+                        self.confirm_grab(p.pos(), ed);
+                    }
+                }
+                Input::Finish if !grab.picking_base => {
+                    let target = grab.target;
+                    self.confirm_grab(target, ed);
+                }
+                _ => {}
+            }
+            return;
+        }
         match input {
             Input::Hover(p) => {
                 ed.hovered_midpoint = None;
@@ -399,6 +713,17 @@ impl Tool for SelectTool {
                             .doc
                             .add_constraint(Constraint::Midpoint { point: from, line });
                     }
+                    // Dropped on a curve: keep it on the curve (refused for its own curves).
+                    if let (Some(from), Some(curve)) = (point, p.on_curve())
+                        && ed.doc.constraints_on(from).all(|c| {
+                            ed.doc.constraint(c)
+                                != Some(&Constraint::PointOnCurve { point: from, curve })
+                        })
+                    {
+                        let _ = ed
+                            .doc
+                            .add_constraint(Constraint::PointOnCurve { point: from, curve });
+                    }
                     ed.commit("Move");
                 }
                 None => {}
@@ -407,6 +732,9 @@ impl Tool for SelectTool {
     }
 
     fn cancel(&mut self, ed: &mut Editor) -> bool {
+        if self.cancel_grab(ed) {
+            return true;
+        }
         match self.drag.take() {
             Some(SelectDrag::Move { .. }) => {
                 ed.doc.rollback();
@@ -424,6 +752,12 @@ impl Tool for SelectTool {
     }
 
     fn overlay(&self) -> Option<Overlay> {
+        if let Some(grab) = &self.grab {
+            return Some(Overlay::Move {
+                base: grab.base,
+                to: (!grab.picking_base).then(|| grab.base + grab.offset(grab.target)),
+            });
+        }
         match self.drag {
             Some(SelectDrag::Box { start, current }) => {
                 let mut rect = Bounds::from_point(start);
@@ -438,10 +772,21 @@ impl Tool for SelectTool {
     }
 
     fn wants_snap(&self) -> bool {
-        self.dragged_point().is_some()
+        self.dragged_point().is_some() || self.grab.is_some()
     }
 
     fn snap_excludes(&self, ed: &Editor, id: EntityId) -> bool {
+        if let Some(grab) = &self.grab {
+            // Picking a base point: anything, typically a point of the selection. Moving:
+            // nothing that moves with the selection.
+            return !grab.picking_base
+                && (grab.points.contains(&id)
+                    || grab.ids.contains(&id)
+                    || ed
+                        .doc
+                        .get(id)
+                        .is_some_and(|e| e.kind.points().any(|q| grab.points.contains(&q))));
+        }
         // Don't snap a dragged point to itself or to the curves that move with it.
         self.dragged_point().is_some_and(|p| {
             id == p
@@ -525,6 +870,8 @@ pub struct LineTool {
     last: Option<Anchor>,
     chain_start: Option<EntityId>,
     typed: [Option<f64>; 2],
+    /// Axis the current segment is locked to; cleared when the segment is placed.
+    lock: Option<Axis>,
 }
 
 impl LineTool {
@@ -538,10 +885,15 @@ impl LineTool {
         }
         let d = p.pos() - last.pos;
         let len = self.typed[0].unwrap_or(d.length());
-        let dir = match self.typed[1] {
-            Some(degrees) => exact_direction(degrees),
-            None if d.length() > 0.0 => d.normalize(),
-            None => DVec2::X,
+        let dir = match (self.typed[1], self.lock) {
+            (Some(degrees), _) => exact_direction(degrees),
+            // Locked: along the axis, towards the pointer's side.
+            (None, Some(axis)) => {
+                let u = axis.dir();
+                if d.dot(u) < 0.0 { -u } else { u }
+            }
+            (None, None) if d.length() > 0.0 => d.normalize(),
+            (None, None) => DVec2::X,
         };
         last.pos + dir * len
     }
@@ -571,13 +923,24 @@ impl LineTool {
             ed.sync();
             return;
         };
-        auto_relation(ed, relation, line);
+        match self.lock {
+            // An explicit axis lock always gets its relation.
+            Some(axis) => {
+                let _ = ed.doc.add_constraint(match axis {
+                    Axis::X => Constraint::Horizontal { line },
+                    Axis::Y => Constraint::Vertical { line },
+                });
+            }
+            None => auto_relation(ed, relation, line),
+        }
         if let Some(value) = length {
             let _ = ed.doc.add_constraint(Constraint::Distance { a, b, value });
         }
         if !ed.commit("Line") {
             return;
         }
+        // Locks are per segment.
+        self.lock = None;
         let start = *self.chain_start.get_or_insert(a);
         if b == start {
             // Closed the loop.
@@ -588,6 +951,7 @@ impl LineTool {
                 pos: ed.doc.point(b).unwrap_or(anchor.pos),
                 existing: Some(b),
                 midpoint_of: None,
+                on_curve: None,
             });
         }
     }
@@ -595,6 +959,21 @@ impl LineTool {
     fn finish(&mut self) {
         self.last = None;
         self.chain_start = None;
+        self.lock = None;
+    }
+
+    /// Lock (or, pressed again, unlock) the segment in progress to an axis. False before the
+    /// first point.
+    fn lock_axis(&mut self, axis: Axis) -> bool {
+        if self.last.is_none() {
+            return false;
+        }
+        self.lock = if self.lock == Some(axis) {
+            None
+        } else {
+            Some(axis)
+        };
+        true
     }
 }
 
@@ -610,9 +989,15 @@ impl Tool for LineTool {
     fn hint(&self) -> String {
         match self.last {
             None => "Click the start point, or type X / Y".into(),
-            Some(_) => "Click the next point, or type a length (Tab: angle) · double-click, \
-                        right-click or Enter to finish"
-                .into(),
+            Some(_) => match self.lock {
+                Some(axis) => format!(
+                    "Locked to the {axis:?} axis ({axis:?} again to unlock) · click the next point \
+                     or type a length"
+                ),
+                None => "Click the next point, or type a length (Tab: angle) · X / Y: lock to \
+                         an axis · double-click, right-click or Enter to finish"
+                    .into(),
+            },
         }
     }
 
@@ -635,6 +1020,24 @@ impl Tool for LineTool {
 
     fn refine_pointer(&self, p: &mut Pointer) {
         let Some(last) = self.last else { return };
+        if let Some(axis) = self.lock {
+            // Project onto the axis through the last point. A snap target off the axis still
+            // sets how far along it goes (shown with a guide line from the target); it is only
+            // reused if it lies exactly on the axis.
+            let u = axis.dir();
+            let target = p.pos();
+            let at = last.pos + u * (target - last.pos).dot(u);
+            let reference = p.snap.map(|s| s.at).filter(|q| *q != at);
+            if reference.is_some() {
+                p.snap = None;
+            }
+            p.guide = Some(Guide {
+                at,
+                kind: axis.relation(),
+                from: [Some(last.pos), reference],
+            });
+            return;
+        }
         if p.snapped_point().is_some() {
             return;
         }
@@ -668,12 +1071,44 @@ impl Tool for LineTool {
         self.typed = values;
     }
 
+    fn key(&mut self, key: ToolKey, _pointer: Option<&Pointer>, _ed: &mut Editor) -> bool {
+        match key {
+            ToolKey::X => self.lock_axis(Axis::X),
+            ToolKey::Y => self.lock_axis(Axis::Y),
+            _ => false,
+        }
+    }
+
+    fn axis_lock(&self) -> Option<(DVec2, Axis)> {
+        Some((self.last?.pos, self.lock?))
+    }
+
+    fn chain_end(&self) -> Option<EntityId> {
+        self.last?.existing
+    }
+
+    fn continue_from(&mut self, point: EntityId, ed: &mut Editor) {
+        if let Ok(pos) = ed.doc.point(point) {
+            self.last = Some(Anchor {
+                pos,
+                existing: Some(point),
+                midpoint_of: None,
+                on_curve: None,
+            });
+            self.chain_start = None;
+        }
+    }
+
     fn commit_typed(&mut self, p: &Pointer, ed: &mut Editor) {
         let target = self.target(p);
         let anchor = Anchor::at(target);
         if self.last.is_none() {
             self.place(anchor, None, None, ed);
         } else {
+            if self.typed[1].is_some() {
+                // A typed angle overrides the lock.
+                self.lock = None;
+            }
             let relation = match self.typed[1] {
                 Some(degrees) => relation_for_angle(degrees),
                 None => p.auto_relation(),
@@ -683,7 +1118,6 @@ impl Tool for LineTool {
         }
         self.typed = [None; 2];
     }
-
     fn preview(&self, pointer: Option<&Pointer>) -> Vec<SketchItem> {
         match (self.last, pointer) {
             (Some(last), Some(p)) => vec![
@@ -701,7 +1135,10 @@ impl Tool for LineTool {
         let last = self.last?;
         let d = self.target(p) - last.pos;
         let angle = d.y.atan2(d.x).to_degrees();
-        Some(format!("L {}  A {angle:.2}°", format_len(d.length())))
+        let lock = self
+            .lock
+            .map_or(String::new(), |axis| format!("  [{axis:?} locked]"));
+        Some(format!("L {}  A {angle:.2}°{lock}", format_len(d.length())))
     }
 }
 
@@ -1083,6 +1520,7 @@ impl ArcTool {
                     (p.pos().distance(center.pos) - radius).abs() <= 1e-9 * radius.max(1.0)
                 }),
             midpoint_of: None,
+            on_curve: None,
         };
         ed.doc.begin();
         let c = center.resolve(&mut ed.doc);
@@ -1228,6 +1666,502 @@ impl Tool for ArcTool {
                 Some(format!("R {}  {:.2}°", format_len(r), sweep.to_degrees()))
             }
         }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Three-point arc
+
+/// Centre of the circle through three points, or `None` if they are (nearly) collinear.
+/// Computed relative to `a` to keep precision far from the origin.
+fn circumcenter(a: DVec2, b: DVec2, c: DVec2) -> Option<DVec2> {
+    let (b, c) = (b - a, c - a);
+    let d = 2.0 * b.perp_dot(c);
+    if d.abs() <= 1e-12 * b.length() * c.length() || d == 0.0 {
+        return None;
+    }
+    let (bb, cc) = (b.length_squared(), c.length_squared());
+    Some(a + DVec2::new(c.y * bb - b.y * cc, b.x * cc - c.x * bb) / d)
+}
+
+/// Order a start/end pair counter-clockwise for an arc from `s` to `e` that passes `m`'s side
+/// of the chord: (centre, first, last), and whether they were swapped.
+fn order_through(center: DVec2, s: DVec2, e: DVec2, m: DVec2) -> (DVec2, DVec2, DVec2, bool) {
+    // Counter-clockwise from s to e runs on the right of the chord s → e.
+    if (e - s).perp_dot(m - s) < 0.0 {
+        (center, s, e, false)
+    } else {
+        (center, e, s, true)
+    }
+}
+
+/// Start point, end point, then a point on the arc (sets the bulge and radius).
+#[derive(Default)]
+pub struct ThreePointArcTool {
+    start: Option<Anchor>,
+    end: Option<Anchor>,
+    typed: [Option<f64>; 2],
+}
+
+impl ThreePointArcTool {
+    /// End point for the pointer: typed length/angle from the start, else the pointer.
+    fn end_for(&self, p: &Pointer) -> DVec2 {
+        let Some(start) = self.start else {
+            return p.pos();
+        };
+        if !any_typed(self.typed) {
+            return p.pos();
+        }
+        let d = p.pos() - start.pos;
+        let len = self.typed[0].unwrap_or(d.length());
+        let dir = match self.typed[1] {
+            Some(degrees) => exact_direction(degrees),
+            None if d.length() > 0.0 => d.normalize(),
+            None => DVec2::X,
+        };
+        start.pos + dir * len
+    }
+
+    /// (centre, first, last, swapped) for the pointer, honouring a typed radius.
+    fn geometry(&self, p: &Pointer) -> Option<(DVec2, DVec2, DVec2, bool)> {
+        let (s, e) = (self.start?.pos, self.end?.pos);
+        let m = p.pos();
+        match self.typed[0] {
+            Some(r) => {
+                // The shorter arc of radius r, bulging towards the pointer.
+                let chord = e - s;
+                let half = chord.length() / 2.0;
+                let r = r.abs();
+                if r < half || half == 0.0 {
+                    return None;
+                }
+                let mut n = chord.perp().normalize();
+                if n.dot(m - s) < 0.0 {
+                    n = -n;
+                }
+                let h = (r * r - half * half).sqrt();
+                let mid = s + chord / 2.0;
+                let center = mid - n * h;
+                Some(order_through(center, s, e, mid + n * (r - h)))
+            }
+            None => Some(order_through(circumcenter(s, e, m)?, s, e, m)),
+        }
+    }
+
+    fn create(&mut self, p: &Pointer, ed: &mut Editor) {
+        let (Some(start), Some(end)) = (self.start, self.end) else {
+            return;
+        };
+        let Some((center, _, _, swapped)) = self.geometry(p) else {
+            ed.notice = Some("The three points are in line: move off the line".into());
+            return;
+        };
+        let radius = self.typed[0].map(f64::abs);
+        // A third point picked on an existing point stays on the arc.
+        let through = p.snapped_point().filter(|_| radius.is_none());
+        ed.doc.begin();
+        let c = ed.doc.add_point(center);
+        let s = start.resolve(&mut ed.doc);
+        let e = end.resolve(&mut ed.doc);
+        let (first, last) = if swapped { (e, s) } else { (s, e) };
+        match ed.doc.add_arc(c, first, last) {
+            Ok(arc) => {
+                if let Some(value) = radius {
+                    let _ = ed
+                        .doc
+                        .add_constraint(Constraint::Radius { curve: arc, value });
+                }
+                if let Some(point) = through
+                    && point != s
+                    && point != e
+                {
+                    let _ = ed
+                        .doc
+                        .add_constraint(Constraint::PointOnCurve { point, curve: arc });
+                }
+                ed.commit("3-point arc");
+            }
+            Err(_) => {
+                ed.doc.rollback();
+                ed.sync();
+            }
+        }
+        *self = Self::default();
+    }
+}
+
+impl Tool for ThreePointArcTool {
+    fn is_busy(&self) -> bool {
+        self.start.is_some()
+    }
+
+    fn kind(&self) -> ToolKind {
+        ToolKind::ThreePointArc
+    }
+
+    fn hint(&self) -> String {
+        match (self.start, self.end) {
+            (None, _) => "Click the arc's start point, or type X / Y".into(),
+            (Some(_), None) => "Click the end point, or type the chord length (Tab: angle)".into(),
+            _ => "Click a point on the arc (sets its size and side), or type the radius".into(),
+        }
+    }
+
+    fn handle(&mut self, input: Input, ed: &mut Editor) {
+        let p = match input {
+            Input::Click(p, _) | Input::DragEnd(p, _) => p,
+            Input::DragStart(p, _) if self.start.is_none() => p,
+            _ => return,
+        };
+        match (self.start, self.end) {
+            (None, _) => self.start = Some(p.anchor()),
+            (Some(start), None) => {
+                if p.pos() != start.pos {
+                    self.end = Some(p.anchor());
+                }
+            }
+            _ => self.create(&p, ed),
+        }
+    }
+
+    fn cancel(&mut self, _ed: &mut Editor) -> bool {
+        let had = self.start.is_some();
+        *self = Self::default();
+        had
+    }
+
+    fn fields(&self) -> &'static [&'static str] {
+        match (self.start, self.end) {
+            (None, _) => XY,
+            (Some(_), None) => &["Length", "Angle"],
+            _ => &["Radius"],
+        }
+    }
+
+    fn set_typed(&mut self, values: [Option<f64>; 2]) {
+        self.typed = values;
+    }
+
+    fn commit_typed(&mut self, p: &Pointer, ed: &mut Editor) {
+        match (self.start, self.end) {
+            (None, _) => self.start = Some(exact(p, typed_point(self.typed, p)).anchor()),
+            (Some(start), None) => {
+                let at = self.end_for(p);
+                if at != start.pos {
+                    self.end = Some(Anchor::at(at));
+                }
+            }
+            _ => self.create(p, ed),
+        }
+        self.typed = [None; 2];
+    }
+
+    fn preview(&self, pointer: Option<&Pointer>) -> Vec<SketchItem> {
+        let (Some(start), Some(p)) = (self.start, pointer) else {
+            return Vec::new();
+        };
+        let mut items = vec![preview_vertex(start.pos)];
+        match self.end {
+            None => items.push(preview(Shape::Line {
+                a: start.pos,
+                b: self.end_for(p),
+            })),
+            Some(end) => {
+                items.push(preview_vertex(end.pos));
+                match self.geometry(p) {
+                    Some((c, s, e, _)) => items.push(preview(arc_shape(c, s, e))),
+                    None => items.push(preview(Shape::Line {
+                        a: start.pos,
+                        b: end.pos,
+                    })),
+                }
+            }
+        }
+        items
+    }
+
+    fn measurement(&self, p: &Pointer) -> Option<String> {
+        let start = self.start?.pos;
+        if self.end.is_none() {
+            let d = self.end_for(p) - start;
+            return Some(format!(
+                "Chord {}  A {:.2}°",
+                format_len(d.length()),
+                d.y.atan2(d.x).to_degrees()
+            ));
+        }
+        let (c, s, e, _) = self.geometry(p)?;
+        let Shape::Arc { sweep, .. } = arc_shape(c, s, e) else {
+            return None;
+        };
+        Some(format!(
+            "R {}  {:.2}°",
+            format_len(c.distance(s)),
+            sweep.to_degrees()
+        ))
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Tangent arc
+
+/// The directions a curve leaves `point` in, for each line or arc ending there: (curve, unit
+/// direction continuing past the end).
+fn tangents_at(doc: &drift_core::Document, point: EntityId) -> Vec<(EntityId, DVec2)> {
+    let Ok(p) = doc.point(point) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for (id, e) in doc.iter() {
+        let dir = match e.kind {
+            EntityKind::Line { a, b } if a == point || b == point => {
+                let other = if a == point { b } else { a };
+                doc.point(other).ok().map(|q| p - q)
+            }
+            EntityKind::Arc { center, start, end } if start == point || end == point => {
+                doc.point(center).ok().map(|c| {
+                    // Counter-clockwise travel direction at the end; reversed at the start.
+                    let along = (p - c).perp();
+                    if end == point { along } else { -along }
+                })
+            }
+            _ => None,
+        };
+        if let Some(d) = dir.filter(|d| d.length() > 0.0) {
+            out.push((id, d.normalize()));
+        }
+    }
+    out
+}
+
+/// An arc leaving `from` along `dir`: centre, end and whether it turns left (counter-clockwise),
+/// from a target end point and/or a typed radius and sweep (degrees, positive turns left).
+fn tangent_arc(
+    from: DVec2,
+    dir: DVec2,
+    target: DVec2,
+    radius: Option<f64>,
+    sweep: Option<f64>,
+) -> Option<(DVec2, DVec2, bool)> {
+    let n = dir.perp(); // left of the travel direction
+    let d = target - from;
+    let nd = n.dot(d);
+    // Radius and side through the target point (centre on the normal, equidistant).
+    let through = (nd.abs() > 1e-12 * d.length()).then(|| {
+        let s = d.length_squared() / (2.0 * nd);
+        (s.abs(), s > 0.0)
+    });
+    let (r, left) = match (radius, sweep) {
+        (Some(r), Some(sweep)) => (r.abs(), sweep > 0.0),
+        (Some(r), None) => (r.abs(), nd >= 0.0),
+        (None, Some(sweep)) => (through?.0, sweep > 0.0),
+        (None, None) => through?,
+    };
+    if r <= 0.0 {
+        return None;
+    }
+    let center = from + n * if left { r } else { -r };
+    let end = match sweep {
+        Some(sweep) => center + DVec2::from_angle(sweep.to_radians()).rotate(from - center),
+        None if radius.is_some() => {
+            let v = target - center;
+            if v == DVec2::ZERO {
+                return None;
+            }
+            center + v.normalize() * r
+        }
+        None => target,
+    };
+    (end != from).then_some((center, end, left))
+}
+
+/// An arc tangent to the line or arc it starts from. Chains: each arc starts where the last
+/// ended. Pressing L continues with lines.
+#[derive(Default)]
+pub struct TangentArcTool {
+    /// The existing point the arc starts at, and where it is.
+    start: Option<(EntityId, DVec2)>,
+    /// Curves ending at the start, with the direction each leaves it in.
+    tangents: Vec<(EntityId, DVec2)>,
+    typed: [Option<f64>; 2],
+}
+
+impl TangentArcTool {
+    fn begin_at(&mut self, point: EntityId, ed: &Editor) -> bool {
+        let tangents = tangents_at(&ed.doc, point);
+        let Ok(pos) = ed.doc.point(point) else {
+            return false;
+        };
+        if tangents.is_empty() {
+            return false;
+        }
+        self.start = Some((point, pos));
+        self.tangents = tangents;
+        true
+    }
+
+    /// The curve to be tangent to and its direction: the one best aligned with the pointer.
+    fn tangent_for(&self, target: DVec2) -> Option<(EntityId, DVec2)> {
+        let (_, from) = self.start?;
+        let towards = (target - from).normalize_or_zero();
+        self.tangents
+            .iter()
+            .copied()
+            .max_by(|a, b| a.1.dot(towards).total_cmp(&b.1.dot(towards)))
+    }
+
+    /// (curve, centre, end, left) for the pointer and typed values.
+    fn geometry(&self, p: &Pointer) -> Option<(EntityId, DVec2, DVec2, bool)> {
+        let (_, from) = self.start?;
+        let (curve, dir) = self.tangent_for(p.pos())?;
+        let (center, end, left) = tangent_arc(from, dir, p.pos(), self.typed[0], self.typed[1])?;
+        Some((curve, center, end, left))
+    }
+
+    fn create(&mut self, p: &Pointer, ed: &mut Editor) {
+        let Some((point, _)) = self.start else {
+            return;
+        };
+        let Some((curve, center, end, left)) = self.geometry(p) else {
+            ed.notice = Some("Move off the tangent line to bend the arc".into());
+            return;
+        };
+        let typed = any_typed(self.typed);
+        let anchor = if typed {
+            Anchor::at(end)
+        } else {
+            // Reuse a snapped point only if the arc ends exactly on it.
+            let mut a = p.anchor();
+            a.pos = end;
+            a.existing = a.existing.filter(|_| p.pos() == end);
+            a
+        };
+        let radius = self.typed[0].map(f64::abs);
+        ed.doc.begin();
+        let c = ed.doc.add_point(center);
+        let e = anchor.resolve(&mut ed.doc);
+        let (first, last) = if left { (point, e) } else { (e, point) };
+        let Ok(arc) = ed.doc.add_arc(c, first, last) else {
+            ed.doc.rollback();
+            ed.sync();
+            return;
+        };
+        let _ = ed
+            .doc
+            .add_constraint(Constraint::Tangent { a: curve, b: arc });
+        if let Some(value) = radius {
+            let _ = ed
+                .doc
+                .add_constraint(Constraint::Radius { curve: arc, value });
+        }
+        if !ed.commit("Tangent arc") {
+            return;
+        }
+        // Chain: the next arc continues from this one's end.
+        self.typed = [None; 2];
+        if !self.begin_at(e, ed) {
+            self.start = None;
+        }
+        // Only the new arc counts as the curve to continue from.
+        self.tangents.retain(|(id, _)| *id == arc);
+    }
+}
+
+impl Tool for TangentArcTool {
+    fn is_busy(&self) -> bool {
+        self.start.is_some()
+    }
+
+    fn kind(&self) -> ToolKind {
+        ToolKind::TangentArc
+    }
+
+    fn hint(&self) -> String {
+        match self.start {
+            None => "Click the end of a line or arc to start a tangent arc".into(),
+            Some(_) => "Click the arc's end, or type radius (Tab: sweep) · L: lines · Enter /                         right-click to finish"
+                .into(),
+        }
+    }
+
+    fn handle(&mut self, input: Input, ed: &mut Editor) {
+        match input {
+            Input::Click(p, _) | Input::DragEnd(p, _) => match self.start {
+                None => match p.snapped_point() {
+                    Some(point) if self.begin_at(point, ed) => {}
+                    _ => {
+                        ed.notice = Some("Start a tangent arc on the end of a line or arc".into());
+                    }
+                },
+                Some(_) => self.create(&p, ed),
+            },
+            Input::DragStart(p, _) if self.start.is_none() => {
+                if let Some(point) = p.snapped_point() {
+                    self.begin_at(point, ed);
+                }
+            }
+            Input::DoubleClick(_) | Input::Finish => *self = Self::default(),
+            _ => {}
+        }
+    }
+
+    fn cancel(&mut self, _ed: &mut Editor) -> bool {
+        let had = self.start.is_some();
+        *self = Self::default();
+        had
+    }
+
+    fn chain_end(&self) -> Option<EntityId> {
+        self.start.map(|(point, _)| point)
+    }
+
+    fn continue_from(&mut self, point: EntityId, ed: &mut Editor) {
+        self.begin_at(point, ed);
+    }
+
+    fn fields(&self) -> &'static [&'static str] {
+        if self.start.is_some() {
+            &["Radius", "Sweep"]
+        } else {
+            &[]
+        }
+    }
+
+    fn set_typed(&mut self, values: [Option<f64>; 2]) {
+        self.typed = values;
+    }
+
+    fn commit_typed(&mut self, p: &Pointer, ed: &mut Editor) {
+        self.create(p, ed);
+        self.typed = [None; 2];
+    }
+
+    fn preview(&self, pointer: Option<&Pointer>) -> Vec<SketchItem> {
+        let (Some((_, from)), Some(p)) = (self.start, pointer) else {
+            return Vec::new();
+        };
+        let mut items = vec![preview_vertex(from)];
+        if let Some((_, center, end, left)) = self.geometry(p) {
+            let (s, e) = if left { (from, end) } else { (end, from) };
+            items.push(preview(arc_shape(center, s, e)));
+            items.push(preview_vertex(end));
+        }
+        items
+    }
+
+    fn measurement(&self, p: &Pointer) -> Option<String> {
+        let (_, from) = self.start?;
+        let (_, center, end, left) = self.geometry(p)?;
+        let (s, e) = if left { (from, end) } else { (end, from) };
+        let Shape::Arc { sweep, .. } = arc_shape(center, s, e) else {
+            return None;
+        };
+        let sweep = if left { sweep } else { -sweep };
+        Some(format!(
+            "R {}  {:.2}°",
+            format_len(center.distance(from)),
+            sweep.to_degrees()
+        ))
     }
 }
 
@@ -1551,6 +2485,363 @@ mod tests {
         assert_eq!(lines(&ed.doc), 2);
     }
 
+    fn line_relations(ed: &Editor) -> Vec<Constraint> {
+        ed.doc
+            .constraints()
+            .map(|(_, c)| *c)
+            .filter(|c| {
+                matches!(
+                    c,
+                    Constraint::Horizontal { .. } | Constraint::Vertical { .. }
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn axis_locks_apply_per_segment() {
+        let mut ed = Editor::default();
+        let mut tool = LineTool::default();
+        assert!(
+            !tool.lock_axis(Axis::X),
+            "nothing to lock before the first point"
+        );
+        click(&mut ed, &mut tool, v(0.0, 0.0));
+        assert!(tool.lock_axis(Axis::X));
+        assert_eq!(tool.axis_lock(), Some((v(0.0, 0.0), Axis::X)));
+        // Far off the axis: the end is projected onto it.
+        click(&mut ed, &mut tool, v(30.0, 17.0));
+        assert_eq!(tool.axis_lock(), None, "the lock ends with the segment");
+        assert!(tool.lock_axis(Axis::Y));
+        click(&mut ed, &mut tool, v(12.0, -20.0));
+        // A third, unlocked segment gets no relation.
+        click(&mut ed, &mut tool, v(50.0, 3.0));
+        tool.handle(Input::Finish, &mut ed);
+        let ends: Vec<_> = ed
+            .doc
+            .iter()
+            .filter_map(|(_, e)| match e.kind {
+                EntityKind::Line { a, b } => {
+                    Some((ed.doc.point(a).unwrap(), ed.doc.point(b).unwrap()))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(ends[0], (v(0.0, 0.0), v(30.0, 0.0)));
+        assert_eq!(ends[1], (v(30.0, 0.0), v(30.0, -20.0)));
+        assert_eq!(ends[2].1, v(50.0, 3.0));
+        assert!(matches!(
+            line_relations(&ed)[..],
+            [Constraint::Horizontal { .. }, Constraint::Vertical { .. }]
+        ));
+    }
+
+    #[test]
+    fn axis_lock_toggles_and_works_with_typed_lengths() {
+        let mut ed = Editor::default();
+        let mut tool = LineTool::default();
+        click(&mut ed, &mut tool, v(10.0, 10.0));
+        tool.lock_axis(Axis::Y);
+        tool.lock_axis(Axis::Y);
+        assert_eq!(tool.axis_lock(), None, "pressing the key again unlocks");
+        tool.lock_axis(Axis::X);
+        tool.lock_axis(Axis::Y);
+        assert_eq!(
+            tool.axis_lock().map(|l| l.1),
+            Some(Axis::Y),
+            "the other key switches"
+        );
+        // Pointer below and to the side: a typed length goes straight down.
+        let p = ptr(&ed, &tool, v(14.0, 2.0));
+        tool.set_typed([Some(25.0), None]);
+        tool.commit_typed(&p, &mut ed);
+        let b = ed
+            .doc
+            .iter()
+            .find_map(|(_, e)| match e.kind {
+                EntityKind::Line { b, .. } => Some(b),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(ed.doc.point(b).unwrap(), v(10.0, -15.0));
+        assert!(matches!(
+            line_relations(&ed)[..],
+            [Constraint::Vertical { .. }]
+        ));
+    }
+
+    #[test]
+    fn a_locked_end_lines_up_with_a_snapped_point() {
+        let mut ed = Editor::default();
+        ed.doc.begin();
+        let marker = ed.doc.add_point(v(40.0, 25.0));
+        ed.commit("Point");
+        let mut tool = LineTool::default();
+        click(&mut ed, &mut tool, v(0.0, 0.0));
+        tool.lock_axis(Axis::X);
+        let p = ptr(&ed, &tool, v(40.1, 25.1)); // snaps to the marker point
+        assert_eq!(p.pos(), v(40.0, 0.0));
+        assert_eq!(p.snapped_point(), None, "an off-axis point isn't reused");
+        assert_eq!(p.guide.unwrap().from[1], Some(v(40.0, 25.0)));
+        tool.handle(Input::Click(p, Modifiers::default()), &mut ed);
+        assert!(ed.doc.contains(marker));
+        assert_eq!(points(&ed.doc), 3);
+    }
+
+    /// A selected line from (0, 0) to (10, 0) and an unselected one ending at (30, 20):
+    /// (editor, selected line's end points).
+    fn grab_fixture() -> (Editor, [EntityId; 2]) {
+        let mut ed = Editor::default();
+        ed.doc.begin();
+        let a = ed.doc.add_point(v(0.0, 0.0));
+        let b = ed.doc.add_point(v(10.0, 0.0));
+        let line = ed.doc.add_line(a, b).unwrap();
+        let c = ed.doc.add_point(v(50.0, 50.0));
+        let d = ed.doc.add_point(v(30.0, 20.0));
+        ed.doc.add_line(c, d).unwrap();
+        ed.commit("Setup");
+        ed.selection = [line].into();
+        (ed, [a, b])
+    }
+
+    fn grab(ed: &mut Editor, tool: &mut SelectTool, at: DVec2) {
+        let p = ptr(ed, tool, at);
+        assert!(tool.key(ToolKey::G, Some(&p), ed));
+        assert!(tool.is_modal());
+    }
+
+    fn hover(ed: &mut Editor, tool: &mut SelectTool, at: DVec2) {
+        let p = ptr(ed, tool, at);
+        tool.handle(Input::Hover(p), ed);
+    }
+
+    fn ends(ed: &Editor, [a, b]: [EntityId; 2]) -> [DVec2; 2] {
+        [ed.doc.point(a).unwrap(), ed.doc.point(b).unwrap()]
+    }
+
+    #[test]
+    fn grab_follows_the_pointer_and_confirms_in_one_undo_step() {
+        let (mut ed, pts) = grab_fixture();
+        let mut tool = SelectTool::default();
+        grab(&mut ed, &mut tool, v(5.0, 0.0));
+        hover(&mut ed, &mut tool, v(8.0, 3.0));
+        assert_eq!(ends(&ed, pts), [v(3.0, 3.0), v(13.0, 3.0)], "live preview");
+        click(&mut ed, &mut tool, v(8.0, 3.0));
+        assert!(!tool.is_modal());
+        assert_eq!(ends(&ed, pts), [v(3.0, 3.0), v(13.0, 3.0)]);
+        assert!(ed.undo());
+        assert_eq!(ends(&ed, pts), [v(0.0, 0.0), v(10.0, 0.0)]);
+    }
+
+    #[test]
+    fn grab_takes_axis_locks_and_typed_offsets() {
+        let (mut ed, pts) = grab_fixture();
+        let mut tool = SelectTool::default();
+        grab(&mut ed, &mut tool, v(5.0, 0.0));
+        assert!(tool.key(ToolKey::Y, None, &mut ed));
+        assert_eq!(tool.fields(), ["Distance"]);
+        hover(&mut ed, &mut tool, v(9.0, 7.0));
+        assert_eq!(ends(&ed, pts)[0], v(0.0, 7.0), "locked to Y");
+        tool.set_typed([Some(-4.25), None]);
+        let p = ptr(&ed, &tool, v(9.0, 7.0));
+        tool.commit_typed(&p, &mut ed);
+        assert_eq!(ends(&ed, pts), [v(0.0, -4.25), v(10.0, -4.25)]);
+
+        // Unlocked: dX and dY.
+        grab(&mut ed, &mut tool, v(5.0, 0.0));
+        assert_eq!(tool.fields(), ["dX", "dY"]);
+        tool.set_typed([Some(0.1), Some(0.2)]);
+        let p = ptr(&ed, &tool, v(40.0, 40.0));
+        tool.commit_typed(&p, &mut ed);
+        assert_eq!(ends(&ed, pts)[1], v(10.0 + 0.1, -4.25 + 0.2));
+    }
+
+    #[test]
+    fn grab_from_a_picked_base_point_lands_exactly_on_a_snap() {
+        let (mut ed, pts) = grab_fixture();
+        let mut tool = SelectTool::default();
+        grab(&mut ed, &mut tool, v(4.0, 1.0));
+        hover(&mut ed, &mut tool, v(20.0, 9.0));
+        assert!(tool.key(ToolKey::B, None, &mut ed));
+        // Picking the base point puts the geometry back and can snap to the selection's own end.
+        hover(&mut ed, &mut tool, v(10.1, 0.1));
+        assert_eq!(ends(&ed, pts), [v(0.0, 0.0), v(10.0, 0.0)]);
+        click(&mut ed, &mut tool, v(10.1, 0.1));
+        assert!(tool.is_modal(), "picking the base doesn't place the move");
+        // Moving snaps to the other line's end, but not to the moving line.
+        hover(&mut ed, &mut tool, v(30.2, 19.9));
+        click(&mut ed, &mut tool, v(30.2, 19.9));
+        assert_eq!(ends(&ed, pts), [v(20.0, 20.0), v(30.0, 20.0)]);
+    }
+
+    #[test]
+    fn cancelling_a_grab_restores_the_geometry() {
+        let (mut ed, pts) = grab_fixture();
+        let mut tool = SelectTool::default();
+        grab(&mut ed, &mut tool, v(5.0, 0.0));
+        hover(&mut ed, &mut tool, v(25.0, 13.0));
+        assert!(tool.cancel(&mut ed));
+        assert!(!tool.is_modal());
+        assert_eq!(ends(&ed, pts), [v(0.0, 0.0), v(10.0, 0.0)]);
+        // The selection survives the cancel.
+        assert!(!ed.selection.is_empty());
+        // No move was recorded: one undo removes the setup itself.
+        assert!(ed.undo());
+        assert_eq!(ed.doc.iter().count(), 0);
+        // G with nothing selected only explains.
+        let p = ptr(&ed, &tool, v(0.0, 0.0));
+        assert!(tool.key(ToolKey::G, Some(&p), &mut ed));
+        assert!(!tool.is_modal());
+        assert!(ed.notice.take().is_some());
+    }
+
+    /// The single arc in the document: (centre, start, end) positions.
+    fn the_arc(ed: &Editor) -> (EntityId, [DVec2; 3]) {
+        let arcs: Vec<_> = ed
+            .doc
+            .iter()
+            .filter_map(|(id, e)| match e.kind {
+                EntityKind::Arc { center, start, end } => {
+                    Some((id, [center, start, end].map(|q| ed.doc.point(q).unwrap())))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(arcs.len(), 1, "expected one arc");
+        arcs[0]
+    }
+
+    fn close(a: DVec2, b: DVec2) -> bool {
+        a.distance(b) < 1e-9
+    }
+
+    #[test]
+    fn three_point_arc_bulges_through_the_third_point() {
+        for (third, center, start, end) in [
+            // Above the chord: counter-clockwise from the end back to the start.
+            (v(10.0, 5.0), v(10.0, -7.5), v(20.0, 0.0), v(0.0, 0.0)),
+            // Below: counter-clockwise from the start.
+            (v(10.0, -5.0), v(10.0, 7.5), v(0.0, 0.0), v(20.0, 0.0)),
+        ] {
+            let mut ed = Editor::default();
+            let mut tool = ThreePointArcTool::default();
+            click(&mut ed, &mut tool, v(0.0, 0.0));
+            click(&mut ed, &mut tool, v(20.0, 0.0));
+            click(&mut ed, &mut tool, third);
+            let (_, [c, s, e]) = the_arc(&ed);
+            assert!(
+                close(c, center) && close(s, start) && close(e, end),
+                "{c} {s} {e}"
+            );
+            assert!(!tool.is_busy());
+        }
+    }
+
+    #[test]
+    fn three_point_arc_takes_typed_values_and_refuses_collinear_points() {
+        let mut ed = Editor::default();
+        let mut tool = ThreePointArcTool::default();
+        click(&mut ed, &mut tool, v(0.0, 0.0));
+        let p = ptr(&ed, &tool, v(3.0, 1.0));
+        tool.set_typed([Some(20.0), Some(0.0)]);
+        tool.commit_typed(&p, &mut ed);
+        // Collinear third point: refused, still waiting.
+        click(&mut ed, &mut tool, v(40.0, 0.0));
+        assert!(ed.notice.take().is_some());
+        assert!(tool.is_busy());
+        // Typed radius, bulging towards the pointer (above).
+        let p = ptr(&ed, &tool, v(8.0, 30.0));
+        tool.set_typed([Some(12.5), None]);
+        tool.commit_typed(&p, &mut ed);
+        let (arc, [c, ..]) = the_arc(&ed);
+        assert!(close(c, v(10.0, -7.5)), "{c}");
+        assert!(ed.doc.constraints().any(|(_, k)| *k
+            == Constraint::Radius {
+                curve: arc,
+                value: 12.5
+            }));
+    }
+
+    /// A line from (0, 0) to (10, 0): (editor, its end point).
+    fn line_end_fixture() -> (Editor, EntityId) {
+        let mut ed = Editor::default();
+        ed.doc.begin();
+        let a = ed.doc.add_point(v(0.0, 0.0));
+        let b = ed.doc.add_point(v(10.0, 0.0));
+        ed.doc.add_line(a, b).unwrap();
+        ed.commit("Line");
+        (ed, b)
+    }
+
+    fn tangents(ed: &Editor) -> usize {
+        ed.doc
+            .constraints()
+            .filter(|(_, c)| matches!(c, Constraint::Tangent { .. }))
+            .count()
+    }
+
+    #[test]
+    fn tangent_arcs_continue_lines_and_chain() {
+        let (mut ed, end) = line_end_fixture();
+        let mut tool = TangentArcTool::default();
+        click(&mut ed, &mut tool, v(10.1, 0.1)); // snaps to the line's end
+        assert_eq!(tool.chain_end(), Some(end));
+        click(&mut ed, &mut tool, v(20.0, 10.0));
+        let (_, [c, s, e]) = the_arc(&ed);
+        // Leaves along +X, turning left: a quarter circle about (10, 10).
+        assert!(close(c, v(10.0, 10.0)) && close(s, v(10.0, 0.0)) && close(e, v(20.0, 10.0)));
+        assert_eq!(tangents(&ed), 1);
+        // Chained: the next arc leaves the first one's end going up, and turns right.
+        click(&mut ed, &mut tool, v(30.0, 20.0));
+        let centers: Vec<DVec2> = ed
+            .doc
+            .iter()
+            .filter_map(|(_, e)| match e.kind {
+                EntityKind::Arc { center, .. } => Some(ed.doc.point(center).unwrap()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            centers.iter().any(|c| close(*c, v(30.0, 10.0))),
+            "{centers:?}"
+        );
+        assert_eq!(tangents(&ed), 2);
+        assert!(ed.analysis().conflicts.is_empty());
+        tool.handle(Input::Finish, &mut ed);
+        assert!(!tool.is_busy());
+    }
+
+    #[test]
+    fn tangent_arc_takes_a_typed_radius_and_sweep() {
+        let (mut ed, _) = line_end_fixture();
+        let mut tool = TangentArcTool::default();
+        click(&mut ed, &mut tool, v(10.0, 0.0));
+        let p = ptr(&ed, &tool, v(14.0, 3.0));
+        tool.set_typed([Some(5.0), Some(-90.0)]); // right turn
+        tool.commit_typed(&p, &mut ed);
+        let (arc, [c, s, e]) = the_arc(&ed);
+        assert!(close(c, v(10.0, -5.0)), "{c}");
+        // Clockwise from the line's end, so stored counter-clockwise from the far end.
+        assert!(close(s, v(15.0, -5.0)) && close(e, v(10.0, 0.0)), "{s} {e}");
+        assert!(ed.doc.constraints().any(|(_, k)| *k
+            == Constraint::Radius {
+                curve: arc,
+                value: 5.0
+            }));
+    }
+
+    #[test]
+    fn tangent_arc_needs_a_curve_end_to_start_from() {
+        let mut ed = Editor::default();
+        ed.doc.begin();
+        ed.doc.add_point(v(0.0, 0.0));
+        ed.commit("Point");
+        let mut tool = TangentArcTool::default();
+        click(&mut ed, &mut tool, v(0.0, 0.0));
+        assert!(!tool.is_busy());
+        assert!(ed.notice.take().is_some());
+    }
+
     #[test]
     fn starting_a_line_on_an_existing_end_point_connects_to_it() {
         let mut ed = Editor::default();
@@ -1854,6 +3145,12 @@ mod tests {
                 .take()
                 .is_some_and(|n| n.contains("already implied"))
         );
+        // ...and offered as a driven dimension instead.
+        let (driven, placement) = ed.pending_driven.take().expect("driven prompt");
+        assert!(matches!(driven, Constraint::Distance { .. }));
+        let id = ed.add_driven_dimension(driven, placement).unwrap();
+        assert!(ed.doc.is_driven(id));
+        assert!((driven.value().unwrap() - 125f64.sqrt()).abs() < 1e-9);
     }
 
     #[test]
@@ -1981,6 +3278,83 @@ mod tests {
         let mid = (ed.doc.point(a).unwrap() + ed.doc.point(b).unwrap()) * 0.5;
         assert!((mid - v(14.0, 0.0)).length() < 1e-5, "{mid}");
         assert!((ed.doc.point(point).unwrap() - mid).length() < 1e-9);
+    }
+
+    /// A circle of radius 10 at the origin: (editor, circle).
+    fn circle_fixture() -> (Editor, EntityId) {
+        let mut ed = Editor::default();
+        ed.doc.begin();
+        let c = ed.doc.add_point(v(0.0, 0.0));
+        let circle = ed.doc.add_circle(c, 10.0).unwrap();
+        ed.commit("Circle");
+        (ed, circle)
+    }
+
+    fn on_curve_relations(ed: &Editor) -> Vec<(EntityId, EntityId)> {
+        ed.doc
+            .constraints()
+            .filter_map(|(_, c)| match *c {
+                Constraint::PointOnCurve { point, curve } => Some((point, curve)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_line_ending_on_a_curve_stays_on_it() {
+        let (mut ed, circle) = circle_fixture();
+        let mut tool = LineTool::default();
+        click(&mut ed, &mut tool, v(30.0, 0.0));
+        click(&mut ed, &mut tool, v(6.1, 8.1)); // near (6, 8) on the circle
+        tool.handle(Input::Finish, &mut ed);
+        let [(point, curve)] = on_curve_relations(&ed)[..] else {
+            panic!("expected one on-curve relation")
+        };
+        assert_eq!(curve, circle);
+        assert!((ed.doc.point(point).unwrap().length() - 10.0).abs() < 1e-9);
+        // Growing the circle carries the end along.
+        ed.doc.begin();
+        let _ = ed.doc.add_constraint(Constraint::Radius {
+            curve: circle,
+            value: 15.0,
+        });
+        ed.commit("Radius");
+        let EntityKind::Circle { center, radius } = ed.doc.get(circle).unwrap().kind else {
+            unreachable!()
+        };
+        assert!((radius - 15.0).abs() < 1e-9);
+        let from_centre = ed.doc.point(point).unwrap() - ed.doc.point(center).unwrap();
+        assert!((from_centre.length() - 15.0).abs() < 1e-9);
+
+        // Without automatic relations the point is only placed there.
+        let (mut ed, _) = circle_fixture();
+        ed.auto_relations = false;
+        let mut tool = LineTool::default();
+        let mut p = ptr(&ed, &tool, v(30.0, 0.0));
+        p.relations = false;
+        tool.handle(Input::Click(p, Modifiers::default()), &mut ed);
+        let mut p = ptr(&ed, &tool, v(6.1, 8.1));
+        p.relations = false;
+        tool.handle(Input::Click(p, Modifiers::default()), &mut ed);
+        assert!(on_curve_relations(&ed).is_empty());
+    }
+
+    #[test]
+    fn dropping_a_point_on_a_curve_constrains_it() {
+        let (mut ed, circle) = circle_fixture();
+        ed.doc.begin();
+        let p = ed.doc.add_point(v(20.0, 20.0));
+        ed.commit("Point");
+        let mut sel = SelectTool::default();
+        let m = Modifiers::default();
+        let grab = ptr(&ed, &sel, v(20.0, 20.0));
+        sel.handle(Input::DragStart(grab, m), &mut ed);
+        let to = ptr(&ed, &sel, v(-6.1, 8.1));
+        assert_eq!(to.on_curve(), Some(circle));
+        sel.handle(Input::Drag(to), &mut ed);
+        sel.handle(Input::DragEnd(to, m), &mut ed);
+        assert_eq!(on_curve_relations(&ed), [(p, circle)]);
+        assert!((ed.doc.point(p).unwrap().length() - 10.0).abs() < 1e-9);
     }
 
     #[test]

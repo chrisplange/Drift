@@ -24,7 +24,7 @@ use crate::annotations::{AnnotationColors, AnnotationState, DimLayout, GlyphKind
 use crate::canvas::CanvasPainter;
 use crate::editor::{Editor, Guide, GuideKind, Pointer};
 use crate::overlay::{OverlayColors, ScreenMap};
-use crate::tools::{Input, Modifiers, Overlay, Tool, ToolKind};
+use crate::tools::{Axis, Input, Modifiers, Overlay, Tool, ToolKey, ToolKind};
 
 /// Zoom factor per logical point of scroll.
 const SCROLL_ZOOM_SPEED: f64 = 0.0015;
@@ -420,6 +420,32 @@ impl DriftApp {
         let plain = ctx.input(|i| i.modifiers.is_none());
         let pressed = |key| plain && ctx.input(|i| i.key_pressed(key));
 
+        // Modal keys go to the tool first: X / Y lock an axis, G grabs (moves) the selection,
+        // B picks a move's base point.
+        let mut claimed = |key, tool_key| {
+            pressed(key)
+                && self
+                    .tool
+                    .key(tool_key, self.pointer.as_ref(), &mut self.editor)
+        };
+        let x_claimed = claimed(Key::X, ToolKey::X);
+        claimed(Key::Y, ToolKey::Y);
+        claimed(Key::G, ToolKey::G);
+        claimed(Key::B, ToolKey::B);
+        if ctx.input(|i| i.modifiers.shift_only() && i.key_pressed(Key::G)) {
+            self.grid_snap = !self.grid_snap;
+        }
+        if self.tool.is_modal() {
+            // Only Esc and Enter (and the modal keys above) act during a grab.
+            if pressed(Key::Escape) {
+                self.tool.cancel(&mut self.editor);
+            }
+            if pressed(Key::Enter) {
+                self.tool.handle(Input::Finish, &mut self.editor);
+            }
+            return;
+        }
+
         if pressed(Key::Escape) {
             if self.selected_constraint.take().is_some() {
                 // First Esc just clears a picked relation or dimension.
@@ -436,21 +462,41 @@ impl DriftApp {
                 None => self.editor.delete_selection(),
             }
         }
-        if pressed(Key::X) {
+        // X toggles construction unless a tool used it (an axis lock).
+        if pressed(Key::X) && !x_claimed {
             self.editor.toggle_construction();
         }
         if pressed(Key::F) {
             self.fit_target = Some(self.fit_bounds());
         }
-        if pressed(Key::G) {
-            self.grid_snap = !self.grid_snap;
-        }
-        for kind in ToolKind::ALL {
-            if let Some(key) = Key::from_name(&kind.shortcut().to_string())
-                && pressed(key)
-            {
-                self.set_tool(kind);
+        let requested = ToolKind::ALL
+            .into_iter()
+            .find(|kind| Key::from_name(&kind.shortcut().to_string()).is_some_and(pressed));
+        if let Some(mut kind) = requested {
+            let current = self.tool.kind();
+            if kind == ToolKind::Arc {
+                kind = if let Some(i) = ToolKind::ARCS.iter().position(|k| *k == current) {
+                    // A again: the next arc type.
+                    ToolKind::ARCS[(i + 1) % ToolKind::ARCS.len()]
+                } else if current == ToolKind::Line && self.tool.chain_end().is_some() {
+                    // Mid-polyline: continue with a tangent arc (SolidWorks-style).
+                    ToolKind::TangentArc
+                } else {
+                    ToolKind::Arc
+                };
             }
+            self.switch_tool(kind);
+        }
+    }
+
+    /// Change tool, continuing a polyline / tangent-arc chain across the switch.
+    fn switch_tool(&mut self, kind: ToolKind) {
+        let chain = self.tool.chain_end();
+        self.set_tool(kind);
+        if let Some(point) = chain
+            && matches!(kind, ToolKind::Line | ToolKind::TangentArc)
+        {
+            self.tool.continue_from(point, &mut self.editor);
         }
     }
 
@@ -626,7 +672,7 @@ impl DriftApp {
                 {
                     self.fit_target = Some(self.fit_bounds());
                 }
-                ui.checkbox(&mut self.grid_snap, "Snap to grid (G)");
+                ui.checkbox(&mut self.grid_snap, "Snap to grid (Shift+G)");
                 ui.checkbox(&mut self.auto_relations, "Automatic relations");
                 ui.checkbox(&mut self.show_dimensions, "Show dimensions");
                 ui.checkbox(&mut self.show_relations, "Show relations");
@@ -663,7 +709,7 @@ impl DriftApp {
                 .on_hover_text(format!("{} ({})", kind.label(), kind.shortcut()))
                 .clicked()
             {
-                self.set_tool(kind);
+                self.switch_tool(kind);
             }
         }
     }
@@ -781,10 +827,11 @@ impl DriftApp {
                 }
             });
             if let Some(option) = chosen {
-                match self
-                    .editor
-                    .add_constraints(option.label, &option.constraints)
-                {
+                let added = match option.constraints.as_slice() {
+                    [c] if is_dimension => self.editor.add_dimension(*c, None).map(|id| vec![id]),
+                    constraints => self.editor.add_constraints(option.label, constraints),
+                };
+                match added {
                     Ok(ids) => {
                         if is_dimension {
                             // Let the user type the value straight away.
@@ -826,6 +873,7 @@ impl DriftApp {
         let mut remove = None;
         let mut select = None;
         let mut apply = None;
+        let mut toggle_driven = None;
         egui::ScrollArea::vertical()
             .max_height(260.0)
             .auto_shrink([false, true])
@@ -847,32 +895,69 @@ impl DriftApp {
                                 select = Some(*c);
                             }
                             match c.value() {
-                                Some(value) => {
-                                    let field = egui::Id::new(("dimension", id.0));
-                                    let mut text = self
-                                        .dimension_text
-                                        .get(id)
-                                        .cloned()
-                                        .unwrap_or_else(|| format_value(value));
-                                    let response = ui.add(
-                                        egui::TextEdit::singleline(&mut text)
-                                            .id(field)
-                                            .desired_width(90.0)
-                                            .hint_text(c.unit()),
-                                    );
-                                    if self.focus_dimension == Some(*id) {
-                                        response.request_focus();
-                                        self.focus_dimension = None;
-                                    }
-                                    if response.has_focus() {
-                                        self.dimension_text.insert(*id, text.clone());
-                                    }
-                                    if response.lost_focus() {
-                                        if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                                            apply = Some((*id, text.clone()));
+                                Some(_) if ed.doc.is_driven(*id) => {
+                                    ui.horizontal(|ui| {
+                                        let value = ed.dimension_value(*id).unwrap_or_default();
+                                        ui.add_sized(
+                                            [90.0, 18.0],
+                                            egui::Label::new(
+                                                egui::RichText::new(format!(
+                                                    "({})",
+                                                    format_value(value)
+                                                ))
+                                                .weak(),
+                                            ),
+                                        )
+                                        .on_hover_text("Driven: follows the geometry");
+                                        let mut driven = true;
+                                        if ui
+                                            .checkbox(&mut driven, "Driven")
+                                            .on_hover_text("Untick to make it drive the geometry")
+                                            .changed()
+                                        {
+                                            toggle_driven = Some((*id, false));
                                         }
-                                        self.dimension_text.remove(id);
-                                    }
+                                    });
+                                }
+                                Some(value) => {
+                                    ui.horizontal(|ui| {
+                                        let field = egui::Id::new(("dimension", id.0));
+                                        let mut text = self
+                                            .dimension_text
+                                            .get(id)
+                                            .cloned()
+                                            .unwrap_or_else(|| format_value(value));
+                                        let response = ui.add(
+                                            egui::TextEdit::singleline(&mut text)
+                                                .id(field)
+                                                .desired_width(90.0)
+                                                .hint_text(c.unit()),
+                                        );
+                                        if self.focus_dimension == Some(*id) {
+                                            response.request_focus();
+                                            self.focus_dimension = None;
+                                        }
+                                        if response.has_focus() {
+                                            self.dimension_text.insert(*id, text.clone());
+                                        }
+                                        if response.lost_focus() {
+                                            if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                                                apply = Some((*id, text.clone()));
+                                            }
+                                            self.dimension_text.remove(id);
+                                        }
+                                        let mut driven = false;
+                                        if ui
+                                            .checkbox(&mut driven, "Driven")
+                                            .on_hover_text(
+                                                "Make it a reference that follows the geometry",
+                                            )
+                                            .changed()
+                                        {
+                                            toggle_driven = Some((*id, true));
+                                        }
+                                    })
+                                    .inner
                                 }
                                 None => {
                                     ui.label("");
@@ -890,6 +975,11 @@ impl DriftApp {
         }
         if let Some(id) = remove {
             self.editor.remove_constraint(id);
+        }
+        if let Some((id, driven)) = toggle_driven
+            && let Err(e) = self.editor.set_driven(id, driven)
+        {
+            self.set_status(format!("Can't make it driving: it {e}"), true, now);
         }
         if let Some((id, text)) = apply {
             match parse_value(&text) {
@@ -1114,6 +1204,14 @@ impl DriftApp {
     }
 
     fn open_dimension_edit(&mut self, id: ConstraintId) {
+        if self.editor.doc.is_driven(id) {
+            self.editor.notice = Some(
+                "A driven dimension follows the geometry: untick Driven in the constraint list \
+                 to set its value"
+                    .into(),
+            );
+            return;
+        }
         if let Some(value) = self.editor.doc.constraint(id).and_then(|c| c.value()) {
             self.dimension_edit = Some(DimensionEdit {
                 id,
@@ -1275,7 +1373,12 @@ impl DriftApp {
             self.editor.hovered = None;
         }
         if response.clicked_by(PointerButton::Secondary) {
-            self.tool.handle(Input::Finish, &mut self.editor);
+            if self.tool.is_modal() {
+                // Right-click cancels a grab, as in Blender.
+                self.tool.cancel(&mut self.editor);
+            } else {
+                self.tool.handle(Input::Finish, &mut self.editor);
+            }
         }
         // Tool events may have changed the document (and the pointer's snap targets).
         self.editor.sync();
@@ -1325,8 +1428,14 @@ impl DriftApp {
                 ui.visuals().weak_text_color(),
             );
         }
-        if let Some(Overlay::SelectionBox { rect: r, crossing }) = self.tool.overlay() {
-            overlay::selection_box(&painter, &map, &r, crossing, &colors);
+        match self.tool.overlay() {
+            Some(Overlay::SelectionBox { rect: r, crossing }) => {
+                overlay::selection_box(&painter, &map, &r, crossing, &colors);
+            }
+            Some(Overlay::Move { base, to }) => {
+                overlay::move_guide(&painter, &map, base, to, &colors);
+            }
+            None => {}
         }
         self.paint_annotations(&painter, &map, &dims, &glyphs, ui.visuals().dark_mode);
         let ctx = ui.ctx().clone();
@@ -1431,6 +1540,22 @@ impl DriftApp {
         if let Some(at) = ed.hovered_midpoint.and_then(midpoint_at) {
             annotations::paint_midpoint_marker(painter, at, colors.hovered, false);
         }
+        // An axis lock: a full-width line through the segment's start, red for X, green for Y.
+        if let Some((through, axis)) = self.tool.axis_lock() {
+            let at = map.to_screen(through);
+            let r = map.rect;
+            let (ends, color) = match axis {
+                Axis::X => (
+                    [egui::pos2(r.left(), at.y), egui::pos2(r.right(), at.y)],
+                    egui::Color32::from_rgb(0xe8, 0x4a, 0x5f),
+                ),
+                Axis::Y => (
+                    [egui::pos2(at.x, r.top()), egui::pos2(at.x, r.bottom())],
+                    egui::Color32::from_rgb(0x7c, 0xc4, 0x4e),
+                ),
+            };
+            painter.line_segment(ends, egui::Stroke::new(1.5, color.gamma_multiply(0.85)));
+        }
         // Inference guide lines and the automatic relation about to be added.
         if let Some(p) = self.pointer
             && let Some(guide) = p.guide
@@ -1504,6 +1629,38 @@ impl DriftApp {
     // ----- Dialogs --------------------------------------------------------------------------
 
     fn dialogs(&mut self, ctx: &egui::Context) {
+        if let Some((constraint, placement)) = self.editor.pending_driven {
+            let mut choice = None;
+            let modal = egui::Modal::new(egui::Id::new("driven")).show(ctx, |ui| {
+                ui.set_width(340.0);
+                ui.heading("Make this dimension driven?");
+                ui.add_space(6.0);
+                ui.label(format!(
+                    "This {} would over-define the sketch. Add it as a driven (reference) \
+                     dimension that shows the measurement without constraining it?",
+                    constraint.type_name().to_lowercase()
+                ));
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Add as driven").clicked() {
+                        choice = Some(true);
+                    }
+                    if ui.button("Cancel").clicked() {
+                        choice = Some(false);
+                    }
+                });
+            });
+            if modal.should_close() && choice.is_none() {
+                choice = Some(false);
+            }
+            if let Some(add) = choice {
+                self.editor.pending_driven = None;
+                if add && let Err(e) = self.editor.add_driven_dimension(constraint, placement) {
+                    self.editor.notice = Some(format!("{}: {e}", constraint.type_name()));
+                }
+            }
+        }
+
         if let Some(action) = self.pending {
             let mut choice = None;
             let modal = egui::Modal::new(egui::Id::new("discard")).show(ctx, |ui| {
@@ -1577,7 +1734,7 @@ impl DriftApp {
             (sel.len(), sel.first().copied(), sel.last().copied()),
             self.editor.hovered,
             self.grid_snap,
-            self.pending,
+            (self.pending, self.editor.pending_driven.is_some()),
             self.editor.doc.constraint_count(),
             self.selected_constraint,
             self.hovered_constraint,
@@ -1691,7 +1848,14 @@ const SHORTCUTS: &[(&str, &str)] = &[
     ("L", "Line (polyline)"),
     ("R", "Rectangle"),
     ("C", "Circle"),
-    ("A", "Arc (centre, start, end)"),
+    (
+        "A",
+        "Arc: centre-point; press again for 3-point, then tangent arc",
+    ),
+    (
+        "A / L (while drawing)",
+        "Switch between line and tangent arc, continuing from the last point",
+    ),
     ("P", "Point"),
     ("D", "Smart Dimension"),
     (
@@ -1710,13 +1874,22 @@ const SHORTCUTS: &[(&str, &str)] = &[
         "Del",
         "Delete selection, or the picked relation / dimension",
     ),
-    ("X", "Toggle construction"),
+    (
+        "X",
+        "Toggle construction (while drawing a line or moving: lock to the X axis)",
+    ),
+    ("Y", "While drawing a line or moving: lock to the Y axis"),
     ("Ctrl+A", "Select all"),
     ("Ctrl+Z / Ctrl+Y", "Undo / redo"),
     ("Ctrl+S / Ctrl+Shift+S", "Save / save as"),
     ("Ctrl+O", "Open"),
     ("F / double middle-click", "Zoom to fit"),
-    ("G", "Toggle grid snapping"),
+    ("Shift+G", "Toggle grid snapping"),
+    (
+        "G (with a selection)",
+        "Move it: X / Y lock an axis, type dX Tab dY (or a distance), B picks the base point, \
+         click / Enter places, Esc / right-click cancels",
+    ),
     ("Alt (hold)", "Place without snapping"),
     ("Middle / right drag", "Pan"),
     ("Scroll / pinch", "Zoom at cursor"),
@@ -1774,7 +1947,7 @@ impl eframe::App for DriftApp {
             self.set_status(notice, true, now);
         }
         self.editor.auto_relations = self.auto_relations;
-        if self.pending.is_none() {
+        if self.pending.is_none() && self.editor.pending_driven.is_none() {
             self.handle_typing(&ctx);
             self.shortcuts(&ctx);
         }

@@ -71,7 +71,8 @@ pub struct Pointer {
     pub tolerance: f64,
     /// Inference adjustment, used unless the pointer snapped to an existing point.
     pub guide: Option<Guide>,
-    /// Whether snapping onto a midpoint should add a Midpoint relation (automatic relations).
+    /// Whether snapping onto a midpoint or a curve should add a Midpoint / On curve relation
+    /// (automatic relations).
     pub relations: bool,
 }
 
@@ -90,6 +91,16 @@ impl Pointer {
     pub fn midpoint_of(&self) -> Option<EntityId> {
         self.snap
             .filter(|s| s.kind == drift_geom::SnapKind::Midpoint && self.relations)
+            .and_then(|s| s.entity)
+    }
+
+    /// The curve the pointer snapped onto (anywhere along it, or at a quadrant), if a new point
+    /// there should get an On curve relation.
+    pub fn on_curve(&self) -> Option<EntityId> {
+        use drift_geom::SnapKind::{OnCurve, Quadrant};
+        self.snap
+            .filter(|s| matches!(s.kind, OnCurve | Quadrant) && self.relations)
+            .filter(|_| self.guide.is_none())
             .and_then(|s| s.entity)
     }
 
@@ -124,6 +135,7 @@ impl Pointer {
             pos: self.pos(),
             existing: self.snapped_point(),
             midpoint_of: self.midpoint_of(),
+            on_curve: self.on_curve(),
         }
     }
 }
@@ -135,6 +147,8 @@ pub struct Anchor {
     pub existing: Option<EntityId>,
     /// A new point here should be kept at this line's midpoint.
     pub midpoint_of: Option<EntityId>,
+    /// A new point here should be kept on this curve.
+    pub on_curve: Option<EntityId>,
 }
 
 impl Anchor {
@@ -144,11 +158,12 @@ impl Anchor {
             pos,
             existing: None,
             midpoint_of: None,
+            on_curve: None,
         }
     }
 
-    /// The point entity for this anchor, creating it if needed (with its Midpoint relation, if
-    /// it was snapped to a midpoint). Call inside a transaction.
+    /// The point entity for this anchor, creating it if needed (with its Midpoint or On curve
+    /// relation, if it was snapped to a midpoint or curve). Call inside a transaction.
     pub fn resolve(&self, doc: &mut Document) -> EntityId {
         match self.existing {
             Some(id) if doc.contains(id) => id,
@@ -156,6 +171,8 @@ impl Anchor {
                 let point = doc.add_point(self.pos);
                 if let Some(line) = self.midpoint_of {
                     let _ = doc.add_constraint(Constraint::Midpoint { point, line });
+                } else if let Some(curve) = self.on_curve {
+                    let _ = doc.add_constraint(Constraint::PointOnCurve { point, curve });
                 }
                 point
             }
@@ -183,6 +200,9 @@ pub struct Editor {
     pub highlight: BTreeSet<EntityId>,
     /// A dimension just created by a tool, whose value the UI should let the user type.
     pub pending_edit: Option<ConstraintId>,
+    /// A dimension refused because it would over-define the sketch, with its label placement:
+    /// the UI offers to add it as a driven (reference) dimension instead.
+    pub pending_driven: Option<(Constraint, Option<DVec2>)>,
     /// Whether drawing tools add relations they infer (horizontal / vertical lines, rectangles).
     pub auto_relations: bool,
 }
@@ -260,10 +280,42 @@ impl Editor {
             self.sync();
             return false;
         }
+        self.refresh_driven();
         let tx = self.doc.commit(label);
         self.history.push(tx);
         self.sync();
         true
+    }
+
+    /// Update driven dimensions to the geometry's current measurements (inside a transaction).
+    fn refresh_driven(&mut self) {
+        let driven: Vec<_> = self
+            .doc
+            .constraints()
+            .filter(|(id, _)| self.doc.is_driven(*id))
+            .map(|(id, c)| (id, *c))
+            .collect();
+        for (id, c) in driven {
+            if let Some(value) = drift_solver::measure(&self.doc, &c)
+                && c.value() != Some(value)
+            {
+                let measured = c.with_value(value);
+                if measured.value_is_valid() {
+                    let _ = self.doc.set_constraint(id, measured);
+                }
+            }
+        }
+    }
+
+    /// The value to show for a dimension: its own for a driving one, the current measurement for
+    /// a driven one (which may be mid-drag, before the commit refreshes it).
+    pub fn dimension_value(&self, id: ConstraintId) -> Option<f64> {
+        let c = self.doc.constraint(id)?;
+        if self.doc.is_driven(id) {
+            drift_solver::measure(&self.doc, c).or(c.value())
+        } else {
+            c.value()
+        }
     }
 
     /// Move entities by `delta` inside an open transaction, keeping constraints satisfied.
@@ -302,6 +354,19 @@ impl Editor {
                 }
             }
         }
+        self.check_new_constraints(label, &ids, &before, &degenerate_before)?;
+        Ok(ids)
+    }
+
+    /// Solve after constraints `ids` were made active in the open transaction, and commit it,
+    /// or roll it back if they conflict, collapse geometry or add nothing new.
+    fn check_new_constraints(
+        &mut self,
+        label: &str,
+        ids: &[ConstraintId],
+        before: &SolveReport,
+        degenerate_before: &[EntityId],
+    ) -> Result<(), EditError> {
         let report = drift_solver::solve(
             &mut self.doc,
             &SolveOptions {
@@ -311,7 +376,7 @@ impl Editor {
         );
         let error = if self.new_conflicts(&report) {
             Some(EditError::Conflict)
-        } else if self.new_degeneracy(&degenerate_before) {
+        } else if self.new_degeneracy(degenerate_before) {
             Some(EditError::Degenerate)
         } else if ids.iter().all(|id| report.redundant.contains(id))
             || report.dependent_equations > before.dependent_equations
@@ -327,7 +392,7 @@ impl Editor {
             return Err(error);
         }
         self.commit(label);
-        Ok(ids)
+        Ok(())
     }
 
     /// Add a dimension with its label placed at `placement` (offset from its anchor), as one
@@ -337,10 +402,15 @@ impl Editor {
         constraint: Constraint,
         placement: Option<DVec2>,
     ) -> Result<ConstraintId, EditError> {
-        let id = *self
-            .add_constraints(constraint.type_name(), &[constraint])?
-            .first()
-            .expect("one constraint added");
+        let id = match self.add_constraints(constraint.type_name(), &[constraint]) {
+            Ok(ids) => ids[0],
+            Err(e @ (EditError::Redundant | EditError::Conflict)) => {
+                // Over-defining: offer it as a reference dimension instead.
+                self.pending_driven = Some((constraint, placement));
+                return Err(e);
+            }
+            Err(e) => return Err(e),
+        };
         if let Some(offset) = placement {
             // Fold the placement into the step that added the dimension.
             let tx_label = constraint.type_name();
@@ -353,6 +423,67 @@ impl Editor {
         Ok(id)
     }
 
+    /// Add a driven (reference) dimension at the geometry's current measurement, as one
+    /// undoable step. It never conflicts: it reports rather than constrains.
+    pub fn add_driven_dimension(
+        &mut self,
+        constraint: Constraint,
+        placement: Option<DVec2>,
+    ) -> Result<ConstraintId, EditError> {
+        let constraint = drift_solver::measure(&self.doc, &constraint)
+            .map(|v| constraint.with_value(v))
+            .unwrap_or(constraint);
+        self.doc.begin();
+        let added = self.doc.add_constraint(constraint).and_then(|id| {
+            self.doc.set_driven(id, true)?;
+            if let Some(offset) = placement {
+                self.doc.set_placement(id, offset)?;
+            }
+            Ok(id)
+        });
+        match added {
+            Ok(id) => {
+                self.commit(&format!("{} (driven)", constraint.type_name()));
+                Ok(id)
+            }
+            Err(e) => {
+                self.doc.rollback();
+                self.sync();
+                Err(EditError::Invalid(e.to_string()))
+            }
+        }
+    }
+
+    /// Make a dimension driven (a reference) or driving. Switching to driving keeps the current
+    /// measurement and is refused if the dimension would over-define the sketch.
+    pub fn set_driven(&mut self, id: ConstraintId, driven: bool) -> Result<(), EditError> {
+        if self.doc.is_driven(id) == driven {
+            return Ok(());
+        }
+        let label = if driven {
+            "Make driven"
+        } else {
+            "Make driving"
+        };
+        if driven {
+            self.doc.begin();
+            if let Err(e) = self.doc.set_driven(id, true) {
+                self.doc.rollback();
+                return Err(EditError::Invalid(e.to_string()));
+            }
+            self.commit(label);
+            return Ok(());
+        }
+        let before = self.analysis.clone();
+        let degenerate_before = drift_solver::degenerate_entities(&self.doc);
+        self.doc.begin();
+        if let Err(e) = self.doc.set_driven(id, false) {
+            self.doc.rollback();
+            return Err(EditError::Invalid(e.to_string()));
+        }
+        self.check_new_constraints(label, &[id], &before, &degenerate_before)
+    }
+
     /// Move a dimension's label (inside an open transaction while dragging).
     pub fn place_dimension(&mut self, id: ConstraintId, offset: DVec2) {
         let _ = self.doc.set_placement(id, offset);
@@ -363,6 +494,11 @@ impl Editor {
         let Some(current) = self.doc.constraint(id).copied() else {
             return Err(EditError::Invalid(format!("{id} no longer exists")));
         };
+        if self.doc.is_driven(id) {
+            return Err(EditError::Invalid(
+                "a driven dimension follows the geometry; make it driving to set it".into(),
+            ));
+        }
         if current.value() == Some(value) {
             return Ok(());
         }
@@ -418,6 +554,19 @@ impl Editor {
         if !sel.midpoints.is_empty() {
             return out;
         }
+        if let ([point], [curve], []) | ([point], [], [curve]) = (
+            sel.points.as_slice(),
+            sel.lines.as_slice(),
+            sel.circulars.as_slice(),
+        ) {
+            out.push(opt(
+                "On curve",
+                vec![Constraint::PointOnCurve {
+                    point: *point,
+                    curve: *curve,
+                }],
+            ));
+        }
         match (
             sel.points.as_slice(),
             sel.lines.as_slice(),
@@ -458,6 +607,10 @@ impl Editor {
                         "Perpendicular",
                         vec![Constraint::Perpendicular { a: *a, b: *b }],
                     ));
+                    out.push(opt(
+                        "Collinear",
+                        vec![Constraint::Collinear { a: *a, b: *b }],
+                    ));
                 }
                 if lines.len() >= 2 {
                     out.push(opt(
@@ -470,12 +623,37 @@ impl Editor {
                 }
             }
             ([], [], circulars) if circulars.len() >= 2 => {
+                if let [a, b] = circulars {
+                    let (a, b) = (*a, *b);
+                    out.push(opt("Tangent", vec![Constraint::Tangent { a, b }]));
+                    out.push(opt("Concentric", vec![Constraint::Concentric { a, b }]));
+                    out.push(opt("Coradial", vec![Constraint::Coradial { a, b }]));
+                }
                 out.push(opt(
                     "Equal",
                     circulars
                         .windows(2)
                         .map(|w| Constraint::Equal { a: w[0], b: w[1] })
                         .collect(),
+                ));
+            }
+            ([], [line], [curve]) => {
+                out.push(opt(
+                    "Tangent",
+                    vec![Constraint::Tangent {
+                        a: *line,
+                        b: *curve,
+                    }],
+                ));
+            }
+            ([a, b], [axis], []) => {
+                out.push(opt(
+                    "Symmetric",
+                    vec![Constraint::Symmetric {
+                        a: *a,
+                        b: *b,
+                        axis: *axis,
+                    }],
                 ));
             }
             _ => {}
@@ -885,6 +1063,7 @@ mod tests {
                 "Vertical",
                 "Parallel",
                 "Perpendicular",
+                "Collinear",
                 "Equal",
                 "Fix",
                 "Angle"
@@ -906,5 +1085,156 @@ mod tests {
         // The dimension is created at the current value, so adding it changes nothing.
         let dim = &ed.dimension_options()[0].constraints[0];
         assert!((dim.value().unwrap() - length(&ed, a, b)).abs() < 1e-12);
+    }
+
+    /// A line, a circle beside it and a second circle: (editor, line, circle, circle2, centre).
+    fn with_curves() -> (Editor, EntityId, EntityId, EntityId, EntityId) {
+        let mut ed = Editor::default();
+        ed.doc.begin();
+        let a = ed.doc.add_point(v(0.0, 0.0));
+        let b = ed.doc.add_point(v(20.0, 0.0));
+        let line = ed.doc.add_line(a, b).unwrap();
+        let c = ed.doc.add_point(v(10.0, 7.0));
+        let circle = ed.doc.add_circle(c, 4.0).unwrap();
+        let c2 = ed.doc.add_point(v(30.0, 8.0));
+        let circle2 = ed.doc.add_circle(c2, 2.0).unwrap();
+        ed.commit("Setup");
+        (ed, line, circle, circle2, c)
+    }
+
+    fn labels(ed: &Editor) -> Vec<&'static str> {
+        ed.relation_options().iter().map(|o| o.label).collect()
+    }
+
+    fn apply(ed: &mut Editor, label: &str) {
+        let option = ed
+            .relation_options()
+            .into_iter()
+            .find(|o| o.label == label)
+            .unwrap_or_else(|| panic!("no {label} option"));
+        ed.add_constraints(label, &option.constraints).unwrap();
+    }
+
+    #[test]
+    fn curve_relations_are_offered_and_applied() {
+        let (mut ed, line, circle, circle2, c) = with_curves();
+        ed.selection = [line, circle].into();
+        assert_eq!(labels(&ed), ["Tangent", "Fix"]);
+        apply(&mut ed, "Tangent");
+        let centre = ed.doc.point(c).unwrap();
+        let radius = drift_solver::radius_of(&ed.doc, circle).unwrap();
+        let (a, b) = match ed.doc.get(line).unwrap().kind {
+            EntityKind::Line { a, b } => (ed.doc.point(a).unwrap(), ed.doc.point(b).unwrap()),
+            _ => unreachable!(),
+        };
+        let distance = (b - a).perp_dot(centre - a).abs() / (b - a).length();
+        assert!((distance - radius).abs() < 1e-9, "{distance} vs {radius}");
+        // Still on the side it started.
+        assert!(centre.y > a.y);
+
+        ed.selection = [circle, circle2].into();
+        assert_eq!(
+            labels(&ed),
+            ["Tangent", "Concentric", "Coradial", "Equal", "Fix"]
+        );
+        apply(&mut ed, "Coradial");
+        let centres = |ed: &Editor| {
+            [circle, circle2].map(|e| match ed.doc.get(e).unwrap().kind {
+                EntityKind::Circle { center, radius } => (ed.doc.point(center).unwrap(), radius),
+                _ => unreachable!(),
+            })
+        };
+        let [(c1, r1), (c2, r2)] = centres(&ed);
+        assert!(c1.distance(c2) < 1e-9 && (r1 - r2).abs() < 1e-9);
+        // Coradial implies concentric.
+        let concentric = Constraint::Concentric {
+            a: circle,
+            b: circle2,
+        };
+        assert_eq!(
+            ed.add_constraints("Concentric", &[concentric]),
+            Err(EditError::Redundant)
+        );
+    }
+
+    #[test]
+    fn point_relations_are_offered() {
+        let (mut ed, line, circle, ..) = with_curves();
+        ed.doc.begin();
+        let p = ed.doc.add_point(v(5.0, 20.0));
+        let q = ed.doc.add_point(v(8.0, -12.0));
+        ed.commit("Points");
+        ed.selection = [p, circle].into();
+        assert_eq!(labels(&ed), ["On curve", "Fix"]);
+        apply(&mut ed, "On curve");
+        let (centre, radius) = match ed.doc.get(circle).unwrap().kind {
+            EntityKind::Circle { center, radius } => (ed.doc.point(center).unwrap(), radius),
+            _ => unreachable!(),
+        };
+        assert!((ed.doc.point(p).unwrap().distance(centre) - radius).abs() < 1e-9);
+
+        ed.selection = [q, line].into();
+        assert_eq!(labels(&ed), ["Midpoint", "On curve", "Fix"]);
+
+        ed.selection = [p, q, line].into();
+        assert_eq!(labels(&ed), ["Symmetric", "Fix"]);
+        apply(&mut ed, "Symmetric");
+        // The line is the x axis (it may have moved, but stays horizontal-ish): q mirrors p.
+        let (a, b) = match ed.doc.get(line).unwrap().kind {
+            EntityKind::Line { a, b } => (ed.doc.point(a).unwrap(), ed.doc.point(b).unwrap()),
+            _ => unreachable!(),
+        };
+        let (pp, qq) = (ed.doc.point(p).unwrap(), ed.doc.point(q).unwrap());
+        let u = (b - a).normalize();
+        assert!((pp - qq).dot(u).abs() < 1e-9);
+        assert!(((pp + qq) * 0.5 - a).perp_dot(u).abs() < 1e-9);
+    }
+
+    #[test]
+    fn over_defining_dimensions_can_be_driven() {
+        let (mut ed, line, a, b) = with_line();
+        ed.add_constraints("Horizontal", &[Constraint::Horizontal { line }])
+            .unwrap();
+        let length = ed
+            .add_dimension(Constraint::Distance { a, b, value: 12.0 }, None)
+            .unwrap();
+        // The horizontal distance is now implied: refused, with the driven option offered.
+        let horizontal = Constraint::HorizontalDistance { a, b, value: 0.0 };
+        let horizontal =
+            horizontal.with_value(drift_solver::measure(&ed.doc, &horizontal).unwrap());
+        let placement = Some(v(0.0, 4.0));
+        assert_eq!(
+            ed.add_dimension(horizontal, placement),
+            Err(EditError::Redundant)
+        );
+        assert_eq!(ed.pending_driven, Some((horizontal, placement)));
+        let (constraint, placement) = ed.pending_driven.take().unwrap();
+        let driven = ed.add_driven_dimension(constraint, placement).unwrap();
+        assert!(ed.doc.is_driven(driven));
+        assert_eq!(ed.doc.placement(driven), placement);
+        // It measures rather than imposes its value.
+        let measured = |ed: &Editor| ed.doc.constraint(driven).unwrap().value().unwrap().abs();
+        assert!((measured(&ed) - 12.0).abs() < 1e-9);
+        assert!(ed.analysis().conflicts.is_empty());
+
+        // Driven values follow changes to the geometry.
+        ed.set_dimension(length, 20.0).unwrap();
+        assert!((measured(&ed) - 20.0).abs() < 1e-9);
+        assert!(matches!(
+            ed.set_dimension(driven, 3.0),
+            Err(EditError::Invalid(_))
+        ));
+        // Making it driving would over-define, until the length is gone.
+        assert_eq!(ed.set_driven(driven, false), Err(EditError::Redundant));
+        assert!(ed.doc.is_driven(driven));
+        ed.remove_constraint(length);
+        ed.set_driven(driven, false).unwrap();
+        assert!(!ed.doc.is_driven(driven));
+        ed.set_dimension(driven, 7.0).unwrap();
+        assert!((ed.doc.point(b).unwrap().x - ed.doc.point(a).unwrap().x).abs() - 7.0 < 1e-9);
+        // Each switch is one undo step.
+        ed.undo();
+        ed.undo();
+        assert!(ed.doc.is_driven(driven));
     }
 }

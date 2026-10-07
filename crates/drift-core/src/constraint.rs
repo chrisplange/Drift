@@ -75,6 +75,38 @@ pub enum Constraint {
         a: EntityId,
         b: EntityId,
     },
+    /// A line or circle/arc (`a`) tangent to a circle or arc (`b`). Which side (and, for two
+    /// circles, inside or outside) follows the geometry when the relation is added.
+    Tangent {
+        a: EntityId,
+        b: EntityId,
+    },
+    /// Two circles/arcs sharing a centre.
+    Concentric {
+        a: EntityId,
+        b: EntityId,
+    },
+    /// Two circles/arcs with the same centre and radius.
+    Coradial {
+        a: EntityId,
+        b: EntityId,
+    },
+    /// Two lines on the same infinite line.
+    Collinear {
+        a: EntityId,
+        b: EntityId,
+    },
+    /// A point lying on a line (extended infinitely) or on a circle/arc's circle.
+    PointOnCurve {
+        point: EntityId,
+        curve: EntityId,
+    },
+    /// Two points mirrored about a line.
+    Symmetric {
+        a: EntityId,
+        b: EntityId,
+        axis: EntityId,
+    },
     /// A point kept at the midpoint of a line.
     Midpoint {
         point: EntityId,
@@ -152,6 +184,15 @@ impl Constraint {
                 vec![(point, PointOrMidpoint), (line, Line)]
             }
             Constraint::Midpoint { point, line } => vec![(point, Point), (line, Line)],
+            Constraint::Tangent { a, b } => vec![(a, LineOrCircular), (b, Circular)],
+            Constraint::Concentric { a, b } | Constraint::Coradial { a, b } => {
+                vec![(a, Circular), (b, Circular)]
+            }
+            Constraint::Collinear { a, b } => vec![(a, Line), (b, Line)],
+            Constraint::PointOnCurve { point, curve } => {
+                vec![(point, Point), (curve, LineOrCircular)]
+            }
+            Constraint::Symmetric { a, b, axis } => vec![(a, Point), (b, Point), (axis, Line)],
             Constraint::Horizontal { line } | Constraint::Vertical { line } => {
                 vec![(line, Line)]
             }
@@ -175,6 +216,12 @@ impl Constraint {
         match self {
             Constraint::Coincident { .. } => "Coincident",
             Constraint::Midpoint { .. } => "Midpoint",
+            Constraint::Tangent { .. } => "Tangent",
+            Constraint::Concentric { .. } => "Concentric",
+            Constraint::Coradial { .. } => "Coradial",
+            Constraint::Collinear { .. } => "Collinear",
+            Constraint::PointOnCurve { .. } => "On curve",
+            Constraint::Symmetric { .. } => "Symmetric",
             Constraint::Horizontal { .. } | Constraint::HorizontalPoints { .. } => "Horizontal",
             Constraint::Vertical { .. } | Constraint::VerticalPoints { .. } => "Vertical",
             Constraint::Parallel { .. } => "Parallel",
@@ -267,7 +314,12 @@ impl Constraint {
             }
             Constraint::Fix { point, .. }
             | Constraint::PointLineDistance { point, .. }
-            | Constraint::Midpoint { point, .. } => swap(point),
+            | Constraint::Midpoint { point, .. }
+            | Constraint::PointOnCurve { point, .. } => swap(point),
+            Constraint::Symmetric { a, b, .. } => {
+                swap(a);
+                swap(b);
+            }
             _ => {}
         }
     }
@@ -281,6 +333,11 @@ impl Constraint {
             | Constraint::Distance { a, b, .. }
             | Constraint::HorizontalDistance { a, b, .. }
             | Constraint::VerticalDistance { a, b, .. }
+            | Constraint::Tangent { a, b }
+            | Constraint::Concentric { a, b }
+            | Constraint::Coradial { a, b }
+            | Constraint::Collinear { a, b }
+            | Constraint::Symmetric { a, b, .. }
             | Constraint::Parallel { a, b }
             | Constraint::Perpendicular { a, b }
             | Constraint::Equal { a, b }

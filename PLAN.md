@@ -559,6 +559,62 @@ written but hasn't run yet (no GitHub repo).*
   M3).
 - Redundancy/conflict detection and the driven-dimension prompt.
 
+*M4 as built:*
+- **New relations:** tangent (line–circle/arc, circle/arc–circle/arc), concentric, coradial,
+  collinear, point-on-curve (lines extended infinitely, and arcs' full circles) and symmetric
+  (two points about a line).
+  - **Solver:** concentric and coradial merge centres by substitution; coradial also equates
+    the radii.
+  - **Tangency without a shared point:** it records which side the geometry is on (line–circle
+    side; outside vs inside for two circles) when added, so it can't flip.
+  - **Tangency at a shared end point (fillets):** it uses perpendicular-radius /
+    collinear-centre equations instead of distance = radius. Distance = radius has a double
+    root there and converged only to about 1e-5.
+  - Validation refuses a point on its own curve and a symmetry axis through either point.
+- **Driven (reference) dimensions:**
+  - The document keeps a journalled `driven` set. The solver skips driven dimensions, and
+    each commit refreshes their stored values to the measurement.
+  - They are drawn grey with the value in parentheses.
+  - A dimension refused as redundant or conflicting (from Smart Dimension or the panel) opens
+    a "Make this dimension driven?" prompt.
+  - A Driven checkbox in the constraint list switches either way. Switching back to driving is
+    checked for over-definition like a new constraint.
+- **Automatic point-on-curve:** a new point placed on a curve (nearest-on-curve or quadrant
+  snap) gets an On curve relation, as does a point dropped on a curve while dragging. This
+  respects the automatic-relations toggle. Typed coordinates never add one.
+- **Glyphs** for all six new relations. Symmetric sits on its axis, and on-curve on its point.
+- **File format v4:** the new relation records plus `"driven": true` on dimensions. v1–v3
+  still load.
+- **Not yet:**
+  - Tangent glyphs sit beside the curve, not at the tangency point.
+  - Relations between more than two curves (e.g. "all tangent") are added pairwise by hand.
+  - The constrained example plate is still unconstrained.
+- **Added after M4 at the user's request: Blender-style modal keys.**
+  - **Tool keys:** tools can claim X / Y / G / B (`Tool::key`). Unclaimed X still toggles
+    construction.
+  - **Line tool:** X / Y lock the current segment to an axis (per segment, always adds H/V).
+  - **Select tool, G (grab):** a modal move of the selection.
+    - Live preview uses incremental solver drags, like a mouse drag.
+    - Confirming rolls back and re-applies the final offset in one step from the original
+      geometry, so typed and snapped moves are exact. It falls back to 16 steps if one solve
+      can't reach.
+    - Typed fields: dX/dY, or a Distance when an axis is locked.
+    - B re-picks the base point; snapping there may hit the selection itself.
+    - Right-click cancels; other shortcuts are suspended while it runs.
+  - **Grid snapping** moved from G to Shift+G.
+- **Added after M4 at the user's request: 3-point and tangent arc tools.**
+  - **3-point arc:** start, end, then a point on the arc. You can type the chord length/angle
+    and the radius. A third point picked on an existing point gets On curve.
+  - **Tangent arc:** starts on an existing line/arc end. Where several curves meet, it uses
+    the one whose outgoing direction best matches the pointer. It gets a Tangent relation
+    (the exact shared-endpoint formulation) and chains like a polyline. Radius and/or sweep
+    can be typed.
+  - **Switching:** A cycles centre → 3-point → tangent. Mid-polyline, A switches to tangent
+    arc and L back to lines, continuing from the chain end (`Tool::chain_end` /
+    `continue_from`).
+  - Rotate (R) / scale modal ops would follow the same pattern. R and S are currently tool
+    shortcuts.
+
 **M5 — Parametrics and exploration (3 wks)**
 - Global variables, the expression engine with units, and the equations panel.
 - Variable sliders with live re-solve, variants/configurations, snapshots, free-DOF arrows, and
@@ -630,6 +686,6 @@ title-block template syntax.
 
 1. Create the `drift` GitHub repo and push, so CI runs and Pages deploys. Enable Pages with
    "GitHub Actions" as the source.
-2. M4: tangent, concentric, symmetric, collinear, point-on-curve and coradial
-   relations (so the example's fillets can be fully defined), and driven (reference)
-   dimensions with the "make it driven?" prompt for redundant dimensions.
+2. M5: global variables and expressions with units, an equations panel, sliders with live
+   re-solve, and free-DOF arrows. Also fully constrain the example plate with M4's tangent
+   relations.

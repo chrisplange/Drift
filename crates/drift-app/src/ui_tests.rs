@@ -618,3 +618,278 @@ fn smart_dimension_from_a_midpoint() {
     );
     save_png("drift_ui_midpoint_dimension.png", &mut h);
 }
+
+#[test]
+fn curve_relations_and_driven_dimensions_render() {
+    use drift_core::Constraint as C;
+    use eframe::egui::accesskit::Role;
+
+    let Some(mut h) = harness() else { return };
+    let v = DVec2::new;
+    let hole;
+    {
+        let ed = &mut h.state_mut().editor;
+        ed.doc.begin();
+        let doc = &mut ed.doc;
+        // A slot: two lines tangent to two arcs at shared end points.
+        let [lc, rc, lt, rt, rb, lb] = [
+            v(-30.0, 0.0),
+            v(30.0, 0.0),
+            v(-30.0, 10.0),
+            v(30.0, 10.0),
+            v(30.0, -10.0),
+            v(-30.0, -10.0),
+        ]
+        .map(|q| doc.add_point(q));
+        let top = doc.add_line(lt, rt).unwrap();
+        let bottom = doc.add_line(rb, lb).unwrap();
+        let right = doc.add_arc(rc, rb, rt).unwrap();
+        let left = doc.add_arc(lc, lt, lb).unwrap();
+        let hc = doc.add_point(v(30.0, 0.0));
+        hole = doc.add_circle(hc, 5.0).unwrap();
+        let ext = [v(50.0, 10.0), v(70.0, 10.0)].map(|q| doc.add_point(q));
+        let extension = doc.add_line(ext[0], ext[1]).unwrap();
+        let axis_ends = [v(-50.0, 0.0), v(50.0, 0.0)].map(|q| doc.add_point(q));
+        let axis = doc.add_line(axis_ends[0], axis_ends[1]).unwrap();
+        let mirrored = [v(-10.0, 25.0), v(-10.0, -25.0)].map(|q| doc.add_point(q));
+        let on_arc = doc.add_point(v(-30.0 - 50f64.sqrt(), 50f64.sqrt()));
+        for constraint in [
+            C::Horizontal { line: top },
+            C::Tangent { a: top, b: right },
+            C::Tangent { a: top, b: left },
+            C::Tangent {
+                a: bottom,
+                b: right,
+            },
+            C::Tangent { a: bottom, b: left },
+            C::Concentric { a: right, b: hole },
+            C::Collinear {
+                a: top,
+                b: extension,
+            },
+            C::Symmetric {
+                a: mirrored[0],
+                b: mirrored[1],
+                axis,
+            },
+            C::PointOnCurve {
+                point: on_arc,
+                curve: left,
+            },
+            C::Diameter {
+                curve: hole,
+                value: 10.0,
+            },
+        ] {
+            doc.add_constraint(constraint).unwrap();
+        }
+        ed.commit("Setup");
+        ed.add_driven_dimension(
+            C::Distance {
+                a: lc,
+                b: rc,
+                value: 0.0,
+            },
+            None,
+        )
+        .unwrap();
+        let bounds = ed.bounds();
+        h.state_mut().fit_target = Some(bounds);
+    }
+    h.run();
+    assert!(h.state().editor.analysis().converged);
+    assert!(h.state().editor.analysis().conflicts.is_empty());
+    let painter = egui::Painter::new(
+        h.ctx.clone(),
+        egui::LayerId::background(),
+        h.state().canvas_rect,
+    );
+    let dims = h.state().layout_dimensions(&painter, &screen_map(&h));
+    let driven: Vec<_> = dims.iter().filter(|d| d.driven).collect();
+    assert_eq!(driven.len(), 1);
+    assert_eq!(driven[0].text, "(60)");
+    save_png("drift_ui_curve_relations.png", &mut h);
+
+    // A radius on the dimensioned hole over-defines it: the prompt offers a driven one.
+    let radius = C::Radius {
+        curve: hole,
+        value: 5.0,
+    };
+    let refused = h.state_mut().editor.add_dimension(radius, None);
+    assert!(refused.is_err());
+    h.run();
+    save_png("drift_ui_driven_prompt.png", &mut h);
+    h.get_by_role_and_label(Role::Button, "Add as driven")
+        .click();
+    h.run();
+    h.run();
+    let ed = &h.state().editor;
+    assert!(ed.pending_driven.is_none());
+    let driven = ed
+        .doc
+        .constraints()
+        .filter(|(id, _)| ed.doc.is_driven(*id))
+        .count();
+    assert_eq!(driven, 2);
+}
+
+#[test]
+fn x_and_y_keys_lock_line_segments() {
+    let Some(mut h) = harness() else { return };
+    h.key_press(Key::L);
+    h.run();
+    click_world(&mut h, DVec2::new(-30.0, -10.0));
+    h.key_press(Key::X);
+    h.run();
+    h.hover_at(screen(&h, DVec2::new(10.0, 4.0)));
+    h.run();
+    save_png("drift_ui_axis_lock.png", &mut h);
+    click_world(&mut h, DVec2::new(10.0, 4.0));
+    h.key_press(Key::Y);
+    h.run();
+    click_world(&mut h, DVec2::new(25.0, 20.0));
+    h.key_press(Key::Escape);
+    h.run();
+    let doc = &h.state().editor.doc;
+    let ends: Vec<_> = doc
+        .iter()
+        .filter_map(|(_, e)| match e.kind {
+            EntityKind::Line { a, b } => Some((doc.point(a).unwrap(), doc.point(b).unwrap())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(ends.len(), 2);
+    assert_eq!(ends[0].0.y, ends[0].1.y, "first segment horizontal");
+    assert_eq!(ends[1].0.x, ends[1].1.x, "second segment vertical");
+    // X went to the tool, not to the construction toggle.
+    assert!(
+        doc.iter()
+            .all(|(_, e)| e.style == drift_core::LineKind::Solid)
+    );
+}
+
+#[test]
+fn g_moves_the_selection_with_typed_offsets_and_base_points() {
+    let Some(mut h) = harness() else { return };
+    let v = DVec2::new;
+    {
+        let ed = &mut h.state_mut().editor;
+        ed.doc.begin();
+        let a = ed.doc.add_point(v(-20.0, 0.0));
+        let b = ed.doc.add_point(v(0.0, 10.0));
+        let line = ed.doc.add_line(a, b).unwrap();
+        let c = ed.doc.add_point(v(15.0, -12.0));
+        let target = ed.doc.add_point(v(30.0, 25.0));
+        ed.doc.add_line(c, target).unwrap();
+        ed.commit("Setup");
+        ed.selection = [line].into();
+    }
+    h.run();
+    let line_ends = |h: &Harness<'_, DriftApp>| {
+        let doc = &h.state().editor.doc;
+        let (_, e) = doc
+            .iter()
+            .find(|(_, e)| matches!(e.kind, EntityKind::Line { .. }))
+            .unwrap();
+        let EntityKind::Line { a, b } = e.kind else {
+            unreachable!()
+        };
+        (doc.point(a).unwrap(), doc.point(b).unwrap())
+    };
+
+    // G, X, type 15, Enter: moved exactly 15 mm along X.
+    h.hover_at(screen(&h, v(-5.0, 2.0)));
+    h.run();
+    h.key_press(Key::G);
+    h.run();
+    h.hover_at(screen(&h, v(3.0, 9.0)));
+    h.run();
+    h.key_press(Key::X);
+    h.run();
+    type_text(&mut h, "15");
+    save_png("drift_ui_grab_typed.png", &mut h);
+    h.key_press(Key::Enter);
+    h.run();
+    assert_eq!(line_ends(&h), (v(-5.0, 0.0), v(15.0, 10.0)));
+
+    // G, B on the line's top end, then onto the other line's end: lands exactly.
+    h.key_press(Key::G);
+    h.run();
+    h.key_press(Key::B);
+    h.run();
+    click_world(&mut h, v(15.2, 10.1));
+    h.hover_at(screen(&h, v(29.8, 25.1)));
+    h.run();
+    save_png("drift_ui_grab_base.png", &mut h);
+    click_world(&mut h, v(29.8, 25.1));
+    assert_eq!(line_ends(&h), (v(10.0, 15.0), v(30.0, 25.0)));
+
+    // Right-click cancels; Shift+G still toggles grid snapping.
+    h.key_press(Key::G);
+    h.run();
+    h.hover_at(screen(&h, v(0.0, -30.0)));
+    h.run();
+    let pos = screen(&h, v(0.0, -30.0));
+    for pressed in [true, false] {
+        h.event(Event::PointerButton {
+            pos,
+            button: PointerButton::Secondary,
+            pressed,
+            modifiers: EguiModifiers::NONE,
+        });
+        h.run();
+    }
+    assert_eq!(line_ends(&h), (v(10.0, 15.0), v(30.0, 25.0)));
+    let grid = h.state().grid_snap;
+    h.key_press_modifiers(EguiModifiers::SHIFT, Key::G);
+    h.run();
+    assert_ne!(h.state().grid_snap, grid);
+}
+
+#[test]
+fn a_cycles_arc_tools_and_switches_mid_polyline() {
+    let Some(mut h) = harness() else { return };
+    let v = DVec2::new;
+    for expected in [
+        ToolKind::Arc,
+        ToolKind::ThreePointArc,
+        ToolKind::TangentArc,
+        ToolKind::Arc,
+    ] {
+        h.key_press(Key::A);
+        h.run();
+        assert_eq!(h.state().tool.kind(), expected);
+    }
+
+    // Polyline, then A: a tangent arc from the last point, then L: lines again.
+    h.key_press(Key::L);
+    h.run();
+    click_world(&mut h, v(-40.0, 0.0));
+    click_world(&mut h, v(0.0, 0.0));
+    h.key_press(Key::A);
+    h.run();
+    assert_eq!(h.state().tool.kind(), ToolKind::TangentArc);
+    h.hover_at(screen(&h, v(15.0, 15.0)));
+    h.run();
+    save_png("drift_ui_tangent_arc.png", &mut h);
+    click_world(&mut h, v(15.0, 15.0));
+    h.key_press(Key::L);
+    h.run();
+    assert_eq!(h.state().tool.kind(), ToolKind::Line);
+    click_world(&mut h, v(15.0, 40.0));
+    h.key_press(Key::Escape);
+    h.run();
+
+    let doc = &h.state().editor.doc;
+    let count = |pred: fn(&EntityKind) -> bool| doc.iter().filter(|(_, e)| pred(&e.kind)).count();
+    assert_eq!(count(|k| matches!(k, EntityKind::Line { .. })), 2);
+    assert_eq!(count(|k| matches!(k, EntityKind::Arc { .. })), 1);
+    // One connected chain: 4 curve end points shared → 4 points plus the arc's centre.
+    assert_eq!(count(EntityKind::is_point), 5);
+    assert!(
+        doc.constraints()
+            .any(|(_, c)| matches!(c, drift_core::Constraint::Tangent { .. }))
+    );
+    assert!(h.state().editor.analysis().conflicts.is_empty());
+    save_png("drift_ui_line_arc_line.png", &mut h);
+}

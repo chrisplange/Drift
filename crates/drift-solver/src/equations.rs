@@ -71,6 +71,28 @@ pub enum Equation {
         sign: f64,
         value: f64,
     },
+    /// Line tangent to a circle: `sign·cross(b − a, c − a)/|b − a| − radius = 0`, i.e. the
+    /// centre `c` lies one radius from the line, on the side recorded by `sign`.
+    TangentLine {
+        center: [usize; 2],
+        line: [usize; 4],
+        sign: f64,
+        radius: Length,
+    },
+    /// `Σ kᵢ·lengthᵢ = 0` (e.g. circle–circle tangency `|c₁c₂| − r₁ − r₂ = 0`).
+    LengthSum { terms: [(Length, f64); 3] },
+    /// Symmetry, part 1: `(b − a)·d/|d| = 0` — the points' join is perpendicular to the axis.
+    SymmetricPerpendicular {
+        a: [usize; 2],
+        b: [usize; 2],
+        axis: [usize; 4],
+    },
+    /// Symmetry, part 2: the points' midpoint lies on the axis.
+    SymmetricMidpoint {
+        a: [usize; 2],
+        b: [usize; 2],
+        axis: [usize; 4],
+    },
     /// `p − (a + b)/2 = 0` for one coordinate: a point at the midpoint of two others.
     Midpoint { p: usize, a: usize, b: usize },
     /// `sin(θ − φ) = 0`, where θ is the angle from line 1 to line 2. Params are
@@ -109,6 +131,21 @@ impl Equation {
             Equation::Angle { l1, l2, .. } => l1.iter().chain(l2).copied().collect(),
             Equation::Difference { a, b, .. } => vec![*a, *b],
             Equation::Midpoint { p, a, b } => vec![*p, *a, *b],
+            Equation::TangentLine {
+                center,
+                line,
+                radius,
+                ..
+            } => {
+                let mut v: Vec<usize> = center.iter().chain(line).copied().collect();
+                v.extend(radius.params());
+                v
+            }
+            Equation::LengthSum { terms } => terms.iter().flat_map(|(l, _)| l.params()).collect(),
+            Equation::SymmetricPerpendicular { a, b, axis }
+            | Equation::SymmetricMidpoint { a, b, axis } => {
+                a.iter().chain(b).chain(axis).copied().collect()
+            }
             Equation::PointLine { point, line, .. } => point.iter().chain(line).copied().collect(),
         }
     }
@@ -123,37 +160,80 @@ impl Equation {
                 grad.extend([(p, 1.0), (a, -0.5), (b, -0.5)]);
                 val(p) - 0.5 * (val(a) + val(b))
             }
+            Equation::TangentLine {
+                center,
+                line,
+                sign,
+                radius,
+            } => point_line(val, center, line, sign, grad) - radius.eval(val, -1.0, grad),
+            Equation::LengthSum { terms } => terms
+                .iter()
+                .map(|(length, k)| k * length.eval(val, *k, grad))
+                .sum(),
+            Equation::SymmetricPerpendicular {
+                a: [ax, ay],
+                b: [bx, by],
+                axis: [px, py, qx, qy],
+            } => {
+                let w = (val(bx) - val(ax), val(by) - val(ay));
+                let d = (val(qx) - val(px), val(qy) - val(py));
+                let len = d.0.hypot(d.1).max(1e-300);
+                let r = (w.0 * d.0 + w.1 * d.1) / len;
+                let gd = (
+                    w.0 / len - r * d.0 / (len * len),
+                    w.1 / len - r * d.1 / (len * len),
+                );
+                grad.extend([
+                    (ax, -d.0 / len),
+                    (ay, -d.1 / len),
+                    (bx, d.0 / len),
+                    (by, d.1 / len),
+                    (px, -gd.0),
+                    (py, -gd.1),
+                    (qx, gd.0),
+                    (qy, gd.1),
+                ]);
+                r
+            }
+            Equation::SymmetricMidpoint {
+                a: [ax, ay],
+                b: [bx, by],
+                axis: [px, py, qx, qy],
+            } => {
+                let d = (val(qx) - val(px), val(qy) - val(py));
+                let q = (
+                    0.5 * (val(ax) + val(bx)) - val(px),
+                    0.5 * (val(ay) + val(by)) - val(py),
+                );
+                let len = d.0.hypot(d.1).max(1e-300);
+                let r = (d.0 * q.1 - d.1 * q.0) / len;
+                let gq = (-d.1 / len, d.0 / len);
+                let gd = (
+                    q.1 / len - r * d.0 / (len * len),
+                    -q.0 / len - r * d.1 / (len * len),
+                );
+                grad.extend([
+                    (ax, 0.5 * gq.0),
+                    (ay, 0.5 * gq.1),
+                    (bx, 0.5 * gq.0),
+                    (by, 0.5 * gq.1),
+                    (px, -gq.0 - gd.0),
+                    (py, -gq.1 - gd.1),
+                    (qx, gd.0),
+                    (qy, gd.1),
+                ]);
+                r
+            }
             Equation::Difference { a, b, sign, value } => {
                 grad.extend([(a, -sign), (b, sign)]);
                 sign * (val(b) - val(a)) - value
             }
             Equation::PointLine {
-                point: [px, py],
-                line: [ax, ay, bx, by],
+                point,
+                line,
                 sign,
                 value,
-            } => {
-                let d = (val(bx) - val(ax), val(by) - val(ay));
-                let w = (val(px) - val(ax), val(py) - val(ay));
-                let len = d.0.hypot(d.1).max(1e-300);
-                let cross = d.0 * w.1 - d.1 * w.0;
-                let f = cross / len;
-                // ∂f/∂d and ∂f/∂w; then a = −(d + w) terms, b = d terms, p = w terms.
-                let gd = (
-                    w.1 / len - f * d.0 / (len * len),
-                    -w.0 / len - f * d.1 / (len * len),
-                );
-                let gw = (-d.1 / len, d.0 / len);
-                grad.extend([
-                    (px, sign * gw.0),
-                    (py, sign * gw.1),
-                    (ax, -sign * (gd.0 + gw.0)),
-                    (ay, -sign * (gd.1 + gw.1)),
-                    (bx, sign * gd.0),
-                    (by, sign * gd.1),
-                ]);
-                sign * f - value
-            }
+            } => point_line(val, point, line, sign, grad) - value,
             Equation::Angle {
                 l1,
                 l2,
@@ -191,6 +271,36 @@ impl Equation {
             }
         }
     }
+}
+
+/// Signed distance `sign·cross(b − a, p − a)/|b − a|` from a point to a line, with gradient.
+fn point_line(
+    val: &impl Fn(usize) -> f64,
+    [px, py]: [usize; 2],
+    [ax, ay, bx, by]: [usize; 4],
+    sign: f64,
+    grad: &mut Vec<(usize, f64)>,
+) -> f64 {
+    let d = (val(bx) - val(ax), val(by) - val(ay));
+    let w = (val(px) - val(ax), val(py) - val(ay));
+    let len = d.0.hypot(d.1).max(1e-300);
+    let cross = d.0 * w.1 - d.1 * w.0;
+    let f = cross / len;
+    // ∂f/∂d and ∂f/∂w; then a = −(d + w) terms, b = d terms, p = w terms.
+    let gd = (
+        w.1 / len - f * d.0 / (len * len),
+        -w.0 / len - f * d.1 / (len * len),
+    );
+    let gw = (-d.1 / len, d.0 / len);
+    grad.extend([
+        (px, sign * gw.0),
+        (py, sign * gw.1),
+        (ax, -sign * (gd.0 + gw.0)),
+        (ay, -sign * (gd.1 + gw.1)),
+        (bx, sign * gd.0),
+        (by, sign * gd.1),
+    ]);
+    sign * f
 }
 
 #[cfg(test)]
@@ -261,6 +371,29 @@ mod tests {
                 value: 2.5,
             },
             Equation::Midpoint { p: 4, a: 0, b: 2 },
+            Equation::TangentLine {
+                center: [4, 5],
+                line: line1,
+                sign: -1.0,
+                radius: Length::Param(8),
+            },
+            Equation::LengthSum {
+                terms: [
+                    (Length::Points([0, 1, 4, 5]), 1.0),
+                    (Length::Param(8), -1.0),
+                    (Length::Points([4, 5, 6, 7]), 1.0),
+                ],
+            },
+            Equation::SymmetricPerpendicular {
+                a: [0, 1],
+                b: [2, 3],
+                axis: line2,
+            },
+            Equation::SymmetricMidpoint {
+                a: [0, 1],
+                b: [2, 3],
+                axis: line2,
+            },
             Equation::PointLine {
                 point: [4, 5],
                 line: line1,

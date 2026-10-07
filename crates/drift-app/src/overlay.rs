@@ -133,6 +133,25 @@ pub fn selection_box(
     }
 }
 
+/// A modal move: a ring at the base point and a dashed line to where it has moved.
+pub fn move_guide(
+    painter: &egui::Painter,
+    map: &ScreenMap,
+    base: DVec2,
+    to: Option<DVec2>,
+    colors: &OverlayColors,
+) {
+    let b = map.to_screen(base);
+    let stroke = Stroke::new(1.5, colors.snap);
+    painter.circle_stroke(b, 6.0, stroke);
+    painter.circle_filled(b, 2.0, colors.snap);
+    if let Some(to) = to {
+        let t = map.to_screen(to);
+        painter.extend(egui::Shape::dashed_line(&[b, t], stroke, 5.0, 3.0));
+        painter.circle_filled(t, 3.0, colors.snap);
+    }
+}
+
 /// A small text label with a background, offset from the cursor.
 pub fn cursor_label(painter: &egui::Painter, at: Pos2, lines: &[String], colors: &OverlayColors) {
     if lines.is_empty() {

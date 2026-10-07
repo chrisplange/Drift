@@ -640,3 +640,173 @@ fn dimensions_can_measure_to_midpoints() {
             .is_err()
     );
 }
+
+// ---- M4 relations ----
+
+#[test]
+fn line_tangent_to_circle_keeps_its_side() {
+    let mut doc = Document::new();
+    let a = doc.add_point(v(-10.0, 6.0));
+    let b = doc.add_point(v(10.0, 7.0));
+    let line = doc.add_line(a, b).unwrap();
+    let c = doc.add_point(v(0.0, 0.0));
+    let circle = doc.add_circle(c, 4.0).unwrap();
+    doc.add_constraint(Constraint::Tangent { a: line, b: circle })
+        .unwrap();
+    assert!(solved(&mut doc).converged);
+    let (pa, pb, pc) = (
+        doc.point(a).unwrap(),
+        doc.point(b).unwrap(),
+        doc.point(c).unwrap(),
+    );
+    let EntityKind::Circle { radius, .. } = doc.get(circle).unwrap().kind else {
+        panic!()
+    };
+    let d = pb - pa;
+    let signed = d.perp_dot(pc - pa) / d.length();
+    assert!((signed.abs() - radius).abs() < 1e-9);
+    assert!(signed < 0.0, "the circle stays below the line");
+}
+
+#[test]
+fn fillet_arc_tangent_to_lines_at_shared_end_points() {
+    // An L corner with a slightly-off fillet arc sharing the lines' end points.
+    let mut doc = Document::new();
+    let p0 = doc.add_point(v(0.0, 30.0));
+    let t1 = doc.add_point(v(0.0, 10.0));
+    let t2 = doc.add_point(v(10.5, 0.0));
+    let p3 = doc.add_point(v(30.0, 0.0));
+    let c = doc.add_point(v(9.0, 9.0));
+    let vertical = doc.add_line(p0, t1).unwrap();
+    let horizontal = doc.add_line(t2, p3).unwrap();
+    let arc = doc.add_arc(c, t2, t1).unwrap();
+    for k in [
+        Constraint::Vertical { line: vertical },
+        Constraint::Horizontal { line: horizontal },
+        Constraint::Tangent {
+            a: vertical,
+            b: arc,
+        },
+        Constraint::Tangent {
+            a: horizontal,
+            b: arc,
+        },
+    ] {
+        doc.add_constraint(k).unwrap();
+    }
+    assert!(solved(&mut doc).converged);
+    let (pc, pt1, pt2) = (
+        doc.point(c).unwrap(),
+        doc.point(t1).unwrap(),
+        doc.point(t2).unwrap(),
+    );
+    // Tangent at the shared points: the radius there is perpendicular to the line.
+    assert!((pc.y - pt1.y).abs() < 1e-9, "radius to t1 is horizontal");
+    assert!((pc.x - pt2.x).abs() < 1e-9, "radius to t2 is vertical");
+}
+
+#[test]
+fn circles_tangent_outside_and_inside() {
+    for (second_center, second_radius, outside) in
+        [(v(9.5, 0.0), 4.0, true), (v(1.5, 0.0), 2.0, false)]
+    {
+        let mut doc = Document::new();
+        let c1 = doc.add_point(v(0.0, 0.0));
+        let big = doc.add_circle(c1, 5.0).unwrap();
+        let c2 = doc.add_point(second_center);
+        let small = doc.add_circle(c2, second_radius).unwrap();
+        doc.add_constraint(Constraint::Tangent { a: big, b: small })
+            .unwrap();
+        assert!(solved(&mut doc).converged);
+        let r = |id| radius_of(&doc, id).unwrap();
+        let dist = doc.point(c1).unwrap().distance(doc.point(c2).unwrap());
+        let want = if outside {
+            r(big) + r(small)
+        } else {
+            r(big) - r(small)
+        };
+        assert!(
+            (dist - want).abs() < 1e-9,
+            "outside {outside}: {dist} vs {want}"
+        );
+    }
+}
+
+#[test]
+fn concentric_coradial_collinear_on_curve_and_symmetric() {
+    let mut doc = Document::new();
+    let c1 = doc.add_point(v(0.0, 0.0));
+    let circle = doc.add_circle(c1, 5.0).unwrap();
+    let c2 = doc.add_point(v(1.0, 0.5));
+    let s = doc.add_point(v(4.0, 0.5));
+    let e = doc.add_point(v(1.0, 3.5));
+    let arc = doc.add_arc(c2, s, e).unwrap();
+    let a1 = doc.add_point(v(10.0, 0.0));
+    let b1 = doc.add_point(v(20.0, 1.0));
+    let l1 = doc.add_line(a1, b1).unwrap();
+    let a2 = doc.add_point(v(25.0, 2.0));
+    let b2 = doc.add_point(v(35.0, 1.0));
+    let l2 = doc.add_line(a2, b2).unwrap();
+    let q = doc.add_point(v(3.0, 4.5));
+    let m1 = doc.add_point(v(-8.0, 3.0));
+    let m2 = doc.add_point(v(-1.0, 12.0));
+    let ax0 = doc.add_point(v(-10.0, -10.0));
+    let ax1 = doc.add_point(v(10.0, 10.0));
+    let axis = doc.add_line(ax0, ax1).unwrap();
+    for k in [
+        Constraint::Coradial { a: circle, b: arc },
+        Constraint::Collinear { a: l1, b: l2 },
+        Constraint::PointOnCurve {
+            point: q,
+            curve: circle,
+        },
+        Constraint::Symmetric { a: m1, b: m2, axis },
+    ] {
+        doc.add_constraint(k).unwrap();
+    }
+    let report = solved(&mut doc);
+    assert!(report.converged, "{report:?}");
+    let p = |id| doc.point(id).unwrap();
+    assert!((p(c1) - p(c2)).length() < 1e-9);
+    assert!((radius_of(&doc, circle).unwrap() - radius_of(&doc, arc).unwrap()).abs() < 1e-9);
+    let d1 = p(b1) - p(a1);
+    assert!(d1.perp_dot(p(a2) - p(a1)).abs() < 1e-9 * d1.length());
+    assert!(d1.perp_dot(p(b2) - p(a1)).abs() < 1e-9 * d1.length());
+    assert!((p(q).distance(p(c1)) - radius_of(&doc, circle).unwrap()).abs() < 1e-9);
+    let axis_dir = p(ax1) - p(ax0);
+    assert!((p(m2) - p(m1)).dot(axis_dir).abs() < 1e-9);
+    assert!(axis_dir.perp_dot((p(m1) + p(m2)) * 0.5 - p(ax0)).abs() < 1e-9);
+
+    // Concentric on an already-coradial pair adds nothing new.
+    let again = doc
+        .add_constraint(Constraint::Concentric { a: circle, b: arc })
+        .unwrap();
+    assert!(solved(&mut doc).redundant.contains(&again));
+    // A curve's own points can't be put on it.
+    assert!(
+        doc.add_constraint(Constraint::PointOnCurve {
+            point: a1,
+            curve: l1
+        })
+        .is_err()
+    );
+}
+
+#[test]
+fn arcs_tangent_at_a_shared_end_point() {
+    // Two arcs meeting at t, slightly kinked; tangency makes the centres and t collinear.
+    let mut doc = Document::new();
+    let c1 = doc.add_point(v(0.0, 0.0));
+    let s1 = doc.add_point(v(5.0, 0.0));
+    let t = doc.add_point(v(0.0, 5.0));
+    let a1 = doc.add_arc(c1, s1, t).unwrap();
+    let c2 = doc.add_point(v(0.5, 8.0));
+    let e2 = doc.add_point(v(-3.0, 8.0));
+    let a2 = doc.add_arc(c2, t, e2).unwrap();
+    doc.add_constraint(Constraint::Tangent { a: a1, b: a2 })
+        .unwrap();
+    assert!(solved(&mut doc).converged);
+    let p = |id| doc.point(id).unwrap();
+    let (u, w) = (p(c1) - p(t), p(c2) - p(t));
+    assert!(u.perp_dot(w).abs() < 1e-9 * u.length() * w.length());
+}

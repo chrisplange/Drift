@@ -6,7 +6,7 @@
 //! ```json
 //! {
 //!   "format": "drift",
-//!   "version": 3,
+//!   "version": 4,
 //!   "meta": {"title":"Bracket","units":"mm","generator":"Drift 0.1.0"},
 //!   "entities": [
 //!     {"type":"point","id":"e1","at":[0.0,0.0]},
@@ -36,8 +36,10 @@ pub const EXTENSION: &str = "drift";
 /// The version this build writes. Files with a higher version are rejected.
 ///
 /// History: 1 = entities only (M1); 2 = adds `constraints` (M2); 3 = adds diameter,
-/// horizontal/vertical and point–line distances, and dimension `label` offsets (M3).
-pub const FORMAT_VERSION: u32 = 3;
+/// horizontal/vertical and point–line distances, and dimension `label` offsets (M3);
+/// 4 = adds tangent, concentric, coradial, collinear, point-on-curve and symmetric relations,
+/// and `driven` dimensions (M4).
+pub const FORMAT_VERSION: u32 = 4;
 const FORMAT_TAG: &str = "drift";
 
 /// Document-level properties stored alongside the geometry.
@@ -206,13 +208,22 @@ struct ConstraintRecord {
     /// Dimension label offset from its anchor, in mm.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     label: Option<[f64; 2]>,
+    /// A driven (reference) dimension: shown but not enforced.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    driven: bool,
 }
 
-fn constraint_record(id: ConstraintId, c: &Constraint, label: Option<DVec2>) -> ConstraintRecord {
+fn constraint_record(
+    id: ConstraintId,
+    c: &Constraint,
+    label: Option<DVec2>,
+    driven: bool,
+) -> ConstraintRecord {
     let s = |e: EntityId| Some(id_string(e));
     let mut r = ConstraintRecord {
         id: id.to_string(),
         label: label.map(|l| l.to_array()),
+        driven,
         ..Default::default()
     };
     let kind = match *c {
@@ -247,6 +258,30 @@ fn constraint_record(id: ConstraintId, c: &Constraint, label: Option<DVec2>) -> 
         Constraint::Equal { a, b } => {
             (r.a, r.b) = (s(a), s(b));
             "equal"
+        }
+        Constraint::Tangent { a, b } => {
+            (r.a, r.b) = (s(a), s(b));
+            "tangent"
+        }
+        Constraint::Concentric { a, b } => {
+            (r.a, r.b) = (s(a), s(b));
+            "concentric"
+        }
+        Constraint::Coradial { a, b } => {
+            (r.a, r.b) = (s(a), s(b));
+            "coradial"
+        }
+        Constraint::Collinear { a, b } => {
+            (r.a, r.b) = (s(a), s(b));
+            "collinear"
+        }
+        Constraint::PointOnCurve { point, curve } => {
+            (r.point, r.curve) = (s(point), s(curve));
+            "point_on_curve"
+        }
+        Constraint::Symmetric { a, b, axis } => {
+            (r.a, r.b, r.line) = (s(a), s(b), s(axis));
+            "symmetric"
         }
         Constraint::Midpoint { point, line } => {
             (r.line, r.point) = (s(line), s(point));
@@ -301,8 +336,8 @@ fn parse_constraint_id(s: &str) -> Result<ConstraintId, LoadError> {
         .ok_or_else(|| LoadError::BadId(s.to_owned()))
 }
 
-/// A parsed constraint and its label offset, if any.
-type ParsedConstraint = (ConstraintId, Constraint, Option<DVec2>);
+/// A parsed constraint, its label offset (if any) and whether it is driven.
+type ParsedConstraint = (ConstraintId, Constraint, Option<DVec2>, bool);
 
 fn parse_constraint(r: ConstraintRecord) -> Result<ParsedConstraint, LoadError> {
     let missing = |field: &'static str| LoadError::MissingField {
@@ -327,6 +362,19 @@ fn parse_constraint(r: ConstraintRecord) -> Result<ParsedConstraint, LoadError> 
         "parallel" => Constraint::Parallel { a: a()?, b: b()? },
         "perpendicular" => Constraint::Perpendicular { a: a()?, b: b()? },
         "equal" => Constraint::Equal { a: a()?, b: b()? },
+        "tangent" => Constraint::Tangent { a: a()?, b: b()? },
+        "concentric" => Constraint::Concentric { a: a()?, b: b()? },
+        "coradial" => Constraint::Coradial { a: a()?, b: b()? },
+        "collinear" => Constraint::Collinear { a: a()?, b: b()? },
+        "point_on_curve" => Constraint::PointOnCurve {
+            point: entity(&r.point, "point")?,
+            curve: entity(&r.curve, "curve")?,
+        },
+        "symmetric" => Constraint::Symmetric {
+            a: a()?,
+            b: b()?,
+            axis: entity(&r.line, "line")?,
+        },
         "midpoint" => Constraint::Midpoint {
             point: entity(&r.point, "point")?,
             line: entity(&r.line, "line")?,
@@ -378,7 +426,7 @@ fn parse_constraint(r: ConstraintRecord) -> Result<ParsedConstraint, LoadError> 
     if label.is_some_and(|l| !l.is_finite()) {
         return Err(LoadError::NonFinite(r.id));
     }
-    Ok((parse_constraint_id(&r.id)?, constraint, label))
+    Ok((parse_constraint_id(&r.id)?, constraint, label, r.driven))
 }
 
 #[derive(Debug, Deserialize)]
@@ -455,8 +503,13 @@ pub fn save(doc: &Document, meta: &Metadata) -> String {
     let constraints: Vec<String> = doc
         .constraints()
         .map(|(id, c)| {
-            serde_json::to_string(&constraint_record(id, c, doc.placement(id)))
-                .expect("constraint serializes")
+            serde_json::to_string(&constraint_record(
+                id,
+                c,
+                doc.placement(id),
+                doc.is_driven(id),
+            ))
+            .expect("constraint serializes")
         })
         .collect();
     push_array(&mut out, "entities", &entities, true);
@@ -569,8 +622,12 @@ pub fn load(text: &str) -> Result<(Document, Metadata), LoadError> {
     let mut constraints = Vec::with_capacity(file.constraints.len());
     let mut seen_constraints = std::collections::HashSet::new();
     let mut labels = Vec::new();
+    let mut driven = Vec::new();
     for rec in file.constraints {
-        let (id, c, label) = parse_constraint(rec)?;
+        let (id, c, label, is_driven) = parse_constraint(rec)?;
+        if is_driven {
+            driven.push(id);
+        }
         if !seen_constraints.insert(id) {
             return Err(LoadError::DuplicateId(id.to_string()));
         }
@@ -582,6 +639,9 @@ pub fn load(text: &str) -> Result<(Document, Metadata), LoadError> {
     let mut doc = Document::from_parts(entities, constraints).map_err(LoadError::Document)?;
     for (id, label) in labels {
         doc.set_placement(id, label).map_err(LoadError::Document)?;
+    }
+    for id in driven {
+        doc.set_driven(id, true).map_err(LoadError::Document)?;
     }
     Ok((doc, file.meta))
 }
@@ -604,7 +664,7 @@ pub fn migrate(value: serde_json::Value) -> Result<serde_json::Value, LoadError>
         // v1 → v2: constraints were introduced; a v1 file simply has none.
         value["constraints"] = serde_json::Value::Array(Vec::new());
     }
-    // v2 → v3 only added optional fields and constraint types: nothing to convert.
+    // v2 → v3 and v3 → v4 only added optional fields and constraint types: nothing to convert.
     value["version"] = FORMAT_VERSION.into();
     Ok(value)
 }
@@ -647,7 +707,7 @@ mod tests {
         let text = save(&doc, &Metadata::default());
         let expected = r#"{
   "format": "drift",
-  "version": 3,
+  "version": 4,
   "meta": {"units":"mm"},
   "entities": [
     {"type":"point","id":"e1","at":[0.0,0.0]},
@@ -747,17 +807,40 @@ mod tests {
                 value: 5.0,
             },
             Constraint::Midpoint { point: c, line: l3 },
+            Constraint::Tangent { a: l1, b: circle },
+            Constraint::Concentric {
+                a: circle,
+                b: circle2,
+            },
+            Constraint::Coradial {
+                a: circle,
+                b: circle2,
+            },
+            Constraint::Collinear { a: l1, b: l3 },
+            Constraint::PointOnCurve {
+                point: p[3],
+                curve: circle,
+            },
+            Constraint::Symmetric {
+                a: p[0],
+                b: p[3],
+                axis: l2,
+            },
         ] {
             let id = doc.add_constraint(constraint).unwrap();
             if constraint.is_dimension() {
                 doc.set_placement(id, DVec2::new(1.5, -2.25)).unwrap();
             }
+            if matches!(constraint, Constraint::Diameter { .. }) {
+                doc.set_driven(id, true).unwrap();
+            }
         }
         let text = save(&doc, &Metadata::default());
         let (loaded, _) = load(&text).unwrap();
         assert_eq!(loaded, doc);
-        assert_eq!(loaded.constraint_count(), 18);
+        assert_eq!(loaded.constraint_count(), 24);
         assert!(text.contains(r#""label":[1.5,-2.25]"#));
+        assert!(text.contains(r#""driven":true"#));
     }
 
     #[test]

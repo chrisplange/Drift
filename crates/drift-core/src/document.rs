@@ -142,6 +142,8 @@ enum Key {
     Entity(EntityId),
     Constraint(ConstraintId),
     Placement(ConstraintId),
+    /// Present (with `Record::Driven`) when the dimension is driven.
+    Driven(ConstraintId),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -149,6 +151,7 @@ enum Record {
     Entity(Entity),
     Constraint(Constraint),
     Placement(DVec2),
+    Driven,
 }
 
 /// One undoable step: the before and after state of everything it touched.
@@ -171,6 +174,8 @@ pub struct Document {
     /// Where dimension labels sit: an offset in world units from the dimension's anchor
     /// (e.g. the midpoint of a measured line). Missing means "default placement".
     placements: BTreeMap<ConstraintId, DVec2>,
+    /// Driven (reference) dimensions: they show a measurement but don't constrain.
+    driven: BTreeSet<ConstraintId>,
     next_id: u32,
     next_constraint_id: u32,
     /// Incremented on every change, so caches (spatial index, autosave) can tell when to refresh.
@@ -184,6 +189,7 @@ impl PartialEq for Document {
         self.entities == other.entities
             && self.constraints == other.constraints
             && self.placements == other.placements
+            && self.driven == other.driven
     }
 }
 
@@ -193,6 +199,7 @@ impl Default for Document {
             entities: BTreeMap::new(),
             constraints: BTreeMap::new(),
             placements: BTreeMap::new(),
+            driven: BTreeSet::new(),
             // Ids start at 1; `e0` and `c0` are not valid ids in `.drift` files.
             next_id: 1,
             next_constraint_id: 1,
@@ -365,6 +372,7 @@ impl Document {
             Key::Entity(id) => self.entities.get(&id).copied().map(Record::Entity),
             Key::Constraint(id) => self.constraints.get(&id).copied().map(Record::Constraint),
             Key::Placement(id) => self.placements.get(&id).copied().map(Record::Placement),
+            Key::Driven(id) => self.driven.contains(&id).then_some(Record::Driven),
         }
     }
 
@@ -405,6 +413,12 @@ impl Document {
             }
             (Key::Placement(id), _) => {
                 self.placements.remove(&id);
+            }
+            (Key::Driven(id), Some(_)) => {
+                self.driven.insert(id);
+            }
+            (Key::Driven(id), None) => {
+                self.driven.remove(&id);
             }
         }
     }
@@ -713,6 +727,27 @@ impl Document {
             }
             kinds.push(kind);
         }
+        // A curve's own defining point can't be constrained onto it; tangency needs at least
+        // one circular curve (enforced by the slot) and is meaningless between a curve and
+        // itself (caught by `is_degenerate`).
+        if let Constraint::PointOnCurve { point, curve } = constraint
+            && self
+                .entities
+                .get(curve)
+                .is_some_and(|e| e.kind.points().any(|p| p == *point))
+        {
+            return Err(DocumentError::Degenerate("point on its own curve"));
+        }
+        if let Constraint::Symmetric { a, b, axis } = constraint
+            && self
+                .entities
+                .get(axis)
+                .is_some_and(|e| e.kind.points().any(|p| p == *a || p == *b))
+        {
+            return Err(DocumentError::Degenerate(
+                "symmetric about a line through the points",
+            ));
+        }
         // A line's own end point can't sit at its midpoint.
         if let Constraint::Midpoint { point, .. } = constraint
             && let EntityKind::Line { a, b } = kinds[1]
@@ -773,6 +808,35 @@ impl Document {
             self.touch_key(Key::Placement(id));
             self.placements.remove(&id);
         }
+        if self.driven.contains(&id) {
+            self.touch_key(Key::Driven(id));
+            self.driven.remove(&id);
+        }
+    }
+
+    /// Whether a dimension is driven (a reference that reports but doesn't constrain).
+    pub fn is_driven(&self, id: ConstraintId) -> bool {
+        self.driven.contains(&id)
+    }
+
+    /// Make a dimension driven or driving. Only dimensions can be driven.
+    pub fn set_driven(&mut self, id: ConstraintId, driven: bool) -> Result<(), DocumentError> {
+        let constraint = self
+            .constraints
+            .get(&id)
+            .ok_or(DocumentError::MissingConstraint(id))?;
+        if driven && !constraint.is_dimension() {
+            return Err(DocumentError::InvalidValue);
+        }
+        if self.driven.contains(&id) != driven {
+            self.touch_key(Key::Driven(id));
+            if driven {
+                self.driven.insert(id);
+            } else {
+                self.driven.remove(&id);
+            }
+        }
+        Ok(())
     }
 
     /// Where a dimension's label sits, as an offset from its anchor (see [`Document`]).

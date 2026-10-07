@@ -35,6 +35,8 @@ pub struct AnnotationColors {
     pub selected: Color32,
     pub conflict: Color32,
     pub preview: Color32,
+    /// Driven (reference) dimensions.
+    pub driven: Color32,
     pub text_background: Color32,
     pub glyph_background: Color32,
 }
@@ -48,6 +50,7 @@ impl AnnotationColors {
                 selected: Color32::from_rgb(0xf5, 0xa6, 0x23),
                 conflict: Color32::from_rgb(0xff, 0x5d, 0x5d),
                 preview: Color32::from_rgb(0x5e, 0xd3, 0xa3),
+                driven: Color32::from_rgb(0x8a, 0x90, 0x99),
                 text_background: Color32::from_rgb(0x1b, 0x1d, 0x21),
                 glyph_background: Color32::from_rgb(0x2a, 0x2e, 0x35),
             }
@@ -58,6 +61,7 @@ impl AnnotationColors {
                 selected: Color32::from_rgb(0xe0, 0x86, 0x00),
                 conflict: Color32::from_rgb(0xd3, 0x2f, 0x2f),
                 preview: Color32::from_rgb(0x13, 0x9a, 0x6a),
+                driven: Color32::from_rgb(0x7a, 0x80, 0x88),
                 text_background: Color32::from_rgb(0xfb, 0xfb, 0xfa),
                 glyph_background: Color32::from_rgb(0xe8, 0xea, 0xee),
             }
@@ -204,6 +208,8 @@ pub struct DimLayout {
     pub text_pos: Pos2,
     pub text_rect: Rect,
     pub shape: DimShape,
+    /// A driven (reference) dimension: drawn grey, its value in parentheses.
+    pub driven: bool,
 }
 
 /// The text a dimension shows.
@@ -233,7 +239,8 @@ fn dir(a: Pos2, b: Pos2) -> Vec2 {
     }
 }
 
-/// Lay out a dimension. `placement` is the label offset from the anchor (world units).
+/// Lay out a dimension. `placement` is the label offset from the anchor (world units). A
+/// driven dimension shows the geometry's current measurement in parentheses.
 pub fn layout_dimension(
     painter: &egui::Painter,
     doc: &Document,
@@ -322,7 +329,15 @@ pub fn layout_dimension(
         }
         _ => return None,
     };
-    let text = dimension_text(c);
+    let driven = id.is_some_and(|id| doc.is_driven(id));
+    let text = if driven {
+        let measured = drift_solver::measure(doc, c)
+            .map(|v| c.with_value(v))
+            .unwrap_or(*c);
+        format!("({})", dimension_text(&measured))
+    } else {
+        dimension_text(c)
+    };
     let galley = painter.layout_no_wrap(text.clone(), FontId::proportional(13.0), Color32::WHITE);
     let text_rect = Rect::from_center_size(text_pos, galley.size()).expand2(vec2(3.0, 1.0));
     Some(DimLayout {
@@ -333,6 +348,7 @@ pub fn layout_dimension(
         text_pos,
         text_rect,
         shape,
+        driven,
     })
 }
 
@@ -358,7 +374,11 @@ pub fn paint_dimension(
     state: AnnotationState,
     colors: &AnnotationColors,
 ) {
-    let color = colors.color(state);
+    let color = if dim.driven && state == AnnotationState::Normal {
+        colors.driven
+    } else {
+        colors.color(state)
+    };
     let stroke = Stroke::new(1.0, color);
     match &dim.shape {
         DimShape::Linear { p, d } => {
@@ -465,6 +485,12 @@ pub enum GlyphKind {
     Fix,
     Coincident,
     Midpoint,
+    Tangent,
+    Concentric,
+    Coradial,
+    Collinear,
+    OnCurve,
+    Symmetric,
 }
 
 #[derive(Clone, Debug)]
@@ -526,10 +552,18 @@ pub fn layout_glyphs(doc: &Document, map: &ScreenMap) -> Vec<GlyphLayout> {
             }
             Constraint::Parallel { a, b }
             | Constraint::Perpendicular { a, b }
-            | Constraint::Equal { a, b } => {
+            | Constraint::Equal { a, b }
+            | Constraint::Tangent { a, b }
+            | Constraint::Concentric { a, b }
+            | Constraint::Coradial { a, b }
+            | Constraint::Collinear { a, b } => {
                 let kind = match c {
                     Constraint::Parallel { .. } => Parallel,
                     Constraint::Perpendicular { .. } => Perpendicular,
+                    Constraint::Tangent { .. } => Tangent,
+                    Constraint::Concentric { .. } => Concentric,
+                    Constraint::Coradial { .. } => Coradial,
+                    Constraint::Collinear { .. } => Collinear,
                     _ => Equal,
                 };
                 for e in [a, b] {
@@ -557,6 +591,12 @@ pub fn layout_glyphs(doc: &Document, map: &ScreenMap) -> Vec<GlyphLayout> {
             Constraint::Coincident { a, .. } => place(a, point_base(a), id, Coincident, &mut out),
             Constraint::Midpoint { point, .. } => {
                 place(point, point_base(point), id, Midpoint, &mut out)
+            }
+            Constraint::PointOnCurve { point, .. } => {
+                place(point, point_base(point), id, OnCurve, &mut out)
+            }
+            Constraint::Symmetric { axis, .. } => {
+                place(axis, line_base(axis), id, Symmetric, &mut out)
             }
             _ => {}
         }
@@ -617,6 +657,38 @@ pub fn paint_glyph(
                 color,
                 Stroke::NONE,
             ));
+        }
+        GlyphKind::Tangent => {
+            painter.circle_stroke(c + vec2(0.0, 1.2), 3.3, s);
+            line((-5.0, -2.1), (5.0, -2.1));
+        }
+        GlyphKind::Concentric => {
+            painter.circle_stroke(c, 4.6, s);
+            painter.circle_stroke(c, 2.0, s);
+        }
+        GlyphKind::Coradial => {
+            painter.circle_stroke(c, 4.6, s);
+            line((0.0, 0.0), (3.3, -3.3));
+            painter.circle_filled(c, 1.1, color);
+        }
+        GlyphKind::Collinear => {
+            line((-5.0, 3.5), (-1.2, 0.8));
+            line((1.2, -0.8), (5.0, -3.5));
+        }
+        GlyphKind::OnCurve => {
+            let arc: Vec<Pos2> = (0..=8)
+                .map(|k| {
+                    let a = (200.0 + 140.0 * k as f32 / 8.0).to_radians();
+                    c + vec2(0.0, 5.5) + vec2(a.cos(), a.sin()) * 6.0
+                })
+                .collect();
+            painter.add(egui::Shape::line(arc, s));
+            painter.circle_filled(c + vec2(0.0, -0.5), 1.8, color);
+        }
+        GlyphKind::Symmetric => {
+            line((0.0, -5.0), (0.0, 5.0));
+            line((-4.5, -2.5), (-4.5, 2.5));
+            line((4.5, -2.5), (4.5, 2.5));
         }
     }
 }

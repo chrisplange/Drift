@@ -19,12 +19,7 @@ impl DriftApp {
         self.tool = ToolKind::Select.create();
         let revision = doc.revision();
         self.editor = Editor::new(doc);
-        let bounds = self.editor.bounds();
-        self.fit_target = Some(if bounds.is_empty() {
-            EMPTY_VIEW
-        } else {
-            bounds
-        });
+        self.fit_target = Some(self.fit_bounds());
         self.file = FileState {
             name,
             path,

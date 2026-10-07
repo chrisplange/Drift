@@ -82,12 +82,17 @@ impl DriftApp {
         if pressed(Key::X) && !x_claimed {
             self.editor.toggle_construction();
         }
+        if pressed(Key::W) {
+            self.thin_lines = !self.thin_lines;
+        }
         if pressed(Key::F) {
             self.fit_target = Some(self.fit_bounds());
         }
-        let requested = ToolKind::ALL
-            .into_iter()
-            .find(|kind| Key::from_name(&kind.shortcut().to_string()).is_some_and(pressed));
+        let requested = ToolKind::ALL.into_iter().find(|kind| {
+            kind.shortcut()
+                .and_then(|c| Key::from_name(&c.to_string()))
+                .is_some_and(pressed)
+        });
         if let Some(mut kind) = requested {
             let current = self.tool.kind();
             if kind == ToolKind::Arc {
@@ -223,8 +228,27 @@ impl DriftApp {
         self.tool.set_typed(values);
     }
 
+    /// What zoom-to-fit frames: the geometry plus placed dimension labels (with a little room
+    /// for the label text).
     pub(crate) fn fit_bounds(&self) -> Bounds {
-        let b = self.editor.bounds();
-        if b.is_empty() { EMPTY_VIEW } else { b }
+        let mut b = self.editor.bounds();
+        if b.is_empty() {
+            return EMPTY_VIEW;
+        }
+        if self.show_dimensions {
+            let doc = &self.editor.doc;
+            let pad = 0.04 * (b.max - b.min).max_element();
+            for (id, c) in doc.constraints() {
+                if let (Some(anchor), Some(offset)) = (
+                    crate::annotations::dimension_anchor(doc, c),
+                    doc.placement(id),
+                ) {
+                    let at = anchor + offset;
+                    b.include(at - DVec2::splat(pad));
+                    b.include(at + DVec2::splat(pad));
+                }
+            }
+        }
+        b
     }
 }

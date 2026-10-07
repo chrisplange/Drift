@@ -41,6 +41,7 @@ fn main() {
         pixels_per_point: 2.0,
         srgb_target: false,
         imperial_grid: false,
+        thin_lines: false,
     };
     let bounds = items.iter().map(|i| i.shape.bounds()).collect();
     let mut camera = Camera::default();

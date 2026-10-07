@@ -8,6 +8,7 @@ pub mod constraint;
 pub mod demo;
 pub mod document;
 pub mod expr;
+pub mod layers;
 pub mod params;
 pub mod shape;
 pub mod units;
@@ -19,5 +20,6 @@ pub use document::{
     Variable, VariableId, Variant, VariantId, arc_shape, dimension_kind,
 };
 pub use glam::DVec2;
+pub use layers::{Appearance, Layer, LayerId, LineType, LineWeight, Rgb};
 pub use shape::{DofState, Emphasis, LineKind, Shape, SketchItem};
 pub use units::{Kind, LengthFormat, Quantity, Units};

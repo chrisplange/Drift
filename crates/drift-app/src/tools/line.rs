@@ -174,7 +174,7 @@ impl Tool for LineTool {
             });
             return;
         }
-        if p.snapped_point().is_some() {
+        if p.exact_snap().is_some() {
             return;
         }
         let at = p.pos();

@@ -67,6 +67,9 @@ impl SceneIndex {
 
         let mut entries = Vec::with_capacity(doc.len());
         for (id, entity) in doc.iter() {
+            if !doc.is_visible(id) {
+                continue;
+            }
             let Some(shape) = doc.shape(id) else { continue };
             let b = shape.bounds();
             entries.push(Entry {

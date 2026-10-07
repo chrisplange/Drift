@@ -7,6 +7,8 @@ mod annotations;
 mod app;
 mod canvas;
 pub mod editor;
+mod layers_ui;
+pub mod modify;
 mod overlay;
 mod parameters;
 pub mod tools;
@@ -182,6 +184,15 @@ pub struct DriftApp {
     inference_points: Vec<DVec2>,
     /// The Parameters tab's state.
     params: parameters::ParamUi,
+    /// The pattern fields in the properties panel.
+    patterns: app::patterns::PatternUi,
+    /// Draw every curve one pixel wide (Revit's thin lines).
+    thin_lines: bool,
+    /// Colour geometry by constraint status (under / fully defined) rather than by layer.
+    status_colors: bool,
+    /// Layer names being edited in the Layers tab.
+    layer_names: std::collections::HashMap<drift_core::LayerId, String>,
+    new_layer_name: String,
 }
 
 impl DriftApp {
@@ -233,6 +244,11 @@ impl DriftApp {
             typing: None,
             inference_points: Vec::new(),
             params: Default::default(),
+            patterns: Default::default(),
+            thin_lines: false,
+            status_colors: true,
+            layer_names: Default::default(),
+            new_layer_name: String::new(),
         };
         if let Some(storage) = cc.storage {
             app.restore_session(storage);
@@ -322,6 +338,24 @@ const SHORTCUTS: &[(&str, &str)] = &[
     ("P", "Point"),
     ("D", "Smart Dimension"),
     (
+        "T",
+        "Trim: click a piece to remove it, or drag across pieces",
+    ),
+    ("E", "Extend a line or arc end to the next curve"),
+    (
+        "O",
+        "Offset: click a curve (and its chain), then the side; type the distance",
+    ),
+    ("M", "Mirror the selection: click the line to mirror about"),
+    (
+        "Split, Fillet, Chamfer",
+        "Toolbar: split a curve; round / cut a two-line corner (type the size)",
+    ),
+    (
+        "Click inside a closed area",
+        "Select the region: area, perimeter and centroid in Properties",
+    ),
+    (
         "Click near a line's middle",
         "Pick its midpoint (e.g. point + midpoint -> Midpoint)",
     ),
@@ -356,6 +390,7 @@ const SHORTCUTS: &[(&str, &str)] = &[
     ("Ctrl+O", "Open"),
     ("F / double middle-click", "Zoom to fit"),
     ("Shift+G", "Toggle grid snapping"),
+    ("W", "Thin lines: draw every line one pixel wide"),
     (
         "G (with a selection)",
         "Move it: X / Y lock an axis, type dX Tab dY (or a distance), B picks the base point, \

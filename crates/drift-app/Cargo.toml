@@ -17,6 +17,7 @@ drift-solver.workspace = true
 eframe.workspace = true
 glam.workspace = true
 log.workspace = true
+lyon_tessellation.workspace = true
 web-time = "1"
 
 [lints]

@@ -10,6 +10,7 @@ use std::f64::consts::TAU;
 use glam::DVec2;
 
 use crate::constraint::Slot;
+use crate::layers::{Appearance, Layer, LayerId};
 use crate::units::{Kind, Units};
 use crate::{Constraint, ConstraintId, LineKind, Shape};
 
@@ -138,7 +139,11 @@ impl std::fmt::Display for MeasurementId {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Entity {
     pub kind: EntityKind,
+    /// Geometry, construction (reference) or centre line.
     pub style: LineKind,
+    pub layer: LayerId,
+    /// Colour / weight / line type overrides (by layer when unset).
+    pub appearance: Appearance,
 }
 
 impl Entity {
@@ -146,6 +151,8 @@ impl Entity {
         Self {
             kind,
             style: LineKind::Solid,
+            layer: LayerId::DEFAULT,
+            appearance: Appearance::default(),
         }
     }
 }
@@ -169,6 +176,7 @@ pub enum DocumentError {
     /// A variable still used by expressions (their owners are listed).
     InUse(String),
     MissingVariant(VariantId),
+    MissingLayer(LayerId),
 }
 
 impl std::fmt::Display for DocumentError {
@@ -186,6 +194,7 @@ impl std::fmt::Display for DocumentError {
             DocumentError::BadName(why) => f.write_str(why),
             DocumentError::InUse(by) => write!(f, "still used by {by}"),
             DocumentError::MissingVariant(id) => write!(f, "variant {id} does not exist"),
+            DocumentError::MissingLayer(id) => write!(f, "layer {id} does not exist"),
         }
     }
 }
@@ -206,6 +215,8 @@ enum Key {
     Variant(VariantId),
     Measurement(MeasurementId),
     Units,
+    Layer(LayerId),
+    CurrentLayer,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -219,6 +230,8 @@ enum Record {
     Variant(Variant),
     Measurement(Constraint),
     Units(Units),
+    Layer(Layer),
+    CurrentLayer(LayerId),
 }
 
 /// One undoable step: the before and after state of everything it touched.
@@ -250,6 +263,9 @@ pub struct Document {
     /// Pinned measurements: dimension definitions that are only measured, never solved.
     measurements: BTreeMap<MeasurementId, Constraint>,
     units: Units,
+    layers: BTreeMap<LayerId, Layer>,
+    /// The layer new geometry goes on.
+    current_layer: LayerId,
     next_id: u32,
     next_constraint_id: u32,
     /// Next id for variables, variants and measurements (one counter, ids never reused).
@@ -271,6 +287,8 @@ impl PartialEq for Document {
             && self.variants == other.variants
             && self.measurements == other.measurements
             && self.units == other.units
+            && self.layers == other.layers
+            && self.current_layer == other.current_layer
     }
 }
 
@@ -286,6 +304,8 @@ impl Default for Document {
             variants: BTreeMap::new(),
             measurements: BTreeMap::new(),
             units: Units::default(),
+            layers: BTreeMap::from([(LayerId::DEFAULT, Layer::new("0"))]),
+            current_layer: LayerId::DEFAULT,
             // Ids start at 1; `e0` and `c0` are not valid ids in `.drift` files.
             next_id: 1,
             next_constraint_id: 1,
@@ -465,6 +485,8 @@ impl Document {
             Key::Variant(id) => self.variants.get(&id).cloned().map(Record::Variant),
             Key::Measurement(id) => self.measurements.get(&id).copied().map(Record::Measurement),
             Key::Units => Some(Record::Units(self.units)),
+            Key::Layer(id) => self.layers.get(&id).cloned().map(Record::Layer),
+            Key::CurrentLayer => Some(Record::CurrentLayer(self.current_layer)),
         }
     }
 
@@ -538,6 +560,14 @@ impl Document {
             }
             (Key::Units, Some(Record::Units(u))) => self.units = u,
             (Key::Units, _) => {}
+            (Key::Layer(id), Some(Record::Layer(l))) => {
+                self.layers.insert(id, l);
+            }
+            (Key::Layer(id), _) => {
+                self.layers.remove(&id);
+            }
+            (Key::CurrentLayer, Some(Record::CurrentLayer(l))) => self.current_layer = l,
+            (Key::CurrentLayer, _) => {}
         }
     }
 
@@ -557,7 +587,8 @@ impl Document {
 
     // ----- Edits -----------------------------------------------------------------------------
 
-    fn insert(&mut self, entity: Entity) -> EntityId {
+    fn insert(&mut self, mut entity: Entity) -> EntityId {
+        entity.layer = self.current_layer;
         let id = EntityId(self.next_id);
         self.next_id += 1;
         self.touch(id);
@@ -640,6 +671,61 @@ impl Document {
                 expected: "a circle",
             }),
             None => Err(DocumentError::Missing(id)),
+        }
+    }
+
+    /// Change what an entity is (e.g. move a line's end to another point, or turn a circle
+    /// into an arc), keeping its id so relations on it stay. Validated like adding it.
+    pub fn set_entity_kind(&mut self, id: EntityId, kind: EntityKind) -> Result<(), DocumentError> {
+        let current = self.entities.get(&id).ok_or(DocumentError::Missing(id))?;
+        if current.kind.is_point() != kind.is_point() {
+            return Err(DocumentError::WrongKind {
+                id,
+                expected: if kind.is_point() {
+                    "a point"
+                } else {
+                    "a curve"
+                },
+            });
+        }
+        match kind {
+            EntityKind::Point(p) if !p.is_finite() => return Err(DocumentError::InvalidValue),
+            EntityKind::Line { a, b } => {
+                if a == b || self.point(a)? == self.point(b)? {
+                    return Err(DocumentError::Degenerate("line"));
+                }
+            }
+            EntityKind::Circle { center, radius } => {
+                self.point(center)?;
+                if !(radius > 0.0 && radius.is_finite()) {
+                    return Err(DocumentError::Degenerate("circle"));
+                }
+            }
+            EntityKind::Arc { center, start, end } => {
+                let (c, s, e) = (self.point(center)?, self.point(start)?, self.point(end)?);
+                if start == end || center == start || center == end || s == c || e == c || s == e {
+                    return Err(DocumentError::Degenerate("arc"));
+                }
+            }
+            EntityKind::Point(_) => {}
+        }
+        if self.entities[&id].kind != kind {
+            self.touch(id);
+            if let Some(e) = self.entities.get_mut(&id) {
+                e.kind = kind;
+            }
+            if matches!(kind, EntityKind::Arc { .. }) {
+                self.normalize_arc(id);
+            }
+        }
+        Ok(())
+    }
+
+    /// Remove points no curve uses and no constraint refers to beyond themselves (cleanup
+    /// after trimming moves a curve's end to a new point).
+    pub fn remove_if_orphaned(&mut self, point: EntityId) {
+        if self.point(point).is_ok() && self.users_of(point).next().is_none() {
+            self.delete([point]);
         }
     }
 
@@ -1008,6 +1094,163 @@ impl Document {
         Ok(())
     }
 
+    // ----- Layers ----------------------------------------------------------------------------
+
+    /// All layers in id order (layer "0" first).
+    pub fn layers(&self) -> impl Iterator<Item = (LayerId, &Layer)> {
+        self.layers.iter().map(|(id, l)| (*id, l))
+    }
+
+    pub fn layer(&self, id: LayerId) -> Option<&Layer> {
+        self.layers.get(&id)
+    }
+
+    /// The layer an entity is on (layer "0" if its layer is missing).
+    pub fn layer_of(&self, entity: EntityId) -> &Layer {
+        let id = self
+            .entities
+            .get(&entity)
+            .map_or(LayerId::DEFAULT, |e| e.layer);
+        self.layers
+            .get(&id)
+            .or_else(|| self.layers.get(&LayerId::DEFAULT))
+            .expect("layer 0 exists")
+    }
+
+    pub fn add_layer(&mut self, layer: Layer) -> LayerId {
+        let id = LayerId(self.next_param());
+        self.touch_key(Key::Layer(id));
+        self.layers.insert(id, layer);
+        id
+    }
+
+    /// Add or replace a layer with a given id (when loading, or editing its settings).
+    pub fn set_layer(&mut self, id: LayerId, layer: Layer) {
+        self.reserve_param(id.0);
+        if self.layers.get(&id) != Some(&layer) {
+            self.touch_key(Key::Layer(id));
+            self.layers.insert(id, layer);
+        }
+    }
+
+    /// Delete a layer, moving its entities to layer "0". Layer "0" can't be deleted.
+    pub fn remove_layer(&mut self, id: LayerId) -> Result<(), DocumentError> {
+        if id == LayerId::DEFAULT {
+            return Err(DocumentError::BadName("layer 0 can't be deleted".into()));
+        }
+        if !self.layers.contains_key(&id) {
+            return Err(DocumentError::MissingLayer(id));
+        }
+        let on: Vec<EntityId> = self
+            .entities
+            .iter()
+            .filter(|(_, e)| e.layer == id)
+            .map(|(eid, _)| *eid)
+            .collect();
+        for e in on {
+            self.touch(e);
+            if let Some(x) = self.entities.get_mut(&e) {
+                x.layer = LayerId::DEFAULT;
+            }
+        }
+        if self.current_layer == id {
+            self.set_current_layer(LayerId::DEFAULT)?;
+        }
+        self.touch_key(Key::Layer(id));
+        self.layers.remove(&id);
+        Ok(())
+    }
+
+    pub fn current_layer(&self) -> LayerId {
+        self.current_layer
+    }
+
+    pub fn set_current_layer(&mut self, id: LayerId) -> Result<(), DocumentError> {
+        if !self.layers.contains_key(&id) {
+            return Err(DocumentError::MissingLayer(id));
+        }
+        if self.current_layer != id {
+            self.touch_key(Key::CurrentLayer);
+            self.current_layer = id;
+        }
+        Ok(())
+    }
+
+    /// Move an entity to a layer.
+    pub fn set_entity_layer(&mut self, id: EntityId, layer: LayerId) -> Result<(), DocumentError> {
+        if !self.layers.contains_key(&layer) {
+            return Err(DocumentError::MissingLayer(layer));
+        }
+        let e = self.entities.get(&id).ok_or(DocumentError::Missing(id))?;
+        if e.layer != layer {
+            self.touch(id);
+            if let Some(x) = self.entities.get_mut(&id) {
+                x.layer = layer;
+            }
+        }
+        Ok(())
+    }
+
+    /// Set an entity's appearance overrides.
+    pub fn set_appearance(
+        &mut self,
+        id: EntityId,
+        appearance: Appearance,
+    ) -> Result<(), DocumentError> {
+        let e = self.entities.get(&id).ok_or(DocumentError::Missing(id))?;
+        if e.appearance != appearance {
+            self.touch(id);
+            if let Some(x) = self.entities.get_mut(&id) {
+                x.appearance = appearance;
+            }
+        }
+        Ok(())
+    }
+
+    /// Give `to` the same line role, layer and appearance as `from` (for copies made by modify
+    /// tools).
+    pub fn copy_look(&mut self, from: EntityId, to: EntityId) {
+        let Some(src) = self.entities.get(&from).copied() else {
+            return;
+        };
+        if let Some(dst) = self.entities.get(&to).copied()
+            && (dst.style, dst.layer, dst.appearance) != (src.style, src.layer, src.appearance)
+        {
+            self.touch(to);
+            if let Some(x) = self.entities.get_mut(&to) {
+                x.style = src.style;
+                x.layer = src.layer;
+                x.appearance = src.appearance;
+            }
+        }
+    }
+
+    /// Entities on a locked layer, and the points they use (for the solver to keep fixed).
+    pub fn locked_entities(&self) -> BTreeSet<EntityId> {
+        let locked: BTreeSet<LayerId> = self
+            .layers
+            .iter()
+            .filter(|(_, l)| l.locked)
+            .map(|(id, _)| *id)
+            .collect();
+        if locked.is_empty() {
+            return BTreeSet::new();
+        }
+        let mut out = BTreeSet::new();
+        for (id, e) in &self.entities {
+            if locked.contains(&e.layer) {
+                out.insert(*id);
+                out.extend(e.kind.points());
+            }
+        }
+        out
+    }
+
+    /// True if the entity's layer is visible.
+    pub fn is_visible(&self, id: EntityId) -> bool {
+        self.layer_of(id).visible
+    }
+
     // ----- Parameters: units, variables, expressions, variants, measurements -----------------
 
     /// Every journal key with content in this document.
@@ -1022,6 +1265,8 @@ impl Document {
         keys.extend(self.variants.keys().map(|id| Key::Variant(*id)));
         keys.extend(self.measurements.keys().map(|id| Key::Measurement(*id)));
         keys.push(Key::Units);
+        keys.extend(self.layers.keys().map(|id| Key::Layer(*id)));
+        keys.push(Key::CurrentLayer);
         keys
     }
 

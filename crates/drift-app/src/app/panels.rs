@@ -103,6 +103,10 @@ impl DriftApp {
                 }
                 ui.checkbox(&mut self.grid_snap, "Snap to grid (Shift+G)");
                 ui.checkbox(&mut self.auto_relations, "Automatic relations");
+                ui.checkbox(&mut self.thin_lines, "Thin lines (W)")
+                    .on_hover_text("Draw every line one pixel wide, whatever its weight");
+                ui.checkbox(&mut self.status_colors, "Constraint status colours")
+                    .on_hover_text("Off: show layer colours");
                 ui.checkbox(&mut self.show_dimensions, "Show dimensions");
                 ui.checkbox(&mut self.show_relations, "Show relations");
                 ui.checkbox(&mut self.params.show_free, "Show free directions")
@@ -128,22 +132,44 @@ impl DriftApp {
     }
 
     pub(crate) fn toolbar(&mut self, ui: &mut egui::Ui, wide: bool) {
-        ui.add_space(6.0);
-        for kind in ToolKind::ALL {
-            let selected = self.tool.kind() == kind;
-            let (label, width) = if wide {
-                (format!("{}  {}", kind.label(), kind.shortcut()), 96.0)
-            } else {
-                (kind.label().to_owned(), 68.0)
-            };
-            if ui
-                .add_sized([width, 26.0], egui::Button::selectable(selected, label))
-                .on_hover_text(format!("{} ({})", kind.label(), kind.shortcut()))
-                .clicked()
-            {
-                self.switch_tool(kind);
-            }
-        }
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.add_space(6.0);
+                let mut group = 0;
+                for kind in ToolKind::ALL {
+                    if kind.group() != group {
+                        group = kind.group();
+                        ui.add_space(4.0);
+                        ui.label(
+                            egui::RichText::new(if group == 1 { "Annotate" } else { "Modify" })
+                                .small()
+                                .weak(),
+                        );
+                    }
+                    let selected = self.tool.kind() == kind;
+                    let (label, width) = if wide {
+                        let label = match kind.shortcut() {
+                            Some(c) => format!("{}  {c}", kind.label()),
+                            None => kind.label().to_owned(),
+                        };
+                        (label, 96.0)
+                    } else {
+                        (kind.label().to_owned(), 68.0)
+                    };
+                    let hover = match kind.shortcut() {
+                        Some(c) => format!("{} ({c})", kind.label()),
+                        None => kind.label().to_owned(),
+                    };
+                    if ui
+                        .add_sized([width, 24.0], egui::Button::selectable(selected, label))
+                        .on_hover_text(hover)
+                        .clicked()
+                    {
+                        self.switch_tool(kind);
+                    }
+                }
+            });
     }
 
     pub(crate) fn properties(&mut self, ui: &mut egui::Ui) {
@@ -153,8 +179,9 @@ impl DriftApp {
             for (tab, label) in [
                 (RightTab::Properties, "Properties"),
                 (RightTab::Parameters, "Parameters"),
+                (RightTab::Layers, "Layers"),
             ] {
-                let text = egui::RichText::new(label).heading();
+                let text = egui::RichText::new(label).strong().size(15.0);
                 if ui
                     .add(egui::Button::selectable(self.params.tab == tab, text).frame(false))
                     .clicked()
@@ -168,6 +195,34 @@ impl DriftApp {
             let now = ui.input(|i| i.time);
             self.parameters_panel(ui, now);
             return;
+        }
+        if self.params.tab == parameters::RightTab::Layers {
+            let now = ui.input(|i| i.time);
+            self.layers_panel(ui, now);
+            return;
+        }
+        if let Some(region) = self.editor.region() {
+            let units = self.editor.doc.units();
+            ui.strong("Region");
+            egui::Grid::new("region").num_columns(2).show(ui, |ui| {
+                let mut row = |name: &str, value: String| {
+                    ui.label(name);
+                    ui.monospace(value);
+                    ui.end_row();
+                };
+                row("Area", units.format_area(region.area));
+                row("Perimeter", units.format_readout(region.perimeter));
+                row(
+                    "Centroid",
+                    format!(
+                        "{}, {}",
+                        units.format_readout(region.centroid.x),
+                        units.format_readout(region.centroid.y)
+                    ),
+                );
+                row("Holes", region.holes.len().to_string());
+            });
+            ui.add_space(8.0);
         }
         let ed = &self.editor;
         let selection: Vec<_> = ed.selection.iter().copied().collect();
@@ -186,6 +241,7 @@ impl DriftApp {
         }
         match selection.as_slice() {
             [] if !ed.selected_midpoints.is_empty() => {}
+            [] if ed.selected_region.is_some() => {}
             [] => {
                 ui.label(egui::RichText::new("Nothing selected").weak());
                 ui.add_space(8.0);
@@ -247,6 +303,7 @@ impl DriftApp {
             if let Some(style) = chosen {
                 self.set_selection_style(style);
             }
+            self.appearance_panel(ui);
         }
         if !selection.is_empty() {
             ui.add_space(10.0);
@@ -256,6 +313,8 @@ impl DriftApp {
         }
 
         self.constraint_buttons(ui);
+        let now = ui.input(|i| i.time);
+        self.pattern_panel(ui, now);
         self.constraint_list(ui);
     }
 
@@ -504,6 +563,8 @@ impl DriftApp {
             };
             ui.monospace(format!("Grid {grid}"));
             ui.toggle_value(&mut self.grid_snap, "Snap to grid");
+            ui.toggle_value(&mut self.thin_lines, "Thin")
+                .on_hover_text("Thin lines (W): every line one pixel wide");
             ui.separator();
             let mut units = self.editor.doc.units();
             let short = |f: drift_core::LengthFormat| match f {
@@ -559,7 +620,14 @@ impl DriftApp {
                     });
                 }
                 _ => {
-                    ui.label(egui::RichText::new(self.tool.hint()).weak());
+                    // Leave room for the readouts on the right; long hints are cut short
+                    // (the full text shows on hover).
+                    let width = (ui.available_width() - 190.0).max(40.0);
+                    let hint = self.tool.hint();
+                    ui.allocate_ui(egui::vec2(width, ui.available_height()), |ui| {
+                        ui.add(egui::Label::new(egui::RichText::new(&hint).weak()).truncate())
+                            .on_hover_text(&hint);
+                    });
                 }
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

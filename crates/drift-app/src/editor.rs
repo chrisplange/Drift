@@ -103,29 +103,36 @@ impl Pointer {
     /// there should get an On curve relation.
     pub fn on_curve(&self) -> Option<EntityId> {
         use drift_geom::SnapKind::{OnCurve, Quadrant};
-        self.snap
+        self.exact_snap()
             .filter(|s| matches!(s.kind, OnCurve | Quadrant) && self.relations)
-            .filter(|_| self.guide.is_none())
             .and_then(|s| s.entity)
     }
 
-    /// The effective position: an existing point snapped to, else an inference, else a snap
-    /// (curve / grid), else the raw position.
+    /// A snap to a specific spot on the geometry (a point, midpoint, quadrant or a point on a
+    /// curve), which wins over inference guides. Grid snaps combine with guides instead.
+    pub fn exact_snap(&self) -> Option<Snap> {
+        self.snap.filter(|s| s.kind != drift_geom::SnapKind::Grid)
+    }
+
+    /// The effective position: an exact snap, else an inference guide (itself on the grid when
+    /// grid snapping), else a grid snap, else the raw position. What the snap marker shows is
+    /// where geometry goes.
     pub fn pos(&self) -> DVec2 {
-        match (self.snap, self.guide) {
-            (Some(s), _) if s.kind.is_point() => s.at,
-            (_, Some(g)) => g.at,
-            (Some(s), None) => s.at,
-            (None, None) => self.raw,
+        match (self.exact_snap(), self.guide, self.snap) {
+            (Some(s), ..) => s.at,
+            (None, Some(g), _) => g.at,
+            (None, None, Some(grid)) => grid.at,
+            (None, None, None) => self.raw,
         }
     }
 
-    /// The automatic relation implied by the guide, if any.
+    /// The automatic relation implied by the guide, if any (not when an exact snap decides
+    /// the position).
     pub fn auto_relation(&self) -> Option<GuideKind> {
         self.guide
             .map(|g| g.kind)
             .filter(|k| *k != GuideKind::Aligned)
-            .filter(|_| self.snapped_point().is_none())
+            .filter(|_| self.exact_snap().is_none())
     }
 
     /// The existing point entity under the pointer, if it snapped to one.
@@ -220,6 +227,11 @@ pub struct Editor {
     pub snapshots: Vec<(String, Document)>,
     /// A variable being scrubbed with a slider: its expression before the scrub started.
     scrubbing: Option<(VariableId, String)>,
+    /// Closed regions of the solid curves, as of a document revision.
+    regions: Option<(u64, std::rc::Rc<Vec<drift_geom::regions::Region>>)>,
+    /// A point inside the selected region (regions are recomputed, so they're picked by a
+    /// point rather than an id).
+    pub selected_region: Option<DVec2>,
 }
 
 impl Editor {
@@ -251,7 +263,9 @@ impl Editor {
             self.evaluated = Some(self.doc.revision());
         }
         let doc = &self.doc;
-        self.selection.retain(|id| doc.contains(*id));
+        // Hidden or locked geometry can't stay selected.
+        self.selection
+            .retain(|id| doc.contains(*id) && doc.is_visible(*id) && !doc.layer_of(*id).locked);
         let is_line =
             |id: &EntityId| matches!(doc.get(*id).map(|e| e.kind), Some(EntityKind::Line { .. }));
         self.selected_midpoints.retain(is_line);
@@ -513,6 +527,39 @@ impl Editor {
     /// Move a dimension's label (inside an open transaction while dragging).
     pub fn place_dimension(&mut self, id: ConstraintId, offset: DVec2) {
         let _ = self.doc.set_placement(id, offset);
+    }
+
+    // ----- Regions ---------------------------------------------------------------------------
+
+    /// The closed regions formed by solid curves (construction and centre lines are
+    /// references, not boundaries), recomputed when the document changes.
+    pub fn regions(&mut self) -> std::rc::Rc<Vec<drift_geom::regions::Region>> {
+        let revision = self.doc.revision();
+        if let Some((r, regions)) = &self.regions
+            && *r == revision
+        {
+            return regions.clone();
+        }
+        let curves: Vec<Shape> = self
+            .doc
+            .iter()
+            .filter(|(_, e)| !e.kind.is_point() && e.style == LineKind::Solid)
+            .filter_map(|(id, _)| self.doc.shape(id))
+            .collect();
+        let regions = std::rc::Rc::new(drift_geom::regions::regions(&curves));
+        self.regions = Some((revision, regions.clone()));
+        regions
+    }
+
+    /// The selected region, if its seed point is still inside one.
+    pub fn region(&mut self) -> Option<drift_geom::regions::Region> {
+        let seed = self.selected_region?;
+        let regions = self.regions();
+        let found = drift_geom::regions::region_at(&regions, seed).cloned();
+        if found.is_none() {
+            self.selected_region = None;
+        }
+        found
     }
 
     // ----- Parameters ------------------------------------------------------------------------
@@ -1291,7 +1338,19 @@ impl Editor {
     }
 
     /// Render items for the document, with selection and hover emphasis.
+    /// Render items with constraint-status colouring (see [`items_styled`](Self::items_styled)).
     pub fn items(&self) -> Vec<SketchItem> {
+        self.items_styled(true, true)
+    }
+
+    /// True if the entity is on a locked layer (it can't be selected or modified).
+    pub fn is_locked(&self, id: EntityId) -> bool {
+        self.doc.layer_of(id).locked
+    }
+
+    /// Render items: each entity with its layer's (or its own) weight and line type, and either
+    /// constraint-status colours or layer colours (adjusted for contrast with the theme).
+    pub fn items_styled(&self, status_colors: bool, dark: bool) -> Vec<SketchItem> {
         let mut items = Vec::with_capacity(self.doc.len());
         let mut emphasized = Vec::new();
         for (id, entity) in self.doc.iter() {
@@ -1304,9 +1363,26 @@ impl Editor {
                 Some(Definition::Over) => DofState::Over,
                 None => DofState::Unknown,
             };
+            let layer = self.doc.layer_of(id);
+            let look = entity.appearance;
+            let color = if status_colors {
+                None
+            } else {
+                look.color.or(layer.color).map(|c| contrast(c.0, dark))
+            };
+            let dof = if status_colors || dof == DofState::Over {
+                dof
+            } else {
+                DofState::Unknown
+            };
             let mut item = SketchItem::new(*shape)
                 .with_kind(entity.style)
-                .with_dof(dof);
+                .with_dof(dof)
+                .with_look(
+                    color.flatten(),
+                    look.weight.unwrap_or(layer.weight).0,
+                    look.line_type.unwrap_or(layer.line_type),
+                );
             let role = self.index.role(id);
             if role.is_some_and(|r| r != PointRole::Standalone) {
                 item = item.as_vertex();
@@ -1328,6 +1404,24 @@ impl Editor {
         items.extend(emphasized);
         items
     }
+}
+
+/// A layer colour that would be hard to see on the theme's background (WCAG contrast ratio
+/// under 2:1, e.g. black on the dark theme) is shown as the theme's foreground instead
+/// (`None`), like AutoCAD's colour 7.
+fn contrast(c: [u8; 3], dark: bool) -> Option<[u8; 3]> {
+    let linear = |v: u8| {
+        let v = f64::from(v) / 255.0;
+        if v <= 0.04045 {
+            v / 12.92
+        } else {
+            ((v + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    let lum = 0.2126 * linear(c[0]) + 0.7152 * linear(c[1]) + 0.0722 * linear(c[2]);
+    let background: f64 = if dark { 0.012 } else { 0.95 };
+    let ratio = (lum.max(background) + 0.05) / (lum.min(background) + 0.05);
+    (ratio >= 2.0).then_some(c)
 }
 
 #[derive(Default)]

@@ -296,6 +296,95 @@ impl Constraint {
     }
 
     /// Redirect references from point `from` to point `to`.
+    /// The same constraint with every entity reference passed through `f` (for copies and
+    /// replacements).
+    pub fn map_entities(&self, f: impl Fn(EntityId) -> EntityId) -> Constraint {
+        use Constraint::*;
+        match *self {
+            Coincident { a, b } => Coincident { a: f(a), b: f(b) },
+            Horizontal { line } => Horizontal { line: f(line) },
+            Vertical { line } => Vertical { line: f(line) },
+            HorizontalPoints { a, b } => HorizontalPoints { a: f(a), b: f(b) },
+            VerticalPoints { a, b } => VerticalPoints { a: f(a), b: f(b) },
+            Parallel { a, b } => Parallel { a: f(a), b: f(b) },
+            Perpendicular { a, b } => Perpendicular { a: f(a), b: f(b) },
+            Equal { a, b } => Equal { a: f(a), b: f(b) },
+            Tangent { a, b } => Tangent { a: f(a), b: f(b) },
+            Concentric { a, b } => Concentric { a: f(a), b: f(b) },
+            Coradial { a, b } => Coradial { a: f(a), b: f(b) },
+            Collinear { a, b } => Collinear { a: f(a), b: f(b) },
+            PointOnCurve { point, curve } => PointOnCurve {
+                point: f(point),
+                curve: f(curve),
+            },
+            Symmetric { a, b, axis } => Symmetric {
+                a: f(a),
+                b: f(b),
+                axis: f(axis),
+            },
+            Midpoint { point, line } => Midpoint {
+                point: f(point),
+                line: f(line),
+            },
+            Fix { point, at } => Fix {
+                point: f(point),
+                at,
+            },
+            FixRadius { curve, radius } => FixRadius {
+                curve: f(curve),
+                radius,
+            },
+            Distance { a, b, value } => Distance {
+                a: f(a),
+                b: f(b),
+                value,
+            },
+            Radius { curve, value } => Radius {
+                curve: f(curve),
+                value,
+            },
+            Diameter { curve, value } => Diameter {
+                curve: f(curve),
+                value,
+            },
+            HorizontalDistance { a, b, value } => HorizontalDistance {
+                a: f(a),
+                b: f(b),
+                value,
+            },
+            VerticalDistance { a, b, value } => VerticalDistance {
+                a: f(a),
+                b: f(b),
+                value,
+            },
+            PointLineDistance { point, line, value } => PointLineDistance {
+                point: f(point),
+                line: f(line),
+                value,
+            },
+            Angle { a, b, degrees } => Angle {
+                a: f(a),
+                b: f(b),
+                degrees,
+            },
+        }
+    }
+
+    /// True for relations that depend on the sketch's orientation (they don't survive a
+    /// rotation or a mirror about a slanted line).
+    pub fn is_orientation_dependent(&self) -> bool {
+        matches!(
+            self,
+            Constraint::Horizontal { .. }
+                | Constraint::Vertical { .. }
+                | Constraint::HorizontalPoints { .. }
+                | Constraint::VerticalPoints { .. }
+                | Constraint::HorizontalDistance { .. }
+                | Constraint::VerticalDistance { .. }
+                | Constraint::Fix { .. }
+        )
+    }
+
     pub(crate) fn replace_point(&mut self, from: EntityId, to: EntityId) {
         let swap = |id: &mut EntityId| {
             if *id == from {

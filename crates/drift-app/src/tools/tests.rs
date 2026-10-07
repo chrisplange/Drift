@@ -1013,3 +1013,320 @@ fn panel_offers_distances_to_selected_midpoints() {
     let distance = &ed.dimension_options()[0].constraints[0];
     assert_eq!(distance.value(), Some(v(10.0, 0.0).distance(v(13.0, 6.0))));
 }
+
+// ----- Modify tools -------------------------------------------------------------------------
+
+/// Lines between point pairs, committed as one step.
+fn modify_fixture(lines: &[(DVec2, DVec2)]) -> (Editor, Vec<EntityId>) {
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    let ids = lines
+        .iter()
+        .map(|(a, b)| {
+            let pa = ed.doc.add_point(*a);
+            let pb = ed.doc.add_point(*b);
+            ed.doc.add_line(pa, pb).unwrap()
+        })
+        .collect();
+    ed.commit("Setup");
+    (ed, ids)
+}
+
+fn line_ends(ed: &Editor, id: EntityId) -> (DVec2, DVec2) {
+    match ed.doc.shape(id) {
+        Some(Shape::Line { a, b }) => (a, b),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn trim_tool_previews_and_trims_pieces() {
+    let (mut ed, ids) = modify_fixture(&[
+        (v(0.0, 0.0), v(30.0, 0.0)),
+        (v(10.0, -5.0), v(10.0, 5.0)),
+        (v(20.0, -5.0), v(20.0, 5.0)),
+    ]);
+    let mut tool = TrimTool::default();
+    let p = ptr(&ed, &tool, v(15.0, 0.2));
+    tool.handle(Input::Hover(p), &mut ed);
+    let removal = tool.editor_preview(&ed);
+    assert!(
+        matches!(removal[..], [SketchItem { shape: Shape::Line { a, b }, emphasis: Emphasis::Remove, .. }]
+        if a == v(10.0, 0.0) && b == v(20.0, 0.0))
+    );
+    click(&mut ed, &mut tool, v(15.0, 0.2));
+    assert_eq!(line_ends(&ed, ids[0]), (v(0.0, 0.0), v(10.0, 0.0)));
+    // Drag across the two verticals below the bar: both lower pieces go.
+    let m = Modifiers::default();
+    let start = ptr(&ed, &tool, v(8.0, -3.0));
+    tool.handle(Input::DragStart(start, m), &mut ed);
+    for x in [10.0, 15.0, 20.0] {
+        let p = ptr(&ed, &tool, v(x, -3.0));
+        tool.handle(Input::Drag(p), &mut ed);
+    }
+    tool.handle(Input::DragEnd(ptr(&ed, &tool, v(22.0, -3.0)), m), &mut ed);
+    assert_eq!(line_ends(&ed, ids[1]).0, v(10.0, 0.0));
+    assert_eq!(line_ends(&ed, ids[2]).0, v(20.0, 0.0));
+}
+
+#[test]
+fn extend_and_split_tools() {
+    let (mut ed, ids) =
+        modify_fixture(&[(v(0.0, 0.0), v(5.0, 0.0)), (v(10.0, -5.0), v(10.0, 5.0))]);
+    let mut tool = ExtendTool::default();
+    let p = ptr(&ed, &tool, v(4.0, 0.1));
+    tool.handle(Input::Hover(p), &mut ed);
+    assert!(
+        matches!(tool.preview(None)[..], [SketchItem { shape: Shape::Line { a, b }, .. }]
+        if a == v(5.0, 0.0) && b == v(10.0, 0.0))
+    );
+    click(&mut ed, &mut tool, v(4.0, 0.1));
+    assert_eq!(line_ends(&ed, ids[0]).1, v(10.0, 0.0));
+    let mut split = SplitTool::default();
+    click(&mut ed, &mut split, v(10.0, 2.0));
+    assert_eq!(lines(&ed.doc), 3);
+}
+
+/// Two lines meeting at the origin.
+fn corner_fixture() -> Editor {
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    let p = ed.doc.add_point(v(0.0, 0.0));
+    let a = ed.doc.add_point(v(20.0, 0.0));
+    let b = ed.doc.add_point(v(0.0, 10.0));
+    ed.doc.add_line(p, a).unwrap();
+    ed.doc.add_line(p, b).unwrap();
+    ed.commit("Corner");
+    ed
+}
+
+#[test]
+fn fillet_and_chamfer_tools_use_typed_sizes() {
+    let mut ed = corner_fixture();
+    let mut tool = FilletTool::default();
+    tool.set_typed([Some(4.0), None]);
+    let p = ptr(&ed, &tool, v(0.1, 0.1));
+    tool.commit_typed(&p, &mut ed);
+    tool.handle(Input::Hover(p), &mut ed);
+    assert!(
+        matches!(tool.editor_preview(&ed)[..], [SketchItem { shape: Shape::Arc { radius, .. }, .. }]
+        if (radius - 4.0).abs() < 1e-12)
+    );
+    click(&mut ed, &mut tool, v(0.1, 0.1));
+    let arc = ed
+        .doc
+        .iter()
+        .find_map(|(_, e)| match e.kind {
+            EntityKind::Arc { center, .. } => Some(ed.doc.point(center).unwrap()),
+            _ => None,
+        })
+        .expect("a fillet arc");
+    assert!(arc.distance(v(4.0, 4.0)) < 1e-9);
+    // Not a corner: explained.
+    click(&mut ed, &mut tool, v(10.0, 0.0));
+    assert!(ed.notice.take().is_some());
+
+    let mut ed = corner_fixture();
+    let mut tool = ChamferTool::default();
+    tool.set_typed([Some(2.0), None]);
+    let p = ptr(&ed, &tool, v(0.0, 0.0));
+    tool.commit_typed(&p, &mut ed);
+    click(&mut ed, &mut tool, v(0.0, 0.0));
+    assert_eq!(lines(&ed.doc), 3);
+    assert!(
+        !ed.doc
+            .iter()
+            .any(|(_, e)| e.kind == EntityKind::Point(v(0.0, 0.0)))
+    );
+}
+
+#[test]
+fn offset_tool_picks_a_chain_then_the_side() {
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    let ps = [v(0.0, 0.0), v(20.0, 0.0), v(20.0, 10.0)].map(|p| ed.doc.add_point(p));
+    ed.doc.add_line(ps[0], ps[1]).unwrap();
+    ed.doc.add_line(ps[1], ps[2]).unwrap();
+    ed.commit("Chain");
+    let mut tool = OffsetTool::default();
+    click(&mut ed, &mut tool, v(10.0, 0.0));
+    assert!(tool.is_busy());
+    assert_eq!(ed.highlight.len(), 2, "the chain is highlighted");
+    // The pointer 3 mm inside sets side and distance; the preview follows.
+    let p = ptr(&ed, &tool, v(10.0, 3.0));
+    tool.handle(Input::Hover(p), &mut ed);
+    assert_eq!(tool.preview(None).len(), 2);
+    // A typed distance wins.
+    tool.set_typed([Some(2.0), None]);
+    tool.commit_typed(&p, &mut ed);
+    assert!(!tool.is_busy());
+    assert_eq!(lines(&ed.doc), 4);
+    assert!(
+        ed.doc
+            .iter()
+            .any(|(_, e)| e.kind == EntityKind::Point(v(18.0, 2.0)))
+    );
+}
+
+#[test]
+fn mirror_tool_mirrors_the_selection() {
+    let (mut ed, ids) =
+        modify_fixture(&[(v(2.0, 1.0), v(5.0, 4.0)), (v(0.0, -10.0), v(0.0, 10.0))]);
+    let mut tool = MirrorTool;
+    // Nothing selected: explained.
+    click(&mut ed, &mut tool, v(0.0, 5.0));
+    assert!(ed.notice.take().is_some());
+    ed.selection = [ids[0]].into();
+    click(&mut ed, &mut tool, v(0.0, 5.0));
+    assert_eq!(lines(&ed.doc), 3);
+    assert!(
+        ed.doc
+            .iter()
+            .any(|(_, e)| e.kind == EntityKind::Point(v(-5.0, 4.0)))
+    );
+}
+
+// ----- Move base points and snapping -------------------------------------------------------
+
+/// A pointer snapped like the canvas does, optionally to a grid.
+fn ptr_grid(ed: &Editor, tool: &dyn Tool, at: DVec2, grid: Option<f64>) -> Pointer {
+    let mut p = Pointer::new(at, TOL);
+    if tool.wants_snap() {
+        p.snap = ed.index.snap(
+            at,
+            SnapOptions {
+                tolerance: TOL,
+                grid,
+            },
+            |id| tool.snap_excludes(ed, id),
+        );
+    }
+    tool.refine_pointer(&mut p);
+    p
+}
+
+/// A line from (0, 0) to (10, 0) and a separate target point at (30, 20).
+fn move_fixture() -> (Editor, EntityId, [EntityId; 2], EntityId) {
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    let a = ed.doc.add_point(v(0.0, 0.0));
+    let b = ed.doc.add_point(v(10.0, 0.0));
+    let line = ed.doc.add_line(a, b).unwrap();
+    let target = ed.doc.add_point(v(30.0, 20.0));
+    ed.commit("Setup");
+    (ed, line, [a, b], target)
+}
+
+#[test]
+fn grab_bases_a_line_on_its_midpoint_and_lands_it_on_snaps() {
+    let (mut ed, line, [a, b], _) = move_fixture();
+    ed.selection = [line].into();
+    let mut tool = SelectTool::default();
+    // G with the cursor well away from the line.
+    let p = ptr(&ed, &tool, v(40.0, -15.0));
+    assert!(tool.key(ToolKey::G, Some(&p), &mut ed));
+    assert_eq!(tool.grab.as_ref().unwrap().base, v(5.0, 0.0));
+    // Unsnapped, the line follows the cursor's motion.
+    let p = ptr(&ed, &tool, v(42.0, -14.0));
+    tool.handle(Input::Hover(p), &mut ed);
+    assert_eq!(ed.doc.point(a).unwrap(), v(2.0, 1.0));
+    // Snapped to the target point, the midpoint lands exactly on it.
+    click(&mut ed, &mut tool, v(30.1, 19.9));
+    assert_eq!(ed.doc.point(a).unwrap(), v(25.0, 20.0));
+    assert_eq!(ed.doc.point(b).unwrap(), v(35.0, 20.0));
+}
+
+#[test]
+fn grab_bases_a_point_on_itself() {
+    let (mut ed, _, [a, _], _) = move_fixture();
+    ed.selection = [a].into();
+    let mut tool = SelectTool::default();
+    let p = ptr(&ed, &tool, v(-20.0, 7.0));
+    tool.key(ToolKey::G, Some(&p), &mut ed);
+    assert_eq!(tool.grab.as_ref().unwrap().base, v(0.0, 0.0));
+    click(&mut ed, &mut tool, v(29.9, 20.2));
+    assert_eq!(ed.doc.point(a).unwrap(), v(30.0, 20.0));
+}
+
+#[test]
+fn grab_moves_a_selected_region_from_its_centroid() {
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    let c = [v(0.0, 0.0), v(10.0, 0.0), v(10.0, 6.0), v(0.0, 6.0)].map(|p| ed.doc.add_point(p));
+    for i in 0..4 {
+        ed.doc.add_line(c[i], c[(i + 1) % 4]).unwrap();
+    }
+    let target = ed.doc.add_point(v(50.0, 50.0));
+    ed.commit("Setup");
+    let mut tool = SelectTool::default();
+    click(&mut ed, &mut tool, v(2.0, 2.0));
+    assert!(ed.region().is_some());
+    let p = ptr(&ed, &tool, v(2.0, 2.0));
+    tool.key(ToolKey::G, Some(&p), &mut ed);
+    assert_eq!(tool.grab.as_ref().unwrap().base, v(5.0, 3.0));
+    assert_eq!(tool.grab.as_ref().unwrap().ids.len(), 4);
+    click(&mut ed, &mut tool, v(50.2, 49.9));
+    // The centroid lands on the target; the region stays selected.
+    assert_eq!(ed.doc.point(c[0]).unwrap(), v(45.0, 47.0));
+    let region = ed.region().expect("still selected");
+    assert!(region.centroid.distance(ed.doc.point(target).unwrap()) < 1e-9);
+}
+
+#[test]
+fn dragging_a_line_snaps_the_end_nearest_the_grab() {
+    let (mut ed, line, [_, b], _) = move_fixture();
+    let mut tool = SelectTool::default();
+    let m = Modifiers::default();
+    // Grab near the right end, drag so the cursor snaps to the target point.
+    let start = ptr(&ed, &tool, v(9.0, 0.1));
+    tool.handle(Input::DragStart(start, m), &mut ed);
+    assert_eq!(ed.selection, [line].into());
+    let to = ptr(&ed, &tool, v(30.2, 20.1));
+    assert!(to.snap.is_some());
+    tool.handle(Input::Drag(to), &mut ed);
+    tool.handle(Input::DragEnd(to, m), &mut ed);
+    assert_eq!(ed.doc.point(b).unwrap(), v(30.0, 20.0));
+}
+
+#[test]
+fn dragging_with_grid_snapping_puts_the_base_on_the_grid() {
+    let (mut ed, line, [a, _], _) = move_fixture();
+    ed.selection = [line].into();
+    let mut tool = SelectTool::default();
+    let m = Modifiers::default();
+    let start = ptr_grid(&ed, &tool, v(0.4, 0.1), Some(5.0));
+    tool.handle(Input::DragStart(start, m), &mut ed);
+    let to = ptr_grid(&ed, &tool, v(13.3, 6.6), Some(5.0));
+    tool.handle(Input::Drag(to), &mut ed);
+    tool.handle(Input::DragEnd(to, m), &mut ed);
+    // The end nearest the grab (a) is on the grid point nearest the cursor.
+    assert_eq!(ed.doc.point(a).unwrap(), v(15.0, 5.0));
+}
+
+#[test]
+fn exact_snaps_win_over_inference_guides() {
+    use crate::editor::{Guide, GuideKind};
+    use drift_geom::{Snap, SnapKind};
+
+    let mut p = Pointer::new(v(5.2, 0.3), TOL);
+    p.snap = Some(Snap {
+        at: v(5.0, 0.0),
+        kind: SnapKind::Midpoint,
+        entity: None,
+    });
+    p.guide = Some(Guide {
+        at: v(5.2, 3.0),
+        kind: GuideKind::Horizontal,
+        from: [None, None],
+    });
+    assert_eq!(p.pos(), v(5.0, 0.0), "the midpoint, as the marker shows");
+    assert_eq!(p.auto_relation(), None);
+    // A grid snap combines with the guide (the guide decides).
+    p.snap = Some(Snap {
+        at: v(5.0, 0.0),
+        kind: SnapKind::Grid,
+        entity: None,
+    });
+    assert_eq!(p.pos(), v(5.2, 3.0));
+    assert_eq!(p.auto_relation(), Some(GuideKind::Horizontal));
+}

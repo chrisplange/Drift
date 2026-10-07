@@ -18,6 +18,7 @@ pub enum RightTab {
     #[default]
     Properties,
     Parameters,
+    Layers,
 }
 
 /// Edit buffers and view state for the Parameters tab.

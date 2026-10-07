@@ -259,6 +259,27 @@ impl Units {
         (shown - mm).abs() <= 1e-9 * mm.abs().max(1.0)
     }
 
+    /// An area (given in mm²) in the display unit squared.
+    pub fn format_area(&self, mm2: f64) -> String {
+        let (per, name) = match self.length {
+            LengthFormat::Millimetre => (1.0, "mm²"),
+            LengthFormat::Centimetre => (100.0, "cm²"),
+            LengthFormat::Metre => (1e6, "m²"),
+            LengthFormat::Inch => (MM_PER_INCH * MM_PER_INCH, "in²"),
+            LengthFormat::Foot => (144.0 * MM_PER_INCH * MM_PER_INCH, "ft²"),
+            LengthFormat::Architectural => {
+                let ft2 = 144.0 * MM_PER_INCH * MM_PER_INCH;
+                if mm2.abs() >= ft2 {
+                    (ft2, "ft²")
+                } else {
+                    (MM_PER_INCH * MM_PER_INCH, "in²")
+                }
+            }
+        };
+        let d = usize::from(self.decimals.max(2));
+        format!("{} {name}", trim(&format!("{:.*}", d, mm2 / per)))
+    }
+
     /// An angle in degrees, trailing zeros trimmed, with a degree sign.
     pub fn format_angle(&self, degrees: f64) -> String {
         format!(

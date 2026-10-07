@@ -858,3 +858,36 @@ fn free_directions_follow_the_null_space() {
         .unwrap();
     assert_eq!(free_directions(&doc).get(&b), None);
 }
+
+#[test]
+fn the_example_plate_is_fully_defined() {
+    let mut doc = drift_core::demo::mounting_plate();
+    let before = doc.clone();
+    let report = solve(
+        &mut doc,
+        &SolveOptions {
+            analyze: true,
+            ..Default::default()
+        },
+    );
+    assert!(report.converged, "conflicts: {:?}", report.conflicts);
+    assert!(
+        report.redundant.is_empty(),
+        "redundant: {:?}",
+        report.redundant
+    );
+    assert_eq!(report.dependent_equations, 0);
+    assert_eq!(report.dof, Some(0));
+    let loose: Vec<_> = report
+        .definitions
+        .iter()
+        .filter(|(_, d)| **d != Definition::Full)
+        .collect();
+    assert!(loose.is_empty(), "{loose:?}");
+    // It was drawn exactly as constrained: solving moves nothing.
+    for (id, e) in before.iter() {
+        if let drift_core::EntityKind::Point(p) = e.kind {
+            assert!(doc.point(id).unwrap().distance(p) < 1e-9, "{id} moved");
+        }
+    }
+}

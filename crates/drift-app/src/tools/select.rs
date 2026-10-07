@@ -42,16 +42,23 @@ pub(super) fn pick_target(ed: &Editor, p: &Pointer) -> Option<Target> {
         .map(Target::Entity)
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(super) enum SelectDrag {
     Box {
         start: DVec2,
         current: DVec2,
     },
+    /// Dragging the selection: it follows the pointer's motion; when the pointer snaps, the
+    /// base point (the point, midpoint or centre nearest the grab) lands on the snap.
     Move {
-        /// World position the drag is following: the dragged point, or the grab position.
-        last: DVec2,
-        /// Set when a single point is being dragged; it snaps and can merge on drop.
+        ids: Vec<EntityId>,
+        points: BTreeSet<EntityId>,
+        /// Pointer where the drag began.
+        start: DVec2,
+        base: DVec2,
+        /// Offset applied so far in the open transaction.
+        applied: DVec2,
+        /// Set when a single point is being dragged; it can merge on drop.
         point: Option<EntityId>,
     },
 }
@@ -63,10 +70,16 @@ pub(super) struct Grab {
     pub(super) ids: Vec<EntityId>,
     /// Defining points of the selection: these move rigidly with the offset.
     pub(super) points: BTreeSet<EntityId>,
+    /// The point that lands on snap targets: a selected point, a line's midpoint, a
+    /// circle's centre or a region's centroid by default; B picks another.
     pub(super) base: DVec2,
-    /// Where the pointer is (the move's target before locks and typed values).
-    pub(super) target: DVec2,
+    /// Pointer where the move (or the base point) began.
+    pub(super) start: DVec2,
+    /// The pointer's offset before locks and typed values (see `move_offset`).
+    pub(super) delta: DVec2,
     pub(super) picking_base: bool,
+    /// A region being moved (its seed point follows it).
+    pub(super) region: bool,
     pub(super) lock: Option<Axis>,
     pub(super) typed: [Option<f64>; 2],
     /// The offset the geometry has been moved by so far in the open transaction.
@@ -74,9 +87,9 @@ pub(super) struct Grab {
 }
 
 impl Grab {
-    /// The offset for the pointer at `target`, honouring the lock and typed values.
-    pub(super) fn offset(&self, target: DVec2) -> DVec2 {
-        let d = target - self.base;
+    /// The offset for the latest pointer position, honouring the lock and typed values.
+    pub(super) fn offset(&self) -> DVec2 {
+        let d = self.delta;
         match self.lock {
             Some(axis) => {
                 let u = axis.dir();
@@ -115,19 +128,34 @@ impl SelectTool {
         if self.drag.is_some() || self.grab.is_some() {
             return false;
         }
-        if ed.selection.is_empty() {
+        // A selected region moves its boundary, based on its centroid.
+        let region = if ed.selection.is_empty() {
+            ed.region()
+        } else {
+            None
+        };
+        let (ids, base) = match &region {
+            Some(r) => (ed.region_curves(r), r.centroid),
+            None => {
+                let ids: Vec<EntityId> = ed.selection.iter().copied().collect();
+                let base = ed.move_base(&ids, p.raw, false);
+                (ids, base)
+            }
+        };
+        if ids.is_empty() {
             ed.notice = Some("Select something to move first".into());
             return true;
         }
-        let ids: Vec<EntityId> = ed.selection.iter().copied().collect();
         let points = ed.doc.defining_points(ids.iter().copied());
         ed.doc.begin();
         self.grab = Some(Grab {
             ids,
             points,
-            base: p.pos(),
-            target: p.pos(),
+            base,
+            start: p.raw,
+            delta: DVec2::ZERO,
             picking_base: false,
+            region: region.is_some(),
             lock: None,
             typed: [None; 2],
             applied: DVec2::ZERO,
@@ -137,9 +165,14 @@ impl SelectTool {
 
     /// Confirm the move for the pointer at `target`. The final offset is applied again in one
     /// step from the original geometry, so typed and snapped moves land exactly.
-    pub(super) fn confirm_grab(&mut self, target: DVec2, ed: &mut Editor) {
+    pub(super) fn confirm_grab(&mut self, ed: &mut Editor) {
         let Some(grab) = self.grab.take() else { return };
-        let offset = grab.offset(target);
+        let offset = grab.offset();
+        if grab.region
+            && let Some(seed) = &mut ed.selected_region
+        {
+            *seed += offset;
+        }
         ed.doc.rollback();
         if offset == DVec2::ZERO {
             ed.sync();
@@ -166,9 +199,13 @@ impl SelectTool {
         true
     }
 
-    pub(super) fn dragged_point(&self) -> Option<EntityId> {
-        match self.drag {
-            Some(SelectDrag::Move { point, .. }) => point,
+    /// The points moving with a drag or grab (never snap targets).
+    fn moving(&self) -> Option<(&BTreeSet<EntityId>, &[EntityId])> {
+        if let Some(grab) = &self.grab {
+            return (!grab.picking_base).then_some((&grab.points, grab.ids.as_slice()));
+        }
+        match &self.drag {
+            Some(SelectDrag::Move { points, ids, .. }) => Some((points, ids.as_slice())),
             _ => None,
         }
     }
@@ -196,7 +233,7 @@ impl Tool for SelectTool {
             (ToolKey::X | ToolKey::Y, Some(grab)) if !grab.picking_base => {
                 let axis = if key == ToolKey::X { Axis::X } else { Axis::Y };
                 grab.lock = (grab.lock != Some(axis)).then_some(axis);
-                let offset = grab.offset(grab.target);
+                let offset = grab.offset();
                 grab.apply(offset, ed);
                 true
             }
@@ -236,15 +273,10 @@ impl Tool for SelectTool {
         }
     }
 
-    fn commit_typed(&mut self, p: &Pointer, ed: &mut Editor) {
-        if let Some(grab) = &self.grab {
-            // The pointer may be off the canvas while typing: keep the last target.
-            let target = if grab.typed.iter().any(Option::is_some) {
-                grab.target
-            } else {
-                p.pos()
-            };
-            self.confirm_grab(target, ed);
+    fn commit_typed(&mut self, _p: &Pointer, ed: &mut Editor) {
+        // The pointer may be off the canvas while typing: the last offset stands.
+        if self.grab.is_some() {
+            self.confirm_grab(ed);
         }
     }
 
@@ -253,7 +285,7 @@ impl Tool for SelectTool {
         if grab.picking_base {
             return Some("Base point".into());
         }
-        let d = grab.offset(grab.target);
+        let d = grab.offset();
         let lock = grab
             .lock
             .map_or(String::new(), |axis| format!("  [{axis:?} locked]"));
@@ -279,7 +311,7 @@ impl Tool for SelectTool {
                 )
             };
         }
-        match self.drag {
+        match &self.drag {
             Some(SelectDrag::Box { .. }) => {
                 "Drag right for window selection, left for crossing selection".into()
             }
@@ -298,25 +330,25 @@ impl Tool for SelectTool {
             ed.hovered_midpoint = None;
             match input {
                 Input::Hover(p) | Input::Drag(p) => {
-                    grab.target = p.pos();
                     if !grab.picking_base {
-                        grab.apply(grab.offset(p.pos()), ed);
+                        grab.delta = crate::modify::move_offset(grab.start, grab.base, &p);
+                        let offset = grab.offset();
+                        grab.apply(offset, ed);
                     }
                 }
                 // Blender confirms on press; a click that turned into a drag still counts.
                 Input::Click(p, _) | Input::DragStart(p, _) => {
                     if grab.picking_base {
                         grab.base = p.pos();
-                        grab.target = p.pos();
+                        grab.start = p.raw;
+                        grab.delta = DVec2::ZERO;
                         grab.picking_base = false;
                     } else {
-                        self.confirm_grab(p.pos(), ed);
+                        grab.delta = crate::modify::move_offset(grab.start, grab.base, &p);
+                        self.confirm_grab(ed);
                     }
                 }
-                Input::Finish if !grab.picking_base => {
-                    let target = grab.target;
-                    self.confirm_grab(target, ed);
-                }
+                Input::Finish if !grab.picking_base => self.confirm_grab(ed),
                 _ => {}
             }
             return;
@@ -324,9 +356,9 @@ impl Tool for SelectTool {
         match input {
             Input::Hover(p) => {
                 ed.hovered_midpoint = None;
-                ed.hovered = match self.drag {
+                ed.hovered = match &self.drag {
                     Some(SelectDrag::Box { .. }) => None,
-                    Some(SelectDrag::Move { point, .. }) => point,
+                    Some(SelectDrag::Move { point, .. }) => *point,
                     None => match pick_target(ed, &p) {
                         Some(Target::Entity(id)) => Some(id),
                         Some(Target::Midpoint(line)) => {
@@ -355,7 +387,15 @@ impl Tool for SelectTool {
                 if !mods.shift && !mods.command {
                     ed.selected_midpoints.clear();
                 }
-                let hit = ed.index.pick(p.raw, p.tolerance, |_| true);
+                let hit = ed.index.pick(p.raw, p.tolerance, |id| !ed.is_locked(id));
+                // Clicking inside a closed area (not on a curve) picks the region.
+                ed.selected_region = match hit {
+                    None => {
+                        let regions = ed.regions();
+                        drift_geom::regions::region_at(&regions, p.raw).map(|_| p.raw)
+                    }
+                    Some(_) => None,
+                };
                 match hit {
                     Some(id) if mods.command => {
                         if !ed.selection.remove(&id) {
@@ -373,50 +413,56 @@ impl Tool for SelectTool {
                 }
             }
             Input::DoubleClick(_) | Input::Finish => {}
-            Input::DragStart(p, mods) => match ed.index.pick(p.raw, p.tolerance, |_| true) {
-                Some(id) => {
-                    if !ed.selection.contains(&id) {
-                        if !mods.shift && !mods.command {
-                            ed.selection.clear();
+            Input::DragStart(p, mods) => {
+                match ed.index.pick(p.raw, p.tolerance, |id| !ed.is_locked(id)) {
+                    Some(id) => {
+                        if !ed.selection.contains(&id) {
+                            if !mods.shift && !mods.command {
+                                ed.selection.clear();
+                            }
+                            ed.selection.insert(id);
                         }
-                        ed.selection.insert(id);
+                        let is_point = ed.doc.get(id).is_some_and(|e| e.kind.is_point());
+                        let point = (is_point && ed.selection.len() == 1).then_some(id);
+                        let ids: Vec<EntityId> = ed.selection.iter().copied().collect();
+                        let base = ed.move_base(&ids, p.raw, point.is_none());
+                        let points = ed.doc.defining_points(ids.iter().copied());
+                        ed.doc.begin();
+                        self.drag = Some(SelectDrag::Move {
+                            ids,
+                            points,
+                            start: p.raw,
+                            base,
+                            applied: DVec2::ZERO,
+                            point,
+                        });
                     }
-                    let is_point = ed.doc.get(id).is_some_and(|e| e.kind.is_point());
-                    let point = (is_point && ed.selection.len() == 1).then_some(id);
-                    let last = match point {
-                        Some(pt) => ed.doc.point(pt).unwrap_or(p.raw),
-                        None => p.raw,
-                    };
-                    ed.doc.begin();
-                    self.drag = Some(SelectDrag::Move { last, point });
+                    None => {
+                        self.drag = Some(SelectDrag::Box {
+                            start: p.raw,
+                            current: p.raw,
+                        });
+                    }
                 }
-                None => {
-                    self.drag = Some(SelectDrag::Box {
-                        start: p.raw,
-                        current: p.raw,
-                    });
-                }
-            },
+            }
             Input::Drag(p) => match &mut self.drag {
                 Some(SelectDrag::Box { current, .. }) => *current = p.raw,
-                Some(SelectDrag::Move { last, point }) => {
-                    let target = if point.is_some() { p.pos() } else { p.raw };
-                    let delta = target - *last;
-                    if delta != DVec2::ZERO {
-                        let ids: Vec<EntityId> = ed.selection.iter().copied().collect();
+                Some(SelectDrag::Move {
+                    ids,
+                    points,
+                    start,
+                    base,
+                    applied,
+                    ..
+                }) => {
+                    let offset = crate::modify::move_offset(*start, *base, &p);
+                    let step = offset - *applied;
+                    if step != DVec2::ZERO {
                         // The grabbed geometry follows the pointer; constraints move the rest.
-                        let dragged: Vec<Param> = ed
-                            .doc
-                            .defining_points(ids.iter().copied())
-                            .into_iter()
-                            .flat_map(Param::point)
-                            .collect();
-                        if ed.drag(&ids, delta, &dragged) {
-                            // Track where the geometry actually went (constraints may hold it).
-                            *last = match point {
-                                Some(pt) => ed.doc.point(*pt).unwrap_or(target),
-                                None => target,
-                            };
+                        let dragged: Vec<Param> =
+                            points.iter().copied().flat_map(Param::point).collect();
+                        if ed.drag(ids, step, &dragged) {
+                            *applied = offset;
                         }
                     }
                 }
@@ -427,7 +473,12 @@ impl Tool for SelectTool {
                     let mut rect = Bounds::from_point(start);
                     rect.include(p.raw);
                     let crossing = p.raw.x < start.x;
-                    let found = ed.index.select_in_rect(&rect, crossing);
+                    let found: Vec<EntityId> = ed
+                        .index
+                        .select_in_rect(&rect, crossing)
+                        .into_iter()
+                        .filter(|id| !ed.is_locked(*id))
+                        .collect();
                     if !mods.shift && !mods.command {
                         ed.selection.clear();
                     }
@@ -480,9 +531,13 @@ impl Tool for SelectTool {
                 true
             }
             Some(SelectDrag::Box { .. }) => true,
-            None if !ed.selection.is_empty() || !ed.selected_midpoints.is_empty() => {
+            None if !ed.selection.is_empty()
+                || !ed.selected_midpoints.is_empty()
+                || ed.selected_region.is_some() =>
+            {
                 ed.selection.clear();
                 ed.selected_midpoints.clear();
+                ed.selected_region = None;
                 true
             }
             None => false,
@@ -493,11 +548,12 @@ impl Tool for SelectTool {
         if let Some(grab) = &self.grab {
             return Some(Overlay::Move {
                 base: grab.base,
-                to: (!grab.picking_base).then(|| grab.base + grab.offset(grab.target)),
+                to: (!grab.picking_base).then(|| grab.base + grab.offset()),
             });
         }
-        match self.drag {
+        match &self.drag {
             Some(SelectDrag::Box { start, current }) => {
+                let (start, current) = (*start, *current);
                 let mut rect = Bounds::from_point(start);
                 rect.include(current);
                 Some(Overlay::SelectionBox {
@@ -510,28 +566,19 @@ impl Tool for SelectTool {
     }
 
     fn wants_snap(&self) -> bool {
-        self.dragged_point().is_some() || self.grab.is_some()
+        matches!(self.drag, Some(SelectDrag::Move { .. })) || self.grab.is_some()
     }
 
     fn snap_excludes(&self, ed: &Editor, id: EntityId) -> bool {
-        if let Some(grab) = &self.grab {
-            // Picking a base point: anything, typically a point of the selection. Moving:
-            // nothing that moves with the selection.
-            return !grab.picking_base
-                && (grab.points.contains(&id)
-                    || grab.ids.contains(&id)
-                    || ed
-                        .doc
-                        .get(id)
-                        .is_some_and(|e| e.kind.points().any(|q| grab.points.contains(&q))));
-        }
-        // Don't snap a dragged point to itself or to the curves that move with it.
-        self.dragged_point().is_some_and(|p| {
-            id == p
+        // Nothing that moves with the selection (picking a grab's base point: anything,
+        // typically a point of the selection).
+        self.moving().is_some_and(|(points, ids)| {
+            points.contains(&id)
+                || ids.contains(&id)
                 || ed
                     .doc
                     .get(id)
-                    .is_some_and(|e| e.kind.points().any(|q| q == p))
+                    .is_some_and(|e| e.kind.points().any(|q| points.contains(&q)))
         })
     }
 }

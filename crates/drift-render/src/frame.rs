@@ -7,7 +7,7 @@
 use std::f64::consts::TAU;
 
 use bytemuck::{Pod, Zeroable};
-use drift_core::{DVec2, DofState, Emphasis, LineKind, Shape, SketchItem};
+use drift_core::{DVec2, DofState, Emphasis, LineKind, LineType, Shape, SketchItem};
 
 use crate::{Camera, Palette};
 
@@ -73,6 +73,8 @@ pub struct Viewport {
     pub srgb_target: bool,
     /// Use imperial grid steps (fractions of an inch, inches, feet) instead of powers of ten.
     pub imperial_grid: bool,
+    /// Draw every curve one device pixel wide, whatever its weight (Revit's thin lines).
+    pub thin_lines: bool,
 }
 
 /// Everything needed to draw one frame of the canvas.
@@ -217,10 +219,40 @@ impl Builder<'_> {
             DofState::Over => p.over,
             DofState::Full | DofState::Unknown => p.solid,
         };
+        let custom = item.color.map(|[r, g, b]| [r, g, b, 0xff]);
+        // Weights show at about twice their printed size on a 96 dpi screen, so they read
+        // clearly; thin lines draws everything one pixel wide.
+        let weighted = if self.viewport.thin_lines {
+            0.5 * ppp
+        } else if item.weight > 0 {
+            (f64::from(item.weight) / 100.0 * 96.0 / 25.4).max(0.8) * ppp
+        } else {
+            0.8 * ppp
+        };
+        let scale = (weighted / (0.8 * ppp)).max(1.0);
+        let dashes = |d: [f64; 3]| [d[0] * ppp * scale, d[1] * ppp * scale, d[2] * ppp * scale];
         let (color, half_width, dash) = match item.kind {
-            LineKind::Solid => (solid, 0.8 * ppp, [0.0; 3]),
-            LineKind::Construction => (p.construction, 0.5 * ppp, [6.0 * ppp, 4.0 * ppp, 0.0]),
-            LineKind::Center => (p.center, 0.5 * ppp, [16.0 * ppp, 3.0 * ppp, 2.0 * ppp]),
+            LineKind::Solid => (
+                custom.unwrap_or(solid),
+                weighted,
+                match item.line_type {
+                    LineType::Continuous => [0.0; 3],
+                    LineType::Dashed => dashes([6.0, 3.0, 0.0]),
+                    LineType::Hidden => dashes([3.0, 2.0, 0.0]),
+                    LineType::Center => dashes([16.0, 3.0, 2.0]),
+                    LineType::Phantom => dashes([16.0, 3.0, -2.0]),
+                },
+            ),
+            LineKind::Construction => (
+                custom.unwrap_or(p.construction),
+                0.5 * ppp,
+                [6.0 * ppp, 4.0 * ppp, 0.0],
+            ),
+            LineKind::Center => (
+                custom.unwrap_or(p.center),
+                0.5 * ppp,
+                [16.0 * ppp, 3.0 * ppp, 2.0 * ppp],
+            ),
         };
         // Conflicts show in red whatever the line style.
         let color = if item.dof == DofState::Over {
@@ -233,6 +265,7 @@ impl Builder<'_> {
             Emphasis::Hovered => (p.hover, half_width + 0.5 * ppp, dash),
             Emphasis::Selected => (p.selected, half_width + 0.5 * ppp, dash),
             Emphasis::Preview => (p.preview, half_width, dash),
+            Emphasis::Remove => (p.over, half_width + 0.7 * ppp, [5.0 * ppp, 3.0 * ppp, 0.0]),
         }
     }
 
@@ -255,6 +288,7 @@ impl Builder<'_> {
             Emphasis::Hovered => (p.hover, 3.5 * ppp),
             Emphasis::Selected => (p.selected, 3.5 * ppp),
             Emphasis::Preview => (p.preview, radius),
+            Emphasis::Remove => (p.over, radius),
         }
     }
 
@@ -473,6 +507,7 @@ mod tests {
             pixels_per_point: 1.0,
             srgb_target: false,
             imperial_grid: false,
+            thin_lines: false,
         }
     }
 

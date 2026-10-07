@@ -2,7 +2,9 @@
 //! spatial index over document entities. All computation is `f64`.
 
 mod index;
+pub mod intersect;
 mod primitives;
+pub mod regions;
 mod snap;
 
 pub use index::{PointRole, SceneIndex};

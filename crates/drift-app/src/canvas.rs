@@ -7,6 +7,14 @@ use eframe::egui_wgpu::{self, wgpu};
 
 /// Creates per-frame canvas callbacks. The GPU renderer itself lives in egui-wgpu's callback
 /// resources so it can be reached from the render thread.
+/// How the canvas is drawn this frame.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CanvasOptions {
+    pub dark_mode: bool,
+    pub imperial_grid: bool,
+    pub thin_lines: bool,
+}
+
 pub struct CanvasPainter {
     srgb_target: bool,
 }
@@ -30,10 +38,9 @@ impl CanvasPainter {
         pixels_per_point: f64,
         items: &[SketchItem],
         camera: &Camera,
-        dark_mode: bool,
-        imperial_grid: bool,
+        options: CanvasOptions,
     ) -> egui::PaintCallback {
-        let palette = if dark_mode {
+        let palette = if options.dark_mode {
             Palette::dark()
         } else {
             Palette::light()
@@ -43,7 +50,8 @@ impl CanvasPainter {
                 * pixels_per_point,
             pixels_per_point,
             srgb_target: self.srgb_target,
-            imperial_grid,
+            imperial_grid: options.imperial_grid,
+            thin_lines: options.thin_lines,
         };
         let frame = build_frame(items, camera, viewport, &palette);
         egui_wgpu::Callback::new_paint_callback(rect, CanvasCallback { frame })

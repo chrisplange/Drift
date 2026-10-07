@@ -15,8 +15,11 @@ use crate::editor::{Anchor, Editor, Guide, GuideKind, Pointer};
 
 mod arc;
 mod circle;
+mod corners;
+mod curve_ops;
 mod dimension;
 mod line;
+mod offset_mirror;
 mod point;
 mod rectangle;
 mod select;
@@ -29,6 +32,11 @@ pub use self::{
     arc::ArcTool, circle::CircleTool, dimension::DimensionTool, line::LineTool, point::PointTool,
     rectangle::RectangleTool, select::SelectTool, tangent_arc::TangentArcTool,
     three_point_arc::ThreePointArcTool,
+};
+pub use self::{
+    corners::{ChamferTool, FilletTool},
+    curve_ops::{ExtendTool, SplitTool, TrimTool},
+    offset_mirror::{MirrorTool, OffsetTool},
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -118,10 +126,17 @@ pub enum ToolKind {
     TangentArc,
     Point,
     Dimension,
+    Trim,
+    Extend,
+    Split,
+    Fillet,
+    Chamfer,
+    Offset,
+    Mirror,
 }
 
 impl ToolKind {
-    pub const ALL: [ToolKind; 9] = [
+    pub const ALL: [ToolKind; 16] = [
         ToolKind::Select,
         ToolKind::Line,
         ToolKind::Rectangle,
@@ -131,7 +146,29 @@ impl ToolKind {
         ToolKind::TangentArc,
         ToolKind::Point,
         ToolKind::Dimension,
+        ToolKind::Trim,
+        ToolKind::Extend,
+        ToolKind::Split,
+        ToolKind::Fillet,
+        ToolKind::Chamfer,
+        ToolKind::Offset,
+        ToolKind::Mirror,
     ];
+
+    /// Toolbar group: 0 = draw, 1 = annotate, 2 = modify.
+    pub fn group(self) -> u8 {
+        match self {
+            ToolKind::Dimension => 1,
+            ToolKind::Trim
+            | ToolKind::Extend
+            | ToolKind::Split
+            | ToolKind::Fillet
+            | ToolKind::Chamfer
+            | ToolKind::Offset
+            | ToolKind::Mirror => 2,
+            _ => 0,
+        }
+    }
 
     /// The arc tools, in the order pressing A cycles through them.
     pub const ARCS: [ToolKind; 3] = [ToolKind::Arc, ToolKind::ThreePointArc, ToolKind::TangentArc];
@@ -147,11 +184,18 @@ impl ToolKind {
             ToolKind::TangentArc => "Tangent arc",
             ToolKind::Point => "Point",
             ToolKind::Dimension => "Dimension",
+            ToolKind::Trim => "Trim",
+            ToolKind::Extend => "Extend",
+            ToolKind::Split => "Split",
+            ToolKind::Fillet => "Fillet",
+            ToolKind::Chamfer => "Chamfer",
+            ToolKind::Offset => "Offset",
+            ToolKind::Mirror => "Mirror",
         }
     }
 
-    pub fn shortcut(self) -> char {
-        match self {
+    pub fn shortcut(self) -> Option<char> {
+        Some(match self {
             ToolKind::Select => 'S',
             ToolKind::Line => 'L',
             ToolKind::Rectangle => 'R',
@@ -160,7 +204,12 @@ impl ToolKind {
             ToolKind::Arc | ToolKind::ThreePointArc | ToolKind::TangentArc => 'A',
             ToolKind::Point => 'P',
             ToolKind::Dimension => 'D',
-        }
+            ToolKind::Trim => 'T',
+            ToolKind::Extend => 'E',
+            ToolKind::Offset => 'O',
+            ToolKind::Mirror => 'M',
+            ToolKind::Split | ToolKind::Fillet | ToolKind::Chamfer => return None,
+        })
     }
 
     pub fn create(self) -> Box<dyn Tool> {
@@ -174,6 +223,13 @@ impl ToolKind {
             ToolKind::TangentArc => Box::<TangentArcTool>::default(),
             ToolKind::Point => Box::<PointTool>::default(),
             ToolKind::Dimension => Box::<DimensionTool>::default(),
+            ToolKind::Trim => Box::<TrimTool>::default(),
+            ToolKind::Extend => Box::<ExtendTool>::default(),
+            ToolKind::Split => Box::<SplitTool>::default(),
+            ToolKind::Fillet => Box::<FilletTool>::default(),
+            ToolKind::Chamfer => Box::<ChamferTool>::default(),
+            ToolKind::Offset => Box::<OffsetTool>::default(),
+            ToolKind::Mirror => Box::<MirrorTool>::default(),
         }
     }
 }
@@ -195,6 +251,11 @@ pub trait Tool {
 
     /// Geometry to draw for the operation in progress.
     fn preview(&self, _pointer: Option<&Pointer>) -> Vec<SketchItem> {
+        Vec::new()
+    }
+
+    /// Previews that need the document (e.g. the piece a trim would remove).
+    fn editor_preview(&self, _ed: &Editor) -> Vec<SketchItem> {
         Vec::new()
     }
 

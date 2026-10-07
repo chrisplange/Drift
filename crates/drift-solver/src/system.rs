@@ -448,6 +448,21 @@ impl System {
             }
         }
 
+        // Geometry on locked layers is pinned where it is (marked with constraint id 0, which
+        // is never reported as a conflict).
+        for id in doc.locked_entities() {
+            let pins: Vec<(usize, f64)> = match doc.get(id).map(|e| e.kind) {
+                Some(EntityKind::Point(p)) => vec![(x(id), p.x), (y(id), p.y)],
+                Some(EntityKind::Circle { radius: r, .. }) => {
+                    vec![(param_index[&Param::Radius(id)], r)]
+                }
+                _ => Vec::new(),
+            };
+            for (param, v) in pins {
+                fixed.entry(param).or_insert((v, ConstraintId(0)));
+            }
+        }
+
         // Collinear: each end of `b` not shared with (or merged into) an end of `a` lies on
         // `a`'s line. Connected lines (a polyline corner) need one equation, separate lines
         // two; an equation for a shared end would be identically zero and read as redundant.
@@ -552,7 +567,7 @@ impl System {
                 group.fixed = true;
                 let scale = v.abs().max(1.0);
                 for &(other, cid) in &pins[1..] {
-                    if (other - v).abs() > tol.length * scale {
+                    if (other - v).abs() > tol.length * scale && cid.0 != 0 {
                         conflicts.push(cid);
                     }
                 }

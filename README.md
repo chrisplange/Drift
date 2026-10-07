@@ -7,11 +7,12 @@ constraints, built for technical drawings and design exploration. It is written 
 on the GPU with [wgpu](https://wgpu.rs), and runs natively on Windows, macOS and Linux and in the
 browser (WebGPU, with a WebGL2 fallback).
 
-> **Status: early development (milestone M5).** You can draw with typed values and automatic
-> relations, constrain with the full set of SolidWorks-style relations, dimension with Smart
-> Dimension, drive dimensions from variables and expressions, scrub variables with sliders,
-> switch between variants, work in metric or imperial (including feet-inches with fractions),
-> and save it all. Modify tools and layers come next. See [PLAN.md](PLAN.md) for the roadmap.
+> **Status: early development (milestone M6).** You can draw and modify (trim, extend, split,
+> fillet, chamfer, offset, mirror, patterns), constrain with SolidWorks-style relations and
+> dimensions, drive them from variables and expressions, measure closed regions, organise
+> geometry on layers with colours and line weights, work in metric or imperial units, and save
+> it all. Drafting (dimension styles, notes, hatching) comes next. See [PLAN.md](PLAN.md) for
+> the roadmap.
 
 ## What works today
 
@@ -30,6 +31,21 @@ browser (WebGPU, with a WebGL2 fallback).
   value straight away.
 - **Dimensions and relations on the canvas:** drag dimension labels to move them, double-click
   to edit the value, and click relation symbols to pick them (Delete removes them).
+- **Modify tools:**
+  - Trim (T): click a piece, or drag across pieces. Extend (E) and Split.
+  - Fillet and Chamfer at two-line corners. Fillets are tangent and dimensioned.
+  - Offset (O) on connected chains; the corners rejoin.
+  - Mirror (M) with symmetric relations.
+  - Linear and circular patterns.
+  - Each is one undo step, and the results stay constrained to the original.
+- **Regions:** click inside any closed area to select it and see its exact area, perimeter and
+  centroid (holes included).
+- **Layers:**
+  - Colours, ISO line weights and line types (continuous, dashed, hidden, centre, phantom),
+    by layer or per entity.
+  - Show / lock / print flags. Locked geometry stays fixed.
+  - A Revit-style **thin lines** toggle (W), and a choice between constraint-status colours
+    and layer colours.
 - **Parameters (Parameters tab):**
   - Variables such as `width = 120` and `hole = width / 10`, with sliders that re-solve the
     sketch live.

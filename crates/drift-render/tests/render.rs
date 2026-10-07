@@ -126,6 +126,7 @@ fn viewport() -> Viewport {
         pixels_per_point: 1.0,
         srgb_target: false,
         imperial_grid: false,
+        thin_lines: false,
     }
 }
 

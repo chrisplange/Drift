@@ -152,6 +152,56 @@ pub fn move_guide(
     }
 }
 
+/// Fill a region (outline and holes) with a translucent colour.
+pub fn region_fill(
+    painter: &egui::Painter,
+    map: &ScreenMap,
+    region: &drift_geom::regions::Region,
+    color: Color32,
+) {
+    use lyon_tessellation::geometry_builder::simple_builder;
+    use lyon_tessellation::math::point;
+    use lyon_tessellation::path::Path;
+    use lyon_tessellation::{FillOptions, FillTessellator, VertexBuffers};
+
+    // Flatten arcs finely enough on screen (about 2 px of sagitta at most).
+    let max_angle = 0.15;
+    let mut builder = Path::builder();
+    for lp in std::iter::once(&region.outer).chain(&region.holes) {
+        let poly = lp.polygon(max_angle);
+        let Some(first) = poly.first() else {
+            continue;
+        };
+        let to = |p: DVec2| {
+            let s = map.to_screen(p);
+            point(s.x, s.y)
+        };
+        builder.begin(to(*first));
+        for p in &poly[1..] {
+            builder.line_to(to(*p));
+        }
+        builder.close();
+    }
+    let path = builder.build();
+    let mut buffers: VertexBuffers<lyon_tessellation::math::Point, u16> = VertexBuffers::new();
+    let ok = FillTessellator::new()
+        .tessellate_path(
+            &path,
+            &FillOptions::default().with_fill_rule(lyon_tessellation::FillRule::EvenOdd),
+            &mut simple_builder(&mut buffers),
+        )
+        .is_ok();
+    if !ok {
+        return;
+    }
+    let mut mesh = egui::Mesh::default();
+    for v in &buffers.vertices {
+        mesh.colored_vertex(egui::pos2(v.x, v.y), color);
+    }
+    mesh.indices = buffers.indices.iter().map(|i| u32::from(*i)).collect();
+    painter.add(egui::Shape::mesh(mesh));
+}
+
 /// A small text label with a background, offset from the cursor.
 pub fn cursor_label(painter: &egui::Painter, at: Pos2, lines: &[String], colors: &OverlayColors) {
     if lines.is_empty() {

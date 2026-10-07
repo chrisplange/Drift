@@ -821,6 +821,102 @@ written but hasn't run yet (no GitHub repo).*
 - Layers, colours, line weights and line types, and the thin-lines toggle (§5.11). File
   format v6.
 
+*M6 as built (2026-10-07):*
+- **Intersections (`drift-geom::intersect`):**
+  - Hits are reported for lines, arcs and circles, with each hit's parameter along both curves.
+  - **Touching cases follow fixed rules:**
+    - Tolerance is 1e-9 relative to the coordinates.
+    - A near-touch gives a single hit flagged as tangent.
+    - Hits just past an end snap exactly onto it.
+    - Parallel and concentric overlaps give no hits.
+  - **Extended variants:** a line extended or an arc taken as its full circle, used by extend
+    and by offset corners.
+  - **Tests:** a randomised check that all of 3,000 pairs' hits lie on both curves.
+- **Modify operations (`drift-app::modify`):** each is one undo step, solved, or refused with
+  a reason.
+  - **Trim:**
+    - Removes the clicked piece between the nearest cuts. The curve keeps its id, so its
+      relations stay.
+    - A removed middle piece leaves two parts joined by Collinear (lines) or Equal (arcs).
+    - A circle becomes an arc in place.
+    - New ends get On curve to the cutter, or join its existing end.
+  - **Extend:** the nearest end moves to the first curve along the extension; a connected end
+    is refused.
+  - **Split:** a new shared point, with Collinear or Equal between the parts.
+  - **Fillet:** at a two-line corner. It adds an arc tangent to both lines (2× Tangent) and a
+    Radius dimension, and the sharp corner point goes.
+  - **Chamfer:** two distances along the lines.
+  - **Offset:**
+    - Applies to the connected chain, with corners rejoined (line–line by intersection,
+      tangent joins shared).
+    - Lines get Parallel and a point-to-line distance; arcs and circles share their centre.
+    - Offsets that invert a segment are refused.
+  - **Mirror:** Symmetric relations about the axis. Points on the axis are shared, and arcs
+    swap ends to stay counter-clockwise.
+  - **Linear and circular patterns:**
+    - They copy geometry and the relations within the selection (with expressions, label
+      placements and driven flags).
+    - Rotation drops orientation-dependent relations (H/V, H/V distances, Fix).
+  - Copies keep their source's layer, appearance and line role (`Document::copy_look`).
+- **Tools:**
+  - Trim (T) previews the piece in red dashes and supports drag-across power trim.
+  - Extend (E) previews the extension.
+  - Split, Fillet and Chamfer (typed sizes are remembered).
+  - Offset (O): pick a chain, then set the side and distance by pointer or typing.
+  - Mirror (M): uses the selection; click the axis.
+  - Patterns are in a collapsed Pattern section in Properties; their fields take expressions.
+  - The toolbar is grouped into Draw / Annotate / Modify and scrolls; shortcuts are optional.
+- **Regions (`drift-geom::regions`):**
+  - Curves are split at their intersections, ends merged into vertices, and dangling edges
+    pruned.
+  - Faces are traced on a half-edge graph by taking the edge just clockwise at each vertex.
+    Outgoing edges are ordered by angle, then curvature, so tangent fillets work.
+  - **Exact area:** chord shoelace plus each arc's circular segment. Perimeter is exact; the
+    centroid comes from fine flattening.
+  - Clockwise boundaries become holes of the smallest larger containing region.
+  - Only solid curves count: construction and centre lines are references.
+  - **In the app:**
+    - Click inside a closed area to select its region.
+    - It shows a translucent fill, triangulated by lyon with even-odd holes.
+    - Properties shows area (in display units²), perimeter, centroid and hole count.
+- **Layers (§5.11):**
+  - A journalled layers table with layer `l0` ("0") always present, a current layer, and
+    per-entity layer plus appearance overrides.
+  - **Locked layers:** pinned by the solver (marked constraint id 0, never reported as a
+    conflict) and not selectable.
+  - **Hidden layers:** not indexed, so not drawn, picked or snapped.
+  - Deleting a layer moves its geometry to "0".
+  - **Rendering:**
+    - Per-item colour, weight and line type.
+    - Weights show at about 2× print size on a 96 dpi screen (minimum the old default width).
+    - Dash patterns scale with weight. The shader supports phantom lines: a negative dot means
+      two dots.
+  - **Thin lines** (W / status bar / View menu): every line is one device pixel.
+  - **View → Constraint status colours:** on by default. Off shows layer colours, with low
+    contrast colours (WCAG ratio under 2:1 against the theme background) swapped for the
+    foreground.
+  - **UI:** a Layers tab (current, show / lock / print, auto colour or picker, weight, line
+    type, select all, move selection here, add / delete), plus layer, colour, weight and line
+    type overrides for the selection in Properties.
+  - **File format v6:**
+    - `layers` and `current_layer` are written only when not default.
+    - Entity `layer` / `color` (#rrggbb) / `weight` (mm, snapped to ISO) / `linetype`.
+    - An entity on a missing layer is rejected. v1–v5 load unchanged.
+- **Example plate:**
+  - It is now fully defined (DOF 0, no redundancy, nothing moves when solved):
+    - Tangent fillets.
+    - The first bolt hole on the bolt circle at an exact 45°; the other three Symmetric about
+      the centre lines.
+    - A slot of vertical sides tangent to both ends.
+  - Its dimension labels are laid out like a drawing.
+  - Zoom-to-fit and opening a file now include placed dimension labels.
+- **Not yet:**
+  - Fillets between a line and an arc, or two arcs.
+  - Trim against points.
+  - Offset relations for arcs (only the shared centre).
+  - Pattern copies aren't linked to the pattern spacing.
+  - Dual units and line-weight scale settings.
+
 **M7 — Drafting, fills and hatches (5–6 wks)**
 - ISO/ASME dimension styles, tolerances, baseline/chain/ordinate dimensions, and hole and chamfer
   callouts.
@@ -883,7 +979,6 @@ title-block template syntax.
 
 1. Create the `drift` GitHub repo and push, so CI runs and Pages deploys. Enable Pages with
    "GitHub Actions" as the source.
-2. M6: modify tools (trim/extend, fillet/chamfer, offset, mirror, patterns), region detection,
-   and layers with line weights, colours and the thin-lines toggle. Also fully constrain the
-   example plate with M4's tangent relations. Also fully constrain the example plate with M4's tangent
+2. M7: drafting (dimension styles, tolerances, baseline / chain / ordinate dimensions,
+   callouts, notes and leaders, centre marks) and fills and hatches on M6's regions (§5.12). Also fully constrain the example plate with M4's tangent
    relations.

@@ -6,7 +6,7 @@
 //! ```json
 //! {
 //!   "format": "drift",
-//!   "version": 5,
+//!   "version": 6,
 //!   "meta": {"title":"Bracket","units":"mm","generator":"Drift 0.1.0"},
 //!   "display": {"length":"architectural","fraction":16},
 //!   "variables": [
@@ -36,8 +36,9 @@
 use std::collections::BTreeMap;
 
 use drift_core::{
-    Constraint, ConstraintId, DVec2, Document, DocumentError, Entity, EntityId, EntityKind, Kind,
-    LengthFormat, LineKind, MeasurementId, Units, Variable, VariableId, Variant, VariantId,
+    Appearance, Constraint, ConstraintId, DVec2, Document, DocumentError, Entity, EntityId,
+    EntityKind, Kind, Layer, LayerId, LengthFormat, LineKind, LineType, LineWeight, MeasurementId,
+    Rgb, Units, Variable, VariableId, Variant, VariantId,
 };
 use serde::{Deserialize, Serialize};
 
@@ -49,8 +50,9 @@ pub const EXTENSION: &str = "drift";
 /// horizontal/vertical and point–line distances, and dimension `label` offsets (M3);
 /// 4 = adds tangent, concentric, coradial, collinear, point-on-curve and symmetric relations,
 /// and `driven` dimensions (M4); 5 = adds `display` units, `variables`, dimension `expr`,
-/// `measurements` and `variants` (M5).
-pub const FORMAT_VERSION: u32 = 5;
+/// `measurements` and `variants` (M5); 6 = adds `layers`, `current_layer`, and per-entity
+/// `layer`, `color`, `weight` (mm) and `linetype` (M6).
+pub const FORMAT_VERSION: u32 = 6;
 const FORMAT_TAG: &str = "drift";
 
 /// Document-level properties stored alongside the geometry.
@@ -165,6 +167,14 @@ enum EntityRecord {
         at: [f64; 2],
         #[serde(default, skip_serializing_if = "Style::is_solid")]
         style: Style,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        layer: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        color: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        weight: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        linetype: Option<String>,
     },
     Line {
         id: String,
@@ -172,6 +182,14 @@ enum EntityRecord {
         b: String,
         #[serde(default, skip_serializing_if = "Style::is_solid")]
         style: Style,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        layer: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        color: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        weight: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        linetype: Option<String>,
     },
     Circle {
         id: String,
@@ -179,6 +197,14 @@ enum EntityRecord {
         radius: f64,
         #[serde(default, skip_serializing_if = "Style::is_solid")]
         style: Style,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        layer: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        color: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        weight: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        linetype: Option<String>,
     },
     Arc {
         id: String,
@@ -187,6 +213,14 @@ enum EntityRecord {
         end: String,
         #[serde(default, skip_serializing_if = "Style::is_solid")]
         style: Style,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        layer: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        color: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        weight: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        linetype: Option<String>,
     },
 }
 
@@ -294,6 +328,80 @@ impl DisplayRecord {
             zero_feet: self.zero_feet.unwrap_or(d.zero_feet),
             angle_decimals: self.angle_decimals.unwrap_or(d.angle_decimals).min(10),
         })
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LayerRecord {
+    id: String,
+    name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    color: Option<String>,
+    weight: f64,
+    linetype: String,
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    visible: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    locked: bool,
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    print: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+fn is_true(b: &bool) -> bool {
+    *b
+}
+
+fn parse_layer_id(s: &str) -> Result<LayerId, LoadError> {
+    s.strip_prefix('l')
+        .and_then(|n| n.parse::<u32>().ok())
+        .map(LayerId)
+        .ok_or_else(|| LoadError::BadId(s.to_owned()))
+}
+
+/// Per-entity layer and appearance fields, as stored.
+struct Look {
+    layer: Option<String>,
+    color: Option<String>,
+    weight: Option<f64>,
+    linetype: Option<String>,
+}
+
+impl Look {
+    fn of(entity: &Entity) -> Look {
+        let a = entity.appearance;
+        Look {
+            layer: (entity.layer != LayerId::DEFAULT).then(|| entity.layer.to_string()),
+            color: a.color.map(Rgb::hex),
+            weight: a.weight.map(LineWeight::mm),
+            linetype: a.line_type.map(|t| t.name().to_owned()),
+        }
+    }
+
+    fn apply(self, id: &str, entity: &mut Entity) -> Result<(), LoadError> {
+        if let Some(l) = self.layer {
+            entity.layer = parse_layer_id(&l)?;
+        }
+        let bad = |field: &'static str| LoadError::MissingField {
+            id: id.to_owned(),
+            field,
+        };
+        entity.appearance = Appearance {
+            color: match self.color {
+                Some(c) => Some(Rgb::parse(&c).ok_or_else(|| bad("color"))?),
+                None => None,
+            },
+            weight: self.weight.map(LineWeight::nearest),
+            line_type: match self.linetype {
+                Some(t) => Some(LineType::from_name(&t).ok_or_else(|| bad("linetype"))?),
+                None => None,
+            },
+        };
+        Ok(())
     }
 }
 
@@ -566,6 +674,10 @@ struct FileRecord {
     #[serde(default)]
     display: Option<DisplayRecord>,
     #[serde(default)]
+    layers: Vec<LayerRecord>,
+    #[serde(default)]
+    current_layer: Option<String>,
+    #[serde(default)]
     variables: Vec<VariableRecord>,
     #[serde(default)]
     entities: Vec<EntityRecord>,
@@ -592,23 +704,41 @@ fn parse_id(s: &str) -> Result<EntityId, LoadError> {
 fn record(id: EntityId, entity: &Entity) -> EntityRecord {
     let style = entity.style.into();
     let id = id_string(id);
+    let Look {
+        layer,
+        color,
+        weight,
+        linetype,
+    } = Look::of(entity);
     match entity.kind {
         EntityKind::Point(at) => EntityRecord::Point {
             id,
             at: at.to_array(),
             style,
+            layer,
+            color,
+            weight,
+            linetype,
         },
         EntityKind::Line { a, b } => EntityRecord::Line {
             id,
             a: id_string(a),
             b: id_string(b),
             style,
+            layer,
+            color,
+            weight,
+            linetype,
         },
         EntityKind::Circle { center, radius } => EntityRecord::Circle {
             id,
             center: id_string(center),
             radius,
             style,
+            layer,
+            color,
+            weight,
+            linetype,
         },
         EntityKind::Arc { center, start, end } => EntityRecord::Arc {
             id,
@@ -616,6 +746,10 @@ fn record(id: EntityId, entity: &Entity) -> EntityRecord {
             start: id_string(start),
             end: id_string(end),
             style,
+            layer,
+            color,
+            weight,
+            linetype,
         },
     }
 }
@@ -632,6 +766,38 @@ pub fn save(doc: &Document, meta: &Metadata) -> String {
         let display = serde_json::to_string(&DisplayRecord::from_units(doc.units()))
             .expect("display serializes");
         out.push_str(&format!("  \"display\": {display},\n"));
+    }
+    let default_layers = {
+        let mut layers = doc.layers();
+        matches!(
+            (layers.next(), layers.next()),
+            (Some((LayerId::DEFAULT, l)), None) if *l == Layer::new("0")
+        )
+    };
+    if !default_layers {
+        let layers: Vec<String> = doc
+            .layers()
+            .map(|(id, l)| {
+                serde_json::to_string(&LayerRecord {
+                    id: id.to_string(),
+                    name: l.name.clone(),
+                    color: l.color.map(Rgb::hex),
+                    weight: l.weight.mm(),
+                    linetype: l.line_type.name().to_owned(),
+                    visible: l.visible,
+                    locked: l.locked,
+                    print: l.printable,
+                })
+                .expect("layer serializes")
+            })
+            .collect();
+        push_array(&mut out, "layers", &layers, true);
+    }
+    if doc.current_layer() != LayerId::DEFAULT {
+        out.push_str(&format!(
+            "  \"current_layer\": \"{}\",\n",
+            doc.current_layer()
+        ));
     }
     let variables: Vec<String> = doc
         .variables()
@@ -725,15 +891,42 @@ pub fn load(text: &str) -> Result<(Document, Metadata), LoadError> {
     let mut entities = Vec::with_capacity(file.entities.len());
     let mut seen = std::collections::HashSet::new();
     for rec in file.entities {
-        let (id_text, entity) = match rec {
-            EntityRecord::Point { id, at, style } => {
+        let (id_text, mut entity, look) = match rec {
+            EntityRecord::Point {
+                id,
+                at,
+                style,
+                layer,
+                color,
+                weight,
+                linetype,
+            } => {
                 let entity = Entity {
                     kind: EntityKind::Point(at.into()),
                     style: style.into(),
+                    ..Entity::new(EntityKind::Point(at.into()))
                 };
-                (id, entity)
+                (
+                    id,
+                    entity,
+                    Look {
+                        layer,
+                        color,
+                        weight,
+                        linetype,
+                    },
+                )
             }
-            EntityRecord::Line { id, a, b, style } => {
+            EntityRecord::Line {
+                id,
+                a,
+                b,
+                style,
+                layer,
+                color,
+                weight,
+                linetype,
+            } => {
                 let kind = EntityKind::Line {
                     a: parse_id(&a)?,
                     b: parse_id(&b)?,
@@ -741,8 +934,14 @@ pub fn load(text: &str) -> Result<(Document, Metadata), LoadError> {
                 (
                     id,
                     Entity {
-                        kind,
                         style: style.into(),
+                        ..Entity::new(kind)
+                    },
+                    Look {
+                        layer,
+                        color,
+                        weight,
+                        linetype,
                     },
                 )
             }
@@ -751,6 +950,10 @@ pub fn load(text: &str) -> Result<(Document, Metadata), LoadError> {
                 center,
                 radius,
                 style,
+                layer,
+                color,
+                weight,
+                linetype,
             } => {
                 let kind = EntityKind::Circle {
                     center: parse_id(&center)?,
@@ -759,8 +962,14 @@ pub fn load(text: &str) -> Result<(Document, Metadata), LoadError> {
                 (
                     id,
                     Entity {
-                        kind,
                         style: style.into(),
+                        ..Entity::new(kind)
+                    },
+                    Look {
+                        layer,
+                        color,
+                        weight,
+                        linetype,
                     },
                 )
             }
@@ -770,6 +979,10 @@ pub fn load(text: &str) -> Result<(Document, Metadata), LoadError> {
                 start,
                 end,
                 style,
+                layer,
+                color,
+                weight,
+                linetype,
             } => {
                 let kind = EntityKind::Arc {
                     center: parse_id(&center)?,
@@ -779,12 +992,19 @@ pub fn load(text: &str) -> Result<(Document, Metadata), LoadError> {
                 (
                     id,
                     Entity {
-                        kind,
                         style: style.into(),
+                        ..Entity::new(kind)
+                    },
+                    Look {
+                        layer,
+                        color,
+                        weight,
+                        linetype,
                     },
                 )
             }
         };
+        look.apply(&id_text, &mut entity)?;
         let id = parse_id(&id_text)?;
         if !seen.insert(id) {
             return Err(LoadError::DuplicateId(id_text));
@@ -830,6 +1050,42 @@ pub fn load(text: &str) -> Result<(Document, Metadata), LoadError> {
     }
     if let Some(display) = &file.display {
         doc.set_units(display.to_units()?);
+    }
+    for l in file.layers {
+        let id = parse_layer_id(&l.id)?;
+        let line_type = LineType::from_name(&l.linetype).ok_or(LoadError::MissingField {
+            id: l.id.clone(),
+            field: "linetype",
+        })?;
+        let color = match &l.color {
+            Some(c) => Some(Rgb::parse(c).ok_or(LoadError::MissingField {
+                id: l.id.clone(),
+                field: "color",
+            })?),
+            None => None,
+        };
+        doc.set_layer(
+            id,
+            Layer {
+                name: l.name,
+                color,
+                weight: LineWeight::nearest(l.weight),
+                line_type,
+                visible: l.visible,
+                locked: l.locked,
+                printable: l.print,
+            },
+        );
+    }
+    for (id, _) in doc.iter() {
+        let layer = doc.get(id).map(|e| e.layer).unwrap_or_default();
+        if doc.layer(layer).is_none() {
+            return Err(LoadError::Document(DocumentError::MissingLayer(layer)));
+        }
+    }
+    if let Some(current) = &file.current_layer {
+        doc.set_current_layer(parse_layer_id(current)?)
+            .map_err(LoadError::Document)?;
     }
     for v in file.variables {
         let id = VariableId(parse_prefixed(&v.id, 'v')?);
@@ -911,7 +1167,7 @@ pub fn migrate(value: serde_json::Value) -> Result<serde_json::Value, LoadError>
         // v1 → v2: constraints were introduced; a v1 file simply has none.
         value["constraints"] = serde_json::Value::Array(Vec::new());
     }
-    // v2 → v5 only added optional fields, sections and constraint types: nothing to convert.
+    // v2 → v6 only added optional fields, sections and constraint types: nothing to convert.
     value["version"] = FORMAT_VERSION.into();
     Ok(value)
 }
@@ -954,7 +1210,7 @@ mod tests {
         let text = save(&doc, &Metadata::default());
         let expected = r#"{
   "format": "drift",
-  "version": 5,
+  "version": 6,
   "meta": {"units":"mm"},
   "entities": [
     {"type":"point","id":"e1","at":[0.0,0.0]},
@@ -1168,6 +1424,51 @@ mod tests {
             .unwrap();
         assert!(loaded.variables().filter(|(id, _)| *id == v).count() == 1);
         assert!(v.0 > 5);
+    }
+
+    #[test]
+    fn layers_round_trip() {
+        let mut doc = Document::new();
+        let walls = doc.add_layer(Layer {
+            name: "Walls".into(),
+            color: Some(Rgb([200, 30, 40])),
+            weight: LineWeight(50),
+            line_type: LineType::Continuous,
+            visible: true,
+            locked: true,
+            printable: true,
+        });
+        let hidden = doc.add_layer(Layer {
+            line_type: LineType::Hidden,
+            visible: false,
+            printable: false,
+            ..Layer::new("Hidden lines")
+        });
+        doc.set_current_layer(walls).unwrap();
+        let a = doc.add_point(DVec2::ZERO);
+        let b = doc.add_point(DVec2::new(10.0, 0.0));
+        let line = doc.add_line(a, b).unwrap();
+        doc.set_entity_layer(line, hidden).unwrap();
+        doc.set_appearance(
+            line,
+            Appearance {
+                color: Some(Rgb([1, 2, 3])),
+                weight: Some(LineWeight(35)),
+                line_type: Some(LineType::Phantom),
+            },
+        )
+        .unwrap();
+        let text = save(&doc, &Metadata::default());
+        assert!(text.contains(r#""current_layer": "l1""#), "{text}");
+        assert!(text.contains(r##""color":"#010203""##));
+        let (loaded, _) = load(&text).unwrap();
+        assert_eq!(loaded, doc);
+        assert_eq!(save(&loaded, &Metadata::default()), text);
+        // A plain document writes no layer section.
+        assert!(!save(&Document::new(), &Metadata::default()).contains("layers"));
+        // An entity on a missing layer is rejected.
+        let broken = text.replace(r#""id":"l2""#, r#""id":"l9""#);
+        assert!(load(&broken).is_err());
     }
 
     #[test]

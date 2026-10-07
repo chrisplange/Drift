@@ -87,6 +87,8 @@ pub enum Emphasis {
     Selected,
     /// Geometry a tool is about to create.
     Preview,
+    /// Geometry a tool is about to remove (e.g. a piece being trimmed).
+    Remove,
 }
 
 /// How completely an entity is determined by constraints, for colouring (SolidWorks style:
@@ -110,6 +112,11 @@ pub struct SketchItem {
     /// For points: drawn as a small endpoint marker of a curve rather than a sketch point.
     pub vertex: bool,
     pub dof: DofState,
+    /// Colour override (sRGB); `None` uses the state / theme colour.
+    pub color: Option<[u8; 3]>,
+    /// Line weight in hundredths of a mm on paper (0 = default thin line).
+    pub weight: u16,
+    pub line_type: crate::LineType,
 }
 
 impl SketchItem {
@@ -120,7 +127,23 @@ impl SketchItem {
             emphasis: Emphasis::Normal,
             vertex: false,
             dof: DofState::Unknown,
+            color: None,
+            weight: 0,
+            line_type: crate::LineType::Continuous,
         }
+    }
+
+    /// Set colour, weight and line type.
+    pub fn with_look(
+        mut self,
+        color: Option<[u8; 3]>,
+        weight: u16,
+        line_type: crate::LineType,
+    ) -> Self {
+        self.color = color;
+        self.weight = weight;
+        self.line_type = line_type;
+        self
     }
 
     pub fn with_kind(mut self, kind: LineKind) -> Self {

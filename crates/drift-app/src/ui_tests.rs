@@ -961,3 +961,110 @@ fn variables_drive_typed_dimensions_and_units_change_display() {
     assert!((a.distance(b) - 63.5).abs() < 1e-9);
     save_png("drift_ui_variant_ghosts.png", &mut h);
 }
+
+#[test]
+fn modify_tools_from_the_toolbar() {
+    let Some(mut h) = harness() else { return };
+    let v = DVec2::new;
+    {
+        let ed = &mut h.state_mut().editor;
+        ed.doc.begin();
+        for (a, b) in [
+            (v(-30.0, 0.0), v(30.0, 0.0)),
+            (v(-10.0, -15.0), v(-10.0, 15.0)),
+            (v(10.0, -15.0), v(10.0, 15.0)),
+        ] {
+            let pa = ed.doc.add_point(a);
+            let pb = ed.doc.add_point(b);
+            ed.doc.add_line(pa, pb).unwrap();
+        }
+        ed.commit("Setup");
+    }
+    h.run();
+    h.key_press(Key::T);
+    h.run();
+    assert_eq!(h.state().tool.kind(), ToolKind::Trim);
+    h.hover_at(screen(&h, v(0.0, 0.3)));
+    h.run();
+    save_png("drift_ui_trim_preview.png", &mut h);
+    click_world(&mut h, v(0.0, 0.3));
+    assert_eq!(lines(&h), 4, "the middle piece went, leaving two");
+    h.get_by_label("Fillet").click();
+    h.run();
+    assert_eq!(h.state().tool.kind(), ToolKind::Fillet);
+}
+
+#[test]
+fn clicking_inside_closed_geometry_selects_its_region() {
+    use std::f64::consts::PI;
+
+    let Some(mut h) = harness() else { return };
+    h.get_by_label("File").click();
+    h.run();
+    h.get_by_label("Open example").click();
+    h.run();
+    h.run();
+    click_world(&mut h, DVec2::new(100.0, 10.0));
+    let region = h.state_mut().editor.region().expect("the plate region");
+    assert_eq!(region.holes.len(), 6, "bore, four bolt holes and the slot");
+    let corners = 4.0 * (100.0 - PI * 100.0 / 4.0);
+    let holes = PI * 14.0 * 14.0 + 4.0 * PI * 3.2 * 3.2 + (8.0 * 30.0 + PI * 16.0);
+    let expected = 120.0 * 80.0 - corners - holes;
+    assert!(
+        (region.area - expected).abs() < 1e-6,
+        "{} vs {expected}",
+        region.area
+    );
+    h.run();
+    save_png("drift_ui_region.png", &mut h);
+    // Clicking inside a hole (clear of the centre lines, the 45° line and the glyphs)
+    // picks the hole's own region.
+    click_world(&mut h, DVec2::new(63.0, 47.0));
+    let bore = h.state_mut().editor.region().expect("the bore");
+    assert!((bore.area - PI * 196.0).abs() < 1e-9);
+}
+
+#[test]
+fn layers_colour_weight_and_thin_lines() {
+    use eframe::egui::accesskit::Role;
+
+    let Some(mut h) = harness() else { return };
+    h.get_by_label("File").click();
+    h.run();
+    h.get_by_label("Open example").click();
+    h.run();
+    {
+        let app = h.state_mut();
+        let ed = &mut app.editor;
+        let outline = ed.add_layer("Outline");
+        let mut look = ed.doc.layer(outline).unwrap().clone();
+        look.color = Some(drift_core::Rgb([0xe0, 0x50, 0x40]));
+        look.weight = drift_core::LineWeight(70);
+        ed.update_layer(outline, look);
+        // The outer boundary: lines and the corner arcs (the curves not inside the plate).
+        ed.selection = ed
+            .doc
+            .iter()
+            .filter(|(id, e)| {
+                !e.kind.is_point()
+                    && e.style == drift_core::LineKind::Solid
+                    && ed.doc.shape(*id).is_some_and(|s| {
+                        let b = s.bounds();
+                        b.min.x < 12.0 || b.max.x > 108.0 || b.min.y < 12.0 || b.max.y > 68.0
+                    })
+            })
+            .map(|(id, _)| id)
+            .collect();
+        ed.move_selection_to_layer(outline);
+        ed.selection.clear();
+        app.status_colors = false;
+    }
+    h.get_by_role_and_label(Role::Button, "Layers").click();
+    h.run();
+    h.run();
+    save_png("drift_ui_layers.png", &mut h);
+    h.key_press(Key::W);
+    h.run();
+    assert!(h.state().thin_lines);
+    save_png("drift_ui_thin_lines.png", &mut h);
+}

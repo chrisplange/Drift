@@ -18,8 +18,11 @@ impl DriftApp {
             let ed = &self.editor;
             let tool = &self.tool;
             pointer.snap = ed.index.snap(raw, options, |id| tool.snap_excludes(ed, id));
-            if pointer.snapped_point().is_none() {
-                pointer.guide = self.inference(raw, pointer.tolerance);
+            // Inference lines apply unless an exact snap decides the position; with grid
+            // snapping they start from the grid point, so both coordinates stay on the grid.
+            if pointer.exact_snap().is_none() {
+                let from = pointer.snap.map_or(raw, |grid| grid.at);
+                pointer.guide = self.inference(from, pointer.tolerance);
             }
         }
         if snap {
@@ -347,16 +350,22 @@ impl DriftApp {
         }
 
         // Geometry (GPU).
-        let mut items = self.editor.items();
+        let mut items = self
+            .editor
+            .items_styled(self.status_colors, ui.visuals().dark_mode);
         items.extend(self.tool.preview(self.pointer.as_ref()));
+        items.extend(self.tool.editor_preview(&self.editor));
         let ppp = f64::from(ui.ctx().pixels_per_point());
         let callback = self.painter.callback(
             rect,
             ppp,
             &items,
             &self.camera,
-            ui.visuals().dark_mode,
-            self.imperial(),
+            crate::canvas::CanvasOptions {
+                dark_mode: ui.visuals().dark_mode,
+                imperial_grid: self.imperial(),
+                thin_lines: self.thin_lines,
+            },
         );
         ui.painter().add(callback);
 
@@ -381,6 +390,9 @@ impl DriftApp {
             None => {}
         }
         self.paint_ghosts(&painter, &map);
+        if let Some(region) = self.editor.region() {
+            overlay::region_fill(&painter, &map, &region, colors.window.gamma_multiply(0.22));
+        }
         self.paint_annotations(&painter, &map, &dims, &glyphs, ui.visuals().dark_mode);
         self.paint_free_directions(&painter, &map);
         let ctx = ui.ctx().clone();
@@ -518,7 +530,7 @@ impl DriftApp {
         // Inference guide lines and the automatic relation about to be added.
         if let Some(p) = self.pointer
             && let Some(guide) = p.guide
-            && p.snapped_point().is_none()
+            && p.exact_snap().is_none()
         {
             let at = map.to_screen(guide.at);
             let stroke = egui::Stroke::new(1.0, colors.preview.gamma_multiply(0.8));

@@ -49,20 +49,25 @@ fn interval_coverage(t: f32, a: f32, b: f32) -> f32 {
     return clamp(min(t - a, b - t) + 0.5, 0.0, 1.0);
 }
 
-// Dash pattern [dash, gap, dot, phase] evaluated at arclength `s` (pixels).
+// Dash pattern [dash, gap, dot, phase] evaluated at arclength `s` (pixels). A negative `dot`
+// means two dots per period (phantom lines).
 fn dash_coverage(s: f32, pattern: vec4<f32>) -> f32 {
     let dash = pattern.x;
     if (dash <= 0.0) {
         return 1.0;
     }
     let gap = pattern.y;
-    let dot = pattern.z;
-    let period = select(dash + gap, dash + 2.0 * gap + dot, dot > 0.0);
+    let dot = abs(pattern.z);
+    let dots = select(1.0, 2.0, pattern.z < 0.0);
+    let period = select(dash + gap, dash + (dots + 1.0) * gap + dots * dot, dot > 0.0);
     let u = s + pattern.w;
     let t = u - period * floor(u / period);
     var c = max(interval_coverage(t, 0.0, dash), interval_coverage(t, period, period + dash));
     if (dot > 0.0) {
         c = max(c, interval_coverage(t, dash + gap, dash + gap + dot));
+        if (dots > 1.5) {
+            c = max(c, interval_coverage(t, dash + 2.0 * gap + dot, dash + 2.0 * gap + 2.0 * dot));
+        }
     }
     return c;
 }

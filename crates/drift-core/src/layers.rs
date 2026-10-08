@@ -128,8 +128,11 @@ impl LineType {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Layer {
     pub name: String,
-    /// `None` is the theme's foreground colour (black on light, white on dark).
+    /// Stroke colour. `None` is the theme's foreground colour (black on light, white on
+    /// dark).
     pub color: Option<Rgb>,
+    /// Colour of fills and hatches; `None` uses the stroke colour.
+    pub fill_color: Option<Rgb>,
     pub weight: LineWeight,
     pub line_type: LineType,
     pub visible: bool,
@@ -144,12 +147,18 @@ impl Layer {
         Self {
             name: name.into(),
             color: None,
+            fill_color: None,
             weight: LineWeight(25),
             line_type: LineType::Continuous,
             visible: true,
             locked: false,
             printable: true,
         }
+    }
+
+    /// The colour of fills and hatches on this layer: its fill colour, else its stroke colour.
+    pub fn fill_colour(&self) -> Option<Rgb> {
+        self.fill_color.or(self.color)
     }
 }
 

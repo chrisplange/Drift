@@ -431,7 +431,7 @@ pub fn fill_graphics(
         if !bounds.intersects(&view) {
             continue;
         }
-        let own = fill.color.or(layer.and_then(|l| l.color));
+        let own = fill.color.or(layer.and_then(|l| l.fill_colour()));
         let mut tint = |color: Rgb, alpha: f64, out: &mut FillGraphics| {
             let mesh = cache.get(revision, id, &shape.region);
             let [r, g, b] = color.0;

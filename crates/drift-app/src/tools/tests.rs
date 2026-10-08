@@ -1779,3 +1779,97 @@ fn drawing_inside_an_open_group_adds_to_it() {
     click(&mut ed, &mut line, v(60.0, 0.0));
     assert_eq!(ed.doc.group(g).unwrap().members.len(), before + 1);
 }
+
+#[test]
+fn duplicate_copies_curves_and_their_relations_then_grabs_the_copy() {
+    let (mut ed, line, [a, b], _) = move_fixture();
+    ed.doc.begin();
+    ed.doc
+        .add_constraint(drift_core::Constraint::Horizontal { line })
+        .unwrap();
+    // A fixed original: its copy isn't pinned there too.
+    ed.doc
+        .add_constraint(drift_core::Constraint::Fix {
+            point: a,
+            at: v(0.0, 0.0),
+        })
+        .unwrap();
+    ed.commit("Relate");
+    ed.selection = [line].into();
+    assert_eq!(ed.duplicate_selection(), 1);
+    assert_eq!(lines(&ed.doc), 2);
+    assert_eq!(
+        ed.doc.constraints().count(),
+        3,
+        "the relation came along, not the fix"
+    );
+    let copy = *ed.selection.iter().next().unwrap();
+    assert_ne!(copy, line);
+    let mut tool = SelectTool::default();
+    let p = ptr(&ed, &tool, v(5.0, 0.0));
+    assert!(tool.key(ToolKey::G, Some(&p), &mut ed));
+    click(&mut ed, &mut tool, v(5.0, 40.0));
+    // The original stays; the copy moved.
+    assert_eq!(ed.doc.point(a).unwrap(), v(0.0, 0.0));
+    assert_eq!(ed.doc.point(b).unwrap(), v(10.0, 0.0));
+    let EntityKind::Line { a: ca, .. } = ed.doc.get(copy).unwrap().kind else {
+        panic!()
+    };
+    assert_eq!(ed.doc.point(ca).unwrap(), v(0.0, 40.0));
+    // One undo step removes the duplicate entirely.
+    ed.undo();
+    ed.undo();
+    assert_eq!(lines(&ed.doc), 1);
+}
+
+#[test]
+fn duplicate_brings_the_fill_of_a_copied_area_and_it_follows_the_copy() {
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    let c = [v(0.0, 0.0), v(10.0, 0.0), v(10.0, 6.0), v(0.0, 6.0)].map(|p| ed.doc.add_point(p));
+    let edges: Vec<EntityId> = (0..4)
+        .map(|i| ed.doc.add_line(c[i], c[(i + 1) % 4]).unwrap())
+        .collect();
+    ed.commit("Setup");
+    let fill = ed.add_fill_at(v(5.0, 3.0)).unwrap();
+    // Drawing on another layer now: the copy stays on the fill's own layer.
+    let other = ed.add_layer("Other");
+    ed.set_current_layer(other);
+    // The fill and its outline are picked, as clicking the hatched area does.
+    ed.selection = edges.iter().copied().collect();
+    ed.selected_fills = [fill].into();
+    ed.duplicate_selection();
+    assert_eq!(ed.doc.fills().count(), 2);
+    let copy = *ed.selected_fills.iter().next().unwrap();
+    assert_ne!(copy, fill);
+    let mut tool = SelectTool::default();
+    let p = ptr(&ed, &tool, v(5.0, 3.0));
+    assert!(tool.key(ToolKey::G, Some(&p), &mut ed));
+    click(&mut ed, &mut tool, v(45.0, 3.0));
+    let shapes = ed.fill_shapes();
+    assert!(
+        shapes[&fill].region.contains(v(5.0, 3.0)),
+        "the original stays"
+    );
+    assert!(!shapes[&copy].lost);
+    assert!(
+        shapes[&copy].region.contains(v(45.0, 3.0)),
+        "the copy's fill moved"
+    );
+    assert_eq!(
+        ed.doc.fill(copy).unwrap().layer,
+        ed.doc.fill(fill).unwrap().layer
+    );
+}
+
+#[test]
+fn toolbar_sections_list_every_tool_once() {
+    let listed: Vec<ToolKind> = ToolKind::SECTIONS
+        .iter()
+        .flat_map(|(_, tools)| tools.iter().copied())
+        .collect();
+    assert_eq!(listed.len(), ToolKind::ALL.len());
+    for kind in ToolKind::ALL {
+        assert_eq!(listed.iter().filter(|k| **k == kind).count(), 1, "{kind:?}");
+    }
+}

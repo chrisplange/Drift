@@ -187,25 +187,46 @@ impl ToolKind {
         ToolKind::Mirror,
     ];
 
-    /// Toolbar group: 0 = draw, 1 = annotate, 2 = modify.
-    pub fn group(self) -> u8 {
-        match self {
-            ToolKind::Dimension
-            | ToolKind::Ordinate
-            | ToolKind::Note
-            | ToolKind::Callout
-            | ToolKind::CentreMark
-            | ToolKind::Fill => 1,
-            ToolKind::Trim
-            | ToolKind::Extend
-            | ToolKind::Split
-            | ToolKind::Fillet
-            | ToolKind::Chamfer
-            | ToolKind::Offset
-            | ToolKind::Mirror => 2,
-            _ => 0,
-        }
-    }
+    /// The toolbar's sections, with their headers (Select stands alone at the top).
+    pub const SECTIONS: [(&'static str, &'static [ToolKind]); 4] = [
+        ("", &[ToolKind::Select]),
+        (
+            "Draw",
+            &[
+                ToolKind::Line,
+                ToolKind::Rectangle,
+                ToolKind::Circle,
+                ToolKind::Arc,
+                ToolKind::ThreePointArc,
+                ToolKind::TangentArc,
+                ToolKind::Point,
+                ToolKind::Block,
+            ],
+        ),
+        (
+            "Annotate",
+            &[
+                ToolKind::Dimension,
+                ToolKind::Ordinate,
+                ToolKind::Note,
+                ToolKind::Callout,
+                ToolKind::CentreMark,
+                ToolKind::Fill,
+            ],
+        ),
+        (
+            "Modify",
+            &[
+                ToolKind::Trim,
+                ToolKind::Extend,
+                ToolKind::Split,
+                ToolKind::Fillet,
+                ToolKind::Chamfer,
+                ToolKind::Offset,
+                ToolKind::Mirror,
+            ],
+        ),
+    ];
 
     /// The arc tools, in the order pressing A cycles through them.
     pub const ARCS: [ToolKind; 3] = [ToolKind::Arc, ToolKind::ThreePointArc, ToolKind::TangentArc];

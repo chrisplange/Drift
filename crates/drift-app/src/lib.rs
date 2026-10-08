@@ -470,11 +470,19 @@ const SHORTCUTS: &[(&str, &str)] = &[
          double-click a copy to edit the block",
     ),
     (
+        "Shift+D",
+        "Duplicate the selection in place and move the copy (Esc leaves it where it was)",
+    ),
+    (
         "Ctrl+G / Ctrl+Shift+G",
         "Group / ungroup the selection; double-click a group to edit inside it, Esc leaves",
     ),
     ("F / double middle-click", "Zoom to fit"),
     ("Shift+G", "Toggle grid snapping"),
+    (
+        "Shift+C",
+        "Colour curves by constraint status, or by their own and their layer's colours",
+    ),
     ("Ctrl+'", "Show or hide the grid"),
     ("W", "Thin lines: draw every line one pixel wide"),
     (
@@ -564,7 +572,7 @@ impl eframe::App for DriftApp {
         egui::Panel::left("tools")
             .resizable(false)
             .frame(frame(8, 6))
-            .exact_size(if wide { 98.0 } else { 56.0 })
+            .exact_size(if wide { 168.0 } else { 56.0 })
             .show(ui, |ui| self.toolbar(ui, wide));
         self.layers_dock_panel(ui, true);
         if self.show_properties.unwrap_or(wide) {

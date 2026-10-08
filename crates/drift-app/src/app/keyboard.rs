@@ -99,6 +99,10 @@ impl DriftApp {
         if ctx.input(|i| i.modifiers.shift_only() && i.key_pressed(Key::G)) {
             self.grid_snap = !self.grid_snap;
         }
+        // Shift+C: constraint status colours, or each curve's own / its layer's colour.
+        if ctx.input(|i| i.modifiers.shift_only() && i.key_pressed(Key::C)) {
+            self.status_colors = !self.status_colors;
+        }
         if self.tool.is_modal() {
             // Only Esc and Enter (and the modal keys above) act during a grab.
             if pressed(Key::Escape) {
@@ -110,6 +114,18 @@ impl DriftApp {
             return;
         }
 
+        // Shift+D duplicates the selection in place and grabs the copy (as in Blender).
+        if ctx.input(|i| i.modifiers.shift_only() && i.key_pressed(Key::D)) && !self.tool.is_busy()
+        {
+            if self.tool.kind() != ToolKind::Select {
+                self.set_tool(ToolKind::Select);
+            }
+            if self.editor.duplicate_selection() > 0 {
+                self.tool
+                    .key(ToolKey::G, self.pointer.as_ref(), &mut self.editor);
+            }
+            return;
+        }
         if pressed(Key::Escape) {
             if self.selected_constraint.take().is_some()
                 || self.editor.selected_annotation.take().is_some()

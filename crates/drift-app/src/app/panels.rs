@@ -165,6 +165,21 @@ impl DriftApp {
                 }
                 if ui
                     .add_enabled(
+                        !self.editor.selection.is_empty()
+                            || !self.editor.selected_instances.is_empty(),
+                        egui::Button::new("Duplicate").shortcut_text("Shift+D"),
+                    )
+                    .on_hover_text("Copy the selection in place, then move the copy")
+                    .clicked()
+                {
+                    self.set_tool(ToolKind::Select);
+                    if self.editor.duplicate_selection() > 0 {
+                        self.tool
+                            .key(ToolKey::G, self.pointer.as_ref(), &mut self.editor);
+                    }
+                }
+                if ui
+                    .add_enabled(
                         !self.editor.selection.is_empty(),
                         egui::Button::new("Make block"),
                     )
@@ -233,7 +248,12 @@ impl DriftApp {
                 toggle_item(ui, &mut self.grid_snap, "Snap to grid", "⇧G");
                 ui.separator();
                 toggle_item(ui, &mut self.thin_lines, "Thin lines", "W");
-                toggle_item(ui, &mut self.status_colors, "Constraint status colours", "");
+                toggle_item(
+                    ui,
+                    &mut self.status_colors,
+                    "Constraint status colours",
+                    "⇧C",
+                );
                 ui.separator();
                 toggle_item(ui, &mut self.show_dimensions, "Dimensions and notes", "");
                 toggle_item(ui, &mut self.show_relations, "Relations", "");
@@ -278,55 +298,51 @@ impl DriftApp {
     /// The tool palette: icon buttons in groups (draw, annotate, modify), with tooltips that
     /// name the tool, its shortcut and what it does.
     pub(crate) fn toolbar(&mut self, ui: &mut egui::Ui, wide: bool) {
-        let columns = if wide { 2 } else { 1 };
-        let size = 38.0;
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                ui.add_space(6.0);
-                let groups: [Vec<ToolKind>; 3] = [0u8, 1, 2].map(|g| {
-                    ToolKind::ALL
-                        .into_iter()
-                        .filter(|k| k.group() == g)
-                        .collect()
-                });
-                for (i, group) in groups.iter().enumerate() {
-                    if i > 0 {
-                        ui.add_space(4.0);
+                if wide {
+                    ui.spacing_mut().item_spacing.y = 1.0;
+                }
+                ui.add_space(4.0);
+                for (i, (title, group)) in ToolKind::SECTIONS.iter().enumerate() {
+                    if wide {
+                        if !title.is_empty() {
+                            ui.add_space(if i > 0 { 10.0 } else { 2.0 });
+                            theme::caps_header(ui, title);
+                            ui.add_space(2.0);
+                        }
+                    } else if i > 0 {
+                        ui.add_space(2.0);
                         ui.separator();
                         ui.add_space(2.0);
                     }
-                    for chunk in group.chunks(columns) {
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 4.0;
-                            for &kind in chunk {
-                                let selected = self.tool.kind() == kind;
-                                let response =
-                                    icons::button(ui, size, selected, kind.label(), |p, r, c| {
-                                        icons::tool(p, r, kind, c)
-                                    });
-                                let response = response.on_hover_ui(|ui| {
-                                    ui.horizontal(|ui| {
-                                        ui.label(
-                                            egui::RichText::new(kind.label()).family(theme::bold()),
-                                        );
-                                        if let Some(c) = kind.shortcut() {
-                                            ui.label(
-                                                egui::RichText::new(c.to_string())
-                                                    .monospace()
-                                                    .weak(),
-                                            );
-                                        }
-                                    });
-                                    ui.label(egui::RichText::new(kind.description()).weak());
-                                });
-                                if response.clicked() {
-                                    self.switch_tool(kind);
+                    for &kind in *group {
+                        let selected = self.tool.kind() == kind;
+                        let draw = |p: &egui::Painter, r: egui::Rect, c: egui::Color32| {
+                            icons::tool(p, r, kind, c)
+                        };
+                        let response = if wide {
+                            let key = kind.shortcut().map(|c| c.to_string());
+                            icons::tool_row(ui, selected, kind.label(), key.as_deref(), draw)
+                        } else {
+                            icons::button(ui, 38.0, selected, kind.label(), draw)
+                        };
+                        let response = response.on_hover_ui(|ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(egui::RichText::new(kind.label()).family(theme::bold()));
+                                if let Some(c) = kind.shortcut() {
+                                    ui.label(egui::RichText::new(c.to_string()).monospace().weak());
                                 }
-                            }
+                            });
+                            ui.label(egui::RichText::new(kind.description()).weak());
                         });
+                        if response.clicked() {
+                            self.switch_tool(kind);
+                        }
                     }
                 }
+                ui.add_space(6.0);
             });
     }
 
@@ -873,6 +889,12 @@ impl DriftApp {
                         Glyph::Snap,
                         &mut self.grid_snap,
                         format!("Snap to grid ({grid}) · Shift+G"),
+                    ),
+                    (
+                        Glyph::Status,
+                        &mut self.status_colors,
+                        "Constraint status colours (on) or layer and line colours (off) · Shift+C"
+                            .to_owned(),
                     ),
                     (Glyph::Axes, &mut self.show_axes, "Origin axes".to_owned()),
                     (

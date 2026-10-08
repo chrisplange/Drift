@@ -231,8 +231,21 @@ impl DriftApp {
                         }
                         let (swatch, _) =
                             ui.allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::hover());
+                        // Stroke colour, with the fill colour in the lower right when it differs.
                         ui.painter()
                             .rect_filled(swatch, 3.0, to_color32(layer.color, dark));
+                        if layer.fill_color.is_some_and(|c| Some(c) != layer.color) {
+                            let fill = to_color32(layer.fill_colour(), dark);
+                            ui.painter().add(egui::Shape::convex_polygon(
+                                vec![
+                                    swatch.right_top(),
+                                    swatch.right_bottom(),
+                                    swatch.left_bottom(),
+                                ],
+                                fill,
+                                egui::Stroke::NONE,
+                            ));
+                        }
                         let name = egui::RichText::new(&layer.name);
                         let name = if is_current {
                             name.family(theme::bold())

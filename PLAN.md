@@ -1168,6 +1168,10 @@ written but hasn't run yet (no GitHub repo).*
     one) and copies placed on their layers.
 - **Not yet:** fills, hatches and text inside blocks; nested blocks; snapping to copies' own
   points; non-uniform DXF insert scales (X scale is used).
+- **Since:** Shift+D duplicates the selection in place and grabs the copy (curves, their
+  relations and dimensions except Fix, fills and hatches of copied areas, block copies).
+  Shift+C or the status bar toggles constraint status colours. Layers have a separate fill
+  and hatch colour (format v11 `fill`; absent uses the stroke colour).
 - **Still to come:** part 3, PDF and DXF underlays with scale calibration and snapping.
 
 **M9 — Advanced geometry (3–4 wks)**

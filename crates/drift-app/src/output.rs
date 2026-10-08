@@ -209,7 +209,7 @@ fn fills(ed: &mut Editor, patterns: &PatternLibrary, s: &Space, d: &mut Drawing)
             continue;
         }
         let layer_name = layer.as_ref().map_or("0".to_owned(), |l| l.name.clone());
-        let own = fill.color.or(layer.as_ref().and_then(|l| l.color));
+        let own = fill.color.or(layer.as_ref().and_then(|l| l.fill_colour()));
         let region = &shape.region;
         let rings: Vec<Vec<DVec2>> = std::iter::once(&region.outer)
             .chain(&region.holes)

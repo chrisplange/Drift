@@ -251,43 +251,6 @@ pub fn cursor_label(painter: &egui::Painter, at: Pos2, lines: &[String], colors:
     painter.galley(pos, galley, colors.label_fg);
 }
 
-/// Centered hint text, wrapped to the canvas width, e.g. for an empty document.
-pub fn canvas_hint(
-    painter: &egui::Painter,
-    rect: Rect,
-    title: &str,
-    lines: &[&str],
-    color: Color32,
-) {
-    let wrap = (rect.width() - 48.0).clamp(80.0, 420.0);
-    let title = painter.layout(
-        title.to_owned(),
-        FontId::new(20.0, crate::theme::bold()),
-        color,
-        wrap,
-    );
-    let body: Vec<_> = lines
-        .iter()
-        .map(|l| painter.layout((*l).to_owned(), FontId::proportional(13.5), color, wrap))
-        .collect();
-    let height = title.size().y + 10.0 + body.iter().map(|g| g.size().y + 4.0).sum::<f32>();
-    let mut y = rect.center().y - height / 2.0;
-    painter.galley(
-        egui::pos2(rect.center().x - title.size().x / 2.0, y),
-        title.clone(),
-        color,
-    );
-    y += title.size().y + 10.0;
-    for g in body {
-        painter.galley(
-            egui::pos2(rect.center().x - g.size().x / 2.0, y),
-            g.clone(),
-            color,
-        );
-        y += g.size().y + 4.0;
-    }
-}
-
 /// A transient message at the bottom of the canvas (macOS-style toast), fading out as
 /// `fade` goes from 1 to 0.
 pub fn toast(painter: &egui::Painter, rect: Rect, text: &str, error: bool, dark: bool, fade: f32) {

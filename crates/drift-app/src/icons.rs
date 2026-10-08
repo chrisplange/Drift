@@ -18,6 +18,8 @@ pub enum Glyph {
     Lock,
     Unlock,
     Print,
+    /// Constraint status colours: a curve with a fixed and a free end.
+    Status,
 }
 
 /// Maps a 20 × 20 design grid into `rect`.
@@ -314,6 +316,12 @@ pub fn glyph(painter: &egui::Painter, rect: Rect, glyph: Glyph, color: Color32) 
             }
             p.dot(10.0, 13.2, 1.1);
         }
+        Glyph::Status => {
+            p.line((4.0, 15.0), (16.0, 5.0));
+            p.dot(4.0, 15.0, 2.2);
+            p.circle(16.0, 5.0, 2.2);
+            p.line((2.0, 18.5), (6.0, 18.5));
+        }
         Glyph::Print => {
             p.poly(&[(6.0, 7.5), (6.0, 3.0), (14.0, 3.0), (14.0, 7.5)], false);
             p.poly(
@@ -337,6 +345,80 @@ pub fn glyph(painter: &egui::Painter, rect: Rect, glyph: Glyph, color: Color32) 
 
 /// A square icon button: an accent-filled tile when `selected`, a soft hover otherwise.
 /// `label` names it for accessibility (screen readers and UI tests).
+/// A full-width toolbar row: icon, name and (dimmed, at the right) shortcut key.
+pub fn tool_row(
+    ui: &mut egui::Ui,
+    selected: bool,
+    label: &str,
+    key: Option<&str>,
+    draw: impl FnOnce(&egui::Painter, Rect, Color32),
+) -> egui::Response {
+    let size = vec2(ui.available_width(), 27.0);
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::Button, true, selected, label)
+    });
+    let dark = ui.visuals().dark_mode;
+    let accent = crate::theme::accent(dark);
+    let (bg, fg, weak) = if selected {
+        (Some(accent), Color32::WHITE, Color32::from_white_alpha(170))
+    } else if response.is_pointer_button_down_on() {
+        (
+            Some(ui.visuals().widgets.active.bg_fill),
+            ui.visuals().strong_text_color(),
+            ui.visuals().weak_text_color(),
+        )
+    } else if response.hovered() {
+        (
+            Some(ui.visuals().widgets.hovered.bg_fill),
+            ui.visuals().strong_text_color(),
+            ui.visuals().weak_text_color(),
+        )
+    } else {
+        (
+            None,
+            ui.visuals().text_color(),
+            ui.visuals().weak_text_color(),
+        )
+    };
+    let painter = ui.painter();
+    if let Some(bg) = bg {
+        painter.rect_filled(rect, 6.0, bg);
+    }
+    let icon = Rect::from_center_size(
+        egui::pos2(rect.left() + 17.0, rect.center().y),
+        Vec2::splat(18.0),
+    );
+    draw(painter, icon, fg);
+    // Text is centred on its ink (cap height), not its line box, so capitals and the key
+    // letter sit on the row's middle.
+    let centred = |g: &std::sync::Arc<egui::Galley>| rect.center().y - g.mesh_bounds.center().y;
+    let mut right = rect.right() - 9.0;
+    if let Some(key) = key {
+        let g = painter.layout_no_wrap(key.to_owned(), egui::FontId::monospace(10.5), weak);
+        right -= g.size().x;
+        let y = centred(&g);
+        painter.galley(egui::pos2(right, y), g, weak);
+        right -= 6.0;
+    }
+    let left = rect.left() + 34.0;
+    let mut job = egui::text::LayoutJob::single_section(
+        label.to_uppercase(),
+        egui::TextFormat {
+            font_id: egui::FontId::proportional(10.5),
+            color: fg,
+            extra_letter_spacing: 0.8,
+            ..Default::default()
+        },
+    );
+    job.wrap.max_width = (right - left).max(10.0);
+    job.wrap.max_rows = 1;
+    let g = painter.layout_job(job);
+    let y = centred(&g);
+    painter.galley(egui::pos2(left, y), g, fg);
+    response
+}
+
 pub fn button(
     ui: &mut egui::Ui,
     size: f32,

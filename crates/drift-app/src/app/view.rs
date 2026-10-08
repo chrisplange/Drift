@@ -432,19 +432,6 @@ impl DriftApp {
         // Overlays (egui).
         let painter = ui.painter_at(rect);
         let colors = OverlayColors::new(ui.visuals().dark_mode);
-        if self.editor.doc.is_empty() && self.tool.kind() == ToolKind::Select {
-            overlay::canvas_hint(
-                &painter,
-                rect,
-                "Start a sketch",
-                &[
-                    "Pick a tool on the left: L draws lines, R rectangles, C circles.",
-                    "Type exact values while drawing; dimension with D.",
-                    "Or open the example from the File menu.",
-                ],
-                ui.visuals().weak_text_color(),
-            );
-        }
         match self.tool.overlay() {
             Some(Overlay::SelectionBox { rect: r, crossing }) => {
                 overlay::selection_box(&painter, &map, &r, crossing, &colors);

@@ -240,6 +240,22 @@ pub fn section(ui: &mut egui::Ui, title: &str) {
     ui.add_space(2.0);
 }
 
+/// A small, letter-spaced all-caps header (as in macOS sidebars).
+pub fn caps_header(ui: &mut egui::Ui, title: &str) {
+    let mut job = egui::text::LayoutJob::default();
+    job.append(
+        &title.to_uppercase(),
+        6.0,
+        egui::TextFormat {
+            font_id: egui::FontId::new(9.5, bold()),
+            color: ui.visuals().weak_text_color().gamma_multiply(0.8),
+            extra_letter_spacing: 1.6,
+            ..Default::default()
+        },
+    );
+    ui.label(job);
+}
+
 /// A segmented control (macOS-style): one rounded track with the selected segment raised.
 /// Returns the clicked segment.
 pub fn segmented<T: Copy + PartialEq>(

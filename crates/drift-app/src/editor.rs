@@ -1453,6 +1453,109 @@ impl Editor {
         self.commit("Delete");
     }
 
+    /// Copy the selection in place (Blender's Shift+D): the curves with their points, the
+    /// relations and dimensions among them, fills and hatches of copied areas, and picked
+    /// block copies. The copies become the
+    /// selection. Returns how many things were copied.
+    pub fn duplicate_selection(&mut self) -> usize {
+        let curves: Vec<EntityId> = self.selection.iter().copied().collect();
+        let instances: Vec<drift_core::InstanceId> =
+            self.selected_instances.iter().copied().collect();
+        if curves.is_empty() && instances.is_empty() {
+            return 0;
+        }
+        // Everything copied: the picked entities and the points they're defined by.
+        let mut sources: BTreeSet<EntityId> = BTreeSet::new();
+        for &id in &curves {
+            if let Some(e) = self.doc.get(id) {
+                sources.insert(id);
+                sources.extend(e.kind.points());
+            }
+        }
+        self.doc.begin();
+        let mut map: std::collections::BTreeMap<EntityId, EntityId> = Default::default();
+        // Points first, then the curves that use them.
+        let (points, others): (Vec<EntityId>, Vec<EntityId>) = sources
+            .iter()
+            .partition(|id| self.doc.get(**id).is_some_and(|e| e.kind.is_point()));
+        for id in points.into_iter().chain(others) {
+            let Some(e) = self.doc.get(id).cloned() else {
+                continue;
+            };
+            let made = match e.kind {
+                EntityKind::Point(p) => Ok(self.doc.add_point(p)),
+                EntityKind::Line { a, b } => self.doc.add_line(map[&a], map[&b]),
+                EntityKind::Circle { center, radius } => self.doc.add_circle(map[&center], radius),
+                EntityKind::Arc { center, start, end } => {
+                    self.doc.add_arc(map[&center], map[&start], map[&end])
+                }
+            };
+            if let Ok(copy) = made {
+                let _ = self.doc.set_entity_layer(copy, e.layer);
+                self.doc.set_style(copy, e.style);
+                let _ = self.doc.set_appearance(copy, e.appearance);
+                map.insert(id, copy);
+            }
+        }
+        // Relations and dimensions entirely within the copied geometry come along, except
+        // fixed positions (the copy would be pinned where the original is).
+        let constraints: Vec<(ConstraintId, Constraint)> = self
+            .doc
+            .constraints()
+            .filter(|(_, c)| !matches!(c, Constraint::Fix { .. }))
+            .filter(|(_, c)| c.entities().all(|e| map.contains_key(&e)))
+            .map(|(id, c)| (id, *c))
+            .collect();
+        for (id, c) in constraints {
+            let placement = self.doc.placement(id);
+            if let Ok(copy) = self.doc.add_constraint(c.map_entities(|e| map[&e]))
+                && let Some(offset) = placement
+            {
+                let _ = self.doc.set_placement(copy, offset);
+            }
+        }
+        // Fills and hatches whose whole boundary was copied follow onto the copy.
+        let fills: Vec<(drift_core::FillId, drift_core::Fill)> = self
+            .doc
+            .fills()
+            .filter(|(_, f)| {
+                !f.boundary.is_empty() && f.boundary.iter().all(|e| map.contains_key(e))
+            })
+            .map(|(id, f)| (id, f.clone()))
+            .collect();
+        let mut fill_copies = BTreeSet::new();
+        for (id, mut fill) in fills {
+            fill.boundary = fill.boundary.iter().map(|e| map[e]).collect();
+            fill.boundary.sort_unstable();
+            // On the original's layer and in its place in the draw order.
+            let copy = self.doc.add_fill(fill.clone());
+            self.doc.set_fill(copy, fill);
+            if self.selected_fills.contains(&id) {
+                fill_copies.insert(copy);
+            }
+        }
+        let mut copies = Vec::new();
+        for id in instances {
+            if let Some(i) = self.doc.instance(id).copied()
+                && let Ok(copy) = self.doc.add_instance(i)
+            {
+                let _ = self.doc.set_instance(copy, i);
+                copies.push(copy);
+            }
+        }
+        self.commit("Duplicate");
+        let n = curves.iter().filter(|id| map.contains_key(id)).count() + copies.len();
+        self.selection = curves
+            .iter()
+            .filter_map(|id| map.get(id).copied())
+            .collect();
+        self.selected_instances = copies.into_iter().collect();
+        self.selected_fills = fill_copies;
+        self.selected_region = None;
+        self.selected_annotation = None;
+        n
+    }
+
     /// The curves joined end to end with `start` (lines and arcs meeting at shared end
     /// points; circles stand alone), as Revit's Tab selects a chain of walls.
     pub fn chain_of(&self, start: EntityId) -> BTreeSet<EntityId> {

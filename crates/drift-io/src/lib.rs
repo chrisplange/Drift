@@ -6,7 +6,7 @@
 //! ```json
 //! {
 //!   "format": "drift",
-//!   "version": 10,
+//!   "version": 11,
 //!   "meta": {"title":"Bracket","units":"mm","generator":"Drift 0.1.0"},
 //!   "display": {"length":"architectural","fraction":16},
 //!   "variables": [
@@ -63,7 +63,7 @@ pub const EXTENSION: &str = "drift";
 /// ordinate dimensions) and dimension `prefix`, `suffix` and `tol` (M7); 8 = adds `sheets`
 /// (paper, scale, view, title block and revisions) (M8); 9 = adds `groups`; 10 = adds `blocks`
 /// and `instances` (M8.5).
-pub const FORMAT_VERSION: u32 = 10;
+pub const FORMAT_VERSION: u32 = 11;
 const FORMAT_TAG: &str = "drift";
 
 /// Document-level properties stored alongside the geometry.
@@ -357,6 +357,9 @@ struct LayerRecord {
     name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     color: Option<String>,
+    /// Fill and hatch colour (v11); absent uses the stroke colour.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    fill: Option<String>,
     weight: f64,
     linetype: String,
     #[serde(default = "yes", skip_serializing_if = "is_true")]
@@ -835,6 +838,7 @@ pub fn save(doc: &Document, meta: &Metadata) -> String {
                     id: id.to_string(),
                     name: l.name.clone(),
                     color: l.color.map(Rgb::hex),
+                    fill: l.fill_color.map(Rgb::hex),
                     weight: l.weight.mm(),
                     linetype: l.line_type.name().to_owned(),
                     visible: l.visible,
@@ -1181,11 +1185,19 @@ pub fn load(text: &str) -> Result<(Document, Metadata), LoadError> {
             })?),
             None => None,
         };
+        let fill_color = match &l.fill {
+            Some(c) => Some(Rgb::parse(c).ok_or(LoadError::MissingField {
+                id: l.id.clone(),
+                field: "fill",
+            })?),
+            None => None,
+        };
         doc.set_layer(
             id,
             Layer {
                 name: l.name,
                 color,
+                fill_color,
                 weight: LineWeight::nearest(l.weight),
                 line_type,
                 visible: l.visible,
@@ -1335,7 +1347,7 @@ pub fn migrate(value: serde_json::Value) -> Result<serde_json::Value, LoadError>
         // v1 → v2: constraints were introduced; a v1 file simply has none.
         value["constraints"] = serde_json::Value::Array(Vec::new());
     }
-    // v2 → v10 only added optional fields, sections and constraint types: nothing to convert.
+    // v2 → v11 only added optional fields, sections and constraint types: nothing to convert.
     value["version"] = FORMAT_VERSION.into();
     Ok(value)
 }
@@ -1378,7 +1390,7 @@ mod tests {
         let text = save(&doc, &Metadata::default());
         let expected = r#"{
   "format": "drift",
-  "version": 10,
+  "version": 11,
   "meta": {"units":"mm"},
   "entities": [
     {"type":"point","id":"e1","at":[0.0,0.0]},
@@ -1600,6 +1612,7 @@ mod tests {
         let walls = doc.add_layer(Layer {
             name: "Walls".into(),
             color: Some(Rgb([200, 30, 40])),
+            fill_color: Some(Rgb([250, 230, 200])),
             weight: LineWeight(50),
             line_type: LineType::Continuous,
             visible: true,
@@ -1629,6 +1642,7 @@ mod tests {
         let text = save(&doc, &Metadata::default());
         assert!(text.contains(r#""current_layer": "l1""#), "{text}");
         assert!(text.contains(r##""color":"#010203""##));
+        assert!(text.contains(r##""fill":"#fae6c8""##), "{text}");
         let (loaded, _) = load(&text).unwrap();
         assert_eq!(loaded, doc);
         assert_eq!(save(&loaded, &Metadata::default()), text);
@@ -1900,7 +1914,7 @@ mod tests {
         .unwrap();
 
         let text = save(&doc, &Metadata::default());
-        assert!(text.contains("\"version\": 10"));
+        assert!(text.contains("\"version\": 11"));
         let (loaded, _) = load(&text).unwrap();
         assert_eq!(loaded, doc);
         assert_eq!(save(&loaded, &Metadata::default()), text);

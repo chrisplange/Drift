@@ -294,11 +294,23 @@ impl DriftApp {
                     });
                             ui.horizontal(|ui| {
                                 ui.add_space(22.0);
+                                ui.add_sized([34.0, 18.0], egui::Label::new("Stroke"));
                                 if let Some(c) = color_choice(ui, edited.color, "Auto colour", dark)
                                 {
                                     edited.color = c;
                                 }
                             });
+                            ui.horizontal(|ui| {
+                                ui.add_space(22.0);
+                                ui.add_sized([34.0, 18.0], egui::Label::new("Fill"));
+                                if let Some(c) =
+                                    color_choice(ui, edited.fill_color, "Same as stroke", dark)
+                                {
+                                    edited.fill_color = c;
+                                }
+                            })
+                            .response
+                            .on_hover_text("Colour of fills and hatches on this layer");
                             ui.horizontal(|ui| {
                                 ui.add_space(22.0);
                                 let mut w = Some(edited.weight);

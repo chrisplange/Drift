@@ -1126,6 +1126,9 @@ written but hasn't run yet (no GitHub repo).*
     Moves (G, drag) and rotates take it together.
   - Double-click a group to edit inside it (members pick one by one); Esc or a click outside
     leaves it.
+  - While a group is open, anything drawn or created (lines, arcs, points, the pieces a
+    trim or split leaves) joins it, in the same undo step. Blocks being edited will work the
+    same way.
   - Canvas: picked groups get a dashed frame with their name, hovered groups a faint frame,
     and the open group a solid "Editing …" frame.
   - The inspector shows the group: rename it, see its member count, Edit group, or Ungroup.

@@ -494,6 +494,22 @@ impl Document {
         self.journal.is_some()
     }
 
+    /// Entities created in the open transaction (that still exist).
+    pub fn created_in_transaction(&self) -> Vec<EntityId> {
+        let Some(journal) = &self.journal else {
+            return Vec::new();
+        };
+        let mut ids: Vec<EntityId> = journal
+            .iter()
+            .filter_map(|(key, before)| match (key, before) {
+                (Key::Entity(id), None) if self.entities.contains_key(id) => Some(*id),
+                _ => None,
+            })
+            .collect();
+        ids.sort_unstable();
+        ids
+    }
+
     /// Finish recording and return the changes made since [`begin`](Self::begin).
     pub fn commit(&mut self, label: impl Into<String>) -> Transaction {
         let journal = self.journal.take().unwrap_or_default();
@@ -2022,6 +2038,32 @@ impl Document {
         self.next_drafting_id = self.next_drafting_id.max(id.0 + 1);
         self.touch_key(Key::Group(id));
         self.groups.insert(id, group);
+        Ok(())
+    }
+
+    /// Add entities to a group (they leave any other group).
+    pub fn add_group_members(
+        &mut self,
+        id: GroupId,
+        members: impl IntoIterator<Item = EntityId>,
+    ) -> Result<(), DocumentError> {
+        let members: BTreeSet<EntityId> = members.into_iter().collect();
+        if let Some(e) = members.iter().find(|e| !self.entities.contains_key(e)) {
+            return Err(DocumentError::Missing(*e));
+        }
+        if !self.groups.contains_key(&id) || members.is_empty() {
+            return Ok(());
+        }
+        let others: BTreeSet<EntityId> = members
+            .iter()
+            .copied()
+            .filter(|e| self.group_of(*e).is_some_and(|g| g != id))
+            .collect();
+        self.ungroup_members(&others);
+        self.touch_key(Key::Group(id));
+        if let Some(g) = self.groups.get_mut(&id) {
+            g.members.extend(members);
+        }
         Ok(())
     }
 

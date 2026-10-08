@@ -1746,3 +1746,36 @@ fn tab_selects_a_chain_of_connected_curves() {
     ed.selection = [lines[2]].into();
     assert_eq!(ed.select_chain(), 1);
 }
+
+#[test]
+fn drawing_inside_an_open_group_adds_to_it() {
+    let (mut ed, _) = rotated_rectangle_fixture();
+    let g = ed.make_group().expect("grouped");
+    let before = ed.doc.group(g).unwrap().members.len();
+    // Open the group and draw a line and a point: both join it, in the same undo step.
+    ed.open_group = Some(g);
+    let mut line = LineTool::default();
+    click(&mut ed, &mut line, v(2.0, 2.0));
+    click(&mut ed, &mut line, v(8.0, 8.0));
+    line.handle(Input::Finish, &mut ed);
+    let mut point = PointTool::default();
+    click(&mut ed, &mut point, v(15.0, 3.0));
+    let members = ed.doc.group(g).unwrap().members.clone();
+    assert_eq!(members.len(), before + 2, "{members:?}");
+    // The line's own end points aren't members; the standalone point is.
+    assert!(
+        members
+            .iter()
+            .filter(|id| ed.doc.get(**id).is_some_and(|e| e.kind.is_point()))
+            .count()
+            == 1
+    );
+    ed.undo();
+    assert_eq!(ed.doc.group(g).unwrap().members.len(), before + 1);
+    // Closed again, new geometry stays out of it.
+    ed.open_group = None;
+    let mut line = LineTool::default();
+    click(&mut ed, &mut line, v(50.0, 0.0));
+    click(&mut ed, &mut line, v(60.0, 0.0));
+    assert_eq!(ed.doc.group(g).unwrap().members.len(), before + 1);
+}

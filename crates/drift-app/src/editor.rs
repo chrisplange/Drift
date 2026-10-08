@@ -341,6 +341,7 @@ impl Editor {
             return false;
         }
         self.refresh_driven();
+        self.adopt_into_open_group();
         let tx = self.doc.commit(label);
         self.history.push(tx);
         self.sync();
@@ -1493,6 +1494,28 @@ impl Editor {
         self.selection = chain;
         self.expand_groups();
         self.selection.len()
+    }
+
+    /// While a group is open for editing, what's drawn joins it: curves and standalone points
+    /// created in the open transaction (a curve's own points ride along with it).
+    fn adopt_into_open_group(&mut self) {
+        let Some(g) = self.open_group else { return };
+        if self.doc.group(g).is_none() {
+            self.open_group = None;
+            return;
+        }
+        let created = self.doc.created_in_transaction();
+        let new: Vec<EntityId> = created
+            .into_iter()
+            .filter(|id| {
+                self.doc
+                    .get(*id)
+                    .is_some_and(|e| !e.kind.is_point() || self.doc.users_of(*id).next().is_none())
+            })
+            .collect();
+        if !new.is_empty() {
+            let _ = self.doc.add_group_members(g, new);
+        }
     }
 
     /// What picking `id` selects: its whole group, unless that group is open.

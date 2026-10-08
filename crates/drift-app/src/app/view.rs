@@ -266,6 +266,7 @@ impl DriftApp {
         } else {
             Vec::new()
         };
+        let notes = self.layout_notes(&annotation_painter, &map);
 
         // Feed pointer input to the active tool.
         let dragging = response.dragged_by(PointerButton::Primary);
@@ -274,7 +275,12 @@ impl DriftApp {
         } else {
             response.hover_pos()
         };
-        let consumed = self.annotation_input(ui, &response, &map, &dims, &glyphs, pos);
+        // While a note's text is being typed, a click on the canvas only finishes it.
+        let typing_note = self.note_edit.is_some()
+            && (response.clicked() || response.drag_started() || response.dragged());
+        let consumed = typing_note
+            || self.note_input(ui, &response, &map, &notes, &dims, &glyphs, pos)
+            || self.annotation_input(ui, &response, &map, &dims, &glyphs, pos);
         if consumed {
             self.pointer = pos.map(|pos| self.make_pointer(&map, pos, snap));
         } else if response.drag_started_by(PointerButton::Primary)
@@ -312,6 +318,16 @@ impl DriftApp {
             }
         } else {
             self.editor.hovered = None;
+            // A drag released off the canvas (e.g. over a side panel) still ends, where the
+            // button came up, so a selection box or move doesn't stay stuck.
+            if response.drag_stopped_by(PointerButton::Primary)
+                && let Some(at) = release_pos(ui, PointerButton::Primary)
+                    .or_else(|| ui.input(|i| i.pointer.latest_pos()))
+            {
+                let released = self.make_pointer(&map, at, snap);
+                self.tool
+                    .handle(Input::DragEnd(released, mods), &mut self.editor);
+            }
         }
         if response.clicked_by(PointerButton::Secondary) {
             if self.tool.is_modal() {
@@ -325,6 +341,9 @@ impl DriftApp {
         self.editor.sync();
         if let Some(id) = self.editor.pending_edit.take() {
             self.open_dimension_edit(id);
+        }
+        if let Some(id) = self.editor.pending_note_edit.take() {
+            self.open_note_edit(id, true);
         }
         // Remember points the pointer snapped to, for inference lines.
         if let Some(snap) = self.pointer.and_then(|p| p.snap)
@@ -349,10 +368,40 @@ impl DriftApp {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
         }
 
+        // Fills and hatches under the geometry (GPU).
+        self.hatch_patterns
+            .update(self.editor.doc.custom_patterns());
+        let view = {
+            let (a, b) = (
+                map.to_world(rect.left_top()),
+                map.to_world(rect.right_bottom()),
+            );
+            Bounds {
+                min: a.min(b),
+                max: a.max(b),
+            }
+        };
+        let fills = crate::fills::fill_graphics(
+            &mut self.editor,
+            &mut self.fill_meshes,
+            &self.hatch_patterns,
+            view,
+            self.camera.scale,
+            ui.visuals().dark_mode,
+        );
         // Geometry (GPU).
-        let mut items = self
-            .editor
-            .items_styled(self.status_colors, ui.visuals().dark_mode);
+        let mut items = fills.lines;
+        if self.show_dimensions {
+            items.extend(crate::notes::centre_items(
+                &self.editor.doc,
+                self.editor.selected_annotation,
+                self.editor.hovered_annotation,
+            ));
+        }
+        items.extend(
+            self.editor
+                .items_styled(self.status_colors, ui.visuals().dark_mode),
+        );
         items.extend(self.tool.preview(self.pointer.as_ref()));
         items.extend(self.tool.editor_preview(&self.editor));
         let ppp = f64::from(ui.ctx().pixels_per_point());
@@ -360,6 +409,7 @@ impl DriftApp {
             rect,
             ppp,
             &items,
+            &fills.meshes,
             &self.camera,
             crate::canvas::CanvasOptions {
                 dark_mode: ui.visuals().dark_mode,
@@ -394,13 +444,38 @@ impl DriftApp {
             Some(Overlay::Move { base, to }) => {
                 overlay::move_guide(&painter, &map, base, to, &colors);
             }
+            Some(Overlay::Region { at }) => {
+                let regions = self.editor.regions();
+                if let Some(region) = drift_geom::regions::region_at(&regions, at) {
+                    overlay::region_fill(&painter, &map, region, colors.snap.gamma_multiply(0.25));
+                }
+            }
             None => {}
+        }
+        // Picked and hovered fills.
+        let shapes = self.editor.fill_shapes();
+        for (id, alpha) in self
+            .editor
+            .selected_fills
+            .iter()
+            .map(|id| (*id, 0.3))
+            .chain(self.editor.hovered_fill.map(|id| (id, 0.14)))
+        {
+            if let Some(shape) = shapes.get(&id) {
+                let color = if shape.lost {
+                    egui::Color32::from_rgb(0xff, 0x5d, 0x5d)
+                } else {
+                    colors.window
+                };
+                overlay::region_fill(&painter, &map, &shape.region, color.gamma_multiply(alpha));
+            }
         }
         self.paint_ghosts(&painter, &map);
         if let Some(region) = self.editor.region() {
             overlay::region_fill(&painter, &map, &region, colors.window.gamma_multiply(0.22));
         }
         self.paint_annotations(&painter, &map, &dims, &glyphs, ui.visuals().dark_mode);
+        self.paint_notes(&painter, &notes, ui.visuals().dark_mode);
         self.paint_free_directions(&painter, &map);
         if let Some(status) = &self.status {
             let now = ui.input(|i| i.time);
@@ -428,6 +503,9 @@ impl DriftApp {
         let ctx = ui.ctx().clone();
         let now = ctx.input(|i| i.time);
         self.dimension_editor(&ctx, &dims, now);
+        // The notes as laid out now (a tool may have just placed one).
+        let notes = self.layout_notes(&annotation_painter, &map);
+        self.note_editor(&ctx, &notes);
         if let (Some(p), Some(pos)) = (self.pointer, pos) {
             let mut label = Vec::new();
             if let Some(snap) = p.snap {

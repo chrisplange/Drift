@@ -40,6 +40,20 @@ browser (WebGPU, with a WebGL2 fallback).
   - Each is one undo step, and the results stay constrained to the original.
 - **Regions:** click inside any closed area to select it and see its exact area, perimeter and
   centroid (holes included).
+- **Fills and hatches (H):** click inside a closed area to fill it solid or hatch it.
+  - Holes are left out, and fills follow the geometry as it changes.
+  - Built-in ANSI and material patterns (concrete, earth, insulation, brick, block…) plus
+    imported AutoCAD / Revit `.pat` files.
+  - Scale, angle, drafting or model size, background colour and draw order.
+  - Hatch lines are clipped exactly and stay crisp at any zoom.
+- **Drafting:**
+  - ISO 129 or ASME Y14.5 dimension styles: aligned or horizontal text, arrowheads, zeros
+    and dual units.
+  - Prefixes and suffixes (`4× Ø6 THRU`) and tolerances (±, stacked deviations, limits, fits
+    like `H7`).
+  - Chain and baseline dimensions (Shift+click after a horizontal or vertical dimension) and
+    ordinate dimensions.
+  - Notes with leaders (N), hole and chamfer callouts, centre marks and centre lines.
 - **Layers:**
   - Colours, ISO line weights and line types (continuous, dashed, hidden, centre, phantom),
     by layer or per entity.
@@ -135,7 +149,8 @@ cargo test --workspace
 | Path | Purpose |
 |---|---|
 | `crates/drift-core` | Document model, transactions and undo history (`f64`, mm, y-up) |
-| `crates/drift-geom` | Exact geometry: nearest points, intersections, R-tree picking and snapping |
+| `crates/drift-geom` | Exact geometry: nearest points, intersections, regions, R-tree picking and snapping |
+| `crates/drift-draft` | Drafting: `.pat` hatch patterns (built-in library and parser) and exact hatch clipping |
 | `crates/drift-solver` | Constraint solver: substitution, sparse weighted least-norm Newton, DOF analysis |
 | `crates/drift-io` | The `.drift` file format (versioned JSON) |
 | `crates/drift-platform` | File dialogs and saving on desktop and web |
@@ -144,7 +159,6 @@ cargo test --workspace
 | `apps/native` | Desktop binary |
 | `apps/web` | Browser entry point and Trunk config |
 
-The drafting crate described in the plan is added in the milestone where it is needed.
 
 ## Licence
 

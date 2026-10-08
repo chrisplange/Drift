@@ -171,6 +171,47 @@ pub fn tool(painter: &egui::Painter, rect: Rect, kind: ToolKind, color: Color32)
             p.arrow_head((4.0, 10.0), vec2(-1.0, 0.0));
             p.arrow_head((16.0, 10.0), vec2(1.0, 0.0));
         }
+        ToolKind::Ordinate => {
+            p.line((3.5, 16.0), (17.0, 16.0));
+            p.dot(3.5, 16.0, 1.6);
+            for x in [3.5, 9.0, 15.0] {
+                p.line((x, 3.0), (x, 12.5));
+            }
+            p.line((3.5, 3.0), (3.5, 6.0));
+        }
+        ToolKind::Note => {
+            p.line((8.0, 5.0), (17.0, 5.0));
+            p.line((8.0, 9.0), (17.0, 9.0));
+            p.line((8.0, 13.0), (13.5, 13.0));
+            p.line((3.0, 17.0), (6.5, 9.0));
+            p.line((6.5, 9.0), (8.0, 9.0));
+            p.arrow_head((2.8, 17.5), vec2(-0.4, 1.0));
+        }
+        ToolKind::Callout => {
+            p.circle(6.5, 13.0, 4.0);
+            p.line((9.3, 10.2), (13.0, 5.0));
+            p.line((13.0, 5.0), (18.0, 5.0));
+            p.arrow_head((9.0, 10.6), vec2(-0.6, 0.8));
+            p.dot(6.5, 13.0, 1.0);
+        }
+        ToolKind::CentreMark => {
+            p.circle(10.0, 10.0, 5.5);
+            p.dashed((1.5, 10.0), (18.5, 10.0));
+            p.dashed((10.0, 1.5), (10.0, 18.5));
+        }
+        ToolKind::Fill => {
+            p.poly(&[(3.5, 4.5), (16.5, 4.5), (16.5, 15.5), (3.5, 15.5)], true);
+            for k in 0..4 {
+                let x = 3.5 + 3.4 * k as f32;
+                let (x0, y0, x1, y1) = (
+                    x,
+                    15.5,
+                    (x + 11.0).min(16.5),
+                    15.5 - ((x + 11.0).min(16.5) - x),
+                );
+                p.line((x0, y0), (x1, y1));
+            }
+        }
         ToolKind::Trim => {
             p.line((6.0, 3.0), (6.0, 17.0));
             p.line((2.5, 10.0), (6.0, 10.0));

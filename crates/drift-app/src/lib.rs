@@ -7,9 +7,11 @@ mod annotations;
 mod app;
 mod canvas;
 pub mod editor;
+pub mod fills;
 mod icons;
 mod layers_ui;
 pub mod modify;
+mod notes;
 mod overlay;
 mod parameters;
 mod theme;
@@ -50,6 +52,10 @@ const EMPTY_VIEW: Bounds = Bounds {
 const DRIFT_FILE: FileType = FileType {
     name: "Drift sketch",
     extensions: &[drift_io::EXTENSION],
+};
+const PAT_FILE: FileType = FileType {
+    name: "Hatch patterns",
+    extensions: &["pat"],
 };
 const UNTITLED: &str = "Untitled.drift";
 
@@ -199,6 +205,13 @@ pub struct DriftApp {
     new_layer_name: String,
     show_grid: bool,
     show_axes: bool,
+    /// Fill tessellations, kept while the document is unchanged.
+    fill_meshes: fills::MeshCache,
+    /// Built-in and imported hatch patterns.
+    hatch_patterns: fills::PatternLibrary,
+    /// An annotation label being dragged, and the grab offset (world units).
+    note_drag: Option<(drift_core::AnnotationId, DVec2)>,
+    note_edit: Option<app::note_ui::NoteEdit>,
 }
 
 impl DriftApp {
@@ -257,6 +270,10 @@ impl DriftApp {
             new_layer_name: String::new(),
             show_grid: true,
             show_axes: true,
+            fill_meshes: Default::default(),
+            hatch_patterns: Default::default(),
+            note_drag: None,
+            note_edit: None,
         };
         theme::install_fonts(&cc.egui_ctx);
         theme::apply(&cc.egui_ctx);
@@ -347,6 +364,19 @@ const SHORTCUTS: &[(&str, &str)] = &[
     ),
     ("P", "Point"),
     ("D", "Smart Dimension"),
+    (
+        "Click more points (after a horizontal or vertical dimension)",
+        "Chain dimensions along the row; B switches to baseline",
+    ),
+    ("H", "Fill / hatch: click inside a closed area"),
+    (
+        "N",
+        "Note: click to place, or click geometry first for a leader; Return finishes",
+    ),
+    (
+        "Ordinate, Callout, Centre mark",
+        "Toolbar: ordinate rows (X / Y), hole and chamfer callouts, centre marks and lines",
+    ),
     (
         "T",
         "Trim: click a piece to remove it, or drag across pieces",

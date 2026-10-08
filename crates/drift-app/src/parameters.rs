@@ -61,7 +61,53 @@ impl DriftApp {
                 self.variants_section(ui, now);
                 self.snapshots_section(ui);
                 self.measurements_section(ui);
+                self.drafting_section(ui);
+                self.patterns_section(ui);
             });
+    }
+
+    fn patterns_section(&mut self, ui: &mut egui::Ui) {
+        crate::theme::section(ui, "Hatch patterns");
+        self.hatch_patterns
+            .update(self.editor.doc.custom_patterns());
+        let custom: Vec<(String, String)> = self
+            .hatch_patterns
+            .custom()
+            .iter()
+            .map(|p| (p.name.clone(), p.description.clone()))
+            .collect();
+        if custom.is_empty() {
+            ui.label(
+                egui::RichText::new(format!(
+                    "{} built-in patterns. Import AutoCAD or Revit .pat files to add your own; \
+                     they are saved in the drawing.",
+                    drift_draft::builtin().len()
+                ))
+                .weak(),
+            );
+        }
+        let mut remove = None;
+        for (name, description) in &custom {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(name).family(crate::theme::bold()));
+                ui.label(egui::RichText::new(description).weak());
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .add(egui::Button::new("×").frame(false))
+                        .on_hover_text("Remove this pattern from the drawing")
+                        .clicked()
+                    {
+                        remove = Some(name.clone());
+                    }
+                });
+            });
+        }
+        if let Some(name) = remove {
+            self.remove_pattern(&name);
+        }
+        if ui.button("Import .pat…").clicked() {
+            self.files.open(crate::PAT_FILE);
+        }
     }
 
     fn units_section(&mut self, ui: &mut egui::Ui) {

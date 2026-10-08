@@ -2,18 +2,20 @@ use std::borrow::Cow;
 use std::mem::size_of;
 use std::num::NonZeroU64;
 
-use crate::frame::{ArcInstance, Frame, Globals, SegmentInstance};
+use crate::frame::{ArcInstance, FillVertex, Frame, Globals, SegmentInstance};
 
 /// GPU resources for drawing the canvas. Create once, then [`prepare`](Self::prepare) and
 /// [`paint`](Self::paint) every frame.
 pub struct CanvasRenderer {
     grid_pipeline: wgpu::RenderPipeline,
+    fill_pipeline: wgpu::RenderPipeline,
     segment_pipeline: wgpu::RenderPipeline,
     arc_pipeline: wgpu::RenderPipeline,
     globals: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     segments: InstanceBuffer,
     arcs: InstanceBuffer,
+    fills: InstanceBuffer,
 }
 
 impl CanvasRenderer {
@@ -101,6 +103,17 @@ impl CanvasRenderer {
             wgpu::PrimitiveTopology::TriangleList,
             &[],
         );
+        let fill_pipeline = pipeline(
+            "drift_fills",
+            "vs_fill",
+            "fs_fill",
+            wgpu::PrimitiveTopology::TriangleList,
+            &[Some(wgpu::VertexBufferLayout {
+                array_stride: size_of::<FillVertex>() as u64,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Unorm8x4],
+            })],
+        );
         let segment_pipeline = pipeline(
             "drift_segments",
             "vs_segment",
@@ -130,12 +143,14 @@ impl CanvasRenderer {
 
         Self {
             grid_pipeline,
+            fill_pipeline,
             segment_pipeline,
             arc_pipeline,
             globals,
             bind_group,
             segments: InstanceBuffer::new(device, "drift_segment_instances"),
             arcs: InstanceBuffer::new(device, "drift_arc_instances"),
+            fills: InstanceBuffer::new(device, "drift_fill_vertices"),
         }
     }
 
@@ -144,6 +159,7 @@ impl CanvasRenderer {
         queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&frame.globals));
         self.segments.upload(device, queue, &frame.segments);
         self.arcs.upload(device, queue, &frame.arcs);
+        self.fills.upload(device, queue, &frame.fills);
     }
 
     /// Record draw calls. The render pass viewport must already cover the canvas.
@@ -152,6 +168,12 @@ impl CanvasRenderer {
 
         pass.set_pipeline(&self.grid_pipeline);
         pass.draw(0..3, 0..1);
+
+        if self.fills.count > 0 {
+            pass.set_pipeline(&self.fill_pipeline);
+            pass.set_vertex_buffer(0, self.fills.buffer.slice(..self.fills.bytes));
+            pass.draw(0..self.fills.count, 0..1);
+        }
 
         // Arcs first so line ends draw over arc ends; both are anti-aliased, so order is cosmetic.
         for (pipeline, buffer) in [

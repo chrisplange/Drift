@@ -9,6 +9,7 @@ rust-version.workspace = true
 
 [dependencies]
 drift-core.workspace = true
+drift-draft.workspace = true
 drift-geom.workspace = true
 drift-io.workspace = true
 drift-platform.workspace = true

@@ -913,6 +913,7 @@ name = "drift-app"
 version = "0.1.0"
 dependencies = [
  "drift-core",
+ "drift-draft",
  "drift-geom",
  "drift-io",
  "drift-platform",
@@ -932,6 +933,14 @@ name = "drift-core"
 version = "0.1.0"
 dependencies = [
  "glam",
+]
+
+[[package]]
+name = "drift-draft"
+version = "0.1.0"
+dependencies = [
+ "drift-core",
+ "drift-geom",
 ]
 
 [[package]]

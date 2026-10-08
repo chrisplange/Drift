@@ -7,6 +7,7 @@ pub mod bounds;
 pub mod constraint;
 pub mod demo;
 pub mod document;
+pub mod drafting;
 pub mod expr;
 pub mod layers;
 pub mod params;
@@ -18,6 +19,10 @@ pub use constraint::{Constraint, ConstraintId, Slot};
 pub use document::{
     Document, DocumentError, Entity, EntityId, EntityKind, History, MeasurementId, Transaction,
     Variable, VariableId, Variant, VariantId, arc_shape, dimension_kind,
+};
+pub use drafting::{
+    Anchor, Annotation, AnnotationId, ArrowStyle, DimNote, DraftStyle, Fill, FillId, FillKind,
+    Hatch, Leader, LeaderEnd, OrdinateAxis, Standard, Tolerance,
 };
 pub use glam::DVec2;
 pub use layers::{Appearance, Layer, LayerId, LineType, LineWeight, Rgb};

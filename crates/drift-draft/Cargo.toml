@@ -1,0 +1,15 @@
+[package]
+name = "drift-draft"
+description = "Drafting for Drift: hatch patterns (.pat) and exact hatch clipping"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+drift-core.workspace = true
+drift-geom.workspace = true
+
+[lints]
+workspace = true

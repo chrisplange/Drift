@@ -4,7 +4,7 @@
 //! available (e.g. a headless CI machine without a software rasteriser) the test is skipped.
 
 use drift_core::{DVec2, Shape, SketchItem, demo};
-use drift_render::{Camera, CanvasRenderer, Frame, Palette, Viewport, build_frame};
+use drift_render::{Camera, CanvasRenderer, FillMesh, Frame, Palette, Viewport, build_frame};
 
 const WIDTH: u32 = 960;
 const HEIGHT: u32 = 640;
@@ -209,4 +209,58 @@ fn renders_precisely_far_from_origin() {
             "angle {angle}: stroke leaked inside the circle, got {in_px:?}"
         );
     }
+}
+
+#[test]
+fn renders_fills_under_curves() {
+    let Some(gpu) = gpu() else {
+        eprintln!("no GPU adapter available; skipping render test");
+        return;
+    };
+    let corners = [
+        DVec2::new(0.0, 0.0),
+        DVec2::new(100.0, 0.0),
+        DVec2::new(100.0, 60.0),
+        DVec2::new(0.0, 60.0),
+    ];
+    let items: Vec<SketchItem> = (0..4)
+        .map(|i| {
+            SketchItem::new(Shape::Line {
+                a: corners[i],
+                b: corners[(i + 1) % 4],
+            })
+        })
+        .collect();
+    let mut camera = Camera::default();
+    camera.fit(
+        items.iter().map(|i| i.shape.bounds()).collect(),
+        viewport().size_px,
+        40.0,
+    );
+    let palette = Palette::dark();
+    let mut frame = build_frame(&items, &camera, viewport(), &palette);
+    let red = [0xff, 0x20, 0x20, 0xff];
+    frame.push_fills(
+        &[FillMesh {
+            vertices: corners.to_vec(),
+            indices: vec![0, 1, 2, 0, 2, 3],
+            color: red,
+        }],
+        &camera,
+        viewport(),
+    );
+    let pixels = render(&gpu, &frame);
+    save_png("drift_fill.png", &pixels);
+    let (x, y) = to_pixel(&camera, DVec2::new(37.3, 21.9));
+    assert!(close(pixel(&pixels, x, y), red, 8), "inside is filled");
+    let (x, y) = to_pixel(&camera, DVec2::new(50.3, -2.7));
+    assert!(
+        close(pixel(&pixels, x, y), palette.background, 24),
+        "outside is not"
+    );
+    // The edge stroke draws over the fill.
+    let (x, y) = to_pixel(&camera, DVec2::new(50.0, 0.0));
+    let on_edge =
+        (y.saturating_sub(1)..=y + 1).any(|y| close(pixel(&pixels, x, y), palette.solid, 40));
+    assert!(on_edge);
 }

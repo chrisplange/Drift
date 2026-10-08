@@ -256,7 +256,7 @@ pub fn segmented<T: Copy + PartialEq>(
     };
     let width = ui.available_width();
     let height = 26.0;
-    let (rect, _) = ui.allocate_exact_size(vec2(width, height), egui::Sense::hover());
+    let (rect, track_response) = ui.allocate_exact_size(vec2(width, height), egui::Sense::hover());
     ui.painter().rect_filled(rect, 7.0, track);
     let n = options.len() as f32;
     let seg = (rect.width() - 4.0) / n;
@@ -266,7 +266,8 @@ pub fn segmented<T: Copy + PartialEq>(
             rect.min + vec2(2.0 + seg * i as f32, 2.0),
             vec2(seg, height - 4.0),
         );
-        let response = ui.interact(r, ui.id().with(("seg", i)), egui::Sense::click());
+        // Ids from the track's own (unique) id, so several controls can share a parent.
+        let response = ui.interact(r, track_response.id.with(("seg", i)), egui::Sense::click());
         let selected = *value == current;
         response.widget_info(|| {
             egui::WidgetInfo::selected(egui::WidgetType::Button, true, selected, *label)
@@ -327,7 +328,11 @@ pub fn pill(ui: &mut egui::Ui, text: &str, color: Color32) -> egui::Response {
 pub const LABEL_WIDTH: f32 = 78.0;
 
 /// A label / value row in an inspector grid.
-pub fn row(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui)) {
+pub fn row(
+    ui: &mut egui::Ui,
+    label: &str,
+    add: impl FnOnce(&mut egui::Ui),
+) -> egui::InnerResponse<()> {
     ui.horizontal(|ui| {
         ui.allocate_ui_with_layout(
             Vec2::new(LABEL_WIDTH, 20.0),
@@ -338,5 +343,5 @@ pub fn row(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui)) {
             },
         );
         add(ui);
-    });
+    })
 }

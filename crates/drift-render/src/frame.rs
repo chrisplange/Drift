@@ -44,6 +44,24 @@ pub struct ArcInstance {
     pub pattern: [f32; 4],
 }
 
+/// A filled-triangle vertex (solid fills and hatch backgrounds). Positions are physical
+/// pixels relative to the canvas centre.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct FillVertex {
+    pub pos: [f32; 2],
+    pub color: [u8; 4],
+}
+
+/// A triangulated area in world coordinates, with an sRGB colour and alpha.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct FillMesh {
+    pub vertices: Vec<DVec2>,
+    /// Triangles, three indices each.
+    pub indices: Vec<u32>,
+    pub color: [u8; 4],
+}
+
 /// Uniform block shared by all canvas pipelines. Laid out as `vec4`s for WebGL2 / std140.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
@@ -85,6 +103,8 @@ pub struct Viewport {
 #[derive(Clone, Debug, Default)]
 pub struct Frame {
     pub globals: Globals,
+    /// Filled triangles, drawn under all curves.
+    pub fills: Vec<FillVertex>,
     pub segments: Vec<SegmentInstance>,
     pub arcs: Vec<ArcInstance>,
 }
@@ -123,6 +143,32 @@ pub fn build_frame(
         builder.add(item);
     }
     builder.frame
+}
+
+impl Frame {
+    /// Add filled areas (drawn under the curves, in the order given). World coordinates are
+    /// made camera-relative in `f64` like everything else.
+    pub fn push_fills(&mut self, meshes: &[FillMesh], camera: &Camera, viewport: Viewport) {
+        let ppp = viewport.pixels_per_point;
+        for mesh in meshes {
+            let px: Vec<[f32; 2]> = mesh
+                .vertices
+                .iter()
+                .map(|p| {
+                    let v = camera.world_to_view(*p) * ppp;
+                    [v.x as f32, v.y as f32]
+                })
+                .collect();
+            for &i in &mesh.indices {
+                if let Some(&pos) = px.get(i as usize) {
+                    self.fills.push(FillVertex {
+                        pos,
+                        color: mesh.color,
+                    });
+                }
+            }
+        }
+    }
 }
 
 /// Imperial grid steps in inches: (minor, major).

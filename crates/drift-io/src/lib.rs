@@ -6,7 +6,7 @@
 //! ```json
 //! {
 //!   "format": "drift",
-//!   "version": 6,
+//!   "version": 7,
 //!   "meta": {"title":"Bracket","units":"mm","generator":"Drift 0.1.0"},
 //!   "display": {"length":"architectural","fraction":16},
 //!   "variables": [
@@ -42,6 +42,8 @@ use drift_core::{
 };
 use serde::{Deserialize, Serialize};
 
+mod drafting;
+
 /// File extension, without the dot.
 pub const EXTENSION: &str = "drift";
 /// The version this build writes. Files with a higher version are rejected.
@@ -51,8 +53,10 @@ pub const EXTENSION: &str = "drift";
 /// 4 = adds tangent, concentric, coradial, collinear, point-on-curve and symmetric relations,
 /// and `driven` dimensions (M4); 5 = adds `display` units, `variables`, dimension `expr`,
 /// `measurements` and `variants` (M5); 6 = adds `layers`, `current_layer`, and per-entity
-/// `layer`, `color`, `weight` (mm) and `linetype` (M6).
-pub const FORMAT_VERSION: u32 = 6;
+/// `layer`, `color`, `weight` (mm) and `linetype` (M6); 7 = adds `drafting` (the dimension
+/// style), `fills` (solid fills and hatches), `annotations` (notes, centre marks, callouts,
+/// ordinate dimensions) and dimension `prefix`, `suffix` and `tol` (M7).
+pub const FORMAT_VERSION: u32 = 7;
 const FORMAT_TAG: &str = "drift";
 
 /// Document-level properties stored alongside the geometry.
@@ -259,6 +263,14 @@ struct ConstraintRecord {
     /// The expression the dimension's value comes from (the value is its last result).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     expr: Option<String>,
+    /// Text before a dimension's value (e.g. `4×`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    prefix: Option<String>,
+    /// Text after a dimension's value (e.g. `THRU`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    suffix: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tol: Option<drafting::ToleranceRecord>,
 }
 
 /// How lengths and angles are displayed. Every field is optional (defaults apply).
@@ -674,6 +686,8 @@ struct FileRecord {
     #[serde(default)]
     display: Option<DisplayRecord>,
     #[serde(default)]
+    drafting: Option<drafting::DraftRecord>,
+    #[serde(default)]
     layers: Vec<LayerRecord>,
     #[serde(default)]
     current_layer: Option<String>,
@@ -687,6 +701,13 @@ struct FileRecord {
     measurements: Vec<ConstraintRecord>,
     #[serde(default)]
     variants: Vec<VariantRecord>,
+    #[serde(default)]
+    fills: Vec<drafting::FillRecord>,
+    #[serde(default)]
+    annotations: Vec<drafting::AnnotationRecord>,
+    /// Imported hatch patterns, as `.pat` text.
+    #[serde(default)]
+    patterns: Option<String>,
 }
 
 fn id_string(id: EntityId) -> String {
@@ -767,6 +788,14 @@ pub fn save(doc: &Document, meta: &Metadata) -> String {
             .expect("display serializes");
         out.push_str(&format!("  \"display\": {display},\n"));
     }
+    if !doc.custom_patterns().is_empty() {
+        let p = serde_json::to_string(doc.custom_patterns()).expect("patterns serialize");
+        out.push_str(&format!("  \"patterns\": {p},\n"));
+    }
+    if let Some(d) = drafting::draft_record(&doc.draft_style()) {
+        let d = serde_json::to_string(&d).expect("drafting serializes");
+        out.push_str(&format!("  \"drafting\": {d},\n"));
+    }
     let default_layers = {
         let mut layers = doc.layers();
         matches!(
@@ -823,6 +852,11 @@ pub fn save(doc: &Document, meta: &Metadata) -> String {
         .map(|(id, c)| {
             let mut r = constraint_record(id, c, doc.placement(id), doc.is_driven(id));
             r.expr = doc.expression(id).map(str::to_owned);
+            if let Some(n) = doc.dim_note(id) {
+                r.prefix = (!n.prefix.is_empty()).then(|| n.prefix.clone());
+                r.suffix = (!n.suffix.is_empty()).then(|| n.suffix.clone());
+                r.tol = drafting::tolerance_record(&n.tolerance);
+            }
             serde_json::to_string(&r).expect("constraint serializes")
         })
         .collect();
@@ -851,7 +885,25 @@ pub fn save(doc: &Document, meta: &Metadata) -> String {
             .expect("variant serializes")
         })
         .collect();
-    let tail = [("measurements", &measurements), ("variants", &variants)];
+    let fills: Vec<String> = doc
+        .fills()
+        .map(|(id, f)| {
+            serde_json::to_string(&drafting::fill_record(doc, id, f)).expect("fill serializes")
+        })
+        .collect();
+    let annotations: Vec<String> = doc
+        .annotations()
+        .map(|(id, a)| {
+            serde_json::to_string(&drafting::annotation_record(id, a))
+                .expect("annotation serializes")
+        })
+        .collect();
+    let tail = [
+        ("measurements", &measurements),
+        ("variants", &variants),
+        ("fills", &fills),
+        ("annotations", &annotations),
+    ];
     let last = tail.iter().rposition(|(_, items)| !items.is_empty());
     push_array(&mut out, "entities", &entities, true);
     push_array(&mut out, "constraints", &constraints, last.is_some());
@@ -1024,11 +1076,16 @@ pub fn load(text: &str) -> Result<(Document, Metadata), LoadError> {
     let mut labels = Vec::new();
     let mut driven = Vec::new();
     let mut exprs = Vec::new();
+    let mut notes = Vec::new();
     for mut rec in file.constraints {
         let expr = rec.expr.take();
+        let note = drafting::dim_note(rec.prefix.take(), rec.suffix.take(), rec.tol.take());
         let (id, c, label, is_driven) = parse_constraint(rec)?;
         if let Some(e) = expr {
             exprs.push((id, e));
+        }
+        if let Some(n) = note {
+            notes.push((id, n));
         }
         if is_driven {
             driven.push(id);
@@ -1047,6 +1104,9 @@ pub fn load(text: &str) -> Result<(Document, Metadata), LoadError> {
     }
     for id in driven {
         doc.set_driven(id, true).map_err(LoadError::Document)?;
+    }
+    for (id, n) in notes {
+        doc.set_dim_note(id, Some(n));
     }
     if let Some(display) = &file.display {
         doc.set_units(display.to_units()?);
@@ -1082,6 +1142,13 @@ pub fn load(text: &str) -> Result<(Document, Metadata), LoadError> {
         if doc.layer(layer).is_none() {
             return Err(LoadError::Document(DocumentError::MissingLayer(layer)));
         }
+    }
+    drafting::insert_all(&mut doc, file.fills, file.annotations)?;
+    if let Some(p) = file.patterns {
+        doc.set_custom_patterns(p);
+    }
+    if let Some(d) = file.drafting {
+        doc.set_draft_style(drafting::parse_draft(d)?);
     }
     if let Some(current) = &file.current_layer {
         doc.set_current_layer(parse_layer_id(current)?)
@@ -1167,7 +1234,7 @@ pub fn migrate(value: serde_json::Value) -> Result<serde_json::Value, LoadError>
         // v1 → v2: constraints were introduced; a v1 file simply has none.
         value["constraints"] = serde_json::Value::Array(Vec::new());
     }
-    // v2 → v6 only added optional fields, sections and constraint types: nothing to convert.
+    // v2 → v7 only added optional fields, sections and constraint types: nothing to convert.
     value["version"] = FORMAT_VERSION.into();
     Ok(value)
 }
@@ -1210,7 +1277,7 @@ mod tests {
         let text = save(&doc, &Metadata::default());
         let expected = r#"{
   "format": "drift",
-  "version": 6,
+  "version": 7,
   "meta": {"units":"mm"},
   "entities": [
     {"type":"point","id":"e1","at":[0.0,0.0]},
@@ -1551,5 +1618,140 @@ mod tests {
         let (mut doc, _) = load(text).unwrap();
         let id = doc.add_point(DVec2::ONE);
         assert_eq!(id, EntityId(8));
+    }
+
+    #[test]
+    fn drafting_round_trips() {
+        use drift_core::{
+            Anchor, Annotation, ArrowStyle, DimNote, DraftStyle, Fill, FillKind, Hatch, Leader,
+            LeaderEnd, OrdinateAxis, Tolerance,
+        };
+        let mut doc = demo::mounting_plate();
+        let curves: Vec<EntityId> = doc
+            .iter()
+            .filter(|(_, e)| matches!(e.kind, EntityKind::Line { .. }))
+            .map(|(id, _)| id)
+            .take(4)
+            .collect();
+        let circle = doc
+            .iter()
+            .find(|(_, e)| matches!(e.kind, EntityKind::Circle { .. }))
+            .map(|(id, _)| id)
+            .unwrap();
+        let point = doc
+            .iter()
+            .find(|(_, e)| e.kind.is_point())
+            .map(|(id, _)| id)
+            .unwrap();
+        let mut solid = Fill::new(curves.clone(), DVec2::new(1.5, 2.5), FillKind::Solid);
+        solid.opacity = 0.5;
+        solid.color = Some(Rgb([10, 20, 30]));
+        doc.add_fill(solid);
+        let mut hatch = Hatch::new("ANSI31");
+        hatch.scale = 2.5;
+        hatch.angle = 15.0;
+        hatch.origin = DVec2::new(1.0, -2.0);
+        hatch.model = true;
+        hatch.background = Some(Rgb([255, 255, 200]));
+        let mut h = Fill::new(curves.clone(), DVec2::new(3.0, 4.0), FillKind::Hatch(hatch));
+        h.weight = Some(LineWeight(35));
+        doc.add_fill(h);
+        doc.add_annotation(Annotation::Note {
+            text: "Deburr all edges\nBreak sharp corners".into(),
+            at: DVec2::new(10.0, 20.0),
+            leader: None,
+        })
+        .unwrap();
+        doc.add_annotation(Annotation::Note {
+            text: "Edge".into(),
+            at: DVec2::new(-5.0, 3.0),
+            leader: Some(Leader {
+                to: Anchor::Curve {
+                    curve: curves[0],
+                    t: 0.25,
+                },
+                end: LeaderEnd::Dot,
+            }),
+        })
+        .unwrap();
+        doc.add_annotation(Annotation::Note {
+            text: "Here".into(),
+            at: DVec2::new(1.0, 1.0),
+            leader: Some(Leader {
+                to: Anchor::Point(point),
+                end: LeaderEnd::Arrow,
+            }),
+        })
+        .unwrap();
+        doc.add_annotation(Annotation::CentreMark { curve: circle })
+            .unwrap();
+        doc.add_annotation(Annotation::Centreline {
+            a: curves[0],
+            b: curves[2],
+        })
+        .unwrap();
+        doc.add_annotation(Annotation::HoleCallout {
+            curve: circle,
+            at: DVec2::new(8.0, 8.0),
+            suffix: "THRU".into(),
+        })
+        .unwrap();
+        doc.add_annotation(Annotation::ChamferCallout {
+            line: curves[1],
+            at: DVec2::new(4.0, -4.0),
+        })
+        .unwrap();
+        doc.add_annotation(Annotation::Ordinate {
+            origin: point,
+            point,
+            axis: OrdinateAxis::Y,
+            at: -12.5,
+        })
+        .unwrap();
+        let dims: Vec<ConstraintId> = doc
+            .constraints()
+            .filter(|(_, c)| c.is_dimension())
+            .map(|(id, _)| id)
+            .take(4)
+            .collect();
+        let tolerances = [
+            Tolerance::Symmetric(0.05),
+            Tolerance::Deviation {
+                upper: 0.1,
+                lower: 0.02,
+            },
+            Tolerance::Limits {
+                upper: 0.2,
+                lower: 0.0,
+            },
+            Tolerance::Fit("H7".into()),
+        ];
+        for (id, t) in dims.iter().zip(tolerances) {
+            doc.set_dim_note(
+                *id,
+                Some(DimNote {
+                    prefix: "4×".into(),
+                    suffix: "THRU".into(),
+                    tolerance: t,
+                }),
+            );
+        }
+        let mut style = DraftStyle::asme();
+        style.arrow = ArrowStyle::Tick;
+        style.alt_units = Some(LengthFormat::Millimetre);
+        style.scale = 50.0;
+        doc.set_draft_style(style);
+        doc.set_custom_patterns("*MINE, Mine\n0, 0,0, 0,2\n".into());
+
+        let text = save(&doc, &Metadata::default());
+        assert!(text.contains("\"version\": 7"));
+        let (loaded, _) = load(&text).unwrap();
+        assert_eq!(loaded, doc);
+        assert_eq!(save(&loaded, &Metadata::default()), text);
+        // Defaults stay out of the file.
+        let plain = save(&demo::mounting_plate(), &Metadata::default());
+        for absent in ["drafting", "fills", "annotations", "\"tol\""] {
+            assert!(!plain.contains(absent), "{absent}");
+        }
     }
 }

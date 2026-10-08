@@ -10,7 +10,7 @@ use egui_kittest::kittest::Queryable as _;
 use crate::DriftApp;
 use crate::overlay::ScreenMap;
 use crate::parameters::RightTab;
-use crate::tools::ToolKind;
+use crate::tools::{Overlay, ToolKind};
 
 fn gpu_available() -> bool {
     let instance = wgpu::Instance::default();
@@ -708,7 +708,7 @@ fn curve_relations_and_driven_dimensions_render() {
     let dims = h.state().layout_dimensions(&painter, &screen_map(&h));
     let driven: Vec<_> = dims.iter().filter(|d| d.driven).collect();
     assert_eq!(driven.len(), 1);
-    assert_eq!(driven[0].text, "(60)");
+    assert_eq!(driven[0].label.plain(), "(60)");
     save_png("drift_ui_curve_relations.png", &mut h);
 
     // A radius on the dimensioned hole over-defines it: the prompt offers a driven one.
@@ -947,7 +947,7 @@ fn variables_drive_typed_dimensions_and_units_change_display() {
     h.run();
     h.run();
     let dims = first_dimension(&h);
-    assert_eq!(dims.text, "Σ2 1/2\"");
+    assert_eq!(dims.label.plain(), "Σ2 1/2\"");
     save_png("drift_ui_parameters.png", &mut h);
 
     // Variants: the other one shows as a ghost.
@@ -1124,4 +1124,356 @@ fn parameters_and_layers_tabs_render() {
     h.state_mut().params.tab = RightTab::Layers;
     h.run();
     save_png("drift_ui_layers.png", &mut h);
+}
+
+#[test]
+fn fill_tool_hatches_and_fills_regions() {
+    let Some(mut h) = harness() else { return };
+    h.get_by_label("File").click();
+    h.run();
+    h.get_by_label("Open example").click();
+    h.run();
+    h.get_by_label("Fill / hatch").click();
+    h.run();
+    assert_eq!(h.state().tool.kind(), ToolKind::Fill);
+    // Hatch the plate (the bore and holes stay open), then fill the bore solid.
+    click_world(&mut h, DVec2::new(100.0, 15.0));
+    assert_eq!(h.state().editor.doc.fills().count(), 1);
+    h.state_mut().editor.fill_style.kind = drift_core::FillKind::Solid;
+    click_world(&mut h, DVec2::new(75.0, 45.0));
+    assert_eq!(h.state().editor.doc.fills().count(), 2);
+    let shapes = h.state_mut().editor.fill_shapes();
+    assert!(shapes.values().all(|s| !s.lost));
+    assert!(
+        shapes.values().any(|s| s.region.holes.len() >= 5),
+        "the plate's hatch excludes the bore, slot and bolt holes"
+    );
+    h.run();
+    save_png("drift_ui_fills.png", &mut h);
+    // Pick the hatch with the select tool: the inspector shows it.
+    h.get_by_label("Select").click();
+    h.run();
+    click_world(&mut h, DVec2::new(100.0, 15.0));
+    assert_eq!(h.state().editor.selected_fills.len(), 1);
+    assert!(h.state().editor.selection.is_empty());
+    h.run();
+    save_png("drift_ui_hatch_selected.png", &mut h);
+    // Delete removes the fill, undo brings it back.
+    h.key_press(Key::Delete);
+    h.run();
+    assert_eq!(h.state().editor.doc.fills().count(), 1);
+    h.state_mut().undo();
+    assert_eq!(h.state().editor.doc.fills().count(), 2);
+}
+
+#[test]
+fn drafting_tools_annotate_the_plate() {
+    use drift_core::Annotation;
+    let Some(mut h) = harness() else { return };
+    h.get_by_label("File").click();
+    h.run();
+    h.get_by_label("Open example").click();
+    h.run();
+    let annotations = |h: &Harness<'_, DriftApp>| -> Vec<Annotation> {
+        h.state()
+            .editor
+            .doc
+            .annotations()
+            .map(|(_, a)| a.clone())
+            .collect()
+    };
+
+    // A note with a leader from the top edge; type its text and press Return.
+    h.get_by_label("Note").click();
+    h.run();
+    click_world(&mut h, DVec2::new(40.0, 80.0));
+    click_world(&mut h, DVec2::new(25.0, 95.0));
+    assert!(h.state().note_edit.is_some(), "the note opens for typing");
+    h.event(Event::Text("DEBURR ALL EDGES".into()));
+    h.run();
+    h.key_press(Key::Enter);
+    h.run();
+    h.run();
+    assert!(h.state().note_edit.is_none());
+    match annotations(&h).as_slice() {
+        [Annotation::Note { text, leader, .. }] => {
+            assert_eq!(text, "DEBURR ALL EDGES");
+            assert!(leader.is_some());
+        }
+        other => panic!("{other:?}"),
+    }
+
+    // A centre mark on the bore.
+    h.get_by_label("Centre mark").click();
+    h.run();
+    click_world(&mut h, DVec2::new(84.0, 40.0));
+    // A hole callout on a bolt hole.
+    h.get_by_label("Callout").click();
+    h.run();
+    let hole = DVec2::new(70.0, 40.0) + DVec2::splat(26.0 / 2f64.sqrt());
+    click_world(&mut h, hole + DVec2::new(3.2, 0.0));
+    click_world(&mut h, DVec2::new(108.0, 92.0));
+    // Ordinates from the bottom-left fillet's end.
+    h.get_by_label("Ordinate").click();
+    h.run();
+    click_world(&mut h, DVec2::new(10.0, 0.0));
+    click_world(&mut h, DVec2::new(110.0, 0.0));
+    let all = annotations(&h);
+    assert!(
+        all.iter()
+            .any(|a| matches!(a, Annotation::CentreMark { .. }))
+    );
+    let callout = all
+        .iter()
+        .find_map(|a| match a {
+            Annotation::HoleCallout { curve, suffix, .. } => Some((*curve, suffix.clone())),
+            _ => None,
+        })
+        .expect("a hole callout");
+    assert_eq!(
+        crate::notes::hole_callout_text(&h.state().editor.doc, callout.0, &callout.1).as_deref(),
+        Some("4× Ø6.4 THRU")
+    );
+    assert_eq!(
+        all.iter()
+            .filter(|a| matches!(a, Annotation::Ordinate { .. }))
+            .count(),
+        2,
+        "the origin (0) and one point"
+    );
+    h.key_press(Key::Escape);
+    h.run();
+    h.get_by_label("Select").click();
+    h.run();
+    h.run();
+    save_png("drift_ui_drafting.png", &mut h);
+
+    // Pick the note by its text and delete it.
+    let painter = h.ctx.layer_painter(egui::LayerId::background());
+    let map = screen_map(&h);
+    let note = crate::notes::layout_annotations(&painter, &h.state().editor.doc, &map)
+        .into_iter()
+        .find(|l| {
+            l.text
+                .as_ref()
+                .is_some_and(|t| t.text == "DEBURR ALL EDGES")
+        })
+        .expect("note laid out");
+    let at = note.text.unwrap().center;
+    h.hover_at(at);
+    h.run();
+    button(&h, at, true);
+    h.run();
+    button(&h, at, false);
+    h.run();
+    assert!(h.state().editor.selected_annotation.is_some());
+    h.run();
+    save_png("drift_ui_note_selected.png", &mut h);
+    h.key_press(Key::Delete);
+    h.run();
+    assert!(
+        !annotations(&h)
+            .iter()
+            .any(|a| matches!(a, Annotation::Note { .. }))
+    );
+}
+
+#[test]
+fn drafting_styles_render() {
+    use drift_core::{Constraint, ConstraintId, DimNote, DraftStyle, LengthFormat, Tolerance};
+    let Some(mut h) = harness() else { return };
+    h.get_by_label("File").click();
+    h.run();
+    h.get_by_label("Open example").click();
+    h.run();
+    let dims: Vec<(ConstraintId, Constraint)> = h
+        .state()
+        .editor
+        .doc
+        .constraints()
+        .filter(|(_, c)| c.is_dimension())
+        .map(|(id, c)| (id, *c))
+        .collect();
+    let find = |pred: &dyn Fn(&Constraint) -> bool| {
+        dims.iter()
+            .find(|(_, c)| pred(c))
+            .map(|(id, _)| *id)
+            .unwrap()
+    };
+    let bore =
+        find(&|c| matches!(c, Constraint::Diameter { value, .. } if (value - 28.0).abs() < 1e-9));
+    let width = find(
+        &|c| matches!(c, Constraint::HorizontalDistance { value, .. } if (value - 120.0).abs() < 1e-9),
+    );
+    let height = find(
+        &|c| matches!(c, Constraint::VerticalDistance { value, .. } if (value - 80.0).abs() < 1e-9),
+    );
+    let ed = &mut h.state_mut().editor;
+    ed.doc.begin();
+    ed.doc.set_dim_note(
+        bore,
+        Some(DimNote {
+            tolerance: Tolerance::Fit("H7".into()),
+            ..DimNote::default()
+        }),
+    );
+    ed.doc.set_dim_note(
+        width,
+        Some(DimNote {
+            tolerance: Tolerance::Symmetric(0.1),
+            ..DimNote::default()
+        }),
+    );
+    ed.doc.set_dim_note(
+        height,
+        Some(DimNote {
+            tolerance: Tolerance::Deviation {
+                upper: 0.05,
+                lower: 0.02,
+            },
+            ..DimNote::default()
+        }),
+    );
+    ed.commit("Tolerances");
+    h.run();
+    save_png("drift_ui_iso_tolerances.png", &mut h);
+
+    let mut asme = DraftStyle::asme();
+    asme.alt_units = Some(LengthFormat::Inch);
+    asme.arrow = drift_core::ArrowStyle::Open;
+    let ed = &mut h.state_mut().editor;
+    ed.doc.begin();
+    ed.doc.set_draft_style(asme);
+    ed.commit("ASME");
+    h.state_mut().params.tab = RightTab::Parameters;
+    h.run();
+    h.run();
+    save_png("drift_ui_asme.png", &mut h);
+    // Pick the height dimension: the inspector edits its tolerance.
+    h.state_mut().params.tab = RightTab::Properties;
+    h.state_mut().selected_constraint = Some(height);
+    h.run();
+    h.run();
+    save_png("drift_ui_dimension_inspector.png", &mut h);
+}
+
+#[test]
+fn selection_box_released_over_a_side_panel_ends() {
+    let Some(mut h) = harness() else { return };
+    h.get_by_label("File").click();
+    h.run();
+    h.get_by_label("Open example").click();
+    h.run();
+    let start = screen(&h, DVec2::new(-20.0, -20.0));
+    h.hover_at(start);
+    h.run();
+    button(&h, start, true);
+    h.run();
+    // Drag across the canvas and out over the inspector, then release there.
+    for x in [start.x + 40.0, start.x + 300.0, 1150.0] {
+        h.hover_at(Pos2::new(x, start.y - 200.0));
+        h.run();
+    }
+    assert!(
+        matches!(h.state().tool.overlay(), Some(Overlay::SelectionBox { .. })),
+        "the box follows the pointer off the canvas"
+    );
+    let off = Pos2::new(1150.0, start.y - 200.0);
+    button(&h, off, false);
+    h.run();
+    h.run();
+    assert!(h.state().tool.overlay().is_none(), "no box left on screen");
+    assert!(!h.state().tool.is_busy());
+    assert!(
+        !h.state().editor.selection.is_empty(),
+        "the box selected what it covered"
+    );
+}
+
+#[test]
+fn drawn_circle_can_be_picked_and_dimensioned() {
+    use drift_core::Constraint;
+    let Some(mut h) = harness() else { return };
+    h.get_by_label("Circle").click();
+    h.run();
+    click_world(&mut h, DVec2::new(0.0, 0.0));
+    click_world(&mut h, DVec2::new(20.0, 0.0));
+    let circle = h
+        .state()
+        .editor
+        .doc
+        .iter()
+        .find(|(_, e)| matches!(e.kind, EntityKind::Circle { .. }))
+        .map(|(id, _)| id)
+        .expect("circle drawn");
+    // Select it by clicking its edge.
+    h.get_by_label("Select").click();
+    h.run();
+    click_world(&mut h, DVec2::new(0.0, 20.0));
+    assert!(
+        h.state().editor.selection.contains(&circle),
+        "click picks the circle"
+    );
+    // Dimension it.
+    h.get_by_label("Dimension").click();
+    h.run();
+    click_world(&mut h, DVec2::new(0.0, 20.0));
+    click_world(&mut h, DVec2::new(30.0, 30.0));
+    let has = h
+        .state()
+        .editor
+        .doc
+        .constraints()
+        .any(|(_, c)| matches!(c, Constraint::Diameter { .. }));
+    assert!(has, "diameter added");
+    h.run();
+    h.event(Event::Key {
+        key: Key::A,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: EguiModifiers::COMMAND,
+    });
+    h.event(Event::Text("50".into()));
+    h.run();
+    h.key_press(Key::Enter);
+    h.run();
+    h.run();
+    assert_eq!(
+        drift_solver::radius_of(&h.state().editor.doc, circle),
+        Some(25.0)
+    );
+}
+
+#[test]
+fn dragging_a_drawn_circles_edge_resizes_it() {
+    let Some(mut h) = harness() else { return };
+    h.get_by_label("Circle").click();
+    h.run();
+    click_world(&mut h, DVec2::new(0.0, 0.0));
+    click_world(&mut h, DVec2::new(20.0, 0.0));
+    let circle = h
+        .state()
+        .editor
+        .doc
+        .iter()
+        .find(|(_, e)| matches!(e.kind, EntityKind::Circle { .. }))
+        .map(|(id, _)| id)
+        .unwrap();
+    h.get_by_label("Select").click();
+    h.run();
+    let from = screen(&h, DVec2::new(0.0, 20.0));
+    let to = screen(&h, DVec2::new(0.0, 35.0));
+    h.hover_at(from);
+    h.run();
+    button(&h, from, true);
+    h.run();
+    for k in 1..=5 {
+        h.hover_at(from + (to - from) * (k as f32 / 5.0));
+        h.run();
+    }
+    button(&h, to, false);
+    h.run();
+    let r = drift_solver::radius_of(&h.state().editor.doc, circle).unwrap();
+    assert!((r - 35.0).abs() < 1.0, "radius {r}");
 }

@@ -955,6 +955,80 @@ written but hasn't run yet (no GitHub repo).*
 - Fills and hatches (§5.12): associative boundaries, solid fills, built-in and `.pat` patterns,
   drafting vs model scaling, and draw order.
 
+*M7 as built (2026-10-08):*
+- **Fills and hatches:**
+  - **Fill / hatch tool (H):** click inside a closed area. The area under the pointer is
+    highlighted first, and islands (holes) are left out.
+  - **From a selected region:** Fill and Hatch buttons fill the region already picked.
+  - **Associative:** a fill stores its region's outer-boundary curve ids and a seed point.
+    - Regions now report the curve each loop edge came from (`Loop::sources`).
+    - A fill is re-found by its exact curve set (nearest its seed if several match), or by the
+      region around its seed if they still share a boundary curve.
+    - Otherwise it is flagged "boundary lost": it keeps its last shape and can be re-picked.
+  - **Kinds:**
+    - Solid fills: colour (by layer or own) and opacity.
+    - Hatches: pattern, scale, angle, origin, drafting or model size, line colour, weight and
+      an optional background colour.
+  - **Patterns:** the new `drift-draft` crate parses AutoCAD / Revit `.pat` files
+    (`;%UNITS=INCH`, `;%TYPE=MODEL`). Built-in patterns, swatched in the pattern menu:
+    - ANSI31–38, STEEL, CONCRETE, EARTH, INSULATION, GLASS, WOOD, GRID, DOTS, SAND.
+    - BRICK and BLOCK as model patterns.
+  - **Imported patterns:** Parameters → Hatch patterns → Import .pat… stores them in the
+    document, so they travel with the file.
+  - **Hatch lines:** clipped exactly in `f64` against line and arc edges.
+    - Arcs are split where they turn back across the scan direction.
+    - The even–odd rule is decided just off each scan line, so vertices count once.
+    - Lines are generated only for the visible area, then drawn by the existing SDF line
+      pipeline.
+    - Hatches denser than 2.5 px on screen, or past 40,000 segments, become a tint (no moiré).
+  - **Solid fills:** tessellated with lyon (relative to the region's centroid, for f32) and
+    cached per document revision. They are drawn by a new triangle pipeline under all curves
+    (WebGL2-compatible).
+  - **Draw order:** by layer, then each fill's order (Bring to front / Send to back).
+  - **Picking and the inspector:** clicking inside a fill picks it, below curves in priority.
+    The inspector shows its style, layer, draw order, area, perimeter and centroid.
+- **Dimension styles (Parameters → Drafting):**
+  - ISO 129 and ASME Y14.5 presets: text height, arrowheads (closed, open, tick, dot) and their
+    size, extension gap and overshoot.
+  - Text: ISO places it aligned above the line, readable from the bottom or the right; ASME
+    uses horizontal text in a break.
+  - Trailing and leading zeros, dual units in brackets, and the drawing scale (1:N).
+  - Sizes are paper millimetres at 96 dpi on screen.
+- **Dimension text (picked dimension → inspector):**
+  - Prefix and suffix, with ×, Ø, THRU and TYP shortcuts.
+  - Tolerances: symmetric (±), deviation (stacked + / −), limits (stacked) and fits (H7).
+- **Chain and baseline:** after a horizontal or vertical dimension, Shift+click more points to
+  chain dimensions along the row. B switches to baseline: all from the same base, each row a
+  step further out. Dimensions that would over-define the sketch become driven automatically.
+- **Annotations (new `annotations` table):**
+  - **Notes (N):** click for a free note, or click geometry first for a leader with an arrow or
+    dot.
+    - The text is typed on the canvas: Return finishes, Shift+Return adds a line, Esc cancels.
+    - Leader targets are points or spots on curves, so they follow the geometry.
+  - **Centre marks and centre lines:**
+    - Click a circle or arc for a centre mark. Then click another circle, arc or point for a
+      centre line through both centres, or two lines for one midway between them.
+    - "Add centre marks" marks every selected circle at once.
+    - They are drawn by the GPU as centre lines.
+  - **Callouts:** `4× Ø6.4 THRU` for holes (counting same-size holes; THRU, TAP, CBORE or CSK as
+    the suffix). `2 × 45°` or `2 × 3` for chamfers, with legs measured to the corner the
+    chamfer cuts.
+  - **Ordinates:** click the origin point (it reads 0), then points.
+    - X / Y choose the coordinate.
+    - Labels line up in a row clear of the geometry and can be dragged.
+  - **Editing:** every annotation's label can be dragged, and double-click edits a note.
+  - **Deleting geometry:** marks and callouts on deleted geometry go; a note keeps its place
+    without the leader.
+- **Format v7:** adds `drafting`, `fills`, `annotations` and `patterns`, and dimension
+  `prefix` / `suffix` / `tol`. Defaults are left out of files, and v1–v6 load unchanged.
+- **Not yet:**
+  - Sheets: the drawing scale stands in for the sheet scale until M8.
+  - Gradients and hatch origin picking on the canvas.
+  - Surface finish symbols, datum labels and balloons.
+  - Dimension text editing on paper: annotations are screen-sized, like dimensions.
+  - Annotations don't move with a G grab of their geometry's neighbours, only through their
+    anchors.
+
 **M8 — Sheets and output (3 wks)**
 - Sheets with a scale, title-block templates, and a revision table.
 - True-scale vector PDF, SVG, and DXF import/export (layers and line types preserved). Printing.
@@ -1010,6 +1084,5 @@ title-block template syntax.
 
 1. Create the `drift` GitHub repo and push, so CI runs and Pages deploys. Enable Pages with
    "GitHub Actions" as the source.
-2. M7: drafting (dimension styles, tolerances, baseline / chain / ordinate dimensions,
-   callouts, notes and leaders, centre marks) and fills and hatches on M6's regions (§5.12). Also fully constrain the example plate with M4's tangent
-   relations.
+2. M8: sheets with a scale and title blocks, and true-scale vector PDF, SVG and DXF output
+   (layers, line types, fills and hatches preserved).

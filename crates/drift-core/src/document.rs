@@ -10,6 +10,7 @@ use std::f64::consts::TAU;
 use glam::DVec2;
 
 use crate::constraint::Slot;
+use crate::drafting::{Anchor, Annotation, AnnotationId, DimNote, DraftStyle, Fill, FillId};
 use crate::layers::{Appearance, Layer, LayerId};
 use crate::units::{Kind, Units};
 use crate::{Constraint, ConstraintId, LineKind, Shape};
@@ -217,6 +218,11 @@ enum Key {
     Units,
     Layer(LayerId),
     CurrentLayer,
+    Fill(FillId),
+    Annotation(AnnotationId),
+    DimNote(ConstraintId),
+    Draft,
+    Patterns,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -232,6 +238,11 @@ enum Record {
     Units(Units),
     Layer(Layer),
     CurrentLayer(LayerId),
+    Fill(Fill),
+    Annotation(Annotation),
+    DimNote(DimNote),
+    Draft(DraftStyle),
+    Patterns(String),
 }
 
 /// One undoable step: the before and after state of everything it touched.
@@ -266,14 +277,26 @@ pub struct Document {
     layers: BTreeMap<LayerId, Layer>,
     /// The layer new geometry goes on.
     current_layer: LayerId,
+    fills: BTreeMap<FillId, Fill>,
+    annotations: BTreeMap<AnnotationId, Annotation>,
+    /// Prefixes, suffixes and tolerances of dimensions.
+    dim_notes: BTreeMap<ConstraintId, DimNote>,
+    draft: DraftStyle,
+    /// Hatch patterns imported from `.pat` files, as `.pat` text, so they travel with the file.
+    patterns: String,
     next_id: u32,
     next_constraint_id: u32,
     /// Next id for variables, variants and measurements (one counter, ids never reused).
     next_param_id: u32,
+    /// Next id for fills and annotations (one counter, ids never reused).
+    next_drafting_id: u32,
     /// Incremented on every change, so caches (spatial index, autosave) can tell when to refresh.
     revision: u64,
     /// Pre-images of everything touched by the open transaction.
     journal: Option<HashMap<Key, Option<Record>>>,
+    /// Leader targets as of the last [`remember_leader_targets`](Self::remember_leader_targets)
+    /// (not part of the content).
+    last_anchor_pos: HashMap<AnnotationId, DVec2>,
 }
 
 impl PartialEq for Document {
@@ -289,6 +312,11 @@ impl PartialEq for Document {
             && self.units == other.units
             && self.layers == other.layers
             && self.current_layer == other.current_layer
+            && self.fills == other.fills
+            && self.annotations == other.annotations
+            && self.dim_notes == other.dim_notes
+            && self.draft == other.draft
+            && self.patterns == other.patterns
     }
 }
 
@@ -306,12 +334,19 @@ impl Default for Document {
             units: Units::default(),
             layers: BTreeMap::from([(LayerId::DEFAULT, Layer::new("0"))]),
             current_layer: LayerId::DEFAULT,
+            fills: BTreeMap::new(),
+            annotations: BTreeMap::new(),
+            dim_notes: BTreeMap::new(),
+            draft: DraftStyle::default(),
+            patterns: String::new(),
             // Ids start at 1; `e0` and `c0` are not valid ids in `.drift` files.
             next_id: 1,
             next_constraint_id: 1,
             next_param_id: 1,
+            next_drafting_id: 1,
             revision: 0,
             journal: None,
+            last_anchor_pos: HashMap::new(),
         }
     }
 }
@@ -487,6 +522,11 @@ impl Document {
             Key::Units => Some(Record::Units(self.units)),
             Key::Layer(id) => self.layers.get(&id).cloned().map(Record::Layer),
             Key::CurrentLayer => Some(Record::CurrentLayer(self.current_layer)),
+            Key::Fill(id) => self.fills.get(&id).cloned().map(Record::Fill),
+            Key::Annotation(id) => self.annotations.get(&id).cloned().map(Record::Annotation),
+            Key::DimNote(id) => self.dim_notes.get(&id).cloned().map(Record::DimNote),
+            Key::Draft => Some(Record::Draft(self.draft)),
+            Key::Patterns => Some(Record::Patterns(self.patterns.clone())),
         }
     }
 
@@ -568,6 +608,28 @@ impl Document {
             }
             (Key::CurrentLayer, Some(Record::CurrentLayer(l))) => self.current_layer = l,
             (Key::CurrentLayer, _) => {}
+            (Key::Fill(id), Some(Record::Fill(f))) => {
+                self.fills.insert(id, f);
+            }
+            (Key::Fill(id), _) => {
+                self.fills.remove(&id);
+            }
+            (Key::Annotation(id), Some(Record::Annotation(a))) => {
+                self.annotations.insert(id, a);
+            }
+            (Key::Annotation(id), _) => {
+                self.annotations.remove(&id);
+            }
+            (Key::DimNote(id), Some(Record::DimNote(n))) => {
+                self.dim_notes.insert(id, n);
+            }
+            (Key::DimNote(id), _) => {
+                self.dim_notes.remove(&id);
+            }
+            (Key::Draft, Some(Record::Draft(d))) => self.draft = d,
+            (Key::Draft, _) => {}
+            (Key::Patterns, Some(Record::Patterns(p))) => self.patterns = p,
+            (Key::Patterns, _) => {}
         }
     }
 
@@ -798,6 +860,7 @@ impl Document {
     /// Delete entities. Deleting a point also deletes the curves that use it; points left
     /// unused by deleting a curve are removed too (unless they were explicitly standalone).
     pub fn delete(&mut self, ids: impl IntoIterator<Item = EntityId>) {
+        self.remember_leader_targets();
         let mut doomed: BTreeSet<EntityId> =
             ids.into_iter().filter(|id| self.contains(*id)).collect();
         // Curves that use a deleted point go too.
@@ -838,6 +901,45 @@ impl Document {
             .collect();
         for id in dangling {
             self.remove_measurement(id);
+        }
+        self.drop_dangling_annotations();
+    }
+
+    /// Annotations on deleted geometry go; a note whose leader lost its target stays where it
+    /// was, without the leader.
+    fn drop_dangling_annotations(&mut self) {
+        let alive = |doc: &Self, e: EntityId| doc.entities.contains_key(&e);
+        let dangling: Vec<(AnnotationId, Annotation)> = self
+            .annotations
+            .iter()
+            .filter(|(_, a)| a.entities().iter().any(|e| !alive(self, *e)))
+            .map(|(id, a)| (*id, a.clone()))
+            .collect();
+        for (id, a) in dangling {
+            self.touch_key(Key::Annotation(id));
+            match a {
+                Annotation::Note { text, at, leader } => {
+                    let from = leader
+                        .and_then(|l| {
+                            self.last_anchor_pos.get(&id).copied().or(match l.to {
+                                Anchor::Free(p) => Some(p),
+                                _ => None,
+                            })
+                        })
+                        .unwrap_or(DVec2::ZERO);
+                    self.annotations.insert(
+                        id,
+                        Annotation::Note {
+                            text,
+                            at: from + at,
+                            leader: None,
+                        },
+                    );
+                }
+                _ => {
+                    self.annotations.remove(&id);
+                }
+            }
         }
     }
 
@@ -899,6 +1001,18 @@ impl Document {
                 self.measurements.remove(&id);
             } else {
                 self.measurements.insert(id, c);
+            }
+        }
+        let annotated: Vec<_> = self
+            .annotations
+            .iter()
+            .filter(|(_, a)| a.entities().contains(&from))
+            .map(|(id, _)| *id)
+            .collect();
+        for id in annotated {
+            self.touch_key(Key::Annotation(id));
+            if let Some(a) = self.annotations.get_mut(&id) {
+                a.replace_entity(from, into);
             }
         }
         self.touch(from);
@@ -1048,6 +1162,7 @@ impl Document {
             self.driven.remove(&id);
         }
         self.set_expression(id, None);
+        self.set_dim_note(id, None);
     }
 
     /// Whether a dimension is driven (a reference that reports but doesn't constrain).
@@ -1150,6 +1265,18 @@ impl Document {
         for e in on {
             self.touch(e);
             if let Some(x) = self.entities.get_mut(&e) {
+                x.layer = LayerId::DEFAULT;
+            }
+        }
+        let fills: Vec<FillId> = self
+            .fills
+            .iter()
+            .filter(|(_, f)| f.layer == id)
+            .map(|(fid, _)| *fid)
+            .collect();
+        for f in fills {
+            self.touch_key(Key::Fill(f));
+            if let Some(x) = self.fills.get_mut(&f) {
                 x.layer = LayerId::DEFAULT;
             }
         }
@@ -1267,6 +1394,11 @@ impl Document {
         keys.push(Key::Units);
         keys.extend(self.layers.keys().map(|id| Key::Layer(*id)));
         keys.push(Key::CurrentLayer);
+        keys.extend(self.fills.keys().map(|id| Key::Fill(*id)));
+        keys.extend(self.annotations.keys().map(|id| Key::Annotation(*id)));
+        keys.extend(self.dim_notes.keys().map(|id| Key::DimNote(*id)));
+        keys.push(Key::Draft);
+        keys.push(Key::Patterns);
         keys
     }
 
@@ -1287,6 +1419,7 @@ impl Document {
         self.next_id = self.next_id.max(other.next_id);
         self.next_constraint_id = self.next_constraint_id.max(other.next_constraint_id);
         self.next_param_id = self.next_param_id.max(other.next_param_id);
+        self.next_drafting_id = self.next_drafting_id.max(other.next_drafting_id);
     }
 
     pub fn units(&self) -> Units {
@@ -1576,6 +1709,218 @@ impl Document {
 }
 
 /// The kind of value a dimension holds.
+impl Document {
+    // ----- Drafting: fills, annotations, dimension notes, drafting style ---------------------
+
+    fn next_drafting(&mut self) -> u32 {
+        let id = self.next_drafting_id;
+        self.next_drafting_id += 1;
+        id
+    }
+
+    pub fn fills(&self) -> impl Iterator<Item = (FillId, &Fill)> {
+        self.fills.iter().map(|(id, f)| (*id, f))
+    }
+
+    pub fn fill(&self, id: FillId) -> Option<&Fill> {
+        self.fills.get(&id)
+    }
+
+    /// Add a fill on the current layer, on top of the others there.
+    pub fn add_fill(&mut self, mut fill: Fill) -> FillId {
+        fill.layer = self.current_layer;
+        fill.order = self
+            .fills
+            .values()
+            .filter(|f| f.layer == fill.layer)
+            .map(|f| f.order + 1)
+            .max()
+            .unwrap_or(0);
+        let id = FillId(self.next_drafting());
+        self.touch_key(Key::Fill(id));
+        self.fills.insert(id, fill);
+        id
+    }
+
+    /// Insert a fill with a known id (loading a file). Its layer must exist.
+    pub fn insert_fill(&mut self, id: FillId, fill: Fill) -> Result<(), DocumentError> {
+        if !self.layers.contains_key(&fill.layer) {
+            return Err(DocumentError::MissingLayer(fill.layer));
+        }
+        self.next_drafting_id = self.next_drafting_id.max(id.0 + 1);
+        self.touch_key(Key::Fill(id));
+        self.fills.insert(id, fill);
+        Ok(())
+    }
+
+    pub fn set_fill(&mut self, id: FillId, fill: Fill) {
+        if self.fills.get(&id).is_some_and(|f| *f != fill) {
+            self.touch_key(Key::Fill(id));
+            self.fills.insert(id, fill);
+        }
+    }
+
+    pub fn remove_fill(&mut self, id: FillId) {
+        if self.fills.contains_key(&id) {
+            self.touch_key(Key::Fill(id));
+            self.fills.remove(&id);
+        }
+    }
+
+    /// Move a fill above (`front`) or below every other fill on its layer.
+    pub fn reorder_fill(&mut self, id: FillId, front: bool) {
+        let Some(mut fill) = self.fills.get(&id).cloned() else {
+            return;
+        };
+        let others = self
+            .fills
+            .iter()
+            .filter(|(fid, f)| **fid != id && f.layer == fill.layer)
+            .map(|(_, f)| f.order);
+        fill.order = if front {
+            others.max().map_or(0, |o| o + 1)
+        } else {
+            others.min().map_or(0, |o| o - 1)
+        };
+        self.set_fill(id, fill);
+    }
+
+    pub fn annotations(&self) -> impl Iterator<Item = (AnnotationId, &Annotation)> {
+        self.annotations.iter().map(|(id, a)| (*id, a))
+    }
+
+    pub fn annotation(&self, id: AnnotationId) -> Option<&Annotation> {
+        self.annotations.get(&id)
+    }
+
+    fn validate_annotation(&self, a: &Annotation) -> Result<(), DocumentError> {
+        for e in a.entities() {
+            if !self.entities.contains_key(&e) {
+                return Err(DocumentError::Missing(e));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn add_annotation(&mut self, a: Annotation) -> Result<AnnotationId, DocumentError> {
+        self.validate_annotation(&a)?;
+        let id = AnnotationId(self.next_drafting());
+        self.touch_key(Key::Annotation(id));
+        self.annotations.insert(id, a);
+        Ok(id)
+    }
+
+    /// Insert an annotation with a known id (loading a file).
+    pub fn insert_annotation(
+        &mut self,
+        id: AnnotationId,
+        a: Annotation,
+    ) -> Result<(), DocumentError> {
+        self.validate_annotation(&a)?;
+        self.next_drafting_id = self.next_drafting_id.max(id.0 + 1);
+        self.touch_key(Key::Annotation(id));
+        self.annotations.insert(id, a);
+        Ok(())
+    }
+
+    pub fn set_annotation(&mut self, id: AnnotationId, a: Annotation) -> Result<(), DocumentError> {
+        self.validate_annotation(&a)?;
+        if self.annotations.get(&id).is_some_and(|x| *x != a) {
+            self.touch_key(Key::Annotation(id));
+            self.annotations.insert(id, a);
+        }
+        Ok(())
+    }
+
+    pub fn remove_annotation(&mut self, id: AnnotationId) {
+        if self.annotations.contains_key(&id) {
+            self.touch_key(Key::Annotation(id));
+            self.annotations.remove(&id);
+        }
+    }
+
+    /// Where an anchor is now, if its geometry exists.
+    pub fn anchor_pos(&self, anchor: &Anchor) -> Option<DVec2> {
+        match *anchor {
+            Anchor::Free(p) => Some(p),
+            Anchor::Point(id) => self.ref_point(id),
+            Anchor::Curve { curve, t } => match self.shape(curve)? {
+                Shape::Line { a, b } => Some(a + (b - a) * t),
+                Shape::Circle { center, radius } | Shape::Arc { center, radius, .. } => {
+                    Some(center + DVec2::from_angle(t) * radius)
+                }
+                Shape::Point(p) => Some(p),
+            },
+        }
+    }
+
+    /// Remember where notes' leaders point, so a note whose target is deleted can stay put.
+    /// Called before deleting geometry.
+    pub fn remember_leader_targets(&mut self) {
+        let targets: Vec<(AnnotationId, DVec2)> = self
+            .annotations
+            .iter()
+            .filter_map(|(id, a)| match a {
+                Annotation::Note {
+                    leader: Some(l), ..
+                } => self.anchor_pos(&l.to).map(|p| (*id, p)),
+                _ => None,
+            })
+            .collect();
+        self.last_anchor_pos = targets.into_iter().collect();
+    }
+
+    pub fn dim_note(&self, id: ConstraintId) -> Option<&DimNote> {
+        self.dim_notes.get(&id)
+    }
+
+    pub fn dim_notes(&self) -> impl Iterator<Item = (ConstraintId, &DimNote)> {
+        self.dim_notes.iter().map(|(id, n)| (*id, n))
+    }
+
+    /// Set (or clear, with `None` or an empty note) a dimension's prefix, suffix and tolerance.
+    pub fn set_dim_note(&mut self, id: ConstraintId, note: Option<DimNote>) {
+        let note = note.filter(|n| !n.is_empty());
+        if self.dim_notes.get(&id) != note.as_ref() {
+            if note.is_some() && !self.constraints.contains_key(&id) {
+                return;
+            }
+            self.touch_key(Key::DimNote(id));
+            match note {
+                Some(n) => {
+                    self.dim_notes.insert(id, n);
+                }
+                None => {
+                    self.dim_notes.remove(&id);
+                }
+            }
+        }
+    }
+
+    /// Imported hatch patterns, in `.pat` format.
+    pub fn custom_patterns(&self) -> &str {
+        &self.patterns
+    }
+
+    pub fn set_custom_patterns(&mut self, pat: String) {
+        if self.patterns != pat {
+            self.touch_key(Key::Patterns);
+            self.patterns = pat;
+        }
+    }
+
+    pub fn draft_style(&self) -> DraftStyle {
+        self.draft
+    }
+
+    pub fn set_draft_style(&mut self, style: DraftStyle) {
+        if self.draft != style {
+            self.touch_key(Key::Draft);
+            self.draft = style;
+        }
+    }
+}
+
 pub fn dimension_kind(c: &Constraint) -> Kind {
     match c {
         Constraint::Angle { .. } => Kind::Angle,

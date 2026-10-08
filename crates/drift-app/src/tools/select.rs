@@ -61,6 +61,11 @@ pub(super) enum SelectDrag {
         /// Set when a single point is being dragged; it can merge on drop.
         point: Option<EntityId>,
     },
+    /// Dragging a circle's edge: the radius follows the pointer (drag its centre to move it).
+    Radius {
+        circle: EntityId,
+        center: DVec2,
+    },
 }
 
 /// A Blender-style modal move (G): the selection follows the pointer from a base point until a
@@ -319,6 +324,9 @@ impl Tool for SelectTool {
                 "Drop on another point to join them · Esc to cancel".into()
             }
             Some(SelectDrag::Move { .. }) => "Moving selection · Esc to cancel".into(),
+            Some(SelectDrag::Radius { .. }) => {
+                "Resizing the circle (drag its centre to move it) · Esc to cancel".into()
+            }
             None => "Click to select · Shift to add · Ctrl to toggle · drag to move or box-select"
                 .into(),
         }
@@ -359,6 +367,7 @@ impl Tool for SelectTool {
                 ed.hovered = match &self.drag {
                     Some(SelectDrag::Box { .. }) => None,
                     Some(SelectDrag::Move { point, .. }) => *point,
+                    Some(SelectDrag::Radius { circle, .. }) => Some(*circle),
                     None => match pick_target(ed, &p) {
                         Some(Target::Entity(id)) => Some(id),
                         Some(Target::Midpoint(line)) => {
@@ -368,6 +377,14 @@ impl Tool for SelectTool {
                         None => None,
                     },
                 };
+                // Inside a fill (and not on a curve): the fill.
+                ed.hovered_fill =
+                    if ed.hovered.is_none() && ed.hovered_midpoint.is_none() && self.drag.is_none()
+                    {
+                        ed.fill_at(p.raw)
+                    } else {
+                        None
+                    };
             }
             Input::Click(p, mods) => {
                 if let Some(Target::Midpoint(line)) = pick_target(ed, &p) {
@@ -388,7 +405,34 @@ impl Tool for SelectTool {
                     ed.selected_midpoints.clear();
                 }
                 let hit = ed.index.pick(p.raw, p.tolerance, |id| !ed.is_locked(id));
-                // Clicking inside a closed area (not on a curve) picks the region.
+                // Clicking inside a fill (not on a curve) picks the fill; inside another
+                // closed area, the region.
+                let fill = if hit.is_none() {
+                    ed.fill_at(p.raw)
+                } else {
+                    None
+                };
+                match fill {
+                    Some(f) if mods.command => {
+                        if !ed.selected_fills.remove(&f) {
+                            ed.selected_fills.insert(f);
+                        }
+                    }
+                    Some(f) if mods.shift => {
+                        ed.selected_fills.insert(f);
+                    }
+                    Some(f) => {
+                        ed.selected_fills = [f].into();
+                        ed.selection.clear();
+                        ed.selected_region = None;
+                        return;
+                    }
+                    None if !mods.shift && !mods.command => ed.selected_fills.clear(),
+                    None => {}
+                }
+                if fill.is_some() {
+                    return;
+                }
                 ed.selected_region = match hit {
                     None => {
                         let regions = ed.regions();
@@ -422,6 +466,16 @@ impl Tool for SelectTool {
                             }
                             ed.selection.insert(id);
                         }
+                        // A lone circle grabbed by its edge resizes.
+                        if ed.selection.len() == 1
+                            && let Some(EntityKind::Circle { center, .. }) =
+                                ed.doc.get(id).map(|e| e.kind)
+                            && let Ok(center) = ed.doc.point(center)
+                        {
+                            ed.doc.begin();
+                            self.drag = Some(SelectDrag::Radius { circle: id, center });
+                            return;
+                        }
                         let is_point = ed.doc.get(id).is_some_and(|e| e.kind.is_point());
                         let point = (is_point && ed.selection.len() == 1).then_some(id);
                         let ids: Vec<EntityId> = ed.selection.iter().copied().collect();
@@ -447,6 +501,13 @@ impl Tool for SelectTool {
             }
             Input::Drag(p) => match &mut self.drag {
                 Some(SelectDrag::Box { current, .. }) => *current = p.raw,
+                Some(SelectDrag::Radius { circle, center }) => {
+                    let r = p.pos().distance(*center);
+                    let current = drift_solver::radius_of(&ed.doc, *circle);
+                    if r > 1e-9 && current.is_some_and(|c| c != r) {
+                        ed.drag_radius(*circle, r);
+                    }
+                }
                 Some(SelectDrag::Move {
                     ids,
                     points,
@@ -515,6 +576,9 @@ impl Tool for SelectTool {
                     }
                     ed.commit("Move");
                 }
+                Some(SelectDrag::Radius { .. }) => {
+                    ed.commit("Resize circle");
+                }
                 None => {}
             },
         }
@@ -525,7 +589,7 @@ impl Tool for SelectTool {
             return true;
         }
         match self.drag.take() {
-            Some(SelectDrag::Move { .. }) => {
+            Some(SelectDrag::Move { .. } | SelectDrag::Radius { .. }) => {
                 ed.doc.rollback();
                 ed.sync();
                 true
@@ -533,11 +597,13 @@ impl Tool for SelectTool {
             Some(SelectDrag::Box { .. }) => true,
             None if !ed.selection.is_empty()
                 || !ed.selected_midpoints.is_empty()
-                || ed.selected_region.is_some() =>
+                || ed.selected_region.is_some()
+                || !ed.selected_fills.is_empty() =>
             {
                 ed.selection.clear();
                 ed.selected_midpoints.clear();
                 ed.selected_region = None;
+                ed.selected_fills.clear();
                 true
             }
             None => false,

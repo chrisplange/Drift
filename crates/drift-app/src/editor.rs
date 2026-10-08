@@ -232,6 +232,25 @@ pub struct Editor {
     /// A point inside the selected region (regions are recomputed, so they're picked by a
     /// point rather than an id).
     pub selected_region: Option<DVec2>,
+    /// The entity each curve passed to the region finder came from (by index).
+    region_ids: std::rc::Rc<Vec<EntityId>>,
+    pub selected_fills: BTreeSet<drift_core::FillId>,
+    pub hovered_fill: Option<drift_core::FillId>,
+    /// How the Fill tool fills.
+    pub fill_style: crate::fills::FillStyle,
+    /// A fill whose boundary the Fill tool's next click re-picks.
+    pub repick_fill: Option<drift_core::FillId>,
+    pub selected_annotation: Option<drift_core::AnnotationId>,
+    pub hovered_annotation: Option<drift_core::AnnotationId>,
+    /// A note just placed by a tool, whose text the UI should let the user type.
+    pub pending_note_edit: Option<drift_core::AnnotationId>,
+    pub(crate) fill_shapes: Option<(
+        u64,
+        std::rc::Rc<std::collections::BTreeMap<drift_core::FillId, crate::fills::FillShape>>,
+    )>,
+    /// Each fill's last region, kept for when its boundary is lost.
+    pub(crate) last_fill_shapes:
+        std::collections::HashMap<drift_core::FillId, drift_geom::regions::Region>,
 }
 
 impl Editor {
@@ -367,6 +386,29 @@ impl Editor {
         if !ok {
             self.doc.translate(ids.iter().copied(), -delta);
             self.solve(dragged);
+        }
+        self.index.update(&self.doc);
+        ok
+    }
+
+    /// Resize a circle inside an open transaction, keeping constraints satisfied (the radius
+    /// follows the pointer; constraints move the rest). Returns false, leaving it as it was, if
+    /// the size is impossible (e.g. fixed by a dimension).
+    pub fn drag_radius(&mut self, circle: EntityId, radius: f64) -> bool {
+        let Some(old) = drift_solver::radius_of(&self.doc, circle) else {
+            return false;
+        };
+        if self.doc.set_radius(circle, radius).is_err() {
+            return false;
+        }
+        let dragged = [Param::Radius(circle)];
+        let report = self.solve(&dragged);
+        let ok = !self.new_conflicts(&report)
+            && drift_solver::radius_of(&self.doc, circle)
+                .is_some_and(|r| (r - radius).abs() <= 1e-6 * radius.max(1.0));
+        if !ok {
+            let _ = self.doc.set_radius(circle, old);
+            self.solve(&dragged);
         }
         self.index.update(&self.doc);
         ok
@@ -540,15 +582,22 @@ impl Editor {
         {
             return regions.clone();
         }
-        let curves: Vec<Shape> = self
+        let (ids, curves): (Vec<EntityId>, Vec<Shape>) = self
             .doc
             .iter()
             .filter(|(_, e)| !e.kind.is_point() && e.style == LineKind::Solid)
-            .filter_map(|(id, _)| self.doc.shape(id))
-            .collect();
+            .filter_map(|(id, _)| Some((id, self.doc.shape(id)?)))
+            .unzip();
         let regions = std::rc::Rc::new(drift_geom::regions::regions(&curves));
         self.regions = Some((revision, regions.clone()));
+        self.region_ids = std::rc::Rc::new(ids);
         regions
+    }
+
+    /// The entity of each curve index in [`regions`](Self::regions)' loops.
+    pub fn region_ids(&mut self) -> std::rc::Rc<Vec<EntityId>> {
+        self.regions();
+        self.region_ids.clone()
     }
 
     /// The selected region, if its seed point is still inside one.
@@ -1280,10 +1329,19 @@ impl Editor {
     }
 
     pub fn delete_selection(&mut self) {
-        if self.selection.is_empty() {
+        if self.selection.is_empty()
+            && self.selected_fills.is_empty()
+            && self.selected_annotation.is_none()
+        {
             return;
         }
         self.doc.begin();
+        if let Some(id) = self.selected_annotation.take() {
+            self.doc.remove_annotation(id);
+        }
+        for id in std::mem::take(&mut self.selected_fills) {
+            self.doc.remove_fill(id);
+        }
         self.doc.delete(self.selection.iter().copied());
         self.commit("Delete");
     }

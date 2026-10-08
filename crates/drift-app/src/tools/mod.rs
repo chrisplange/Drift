@@ -13,11 +13,13 @@ use drift_solver::Param;
 
 use crate::editor::{Anchor, Editor, Guide, GuideKind, Pointer};
 
+mod annotate;
 mod arc;
 mod circle;
 mod corners;
 mod curve_ops;
 mod dimension;
+mod fill;
 mod line;
 mod offset_mirror;
 mod point;
@@ -29,14 +31,16 @@ mod tests;
 mod three_point_arc;
 
 pub use self::{
+    annotate::{CalloutTool, CentreMarkTool, NoteTool, OrdinateTool},
+    corners::{ChamferTool, FilletTool},
+    curve_ops::{ExtendTool, SplitTool, TrimTool},
+    fill::FillTool,
+    offset_mirror::{MirrorTool, OffsetTool},
+};
+pub use self::{
     arc::ArcTool, circle::CircleTool, dimension::DimensionTool, line::LineTool, point::PointTool,
     rectangle::RectangleTool, select::SelectTool, tangent_arc::TangentArcTool,
     three_point_arc::ThreePointArcTool,
-};
-pub use self::{
-    corners::{ChamferTool, FilletTool},
-    curve_ops::{ExtendTool, SplitTool, TrimTool},
-    offset_mirror::{MirrorTool, OffsetTool},
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -73,6 +77,10 @@ pub enum Overlay {
     Move {
         base: DVec2,
         to: Option<DVec2>,
+    },
+    /// Highlight the closed area around a point (the Fill tool's preview).
+    Region {
+        at: DVec2,
     },
 }
 
@@ -126,6 +134,11 @@ pub enum ToolKind {
     TangentArc,
     Point,
     Dimension,
+    Ordinate,
+    Note,
+    Callout,
+    CentreMark,
+    Fill,
     Trim,
     Extend,
     Split,
@@ -136,7 +149,7 @@ pub enum ToolKind {
 }
 
 impl ToolKind {
-    pub const ALL: [ToolKind; 16] = [
+    pub const ALL: [ToolKind; 21] = [
         ToolKind::Select,
         ToolKind::Line,
         ToolKind::Rectangle,
@@ -146,6 +159,11 @@ impl ToolKind {
         ToolKind::TangentArc,
         ToolKind::Point,
         ToolKind::Dimension,
+        ToolKind::Ordinate,
+        ToolKind::Note,
+        ToolKind::Callout,
+        ToolKind::CentreMark,
+        ToolKind::Fill,
         ToolKind::Trim,
         ToolKind::Extend,
         ToolKind::Split,
@@ -158,7 +176,12 @@ impl ToolKind {
     /// Toolbar group: 0 = draw, 1 = annotate, 2 = modify.
     pub fn group(self) -> u8 {
         match self {
-            ToolKind::Dimension => 1,
+            ToolKind::Dimension
+            | ToolKind::Ordinate
+            | ToolKind::Note
+            | ToolKind::Callout
+            | ToolKind::CentreMark
+            | ToolKind::Fill => 1,
             ToolKind::Trim
             | ToolKind::Extend
             | ToolKind::Split
@@ -184,6 +207,11 @@ impl ToolKind {
             ToolKind::TangentArc => "Tangent arc",
             ToolKind::Point => "Point",
             ToolKind::Dimension => "Dimension",
+            ToolKind::Fill => "Fill / hatch",
+            ToolKind::Ordinate => "Ordinate",
+            ToolKind::Note => "Note",
+            ToolKind::Callout => "Callout",
+            ToolKind::CentreMark => "Centre mark",
             ToolKind::Trim => "Trim",
             ToolKind::Extend => "Extend",
             ToolKind::Split => "Split",
@@ -206,6 +234,11 @@ impl ToolKind {
             ToolKind::TangentArc => "Continues tangent from the end of a line or arc",
             ToolKind::Point => "A sketch point, for reference or construction",
             ToolKind::Dimension => "Click geometry, then place the label: the type follows",
+            ToolKind::Fill => "Fill or hatch a closed area: click inside it",
+            ToolKind::Ordinate => "X or Y distances from an origin point, in rows",
+            ToolKind::Note => "Text, with a leader if you start on geometry",
+            ToolKind::Callout => "Hole (4× Ø6 THRU) and chamfer (2 × 45°) callouts",
+            ToolKind::CentreMark => "Centre marks on circles; centre lines between features",
             ToolKind::Trim => "Remove a piece up to the curves that cut it; drag to trim several",
             ToolKind::Extend => "Lengthen a line or arc to the next curve",
             ToolKind::Split => "Cut a line or arc in two at a point",
@@ -226,11 +259,18 @@ impl ToolKind {
             ToolKind::Arc | ToolKind::ThreePointArc | ToolKind::TangentArc => 'A',
             ToolKind::Point => 'P',
             ToolKind::Dimension => 'D',
+            ToolKind::Fill => 'H',
+            ToolKind::Note => 'N',
             ToolKind::Trim => 'T',
             ToolKind::Extend => 'E',
             ToolKind::Offset => 'O',
             ToolKind::Mirror => 'M',
-            ToolKind::Split | ToolKind::Fillet | ToolKind::Chamfer => return None,
+            ToolKind::Split
+            | ToolKind::Fillet
+            | ToolKind::Chamfer
+            | ToolKind::Ordinate
+            | ToolKind::Callout
+            | ToolKind::CentreMark => return None,
         })
     }
 
@@ -245,6 +285,11 @@ impl ToolKind {
             ToolKind::TangentArc => Box::<TangentArcTool>::default(),
             ToolKind::Point => Box::<PointTool>::default(),
             ToolKind::Dimension => Box::<DimensionTool>::default(),
+            ToolKind::Fill => Box::<FillTool>::default(),
+            ToolKind::Ordinate => Box::<OrdinateTool>::default(),
+            ToolKind::Note => Box::<NoteTool>::default(),
+            ToolKind::Callout => Box::<CalloutTool>::default(),
+            ToolKind::CentreMark => Box::<CentreMarkTool>::default(),
             ToolKind::Trim => Box::<TrimTool>::default(),
             ToolKind::Extend => Box::<ExtendTool>::default(),
             ToolKind::Split => Box::<SplitTool>::default(),

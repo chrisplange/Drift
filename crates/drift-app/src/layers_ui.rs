@@ -106,7 +106,7 @@ impl Editor {
     }
 }
 
-fn to_color32(c: Option<Rgb>, dark: bool) -> egui::Color32 {
+pub(crate) fn to_color32(c: Option<Rgb>, dark: bool) -> egui::Color32 {
     match c {
         Some(Rgb([r, g, b])) => egui::Color32::from_rgb(r, g, b),
         None if dark => egui::Color32::from_gray(0xe6),
@@ -115,7 +115,7 @@ fn to_color32(c: Option<Rgb>, dark: bool) -> egui::Color32 {
 }
 
 /// A colour button: "Auto" (theme foreground / by layer) or a picked colour.
-fn color_choice(
+pub(crate) fn color_choice(
     ui: &mut egui::Ui,
     value: Option<Rgb>,
     auto_label: &str,
@@ -142,7 +142,7 @@ fn color_choice(
     out
 }
 
-fn weight_combo(
+pub(crate) fn weight_combo(
     ui: &mut egui::Ui,
     id: impl std::hash::Hash + std::fmt::Debug,
     value: &mut Option<LineWeight>,

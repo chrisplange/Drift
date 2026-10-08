@@ -1330,3 +1330,142 @@ fn exact_snaps_win_over_inference_guides() {
     assert_eq!(p.pos(), v(5.2, 3.0));
     assert_eq!(p.auto_relation(), Some(GuideKind::Horizontal));
 }
+
+fn shift_click(ed: &mut Editor, tool: &mut dyn Tool, at: DVec2) {
+    let p = ptr(ed, tool, at);
+    tool.handle(Input::Hover(p), ed);
+    let shift = Modifiers {
+        shift: true,
+        command: false,
+    };
+    tool.handle(Input::Click(p, shift), ed);
+}
+
+#[test]
+fn chain_and_baseline_dimensions_continue_a_row() {
+    let mut doc = Document::new();
+    let pts: Vec<EntityId> = [0.0, 10.0, 25.0, 45.0]
+        .iter()
+        .map(|x| doc.add_point(v(*x, 0.0)))
+        .collect();
+    let mut ed = Editor::new(doc);
+    let mut tool = DimensionTool::default();
+    // A horizontal dimension 0 → 10 with its label below.
+    click(&mut ed, &mut tool, v(0.0, 0.0));
+    click(&mut ed, &mut tool, v(10.0, 0.0));
+    click(&mut ed, &mut tool, v(5.0, -8.0));
+    let horizontal = |ed: &Editor| -> Vec<(EntityId, EntityId, f64, bool)> {
+        ed.doc
+            .constraints()
+            .filter_map(|(id, c)| match *c {
+                Constraint::HorizontalDistance { a, b, value } => {
+                    Some((a, b, value, ed.doc.is_driven(id)))
+                }
+                _ => None,
+            })
+            .collect()
+    };
+    assert_eq!(horizontal(&ed).len(), 1);
+    // Chain: Shift+click 25 for 10 → 25, on the same line.
+    shift_click(&mut ed, &mut tool, v(25.0, 0.0));
+    let dims = horizontal(&ed);
+    assert_eq!(dims.len(), 2);
+    assert_eq!((dims[1].0, dims[1].1), (pts[1], pts[2]));
+    assert!((dims[1].2 - 15.0).abs() < 1e-12);
+    // Baseline: 0 → 45, a row further out.
+    assert!(tool.key(ToolKey::B, None, &mut ed));
+    shift_click(&mut ed, &mut tool, v(45.0, 0.0));
+    let dims = horizontal(&ed);
+    assert_eq!(dims.len(), 3);
+    assert_eq!((dims[2].0, dims[2].1), (pts[0], pts[3]));
+    let (first, last) = (
+        ed.doc
+            .constraints()
+            .find(|(_, c)| matches!(c, Constraint::HorizontalDistance { b, .. } if *b == pts[1]))
+            .unwrap()
+            .0,
+        ed.doc
+            .constraints()
+            .find(|(_, c)| matches!(c, Constraint::HorizontalDistance { b, .. } if *b == pts[3]))
+            .unwrap()
+            .0,
+    );
+    let label_y = |id| {
+        let c = *ed.doc.constraint(id).unwrap();
+        crate::annotations::dimension_anchor(&ed.doc, &c).unwrap().y
+            + ed.doc.placement(id).unwrap().y
+    };
+    assert!(
+        label_y(last) < label_y(first) - 1.0,
+        "baseline rows step outward"
+    );
+    // A plain click starts a new dimension instead.
+    click(&mut ed, &mut tool, v(25.0, 0.0));
+    assert!(tool.run.is_none());
+    assert_eq!(horizontal(&ed).len(), 3);
+}
+
+#[test]
+fn chained_dimensions_over_a_defined_sketch_become_reference() {
+    let mut doc = Document::new();
+    let a = doc.add_point(v(0.0, 0.0));
+    let b = doc.add_point(v(10.0, 0.0));
+    let c = doc.add_point(v(20.0, 0.0));
+    doc.add_constraint(Constraint::Fix {
+        point: a,
+        at: v(0.0, 0.0),
+    })
+    .unwrap();
+    doc.add_constraint(Constraint::Fix {
+        point: c,
+        at: v(20.0, 0.0),
+    })
+    .unwrap();
+    doc.add_constraint(Constraint::HorizontalPoints { a, b })
+        .unwrap();
+    let mut ed = Editor::new(doc);
+    let mut tool = DimensionTool::default();
+    click(&mut ed, &mut tool, v(0.0, 0.0));
+    click(&mut ed, &mut tool, v(10.0, 0.0));
+    click(&mut ed, &mut tool, v(5.0, -8.0));
+    // 10 → 20 is now implied: it's added as a driven dimension, without a prompt.
+    shift_click(&mut ed, &mut tool, v(20.0, 0.0));
+    let driven = ed
+        .doc
+        .constraints()
+        .filter(|(id, _)| ed.doc.is_driven(*id))
+        .count();
+    assert_eq!(driven, 1);
+    assert!(ed.pending_driven.is_none());
+}
+
+#[test]
+fn a_drawn_circle_takes_a_diameter_dimension() {
+    let mut ed = Editor::default();
+    let mut circle = CircleTool::default();
+    click(&mut ed, &mut circle, v(0.0, 0.0));
+    click(&mut ed, &mut circle, v(10.0, 0.0));
+    let id = ed
+        .doc
+        .iter()
+        .find(|(_, e)| matches!(e.kind, EntityKind::Circle { .. }))
+        .map(|(id, _)| id)
+        .expect("circle");
+    let mut dim = DimensionTool::default();
+    click(&mut ed, &mut dim, v(0.0, 10.0));
+    assert_eq!(
+        dim.base,
+        Some(dimension::DimBase::Circular(id, true)),
+        "{:?}",
+        dim.first
+    );
+    click(&mut ed, &mut dim, v(15.0, 15.0));
+    let d = ed
+        .doc
+        .constraints()
+        .find(|(_, c)| matches!(c, Constraint::Diameter { .. }))
+        .map(|(id, _)| id)
+        .expect("diameter dimension");
+    ed.set_dimension(d, 30.0).unwrap();
+    assert_eq!(drift_solver::radius_of(&ed.doc, id), Some(15.0));
+}

@@ -154,9 +154,20 @@ impl Edge {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Loop {
     pub edges: Vec<Edge>,
+    /// For each edge, the index of the input curve it is a piece of.
+    pub sources: Vec<usize>,
 }
 
 impl Loop {
+    /// The input curves this loop runs along (indices into the `curves` given to
+    /// [`regions`]), sorted and deduplicated.
+    pub fn curves(&self) -> Vec<usize> {
+        let mut c = self.sources.clone();
+        c.sort_unstable();
+        c.dedup();
+        c
+    }
+
     /// Signed area: positive counter-clockwise.
     pub fn signed_area(&self) -> f64 {
         self.edges.iter().map(Edge::area2).sum::<f64>() / 2.0
@@ -213,8 +224,9 @@ impl Region {
     }
 }
 
-/// Split curves (lines, arcs, circles) where they cross into edges.
-fn split(curves: &[Shape]) -> Vec<Edge> {
+/// Split curves (lines, arcs, circles) where they cross into edges, each with the index of
+/// the curve it came from.
+fn split(curves: &[Shape]) -> Vec<(Edge, usize)> {
     let n = curves.len();
     let mut cuts: Vec<Vec<(f64, DVec2)>> = vec![Vec::new(); n];
     let bounds: Vec<_> = curves.iter().map(Shape::bounds).collect();
@@ -236,7 +248,7 @@ fn split(curves: &[Shape]) -> Vec<Edge> {
         }
     }
     let mut edges = Vec::new();
-    for (shape, mut c) in curves.iter().zip(cuts) {
+    for (source, (shape, mut c)) in curves.iter().zip(cuts).enumerate() {
         c.sort_by(|x, y| x.0.total_cmp(&y.0));
         match *shape {
             Shape::Line { a, b } => {
@@ -245,7 +257,7 @@ fn split(curves: &[Shape]) -> Vec<Edge> {
                 pts.push(b);
                 pts.dedup_by(|p, q| p.distance(*q) <= tolerance(p.abs().max_element()));
                 for w in pts.windows(2) {
-                    edges.push(Edge::Line { a: w[0], b: w[1] });
+                    edges.push((Edge::Line { a: w[0], b: w[1] }, source));
                 }
             }
             Shape::Arc {
@@ -261,12 +273,15 @@ fn split(curves: &[Shape]) -> Vec<Edge> {
                     (*x - *y).abs() * radius <= tolerance(center.abs().max_element() + radius)
                 });
                 for w in ts.windows(2) {
-                    edges.push(Edge::Arc {
-                        center,
-                        radius,
-                        start: start + w[0],
-                        sweep: w[1] - w[0],
-                    });
+                    edges.push((
+                        Edge::Arc {
+                            center,
+                            radius,
+                            start: start + w[0],
+                            sweep: w[1] - w[0],
+                        },
+                        source,
+                    ));
                 }
             }
             Shape::Circle { center, radius } => {
@@ -284,18 +299,21 @@ fn split(curves: &[Shape]) -> Vec<Edge> {
                     } else {
                         ts[0] + TAU
                     };
-                    edges.push(Edge::Arc {
-                        center,
-                        radius,
-                        start: t0,
-                        sweep: t1 - t0,
-                    });
+                    edges.push((
+                        Edge::Arc {
+                            center,
+                            radius,
+                            start: t0,
+                            sweep: t1 - t0,
+                        },
+                        source,
+                    ));
                 }
             }
             Shape::Point(_) => {}
         }
     }
-    edges.retain(|e| e.length() > 0.0);
+    edges.retain(|(e, _)| e.length() > 0.0);
     edges
 }
 
@@ -316,7 +334,7 @@ pub fn regions(curves: &[Shape]) -> Vec<Region> {
     };
     // Half-edges: 2k forward, 2k+1 backward.
     let mut half: Vec<(usize, usize, Edge)> = Vec::new(); // (from, to, geometry)
-    for e in &edges {
+    for (e, _) in &edges {
         let (u, v) = (vertex(e.start()), vertex(e.end()));
         half.push((u, v, *e));
         half.push((v, u, e.reversed()));
@@ -373,11 +391,13 @@ pub fn regions(curves: &[Shape]) -> Vec<Region> {
             continue;
         }
         let mut lp = Vec::new();
+        let mut sources = Vec::new();
         let mut h = start;
         let mut guard = 0;
         while !used[h] {
             used[h] = true;
             lp.push(half[h].2);
+            sources.push(edges[h / 2].1);
             let v = half[h].1;
             let twin = h ^ 1;
             let list = &out[v];
@@ -391,7 +411,7 @@ pub fn regions(curves: &[Shape]) -> Vec<Region> {
             }
         }
         if h == start && !lp.is_empty() {
-            loops.push(Loop { edges: lp });
+            loops.push(Loop { edges: lp, sources });
         }
     }
     // Counter-clockwise loops bound regions; clockwise ones are outer boundaries of shapes
@@ -586,5 +606,19 @@ mod tests {
         assert_eq!(regs.len(), 1);
         let expected = 200.0 - (r * r - PI * r * r / 4.0);
         assert!((regs[0].area - expected).abs() < 1e-9, "{}", regs[0].area);
+    }
+
+    #[test]
+    fn loops_name_their_source_curves() {
+        let mut curves = rect(0.0, 0.0, 20.0, 10.0);
+        curves.push(Shape::Circle {
+            center: v(10.0, 5.0),
+            radius: 2.0,
+        });
+        let regs = regions(&curves);
+        let plate = regs.iter().find(|r| !r.holes.is_empty()).expect("plate");
+        assert_eq!(plate.outer.curves(), vec![0, 1, 2, 3]);
+        assert_eq!(plate.holes[0].curves(), vec![4]);
+        assert_eq!(plate.outer.sources.len(), plate.outer.edges.len());
     }
 }

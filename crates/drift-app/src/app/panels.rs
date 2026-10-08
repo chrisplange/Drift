@@ -131,7 +131,7 @@ impl DriftApp {
                 toggle_item(ui, &mut self.thin_lines, "Thin lines", "W");
                 toggle_item(ui, &mut self.status_colors, "Constraint status colours", "");
                 ui.separator();
-                toggle_item(ui, &mut self.show_dimensions, "Dimensions", "");
+                toggle_item(ui, &mut self.show_dimensions, "Dimensions and notes", "");
                 toggle_item(ui, &mut self.show_relations, "Relations", "");
                 toggle_item(ui, &mut self.params.show_free, "Free directions", "");
                 toggle_item(ui, &mut self.params.show_ghosts, "Variant ghosts", "");
@@ -257,6 +257,10 @@ impl DriftApp {
     }
 
     fn inspector(&mut self, ui: &mut egui::Ui) {
+        if self.annotation_inspector(ui) || self.fill_inspector(ui) || self.dimension_inspector(ui)
+        {
+            return;
+        }
         if let Some(region) = self.editor.region() {
             let units = self.editor.doc.units();
             theme::section(ui, "Region");
@@ -278,7 +282,9 @@ impl DriftApp {
                 )
             });
             theme::row(ui, "Holes", |ui| mono(ui, region.holes.len().to_string()));
+            self.region_fill_buttons(ui);
         }
+        self.centre_mark_button(ui);
         let ed = &self.editor;
         let selection: Vec<_> = ed.selection.iter().copied().collect();
         for line in &ed.selected_midpoints {

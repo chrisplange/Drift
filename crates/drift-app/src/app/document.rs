@@ -150,6 +150,19 @@ impl DriftApp {
                     contents,
                 } => {
                     let text = String::from_utf8_lossy(&contents);
+                    if name.to_ascii_lowercase().ends_with(".pat") {
+                        match self.import_patterns(&text) {
+                            Ok(n) => self.set_status(
+                                format!("Imported {n} hatch pattern(s) from {name}"),
+                                false,
+                                now,
+                            ),
+                            Err(e) => {
+                                self.set_status(format!("Could not import {name}: {e}"), true, now)
+                            }
+                        }
+                        continue;
+                    }
                     match drift_io::load(&text) {
                         Ok((doc, meta)) => {
                             self.set_status(format!("Opened {name}"), false, now);
@@ -169,6 +182,38 @@ impl DriftApp {
                 FileEvent::Failed(message) => self.set_status(message, true, now),
             }
         }
+    }
+
+    /// Add the patterns in a `.pat` file to the document (replacing same-named ones).
+    pub(crate) fn import_patterns(&mut self, text: &str) -> Result<usize, String> {
+        let new = drift_draft::parse_pat(text)?;
+        if new.is_empty() {
+            return Err("no patterns found".into());
+        }
+        let mut all = drift_draft::parse_pat(self.editor.doc.custom_patterns()).unwrap_or_default();
+        all.retain(|p| !new.iter().any(|n| n.name.eq_ignore_ascii_case(&p.name)));
+        let count = new.len();
+        all.extend(new);
+        self.editor.doc.begin();
+        self.editor
+            .doc
+            .set_custom_patterns(drift_draft::to_pat(&all));
+        self.editor.commit("Import hatch patterns");
+        Ok(count)
+    }
+
+    /// Remove an imported pattern (fills using it fall back to a tint until re-imported).
+    pub(crate) fn remove_pattern(&mut self, name: &str) {
+        let mut all = drift_draft::parse_pat(self.editor.doc.custom_patterns()).unwrap_or_default();
+        all.retain(|p| p.name != name);
+        let text = if all.is_empty() {
+            String::new()
+        } else {
+            drift_draft::to_pat(&all)
+        };
+        self.editor.doc.begin();
+        self.editor.doc.set_custom_patterns(text);
+        self.editor.commit("Remove hatch pattern");
     }
 
     pub(crate) fn set_status(&mut self, text: String, error: bool, now: f64) {
@@ -199,6 +244,7 @@ impl DriftApp {
             self.editor.highlight.clear();
             self.tool = kind.create();
             self.editor.hovered = None;
+            self.editor.hovered_fill = None;
         }
     }
 

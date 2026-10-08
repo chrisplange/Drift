@@ -1,7 +1,7 @@
 //! Bridges the egui UI and [`drift_render::CanvasRenderer`] through an egui-wgpu paint callback.
 
 use drift_core::{DVec2, SketchItem};
-use drift_render::{Camera, CanvasRenderer, Frame, Palette, Viewport, build_frame};
+use drift_render::{Camera, CanvasRenderer, FillMesh, Frame, Palette, Viewport, build_frame};
 use eframe::egui;
 use eframe::egui_wgpu::{self, wgpu};
 
@@ -39,6 +39,7 @@ impl CanvasPainter {
         rect: egui::Rect,
         pixels_per_point: f64,
         items: &[SketchItem],
+        fills: &[FillMesh],
         camera: &Camera,
         options: CanvasOptions,
     ) -> egui::PaintCallback {
@@ -57,7 +58,8 @@ impl CanvasPainter {
             show_grid: options.show_grid,
             show_axes: options.show_axes,
         };
-        let frame = build_frame(items, camera, viewport, &palette);
+        let mut frame = build_frame(items, camera, viewport, &palette);
+        frame.push_fills(fills, camera, viewport);
         egui_wgpu::Callback::new_paint_callback(rect, CanvasCallback { frame })
     }
 }

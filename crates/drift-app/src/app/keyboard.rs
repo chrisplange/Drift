@@ -70,8 +70,10 @@ impl DriftApp {
         }
 
         if pressed(Key::Escape) {
-            if self.selected_constraint.take().is_some() {
-                // First Esc just clears a picked relation or dimension.
+            if self.selected_constraint.take().is_some()
+                || self.editor.selected_annotation.take().is_some()
+            {
+                // First Esc just clears a picked relation, dimension or annotation.
             } else if !self.tool.cancel(&mut self.editor) {
                 self.set_tool(ToolKind::Select);
             }
@@ -253,6 +255,13 @@ impl DriftApp {
                     let at = anchor + offset;
                     b.include(at - DVec2::splat(pad));
                     b.include(at + DVec2::splat(pad));
+                }
+            }
+            // Notes, callouts and ordinate labels too (the text extends a little further).
+            for (_, a) in doc.annotations() {
+                if let Some(at) = crate::notes::label_world(doc, a) {
+                    b.include(at - DVec2::splat(pad * 2.0));
+                    b.include(at + DVec2::splat(pad * 2.0));
                 }
             }
         }

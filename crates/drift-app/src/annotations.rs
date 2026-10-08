@@ -7,17 +7,16 @@
 use std::collections::HashMap;
 use std::f32::consts::TAU as TAU32;
 
-use drift_core::{Constraint, ConstraintId, DVec2, Document, EntityId, EntityKind, Units};
+use drift_core::{
+    ArrowStyle, Constraint, ConstraintId, DVec2, Document, DraftStyle, EntityId, EntityKind,
+    Tolerance, Units,
+};
 use eframe::egui::{self, Color32, FontId, Pos2, Rect, Stroke, StrokeKind, Vec2, pos2, vec2};
 
 use crate::overlay::ScreenMap;
 
 /// Default distance of a dimension label from the geometry, in logical points.
 const DEFAULT_OFFSET_PT: f64 = 28.0;
-const ARROW_LEN: f32 = 9.0;
-const ARROW_HALF_WIDTH: f32 = 3.0;
-const EXTENSION_GAP: f32 = 3.0;
-const EXTENSION_OVERSHOOT: f32 = 5.0;
 const GLYPH_SIZE: f32 = 15.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -198,30 +197,97 @@ pub enum DimShape {
     },
 }
 
+/// Logical points per millimetre on paper (96 dpi), for drafting sizes on screen.
+pub const PT_PER_MM: f32 = 96.0 / 25.4;
+
+/// Dimension drawing sizes on screen, from the document's drafting style.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DimStyle {
+    pub text: f32,
+    pub arrow: ArrowStyle,
+    pub arrow_len: f32,
+    pub gap: f32,
+    pub overshoot: f32,
+    /// ISO: linear dimension text sits above the line, parallel to it.
+    pub aligned: bool,
+}
+
+impl DimStyle {
+    pub fn of(style: &DraftStyle) -> Self {
+        let pt = |mm: f64| (mm as f32 * PT_PER_MM).clamp(0.0, 60.0);
+        Self {
+            text: pt(style.text_height).clamp(8.0, 40.0),
+            arrow: style.arrow,
+            arrow_len: pt(style.arrow_size).max(3.0),
+            gap: pt(style.extension_gap),
+            overshoot: pt(style.extension_overshoot),
+            aligned: style.aligned_text,
+        }
+    }
+}
+
+impl Default for DimStyle {
+    fn default() -> Self {
+        Self::of(&DraftStyle::default())
+    }
+}
+
+/// A dimension's text: the main part, an optional stacked pair (deviations or limits) and a
+/// trailing part.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct DimText {
+    pub before: String,
+    pub stack: Option<(String, String)>,
+    pub after: String,
+}
+
+impl DimText {
+    /// The text on one line (stacked parts as `upper/lower`).
+    #[cfg(test)]
+    pub fn plain(&self) -> String {
+        match &self.stack {
+            Some((u, l)) => format!("{} {u}/{l}{}", self.before, self.after)
+                .trim()
+                .to_owned(),
+            None => format!("{}{}", self.before, self.after),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct DimLayout {
     /// `None` for a dimension that doesn't exist yet (a tool preview).
     pub id: Option<ConstraintId>,
     pub constraint: Constraint,
     pub anchor: DVec2,
-    pub text: String,
+    pub label: DimText,
+    /// The label's centre.
     pub text_pos: Pos2,
+    /// The label's bounds on screen (of the rotated text, for aligned labels).
     pub text_rect: Rect,
+    /// The label's rotation (radians, screen y-down): 0 for horizontal text.
+    pub angle: f32,
     pub shape: DimShape,
     /// A driven (reference) dimension: drawn grey, its value in parentheses.
     pub driven: bool,
+    pub style: DimStyle,
 }
 
 /// The text a dimension shows, in the document's units. A value the display rounds gets a
 /// `~` prefix, so a rounded label is never mistaken for the exact value.
+#[cfg(test)]
 pub fn dimension_text(c: &Constraint, units: &Units) -> String {
+    dimension_text_styled(c, units, &DraftStyle::default())
+}
+
+fn dimension_text_styled(c: &Constraint, units: &Units, style: &DraftStyle) -> String {
     let v = c.value().unwrap_or(0.0);
     let (n, exact) = match c {
         Constraint::Angle { .. } => {
             let scale = 10f64.powi(i32::from(units.angle_decimals));
             (units.format_angle(v), (v * scale).round() / scale == v)
         }
-        _ => (units.format_length(v), units.is_exact(v)),
+        _ => (style.length(units, v), units.is_exact(v)),
     };
     let n = if exact { n } else { format!("~{n}") };
     match c {
@@ -231,6 +297,102 @@ pub fn dimension_text(c: &Constraint, units: &Units) -> String {
     }
 }
 
+/// The full label of a dimension: value (measured, in parentheses, if driven; marked Σ if
+/// linked to an expression), prefix, suffix, tolerance and alternate units.
+pub fn dimension_label(doc: &Document, id: Option<ConstraintId>, c: &Constraint) -> DimText {
+    let units = doc.units();
+    let style = doc.draft_style();
+    let driven = id.is_some_and(|id| doc.is_driven(id));
+    let shown = if driven {
+        drift_solver::measure(doc, c)
+            .map(|v| c.with_value(v))
+            .unwrap_or(*c)
+    } else {
+        *c
+    };
+    let value = shown.value().unwrap_or(0.0);
+    let angle = matches!(c, Constraint::Angle { .. });
+    let fmt = |v: f64| {
+        if angle {
+            units.format_angle(v)
+        } else {
+            style.length(&units, v)
+        }
+    };
+    let signed = |v: f64| {
+        if v == 0.0 {
+            "0".to_owned()
+        } else if v > 0.0 {
+            format!("+{}", fmt(v))
+        } else {
+            format!("−{}", fmt(-v))
+        }
+    };
+    let main = dimension_text_styled(&shown, &units, &style);
+    let note = id
+        .and_then(|id| doc.dim_note(id))
+        .cloned()
+        .unwrap_or_default();
+    let prefix = if note.prefix.is_empty() {
+        String::new()
+    } else {
+        format!("{} ", note.prefix)
+    };
+    let suffix = if note.suffix.is_empty() {
+        String::new()
+    } else {
+        format!(" {}", note.suffix)
+    };
+    let alt = if angle {
+        None
+    } else {
+        style.alternate(&units, value).map(|a| format!(" {a}"))
+    };
+    let alt = alt.unwrap_or_default();
+    let mark = if !driven && id.is_some_and(|id| doc.expression(id).is_some()) {
+        // Linked to an expression (as SolidWorks marks equation-driven dimensions).
+        "Σ"
+    } else {
+        ""
+    };
+    let mut text = match &note.tolerance {
+        Tolerance::None => DimText {
+            before: format!("{mark}{prefix}{main}{suffix}{alt}"),
+            ..Default::default()
+        },
+        Tolerance::Symmetric(t) => DimText {
+            before: format!("{mark}{prefix}{main} ±{}{suffix}{alt}", fmt(t.abs())),
+            ..Default::default()
+        },
+        Tolerance::Fit(f) => DimText {
+            before: format!("{mark}{prefix}{main} {f}{suffix}{alt}"),
+            ..Default::default()
+        },
+        Tolerance::Deviation { upper, lower } => DimText {
+            before: format!("{mark}{prefix}{main}"),
+            stack: Some((signed(*upper), signed(-*lower))),
+            after: format!("{suffix}{alt}"),
+        },
+        Tolerance::Limits { upper, lower } => {
+            let sign = match c {
+                Constraint::Radius { .. } => "R",
+                Constraint::Diameter { .. } => "Ø",
+                _ => "",
+            };
+            DimText {
+                before: format!("{mark}{prefix}{sign}"),
+                stack: Some((fmt(value + upper), fmt(value - lower))),
+                after: format!("{suffix}{alt}"),
+            }
+        }
+    };
+    if driven {
+        text.before = format!("({}", text.before);
+        text.after = format!("{})", text.after);
+    }
+    text
+}
+
 fn dir(a: Pos2, b: Pos2) -> Vec2 {
     let d = b - a;
     if d.length() > 1e-6 {
@@ -238,6 +400,115 @@ fn dir(a: Pos2, b: Pos2) -> Vec2 {
     } else {
         vec2(1.0, 0.0)
     }
+}
+
+/// Galleys of a dimension label, laid out in its own (unrotated) frame.
+struct LabelGalleys {
+    before: std::sync::Arc<egui::Galley>,
+    stack: Option<[std::sync::Arc<egui::Galley>; 2]>,
+    after: std::sync::Arc<egui::Galley>,
+    size: Vec2,
+}
+
+fn label_galleys(
+    painter: &egui::Painter,
+    text: &DimText,
+    font: f32,
+    color: Color32,
+) -> LabelGalleys {
+    let main = FontId::proportional(font);
+    let small = FontId::proportional(font * 0.72);
+    let before = painter.layout_no_wrap(text.before.clone(), main.clone(), color);
+    let after = painter.layout_no_wrap(text.after.clone(), main, color);
+    let stack = text.stack.as_ref().map(|(u, l)| {
+        [
+            painter.layout_no_wrap(u.clone(), small.clone(), color),
+            painter.layout_no_wrap(l.clone(), small.clone(), color),
+        ]
+    });
+    let stack_w = stack
+        .as_ref()
+        .map_or(0.0, |[u, l]| u.size().x.max(l.size().x) + 3.0);
+    let height = before
+        .size()
+        .y
+        .max(stack.as_ref().map_or(0.0, |[u, l]| u.size().y + l.size().y));
+    let size = vec2(before.size().x + stack_w + after.size().x, height);
+    LabelGalleys {
+        before,
+        stack,
+        after,
+        size,
+    }
+}
+
+/// The screen bounds of a `size` box centred at `center`, rotated by `angle`.
+fn rotated_bounds(center: Pos2, size: Vec2, angle: f32) -> Rect {
+    let rot = egui::emath::Rot2::from_angle(angle);
+    let h = size / 2.0;
+    let corners = [
+        vec2(-h.x, -h.y),
+        vec2(h.x, -h.y),
+        vec2(h.x, h.y),
+        vec2(-h.x, h.y),
+    ];
+    let mut r = Rect::NOTHING;
+    for c in corners {
+        r.extend_with(center + rot * c);
+    }
+    r
+}
+
+/// Draw a label laid out by [`label_galleys`], centred at `center` and rotated by `angle`.
+fn paint_label(
+    painter: &egui::Painter,
+    center: Pos2,
+    angle: f32,
+    g: &LabelGalleys,
+    color: Color32,
+    background: Option<Color32>,
+) {
+    let rot = egui::emath::Rot2::from_angle(angle);
+    let origin = -g.size / 2.0;
+    if let Some(bg) = background {
+        let pad = vec2(3.0, 1.0);
+        let (a, b) = (origin - pad, -origin + pad);
+        let corners = [
+            vec2(a.x, a.y),
+            vec2(b.x, a.y),
+            vec2(b.x, b.y),
+            vec2(a.x, b.y),
+        ]
+        .map(|c| center + rot * c)
+        .to_vec();
+        painter.add(egui::Shape::convex_polygon(corners, bg, Stroke::NONE));
+    }
+    let place = |galley: &std::sync::Arc<egui::Galley>, local: Vec2| {
+        let pos = center + rot * (origin + local);
+        painter.add(egui::epaint::TextShape::new(pos, galley.clone(), color).with_angle(angle));
+    };
+    let mid = g.size.y / 2.0;
+    place(&g.before, vec2(0.0, mid - g.before.size().y / 2.0));
+    let mut x = g.before.size().x;
+    if let Some([u, l]) = &g.stack {
+        let top = mid - (u.size().y + l.size().y) / 2.0;
+        place(u, vec2(x + 2.0, top));
+        place(l, vec2(x + 2.0, top + u.size().y));
+        x += u.size().x.max(l.size().x) + 3.0;
+    }
+    place(&g.after, vec2(x, mid - g.after.size().y / 2.0));
+}
+
+/// Readable text direction along `u`: never upside down (vertical reads bottom to top).
+fn reading_angle(u: Vec2) -> f32 {
+    use std::f32::consts::{FRAC_PI_2, PI};
+    let mut a = u.y.atan2(u.x);
+    if a > FRAC_PI_2 - 1e-4 {
+        a -= PI;
+    } else if a < -FRAC_PI_2 - 1e-4 {
+        a += PI;
+    }
+    a
 }
 
 /// Lay out a dimension. `placement` is the label offset from the anchor (world units). A
@@ -250,6 +521,7 @@ pub fn layout_dimension(
     placement: Option<DVec2>,
     map: &ScreenMap,
 ) -> Option<DimLayout> {
+    let style = DimStyle::of(&doc.draft_style());
     let anchor = dimension_anchor(doc, c)?;
     let offset = placement.unwrap_or_else(|| default_offset(doc, c, map.camera.scale));
     let label = map.to_screen(anchor + offset);
@@ -331,44 +603,64 @@ pub fn layout_dimension(
         _ => return None,
     };
     let driven = id.is_some_and(|id| doc.is_driven(id));
-    let text = if driven {
-        let measured = drift_solver::measure(doc, c)
-            .map(|v| c.with_value(v))
-            .unwrap_or(*c);
-        format!("({})", dimension_text(&measured, &doc.units()))
-    } else if id.is_some_and(|id| doc.expression(id).is_some()) {
-        // Linked to an expression (as SolidWorks marks equation-driven dimensions).
-        format!("Σ{}", dimension_text(c, &doc.units()))
-    } else {
-        dimension_text(c, &doc.units())
+    let text = dimension_label(doc, id, c);
+    let galleys = label_galleys(painter, &text, style.text, Color32::WHITE);
+    // ISO: linear dimension text above the line and parallel to it.
+    let (text_pos, angle) = match &shape {
+        DimShape::Linear { d, .. } if style.aligned => {
+            let angle = reading_angle(dir(d[0], d[1]));
+            let up = egui::emath::Rot2::from_angle(angle) * vec2(0.0, -1.0);
+            (text_pos + up * (galleys.size.y / 2.0 + 1.5), angle)
+        }
+        _ => (text_pos, 0.0),
     };
-    let galley = painter.layout_no_wrap(text.clone(), FontId::proportional(13.0), Color32::WHITE);
-    let text_rect = Rect::from_center_size(text_pos, galley.size()).expand2(vec2(3.0, 1.0));
+    let text_rect = rotated_bounds(text_pos, galleys.size, angle).expand2(vec2(3.0, 1.0));
     Some(DimLayout {
         id,
         constraint: *c,
         anchor,
-        text,
+        label: text,
         text_pos,
         text_rect,
+        angle,
         shape,
         driven,
+        style,
     })
 }
 
-fn arrow(painter: &egui::Painter, tip: Pos2, direction: Vec2, color: Color32) {
+/// An arrowhead (or tick / dot) at `tip`, pointing along `direction`.
+fn arrow(painter: &egui::Painter, tip: Pos2, direction: Vec2, color: Color32, style: &DimStyle) {
     let d = if direction.length() > 1e-6 {
         direction.normalized()
     } else {
         vec2(1.0, 0.0)
     };
-    let base = tip - d * ARROW_LEN;
-    let n = d.rot90() * ARROW_HALF_WIDTH;
-    painter.add(egui::Shape::convex_polygon(
-        vec![tip, base + n, base - n],
-        color,
-        Stroke::NONE,
-    ));
+    let len = style.arrow_len;
+    let base = tip - d * len;
+    let n = d.rot90() * (len / 3.0);
+    match style.arrow {
+        ArrowStyle::Closed => {
+            painter.add(egui::Shape::convex_polygon(
+                vec![tip, base + n, base - n],
+                color,
+                Stroke::NONE,
+            ));
+        }
+        ArrowStyle::Open => {
+            let stroke = Stroke::new(1.0, color);
+            painter.line_segment([tip, base + n], stroke);
+            painter.line_segment([tip, base - n], stroke);
+        }
+        ArrowStyle::Tick => {
+            // An oblique stroke through the end, at 45° to the line.
+            let t = (d + d.rot90()).normalized() * (len * 0.5);
+            painter.line_segment([tip - t, tip + t], Stroke::new(1.6, color));
+        }
+        ArrowStyle::Dot => {
+            painter.circle_filled(tip, (len / 4.0).max(1.5), color);
+        }
+    }
 }
 
 /// Draw a dimension laid out by [`layout_dimension`].
@@ -383,36 +675,37 @@ pub fn paint_dimension(
     } else {
         colors.color(state)
     };
+    let style = &dim.style;
     let stroke = Stroke::new(1.0, color);
     match &dim.shape {
         DimShape::Linear { p, d } => {
             for i in 0..2 {
                 let v = d[i] - p[i];
-                if v.length() > EXTENSION_GAP {
+                if v.length() > style.gap {
                     let u = v.normalized();
-                    painter.line_segment(
-                        [p[i] + u * EXTENSION_GAP, d[i] + u * EXTENSION_OVERSHOOT],
-                        stroke,
-                    );
+                    painter
+                        .line_segment([p[i] + u * style.gap, d[i] + u * style.overshoot], stroke);
                 }
             }
             painter.line_segment([d[0], d[1]], stroke);
             let u = dir(d[0], d[1]);
             let len = (d[1] - d[0]).length();
-            let along = (dim.text_pos - d[0]).dot(u);
+            // Where the label sits along the line (for aligned text, its foot on the line).
+            let foot = d[0] + u * (dim.text_pos - d[0]).dot(u);
+            let along = (foot - d[0]).dot(u);
             // Extend the dimension line to a label placed outside it.
             if along < 0.0 {
-                painter.line_segment([d[0], dim.text_pos], stroke);
+                painter.line_segment([d[0], foot], stroke);
             } else if along > len {
-                painter.line_segment([d[1], dim.text_pos], stroke);
+                painter.line_segment([d[1], foot], stroke);
             }
-            if len > 2.5 * ARROW_LEN {
-                arrow(painter, d[0], -u, color);
-                arrow(painter, d[1], u, color);
+            if len > 2.5 * style.arrow_len || style.arrow == ArrowStyle::Tick {
+                arrow(painter, d[0], -u, color, style);
+                arrow(painter, d[1], u, color, style);
             } else {
                 // Too tight: arrows point inward from outside.
-                arrow(painter, d[0], u, color);
-                arrow(painter, d[1], -u, color);
+                arrow(painter, d[0], u, color, style);
+                arrow(painter, d[1], -u, color, style);
             }
         }
         DimShape::Radius { center, tip, from } => {
@@ -422,7 +715,7 @@ pub fn paint_dimension(
             }
             // The arrow points along the leader: inward from an outside label, outward from
             // the centre when the label is inside.
-            arrow(painter, *tip, *tip - *from, color);
+            arrow(painter, *tip, *tip - *from, color, style);
         }
         DimShape::Diameter { ends } => {
             painter.line_segment([ends[0], ends[1]], stroke);
@@ -434,8 +727,8 @@ pub fn paint_dimension(
             } else if along > len {
                 painter.line_segment([ends[1], dim.text_pos], stroke);
             }
-            arrow(painter, ends[0], -u, color);
-            arrow(painter, ends[1], u, color);
+            arrow(painter, ends[0], -u, color, style);
+            arrow(painter, ends[1], u, color, style);
         }
         DimShape::Angular {
             center,
@@ -453,12 +746,20 @@ pub fn paint_dimension(
             painter.add(egui::Shape::line(points.clone(), stroke));
             if let (Some(first), Some(last)) = (points.first(), points.last()) {
                 let tangent = |a: f32| vec2(-a.sin(), a.cos()) * sweep.signum();
-                arrow(painter, *first, -tangent(*start), color);
-                arrow(painter, *last, tangent(start + sweep), color);
+                arrow(painter, *first, -tangent(*start), color, style);
+                arrow(painter, *last, tangent(start + sweep), color, style);
             }
         }
     }
-    painter.rect_filled(dim.text_rect, 2.0, colors.text_background);
+    let galleys = label_galleys(painter, &dim.label, style.text, color);
+    paint_label(
+        painter,
+        dim.text_pos,
+        dim.angle,
+        &galleys,
+        color,
+        Some(colors.text_background),
+    );
     if state != AnnotationState::Normal {
         painter.rect_stroke(
             dim.text_rect,
@@ -467,13 +768,6 @@ pub fn paint_dimension(
             StrokeKind::Inside,
         );
     }
-    painter.text(
-        dim.text_pos,
-        egui::Align2::CENTER_CENTER,
-        &dim.text,
-        FontId::proportional(13.0),
-        color,
-    );
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -766,6 +1060,74 @@ mod tests {
             }),
             "30°"
         );
+    }
+
+    #[test]
+    fn labels_carry_notes_tolerances_and_alternate_units() {
+        use drift_core::{DimNote, LengthFormat};
+        let mut doc = Document::new();
+        let a = doc.add_point(DVec2::ZERO);
+        let b = doc.add_point(DVec2::new(25.0, 0.0));
+        let c = doc.add_point(DVec2::new(0.0, 10.0));
+        let circle = doc.add_circle(c, 3.0).unwrap();
+        let len = doc
+            .add_constraint(Constraint::Distance { a, b, value: 25.0 })
+            .unwrap();
+        let dia = doc
+            .add_constraint(Constraint::Diameter {
+                curve: circle,
+                value: 6.0,
+            })
+            .unwrap();
+        let label = |doc: &Document, id| {
+            let c = *doc.constraint(id).unwrap();
+            dimension_label(doc, Some(id), &c)
+        };
+        assert_eq!(label(&doc, len).plain(), "25");
+        let note = |prefix: &str, suffix: &str, tolerance| DimNote {
+            prefix: prefix.into(),
+            suffix: suffix.into(),
+            tolerance,
+        };
+        doc.set_dim_note(dia, Some(note("4×", "THRU", Tolerance::None)));
+        assert_eq!(label(&doc, dia).plain(), "4× Ø6 THRU");
+        doc.set_dim_note(len, Some(note("", "", Tolerance::Symmetric(0.1))));
+        assert_eq!(label(&doc, len).plain(), "25 ±0.1");
+        doc.set_dim_note(len, Some(note("", "", Tolerance::Fit("H7".into()))));
+        assert_eq!(label(&doc, len).plain(), "25 H7");
+        doc.set_dim_note(
+            len,
+            Some(note(
+                "",
+                "",
+                Tolerance::Deviation {
+                    upper: 0.1,
+                    lower: 0.05,
+                },
+            )),
+        );
+        let t = label(&doc, len);
+        assert_eq!(t.before, "25");
+        assert_eq!(t.stack, Some(("+0.1".into(), "−0.05".into())));
+        doc.set_dim_note(
+            len,
+            Some(note(
+                "",
+                "",
+                Tolerance::Limits {
+                    upper: 0.2,
+                    lower: 0.1,
+                },
+            )),
+        );
+        assert_eq!(label(&doc, len).stack, Some(("25.2".into(), "24.9".into())));
+        doc.set_dim_note(len, None);
+        let mut style = doc.draft_style();
+        style.alt_units = Some(LengthFormat::Inch);
+        doc.set_draft_style(style);
+        assert_eq!(label(&doc, len).plain(), "25 [0.984\"]");
+        doc.set_driven(len, true).unwrap();
+        assert_eq!(label(&doc, len).plain(), "(25 [0.984\"])");
     }
 
     #[test]

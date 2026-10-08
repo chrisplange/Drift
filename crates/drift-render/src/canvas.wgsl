@@ -124,6 +124,32 @@ fn fs_grid(in: GridOut) -> @location(0) vec4<f32> {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Filled triangles
+
+struct FillIn {
+    @location(0) pos: vec2<f32>,
+    @location(1) color: vec4<f32>,
+};
+
+struct FillOut {
+    @builtin(position) position: vec4<f32>,
+    @location(0) color: vec4<f32>,
+};
+
+@vertex
+fn vs_fill(in: FillIn) -> FillOut {
+    var out: FillOut;
+    out.position = to_clip(in.pos);
+    out.color = in.color;
+    return out;
+}
+
+@fragment
+fn fs_fill(in: FillOut) -> @location(0) vec4<f32> {
+    return shade(in.color, 1.0);
+}
+
+// ---------------------------------------------------------------------------------------------
 // Line segments
 
 struct SegmentIn {

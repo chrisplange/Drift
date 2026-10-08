@@ -98,6 +98,9 @@ browser (WebGPU, with a WebGL2 fallback).
   furniture library; place copies (I; R turns, X mirrors); double-click a copy to edit the
   block and every copy updates; explode, replace and count copies. DXF blocks and inserts
   are kept both ways.
+- **Underlays:** trace over a PDF or DXF drawing. Import a page, calibrate its scale from
+  two points and a known distance (or pick 1 : 50, 1/4" = 1'-0" …), snap to its corners,
+  midpoints and curves while you draw, and convert it to geometry when you want to edit it.
 - **Rotate and groups:** R rotates the selection (type an angle, 15° steps stick, B picks
   the pivot). Ctrl/⌘+G groups things so they pick, move and rotate together; double-click a
   group to edit inside it.

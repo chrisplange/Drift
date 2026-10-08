@@ -6,7 +6,7 @@
 //! ```json
 //! {
 //!   "format": "drift",
-//!   "version": 11,
+//!   "version": 12,
 //!   "meta": {"title":"Bracket","units":"mm","generator":"Drift 0.1.0"},
 //!   "display": {"length":"architectural","fraction":16},
 //!   "variables": [
@@ -46,8 +46,10 @@ mod blocks;
 mod drafting;
 pub mod dxf;
 pub mod pdf;
+pub mod pdf_import;
 mod sheets;
 pub mod svg;
+mod underlays;
 
 /// File extension, without the dot.
 pub const EXTENSION: &str = "drift";
@@ -62,8 +64,8 @@ pub const EXTENSION: &str = "drift";
 /// style), `fills` (solid fills and hatches), `annotations` (notes, centre marks, callouts,
 /// ordinate dimensions) and dimension `prefix`, `suffix` and `tol` (M7); 8 = adds `sheets`
 /// (paper, scale, view, title block and revisions) (M8); 9 = adds `groups`; 10 = adds `blocks`
-/// and `instances` (M8.5).
-pub const FORMAT_VERSION: u32 = 11;
+/// and `instances`; 11 = adds a layer's `fill` colour; 12 = adds `underlays` (M8.5).
+pub const FORMAT_VERSION: u32 = 12;
 const FORMAT_TAG: &str = "drift";
 
 /// Document-level properties stored alongside the geometry.
@@ -726,6 +728,8 @@ struct FileRecord {
     blocks: Vec<blocks::BlockRecord>,
     #[serde(default)]
     instances: Vec<blocks::InstanceRecord>,
+    #[serde(default)]
+    underlays: Vec<underlays::UnderlayRecord>,
 }
 
 /// A named group of entities.
@@ -955,6 +959,12 @@ pub fn save(doc: &Document, meta: &Metadata) -> String {
             serde_json::to_string(&blocks::instance_record(id, i)).expect("instance serializes")
         })
         .collect();
+    let underlay_lines: Vec<String> = doc
+        .underlays()
+        .map(|(id, u)| {
+            serde_json::to_string(&underlays::underlay_record(id, u)).expect("underlay serializes")
+        })
+        .collect();
     let tail = [
         ("measurements", &measurements),
         ("variants", &variants),
@@ -964,6 +974,7 @@ pub fn save(doc: &Document, meta: &Metadata) -> String {
         ("groups", &groups),
         ("blocks", &block_lines),
         ("instances", &instances),
+        ("underlays", &underlay_lines),
     ];
     let last = tail.iter().rposition(|(_, items)| !items.is_empty());
     push_array(&mut out, "entities", &entities, true);
@@ -1233,6 +1244,14 @@ pub fn load(text: &str) -> Result<(Document, Metadata), LoadError> {
         doc.insert_instance(id, instance)
             .map_err(LoadError::Document)?;
     }
+    for u in file.underlays {
+        let id_text = u.id.clone();
+        let (id, underlay) = underlays::parse_underlay(u)?;
+        if doc.underlay(id).is_some() {
+            return Err(LoadError::DuplicateId(id_text));
+        }
+        doc.insert_underlay(id, underlay);
+    }
     for g in file.groups {
         let id = drift_core::GroupId(parse_prefixed(&g.id, 'g')?);
         if doc.group(id).is_some() {
@@ -1347,7 +1366,7 @@ pub fn migrate(value: serde_json::Value) -> Result<serde_json::Value, LoadError>
         // v1 → v2: constraints were introduced; a v1 file simply has none.
         value["constraints"] = serde_json::Value::Array(Vec::new());
     }
-    // v2 → v11 only added optional fields, sections and constraint types: nothing to convert.
+    // v2 → v12 only added optional fields, sections and constraint types: nothing to convert.
     value["version"] = FORMAT_VERSION.into();
     Ok(value)
 }
@@ -1390,7 +1409,7 @@ mod tests {
         let text = save(&doc, &Metadata::default());
         let expected = r#"{
   "format": "drift",
-  "version": 11,
+  "version": 12,
   "meta": {"units":"mm"},
   "entities": [
     {"type":"point","id":"e1","at":[0.0,0.0]},
@@ -1912,9 +1931,44 @@ mod tests {
             members: curves.iter().copied().take(2).collect(),
         })
         .unwrap();
+        let mut plan = drift_core::Underlay::new(
+            "Plan",
+            "plan.pdf, page 2",
+            vec![
+                drift_core::RefPrim::Line(DVec2::new(0.1, 0.2), DVec2::new(300.5, 0.2)),
+                drift_core::RefPrim::Polyline(vec![
+                    DVec2::new(0.0, 0.0),
+                    DVec2::new(10.0, 0.0),
+                    DVec2::new(10.0, 7.25),
+                ]),
+                drift_core::RefPrim::Circle {
+                    center: DVec2::new(50.0, 50.0),
+                    radius: 12.5,
+                },
+                drift_core::RefPrim::Arc {
+                    center: DVec2::new(80.0, 20.0),
+                    radius: 30.0,
+                    start: 0.0,
+                    sweep: std::f64::consts::FRAC_PI_2,
+                },
+            ],
+        );
+        plan.at = DVec2::new(-1000.0, 250.0);
+        plan.scale = 17.6389;
+        plan.angle = 12.0;
+        plan.color = Some(Rgb([90, 120, 200]));
+        plan.opacity = 0.45;
+        plan.snap = false;
+        plan.locked = true;
+        doc.add_underlay(plan);
+        doc.add_underlay(drift_core::Underlay::new("Survey", "", Vec::new()));
 
         let text = save(&doc, &Metadata::default());
-        assert!(text.contains("\"version\": 11"));
+        assert!(text.contains("\"version\": 12"));
+        assert!(
+            text.contains(r#"{"a":[80.0,20.0,30.0,0.0,90.0]}"#),
+            "{text}"
+        );
         let (loaded, _) = load(&text).unwrap();
         assert_eq!(loaded, doc);
         assert_eq!(save(&loaded, &Metadata::default()), text);
@@ -1929,6 +1983,7 @@ mod tests {
             "groups",
             "blocks",
             "instances",
+            "underlays",
         ] {
             assert!(!plain.contains(absent), "{absent}");
         }

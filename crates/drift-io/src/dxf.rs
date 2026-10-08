@@ -417,6 +417,51 @@ pub struct DxfEntity {
     pub color: Option<Rgb>,
 }
 
+/// The curves of a DXF import as underlay curves (in mm), with copies of blocks expanded.
+/// Points are left out.
+pub fn underlay_prims(import: &DxfImport) -> Vec<drift_core::RefPrim> {
+    use drift_core::RefPrim;
+    let prim = |s: &Shape| -> Option<RefPrim> {
+        Some(match *s {
+            Shape::Point(_) => return None,
+            Shape::Line { a, b } => RefPrim::Line(a, b),
+            Shape::Circle { center, radius } => RefPrim::Circle { center, radius },
+            Shape::Arc {
+                center,
+                radius,
+                start,
+                sweep,
+            } => RefPrim::Arc {
+                center,
+                radius,
+                start,
+                sweep,
+            },
+        })
+    };
+    let mut out: Vec<RefPrim> = import
+        .entities
+        .iter()
+        .filter_map(|e| prim(&e.shape))
+        .collect();
+    for insert in &import.inserts {
+        let Some(block) = import.blocks.iter().find(|b| b.name == insert.block) else {
+            continue;
+        };
+        let mut copy = drift_core::Instance::new(drift_core::BlockId::default(), insert.at);
+        copy.angle = insert.angle;
+        copy.scale = insert.scale;
+        copy.mirror = insert.mirror;
+        out.extend(
+            block
+                .entities
+                .iter()
+                .filter_map(|e| prim(&copy.apply_shape(&e.shape))),
+        );
+    }
+    out
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct DxfLayer {
     pub name: String,

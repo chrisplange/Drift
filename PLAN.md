@@ -1172,7 +1172,41 @@ written but hasn't run yet (no GitHub repo).*
   relations and dimensions except Fix, fills and hatches of copied areas, block copies).
   Shift+C or the status bar toggles constraint status colours. Layers have a separate fill
   and hatch colour (format v11 `fill`; absent uses the stroke colour).
-- **Still to come:** part 3, PDF and DXF underlays with scale calibration and snapping.
+
+*Part 3 as built (2026-10-08): underlays.*
+- **Model (format v12 `underlays`):**
+  - An underlay is a reference drawing kept in the file: lines, polylines, circles and arcs
+    in its own units (PDF points, or mm for DXF), shared behind an `Arc` so undo is cheap.
+  - It has a position, a scale (sketch mm per unit), an angle, a colour (grey by default),
+    an opacity, and Visible / Snap / Locked switches.
+  - Underlays can't be selected or edited. They print and export nowhere.
+- **Import:**
+  - File → Import underlay… (or opening any PDF) takes a PDF or DXF file.
+  - PDF: a pure-Rust reader (`lopdf` plus our own content interpreter) follows the
+    transforms (`cm`, `q`/`Q`), lines, curves (flattened), rectangles and closed paths
+    through nested form XObjects. Filled shapes come in as their outlines. Text and images
+    are skipped and counted, and the page's crop box and rotation are honoured.
+  - A multi-page PDF asks which page. It's placed at paper size with the page's lower-left
+    corner at the origin.
+  - DXF: its curves (copies of blocks expanded) in the file's units.
+- **Calibrate and place (Layers tab → Underlays):**
+  - Calibrate…: click two points on the underlay (snapped), type the real distance, Enter.
+    It rescales about the first point and reports the drawing scale (e.g. 1 : 50).
+  - Scale presets for PDFs (metric 1 : n and architectural / engineering imperial), or a
+    factor for DXF.
+  - Move… by two points, X / Y, angle (0 / 90 / 180 / 270 turn about its middle), opacity
+    (one undo step per drag), colour, Zoom to, Delete.
+  - Convert to geometry: the underlay becomes lines, arcs and circles on the current layer,
+    with coincident ends shared.
+- **Snapping and drawing:**
+  - Tools snap to underlay end points, midpoints, centres, quadrants and nearest-on-curve.
+    The sketch wins ties, and grid snapping only applies when nothing is near.
+  - Snaps on an underlay create new, unconstrained points.
+  - Underlays draw beneath everything, faded towards the background and culled to the view
+    via a per-underlay R-tree. That tree is rebuilt only when the underlay moves or changes.
+  - Zoom to fit includes visible underlays.
+- **Not yet:** raster (scanned) PDFs; PDF text as outlines; clipping paths; snapping to
+  intersections between underlay curves.
 
 **M9 — Advanced geometry (3–4 wks)**
 - Ellipses, slots, polygons, and text.

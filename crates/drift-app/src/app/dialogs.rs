@@ -4,6 +4,7 @@ use crate::*;
 
 impl DriftApp {
     pub(crate) fn dialogs(&mut self, ctx: &egui::Context) {
+        self.underlay_dialog(ctx);
         if let Some((constraint, placement)) = self.editor.pending_driven {
             let mut choice = None;
             let modal = egui::Modal::new(egui::Id::new("driven")).show(ctx, |ui| {

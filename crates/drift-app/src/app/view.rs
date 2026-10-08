@@ -17,7 +17,7 @@ impl DriftApp {
             };
             let ed = &self.editor;
             let tool = &self.tool;
-            pointer.snap = ed.index.snap(raw, options, |id| tool.snap_excludes(ed, id));
+            pointer.snap = ed.snap(raw, options, |id| tool.snap_excludes(ed, id));
             // Inference lines apply unless an exact snap decides the position; with grid
             // snapping they start from the grid point, so both coordinates stay on the grid.
             if pointer.exact_snap().is_none() {
@@ -230,6 +230,7 @@ impl DriftApp {
             ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
         self.canvas_rect = rect;
         let view_size = DVec2::new(f64::from(rect.width()), f64::from(rect.height()));
+        self.editor.update_underlays();
 
         if response.double_clicked_by(PointerButton::Middle) {
             self.fit_target = Some(self.fit_bounds());
@@ -397,8 +398,9 @@ impl DriftApp {
             self.camera.scale,
             ui.visuals().dark_mode,
         );
-        // Geometry (GPU).
-        let mut items = fills.lines;
+        // Geometry (GPU): underlays at the bottom.
+        let mut items = self.editor.underlay_items(view, ui.visuals().dark_mode);
+        items.extend(fills.lines);
         if self.show_dimensions {
             items.extend(crate::notes::centre_items(
                 &self.editor.doc,

@@ -20,6 +20,7 @@ mod theme;
 pub mod tools;
 #[cfg(test)]
 mod ui_tests;
+pub mod underlays;
 
 use std::f64::consts::TAU;
 
@@ -227,6 +228,10 @@ pub struct DriftApp {
     layers_last: app::layers_hud::LayersDock,
     /// The name typed for a new block.
     new_block_name: String,
+    /// The next opened file becomes an underlay (File → Import underlay).
+    import_as_underlay: bool,
+    /// A multi-page PDF waiting for its page to be chosen.
+    pending_pdf: Option<app::underlays_ui::PendingPdf>,
 }
 
 impl DriftApp {
@@ -297,6 +302,8 @@ impl DriftApp {
             layers_dock: Default::default(),
             layers_last: Default::default(),
             new_block_name: String::new(),
+            import_as_underlay: false,
+            pending_pdf: None,
         };
         theme::install_fonts(&cc.egui_ctx);
         theme::apply(&cc.egui_ctx);

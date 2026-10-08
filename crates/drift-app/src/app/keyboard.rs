@@ -301,6 +301,13 @@ impl DriftApp {
     /// for the label text).
     pub(crate) fn fit_bounds(&self) -> Bounds {
         let mut b = self.editor.bounds();
+        for (_, u) in self.editor.doc.underlays().filter(|(_, u)| u.visible) {
+            let ub = u.bounds();
+            if !ub.is_empty() {
+                b.include(ub.min);
+                b.include(ub.max);
+            }
+        }
         if b.is_empty() {
             return EMPTY_VIEW;
         }

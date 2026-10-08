@@ -4,6 +4,7 @@
 mod index;
 pub mod intersect;
 mod primitives;
+mod reference;
 pub mod regions;
 mod snap;
 
@@ -12,4 +13,5 @@ pub use primitives::{
     angle_in_sweep, circle_segment_intersections, distance, nearest_point, shape_intersects_rect,
     shape_within_rect,
 };
+pub use reference::RefIndex;
 pub use snap::{Snap, SnapKind, SnapOptions};

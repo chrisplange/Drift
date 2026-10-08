@@ -260,6 +260,9 @@ pub struct Editor {
     /// Each fill's last region, kept for when its boundary is lost.
     pub(crate) last_fill_shapes:
         std::collections::HashMap<drift_core::FillId, drift_geom::regions::Region>,
+    /// The underlay picked in the Layers tab (calibrate and move act on it).
+    pub selected_underlay: Option<drift_core::UnderlayId>,
+    pub(crate) underlay_cache: crate::underlays::UnderlayCache,
 }
 
 impl Editor {

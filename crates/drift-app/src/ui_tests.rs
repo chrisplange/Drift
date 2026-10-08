@@ -1803,3 +1803,94 @@ fn furniture_blocks_place_edit_and_export() {
     let pdf = h.state_mut().pdf_bytes(&painter);
     assert!(pdf.len() > 1000);
 }
+
+#[test]
+fn pdf_underlay_calibrate_and_trace() {
+    let Some(mut h) = harness() else { return };
+    let v = DVec2::new;
+    // A 1 : 50 plan on A3: a 100 × 60 mm room (5 × 3 m) with a door swing.
+    let mut d = drift_draft::page::Drawing::new(v(420.0, 297.0));
+    let pen = drift_draft::page::Pen::new(0.35);
+    let corners = [
+        v(50.0, 50.0),
+        v(150.0, 50.0),
+        v(150.0, 110.0),
+        v(50.0, 110.0),
+    ];
+    for i in 0..4 {
+        d.push(
+            "0",
+            pen,
+            drift_draft::page::Prim::Line(corners[i], corners[(i + 1) % 4]),
+        );
+    }
+    d.push(
+        "0",
+        pen,
+        drift_draft::page::Prim::Arc {
+            center: v(70.0, 50.0),
+            radius: 16.0,
+            start: 0.0,
+            sweep: std::f64::consts::FRAC_PI_2,
+        },
+    );
+    let bytes = drift_io::pdf::write(&[d], "Plan");
+    h.state_mut().import_underlay_file("plan.pdf", bytes, 0.0);
+    h.run();
+    let (id, u) = {
+        let doc = &h.state().editor.doc;
+        let (id, u) = doc.underlays().next().expect("an underlay");
+        (id, u.clone())
+    };
+    assert!((u.scale - drift_core::underlays::MM_PER_POINT).abs() < 1e-12);
+    assert_eq!(h.state().params.tab, RightTab::Layers);
+    // The new underlay is picked; calibrate from its panel.
+    h.get_by_label("Calibrate…").click();
+    h.run();
+    assert_eq!(h.state().tool.kind(), ToolKind::Calibrate);
+    click_world(&mut h, v(50.2, 49.9));
+    click_world(&mut h, v(149.8, 50.1));
+    type_text(&mut h, "5000");
+    h.key_press(Key::Enter);
+    h.run();
+    let u = h.state().editor.doc.underlay(id).unwrap().clone();
+    assert!(
+        (u.scale / drift_core::underlays::MM_PER_POINT - 50.0).abs() < 1e-3,
+        "{}",
+        u.scale
+    );
+    // Fit, then trace the room's bottom wall with a line snapped to its corners.
+    h.key_press(Key::Escape);
+    h.run();
+    h.key_press(Key::F);
+    h.run();
+    h.run();
+    // The room's bottom wall, as the underlay has it (PDF coordinates are rounded).
+    let Some(drift_core::Shape::Line { a, b }) = u.shapes().first().copied() else {
+        panic!("the bottom wall")
+    };
+    assert!((a.distance(b) - 5000.0).abs() < 1e-6);
+    h.key_press(Key::L);
+    h.run();
+    let near = |p: DVec2| p + v(30.0, -20.0);
+    click_world(&mut h, near(a));
+    click_world(&mut h, near(b));
+    h.key_press(Key::Escape);
+    h.run();
+    let line = h
+        .state()
+        .editor
+        .doc
+        .iter()
+        .find_map(|(_, e)| match e.kind {
+            EntityKind::Line { a, b } => Some((a, b)),
+            _ => None,
+        })
+        .expect("a traced line");
+    let doc = &h.state().editor.doc;
+    assert!(doc.point(line.0).unwrap().distance(a) < 1e-6);
+    assert!(doc.point(line.1).unwrap().distance(b) < 1e-6);
+    h.key_press(Key::S);
+    h.run();
+    save_png("drift_ui_underlay.png", &mut h);
+}

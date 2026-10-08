@@ -55,8 +55,19 @@ impl DriftApp {
                     self.save_as();
                 }
                 ui.separator();
-                if ui.button("Import DXF…").clicked() {
+                if ui
+                    .button("Import DXF…")
+                    .on_hover_text("Add a DXF file's curves to the sketch as geometry")
+                    .clicked()
+                {
                     self.files.open(app::sheets_ui::DXF_FILE);
+                }
+                if ui
+                    .button("Import underlay…")
+                    .on_hover_text("A PDF or DXF drawing to trace over (Layers tab)")
+                    .clicked()
+                {
+                    self.pick_underlay_file();
                 }
                 let painter = ui.painter().clone();
                 ui.menu_button("Export", |ui| {

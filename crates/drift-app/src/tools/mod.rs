@@ -31,6 +31,7 @@ mod tangent_arc;
 #[cfg(test)]
 mod tests;
 mod three_point_arc;
+mod underlay;
 
 pub use self::{
     annotate::{CalloutTool, CentreMarkTool, NoteTool, OrdinateTool},
@@ -39,6 +40,7 @@ pub use self::{
     fill::FillTool,
     offset_mirror::{MirrorTool, OffsetTool},
     place_block::BlockTool,
+    underlay::{UnderlayMode, UnderlayTool},
 };
 pub use self::{
     arc::ArcTool, circle::CircleTool, dimension::DimensionTool, line::LineTool, point::PointTool,
@@ -159,6 +161,10 @@ pub enum ToolKind {
     Chamfer,
     Offset,
     Mirror,
+    /// Set an underlay's scale from two points and a known distance (from the Layers tab).
+    Calibrate,
+    /// Move an underlay by two points (from the Layers tab).
+    MoveUnderlay,
 }
 
 impl ToolKind {
@@ -255,6 +261,8 @@ impl ToolKind {
             ToolKind::Chamfer => "Chamfer",
             ToolKind::Offset => "Offset",
             ToolKind::Mirror => "Mirror",
+            ToolKind::Calibrate => "Calibrate underlay",
+            ToolKind::MoveUnderlay => "Move underlay",
         }
     }
 
@@ -283,6 +291,10 @@ impl ToolKind {
             ToolKind::Chamfer => "Cut the corner where two lines meet",
             ToolKind::Offset => "A parallel copy of a curve and the curves connected to it",
             ToolKind::Mirror => "Mirror the selection about a line, kept symmetric",
+            ToolKind::Calibrate => {
+                "Two points on the underlay, then the real distance between them"
+            }
+            ToolKind::MoveUnderlay => "A point on the underlay, then where it goes",
         }
     }
 
@@ -308,7 +320,9 @@ impl ToolKind {
             | ToolKind::Chamfer
             | ToolKind::Ordinate
             | ToolKind::Callout
-            | ToolKind::CentreMark => return None,
+            | ToolKind::CentreMark
+            | ToolKind::Calibrate
+            | ToolKind::MoveUnderlay => return None,
         })
     }
 
@@ -336,6 +350,8 @@ impl ToolKind {
             ToolKind::Chamfer => Box::<ChamferTool>::default(),
             ToolKind::Offset => Box::<OffsetTool>::default(),
             ToolKind::Mirror => Box::<MirrorTool>::default(),
+            ToolKind::Calibrate => Box::new(UnderlayTool::new(UnderlayMode::Calibrate)),
+            ToolKind::MoveUnderlay => Box::new(UnderlayTool::new(UnderlayMode::Move)),
         }
     }
 }

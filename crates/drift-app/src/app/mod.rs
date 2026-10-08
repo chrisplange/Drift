@@ -12,4 +12,5 @@ pub(crate) mod note_ui;
 mod panels;
 pub(crate) mod patterns;
 pub(crate) mod sheets_ui;
+pub(crate) mod underlays_ui;
 mod view;

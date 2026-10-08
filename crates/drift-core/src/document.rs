@@ -15,6 +15,7 @@ use crate::drafting::{Anchor, Annotation, AnnotationId, DimNote, DraftStyle, Fil
 use crate::groups::{Group, GroupId};
 use crate::layers::{Appearance, Layer, LayerId};
 use crate::sheets::{Sheet, SheetId};
+use crate::underlays::{Underlay, UnderlayId};
 use crate::units::{Kind, Units};
 use crate::{Constraint, ConstraintId, LineKind, Shape};
 
@@ -230,6 +231,7 @@ enum Key {
     Group(GroupId),
     Block(BlockId),
     Instance(InstanceId),
+    Underlay(UnderlayId),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -254,6 +256,7 @@ enum Record {
     Group(Group),
     Block(Block),
     Instance(Instance),
+    Underlay(Underlay),
 }
 
 /// One undoable step: the before and after state of everything it touched.
@@ -299,6 +302,7 @@ pub struct Document {
     groups: BTreeMap<GroupId, Group>,
     blocks: BTreeMap<BlockId, Block>,
     instances: BTreeMap<InstanceId, Instance>,
+    underlays: BTreeMap<UnderlayId, Underlay>,
     next_id: u32,
     next_constraint_id: u32,
     /// Next id for variables, variants and measurements (one counter, ids never reused).
@@ -336,6 +340,7 @@ impl PartialEq for Document {
             && self.groups == other.groups
             && self.blocks == other.blocks
             && self.instances == other.instances
+            && self.underlays == other.underlays
     }
 }
 
@@ -362,6 +367,7 @@ impl Default for Document {
             groups: BTreeMap::new(),
             blocks: BTreeMap::new(),
             instances: BTreeMap::new(),
+            underlays: BTreeMap::new(),
             // Ids start at 1; `e0` and `c0` are not valid ids in `.drift` files.
             next_id: 1,
             next_constraint_id: 1,
@@ -570,6 +576,7 @@ impl Document {
             Key::Group(id) => self.groups.get(&id).cloned().map(Record::Group),
             Key::Block(id) => self.blocks.get(&id).cloned().map(Record::Block),
             Key::Instance(id) => self.instances.get(&id).copied().map(Record::Instance),
+            Key::Underlay(id) => self.underlays.get(&id).cloned().map(Record::Underlay),
         }
     }
 
@@ -673,6 +680,12 @@ impl Document {
             (Key::Draft, _) => {}
             (Key::Patterns, Some(Record::Patterns(p))) => self.patterns = p,
             (Key::Patterns, _) => {}
+            (Key::Underlay(id), Some(Record::Underlay(u))) => {
+                self.underlays.insert(id, u);
+            }
+            (Key::Underlay(id), _) => {
+                self.underlays.remove(&id);
+            }
             (Key::Sheet(id), Some(Record::Sheet(s))) => {
                 self.sheets.insert(id, s);
             }
@@ -1516,6 +1529,7 @@ impl Document {
         keys.extend(self.groups.keys().map(|id| Key::Group(*id)));
         keys.extend(self.blocks.keys().map(|id| Key::Block(*id)));
         keys.extend(self.instances.keys().map(|id| Key::Instance(*id)));
+        keys.extend(self.underlays.keys().map(|id| Key::Underlay(*id)));
         keys
     }
 
@@ -2290,6 +2304,42 @@ impl Document {
         if self.sheets.contains_key(&id) {
             self.touch_key(Key::Sheet(id));
             self.sheets.remove(&id);
+        }
+    }
+
+    pub fn underlays(&self) -> impl Iterator<Item = (UnderlayId, &Underlay)> {
+        self.underlays.iter().map(|(id, u)| (*id, u))
+    }
+
+    pub fn underlay(&self, id: UnderlayId) -> Option<&Underlay> {
+        self.underlays.get(&id)
+    }
+
+    pub fn add_underlay(&mut self, underlay: Underlay) -> UnderlayId {
+        let id = UnderlayId(self.next_drafting());
+        self.touch_key(Key::Underlay(id));
+        self.underlays.insert(id, underlay);
+        id
+    }
+
+    /// Insert an underlay with a known id (loading a file).
+    pub fn insert_underlay(&mut self, id: UnderlayId, underlay: Underlay) {
+        self.next_drafting_id = self.next_drafting_id.max(id.0 + 1);
+        self.touch_key(Key::Underlay(id));
+        self.underlays.insert(id, underlay);
+    }
+
+    pub fn set_underlay(&mut self, id: UnderlayId, underlay: Underlay) {
+        if self.underlays.get(&id).is_some_and(|u| *u != underlay) {
+            self.touch_key(Key::Underlay(id));
+            self.underlays.insert(id, underlay);
+        }
+    }
+
+    pub fn remove_underlay(&mut self, id: UnderlayId) {
+        if self.underlays.contains_key(&id) {
+            self.touch_key(Key::Underlay(id));
+            self.underlays.remove(&id);
         }
     }
 

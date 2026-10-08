@@ -45,7 +45,7 @@ impl SnapKind {
     }
 
     /// Lower is stronger: points beat derived points, which beat on-curve, which beats grid.
-    fn priority(self) -> u8 {
+    pub fn priority(self) -> u8 {
         match self {
             SnapKind::Endpoint | SnapKind::Point | SnapKind::Center => 0,
             SnapKind::Midpoint | SnapKind::Quadrant => 1,

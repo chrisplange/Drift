@@ -264,6 +264,21 @@ pub fn tool(painter: &egui::Painter, rect: Rect, kind: ToolKind, color: Color32)
             p.poly(&[(3.0, 15.0), (8.0, 15.0), (8.0, 6.0)], true);
             p.poly(&[(17.0, 15.0), (12.0, 15.0), (12.0, 6.0)], true);
         }
+        ToolKind::Calibrate => {
+            // A ruler.
+            p.poly(&[(2.5, 7.0), (17.5, 7.0), (17.5, 13.0), (2.5, 13.0)], true);
+            for (x, h) in [(5.5, 3.0), (8.5, 2.0), (11.5, 3.0), (14.5, 2.0)] {
+                p.line((x, 7.0), (x, 7.0 + h));
+            }
+        }
+        ToolKind::MoveUnderlay => {
+            p.line((10.0, 2.5), (10.0, 17.5));
+            p.line((2.5, 10.0), (17.5, 10.0));
+            p.arrow_head((10.0, 2.0), vec2(0.0, -1.0));
+            p.arrow_head((10.0, 18.0), vec2(0.0, 1.0));
+            p.arrow_head((2.0, 10.0), vec2(-1.0, 0.0));
+            p.arrow_head((18.0, 10.0), vec2(1.0, 0.0));
+        }
     }
 }
 

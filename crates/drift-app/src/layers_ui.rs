@@ -362,6 +362,7 @@ impl DriftApp {
                         self.editor.set_current_layer(id);
                     }
                 });
+                self.underlays_section(ui);
             });
         if let Some(text) = status {
             self.set_status(text, true, now);

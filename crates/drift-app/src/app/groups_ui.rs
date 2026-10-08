@@ -97,6 +97,9 @@ impl DriftApp {
 
     /// The inspector's group section: shown for a picked group, or the open one.
     pub(crate) fn group_inspector(&mut self, ui: &mut egui::Ui) {
+        if self.editor.block_edit.is_some() {
+            return;
+        }
         let Some(g) = self.editor.selected_group().or(self.editor.open_group) else {
             return;
         };

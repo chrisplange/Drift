@@ -71,6 +71,15 @@ pub enum Prim {
         triangles: Vec<[DVec2; 3]>,
         mask: bool,
     },
+    /// A copy of a block defined in [`Drawing::blocks`]: its items mirrored (x → −x) if
+    /// `mirror`, scaled, turned by `angle` degrees and moved to `at`.
+    Insert {
+        block: String,
+        at: DVec2,
+        angle: f64,
+        scale: f64,
+        mirror: bool,
+    },
     /// A line of text. `at` is on the baseline, at the left, centre or right per `align`.
     /// `angle` is counter-clockwise in radians; `height` is the cap height in mm.
     Text {
@@ -100,6 +109,13 @@ pub struct LayerInfo {
     pub line_type: LineType,
 }
 
+/// A block definition for formats that keep blocks (DXF): items in block coordinates.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BlockDef {
+    pub name: String,
+    pub items: Vec<Item>,
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Drawing {
     /// Paper size (or, for model space, the extents' size). The page spans (0, 0) to `size`.
@@ -110,6 +126,8 @@ pub struct Drawing {
     pub layers: Vec<LayerInfo>,
     /// Line type pattern scale (model space at 1 : n uses n).
     pub line_type_scale: f64,
+    /// Blocks that `Insert` items refer to.
+    pub blocks: Vec<BlockDef>,
 }
 
 impl Drawing {
@@ -182,7 +200,11 @@ impl Drawing {
             min: c.min * f,
             max: c.max * f,
         });
-        for item in &mut d.items {
+        let items = d
+            .items
+            .iter_mut()
+            .chain(d.blocks.iter_mut().flat_map(|b| b.items.iter_mut()));
+        for item in items {
             match &mut item.prim {
                 Prim::Line(a, b) => {
                     *a *= f;
@@ -203,8 +225,59 @@ impl Drawing {
                     *at *= f;
                     *height *= f;
                 }
+                Prim::Insert { at, .. } => *at *= f,
             }
         }
+        d
+    }
+
+    /// The drawing with every `Insert` replaced by its block's items, transformed.
+    pub fn exploded(&self) -> Drawing {
+        if !self
+            .items
+            .iter()
+            .any(|i| matches!(i.prim, Prim::Insert { .. }))
+        {
+            return self.clone();
+        }
+        let mut d = self.clone();
+        d.items.clear();
+        for item in &self.items {
+            match &item.prim {
+                Prim::Insert {
+                    block,
+                    at,
+                    angle,
+                    scale,
+                    mirror,
+                } => {
+                    let Some(def) = self.blocks.iter().find(|b| &b.name == block) else {
+                        continue;
+                    };
+                    let t = Transform {
+                        at: *at,
+                        rotor: DVec2::from_angle(angle.to_radians()),
+                        angle: angle.to_radians(),
+                        scale: *scale,
+                        mirror: *mirror,
+                    };
+                    for inner in &def.items {
+                        d.items.push(Item {
+                            layer: if inner.layer == "0" {
+                                item.layer.clone()
+                            } else {
+                                inner.layer.clone()
+                            },
+                            pen: inner.pen,
+                            prim: t.prim(&inner.prim),
+                            clipped: item.clipped,
+                        });
+                    }
+                }
+                _ => d.items.push(item.clone()),
+            }
+        }
+        d.blocks.clear();
         d
     }
 
@@ -237,9 +310,99 @@ impl Drawing {
                     b.include(*at - DVec2::new(w, *height * 0.3));
                     b.include(*at + DVec2::new(w, *height * 1.2));
                 }
+                Prim::Insert { .. } => {}
+            }
+        }
+        if self
+            .items
+            .iter()
+            .any(|i| matches!(i.prim, Prim::Insert { .. }))
+        {
+            let e = self.exploded().bounds();
+            if !e.is_empty() {
+                b.include(e.min);
+                b.include(e.max);
             }
         }
         b
+    }
+}
+
+/// Mirror, scale, rotate and move (an `Insert`'s placement).
+struct Transform {
+    at: DVec2,
+    rotor: DVec2,
+    angle: f64,
+    scale: f64,
+    mirror: bool,
+}
+
+impl Transform {
+    fn p(&self, p: DVec2) -> DVec2 {
+        let p = if self.mirror {
+            DVec2::new(-p.x, p.y)
+        } else {
+            p
+        };
+        self.at + self.rotor.rotate(p * self.scale)
+    }
+
+    fn prim(&self, prim: &Prim) -> Prim {
+        match prim {
+            Prim::Line(a, b) => Prim::Line(self.p(*a), self.p(*b)),
+            Prim::Polyline { points, closed } => Prim::Polyline {
+                points: points.iter().map(|q| self.p(*q)).collect(),
+                closed: *closed,
+            },
+            Prim::Circle { center, radius } => Prim::Circle {
+                center: self.p(*center),
+                radius: radius * self.scale,
+            },
+            Prim::Arc {
+                center,
+                radius,
+                start,
+                sweep,
+            } => {
+                let start = if self.mirror {
+                    std::f64::consts::PI - (start + sweep)
+                } else {
+                    *start
+                };
+                Prim::Arc {
+                    center: self.p(*center),
+                    radius: radius * self.scale,
+                    start: start + self.angle,
+                    sweep: *sweep,
+                }
+            }
+            Prim::Fill {
+                rings,
+                triangles,
+                mask,
+            } => Prim::Fill {
+                rings: rings
+                    .iter()
+                    .map(|r| r.iter().map(|q| self.p(*q)).collect())
+                    .collect(),
+                triangles: triangles.iter().map(|t| t.map(|q| self.p(q))).collect(),
+                mask: *mask,
+            },
+            Prim::Text {
+                at,
+                height,
+                angle,
+                align,
+                text,
+            } => Prim::Text {
+                at: self.p(*at),
+                height: height * self.scale,
+                angle: angle + self.angle,
+                align: *align,
+                text: text.clone(),
+            },
+            Prim::Insert { .. } => prim.clone(),
+        }
     }
 }
 

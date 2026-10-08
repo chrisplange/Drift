@@ -246,6 +246,13 @@ pub struct Editor {
     pub pending_note_edit: Option<drift_core::AnnotationId>,
     /// The group being edited (its members pick one by one).
     pub open_group: Option<drift_core::GroupId>,
+    /// Picked and hovered copies of blocks.
+    pub selected_instances: BTreeSet<drift_core::InstanceId>,
+    pub hovered_instance: Option<drift_core::InstanceId>,
+    /// A block being edited in place.
+    pub block_edit: Option<crate::blocks::BlockEdit>,
+    /// The block the Place block tool places.
+    pub place_block: Option<drift_core::BlockId>,
     pub(crate) fill_shapes: Option<(
         u64,
         std::rc::Rc<std::collections::BTreeMap<drift_core::FillId, crate::fills::FillShape>>,
@@ -1428,10 +1435,14 @@ impl Editor {
         if self.selection.is_empty()
             && self.selected_fills.is_empty()
             && self.selected_annotation.is_none()
+            && self.selected_instances.is_empty()
         {
             return;
         }
         self.doc.begin();
+        for id in std::mem::take(&mut self.selected_instances) {
+            self.doc.remove_instance(id);
+        }
         if let Some(id) = self.selected_annotation.take() {
             self.doc.remove_annotation(id);
         }
@@ -1640,11 +1651,20 @@ impl Editor {
     }
 
     pub fn bounds(&self) -> Bounds {
-        self.doc
+        let mut b: Bounds = self
+            .doc
             .iter()
             .filter_map(|(id, _)| self.index.shape(id))
             .map(Shape::bounds)
-            .collect()
+            .collect();
+        for (id, _) in self.doc.instances() {
+            let i = self.instance_bounds(id);
+            if !i.is_empty() {
+                b.include(i.min);
+                b.include(i.max);
+            }
+        }
+        b
     }
 
     /// Render items for the document, with selection and hover emphasis.
@@ -1709,6 +1729,47 @@ impl Editor {
             } else {
                 // Draw emphasized items last so they sit on top.
                 emphasized.push(item.with_emphasis(emphasis));
+            }
+        }
+        // Copies of blocks (not the one being edited in place).
+        let editing = self.block_edit.map(|e| e.instance);
+        for (id, i) in self.doc.instances() {
+            let Some(layer) = self.doc.layer(i.layer) else {
+                continue;
+            };
+            if !layer.visible || Some(id) == editing {
+                continue;
+            }
+            let emphasis = if self.selected_instances.contains(&id) {
+                Emphasis::Selected
+            } else if self.hovered_instance == Some(id) {
+                Emphasis::Hovered
+            } else {
+                Emphasis::Normal
+            };
+            for item in self.doc.instance_items(id) {
+                if matches!(item.shape, Shape::Point(_)) {
+                    continue;
+                }
+                let look = item.appearance;
+                let color = if status_colors {
+                    None
+                } else {
+                    look.color.or(layer.color).map(|c| contrast(c.0, dark))
+                };
+                let sketch = SketchItem::new(item.shape)
+                    .with_kind(item.style)
+                    .with_look(
+                        color.flatten(),
+                        look.weight.unwrap_or(layer.weight).0,
+                        look.line_type.unwrap_or(layer.line_type),
+                    )
+                    .with_emphasis(emphasis);
+                if emphasis == Emphasis::Normal {
+                    items.push(sketch);
+                } else {
+                    emphasized.push(sketch);
+                }
             }
         }
         items.extend(emphasized);

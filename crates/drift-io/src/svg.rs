@@ -34,6 +34,7 @@ fn stroke(pen: &Pen, lts: f64) -> String {
 
 /// Serialize a drawing as an SVG document (y flipped so the page reads upright).
 pub fn write(d: &Drawing) -> String {
+    let d = &d.exploded();
     let (w, h) = (d.size.x, d.size.y);
     let y = |v: f64| h - v;
     let mut out = String::new();
@@ -205,6 +206,7 @@ fn item_svg(out: &mut String, item: &Item, h: f64, lts: f64) {
                 escape(text)
             );
         }
+        Prim::Insert { .. } => {}
     }
 }
 

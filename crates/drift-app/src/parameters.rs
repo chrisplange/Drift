@@ -20,6 +20,7 @@ pub enum RightTab {
     Parameters,
     Layers,
     Sheets,
+    Blocks,
 }
 
 /// Edit buffers and view state for the Parameters tab.

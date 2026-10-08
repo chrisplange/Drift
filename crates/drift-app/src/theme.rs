@@ -258,14 +258,26 @@ pub fn segmented<T: Copy + PartialEq>(
     let height = 26.0;
     let (rect, track_response) = ui.allocate_exact_size(vec2(width, height), egui::Sense::hover());
     ui.painter().rect_filled(rect, 7.0, track);
-    let n = options.len() as f32;
-    let seg = (rect.width() - 4.0) / n;
+    // Segments share the width in proportion to their labels (so long ones fit).
+    let font = FontId::new(12.5, bold());
+    let widths: Vec<f32> = options
+        .iter()
+        .map(|(_, label)| {
+            ui.painter()
+                .layout_no_wrap((*label).to_owned(), font.clone(), Color32::WHITE)
+                .size()
+                .x
+                + 12.0
+        })
+        .collect();
+    let total: f32 = widths.iter().sum();
+    let room = rect.width() - 4.0;
+    let mut x = rect.min.x + 2.0;
     let mut clicked = None;
     for (i, (value, label)) in options.iter().enumerate() {
-        let r = egui::Rect::from_min_size(
-            rect.min + vec2(2.0 + seg * i as f32, 2.0),
-            vec2(seg, height - 4.0),
-        );
+        let seg = widths[i] / total * room;
+        let r = egui::Rect::from_min_size(egui::pos2(x, rect.min.y + 2.0), vec2(seg, height - 4.0));
+        x += seg;
         // Ids from the track's own (unique) id, so several controls can share a parent.
         let response = ui.interact(r, track_response.id.with(("seg", i)), egui::Sense::click());
         let selected = *value == current;

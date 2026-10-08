@@ -33,6 +33,8 @@ struct Space {
     /// The drawing scale annotations are sized for (1 : n).
     n: f64,
     clipped: bool,
+    /// Copies of blocks as block definitions and inserts (DXF), rather than their curves.
+    inserts: bool,
 }
 
 impl Space {
@@ -79,45 +81,120 @@ fn geometry(ed: &Editor, s: &Space, d: &mut Drawing) {
             continue;
         }
         let Some(shape) = doc.shape(id) else { continue };
-        let color = e.appearance.color.or(layer.color).unwrap_or(Pen::BLACK);
-        let weight = e.appearance.weight.unwrap_or(layer.weight).mm();
-        let (line_type, width) = if e.style == LineKind::Center {
-            (LineType::Center, THIN)
-        } else {
-            (
-                e.appearance.line_type.unwrap_or(layer.line_type),
-                if weight > 0.0 { weight } else { HAIRLINE },
-            )
+        if let Some(prim) = shape_prim(s, &shape) {
+            let pen = pen_for(e.style, e.appearance, layer);
+            d.items.push(item(&layer.name, pen, prim, s.clipped));
+        }
+    }
+    // Copies of blocks: their curves (sheets), or block definitions and inserts (DXF).
+    let mut defined = std::collections::BTreeSet::new();
+    for (id, copy) in doc.instances() {
+        let Some(layer) = doc.layer(copy.layer) else {
+            continue;
         };
-        let pen = Pen::new(width).with_color(color).with_type(line_type);
-        let prim = match shape {
-            Shape::Line { a, b } => Prim::Line(s.at(a), s.at(b)),
-            Shape::Circle { center, radius } => Prim::Circle {
-                center: s.at(center),
-                radius: radius * s.k,
-            },
-            Shape::Arc {
-                center,
-                radius,
-                start,
-                sweep,
-            } => {
-                let (start, sweep) = if sweep < 0.0 {
-                    (start + sweep, -sweep)
-                } else {
-                    (start, sweep)
+        if !layer.visible || !layer.printable {
+            continue;
+        }
+        let Some(block) = doc.block(copy.block) else {
+            continue;
+        };
+        if s.inserts {
+            if defined.insert(copy.block) {
+                let local = Space {
+                    world: DVec2::ZERO,
+                    page: DVec2::ZERO,
+                    k: 1.0,
+                    ..*s
                 };
-                Prim::Arc {
-                    center: s.at(center),
-                    radius: radius * s.k,
-                    start,
-                    sweep,
+                let items = block
+                    .items
+                    .iter()
+                    .filter(|it| it.style != LineKind::Construction)
+                    .filter_map(|it| {
+                        let prim = shape_prim(&local, &it.shape)?;
+                        Some(item(
+                            "0",
+                            pen_for(it.style, it.appearance, layer),
+                            prim,
+                            false,
+                        ))
+                    })
+                    .collect();
+                d.blocks.push(drift_draft::page::BlockDef {
+                    name: block.name.clone(),
+                    items,
+                });
+            }
+            d.items.push(item(
+                &layer.name,
+                Pen::new(HAIRLINE),
+                Prim::Insert {
+                    block: block.name.clone(),
+                    at: s.at(copy.at),
+                    angle: copy.angle,
+                    scale: copy.scale * s.k,
+                    mirror: copy.mirror,
+                },
+                s.clipped,
+            ));
+        } else {
+            for it in doc.instance_items(id) {
+                if it.style == LineKind::Construction {
+                    continue;
+                }
+                if let Some(prim) = shape_prim(s, &it.shape) {
+                    let pen = pen_for(it.style, it.appearance, layer);
+                    d.items.push(item(&layer.name, pen, prim, s.clipped));
                 }
             }
-            Shape::Point(_) => continue,
-        };
-        d.items.push(item(&layer.name, pen, prim, s.clipped));
+        }
     }
+}
+
+/// How a curve prints: its own or its layer's colour, weight and line type (centre-style
+/// curves as thin centre lines).
+fn pen_for(style: LineKind, look: drift_core::Appearance, layer: &drift_core::Layer) -> Pen {
+    let color = look.color.or(layer.color).unwrap_or(Pen::BLACK);
+    let weight = look.weight.unwrap_or(layer.weight).mm();
+    let (line_type, width) = if style == LineKind::Center {
+        (LineType::Center, THIN)
+    } else {
+        (
+            look.line_type.unwrap_or(layer.line_type),
+            if weight > 0.0 { weight } else { HAIRLINE },
+        )
+    };
+    Pen::new(width).with_color(color).with_type(line_type)
+}
+
+/// A curve on the page (points don't print).
+fn shape_prim(s: &Space, shape: &Shape) -> Option<Prim> {
+    Some(match *shape {
+        Shape::Line { a, b } => Prim::Line(s.at(a), s.at(b)),
+        Shape::Circle { center, radius } => Prim::Circle {
+            center: s.at(center),
+            radius: radius * s.k,
+        },
+        Shape::Arc {
+            center,
+            radius,
+            start,
+            sweep,
+        } => {
+            let (start, sweep) = if sweep < 0.0 {
+                (start + sweep, -sweep)
+            } else {
+                (start, sweep)
+            };
+            Prim::Arc {
+                center: s.at(center),
+                radius: radius * s.k,
+                start,
+                sweep,
+            }
+        }
+        Shape::Point(_) => return None,
+    })
 }
 
 /// Fills and hatches, bottom first.
@@ -361,6 +438,7 @@ pub fn sheet_drawing(
         k: 1.0 / sheet.scale,
         n: sheet.scale,
         clipped: true,
+        inserts: false,
     };
     view(ed, patterns, painter, &space, &mut d);
     drift_draft::sheet::draw_frame(sheet, number, &mut d);
@@ -383,6 +461,7 @@ pub fn model_drawing(
         k: 1.0,
         n,
         clipped: false,
+        inserts: true,
     };
     view(ed, patterns, painter, &space, &mut d);
     let b = d.bounds();
@@ -424,6 +503,7 @@ pub fn paint_drawing(
     to_screen: impl Fn(DVec2) -> Pos2,
     px: f32,
 ) {
+    let d = &d.exploded();
     let clip = d.clip.map(|c| {
         let (a, b) = (to_screen(c.min), to_screen(c.max));
         egui::Rect::from_two_pos(a, b).intersect(painter.clip_rect())
@@ -523,6 +603,7 @@ pub fn paint_drawing(
                 let pos = to_screen(*at) - rot * egui::vec2(shift, ascent);
                 p.add(egui::epaint::TextShape::new(pos, galley, color).with_angle(screen_angle));
             }
+            Prim::Insert { .. } => {}
         }
     }
 }

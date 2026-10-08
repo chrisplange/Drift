@@ -163,6 +163,28 @@ impl DriftApp {
                 {
                     self.editor.ungroup();
                 }
+                if ui
+                    .add_enabled(
+                        !self.editor.selection.is_empty(),
+                        egui::Button::new("Make block"),
+                    )
+                    .on_hover_text("A block from the selection (name it in the Blocks tab)")
+                    .clicked()
+                {
+                    let now = ui.input(|i| i.time);
+                    if let Err(e) = self.editor.make_block("") {
+                        self.set_status(e, true, now);
+                    }
+                }
+                if ui
+                    .add_enabled(
+                        !self.editor.selected_instances.is_empty(),
+                        egui::Button::new("Explode"),
+                    )
+                    .clicked()
+                {
+                    self.editor.explode_selected();
+                }
                 ui.separator();
                 if ui
                     .add(egui::Button::new("Select all").shortcut_text(shortcut("A", false)))
@@ -319,6 +341,7 @@ impl DriftApp {
                 (RightTab::Parameters, "Parameters"),
                 (RightTab::Layers, "Layers"),
                 (RightTab::Sheets, "Sheets"),
+                (RightTab::Blocks, "Blocks"),
             ],
         ) {
             self.params.tab = tab;
@@ -338,13 +361,21 @@ impl DriftApp {
             self.sheets_panel(ui);
             return;
         }
+        if self.params.tab == RightTab::Blocks {
+            self.blocks_panel(ui);
+            return;
+        }
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| self.inspector(ui));
     }
 
     fn inspector(&mut self, ui: &mut egui::Ui) {
-        if self.annotation_inspector(ui) || self.fill_inspector(ui) || self.dimension_inspector(ui)
+        self.block_edit_banner(ui);
+        if self.annotation_inspector(ui)
+            || self.instance_inspector(ui)
+            || self.fill_inspector(ui)
+            || self.dimension_inspector(ui)
         {
             return;
         }

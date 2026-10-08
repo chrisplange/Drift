@@ -94,6 +94,10 @@ browser (WebGPU, with a WebGL2 fallback).
     - B picks the base point (snaps to points, e.g. a corner of the selection).
     - Click or Enter places it; Esc or right-click cancels.
     - Snapped and typed moves land exactly.
+- **Blocks (furniture and symbols):** make a block from the selection or start from the
+  furniture library; place copies (I; R turns, X mirrors); double-click a copy to edit the
+  block and every copy updates; explode, replace and count copies. DXF blocks and inserts
+  are kept both ways.
 - **Rotate and groups:** R rotates the selection (type an angle, 15° steps stick, B picks
   the pivot). Ctrl/⌘+G groups things so they pick, move and rotate together; double-click a
   group to edit inside it.

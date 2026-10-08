@@ -60,6 +60,8 @@ pub(super) enum SelectDrag {
         applied: DVec2,
         /// Set when a single point is being dragged; it can merge on drop.
         point: Option<EntityId>,
+        /// Copies of blocks moving too (as they were when the drag began).
+        instances: Vec<(drift_core::InstanceId, drift_core::Instance)>,
     },
     /// Dragging a circle's edge: the radius follows the pointer (drag its centre to move it).
     Radius {
@@ -87,6 +89,8 @@ pub(super) struct Grab {
     pub(super) typed: [Option<f64>; 2],
     /// The offset the geometry has been moved by so far in the open transaction.
     pub(super) applied: DVec2,
+    /// Copies of blocks moving too (as they were when the move began).
+    pub(super) instances: Vec<(drift_core::InstanceId, drift_core::Instance)>,
 }
 
 impl Grab {
@@ -113,7 +117,11 @@ impl Grab {
     /// follow smoothly).
     pub(super) fn apply(&mut self, offset: DVec2, ed: &mut Editor) {
         let step = offset - self.applied;
-        if step != DVec2::ZERO && ed.drag(&self.ids, step, &self.dragged()) {
+        if step == DVec2::ZERO {
+            return;
+        }
+        if self.ids.is_empty() || ed.drag(&self.ids, step, &self.dragged()) {
+            ed.move_instances(&self.instances, offset);
             self.applied = offset;
         }
     }
@@ -144,16 +152,21 @@ impl SelectTool {
         } else {
             None
         };
+        let instances = ed.picked_instances();
         let (ids, base) = match (&region, fill) {
             (Some(r), _) => (ed.region_curves(r), r.centroid),
             (None, Some((ids, centre))) => (ids, centre),
+            // Only copies of blocks: their insertion point is the base.
+            (None, None) if ed.selection.is_empty() && !instances.is_empty() => {
+                (Vec::new(), instances[0].1.at)
+            }
             (None, None) => {
                 let ids: Vec<EntityId> = ed.selection.iter().copied().collect();
                 let base = ed.move_base(&ids, p.raw, false);
                 (ids, base)
             }
         };
-        if ids.is_empty() {
+        if ids.is_empty() && instances.is_empty() {
             ed.notice = Some("Select something to move first".into());
             return true;
         }
@@ -169,6 +182,7 @@ impl SelectTool {
             lock: None,
             typed: [None; 2],
             applied: DVec2::ZERO,
+            instances,
         });
         true
     }
@@ -188,8 +202,9 @@ impl SelectTool {
             return;
         }
         ed.doc.begin();
+        ed.move_instances(&grab.instances, offset);
         let dragged = grab.dragged();
-        if !ed.drag(&grab.ids, offset, &dragged) {
+        if !grab.ids.is_empty() && !ed.drag(&grab.ids, offset, &dragged) {
             // Too far for one solve (constraints pull the rest along): go in steps.
             const STEPS: u32 = 16;
             for _ in 0..STEPS {
@@ -421,14 +436,19 @@ impl Tool for SelectTool {
                         None => None,
                     },
                 };
-                // Inside a fill (and not on a curve): the fill.
-                ed.hovered_fill =
-                    if ed.hovered.is_none() && ed.hovered_midpoint.is_none() && self.drag.is_none()
-                    {
-                        ed.fill_at(p.raw)
-                    } else {
-                        None
-                    };
+                let free =
+                    ed.hovered.is_none() && ed.hovered_midpoint.is_none() && self.drag.is_none();
+                ed.hovered_instance = if free {
+                    ed.instance_at(p.raw, p.tolerance)
+                } else {
+                    None
+                };
+                // Inside a fill (and not on a curve or a copy of a block): the fill.
+                ed.hovered_fill = if free && ed.hovered_instance.is_none() {
+                    ed.fill_at(p.raw)
+                } else {
+                    None
+                };
             }
             Input::Click(p, mods) => {
                 if let Some(Target::Midpoint(line)) = pick_target(ed, &p) {
@@ -449,6 +469,33 @@ impl Tool for SelectTool {
                     ed.selected_midpoints.clear();
                 }
                 let hit = ed.index.pick(p.raw, p.tolerance, |id| !ed.is_locked(id));
+                // A copy of a block (on its curves, or inside it).
+                let copy = if hit.is_none() {
+                    ed.instance_at(p.raw, p.tolerance)
+                } else {
+                    None
+                };
+                if let Some(c) = copy {
+                    if ed.open_group.is_some() {
+                        ed.close_open_group();
+                    }
+                    if mods.command {
+                        if !ed.selected_instances.remove(&c) {
+                            ed.selected_instances.insert(c);
+                        }
+                    } else if mods.shift {
+                        ed.selected_instances.insert(c);
+                    } else {
+                        ed.selected_instances = [c].into();
+                        ed.selection.clear();
+                        ed.selected_fills.clear();
+                        ed.selected_region = None;
+                    }
+                    return;
+                }
+                if !mods.shift && !mods.command {
+                    ed.selected_instances.clear();
+                }
                 // Clicking inside a fill (not on a curve) picks the fill; inside another
                 // closed area, the region.
                 let fill = if hit.is_none() {
@@ -488,7 +535,7 @@ impl Tool for SelectTool {
                 if let (Some(g), Some(id)) = (ed.open_group, hit)
                     && ed.doc.group_of(id) != Some(g)
                 {
-                    ed.open_group = None;
+                    ed.close_open_group();
                 }
                 match hit {
                     Some(id) if mods.command => {
@@ -518,7 +565,9 @@ impl Tool for SelectTool {
                         };
                         if !mods.shift && !mods.command {
                             ed.selection.clear();
-                            ed.open_group = None;
+                            if ed.open_group.is_some() {
+                                ed.close_open_group();
+                            }
                         }
                         ed.selection.extend(curves);
                         ed.expand_groups();
@@ -527,6 +576,15 @@ impl Tool for SelectTool {
             }
             // Double-click a group's member to edit inside the group.
             Input::DoubleClick(p) => {
+                if ed
+                    .index
+                    .pick(p.raw, p.tolerance, |id| !ed.is_locked(id))
+                    .is_none()
+                    && let Some(c) = ed.instance_at(p.raw, p.tolerance)
+                {
+                    ed.edit_block(c);
+                    return;
+                }
                 if let Some(id) = ed.index.pick(p.raw, p.tolerance, |id| !ed.is_locked(id))
                     && let Some(g) = ed.doc.group_of(id)
                     && ed.open_group != Some(g)
@@ -542,6 +600,7 @@ impl Tool for SelectTool {
                         if !ed.selection.contains(&id) {
                             if !mods.shift && !mods.command {
                                 ed.selection.clear();
+                                ed.selected_instances.clear();
                             }
                             let set = ed.pick_set(id);
                             ed.selection.extend(set);
@@ -561,6 +620,7 @@ impl Tool for SelectTool {
                         let ids: Vec<EntityId> = ed.selection.iter().copied().collect();
                         let base = ed.move_base(&ids, p.raw, point.is_none());
                         let points = ed.doc.defining_points(ids.iter().copied());
+                        let instances = ed.picked_instances();
                         ed.doc.begin();
                         self.drag = Some(SelectDrag::Move {
                             ids,
@@ -569,6 +629,34 @@ impl Tool for SelectTool {
                             base,
                             applied: DVec2::ZERO,
                             point,
+                            instances,
+                        });
+                    }
+                    // A copy of a block: drag it (and the rest of the selection) by its
+                    // insertion point.
+                    None if ed.instance_at(p.raw, p.tolerance).is_some() => {
+                        let c = ed.instance_at(p.raw, p.tolerance).expect("checked");
+                        if !ed.selected_instances.contains(&c) {
+                            if !mods.shift && !mods.command {
+                                ed.selection.clear();
+                                ed.selected_instances.clear();
+                                ed.selected_fills.clear();
+                            }
+                            ed.selected_instances.insert(c);
+                        }
+                        let ids: Vec<EntityId> = ed.selection.iter().copied().collect();
+                        let points = ed.doc.defining_points(ids.iter().copied());
+                        let base = ed.doc.instance(c).map_or(p.raw, |i| i.at);
+                        let instances = ed.picked_instances();
+                        ed.doc.begin();
+                        self.drag = Some(SelectDrag::Move {
+                            ids,
+                            points,
+                            start: p.raw,
+                            base,
+                            applied: DVec2::ZERO,
+                            point: None,
+                            instances,
                         });
                     }
                     None => {
@@ -587,6 +675,7 @@ impl Tool for SelectTool {
                                     base: centre,
                                     applied: DVec2::ZERO,
                                     point: None,
+                                    instances: Vec::new(),
                                 });
                             }
                             None => {
@@ -614,6 +703,7 @@ impl Tool for SelectTool {
                     start,
                     base,
                     applied,
+                    instances,
                     ..
                 }) => {
                     let offset = crate::modify::move_offset(*start, *base, &p);
@@ -622,7 +712,8 @@ impl Tool for SelectTool {
                         // The grabbed geometry follows the pointer; constraints move the rest.
                         let dragged: Vec<Param> =
                             points.iter().copied().flat_map(Param::point).collect();
-                        if ed.drag(ids, step, &dragged) {
+                        if ids.is_empty() || ed.drag(ids, step, &dragged) {
+                            ed.move_instances(instances, offset);
                             *applied = offset;
                         }
                     }
@@ -642,9 +733,12 @@ impl Tool for SelectTool {
                         .collect();
                     if !mods.shift && !mods.command {
                         ed.selection.clear();
+                        ed.selected_instances.clear();
                     }
                     ed.selection.extend(found);
                     ed.expand_groups();
+                    let copies = ed.instances_in(&rect, crossing);
+                    ed.selected_instances.extend(copies);
                 }
                 Some(SelectDrag::Move { point, applied, .. }) => {
                     if let Some(seed) = &mut ed.selected_region {
@@ -701,15 +795,17 @@ impl Tool for SelectTool {
             Some(SelectDrag::Box { .. }) => true,
             // Esc first leaves an open group.
             None if ed.open_group.is_some() => {
-                ed.open_group = None;
+                ed.close_open_group();
                 ed.expand_groups();
                 true
             }
             None if !ed.selection.is_empty()
                 || !ed.selected_midpoints.is_empty()
                 || ed.selected_region.is_some()
-                || !ed.selected_fills.is_empty() =>
+                || !ed.selected_fills.is_empty()
+                || !ed.selected_instances.is_empty() =>
             {
+                ed.selected_instances.clear();
                 ed.selection.clear();
                 ed.selected_midpoints.clear();
                 ed.selected_region = None;

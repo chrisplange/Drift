@@ -233,7 +233,11 @@ pub fn write(d: &Drawing, units: DxfUnits) -> String {
     for l in &d.layers {
         layers.insert(layer_name(&l.name), (aci(l.color), l.line_type));
     }
-    for item in &d.items {
+    for item in d
+        .items
+        .iter()
+        .chain(d.blocks.iter().flat_map(|b| b.items.iter()))
+    {
         layers
             .entry(layer_name(&item.layer))
             .or_insert((aci(item.pen.color), LineType::Continuous));
@@ -254,101 +258,151 @@ pub fn write(d: &Drawing, units: DxfUnits) -> String {
     o.pair(0, "ENDTAB");
     o.pair(0, "ENDSEC");
 
+    // Block definitions (their items on layer 0 take the copy's layer).
+    if !d.blocks.is_empty() {
+        o.pair(0, "SECTION");
+        o.pair(2, "BLOCKS");
+        for b in &d.blocks {
+            let name = layer_name(&b.name);
+            o.pair(0, "BLOCK");
+            o.pair(8, "0");
+            o.pair(2, &name);
+            o.pair(70, 0);
+            o.point(10, DVec2::ZERO);
+            o.pair(3, &name);
+            for item in &b.items {
+                write_item(&mut o, item, &layers);
+            }
+            o.pair(0, "ENDBLK");
+            o.pair(8, "0");
+        }
+        o.pair(0, "ENDSEC");
+    }
     o.pair(0, "SECTION");
     o.pair(2, "ENTITIES");
     for item in &d.items {
-        let layer = layer_name(&item.layer);
-        let (layer_color, layer_type) = layers[&layer];
-        let head = |o: &mut Out, kind: &str| {
-            o.pair(0, kind);
-            o.pair(8, &layer);
-            let c = aci(item.pen.color);
-            if c != layer_color {
-                o.pair(62, c);
-            }
-            if item.pen.line_type != layer_type {
-                o.pair(6, line_type_name(item.pen.line_type));
-            }
-        };
-        match &item.prim {
-            Prim::Line(a, b) => {
-                head(&mut o, "LINE");
-                o.point(10, *a);
-                o.point(11, *b);
-            }
-            Prim::Polyline { points, closed } => {
-                head(&mut o, "POLYLINE");
-                o.pair(66, 1);
-                o.point(10, DVec2::ZERO);
-                o.pair(70, u8::from(*closed));
-                for p in points {
-                    o.pair(0, "VERTEX");
-                    o.pair(8, &layer);
-                    o.point(10, *p);
-                }
-                o.pair(0, "SEQEND");
-                o.pair(8, &layer);
-            }
-            Prim::Circle { center, radius } => {
-                head(&mut o, "CIRCLE");
-                o.point(10, *center);
-                o.num(40, *radius);
-            }
-            Prim::Arc {
-                center,
-                radius,
-                start,
-                sweep,
-            } => {
-                head(&mut o, "ARC");
-                o.point(10, *center);
-                o.num(40, *radius);
-                o.num(50, start.to_degrees().rem_euclid(360.0));
-                o.num(51, (start + sweep).to_degrees().rem_euclid(360.0));
-            }
-            Prim::Fill {
-                triangles, mask, ..
-            } => {
-                if *mask {
-                    continue;
-                }
-                for [a, b, c] in triangles {
-                    head(&mut o, "SOLID");
-                    o.point(10, *a);
-                    o.point(11, *b);
-                    o.point(12, *c);
-                    o.point(13, *c);
-                }
-            }
-            Prim::Text {
-                at,
-                height,
-                angle,
-                align,
-                text,
-            } => {
-                head(&mut o, "TEXT");
-                o.point(10, *at);
-                o.num(40, *height);
-                o.pair(1, dxf_text(text));
-                if angle.abs() > 1e-9 {
-                    o.num(50, angle.to_degrees());
-                }
-                let h = match align {
-                    Align::Left => 0,
-                    Align::Center => 1,
-                    Align::Right => 2,
-                };
-                if h != 0 {
-                    o.pair(72, h);
-                    o.point(11, *at);
-                }
-            }
-        }
+        write_item(&mut o, item, &layers);
     }
     o.pair(0, "ENDSEC");
     o.pair(0, "EOF");
     o.0
+}
+
+/// One entity (an `Insert` becomes an INSERT of its block).
+fn write_item(
+    o: &mut Out,
+    item: &drift_draft::page::Item,
+    layers: &BTreeMap<String, (u8, LineType)>,
+) {
+    let layer = layer_name(&item.layer);
+    let (layer_color, layer_type) = layers
+        .get(&layer)
+        .copied()
+        .unwrap_or((7, LineType::Continuous));
+    let head = |o: &mut Out, kind: &str| {
+        o.pair(0, kind);
+        o.pair(8, &layer);
+        let c = aci(item.pen.color);
+        if c != layer_color {
+            o.pair(62, c);
+        }
+        if item.pen.line_type != layer_type {
+            o.pair(6, line_type_name(item.pen.line_type));
+        }
+    };
+    match &item.prim {
+        Prim::Line(a, b) => {
+            head(o, "LINE");
+            o.point(10, *a);
+            o.point(11, *b);
+        }
+        Prim::Polyline { points, closed } => {
+            head(o, "POLYLINE");
+            o.pair(66, 1);
+            o.point(10, DVec2::ZERO);
+            o.pair(70, u8::from(*closed));
+            for p in points {
+                o.pair(0, "VERTEX");
+                o.pair(8, &layer);
+                o.point(10, *p);
+            }
+            o.pair(0, "SEQEND");
+            o.pair(8, &layer);
+        }
+        Prim::Circle { center, radius } => {
+            head(o, "CIRCLE");
+            o.point(10, *center);
+            o.num(40, *radius);
+        }
+        Prim::Arc {
+            center,
+            radius,
+            start,
+            sweep,
+        } => {
+            head(o, "ARC");
+            o.point(10, *center);
+            o.num(40, *radius);
+            o.num(50, start.to_degrees().rem_euclid(360.0));
+            o.num(51, (start + sweep).to_degrees().rem_euclid(360.0));
+        }
+        Prim::Fill {
+            triangles, mask, ..
+        } => {
+            if *mask {
+                return;
+            }
+            for [a, b, c] in triangles {
+                head(o, "SOLID");
+                o.point(10, *a);
+                o.point(11, *b);
+                o.point(12, *c);
+                o.point(13, *c);
+            }
+        }
+        Prim::Text {
+            at,
+            height,
+            angle,
+            align,
+            text,
+        } => {
+            head(o, "TEXT");
+            o.point(10, *at);
+            o.num(40, *height);
+            o.pair(1, dxf_text(text));
+            if angle.abs() > 1e-9 {
+                o.num(50, angle.to_degrees());
+            }
+            let h = match align {
+                Align::Left => 0,
+                Align::Center => 1,
+                Align::Right => 2,
+            };
+            if h != 0 {
+                o.pair(72, h);
+                o.point(11, *at);
+            }
+        }
+        Prim::Insert {
+            block,
+            at,
+            angle,
+            scale,
+            mirror,
+        } => {
+            head(o, "INSERT");
+            o.pair(2, layer_name(block));
+            o.point(10, *at);
+            // A mirrored copy is a negative X scale (mirroring before rotating).
+            o.num(41, if *mirror { -*scale } else { *scale });
+            o.num(42, *scale);
+            o.num(43, *scale);
+            if angle.abs() > 1e-12 {
+                o.num(50, angle.rem_euclid(360.0));
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -370,11 +424,32 @@ pub struct DxfLayer {
     pub line_type: LineType,
 }
 
+/// A block definition read from a DXF file: its curves relative to its base point.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DxfBlock {
+    pub name: String,
+    pub entities: Vec<DxfEntity>,
+}
+
+/// A placed copy of a block (an INSERT).
+#[derive(Clone, Debug, PartialEq)]
+pub struct DxfInsert {
+    pub block: String,
+    pub layer: String,
+    pub at: DVec2,
+    /// Degrees.
+    pub angle: f64,
+    pub scale: f64,
+    pub mirror: bool,
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct DxfImport {
     pub entities: Vec<DxfEntity>,
     pub layers: Vec<DxfLayer>,
-    /// Entity types that were skipped, with counts (text, splines, blocks…).
+    pub blocks: Vec<DxfBlock>,
+    pub inserts: Vec<DxfInsert>,
+    /// Entity types that were skipped, with counts (text, splines…).
     pub skipped: BTreeMap<String, usize>,
 }
 
@@ -434,6 +509,9 @@ pub fn read(text: &str, default_mm_per_unit: f64) -> Result<DxfImport, String> {
         pairs.push((code, value));
     }
     let mut out = DxfImport::default();
+    let mut skipped: BTreeMap<String, usize> = BTreeMap::new();
+    // The block being read in the BLOCKS section, and its base point.
+    let mut block: Option<(DxfBlock, DVec2)> = None;
     // Units come from the header, which precedes the entities.
     let mut scale = default_mm_per_unit;
     let mut section = "";
@@ -477,6 +555,42 @@ pub fn read(text: &str, default_mm_per_unit: f64) -> Result<DxfImport, String> {
             }
             "ENDSEC" => section = "",
             "EOF" => break,
+            "BLOCK" if section == "BLOCKS" => {
+                let g = take(&mut i);
+                let base = DVec2::new(f(&g, 10).unwrap_or(0.0), f(&g, 20).unwrap_or(0.0)) * scale;
+                block = Some((
+                    DxfBlock {
+                        name: s(&g, 2).unwrap_or_default(),
+                        entities: Vec::new(),
+                    },
+                    base,
+                ));
+            }
+            "ENDBLK" if section == "BLOCKS" => {
+                take(&mut i);
+                // Model and paper space blocks (*Model_Space…) aren't user blocks.
+                if let Some((b, _)) = block.take()
+                    && !b.name.starts_with('*')
+                    && !b.name.is_empty()
+                {
+                    out.blocks.push(b);
+                }
+            }
+            "INSERT" if section == "ENTITIES" => {
+                let g = take(&mut i);
+                let (Some(name), Some(x), Some(y)) = (s(&g, 2), f(&g, 10), f(&g, 20)) else {
+                    continue;
+                };
+                let sx = f(&g, 41).unwrap_or(1.0);
+                out.inserts.push(DxfInsert {
+                    block: name,
+                    layer: s(&g, 8).unwrap_or_else(|| "0".into()),
+                    at: DVec2::new(x, y) * scale,
+                    angle: f(&g, 50).unwrap_or(0.0),
+                    scale: sx.abs().max(1e-9),
+                    mirror: sx < 0.0,
+                });
+            }
             "LAYER" if section == "TABLES" => {
                 let g = take(&mut i);
                 if let Some(name) = s(&g, 2) {
@@ -487,18 +601,23 @@ pub fn read(text: &str, default_mm_per_unit: f64) -> Result<DxfImport, String> {
                     });
                 }
             }
-            kind if section == "ENTITIES" => {
+            kind if section == "ENTITIES" || (section == "BLOCKS" && block.is_some()) => {
                 let g = take(&mut i);
+                // Curves of a block are kept relative to its base point.
+                let (target, shift) = match &mut block {
+                    Some((b, base)) if section == "BLOCKS" => (&mut b.entities, *base),
+                    _ => (&mut out.entities, DVec2::ZERO),
+                };
                 let layer = s(&g, 8).unwrap_or_else(|| "0".into());
                 let line_type = s(&g, 6)
                     .filter(|t| !t.eq_ignore_ascii_case("BYLAYER"))
                     .map(|t| parse_line_type(&t));
                 let color = f(&g, 62).and_then(|c| aci_rgb(c as i64));
                 let p = |x: i32| -> Option<DVec2> {
-                    Some(DVec2::new(f(&g, x)?, f(&g, x + 10)?) * scale)
+                    Some(DVec2::new(f(&g, x)?, f(&g, x + 10)?) * scale - shift)
                 };
                 let mut push = |shape: Shape| {
-                    out.entities.push(DxfEntity {
+                    target.push(DxfEntity {
                         layer: layer.clone(),
                         shape,
                         line_type,
@@ -548,7 +667,7 @@ pub fn read(text: &str, default_mm_per_unit: f64) -> Result<DxfImport, String> {
                                 10 => x = Some(v),
                                 20 => {
                                     if let Some(x) = x.take() {
-                                        verts.push((DVec2::new(x, v) * scale, 0.0));
+                                        verts.push((DVec2::new(x, v) * scale - shift, 0.0));
                                     }
                                 }
                                 42 => {
@@ -568,7 +687,10 @@ pub fn read(text: &str, default_mm_per_unit: f64) -> Result<DxfImport, String> {
                             i += 1;
                             let v = take(&mut i);
                             if let (Some(x), Some(y)) = (f(&v, 10), f(&v, 20)) {
-                                verts.push((DVec2::new(x, y) * scale, f(&v, 42).unwrap_or(0.0)));
+                                verts.push((
+                                    DVec2::new(x, y) * scale - shift,
+                                    f(&v, 42).unwrap_or(0.0),
+                                ));
                             }
                         }
                         if i < pairs.len() && pairs[i] == (0, "SEQEND") {
@@ -577,12 +699,13 @@ pub fn read(text: &str, default_mm_per_unit: f64) -> Result<DxfImport, String> {
                         }
                         polyline(&verts, closed, &mut push);
                     }
-                    other => *out.skipped.entry(other.to_owned()).or_insert(0) += 1,
+                    other => *skipped.entry(other.to_owned()).or_insert(0) += 1,
                 }
             }
             _ => {}
         }
     }
+    out.skipped = skipped;
     Ok(out)
 }
 
@@ -608,6 +731,9 @@ fn polyline(verts: &[(DVec2, f64)], closed: bool, push: &mut impl FnMut(Shape)) 
 pub struct ImportReport {
     pub curves: usize,
     pub layers: usize,
+    /// Blocks created, and copies placed.
+    pub blocks: usize,
+    pub copies: usize,
     pub skipped: BTreeMap<String, usize>,
 }
 
@@ -712,6 +838,45 @@ pub fn add_to_document(doc: &mut Document, import: &DxfImport) -> ImportReport {
             let _ = doc.set_appearance(id, look);
         }
         report.curves += 1;
+    }
+    // Copies of blocks: each block is created once (or found by name), then placed.
+    for insert in &import.inserts {
+        let block = match doc.block_named(&insert.block) {
+            Some(b) => b,
+            None => {
+                let Some(def) = import.blocks.iter().find(|b| b.name == insert.block) else {
+                    continue;
+                };
+                let items = def
+                    .entities
+                    .iter()
+                    .map(|e| drift_core::BlockItem {
+                        shape: e.shape,
+                        style: drift_core::LineKind::Solid,
+                        appearance: drift_core::Appearance {
+                            color: e.color,
+                            weight: None,
+                            line_type: e.line_type,
+                        },
+                    })
+                    .collect();
+                report.blocks += 1;
+                doc.add_block(drift_core::Block {
+                    name: def.name.clone(),
+                    items,
+                })
+            }
+        };
+        let layer = layer_of(doc, &insert.layer, &mut report);
+        let mut copy = drift_core::Instance::new(block, insert.at);
+        copy.angle = insert.angle;
+        copy.scale = insert.scale;
+        copy.mirror = insert.mirror;
+        if let Ok(id) = doc.add_instance(copy) {
+            copy.layer = layer;
+            let _ = doc.set_instance(id, copy);
+            report.copies += 1;
+        }
     }
     report
 }
@@ -862,5 +1027,76 @@ mod tests {
             }
         );
         assert_eq!(DxfUnits::of(&Units::default()), DxfUnits::MM);
+    }
+
+    #[test]
+    fn blocks_round_trip_as_block_and_insert() {
+        use drift_draft::page::{BlockDef, Item};
+        let mut d = Drawing::new(DVec2::new(100.0, 100.0));
+        d.blocks.push(BlockDef {
+            name: "Chair".into(),
+            items: vec![
+                Item {
+                    layer: "0".into(),
+                    pen: Pen::new(0.25),
+                    prim: Prim::Line(DVec2::new(-200.0, 0.0), DVec2::new(200.0, 0.0)),
+                    clipped: false,
+                },
+                Item {
+                    layer: "0".into(),
+                    pen: Pen::new(0.25),
+                    prim: Prim::Arc {
+                        center: DVec2::ZERO,
+                        radius: 200.0,
+                        start: 0.0,
+                        sweep: std::f64::consts::FRAC_PI_2,
+                    },
+                    clipped: false,
+                },
+            ],
+        });
+        d.push(
+            "Furniture",
+            Pen::new(0.25),
+            Prim::Insert {
+                block: "Chair".into(),
+                at: DVec2::new(1000.0, 500.0),
+                angle: 90.0,
+                scale: 1.0,
+                mirror: true,
+            },
+        );
+        let text = write(&d, DxfUnits::MM);
+        assert!(text.contains("BLOCKS") && text.contains("INSERT"));
+        assert!(text.contains(" 41\n-1\n"), "mirrored as a negative X scale");
+        // Extents include the copy.
+        assert!(d.bounds().max.x >= 1000.0);
+        let back = read(&text, 1.0).unwrap();
+        assert_eq!(back.blocks.len(), 1);
+        assert_eq!(back.blocks[0].entities.len(), 2);
+        assert_eq!(back.inserts.len(), 1);
+        let i = &back.inserts[0];
+        assert!(i.mirror && (i.angle - 90.0).abs() < 1e-9 && i.at == DVec2::new(1000.0, 500.0));
+        let mut doc = Document::new();
+        doc.begin();
+        let report = add_to_document(&mut doc, &back);
+        doc.commit("Import");
+        assert_eq!((report.blocks, report.copies), (1, 1));
+        let (id, copy) = doc.instances().next().unwrap();
+        assert!(copy.mirror);
+        // The copy's line lands where the exploded drawing puts it.
+        let world = doc.instance_items(id);
+        let exploded = d.exploded();
+        let Prim::Line(a, b) = exploded.items[0].prim else {
+            panic!()
+        };
+        assert!(world.iter().any(|it| match it.shape {
+            Shape::Line { a: p, b: q } => {
+                (p.distance(a) < 1e-9 && q.distance(b) < 1e-9)
+                    || (p.distance(b) < 1e-9 && q.distance(a) < 1e-9)
+            }
+            _ => false,
+        }));
+        assert!(doc.layers().any(|(_, l)| l.name == "FURNITURE"));
     }
 }

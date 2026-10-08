@@ -1696,3 +1696,84 @@ fn group_and_rotate_on_the_canvas() {
     h.run();
     assert!(!h.state().tool.is_modal());
 }
+
+#[test]
+fn furniture_blocks_place_edit_and_export() {
+    let Some(mut h) = harness() else { return };
+    h.get_by_label("File").click();
+    h.run();
+    h.get_by_label("Open example").click();
+    h.run();
+    h.state_mut().params.tab = RightTab::Blocks;
+    h.run();
+    h.get_by_label("Add furniture library").click();
+    h.run();
+    let chair = h.state().editor.doc.block_named("Chair").expect("library");
+    // Place two chairs (the second turned with R), then a bed.
+    h.state_mut().start_placing(chair);
+    h.run();
+    assert_eq!(h.state().tool.kind(), ToolKind::Block);
+    click_world(&mut h, DVec2::new(15.0, 70.0));
+    let at = screen(&h, DVec2::new(105.0, 70.0));
+    h.hover_at(at);
+    h.run();
+    h.key_press(Key::R);
+    h.run();
+    click_world(&mut h, DVec2::new(105.0, 70.0));
+    let bed = h.state().editor.doc.block_named("Double bed").unwrap();
+    h.state_mut().start_placing(bed);
+    click_world(&mut h, DVec2::new(60.0, 10.0));
+    assert_eq!(h.state().editor.doc.instances().count(), 3);
+    let turned = h
+        .state()
+        .editor
+        .doc
+        .instances()
+        .filter(|(_, i)| i.block == chair)
+        .map(|(_, i)| i.angle)
+        .collect::<Vec<_>>();
+    assert!(
+        turned.contains(&0.0) && turned.contains(&90.0),
+        "{turned:?}"
+    );
+    h.key_press(Key::Escape);
+    h.run();
+    // Fit and pick a chair: the inspector shows the copy.
+    h.key_press(Key::F);
+    h.run();
+    h.run();
+    h.get_by_label("Select").click();
+    h.run();
+    click_world(&mut h, DVec2::new(215.0, -130.0));
+    assert_eq!(h.state().editor.selected_instances.len(), 1);
+    h.state_mut().params.tab = RightTab::Properties;
+    h.run();
+    h.run();
+    save_png("drift_ui_blocks.png", &mut h);
+    // Edit the chair block in place: every copy updates.
+    let copy = *h.state().editor.selected_instances.first().unwrap();
+    h.state_mut().editor.edit_block(copy);
+    h.run();
+    let a = h.state_mut().editor.doc.add_point(DVec2::new(15.0, 70.0));
+    let ed = &mut h.state_mut().editor;
+    ed.doc.begin();
+    let c = ed.doc.add_point(DVec2::new(15.0, 75.0));
+    ed.doc.add_line(a, c).unwrap();
+    ed.commit("Line");
+    let before = h.state().editor.doc.block(chair).unwrap().items.len();
+    h.key_press(Key::Escape);
+    h.run();
+    assert!(h.state().editor.block_edit.is_none());
+    assert_eq!(
+        h.state().editor.doc.block(chair).unwrap().items.len(),
+        before + 1
+    );
+    let painter = h.ctx.layer_painter(egui::LayerId::background());
+    let dxf = h.state_mut().dxf_text(&painter);
+    assert!(
+        dxf.contains("BLOCKS") && dxf.matches("\nINSERT\n").count() == 3,
+        "three inserts"
+    );
+    let pdf = h.state_mut().pdf_bytes(&painter);
+    assert!(pdf.len() > 1000);
+}

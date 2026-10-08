@@ -5,6 +5,7 @@
 
 mod annotations;
 mod app;
+pub mod blocks;
 mod canvas;
 pub mod editor;
 pub mod fills;
@@ -224,6 +225,8 @@ pub struct DriftApp {
     /// Where the Layers HUD is, and where it was before it was hidden.
     layers_dock: app::layers_hud::LayersDock,
     layers_last: app::layers_hud::LayersDock,
+    /// The name typed for a new block.
+    new_block_name: String,
 }
 
 impl DriftApp {
@@ -293,6 +296,7 @@ impl DriftApp {
             view_drag: None,
             layers_dock: Default::default(),
             layers_last: Default::default(),
+            new_block_name: String::new(),
         };
         theme::install_fonts(&cc.egui_ctx);
         theme::apply(&cc.egui_ctx);
@@ -461,6 +465,11 @@ const SHORTCUTS: &[(&str, &str)] = &[
         "Select the chain of curves joined end to end with the one under the pointer (or the selection)",
     ),
     (
+        "I",
+        "Place block: copies of the block picked in the Blocks tab (R turns, X mirrors); \
+         double-click a copy to edit the block",
+    ),
+    (
         "Ctrl+G / Ctrl+Shift+G",
         "Group / ungroup the selection; double-click a group to edit inside it, Esc leaves",
     ),
@@ -562,7 +571,7 @@ impl eframe::App for DriftApp {
             egui::Panel::right("properties")
                 .resizable(true)
                 .frame(frame(14, 6))
-                .default_size(290.0)
+                .default_size(310.0)
                 .min_size(240.0)
                 .show(ui, |ui| self.properties(ui));
         }

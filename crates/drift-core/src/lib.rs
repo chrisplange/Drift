@@ -3,6 +3,7 @@
 //! All model geometry is stored in `f64` world units (millimetres). World space is y-up,
 //! following the usual CAD convention.
 
+pub mod blocks;
 pub mod bounds;
 pub mod constraint;
 pub mod demo;
@@ -16,6 +17,7 @@ pub mod shape;
 pub mod sheets;
 pub mod units;
 
+pub use blocks::{Block, BlockId, BlockItem, Instance, InstanceId};
 pub use bounds::Bounds;
 pub use constraint::{Constraint, ConstraintId, Slot};
 pub use document::{

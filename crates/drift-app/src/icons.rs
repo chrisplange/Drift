@@ -171,6 +171,12 @@ pub fn tool(painter: &egui::Painter, rect: Rect, kind: ToolKind, color: Color32)
             p.arrow_head((4.0, 10.0), vec2(-1.0, 0.0));
             p.arrow_head((16.0, 10.0), vec2(1.0, 0.0));
         }
+        ToolKind::Block => {
+            // A chair seen from above, with its base point.
+            p.poly(&[(5.0, 6.0), (15.0, 6.0), (15.0, 16.0), (5.0, 16.0)], true);
+            p.line((4.0, 3.5), (16.0, 3.5));
+            p.dot(10.0, 11.0, 1.4);
+        }
         ToolKind::Ordinate => {
             p.line((3.5, 16.0), (17.0, 16.0));
             p.dot(3.5, 16.0, 1.6);

@@ -236,6 +236,12 @@ impl DriftApp {
                         String::new()
                     }
                 );
+                if report.copies > 0 {
+                    msg.push_str(&format!(
+                        ", {} block copies ({} new blocks)",
+                        report.copies, report.blocks
+                    ));
+                }
                 if skipped > 0 {
                     let kinds: Vec<String> = report
                         .skipped

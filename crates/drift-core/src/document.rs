@@ -9,6 +9,7 @@ use std::f64::consts::TAU;
 
 use glam::DVec2;
 
+use crate::blocks::{Block, BlockId, BlockItem, Instance, InstanceId};
 use crate::constraint::Slot;
 use crate::drafting::{Anchor, Annotation, AnnotationId, DimNote, DraftStyle, Fill, FillId};
 use crate::groups::{Group, GroupId};
@@ -227,6 +228,8 @@ enum Key {
     Patterns,
     Sheet(SheetId),
     Group(GroupId),
+    Block(BlockId),
+    Instance(InstanceId),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -249,6 +252,8 @@ enum Record {
     Patterns(String),
     Sheet(Sheet),
     Group(Group),
+    Block(Block),
+    Instance(Instance),
 }
 
 /// One undoable step: the before and after state of everything it touched.
@@ -292,6 +297,8 @@ pub struct Document {
     patterns: String,
     sheets: BTreeMap<SheetId, Sheet>,
     groups: BTreeMap<GroupId, Group>,
+    blocks: BTreeMap<BlockId, Block>,
+    instances: BTreeMap<InstanceId, Instance>,
     next_id: u32,
     next_constraint_id: u32,
     /// Next id for variables, variants and measurements (one counter, ids never reused).
@@ -327,6 +334,8 @@ impl PartialEq for Document {
             && self.patterns == other.patterns
             && self.sheets == other.sheets
             && self.groups == other.groups
+            && self.blocks == other.blocks
+            && self.instances == other.instances
     }
 }
 
@@ -351,6 +360,8 @@ impl Default for Document {
             patterns: String::new(),
             sheets: BTreeMap::new(),
             groups: BTreeMap::new(),
+            blocks: BTreeMap::new(),
+            instances: BTreeMap::new(),
             // Ids start at 1; `e0` and `c0` are not valid ids in `.drift` files.
             next_id: 1,
             next_constraint_id: 1,
@@ -557,6 +568,8 @@ impl Document {
             Key::Patterns => Some(Record::Patterns(self.patterns.clone())),
             Key::Sheet(id) => self.sheets.get(&id).cloned().map(Record::Sheet),
             Key::Group(id) => self.groups.get(&id).cloned().map(Record::Group),
+            Key::Block(id) => self.blocks.get(&id).cloned().map(Record::Block),
+            Key::Instance(id) => self.instances.get(&id).copied().map(Record::Instance),
         }
     }
 
@@ -671,6 +684,18 @@ impl Document {
             }
             (Key::Group(id), _) => {
                 self.groups.remove(&id);
+            }
+            (Key::Block(id), Some(Record::Block(b))) => {
+                self.blocks.insert(id, b);
+            }
+            (Key::Block(id), _) => {
+                self.blocks.remove(&id);
+            }
+            (Key::Instance(id), Some(Record::Instance(i))) => {
+                self.instances.insert(id, i);
+            }
+            (Key::Instance(id), _) => {
+                self.instances.remove(&id);
             }
         }
     }
@@ -1344,6 +1369,18 @@ impl Document {
                 x.layer = LayerId::DEFAULT;
             }
         }
+        let placed: Vec<InstanceId> = self
+            .instances
+            .iter()
+            .filter(|(_, i)| i.layer == id)
+            .map(|(iid, _)| *iid)
+            .collect();
+        for i in placed {
+            self.touch_key(Key::Instance(i));
+            if let Some(x) = self.instances.get_mut(&i) {
+                x.layer = LayerId::DEFAULT;
+            }
+        }
         let fills: Vec<FillId> = self
             .fills
             .iter()
@@ -1477,6 +1514,8 @@ impl Document {
         keys.push(Key::Patterns);
         keys.extend(self.sheets.keys().map(|id| Key::Sheet(*id)));
         keys.extend(self.groups.keys().map(|id| Key::Group(*id)));
+        keys.extend(self.blocks.keys().map(|id| Key::Block(*id)));
+        keys.extend(self.instances.keys().map(|id| Key::Instance(*id)));
         keys
     }
 
@@ -1973,6 +2012,138 @@ impl Document {
                 }
             }
         }
+    }
+
+    pub fn blocks(&self) -> impl Iterator<Item = (BlockId, &Block)> {
+        self.blocks.iter().map(|(id, b)| (*id, b))
+    }
+
+    pub fn block(&self, id: BlockId) -> Option<&Block> {
+        self.blocks.get(&id)
+    }
+
+    pub fn block_named(&self, name: &str) -> Option<BlockId> {
+        self.blocks
+            .iter()
+            .find(|(_, b)| b.name.eq_ignore_ascii_case(name))
+            .map(|(id, _)| *id)
+    }
+
+    pub fn add_block(&mut self, block: Block) -> BlockId {
+        let id = BlockId(self.next_drafting());
+        self.touch_key(Key::Block(id));
+        self.blocks.insert(id, block);
+        id
+    }
+
+    /// Insert a block with a known id (loading a file).
+    pub fn insert_block(&mut self, id: BlockId, block: Block) {
+        self.next_drafting_id = self.next_drafting_id.max(id.0 + 1);
+        self.touch_key(Key::Block(id));
+        self.blocks.insert(id, block);
+    }
+
+    /// Change a block's definition: every copy updates.
+    pub fn set_block(&mut self, id: BlockId, block: Block) {
+        if self.blocks.get(&id).is_some_and(|b| *b != block) {
+            self.touch_key(Key::Block(id));
+            self.blocks.insert(id, block);
+        }
+    }
+
+    /// Delete a block and every copy of it.
+    pub fn remove_block(&mut self, id: BlockId) {
+        let copies: Vec<InstanceId> = self
+            .instances
+            .iter()
+            .filter(|(_, i)| i.block == id)
+            .map(|(iid, _)| *iid)
+            .collect();
+        for i in copies {
+            self.remove_instance(i);
+        }
+        if self.blocks.contains_key(&id) {
+            self.touch_key(Key::Block(id));
+            self.blocks.remove(&id);
+        }
+    }
+
+    pub fn instances(&self) -> impl Iterator<Item = (InstanceId, &Instance)> {
+        self.instances.iter().map(|(id, i)| (*id, i))
+    }
+
+    pub fn instance(&self, id: InstanceId) -> Option<&Instance> {
+        self.instances.get(&id)
+    }
+
+    fn check_instance(&self, i: &Instance) -> Result<(), DocumentError> {
+        if !self.blocks.contains_key(&i.block) {
+            return Err(DocumentError::BadName(format!(
+                "block {} does not exist",
+                i.block
+            )));
+        }
+        if !self.layers.contains_key(&i.layer) {
+            return Err(DocumentError::MissingLayer(i.layer));
+        }
+        if !(i.at.is_finite() && i.angle.is_finite() && i.scale.is_finite() && i.scale > 0.0) {
+            return Err(DocumentError::InvalidValue);
+        }
+        Ok(())
+    }
+
+    /// Place a copy of a block (on the current layer).
+    pub fn add_instance(&mut self, mut i: Instance) -> Result<InstanceId, DocumentError> {
+        i.layer = self.current_layer;
+        self.check_instance(&i)?;
+        let id = InstanceId(self.next_drafting());
+        self.touch_key(Key::Instance(id));
+        self.instances.insert(id, i);
+        Ok(id)
+    }
+
+    /// Insert a copy with a known id (loading a file).
+    pub fn insert_instance(&mut self, id: InstanceId, i: Instance) -> Result<(), DocumentError> {
+        self.check_instance(&i)?;
+        self.next_drafting_id = self.next_drafting_id.max(id.0 + 1);
+        self.touch_key(Key::Instance(id));
+        self.instances.insert(id, i);
+        Ok(())
+    }
+
+    pub fn set_instance(&mut self, id: InstanceId, i: Instance) -> Result<(), DocumentError> {
+        self.check_instance(&i)?;
+        if self.instances.get(&id).is_some_and(|x| *x != i) {
+            self.touch_key(Key::Instance(id));
+            self.instances.insert(id, i);
+        }
+        Ok(())
+    }
+
+    pub fn remove_instance(&mut self, id: InstanceId) {
+        if self.instances.contains_key(&id) {
+            self.touch_key(Key::Instance(id));
+            self.instances.remove(&id);
+        }
+    }
+
+    /// A copy's curves in the world, with their style and look.
+    pub fn instance_items(&self, id: InstanceId) -> Vec<BlockItem> {
+        let (Some(i), Some(b)) = (
+            self.instances.get(&id),
+            self.instances
+                .get(&id)
+                .and_then(|i| self.blocks.get(&i.block)),
+        ) else {
+            return Vec::new();
+        };
+        b.items
+            .iter()
+            .map(|item| BlockItem {
+                shape: i.apply_shape(&item.shape),
+                ..*item
+            })
+            .collect()
     }
 
     pub fn groups(&self) -> impl Iterator<Item = (GroupId, &Group)> {

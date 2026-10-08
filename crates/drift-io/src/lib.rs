@@ -6,7 +6,7 @@
 //! ```json
 //! {
 //!   "format": "drift",
-//!   "version": 9,
+//!   "version": 10,
 //!   "meta": {"title":"Bracket","units":"mm","generator":"Drift 0.1.0"},
 //!   "display": {"length":"architectural","fraction":16},
 //!   "variables": [
@@ -42,6 +42,7 @@ use drift_core::{
 };
 use serde::{Deserialize, Serialize};
 
+mod blocks;
 mod drafting;
 pub mod dxf;
 pub mod pdf;
@@ -60,8 +61,9 @@ pub const EXTENSION: &str = "drift";
 /// `layer`, `color`, `weight` (mm) and `linetype` (M6); 7 = adds `drafting` (the dimension
 /// style), `fills` (solid fills and hatches), `annotations` (notes, centre marks, callouts,
 /// ordinate dimensions) and dimension `prefix`, `suffix` and `tol` (M7); 8 = adds `sheets`
-/// (paper, scale, view, title block and revisions) (M8); 9 = adds `groups` (M8.5).
-pub const FORMAT_VERSION: u32 = 9;
+/// (paper, scale, view, title block and revisions) (M8); 9 = adds `groups`; 10 = adds `blocks`
+/// and `instances` (M8.5).
+pub const FORMAT_VERSION: u32 = 10;
 const FORMAT_TAG: &str = "drift";
 
 /// Document-level properties stored alongside the geometry.
@@ -717,6 +719,10 @@ struct FileRecord {
     sheets: Vec<sheets::SheetRecord>,
     #[serde(default)]
     groups: Vec<GroupRecord>,
+    #[serde(default)]
+    blocks: Vec<blocks::BlockRecord>,
+    #[serde(default)]
+    instances: Vec<blocks::InstanceRecord>,
 }
 
 /// A named group of entities.
@@ -933,6 +939,18 @@ pub fn save(doc: &Document, meta: &Metadata) -> String {
             .expect("group serializes")
         })
         .collect();
+    let block_lines: Vec<String> = doc
+        .blocks()
+        .map(|(id, b)| {
+            serde_json::to_string(&blocks::block_record(id, b)).expect("block serializes")
+        })
+        .collect();
+    let instances: Vec<String> = doc
+        .instances()
+        .map(|(id, i)| {
+            serde_json::to_string(&blocks::instance_record(id, i)).expect("instance serializes")
+        })
+        .collect();
     let tail = [
         ("measurements", &measurements),
         ("variants", &variants),
@@ -940,6 +958,8 @@ pub fn save(doc: &Document, meta: &Metadata) -> String {
         ("annotations", &annotations),
         ("sheets", &sheets),
         ("groups", &groups),
+        ("blocks", &block_lines),
+        ("instances", &instances),
     ];
     let last = tail.iter().rposition(|(_, items)| !items.is_empty());
     push_array(&mut out, "entities", &entities, true);
@@ -1184,6 +1204,23 @@ pub fn load(text: &str) -> Result<(Document, Metadata), LoadError> {
     if let Some(p) = file.patterns {
         doc.set_custom_patterns(p);
     }
+    for b in file.blocks {
+        let id_text = b.id.clone();
+        let (id, block) = blocks::parse_block(b)?;
+        if doc.block(id).is_some() {
+            return Err(LoadError::DuplicateId(id_text));
+        }
+        doc.insert_block(id, block);
+    }
+    for i in file.instances {
+        let id_text = i.id.clone();
+        let (id, instance) = blocks::parse_instance(i)?;
+        if doc.instance(id).is_some() {
+            return Err(LoadError::DuplicateId(id_text));
+        }
+        doc.insert_instance(id, instance)
+            .map_err(LoadError::Document)?;
+    }
     for g in file.groups {
         let id = drift_core::GroupId(parse_prefixed(&g.id, 'g')?);
         if doc.group(id).is_some() {
@@ -1298,7 +1335,7 @@ pub fn migrate(value: serde_json::Value) -> Result<serde_json::Value, LoadError>
         // v1 → v2: constraints were introduced; a v1 file simply has none.
         value["constraints"] = serde_json::Value::Array(Vec::new());
     }
-    // v2 → v9 only added optional fields, sections and constraint types: nothing to convert.
+    // v2 → v10 only added optional fields, sections and constraint types: nothing to convert.
     value["version"] = FORMAT_VERSION.into();
     Ok(value)
 }
@@ -1341,7 +1378,7 @@ mod tests {
         let text = save(&doc, &Metadata::default());
         let expected = r#"{
   "format": "drift",
-  "version": 9,
+  "version": 10,
   "meta": {"units":"mm"},
   "entities": [
     {"type":"point","id":"e1","at":[0.0,0.0]},
@@ -1822,6 +1859,40 @@ mod tests {
         });
         doc.add_sheet(sheet);
         doc.add_sheet(drift_core::Sheet::new("Detail"));
+        let chair = doc.add_block(drift_core::Block {
+            name: "Chair".into(),
+            items: vec![
+                drift_core::BlockItem {
+                    shape: drift_core::Shape::Line {
+                        a: DVec2::new(-200.0, 0.0),
+                        b: DVec2::new(200.0, 0.0),
+                    },
+                    style: LineKind::Solid,
+                    appearance: Appearance::default(),
+                },
+                drift_core::BlockItem {
+                    shape: drift_core::Shape::Arc {
+                        center: DVec2::ZERO,
+                        radius: 200.0,
+                        start: 0.0,
+                        sweep: std::f64::consts::PI,
+                    },
+                    style: LineKind::Center,
+                    appearance: Appearance {
+                        color: Some(Rgb([1, 2, 3])),
+                        weight: Some(LineWeight(35)),
+                        line_type: Some(LineType::Dashed),
+                    },
+                },
+            ],
+        });
+        let mut placed = drift_core::Instance::new(chair, DVec2::new(500.0, 250.0));
+        placed.angle = 37.5;
+        placed.scale = 1.25;
+        placed.mirror = true;
+        doc.add_instance(placed).unwrap();
+        doc.add_instance(drift_core::Instance::new(chair, DVec2::ZERO))
+            .unwrap();
         doc.add_group(drift_core::Group {
             name: "Edges".into(),
             members: curves.iter().copied().take(2).collect(),
@@ -1829,7 +1900,7 @@ mod tests {
         .unwrap();
 
         let text = save(&doc, &Metadata::default());
-        assert!(text.contains("\"version\": 9"));
+        assert!(text.contains("\"version\": 10"));
         let (loaded, _) = load(&text).unwrap();
         assert_eq!(loaded, doc);
         assert_eq!(save(&loaded, &Metadata::default()), text);
@@ -1842,6 +1913,8 @@ mod tests {
             "\"tol\"",
             "sheets",
             "groups",
+            "blocks",
+            "instances",
         ] {
             assert!(!plain.contains(absent), "{absent}");
         }

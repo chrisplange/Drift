@@ -155,11 +155,13 @@ fn item_ops(out: &mut String, text: &mut Vec<u8>, item: &Item, lts: f64) {
             text.extend_from_slice(&pdf_string(s));
             text.extend_from_slice(b" Tj\nET\n");
         }
+        Prim::Insert { .. } => {}
     }
 }
 
 /// The content stream of one page.
 fn page_content(d: &Drawing) -> Vec<u8> {
+    let d = &d.exploded();
     let mut bytes = Vec::new();
     let mut out = String::from("1 J 1 j\n");
     let mut clipping = false;

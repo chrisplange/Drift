@@ -20,6 +20,8 @@ pub(super) struct Spin {
     pub(super) picking_pivot: bool,
     /// The angle the geometry is turned to now (so an unchanged angle isn't re-applied).
     pub(super) applied: Option<f64>,
+    /// Copies of blocks turning too (as they were when the rotate began).
+    pub(super) instances: Vec<(drift_core::InstanceId, drift_core::Instance)>,
 }
 
 impl Spin {
@@ -41,7 +43,10 @@ impl Spin {
         ed.doc.rollback();
         ed.doc.begin();
         if angle != 0.0 {
-            ed.rotate_geometry(&self.ids, &self.points, self.pivot, angle);
+            if !self.ids.is_empty() {
+                ed.rotate_geometry(&self.ids, &self.points, self.pivot, angle);
+            }
+            ed.rotate_instances(&self.instances, self.pivot, angle);
         }
         ed.sync();
     }
@@ -104,15 +109,35 @@ impl SelectTool {
             return false;
         }
         // A picked fill or hatch turns with the curves around it.
+        let instances = ed.picked_instances();
         let ids: Vec<EntityId> = if ed.selection.is_empty() {
             match ed.selected_fill_curves() {
                 Some((ids, _)) => ids,
+                None if !instances.is_empty() => Vec::new(),
                 None => return false,
             }
         } else {
             ed.selection.iter().copied().collect()
         };
-        let Some(pivot) = rotate_pivot(ed, &ids, p.raw) else {
+        let pivot = if ids.is_empty() {
+            // Only copies of blocks: one turns about its insertion point, several about
+            // their middle.
+            match instances.as_slice() {
+                [(_, i)] => Some(i.at),
+                _ => {
+                    let mut b = Bounds::EMPTY;
+                    for (id, _) in &instances {
+                        let ib = ed.instance_bounds(*id);
+                        b.include(ib.min);
+                        b.include(ib.max);
+                    }
+                    (!b.is_empty()).then(|| b.center())
+                }
+            }
+        } else {
+            rotate_pivot(ed, &ids, p.raw)
+        };
+        let Some(pivot) = pivot else {
             return false;
         };
         let points = ed.doc.defining_points(ids.iter().copied());
@@ -127,6 +152,7 @@ impl SelectTool {
             typed: None,
             picking_pivot: false,
             applied: Some(0.0),
+            instances,
         });
         true
     }
@@ -140,7 +166,12 @@ impl SelectTool {
             return;
         }
         ed.doc.begin();
-        let (ok, removed) = ed.rotate_geometry(&spin.ids, &spin.points, spin.pivot, angle);
+        ed.rotate_instances(&spin.instances, spin.pivot, angle);
+        let (ok, removed) = if spin.ids.is_empty() {
+            (true, Vec::new())
+        } else {
+            ed.rotate_geometry(&spin.ids, &spin.points, spin.pivot, angle)
+        };
         if ok && let Some(seed) = &mut ed.selected_region {
             // A picked region turns with its outline.
             let rotor = DVec2::from_angle(angle.to_radians());

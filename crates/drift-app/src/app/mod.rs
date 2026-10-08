@@ -1,5 +1,6 @@
 //! `DriftApp` behaviour, split by area.
 
+mod blocks_ui;
 mod dialogs;
 mod document;
 mod drafting_ui;

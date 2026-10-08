@@ -1134,9 +1134,41 @@ written but hasn't run yet (no GitHub repo).*
   - The inspector shows the group: rename it, see its member count, Edit group, or Ungroup.
   - An entity is in at most one group. Members leave a group when deleted, and empty groups
     go.
-- **Still to come:** part 2, blocks (definitions and placements, edit in place, explode, a
-  library panel, DXF BLOCK / INSERT); part 3, PDF and DXF underlays with scale calibration
-  and snapping.
+*Part 2 as built (2026-10-08): blocks.*
+- **Model (format v10 `blocks`, `instances`):**
+  - A block is rigid geometry (lines, arcs, circles, points with their style and look) in
+    its own coordinates, with its base point at the origin.
+  - A copy places it with a position, angle, scale, mirror (x → −x before turning) and layer.
+  - Copies aren't solved, so many copies cost nothing in the solver. They're drawn, picked
+    and exported through their transform.
+  - Deleting a block deletes its copies; layer removal moves copies to layer 0.
+- **Making and placing:**
+  - Make a block from the selection (Blocks tab or Edit → Make block). It's based at the
+    selection's centre, and a copy replaces the geometry.
+  - The Place block tool (I) previews the copy at the pointer, snapping by its base point. R
+    turns the next copy 90° and X mirrors it.
+  - A starter furniture library: chair, desk, double bed, sofa, WC, basin and a 900 door
+    (mm).
+- **Copies on the canvas:**
+  - Pick a copy on its curves or inside its outline; Shift / Ctrl and box selection work.
+  - Drag it, G (base = insertion point) and R (about its insertion point; several about
+    their middle) move it, with other geometry in the selection too. Delete removes it.
+  - The inspector edits position, angle (quick 0 / 90 / 180 / 270), scale, mirror and layer.
+    It can replace the block, Explode (back to connected geometry), or Select all copies.
+- **Edit in place:**
+  - Double-click a copy (or Edit block). The copy becomes ordinary geometry in an open group,
+    so anything drawn joins the block.
+  - Esc, a click outside or "Finish editing" writes it back, and every copy updates.
+- **Blocks tab:** thumbnails, copy counts, click to place, and a context menu to rename,
+  select copies or delete. Sidebar segments are now sized to their labels.
+- **Output:**
+  - Sheets (PDF, SVG, print, preview) draw copies as their curves.
+  - DXF export writes BLOCK definitions and INSERTs (a mirrored copy is a negative X scale).
+  - DXF import reads BLOCKS / INSERT: blocks are created by name (reused if the drawing has
+    one) and copies placed on their layers.
+- **Not yet:** fills, hatches and text inside blocks; nested blocks; snapping to copies' own
+  points; non-uniform DXF insert scales (X scale is used).
+- **Still to come:** part 3, PDF and DXF underlays with scale calibration and snapping.
 
 **M9 — Advanced geometry (3–4 wks)**
 - Ellipses, slots, polygons, and text.

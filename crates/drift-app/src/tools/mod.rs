@@ -22,6 +22,7 @@ mod dimension;
 mod fill;
 mod line;
 mod offset_mirror;
+mod place_block;
 mod point;
 mod rectangle;
 mod rotate;
@@ -37,6 +38,7 @@ pub use self::{
     curve_ops::{ExtendTool, SplitTool, TrimTool},
     fill::FillTool,
     offset_mirror::{MirrorTool, OffsetTool},
+    place_block::BlockTool,
 };
 pub use self::{
     arc::ArcTool, circle::CircleTool, dimension::DimensionTool, line::LineTool, point::PointTool,
@@ -143,6 +145,7 @@ pub enum ToolKind {
     ThreePointArc,
     TangentArc,
     Point,
+    Block,
     Dimension,
     Ordinate,
     Note,
@@ -159,7 +162,7 @@ pub enum ToolKind {
 }
 
 impl ToolKind {
-    pub const ALL: [ToolKind; 21] = [
+    pub const ALL: [ToolKind; 22] = [
         ToolKind::Select,
         ToolKind::Line,
         ToolKind::Rectangle,
@@ -168,6 +171,7 @@ impl ToolKind {
         ToolKind::ThreePointArc,
         ToolKind::TangentArc,
         ToolKind::Point,
+        ToolKind::Block,
         ToolKind::Dimension,
         ToolKind::Ordinate,
         ToolKind::Note,
@@ -216,6 +220,7 @@ impl ToolKind {
             ToolKind::ThreePointArc => "3-pt arc",
             ToolKind::TangentArc => "Tangent arc",
             ToolKind::Point => "Point",
+            ToolKind::Block => "Place block",
             ToolKind::Dimension => "Dimension",
             ToolKind::Fill => "Fill / hatch",
             ToolKind::Ordinate => "Ordinate",
@@ -243,6 +248,7 @@ impl ToolKind {
             ToolKind::ThreePointArc => "Start, end, then a point on the arc",
             ToolKind::TangentArc => "Continues tangent from the end of a line or arc",
             ToolKind::Point => "A sketch point, for reference or construction",
+            ToolKind::Block => "Place copies of a block from the Blocks tab; R turns, X mirrors",
             ToolKind::Dimension => "Click geometry, then place the label: the type follows",
             ToolKind::Fill => "Fill or hatch a closed area: click inside it",
             ToolKind::Ordinate => "X or Y distances from an origin point, in rows",
@@ -268,6 +274,7 @@ impl ToolKind {
             // A selects the centre arc; pressed again it cycles through the arc tools.
             ToolKind::Arc | ToolKind::ThreePointArc | ToolKind::TangentArc => 'A',
             ToolKind::Point => 'P',
+            ToolKind::Block => 'I',
             ToolKind::Dimension => 'D',
             ToolKind::Fill => 'H',
             ToolKind::Note => 'N',
@@ -294,6 +301,7 @@ impl ToolKind {
             ToolKind::ThreePointArc => Box::<ThreePointArcTool>::default(),
             ToolKind::TangentArc => Box::<TangentArcTool>::default(),
             ToolKind::Point => Box::<PointTool>::default(),
+            ToolKind::Block => Box::<BlockTool>::default(),
             ToolKind::Dimension => Box::<DimensionTool>::default(),
             ToolKind::Fill => Box::<FillTool>::default(),
             ToolKind::Ordinate => Box::<OrdinateTool>::default(),

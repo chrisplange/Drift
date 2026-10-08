@@ -136,6 +136,23 @@ pub fn tool(painter: &egui::Painter, rect: Rect, kind: ToolKind, color: Color32)
             p.dot(4.0, 16.0, 1.8);
             p.dot(16.0, 4.0, 1.8);
         }
+        ToolKind::Polygon => {
+            let pts: Vec<(f32, f32)> = (0..6)
+                .map(|k| {
+                    let a = std::f32::consts::FRAC_PI_3 * k as f32;
+                    (10.0 + 7.5 * a.cos(), 10.0 + 7.5 * a.sin())
+                })
+                .collect();
+            p.poly(&pts, true);
+        }
+        ToolKind::Slot => {
+            p.line((6.5, 6.0), (13.5, 6.0));
+            p.line((6.5, 14.0), (13.5, 14.0));
+            p.arc(6.5, 10.0, 4.0, PI / 2.0, PI);
+            p.arc(13.5, 10.0, 4.0, -PI / 2.0, PI);
+            p.dot(6.5, 10.0, 0.9);
+            p.dot(13.5, 10.0, 0.9);
+        }
         ToolKind::Rectangle => {
             p.poly(&[(3.5, 5.5), (16.5, 5.5), (16.5, 14.5), (3.5, 14.5)], true);
         }

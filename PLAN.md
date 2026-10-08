@@ -1211,6 +1211,40 @@ written but hasn't run yet (no GitHub repo).*
 **M9 — Advanced geometry (3–4 wks)**
 - Ellipses, slots, polygons, and text.
 - Splines (control-point and fit) with curvature combs and G1/G2 constraints.
+- **Planned in four parts:**
+  1. Polygons and slots.
+  2. Ellipses and elliptical arcs (a new entity kind).
+  3. Curves: a pen tool.
+  4. Text that converts to geometry.
+- **Curves must feel like the Illustrator / Affinity pen tool** (the user was emphatic; the
+  SolidWorks spline tool is the counter-example):
+  - Click places a corner; click-drag pulls out mirrored handles.
+  - A rubber-band preview of the next segment always follows the pointer.
+  - Alt breaks a handle; clicking the first point closes the path; Enter / Esc ends it.
+  - Anchors and handles are edited directly afterwards.
+  - Curvature combs and G1 / G2 are extras on top.
+
+*Part 1 as built (2026-10-08): polygons and slots.*
+- **Polygon (K):**
+  - Click the centre, then a corner. Tab types the sides (3–64, remembered; 6 by default);
+    X switches to circumscribed, where the pointer is the middle of a side.
+  - Built as equal sides with every corner on a construction circle, so it stays regular:
+    four freedoms (centre, size, turn).
+  - Rotation sticks to 15° steps within 2°, and a level or plumb side gets Horizontal /
+    Vertical.
+  - A typed size is the circle's diameter (inscribed) or the centre-to-side distance
+    (circumscribed, i.e. half across flats).
+  - Tangent-sided polygons were rejected: an even-sided one can collapse into a rhombus.
+- **Slot (U; U again cycles straight → centre → arc):**
+  - Straight: two end centres, then the width. Centre: the middle, then an end centre.
+    Arc: the arc's centre, the start and end centres (either direction), then the width.
+  - Straight slots are two sides tangent to two equal end arcs, with a construction axis
+    line (a Midpoint relation for centre slots): five freedoms.
+  - Arc slots are concentric inner and outer arcs with end caps tangent to both (the caps'
+    equal size follows, so no Equal): six freedoms.
+  - Typed length and width become dimensions (centre-to-centre distance, side-to-side
+    distance, or the cap's diameter for arc slots).
+- **Not yet:** 3-point arc slots; a drawing-scale readout of a circumscribed size.
 
 **M10 — Polish and release (ongoing)**
 - Themes, command palette, keybinding config, crash recovery, PWA offline install, and

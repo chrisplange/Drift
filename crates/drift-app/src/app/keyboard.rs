@@ -164,6 +164,13 @@ impl DriftApp {
             });
         if let Some(mut kind) = requested {
             let current = self.tool.kind();
+            if kind == ToolKind::Slot && current == ToolKind::Slot {
+                // U again: the next kind of slot.
+                self.editor.slot_mode = self.editor.slot_mode.next();
+                self.tool.cancel(&mut self.editor);
+                let now = ctx.input(|i| i.time);
+                self.set_status(self.editor.slot_mode.label().to_owned(), false, now);
+            }
             if kind == ToolKind::Arc {
                 kind = if let Some(i) = ToolKind::ARCS.iter().position(|k| *k == current) {
                     // A again: the next arc type.

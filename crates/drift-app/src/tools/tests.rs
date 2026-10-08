@@ -1873,3 +1873,134 @@ fn toolbar_sections_list_every_tool_once() {
         assert_eq!(listed.iter().filter(|k| **k == kind).count(), 1, "{kind:?}");
     }
 }
+
+fn arcs(doc: &Document) -> usize {
+    count(doc, |k| matches!(k, EntityKind::Arc { .. }))
+}
+
+#[test]
+fn polygon_is_regular_with_four_freedoms() {
+    let mut ed = Editor::default();
+    let mut tool = PolygonTool::default();
+    // Default: six sides, inscribed; the pointer off any 15° step.
+    click(&mut ed, &mut tool, v(0.0, 0.0));
+    let corner = v(10.0, 0.0).rotate(DVec2::from_angle(0.3));
+    click(&mut ed, &mut tool, corner);
+    assert_eq!(lines(&ed.doc), 6);
+    assert_eq!(ed.analysis().dof, Some(4), "centre, size and turn");
+    let circle = ed
+        .doc
+        .iter()
+        .find(|(_, e)| matches!(e.kind, EntityKind::Circle { .. }))
+        .map(|(id, e)| (id, e.style))
+        .unwrap();
+    assert_eq!(circle.1, drift_core::LineKind::Construction);
+    // Every side is the same length and every corner on the circle.
+    let shapes: Vec<_> = ed
+        .doc
+        .iter()
+        .filter_map(|(id, _)| ed.doc.shape(id))
+        .collect();
+    for s in &shapes {
+        if let Shape::Line { a, b } = s {
+            assert!((a.distance(*b) - 10.0).abs() < 1e-6);
+            assert!((a.length() - 10.0).abs() < 1e-6);
+        }
+    }
+
+    // Circumscribed square with a typed radius (the apothem): sides 20 long, dimensioned.
+    let mut ed = Editor::default();
+    ed.auto_relations = true;
+    ed.polygon_circumscribed = true;
+    let mut tool = PolygonTool::default();
+    click(&mut ed, &mut tool, v(0.0, 0.0));
+    let p = ptr(&ed, &tool, v(0.0, 7.0));
+    tool.handle(Input::Hover(p), &mut ed);
+    tool.set_typed([Some(10.0), Some(4.0)]);
+    tool.commit_typed(&p, &mut ed);
+    assert_eq!(lines(&ed.doc), 4);
+    assert_eq!(ed.polygon_sides, 4, "remembered");
+    for (id, _) in ed.doc.iter() {
+        if let Some(Shape::Line { a, b }) = ed.doc.shape(id) {
+            assert!((a.distance(b) - 20.0).abs() < 1e-6);
+        }
+    }
+    // Straight up from the centre: the top side is level, so it gets Horizontal.
+    let kinds: Vec<_> = ed.doc.constraints().map(|(_, c)| c.type_name()).collect();
+    assert_eq!(
+        ed.analysis().dof,
+        Some(2),
+        "only the centre moves: {kinds:?}"
+    );
+}
+
+#[test]
+fn slots_keep_their_shape_and_freedoms() {
+    // Straight: two end centres, then the width.
+    let mut ed = Editor::default();
+    let mut tool = SlotTool::default();
+    click(&mut ed, &mut tool, v(0.0, 0.0));
+    click(&mut ed, &mut tool, v(30.0, 10.0));
+    click(&mut ed, &mut tool, v(15.0, 9.0));
+    assert_eq!(
+        (lines(&ed.doc), arcs(&ed.doc)),
+        (3, 2),
+        "two sides, an axis, two ends"
+    );
+    assert_eq!(ed.analysis().dof, Some(5), "two centres and a width");
+
+    // Centre slot, horizontal, typed length and width: only the middle moves.
+    let mut ed = Editor::default();
+    ed.auto_relations = true;
+    ed.slot_mode = SlotMode::Centre;
+    let mut tool = SlotTool::default();
+    click(&mut ed, &mut tool, v(0.0, 0.0));
+    let p = ptr(&ed, &tool, v(20.0, 0.0));
+    tool.handle(Input::Hover(p), &mut ed);
+    tool.set_typed([Some(40.0), None]);
+    tool.commit_typed(&p, &mut ed);
+    let p = ptr(&ed, &tool, v(5.0, 3.0));
+    tool.handle(Input::Hover(p), &mut ed);
+    tool.set_typed([Some(8.0), None]);
+    tool.commit_typed(&p, &mut ed);
+    assert_eq!((lines(&ed.doc), arcs(&ed.doc)), (3, 2));
+    assert_eq!(ed.analysis().dof, Some(2), "{:?}", ed.analysis());
+    let ends: Vec<DVec2> = ed
+        .doc
+        .iter()
+        .filter_map(|(id, e)| match e.kind {
+            EntityKind::Arc { center, .. } => ed.doc.point(center).ok().map(|c| (id, c)),
+            _ => None,
+        })
+        .map(|(_, c)| c)
+        .collect();
+    assert!(
+        ends.iter().any(|c| c.distance(v(-20.0, 0.0)) < 1e-6),
+        "{ends:?}"
+    );
+    assert!(
+        ends.iter().any(|c| c.distance(v(20.0, 0.0)) < 1e-6),
+        "{ends:?}"
+    );
+
+    // Arc slot: centre, start, end (drawn clockwise), width.
+    let mut ed = Editor::default();
+    ed.slot_mode = SlotMode::Arc;
+    let mut tool = SlotTool::default();
+    click(&mut ed, &mut tool, v(0.0, 0.0));
+    click(&mut ed, &mut tool, v(0.0, 50.0));
+    click(&mut ed, &mut tool, v(40.0, 30.0));
+    click(&mut ed, &mut tool, v(0.0, 54.0));
+    assert_eq!((lines(&ed.doc), arcs(&ed.doc)), (0, 4));
+    assert_eq!(
+        ed.analysis().dof,
+        Some(6),
+        "centre, radius, two angles and a width"
+    );
+    // The short way round: no arc sweeps more than half a turn.
+    for (id, _) in ed.doc.iter() {
+        if let Some(Shape::Arc { sweep, .. }) = ed.doc.shape(id) {
+            assert!(sweep <= PI + 1e-9, "{sweep}");
+        }
+    }
+}

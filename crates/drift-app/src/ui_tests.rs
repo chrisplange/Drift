@@ -1894,3 +1894,46 @@ fn pdf_underlay_calibrate_and_trace() {
     h.run();
     save_png("drift_ui_underlay.png", &mut h);
 }
+
+#[test]
+fn polygons_and_slots_from_the_toolbar() {
+    let Some(mut h) = harness() else { return };
+    let v = DVec2::new;
+    h.get_by_label("Polygon").click();
+    h.run();
+    assert_eq!(h.state().tool.kind(), ToolKind::Polygon);
+    click_world(&mut h, v(-60.0, 20.0));
+    h.hover_at(screen(&h, v(-45.0, 26.0)));
+    h.run();
+    save_png("drift_ui_polygon_preview.png", &mut h);
+    click_world(&mut h, v(-45.0, 26.0));
+    // U: straight slot; U again: centre; again: arc.
+    h.key_press(Key::U);
+    h.run();
+    click_world(&mut h, v(-20.0, -20.0));
+    click_world(&mut h, v(20.0, -20.0));
+    click_world(&mut h, v(0.0, -14.0));
+    h.key_press(Key::U);
+    h.run();
+    h.key_press(Key::U);
+    h.run();
+    assert_eq!(h.state().editor.slot_mode, crate::tools::SlotMode::Arc);
+    click_world(&mut h, v(40.0, 0.0));
+    click_world(&mut h, v(70.0, 0.0));
+    click_world(&mut h, v(40.0, 30.0));
+    h.hover_at(screen(&h, v(74.0, 3.0)));
+    h.run();
+    click_world(&mut h, v(74.0, 3.0));
+    let curves = h
+        .state()
+        .editor
+        .doc
+        .iter()
+        .filter(|(_, e)| !e.kind.is_point())
+        .count();
+    // Hexagon (6 + circle), straight slot (2 lines, 2 arcs, axis), arc slot (4 arcs).
+    assert_eq!(curves, 7 + 5 + 4);
+    h.key_press(Key::Escape);
+    h.run();
+    save_png("drift_ui_polygon_slots.png", &mut h);
+}

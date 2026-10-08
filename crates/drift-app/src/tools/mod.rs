@@ -24,9 +24,11 @@ mod line;
 mod offset_mirror;
 mod place_block;
 mod point;
+mod polygon;
 mod rectangle;
 mod rotate;
 mod select;
+mod slot;
 mod tangent_arc;
 #[cfg(test)]
 mod tests;
@@ -40,6 +42,8 @@ pub use self::{
     fill::FillTool,
     offset_mirror::{MirrorTool, OffsetTool},
     place_block::BlockTool,
+    polygon::PolygonTool,
+    slot::{SlotMode, SlotTool},
     underlay::{UnderlayMode, UnderlayTool},
 };
 pub use self::{
@@ -141,11 +145,13 @@ pub enum ToolKind {
     Select,
     Line,
     Rectangle,
+    Polygon,
     Circle,
     /// Centre-point arc.
     Arc,
     ThreePointArc,
     TangentArc,
+    Slot,
     Point,
     Block,
     Dimension,
@@ -168,14 +174,16 @@ pub enum ToolKind {
 }
 
 impl ToolKind {
-    pub const ALL: [ToolKind; 22] = [
+    pub const ALL: [ToolKind; 24] = [
         ToolKind::Select,
         ToolKind::Line,
         ToolKind::Rectangle,
+        ToolKind::Polygon,
         ToolKind::Circle,
         ToolKind::Arc,
         ToolKind::ThreePointArc,
         ToolKind::TangentArc,
+        ToolKind::Slot,
         ToolKind::Point,
         ToolKind::Block,
         ToolKind::Dimension,
@@ -201,10 +209,12 @@ impl ToolKind {
             &[
                 ToolKind::Line,
                 ToolKind::Rectangle,
+                ToolKind::Polygon,
                 ToolKind::Circle,
                 ToolKind::Arc,
                 ToolKind::ThreePointArc,
                 ToolKind::TangentArc,
+                ToolKind::Slot,
                 ToolKind::Point,
                 ToolKind::Block,
             ],
@@ -242,6 +252,8 @@ impl ToolKind {
             ToolKind::Select => "Select",
             ToolKind::Line => "Line",
             ToolKind::Rectangle => "Rectangle",
+            ToolKind::Polygon => "Polygon",
+            ToolKind::Slot => "Slot",
             ToolKind::Circle => "Circle",
             ToolKind::Arc => "Arc",
             ToolKind::ThreePointArc => "3-pt arc",
@@ -272,6 +284,10 @@ impl ToolKind {
             ToolKind::Select => "Pick, drag and box-select geometry; G moves the selection",
             ToolKind::Line => "Draw connected lines; type a length, X / Y lock an axis",
             ToolKind::Rectangle => "Two opposite corners, or type the width and height",
+            ToolKind::Polygon => {
+                "Regular polygon: centre, then a corner. Tab types sides; X: around the circle"
+            }
+            ToolKind::Slot => "Straight, centre or arc slot (press U again to switch), then width",
             ToolKind::Circle => "Centre, then a point on the circle (or type the diameter)",
             ToolKind::Arc => "Centre, start, end. Press A again for other arc types",
             ToolKind::ThreePointArc => "Start, end, then a point on the arc",
@@ -303,6 +319,8 @@ impl ToolKind {
             ToolKind::Select => 'S',
             ToolKind::Line => 'L',
             ToolKind::Rectangle => 'R',
+            ToolKind::Polygon => 'K',
+            ToolKind::Slot => 'U',
             ToolKind::Circle => 'C',
             // A selects the centre arc; pressed again it cycles through the arc tools.
             ToolKind::Arc | ToolKind::ThreePointArc | ToolKind::TangentArc => 'A',
@@ -331,6 +349,8 @@ impl ToolKind {
             ToolKind::Select => Box::<SelectTool>::default(),
             ToolKind::Line => Box::<LineTool>::default(),
             ToolKind::Rectangle => Box::<RectangleTool>::default(),
+            ToolKind::Polygon => Box::<PolygonTool>::default(),
+            ToolKind::Slot => Box::<SlotTool>::default(),
             ToolKind::Circle => Box::<CircleTool>::default(),
             ToolKind::Arc => Box::<ArcTool>::default(),
             ToolKind::ThreePointArc => Box::<ThreePointArcTool>::default(),

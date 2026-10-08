@@ -216,13 +216,36 @@ impl Editor {
             .ok_or("Click inside a closed area to fill it")?;
         let mut fill = Fill::new(boundary, p, FillKind::Solid);
         self.fill_style.apply(&mut fill);
-        self.doc.begin();
-        let id = self.doc.add_fill(fill);
-        let label = match self.fill_style.kind {
-            FillKind::Solid => "Fill",
-            FillKind::Hatch(_) => "Hatch",
+        // An area that is already filled isn't filled twice: its fill takes the current style
+        // (so clicking again with another pattern swaps it) and is selected.
+        let shapes = self.fill_shapes();
+        let existing = self.fills_in_order().into_iter().rev().find(|id| {
+            shapes
+                .get(id)
+                .is_some_and(|s| !s.lost && s.region.contains(p))
+                && self
+                    .doc
+                    .fill(*id)
+                    .is_some_and(|f| f.boundary == fill.boundary)
+        });
+        let id = if let Some(id) = existing {
+            if let Some(mut current) = self.doc.fill(id).cloned()
+                && FillStyle::of(&current) != self.fill_style
+            {
+                self.fill_style.apply(&mut current);
+                self.update_fill(id, current);
+            }
+            id
+        } else {
+            self.doc.begin();
+            let id = self.doc.add_fill(fill);
+            let label = match self.fill_style.kind {
+                FillKind::Solid => "Fill",
+                FillKind::Hatch(_) => "Hatch",
+            };
+            self.commit(label);
+            id
         };
-        self.commit(label);
         self.selection.clear();
         self.selected_region = None;
         self.selected_fills = [id].into();
@@ -516,6 +539,29 @@ mod tests {
         assert!((shape.region.centroid.x - 120.0).abs() < 1e-6);
         ed.undo();
         assert!(!ed.fill_shapes()[&id].lost);
+    }
+
+    #[test]
+    fn filling_a_filled_area_again_restyles_instead_of_stacking() {
+        let (mut ed, _) = plate();
+        let first = ed.add_fill_at(DVec2::new(5.0, 5.0)).unwrap();
+        // Same style again: nothing new, nothing to undo.
+        let steps = ed.history.can_undo();
+        assert_eq!(ed.add_fill_at(DVec2::new(30.0, 15.0)).unwrap(), first);
+        assert_eq!(ed.doc.fills().count(), 1);
+        assert_eq!(ed.history.can_undo(), steps);
+        // Another pattern: the existing hatch changes to it.
+        ed.fill_style.kind = FillKind::Hatch(Hatch::new("ANSI37"));
+        assert_eq!(ed.add_fill_at(DVec2::new(5.0, 5.0)).unwrap(), first);
+        assert_eq!(ed.doc.fills().count(), 1);
+        assert!(matches!(
+            &ed.doc.fill(first).unwrap().kind,
+            FillKind::Hatch(h) if h.pattern == "ANSI37"
+        ));
+        assert_eq!(ed.selected_fills, [first].into());
+        // A different area (the disc inside the hole) still gets its own fill.
+        ed.add_fill_at(DVec2::new(20.0, 11.0)).unwrap();
+        assert_eq!(ed.doc.fills().count(), 2);
     }
 
     #[test]

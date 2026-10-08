@@ -1477,3 +1477,167 @@ fn dragging_a_drawn_circles_edge_resizes_it() {
     let r = drift_solver::radius_of(&h.state().editor.doc, circle).unwrap();
     assert!((r - 35.0).abs() < 1.0, "radius {r}");
 }
+
+#[test]
+fn sheets_preview_and_export() {
+    let Some(mut h) = harness() else { return };
+    h.get_by_label("File").click();
+    h.run();
+    h.get_by_label("Open example").click();
+    h.run();
+    // Hatch the plate so fills export too.
+    h.get_by_label("Fill / hatch").click();
+    h.run();
+    click_world(&mut h, DVec2::new(100.0, 15.0));
+    h.get_by_label("Select").click();
+    h.run();
+    h.state_mut().params.tab = RightTab::Sheets;
+    h.run();
+    h.get_by_label("New sheet").click();
+    h.run();
+    h.run();
+    let id = h.state().current_sheet().expect("a sheet");
+    let sheet = h.state().editor.doc.sheet(id).cloned().unwrap();
+    assert!(h.state().sheet_preview);
+    // The 120 × 80 plate with its dimensions fits A3 at 1:1, above the title block.
+    assert_eq!(sheet.scale, 1.0);
+    save_png("drift_ui_sheet.png", &mut h);
+
+    let painter = h.ctx.layer_painter(egui::LayerId::background());
+    let pdf = h.state_mut().pdf_bytes(&painter);
+    let text = String::from_utf8_lossy(&pdf);
+    assert!(text.starts_with("%PDF-1.4"));
+    assert!(
+        text.contains("/MediaBox [0 0 1190.551 841.89]"),
+        "A3 landscape"
+    );
+    assert!(text.contains("(120) Tj"), "dimension text exported");
+    assert!(text.contains("(1:1) Tj"), "scale in the title block");
+    std::fs::write(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/tmp/drift_sheet.pdf"),
+        &pdf,
+    )
+    .unwrap();
+    let svg = h.state_mut().svg_text(&painter);
+    assert!(svg.contains(r#"width="420mm" height="297mm""#));
+    std::fs::write(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/tmp/drift_sheet.svg"),
+        &svg,
+    )
+    .unwrap();
+    let dxf = h.state_mut().dxf_text(&painter);
+    assert!(dxf.contains("AC1009"));
+    std::fs::write(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/tmp/drift_model.dxf"),
+        &dxf,
+    )
+    .unwrap();
+    // Re-import the DXF: the plate's curves come back at full size.
+    let import = drift_io::dxf::read(&dxf, 1.0).unwrap();
+    let mut doc = drift_core::Document::new();
+    doc.begin();
+    let report = drift_io::dxf::add_to_document(&mut doc, &import);
+    doc.commit("Import");
+    assert!(report.curves > 30, "{report:?}");
+    let circles = doc
+        .iter()
+        .filter(|(_, e)| matches!(e.kind, EntityKind::Circle { .. }))
+        .count();
+    assert_eq!(
+        circles, 5,
+        "the bore and four bolt holes (the bolt circle is construction)"
+    );
+
+    // Dragging on the sheet moves the drawing within it, as one undo step.
+    let rect = h.state().canvas_rect;
+    let from = rect.center();
+    h.hover_at(from);
+    h.run();
+    button(&h, from, true);
+    h.run();
+    for k in 1..=4 {
+        h.hover_at(from + egui::vec2(10.0 * k as f32, 0.0));
+        h.run();
+    }
+    button(&h, from + egui::vec2(40.0, 0.0), false);
+    h.run();
+    let moved = h.state().editor.doc.sheet(id).unwrap().center;
+    assert!(
+        moved.x < sheet.center.x - 1.0,
+        "dragging right moves the drawing right"
+    );
+    h.state_mut().undo();
+    assert_eq!(h.state().editor.doc.sheet(id).unwrap().center, sheet.center);
+    // Esc returns to the model.
+    h.key_press(Key::Escape);
+    h.run();
+    assert!(!h.state().sheet_preview);
+    // An ANSI B sheet with an ASME title block and revisions.
+    let mut ansi = h.state().editor.doc.sheet(id).cloned().unwrap();
+    ansi.paper = drift_core::PaperSize::AnsiB;
+    ansi.title_block = drift_core::TitleBlock::Ansi;
+    ansi.fields.number = "DR-001".into();
+    ansi.fields.author = "CP".into();
+    ansi.fields.company = "Drift".into();
+    ansi.fields.material = "6061-T6".into();
+    for (rev, what) in [("A", "First issue"), ("B", "Bore H7")] {
+        ansi.revisions.push(drift_core::Revision {
+            rev: rev.into(),
+            date: "2026-10-08".into(),
+            description: what.into(),
+            by: "CP".into(),
+        });
+    }
+    h.state_mut().editor.doc.set_sheet(id, ansi);
+    let svg = h.state_mut().svg_text(&painter);
+    assert!(svg.contains("Bore H7") && svg.contains(">DWG NO<"));
+    std::fs::write(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/tmp/drift_sheet_ansi.svg"),
+        &svg,
+    )
+    .unwrap();
+}
+
+#[test]
+fn layers_hud_floats_docks_and_switches_layers() {
+    use crate::app::layers_hud::LayersDock;
+    let Some(mut h) = harness() else { return };
+    h.get_by_label("File").click();
+    h.run();
+    h.get_by_label("Open example").click();
+    h.run();
+    let walls = h.state_mut().editor.add_layer("Walls");
+    h.state_mut().editor.add_layer("Hatching");
+    assert_eq!(h.state().layers_dock, LayersDock::Hidden);
+    h.event(Event::Key {
+        key: Key::L,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: EguiModifiers::COMMAND,
+    });
+    h.run();
+    h.run();
+    assert_eq!(h.state().layers_dock, LayersDock::Floating);
+    save_png("drift_ui_layers_hud.png", &mut h);
+    // Clicking a layer's name in the HUD makes it the current layer.
+    h.get_by_label("Walls").click();
+    h.run();
+    assert_eq!(h.state().editor.doc.current_layer(), walls);
+    // Docked right, next to the inspector; the choice survives a restart.
+    h.state_mut().layers_dock = LayersDock::Right;
+    h.run();
+    h.run();
+    save_png("drift_ui_layers_docked.png", &mut h);
+    let mut storage = MemoryStorage::default();
+    eframe::App::save(h.state_mut(), &mut storage);
+    let Some(mut fresh) = harness() else { return };
+    fresh.state_mut().restore_session(&storage);
+    assert_eq!(fresh.state().layers_dock, LayersDock::Right);
+    // Ctrl+L hides it, and again brings it back where it was.
+    fresh.state_mut().toggle_layers_hud();
+    assert_eq!(fresh.state().layers_dock, LayersDock::Hidden);
+    fresh.state_mut().toggle_layers_hud();
+    assert_eq!(fresh.state().layers_dock, LayersDock::Right);
+}

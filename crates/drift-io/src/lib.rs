@@ -6,7 +6,7 @@
 //! ```json
 //! {
 //!   "format": "drift",
-//!   "version": 7,
+//!   "version": 8,
 //!   "meta": {"title":"Bracket","units":"mm","generator":"Drift 0.1.0"},
 //!   "display": {"length":"architectural","fraction":16},
 //!   "variables": [
@@ -43,6 +43,10 @@ use drift_core::{
 use serde::{Deserialize, Serialize};
 
 mod drafting;
+pub mod dxf;
+pub mod pdf;
+mod sheets;
+pub mod svg;
 
 /// File extension, without the dot.
 pub const EXTENSION: &str = "drift";
@@ -55,8 +59,9 @@ pub const EXTENSION: &str = "drift";
 /// `measurements` and `variants` (M5); 6 = adds `layers`, `current_layer`, and per-entity
 /// `layer`, `color`, `weight` (mm) and `linetype` (M6); 7 = adds `drafting` (the dimension
 /// style), `fills` (solid fills and hatches), `annotations` (notes, centre marks, callouts,
-/// ordinate dimensions) and dimension `prefix`, `suffix` and `tol` (M7).
-pub const FORMAT_VERSION: u32 = 7;
+/// ordinate dimensions) and dimension `prefix`, `suffix` and `tol` (M7); 8 = adds `sheets`
+/// (paper, scale, view, title block and revisions) (M8).
+pub const FORMAT_VERSION: u32 = 8;
 const FORMAT_TAG: &str = "drift";
 
 /// Document-level properties stored alongside the geometry.
@@ -708,6 +713,8 @@ struct FileRecord {
     /// Imported hatch patterns, as `.pat` text.
     #[serde(default)]
     patterns: Option<String>,
+    #[serde(default)]
+    sheets: Vec<sheets::SheetRecord>,
 }
 
 fn id_string(id: EntityId) -> String {
@@ -898,11 +905,18 @@ pub fn save(doc: &Document, meta: &Metadata) -> String {
                 .expect("annotation serializes")
         })
         .collect();
+    let sheets: Vec<String> = doc
+        .sheets()
+        .map(|(id, s)| {
+            serde_json::to_string(&sheets::sheet_record(id, s)).expect("sheet serializes")
+        })
+        .collect();
     let tail = [
         ("measurements", &measurements),
         ("variants", &variants),
         ("fills", &fills),
         ("annotations", &annotations),
+        ("sheets", &sheets),
     ];
     let last = tail.iter().rposition(|(_, items)| !items.is_empty());
     push_array(&mut out, "entities", &entities, true);
@@ -1147,6 +1161,14 @@ pub fn load(text: &str) -> Result<(Document, Metadata), LoadError> {
     if let Some(p) = file.patterns {
         doc.set_custom_patterns(p);
     }
+    for r in file.sheets {
+        let id_text = r.id.clone();
+        let (id, sheet) = sheets::parse_sheet(r)?;
+        if doc.sheet(id).is_some() {
+            return Err(LoadError::DuplicateId(id_text));
+        }
+        doc.insert_sheet(id, sheet);
+    }
     if let Some(d) = file.drafting {
         doc.set_draft_style(drafting::parse_draft(d)?);
     }
@@ -1234,7 +1256,7 @@ pub fn migrate(value: serde_json::Value) -> Result<serde_json::Value, LoadError>
         // v1 → v2: constraints were introduced; a v1 file simply has none.
         value["constraints"] = serde_json::Value::Array(Vec::new());
     }
-    // v2 → v7 only added optional fields, sections and constraint types: nothing to convert.
+    // v2 → v8 only added optional fields, sections and constraint types: nothing to convert.
     value["version"] = FORMAT_VERSION.into();
     Ok(value)
 }
@@ -1277,7 +1299,7 @@ mod tests {
         let text = save(&doc, &Metadata::default());
         let expected = r#"{
   "format": "drift",
-  "version": 7,
+  "version": 8,
   "meta": {"units":"mm"},
   "entities": [
     {"type":"point","id":"e1","at":[0.0,0.0]},
@@ -1742,15 +1764,31 @@ mod tests {
         style.scale = 50.0;
         doc.set_draft_style(style);
         doc.set_custom_patterns("*MINE, Mine\n0, 0,0, 0,2\n".into());
+        let mut sheet = drift_core::Sheet::new("Plate");
+        sheet.paper = drift_core::PaperSize::Custom(500.0, 350.0);
+        sheet.portrait = true;
+        sheet.scale = 2.5;
+        sheet.center = DVec2::new(60.0, 40.0);
+        sheet.title_block = drift_core::TitleBlock::Ansi;
+        sheet.fields.title = "Mounting plate".into();
+        sheet.fields.number = "DR-001".into();
+        sheet.revisions.push(drift_core::Revision {
+            rev: "A".into(),
+            date: "2026-10-08".into(),
+            description: "First issue".into(),
+            by: "CP".into(),
+        });
+        doc.add_sheet(sheet);
+        doc.add_sheet(drift_core::Sheet::new("Detail"));
 
         let text = save(&doc, &Metadata::default());
-        assert!(text.contains("\"version\": 7"));
+        assert!(text.contains("\"version\": 8"));
         let (loaded, _) = load(&text).unwrap();
         assert_eq!(loaded, doc);
         assert_eq!(save(&loaded, &Metadata::default()), text);
         // Defaults stay out of the file.
         let plain = save(&demo::mounting_plate(), &Metadata::default());
-        for absent in ["drafting", "fills", "annotations", "\"tol\""] {
+        for absent in ["drafting", "fills", "annotations", "\"tol\"", "sheets"] {
             assert!(!plain.contains(absent), "{absent}");
         }
     }

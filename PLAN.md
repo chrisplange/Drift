@@ -1033,6 +1033,78 @@ written but hasn't run yet (no GitHub repo).*
 - Sheets with a scale, title-block templates, and a revision table.
 - True-scale vector PDF, SVG, and DXF import/export (layers and line types preserved). Printing.
 
+*M8 as built (2026-10-08):*
+- **Sheets (Sheets tab; `sheets` in format v8):**
+  - Paper: A4–A0 or ANSI A–E, landscape or portrait.
+  - A drawing scale per sheet, picked from the preferred scales (`fit_scale`, 10:1 to 1:10000).
+    "Fit" centres the drawing, its dimensions included, at the largest scale that clears the
+    title block.
+  - An ISO 7200 or ASME Y14.1 title block, or none. Its fields:
+    - Typed: title, drawing number, drawn by, checked, date (with "Today"), company and
+      material.
+    - Automatic: scale, sheet "n / N", and the revision (the latest row of the table). ANSI
+      sheets also show the size letter.
+  - A revision table in the top-right corner: "Add revision" takes the next letter, today's
+    date and the author.
+  - Typing into the fields merges into one undo step.
+- **Sheet preview (View → Sheet, or Show sheet):**
+  - The canvas shows the page exactly as it prints.
+  - Scroll zooms and middle / right drag pans. Dragging moves the drawing within the sheet,
+    as one undo step.
+  - F refits and Esc returns to the model.
+- **Output pipeline:**
+  - `drift-draft::page` is a display list in millimetres (y up): lines, polylines, true arcs
+    and circles, fills (rings and triangles, plus masks behind text) and Helvetica-metric text.
+    Every item has a pen (colour, width, ISO line type) and a layer.
+  - `drift-draft::sheet` draws the border, centring marks, title blocks and the revision
+    table. Their backgrounds mask the view.
+  - In the app, `output.rs` builds a sheet (clipped to the drawing area) or model space.
+    - Exact: printable geometry (no points, construction or hidden / non-printing layers), by
+      layer or own colour, weight and line type; centre-style curves as centre lines.
+    - Fills are faded to paper by their opacity. Hatches are clipped exactly, with drafting
+      patterns sized by the sheet's scale.
+    - Centre marks are drawn too.
+    - Dimensions and notes go through a new `Pen` trait (egui painter or `Recorder`), so
+      output matches the screen. Text is placed by its glyph baselines.
+- **PDF (`drift-io::pdf`):**
+  - Hand-written, no dependencies: one true-scale page per sheet, Bézier arcs, even–odd fills,
+    clipping, and dash patterns.
+  - Text is Helvetica in WinAnsi (Ø, ±, °, ×), positioned with Helvetica widths.
+  - Checked in Chromium's viewer and Inkscape.
+- **SVG (`drift-io::svg`):** the current sheet, in mm units, with a group per layer run, a
+  clip path, true arcs and rotated text.
+- **DXF export (`drift-io::dxf`):**
+  - R12 (AC1009) ASCII of model space at full size, so every CAD program opens it.
+  - Written in the document's display units, so lengths read the same elsewhere: inches for
+    decimal-inch and architectural documents (with `$LUNITS` architectural), feet, mm, cm or
+    m otherwise, plus `$INSUNITS`, `$LUPREC` and `$MEASUREMENT`.
+  - LTYPE table (Continuous, Dashed, Hidden, Center, Phantom; `$LTSCALE` = drawing scale) and
+    a LAYER table with nearest ACI colours and line types.
+  - LINE / ARC / CIRCLE / POLYLINE / SOLID (fill triangles) / TEXT (`%%c`, `%%d`, `%%p`).
+  - Dimensions and notes are exploded onto an ANNOTATIONS layer.
+- **DXF import (File → Import DXF…, or open a .dxf):**
+  - Reads LINE, ARC, CIRCLE, LWPOLYLINE and POLYLINE (with bulge arcs), POINT and the LAYER
+    table, scaled by `$INSUNITS`. Files that don't give their units are read in the
+    document's display unit.
+  - Curves land on layers of the same names, created with their colour and line type.
+  - Coincident ends share points, so outlines stay connected and can be constrained.
+  - Text, splines, blocks and so on are counted and reported.
+- **Layers HUD (View → Layers panel, Ctrl/⌘+L):**
+  - A compact layer list to keep open while drawing. It floats over the canvas as a
+    translucent panel, or docks to the canvas's left or right edge.
+  - Each row: the current layer (click a name to switch), a colour swatch, the curve count,
+    and show / lock toggles. Right-click a row to select its curves or move the selection
+    there.
+  - Its placement is saved with the view settings. The full editor stays in the Layers tab.
+- **Printing (File → Print…, Ctrl/⌘+P):** writes the PDF to a temporary folder and opens it
+  in the system viewer (a new tab on the web) to print.
+- **Not yet:**
+  - Several views per sheet, and title-block template editing or logos.
+  - DXF line weights (R12 has none; R2000 output later), DXF HATCH and DIMENSION entities, and
+    importing text, splines and blocks.
+  - PDF font embedding (Helvetica is a standard PDF font).
+  - Direct printing without a viewer.
+
 **M9 — Advanced geometry (3–4 wks)**
 - Ellipses, slots, polygons, and text.
 - Splines (control-point and fit) with curvature combs and G1/G2 constraints.
@@ -1084,5 +1156,5 @@ title-block template syntax.
 
 1. Create the `drift` GitHub repo and push, so CI runs and Pages deploys. Enable Pages with
    "GitHub Actions" as the source.
-2. M8: sheets with a scale and title blocks, and true-scale vector PDF, SVG and DXF output
-   (layers, line types, fills and hatches preserved).
+2. M9: advanced geometry (ellipses, slots, polygons, text, splines with curvature combs and
+   G1/G2 constraints).

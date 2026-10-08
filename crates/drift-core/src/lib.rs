@@ -12,6 +12,7 @@ pub mod expr;
 pub mod layers;
 pub mod params;
 pub mod shape;
+pub mod sheets;
 pub mod units;
 
 pub use bounds::Bounds;
@@ -27,4 +28,5 @@ pub use drafting::{
 pub use glam::DVec2;
 pub use layers::{Appearance, Layer, LayerId, LineType, LineWeight, Rgb};
 pub use shape::{DofState, Emphasis, LineKind, Shape, SketchItem};
+pub use sheets::{PaperSize, Revision, Sheet, SheetId, TitleBlock, TitleFields};
 pub use units::{Kind, LengthFormat, Quantity, Units};

@@ -12,6 +12,7 @@ use glam::DVec2;
 use crate::constraint::Slot;
 use crate::drafting::{Anchor, Annotation, AnnotationId, DimNote, DraftStyle, Fill, FillId};
 use crate::layers::{Appearance, Layer, LayerId};
+use crate::sheets::{Sheet, SheetId};
 use crate::units::{Kind, Units};
 use crate::{Constraint, ConstraintId, LineKind, Shape};
 
@@ -223,6 +224,7 @@ enum Key {
     DimNote(ConstraintId),
     Draft,
     Patterns,
+    Sheet(SheetId),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -243,6 +245,7 @@ enum Record {
     DimNote(DimNote),
     Draft(DraftStyle),
     Patterns(String),
+    Sheet(Sheet),
 }
 
 /// One undoable step: the before and after state of everything it touched.
@@ -284,6 +287,7 @@ pub struct Document {
     draft: DraftStyle,
     /// Hatch patterns imported from `.pat` files, as `.pat` text, so they travel with the file.
     patterns: String,
+    sheets: BTreeMap<SheetId, Sheet>,
     next_id: u32,
     next_constraint_id: u32,
     /// Next id for variables, variants and measurements (one counter, ids never reused).
@@ -317,6 +321,7 @@ impl PartialEq for Document {
             && self.dim_notes == other.dim_notes
             && self.draft == other.draft
             && self.patterns == other.patterns
+            && self.sheets == other.sheets
     }
 }
 
@@ -339,6 +344,7 @@ impl Default for Document {
             dim_notes: BTreeMap::new(),
             draft: DraftStyle::default(),
             patterns: String::new(),
+            sheets: BTreeMap::new(),
             // Ids start at 1; `e0` and `c0` are not valid ids in `.drift` files.
             next_id: 1,
             next_constraint_id: 1,
@@ -527,6 +533,7 @@ impl Document {
             Key::DimNote(id) => self.dim_notes.get(&id).cloned().map(Record::DimNote),
             Key::Draft => Some(Record::Draft(self.draft)),
             Key::Patterns => Some(Record::Patterns(self.patterns.clone())),
+            Key::Sheet(id) => self.sheets.get(&id).cloned().map(Record::Sheet),
         }
     }
 
@@ -630,6 +637,12 @@ impl Document {
             (Key::Draft, _) => {}
             (Key::Patterns, Some(Record::Patterns(p))) => self.patterns = p,
             (Key::Patterns, _) => {}
+            (Key::Sheet(id), Some(Record::Sheet(s))) => {
+                self.sheets.insert(id, s);
+            }
+            (Key::Sheet(id), _) => {
+                self.sheets.remove(&id);
+            }
         }
     }
 
@@ -1399,6 +1412,7 @@ impl Document {
         keys.extend(self.dim_notes.keys().map(|id| Key::DimNote(*id)));
         keys.push(Key::Draft);
         keys.push(Key::Patterns);
+        keys.extend(self.sheets.keys().map(|id| Key::Sheet(*id)));
         keys
     }
 
@@ -1894,6 +1908,42 @@ impl Document {
                     self.dim_notes.remove(&id);
                 }
             }
+        }
+    }
+
+    pub fn sheets(&self) -> impl Iterator<Item = (SheetId, &Sheet)> {
+        self.sheets.iter().map(|(id, s)| (*id, s))
+    }
+
+    pub fn sheet(&self, id: SheetId) -> Option<&Sheet> {
+        self.sheets.get(&id)
+    }
+
+    pub fn add_sheet(&mut self, sheet: Sheet) -> SheetId {
+        let id = SheetId(self.next_drafting());
+        self.touch_key(Key::Sheet(id));
+        self.sheets.insert(id, sheet);
+        id
+    }
+
+    /// Insert a sheet with a known id (loading a file).
+    pub fn insert_sheet(&mut self, id: SheetId, sheet: Sheet) {
+        self.next_drafting_id = self.next_drafting_id.max(id.0 + 1);
+        self.touch_key(Key::Sheet(id));
+        self.sheets.insert(id, sheet);
+    }
+
+    pub fn set_sheet(&mut self, id: SheetId, sheet: Sheet) {
+        if self.sheets.get(&id).is_some_and(|s| *s != sheet) {
+            self.touch_key(Key::Sheet(id));
+            self.sheets.insert(id, sheet);
+        }
+    }
+
+    pub fn remove_sheet(&mut self, id: SheetId) {
+        if self.sheets.contains_key(&id) {
+            self.touch_key(Key::Sheet(id));
+            self.sheets.remove(&id);
         }
     }
 

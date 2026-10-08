@@ -46,6 +46,13 @@ browser (WebGPU, with a WebGL2 fallback).
     imported AutoCAD / Revit `.pat` files.
   - Scale, angle, drafting or model size, background colour and draw order.
   - Hatch lines are clipped exactly and stay crisp at any zoom.
+- **Sheets and output:**
+  - Lay the drawing out on A4–A0 or ANSI A–E paper at a scale, with an ISO or ASME title block
+    and a revision table, and preview it exactly as it prints.
+  - Export true-scale vector PDF (every sheet) and SVG, or DXF (R12, with layers and line
+    types).
+  - Import DXF drawings (lines, arcs, circles, polylines with bulges).
+  - Print (Ctrl/⌘+P).
 - **Drafting:**
   - ISO 129 or ASME Y14.5 dimension styles: aligned or horizontal text, arrowheads, zeros
     and dual units.
@@ -58,6 +65,8 @@ browser (WebGPU, with a WebGL2 fallback).
   - Colours, ISO line weights and line types (continuous, dashed, hidden, centre, phantom),
     by layer or per entity.
   - Show / lock / print flags. Locked geometry stays fixed.
+  - A Layers panel (Ctrl/⌘+L) that floats over the canvas or docks left or right, for
+    switching layers and showing / locking them while drawing.
   - A Revit-style **thin lines** toggle (W), and a choice between constraint-status colours
     and layer colours.
 - **Parameters (Parameters tab):**
@@ -150,9 +159,9 @@ cargo test --workspace
 |---|---|
 | `crates/drift-core` | Document model, transactions and undo history (`f64`, mm, y-up) |
 | `crates/drift-geom` | Exact geometry: nearest points, intersections, regions, R-tree picking and snapping |
-| `crates/drift-draft` | Drafting: `.pat` hatch patterns (built-in library and parser) and exact hatch clipping |
+| `crates/drift-draft` | Drafting: `.pat` hatch patterns and exact hatch clipping, the page display list shared by all outputs, sheet borders, title blocks and revision tables |
 | `crates/drift-solver` | Constraint solver: substitution, sparse weighted least-norm Newton, DOF analysis |
-| `crates/drift-io` | The `.drift` file format (versioned JSON) |
+| `crates/drift-io` | The `.drift` file format (versioned JSON); PDF, SVG and DXF output; DXF import |
 | `crates/drift-platform` | File dialogs and saving on desktop and web |
 | `crates/drift-render` | wgpu canvas renderer: camera, frame builder, SDF shaders (WebGL2-compatible) |
 | `crates/drift-app` | eframe/egui application: editor, tools, panels; headless UI tests |

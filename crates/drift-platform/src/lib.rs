@@ -22,6 +22,10 @@ pub enum FileEvent {
         name: String,
         path: Option<FilePath>,
     },
+    /// A file was handed to the system (or browser) viewer, e.g. to print it.
+    Shown {
+        name: String,
+    },
     Failed(String),
 }
 
@@ -107,6 +111,15 @@ impl Files {
         }
     }
 
+    /// Open `contents` in the system's viewer for its type (a new browser tab on the web), e.g. a
+    /// PDF to print. Native builds write it to a temporary folder first.
+    pub fn open_externally(&self, name: &str, contents: &[u8]) {
+        #[cfg(not(target_arch = "wasm32"))]
+        self.post(open_native(name, contents));
+        #[cfg(target_arch = "wasm32")]
+        self.post(web::open(name, contents));
+    }
+
     /// Overwrite a file that was previously opened or saved (native only).
     pub fn save_to(&self, path: &FilePath, contents: &[u8]) {
         #[cfg(not(target_arch = "wasm32"))]
@@ -137,6 +150,30 @@ fn write_native(path: PathBuf, contents: &[u8]) -> FileEvent {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+fn open_native(name: &str, contents: &[u8]) -> FileEvent {
+    let dir = std::env::temp_dir().join("drift");
+    let path = dir.join(name);
+    if let Err(e) = std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(&path, contents)) {
+        return FileEvent::Failed(format!("could not write {}: {e}", path.display()));
+    }
+    #[cfg(target_os = "windows")]
+    let launched = std::process::Command::new("cmd")
+        .args(["/C", "start", ""])
+        .arg(&path)
+        .spawn();
+    #[cfg(target_os = "macos")]
+    let launched = std::process::Command::new("open").arg(&path).spawn();
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let launched = std::process::Command::new("xdg-open").arg(&path).spawn();
+    match launched {
+        Ok(_) => FileEvent::Shown {
+            name: name.to_owned(),
+        },
+        Err(e) => FileEvent::Failed(format!("could not open {}: {e}", path.display())),
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn spawn(future: impl std::future::Future<Output = ()> + Send + 'static) {
     std::thread::spawn(move || pollster::block_on(future));
 }
@@ -163,15 +200,50 @@ mod web {
         }
     }
 
-    fn try_download(name: &str, contents: &[u8]) -> Result<(), wasm_bindgen::JsValue> {
-        let window = web_sys::window().ok_or("no window")?;
-        let document = window.document().ok_or("no document")?;
+    /// The MIME type for a file name's extension.
+    fn mime(name: &str) -> &'static str {
+        match name
+            .rsplit('.')
+            .next()
+            .map(str::to_ascii_lowercase)
+            .as_deref()
+        {
+            Some("pdf") => "application/pdf",
+            Some("svg") => "image/svg+xml",
+            Some("dxf") => "application/dxf",
+            _ => "application/json",
+        }
+    }
+
+    fn blob_url(name: &str, contents: &[u8]) -> Result<String, wasm_bindgen::JsValue> {
         let bytes = js_sys::Uint8Array::from(contents);
         let parts = js_sys::Array::of1(&bytes);
         let options = web_sys::BlobPropertyBag::new();
-        options.set_type("application/json");
+        options.set_type(mime(name));
         let blob = web_sys::Blob::new_with_u8_array_sequence_and_options(&parts, &options)?;
-        let url = web_sys::Url::create_object_url_with_blob(&blob)?;
+        web_sys::Url::create_object_url_with_blob(&blob)
+    }
+
+    /// Open `contents` in a new tab (the browser's viewer, which can print it).
+    pub fn open(name: &str, contents: &[u8]) -> FileEvent {
+        let result = (|| -> Result<(), wasm_bindgen::JsValue> {
+            let window = web_sys::window().ok_or("no window")?;
+            let url = blob_url(name, contents)?;
+            window.open_with_url_and_target(&url, "_blank")?;
+            Ok(())
+        })();
+        match result {
+            Ok(()) => FileEvent::Shown {
+                name: name.to_owned(),
+            },
+            Err(e) => FileEvent::Failed(format!("could not open {name}: {e:?}")),
+        }
+    }
+
+    fn try_download(name: &str, contents: &[u8]) -> Result<(), wasm_bindgen::JsValue> {
+        let window = web_sys::window().ok_or("no window")?;
+        let document = window.document().ok_or("no document")?;
+        let url = blob_url(name, contents)?;
         let anchor: web_sys::HtmlAnchorElement = document.create_element("a")?.dyn_into()?;
         anchor.set_href(&url);
         anchor.set_download(name);

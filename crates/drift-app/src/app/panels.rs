@@ -54,6 +54,40 @@ impl DriftApp {
                 {
                     self.save_as();
                 }
+                ui.separator();
+                if ui.button("Import DXF…").clicked() {
+                    self.files.open(app::sheets_ui::DXF_FILE);
+                }
+                let painter = ui.painter().clone();
+                ui.menu_button("Export", |ui| {
+                    if ui
+                        .button("PDF…")
+                        .on_hover_text("Every sheet at true scale (or the drawing fitted to A3)")
+                        .clicked()
+                    {
+                        self.export_pdf(&painter);
+                    }
+                    if ui
+                        .button("SVG…")
+                        .on_hover_text("The current sheet")
+                        .clicked()
+                    {
+                        self.export_svg(&painter);
+                    }
+                    if ui
+                        .button("DXF…")
+                        .on_hover_text("The model at full size, with layers and line types")
+                        .clicked()
+                    {
+                        self.export_dxf(&painter);
+                    }
+                });
+                if ui
+                    .add(egui::Button::new("Print…").shortcut_text(shortcut("P", false)))
+                    .clicked()
+                {
+                    self.print(&painter);
+                }
             });
             ui.menu_button("Edit", |ui| {
                 let undo = match self.editor.history.undo_label() {
@@ -116,6 +150,31 @@ impl DriftApp {
                 }
             });
             ui.menu_button("View", |ui| {
+                if ui
+                    .add(
+                        egui::Button::selectable(
+                            self.layers_dock != app::layers_hud::LayersDock::Hidden,
+                            "Layers panel",
+                        )
+                        .shortcut_text(shortcut("L", false)),
+                    )
+                    .clicked()
+                {
+                    self.toggle_layers_hud();
+                    ui.close();
+                }
+                if ui
+                    .add(egui::Button::selectable(self.sheet_preview, "Sheet"))
+                    .on_hover_text("Show the drawing on its sheet, as it prints")
+                    .clicked()
+                {
+                    if self.current_sheet().is_none() {
+                        self.add_sheet();
+                    }
+                    self.sheet_preview = !self.sheet_preview;
+                    self.preview.zoom = 0.0;
+                    ui.close();
+                }
                 if ui
                     .add(egui::Button::new("Zoom to fit").shortcut_text("F"))
                     .clicked()
@@ -236,6 +295,7 @@ impl DriftApp {
                 (RightTab::Properties, "Inspector"),
                 (RightTab::Parameters, "Parameters"),
                 (RightTab::Layers, "Layers"),
+                (RightTab::Sheets, "Sheets"),
             ],
         ) {
             self.params.tab = tab;
@@ -249,6 +309,10 @@ impl DriftApp {
         if self.params.tab == RightTab::Layers {
             let now = ui.input(|i| i.time);
             self.layers_panel(ui, now);
+            return;
+        }
+        if self.params.tab == RightTab::Sheets {
+            self.sheets_panel(ui);
             return;
         }
         egui::ScrollArea::vertical()

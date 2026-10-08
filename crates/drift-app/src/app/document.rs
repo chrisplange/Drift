@@ -40,11 +40,13 @@ impl DriftApp {
             ("rels", self.show_relations),
             ("auto", self.auto_relations),
         ];
-        flags
+        let mut prefs: Vec<String> = flags
             .iter()
             .map(|(k, v)| format!("{k}={}", u8::from(*v)))
-            .collect::<Vec<_>>()
-            .join(";")
+            .collect();
+        prefs.push(format!("layers={}", self.layers_dock.key()));
+        prefs.push(format!("layers_last={}", self.layers_last.key()));
+        prefs.join(";")
     }
 
     pub(crate) fn apply_view_prefs(&mut self, text: &str) {
@@ -62,6 +64,16 @@ impl DriftApp {
                 "dims" => self.show_dimensions = on,
                 "rels" => self.show_relations = on,
                 "auto" => self.auto_relations = on,
+                "layers" => {
+                    if let Some(d) = app::layers_hud::LayersDock::parse(value) {
+                        self.layers_dock = d;
+                    }
+                }
+                "layers_last" => {
+                    if let Some(d) = app::layers_hud::LayersDock::parse(value) {
+                        self.layers_last = d;
+                    }
+                }
                 _ => {}
             }
         }
@@ -150,6 +162,10 @@ impl DriftApp {
                     contents,
                 } => {
                     let text = String::from_utf8_lossy(&contents);
+                    if name.to_ascii_lowercase().ends_with(".dxf") {
+                        self.import_dxf(&name, &text, now);
+                        continue;
+                    }
                     if name.to_ascii_lowercase().ends_with(".pat") {
                         match self.import_patterns(&text) {
                             Ok(n) => self.set_status(
@@ -178,6 +194,9 @@ impl DriftApp {
                         self.file.path = path;
                     }
                     self.file.clean_revision = Some(self.editor.doc.revision());
+                }
+                FileEvent::Shown { name } => {
+                    self.set_status(format!("Opened {name} in the system viewer"), false, now);
                 }
                 FileEvent::Failed(message) => self.set_status(message, true, now),
             }

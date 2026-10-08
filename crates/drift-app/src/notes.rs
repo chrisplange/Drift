@@ -6,9 +6,9 @@ use drift_core::{
     Anchor, Annotation, AnnotationId, DVec2, Document, DraftStyle, Emphasis, EntityId, EntityKind,
     LeaderEnd, LineKind, OrdinateAxis, Shape, SketchItem,
 };
-use eframe::egui::{self, Color32, FontId, Pos2, Rect, Stroke, StrokeKind, vec2};
+use eframe::egui::{self, Color32, FontId, Pos2, Rect, Stroke, vec2};
 
-use crate::annotations::{AnnotationColors, AnnotationState, DimStyle, PT_PER_MM};
+use crate::annotations::{AnnotationColors, AnnotationState, DimStyle, PT_PER_MM, Pen};
 use crate::overlay::ScreenMap;
 
 /// Paper millimetres a centre line runs past its circle.
@@ -450,7 +450,7 @@ pub fn layout_annotations(
 
 /// Draw an annotation's text and leader (centre lines are drawn by the GPU).
 pub fn paint_annotation(
-    painter: &egui::Painter,
+    pen: &dyn Pen,
     layout: &NoteLayout,
     state: AnnotationState,
     colors: &AnnotationColors,
@@ -465,7 +465,7 @@ pub fn paint_annotation(
     };
     let stroke = Stroke::new(1.0, color);
     if layout.leader.len() >= 2 {
-        painter.add(egui::Shape::line(layout.leader.clone(), stroke));
+        pen.line(&layout.leader, stroke);
         let (tip, next) = (layout.leader[0], layout.leader[1]);
         let d = (tip - next).normalized();
         let d = if d.is_finite() { d } else { vec2(1.0, 0.0) };
@@ -474,20 +474,16 @@ pub fn paint_annotation(
                 let len = style.arrow_len;
                 let base = tip - d * len;
                 let n = d.rot90() * (len / 3.0);
-                painter.add(egui::Shape::convex_polygon(
-                    vec![tip, base + n, base - n],
-                    color,
-                    Stroke::NONE,
-                ));
+                pen.polygon(vec![tip, base + n, base - n], color);
             }
             LeaderEnd::Dot => {
-                painter.circle_filled(tip, (style.arrow_len / 3.5).max(2.0), color);
+                pen.dot(tip, (style.arrow_len / 3.5).max(2.0), color);
             }
             LeaderEnd::None => {}
         }
     }
     if let Some(t) = &layout.text {
-        let galley = painter.layout(
+        let galley = pen.painter().layout(
             t.text.clone(),
             FontId::proportional(style.text),
             color,
@@ -495,16 +491,16 @@ pub fn paint_annotation(
         );
         let rot = egui::emath::Rot2::from_angle(t.angle);
         let pos = t.center + rot * (-galley.size() / 2.0);
-        painter.add(egui::epaint::TextShape::new(pos, galley, color).with_angle(t.angle));
+        pen.text(pos, galley, t.angle, color);
         if state != AnnotationState::Normal {
-            painter.rect_stroke(t.rect, 2.0, Stroke::new(1.0, color), StrokeKind::Inside);
+            pen.highlight(t.rect, color);
         }
     }
     if state != AnnotationState::Normal && layout.text.is_none() {
         // Centre marks: mark their ends so a picked one shows.
         for [a, b] in &layout.segments {
-            painter.circle_filled(*a, 2.0, color);
-            painter.circle_filled(*b, 2.0, color);
+            pen.dot(*a, 2.0, color);
+            pen.dot(*b, 2.0, color);
         }
     }
 }

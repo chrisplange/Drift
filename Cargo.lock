@@ -956,6 +956,7 @@ name = "drift-io"
 version = "0.1.0"
 dependencies = [
  "drift-core",
+ "drift-draft",
  "serde",
  "serde_json",
 ]

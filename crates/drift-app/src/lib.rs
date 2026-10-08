@@ -12,6 +12,7 @@ mod icons;
 mod layers_ui;
 pub mod modify;
 mod notes;
+pub mod output;
 mod overlay;
 mod parameters;
 mod theme;
@@ -212,6 +213,17 @@ pub struct DriftApp {
     /// An annotation label being dragged, and the grab offset (world units).
     note_drag: Option<(drift_core::AnnotationId, DVec2)>,
     note_edit: Option<app::note_ui::NoteEdit>,
+    /// The sheet shown in the Sheets tab and the preview.
+    active_sheet: Option<drift_core::SheetId>,
+    /// The canvas shows the current sheet as it prints, instead of the model.
+    sheet_preview: bool,
+    preview: app::sheets_ui::PreviewView,
+    /// The previewed page, as of a document revision.
+    preview_cache: Option<(u64, drift_core::SheetId, drift_draft::page::Drawing)>,
+    view_drag: Option<app::sheets_ui::ViewDrag>,
+    /// Where the Layers HUD is, and where it was before it was hidden.
+    layers_dock: app::layers_hud::LayersDock,
+    layers_last: app::layers_hud::LayersDock,
 }
 
 impl DriftApp {
@@ -274,6 +286,13 @@ impl DriftApp {
             hatch_patterns: Default::default(),
             note_drag: None,
             note_edit: None,
+            active_sheet: None,
+            sheet_preview: false,
+            preview: Default::default(),
+            preview_cache: None,
+            view_drag: None,
+            layers_dock: Default::default(),
+            layers_last: Default::default(),
         };
         theme::install_fonts(&cc.egui_ctx);
         theme::apply(&cc.egui_ctx);
@@ -428,6 +447,11 @@ const SHORTCUTS: &[(&str, &str)] = &[
     ("Ctrl+Z / Ctrl+Y", "Undo / redo"),
     ("Ctrl+S / Ctrl+Shift+S", "Save / save as"),
     ("Ctrl+N / Ctrl+O", "New / open"),
+    ("Ctrl+P", "Print (opens the sheets as a PDF)"),
+    (
+        "Ctrl+L",
+        "Show or hide the Layers panel (float it, or dock it left or right)",
+    ),
     ("F / double middle-click", "Zoom to fit"),
     ("Shift+G", "Toggle grid snapping"),
     ("Ctrl+'", "Show or hide the grid"),
@@ -521,6 +545,7 @@ impl eframe::App for DriftApp {
             .frame(frame(8, 6))
             .exact_size(if wide { 98.0 } else { 56.0 })
             .show(ui, |ui| self.toolbar(ui, wide));
+        self.layers_dock_panel(ui, true);
         if self.show_properties.unwrap_or(wide) {
             egui::Panel::right("properties")
                 .resizable(true)
@@ -529,7 +554,15 @@ impl eframe::App for DriftApp {
                 .min_size(240.0)
                 .show(ui, |ui| self.properties(ui));
         }
-        egui::CentralPanel::no_frame().show(ui, |ui| self.canvas(ui));
+        self.layers_dock_panel(ui, false);
+        egui::CentralPanel::no_frame().show(ui, |ui| {
+            if self.sheet_preview {
+                self.sheet_canvas(ui);
+            } else {
+                self.canvas(ui);
+            }
+        });
+        self.layers_float(&ctx);
 
         self.dialogs(&ctx);
         self.update_title(&ctx);

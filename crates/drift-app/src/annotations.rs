@@ -459,9 +459,163 @@ fn rotated_bounds(center: Pos2, size: Vec2, angle: f32) -> Rect {
     r
 }
 
+/// Where dimension and annotation graphics go: the screen (an egui painter), or a
+/// [`Recorder`] that keeps them for output (PDF, SVG, DXF).
+pub trait Pen {
+    /// For laying out text.
+    fn painter(&self) -> &egui::Painter;
+    fn line(&self, points: &[Pos2], stroke: Stroke);
+    /// A filled convex polygon (arrowheads).
+    fn polygon(&self, points: Vec<Pos2>, color: Color32);
+    fn dot(&self, at: Pos2, radius: f32, color: Color32);
+    /// A paper-coloured patch behind text.
+    fn mask(&self, points: Vec<Pos2>, color: Color32);
+    /// Text laid out in `galley`, its top-left corner at `top_left`, rotated by `angle`.
+    fn text(
+        &self,
+        top_left: Pos2,
+        galley: std::sync::Arc<egui::Galley>,
+        angle: f32,
+        color: Color32,
+    );
+    /// A picked or hovered outline (screen only).
+    fn highlight(&self, rect: Rect, color: Color32);
+}
+
+impl Pen for egui::Painter {
+    fn painter(&self) -> &egui::Painter {
+        self
+    }
+
+    fn line(&self, points: &[Pos2], stroke: Stroke) {
+        if let [a, b] = points {
+            self.line_segment([*a, *b], stroke);
+        } else {
+            self.add(egui::Shape::line(points.to_vec(), stroke));
+        }
+    }
+
+    fn polygon(&self, points: Vec<Pos2>, color: Color32) {
+        self.add(egui::Shape::convex_polygon(points, color, Stroke::NONE));
+    }
+
+    fn dot(&self, at: Pos2, radius: f32, color: Color32) {
+        self.circle_filled(at, radius, color);
+    }
+
+    fn mask(&self, points: Vec<Pos2>, color: Color32) {
+        self.add(egui::Shape::convex_polygon(points, color, Stroke::NONE));
+    }
+
+    fn text(
+        &self,
+        top_left: Pos2,
+        galley: std::sync::Arc<egui::Galley>,
+        angle: f32,
+        color: Color32,
+    ) {
+        self.add(egui::epaint::TextShape::new(top_left, galley, color).with_angle(angle));
+    }
+
+    fn highlight(&self, rect: Rect, color: Color32) {
+        self.rect_stroke(rect, 2.0, Stroke::new(1.0, color), StrokeKind::Inside);
+    }
+}
+
+/// Graphics recorded by a [`Recorder`], in its screen space.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Recorded {
+    Line(Vec<Pos2>, f32),
+    Polygon(Vec<Pos2>),
+    Mask(Vec<Pos2>),
+    Dot(Pos2, f32),
+    /// One line of text: the left end of its baseline, rotation and font size (multi-line
+    /// notes give one per line).
+    Text {
+        baseline: Pos2,
+        angle: f32,
+        size: f32,
+        text: String,
+    },
+}
+
+/// A [`Pen`] that keeps what is drawn instead of showing it.
+pub struct Recorder<'a> {
+    painter: &'a egui::Painter,
+    pub items: std::cell::RefCell<Vec<Recorded>>,
+}
+
+impl<'a> Recorder<'a> {
+    pub fn new(painter: &'a egui::Painter) -> Self {
+        Self {
+            painter,
+            items: Default::default(),
+        }
+    }
+
+    pub fn take(self) -> Vec<Recorded> {
+        self.items.into_inner()
+    }
+}
+
+impl Pen for Recorder<'_> {
+    fn painter(&self) -> &egui::Painter {
+        self.painter
+    }
+
+    fn line(&self, points: &[Pos2], stroke: Stroke) {
+        self.items
+            .borrow_mut()
+            .push(Recorded::Line(points.to_vec(), stroke.width));
+    }
+
+    fn polygon(&self, points: Vec<Pos2>, _color: Color32) {
+        self.items.borrow_mut().push(Recorded::Polygon(points));
+    }
+
+    fn dot(&self, at: Pos2, radius: f32, _color: Color32) {
+        self.items.borrow_mut().push(Recorded::Dot(at, radius));
+    }
+
+    fn mask(&self, points: Vec<Pos2>, _color: Color32) {
+        self.items.borrow_mut().push(Recorded::Mask(points));
+    }
+
+    fn text(
+        &self,
+        top_left: Pos2,
+        galley: std::sync::Arc<egui::Galley>,
+        angle: f32,
+        _color: Color32,
+    ) {
+        let size = galley
+            .job
+            .sections
+            .first()
+            .map_or(12.0, |s| s.format.font_id.size);
+        let rot = egui::emath::Rot2::from_angle(angle);
+        let mut items = self.items.borrow_mut();
+        for placed in &galley.rows {
+            let Some(first) = placed.row.glyphs.first() else {
+                continue;
+            };
+            let text: String = placed.row.glyphs.iter().map(|g| g.chr).collect();
+            let local = placed.pos.to_vec2() + vec2(first.pos.x, first.pos.y);
+            items.push(Recorded::Text {
+                baseline: top_left + rot * local,
+                angle,
+                size,
+                text,
+            });
+        }
+    }
+
+    fn highlight(&self, _rect: Rect, _color: Color32) {}
+}
+
 /// Draw a label laid out by [`label_galleys`], centred at `center` and rotated by `angle`.
 fn paint_label(
-    painter: &egui::Painter,
+    pen: &dyn Pen,
     center: Pos2,
     angle: f32,
     g: &LabelGalleys,
@@ -481,11 +635,11 @@ fn paint_label(
         ]
         .map(|c| center + rot * c)
         .to_vec();
-        painter.add(egui::Shape::convex_polygon(corners, bg, Stroke::NONE));
+        pen.mask(corners, bg);
     }
     let place = |galley: &std::sync::Arc<egui::Galley>, local: Vec2| {
         let pos = center + rot * (origin + local);
-        painter.add(egui::epaint::TextShape::new(pos, galley.clone(), color).with_angle(angle));
+        pen.text(pos, galley.clone(), angle, color);
     };
     let mid = g.size.y / 2.0;
     place(&g.before, vec2(0.0, mid - g.before.size().y / 2.0));
@@ -630,7 +784,7 @@ pub fn layout_dimension(
 }
 
 /// An arrowhead (or tick / dot) at `tip`, pointing along `direction`.
-fn arrow(painter: &egui::Painter, tip: Pos2, direction: Vec2, color: Color32, style: &DimStyle) {
+fn arrow(pen: &dyn Pen, tip: Pos2, direction: Vec2, color: Color32, style: &DimStyle) {
     let d = if direction.length() > 1e-6 {
         direction.normalized()
     } else {
@@ -641,31 +795,27 @@ fn arrow(painter: &egui::Painter, tip: Pos2, direction: Vec2, color: Color32, st
     let n = d.rot90() * (len / 3.0);
     match style.arrow {
         ArrowStyle::Closed => {
-            painter.add(egui::Shape::convex_polygon(
-                vec![tip, base + n, base - n],
-                color,
-                Stroke::NONE,
-            ));
+            pen.polygon(vec![tip, base + n, base - n], color);
         }
         ArrowStyle::Open => {
             let stroke = Stroke::new(1.0, color);
-            painter.line_segment([tip, base + n], stroke);
-            painter.line_segment([tip, base - n], stroke);
+            pen.line(&[tip, base + n], stroke);
+            pen.line(&[tip, base - n], stroke);
         }
         ArrowStyle::Tick => {
             // An oblique stroke through the end, at 45° to the line.
             let t = (d + d.rot90()).normalized() * (len * 0.5);
-            painter.line_segment([tip - t, tip + t], Stroke::new(1.6, color));
+            pen.line(&[tip - t, tip + t], Stroke::new(1.6, color));
         }
         ArrowStyle::Dot => {
-            painter.circle_filled(tip, (len / 4.0).max(1.5), color);
+            pen.dot(tip, (len / 4.0).max(1.5), color);
         }
     }
 }
 
 /// Draw a dimension laid out by [`layout_dimension`].
 pub fn paint_dimension(
-    painter: &egui::Painter,
+    pen: &dyn Pen,
     dim: &DimLayout,
     state: AnnotationState,
     colors: &AnnotationColors,
@@ -683,11 +833,10 @@ pub fn paint_dimension(
                 let v = d[i] - p[i];
                 if v.length() > style.gap {
                     let u = v.normalized();
-                    painter
-                        .line_segment([p[i] + u * style.gap, d[i] + u * style.overshoot], stroke);
+                    pen.line(&[p[i] + u * style.gap, d[i] + u * style.overshoot], stroke);
                 }
             }
-            painter.line_segment([d[0], d[1]], stroke);
+            pen.line(&[d[0], d[1]], stroke);
             let u = dir(d[0], d[1]);
             let len = (d[1] - d[0]).length();
             // Where the label sits along the line (for aligned text, its foot on the line).
@@ -695,40 +844,40 @@ pub fn paint_dimension(
             let along = (foot - d[0]).dot(u);
             // Extend the dimension line to a label placed outside it.
             if along < 0.0 {
-                painter.line_segment([d[0], foot], stroke);
+                pen.line(&[d[0], foot], stroke);
             } else if along > len {
-                painter.line_segment([d[1], foot], stroke);
+                pen.line(&[d[1], foot], stroke);
             }
             if len > 2.5 * style.arrow_len || style.arrow == ArrowStyle::Tick {
-                arrow(painter, d[0], -u, color, style);
-                arrow(painter, d[1], u, color, style);
+                arrow(pen, d[0], -u, color, style);
+                arrow(pen, d[1], u, color, style);
             } else {
                 // Too tight: arrows point inward from outside.
-                arrow(painter, d[0], u, color, style);
-                arrow(painter, d[1], -u, color, style);
+                arrow(pen, d[0], u, color, style);
+                arrow(pen, d[1], -u, color, style);
             }
         }
         DimShape::Radius { center, tip, from } => {
-            painter.line_segment([*from, *tip], stroke);
+            pen.line(&[*from, *tip], stroke);
             if from == center {
-                painter.line_segment([*center, *tip], stroke);
+                pen.line(&[*center, *tip], stroke);
             }
             // The arrow points along the leader: inward from an outside label, outward from
             // the centre when the label is inside.
-            arrow(painter, *tip, *tip - *from, color, style);
+            arrow(pen, *tip, *tip - *from, color, style);
         }
         DimShape::Diameter { ends } => {
-            painter.line_segment([ends[0], ends[1]], stroke);
+            pen.line(&[ends[0], ends[1]], stroke);
             let u = dir(ends[0], ends[1]);
             let along = (dim.text_pos - ends[0]).dot(u);
             let len = (ends[1] - ends[0]).length();
             if along < 0.0 {
-                painter.line_segment([ends[0], dim.text_pos], stroke);
+                pen.line(&[ends[0], dim.text_pos], stroke);
             } else if along > len {
-                painter.line_segment([ends[1], dim.text_pos], stroke);
+                pen.line(&[ends[1], dim.text_pos], stroke);
             }
-            arrow(painter, ends[0], -u, color, style);
-            arrow(painter, ends[1], u, color, style);
+            arrow(pen, ends[0], -u, color, style);
+            arrow(pen, ends[1], u, color, style);
         }
         DimShape::Angular {
             center,
@@ -743,17 +892,17 @@ pub fn paint_dimension(
                     *center + vec2(a.cos(), a.sin()) * *radius
                 })
                 .collect();
-            painter.add(egui::Shape::line(points.clone(), stroke));
+            pen.line(&points, stroke);
             if let (Some(first), Some(last)) = (points.first(), points.last()) {
                 let tangent = |a: f32| vec2(-a.sin(), a.cos()) * sweep.signum();
-                arrow(painter, *first, -tangent(*start), color, style);
-                arrow(painter, *last, tangent(start + sweep), color, style);
+                arrow(pen, *first, -tangent(*start), color, style);
+                arrow(pen, *last, tangent(start + sweep), color, style);
             }
         }
     }
-    let galleys = label_galleys(painter, &dim.label, style.text, color);
+    let galleys = label_galleys(pen.painter(), &dim.label, style.text, color);
     paint_label(
-        painter,
+        pen,
         dim.text_pos,
         dim.angle,
         &galleys,
@@ -761,12 +910,7 @@ pub fn paint_dimension(
         Some(colors.text_background),
     );
     if state != AnnotationState::Normal {
-        painter.rect_stroke(
-            dim.text_rect,
-            2.0,
-            Stroke::new(1.0, color),
-            StrokeKind::Inside,
-        );
+        pen.highlight(dim.text_rect, color);
     }
 }
 

@@ -28,12 +28,29 @@ impl DriftApp {
         if consume(cmd(Key::N)) {
             self.request(Pending::New);
         }
+        if consume(cmd(Key::L)) {
+            self.toggle_layers_hud();
+        }
+        if consume(cmd(Key::P)) {
+            let painter = ctx.layer_painter(egui::LayerId::background());
+            self.print(&painter);
+        }
         // ⌘' / Ctrl+': show or hide the grid (as in Apple's apps).
         if consume(cmd(Key::Quote)) {
             self.show_grid = !self.show_grid;
         }
 
         if ctx.text_edit_focused() {
+            return;
+        }
+        // The sheet preview takes no drawing keys: Esc (or F) returns to the model.
+        if self.sheet_preview {
+            if ctx.input(|i| i.key_pressed(Key::Escape)) {
+                self.sheet_preview = false;
+            }
+            if ctx.input(|i| i.key_pressed(Key::F)) {
+                self.preview.zoom = 0.0;
+            }
             return;
         }
         if consume(cmd(Key::A)) {

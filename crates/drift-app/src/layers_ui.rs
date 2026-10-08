@@ -9,7 +9,7 @@ use crate::editor::Editor;
 use crate::icons::{self, Glyph};
 
 /// A small icon toggle: full colour when on, faint (and struck through for `strike`) when off.
-fn icon_toggle(ui: &mut egui::Ui, on: &mut bool, glyph: Glyph, strike: bool, tip: &str) {
+pub(crate) fn icon_toggle(ui: &mut egui::Ui, on: &mut bool, glyph: Glyph, strike: bool, tip: &str) {
     let r = icons::button(ui, 24.0, false, tip, |painter, rect, color| {
         let color = if *on {
             color
@@ -203,7 +203,19 @@ impl DriftApp {
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                crate::theme::section(ui, &format!("Layers · {}", layers.len()));
+                ui.horizontal(|ui| {
+                    crate::theme::section(ui, &format!("Layers · {}", layers.len()));
+                });
+                if self.layers_dock == crate::app::layers_hud::LayersDock::Hidden
+                    && ui
+                        .button("Show as a panel")
+                        .on_hover_text(
+                            "A compact layer list to keep at hand while drawing (Ctrl+L)",
+                        )
+                        .clicked()
+                {
+                    self.toggle_layers_hud();
+                }
                 for (id, layer) in layers {
                     let mut edited = layer.clone();
                     let is_current = current == id;

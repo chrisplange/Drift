@@ -11,6 +11,7 @@ use glam::DVec2;
 
 use crate::constraint::Slot;
 use crate::drafting::{Anchor, Annotation, AnnotationId, DimNote, DraftStyle, Fill, FillId};
+use crate::groups::{Group, GroupId};
 use crate::layers::{Appearance, Layer, LayerId};
 use crate::sheets::{Sheet, SheetId};
 use crate::units::{Kind, Units};
@@ -225,6 +226,7 @@ enum Key {
     Draft,
     Patterns,
     Sheet(SheetId),
+    Group(GroupId),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -246,6 +248,7 @@ enum Record {
     Draft(DraftStyle),
     Patterns(String),
     Sheet(Sheet),
+    Group(Group),
 }
 
 /// One undoable step: the before and after state of everything it touched.
@@ -288,6 +291,7 @@ pub struct Document {
     /// Hatch patterns imported from `.pat` files, as `.pat` text, so they travel with the file.
     patterns: String,
     sheets: BTreeMap<SheetId, Sheet>,
+    groups: BTreeMap<GroupId, Group>,
     next_id: u32,
     next_constraint_id: u32,
     /// Next id for variables, variants and measurements (one counter, ids never reused).
@@ -322,6 +326,7 @@ impl PartialEq for Document {
             && self.draft == other.draft
             && self.patterns == other.patterns
             && self.sheets == other.sheets
+            && self.groups == other.groups
     }
 }
 
@@ -345,6 +350,7 @@ impl Default for Document {
             draft: DraftStyle::default(),
             patterns: String::new(),
             sheets: BTreeMap::new(),
+            groups: BTreeMap::new(),
             // Ids start at 1; `e0` and `c0` are not valid ids in `.drift` files.
             next_id: 1,
             next_constraint_id: 1,
@@ -534,6 +540,7 @@ impl Document {
             Key::Draft => Some(Record::Draft(self.draft)),
             Key::Patterns => Some(Record::Patterns(self.patterns.clone())),
             Key::Sheet(id) => self.sheets.get(&id).cloned().map(Record::Sheet),
+            Key::Group(id) => self.groups.get(&id).cloned().map(Record::Group),
         }
     }
 
@@ -642,6 +649,12 @@ impl Document {
             }
             (Key::Sheet(id), _) => {
                 self.sheets.remove(&id);
+            }
+            (Key::Group(id), Some(Record::Group(g))) => {
+                self.groups.insert(id, g);
+            }
+            (Key::Group(id), _) => {
+                self.groups.remove(&id);
             }
         }
     }
@@ -916,6 +929,27 @@ impl Document {
             self.remove_measurement(id);
         }
         self.drop_dangling_annotations();
+        self.prune_groups();
+    }
+
+    /// Drop deleted entities from groups, and groups left with fewer than one member.
+    fn prune_groups(&mut self) {
+        let stale: Vec<GroupId> = self
+            .groups
+            .iter()
+            .filter(|(_, g)| g.members.iter().any(|e| !self.entities.contains_key(e)))
+            .map(|(id, _)| *id)
+            .collect();
+        for id in stale {
+            self.touch_key(Key::Group(id));
+            let entities = &self.entities;
+            if let Some(g) = self.groups.get_mut(&id) {
+                g.members.retain(|e| entities.contains_key(e));
+                if g.members.is_empty() {
+                    self.groups.remove(&id);
+                }
+            }
+        }
     }
 
     /// Annotations on deleted geometry go; a note whose leader lost its target stays where it
@@ -1014,6 +1048,19 @@ impl Document {
                 self.measurements.remove(&id);
             } else {
                 self.measurements.insert(id, c);
+            }
+        }
+        let grouped: Vec<GroupId> = self
+            .groups
+            .iter()
+            .filter(|(_, g)| g.members.contains(&from))
+            .map(|(id, _)| *id)
+            .collect();
+        for id in grouped {
+            self.touch_key(Key::Group(id));
+            if let Some(g) = self.groups.get_mut(&id) {
+                g.members.remove(&from);
+                g.members.insert(into);
             }
         }
         let annotated: Vec<_> = self
@@ -1413,6 +1460,7 @@ impl Document {
         keys.push(Key::Draft);
         keys.push(Key::Patterns);
         keys.extend(self.sheets.keys().map(|id| Key::Sheet(*id)));
+        keys.extend(self.groups.keys().map(|id| Key::Group(*id)));
         keys
     }
 
@@ -1908,6 +1956,91 @@ impl Document {
                     self.dim_notes.remove(&id);
                 }
             }
+        }
+    }
+
+    pub fn groups(&self) -> impl Iterator<Item = (GroupId, &Group)> {
+        self.groups.iter().map(|(id, g)| (*id, g))
+    }
+
+    pub fn group(&self, id: GroupId) -> Option<&Group> {
+        self.groups.get(&id)
+    }
+
+    /// The group an entity belongs to.
+    pub fn group_of(&self, entity: EntityId) -> Option<GroupId> {
+        self.groups
+            .iter()
+            .find(|(_, g)| g.members.contains(&entity))
+            .map(|(id, _)| *id)
+    }
+
+    /// Take `members` out of any group they are in (dropping groups left empty).
+    fn ungroup_members(&mut self, members: &BTreeSet<EntityId>) {
+        let touched: Vec<GroupId> = self
+            .groups
+            .iter()
+            .filter(|(_, g)| !g.members.is_disjoint(members))
+            .map(|(id, _)| *id)
+            .collect();
+        for id in touched {
+            self.touch_key(Key::Group(id));
+            if let Some(g) = self.groups.get_mut(&id) {
+                g.members.retain(|e| !members.contains(e));
+                if g.members.is_empty() {
+                    self.groups.remove(&id);
+                }
+            }
+        }
+    }
+
+    /// Make a group. Its members leave any group they were in.
+    pub fn add_group(&mut self, group: Group) -> Result<GroupId, DocumentError> {
+        if let Some(e) = group
+            .members
+            .iter()
+            .find(|e| !self.entities.contains_key(e))
+        {
+            return Err(DocumentError::Missing(*e));
+        }
+        self.ungroup_members(&group.members);
+        let id = GroupId(self.next_drafting());
+        self.touch_key(Key::Group(id));
+        self.groups.insert(id, group);
+        Ok(id)
+    }
+
+    /// Insert a group with a known id (loading a file).
+    pub fn insert_group(&mut self, id: GroupId, group: Group) -> Result<(), DocumentError> {
+        if let Some(e) = group
+            .members
+            .iter()
+            .find(|e| !self.entities.contains_key(e))
+        {
+            return Err(DocumentError::Missing(*e));
+        }
+        self.next_drafting_id = self.next_drafting_id.max(id.0 + 1);
+        self.touch_key(Key::Group(id));
+        self.groups.insert(id, group);
+        Ok(())
+    }
+
+    pub fn rename_group(&mut self, id: GroupId, name: &str) {
+        if let Some(g) = self.groups.get(&id)
+            && g.name != name
+        {
+            self.touch_key(Key::Group(id));
+            if let Some(g) = self.groups.get_mut(&id) {
+                g.name = name.to_owned();
+            }
+        }
+    }
+
+    /// Dissolve a group (its members stay).
+    pub fn remove_group(&mut self, id: GroupId) {
+        if self.groups.contains_key(&id) {
+            self.touch_key(Key::Group(id));
+            self.groups.remove(&id);
         }
     }
 

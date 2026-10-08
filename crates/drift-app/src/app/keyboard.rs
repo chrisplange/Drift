@@ -28,6 +28,13 @@ impl DriftApp {
         if consume(cmd(Key::N)) {
             self.request(Pending::New);
         }
+        // Order matters: Shift first.
+        if consume(cmd_shift(Key::G)) {
+            self.editor.ungroup();
+        }
+        if consume(cmd(Key::G)) {
+            self.editor.make_group();
+        }
         if consume(cmd(Key::L)) {
             self.toggle_layers_hud();
         }
@@ -59,6 +66,21 @@ impl DriftApp {
         }
         let plain = ctx.input(|i| i.modifiers.is_none());
         let pressed = |key| plain && ctx.input(|i| i.key_pressed(key));
+        // Tab selects a chain of connected curves (Revit-style). egui moves keyboard focus on
+        // Tab, so take focus back from any button it landed on.
+        if pressed(Key::Tab) && !self.tool.is_busy() {
+            if let Some(id) = ctx.memory(|m| m.focused()) {
+                ctx.memory_mut(|m| m.surrender_focus(id));
+            }
+            if self.tool.kind() != ToolKind::Select {
+                self.set_tool(ToolKind::Select);
+            }
+            let n = self.editor.select_chain();
+            if n > 0 {
+                let now = ctx.input(|i| i.time);
+                self.set_status(format!("Selected a chain of {n}"), false, now);
+            }
+        }
 
         // Modal keys go to the tool first: X / Y lock an axis, G grabs (moves) the selection,
         // B picks a move's base point.
@@ -72,6 +94,8 @@ impl DriftApp {
         claimed(Key::Y, ToolKey::Y);
         claimed(Key::G, ToolKey::G);
         claimed(Key::B, ToolKey::B);
+        // R rotates a selection (with the select tool); otherwise it's the rectangle tool.
+        let r_claimed = claimed(Key::R, ToolKey::R);
         if ctx.input(|i| i.modifiers.shift_only() && i.key_pressed(Key::G)) {
             self.grid_snap = !self.grid_snap;
         }
@@ -114,11 +138,14 @@ impl DriftApp {
         if pressed(Key::F) {
             self.fit_target = Some(self.fit_bounds());
         }
-        let requested = ToolKind::ALL.into_iter().find(|kind| {
-            kind.shortcut()
-                .and_then(|c| Key::from_name(&c.to_string()))
-                .is_some_and(pressed)
-        });
+        let requested = ToolKind::ALL
+            .into_iter()
+            .filter(|_| !r_claimed)
+            .find(|kind| {
+                kind.shortcut()
+                    .and_then(|c| Key::from_name(&c.to_string()))
+                    .is_some_and(pressed)
+            });
         if let Some(mut kind) = requested {
             let current = self.tool.kind();
             if kind == ToolKind::Arc {

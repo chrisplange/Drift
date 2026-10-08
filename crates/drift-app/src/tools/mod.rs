@@ -24,6 +24,7 @@ mod line;
 mod offset_mirror;
 mod point;
 mod rectangle;
+mod rotate;
 mod select;
 mod tangent_arc;
 #[cfg(test)]
@@ -78,6 +79,13 @@ pub enum Overlay {
         base: DVec2,
         to: Option<DVec2>,
     },
+    /// A modal rotate: the pivot, the reference direction's point, and the angle so far
+    /// (`None` while a new pivot is being picked).
+    Rotate {
+        pivot: DVec2,
+        from: DVec2,
+        degrees: Option<f64>,
+    },
     /// Highlight the closed area around a point (the Fill tool's preview).
     Region {
         at: DVec2,
@@ -94,8 +102,10 @@ pub enum ToolKey {
     Y,
     /// Grab: move the selection.
     G,
-    /// Pick the base point of a move.
+    /// Pick the base point of a move (or the pivot of a rotate).
     B,
+    /// Rotate the selection.
+    R,
 }
 
 /// A world axis a drawing tool can lock the segment being drawn to (Blender-style X / Y keys).

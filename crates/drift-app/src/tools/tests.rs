@@ -1469,3 +1469,280 @@ fn a_drawn_circle_takes_a_diameter_dimension() {
     ed.set_dimension(d, 30.0).unwrap();
     assert_eq!(drift_solver::radius_of(&ed.doc, id), Some(15.0));
 }
+
+fn rotated_rectangle_fixture() -> (Editor, Vec<EntityId>) {
+    let mut ed = Editor::default();
+    ed.auto_relations = true;
+    let mut rect = RectangleTool::default();
+    click(&mut ed, &mut rect, v(0.0, 0.0));
+    click(&mut ed, &mut rect, v(20.0, 10.0));
+    let ids: Vec<EntityId> = ed.doc.iter().map(|(id, _)| id).collect();
+    ed.select_all();
+    (ed, ids)
+}
+
+fn hv_count(ed: &Editor) -> (usize, usize) {
+    let h = ed
+        .doc
+        .constraints()
+        .filter(|(_, c)| matches!(c, Constraint::Horizontal { .. }))
+        .count();
+    let v_ = ed
+        .doc
+        .constraints()
+        .filter(|(_, c)| matches!(c, Constraint::Vertical { .. }))
+        .count();
+    (h, v_)
+}
+
+#[test]
+fn rotate_turns_the_selection_about_its_centre() {
+    let (mut ed, ids) = rotated_rectangle_fixture();
+    assert_eq!(hv_count(&ed), (2, 2));
+    let mut tool = SelectTool::default();
+    // R with the pointer to the right of the centre (10, 5); turn to 30° up.
+    let start = ptr(&ed, &tool, v(30.0, 5.0));
+    assert!(tool.key(ToolKey::R, Some(&start), &mut ed));
+    assert!(tool.is_modal());
+    let to = v(10.0, 5.0) + DVec2::from_angle(30f64.to_radians()) * 20.0;
+    tool.handle(Input::Hover(ptr(&ed, &tool, to)), &mut ed);
+    tool.handle(
+        Input::Click(ptr(&ed, &tool, to), Modifiers::default()),
+        &mut ed,
+    );
+    assert!(!tool.is_modal());
+    // The corner (0, 0) turned 30° about (10, 5); sizes kept; H/V relations gone.
+    let expected = v(10.0, 5.0) + DVec2::from_angle(30f64.to_radians()).rotate(v(-10.0, -5.0));
+    assert!(
+        ids.iter()
+            .filter_map(|id| ed.doc.point(*id).ok())
+            .any(|p| p.distance(expected) < 1e-6),
+        "the corner (0, 0) lands at {expected:?}"
+    );
+    assert_eq!(hv_count(&ed), (0, 0));
+    assert!(ed.notice.take().is_some_and(|n| n.contains("removed")));
+    // One undo step puts it back, relations and all.
+    ed.undo();
+    assert_eq!(hv_count(&ed), (2, 2));
+}
+
+#[test]
+fn quarter_turns_keep_relations_and_typed_angles_are_exact() {
+    let (mut ed, ids) = rotated_rectangle_fixture();
+    let mut tool = SelectTool::default();
+    let start = ptr(&ed, &tool, v(30.0, 5.0));
+    tool.key(ToolKey::R, Some(&start), &mut ed);
+    tool.set_typed([Some(90.0), None]);
+    tool.commit_typed(&start, &mut ed);
+    // Horizontal and vertical swapped, so the rectangle is still constrained square.
+    assert_eq!(hv_count(&ed), (2, 2));
+    assert!(
+        ed.doc
+            .constraints()
+            .all(|(id, _)| !ed.analysis().conflicts.contains(&id))
+    );
+    let pts: Vec<DVec2> = ids.iter().filter_map(|id| ed.doc.point(*id).ok()).collect();
+    // Now 10 wide and 20 tall, about the same centre, exactly.
+    assert!(
+        pts.contains(&v(15.0, -5.0)) && pts.contains(&v(5.0, 15.0)),
+        "{pts:?}"
+    );
+
+    // B picks a pivot; Esc cancels everything.
+    let before: Vec<DVec2> = ids.iter().filter_map(|id| ed.doc.point(*id).ok()).collect();
+    tool.key(ToolKey::R, Some(&start), &mut ed);
+    tool.key(ToolKey::B, None, &mut ed);
+    tool.handle(
+        Input::Click(ptr(&ed, &tool, v(5.0, -5.0)), Modifiers::default()),
+        &mut ed,
+    );
+    tool.handle(Input::Hover(ptr(&ed, &tool, v(40.0, 0.0))), &mut ed);
+    assert!(tool.cancel(&mut ed));
+    let after: Vec<DVec2> = ids.iter().filter_map(|id| ed.doc.point(*id).ok()).collect();
+    assert_eq!(before, after);
+}
+
+#[test]
+fn groups_pick_together_and_open_for_editing() {
+    let (mut ed, _) = rotated_rectangle_fixture();
+    let lines: BTreeSet<EntityId> = ed
+        .doc
+        .iter()
+        .filter(|(_, e)| matches!(e.kind, EntityKind::Line { .. }))
+        .map(|(id, _)| id)
+        .collect();
+    // Grouping the selection keeps the curves (their points ride along).
+    let g = ed.make_group().expect("grouped");
+    assert_eq!(ed.doc.group(g).unwrap().members, lines);
+    assert_eq!(ed.selected_group(), Some(g));
+    let mut tool = SelectTool::default();
+    // Clicking one edge picks the whole group.
+    ed.selection.clear();
+    click(&mut ed, &mut tool, v(4.0, 0.0));
+    assert_eq!(ed.selection, lines);
+    // Double-click opens it: now one edge at a time.
+    tool.handle(Input::DoubleClick(ptr(&ed, &tool, v(4.0, 0.0))), &mut ed);
+    assert_eq!(ed.open_group, Some(g));
+    click(&mut ed, &mut tool, v(20.0, 2.0));
+    assert_eq!(ed.selection.len(), 1);
+    // Esc leaves the group and picks it whole again.
+    assert!(tool.cancel(&mut ed));
+    assert_eq!(ed.open_group, None);
+    assert_eq!(ed.selection, lines);
+    // Rotating the group turns all of it.
+    let start = ptr(&ed, &tool, v(30.0, 5.0));
+    tool.key(ToolKey::R, Some(&start), &mut ed);
+    tool.set_typed([Some(180.0), None]);
+    tool.commit_typed(&start, &mut ed);
+    let pts: Vec<DVec2> = ed
+        .doc
+        .iter()
+        .filter_map(|(_, e)| match e.kind {
+            EntityKind::Point(p) => Some(p),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        pts.contains(&v(20.0, 10.0)) && pts.contains(&v(0.0, 0.0)),
+        "{pts:?}"
+    );
+    // Ungroup dissolves it; one undo brings it back.
+    ed.ungroup();
+    assert!(ed.doc.groups().next().is_none());
+    ed.undo();
+    assert_eq!(ed.doc.group(g).unwrap().members, lines);
+}
+
+#[test]
+fn moving_a_picked_hatch_moves_its_area() {
+    let (mut ed, _) = rotated_rectangle_fixture();
+    ed.selection.clear();
+    ed.add_fill_at(v(5.0, 5.0)).unwrap();
+    assert!(ed.selection.is_empty() && ed.selected_fills.len() == 1);
+    let mut tool = SelectTool::default();
+    // G with only the hatch picked moves the rectangle around it.
+    let start = ptr(&ed, &tool, v(5.0, 5.0));
+    assert!(tool.key(ToolKey::G, Some(&start), &mut ed));
+    tool.set_typed([Some(30.0), Some(0.0)]);
+    tool.commit_typed(&start, &mut ed);
+    let xs: Vec<f64> = ed
+        .doc
+        .iter()
+        .filter_map(|(_, e)| match e.kind {
+            EntityKind::Point(p) => Some(p.x),
+            _ => None,
+        })
+        .collect();
+    assert!(xs.iter().all(|x| *x >= 30.0 - 1e-9), "{xs:?}");
+    let shape = ed.fill_shapes().values().next().cloned().unwrap();
+    assert!(!shape.lost && (shape.region.centroid.x - 40.0).abs() < 1e-6);
+    // Dragging inside the picked hatch moves it too.
+    let from = ptr(&ed, &tool, v(40.0, 5.0));
+    tool.handle(Input::DragStart(from, Modifiers::default()), &mut ed);
+    tool.handle(Input::Drag(ptr(&ed, &tool, v(40.0, 25.0))), &mut ed);
+    tool.handle(
+        Input::DragEnd(ptr(&ed, &tool, v(40.0, 25.0)), Modifiers::default()),
+        &mut ed,
+    );
+    let shape = ed.fill_shapes().values().next().cloned().unwrap();
+    assert!(
+        (shape.region.centroid.y - 25.0).abs() < 1e-6,
+        "{:?}",
+        shape.region.centroid
+    );
+}
+
+#[test]
+fn rotate_pivot_from_b_and_absolute_angles() {
+    let (mut ed, ids) = rotated_rectangle_fixture();
+    let mut tool = SelectTool::default();
+    // R with the pointer anywhere: nothing turns until the pointer moves, and then the angle
+    // is the pointer's direction from 0° (here straight right of the centre: no turn).
+    let start = ptr(&ed, &tool, v(13.0, 27.0));
+    tool.key(ToolKey::R, Some(&start), &mut ed);
+    assert_eq!(tool.spin.as_ref().unwrap().pivot, v(10.0, 5.0));
+    tool.handle(Input::Hover(ptr(&ed, &tool, v(40.0, 5.5))), &mut ed);
+    let flat: Vec<DVec2> = ids.iter().filter_map(|id| ed.doc.point(*id).ok()).collect();
+    assert!(
+        flat.contains(&v(20.0, 10.0)),
+        "near 0° sticks to 0°: {flat:?}"
+    );
+    // B, then pick the corner (0, 0) as the pivot; point straight up: a quarter turn.
+    tool.key(ToolKey::B, None, &mut ed);
+    tool.handle(Input::Hover(ptr(&ed, &tool, v(0.0, 0.0))), &mut ed);
+    tool.handle(
+        Input::Click(ptr(&ed, &tool, v(0.0, 0.0)), Modifiers::default()),
+        &mut ed,
+    );
+    tool.handle(Input::Hover(ptr(&ed, &tool, v(0.0, 30.0))), &mut ed);
+    tool.handle(
+        Input::Click(ptr(&ed, &tool, v(0.0, 30.0)), Modifiers::default()),
+        &mut ed,
+    );
+    let turned: Vec<DVec2> = ids.iter().filter_map(|id| ed.doc.point(*id).ok()).collect();
+    assert!(
+        turned.iter().any(|p| p.distance(v(0.0, 20.0)) < 1e-6)
+            && turned.iter().any(|p| p.distance(v(-10.0, 20.0)) < 1e-6),
+        "{turned:?}"
+    );
+}
+
+#[test]
+fn clicking_inside_a_closed_area_picks_its_outline() {
+    let (mut ed, _) = rotated_rectangle_fixture();
+    ed.selection.clear();
+    let lines: BTreeSet<EntityId> = ed
+        .doc
+        .iter()
+        .filter(|(_, e)| matches!(e.kind, EntityKind::Line { .. }))
+        .map(|(id, _)| id)
+        .collect();
+    let mut tool = SelectTool::default();
+    click(&mut ed, &mut tool, v(5.0, 5.0));
+    assert!(ed.selected_region.is_some());
+    assert_eq!(ed.selection, lines);
+    // Moving it takes the region along.
+    let start = ptr(&ed, &tool, v(5.0, 5.0));
+    tool.key(ToolKey::G, Some(&start), &mut ed);
+    tool.set_typed([Some(0.0), Some(50.0)]);
+    tool.commit_typed(&start, &mut ed);
+    let r = ed.region().expect("still picked");
+    assert!(
+        (r.centroid - v(10.0, 55.0)).length() < 1e-6,
+        "{:?}",
+        r.centroid
+    );
+}
+
+#[test]
+fn tab_selects_a_chain_of_connected_curves() {
+    let mut ed = Editor::default();
+    let mut line = LineTool::default();
+    // An L-shaped polyline, a separate line, and a circle touching the end.
+    for at in [v(0.0, 0.0), v(10.0, 0.0), v(10.0, 10.0)] {
+        click(&mut ed, &mut line, at);
+    }
+    line.handle(Input::Finish, &mut ed);
+    for at in [v(30.0, 0.0), v(40.0, 0.0)] {
+        click(&mut ed, &mut line, at);
+    }
+    line.handle(Input::Finish, &mut ed);
+    let lines: Vec<EntityId> = ed
+        .doc
+        .iter()
+        .filter(|(_, e)| matches!(e.kind, EntityKind::Line { .. }))
+        .map(|(id, _)| id)
+        .collect();
+    assert_eq!(lines.len(), 3);
+    let c = ed.doc.add_point(v(10.0, 10.0));
+    ed.doc.add_circle(c, 2.0).unwrap();
+    ed.sync();
+    // Pointing at the first segment, Tab picks both segments of the L (not the others).
+    ed.hovered = Some(lines[0]);
+    assert_eq!(ed.select_chain(), 2);
+    assert_eq!(ed.selection, [lines[0], lines[1]].into());
+    // With nothing under the pointer, it widens the selection instead.
+    ed.hovered = None;
+    ed.selection = [lines[2]].into();
+    assert_eq!(ed.select_chain(), 1);
+}

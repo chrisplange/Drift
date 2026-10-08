@@ -9,6 +9,7 @@ pub mod demo;
 pub mod document;
 pub mod drafting;
 pub mod expr;
+pub mod groups;
 pub mod layers;
 pub mod params;
 pub mod shape;
@@ -26,6 +27,7 @@ pub use drafting::{
     Hatch, Leader, LeaderEnd, OrdinateAxis, Standard, Tolerance,
 };
 pub use glam::DVec2;
+pub use groups::{Group, GroupId};
 pub use layers::{Appearance, Layer, LayerId, LineType, LineWeight, Rgb};
 pub use shape::{DofState, Emphasis, LineKind, Shape, SketchItem};
 pub use sheets::{PaperSize, Revision, Sheet, SheetId, TitleBlock, TitleFields};

@@ -83,8 +83,6 @@ pub(super) struct Grab {
     /// The pointer's offset before locks and typed values (see `move_offset`).
     pub(super) delta: DVec2,
     pub(super) picking_base: bool,
-    /// A region being moved (its seed point follows it).
-    pub(super) region: bool,
     pub(super) lock: Option<Axis>,
     pub(super) typed: [Option<f64>; 2],
     /// The offset the geometry has been moved by so far in the open transaction.
@@ -125,6 +123,7 @@ impl Grab {
 pub struct SelectTool {
     pub(super) drag: Option<SelectDrag>,
     pub(super) grab: Option<Grab>,
+    pub(super) spin: Option<super::rotate::Spin>,
 }
 
 impl SelectTool {
@@ -134,14 +133,21 @@ impl SelectTool {
             return false;
         }
         // A selected region moves its boundary, based on its centroid.
-        let region = if ed.selection.is_empty() {
-            ed.region()
+        // A picked region (its outline is selected with it) moves from its centroid.
+        let region = ed.region().filter(|r| {
+            let outline = ed.region_curves(r);
+            ed.selection.iter().all(|id| outline.contains(id))
+        });
+        // A picked fill or hatch moves the curves around it (it follows them).
+        let fill = if ed.selection.is_empty() && region.is_none() {
+            ed.selected_fill_curves()
         } else {
             None
         };
-        let (ids, base) = match &region {
-            Some(r) => (ed.region_curves(r), r.centroid),
-            None => {
+        let (ids, base) = match (&region, fill) {
+            (Some(r), _) => (ed.region_curves(r), r.centroid),
+            (None, Some((ids, centre))) => (ids, centre),
+            (None, None) => {
                 let ids: Vec<EntityId> = ed.selection.iter().copied().collect();
                 let base = ed.move_base(&ids, p.raw, false);
                 (ids, base)
@@ -160,7 +166,6 @@ impl SelectTool {
             start: p.raw,
             delta: DVec2::ZERO,
             picking_base: false,
-            region: region.is_some(),
             lock: None,
             typed: [None; 2],
             applied: DVec2::ZERO,
@@ -173,9 +178,8 @@ impl SelectTool {
     pub(super) fn confirm_grab(&mut self, ed: &mut Editor) {
         let Some(grab) = self.grab.take() else { return };
         let offset = grab.offset();
-        if grab.region
-            && let Some(seed) = &mut ed.selected_region
-        {
+        // A picked region moves with its outline.
+        if let Some(seed) = &mut ed.selected_region {
             *seed += offset;
         }
         ed.doc.rollback();
@@ -209,6 +213,9 @@ impl SelectTool {
         if let Some(grab) = &self.grab {
             return (!grab.picking_base).then_some((&grab.points, grab.ids.as_slice()));
         }
+        if let Some(spin) = &self.spin {
+            return (!spin.picking_pivot).then_some((&spin.points, spin.ids.as_slice()));
+        }
         match &self.drag {
             Some(SelectDrag::Move { points, ids, .. }) => Some((points, ids.as_slice())),
             _ => None,
@@ -218,7 +225,7 @@ impl SelectTool {
 
 impl Tool for SelectTool {
     fn is_busy(&self) -> bool {
-        self.drag.is_some() || self.grab.is_some()
+        self.drag.is_some() || self.grab.is_some() || self.spin.is_some()
     }
 
     fn kind(&self) -> ToolKind {
@@ -226,10 +233,19 @@ impl Tool for SelectTool {
     }
 
     fn is_modal(&self) -> bool {
-        self.grab.is_some()
+        self.grab.is_some() || self.spin.is_some()
     }
 
     fn key(&mut self, key: ToolKey, pointer: Option<&Pointer>, ed: &mut Editor) -> bool {
+        if self.spin.is_some() {
+            return self.spin_key(key, ed);
+        }
+        if key == ToolKey::R && self.grab.is_none() {
+            return match pointer {
+                Some(p) => self.start_spin(p, ed),
+                None => false,
+            };
+        }
         match (key, &mut self.grab) {
             (ToolKey::G, None) => match pointer {
                 Some(p) => self.start_grab(p, ed),
@@ -260,6 +276,9 @@ impl Tool for SelectTool {
     }
 
     fn fields(&self) -> &'static [&'static str] {
+        if let Some(spin) = &self.spin {
+            return if spin.picking_pivot { &[] } else { &["Angle"] };
+        }
         match &self.grab {
             Some(grab) if !grab.picking_base => {
                 if grab.lock.is_some() {
@@ -276,6 +295,9 @@ impl Tool for SelectTool {
         if let Some(grab) = &mut self.grab {
             grab.typed = values;
         }
+        if let Some(spin) = &mut self.spin {
+            spin.typed = values[0];
+        }
     }
 
     fn commit_typed(&mut self, _p: &Pointer, ed: &mut Editor) {
@@ -283,9 +305,19 @@ impl Tool for SelectTool {
         if self.grab.is_some() {
             self.confirm_grab(ed);
         }
+        if self.spin.is_some() {
+            self.confirm_spin(ed);
+        }
     }
 
     fn measurement(&self, p: &Pointer) -> Option<String> {
+        if let Some(spin) = &self.spin {
+            return Some(if spin.picking_pivot {
+                "Pivot".into()
+            } else {
+                format!("Angle {}", p.units.format_angle(spin.current()))
+            });
+        }
         let grab = self.grab.as_ref()?;
         if grab.picking_base {
             return Some("Base point".into());
@@ -303,6 +335,15 @@ impl Tool for SelectTool {
     }
 
     fn hint(&self) -> String {
+        if let Some(spin) = &self.spin {
+            return if spin.picking_pivot {
+                "Click the pivot (snaps to points) · Esc: cancel".into()
+            } else {
+                "Rotate: click / Enter to place · type an angle · 15° steps stick · B: pivot · \
+                 Esc: cancel"
+                    .into()
+            };
+        }
         if let Some(grab) = &self.grab {
             return if grab.picking_base {
                 "Click the base point (snaps to points) · Esc: cancel".into()
@@ -333,6 +374,9 @@ impl Tool for SelectTool {
     }
 
     fn handle(&mut self, input: Input, ed: &mut Editor) {
+        if self.spin_input(input, ed) {
+            return;
+        }
         if let Some(grab) = &mut self.grab {
             ed.hovered = None;
             ed.hovered_midpoint = None;
@@ -440,23 +484,58 @@ impl Tool for SelectTool {
                     }
                     Some(_) => None,
                 };
+                // Picking outside the open group closes it.
+                if let (Some(g), Some(id)) = (ed.open_group, hit)
+                    && ed.doc.group_of(id) != Some(g)
+                {
+                    ed.open_group = None;
+                }
                 match hit {
                     Some(id) if mods.command => {
-                        if !ed.selection.remove(&id) {
-                            ed.selection.insert(id);
+                        let set = ed.pick_set(id);
+                        if ed.selection.contains(&id) {
+                            ed.selection.retain(|e| !set.contains(e));
+                        } else {
+                            ed.selection.extend(set);
                         }
                     }
                     Some(id) if mods.shift => {
-                        ed.selection.insert(id);
+                        let set = ed.pick_set(id);
+                        ed.selection.extend(set);
                     }
                     Some(id) => {
-                        ed.selection = [id].into();
+                        ed.selection = ed.pick_set(id);
                     }
-                    None if !mods.shift && !mods.command => ed.selection.clear(),
-                    None => {}
+                    // Inside a closed area (with no fill): its outline curves.
+                    None => {
+                        let curves: Vec<EntityId> = match ed.region() {
+                            Some(r) => ed
+                                .region_curves(&r)
+                                .into_iter()
+                                .filter(|id| !ed.is_locked(*id))
+                                .collect(),
+                            None => Vec::new(),
+                        };
+                        if !mods.shift && !mods.command {
+                            ed.selection.clear();
+                            ed.open_group = None;
+                        }
+                        ed.selection.extend(curves);
+                        ed.expand_groups();
+                    }
                 }
             }
-            Input::DoubleClick(_) | Input::Finish => {}
+            // Double-click a group's member to edit inside the group.
+            Input::DoubleClick(p) => {
+                if let Some(id) = ed.index.pick(p.raw, p.tolerance, |id| !ed.is_locked(id))
+                    && let Some(g) = ed.doc.group_of(id)
+                    && ed.open_group != Some(g)
+                {
+                    ed.open_group = Some(g);
+                    ed.selection = [id].into();
+                }
+            }
+            Input::Finish => {}
             Input::DragStart(p, mods) => {
                 match ed.index.pick(p.raw, p.tolerance, |id| !ed.is_locked(id)) {
                     Some(id) => {
@@ -464,7 +543,8 @@ impl Tool for SelectTool {
                             if !mods.shift && !mods.command {
                                 ed.selection.clear();
                             }
-                            ed.selection.insert(id);
+                            let set = ed.pick_set(id);
+                            ed.selection.extend(set);
                         }
                         // A lone circle grabbed by its edge resizes.
                         if ed.selection.len() == 1
@@ -492,10 +572,30 @@ impl Tool for SelectTool {
                         });
                     }
                     None => {
-                        self.drag = Some(SelectDrag::Box {
-                            start: p.raw,
-                            current: p.raw,
-                        });
+                        // Dragging inside a picked fill moves its area; elsewhere, box-select.
+                        let picked_fill = ed
+                            .fill_at(p.raw)
+                            .is_some_and(|f| ed.selected_fills.contains(&f));
+                        match picked_fill.then(|| ed.selected_fill_curves()).flatten() {
+                            Some((ids, centre)) => {
+                                let points = ed.doc.defining_points(ids.iter().copied());
+                                ed.doc.begin();
+                                self.drag = Some(SelectDrag::Move {
+                                    ids,
+                                    points,
+                                    start: p.raw,
+                                    base: centre,
+                                    applied: DVec2::ZERO,
+                                    point: None,
+                                });
+                            }
+                            None => {
+                                self.drag = Some(SelectDrag::Box {
+                                    start: p.raw,
+                                    current: p.raw,
+                                });
+                            }
+                        }
                     }
                 }
             }
@@ -544,8 +644,12 @@ impl Tool for SelectTool {
                         ed.selection.clear();
                     }
                     ed.selection.extend(found);
+                    ed.expand_groups();
                 }
-                Some(SelectDrag::Move { point, .. }) => {
+                Some(SelectDrag::Move { point, applied, .. }) => {
+                    if let Some(seed) = &mut ed.selected_region {
+                        *seed += applied;
+                    }
                     if let (Some(from), Some(into)) = (point, p.snapped_point())
                         && from != into
                         && ed.doc.merge_points(from, into).is_ok()
@@ -585,7 +689,7 @@ impl Tool for SelectTool {
     }
 
     fn cancel(&mut self, ed: &mut Editor) -> bool {
-        if self.cancel_grab(ed) {
+        if self.cancel_grab(ed) || self.cancel_spin(ed) {
             return true;
         }
         match self.drag.take() {
@@ -595,6 +699,12 @@ impl Tool for SelectTool {
                 true
             }
             Some(SelectDrag::Box { .. }) => true,
+            // Esc first leaves an open group.
+            None if ed.open_group.is_some() => {
+                ed.open_group = None;
+                ed.expand_groups();
+                true
+            }
             None if !ed.selection.is_empty()
                 || !ed.selected_midpoints.is_empty()
                 || ed.selected_region.is_some()
@@ -611,6 +721,9 @@ impl Tool for SelectTool {
     }
 
     fn overlay(&self) -> Option<Overlay> {
+        if let Some(o) = self.spin_overlay() {
+            return Some(o);
+        }
         if let Some(grab) = &self.grab {
             return Some(Overlay::Move {
                 base: grab.base,

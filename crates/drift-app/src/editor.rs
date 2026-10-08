@@ -244,6 +244,8 @@ pub struct Editor {
     pub hovered_annotation: Option<drift_core::AnnotationId>,
     /// A note just placed by a tool, whose text the UI should let the user type.
     pub pending_note_edit: Option<drift_core::AnnotationId>,
+    /// The group being edited (its members pick one by one).
+    pub open_group: Option<drift_core::GroupId>,
     pub(crate) fill_shapes: Option<(
         u64,
         std::rc::Rc<std::collections::BTreeMap<drift_core::FillId, crate::fills::FillShape>>,
@@ -412,6 +414,99 @@ impl Editor {
         }
         self.index.update(&self.doc);
         ok
+    }
+
+    /// Rotate geometry about `pivot` by `degrees` (counter-clockwise), inside an open
+    /// transaction. `points` are the selection's defining points; they turn rigidly while
+    /// constraints move the rest.
+    ///
+    /// Horizontal / vertical relations and dimensions entirely within the rotated set are
+    /// removed (they can't hold at an arbitrary angle) and returned, so a quarter-turn can put
+    /// them back; fixed points are re-fixed where they land. Returns false if the solve
+    /// conflicts.
+    pub fn rotate_geometry(
+        &mut self,
+        ids: &[EntityId],
+        points: &BTreeSet<EntityId>,
+        pivot: DVec2,
+        degrees: f64,
+    ) -> (bool, Vec<Constraint>) {
+        let rotor = exact_rotor(degrees);
+        let turn = |p: DVec2| pivot + rotor.rotate(p - pivot);
+        let inside: BTreeSet<EntityId> =
+            ids.iter().copied().chain(points.iter().copied()).collect();
+        let internal: Vec<(ConstraintId, Constraint)> = self
+            .doc
+            .constraints()
+            .filter(|(_, c)| c.entities().all(|e| inside.contains(&e)))
+            .map(|(id, c)| (id, *c))
+            .collect();
+        let mut removed = Vec::new();
+        for (id, c) in internal {
+            match c {
+                Constraint::Horizontal { .. }
+                | Constraint::Vertical { .. }
+                | Constraint::HorizontalPoints { .. }
+                | Constraint::VerticalPoints { .. }
+                | Constraint::HorizontalDistance { .. }
+                | Constraint::VerticalDistance { .. } => {
+                    self.doc.remove_constraint(id);
+                    removed.push(c);
+                }
+                Constraint::Fix { point, at } => {
+                    let _ = self.doc.set_constraint(
+                        id,
+                        Constraint::Fix {
+                            point,
+                            at: turn(at),
+                        },
+                    );
+                }
+                _ => {}
+            }
+        }
+        for p in points {
+            if let Ok(at) = self.doc.point(*p) {
+                let _ = self.doc.set_point(*p, turn(at));
+            }
+        }
+        let dragged: Vec<Param> = points.iter().copied().flat_map(Param::point).collect();
+        let report = self.solve(&dragged);
+        let ok = !self.new_conflicts(&report);
+        self.index.update(&self.doc);
+        (ok, removed)
+    }
+
+    /// Put back relations removed by [`rotate_geometry`](Self::rotate_geometry) after a turn by
+    /// a multiple of 90° (horizontal and vertical swap on a quarter turn). Dimensions take the
+    /// geometry's current values.
+    pub fn restore_after_rotation(&mut self, removed: &[Constraint], degrees: f64) {
+        let quarters = (degrees / 90.0).round() as i64;
+        let swap = quarters.rem_euclid(2) == 1;
+        for c in removed {
+            let c = if swap {
+                match *c {
+                    Constraint::Horizontal { line } => Constraint::Vertical { line },
+                    Constraint::Vertical { line } => Constraint::Horizontal { line },
+                    Constraint::HorizontalPoints { a, b } => Constraint::VerticalPoints { a, b },
+                    Constraint::VerticalPoints { a, b } => Constraint::HorizontalPoints { a, b },
+                    Constraint::HorizontalDistance { a, b, value } => {
+                        Constraint::VerticalDistance { a, b, value }
+                    }
+                    Constraint::VerticalDistance { a, b, value } => {
+                        Constraint::HorizontalDistance { a, b, value }
+                    }
+                    other => other,
+                }
+            } else {
+                *c
+            };
+            let c = match drift_solver::measure(&self.doc, &c) {
+                Some(v) if c.is_dimension() => c.with_value(v),
+                _ => c,
+            };
+            let _ = self.doc.add_constraint(c);
+        }
     }
 
     /// Add constraints as one undoable step. Refused if they conflict with the existing ones
@@ -1346,6 +1441,140 @@ impl Editor {
         self.commit("Delete");
     }
 
+    /// The curves joined end to end with `start` (lines and arcs meeting at shared end
+    /// points; circles stand alone), as Revit's Tab selects a chain of walls.
+    pub fn chain_of(&self, start: EntityId) -> BTreeSet<EntityId> {
+        let ends = |id: EntityId| -> Vec<EntityId> {
+            match self.doc.get(id).map(|e| e.kind) {
+                Some(EntityKind::Line { a, b }) => vec![a, b],
+                Some(EntityKind::Arc { start, end, .. }) => vec![start, end],
+                _ => Vec::new(),
+            }
+        };
+        let mut chain = BTreeSet::new();
+        if self.doc.get(start).is_none_or(|e| e.kind.is_point()) {
+            return chain;
+        }
+        let mut queue = vec![start];
+        chain.insert(start);
+        while let Some(c) = queue.pop() {
+            for p in ends(c) {
+                for u in self.doc.users_of(p) {
+                    if !chain.contains(&u) && !self.is_locked(u) && ends(u).contains(&p) {
+                        chain.insert(u);
+                        queue.push(u);
+                    }
+                }
+            }
+        }
+        chain
+    }
+
+    /// Tab: select the chain under the pointer, or widen the selection to whole chains.
+    /// Returns how many curves are selected.
+    pub fn select_chain(&mut self) -> usize {
+        let seeds: Vec<EntityId> = match self.hovered {
+            Some(h) if self.doc.get(h).is_some_and(|e| !e.kind.is_point()) => vec![h],
+            _ => self.selection.iter().copied().collect(),
+        };
+        let mut chain = BTreeSet::new();
+        for s in seeds {
+            chain.extend(self.chain_of(s));
+        }
+        if chain.is_empty() {
+            return 0;
+        }
+        // Within an open group, stay inside it.
+        if let Some(g) = self.open_group.and_then(|g| self.doc.group(g)) {
+            chain.retain(|id| g.members.contains(id));
+        }
+        self.selected_fills.clear();
+        self.selected_region = None;
+        self.selection = chain;
+        self.expand_groups();
+        self.selection.len()
+    }
+
+    /// What picking `id` selects: its whole group, unless that group is open.
+    pub fn pick_set(&self, id: EntityId) -> BTreeSet<EntityId> {
+        match self.doc.group_of(id) {
+            Some(g) if self.open_group != Some(g) => self
+                .doc
+                .group(g)
+                .map_or_else(|| [id].into(), |g| g.members.clone()),
+            _ => [id].into(),
+        }
+    }
+
+    /// Widen the selection to whole groups (except the open one).
+    pub fn expand_groups(&mut self) {
+        let extra: Vec<EntityId> = self
+            .selection
+            .iter()
+            .flat_map(|id| self.pick_set(*id))
+            .collect();
+        self.selection.extend(extra);
+    }
+
+    /// The group the selection is exactly, if any.
+    pub fn selected_group(&self) -> Option<drift_core::GroupId> {
+        let first = *self.selection.first()?;
+        let g = self.doc.group_of(first)?;
+        (self.doc.group(g)?.members == self.selection).then_some(g)
+    }
+
+    /// Group the selection (Ctrl/⌘+G). Curves' own points aren't members: the curves carry
+    /// them.
+    pub fn make_group(&mut self) -> Option<drift_core::GroupId> {
+        let referenced = self.doc.defining_points(
+            self.selection
+                .iter()
+                .copied()
+                .filter(|id| self.doc.get(*id).is_some_and(|e| !e.kind.is_point())),
+        );
+        let members: BTreeSet<EntityId> = self
+            .selection
+            .iter()
+            .copied()
+            .filter(|id| !referenced.contains(id))
+            .collect();
+        if members.len() < 2 {
+            self.notice = Some("Select two or more things to group".into());
+            return None;
+        }
+        let n = self.doc.groups().count() + 1;
+        self.doc.begin();
+        let id = self
+            .doc
+            .add_group(drift_core::Group {
+                name: format!("Group {n}"),
+                members,
+            })
+            .ok();
+        self.commit("Group");
+        self.open_group = None;
+        self.expand_groups();
+        id
+    }
+
+    /// Dissolve the groups the selection belongs to (Ctrl/⌘+Shift+G).
+    pub fn ungroup(&mut self) {
+        let groups: BTreeSet<drift_core::GroupId> = self
+            .selection
+            .iter()
+            .filter_map(|id| self.doc.group_of(*id))
+            .collect();
+        if groups.is_empty() {
+            return;
+        }
+        self.doc.begin();
+        for g in groups {
+            self.doc.remove_group(g);
+        }
+        self.commit("Ungroup");
+        self.open_group = None;
+    }
+
     /// Toggle construction style on the selection: if any selected curve is not construction,
     /// all become construction; otherwise all become solid.
     pub fn toggle_construction(&mut self) {
@@ -2046,4 +2275,25 @@ mod collinear_tests {
             .unwrap();
         assert_collinear(&ed, [a, b, c, d]);
     }
+}
+
+/// A unit rotor for `degrees`, exact for multiples of 90°.
+fn exact_rotor(degrees: f64) -> DVec2 {
+    let quarter = degrees / 90.0;
+    if (quarter - quarter.round()).abs() <= 1e-12 {
+        match (quarter.round() as i64).rem_euclid(4) {
+            0 => DVec2::X,
+            1 => DVec2::Y,
+            2 => -DVec2::X,
+            _ => -DVec2::Y,
+        }
+    } else {
+        DVec2::from_angle(degrees.to_radians())
+    }
+}
+
+/// Whether a turn is a whole number of quarter turns.
+pub fn is_quarter_turn(degrees: f64) -> bool {
+    let q = degrees / 90.0;
+    (q - q.round()).abs() <= 1e-9
 }

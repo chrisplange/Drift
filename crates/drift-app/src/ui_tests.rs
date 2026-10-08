@@ -1641,3 +1641,58 @@ fn layers_hud_floats_docks_and_switches_layers() {
     fresh.state_mut().toggle_layers_hud();
     assert_eq!(fresh.state().layers_dock, LayersDock::Right);
 }
+
+#[test]
+fn group_and_rotate_on_the_canvas() {
+    let Some(mut h) = harness() else { return };
+    h.get_by_label("File").click();
+    h.run();
+    h.get_by_label("Open example").click();
+    h.run();
+    // Pick the four bolt holes and group them.
+    let holes: std::collections::BTreeSet<drift_core::EntityId> = {
+        let doc = &h.state().editor.doc;
+        doc.iter()
+            .filter(|(id, e)| {
+                matches!(e.kind, EntityKind::Circle { .. })
+                    && drift_solver::radius_of(doc, *id).is_some_and(|r| (r - 3.2).abs() < 1e-9)
+            })
+            .map(|(id, _)| id)
+            .collect()
+    };
+    assert_eq!(holes.len(), 4);
+    h.state_mut().editor.selection = holes.clone();
+    h.event(Event::Key {
+        key: Key::G,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: EguiModifiers::COMMAND,
+    });
+    h.run();
+    let g = h.state().editor.selected_group().expect("grouped");
+    assert_eq!(h.state().editor.doc.group(g).unwrap().members, holes);
+    // Clicking any hole picks all four.
+    h.state_mut().editor.selection.clear();
+    let hole = DVec2::new(70.0, 40.0) + DVec2::splat(26.0 / 2f64.sqrt());
+    click_world(&mut h, hole + DVec2::new(0.0, 3.2));
+    assert_eq!(h.state().editor.selection, holes);
+    h.run();
+    save_png("drift_ui_group.png", &mut h);
+    // R rotates the group about its centre: show the guide mid-turn.
+    let start = screen(&h, DVec2::new(110.0, 40.0));
+    h.hover_at(start);
+    h.run();
+    h.key_press(Key::R);
+    h.run();
+    assert!(h.state().tool.is_modal());
+    h.hover_at(screen(
+        &h,
+        DVec2::new(70.0, 40.0) + DVec2::from_angle(0.5) * 40.0,
+    ));
+    h.run();
+    save_png("drift_ui_rotate.png", &mut h);
+    h.key_press(Key::Escape);
+    h.run();
+    assert!(!h.state().tool.is_modal());
+}

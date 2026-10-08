@@ -452,6 +452,18 @@ const SHORTCUTS: &[(&str, &str)] = &[
         "Ctrl+L",
         "Show or hide the Layers panel (float it, or dock it left or right)",
     ),
+    (
+        "R (with a selection)",
+        "Rotate it: type an angle, 15° steps stick, B picks the pivot, click / Enter places",
+    ),
+    (
+        "Tab",
+        "Select the chain of curves joined end to end with the one under the pointer (or the selection)",
+    ),
+    (
+        "Ctrl+G / Ctrl+Shift+G",
+        "Group / ungroup the selection; double-click a group to edit inside it, Esc leaves",
+    ),
     ("F / double middle-click", "Zoom to fit"),
     ("Shift+G", "Toggle grid snapping"),
     ("Ctrl+'", "Show or hide the grid"),

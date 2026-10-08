@@ -363,6 +363,14 @@ impl DriftApp {
                 .and_then(|id| self.editor.doc.constraint(id))
                 .map(|c| c.entities().collect())
                 .unwrap_or_default();
+            // A picked fill shows the curves that move with it.
+            if self.editor.selection.is_empty()
+                && !self.editor.selected_fills.is_empty()
+                && !self.tool.is_busy()
+                && let Some((curves, _)) = self.editor.selected_fill_curves()
+            {
+                self.editor.highlight.extend(curves);
+            }
         }
         if self.tool.kind() != ToolKind::Select && response.hovered() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
@@ -444,6 +452,13 @@ impl DriftApp {
             Some(Overlay::Move { base, to }) => {
                 overlay::move_guide(&painter, &map, base, to, &colors);
             }
+            Some(Overlay::Rotate {
+                pivot,
+                from,
+                degrees,
+            }) => {
+                overlay::rotate_guide(&painter, &map, pivot, from, degrees, &colors);
+            }
             Some(Overlay::Region { at }) => {
                 let regions = self.editor.regions();
                 if let Some(region) = drift_geom::regions::region_at(&regions, at) {
@@ -476,6 +491,7 @@ impl DriftApp {
         }
         self.paint_annotations(&painter, &map, &dims, &glyphs, ui.visuals().dark_mode);
         self.paint_notes(&painter, &notes, ui.visuals().dark_mode);
+        self.paint_groups(&painter, &map, ui.visuals().dark_mode);
         self.paint_free_directions(&painter, &map);
         if let Some(status) = &self.status {
             let now = ui.input(|i| i.time);

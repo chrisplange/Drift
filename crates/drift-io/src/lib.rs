@@ -6,7 +6,7 @@
 //! ```json
 //! {
 //!   "format": "drift",
-//!   "version": 8,
+//!   "version": 9,
 //!   "meta": {"title":"Bracket","units":"mm","generator":"Drift 0.1.0"},
 //!   "display": {"length":"architectural","fraction":16},
 //!   "variables": [
@@ -60,8 +60,8 @@ pub const EXTENSION: &str = "drift";
 /// `layer`, `color`, `weight` (mm) and `linetype` (M6); 7 = adds `drafting` (the dimension
 /// style), `fills` (solid fills and hatches), `annotations` (notes, centre marks, callouts,
 /// ordinate dimensions) and dimension `prefix`, `suffix` and `tol` (M7); 8 = adds `sheets`
-/// (paper, scale, view, title block and revisions) (M8).
-pub const FORMAT_VERSION: u32 = 8;
+/// (paper, scale, view, title block and revisions) (M8); 9 = adds `groups` (M8.5).
+pub const FORMAT_VERSION: u32 = 9;
 const FORMAT_TAG: &str = "drift";
 
 /// Document-level properties stored alongside the geometry.
@@ -715,6 +715,17 @@ struct FileRecord {
     patterns: Option<String>,
     #[serde(default)]
     sheets: Vec<sheets::SheetRecord>,
+    #[serde(default)]
+    groups: Vec<GroupRecord>,
+}
+
+/// A named group of entities.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GroupRecord {
+    id: String,
+    name: String,
+    members: Vec<String>,
 }
 
 fn id_string(id: EntityId) -> String {
@@ -911,12 +922,24 @@ pub fn save(doc: &Document, meta: &Metadata) -> String {
             serde_json::to_string(&sheets::sheet_record(id, s)).expect("sheet serializes")
         })
         .collect();
+    let groups: Vec<String> = doc
+        .groups()
+        .map(|(id, g)| {
+            serde_json::to_string(&GroupRecord {
+                id: id.to_string(),
+                name: g.name.clone(),
+                members: g.members.iter().map(|e| id_string(*e)).collect(),
+            })
+            .expect("group serializes")
+        })
+        .collect();
     let tail = [
         ("measurements", &measurements),
         ("variants", &variants),
         ("fills", &fills),
         ("annotations", &annotations),
         ("sheets", &sheets),
+        ("groups", &groups),
     ];
     let last = tail.iter().rposition(|(_, items)| !items.is_empty());
     push_array(&mut out, "entities", &entities, true);
@@ -1161,6 +1184,25 @@ pub fn load(text: &str) -> Result<(Document, Metadata), LoadError> {
     if let Some(p) = file.patterns {
         doc.set_custom_patterns(p);
     }
+    for g in file.groups {
+        let id = drift_core::GroupId(parse_prefixed(&g.id, 'g')?);
+        if doc.group(id).is_some() {
+            return Err(LoadError::DuplicateId(g.id));
+        }
+        let members = g
+            .members
+            .iter()
+            .map(|m| parse_id(m))
+            .collect::<Result<_, _>>()?;
+        doc.insert_group(
+            id,
+            drift_core::Group {
+                name: g.name,
+                members,
+            },
+        )
+        .map_err(LoadError::Document)?;
+    }
     for r in file.sheets {
         let id_text = r.id.clone();
         let (id, sheet) = sheets::parse_sheet(r)?;
@@ -1256,7 +1298,7 @@ pub fn migrate(value: serde_json::Value) -> Result<serde_json::Value, LoadError>
         // v1 → v2: constraints were introduced; a v1 file simply has none.
         value["constraints"] = serde_json::Value::Array(Vec::new());
     }
-    // v2 → v8 only added optional fields, sections and constraint types: nothing to convert.
+    // v2 → v9 only added optional fields, sections and constraint types: nothing to convert.
     value["version"] = FORMAT_VERSION.into();
     Ok(value)
 }
@@ -1299,7 +1341,7 @@ mod tests {
         let text = save(&doc, &Metadata::default());
         let expected = r#"{
   "format": "drift",
-  "version": 8,
+  "version": 9,
   "meta": {"units":"mm"},
   "entities": [
     {"type":"point","id":"e1","at":[0.0,0.0]},
@@ -1780,15 +1822,27 @@ mod tests {
         });
         doc.add_sheet(sheet);
         doc.add_sheet(drift_core::Sheet::new("Detail"));
+        doc.add_group(drift_core::Group {
+            name: "Edges".into(),
+            members: curves.iter().copied().take(2).collect(),
+        })
+        .unwrap();
 
         let text = save(&doc, &Metadata::default());
-        assert!(text.contains("\"version\": 8"));
+        assert!(text.contains("\"version\": 9"));
         let (loaded, _) = load(&text).unwrap();
         assert_eq!(loaded, doc);
         assert_eq!(save(&loaded, &Metadata::default()), text);
         // Defaults stay out of the file.
         let plain = save(&demo::mounting_plate(), &Metadata::default());
-        for absent in ["drafting", "fills", "annotations", "\"tol\"", "sheets"] {
+        for absent in [
+            "drafting",
+            "fills",
+            "annotations",
+            "\"tol\"",
+            "sheets",
+            "groups",
+        ] {
             assert!(!plain.contains(absent), "{absent}");
         }
     }

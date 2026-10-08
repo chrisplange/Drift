@@ -152,6 +152,41 @@ pub fn move_guide(
     }
 }
 
+/// A rotate in progress: the pivot, the reference ray, the current ray and the arc between.
+pub fn rotate_guide(
+    painter: &egui::Painter,
+    map: &ScreenMap,
+    pivot: DVec2,
+    from: DVec2,
+    degrees: Option<f64>,
+    colors: &OverlayColors,
+) {
+    let c = map.to_screen(pivot);
+    let stroke = Stroke::new(1.2, colors.snap);
+    painter.circle_stroke(c, 5.0, stroke);
+    painter.line_segment([c - vec2(8.0, 0.0), c + vec2(8.0, 0.0)], stroke);
+    painter.line_segment([c - vec2(0.0, 8.0), c + vec2(0.0, 8.0)], stroke);
+    let Some(deg) = degrees else { return };
+    let r = 46.0;
+    let v = map.to_screen(from) - c;
+    let a0 = v.y.atan2(v.x);
+    let dir = |a: f32| vec2(a.cos(), a.sin());
+    // Screen angles turn clockwise, so a counter-clockwise turn is negative.
+    let sweep = -(deg.to_radians() as f32);
+    painter.extend(egui::Shape::dashed_line(
+        &[c, c + dir(a0) * (r + 14.0)],
+        Stroke::new(1.0, colors.snap.gamma_multiply(0.7)),
+        4.0,
+        3.0,
+    ));
+    painter.line_segment([c, c + dir(a0 + sweep) * (r + 14.0)], stroke);
+    let n = ((sweep.abs() / 0.08).ceil() as usize).max(2);
+    let arc: Vec<Pos2> = (0..=n)
+        .map(|k| c + dir(a0 + sweep * k as f32 / n as f32) * r)
+        .collect();
+    painter.add(egui::Shape::line(arc, stroke));
+}
+
 /// Fill a region (outline and holes) with a translucent colour.
 pub fn region_fill(
     painter: &egui::Painter,

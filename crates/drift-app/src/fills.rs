@@ -188,6 +188,21 @@ impl Editor {
         fills.into_iter().map(|(id, _)| id).collect()
     }
 
+    /// The curves that make up the picked fills' areas (outlines and holes), and the centre
+    /// of the first one: what moves or rotates when a fill is moved.
+    pub fn selected_fill_curves(&mut self) -> Option<(Vec<EntityId>, DVec2)> {
+        let shapes = self.fill_shapes();
+        let mut ids = std::collections::BTreeSet::new();
+        let mut centre = None;
+        for f in self.selected_fills.clone() {
+            if let Some(shape) = shapes.get(&f) {
+                ids.extend(self.region_curves(&shape.region));
+                centre.get_or_insert(shape.region.centroid);
+            }
+        }
+        (!ids.is_empty()).then(|| (ids.into_iter().collect(), centre.unwrap_or_default()))
+    }
+
     /// The topmost visible fill under `p`.
     pub fn fill_at(&mut self, p: DVec2) -> Option<FillId> {
         let shapes = self.fill_shapes();
@@ -562,6 +577,18 @@ mod tests {
         // A different area (the disc inside the hole) still gets its own fill.
         ed.add_fill_at(DVec2::new(20.0, 11.0)).unwrap();
         assert_eq!(ed.doc.fills().count(), 2);
+    }
+
+    #[test]
+    fn a_picked_fill_brings_its_boundary_and_holes() {
+        let (mut ed, lines) = plate();
+        let id = ed.add_fill_at(DVec2::new(5.0, 5.0)).unwrap();
+        assert_eq!(ed.selected_fills, [id].into());
+        let (curves, centre) = ed.selected_fill_curves().expect("curves");
+        // The four edges and the hole's circle.
+        assert_eq!(curves.len(), 5);
+        assert!(lines.iter().all(|l| curves.contains(l)));
+        assert!((centre - DVec2::new(20.0, 10.0)).length() < 1e-6);
     }
 
     #[test]

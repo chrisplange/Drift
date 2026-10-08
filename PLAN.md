@@ -1105,6 +1105,36 @@ written but hasn't run yet (no GitHub repo).*
   - PDF font embedding (Helvetica is a standard PDF font).
   - Direct printing without a viewer.
 
+**M8.5 — Floor-plan tools: rotate, groups, blocks, underlays**
+
+*Part 1 as built (2026-10-08): rotate and groups.*
+- **Rotate (R with a selection; Blender-style):**
+  - Turns about the selection's centre. The angle follows the pointer, with multiples of 15°
+    sticking within 2° and snaps giving exact angles.
+  - Type an angle for an exact turn. B picks another pivot; click or Enter places; Esc or
+    right-click cancels. The guide shows the pivot, the reference and current rays and the
+    arc.
+  - Quarter turns are exact. Horizontal / vertical relations and dimensions inside the turned
+    set are swapped on a quarter turn, kept on a half turn, and removed (with a notice) at
+    other angles. Fixed points are re-fixed where they land. Constrained geometry that can't
+    turn is refused.
+  - Without a selection, R is still the rectangle tool.
+- **Groups (format v9 `groups`):**
+  - Ctrl/⌘+G groups the selection (curves, plus standalone points); Ctrl/⌘+Shift+G
+    ungroups. Both are also in the Edit menu.
+  - Picking any member (click, Shift / Ctrl-click, box, or drag) picks the whole group.
+    Moves (G, drag) and rotates take it together.
+  - Double-click a group to edit inside it (members pick one by one); Esc or a click outside
+    leaves it.
+  - Canvas: picked groups get a dashed frame with their name, hovered groups a faint frame,
+    and the open group a solid "Editing …" frame.
+  - The inspector shows the group: rename it, see its member count, Edit group, or Ungroup.
+  - An entity is in at most one group. Members leave a group when deleted, and empty groups
+    go.
+- **Still to come:** part 2, blocks (definitions and placements, edit in place, explode, a
+  library panel, DXF BLOCK / INSERT); part 3, PDF and DXF underlays with scale calibration
+  and snapping.
+
 **M9 — Advanced geometry (3–4 wks)**
 - Ellipses, slots, polygons, and text.
 - Splines (control-point and fit) with curvature combs and G1/G2 constraints.

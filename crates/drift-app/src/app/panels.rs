@@ -140,6 +140,29 @@ impl DriftApp {
                 {
                     self.editor.toggle_construction();
                 }
+                if ui
+                    .add_enabled(
+                        self.editor.selection.len() >= 2,
+                        egui::Button::new("Group").shortcut_text(shortcut("G", false)),
+                    )
+                    .clicked()
+                {
+                    self.editor.make_group();
+                }
+                let grouped = self
+                    .editor
+                    .selection
+                    .iter()
+                    .any(|id| self.editor.doc.group_of(*id).is_some());
+                if ui
+                    .add_enabled(
+                        grouped,
+                        egui::Button::new("Ungroup").shortcut_text(shortcut("G", true)),
+                    )
+                    .clicked()
+                {
+                    self.editor.ungroup();
+                }
                 ui.separator();
                 if ui
                     .add(egui::Button::new("Select all").shortcut_text(shortcut("A", false)))
@@ -348,6 +371,7 @@ impl DriftApp {
             theme::row(ui, "Holes", |ui| mono(ui, region.holes.len().to_string()));
             self.region_fill_buttons(ui);
         }
+        self.group_inspector(ui);
         self.centre_mark_button(ui);
         let ed = &self.editor;
         let selection: Vec<_> = ed.selection.iter().copied().collect();

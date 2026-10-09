@@ -1765,7 +1765,7 @@ fn furniture_blocks_place_edit_and_export() {
     h.key_press(Key::Escape);
     h.run();
     // Fit and pick a chair: the inspector shows the copy.
-    h.key_press(Key::F);
+    h.key_press_modifiers(EguiModifiers::SHIFT, Key::F);
     h.run();
     h.run();
     h.get_by_label("Select").click();
@@ -1862,7 +1862,7 @@ fn pdf_underlay_calibrate_and_trace() {
     // Fit, then trace the room's bottom wall with a line snapped to its corners.
     h.key_press(Key::Escape);
     h.run();
-    h.key_press(Key::F);
+    h.key_press_modifiers(EguiModifiers::SHIFT, Key::F);
     h.run();
     h.run();
     // The room's bottom wall, as the underlay has it (PDF coordinates are rounded).
@@ -2074,4 +2074,78 @@ fn end_points_light_up_and_hide_until_used() {
     h.state_mut().always_endpoints = true;
     h.run();
     assert!(markers(&h) > 10);
+}
+
+#[test]
+fn view_and_tool_hotkeys() {
+    let Some(mut h) = harness() else { return };
+    // Alt+D / Alt+R hide and show dimensions and relations.
+    let (dims, rels) = (h.state().show_dimensions, h.state().show_relations);
+    h.key_press_modifiers(EguiModifiers::ALT, Key::D);
+    h.run();
+    h.key_press_modifiers(EguiModifiers::ALT, Key::R);
+    h.run();
+    assert_eq!(h.state().show_dimensions, !dims);
+    assert_eq!(h.state().show_relations, !rels);
+    assert_eq!(
+        h.state().tool.kind(),
+        ToolKind::Select,
+        "Alt+D isn't the dimension tool"
+    );
+    // F: fillet, then chamfer, then fillet again.
+    for expected in [ToolKind::Fillet, ToolKind::Chamfer, ToolKind::Fillet] {
+        h.key_press(Key::F);
+        h.run();
+        assert_eq!(h.state().tool.kind(), expected);
+    }
+    // Shift+F fits (and doesn't change the tool).
+    h.state_mut().fit_target = None;
+    h.key_press_modifiers(EguiModifiers::SHIFT, Key::F);
+    h.run();
+    assert!(h.state().fit_target.is_some());
+    assert_eq!(h.state().tool.kind(), ToolKind::Fillet);
+}
+
+#[test]
+fn text_tool_places_and_types_live() {
+    let Some(mut h) = harness() else { return };
+    let v = DVec2::new;
+    h.get_by_label("Text").click();
+    h.run();
+    assert_eq!(h.state().tool.kind(), ToolKind::Text);
+    click_world(&mut h, v(-40.0, 0.0));
+    h.run();
+    // The inspector's field is focused: typing goes straight in.
+    type_text(&mut h, "Drift 2026");
+    h.run();
+    let (id, t) = {
+        let doc = &h.state().editor.doc;
+        let (id, t) = doc.texts().next().expect("a text");
+        (id, t.clone())
+    };
+    assert_eq!(t.text, "Drift 2026");
+    assert!(h.state().editor.text_items(true, true).len() > 20);
+    // One undo step for the typing, one for placing it.
+    // Drag it by its body with the select tool.
+    h.key_press(Key::Escape);
+    h.run();
+    h.key_press(Key::S);
+    h.run();
+    let b = h.state().editor.text_outline(id).unwrap().bounds;
+    let grab = b.center();
+    let from = screen(&h, grab);
+    let to = screen(&h, grab + v(0.0, -20.0));
+    h.hover_at(from);
+    h.run();
+    button(&h, from, true);
+    h.run();
+    for k in 1..=5 {
+        h.hover_at(from + (to - from) * (k as f32 / 5.0));
+        h.run();
+    }
+    button(&h, to, false);
+    h.run();
+    let moved = h.state().editor.doc.text(id).unwrap().at;
+    assert!(moved.distance(t.at + v(0.0, -20.0)) < 1.0, "{moved:?}");
+    save_png("drift_ui_text.png", &mut h);
 }

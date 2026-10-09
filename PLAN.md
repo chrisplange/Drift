@@ -1318,6 +1318,35 @@ written but hasn't run yet (no GitHub repo).*
   - Continuing a path from an existing end with its handle.
   - Smooth / corner buttons in the inspector.
 
+*Part 4 as built (2026-10-09): text.*
+- **Model (format v15 `texts`):**
+  - A sketch text is one line at a real size: words, baseline start, cap height, angle,
+    font (built-in Sans = Ubuntu Light, Mono = Hack, so files look the same everywhere),
+    layer and colour.
+  - Notes stay the drafting text sized on paper.
+- **Outlines:** `drift_draft::outline` reads glyphs with skrifa (already in the tree via
+  egui) into closed contours of lines and cubic Béziers (TrueType quadratics raised
+  exactly), cached per text change.
+- **Text tool (toolbar, DRAW):**
+  - Click where the text starts. It's picked, and the inspector's field is focused, so you
+    type straight away and see the outlines update live. Typing is one undo step.
+  - Text left empty is removed once you move on.
+- **Editing:**
+  - Hover highlights, a click picks (anywhere in its box), and drag moves it (one undo
+    step). Delete removes it; Esc clears it.
+  - Inspector: words, height, angle (0 / 90 / 180 / 270), font, Convert to curves (curves
+    and lines with each contour's ends shared, grouped as "Text: …"), Delete.
+- **Output:** outlines on sheets (PDF, SVG, preview) and in DXF, as curves.
+- **Not yet:**
+  - System fonts.
+  - Multi-line text and alignment.
+  - Snapping to text outlines (convert first).
+  - Text in blocks and Shift+D.
+  - A keyboard shortcut for the Text tool.
+
+*Hotkeys added (2026-10-09):* Alt+D / Alt+R show or hide dimensions / relations; Shift+F
+zooms to fit; F is Fillet (again for Chamfer).
+
 *Performance torture test (2026-10-09):*
 - **What it runs** (`cargo test --release -p drift-app perf_ -- --ignored --nocapture`): 10,000
   curves (28,822 entities, 6,472 relations) of lines, arcs, circles, curves and ellipses,

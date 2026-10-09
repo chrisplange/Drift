@@ -6,7 +6,7 @@
 //! ```json
 //! {
 //!   "format": "drift",
-//!   "version": 14,
+//!   "version": 15,
 //!   "meta": {"title":"Bracket","units":"mm","generator":"Drift 0.1.0"},
 //!   "display": {"length":"architectural","fraction":16},
 //!   "variables": [
@@ -49,6 +49,7 @@ pub mod pdf;
 pub mod pdf_import;
 mod sheets;
 pub mod svg;
+mod texts;
 mod underlays;
 
 /// File extension, without the dot.
@@ -65,8 +66,9 @@ pub const EXTENSION: &str = "drift";
 /// ordinate dimensions) and dimension `prefix`, `suffix` and `tol` (M7); 8 = adds `sheets`
 /// (paper, scale, view, title block and revisions) (M8); 9 = adds `groups`; 10 = adds `blocks`
 /// and `instances`; 11 = adds a layer's `fill` colour; 12 = adds `underlays` (M8.5); 13 = adds
-/// `ellipse` entities; 14 = adds `bezier` curves and `smooth` relations (M9).
-pub const FORMAT_VERSION: u32 = 14;
+/// `ellipse` entities; 14 = adds `bezier` curves and `smooth` relations; 15 = adds `texts`
+/// (M9).
+pub const FORMAT_VERSION: u32 = 15;
 const FORMAT_TAG: &str = "drift";
 
 /// Document-level properties stored alongside the geometry.
@@ -779,6 +781,8 @@ struct FileRecord {
     instances: Vec<blocks::InstanceRecord>,
     #[serde(default)]
     underlays: Vec<underlays::UnderlayRecord>,
+    #[serde(default)]
+    texts: Vec<texts::TextRecord>,
 }
 
 /// A named group of entities.
@@ -1062,6 +1066,10 @@ pub fn save(doc: &Document, meta: &Metadata) -> String {
             serde_json::to_string(&underlays::underlay_record(id, u)).expect("underlay serializes")
         })
         .collect();
+    let text_lines: Vec<String> = doc
+        .texts()
+        .map(|(id, t)| serde_json::to_string(&texts::text_record(id, t)).expect("text serializes"))
+        .collect();
     let tail = [
         ("measurements", &measurements),
         ("variants", &variants),
@@ -1072,6 +1080,7 @@ pub fn save(doc: &Document, meta: &Metadata) -> String {
         ("blocks", &block_lines),
         ("instances", &instances),
         ("underlays", &underlay_lines),
+        ("texts", &text_lines),
     ];
     let last = tail.iter().rposition(|(_, items)| !items.is_empty());
     push_array(&mut out, "entities", &entities, true);
@@ -1419,6 +1428,17 @@ pub fn load(text: &str) -> Result<(Document, Metadata), LoadError> {
         doc.insert_instance(id, instance)
             .map_err(LoadError::Document)?;
     }
+    for t in file.texts {
+        let id_text = t.id.clone();
+        let (id, text) = texts::parse_text(t)?;
+        if doc.text(id).is_some() {
+            return Err(LoadError::DuplicateId(id_text));
+        }
+        if doc.layer(text.layer).is_none() {
+            return Err(LoadError::Document(DocumentError::MissingLayer(text.layer)));
+        }
+        doc.insert_text(id, text);
+    }
     for u in file.underlays {
         let id_text = u.id.clone();
         let (id, underlay) = underlays::parse_underlay(u)?;
@@ -1541,7 +1561,7 @@ pub fn migrate(value: serde_json::Value) -> Result<serde_json::Value, LoadError>
         // v1 → v2: constraints were introduced; a v1 file simply has none.
         value["constraints"] = serde_json::Value::Array(Vec::new());
     }
-    // v2 → v14 only added optional fields, sections and constraint types: nothing to convert.
+    // v2 → v15 only added optional fields, sections and constraint types: nothing to convert.
     value["version"] = FORMAT_VERSION.into();
     Ok(value)
 }
@@ -1584,7 +1604,7 @@ mod tests {
         let text = save(&doc, &Metadata::default());
         let expected = r#"{
   "format": "drift",
-  "version": 14,
+  "version": 15,
   "meta": {"units":"mm"},
   "entities": [
     {"type":"point","id":"e1","at":[0.0,0.0]},
@@ -2167,9 +2187,15 @@ mod tests {
         plan.locked = true;
         doc.add_underlay(plan);
         doc.add_underlay(drift_core::Underlay::new("Survey", "", Vec::new()));
+        let mut sign = drift_core::SketchText::new("EXIT → 2", DVec2::new(5.0, -40.0), 12.5);
+        sign.angle = 15.0;
+        sign.font = drift_core::TextFont::Mono;
+        sign.appearance.color = Some(Rgb([200, 10, 10]));
+        doc.add_text(sign);
+        doc.add_text(drift_core::SketchText::new("A", DVec2::ZERO, 3.0));
 
         let text = save(&doc, &Metadata::default());
-        assert!(text.contains("\"version\": 14"));
+        assert!(text.contains("\"version\": 15"));
         assert!(
             text.contains(r#"{"a":[80.0,20.0,30.0,0.0,90.0]}"#),
             "{text}"
@@ -2189,6 +2215,7 @@ mod tests {
             "blocks",
             "instances",
             "underlays",
+            "texts",
         ] {
             assert!(!plain.contains(absent), "{absent}");
         }

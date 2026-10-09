@@ -34,6 +34,7 @@ mod slot;
 mod tangent_arc;
 #[cfg(test)]
 mod tests;
+mod text;
 mod three_point_arc;
 mod underlay;
 
@@ -47,6 +48,7 @@ pub use self::{
     place_block::BlockTool,
     polygon::PolygonTool,
     slot::{SlotMode, SlotTool},
+    text::TextTool,
     underlay::{UnderlayMode, UnderlayTool},
 };
 pub use self::{
@@ -159,6 +161,7 @@ pub enum ToolKind {
     TangentArc,
     Slot,
     Point,
+    Text,
     Block,
     Dimension,
     Ordinate,
@@ -180,7 +183,7 @@ pub enum ToolKind {
 }
 
 impl ToolKind {
-    pub const ALL: [ToolKind; 27] = [
+    pub const ALL: [ToolKind; 28] = [
         ToolKind::Select,
         ToolKind::Line,
         ToolKind::Pen,
@@ -194,6 +197,7 @@ impl ToolKind {
         ToolKind::TangentArc,
         ToolKind::Slot,
         ToolKind::Point,
+        ToolKind::Text,
         ToolKind::Block,
         ToolKind::Dimension,
         ToolKind::Ordinate,
@@ -228,6 +232,7 @@ impl ToolKind {
                 ToolKind::TangentArc,
                 ToolKind::Slot,
                 ToolKind::Point,
+                ToolKind::Text,
                 ToolKind::Block,
             ],
         ),
@@ -277,6 +282,7 @@ impl ToolKind {
             ToolKind::ThreePointArc => "3-pt arc",
             ToolKind::TangentArc => "Tangent arc",
             ToolKind::Point => "Point",
+            ToolKind::Text => "Text",
             ToolKind::Block => "Place block",
             ToolKind::Dimension => "Dimension",
             ToolKind::Fill => "Fill / hatch",
@@ -316,6 +322,7 @@ impl ToolKind {
             ToolKind::ThreePointArc => "Start, end, then a point on the arc",
             ToolKind::TangentArc => "Continues tangent from the end of a line or arc",
             ToolKind::Point => "A sketch point, for reference or construction",
+            ToolKind::Text => "A line of text drawn as outlines, convertible to curves",
             ToolKind::Block => "Place copies of a block from the Blocks tab; R turns, X mirrors",
             ToolKind::Dimension => "Click geometry, then place the label: the type follows",
             ToolKind::Fill => "Fill or hatch a closed area: click inside it",
@@ -358,12 +365,13 @@ impl ToolKind {
             ToolKind::Extend => 'E',
             ToolKind::Offset => 'O',
             ToolKind::Mirror => 'M',
+            // F selects the fillet; pressed again it switches to the chamfer.
+            ToolKind::Fillet | ToolKind::Chamfer => 'F',
             ToolKind::Split
-            | ToolKind::Fillet
-            | ToolKind::Chamfer
             | ToolKind::Ordinate
             | ToolKind::Callout
             | ToolKind::CentreMark
+            | ToolKind::Text
             | ToolKind::Calibrate
             | ToolKind::MoveUnderlay => return None,
         })
@@ -384,6 +392,7 @@ impl ToolKind {
             ToolKind::ThreePointArc => Box::<ThreePointArcTool>::default(),
             ToolKind::TangentArc => Box::<TangentArcTool>::default(),
             ToolKind::Point => Box::<PointTool>::default(),
+            ToolKind::Text => Box::<TextTool>::default(),
             ToolKind::Block => Box::<BlockTool>::default(),
             ToolKind::Dimension => Box::<DimensionTool>::default(),
             ToolKind::Fill => Box::<FillTool>::default(),

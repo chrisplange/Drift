@@ -288,6 +288,14 @@ pub struct Editor {
     /// while the sketch's structure stays the same: (dragged ids, entity and constraint
     /// counts, the connected set).
     drag_scope: std::cell::RefCell<Option<DragScope>>,
+    /// The sketch text picked and under the pointer.
+    pub selected_text: Option<drift_core::TextId>,
+    pub hovered_text: Option<drift_core::TextId>,
+    pub(crate) text_cache: std::cell::RefCell<crate::texts::TextCache>,
+    /// Text just placed: the inspector focuses its field once.
+    pub editing_text: Option<drift_core::TextId>,
+    /// Cap height for new text (0: the default).
+    pub text_height: f64,
     /// Bézier handles and their owners, by document revision.
     pub(crate) handle_cache:
         std::cell::RefCell<Option<(u64, std::rc::Rc<crate::curves::HandleOwners>)>>,
@@ -1511,10 +1519,14 @@ impl Editor {
             && self.selected_fills.is_empty()
             && self.selected_annotation.is_none()
             && self.selected_instances.is_empty()
+            && self.selected_text.is_none()
         {
             return;
         }
         self.doc.begin();
+        if let Some(id) = self.selected_text.take() {
+            self.doc.remove_text(id);
+        }
         for id in std::mem::take(&mut self.selected_instances) {
             self.doc.remove_instance(id);
         }
@@ -2021,7 +2033,7 @@ impl Editor {
 /// A layer colour that would be hard to see on the theme's background (WCAG contrast ratio
 /// under 2:1, e.g. black on the dark theme) is shown as the theme's foreground instead
 /// (`None`), like AutoCAD's colour 7.
-fn contrast(c: [u8; 3], dark: bool) -> Option<[u8; 3]> {
+pub(crate) fn contrast(c: [u8; 3], dark: bool) -> Option<[u8; 3]> {
     let linear = |v: u8| {
         let v = f64::from(v) / 255.0;
         if v <= 0.04045 {

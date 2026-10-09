@@ -247,7 +247,7 @@ impl DriftApp {
                     ui.close();
                 }
                 if ui
-                    .add(egui::Button::new("Zoom to fit").shortcut_text("F"))
+                    .add(egui::Button::new("Zoom to fit").shortcut_text("⇧F"))
                     .clicked()
                 {
                     self.fit_target = Some(self.fit_bounds());
@@ -267,8 +267,13 @@ impl DriftApp {
                 );
                 toggle_item(ui, &mut self.always_endpoints, "Always show end points", "");
                 ui.separator();
-                toggle_item(ui, &mut self.show_dimensions, "Dimensions and notes", "");
-                toggle_item(ui, &mut self.show_relations, "Relations", "");
+                toggle_item(
+                    ui,
+                    &mut self.show_dimensions,
+                    "Dimensions and notes",
+                    "Alt+D",
+                );
+                toggle_item(ui, &mut self.show_relations, "Relations", "Alt+R");
                 toggle_item(ui, &mut self.params.show_free, "Free directions", "");
                 toggle_item(ui, &mut self.params.show_ghosts, "Variant ghosts", "");
                 toggle_item(ui, &mut self.show_combs, "Curvature combs", "");
@@ -402,6 +407,7 @@ impl DriftApp {
     fn inspector(&mut self, ui: &mut egui::Ui) {
         self.block_edit_banner(ui);
         if self.annotation_inspector(ui)
+            || self.text_inspector(ui)
             || self.instance_inspector(ui)
             || self.fill_inspector(ui)
             || self.dimension_inspector(ui)

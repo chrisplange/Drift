@@ -55,7 +55,7 @@ impl DriftApp {
             if ctx.input(|i| i.key_pressed(Key::Escape)) {
                 self.sheet_preview = false;
             }
-            if ctx.input(|i| i.key_pressed(Key::F)) {
+            if ctx.input(|i| i.key_pressed(Key::F) && i.modifiers.shift_only()) {
                 self.preview.zoom = 0.0;
             }
             return;
@@ -151,8 +151,21 @@ impl DriftApp {
         if pressed(Key::W) {
             self.thin_lines = !self.thin_lines;
         }
-        if pressed(Key::F) {
+        // Shift+F: zoom to fit (F is the fillet tool).
+        if ctx.input(|i| i.modifiers.shift_only() && i.key_pressed(Key::F)) {
             self.fit_target = Some(self.fit_bounds());
+        }
+        // Alt+D / Alt+R: show or hide dimensions / relations.
+        let alt_only = |key| {
+            ctx.input(|i| {
+                i.modifiers.alt && !i.modifiers.shift && !i.modifiers.command && i.key_pressed(key)
+            })
+        };
+        if alt_only(Key::D) {
+            self.show_dimensions = !self.show_dimensions;
+        }
+        if alt_only(Key::R) {
+            self.show_relations = !self.show_relations;
         }
         let requested = ToolKind::ALL
             .into_iter()
@@ -170,6 +183,10 @@ impl DriftApp {
                 self.tool.cancel(&mut self.editor);
                 let now = ctx.input(|i| i.time);
                 self.set_status(self.editor.slot_mode.label().to_owned(), false, now);
+            }
+            if kind == ToolKind::Fillet && current == ToolKind::Fillet {
+                // F again: chamfer (and again, fillet).
+                kind = ToolKind::Chamfer;
             }
             if kind == ToolKind::Circle
                 && let Some(i) = ToolKind::CIRCLES.iter().position(|k| *k == current)

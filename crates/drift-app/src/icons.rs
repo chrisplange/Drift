@@ -138,6 +138,12 @@ pub fn tool(painter: &egui::Painter, rect: Rect, kind: ToolKind, color: Color32)
             p.dot(4.0, 16.0, 1.8);
             p.dot(16.0, 4.0, 1.8);
         }
+        ToolKind::Text => {
+            // A capital T.
+            p.line((4.0, 4.0), (16.0, 4.0));
+            p.line((10.0, 4.0), (10.0, 17.0));
+            p.line((7.5, 17.0), (12.5, 17.0));
+        }
         ToolKind::Pen => {
             // A pen nib over a curve.
             p.poly(

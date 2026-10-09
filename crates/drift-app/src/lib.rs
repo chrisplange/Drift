@@ -19,6 +19,7 @@ mod overlay;
 mod parameters;
 #[cfg(test)]
 mod perf_tests;
+pub mod texts;
 mod theme;
 pub mod tools;
 #[cfg(test)]
@@ -233,6 +234,8 @@ pub struct DriftApp {
     new_block_name: String,
     /// Curvature combs on picked curves.
     show_combs: bool,
+    /// The text being typed into (its edits merge into one undo step).
+    text_typing: Option<drift_core::TextId>,
     /// Show every end point, or only those of hovered or picked curves (as in Illustrator).
     always_endpoints: bool,
     /// The next opened file becomes an underlay (File → Import underlay).
@@ -310,6 +313,7 @@ impl DriftApp {
             layers_last: Default::default(),
             new_block_name: String::new(),
             show_combs: true,
+            text_typing: None,
             always_endpoints: false,
             import_as_underlay: false,
             pending_pdf: None,
@@ -493,7 +497,9 @@ const SHORTCUTS: &[(&str, &str)] = &[
         "Ctrl+G / Ctrl+Shift+G",
         "Group / ungroup the selection; double-click a group to edit inside it, Esc leaves",
     ),
-    ("F / double middle-click", "Zoom to fit"),
+    ("Shift+F / double middle-click", "Zoom to fit"),
+    ("F", "Fillet; press again for chamfer"),
+    ("Alt+D / Alt+R", "Show or hide dimensions / relations"),
     ("Shift+G", "Toggle grid snapping"),
     (
         "Shift+C",
@@ -597,6 +603,9 @@ impl eframe::App for DriftApp {
         }
         self.editor.auto_relations = self.auto_relations;
         self.editor.always_endpoints = self.always_endpoints;
+        // Text placed but left empty goes once it's no longer picked.
+        let keep = self.editor.selected_text;
+        self.editor.drop_empty_texts(keep);
         if self.pending.is_none() && self.editor.pending_driven.is_none() {
             self.handle_typing(&ctx);
             self.shortcuts(&ctx);

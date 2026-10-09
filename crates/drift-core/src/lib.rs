@@ -15,6 +15,7 @@ pub mod layers;
 pub mod params;
 pub mod shape;
 pub mod sheets;
+pub mod texts;
 pub mod underlays;
 pub mod units;
 
@@ -34,5 +35,6 @@ pub use groups::{Group, GroupId};
 pub use layers::{Appearance, Layer, LayerId, LineType, LineWeight, Rgb};
 pub use shape::{DofState, Emphasis, LineKind, Shape, SketchItem};
 pub use sheets::{PaperSize, Revision, Sheet, SheetId, TitleBlock, TitleFields};
+pub use texts::{SketchText, TextFont, TextId};
 pub use underlays::{RefPrim, Underlay, UnderlayId};
 pub use units::{Kind, LengthFormat, Quantity, Units};

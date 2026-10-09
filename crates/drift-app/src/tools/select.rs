@@ -65,6 +65,13 @@ pub(super) enum SelectDrag {
         /// Copies of blocks moving too (as they were when the drag began).
         instances: Vec<(drift_core::InstanceId, drift_core::Instance)>,
     },
+    /// Dragging a sketch text by its body.
+    Text {
+        id: drift_core::TextId,
+        /// Pointer and the text's start where the drag began.
+        start: DVec2,
+        from: DVec2,
+    },
     /// Dragging a circle's edge: the radius follows the pointer (drag its centre to move it).
     Radius {
         circle: EntityId,
@@ -382,6 +389,7 @@ impl Tool for SelectTool {
                 "Drop on another point to join them · Esc to cancel".into()
             }
             Some(SelectDrag::Move { .. }) => "Moving selection · Esc to cancel".into(),
+            Some(SelectDrag::Text { .. }) => "Moving text · Esc to cancel".into(),
             Some(SelectDrag::Radius { .. }) => {
                 "Resizing the circle (drag its centre to move it) · Esc to cancel".into()
             }
@@ -429,6 +437,7 @@ impl Tool for SelectTool {
                     Some(SelectDrag::Box { .. }) => None,
                     Some(SelectDrag::Move { point, .. }) => *point,
                     Some(SelectDrag::Radius { circle, .. }) => Some(*circle),
+                    Some(SelectDrag::Text { .. }) => None,
                     None => match pick_target(ed, &p) {
                         Some(Target::Entity(id)) => Some(id),
                         Some(Target::Midpoint(line)) => {
@@ -440,7 +449,12 @@ impl Tool for SelectTool {
                 };
                 let free =
                     ed.hovered.is_none() && ed.hovered_midpoint.is_none() && self.drag.is_none();
-                ed.hovered_instance = if free {
+                ed.hovered_text = if free {
+                    ed.text_at(p.raw, p.tolerance)
+                } else {
+                    None
+                };
+                ed.hovered_instance = if free && ed.hovered_text.is_none() {
                     ed.instance_at(p.raw, p.tolerance)
                 } else {
                     None
@@ -475,6 +489,20 @@ impl Tool for SelectTool {
                     ed.index
                         .pick(p.raw, p.tolerance, |id| ed.pickable(id, &hidden))
                 };
+                // Sketch text (anywhere in its box).
+                if hit.is_none()
+                    && let Some(t) = ed.text_at(p.raw, p.tolerance)
+                {
+                    ed.selected_text = Some(t);
+                    if !mods.shift && !mods.command {
+                        ed.selection.clear();
+                        ed.selected_instances.clear();
+                        ed.selected_fills.clear();
+                        ed.selected_region = None;
+                    }
+                    return;
+                }
+                ed.selected_text = None;
                 // A copy of a block (on its curves, or inside it).
                 let copy = if hit.is_none() {
                     ed.instance_at(p.raw, p.tolerance)
@@ -645,6 +673,18 @@ impl Tool for SelectTool {
                             instances,
                         });
                     }
+                    // Sketch text: drag it by its body.
+                    None if ed.text_at(p.raw, p.tolerance).is_some() => {
+                        let id = ed.text_at(p.raw, p.tolerance).expect("checked");
+                        ed.selected_text = Some(id);
+                        let from = ed.doc.text(id).map_or(p.raw, |t| t.at);
+                        ed.doc.begin();
+                        self.drag = Some(SelectDrag::Text {
+                            id,
+                            start: p.raw,
+                            from,
+                        });
+                    }
                     // A copy of a block: drag it (and the rest of the selection) by its
                     // insertion point.
                     None if ed.instance_at(p.raw, p.tolerance).is_some() => {
@@ -703,6 +743,12 @@ impl Tool for SelectTool {
             }
             Input::Drag(p) => match &mut self.drag {
                 Some(SelectDrag::Box { current, .. }) => *current = p.raw,
+                Some(SelectDrag::Text { id, start, from }) => {
+                    if let Some(mut t) = ed.doc.text(*id).cloned() {
+                        t.at = *from + (p.raw - *start);
+                        ed.doc.set_text(*id, t);
+                    }
+                }
                 Some(SelectDrag::Radius { circle, center }) => {
                     let r = p.pos().distance(*center);
                     let current = drift_solver::radius_of(&ed.doc, *circle);
@@ -791,6 +837,9 @@ impl Tool for SelectTool {
                 Some(SelectDrag::Radius { .. }) => {
                     ed.commit("Resize circle");
                 }
+                Some(SelectDrag::Text { .. }) => {
+                    ed.commit("Move text");
+                }
                 None => {}
             },
         }
@@ -801,7 +850,7 @@ impl Tool for SelectTool {
             return true;
         }
         match self.drag.take() {
-            Some(SelectDrag::Move { .. } | SelectDrag::Radius { .. }) => {
+            Some(SelectDrag::Move { .. } | SelectDrag::Radius { .. } | SelectDrag::Text { .. }) => {
                 ed.doc.rollback();
                 ed.sync();
                 true
@@ -817,8 +866,10 @@ impl Tool for SelectTool {
                 || !ed.selected_midpoints.is_empty()
                 || ed.selected_region.is_some()
                 || !ed.selected_fills.is_empty()
-                || !ed.selected_instances.is_empty() =>
+                || !ed.selected_instances.is_empty()
+                || ed.selected_text.is_some() =>
             {
+                ed.selected_text = None;
                 ed.selected_instances.clear();
                 ed.selection.clear();
                 ed.selected_midpoints.clear();

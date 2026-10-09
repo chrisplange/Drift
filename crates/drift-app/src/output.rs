@@ -86,6 +86,24 @@ fn geometry(ed: &Editor, s: &Space, d: &mut Drawing) {
             d.items.push(item(&layer.name, pen, prim, s.clipped));
         }
     }
+    // Sketch text: its outlines.
+    for (id, t) in doc.texts() {
+        let Some(layer) = doc.layer(t.layer) else {
+            continue;
+        };
+        if !layer.visible || !layer.printable {
+            continue;
+        }
+        let Some(outline) = ed.text_outline(id) else {
+            continue;
+        };
+        let pen = pen_for(LineKind::Solid, t.appearance, layer);
+        for shape in outline.contours.iter().flatten() {
+            if let Some(prim) = shape_prim(s, shape) {
+                d.items.push(item(&layer.name, pen, prim, s.clipped));
+            }
+        }
+    }
     // Copies of blocks: their curves (sheets), or block definitions and inserts (DXF).
     let mut defined = std::collections::BTreeSet::new();
     for (id, copy) in doc.instances() {

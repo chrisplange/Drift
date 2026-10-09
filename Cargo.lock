@@ -1072,6 +1072,8 @@ version = "0.1.0"
 dependencies = [
  "drift-core",
  "drift-geom",
+ "epaint_default_fonts",
+ "skrifa",
 ]
 
 [[package]]

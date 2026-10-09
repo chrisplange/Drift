@@ -15,6 +15,7 @@ use crate::drafting::{Anchor, Annotation, AnnotationId, DimNote, DraftStyle, Fil
 use crate::groups::{Group, GroupId};
 use crate::layers::{Appearance, Layer, LayerId};
 use crate::sheets::{Sheet, SheetId};
+use crate::texts::{SketchText, TextId};
 use crate::underlays::{Underlay, UnderlayId};
 use crate::units::{Kind, Units};
 use crate::{Constraint, ConstraintId, LineKind, Shape};
@@ -328,6 +329,7 @@ enum Key {
     Block(BlockId),
     Instance(InstanceId),
     Underlay(UnderlayId),
+    Text(TextId),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -353,6 +355,7 @@ enum Record {
     Block(Block),
     Instance(Instance),
     Underlay(Underlay),
+    Text(SketchText),
 }
 
 /// One undoable step: the before and after state of everything it touched.
@@ -399,6 +402,7 @@ pub struct Document {
     blocks: BTreeMap<BlockId, Block>,
     instances: BTreeMap<InstanceId, Instance>,
     underlays: BTreeMap<UnderlayId, Underlay>,
+    texts: BTreeMap<TextId, SketchText>,
     next_id: u32,
     next_constraint_id: u32,
     /// Next id for variables, variants and measurements (one counter, ids never reused).
@@ -437,6 +441,7 @@ impl PartialEq for Document {
             && self.blocks == other.blocks
             && self.instances == other.instances
             && self.underlays == other.underlays
+            && self.texts == other.texts
     }
 }
 
@@ -464,6 +469,7 @@ impl Default for Document {
             blocks: BTreeMap::new(),
             instances: BTreeMap::new(),
             underlays: BTreeMap::new(),
+            texts: BTreeMap::new(),
             // Ids start at 1; `e0` and `c0` are not valid ids in `.drift` files.
             next_id: 1,
             next_constraint_id: 1,
@@ -713,6 +719,7 @@ impl Document {
             Key::Block(id) => self.blocks.get(&id).cloned().map(Record::Block),
             Key::Instance(id) => self.instances.get(&id).copied().map(Record::Instance),
             Key::Underlay(id) => self.underlays.get(&id).cloned().map(Record::Underlay),
+            Key::Text(id) => self.texts.get(&id).cloned().map(Record::Text),
         }
     }
 
@@ -816,6 +823,12 @@ impl Document {
             (Key::Draft, _) => {}
             (Key::Patterns, Some(Record::Patterns(p))) => self.patterns = p,
             (Key::Patterns, _) => {}
+            (Key::Text(id), Some(Record::Text(t))) => {
+                self.texts.insert(id, t);
+            }
+            (Key::Text(id), _) => {
+                self.texts.remove(&id);
+            }
             (Key::Underlay(id), Some(Record::Underlay(u))) => {
                 self.underlays.insert(id, u);
             }
@@ -1707,6 +1720,18 @@ impl Document {
                 x.layer = LayerId::DEFAULT;
             }
         }
+        let texts: Vec<TextId> = self
+            .texts
+            .iter()
+            .filter(|(_, t)| t.layer == id)
+            .map(|(tid, _)| *tid)
+            .collect();
+        for t in texts {
+            self.touch_key(Key::Text(t));
+            if let Some(x) = self.texts.get_mut(&t) {
+                x.layer = LayerId::DEFAULT;
+            }
+        }
         let fills: Vec<FillId> = self
             .fills
             .iter()
@@ -1843,6 +1868,7 @@ impl Document {
         keys.extend(self.blocks.keys().map(|id| Key::Block(*id)));
         keys.extend(self.instances.keys().map(|id| Key::Instance(*id)));
         keys.extend(self.underlays.keys().map(|id| Key::Underlay(*id)));
+        keys.extend(self.texts.keys().map(|id| Key::Text(*id)));
         keys
     }
 
@@ -2624,6 +2650,44 @@ impl Document {
         if self.sheets.contains_key(&id) {
             self.touch_key(Key::Sheet(id));
             self.sheets.remove(&id);
+        }
+    }
+
+    pub fn texts(&self) -> impl Iterator<Item = (TextId, &SketchText)> {
+        self.texts.iter().map(|(id, t)| (*id, t))
+    }
+
+    pub fn text(&self, id: TextId) -> Option<&SketchText> {
+        self.texts.get(&id)
+    }
+
+    /// Add a text on the current layer.
+    pub fn add_text(&mut self, mut text: SketchText) -> TextId {
+        text.layer = self.current_layer;
+        let id = TextId(self.next_drafting());
+        self.touch_key(Key::Text(id));
+        self.texts.insert(id, text);
+        id
+    }
+
+    /// Insert a text with a known id (loading a file).
+    pub fn insert_text(&mut self, id: TextId, text: SketchText) {
+        self.next_drafting_id = self.next_drafting_id.max(id.0 + 1);
+        self.touch_key(Key::Text(id));
+        self.texts.insert(id, text);
+    }
+
+    pub fn set_text(&mut self, id: TextId, text: SketchText) {
+        if self.texts.get(&id).is_some_and(|t| *t != text) {
+            self.touch_key(Key::Text(id));
+            self.texts.insert(id, text);
+        }
+    }
+
+    pub fn remove_text(&mut self, id: TextId) {
+        if self.texts.contains_key(&id) {
+            self.touch_key(Key::Text(id));
+            self.texts.remove(&id);
         }
     }
 

@@ -416,6 +416,10 @@ impl DriftApp {
             self.editor
                 .items_styled(self.status_colors, ui.visuals().dark_mode),
         );
+        items.extend(
+            self.editor
+                .text_items(self.status_colors, ui.visuals().dark_mode),
+        );
         // Bézier handles around picked curves, and their curvature combs.
         let handle_grey = if ui.visuals().dark_mode {
             [0x8a, 0x90, 0x9a]

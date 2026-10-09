@@ -98,6 +98,8 @@ browser (WebGPU, with a WebGL2 fallback).
   points, Alt to break a handle, click the first point to close. Handles show on picked curves,
   anchors carry their handles, smooth points keep their tangent, and curvature combs show
   how the curve bends.
+- **Text:** a line of text drawn as true outlines at a real size (for engraving or signage):
+  click, type and watch it update; set height, angle and font; convert it to curves.
 - **Polygons, slots and ellipses:** regular polygons (K; type the sides, inscribed or
   circumscribed), straight / centre / arc slots (U, again to switch) and ellipses and partial
   ellipses (C again from the circle), all built to stay true when dimensioned or dragged.

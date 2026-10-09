@@ -94,6 +94,10 @@ browser (WebGPU, with a WebGL2 fallback).
     - B picks the base point (snaps to points, e.g. a corner of the selection).
     - Click or Enter places it; Esc or right-click cancels.
     - Snapped and typed moves land exactly.
+- **Pen curves (B):** draw like Illustrator or Affinity: click for corners, drag for smooth
+  points, Alt to break a handle, click the first point to close. Handles show on picked curves,
+  anchors carry their handles, smooth points keep their tangent, and curvature combs show
+  how the curve bends.
 - **Polygons, slots and ellipses:** regular polygons (K; type the sides, inscribed or
   circumscribed), straight / centre / arc slots (U, again to switch) and ellipses and partial
   ellipses (C again from the circle), all built to stay true when dimensioned or dragged.

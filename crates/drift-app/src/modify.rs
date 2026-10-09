@@ -71,6 +71,7 @@ pub fn param_of(shape: &Shape, p: DVec2) -> f64 {
                 0.0
             }
         }
+        Shape::Bezier { p: q } => drift_geom::nearest_on_bezier(&q, p).1,
         Shape::Point(_) => 0.0,
     }
 }
@@ -93,6 +94,7 @@ pub fn point_at(shape: &Shape, t: f64) -> DVec2 {
             start,
             ..
         } => drift_core::shape::ellipse_point(center, major, minor, start + t),
+        Shape::Bezier { p } => drift_core::shape::bezier_point(&p, t),
         Shape::Point(p) => p,
     }
 }
@@ -138,6 +140,9 @@ pub fn piece(shape: &Shape, t0: f64, t1: f64) -> Shape {
             } else {
                 t1 - t0
             },
+        },
+        Shape::Bezier { p } => Shape::Bezier {
+            p: drift_core::shape::bezier_piece(&p, t0, t1),
         },
         Shape::Point(p) => Shape::Point(p),
     }
@@ -213,6 +218,7 @@ impl Editor {
                     | Shape::Arc { center, .. }
                     | Shape::Ellipse { center, .. },
                 ) => return center,
+                Some(Shape::Bezier { p }) => return drift_core::shape::bezier_point(&p, 0.5),
                 None => {}
             }
         }
@@ -894,6 +900,9 @@ impl Editor {
                 Shape::Ellipse { .. } => {
                     return Err(invalid("offsetting ellipses isn't supported yet"));
                 }
+                Shape::Bezier { .. } => {
+                    return Err(invalid("offsetting curves isn't supported yet"));
+                }
                 Shape::Arc {
                     center,
                     radius,
@@ -1155,6 +1164,10 @@ impl Editor {
                         .doc
                         .add_ellipse_arc(m(center), m(major), m(minor), m(end), m(start))
                         .map_err(doc_err)?,
+                    EntityKind::Bezier { a, c1, c2, b } => self
+                        .doc
+                        .add_bezier(m(a), m(c1), m(c2), m(b))
+                        .map_err(doc_err)?,
                 };
                 self.doc.copy_look(id, new);
                 created.push(new);
@@ -1234,6 +1247,9 @@ impl Editor {
                             m(start),
                             m(end),
                         ),
+                        EntityKind::Bezier { a, c1, c2, b } => {
+                            self.doc.add_bezier(m(a), m(c1), m(c2), m(b))
+                        }
                     }
                     .map_err(doc_err)?;
                     self.doc.copy_look(id, new);
@@ -1315,6 +1331,7 @@ fn piece_end(shape: &Shape, forward: bool, last: bool) -> DVec2 {
         Shape::Arc { .. } | Shape::Ellipse { .. } => {
             (point_at(shape, 0.0), point_at(shape, sweep_of(shape)))
         }
+        Shape::Bezier { p } => (p[0], p[3]),
         Shape::Circle { center, radius } => {
             let p = center + DVec2::new(radius, 0.0);
             (p, p)

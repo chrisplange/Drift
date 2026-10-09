@@ -2074,3 +2074,107 @@ fn ellipses_draw_snap_and_fill() {
     );
     assert_eq!(ed.analysis().dof, Some(7));
 }
+
+fn beziers(doc: &Document) -> Vec<[DVec2; 4]> {
+    doc.iter()
+        .filter_map(|(id, _)| match doc.shape(id) {
+            Some(Shape::Bezier { p }) => Some(p),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Press at `at`, drag to `to` (Alt held if `alt`), release.
+fn pen_drag(ed: &mut Editor, tool: &mut dyn Tool, at: DVec2, to: DVec2, alt: bool) {
+    let p = ptr(ed, tool, at);
+    tool.handle(Input::DragStart(p, Modifiers::default()), ed);
+    let mut q = Pointer::new(to, TOL);
+    q.alt = alt;
+    tool.handle(Input::Drag(q), ed);
+    tool.handle(Input::DragEnd(q, Modifiers::default()), ed);
+}
+
+#[test]
+fn pen_clicks_make_corners_and_drags_make_smooth_points() {
+    let mut ed = Editor::default();
+    let mut tool = PenTool::default();
+    // Corner, smooth (dragged right), corner.
+    click(&mut ed, &mut tool, v(0.0, 0.0));
+    pen_drag(&mut ed, &mut tool, v(20.0, 10.0), v(28.0, 10.0), false);
+    click(&mut ed, &mut tool, v(40.0, 0.0));
+    tool.handle(Input::Finish, &mut ed);
+    let curves = beziers(&ed.doc);
+    assert_eq!(curves.len(), 2);
+    assert_eq!(lines(&ed.doc), 0);
+    // The first curve arrives along the mirrored handle; the second leaves along the drag.
+    let first = curves.iter().find(|p| p[0] == v(0.0, 0.0)).unwrap();
+    let second = curves.iter().find(|p| p[0] == v(20.0, 10.0)).unwrap();
+    assert_eq!(first[2], v(12.0, 10.0));
+    assert_eq!(second[1], v(28.0, 10.0));
+    assert_eq!(first[3], second[0], "they share the point");
+    let smooth = ed
+        .doc
+        .constraints()
+        .filter(|(_, c)| matches!(c, Constraint::Smooth { .. }))
+        .count();
+    assert_eq!(smooth, 1);
+    assert!(!tool.is_busy());
+
+    // Straight clicks are lines; clicking the first point closes the path.
+    let mut ed = Editor::default();
+    let mut tool = PenTool::default();
+    for at in [v(0.0, 0.0), v(30.0, 0.0), v(15.0, 20.0), v(0.1, 0.1)] {
+        click(&mut ed, &mut tool, at);
+    }
+    assert_eq!(lines(&ed.doc), 3);
+    assert_eq!(
+        count(&ed.doc, |k| k.is_point()),
+        3,
+        "closed onto the first point"
+    );
+    assert!(!tool.is_busy(), "closing ends the path");
+}
+
+#[test]
+fn pen_alt_breaks_handles_and_toggles_points() {
+    let mut ed = Editor::default();
+    let mut tool = PenTool::default();
+    click(&mut ed, &mut tool, v(0.0, 0.0));
+    // Alt during the drag: the incoming handle stays where it was, a corner.
+    pen_drag(&mut ed, &mut tool, v(20.0, 0.0), v(20.0, 10.0), true);
+    click(&mut ed, &mut tool, v(40.0, 0.0));
+    tool.handle(Input::Finish, &mut ed);
+    assert_eq!(
+        beziers(&ed.doc).len(),
+        1,
+        "the first segment has no handles: a line"
+    );
+    assert_eq!(lines(&ed.doc), 1);
+    assert!(
+        ed.doc
+            .constraints()
+            .all(|(_, c)| !matches!(c, Constraint::Smooth { .. })),
+        "a broken handle isn't smooth"
+    );
+
+    // An S-curve's middle point: Alt-click makes it a corner, and again smooth.
+    let mut ed = Editor::default();
+    let mut tool = PenTool::default();
+    click(&mut ed, &mut tool, v(0.0, 0.0));
+    pen_drag(&mut ed, &mut tool, v(20.0, 0.0), v(25.0, 5.0), false);
+    click(&mut ed, &mut tool, v(40.0, 0.0));
+    tool.handle(Input::Finish, &mut ed);
+    let middle = ed
+        .doc
+        .iter()
+        .find(|(_, e)| e.kind == EntityKind::Point(v(20.0, 0.0)))
+        .unwrap()
+        .0;
+    assert!(ed.smooth_at(middle).is_some());
+    let mut p = ptr(&ed, &tool, v(20.0, 0.0));
+    p.alt = true;
+    tool.handle(Input::Click(p, Modifiers::default()), &mut ed);
+    assert!(ed.smooth_at(middle).is_none());
+    tool.handle(Input::Click(p, Modifiers::default()), &mut ed);
+    assert!(ed.smooth_at(middle).is_some());
+}

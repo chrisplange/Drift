@@ -239,6 +239,10 @@ impl Editor {
                         None => self.doc.add_ellipse(c, m, n).ok(),
                     }
                 }
+                Shape::Bezier { p } => {
+                    let [a, c1, c2, b] = p.map(|q| point(&mut self.doc, q));
+                    self.doc.add_bezier(a, c1, c2, b).ok()
+                }
             };
             if let Some(e) = made {
                 let _ = self.doc.set_entity_layer(e, layer);

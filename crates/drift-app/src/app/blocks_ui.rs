@@ -62,6 +62,13 @@ fn thumbnail(ui: &mut egui::Ui, block: &drift_core::Block, size: f32) -> egui::R
                         .collect();
                 ui.painter().add(egui::Shape::line(pts, stroke));
             }
+            Shape::Bezier { p } => {
+                let pts = drift_core::shape::flatten_bezier(&p, 16)
+                    .into_iter()
+                    .map(to)
+                    .collect();
+                ui.painter().add(egui::Shape::line(pts, stroke));
+            }
             Shape::Point(_) => {}
         }
     }

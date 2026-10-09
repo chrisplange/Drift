@@ -54,6 +54,14 @@ pub enum EntityKind {
         major: EntityId,
         minor: EntityId,
     },
+    /// A cubic Bézier curve from `a` to `b`, shaped by the handle points `c1` (leaving `a`)
+    /// and `c2` (arriving at `b`). Paths are chains of these sharing end points.
+    Bezier {
+        a: EntityId,
+        c1: EntityId,
+        c2: EntityId,
+        b: EntityId,
+    },
     /// The counter-clockwise part of an ellipse from `start` to `end` (both kept on it).
     EllipseArc {
         center: EntityId,
@@ -79,6 +87,7 @@ impl EntityKind {
                 major,
                 minor,
             } => [Some(center), Some(major), Some(minor), None, None],
+            EntityKind::Bezier { a, c1, c2, b } => [Some(a), Some(c1), Some(c2), Some(b), None],
             EntityKind::EllipseArc {
                 center,
                 major,
@@ -108,6 +117,19 @@ impl EntityKind {
             EntityKind::Arc { .. } => "Arc",
             EntityKind::Ellipse { .. } => "Ellipse",
             EntityKind::EllipseArc { .. } => "Elliptical arc",
+            EntityKind::Bezier { .. } => "Curve",
+        }
+    }
+
+    /// A curve's end points (where it connects to others): a line's or arc's ends, a
+    /// Bézier's anchors, an elliptical arc's ends.
+    pub fn ends(&self) -> Option<[EntityId; 2]> {
+        match *self {
+            EntityKind::Line { a, b } | EntityKind::Bezier { a, b, .. } => Some([a, b]),
+            EntityKind::Arc { start, end, .. } | EntityKind::EllipseArc { start, end, .. } => {
+                Some([start, end])
+            }
+            _ => None,
         }
     }
 
@@ -146,6 +168,12 @@ impl EntityKind {
                 swap(center);
                 swap(major);
                 swap(minor);
+            }
+            EntityKind::Bezier { a, c1, c2, b } => {
+                swap(a);
+                swap(c1);
+                swap(c2);
+                swap(b);
             }
             EntityKind::EllipseArc {
                 center,
@@ -577,6 +605,9 @@ impl Document {
                     sweep: TAU,
                 }
             }
+            EntityKind::Bezier { a, c1, c2, b } => Shape::Bezier {
+                p: [p(a)?, p(c1)?, p(c2)?, p(b)?],
+            },
             EntityKind::EllipseArc {
                 center,
                 major,
@@ -862,6 +893,38 @@ impl Document {
         Ok(self.insert(Entity::new(EntityKind::Circle { center, radius })))
     }
 
+    /// Add a cubic Bézier from `a` to `b` with handles `c1` and `c2`.
+    pub fn add_bezier(
+        &mut self,
+        a: EntityId,
+        c1: EntityId,
+        c2: EntityId,
+        b: EntityId,
+    ) -> Result<EntityId, DocumentError> {
+        self.check_bezier(a, c1, c2, b)?;
+        Ok(self.insert(Entity::new(EntityKind::Bezier { a, c1, c2, b })))
+    }
+
+    fn check_bezier(
+        &self,
+        a: EntityId,
+        c1: EntityId,
+        c2: EntityId,
+        b: EntityId,
+    ) -> Result<(), DocumentError> {
+        let ids = [a, c1, c2, b];
+        for (i, x) in ids.iter().enumerate() {
+            self.point(*x)?;
+            if ids[i + 1..].contains(x) {
+                return Err(DocumentError::Degenerate("curve"));
+            }
+        }
+        if self.point(a)? == self.point(b)? && self.point(c1)? == self.point(c2)? {
+            return Err(DocumentError::Degenerate("curve"));
+        }
+        Ok(())
+    }
+
     /// Add an ellipse from its centre and the ends of its two semi-axes (`minor` is moved onto
     /// the perpendicular through the centre, keeping its distance).
     pub fn add_ellipse(
@@ -1015,6 +1078,7 @@ impl Document {
                 major,
                 minor,
             } => self.check_ellipse(center, major, minor)?,
+            EntityKind::Bezier { a, c1, c2, b } => self.check_bezier(a, c1, c2, b)?,
             EntityKind::EllipseArc {
                 center,
                 major,
@@ -2235,6 +2299,7 @@ impl Document {
                     minor,
                     ..
                 } => Some(crate::shape::ellipse_point(center, major, minor, t)),
+                Shape::Bezier { p } => Some(crate::shape::bezier_point(&p, t)),
                 Shape::Point(p) => Some(p),
             },
         }

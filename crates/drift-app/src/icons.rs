@@ -20,6 +20,8 @@ pub enum Glyph {
     Print,
     /// Constraint status colours: a curve with a fixed and a free end.
     Status,
+    /// End points always shown: a line with dots at its ends.
+    Endpoints,
 }
 
 /// Maps a 20 × 20 design grid into `rect`.
@@ -135,6 +137,22 @@ pub fn tool(painter: &egui::Painter, rect: Rect, kind: ToolKind, color: Color32)
             p.line((4.0, 16.0), (16.0, 4.0));
             p.dot(4.0, 16.0, 1.8);
             p.dot(16.0, 4.0, 1.8);
+        }
+        ToolKind::Pen => {
+            // A pen nib over a curve.
+            p.poly(
+                &[
+                    (10.0, 2.5),
+                    (14.5, 9.5),
+                    (12.0, 15.0),
+                    (8.0, 15.0),
+                    (5.5, 9.5),
+                ],
+                true,
+            );
+            p.line((10.0, 2.5), (10.0, 9.0));
+            p.dot(10.0, 10.0, 1.0);
+            p.line((8.0, 17.5), (12.0, 17.5));
         }
         ToolKind::Ellipse => {
             let pts: Vec<(f32, f32)> = (0..32)
@@ -367,6 +385,11 @@ pub fn glyph(painter: &egui::Painter, rect: Rect, glyph: Glyph, color: Color32) 
                 p.line((10.0, 6.0), (10.0, 9.5));
             }
             p.dot(10.0, 13.2, 1.1);
+        }
+        Glyph::Endpoints => {
+            p.line((5.0, 14.0), (15.0, 6.0));
+            p.dot(5.0, 14.0, 2.2);
+            p.dot(15.0, 6.0, 2.2);
         }
         Glyph::Status => {
             p.line((4.0, 15.0), (16.0, 5.0));

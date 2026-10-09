@@ -7,6 +7,7 @@ mod annotations;
 mod app;
 pub mod blocks;
 mod canvas;
+pub mod curves;
 pub mod editor;
 pub mod fills;
 mod icons;
@@ -16,6 +17,8 @@ mod notes;
 pub mod output;
 mod overlay;
 mod parameters;
+#[cfg(test)]
+mod perf_tests;
 mod theme;
 pub mod tools;
 #[cfg(test)]
@@ -228,6 +231,10 @@ pub struct DriftApp {
     layers_last: app::layers_hud::LayersDock,
     /// The name typed for a new block.
     new_block_name: String,
+    /// Curvature combs on picked curves.
+    show_combs: bool,
+    /// Show every end point, or only those of hovered or picked curves (as in Illustrator).
+    always_endpoints: bool,
     /// The next opened file becomes an underlay (File → Import underlay).
     import_as_underlay: bool,
     /// A multi-page PDF waiting for its page to be chosen.
@@ -302,6 +309,8 @@ impl DriftApp {
             layers_dock: Default::default(),
             layers_last: Default::default(),
             new_block_name: String::new(),
+            show_combs: true,
+            always_endpoints: false,
             import_as_underlay: false,
             pending_pdf: None,
         };
@@ -565,6 +574,15 @@ fn property_rows(ui: &mut egui::Ui, shape: &Shape, units: Units) {
                 row(ui, "Sweep", deg(sweep));
             }
         }
+        Shape::Bezier { p } => {
+            let length: f64 = drift_core::shape::flatten_bezier(&p, 128)
+                .windows(2)
+                .map(|w| w[0].distance(w[1]))
+                .sum();
+            row(ui, "Start", pt(p[0]));
+            row(ui, "End", pt(p[3]));
+            row(ui, "Length", len(length));
+        }
     }
 }
 
@@ -578,6 +596,7 @@ impl eframe::App for DriftApp {
             self.set_status(notice, true, now);
         }
         self.editor.auto_relations = self.auto_relations;
+        self.editor.always_endpoints = self.always_endpoints;
         if self.pending.is_none() && self.editor.pending_driven.is_none() {
             self.handle_typing(&ctx);
             self.shortcuts(&ctx);

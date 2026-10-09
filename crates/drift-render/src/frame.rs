@@ -105,6 +105,10 @@ pub struct Frame {
     pub globals: Globals,
     /// Filled triangles, drawn under all curves.
     pub fills: Vec<FillVertex>,
+    /// Curves drawn under all the others (hatch lines, underlays): arcs and lines are drawn
+    /// in separate passes, so order within one list can't keep them below.
+    pub under_segments: Vec<SegmentInstance>,
+    pub under_arcs: Vec<ArcInstance>,
     pub segments: Vec<SegmentInstance>,
     pub arcs: Vec<ArcInstance>,
 }
@@ -146,6 +150,19 @@ pub fn build_frame(
 }
 
 impl Frame {
+    /// Add curves drawn under all the frame's others (after fills, before the sketch).
+    pub fn push_under(
+        &mut self,
+        items: &[SketchItem],
+        camera: &Camera,
+        viewport: Viewport,
+        palette: &Palette,
+    ) {
+        let under = build_frame(items, camera, viewport, palette);
+        self.under_segments.extend(under.segments);
+        self.under_arcs.extend(under.arcs);
+    }
+
     /// Add filled areas (drawn under the curves, in the order given). World coordinates are
     /// made camera-relative in `f64` like everything else.
     pub fn push_fills(&mut self, meshes: &[FillMesh], camera: &Camera, viewport: Viewport) {
@@ -348,13 +365,13 @@ impl Builder<'_> {
             DofState::Unknown => None,
         };
         let (color, radius) = if item.vertex {
-            (state.unwrap_or(p.solid), 1.75 * ppp)
+            (state.unwrap_or(p.solid), 2.25 * ppp)
         } else {
-            (state.unwrap_or(p.point), 2.5 * ppp)
+            (state.unwrap_or(p.point), 2.75 * ppp)
         };
         match item.emphasis {
             Emphasis::Normal => (color, radius),
-            Emphasis::Hovered => (p.hover, 3.5 * ppp),
+            Emphasis::Hovered => (p.point_hover, 4.0 * ppp),
             Emphasis::Selected => (p.selected, 3.5 * ppp),
             Emphasis::Preview => (p.preview, radius),
             Emphasis::Remove => (p.over, radius),
@@ -368,6 +385,21 @@ impl Builder<'_> {
                 let c = self.to_px(p);
                 if self.visible(c, DVec2::ZERO) {
                     let (color, radius) = self.point_style(item);
+                    if item.emphasis == Emphasis::Hovered {
+                        // A ring around the lit-up point, so it reads at a glance.
+                        let ppp = self.ppp();
+                        self.frame.arcs.push(ArcInstance {
+                            center: to_f32(c),
+                            params: [
+                                (radius + 2.5 * ppp) as f32,
+                                (0.9 * ppp) as f32,
+                                0.0,
+                                TAU as f32,
+                            ],
+                            color: self.palette.selected,
+                            pattern: [0.0; 4],
+                        });
+                    }
                     self.frame.arcs.push(ArcInstance {
                         center: to_f32(c),
                         params: [0.0, radius as f32, 0.0, TAU as f32],
@@ -419,8 +451,30 @@ impl Builder<'_> {
                 }
                 let span = (hi - lo).abs();
                 let around = std::f64::consts::PI * (span.x + span.y) * 0.5 * (sweep / TAU);
-                let n = (around / 3.0).clamp(12.0, 720.0) as usize;
-                let pts = drift_core::shape::flatten_ellipse(center, major, minor, start, sweep, n);
+                // About one segment per 4 px of curve: smooth, but no more than the screen needs.
+                let n = (around / 4.0).clamp(12.0, 360.0) as usize;
+                let pts = drift_core::shape::ellipse_steps(center, major, minor, start, sweep, n);
+                let mut distance = 0.0;
+                for w in pts.windows(2) {
+                    let (a, b) = (self.to_px(w[0]), self.to_px(w[1]));
+                    self.add_segment(a, b, color, half_width, dash, distance);
+                    distance += a.distance(b);
+                }
+            }
+            Shape::Bezier { p } => {
+                let b = item.shape.bounds();
+                let (lo, hi) = (self.to_px(b.min), self.to_px(b.max));
+                let mid = (lo + hi) * 0.5;
+                if !self.visible(mid, (hi - lo).abs() * 0.5 + DVec2::splat(half_width)) {
+                    return;
+                }
+                // About one segment per 4 px of control polygon (which is longer than the curve).
+                let polygon: f64 = p
+                    .windows(2)
+                    .map(|w| self.to_px(w[0]).distance(self.to_px(w[1])))
+                    .sum();
+                let n = (polygon / 4.0).clamp(4.0, 128.0) as usize;
+                let pts = drift_core::shape::bezier_steps(&p, n);
                 let mut distance = 0.0;
                 for w in pts.windows(2) {
                     let (a, b) = (self.to_px(w[0]), self.to_px(w[1]));

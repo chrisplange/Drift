@@ -110,6 +110,13 @@ pub enum Constraint {
         b: EntityId,
         axis: EntityId,
     },
+    /// A smooth anchor (G1): the handles `a` and `b` on either side of `point` stay on one
+    /// line through it, so the curves meeting there share a tangent.
+    Smooth {
+        point: EntityId,
+        a: EntityId,
+        b: EntityId,
+    },
     /// A point kept at the midpoint of a line.
     Midpoint {
         point: EntityId,
@@ -187,6 +194,7 @@ impl Constraint {
                 vec![(point, PointOrMidpoint), (line, Line)]
             }
             Constraint::Midpoint { point, line } => vec![(point, Point), (line, Line)],
+            Constraint::Smooth { point, a, b } => vec![(point, Point), (a, Point), (b, Point)],
             Constraint::Tangent { a, b } => vec![(a, LineOrCircular), (b, Circular)],
             Constraint::Concentric { a, b } | Constraint::Coradial { a, b } => {
                 vec![(a, Circular), (b, Circular)]
@@ -217,6 +225,7 @@ impl Constraint {
         match self {
             Constraint::Coincident { .. } => "Coincident",
             Constraint::Midpoint { .. } => "Midpoint",
+            Constraint::Smooth { .. } => "Smooth",
             Constraint::Tangent { .. } => "Tangent",
             Constraint::Concentric { .. } => "Concentric",
             Constraint::Coradial { .. } => "Coradial",
@@ -327,6 +336,11 @@ impl Constraint {
                 point: f(point),
                 line: f(line),
             },
+            Smooth { point, a, b } => Smooth {
+                point: f(point),
+                a: f(a),
+                b: f(b),
+            },
             Fix { point, at } => Fix {
                 point: f(point),
                 at,
@@ -410,6 +424,11 @@ impl Constraint {
                 swap(a);
                 swap(b);
             }
+            Constraint::Smooth { point, a, b } => {
+                swap(point);
+                swap(a);
+                swap(b);
+            }
             _ => {}
         }
     }
@@ -432,6 +451,7 @@ impl Constraint {
             | Constraint::Perpendicular { a, b }
             | Constraint::Equal { a, b }
             | Constraint::Angle { a, b, .. } => a == b,
+            Constraint::Smooth { point, a, b } => point == a || point == b || a == b,
             _ => false,
         }
     }

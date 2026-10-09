@@ -86,11 +86,23 @@ const DRAGGED_MOBILITY: f64 = 1e-6;
 
 impl System {
     pub fn build(doc: &Document, dragged: &[Param], tol: &Tolerances) -> Self {
+        Self::build_in(doc, dragged, tol, None)
+    }
+
+    /// Build the system for the entities in `scope` only (everything if `None`). The scope
+    /// must be closed under shared points and constraints (see [`crate::connected`]).
+    pub fn build_in(
+        doc: &Document,
+        dragged: &[Param],
+        tol: &Tolerances,
+        scope: Option<&std::collections::HashSet<EntityId>>,
+    ) -> Self {
+        let keep = |id: EntityId| scope.is_none_or(|s| s.contains(&id));
         // ---- Parameters ----
         let mut params = Vec::new();
         let mut values = Vec::new();
         let mut entities = Vec::new();
-        for (id, entity) in doc.iter() {
+        for (id, entity) in doc.iter().filter(|(id, _)| keep(*id)) {
             entities.push((
                 id,
                 match entity.kind {
@@ -116,7 +128,7 @@ impl System {
         // Lines that dimensions measure to the midpoint of get a hidden midpoint: two unknowns
         // tied to the line's ends by two equations, so they add no freedom.
         let mut midpoint_lines = Vec::new();
-        for (_, c) in doc.constraints() {
+        for (_, c) in doc.constraints().filter(|(_, c)| c.entities().all(keep)) {
             for (id, slot) in c.slots() {
                 if slot == drift_core::Slot::PointOrMidpoint
                     && let Some(EntityKind::Line { .. }) = doc.get(id).map(|e| e.kind)
@@ -179,7 +191,7 @@ impl System {
             Some(EntityKind::Circle { center, .. } | EntityKind::Arc { center, .. }) => center,
             _ => unreachable!("validated constraint refers to a circle or arc"),
         };
-        for (cid, constraint) in doc.constraints() {
+        for (cid, constraint) in doc.constraints().filter(|(_, c)| c.entities().all(keep)) {
             if doc.is_driven(cid) {
                 // Driven (reference) dimensions only report; they don't constrain.
                 continue;
@@ -264,6 +276,19 @@ impl System {
                     }
                 }
                 Constraint::Collinear { a, b } => collinear.push((cid, a, b)),
+                Constraint::Smooth { point: p, a, b } => {
+                    // The two handles on one line through the anchor (sin of the angle
+                    // between anchor→a and anchor→b is zero).
+                    let (pp, pa, pb) = (point(p), point(a), point(b));
+                    rows.push(Row {
+                        equation: Equation::angle(
+                            [pp[0], pp[1], pa[0], pa[1]],
+                            [pp[0], pp[1], pb[0], pb[1]],
+                            std::f64::consts::PI,
+                        ),
+                        source: Some(cid),
+                    });
+                }
                 Constraint::PointOnCurve { point: p, curve } => {
                     let equation = match doc.get(curve).map(|e| e.kind) {
                         Some(EntityKind::Line { .. }) => Equation::PointLine {
@@ -468,7 +493,7 @@ impl System {
 
         // Geometry on locked layers is pinned where it is (marked with constraint id 0, which
         // is never reported as a conflict).
-        for id in doc.locked_entities() {
+        for id in doc.locked_entities().into_iter().filter(|id| keep(*id)) {
             let pins: Vec<(usize, f64)> = match doc.get(id).map(|e| e.kind) {
                 Some(EntityKind::Point(p)) => vec![(x(id), p.x), (y(id), p.y)],
                 Some(EntityKind::Circle { radius: r, .. }) => {
@@ -528,7 +553,7 @@ impl System {
 
         // Ellipses keep their minor axis perpendicular to the major one, and elliptical arcs
         // their ends on the ellipse.
-        for (_, entity) in doc.iter() {
+        for (_, entity) in doc.iter().filter(|(id, _)| keep(*id)) {
             let (c, m, n, ends) = match entity.kind {
                 EntityKind::Ellipse {
                     center,
@@ -567,7 +592,7 @@ impl System {
         }
 
         // Arcs keep their end on the circle through their start.
-        for (_, entity) in doc.iter() {
+        for (_, entity) in doc.iter().filter(|(id, _)| keep(*id)) {
             if let EntityKind::Arc { center, start, end } = entity.kind {
                 rows.push(Row {
                     equation: Equation::EqualLength {

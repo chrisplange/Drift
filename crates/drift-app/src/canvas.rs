@@ -8,6 +8,14 @@ use eframe::egui_wgpu::{self, wgpu};
 /// Creates per-frame canvas callbacks. The GPU renderer itself lives in egui-wgpu's callback
 /// resources so it can be reached from the render thread.
 /// How the canvas is drawn this frame.
+/// What the canvas draws: curves under everything (hatch lines, underlays), the sketch's
+/// curves on top, and filled areas (beneath both).
+pub struct CanvasContent<'a> {
+    pub under: &'a [SketchItem],
+    pub items: &'a [SketchItem],
+    pub fills: &'a [FillMesh],
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct CanvasOptions {
     pub dark_mode: bool,
@@ -38,11 +46,15 @@ impl CanvasPainter {
         &self,
         rect: egui::Rect,
         pixels_per_point: f64,
-        items: &[SketchItem],
-        fills: &[FillMesh],
+        content: CanvasContent<'_>,
         camera: &Camera,
         options: CanvasOptions,
     ) -> egui::PaintCallback {
+        let CanvasContent {
+            under,
+            items,
+            fills,
+        } = content;
         let palette = if options.dark_mode {
             Palette::dark()
         } else {
@@ -59,6 +71,7 @@ impl CanvasPainter {
             show_axes: options.show_axes,
         };
         let mut frame = build_frame(items, camera, viewport, &palette);
+        frame.push_under(under, camera, viewport, &palette);
         frame.push_fills(fills, camera, viewport);
         egui_wgpu::Callback::new_paint_callback(rect, CanvasCallback { frame })
     }

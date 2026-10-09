@@ -118,6 +118,12 @@ fn item_ops(out: &mut String, text: &mut Vec<u8>, item: &Item, lts: f64) {
                 "S\n"
             });
         }
+        Prim::Bezier { p } => {
+            stroke_setup(out);
+            let _ = writeln!(out, "{} m", pt(p[0]));
+            let _ = writeln!(out, "{} {} {} c", pt(p[1]), pt(p[2]), pt(p[3]));
+            out.push_str("S\n");
+        }
         Prim::Fill { rings, mask, .. } => {
             let (r, g, b) = if *mask { (1.0, 1.0, 1.0) } else { (r, g, b) };
             let _ = writeln!(out, "{} {} {} rg", n(r), n(g), n(b));

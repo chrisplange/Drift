@@ -39,6 +39,7 @@ impl DriftApp {
             ("dims", self.show_dimensions),
             ("rels", self.show_relations),
             ("auto", self.auto_relations),
+            ("ends", self.always_endpoints),
         ];
         let mut prefs: Vec<String> = flags
             .iter()
@@ -64,6 +65,7 @@ impl DriftApp {
                 "dims" => self.show_dimensions = on,
                 "rels" => self.show_relations = on,
                 "auto" => self.auto_relations = on,
+                "ends" => self.always_endpoints = on,
                 "layers" => {
                     if let Some(d) = app::layers_hud::LayersDock::parse(value) {
                         self.layers_dock = d;

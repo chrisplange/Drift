@@ -72,6 +72,10 @@ pub enum Prim {
         start: f64,
         sweep: f64,
     },
+    /// A cubic Bézier from `p[0]` to `p[3]` with handles `p[1]` and `p[2]`.
+    Bezier {
+        p: [DVec2; 4],
+    },
     /// A filled area: outer rings and holes, filled even–odd, and the same area as triangles
     /// (for formats without even–odd fills, such as DXF). A `mask` is a paper-coloured patch
     /// behind text (left out of DXF).
@@ -110,6 +114,7 @@ pub fn prim_points(prim: &Prim) -> Vec<DVec2> {
             start,
             sweep,
         } => drift_core::shape::flatten_ellipse(center, major, minor, start, sweep, 64),
+        Prim::Bezier { p } => drift_core::shape::flatten_bezier(&p, 32),
         _ => Vec::new(),
     }
 }
@@ -248,6 +253,7 @@ impl Drawing {
                     *major *= f;
                     *minor *= f;
                 }
+                Prim::Bezier { p } => p.iter_mut().for_each(|q| *q *= f),
                 Prim::Fill {
                     rings, triangles, ..
                 } => {
@@ -335,7 +341,9 @@ impl Drawing {
                     b.include(*center - DVec2::splat(*radius));
                     b.include(*center + DVec2::splat(*radius));
                 }
-                Prim::Ellipse { .. } => prim_points(&item.prim).iter().for_each(|p| b.include(*p)),
+                Prim::Ellipse { .. } | Prim::Bezier { .. } => {
+                    prim_points(&item.prim).iter().for_each(|p| b.include(*p))
+                }
                 Prim::Fill { rings, .. } => rings.iter().flatten().for_each(|p| b.include(*p)),
                 Prim::Text {
                     at, height, text, ..
@@ -432,6 +440,9 @@ impl Transform {
                     sweep: *sweep,
                 }
             }
+            Prim::Bezier { p } => Prim::Bezier {
+                p: p.map(|q| self.p(q)),
+            },
             Prim::Fill {
                 rings,
                 triangles,

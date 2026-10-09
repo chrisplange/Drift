@@ -51,6 +51,8 @@ impl DimensionTool {
             // An ellipse: its first semi-axis (centre to major point).
             EntityKind::Ellipse { center, major, .. }
             | EntityKind::EllipseArc { center, major, .. } => Some(DimBase::Points(center, major)),
+            // A curve: the distance between its ends.
+            EntityKind::Bezier { a, b, .. } => Some(DimBase::Points(a, b)),
             EntityKind::Point(_) => None,
         }
     }

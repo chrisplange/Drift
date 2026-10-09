@@ -51,7 +51,39 @@ pub fn nearest_point(shape: &Shape, p: DVec2) -> DVec2 {
             start,
             sweep,
         } => nearest_on_ellipse(center, major, minor, start, sweep, p).0,
+        Shape::Bezier { p: q } => nearest_on_bezier(&q, p).0,
     }
+}
+
+/// The point of a cubic Bézier closest to `p`, and its `t` (0..1): the best of a sampling,
+/// refined by golden-section search.
+pub fn nearest_on_bezier(q: &[DVec2; 4], p: DVec2) -> (DVec2, f64) {
+    let at = |t: f64| drift_core::shape::bezier_point(q, t);
+    let d2 = |t: f64| at(t).distance_squared(p);
+    const SAMPLES: usize = 48;
+    let mut best = (0, f64::INFINITY);
+    for i in 0..=SAMPLES {
+        let d = d2(i as f64 / SAMPLES as f64);
+        if d < best.1 {
+            best = (i, d);
+        }
+    }
+    let step = 1.0 / SAMPLES as f64;
+    let (mut lo, mut hi) = (
+        step * best.0.saturating_sub(1) as f64,
+        step * (best.0 + 1).min(SAMPLES) as f64,
+    );
+    let g = (5f64.sqrt() - 1.0) / 2.0;
+    for _ in 0..60 {
+        let (t1, t2) = (hi - g * (hi - lo), lo + g * (hi - lo));
+        if d2(t1) < d2(t2) {
+            hi = t2;
+        } else {
+            lo = t1;
+        }
+    }
+    let t = (lo + hi) / 2.0;
+    (at(t), t)
 }
 
 /// The point of an ellipse (or the part of it from `start` over `sweep`) closest to `p`, and
@@ -223,6 +255,13 @@ pub fn shape_intersects_rect(shape: &Shape, rect: &Bounds) -> bool {
                         .is_empty()
                 })
         }
+        Shape::Bezier { p } => drift_core::shape::flatten_bezier(&p, 32)
+            .windows(2)
+            .any(|w| {
+                point_in_rect(w[0], rect)
+                    || point_in_rect(w[1], rect)
+                    || segment_crosses_rect(w[0], w[1], rect)
+            }),
     }
 }
 

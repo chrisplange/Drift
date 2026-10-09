@@ -110,6 +110,8 @@ impl SceneIndex {
                     let kind = match self.role(id) {
                         Some(PointRole::Endpoint) => SnapKind::Endpoint,
                         Some(PointRole::Center) => SnapKind::Center,
+                        // Handles shape curves; they aren't places to snap to.
+                        Some(PointRole::Handle) => continue,
                         _ => SnapKind::Point,
                     };
                     offer(Snap {
@@ -170,6 +172,8 @@ impl SceneIndex {
                         }
                     }
                 }
+                // Curves snap to their anchors (points) and along themselves.
+                Shape::Bezier { .. } => {}
             }
             if !matches!(shape, Shape::Point(_)) {
                 offer(Snap {

@@ -15,6 +15,8 @@ pub struct CanvasRenderer {
     bind_group: wgpu::BindGroup,
     segments: InstanceBuffer,
     arcs: InstanceBuffer,
+    under_segments: InstanceBuffer,
+    under_arcs: InstanceBuffer,
     fills: InstanceBuffer,
 }
 
@@ -150,6 +152,8 @@ impl CanvasRenderer {
             bind_group,
             segments: InstanceBuffer::new(device, "drift_segment_instances"),
             arcs: InstanceBuffer::new(device, "drift_arc_instances"),
+            under_segments: InstanceBuffer::new(device, "drift_under_segment_instances"),
+            under_arcs: InstanceBuffer::new(device, "drift_under_arc_instances"),
             fills: InstanceBuffer::new(device, "drift_fill_vertices"),
         }
     }
@@ -159,6 +163,9 @@ impl CanvasRenderer {
         queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&frame.globals));
         self.segments.upload(device, queue, &frame.segments);
         self.arcs.upload(device, queue, &frame.arcs);
+        self.under_segments
+            .upload(device, queue, &frame.under_segments);
+        self.under_arcs.upload(device, queue, &frame.under_arcs);
         self.fills.upload(device, queue, &frame.fills);
     }
 
@@ -175,8 +182,11 @@ impl CanvasRenderer {
             pass.draw(0..self.fills.count, 0..1);
         }
 
-        // Arcs first so line ends draw over arc ends; both are anti-aliased, so order is cosmetic.
+        // Curves under the sketch (hatch lines, underlays) first. Then arcs before lines so
+        // line ends draw over arc ends; both are anti-aliased, so that order is cosmetic.
         for (pipeline, buffer) in [
+            (&self.arc_pipeline, &self.under_arcs),
+            (&self.segment_pipeline, &self.under_segments),
             (&self.arc_pipeline, &self.arcs),
             (&self.segment_pipeline, &self.segments),
         ] {

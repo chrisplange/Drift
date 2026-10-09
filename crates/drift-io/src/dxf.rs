@@ -377,6 +377,21 @@ fn write_item(
             };
             o.num(42, t1);
         }
+        Prim::Bezier { p } => {
+            // A degree-3 spline with a clamped knot vector is exactly this Bézier.
+            head(o, "SPLINE");
+            o.pair(70, 8);
+            o.pair(71, 3);
+            o.pair(72, 8);
+            o.pair(73, 4);
+            o.pair(74, 0);
+            for k in [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0] {
+                o.num(40, k);
+            }
+            for q in p {
+                o.point(10, *q);
+            }
+        }
         Prim::Fill {
             triangles, mask, ..
         } => {
@@ -477,6 +492,7 @@ pub fn underlay_prims(import: &DxfImport) -> Vec<drift_core::RefPrim> {
             } => RefPrim::Polyline(drift_core::shape::flatten_ellipse(
                 center, major, minor, start, sweep, 48,
             )),
+            Shape::Bezier { p } => RefPrim::Polyline(drift_core::shape::flatten_bezier(&p, 24)),
         })
     };
     let mut out: Vec<RefPrim> = import
@@ -953,6 +969,10 @@ pub fn add_to_document(doc: &mut Document, import: &DxfImport) -> ImportReport {
                     }
                     None => doc.add_ellipse(c, m, n).ok(),
                 }
+            }
+            Shape::Bezier { p } => {
+                let [a, c1, c2, b] = p.map(|q| point(doc, q));
+                doc.add_bezier(a, c1, c2, b).ok()
             }
             Shape::Point(p) => Some(point(doc, p)),
         };

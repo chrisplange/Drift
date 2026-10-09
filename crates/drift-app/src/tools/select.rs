@@ -25,7 +25,9 @@ impl Target {
 pub(super) const MIDPOINT_PICK: f64 = 0.6;
 
 pub(super) fn pick_target(ed: &Editor, p: &Pointer) -> Option<Target> {
-    let is_point = |id: EntityId| ed.doc.get(id).is_some_and(|e| e.kind.is_point());
+    let hidden = ed.hidden_handles();
+    let is_point =
+        |id: EntityId| !hidden.contains(&id) && ed.doc.get(id).is_some_and(|e| e.kind.is_point());
     if let Some(id) = ed.index.pick(p.raw, p.tolerance, is_point) {
         return Some(Target::Entity(id));
     }
@@ -38,7 +40,7 @@ pub(super) fn pick_target(ed: &Editor, p: &Pointer) -> Option<Target> {
         return Some(Target::Midpoint(line));
     }
     ed.index
-        .pick(p.raw, p.tolerance, |_| true)
+        .pick(p.raw, p.tolerance, |id| !hidden.contains(&id))
         .map(Target::Entity)
 }
 
@@ -468,7 +470,11 @@ impl Tool for SelectTool {
                 if !mods.shift && !mods.command {
                     ed.selected_midpoints.clear();
                 }
-                let hit = ed.index.pick(p.raw, p.tolerance, |id| !ed.is_locked(id));
+                let hit = {
+                    let hidden = ed.hidden_handles();
+                    ed.index
+                        .pick(p.raw, p.tolerance, |id| ed.pickable(id, &hidden))
+                };
                 // A copy of a block (on its curves, or inside it).
                 let copy = if hit.is_none() {
                     ed.instance_at(p.raw, p.tolerance)
@@ -585,8 +591,11 @@ impl Tool for SelectTool {
                     ed.edit_block(c);
                     return;
                 }
-                if let Some(id) = ed.index.pick(p.raw, p.tolerance, |id| !ed.is_locked(id))
-                    && let Some(g) = ed.doc.group_of(id)
+                if let Some(id) = {
+                    let hidden = ed.hidden_handles();
+                    ed.index
+                        .pick(p.raw, p.tolerance, |id| ed.pickable(id, &hidden))
+                } && let Some(g) = ed.doc.group_of(id)
                     && ed.open_group != Some(g)
                 {
                     ed.open_group = Some(g);
@@ -595,7 +604,11 @@ impl Tool for SelectTool {
             }
             Input::Finish => {}
             Input::DragStart(p, mods) => {
-                match ed.index.pick(p.raw, p.tolerance, |id| !ed.is_locked(id)) {
+                let hidden = ed.hidden_handles();
+                let hit = ed
+                    .index
+                    .pick(p.raw, p.tolerance, |id| ed.pickable(id, &hidden));
+                match hit {
                     Some(id) => {
                         if !ed.selection.contains(&id) {
                             if !mods.shift && !mods.command {
@@ -722,6 +735,7 @@ impl Tool for SelectTool {
             },
             Input::DragEnd(p, mods) => match self.drag.take() {
                 Some(SelectDrag::Box { start, .. }) => {
+                    let hidden = ed.hidden_handles();
                     let mut rect = Bounds::from_point(start);
                     rect.include(p.raw);
                     let crossing = p.raw.x < start.x;
@@ -729,7 +743,7 @@ impl Tool for SelectTool {
                         .index
                         .select_in_rect(&rect, crossing)
                         .into_iter()
-                        .filter(|id| !ed.is_locked(*id))
+                        .filter(|id| ed.pickable(*id, &hidden))
                         .collect();
                     if !mods.shift && !mods.command {
                         ed.selection.clear();

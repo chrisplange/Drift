@@ -1979,3 +1979,99 @@ fn c_cycles_to_ellipses_and_draws_them() {
     h.run();
     save_png("drift_ui_ellipses.png", &mut h);
 }
+
+#[test]
+fn pen_draws_curves_like_illustrator() {
+    let Some(mut h) = harness() else { return };
+    let v = DVec2::new;
+    h.key_press(Key::B);
+    h.run();
+    assert_eq!(h.state().tool.kind(), ToolKind::Pen);
+    click_world(&mut h, v(-60.0, -10.0));
+    // Press, drag out the handles, and look mid-drag.
+    let at = screen(&h, v(-20.0, 20.0));
+    h.hover_at(at);
+    h.run();
+    button(&h, at, true);
+    h.run();
+    for k in 1..=4 {
+        h.hover_at(screen(&h, v(-20.0 + 4.0 * k as f64, 20.0)));
+        h.run();
+    }
+    save_png("drift_ui_pen_drag.png", &mut h);
+    button(&h, screen(&h, v(-4.0, 20.0)), false);
+    h.run();
+    // The rubber band to the pointer.
+    h.hover_at(screen(&h, v(30.0, -15.0)));
+    h.run();
+    save_png("drift_ui_pen_rubber_band.png", &mut h);
+    click_world(&mut h, v(30.0, -15.0));
+    h.key_press(Key::Enter);
+    h.run();
+    let curves = h
+        .state()
+        .editor
+        .doc
+        .iter()
+        .filter(|(_, e)| matches!(e.kind, EntityKind::Bezier { .. }))
+        .count();
+    assert_eq!(curves, 2);
+    // Pick the first curve: its handles and comb show.
+    h.key_press(Key::Escape);
+    h.run();
+    let on_curve = {
+        let doc = &h.state().editor.doc;
+        let (_, e) = doc
+            .iter()
+            .find(|(_, e)| matches!(e.kind, EntityKind::Bezier { .. }))
+            .unwrap();
+        let EntityKind::Bezier { a, c1, c2, b } = e.kind else {
+            unreachable!()
+        };
+        let p = [a, c1, c2, b].map(|q| doc.point(q).unwrap());
+        drift_core::shape::bezier_point(&p, 0.5)
+    };
+    click_world(&mut h, on_curve);
+    assert_eq!(h.state().editor.selection.len(), 1);
+    assert_eq!(h.state().editor.handle_lines([0, 0, 0]).len(), 2);
+    save_png("drift_ui_pen_picked.png", &mut h);
+}
+
+#[test]
+fn end_points_light_up_and_hide_until_used() {
+    let Some(mut h) = harness() else { return };
+    h.get_by_label("File").click();
+    h.run();
+    h.get_by_label("Open example").click();
+    h.run();
+    assert!(!h.state().always_endpoints, "Illustrator-like by default");
+    // Untouched: no end point markers.
+    let markers = |h: &Harness<'_, DriftApp>| {
+        h.state()
+            .editor
+            .items_styled(true, true)
+            .iter()
+            .filter(|i| i.vertex)
+            .count()
+    };
+    assert_eq!(markers(&h), 0);
+    // Hover a corner where a line meets a fillet: it lights up.
+    let corner = DVec2::new(10.0, 0.0);
+    h.hover_at(screen(&h, corner));
+    h.run();
+    h.run();
+    let hovered = h.state().editor.hovered;
+    assert!(hovered.is_some_and(|id| {
+        h.state()
+            .editor
+            .doc
+            .get(id)
+            .is_some_and(|e| e.kind.is_point())
+    }));
+    assert!(markers(&h) >= 1);
+    save_png("drift_ui_endpoint_hover.png", &mut h);
+    // Always show: every end point.
+    h.state_mut().always_endpoints = true;
+    h.run();
+    assert!(markers(&h) > 10);
+}

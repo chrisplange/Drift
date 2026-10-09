@@ -45,6 +45,124 @@ pub enum Shape {
         start: f64,
         sweep: f64,
     },
+    /// A cubic Bézier: from `p[0]` to `p[3]`, pulled towards the handles `p[1]` and `p[2]`.
+    Bezier {
+        p: [DVec2; 4],
+    },
+}
+
+/// A point of a cubic Bézier at `t` in 0..1.
+pub fn bezier_point(p: &[DVec2; 4], t: f64) -> DVec2 {
+    let u = 1.0 - t;
+    p[0] * (u * u * u) + p[1] * (3.0 * u * u * t) + p[2] * (3.0 * u * t * t) + p[3] * (t * t * t)
+}
+
+/// The first derivative of a cubic Bézier at `t`.
+pub fn bezier_tangent(p: &[DVec2; 4], t: f64) -> DVec2 {
+    let u = 1.0 - t;
+    (p[1] - p[0]) * (3.0 * u * u) + (p[2] - p[1]) * (6.0 * u * t) + (p[3] - p[2]) * (3.0 * t * t)
+}
+
+/// The second derivative of a cubic Bézier at `t`.
+pub fn bezier_second(p: &[DVec2; 4], t: f64) -> DVec2 {
+    (p[2] - p[1] * 2.0 + p[0]) * (6.0 * (1.0 - t)) + (p[3] - p[2] * 2.0 + p[1]) * (6.0 * t)
+}
+
+/// Signed curvature (1 / radius, positive turning left) of a cubic Bézier at `t`.
+pub fn bezier_curvature(p: &[DVec2; 4], t: f64) -> f64 {
+    let d1 = bezier_tangent(p, t);
+    let d2 = bezier_second(p, t);
+    let len = d1.length();
+    if len < 1e-12 {
+        return 0.0;
+    }
+    d1.perp_dot(d2) / (len * len * len)
+}
+
+/// A cubic Bézier as connected points: at least `min_segments`, more for long or bendy ones.
+pub fn flatten_bezier(p: &[DVec2; 4], min_segments: usize) -> Vec<DVec2> {
+    let hull = p[0].distance(p[1]) + p[1].distance(p[2]) + p[2].distance(p[3]);
+    let chord = p[0].distance(p[3]);
+    let bend = (hull - chord) / hull.max(1e-12);
+    let n = (16.0 + 112.0 * bend.sqrt())
+        .max(min_segments as f64)
+        .min(256.0) as usize;
+    (0..=n)
+        .map(|i| bezier_point(p, i as f64 / n as f64))
+        .collect()
+}
+
+/// A cubic Bézier as exactly `n` segments (for drawing, sized to the screen).
+pub fn bezier_steps(p: &[DVec2; 4], n: usize) -> Vec<DVec2> {
+    let n = n.max(1);
+    (0..=n)
+        .map(|i| bezier_point(p, i as f64 / n as f64))
+        .collect()
+}
+
+/// An ellipse (or part) as exactly `n` segments (for drawing, sized to the screen).
+pub fn ellipse_steps(
+    center: DVec2,
+    major: DVec2,
+    minor: f64,
+    start: f64,
+    sweep: f64,
+    n: usize,
+) -> Vec<DVec2> {
+    let n = n.max(1);
+    (0..=n)
+        .map(|i| ellipse_point(center, major, minor, start + sweep * i as f64 / n as f64))
+        .collect()
+}
+
+/// The part of a cubic Bézier between `t0` and `t1` (de Casteljau).
+pub fn bezier_piece(p: &[DVec2; 4], t0: f64, t1: f64) -> [DVec2; 4] {
+    // Split at t1 and keep the first part, then split that at t0 / t1.
+    let split = |q: &[DVec2; 4], t: f64| -> ([DVec2; 4], [DVec2; 4]) {
+        let lerp = |a: DVec2, b: DVec2| a + (b - a) * t;
+        let (a, b, c) = (lerp(q[0], q[1]), lerp(q[1], q[2]), lerp(q[2], q[3]));
+        let (d, e) = (lerp(a, b), lerp(b, c));
+        let f = lerp(d, e);
+        ([q[0], a, d, f], [f, e, c, q[3]])
+    };
+    let (head, _) = split(p, t1.clamp(0.0, 1.0));
+    if t1 <= 1e-12 {
+        return [p[0]; 4];
+    }
+    let (_, tail) = split(&head, (t0 / t1).clamp(0.0, 1.0));
+    tail
+}
+
+fn bezier_bounds(p: &[DVec2; 4]) -> Bounds {
+    let mut b = Bounds::from_point(p[0]);
+    b.include(p[3]);
+    // Where x' or y' is zero: a quadratic in t for each axis.
+    for axis in 0..2 {
+        let c = |v: DVec2| if axis == 0 { v.x } else { v.y };
+        let (a0, a1, a2, a3) = (c(p[0]), c(p[1]), c(p[2]), c(p[3]));
+        let qa = -a0 + 3.0 * a1 - 3.0 * a2 + a3;
+        let qb = 2.0 * (a0 - 2.0 * a1 + a2);
+        let qc = a1 - a0;
+        let mut roots = Vec::new();
+        if qa.abs() < 1e-12 {
+            if qb.abs() > 1e-12 {
+                roots.push(-qc / qb);
+            }
+        } else {
+            let disc = qb * qb - 4.0 * qa * qc;
+            if disc >= 0.0 {
+                let r = disc.sqrt();
+                roots.push((-qb + r) / (2.0 * qa));
+                roots.push((-qb - r) / (2.0 * qa));
+            }
+        }
+        for t in roots {
+            if (0.0..=1.0).contains(&t) {
+                b.include(bezier_point(p, t));
+            }
+        }
+    }
+    b
 }
 
 /// A point of an ellipse at parametric angle `t`.
@@ -128,6 +246,7 @@ impl Shape {
                 start,
                 sweep,
             } => ellipse_bounds(center, major, minor, start, sweep),
+            Shape::Bezier { p } => bezier_bounds(&p),
         }
     }
 }

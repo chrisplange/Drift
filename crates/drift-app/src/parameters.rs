@@ -610,6 +610,13 @@ fn paint_shape(painter: &egui::Painter, map: &ScreenMap, shape: &Shape, stroke: 
                 .collect();
             painter.add(egui::Shape::line(points, stroke));
         }
+        Shape::Bezier { p } => {
+            let points = drift_core::shape::flatten_bezier(&p, 32)
+                .into_iter()
+                .map(|q| map.to_screen(q))
+                .collect();
+            painter.add(egui::Shape::line(points, stroke));
+        }
         Shape::Point(_) => {}
     }
 }

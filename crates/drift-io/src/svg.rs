@@ -196,6 +196,21 @@ fn item_svg(out: &mut String, item: &Item, h: f64, lts: f64) {
             }
             let _ = writeln!(out, r#"<path d="{d}" {}/>"#, stroke(pen, lts));
         }
+        Prim::Bezier { p } => {
+            let _ = writeln!(
+                out,
+                r#"<path d="M {} {} C {} {} {} {} {} {}" {}/>"#,
+                num(p[0].x),
+                num(y(p[0].y)),
+                num(p[1].x),
+                num(y(p[1].y)),
+                num(p[2].x),
+                num(y(p[2].y)),
+                num(p[3].x),
+                num(y(p[3].y)),
+                stroke(pen, lts)
+            );
+        }
         Prim::Fill { rings, mask, .. } => {
             let mut d = String::new();
             for ring in rings {

@@ -67,6 +67,9 @@ pub struct SolveOptions {
     /// Also run the degrees-of-freedom analysis.
     pub analyze: bool,
     pub tolerances: Tolerances,
+    /// Solve only these entities (closed under shared points and constraints; see
+    /// [`connected`]): a drag in a big sketch then costs what the dragged part costs.
+    pub scope: Option<std::rc::Rc<HashSet<EntityId>>>,
 }
 
 /// How completely an entity's position is determined by constraints.
@@ -103,7 +106,12 @@ const MAX_ITERATIONS: usize = 100;
 /// Solve the document's constraints in place. Changes go through the document's normal edit
 /// methods, so they are recorded by an open transaction.
 pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
-    let mut sys = System::build(doc, &options.dragged, &options.tolerances);
+    let mut sys = System::build_in(
+        doc,
+        &options.dragged,
+        &options.tolerances,
+        options.scope.as_deref(),
+    );
     let report = run(&mut sys, options, true);
     write_back(doc, &sys);
     report
@@ -117,6 +125,54 @@ pub fn analyze(doc: &Document) -> SolveReport {
     };
     let mut sys = System::build(doc, &[], &options.tolerances);
     run(&mut sys, &options, false)
+}
+
+/// The entities that can move with `seeds`: everything joined to them through shared points
+/// and (non-driven) constraints.
+pub fn connected(doc: &Document, seeds: impl IntoIterator<Item = EntityId>) -> HashSet<EntityId> {
+    let ids: Vec<EntityId> = doc.iter().map(|(id, _)| id).collect();
+    let index: HashMap<EntityId, usize> = ids.iter().enumerate().map(|(i, id)| (*id, i)).collect();
+    let mut parent: Vec<usize> = (0..ids.len()).collect();
+    fn find(parent: &mut [usize], mut i: usize) -> usize {
+        while parent[i] != i {
+            parent[i] = parent[parent[i]];
+            i = parent[i];
+        }
+        i
+    }
+    let join = |parent: &mut Vec<usize>, a: EntityId, b: EntityId| {
+        if let (Some(&i), Some(&j)) = (index.get(&a), index.get(&b)) {
+            let (ri, rj) = (find(parent, i), find(parent, j));
+            if ri != rj {
+                parent[ri.max(rj)] = ri.min(rj);
+            }
+        }
+    };
+    for (id, e) in doc.iter() {
+        for p in e.kind.points() {
+            join(&mut parent, id, p);
+        }
+    }
+    for (cid, c) in doc.constraints() {
+        if doc.is_driven(cid) {
+            continue;
+        }
+        let mut ents = c.entities();
+        if let Some(first) = ents.next() {
+            for other in ents {
+                join(&mut parent, first, other);
+            }
+        }
+    }
+    let roots: HashSet<usize> = seeds
+        .into_iter()
+        .filter_map(|id| index.get(&id).copied())
+        .map(|i| find(&mut parent, i))
+        .collect();
+    (0..ids.len())
+        .filter(|&i| roots.contains(&find(&mut parent, i)))
+        .map(|i| ids[i])
+        .collect()
 }
 
 /// Entities whose geometry has collapsed: zero-length lines, zero-radius circles and arcs.
@@ -140,6 +196,17 @@ pub fn degenerate_entities(doc: &Document) -> Vec<EntityId> {
                     (Some(c), Some(s), Some(e)) => {
                         let scale = c.abs().max_element();
                         tiny(c.distance(s), scale) || tiny(s.distance(e), scale)
+                    }
+                    _ => false,
+                }
+            }
+            EntityKind::Bezier { a, c1, c2, b } => {
+                match (point(a), point(c1), point(c2), point(b)) {
+                    (Some(pa), Some(p1), Some(p2), Some(pb)) => {
+                        let scale = pa.abs().max_element();
+                        tiny(pa.distance(pb), scale)
+                            && tiny(pa.distance(p1), scale)
+                            && tiny(pa.distance(p2), scale)
                     }
                     _ => false,
                 }

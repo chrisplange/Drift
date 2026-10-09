@@ -265,11 +265,13 @@ impl DriftApp {
                     "Constraint status colours",
                     "⇧C",
                 );
+                toggle_item(ui, &mut self.always_endpoints, "Always show end points", "");
                 ui.separator();
                 toggle_item(ui, &mut self.show_dimensions, "Dimensions and notes", "");
                 toggle_item(ui, &mut self.show_relations, "Relations", "");
                 toggle_item(ui, &mut self.params.show_free, "Free directions", "");
                 toggle_item(ui, &mut self.params.show_ghosts, "Variant ghosts", "");
+                toggle_item(ui, &mut self.show_combs, "Curvature combs", "");
                 ui.separator();
                 toggle_item(ui, &mut self.auto_relations, "Automatic relations", "");
                 let wide = ui.ctx().content_rect().width() >= WIDE_LAYOUT;
@@ -674,7 +676,10 @@ impl DriftApp {
         let mut apply = None;
         let mut toggle_driven = None;
         let weak = ui.visuals().weak_text_color();
-        for (id, c) in &constraints {
+        // Laying out thousands of rows every frame stalls the UI; the rest are summarised.
+        const MAX_ROWS: usize = 100;
+        let hidden_rows = constraints.len().saturating_sub(MAX_ROWS);
+        for (id, c) in constraints.iter().take(MAX_ROWS) {
             let row = ui.horizontal(|ui| {
                 let mut name = egui::RichText::new(constraint_label(&ed.doc, c));
                 if conflicts.contains(id) {
@@ -782,6 +787,12 @@ impl DriftApp {
                     r.right_bottom() + egui::vec2(0.0, 3.0),
                 ],
                 egui::Stroke::new(0.5, ui.visuals().widgets.noninteractive.bg_stroke.color),
+            );
+        }
+        if hidden_rows > 0 {
+            ui.label(
+                egui::RichText::new(format!("… and {hidden_rows} more (pick less to see them)"))
+                    .weak(),
             );
         }
         if let Some(c) = select {
@@ -906,6 +917,11 @@ impl DriftApp {
                         &mut self.status_colors,
                         "Constraint status colours (on) or layer and line colours (off) · Shift+C"
                             .to_owned(),
+                    ),
+                    (
+                        Glyph::Endpoints,
+                        &mut self.always_endpoints,
+                        "Always show end points (off: only on hovered or picked curves)".to_owned(),
                     ),
                     (Glyph::Axes, &mut self.show_axes, "Origin axes".to_owned()),
                     (

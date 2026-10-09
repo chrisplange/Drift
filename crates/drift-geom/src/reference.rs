@@ -145,6 +145,10 @@ impl RefIndex {
                         }
                     }
                 }
+                Shape::Bezier { p } => {
+                    offer(p[0], SnapKind::Endpoint);
+                    offer(p[3], SnapKind::Endpoint);
+                }
             }
             if !matches!(shape, Shape::Point(_)) {
                 offer(nearest_point(shape, p), SnapKind::OnCurve);

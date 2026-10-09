@@ -172,6 +172,9 @@ impl Instance {
                     sweep,
                 }
             }
+            Shape::Bezier { p } => Shape::Bezier {
+                p: p.map(|q| self.apply(q)),
+            },
         }
     }
 
@@ -223,6 +226,9 @@ impl Instance {
                     sweep,
                 }
             }
+            Shape::Bezier { p } => Shape::Bezier {
+                p: p.map(|q| self.invert(q)),
+            },
         }
     }
 }

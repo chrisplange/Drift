@@ -23,6 +23,7 @@ mod ellipse;
 mod fill;
 mod line;
 mod offset_mirror;
+mod pen;
 mod place_block;
 mod point;
 mod polygon;
@@ -42,6 +43,7 @@ pub use self::{
     curve_ops::{ExtendTool, SplitTool, TrimTool},
     fill::FillTool,
     offset_mirror::{MirrorTool, OffsetTool},
+    pen::PenTool,
     place_block::BlockTool,
     polygon::PolygonTool,
     slot::{SlotMode, SlotTool},
@@ -145,6 +147,7 @@ impl Axis {
 pub enum ToolKind {
     Select,
     Line,
+    Pen,
     Rectangle,
     Polygon,
     Circle,
@@ -177,9 +180,10 @@ pub enum ToolKind {
 }
 
 impl ToolKind {
-    pub const ALL: [ToolKind; 26] = [
+    pub const ALL: [ToolKind; 27] = [
         ToolKind::Select,
         ToolKind::Line,
+        ToolKind::Pen,
         ToolKind::Rectangle,
         ToolKind::Polygon,
         ToolKind::Circle,
@@ -213,6 +217,7 @@ impl ToolKind {
             "Draw",
             &[
                 ToolKind::Line,
+                ToolKind::Pen,
                 ToolKind::Rectangle,
                 ToolKind::Polygon,
                 ToolKind::Circle,
@@ -261,6 +266,7 @@ impl ToolKind {
         match self {
             ToolKind::Select => "Select",
             ToolKind::Line => "Line",
+            ToolKind::Pen => "Pen",
             ToolKind::Rectangle => "Rectangle",
             ToolKind::Polygon => "Polygon",
             ToolKind::Slot => "Slot",
@@ -295,6 +301,9 @@ impl ToolKind {
         match self {
             ToolKind::Select => "Pick, drag and box-select geometry; G moves the selection",
             ToolKind::Line => "Draw connected lines; type a length, X / Y lock an axis",
+            ToolKind::Pen => {
+                "Curves: click for corners, drag for smooth points (Alt breaks the handle)"
+            }
             ToolKind::Rectangle => "Two opposite corners, or type the width and height",
             ToolKind::Polygon => {
                 "Regular polygon: centre, then a corner. Tab types sides; X: around the circle"
@@ -332,6 +341,7 @@ impl ToolKind {
         Some(match self {
             ToolKind::Select => 'S',
             ToolKind::Line => 'L',
+            ToolKind::Pen => 'B',
             ToolKind::Rectangle => 'R',
             ToolKind::Polygon => 'K',
             ToolKind::Slot => 'U',
@@ -363,6 +373,7 @@ impl ToolKind {
         match self {
             ToolKind::Select => Box::<SelectTool>::default(),
             ToolKind::Line => Box::<LineTool>::default(),
+            ToolKind::Pen => Box::<PenTool>::default(),
             ToolKind::Rectangle => Box::<RectangleTool>::default(),
             ToolKind::Polygon => Box::<PolygonTool>::default(),
             ToolKind::Slot => Box::<SlotTool>::default(),

@@ -6,7 +6,7 @@
 //! ```json
 //! {
 //!   "format": "drift",
-//!   "version": 13,
+//!   "version": 14,
 //!   "meta": {"title":"Bracket","units":"mm","generator":"Drift 0.1.0"},
 //!   "display": {"length":"architectural","fraction":16},
 //!   "variables": [
@@ -65,8 +65,8 @@ pub const EXTENSION: &str = "drift";
 /// ordinate dimensions) and dimension `prefix`, `suffix` and `tol` (M7); 8 = adds `sheets`
 /// (paper, scale, view, title block and revisions) (M8); 9 = adds `groups`; 10 = adds `blocks`
 /// and `instances`; 11 = adds a layer's `fill` colour; 12 = adds `underlays` (M8.5); 13 = adds
-/// `ellipse` entities (M9).
-pub const FORMAT_VERSION: u32 = 13;
+/// `ellipse` entities; 14 = adds `bezier` curves and `smooth` relations (M9).
+pub const FORMAT_VERSION: u32 = 14;
 const FORMAT_TAG: &str = "drift";
 
 /// Document-level properties stored alongside the geometry.
@@ -225,6 +225,24 @@ enum EntityRecord {
         center: String,
         start: String,
         end: String,
+        #[serde(default, skip_serializing_if = "Style::is_solid")]
+        style: Style,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        layer: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        color: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        weight: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        linetype: Option<String>,
+    },
+    /// A cubic Bézier curve (v14): end points `a` and `b`, handles `c1` and `c2`.
+    Bezier {
+        id: String,
+        a: String,
+        c1: String,
+        c2: String,
+        b: String,
         #[serde(default, skip_serializing_if = "Style::is_solid")]
         style: Style,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -565,6 +583,10 @@ fn constraint_record(
             (r.line, r.point) = (s(line), s(point));
             "midpoint"
         }
+        Constraint::Smooth { point, a, b } => {
+            (r.a, r.b, r.point) = (s(a), s(b), s(point));
+            "smooth"
+        }
         Constraint::Fix { point, at } => {
             (r.point, r.at) = (s(point), Some(at.to_array()));
             "fix"
@@ -652,6 +674,11 @@ fn parse_constraint(r: ConstraintRecord) -> Result<ParsedConstraint, LoadError> 
             a: a()?,
             b: b()?,
             axis: entity(&r.line, "line")?,
+        },
+        "smooth" => Constraint::Smooth {
+            point: entity(&r.point, "point")?,
+            a: a()?,
+            b: b()?,
         },
         "midpoint" => Constraint::Midpoint {
             point: entity(&r.point, "point")?,
@@ -844,6 +871,18 @@ fn record(id: EntityId, entity: &Entity) -> EntityRecord {
             minor: id_string(minor),
             start: Some(id_string(start)),
             end: Some(id_string(end)),
+            style,
+            layer,
+            color,
+            weight,
+            linetype,
+        },
+        EntityKind::Bezier { a, c1, c2, b } => EntityRecord::Bezier {
+            id,
+            a: id_string(a),
+            c1: id_string(c1),
+            c2: id_string(c2),
+            b: id_string(b),
             style,
             layer,
             color,
@@ -1140,6 +1179,38 @@ pub fn load(text: &str) -> Result<(Document, Metadata), LoadError> {
                 let kind = EntityKind::Circle {
                     center: parse_id(&center)?,
                     radius,
+                };
+                (
+                    id,
+                    Entity {
+                        style: style.into(),
+                        ..Entity::new(kind)
+                    },
+                    Look {
+                        layer,
+                        color,
+                        weight,
+                        linetype,
+                    },
+                )
+            }
+            EntityRecord::Bezier {
+                id,
+                a,
+                c1,
+                c2,
+                b,
+                style,
+                layer,
+                color,
+                weight,
+                linetype,
+            } => {
+                let kind = EntityKind::Bezier {
+                    a: parse_id(&a)?,
+                    c1: parse_id(&c1)?,
+                    c2: parse_id(&c2)?,
+                    b: parse_id(&b)?,
                 };
                 (
                     id,
@@ -1470,7 +1541,7 @@ pub fn migrate(value: serde_json::Value) -> Result<serde_json::Value, LoadError>
         // v1 → v2: constraints were introduced; a v1 file simply has none.
         value["constraints"] = serde_json::Value::Array(Vec::new());
     }
-    // v2 → v13 only added optional fields, sections and constraint types: nothing to convert.
+    // v2 → v14 only added optional fields, sections and constraint types: nothing to convert.
     value["version"] = FORMAT_VERSION.into();
     Ok(value)
 }
@@ -1513,7 +1584,7 @@ mod tests {
         let text = save(&doc, &Metadata::default());
         let expected = r#"{
   "format": "drift",
-  "version": 13,
+  "version": 14,
   "meta": {"units":"mm"},
   "entities": [
     {"type":"point","id":"e1","at":[0.0,0.0]},
@@ -2046,6 +2117,25 @@ mod tests {
         .map(|p| doc.add_point(p));
         doc.add_ellipse(ec, em, en).unwrap();
         doc.add_ellipse_arc(ec, em, en, es, ee).unwrap();
+        // Two curves meeting at a smooth point.
+        let [b0, b1, b2, b3, b4, b5, b6] = [
+            (400.0, 0.0),
+            (410.0, 10.0),
+            (420.0, 10.0),
+            (430.0, 0.0),
+            (440.0, -10.0),
+            (450.0, -10.0),
+            (460.0, 0.0),
+        ]
+        .map(|(x, y)| doc.add_point(DVec2::new(x, y)));
+        doc.add_bezier(b0, b1, b2, b3).unwrap();
+        doc.add_bezier(b3, b4, b5, b6).unwrap();
+        doc.add_constraint(Constraint::Smooth {
+            point: b3,
+            a: b2,
+            b: b4,
+        })
+        .unwrap();
         let mut plan = drift_core::Underlay::new(
             "Plan",
             "plan.pdf, page 2",
@@ -2079,7 +2169,7 @@ mod tests {
         doc.add_underlay(drift_core::Underlay::new("Survey", "", Vec::new()));
 
         let text = save(&doc, &Metadata::default());
-        assert!(text.contains("\"version\": 13"));
+        assert!(text.contains("\"version\": 14"));
         assert!(
             text.contains(r#"{"a":[80.0,20.0,30.0,0.0,90.0]}"#),
             "{text}"

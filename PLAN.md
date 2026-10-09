@@ -1283,6 +1283,68 @@ written but hasn't run yet (no GitHub repo).*
   - Tangency to ellipses.
   - Splitting a fill region where an ellipse crosses another curve.
 
+*Part 3 as built (2026-10-09): curves and the pen.*
+- **Model (format v14 `bezier` entities, `smooth` relations):**
+  - A curve is a cubic Bézier between two anchor points with two handle points (8
+    freedoms); a path is a chain sharing anchors, so curves and lines join like lines do.
+  - Smooth (G1) keeps the handles either side of an anchor on one line through it (the
+    angle equation at 180°); handle lengths stay independent, as in Illustrator.
+  - `Shape::Bezier` with exact bounds (derivative roots), evaluation, curvature, splitting
+    (de Casteljau) and flattening.
+- **The pen (B):**
+  - Click: corner point. Press and drag: smooth point, handles mirrored; Alt while dragging
+    breaks them (only the outgoing one moves; Alt before moving gives no incoming handle).
+  - A live rubber band shows the next segment to the pointer; while dragging, both handles
+    and the curve update.
+  - Clicking or dragging on the first point closes the path (ringed when hovered), smooth
+    if it was. Enter, Esc or a right-click ends an open path.
+  - Segments with no handles at either end are lines; a missing handle sits a third of the
+    way along, like a retracted one.
+  - Alt-click a point between two curves to make it smooth or a corner.
+- **Editing:**
+  - Handles show only around picked or hovered curves (or a picked anchor or handle), with
+    grey handle lines. Hidden ones can't be picked or box-selected, and handles are never
+    snap targets.
+  - Dragging or grabbing an anchor carries its handles. Dragging a smooth point's handle
+    swings the other one round.
+  - Curvature combs on picked curves (View → Curvature combs), scaled to a fixed screen
+    length.
+- **Output:** SVG `C` and PDF `c` exactly; DXF a degree-3 SPLINE per segment; blocks,
+  Shift+D, mirror and patterns copy curves; the inspector shows ends and length.
+- **Not yet:**
+  - DXF SPLINE import.
+  - Trim, extend, split, fillet and offset with curves.
+  - G2 (equal curvature) relations.
+  - Continuing a path from an existing end with its handle.
+  - Smooth / corner buttons in the inspector.
+
+*Performance torture test (2026-10-09):*
+- **What it runs** (`cargo test --release -p drift-app perf_ -- --ignored --nocapture`): 10,000
+  curves (28,822 entities, 6,472 relations) of lines, arcs, circles, curves and ellipses,
+  through every per-frame and per-edit path, and the real app at 1920 × 1080 on the GPU.
+- **Fixed:**
+  - Region finding: 130 s → 0.24 s. Vertex merging was a linear search over ~110k edge
+    ends; now a hash grid. Also: hole hosts prefiltered by bounds, a queue for pruning,
+    sort-and-sweep for crossing pairs, and region bounds for quick `contains`.
+  - Dragging 1,000 curves: 32 → 4.5 ms a move. The solver builds only the connected part
+    (`drift_solver::connected`, `SolveOptions::scope`), and the index refreshes only those
+    shapes during a drag, rebuilding its tree on the next commit.
+  - Rotating 1,000 curves: 85 → 7.8 ms a move (the same scoping).
+  - GPU frame at "fit all": 310k → 30k instances, 9 → 0.9 ms. Curves and ellipses are
+    flattened by their size on screen (about one segment per 4 px), not to a fixed minimum.
+  - The relation list shows at most 100 rows (a selection of 1,000 curves laid out
+    thousands of rows every frame).
+  - The index compares shapes in place and works out point roles only when the structure
+    changes. rstar 0.13 panicked on removes mixed with inserts, so the tree is bulk-loaded.
+- **Now:**
+  - Full app frames: 5–6 ms whatever the zoom, and 12 ms with 1,000 curves picked.
+  - Snapping under 0.02 ms, picking 0.3 ms.
+- **Still slow (once per edit, not per frame):**
+  - A commit re-solves, re-analyses (23 ms) and re-indexes (20 ms) the whole sketch: about
+    60 ms. Undo and redo cost about 38 ms.
+  - Regions take 0.24 s per change, when fills or region picking need them.
+  - Next: scope analysis and indexing to what an edit touched.
+
 **M10 — Polish and release (ongoing)**
 - Themes, command palette, keybinding config, crash recovery, PWA offline install, and
   accessibility pass.

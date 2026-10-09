@@ -14,11 +14,19 @@ pub enum PointRole {
     Center,
     /// A sketch point not used by any curve.
     Standalone,
+    /// A Bézier's handle: dragged to shape the curve, but not snapped to.
+    Handle,
 }
 
+#[derive(PartialEq)]
 struct Entry {
     id: EntityId,
     envelope: AABB<[f64; 2]>,
+}
+
+fn envelope(shape: &Shape) -> AABB<[f64; 2]> {
+    let b = shape.bounds();
+    AABB::from_corners(b.min.to_array(), b.max.to_array())
 }
 
 impl RTreeObject for Entry {
@@ -35,6 +43,10 @@ pub struct SceneIndex {
     revision: Option<u64>,
     tree: RTree<Entry>,
     shapes: HashMap<EntityId, Shape>,
+    /// What each entity was at the last update (a change means roles need working out).
+    kinds: HashMap<EntityId, EntityKind>,
+    /// Shapes moved (during a drag) without the tree following; rebuilt on the next update.
+    tree_stale: bool,
     roles: HashMap<EntityId, PointRole>,
 }
 
@@ -44,6 +56,8 @@ impl Default for SceneIndex {
             revision: None,
             tree: RTree::new(),
             shapes: HashMap::new(),
+            kinds: HashMap::new(),
+            tree_stale: false,
             roles: HashMap::new(),
         }
     }
@@ -56,65 +70,140 @@ impl SceneIndex {
         index
     }
 
-    /// Rebuild if the document changed since the last build.
+    /// Bring the index up to date with the document. Shapes are compared in place, point
+    /// roles are worked out again only when the sketch's structure changed, and the tree is
+    /// rebuilt only when something moved.
     pub fn update(&mut self, doc: &Document) {
-        if self.revision == Some(doc.revision()) {
+        if self.revision == Some(doc.revision()) && !self.tree_stale {
             return;
         }
         self.revision = Some(doc.revision());
-        self.shapes.clear();
-        self.roles.clear();
 
-        let mut entries = Vec::with_capacity(doc.len());
+        let mut structure_changed = false;
+        let mut changed: Vec<(EntityId, Option<Shape>)> = Vec::new();
+        let mut seen = 0;
         for (id, entity) in doc.iter() {
             if !doc.is_visible(id) {
                 continue;
             }
             let Some(shape) = doc.shape(id) else { continue };
-            let b = shape.bounds();
-            entries.push(Entry {
-                id,
-                envelope: AABB::from_corners(b.min.to_array(), b.max.to_array()),
-            });
-            self.shapes.insert(id, shape);
-            match entity.kind {
-                EntityKind::Point(_) => {
-                    self.roles.entry(id).or_insert(PointRole::Standalone);
+            seen += 1;
+            if self.kinds.get(&id) != Some(&entity.kind) {
+                structure_changed = true;
+            }
+            match self.shapes.get_mut(&id) {
+                Some(old) if *old == shape => {}
+                Some(old) => {
+                    changed.push((id, Some(*old)));
+                    *old = shape;
                 }
-                EntityKind::Line { a, b } => {
-                    self.roles.insert(a, PointRole::Endpoint);
-                    self.roles.insert(b, PointRole::Endpoint);
+                None => {
+                    changed.push((id, None));
+                    self.shapes.insert(id, shape);
                 }
-                EntityKind::Circle { center, .. } => self.mark_center(center),
-                EntityKind::Arc { center, start, end } => {
-                    self.mark_center(center);
-                    self.roles.insert(start, PointRole::Endpoint);
-                    self.roles.insert(end, PointRole::Endpoint);
+            }
+        }
+        // Gone (deleted or hidden).
+        let mut removed: Vec<(EntityId, Shape)> = Vec::new();
+        if seen != self.shapes.len() {
+            structure_changed = true;
+            removed = self
+                .shapes
+                .iter()
+                .filter(|(id, _)| !doc.contains(**id) || !doc.is_visible(**id))
+                .map(|(id, s)| (*id, *s))
+                .collect();
+            for (id, _) in &removed {
+                self.shapes.remove(id);
+            }
+        }
+        if structure_changed {
+            self.kinds.clear();
+            self.roles.clear();
+            for (id, entity) in doc.iter() {
+                if !self.shapes.contains_key(&id) {
+                    continue;
                 }
-                EntityKind::Ellipse {
-                    center,
-                    major,
-                    minor,
-                } => {
-                    self.mark_center(center);
-                    self.roles.insert(major, PointRole::Endpoint);
-                    self.roles.insert(minor, PointRole::Endpoint);
-                }
-                EntityKind::EllipseArc {
-                    center,
-                    major,
-                    minor,
-                    start,
-                    end,
-                } => {
-                    self.mark_center(center);
-                    for p in [major, minor, start, end] {
-                        self.roles.insert(p, PointRole::Endpoint);
+                self.kinds.insert(id, entity.kind);
+                match entity.kind {
+                    EntityKind::Point(_) => {
+                        self.roles.entry(id).or_insert(PointRole::Standalone);
+                    }
+                    EntityKind::Line { a, b } => {
+                        self.roles.insert(a, PointRole::Endpoint);
+                        self.roles.insert(b, PointRole::Endpoint);
+                    }
+                    EntityKind::Circle { center, .. } => self.mark_center(center),
+                    EntityKind::Arc { center, start, end } => {
+                        self.mark_center(center);
+                        self.roles.insert(start, PointRole::Endpoint);
+                        self.roles.insert(end, PointRole::Endpoint);
+                    }
+                    EntityKind::Ellipse {
+                        center,
+                        major,
+                        minor,
+                    } => {
+                        self.mark_center(center);
+                        self.roles.insert(major, PointRole::Endpoint);
+                        self.roles.insert(minor, PointRole::Endpoint);
+                    }
+                    EntityKind::Bezier { a, c1, c2, b } => {
+                        self.roles.insert(a, PointRole::Endpoint);
+                        self.roles.insert(b, PointRole::Endpoint);
+                        for h in [c1, c2] {
+                            // A point that's also an end elsewhere stays an end.
+                            let role = self.roles.entry(h).or_insert(PointRole::Handle);
+                            if *role == PointRole::Standalone {
+                                *role = PointRole::Handle;
+                            }
+                        }
+                    }
+                    EntityKind::EllipseArc {
+                        center,
+                        major,
+                        minor,
+                        start,
+                        end,
+                    } => {
+                        self.mark_center(center);
+                        for p in [major, minor, start, end] {
+                            self.roles.insert(p, PointRole::Endpoint);
+                        }
                     }
                 }
             }
         }
-        self.tree = RTree::bulk_load(entries);
+        // The tree is rebuilt in one go when anything moved: bulk loading is fast (about
+        // 6 ms for 28,000 entries) and rstar 0.13 can panic on removes mixed with inserts.
+        if !changed.is_empty() || !removed.is_empty() || self.tree_stale {
+            self.tree_stale = false;
+            let entries = self
+                .shapes
+                .iter()
+                .map(|(id, shape)| Entry {
+                    id: *id,
+                    envelope: envelope(shape),
+                })
+                .collect();
+            self.tree = RTree::bulk_load(entries);
+        }
+    }
+
+    /// During a drag: refresh just the shapes of `ids` (all that can have moved), leaving the
+    /// tree as it was until the next [`update`](Self::update). Searches near the moving
+    /// geometry may miss it meanwhile; it's excluded from snapping while it moves anyway.
+    pub fn update_moved(&mut self, doc: &Document, ids: impl IntoIterator<Item = EntityId>) {
+        for id in ids {
+            if let Some(shape) = doc.shape(id)
+                && let Some(old) = self.shapes.get_mut(&id)
+                && *old != shape
+            {
+                *old = shape;
+                self.tree_stale = true;
+            }
+        }
+        self.revision = Some(doc.revision());
     }
 
     fn mark_center(&mut self, id: EntityId) {

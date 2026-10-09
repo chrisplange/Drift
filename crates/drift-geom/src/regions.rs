@@ -9,7 +9,7 @@
 
 use std::f64::consts::TAU;
 
-use drift_core::{DVec2, Shape};
+use drift_core::{Bounds, DVec2, Shape};
 
 use crate::intersect::{intersect, tolerance};
 
@@ -216,12 +216,23 @@ pub struct Region {
     /// Total boundary length, holes included.
     pub perimeter: f64,
     pub centroid: DVec2,
+    /// Bounds of the outer boundary (for quick rejection).
+    pub bounds: Bounds,
 }
 
 impl Region {
     pub fn contains(&self, p: DVec2) -> bool {
+        let b = &self.bounds;
+        if p.x < b.min.x || p.x > b.max.x || p.y < b.min.y || p.y > b.max.y {
+            return false;
+        }
         self.outer.contains(p) && !self.holes.iter().any(|h| h.contains(p))
     }
+}
+
+/// Bounds of a loop's edges.
+fn loop_bounds(lp: &Loop) -> Bounds {
+    lp.edges.iter().map(|e| e.shape().bounds()).collect()
 }
 
 /// Split curves (lines, arcs, circles) where they cross into edges, each with the index of
@@ -230,8 +241,20 @@ fn split(curves: &[Shape]) -> Vec<(Edge, usize)> {
     let n = curves.len();
     let mut cuts: Vec<Vec<(f64, DVec2)>> = vec![Vec::new(); n];
     let bounds: Vec<_> = curves.iter().map(Shape::bounds).collect();
-    for i in 0..n {
-        for j in i + 1..n {
+    // Sweep along x: only curves whose x ranges overlap are compared.
+    let mut order: Vec<usize> = (0..n).collect();
+    order.sort_by(|&a, &b| bounds[a].min.x.total_cmp(&bounds[b].min.x));
+    let pad_all = bounds
+        .iter()
+        .map(|b| tolerance(b.max.abs().max_element()))
+        .fold(0.0, f64::max);
+    for (k, &first) in order.iter().enumerate() {
+        for &second in &order[k + 1..] {
+            if bounds[second].min.x > bounds[first].max.x + pad_all {
+                break;
+            }
+            // Same order as an all-pairs loop, so cut lists come out the same.
+            let (i, j) = (first.min(second), first.max(second));
             let (a, b) = (bounds[i], bounds[j]);
             let pad = tolerance(a.max.abs().max_element().max(b.max.abs().max_element()));
             if a.max.x + pad < b.min.x
@@ -324,6 +347,11 @@ fn split(curves: &[Shape]) -> Vec<(Edge, usize)> {
                     edges.push((Edge::Line { a: w[0], b: w[1] }, source));
                 }
             }
+            Shape::Bezier { p } => {
+                for w in drift_core::shape::flatten_bezier(&p, 24).windows(2) {
+                    edges.push((Edge::Line { a: w[0], b: w[1] }, source));
+                }
+            }
             Shape::Point(_) => {}
         }
     }
@@ -336,15 +364,31 @@ pub fn regions(curves: &[Shape]) -> Vec<Region> {
     let edges = split(curves);
     // Vertices: edge ends merged within tolerance.
     let mut verts: Vec<DVec2> = Vec::new();
+    // A grid of cells much larger than the tolerance: a point's match is in its own cell or
+    // a neighbouring one.
+    let cell = edges
+        .iter()
+        .map(|(e, _)| tolerance(e.start().abs().max_element()))
+        .fold(1e-9, f64::max)
+        * 8.0;
+    let key = |p: DVec2| ((p.x / cell).floor() as i64, (p.y / cell).floor() as i64);
+    let mut grid: std::collections::HashMap<(i64, i64), Vec<usize>> =
+        std::collections::HashMap::new();
     let mut vertex = |p: DVec2| -> usize {
         let tol = tolerance(p.abs().max_element());
-        match verts.iter().position(|q| q.distance(p) <= tol) {
-            Some(i) => i,
-            None => {
-                verts.push(p);
-                verts.len() - 1
+        let (kx, ky) = key(p);
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                if let Some(list) = grid.get(&(kx + dx, ky + dy))
+                    && let Some(&i) = list.iter().find(|&&i| verts[i].distance(p) <= tol)
+                {
+                    return i;
+                }
             }
         }
+        verts.push(p);
+        grid.entry((kx, ky)).or_default().push(verts.len() - 1);
+        verts.len() - 1
     };
     // Half-edges: 2k forward, 2k+1 backward.
     let mut half: Vec<(usize, usize, Edge)> = Vec::new(); // (from, to, geometry)
@@ -355,23 +399,32 @@ pub fn regions(curves: &[Shape]) -> Vec<Region> {
     }
     // Prune dangling edges (vertices of degree one) repeatedly.
     let mut alive = vec![true; half.len()];
-    loop {
+    {
         let mut degree = vec![0usize; verts.len()];
-        for (k, (u, _, _)) in half.iter().enumerate() {
-            if alive[k] {
-                degree[*u] += 1;
-            }
-        }
-        let mut changed = false;
+        let mut at: Vec<Vec<usize>> = vec![Vec::new(); verts.len()];
         for k in (0..half.len()).step_by(2) {
-            if alive[k] && (degree[half[k].0] == 1 || degree[half[k].1] == 1) {
-                alive[k] = false;
-                alive[k + 1] = false;
-                changed = true;
-            }
+            let (u, v, _) = half[k];
+            degree[u] += 1;
+            degree[v] += 1;
+            at[u].push(k);
+            at[v].push(k);
         }
-        if !changed {
-            break;
+        let mut queue: Vec<usize> = (0..verts.len()).filter(|&i| degree[i] == 1).collect();
+        while let Some(i) = queue.pop() {
+            if degree[i] != 1 {
+                continue;
+            }
+            let Some(&k) = at[i].iter().find(|&&k| alive[k]) else {
+                continue;
+            };
+            alive[k] = false;
+            alive[k + 1] = false;
+            for end in [half[k].0, half[k].1] {
+                degree[end] -= 1;
+                if degree[end] == 1 {
+                    queue.push(end);
+                }
+            }
         }
     }
     // Outgoing half-edges at each vertex, sorted counter-clockwise by direction, then
@@ -447,6 +500,7 @@ pub fn regions(curves: &[Shape]) -> Vec<Region> {
             area: outer.signed_area(),
             perimeter: outer.length(),
             centroid: DVec2::ZERO,
+            bounds: loop_bounds(&outer),
             outer,
             holes: Vec::new(),
         })
@@ -455,11 +509,20 @@ pub fn regions(curves: &[Shape]) -> Vec<Region> {
     // the face it bounds itself, which has the same outline).
     for b in boundaries {
         let own_area = -b.signed_area();
+        let own = loop_bounds(&b);
         let outline = b.polygon(0.05);
         let host = result
             .iter()
             .enumerate()
             .filter(|(_, r)| r.area > own_area * (1.0 + 1e-9))
+            // Only regions whose bounds hold this boundary's (cheap) are checked closely.
+            .filter(|(_, r)| {
+                let pad = tolerance(own.max.abs().max_element()) * 10.0;
+                r.bounds.min.x <= own.min.x + pad
+                    && r.bounds.min.y <= own.min.y + pad
+                    && r.bounds.max.x >= own.max.x - pad
+                    && r.bounds.max.y >= own.max.y - pad
+            })
             .filter(|(_, r)| {
                 outline
                     .iter()

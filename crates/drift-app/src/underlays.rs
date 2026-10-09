@@ -355,7 +355,7 @@ impl Editor {
                     self.doc.add_arc(c, s, e).ok()
                 }
                 // Underlay curves are never ellipses (they're flattened on import).
-                Shape::Ellipse { .. } => None,
+                Shape::Ellipse { .. } | Shape::Bezier { .. } => None,
             };
             if let Some(e) = made {
                 self.doc.set_style(e, LineKind::Solid);

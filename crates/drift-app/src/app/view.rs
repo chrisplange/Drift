@@ -8,6 +8,7 @@ impl DriftApp {
         let mut pointer = Pointer::new(raw, PICK_RADIUS / self.camera.scale);
         pointer.relations = self.auto_relations;
         pointer.units = self.editor.doc.units();
+        pointer.alt = !snap;
         if snap && self.tool.wants_snap() {
             let options = SnapOptions {
                 tolerance: pointer.tolerance,
@@ -231,6 +232,8 @@ impl DriftApp {
         self.canvas_rect = rect;
         let view_size = DVec2::new(f64::from(rect.width()), f64::from(rect.height()));
         self.editor.update_underlays();
+        // A point the pointer snaps to lights up like a hovered one (as in Illustrator).
+        self.editor.snapped_point = self.pointer.and_then(|p| p.snapped_point());
 
         if response.double_clicked_by(PointerButton::Middle) {
             self.fit_target = Some(self.fit_bounds());
@@ -398,9 +401,10 @@ impl DriftApp {
             self.camera.scale,
             ui.visuals().dark_mode,
         );
-        // Geometry (GPU): underlays at the bottom.
-        let mut items = self.editor.underlay_items(view, ui.visuals().dark_mode);
-        items.extend(fills.lines);
+        // Geometry (GPU): underlays and hatch lines under everything else.
+        let mut under = self.editor.underlay_items(view, ui.visuals().dark_mode);
+        under.extend(fills.lines);
+        let mut items = Vec::new();
         if self.show_dimensions {
             items.extend(crate::notes::centre_items(
                 &self.editor.doc,
@@ -412,14 +416,32 @@ impl DriftApp {
             self.editor
                 .items_styled(self.status_colors, ui.visuals().dark_mode),
         );
+        // Bézier handles around picked curves, and their curvature combs.
+        let handle_grey = if ui.visuals().dark_mode {
+            [0x8a, 0x90, 0x9a]
+        } else {
+            [0x8a, 0x8e, 0x96]
+        };
+        items.extend(self.editor.handle_lines(handle_grey));
+        if self.show_combs {
+            let comb = if ui.visuals().dark_mode {
+                [0xd9, 0x8c, 0xff]
+            } else {
+                [0x9b, 0x3c, 0xc8]
+            };
+            items.extend(self.editor.curvature_combs(28.0 / self.camera.scale, comb));
+        }
         items.extend(self.tool.preview(self.pointer.as_ref()));
         items.extend(self.tool.editor_preview(&self.editor));
         let ppp = f64::from(ui.ctx().pixels_per_point());
         let callback = self.painter.callback(
             rect,
             ppp,
-            &items,
-            &fills.meshes,
+            crate::canvas::CanvasContent {
+                under: &under,
+                items: &items,
+                fills: &fills.meshes,
+            },
             &self.camera,
             crate::canvas::CanvasOptions {
                 dark_mode: ui.visuals().dark_mode,

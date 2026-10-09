@@ -206,6 +206,9 @@ fn shape_prim(s: &Space, shape: &Shape) -> Option<Prim> {
             start,
             sweep,
         },
+        Shape::Bezier { p } => Prim::Bezier {
+            p: p.map(|q| s.at(q)),
+        },
         Shape::Point(_) => return None,
     })
 }
@@ -566,7 +569,7 @@ pub fn paint_drawing(
                 start,
                 sweep,
             } => line(arc_points(*center, *radius, *start, *sweep)),
-            Prim::Ellipse { .. } => line(
+            Prim::Ellipse { .. } | Prim::Bezier { .. } => line(
                 drift_draft::page::prim_points(&it.prim)
                     .into_iter()
                     .map(&to_screen)

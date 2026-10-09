@@ -78,6 +78,8 @@ pub struct Pointer {
     pub relations: bool,
     /// How to show lengths in readouts.
     pub units: Units,
+    /// Alt is held (places freely, without snapping; the pen breaks a handle with it).
+    pub alt: bool,
 }
 
 impl Pointer {
@@ -89,6 +91,7 @@ impl Pointer {
             guide: None,
             relations: true,
             units: Units::default(),
+            alt: false,
         }
     }
 
@@ -192,6 +195,14 @@ impl Anchor {
     }
 }
 
+/// A drag's cached scope: the dragged ids, the entity and constraint counts it was worked out
+/// for, and the connected entities.
+type DragScope = (
+    Vec<EntityId>,
+    (usize, usize),
+    std::rc::Rc<std::collections::HashSet<EntityId>>,
+);
+
 #[derive(Default)]
 pub struct Editor {
     pub doc: Document,
@@ -268,6 +279,18 @@ pub struct Editor {
     /// The underlay picked in the Layers tab (calibrate and move act on it).
     pub selected_underlay: Option<drift_core::UnderlayId>,
     pub(crate) underlay_cache: crate::underlays::UnderlayCache,
+    /// Show every end and centre point, or (Illustrator-like) only those of hovered or picked
+    /// curves.
+    pub always_endpoints: bool,
+    /// The point the pointer has snapped to while drawing (lit up like a hovered one).
+    pub snapped_point: Option<EntityId>,
+    /// What a drag of these entities can move (connected through points and relations), kept
+    /// while the sketch's structure stays the same: (dragged ids, entity and constraint
+    /// counts, the connected set).
+    drag_scope: std::cell::RefCell<Option<DragScope>>,
+    /// Bézier handles and their owners, by document revision.
+    pub(crate) handle_cache:
+        std::cell::RefCell<Option<(u64, std::rc::Rc<crate::curves::HandleOwners>)>>,
 }
 
 impl Editor {
@@ -316,6 +339,35 @@ impl Editor {
     /// The degrees-of-freedom analysis of the document as of the last [`sync`](Self::sync).
     pub fn analysis(&self) -> &SolveReport {
         &self.analysis
+    }
+
+    /// The entities a drag of `ids` can move (cached while the structure is unchanged).
+    fn drag_scope(&self, ids: &[EntityId]) -> std::rc::Rc<std::collections::HashSet<EntityId>> {
+        let structure = (self.doc.len(), self.doc.constraints().count());
+        if let Some((key, s, scope)) = &*self.drag_scope.borrow()
+            && key == ids
+            && *s == structure
+        {
+            return scope.clone();
+        }
+        let scope = std::rc::Rc::new(drift_solver::connected(&self.doc, ids.iter().copied()));
+        *self.drag_scope.borrow_mut() = Some((ids.to_vec(), structure, scope.clone()));
+        scope
+    }
+
+    fn solve_in(
+        &mut self,
+        dragged: &[Param],
+        scope: std::rc::Rc<std::collections::HashSet<EntityId>>,
+    ) -> SolveReport {
+        drift_solver::solve(
+            &mut self.doc,
+            &SolveOptions {
+                dragged: dragged.to_vec(),
+                scope: Some(scope),
+                ..Default::default()
+            },
+        )
     }
 
     fn solve(&mut self, dragged: &[Param]) -> SolveReport {
@@ -398,14 +450,19 @@ impl Editor {
     /// `dragged` are the parameters that should follow the pointer exactly. Returns false (and
     /// leaves the geometry where it was) if the move is impossible.
     pub fn drag(&mut self, ids: &[EntityId], delta: DVec2, dragged: &[Param]) -> bool {
+        // Anchors carry their curve handles.
+        let ids = &self.with_handles(ids);
+        // Only what's connected to the dragged geometry is solved.
+        let scope = self.drag_scope(ids);
         self.doc.translate(ids.iter().copied(), delta);
-        let report = self.solve(dragged);
+        let report = self.solve_in(dragged, scope.clone());
         let ok = !self.new_conflicts(&report);
         if !ok {
             self.doc.translate(ids.iter().copied(), -delta);
-            self.solve(dragged);
+            self.solve_in(dragged, scope.clone());
         }
-        self.index.update(&self.doc);
+        // Only the connected part can have moved.
+        self.index.update_moved(&self.doc, scope.iter().copied());
         ok
     }
 
@@ -451,6 +508,10 @@ impl Editor {
         let turn = |p: DVec2| pivot + rotor.rotate(p - pivot);
         let inside: BTreeSet<EntityId> =
             ids.iter().copied().chain(points.iter().copied()).collect();
+        // Only what's connected to the turned geometry is solved (worked out before any
+        // relations are lifted, so it's the same every move).
+        let seeds: Vec<EntityId> = inside.iter().copied().collect();
+        let scope = self.drag_scope(&seeds);
         let internal: Vec<(ConstraintId, Constraint)> = self
             .doc
             .constraints()
@@ -487,9 +548,9 @@ impl Editor {
             }
         }
         let dragged: Vec<Param> = points.iter().copied().flat_map(Param::point).collect();
-        let report = self.solve(&dragged);
+        let report = self.solve_in(&dragged, scope.clone());
         let ok = !self.new_conflicts(&report);
-        self.index.update(&self.doc);
+        self.index.update_moved(&self.doc, scope.iter().copied());
         (ok, removed)
     }
 
@@ -1422,7 +1483,12 @@ impl Editor {
                     kinds.circulars.push(*id)
                 }
                 // No relation buttons for ellipses yet.
-                Some(EntityKind::Ellipse { .. } | EntityKind::EllipseArc { .. }) | None => {}
+                Some(
+                    EntityKind::Ellipse { .. }
+                    | EntityKind::EllipseArc { .. }
+                    | EntityKind::Bezier { .. },
+                )
+                | None => {}
             }
         }
         kinds
@@ -1516,6 +1582,9 @@ impl Editor {
                     map[&start],
                     map[&end],
                 ),
+                EntityKind::Bezier { a, c1, c2, b } => {
+                    self.doc.add_bezier(map[&a], map[&c1], map[&c2], map[&b])
+                }
             };
             if let Ok(copy) = made {
                 let _ = self.doc.set_entity_layer(copy, e.layer);
@@ -1797,6 +1866,28 @@ impl Editor {
         b
     }
 
+    /// Points whose markers show when end points are only shown in use: those of hovered or
+    /// picked curves, and hovered, picked or snapped-to points.
+    pub fn touched_points(&self) -> BTreeSet<EntityId> {
+        let mut out = BTreeSet::new();
+        let active = self
+            .selection
+            .iter()
+            .chain(self.hovered.iter())
+            .chain(self.highlight.iter())
+            .chain(self.snapped_point.iter());
+        for &id in active {
+            if let Some(e) = self.doc.get(id) {
+                if e.kind.is_point() {
+                    out.insert(id);
+                } else {
+                    out.extend(e.kind.points());
+                }
+            }
+        }
+        out
+    }
+
     /// Render items for the document, with selection and hover emphasis.
     /// Render items with constraint-status colouring (see [`items_styled`](Self::items_styled)).
     pub fn items(&self) -> Vec<SketchItem> {
@@ -1813,7 +1904,23 @@ impl Editor {
     pub fn items_styled(&self, status_colors: bool, dark: bool) -> Vec<SketchItem> {
         let mut items = Vec::with_capacity(self.doc.len());
         let mut emphasized = Vec::new();
+        let hidden = self.hidden_handles();
+        let shown_ends = (!self.always_endpoints).then(|| self.touched_points());
         for (id, entity) in self.doc.iter() {
+            if hidden.contains(&id) {
+                continue;
+            }
+            // End and centre points of untouched curves stay out of the way.
+            if let Some(shown) = &shown_ends
+                && entity.kind.is_point()
+                && matches!(
+                    self.index.role(id),
+                    Some(PointRole::Endpoint | PointRole::Center)
+                )
+                && !shown.contains(&id)
+            {
+                continue;
+            }
             let Some(shape) = self.index.shape(id) else {
                 continue;
             };
@@ -1844,12 +1951,16 @@ impl Editor {
                     look.line_type.unwrap_or(layer.line_type),
                 );
             let role = self.index.role(id);
-            if role.is_some_and(|r| r != PointRole::Standalone) {
+            // End and centre points are small markers; handles and lone points full size.
+            if role.is_some_and(|r| r != PointRole::Standalone && r != PointRole::Handle) {
                 item = item.as_vertex();
             }
             let emphasis = if self.selection.contains(&id) {
                 Emphasis::Selected
-            } else if self.hovered == Some(id) || self.highlight.contains(&id) {
+            } else if self.hovered == Some(id)
+                || self.highlight.contains(&id)
+                || self.snapped_point == Some(id)
+            {
                 Emphasis::Hovered
             } else {
                 Emphasis::Normal

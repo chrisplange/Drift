@@ -33,6 +33,10 @@ pub(crate) enum ItemShape {
         start: f64,
         sweep: f64,
     },
+    /// A cubic Bézier: its four points.
+    Bezier {
+        p: [[f64; 2]; 4],
+    },
     /// `major` is the first semi-axis as a vector; angles are parametric, in degrees.
     Ellipse {
         center: [f64; 2],
@@ -107,6 +111,9 @@ pub(crate) fn block_record(id: BlockId, b: &Block) -> BlockRecord {
                     radius,
                     start: start.to_degrees(),
                     sweep: sweep.to_degrees(),
+                },
+                Shape::Bezier { p } => ItemShape::Bezier {
+                    p: p.map(|q| q.to_array()),
                 },
                 Shape::Ellipse {
                     center,
@@ -192,6 +199,9 @@ pub(crate) fn parse_block(r: BlockRecord) -> Result<(BlockId, Block), LoadError>
                     sweep: sweep.to_radians(),
                 }
             }
+            ItemShape::Bezier { p } => Shape::Bezier {
+                p: [finite(p[0])?, finite(p[1])?, finite(p[2])?, finite(p[3])?],
+            },
             _ => return Err(bad("radius")),
         };
         let appearance = Appearance {

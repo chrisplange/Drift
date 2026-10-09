@@ -187,9 +187,12 @@ fn line_type_combo(
 }
 
 impl DriftApp {
-    /// The Layers tab.
+    /// The Layers panel: a compact row per layer (colour, name, curve count, visibility,
+    /// locking; the current one highlighted) that opens to show its colours and line
+    /// settings; then underlays.
     pub(crate) fn layers_panel(&mut self, ui: &mut egui::Ui, now: f64) {
         let dark = ui.visuals().dark_mode;
+        let accent = crate::theme::accent(dark);
         let layers: Vec<(LayerId, Layer)> = self
             .editor
             .doc
@@ -198,168 +201,114 @@ impl DriftApp {
             .collect();
         let current = self.editor.doc.current_layer();
         let has_selection = !self.editor.selection.is_empty();
+        // Curves per layer, and the layers the selection is on.
+        let mut counts = std::collections::HashMap::<LayerId, usize>::new();
+        for (_, e) in self.editor.doc.iter() {
+            if !e.kind.is_point() {
+                *counts.entry(e.layer).or_default() += 1;
+            }
+        }
+        let picked: std::collections::BTreeSet<LayerId> = self
+            .editor
+            .selection
+            .iter()
+            .filter_map(|id| self.editor.doc.get(*id).map(|e| e.layer))
+            .collect();
         let mut status = None;
-        let accent = crate::theme::accent(dark);
         egui::ScrollArea::vertical()
+            .id_salt("layers_scroll")
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    crate::theme::section(ui, &format!("Layers · {}", layers.len()));
-                });
-                if self.layers_dock == crate::app::layers_hud::LayersDock::Hidden
-                    && ui
-                        .button("Show as a panel")
-                        .on_hover_text(
-                            "A compact layer list to keep at hand while drawing (Ctrl+L)",
-                        )
-                        .clicked()
-                {
-                    self.toggle_layers_hud();
-                }
+                crate::theme::section(ui, &format!("Layers · {}", layers.len()));
                 for (id, layer) in layers {
                     let mut edited = layer.clone();
-                    let is_current = current == id;
-                    egui::Frame::new()
-                        .fill(ui.visuals().faint_bg_color)
-                        .corner_radius(8.0)
-                        .stroke(egui::Stroke::new(
-                            1.0,
-                            if is_current {
-                                accent
-                            } else {
-                                egui::Color32::TRANSPARENT
-                            },
-                        ))
-                        .inner_margin(egui::Margin::symmetric(8, 6))
+                    let is_current = id == current;
+                    let open = self.expanded_layers.contains(&id);
+                    let row = egui::Frame::new()
+                        .fill(if is_current {
+                            accent.gamma_multiply(0.16)
+                        } else if open {
+                            ui.visuals().faint_bg_color
+                        } else {
+                            egui::Color32::TRANSPARENT
+                        })
+                        .corner_radius(7.0)
+                        .inner_margin(egui::Margin::symmetric(4, 2))
                         .show(ui, |ui| {
-                            ui.horizontal(|ui| {
+                            self.layer_row(
+                                ui,
+                                id,
+                                &layer,
+                                &mut edited,
+                                is_current,
+                                open,
+                                &counts,
+                                &picked,
+                            );
+                            if open {
+                                self.layer_details(ui, id, &mut edited, has_selection, &mut status);
+                            }
+                        });
+                    row.response.context_menu(|ui| {
+                        if ui.button("Make current").clicked() {
+                            self.editor.set_current_layer(id);
+                            ui.close();
+                        }
                         if ui
-                            .radio(current == id, "")
-                            .on_hover_text("Current layer: new geometry goes here")
+                            .add_enabled(id != LayerId::DEFAULT, egui::Button::new("Rename"))
                             .clicked()
                         {
-                            self.editor.set_current_layer(id);
+                            self.renaming_layer = Some(id);
+                            ui.close();
                         }
-                        let name = self
-                            .layer_names
-                            .entry(id)
-                            .or_insert_with(|| layer.name.clone());
-                        let r = ui.add_enabled(
-                            id != LayerId::DEFAULT,
-                            egui::TextEdit::singleline(name)
-                                .desired_width(ui.available_width() - 112.0),
-                        );
-                        if r.lost_focus() && !name.trim().is_empty() {
-                            edited.name = name.trim().to_owned();
+                        if ui.button("Select all on this layer").clicked() {
+                            self.editor.select_layer(id);
+                            ui.close();
                         }
-                        if !r.has_focus() && !r.lost_focus() {
-                            *name = layer.name.clone();
+                        if ui
+                            .add_enabled(has_selection, egui::Button::new("Move selection here"))
+                            .clicked()
+                        {
+                            self.editor.move_selection_to_layer(id);
+                            ui.close();
                         }
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if id != LayerId::DEFAULT
-                                && ui
-                                    .add(egui::Button::new(
-                                        egui::RichText::new("×")
-                                            .size(16.0)
-                                            .color(ui.visuals().weak_text_color()),
-                                    )
-                                    .frame(false))
-                                    .on_hover_text("Delete layer (its geometry moves to 0)")
-                                    .clicked()
-                            {
-                                if let Err(e) = self.editor.remove_layer(id) {
-                                    status = Some(e);
-                                }
-                                self.layer_names.remove(&id);
+                        ui.separator();
+                        if ui
+                            .add_enabled(id != LayerId::DEFAULT, egui::Button::new("Delete layer"))
+                            .clicked()
+                        {
+                            if let Err(e) = self.editor.remove_layer(id) {
+                                status = Some(e);
                             }
-                            icon_toggle(
-                                ui,
-                                &mut edited.printable,
-                                Glyph::Print,
-                                true,
-                                "Printable: included when printing or exporting",
-                            );
-                            let mut locked = edited.locked;
-                            let lock_glyph = if locked { Glyph::Lock } else { Glyph::Unlock };
-                            icon_toggle(
-                                ui,
-                                &mut locked,
-                                lock_glyph,
-                                false,
-                                "Locked geometry can be snapped to but not edited, and stays fixed",
-                            );
-                            edited.locked = locked;
-                            icon_toggle(ui, &mut edited.visible, Glyph::Eye, true, "Show or hide");
-                        });
+                            ui.close();
+                        }
                     });
-                            ui.horizontal(|ui| {
-                                ui.add_space(22.0);
-                                ui.add_sized([34.0, 18.0], egui::Label::new("Stroke"));
-                                if let Some(c) = color_choice(ui, edited.color, "Auto colour", dark)
-                                {
-                                    edited.color = c;
-                                }
-                            });
-                            ui.horizontal(|ui| {
-                                ui.add_space(22.0);
-                                ui.add_sized([34.0, 18.0], egui::Label::new("Fill"));
-                                if let Some(c) =
-                                    color_choice(ui, edited.fill_color, "Same as stroke", dark)
-                                {
-                                    edited.fill_color = c;
-                                }
-                            })
-                            .response
-                            .on_hover_text("Colour of fills and hatches on this layer");
-                            ui.horizontal(|ui| {
-                                ui.add_space(22.0);
-                                let mut w = Some(edited.weight);
-                                if weight_combo(ui, ("layer_weight", id.0), &mut w, false) {
-                                    edited.weight = w.unwrap_or_default();
-                                }
-                                let mut t = Some(edited.line_type);
-                                if line_type_combo(ui, ("layer_type", id.0), &mut t, false) {
-                                    edited.line_type = t.unwrap_or_default();
-                                }
-                            });
-                            ui.horizontal(|ui| {
-                                ui.add_space(22.0);
-                                if ui.small_button("Select all").clicked() {
-                                    self.editor.select_layer(id);
-                                }
-                                if ui
-                                    .add_enabled(
-                                        has_selection,
-                                        egui::Button::new("Move here").small(),
-                                    )
-                                    .on_hover_text("Move the selected geometry onto this layer")
-                                    .clicked()
-                                {
-                                    self.editor.move_selection_to_layer(id);
-                                }
-                            });
-                        });
-                    if edited != layer {
+                    if edited != layer && self.editor.doc.layer(id).is_some() {
                         self.editor.update_layer(id, edited);
                     }
-                    ui.add_space(4.0);
+                    ui.add_space(1.0);
                 }
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.new_layer_name)
-                            .hint_text("new layer")
-                            .desired_width(110.0),
-                    );
-                    if ui.button("Add layer").clicked() {
+                    if ui
+                        .button("+ New layer")
+                        .on_hover_text("A new layer, made current; type its name")
+                        .clicked()
+                    {
                         let n = self.editor.doc.layers().count();
-                        let name = if self.new_layer_name.trim().is_empty() {
-                            format!("Layer {n}")
-                        } else {
-                            std::mem::take(&mut self.new_layer_name)
-                        };
+                        let name = format!("Layer {n}");
                         let id = self.editor.add_layer(&name);
                         self.editor.set_current_layer(id);
+                        self.renaming_layer = Some(id);
+                        self.layer_names.insert(id, name);
+                    }
+                    if has_selection
+                        && ui
+                            .button("Move selection here")
+                            .on_hover_text("Move the selection to the current layer")
+                            .clicked()
+                    {
+                        self.editor.move_selection_to_layer(current);
                     }
                 });
                 self.underlays_section(ui);
@@ -367,6 +316,235 @@ impl DriftApp {
         if let Some(text) = status {
             self.set_status(text, true, now);
         }
+    }
+
+    /// A layer's row: disclosure chevron, colour swatch, name (click: make current;
+    /// double-click: rename), the selection marker, curve count, visibility and lock.
+    #[allow(clippy::too_many_arguments)]
+    fn layer_row(
+        &mut self,
+        ui: &mut egui::Ui,
+        id: LayerId,
+        layer: &Layer,
+        edited: &mut Layer,
+        is_current: bool,
+        open: bool,
+        counts: &std::collections::HashMap<LayerId, usize>,
+        picked: &std::collections::BTreeSet<LayerId>,
+    ) {
+        let dark = ui.visuals().dark_mode;
+        let accent = crate::theme::accent(dark);
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 5.0;
+            let (chev, r) = ui.allocate_exact_size(egui::vec2(14.0, 22.0), egui::Sense::click());
+            let c = chev.center();
+            let color = if r.hovered() {
+                ui.visuals().strong_text_color()
+            } else {
+                ui.visuals().weak_text_color()
+            };
+            let pts = if open {
+                vec![
+                    c + egui::vec2(-3.5, -1.8),
+                    c + egui::vec2(0.0, 1.8),
+                    c + egui::vec2(3.5, -1.8),
+                ]
+            } else {
+                vec![
+                    c + egui::vec2(-1.8, -3.5),
+                    c + egui::vec2(1.8, 0.0),
+                    c + egui::vec2(-1.8, 3.5),
+                ]
+            };
+            ui.painter()
+                .add(egui::Shape::line(pts, egui::Stroke::new(1.4, color)));
+            if r.on_hover_text("Colours and line settings").clicked() {
+                if open {
+                    self.expanded_layers.remove(&id);
+                } else {
+                    self.expanded_layers.insert(id);
+                }
+            }
+            // Stroke colour, with the fill colour in the lower right when it differs.
+            let (swatch, _) = ui.allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::hover());
+            ui.painter()
+                .rect_filled(swatch, 3.0, to_color32(layer.color, dark));
+            if layer.fill_color.is_some_and(|c| Some(c) != layer.color) {
+                ui.painter().add(egui::Shape::convex_polygon(
+                    vec![
+                        swatch.right_top(),
+                        swatch.right_bottom(),
+                        swatch.left_bottom(),
+                    ],
+                    to_color32(layer.fill_colour(), dark),
+                    egui::Stroke::NONE,
+                ));
+            }
+            // Controls from the right, so the name takes the space left.
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
+                let mut locked = edited.locked;
+                let glyph = if locked { Glyph::Lock } else { Glyph::Unlock };
+                icon_toggle(
+                    ui,
+                    &mut locked,
+                    glyph,
+                    false,
+                    "Locked geometry can be snapped to but not edited",
+                );
+                edited.locked = locked;
+                icon_toggle(ui, &mut edited.visible, Glyph::Eye, true, "Show or hide");
+                ui.add_space(4.0);
+                let n = counts.get(&id).copied().unwrap_or(0);
+                ui.label(egui::RichText::new(n.to_string()).small().weak())
+                    .on_hover_text("Curves on this layer");
+                if picked.contains(&id) {
+                    ui.add_space(5.0);
+                    let (dot, _) =
+                        ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
+                    ui.painter().circle_filled(dot.center(), 3.0, accent);
+                }
+                ui.add_space(6.0);
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    self.layer_name(ui, id, layer, edited, is_current);
+                });
+            });
+        });
+    }
+
+    /// A layer's name, or the field renaming it.
+    fn layer_name(
+        &mut self,
+        ui: &mut egui::Ui,
+        id: LayerId,
+        layer: &Layer,
+        edited: &mut Layer,
+        is_current: bool,
+    ) {
+        if self.renaming_layer == Some(id) && id != LayerId::DEFAULT {
+            let name = self
+                .layer_names
+                .entry(id)
+                .or_insert_with(|| layer.name.clone());
+            let r = ui.add(egui::TextEdit::singleline(name).desired_width(ui.available_width()));
+            if !r.has_focus() && !r.lost_focus() {
+                r.request_focus();
+            }
+            if r.lost_focus() {
+                let cancel = ui.input(|i| i.key_pressed(egui::Key::Escape));
+                if !cancel && !name.trim().is_empty() {
+                    edited.name = name.trim().to_owned();
+                }
+                self.renaming_layer = None;
+                self.layer_names.remove(&id);
+            }
+            return;
+        }
+        let name = egui::RichText::new(&layer.name);
+        let name = if is_current {
+            name.family(crate::theme::bold())
+        } else if layer.visible {
+            name
+        } else {
+            name.weak()
+        };
+        let r = ui
+            .add(
+                egui::Label::new(name)
+                    .sense(egui::Sense::click())
+                    .truncate(),
+            )
+            .on_hover_text(if is_current {
+                "The current layer: new geometry goes here. Double-click to rename"
+            } else {
+                "Click to make this the current layer; double-click to rename"
+            });
+        if r.clicked() && !is_current {
+            self.editor.set_current_layer(id);
+        }
+        if r.double_clicked() && id != LayerId::DEFAULT {
+            self.renaming_layer = Some(id);
+        }
+    }
+
+    /// An opened layer row: stroke and fill colours, weight and line type, printing, and
+    /// actions.
+    fn layer_details(
+        &mut self,
+        ui: &mut egui::Ui,
+        id: LayerId,
+        edited: &mut Layer,
+        has_selection: bool,
+        status: &mut Option<String>,
+    ) {
+        let dark = ui.visuals().dark_mode;
+        let indent = 19.0;
+        let label = |ui: &mut egui::Ui, text: &str| {
+            ui.add_space(indent);
+            ui.add_sized(
+                [44.0, 20.0],
+                egui::Label::new(egui::RichText::new(text).weak()),
+            );
+        };
+        ui.horizontal(|ui| {
+            label(ui, "Stroke");
+            if let Some(c) = color_choice(ui, edited.color, "Auto", dark) {
+                edited.color = c;
+            }
+        });
+        ui.horizontal(|ui| {
+            label(ui, "Fill");
+            if let Some(c) = color_choice(ui, edited.fill_color, "Same as stroke", dark) {
+                edited.fill_color = c;
+            }
+        })
+        .response
+        .on_hover_text("Colour of fills and hatches on this layer");
+        ui.horizontal(|ui| {
+            label(ui, "Line");
+            let mut w = Some(edited.weight);
+            if weight_combo(ui, ("layer_weight", id.0), &mut w, false) {
+                edited.weight = w.unwrap_or_default();
+            }
+            let mut t = Some(edited.line_type);
+            if line_type_combo(ui, ("layer_type", id.0), &mut t, false) {
+                edited.line_type = t.unwrap_or_default();
+            }
+        });
+        ui.horizontal(|ui| {
+            label(ui, "Output");
+            ui.checkbox(&mut edited.printable, "Printed and exported");
+        });
+        ui.horizontal(|ui| {
+            ui.add_space(indent);
+            if ui.small_button("Select all").clicked() {
+                self.editor.select_layer(id);
+            }
+            if ui
+                .add_enabled(has_selection, egui::Button::new("Move here").small())
+                .on_hover_text("Move the selected geometry onto this layer")
+                .clicked()
+            {
+                self.editor.move_selection_to_layer(id);
+            }
+            if id != LayerId::DEFAULT
+                && ui
+                    .add(
+                        egui::Button::new(
+                            egui::RichText::new("Delete").color(ui.visuals().error_fg_color),
+                        )
+                        .small(),
+                    )
+                    .on_hover_text("Delete the layer (its geometry moves to 0)")
+                    .clicked()
+            {
+                if let Err(e) = self.editor.remove_layer(id) {
+                    *status = Some(e);
+                }
+                self.expanded_layers.remove(&id);
+            }
+        });
+        ui.add_space(3.0);
     }
 
     /// Layer and appearance controls for the selected curves (in the Properties tab).

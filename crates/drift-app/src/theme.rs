@@ -141,6 +141,9 @@ fn style(s: &mut egui::Style, dark: bool) {
     sp.window_margin = Margin::same(14);
     sp.combo_width = 120.0;
     sp.icon_spacing = 6.0;
+    // Thin scroll bars that widen on hover, over the content.
+    sp.scroll = egui::style::ScrollStyle::floating();
+    s.interaction.tooltip_delay = 0.35;
 
     let v = &mut s.visuals;
     let (panel, canvasish, field, faint, fill, hover, press, line, text, weak) = if dark {
@@ -228,16 +231,120 @@ fn style(s: &mut egui::Style, dark: bool) {
     w.inactive.fg_stroke = Stroke::new(1.0, text.gamma_multiply(0.92));
 }
 
-/// A small, quiet section header (like a macOS inspector's), with space above it.
-pub fn section(ui: &mut egui::Ui, title: &str) {
-    ui.add_space(12.0);
-    ui.label(
-        egui::RichText::new(title.to_uppercase())
-            .small()
-            .strong()
-            .color(ui.visuals().weak_text_color()),
+/// Letter-spaced caps for section titles, on one line.
+fn caps_job(ui: &egui::Ui, title: &str, color: Color32) -> egui::text::LayoutJob {
+    let mut job = egui::text::LayoutJob::single_section(
+        title.to_uppercase(),
+        egui::TextFormat {
+            font_id: FontId::new(10.0, bold()),
+            color,
+            extra_letter_spacing: 0.9,
+            ..Default::default()
+        },
     );
+    job.wrap.max_rows = 1;
+    job.wrap.max_width = ui.available_width();
+    job
+}
+
+/// The hairline colour used between sections and rows.
+pub fn hairline(ui: &egui::Ui) -> Color32 {
+    ui.visuals().widgets.noninteractive.bg_stroke.color
+}
+
+/// A quiet section header: letter-spaced caps followed by a hairline to the edge, with space
+/// above it.
+pub fn section(ui: &mut egui::Ui, title: &str) {
+    ui.add_space(14.0);
+    let color = ui.visuals().weak_text_color();
+    let galley = ui.painter().layout_job(caps_job(ui, title, color));
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 16.0), egui::Sense::hover());
+    let y = rect.center().y;
+    ui.painter().galley(
+        egui::pos2(rect.left(), y - galley.size().y / 2.0),
+        galley.clone(),
+        color,
+    );
+    let x = rect.left() + galley.size().x + 8.0;
+    if x < rect.right() {
+        ui.painter().line_segment(
+            [egui::pos2(x, y), egui::pos2(rect.right(), y)],
+            Stroke::new(1.0, hairline(ui)),
+        );
+    }
     ui.add_space(2.0);
+}
+
+/// A section that folds away: a chevron, the caps title and a hairline. Whether it is open
+/// is remembered (across runs). Returns the body's result when open.
+pub fn fold<R>(
+    ui: &mut egui::Ui,
+    id_salt: impl std::hash::Hash + std::fmt::Debug,
+    title: &str,
+    default_open: bool,
+    body: impl FnOnce(&mut egui::Ui) -> R,
+) -> Option<R> {
+    ui.add_space(14.0);
+    let id = ui.make_persistent_id(("fold", id_salt));
+    let mut open = ui.data_mut(|d| *d.get_persisted_mut_or(id, default_open));
+    let (rect, response) =
+        ui.allocate_exact_size(vec2(ui.available_width(), 18.0), egui::Sense::click());
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::CollapsingHeader, true, open, title)
+    });
+    if response.clicked() {
+        open = !open;
+        ui.data_mut(|d| d.insert_persisted(id, open));
+    }
+    let color = if response.hovered() {
+        ui.visuals().text_color()
+    } else {
+        ui.visuals().weak_text_color()
+    };
+    let y = rect.center().y;
+    // The chevron: right when folded, down when open.
+    let c = egui::pos2(rect.left() + 4.0, y);
+    let pts = if open {
+        vec![
+            c + vec2(-3.5, -1.8),
+            c + vec2(0.0, 1.8),
+            c + vec2(3.5, -1.8),
+        ]
+    } else {
+        vec![
+            c + vec2(-1.8, -3.5),
+            c + vec2(1.8, 0.0),
+            c + vec2(-1.8, 3.5),
+        ]
+    };
+    ui.painter()
+        .add(egui::Shape::line(pts, Stroke::new(1.4, color)));
+    let galley = ui.painter().layout_job(caps_job(ui, title, color));
+    let left = rect.left() + 14.0;
+    ui.painter().galley(
+        egui::pos2(left, y - galley.size().y / 2.0),
+        galley.clone(),
+        color,
+    );
+    let x = left + galley.size().x + 8.0;
+    if x < rect.right() {
+        ui.painter().line_segment(
+            [egui::pos2(x, y), egui::pos2(rect.right(), y)],
+            Stroke::new(1.0, hairline(ui)),
+        );
+    }
+    ui.add_space(2.0);
+    open.then(|| body(ui))
+}
+
+/// A soft, full-width button for destructive actions.
+pub fn danger_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
+    let red = ui.visuals().error_fg_color;
+    ui.add(
+        egui::Button::new(egui::RichText::new(label).color(red))
+            .fill(red.gamma_multiply(0.12))
+            .min_size(vec2(ui.available_width(), 28.0)),
+    )
 }
 
 /// A small, letter-spaced all-caps header (as in macOS sidebars).

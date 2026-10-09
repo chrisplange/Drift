@@ -140,8 +140,7 @@ impl DriftApp {
             }
             Some(_) => {
                 self.editor.selected_annotation = Some(id);
-                self.show_properties = Some(true);
-                self.params.tab = parameters::RightTab::Properties;
+                self.show_panel(crate::dock::Panel::Inspector);
             }
             None => {}
         }
@@ -285,12 +284,7 @@ impl DriftApp {
             self.editor.selected_annotation = None;
             return false;
         };
-        ui.add_space(6.0);
-        ui.label(
-            egui::RichText::new(a.type_name())
-                .family(theme::bold())
-                .size(15.0),
-        );
+        crate::app::panels::title(ui, Some(ToolKind::Note), a.type_name(), "");
         let mut edited = a.clone();
         match &mut edited {
             Annotation::Note { text, leader, .. } => {

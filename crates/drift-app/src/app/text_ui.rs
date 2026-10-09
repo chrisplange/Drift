@@ -15,8 +15,10 @@ impl DriftApp {
             return false;
         };
         let units = self.editor.doc.units();
-        ui.add_space(6.0);
-        ui.label(egui::RichText::new("Text").family(theme::bold()).size(15.0));
+        let layer = self.editor.doc.layer(t.layer).map_or(String::new(), |l| {
+            format!("{} · on layer {}", t.font.label(), l.name)
+        });
+        app::panels::title(ui, Some(ToolKind::Text), "Text", &layer);
         ui.add_space(4.0);
         let mut words = t.text.clone();
         let edit = ui.add(

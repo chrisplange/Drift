@@ -1375,8 +1375,24 @@ zooms to fit; F is Fillet (again for Chamfer).
   - Next: scope analysis and indexing to what an edit touched.
 
 **M10 — Polish and release (ongoing)**
-- Themes, command palette, keybinding config, crash recovery, PWA offline install, and
-  accessibility pass.
+- **Part 1 (done): panels and the command palette.**
+  - Dockable panels: Inspector, Parameters, Layers, Sheets and Blocks dock as tabs on either
+    side of the canvas, float over it, or hide.
+  - Drag a tab onto the canvas to float it, or onto a side to dock it (drop zones light up);
+    drag a floating panel's header onto a side to dock it.
+  - Right-click a tab, or use its ⋯ menu, to dock, float or close it. Collapse a dock to an
+    icon rail; narrow windows collapse both docks.
+  - View → Panels shows each panel, hides all (Ctrl+\) or resets the layout. The layout is
+    saved with the view preferences.
+  - One Layers panel replaces the old Layers HUD and Layers tab. Compact rows (Ctrl+L) open to
+    show colours, line settings and output; double-click a name to rename it.
+  - The command palette (Ctrl+K or Ctrl+Shift+P) searches every tool, view setting, panel and
+    command, with recent commands first.
+  - Polish: inspector titles with icons, an empty-state summary, fold-out sections, section
+    headers with hairlines, floating scroll bars and a shorter tooltip delay.
+  - Not yet: keybinding config, drag-to-reorder for floating panels, and tear-off for more
+    than one panel per window.
+- Themes, keybinding config, crash recovery, PWA offline install, and accessibility pass.
 - Performance profiling against targets (WASM first), plus native packaging (MSI, dmg, AppImage /
   Flatpak).
 - Docs site, example gallery, and a 1.0 release.

@@ -118,17 +118,17 @@ impl DriftApp {
             return false;
         }
         let angle = matches!(c, drift_core::Constraint::Angle { .. });
-        ui.add_space(6.0);
-        ui.label(
-            egui::RichText::new(crate::constraint_label(&self.editor.doc, &c))
-                .family(theme::bold())
-                .size(15.0),
-        );
         let label = annotations::dimension_label(&self.editor.doc, Some(id), &c);
-        ui.label(egui::RichText::new(match &label.stack {
+        let shown = match &label.stack {
             Some((u, l)) => format!("{} {u} / {l}{}", label.before, label.after),
             None => format!("{}{}", label.before, label.after),
-        }));
+        };
+        crate::app::panels::title(
+            ui,
+            Some(ToolKind::Dimension),
+            crate::constraint_label(&self.editor.doc, &c),
+            &shown,
+        );
         let mut note = self.editor.doc.dim_note(id).cloned().unwrap_or_default();
         let before = note.clone();
         theme::section(ui, "Text");

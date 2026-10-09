@@ -12,6 +12,73 @@ pub(crate) fn shortcut(key: &str, shift: bool) -> String {
     }
 }
 
+/// An inspector's title: the thing's icon on a soft tile, its name, and a line of detail.
+pub(crate) fn title(ui: &mut egui::Ui, icon: Option<ToolKind>, name: &str, detail: &str) {
+    ui.add_space(8.0);
+    ui.horizontal(|ui| {
+        let dark = ui.visuals().dark_mode;
+        let accent = theme::accent(dark);
+        let (tile, _) = ui.allocate_exact_size(egui::vec2(34.0, 34.0), egui::Sense::hover());
+        ui.painter().rect_filled(
+            tile,
+            9.0,
+            accent.gamma_multiply(if dark { 0.22 } else { 0.12 }),
+        );
+        let glyph = tile.shrink(8.0);
+        match icon {
+            Some(kind) => icons::tool(ui.painter(), glyph, kind, accent),
+            None => icons::glyph(ui.painter(), glyph, Glyph::Inspector, accent),
+        }
+        ui.add_space(2.0);
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            ui.add(
+                egui::Label::new(egui::RichText::new(name).family(theme::bold()).size(15.0))
+                    .truncate(),
+            );
+            if !detail.is_empty() {
+                ui.add(egui::Label::new(egui::RichText::new(detail).small().weak()).truncate());
+            }
+        });
+    });
+    ui.add_space(2.0);
+}
+
+/// The tool that draws an entity kind (for its icon).
+fn kind_icon(kind: &drift_core::EntityKind) -> ToolKind {
+    use drift_core::EntityKind as K;
+    match kind {
+        K::Point(_) => ToolKind::Point,
+        K::Line { .. } => ToolKind::Line,
+        K::Circle { .. } => ToolKind::Circle,
+        K::Arc { .. } => ToolKind::Arc,
+        K::Ellipse { .. } => ToolKind::Ellipse,
+        K::EllipseArc { .. } => ToolKind::EllipseArc,
+        K::Bezier { .. } => ToolKind::Pen,
+    }
+}
+
+/// A figure for the empty inspector: a number over a caption.
+fn stat(ui: &mut egui::Ui, value: usize, caption: &str, width: f32) {
+    let (r, _) = ui.allocate_exact_size(egui::vec2(width, 52.0), egui::Sense::hover());
+    ui.painter()
+        .rect_filled(r, 8.0, ui.visuals().faint_bg_color);
+    ui.painter().text(
+        egui::pos2(r.center().x, r.top() + 20.0),
+        egui::Align2::CENTER_CENTER,
+        value.to_string(),
+        egui::FontId::new(17.0, theme::bold()),
+        ui.visuals().strong_text_color(),
+    );
+    ui.painter().text(
+        egui::pos2(r.center().x, r.bottom() - 13.0),
+        egui::Align2::CENTER_CENTER,
+        caption.to_uppercase(),
+        egui::FontId::new(9.5, theme::bold()),
+        ui.visuals().weak_text_color(),
+    );
+}
+
 /// A checkbox-style menu item with a shortcut hint.
 fn toggle_item(ui: &mut egui::Ui, value: &mut bool, label: &str, keys: &str) {
     if ui
@@ -222,18 +289,14 @@ impl DriftApp {
             });
             ui.menu_button("View", |ui| {
                 if ui
-                    .add(
-                        egui::Button::selectable(
-                            self.layers_dock != app::layers_hud::LayersDock::Hidden,
-                            "Layers panel",
-                        )
-                        .shortcut_text(shortcut("L", false)),
-                    )
+                    .add(egui::Button::new("Command palette…").shortcut_text(shortcut("K", false)))
                     .clicked()
                 {
-                    self.toggle_layers_hud();
+                    self.open_palette();
                     ui.close();
                 }
+                ui.menu_button("Panels", |ui| self.panels_menu(ui));
+                ui.separator();
                 if ui
                     .add(egui::Button::selectable(self.sheet_preview, "Sheet"))
                     .on_hover_text("Show the drawing on its sheet, as it prints")
@@ -279,13 +342,6 @@ impl DriftApp {
                 toggle_item(ui, &mut self.show_combs, "Curvature combs", "");
                 ui.separator();
                 toggle_item(ui, &mut self.auto_relations, "Automatic relations", "");
-                let wide = ui.ctx().content_rect().width() >= WIDE_LAYOUT;
-                let mut show = self.show_properties.unwrap_or(wide);
-                let before = show;
-                toggle_item(ui, &mut show, "Inspector", "");
-                if show != before {
-                    self.show_properties = Some(show);
-                }
                 ui.separator();
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new("Appearance").weak());
@@ -364,47 +420,53 @@ impl DriftApp {
             });
     }
 
-    pub(crate) fn properties(&mut self, ui: &mut egui::Ui) {
-        ui.add_space(8.0);
-        use parameters::RightTab;
-        if let Some(tab) = theme::segmented(
-            ui,
-            self.params.tab,
-            &[
-                (RightTab::Properties, "Inspector"),
-                (RightTab::Parameters, "Parameters"),
-                (RightTab::Layers, "Layers"),
-                (RightTab::Sheets, "Sheets"),
-                (RightTab::Blocks, "Blocks"),
-            ],
-        ) {
-            self.params.tab = tab;
+    /// View → Panels: show or hide each panel; hide them all; reset the layout.
+    pub(crate) fn panels_menu(&mut self, ui: &mut egui::Ui) {
+        use crate::dock::Panel;
+        for p in Panel::ALL {
+            let shown =
+                !self.dock_view.hide_all && self.layout.place(p) != crate::dock::Place::Hidden;
+            let keys = if p == Panel::Layers {
+                shortcut("L", false)
+            } else {
+                String::new()
+            };
+            if ui
+                .add(egui::Button::selectable(shown, p.title()).shortcut_text(keys))
+                .on_hover_text(p.description())
+                .clicked()
+            {
+                if shown {
+                    self.layout.move_to(p, crate::dock::Place::Hidden, None);
+                } else {
+                    self.show_panel(p);
+                }
+                ui.close();
+            }
         }
-        ui.add_space(4.0);
-        if self.params.tab == RightTab::Parameters {
-            let now = ui.input(|i| i.time);
-            self.parameters_panel(ui, now);
-            return;
+        ui.separator();
+        if ui
+            .add(
+                egui::Button::selectable(self.dock_view.hide_all, "Hide all panels")
+                    .shortcut_text(shortcut("\\", false)),
+            )
+            .clicked()
+        {
+            self.dock_view.hide_all = !self.dock_view.hide_all;
+            ui.close();
         }
-        if self.params.tab == RightTab::Layers {
-            let now = ui.input(|i| i.time);
-            self.layers_panel(ui, now);
-            return;
+        if ui
+            .button("Reset panel layout")
+            .on_hover_text("Every panel back in the right dock")
+            .clicked()
+        {
+            self.layout = Default::default();
+            self.dock_view.hide_all = false;
+            ui.close();
         }
-        if self.params.tab == RightTab::Sheets {
-            self.sheets_panel(ui);
-            return;
-        }
-        if self.params.tab == RightTab::Blocks {
-            self.blocks_panel(ui);
-            return;
-        }
-        egui::ScrollArea::vertical()
-            .auto_shrink([false, false])
-            .show(ui, |ui| self.inspector(ui));
     }
 
-    fn inspector(&mut self, ui: &mut egui::Ui) {
+    pub(crate) fn inspector(&mut self, ui: &mut egui::Ui) {
         self.block_edit_banner(ui);
         if self.annotation_inspector(ui)
             || self.text_inspector(ui)
@@ -462,10 +524,19 @@ impl DriftApp {
             [] if !ed.selected_midpoints.is_empty() => {}
             [] if ed.selected_region.is_some() => {}
             [] => {
-                ui.add_space(18.0);
+                ui.add_space(22.0);
                 ui.vertical_centered(|ui| {
-                    ui.label(egui::RichText::new("No selection").size(15.0).weak());
+                    let (r, _) =
+                        ui.allocate_exact_size(egui::vec2(40.0, 40.0), egui::Sense::hover());
+                    icons::tool(
+                        ui.painter(),
+                        r.shrink(6.0),
+                        ToolKind::Select,
+                        ui.visuals().weak_text_color().gamma_multiply(0.7),
+                    );
                     ui.add_space(4.0);
+                    ui.label(egui::RichText::new("Nothing selected").size(14.0).weak());
+                    ui.add_space(2.0);
                     ui.label(
                         egui::RichText::new(
                             "Click geometry to inspect it, or inside a closed area to measure it.",
@@ -474,28 +545,32 @@ impl DriftApp {
                         .weak(),
                     );
                 });
-                theme::section(ui, "Document");
+                theme::section(ui, "Sketch");
                 let curves = ed.doc.iter().filter(|(_, e)| !e.kind.is_point()).count();
-                theme::row(ui, "Curves", |ui| {
-                    ui.label(curves.to_string());
-                });
-                theme::row(ui, "Relations", |ui| {
-                    ui.label(ed.doc.constraint_count().to_string());
+                let relations = ed.doc.constraint_count();
+                let layers = ed.doc.layers().count();
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    let w = ((ui.available_width() - 12.0) / 3.0).max(40.0);
+                    stat(ui, curves, "Curves", w);
+                    stat(ui, relations, "Relations", w);
+                    stat(ui, layers, "Layers", w);
                 });
             }
             [id] => {
                 let (Some(entity), Some(shape)) = (ed.doc.get(*id), ed.index.shape(*id)) else {
                     return;
                 };
-                ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    ui.label(
-                        egui::RichText::new(entity.kind.type_name())
-                            .family(theme::bold())
-                            .size(15.0),
-                    );
-                    ui.label(egui::RichText::new(id.to_string()).weak());
-                });
+                let layer = ed
+                    .doc
+                    .layer(entity.layer)
+                    .map_or(String::new(), |l| format!("on layer {}", l.name));
+                title(
+                    ui,
+                    Some(kind_icon(&entity.kind)),
+                    entity.kind.type_name(),
+                    &format!("{id} · {layer}"),
+                );
                 theme::section(ui, "Geometry");
                 property_rows(ui, shape, ed.doc.units());
             }
@@ -506,17 +581,16 @@ impl DriftApp {
                         *counts.entry(e.kind.type_name()).or_insert(0) += 1;
                     }
                 }
-                ui.add_space(6.0);
-                ui.label(
-                    egui::RichText::new(format!("{} selected", many.len()))
-                        .family(theme::bold())
-                        .size(15.0),
-                );
                 let summary: Vec<String> = counts
                     .iter()
                     .map(|(name, n)| format!("{n} {name}"))
                     .collect();
-                ui.label(egui::RichText::new(summary.join(" · ")).weak());
+                title(
+                    ui,
+                    Some(ToolKind::Select),
+                    &format!("{} selected", many.len()),
+                    &summary.join(" · "),
+                );
             }
         }
 
@@ -550,12 +624,8 @@ impl DriftApp {
         self.constraint_list(ui);
 
         if !self.editor.selection.is_empty() {
-            ui.add_space(14.0);
-            let delete = egui::Button::new(
-                egui::RichText::new("Delete selection").color(ui.visuals().error_fg_color),
-            )
-            .min_size(egui::vec2(ui.available_width(), 26.0));
-            if ui.add(delete).clicked() {
+            ui.add_space(16.0);
+            if theme::danger_button(ui, "Delete selection").clicked() {
                 self.editor.delete_selection();
             }
         }
@@ -603,25 +673,22 @@ impl DriftApp {
             }
         }
         if !pins.is_empty() {
-            ui.add_space(4.0);
             let mut chosen = None;
-            egui::CollapsingHeader::new(egui::RichText::new("Pin measurement").weak())
-                .default_open(false)
-                .show(ui, |ui| {
-                    ui.label(
-                        egui::RichText::new("Keep a live measurement in the Parameters tab")
-                            .small()
-                            .weak(),
-                    );
-                    ui.horizontal_wrapped(|ui| {
-                        for option in &pins {
-                            let chip = egui::Button::new(option.label).corner_radius(12.0);
-                            if ui.add(chip).clicked() {
-                                chosen = option.constraints.first().copied();
-                            }
+            theme::fold(ui, "pin_measurement", "Pin measurement", false, |ui| {
+                ui.label(
+                    egui::RichText::new("Keep a live measurement in the Parameters tab")
+                        .small()
+                        .weak(),
+                );
+                ui.horizontal_wrapped(|ui| {
+                    for option in &pins {
+                        let chip = egui::Button::new(option.label).corner_radius(12.0);
+                        if ui.add(chip).clicked() {
+                            chosen = option.constraints.first().copied();
                         }
-                    });
+                    }
                 });
+            });
             if let Some(c) = chosen {
                 match self.editor.pin_measurement(c) {
                     Ok(_) => self.set_status("Pinned (see the Parameters tab)".into(), false, now),

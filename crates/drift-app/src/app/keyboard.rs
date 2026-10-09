@@ -9,6 +9,11 @@ impl DriftApp {
             |key| KeyboardShortcut::new(EguiModifiers::COMMAND | EguiModifiers::SHIFT, key);
         let consume = |shortcut: KeyboardShortcut| ctx.input_mut(|i| i.consume_shortcut(&shortcut));
 
+        // The command palette: ⌘K / Ctrl+K, or Ctrl+Shift+P as in code editors.
+        if consume(cmd(Key::K)) || consume(cmd_shift(Key::P)) {
+            self.open_palette();
+            return;
+        }
         // Order matters: check the more specific (Shift) variants first.
         if consume(cmd_shift(Key::Z)) || consume(cmd(Key::Y)) {
             self.redo();
@@ -36,7 +41,11 @@ impl DriftApp {
             self.editor.make_group();
         }
         if consume(cmd(Key::L)) {
-            self.toggle_layers_hud();
+            self.toggle_panel(crate::dock::Panel::Layers);
+        }
+        // Ctrl/⌘+\: hide every panel for a clear view, and bring them back.
+        if consume(cmd(Key::Backslash)) {
+            self.dock_view.hide_all = !self.dock_view.hide_all;
         }
         if consume(cmd(Key::P)) {
             let painter = ctx.layer_painter(egui::LayerId::background());

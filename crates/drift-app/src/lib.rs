@@ -8,6 +8,7 @@ mod app;
 pub mod blocks;
 mod canvas;
 pub mod curves;
+mod dock;
 pub mod editor;
 pub mod fills;
 mod icons;
@@ -175,8 +176,12 @@ pub struct DriftApp {
     pending: Option<Pending>,
     status: Option<Status>,
     show_shortcuts: bool,
-    /// User override for the properties panel; by default it shows on wide windows only.
-    show_properties: Option<bool>,
+    /// Where the side panels are (docked, floating or hidden).
+    layout: dock::Layout,
+    dock_view: app::dock_ui::DockView,
+    /// The command palette, while open.
+    palette: Option<app::palette::Palette>,
+    recent_commands: Vec<app::palette::Command>,
     backend: String,
     window_title: String,
     /// Where the canvas was laid out last frame.
@@ -209,7 +214,10 @@ pub struct DriftApp {
     status_colors: bool,
     /// Layer names being edited in the Layers tab.
     layer_names: std::collections::HashMap<drift_core::LayerId, String>,
-    new_layer_name: String,
+    /// Layers showing their colours and line settings in the Layers panel.
+    expanded_layers: std::collections::HashSet<drift_core::LayerId>,
+    /// The layer whose name is being edited.
+    renaming_layer: Option<drift_core::LayerId>,
     show_grid: bool,
     show_axes: bool,
     /// Fill tessellations, kept while the document is unchanged.
@@ -227,9 +235,6 @@ pub struct DriftApp {
     /// The previewed page, as of a document revision.
     preview_cache: Option<(u64, drift_core::SheetId, drift_draft::page::Drawing)>,
     view_drag: Option<app::sheets_ui::ViewDrag>,
-    /// Where the Layers HUD is, and where it was before it was hidden.
-    layers_dock: app::layers_hud::LayersDock,
-    layers_last: app::layers_hud::LayersDock,
     /// The name typed for a new block.
     new_block_name: String,
     /// Curvature combs on picked curves.
@@ -276,7 +281,10 @@ impl DriftApp {
             pending: None,
             status: None,
             show_shortcuts: false,
-            show_properties: None,
+            layout: Default::default(),
+            dock_view: Default::default(),
+            palette: None,
+            recent_commands: Vec::new(),
             backend,
             window_title: String::new(),
             canvas_rect: egui::Rect::NOTHING,
@@ -297,7 +305,8 @@ impl DriftApp {
             thin_lines: false,
             status_colors: true,
             layer_names: Default::default(),
-            new_layer_name: String::new(),
+            expanded_layers: Default::default(),
+            renaming_layer: None,
             show_grid: true,
             show_axes: true,
             fill_meshes: Default::default(),
@@ -309,8 +318,6 @@ impl DriftApp {
             preview: Default::default(),
             preview_cache: None,
             view_drag: None,
-            layers_dock: Default::default(),
-            layers_last: Default::default(),
             new_block_name: String::new(),
             show_combs: true,
             text_typing: None,
@@ -473,8 +480,17 @@ const SHORTCUTS: &[(&str, &str)] = &[
     ("Ctrl+N / Ctrl+O", "New / open"),
     ("Ctrl+P", "Print (opens the sheets as a PDF)"),
     (
-        "Ctrl+L",
-        "Show or hide the Layers panel (float it, or dock it left or right)",
+        "Ctrl+K / Ctrl+Shift+P",
+        "Command palette: type any tool, setting, panel or command",
+    ),
+    ("Ctrl+L", "Show or hide the Layers panel"),
+    (
+        "Ctrl+\\",
+        "Hide all panels for a clear view, and bring them back",
+    ),
+    (
+        "Drag a panel's tab",
+        "Onto the canvas to float it, or onto either side to dock it (right-click for the same)",
     ),
     (
         "R (with a selection)",
@@ -607,8 +623,12 @@ impl eframe::App for DriftApp {
         let keep = self.editor.selected_text;
         self.editor.drop_empty_texts(keep);
         if self.pending.is_none() && self.editor.pending_driven.is_none() {
-            self.handle_typing(&ctx);
-            self.shortcuts(&ctx);
+            if self.palette.is_none() {
+                self.handle_typing(&ctx);
+                self.shortcuts(&ctx);
+            }
+            // Before the panels, so it takes the arrow keys, Return and Esc first.
+            self.palette_ui(&ctx);
         }
 
         let style = ui.style().clone();
@@ -627,16 +647,9 @@ impl eframe::App for DriftApp {
             .frame(frame(8, 6))
             .exact_size(if wide { 168.0 } else { 56.0 })
             .show(ui, |ui| self.toolbar(ui, wide));
-        self.layers_dock_panel(ui, true);
-        if self.show_properties.unwrap_or(wide) {
-            egui::Panel::right("properties")
-                .resizable(true)
-                .frame(frame(14, 6))
-                .default_size(310.0)
-                .min_size(240.0)
-                .show(ui, |ui| self.properties(ui));
-        }
-        self.layers_dock_panel(ui, false);
+        self.begin_docks(wide);
+        self.dock(ui, dock::Side::Left);
+        self.dock(ui, dock::Side::Right);
         egui::CentralPanel::no_frame().show(ui, |ui| {
             if self.sheet_preview {
                 self.sheet_canvas(ui);
@@ -644,7 +657,8 @@ impl eframe::App for DriftApp {
                 self.canvas(ui);
             }
         });
-        self.layers_float(&ctx);
+        self.floating_panels(&ctx);
+        self.dock_drag(&ctx);
 
         self.dialogs(&ctx);
         self.update_title(&ctx);

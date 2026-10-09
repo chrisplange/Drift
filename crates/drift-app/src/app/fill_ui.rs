@@ -214,8 +214,7 @@ impl DriftApp {
                 (FillKind::Hatch(_), 1) => "Hatch".to_owned(),
                 (_, n) => format!("{n} fills"),
             };
-            ui.add_space(6.0);
-            ui.label(egui::RichText::new(title).family(theme::bold()).size(15.0));
+            app::panels::title(ui, Some(ToolKind::Fill), &title, "");
             if shape.is_none_or(|s| s.lost) {
                 ui.add_space(4.0);
                 ui.label(
@@ -327,12 +326,7 @@ impl DriftApp {
             return true;
         }
         if self.tool.kind() == ToolKind::Fill && self.editor.selection.is_empty() {
-            ui.add_space(6.0);
-            ui.label(
-                egui::RichText::new("Fill / hatch")
-                    .family(theme::bold())
-                    .size(15.0),
-            );
+            app::panels::title(ui, Some(ToolKind::Fill), "Fill / hatch", "New fills");
             ui.label(
                 egui::RichText::new(if self.editor.repick_fill.is_some() {
                     "Click inside the area that should be the fill's new boundary."

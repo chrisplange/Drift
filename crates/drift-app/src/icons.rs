@@ -17,11 +17,22 @@ pub enum Glyph {
     Eye,
     Lock,
     Unlock,
-    Print,
     /// Constraint status colours: a curve with a fixed and a free end.
     Status,
     /// End points always shown: a line with dots at its ends.
     Endpoints,
+    // Panels.
+    Inspector,
+    Parameters,
+    Layers,
+    Sheets,
+    Blocks,
+    // Panel controls.
+    More,
+    ChevronsLeft,
+    ChevronsRight,
+    Close,
+    Search,
 }
 
 /// Maps a 20 × 20 design grid into `rect`.
@@ -403,23 +414,81 @@ pub fn glyph(painter: &egui::Painter, rect: Rect, glyph: Glyph, color: Color32) 
             p.circle(16.0, 5.0, 2.2);
             p.line((2.0, 18.5), (6.0, 18.5));
         }
-        Glyph::Print => {
-            p.poly(&[(6.0, 7.5), (6.0, 3.0), (14.0, 3.0), (14.0, 7.5)], false);
+        Glyph::Inspector => {
+            // "i" in a circle.
+            p.circle(10.0, 10.0, 7.5);
+            p.dot(10.0, 6.3, 1.2);
+            p.line((10.0, 9.0), (10.0, 14.2));
+        }
+        Glyph::Parameters => {
+            // Sliders.
+            for (y, x) in [(5.0, 7.0), (10.0, 13.0), (15.0, 9.0)] {
+                p.line((3.0, y), (x - 2.2, y));
+                p.line((x + 2.2, y), (17.0, y));
+                p.circle(x, y, 2.2);
+            }
+        }
+        Glyph::Layers => {
+            p.poly(&[(10.0, 3.0), (17.5, 7.0), (10.0, 11.0), (2.5, 7.0)], true);
+            p.poly(&[(2.5, 10.5), (10.0, 14.5), (17.5, 10.5)], false);
+            p.poly(&[(2.5, 14.0), (10.0, 18.0), (17.5, 14.0)], false);
+        }
+        Glyph::Sheets => {
             p.poly(
                 &[
-                    (6.0, 14.0),
-                    (3.0, 14.0),
-                    (3.0, 7.5),
-                    (17.0, 7.5),
-                    (17.0, 14.0),
-                    (14.0, 14.0),
+                    (4.5, 2.5),
+                    (11.5, 2.5),
+                    (15.5, 6.5),
+                    (15.5, 17.5),
+                    (4.5, 17.5),
                 ],
-                false,
-            );
-            p.poly(
-                &[(6.0, 11.5), (14.0, 11.5), (14.0, 17.0), (6.0, 17.0)],
                 true,
             );
+            p.poly(&[(11.5, 2.5), (11.5, 6.5), (15.5, 6.5)], false);
+            p.line((7.0, 11.0), (13.0, 11.0));
+            p.line((7.0, 14.0), (11.0, 14.0));
+        }
+        Glyph::Blocks => {
+            // A cube.
+            p.poly(
+                &[
+                    (10.0, 2.5),
+                    (16.5, 6.0),
+                    (16.5, 13.5),
+                    (10.0, 17.5),
+                    (3.5, 13.5),
+                    (3.5, 6.0),
+                ],
+                true,
+            );
+            p.poly(&[(3.5, 6.0), (10.0, 9.8), (16.5, 6.0)], false);
+            p.line((10.0, 9.8), (10.0, 17.5));
+        }
+        Glyph::More => {
+            for x in [4.5, 10.0, 15.5] {
+                p.dot(x, 10.0, 1.5);
+            }
+        }
+        Glyph::ChevronsLeft | Glyph::ChevronsRight => {
+            let s = if glyph == Glyph::ChevronsLeft {
+                1.0
+            } else {
+                -1.0
+            };
+            for x in [7.5, 12.5] {
+                p.poly(
+                    &[(x + 2.5 * s, 5.5), (x - 2.5 * s, 10.0), (x + 2.5 * s, 14.5)],
+                    false,
+                );
+            }
+        }
+        Glyph::Close => {
+            p.line((5.5, 5.5), (14.5, 14.5));
+            p.line((14.5, 5.5), (5.5, 14.5));
+        }
+        Glyph::Search => {
+            p.circle(8.5, 8.5, 5.0);
+            p.line((12.2, 12.2), (16.5, 16.5));
         }
     }
 }

@@ -12,21 +12,9 @@ use eframe::egui::{self, Color32, Pos2, Stroke, Vec2, vec2};
 use crate::DriftApp;
 use crate::overlay::ScreenMap;
 
-/// Which page the right-hand panel shows.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum RightTab {
-    #[default]
-    Properties,
-    Parameters,
-    Layers,
-    Sheets,
-    Blocks,
-}
-
 /// Edit buffers and view state for the Parameters tab.
 #[derive(Default)]
 pub struct ParamUi {
-    pub tab: RightTab,
     new_name: String,
     new_expr: String,
     new_kind: Kind,

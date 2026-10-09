@@ -45,12 +45,13 @@ impl DriftApp {
             .iter()
             .map(|(k, v)| format!("{k}={}", u8::from(*v)))
             .collect();
-        prefs.push(format!("layers={}", self.layers_dock.key()));
-        prefs.push(format!("layers_last={}", self.layers_last.key()));
+        prefs.extend(self.layout.prefs());
         prefs.join(";")
     }
 
     pub(crate) fn apply_view_prefs(&mut self, text: &str) {
+        let pairs: Vec<(&str, &str)> = text.split(';').filter_map(|p| p.split_once('=')).collect();
+        self.layout.apply(&pairs);
         for pair in text.split(';') {
             let Some((key, value)) = pair.split_once('=') else {
                 continue;
@@ -66,16 +67,6 @@ impl DriftApp {
                 "rels" => self.show_relations = on,
                 "auto" => self.auto_relations = on,
                 "ends" => self.always_endpoints = on,
-                "layers" => {
-                    if let Some(d) = app::layers_hud::LayersDock::parse(value) {
-                        self.layers_dock = d;
-                    }
-                }
-                "layers_last" => {
-                    if let Some(d) = app::layers_hud::LayersDock::parse(value) {
-                        self.layers_last = d;
-                    }
-                }
                 _ => {}
             }
         }

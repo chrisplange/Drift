@@ -39,73 +39,67 @@ impl DriftApp {
         if ids.is_empty() {
             return;
         }
-        ui.add_space(6.0);
         let mut result = None;
-        egui::CollapsingHeader::new("Pattern")
-            .default_open(false)
-            .show(ui, |ui| {
-                let field = |ui: &mut egui::Ui, label: &str, text: &mut String| {
-                    ui.label(label);
-                    ui.add(egui::TextEdit::singleline(text).desired_width(70.0));
-                };
-                let ed = &self.editor;
-                let eval = |text: &str, kind| {
-                    ed.evaluate_text(text, kind)
-                        .map(|e| e.value)
-                        .map_err(|e| format!("\"{text}\": {e}"))
-                };
-                let p = &mut self.patterns;
-                ui.label(egui::RichText::new("Linear").strong());
-                egui::Grid::new("linear_pattern")
-                    .num_columns(4)
-                    .show(ui, |ui| {
-                        ui.label("Count");
-                        ui.add(egui::DragValue::new(&mut p.linear_count).range(2..=500));
-                        ui.end_row();
-                        field(ui, "Spacing X", &mut p.dx);
-                        field(ui, "Y", &mut p.dy);
-                        ui.end_row();
-                    });
-                if ui.button("Make linear pattern").clicked() {
-                    result = Some(
-                        eval(&p.dx, Kind::Length)
-                            .and_then(|dx| Ok((dx, eval(&p.dy, Kind::Length)?)))
-                            .map(|(dx, dy)| PatternRequest::Linear {
-                                count: p.linear_count,
-                                step: DVec2::new(dx, dy),
-                            }),
-                    );
-                }
-                ui.add_space(6.0);
-                ui.label(egui::RichText::new("Circular").strong());
-                egui::Grid::new("circular_pattern")
-                    .num_columns(4)
-                    .show(ui, |ui| {
-                        ui.label("Count");
-                        ui.add(egui::DragValue::new(&mut p.circular_count).range(2..=500));
-                        field(ui, "Angle", &mut p.angle);
-                        ui.end_row();
-                        field(ui, "Centre X", &mut p.cx);
-                        field(ui, "Y", &mut p.cy);
-                        ui.end_row();
-                    });
-                if ui
-                    .button("Make circular pattern")
-                    .on_hover_text("360° spreads the copies evenly round the full circle")
-                    .clicked()
-                {
-                    result = Some((|| {
-                        Ok(PatternRequest::Circular {
-                            count: p.circular_count,
-                            center: DVec2::new(
-                                eval(&p.cx, Kind::Length)?,
-                                eval(&p.cy, Kind::Length)?,
-                            ),
-                            degrees: eval(&p.angle, Kind::Angle)?,
-                        })
-                    })());
-                }
-            });
+        crate::theme::fold(ui, "pattern", "Pattern", false, |ui| {
+            let field = |ui: &mut egui::Ui, label: &str, text: &mut String| {
+                ui.label(label);
+                ui.add(egui::TextEdit::singleline(text).desired_width(70.0));
+            };
+            let ed = &self.editor;
+            let eval = |text: &str, kind| {
+                ed.evaluate_text(text, kind)
+                    .map(|e| e.value)
+                    .map_err(|e| format!("\"{text}\": {e}"))
+            };
+            let p = &mut self.patterns;
+            ui.label(egui::RichText::new("Linear").strong());
+            egui::Grid::new("linear_pattern")
+                .num_columns(4)
+                .show(ui, |ui| {
+                    ui.label("Count");
+                    ui.add(egui::DragValue::new(&mut p.linear_count).range(2..=500));
+                    ui.end_row();
+                    field(ui, "Spacing X", &mut p.dx);
+                    field(ui, "Y", &mut p.dy);
+                    ui.end_row();
+                });
+            if ui.button("Make linear pattern").clicked() {
+                result = Some(
+                    eval(&p.dx, Kind::Length)
+                        .and_then(|dx| Ok((dx, eval(&p.dy, Kind::Length)?)))
+                        .map(|(dx, dy)| PatternRequest::Linear {
+                            count: p.linear_count,
+                            step: DVec2::new(dx, dy),
+                        }),
+                );
+            }
+            ui.add_space(6.0);
+            ui.label(egui::RichText::new("Circular").strong());
+            egui::Grid::new("circular_pattern")
+                .num_columns(4)
+                .show(ui, |ui| {
+                    ui.label("Count");
+                    ui.add(egui::DragValue::new(&mut p.circular_count).range(2..=500));
+                    field(ui, "Angle", &mut p.angle);
+                    ui.end_row();
+                    field(ui, "Centre X", &mut p.cx);
+                    field(ui, "Y", &mut p.cy);
+                    ui.end_row();
+                });
+            if ui
+                .button("Make circular pattern")
+                .on_hover_text("360° spreads the copies evenly round the full circle")
+                .clicked()
+            {
+                result = Some((|| {
+                    Ok(PatternRequest::Circular {
+                        count: p.circular_count,
+                        center: DVec2::new(eval(&p.cx, Kind::Length)?, eval(&p.cy, Kind::Length)?),
+                        degrees: eval(&p.angle, Kind::Angle)?,
+                    })
+                })());
+            }
+        });
         let outcome = match result {
             None => return,
             Some(Err(e)) => Err(e),

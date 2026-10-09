@@ -258,17 +258,12 @@ impl DriftApp {
         let name = doc
             .block(first.block)
             .map_or("?".to_owned(), |b| b.name.clone());
-        ui.add_space(6.0);
-        ui.label(
-            egui::RichText::new(if picked.len() == 1 {
-                name.clone()
-            } else {
-                format!("{} copies", picked.len())
-            })
-            .family(theme::bold())
-            .size(15.0),
-        );
-        ui.label(egui::RichText::new("Block copy").small().weak());
+        let heading = if picked.len() == 1 {
+            name.clone()
+        } else {
+            format!("{} copies", picked.len())
+        };
+        crate::app::panels::title(ui, Some(ToolKind::Block), &heading, "Block copy");
         let blocks: Vec<(BlockId, String)> =
             doc.blocks().map(|(id, b)| (id, b.name.clone())).collect();
         let layers: Vec<(LayerId, String)> =

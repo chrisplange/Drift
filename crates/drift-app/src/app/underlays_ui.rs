@@ -106,10 +106,7 @@ impl DriftApp {
                     msg.push_str(&format!("; skipped {}", report.skipped));
                 }
                 self.set_status(msg, false, now);
-                self.params.tab = parameters::RightTab::Layers;
-                if self.show_properties == Some(false) {
-                    self.show_properties = None;
-                }
+                self.show_panel(crate::dock::Panel::Layers);
                 self.fit_target = Some(self.fit_bounds());
             }
             Err(e) => self.set_status(format!("Could not import {name}: {e}"), true, now),

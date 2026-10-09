@@ -8,8 +8,8 @@ use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable as _;
 
 use crate::DriftApp;
+use crate::dock::{Panel, Place, Side};
 use crate::overlay::ScreenMap;
-use crate::parameters::RightTab;
 use crate::tools::{Overlay, ToolKind};
 
 fn gpu_available() -> bool {
@@ -1139,7 +1139,7 @@ fn parameters_and_layers_tabs_render() {
     h.run();
     h.get_by_label("Open example").click();
     h.run();
-    h.state_mut().params.tab = RightTab::Parameters;
+    h.state_mut().show_panel(Panel::Parameters);
     h.run();
     save_png("drift_ui_parameters.png", &mut h);
     let id = h.state_mut().editor.add_layer("Notes");
@@ -1147,7 +1147,7 @@ fn parameters_and_layers_tabs_render() {
     layer.visible = false;
     layer.locked = true;
     h.state_mut().editor.update_layer(id, layer);
-    h.state_mut().params.tab = RightTab::Layers;
+    h.state_mut().show_panel(Panel::Layers);
     h.run();
     save_png("drift_ui_layers.png", &mut h);
 }
@@ -1371,12 +1371,12 @@ fn drafting_styles_render() {
     ed.doc.begin();
     ed.doc.set_draft_style(asme);
     ed.commit("ASME");
-    h.state_mut().params.tab = RightTab::Parameters;
+    h.state_mut().show_panel(Panel::Parameters);
     h.run();
     h.run();
     save_png("drift_ui_asme.png", &mut h);
     // Pick the height dimension: the inspector edits its tolerance.
-    h.state_mut().params.tab = RightTab::Properties;
+    h.state_mut().show_panel(Panel::Inspector);
     h.state_mut().selected_constraint = Some(height);
     h.run();
     h.run();
@@ -1517,7 +1517,7 @@ fn sheets_preview_and_export() {
     click_world(&mut h, DVec2::new(100.0, 15.0));
     h.get_by_label("Select").click();
     h.run();
-    h.state_mut().params.tab = RightTab::Sheets;
+    h.state_mut().show_panel(Panel::Sheets);
     h.run();
     h.get_by_label("New sheet").click();
     h.run();
@@ -1626,8 +1626,7 @@ fn sheets_preview_and_export() {
 }
 
 #[test]
-fn layers_hud_floats_docks_and_switches_layers() {
-    use crate::app::layers_hud::LayersDock;
+fn panels_float_dock_and_switch_layers() {
     let Some(mut h) = harness() else { return };
     h.get_by_label("File").click();
     h.run();
@@ -1635,7 +1634,13 @@ fn layers_hud_floats_docks_and_switches_layers() {
     h.run();
     let walls = h.state_mut().editor.add_layer("Walls");
     h.state_mut().editor.add_layer("Hatching");
-    assert_eq!(h.state().layers_dock, LayersDock::Hidden);
+    // Every panel starts in the right dock with the inspector in front.
+    assert_eq!(
+        h.state().layout.place(Panel::Layers),
+        Place::Dock(Side::Right)
+    );
+    assert!(!h.state().layout.is_shown(Panel::Layers));
+    // Ctrl+L brings the layers to the front.
     h.event(Event::Key {
         key: Key::L,
         physical_key: None,
@@ -1645,14 +1650,36 @@ fn layers_hud_floats_docks_and_switches_layers() {
     });
     h.run();
     h.run();
-    assert_eq!(h.state().layers_dock, LayersDock::Floating);
-    save_png("drift_ui_layers_hud.png", &mut h);
-    // Clicking a layer's name in the HUD makes it the current layer.
+    assert!(h.state().layout.is_shown(Panel::Layers));
+    save_png("drift_ui_layers_panel.png", &mut h);
+    // Clicking a layer's name makes it the current layer.
     h.get_by_label("Walls").click();
     h.run();
     assert_eq!(h.state().editor.doc.current_layer(), walls);
-    // Docked right, next to the inspector; the choice survives a restart.
-    h.state_mut().layers_dock = LayersDock::Right;
+    // Drag the Layers tab onto the canvas: it floats there.
+    let tab = h.get_by_label("Layers").rect().center();
+    let canvas = h.state().canvas_rect.center();
+    h.hover_at(tab);
+    h.run();
+    button(&h, tab, true);
+    h.run();
+    for t in 1..=8 {
+        let p = tab + (canvas - tab) * (t as f32 / 8.0);
+        h.hover_at(p);
+        h.run();
+    }
+    save_png("drift_ui_panel_dragging.png", &mut h);
+    button(&h, canvas, false);
+    h.run();
+    h.run();
+    assert_eq!(h.state().layout.place(Panel::Layers), Place::Float);
+    // The right dock shows the next tab.
+    assert_eq!(h.state().layout.active[1], Some(Panel::Sheets));
+    save_png("drift_ui_layers_floating.png", &mut h);
+    // Docked left, beside the toolbar; the layout survives a restart.
+    h.state_mut()
+        .layout
+        .move_to(Panel::Layers, Place::Dock(Side::Left), None);
     h.run();
     h.run();
     save_png("drift_ui_layers_docked.png", &mut h);
@@ -1660,12 +1687,55 @@ fn layers_hud_floats_docks_and_switches_layers() {
     eframe::App::save(h.state_mut(), &mut storage);
     let Some(mut fresh) = harness() else { return };
     fresh.state_mut().restore_session(&storage);
-    assert_eq!(fresh.state().layers_dock, LayersDock::Right);
+    assert_eq!(
+        fresh.state().layout.place(Panel::Layers),
+        Place::Dock(Side::Left)
+    );
     // Ctrl+L hides it, and again brings it back where it was.
-    fresh.state_mut().toggle_layers_hud();
-    assert_eq!(fresh.state().layers_dock, LayersDock::Hidden);
-    fresh.state_mut().toggle_layers_hud();
-    assert_eq!(fresh.state().layers_dock, LayersDock::Right);
+    fresh.state_mut().toggle_panel(Panel::Layers);
+    assert_eq!(fresh.state().layout.place(Panel::Layers), Place::Hidden);
+    fresh.state_mut().toggle_panel(Panel::Layers);
+    assert_eq!(
+        fresh.state().layout.place(Panel::Layers),
+        Place::Dock(Side::Left)
+    );
+}
+
+#[test]
+fn command_palette_finds_and_runs_commands() {
+    let Some(mut h) = harness() else { return };
+    h.event(Event::Key {
+        key: Key::K,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: EguiModifiers::COMMAND,
+    });
+    h.run();
+    h.run();
+    assert!(h.state().palette.is_some());
+    h.event(Event::Text("rect".into()));
+    h.run();
+    save_png("drift_ui_palette.png", &mut h);
+    h.key_press(Key::Enter);
+    h.run();
+    assert!(h.state().palette.is_none());
+    assert_eq!(h.state().tool.kind(), ToolKind::Rectangle);
+    // Settings toggle; Esc closes without doing anything.
+    let grid = h.state().show_grid;
+    h.state_mut().open_palette();
+    h.run();
+    h.event(Event::Text("grid".into()));
+    h.run();
+    h.key_press(Key::Enter);
+    h.run();
+    assert_eq!(h.state().show_grid, !grid);
+    h.state_mut().open_palette();
+    h.run();
+    h.key_press(Key::Escape);
+    h.run();
+    assert!(h.state().palette.is_none());
+    assert_eq!(h.state().tool.kind(), ToolKind::Rectangle);
 }
 
 #[test]
@@ -1730,7 +1800,7 @@ fn furniture_blocks_place_edit_and_export() {
     h.run();
     h.get_by_label("Open example").click();
     h.run();
-    h.state_mut().params.tab = RightTab::Blocks;
+    h.state_mut().show_panel(Panel::Blocks);
     h.run();
     h.get_by_label("Add furniture library").click();
     h.run();
@@ -1772,7 +1842,7 @@ fn furniture_blocks_place_edit_and_export() {
     h.run();
     click_world(&mut h, DVec2::new(215.0, -130.0));
     assert_eq!(h.state().editor.selected_instances.len(), 1);
-    h.state_mut().params.tab = RightTab::Properties;
+    h.state_mut().show_panel(Panel::Inspector);
     h.run();
     h.run();
     save_png("drift_ui_blocks.png", &mut h);
@@ -1843,7 +1913,7 @@ fn pdf_underlay_calibrate_and_trace() {
         (id, u.clone())
     };
     assert!((u.scale - drift_core::underlays::MM_PER_POINT).abs() < 1e-12);
-    assert_eq!(h.state().params.tab, RightTab::Layers);
+    assert!(h.state().layout.is_shown(Panel::Layers));
     // The new underlay is picked; calibrate from its panel.
     h.get_by_label("Calibrate…").click();
     h.run();

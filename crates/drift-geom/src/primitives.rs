@@ -44,7 +44,79 @@ pub fn nearest_point(shape: &Shape, p: DVec2) -> DVec2 {
                 }
             }
         }
+        Shape::Ellipse {
+            center,
+            major,
+            minor,
+            start,
+            sweep,
+        } => nearest_on_ellipse(center, major, minor, start, sweep, p).0,
     }
+}
+
+/// The point of an ellipse (or the part of it from `start` over `sweep`) closest to `p`, and
+/// its parametric angle: the best of a coarse sampling, refined by golden-section search.
+pub fn nearest_on_ellipse(
+    center: DVec2,
+    major: DVec2,
+    minor: f64,
+    start: f64,
+    sweep: f64,
+    p: DVec2,
+) -> (DVec2, f64) {
+    let at = |t: f64| drift_core::shape::ellipse_point(center, major, minor, t);
+    let d2 = |t: f64| at(t).distance_squared(p);
+    const SAMPLES: usize = 72;
+    let step = sweep / SAMPLES as f64;
+    let mut best = (0, f64::INFINITY);
+    for i in 0..=SAMPLES {
+        let d = d2(start + step * i as f64);
+        if d < best.1 {
+            best = (i, d);
+        }
+    }
+    let (mut lo, mut hi) = (
+        start + step * best.0.saturating_sub(1) as f64,
+        start + step * (best.0 + 1).min(SAMPLES) as f64,
+    );
+    let g = (5f64.sqrt() - 1.0) / 2.0;
+    for _ in 0..60 {
+        let (t1, t2) = (hi - g * (hi - lo), lo + g * (hi - lo));
+        if d2(t1) < d2(t2) {
+            hi = t2;
+        } else {
+            lo = t1;
+        }
+    }
+    let t = (lo + hi) / 2.0;
+    (at(t), t)
+}
+
+/// Where the segment `a`→`b` meets an ellipse (within the sweep): in coordinates where the
+/// ellipse is the unit circle, segments stay segments.
+pub fn ellipse_segment_intersections(
+    center: DVec2,
+    major: DVec2,
+    minor: f64,
+    start: f64,
+    sweep: f64,
+    a: DVec2,
+    b: DVec2,
+) -> Vec<DVec2> {
+    let len = major.length();
+    let u = major.normalize_or_zero();
+    if len == 0.0 || minor == 0.0 {
+        return Vec::new();
+    }
+    let local = |q: DVec2| {
+        let d = q - center;
+        DVec2::new(d.dot(u) / len, d.dot(u.perp()) / minor)
+    };
+    circle_segment_intersections(DVec2::ZERO, 1.0, local(a), local(b))
+        .into_iter()
+        .filter(|q| angle_in_sweep(q.y.atan2(q.x), start, sweep))
+        .map(|q| drift_core::shape::ellipse_point(center, major, minor, q.y.atan2(q.x)))
+        .collect()
 }
 
 fn on_circle(center: DVec2, radius: f64, p: DVec2) -> DVec2 {
@@ -134,6 +206,21 @@ pub fn shape_intersects_rect(shape: &Shape, rect: &Bounds) -> bool {
                             let rel = *q - center;
                             angle_in_sweep(rel.y.atan2(rel.x), start, sweep)
                         })
+                })
+        }
+        Shape::Ellipse {
+            center,
+            major,
+            minor,
+            start,
+            sweep,
+        } => {
+            let at = |t: f64| drift_core::shape::ellipse_point(center, major, minor, t);
+            point_in_rect(at(start), rect)
+                || point_in_rect(at(start + sweep), rect)
+                || rect_edges(rect).iter().any(|&(a, b)| {
+                    !ellipse_segment_intersections(center, major, minor, start, sweep, a, b)
+                        .is_empty()
                 })
         }
     }

@@ -597,6 +597,19 @@ fn paint_shape(painter: &egui::Painter, map: &ScreenMap, shape: &Shape, stroke: 
                 .collect();
             painter.add(egui::Shape::line(points, stroke));
         }
+        Shape::Ellipse {
+            center,
+            major,
+            minor,
+            start,
+            sweep,
+        } => {
+            let points = drift_core::shape::flatten_ellipse(center, major, minor, start, sweep, 64)
+                .into_iter()
+                .map(|p| map.to_screen(p))
+                .collect();
+            painter.add(egui::Shape::line(points, stroke));
+        }
         Shape::Point(_) => {}
     }
 }

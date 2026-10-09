@@ -48,6 +48,20 @@ fn thumbnail(ui: &mut egui::Ui, block: &drift_core::Block, size: f32) -> egui::R
                         .collect();
                 ui.painter().add(egui::Shape::line(pts, stroke));
             }
+            Shape::Ellipse {
+                center,
+                major,
+                minor,
+                start,
+                sweep,
+            } => {
+                let pts =
+                    drift_core::shape::flatten_ellipse(center, major, minor, start, sweep, 24)
+                        .into_iter()
+                        .map(to)
+                        .collect();
+                ui.painter().add(egui::Shape::line(pts, stroke));
+            }
             Shape::Point(_) => {}
         }
     }

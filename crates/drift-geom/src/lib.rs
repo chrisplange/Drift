@@ -10,8 +10,8 @@ mod snap;
 
 pub use index::{PointRole, SceneIndex};
 pub use primitives::{
-    angle_in_sweep, circle_segment_intersections, distance, nearest_point, shape_intersects_rect,
-    shape_within_rect,
+    angle_in_sweep, circle_segment_intersections, distance, ellipse_segment_intersections,
+    nearest_on_ellipse, nearest_point, shape_intersects_rect, shape_within_rect,
 };
 pub use reference::RefIndex;
 pub use snap::{Snap, SnapKind, SnapOptions};

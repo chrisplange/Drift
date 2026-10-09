@@ -95,6 +95,15 @@ pub enum Equation {
     },
     /// `p − (a + b)/2 = 0` for one coordinate: a point at the midpoint of two others.
     Midpoint { p: usize, a: usize, b: usize },
+    /// A point on an ellipse. With `M = major − center`, `d = point − center` and
+    /// `b = |minor − center|`, stretching across the major axis by `a/b` makes the ellipse a
+    /// circle of radius `a = |M|`: `√((d·M/a)² + (M×d/b)²) − a = 0`.
+    OnEllipse {
+        point: [usize; 2],
+        center: [usize; 2],
+        major: [usize; 2],
+        minor: [usize; 2],
+    },
     /// `sin(θ − φ) = 0`, where θ is the angle from line 1 to line 2. Params are
     /// `[ax, ay, bx, by]` for each line.
     Angle {
@@ -147,6 +156,18 @@ impl Equation {
                 a.iter().chain(b).chain(axis).copied().collect()
             }
             Equation::PointLine { point, line, .. } => point.iter().chain(line).copied().collect(),
+            Equation::OnEllipse {
+                point,
+                center,
+                major,
+                minor,
+            } => point
+                .iter()
+                .chain(center)
+                .chain(major)
+                .chain(minor)
+                .copied()
+                .collect(),
         }
     }
 
@@ -154,6 +175,47 @@ impl Equation {
     /// callers must sum duplicates).
     pub fn eval(&self, val: &impl Fn(usize) -> f64, grad: &mut Vec<(usize, f64)>) -> f64 {
         match *self {
+            Equation::OnEllipse {
+                point,
+                center,
+                major,
+                minor,
+            } => {
+                let at = |p: [usize; 2]| (val(p[0]), val(p[1]));
+                let (cx, cy) = at(center);
+                let (px, py) = at(point);
+                let (mx, my) = at(major);
+                let (nx, ny) = at(minor);
+                let (dx, dy) = (px - cx, py - cy);
+                let (ex, ey) = (mx - cx, my - cy);
+                let (fx, fy) = (nx - cx, ny - cy);
+                let a = ex.hypot(ey).max(1e-12);
+                let b = fx.hypot(fy).max(1e-12);
+                let dot = dx * ex + dy * ey;
+                let cross = ex * dy - ey * dx;
+                let u = dot / a;
+                let w = cross / b;
+                let r = u.hypot(w).max(1e-12);
+                // ∂/∂d, ∂/∂M and ∂/∂b of √(u² + w²) − a.
+                let gd = [(u * ex / a - w * ey / b) / r, (u * ey / a + w * ex / b) / r];
+                let gm = [
+                    (u * (dx / a - dot * ex / (a * a * a)) + w * dy / b) / r - ex / a,
+                    (u * (dy / a - dot * ey / (a * a * a)) - w * dx / b) / r - ey / a,
+                ];
+                let gb = -(w * w / b) / r;
+                let gn = [gb * fx / b, gb * fy / b];
+                grad.extend([
+                    (point[0], gd[0]),
+                    (point[1], gd[1]),
+                    (major[0], gm[0]),
+                    (major[1], gm[1]),
+                    (minor[0], gn[0]),
+                    (minor[1], gn[1]),
+                    (center[0], -(gd[0] + gm[0] + gn[0])),
+                    (center[1], -(gd[1] + gm[1] + gn[1])),
+                ]);
+                r - a
+            }
             Equation::LengthValue { length, value } => length.eval(val, 1.0, grad) - value,
             Equation::EqualLength { a, b } => a.eval(val, 1.0, grad) - b.eval(val, -1.0, grad),
             Equation::Midpoint { p, a, b } => {
@@ -405,6 +467,18 @@ mod tests {
                 line: line1,
                 sign: -1.0,
                 value: 3.0,
+            },
+            Equation::OnEllipse {
+                point: [0, 1],
+                center: [2, 3],
+                major: [4, 5],
+                minor: [6, 7],
+            },
+            Equation::OnEllipse {
+                point: [8, 2],
+                center: [0, 1],
+                major: [6, 3],
+                minor: [4, 7],
             },
         ];
         for eq in eqs {

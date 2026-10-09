@@ -310,6 +310,20 @@ fn split(curves: &[Shape]) -> Vec<(Edge, usize)> {
                     ));
                 }
             }
+            Shape::Ellipse {
+                center,
+                major,
+                minor,
+                start,
+                sweep,
+            } => {
+                // Ellipses take part as fine straight edges (they aren't cut by crossings).
+                let pts =
+                    drift_core::shape::flatten_ellipse(center, major, minor, start, sweep, 48);
+                for w in pts.windows(2) {
+                    edges.push((Edge::Line { a: w[0], b: w[1] }, source));
+                }
+            }
             Shape::Point(_) => {}
         }
     }

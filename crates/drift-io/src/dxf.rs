@@ -346,6 +346,37 @@ fn write_item(
             o.num(50, start.to_degrees().rem_euclid(360.0));
             o.num(51, (start + sweep).to_degrees().rem_euclid(360.0));
         }
+        Prim::Ellipse {
+            center,
+            major,
+            minor,
+            start,
+            sweep,
+        } => {
+            // DXF wants the longer axis first (ratio ≤ 1): swap them if needed, which shifts
+            // parametric angles by a quarter turn.
+            let (axis, ratio, shift) = if *minor <= major.length() {
+                (*major, minor / major.length(), 0.0)
+            } else {
+                (
+                    major.perp().normalize() * *minor,
+                    major.length() / minor,
+                    std::f64::consts::FRAC_PI_2,
+                )
+            };
+            head(o, "ELLIPSE");
+            o.point(10, *center);
+            o.point(11, axis);
+            o.num(40, ratio);
+            let t0 = start - shift;
+            o.num(41, t0.rem_euclid(TAU));
+            let t1 = if *sweep >= TAU - 1e-12 {
+                t0.rem_euclid(TAU) + TAU
+            } else {
+                (t0 + sweep).rem_euclid(TAU)
+            };
+            o.num(42, t1);
+        }
         Prim::Fill {
             triangles, mask, ..
         } => {
@@ -437,6 +468,15 @@ pub fn underlay_prims(import: &DxfImport) -> Vec<drift_core::RefPrim> {
                 start,
                 sweep,
             },
+            Shape::Ellipse {
+                center,
+                major,
+                minor,
+                start,
+                sweep,
+            } => RefPrim::Polyline(drift_core::shape::flatten_ellipse(
+                center, major, minor, start, sweep, 48,
+            )),
         })
     };
     let mut out: Vec<RefPrim> = import
@@ -701,6 +741,32 @@ pub fn read(text: &str, default_mm_per_unit: f64) -> Result<DxfImport, String> {
                             });
                         }
                     }
+                    "ELLIPSE" => {
+                        // Centre, the major axis end (relative to it), the minor/major ratio and
+                        // parametric start / end angles (radians).
+                        if let (Some(c), Some(mx), Some(my), Some(ratio)) =
+                            (p(10), f(&g, 11), f(&g, 21), f(&g, 40))
+                        {
+                            let major = DVec2::new(mx, my) * scale;
+                            let t0 = f(&g, 41).unwrap_or(0.0);
+                            let t1 = f(&g, 42).unwrap_or(TAU);
+                            // A whole one may come back a hair short of a turn (six
+                            // decimals), or as 0 → 0.
+                            let mut sweep = (t1 - t0).rem_euclid(TAU);
+                            if sweep < 1e-5 || sweep > TAU - 1e-5 {
+                                sweep = TAU;
+                            }
+                            if major.length() > 0.0 && ratio > 0.0 {
+                                push(Shape::Ellipse {
+                                    center: c,
+                                    major,
+                                    minor: major.length() * ratio,
+                                    start: t0,
+                                    sweep,
+                                });
+                            }
+                        }
+                    }
                     "LWPOLYLINE" => {
                         let closed = f(&g, 70).is_some_and(|v| (v as i64) & 1 == 1);
                         // Vertices: each 10/20, optionally followed by a 42 bulge.
@@ -868,6 +934,24 @@ pub fn add_to_document(doc: &mut Document, import: &DxfImport) -> ImportReport {
                     doc.add_circle(c, radius).ok()
                 } else {
                     doc.add_arc(c, s, e2).ok()
+                }
+            }
+            Shape::Ellipse {
+                center,
+                major,
+                minor,
+                start,
+                sweep,
+            } => {
+                let (axes, ends) =
+                    drift_core::shape::ellipse_handles(center, major, minor, start, sweep);
+                let [c, m, n] = axes.map(|q| point(doc, q));
+                match ends {
+                    Some([s, e2]) => {
+                        let (s, e2) = (point(doc, s), point(doc, e2));
+                        doc.add_ellipse_arc(c, m, n, s, e2).ok()
+                    }
+                    None => doc.add_ellipse(c, m, n).ok(),
                 }
             }
             Shape::Point(p) => Some(point(doc, p)),
@@ -1143,5 +1227,78 @@ mod tests {
             _ => false,
         }));
         assert!(doc.layers().any(|(_, l)| l.name == "FURNITURE"));
+    }
+
+    #[test]
+    fn ellipses_round_trip_as_ellipse_entities() {
+        let mut d = Drawing::new(DVec2::new(200.0, 100.0));
+        let cases = [
+            // A whole one, turned.
+            (DVec2::new(20.0, 10.0), 4.0, 0.0, TAU),
+            // Part of one whose second axis is the longer: written with the axes swapped.
+            (DVec2::new(0.0, 5.0), 12.0, 0.5, 2.0),
+        ];
+        for (major, minor, start, sweep) in cases {
+            d.push(
+                "Ellipses",
+                Pen::new(0.25),
+                Prim::Ellipse {
+                    center: DVec2::new(50.0, 40.0),
+                    major,
+                    minor,
+                    start,
+                    sweep,
+                },
+            );
+        }
+        let text = write(&d, DxfUnits::MM);
+        assert_eq!(
+            text.matches(
+                "
+ELLIPSE
+"
+            )
+            .count(),
+            2,
+            "{text}"
+        );
+        let back = read(&text, 1.0).unwrap();
+        assert_eq!(back.entities.len(), 2);
+        for ((major, minor, start, sweep), e) in cases.iter().zip(&back.entities) {
+            let Shape::Ellipse {
+                major: m2,
+                minor: n2,
+                start: s2,
+                sweep: w2,
+                ..
+            } = e.shape
+            else {
+                panic!("{:?}", e.shape)
+            };
+            // The same curve: compare points along it.
+            for k in 0..=8 {
+                let f = k as f64 / 8.0;
+                let a = drift_core::shape::ellipse_point(
+                    DVec2::ZERO,
+                    *major,
+                    *minor,
+                    start + sweep * f,
+                );
+                let b = drift_core::shape::ellipse_point(DVec2::ZERO, m2, n2, s2 + w2 * f);
+                // DXF numbers carry six decimals.
+                assert!(a.distance(b) < 1e-4, "{a} vs {b}");
+            }
+        }
+        // Into a document: an ellipse and an elliptical arc.
+        let mut doc = Document::new();
+        doc.begin();
+        add_to_document(&mut doc, &back);
+        doc.commit("Import");
+        let kinds: Vec<_> = doc
+            .iter()
+            .filter(|(_, e)| !e.kind.is_point())
+            .map(|(_, e)| e.kind.type_name())
+            .collect();
+        assert_eq!(kinds, ["Ellipse", "Elliptical arc"]);
     }
 }

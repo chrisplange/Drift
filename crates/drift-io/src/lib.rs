@@ -6,7 +6,7 @@
 //! ```json
 //! {
 //!   "format": "drift",
-//!   "version": 12,
+//!   "version": 13,
 //!   "meta": {"title":"Bracket","units":"mm","generator":"Drift 0.1.0"},
 //!   "display": {"length":"architectural","fraction":16},
 //!   "variables": [
@@ -64,8 +64,9 @@ pub const EXTENSION: &str = "drift";
 /// style), `fills` (solid fills and hatches), `annotations` (notes, centre marks, callouts,
 /// ordinate dimensions) and dimension `prefix`, `suffix` and `tol` (M7); 8 = adds `sheets`
 /// (paper, scale, view, title block and revisions) (M8); 9 = adds `groups`; 10 = adds `blocks`
-/// and `instances`; 11 = adds a layer's `fill` colour; 12 = adds `underlays` (M8.5).
-pub const FORMAT_VERSION: u32 = 12;
+/// and `instances`; 11 = adds a layer's `fill` colour; 12 = adds `underlays` (M8.5); 13 = adds
+/// `ellipse` entities (M9).
+pub const FORMAT_VERSION: u32 = 13;
 const FORMAT_TAG: &str = "drift";
 
 /// Document-level properties stored alongside the geometry.
@@ -224,6 +225,27 @@ enum EntityRecord {
         center: String,
         start: String,
         end: String,
+        #[serde(default, skip_serializing_if = "Style::is_solid")]
+        style: Style,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        layer: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        color: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        weight: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        linetype: Option<String>,
+    },
+    /// An ellipse (v13); with `start` and `end`, the counter-clockwise part between them.
+    Ellipse {
+        id: String,
+        center: String,
+        major: String,
+        minor: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        start: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        end: Option<String>,
         #[serde(default, skip_serializing_if = "Style::is_solid")]
         style: Style,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -792,6 +814,42 @@ fn record(id: EntityId, entity: &Entity) -> EntityRecord {
             weight,
             linetype,
         },
+        EntityKind::Ellipse {
+            center,
+            major,
+            minor,
+        } => EntityRecord::Ellipse {
+            id,
+            center: id_string(center),
+            major: id_string(major),
+            minor: id_string(minor),
+            start: None,
+            end: None,
+            style,
+            layer,
+            color,
+            weight,
+            linetype,
+        },
+        EntityKind::EllipseArc {
+            center,
+            major,
+            minor,
+            start,
+            end,
+        } => EntityRecord::Ellipse {
+            id,
+            center: id_string(center),
+            major: id_string(major),
+            minor: id_string(minor),
+            start: Some(id_string(start)),
+            end: Some(id_string(end)),
+            style,
+            layer,
+            color,
+            weight,
+            linetype,
+        },
         EntityKind::Arc { center, start, end } => EntityRecord::Arc {
             id,
             center: id_string(center),
@@ -1097,6 +1155,52 @@ pub fn load(text: &str) -> Result<(Document, Metadata), LoadError> {
                     },
                 )
             }
+            EntityRecord::Ellipse {
+                id,
+                center,
+                major,
+                minor,
+                start,
+                end,
+                style,
+                layer,
+                color,
+                weight,
+                linetype,
+            } => {
+                let (center, major, minor) =
+                    (parse_id(&center)?, parse_id(&major)?, parse_id(&minor)?);
+                let kind = match (start, end) {
+                    (Some(s), Some(e)) => EntityKind::EllipseArc {
+                        center,
+                        major,
+                        minor,
+                        start: parse_id(&s)?,
+                        end: parse_id(&e)?,
+                    },
+                    (None, None) => EntityKind::Ellipse {
+                        center,
+                        major,
+                        minor,
+                    },
+                    _ => {
+                        return Err(LoadError::MissingField { id, field: "end" });
+                    }
+                };
+                (
+                    id,
+                    Entity {
+                        style: style.into(),
+                        ..Entity::new(kind)
+                    },
+                    Look {
+                        layer,
+                        color,
+                        weight,
+                        linetype,
+                    },
+                )
+            }
             EntityRecord::Arc {
                 id,
                 center,
@@ -1366,7 +1470,7 @@ pub fn migrate(value: serde_json::Value) -> Result<serde_json::Value, LoadError>
         // v1 → v2: constraints were introduced; a v1 file simply has none.
         value["constraints"] = serde_json::Value::Array(Vec::new());
     }
-    // v2 → v12 only added optional fields, sections and constraint types: nothing to convert.
+    // v2 → v13 only added optional fields, sections and constraint types: nothing to convert.
     value["version"] = FORMAT_VERSION.into();
     Ok(value)
 }
@@ -1409,7 +1513,7 @@ mod tests {
         let text = save(&doc, &Metadata::default());
         let expected = r#"{
   "format": "drift",
-  "version": 12,
+  "version": 13,
   "meta": {"units":"mm"},
   "entities": [
     {"type":"point","id":"e1","at":[0.0,0.0]},
@@ -1931,6 +2035,17 @@ mod tests {
             members: curves.iter().copied().take(2).collect(),
         })
         .unwrap();
+        // An ellipse and part of it, with every point exactly where adding them puts them.
+        let [ec, em, en, es, ee] = [
+            DVec2::new(300.0, 0.0),
+            DVec2::new(340.0, 0.0),
+            DVec2::new(300.0, 10.0),
+            DVec2::new(300.0, -10.0),
+            DVec2::new(260.0, 0.0),
+        ]
+        .map(|p| doc.add_point(p));
+        doc.add_ellipse(ec, em, en).unwrap();
+        doc.add_ellipse_arc(ec, em, en, es, ee).unwrap();
         let mut plan = drift_core::Underlay::new(
             "Plan",
             "plan.pdf, page 2",
@@ -1964,7 +2079,7 @@ mod tests {
         doc.add_underlay(drift_core::Underlay::new("Survey", "", Vec::new()));
 
         let text = save(&doc, &Metadata::default());
-        assert!(text.contains("\"version\": 12"));
+        assert!(text.contains("\"version\": 13"));
         assert!(
             text.contains(r#"{"a":[80.0,20.0,30.0,0.0,90.0]}"#),
             "{text}"

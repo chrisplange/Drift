@@ -48,6 +48,9 @@ impl DimensionTool {
             EntityKind::Line { a, b } => Some(DimBase::Points(a, b)),
             EntityKind::Circle { .. } => Some(DimBase::Circular(e, true)),
             EntityKind::Arc { .. } => Some(DimBase::Circular(e, false)),
+            // An ellipse: its first semi-axis (centre to major point).
+            EntityKind::Ellipse { center, major, .. }
+            | EntityKind::EllipseArc { center, major, .. } => Some(DimBase::Points(center, major)),
             EntityKind::Point(_) => None,
         }
     }

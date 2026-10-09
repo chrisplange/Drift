@@ -77,7 +77,8 @@ fn curve(shape: &Shape, extended: bool) -> Option<Curve> {
             radius,
             span: (!extended).then_some((start, sweep)),
         },
-        Shape::Point(_) => return None,
+        // Ellipses don't cut or get cut yet.
+        Shape::Point(_) | Shape::Ellipse { .. } => return None,
     })
 }
 

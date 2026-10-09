@@ -25,6 +25,8 @@ pub enum Slot {
     Circular,
     /// Two lines, or two circles/arcs (for [`Constraint::Equal`]).
     LineOrCircular,
+    /// Any curve, ellipses included.
+    Curve,
 }
 
 impl Slot {
@@ -35,6 +37,7 @@ impl Slot {
             Slot::Line => "a line",
             Slot::Circular => "a circle or arc",
             Slot::LineOrCircular => "a line, circle or arc",
+            Slot::Curve => "a curve",
         }
     }
 }
@@ -189,9 +192,7 @@ impl Constraint {
                 vec![(a, Circular), (b, Circular)]
             }
             Constraint::Collinear { a, b } => vec![(a, Line), (b, Line)],
-            Constraint::PointOnCurve { point, curve } => {
-                vec![(point, Point), (curve, LineOrCircular)]
-            }
+            Constraint::PointOnCurve { point, curve } => vec![(point, Point), (curve, Curve)],
             Constraint::Symmetric { a, b, axis } => vec![(a, Point), (b, Point), (axis, Line)],
             Constraint::Horizontal { line } | Constraint::Vertical { line } => {
                 vec![(line, Line)]

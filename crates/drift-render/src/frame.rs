@@ -403,6 +403,31 @@ impl Builder<'_> {
                     dash,
                 );
             }
+            Shape::Ellipse {
+                center,
+                major,
+                minor,
+                start,
+                sweep,
+            } => {
+                // Flattened in pixel space, finely enough to look smooth at this zoom.
+                let b = item.shape.bounds();
+                let (lo, hi) = (self.to_px(b.min), self.to_px(b.max));
+                let mid = (lo + hi) * 0.5;
+                if !self.visible(mid, (hi - lo).abs() * 0.5 + DVec2::splat(half_width)) {
+                    return;
+                }
+                let span = (hi - lo).abs();
+                let around = std::f64::consts::PI * (span.x + span.y) * 0.5 * (sweep / TAU);
+                let n = (around / 3.0).clamp(12.0, 720.0) as usize;
+                let pts = drift_core::shape::flatten_ellipse(center, major, minor, start, sweep, n);
+                let mut distance = 0.0;
+                for w in pts.windows(2) {
+                    let (a, b) = (self.to_px(w[0]), self.to_px(w[1]));
+                    self.add_segment(a, b, color, half_width, dash, distance);
+                    distance += a.distance(b);
+                }
+            }
         }
     }
 

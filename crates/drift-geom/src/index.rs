@@ -91,6 +91,27 @@ impl SceneIndex {
                     self.roles.insert(start, PointRole::Endpoint);
                     self.roles.insert(end, PointRole::Endpoint);
                 }
+                EntityKind::Ellipse {
+                    center,
+                    major,
+                    minor,
+                } => {
+                    self.mark_center(center);
+                    self.roles.insert(major, PointRole::Endpoint);
+                    self.roles.insert(minor, PointRole::Endpoint);
+                }
+                EntityKind::EllipseArc {
+                    center,
+                    major,
+                    minor,
+                    start,
+                    end,
+                } => {
+                    self.mark_center(center);
+                    for p in [major, minor, start, end] {
+                        self.roles.insert(p, PointRole::Endpoint);
+                    }
+                }
             }
         }
         self.tree = RTree::bulk_load(entries);

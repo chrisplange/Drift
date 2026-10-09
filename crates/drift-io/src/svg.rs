@@ -153,6 +153,49 @@ fn item_svg(out: &mut String, item: &Item, h: f64, lts: f64) {
                 stroke(pen, lts)
             );
         }
+        Prim::Ellipse {
+            center,
+            major,
+            minor,
+            start,
+            sweep,
+        } => {
+            // Exact elliptical arcs; a whole ellipse as two halves.
+            let at = |t: f64| drift_core::shape::ellipse_point(*center, *major, *minor, t);
+            let rx = major.length();
+            // The page is flipped in y, so angles turn the other way.
+            let rot = -major.y.atan2(major.x).to_degrees();
+            let whole = *sweep >= std::f64::consts::TAU - 1e-12;
+            let steps: Vec<f64> = if whole {
+                vec![
+                    *start + std::f64::consts::PI,
+                    *start + std::f64::consts::TAU,
+                ]
+            } else {
+                vec![start + sweep]
+            };
+            let p = at(*start);
+            let mut d = format!("M {} {}", num(p.x), num(y(p.y)));
+            let mut from = *start;
+            for to in steps {
+                let q = at(to);
+                let large = u8::from(to - from > std::f64::consts::PI);
+                let _ = write!(
+                    d,
+                    " A {} {} {} {large} 0 {} {}",
+                    num(rx),
+                    num(*minor),
+                    num(rot),
+                    num(q.x),
+                    num(y(q.y))
+                );
+                from = to;
+            }
+            if whole {
+                d.push_str(" Z");
+            }
+            let _ = writeln!(out, r#"<path d="{d}" {}/>"#, stroke(pen, lts));
+        }
         Prim::Fill { rings, mask, .. } => {
             let mut d = String::new();
             for ring in rings {
@@ -253,5 +296,44 @@ mod tests {
         assert!(svg.contains("data-layer=\"Walls &amp; doors\""));
         assert!(svg.contains("Ø6 &lt;THRU&gt;"));
         assert!(svg.contains(r#"text-anchor="middle""#));
+    }
+
+    #[test]
+    fn ellipses_are_exact_arcs() {
+        use drift_core::DVec2;
+        let mut d = Drawing::new(DVec2::new(120.0, 80.0));
+        let pen = drift_draft::page::Pen::new(0.35);
+        d.push(
+            "0",
+            pen,
+            Prim::Ellipse {
+                center: DVec2::new(40.0, 40.0),
+                major: DVec2::new(25.0, 10.0),
+                minor: 8.0,
+                start: 0.0,
+                sweep: std::f64::consts::TAU,
+            },
+        );
+        d.push(
+            "0",
+            pen,
+            Prim::Ellipse {
+                center: DVec2::new(90.0, 40.0),
+                major: DVec2::new(0.0, 20.0),
+                minor: 10.0,
+                start: 0.5,
+                sweep: 2.5,
+            },
+        );
+        let svg = write(&d);
+        assert_eq!(svg.matches(" A ").count(), 3, "{svg}");
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/tmp");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("drift_ellipses.svg"), &svg).unwrap();
+        std::fs::write(
+            dir.join("drift_ellipses.pdf"),
+            crate::pdf::write(&[d], "Ellipses"),
+        )
+        .unwrap();
     }
 }

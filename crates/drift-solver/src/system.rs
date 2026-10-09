@@ -272,6 +272,24 @@ impl System {
                             sign: 1.0,
                             value: 0.0,
                         },
+                        Some(
+                            EntityKind::Ellipse {
+                                center: c,
+                                major,
+                                minor,
+                            }
+                            | EntityKind::EllipseArc {
+                                center: c,
+                                major,
+                                minor,
+                                ..
+                            },
+                        ) => Equation::OnEllipse {
+                            point: point(p),
+                            center: point(c),
+                            major: point(major),
+                            minor: point(minor),
+                        },
                         _ => {
                             let c = center(curve);
                             Equation::EqualLength {
@@ -503,6 +521,46 @@ impl System {
             ] {
                 rows.push(Row {
                     equation: Equation::Midpoint { p, a, b },
+                    source: None,
+                });
+            }
+        }
+
+        // Ellipses keep their minor axis perpendicular to the major one, and elliptical arcs
+        // their ends on the ellipse.
+        for (_, entity) in doc.iter() {
+            let (c, m, n, ends) = match entity.kind {
+                EntityKind::Ellipse {
+                    center,
+                    major,
+                    minor,
+                } => (center, major, minor, None),
+                EntityKind::EllipseArc {
+                    center,
+                    major,
+                    minor,
+                    start,
+                    end,
+                } => (center, major, minor, Some([start, end])),
+                _ => continue,
+            };
+            let (pc, pm, pn) = (point(c), point(m), point(n));
+            rows.push(Row {
+                equation: Equation::angle(
+                    [pc[0], pc[1], pm[0], pm[1]],
+                    [pc[0], pc[1], pn[0], pn[1]],
+                    std::f64::consts::FRAC_PI_2,
+                ),
+                source: None,
+            });
+            for end in ends.into_iter().flatten() {
+                rows.push(Row {
+                    equation: Equation::OnEllipse {
+                        point: point(end),
+                        center: pc,
+                        major: pm,
+                        minor: pn,
+                    },
                     source: None,
                 });
             }

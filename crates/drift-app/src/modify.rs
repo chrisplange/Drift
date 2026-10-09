@@ -54,6 +54,23 @@ pub fn param_of(shape: &Shape, p: DVec2) -> f64 {
                 0.0
             }
         }
+        Shape::Ellipse {
+            center,
+            major,
+            minor,
+            start,
+            sweep,
+        } => {
+            let t =
+                (drift_core::shape::ellipse_angle(center, major, minor, p) - start).rem_euclid(TAU);
+            if sweep >= TAU || t <= sweep {
+                t
+            } else if t - sweep < TAU - t {
+                sweep
+            } else {
+                0.0
+            }
+        }
         Shape::Point(_) => 0.0,
     }
 }
@@ -69,6 +86,13 @@ pub fn point_at(shape: &Shape, t: f64) -> DVec2 {
             start,
             ..
         } => center + radius * DVec2::from_angle(start + t),
+        Shape::Ellipse {
+            center,
+            major,
+            minor,
+            start,
+            ..
+        } => drift_core::shape::ellipse_point(center, major, minor, start + t),
         Shape::Point(p) => p,
     }
 }
@@ -97,6 +121,23 @@ pub fn piece(shape: &Shape, t0: f64, t1: f64) -> Shape {
             radius,
             start: start + t0,
             sweep: t1 - t0,
+        },
+        Shape::Ellipse {
+            center,
+            major,
+            minor,
+            start,
+            sweep,
+        } => Shape::Ellipse {
+            center,
+            major,
+            minor,
+            start: start + t0,
+            sweep: if sweep >= TAU {
+                (t1 - t0).rem_euclid(TAU).max(1e-12)
+            } else {
+                t1 - t0
+            },
         },
         Shape::Point(p) => Shape::Point(p),
     }
@@ -167,7 +208,11 @@ impl Editor {
             match self.doc.shape(*id) {
                 Some(Shape::Point(p)) => return p,
                 Some(Shape::Line { a, b }) => return (a + b) * 0.5,
-                Some(Shape::Circle { center, .. } | Shape::Arc { center, .. }) => return center,
+                Some(
+                    Shape::Circle { center, .. }
+                    | Shape::Arc { center, .. }
+                    | Shape::Ellipse { center, .. },
+                ) => return center,
                 None => {}
             }
         }
@@ -846,6 +891,9 @@ impl Editor {
                     }
                     Shape::Circle { center, radius: r }
                 }
+                Shape::Ellipse { .. } => {
+                    return Err(invalid("offsetting ellipses isn't supported yet"));
+                }
                 Shape::Arc {
                     center,
                     radius,
@@ -1089,6 +1137,24 @@ impl Editor {
                         .doc
                         .add_arc(m(center), m(end), m(start))
                         .map_err(doc_err)?,
+                    EntityKind::Ellipse {
+                        center,
+                        major,
+                        minor,
+                    } => self
+                        .doc
+                        .add_ellipse(m(center), m(major), m(minor))
+                        .map_err(doc_err)?,
+                    EntityKind::EllipseArc {
+                        center,
+                        major,
+                        minor,
+                        start,
+                        end,
+                    } => self
+                        .doc
+                        .add_ellipse_arc(m(center), m(major), m(minor), m(end), m(start))
+                        .map_err(doc_err)?,
                 };
                 self.doc.copy_look(id, new);
                 created.push(new);
@@ -1150,6 +1216,24 @@ impl Editor {
                         EntityKind::Arc { center, start, end } => {
                             self.doc.add_arc(m(center), m(start), m(end))
                         }
+                        EntityKind::Ellipse {
+                            center,
+                            major,
+                            minor,
+                        } => self.doc.add_ellipse(m(center), m(major), m(minor)),
+                        EntityKind::EllipseArc {
+                            center,
+                            major,
+                            minor,
+                            start,
+                            end,
+                        } => self.doc.add_ellipse_arc(
+                            m(center),
+                            m(major),
+                            m(minor),
+                            m(start),
+                            m(end),
+                        ),
                     }
                     .map_err(doc_err)?;
                     self.doc.copy_look(id, new);
@@ -1228,7 +1312,9 @@ impl Editor {
 fn piece_end(shape: &Shape, forward: bool, last: bool) -> DVec2 {
     let (s, e) = match *shape {
         Shape::Line { a, b } => (a, b),
-        Shape::Arc { .. } => (point_at(shape, 0.0), point_at(shape, sweep_of(shape))),
+        Shape::Arc { .. } | Shape::Ellipse { .. } => {
+            (point_at(shape, 0.0), point_at(shape, sweep_of(shape)))
+        }
         Shape::Circle { center, radius } => {
             let p = center + DVec2::new(radius, 0.0);
             (p, p)
@@ -1246,7 +1332,7 @@ fn piece_end(shape: &Shape, forward: bool, last: bool) -> DVec2 {
 
 fn sweep_of(shape: &Shape) -> f64 {
     match *shape {
-        Shape::Arc { sweep, .. } => sweep,
+        Shape::Arc { sweep, .. } | Shape::Ellipse { sweep, .. } => sweep,
         _ => 0.0,
     }
 }

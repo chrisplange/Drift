@@ -33,6 +33,14 @@ pub(crate) enum ItemShape {
         start: f64,
         sweep: f64,
     },
+    /// `major` is the first semi-axis as a vector; angles are parametric, in degrees.
+    Ellipse {
+        center: [f64; 2],
+        major: [f64; 2],
+        minor: f64,
+        start: f64,
+        sweep: f64,
+    },
 }
 
 /// (`flatten` can't be combined with `deny_unknown_fields`, so items accept extra fields.)
@@ -100,6 +108,19 @@ pub(crate) fn block_record(id: BlockId, b: &Block) -> BlockRecord {
                     start: start.to_degrees(),
                     sweep: sweep.to_degrees(),
                 },
+                Shape::Ellipse {
+                    center,
+                    major,
+                    minor,
+                    start,
+                    sweep,
+                } => ItemShape::Ellipse {
+                    center: center.to_array(),
+                    major: major.to_array(),
+                    minor,
+                    start: start.to_degrees(),
+                    sweep: sweep.to_degrees(),
+                },
             };
             let a = item.appearance;
             ItemRecord {
@@ -152,6 +173,21 @@ pub(crate) fn parse_block(r: BlockRecord) -> Result<(BlockId, Block), LoadError>
                 Shape::Arc {
                     center: finite(center)?,
                     radius,
+                    start: start.to_radians(),
+                    sweep: sweep.to_radians(),
+                }
+            }
+            ItemShape::Ellipse {
+                center,
+                major,
+                minor,
+                start,
+                sweep,
+            } if minor > 0.0 && minor.is_finite() && start.is_finite() && sweep.is_finite() => {
+                Shape::Ellipse {
+                    center: finite(center)?,
+                    major: finite(major)?,
+                    minor,
                     start: start.to_radians(),
                     sweep: sweep.to_radians(),
                 }

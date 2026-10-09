@@ -1421,7 +1421,8 @@ impl Editor {
                 Some(EntityKind::Circle { .. } | EntityKind::Arc { .. }) => {
                     kinds.circulars.push(*id)
                 }
-                None => {}
+                // No relation buttons for ellipses yet.
+                Some(EntityKind::Ellipse { .. } | EntityKind::EllipseArc { .. }) | None => {}
             }
         }
         kinds
@@ -1497,6 +1498,24 @@ impl Editor {
                 EntityKind::Arc { center, start, end } => {
                     self.doc.add_arc(map[&center], map[&start], map[&end])
                 }
+                EntityKind::Ellipse {
+                    center,
+                    major,
+                    minor,
+                } => self.doc.add_ellipse(map[&center], map[&major], map[&minor]),
+                EntityKind::EllipseArc {
+                    center,
+                    major,
+                    minor,
+                    start,
+                    end,
+                } => self.doc.add_ellipse_arc(
+                    map[&center],
+                    map[&major],
+                    map[&minor],
+                    map[&start],
+                    map[&end],
+                ),
             };
             if let Ok(copy) = made {
                 let _ = self.doc.set_entity_layer(copy, e.layer);

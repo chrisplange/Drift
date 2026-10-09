@@ -151,6 +151,25 @@ impl SceneIndex {
                         }
                     }
                 }
+                Shape::Ellipse {
+                    center,
+                    major,
+                    minor,
+                    start,
+                    sweep,
+                } => {
+                    // The ends of both axes (the two given ones are points already).
+                    for k in 0..4 {
+                        let t = f64::from(k) * FRAC_PI_2;
+                        if angle_in_sweep(t, start, sweep) {
+                            offer(Snap {
+                                at: drift_core::shape::ellipse_point(center, major, minor, t),
+                                kind: SnapKind::Quadrant,
+                                entity: Some(id),
+                            });
+                        }
+                    }
+                }
             }
             if !matches!(shape, Shape::Point(_)) {
                 offer(Snap {

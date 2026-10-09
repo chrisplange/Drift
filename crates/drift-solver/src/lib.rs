@@ -144,6 +144,32 @@ pub fn degenerate_entities(doc: &Document) -> Vec<EntityId> {
                     _ => false,
                 }
             }
+            EntityKind::Ellipse {
+                center,
+                major,
+                minor,
+            }
+            | EntityKind::EllipseArc {
+                center,
+                major,
+                minor,
+                ..
+            } => match (point(center), point(major), point(minor)) {
+                (Some(c), Some(m), Some(n)) => {
+                    let scale = c.abs().max_element();
+                    let arc_collapsed = match e.kind {
+                        EntityKind::EllipseArc { start, end, .. } => {
+                            match (point(start), point(end)) {
+                                (Some(s), Some(t)) => tiny(s.distance(t), scale),
+                                _ => false,
+                            }
+                        }
+                        _ => false,
+                    };
+                    tiny(c.distance(m), scale) || tiny(c.distance(n), scale) || arc_collapsed
+                }
+                _ => false,
+            },
         })
         .map(|(id, _)| id)
         .collect()

@@ -47,16 +47,51 @@ pub enum EntityKind {
         start: EntityId,
         end: EntityId,
     },
+    /// An ellipse: its centre and the ends of two semi-axes. `minor` is kept on the
+    /// perpendicular to `center → major` through the centre.
+    Ellipse {
+        center: EntityId,
+        major: EntityId,
+        minor: EntityId,
+    },
+    /// The counter-clockwise part of an ellipse from `start` to `end` (both kept on it).
+    EllipseArc {
+        center: EntityId,
+        major: EntityId,
+        minor: EntityId,
+        start: EntityId,
+        end: EntityId,
+    },
 }
 
 impl EntityKind {
     /// The point entities this entity is defined by.
     pub fn points(&self) -> impl Iterator<Item = EntityId> {
-        let ids: [Option<EntityId>; 3] = match *self {
-            EntityKind::Point(_) => [None; 3],
-            EntityKind::Line { a, b } => [Some(a), Some(b), None],
-            EntityKind::Circle { center, .. } => [Some(center), None, None],
-            EntityKind::Arc { center, start, end } => [Some(center), Some(start), Some(end)],
+        let ids: [Option<EntityId>; 5] = match *self {
+            EntityKind::Point(_) => [None; 5],
+            EntityKind::Line { a, b } => [Some(a), Some(b), None, None, None],
+            EntityKind::Circle { center, .. } => [Some(center), None, None, None, None],
+            EntityKind::Arc { center, start, end } => {
+                [Some(center), Some(start), Some(end), None, None]
+            }
+            EntityKind::Ellipse {
+                center,
+                major,
+                minor,
+            } => [Some(center), Some(major), Some(minor), None, None],
+            EntityKind::EllipseArc {
+                center,
+                major,
+                minor,
+                start,
+                end,
+            } => [
+                Some(center),
+                Some(major),
+                Some(minor),
+                Some(start),
+                Some(end),
+            ],
         };
         ids.into_iter().flatten()
     }
@@ -71,7 +106,18 @@ impl EntityKind {
             EntityKind::Line { .. } => "Line",
             EntityKind::Circle { .. } => "Circle",
             EntityKind::Arc { .. } => "Arc",
+            EntityKind::Ellipse { .. } => "Ellipse",
+            EntityKind::EllipseArc { .. } => "Elliptical arc",
         }
+    }
+
+    /// Lines, circles and arcs; ellipses and elliptical arcs are curves too, but most modify
+    /// tools don't handle them yet.
+    pub fn is_ellipse(&self) -> bool {
+        matches!(
+            self,
+            EntityKind::Ellipse { .. } | EntityKind::EllipseArc { .. }
+        )
     }
 
     fn replace_point(&mut self, from: EntityId, to: EntityId) {
@@ -89,6 +135,28 @@ impl EntityKind {
             EntityKind::Circle { center, .. } => swap(center),
             EntityKind::Arc { center, start, end } => {
                 swap(center);
+                swap(start);
+                swap(end);
+            }
+            EntityKind::Ellipse {
+                center,
+                major,
+                minor,
+            } => {
+                swap(center);
+                swap(major);
+                swap(minor);
+            }
+            EntityKind::EllipseArc {
+                center,
+                major,
+                minor,
+                start,
+                end,
+            } => {
+                swap(center);
+                swap(major);
+                swap(minor);
                 swap(start);
                 swap(end);
             }
@@ -495,6 +563,43 @@ impl Document {
                 let (c, s, e) = (p(center)?, p(start)?, p(end)?);
                 arc_shape(c, s, e)
             }
+            EntityKind::Ellipse {
+                center,
+                major,
+                minor,
+            } => {
+                let c = p(center)?;
+                Shape::Ellipse {
+                    center: c,
+                    major: p(major)? - c,
+                    minor: p(minor)?.distance(c),
+                    start: 0.0,
+                    sweep: TAU,
+                }
+            }
+            EntityKind::EllipseArc {
+                center,
+                major,
+                minor,
+                start,
+                end,
+            } => {
+                let c = p(center)?;
+                let (m, b) = (p(major)? - c, p(minor)?.distance(c));
+                let t0 = crate::shape::ellipse_angle(c, m, b, p(start)?);
+                let t1 = crate::shape::ellipse_angle(c, m, b, p(end)?);
+                let mut sweep = (t1 - t0).rem_euclid(TAU);
+                if sweep == 0.0 {
+                    sweep = TAU;
+                }
+                Shape::Ellipse {
+                    center: c,
+                    major: m,
+                    minor: b,
+                    start: t0,
+                    sweep,
+                }
+            }
         })
     }
 
@@ -757,6 +862,62 @@ impl Document {
         Ok(self.insert(Entity::new(EntityKind::Circle { center, radius })))
     }
 
+    /// Add an ellipse from its centre and the ends of its two semi-axes (`minor` is moved onto
+    /// the perpendicular through the centre, keeping its distance).
+    pub fn add_ellipse(
+        &mut self,
+        center: EntityId,
+        major: EntityId,
+        minor: EntityId,
+    ) -> Result<EntityId, DocumentError> {
+        self.check_ellipse(center, major, minor)?;
+        let id = self.insert(Entity::new(EntityKind::Ellipse {
+            center,
+            major,
+            minor,
+        }));
+        self.normalize_arc(id);
+        Ok(id)
+    }
+
+    /// Add a counter-clockwise part of an ellipse; `start` and `end` are moved onto it.
+    pub fn add_ellipse_arc(
+        &mut self,
+        center: EntityId,
+        major: EntityId,
+        minor: EntityId,
+        start: EntityId,
+        end: EntityId,
+    ) -> Result<EntityId, DocumentError> {
+        self.check_ellipse(center, major, minor)?;
+        let (s, e) = (self.point(start)?, self.point(end)?);
+        if start == end || s == e {
+            return Err(DocumentError::Degenerate("elliptical arc"));
+        }
+        let id = self.insert(Entity::new(EntityKind::EllipseArc {
+            center,
+            major,
+            minor,
+            start,
+            end,
+        }));
+        self.normalize_arc(id);
+        Ok(id)
+    }
+
+    fn check_ellipse(
+        &self,
+        center: EntityId,
+        major: EntityId,
+        minor: EntityId,
+    ) -> Result<(), DocumentError> {
+        let (c, m, n) = (self.point(center)?, self.point(major)?, self.point(minor)?);
+        if center == major || center == minor || major == minor || c == m || c == n {
+            return Err(DocumentError::Degenerate("ellipse"));
+        }
+        Ok(())
+    }
+
     /// Add a counter-clockwise arc. `end` is projected onto the circle through `start`.
     pub fn add_arc(
         &mut self,
@@ -849,6 +1010,23 @@ impl Document {
                     return Err(DocumentError::Degenerate("arc"));
                 }
             }
+            EntityKind::Ellipse {
+                center,
+                major,
+                minor,
+            } => self.check_ellipse(center, major, minor)?,
+            EntityKind::EllipseArc {
+                center,
+                major,
+                minor,
+                start,
+                end,
+            } => {
+                self.check_ellipse(center, major, minor)?;
+                if start == end || self.point(start)? == self.point(end)? {
+                    return Err(DocumentError::Degenerate("elliptical arc"));
+                }
+            }
             EntityKind::Point(_) => {}
         }
         if self.entities[&id].kind != kind {
@@ -906,8 +1084,12 @@ impl Document {
             .entities
             .iter()
             .filter(|(_, e)| {
-                matches!(e.kind, EntityKind::Arc { .. })
-                    && e.kind.points().any(|p| points.contains(&p))
+                matches!(
+                    e.kind,
+                    EntityKind::Arc { .. }
+                        | EntityKind::Ellipse { .. }
+                        | EntityKind::EllipseArc { .. }
+                ) && e.kind.points().any(|p| points.contains(&p))
             })
             .map(|(id, _)| *id)
             .collect();
@@ -917,11 +1099,30 @@ impl Document {
     }
 
     fn normalize_arc(&mut self, arc: EntityId) {
-        let Some(Entity {
-            kind: EntityKind::Arc { center, start, end },
-            ..
-        }) = self.entities.get(&arc).copied()
-        else {
+        let kind = self.entities.get(&arc).map(|e| e.kind);
+        if let Some(
+            EntityKind::Ellipse {
+                center,
+                major,
+                minor,
+            }
+            | EntityKind::EllipseArc {
+                center,
+                major,
+                minor,
+                ..
+            },
+        ) = kind
+        {
+            self.normalize_ellipse(center, major, minor);
+            if let Some(EntityKind::EllipseArc { start, end, .. }) = kind {
+                for p in [start, end] {
+                    self.project_onto_ellipse(center, major, minor, p);
+                }
+            }
+            return;
+        }
+        let Some(EntityKind::Arc { center, start, end }) = kind else {
             return;
         };
         let (Ok(c), Ok(s), Ok(e)) = (self.point(center), self.point(start), self.point(end)) else {
@@ -933,6 +1134,53 @@ impl Document {
             let projected = c + dir.normalize() * radius;
             if projected != e {
                 let _ = self.set_point(end, projected);
+            }
+        }
+    }
+
+    /// Keep an ellipse's minor point on the perpendicular through its centre (at the same
+    /// distance, on the side it's nearer).
+    fn normalize_ellipse(&mut self, center: EntityId, major: EntityId, minor: EntityId) {
+        let (Ok(c), Ok(m), Ok(n)) = (self.point(center), self.point(major), self.point(minor))
+        else {
+            return;
+        };
+        let axis = (m - c).normalize_or_zero().perp();
+        let b = n.distance(c);
+        if axis == DVec2::ZERO || b == 0.0 {
+            return;
+        }
+        let side = if (n - c).dot(axis) < 0.0 { -1.0 } else { 1.0 };
+        let target = c + axis * b * side;
+        if target != n {
+            let _ = self.set_point(minor, target);
+        }
+    }
+
+    /// Move a point onto an ellipse, along the line from its centre.
+    fn project_onto_ellipse(
+        &mut self,
+        center: EntityId,
+        major: EntityId,
+        minor: EntityId,
+        point: EntityId,
+    ) {
+        let (Ok(c), Ok(m), Ok(n), Ok(p)) = (
+            self.point(center),
+            self.point(major),
+            self.point(minor),
+            self.point(point),
+        ) else {
+            return;
+        };
+        let (a, b) = ((m - c).length(), (n - c).length());
+        let u = (m - c).normalize_or_zero();
+        let d = p - c;
+        let q = ((d.dot(u) / a).powi(2) + (d.dot(u.perp()) / b).powi(2)).sqrt();
+        if q > 0.0 && q.is_finite() {
+            let target = c + d / q;
+            if target != p {
+                let _ = self.set_point(point, target);
             }
         }
     }
@@ -1180,7 +1428,8 @@ impl Document {
                 Slot::Circular => {
                     matches!(kind, EntityKind::Circle { .. } | EntityKind::Arc { .. })
                 }
-                Slot::LineOrCircular => !kind.is_point(),
+                Slot::LineOrCircular => !kind.is_point() && !kind.is_ellipse(),
+                Slot::Curve => !kind.is_point(),
             };
             if !ok {
                 return Err(DocumentError::WrongKind {
@@ -1980,6 +2229,12 @@ impl Document {
                 Shape::Circle { center, radius } | Shape::Arc { center, radius, .. } => {
                     Some(center + DVec2::from_angle(t) * radius)
                 }
+                Shape::Ellipse {
+                    center,
+                    major,
+                    minor,
+                    ..
+                } => Some(crate::shape::ellipse_point(center, major, minor, t)),
                 Shape::Point(p) => Some(p),
             },
         }

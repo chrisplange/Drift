@@ -106,6 +106,18 @@ fn item_ops(out: &mut String, text: &mut Vec<u8>, item: &Item, lts: f64) {
             arc_path(out, *center, *radius, *start, *sweep, true);
             out.push_str("S\n");
         }
+        Prim::Ellipse { sweep, .. } => {
+            stroke_setup(out);
+            let pts = drift_draft::page::prim_points(&item.prim);
+            for (k, p) in pts.iter().enumerate() {
+                let _ = writeln!(out, "{} {}", pt(*p), if k == 0 { "m" } else { "l" });
+            }
+            out.push_str(if *sweep >= std::f64::consts::TAU - 1e-12 {
+                "s\n"
+            } else {
+                "S\n"
+            });
+        }
         Prim::Fill { rings, mask, .. } => {
             let (r, g, b) = if *mask { (1.0, 1.0, 1.0) } else { (r, g, b) };
             let _ = writeln!(out, "{} {} {} rg", n(r), n(g), n(b));

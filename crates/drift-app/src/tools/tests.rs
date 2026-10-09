@@ -2004,3 +2004,73 @@ fn slots_keep_their_shape_and_freedoms() {
         }
     }
 }
+
+#[test]
+fn ellipses_draw_snap_and_fill() {
+    let mut ed = Editor::default();
+    ed.auto_relations = true;
+    let mut tool = EllipseTool::default();
+    click(&mut ed, &mut tool, v(0.0, 0.0));
+    click(&mut ed, &mut tool, v(20.0, 0.0));
+    click(&mut ed, &mut tool, v(7.0, 10.0));
+    let (id, shape) = ed
+        .doc
+        .iter()
+        .find_map(|(id, e)| {
+            matches!(e.kind, EntityKind::Ellipse { .. }).then(|| (id, ed.doc.shape(id).unwrap()))
+        })
+        .expect("an ellipse");
+    let Shape::Ellipse {
+        major,
+        minor,
+        sweep,
+        ..
+    } = shape
+    else {
+        panic!()
+    };
+    assert_eq!((major, minor, sweep), (v(20.0, 0.0), 10.0, TAU));
+    // Five freedoms, less one for the level axis.
+    assert_eq!(ed.analysis().dof, Some(4));
+    // The far end of the minor axis snaps (as a quadrant of the ellipse).
+    let p = ptr(&ed, &tool, v(0.1, -9.9));
+    let s = p.snap.unwrap();
+    assert_eq!(
+        (s.kind, s.entity),
+        (drift_geom::SnapKind::Quadrant, Some(id))
+    );
+    assert!(s.at.distance(v(0.0, -10.0)) < 1e-9);
+    // Fill inside it.
+    let fill = ed
+        .add_fill_at(v(5.0, 2.0))
+        .expect("an area inside the ellipse");
+    let shapes = ed.fill_shapes();
+    assert!(!shapes[&fill].lost);
+    assert!(
+        !shapes[&fill].region.contains(v(19.0, 9.0)),
+        "outside the curve"
+    );
+
+    // A partial ellipse, counter-clockwise from t = 0.3 to t = 2.5 (clicks on the curve).
+    let mut ed = Editor::default();
+    let mut tool = EllipseTool::partial();
+    let on = |t: f64| v(30.0 * t.cos(), 12.0 * t.sin());
+    for at in [v(0.0, 0.0), v(30.0, 0.0), v(0.0, 12.0), on(0.3), on(2.5)] {
+        click(&mut ed, &mut tool, at);
+    }
+    let shape = ed
+        .doc
+        .iter()
+        .find_map(|(id, e)| {
+            matches!(e.kind, EntityKind::EllipseArc { .. }).then(|| ed.doc.shape(id).unwrap())
+        })
+        .expect("an elliptical arc");
+    let Shape::Ellipse { start, sweep, .. } = shape else {
+        panic!()
+    };
+    assert!(
+        (start - 0.3).abs() < 1e-9 && (sweep - 2.2).abs() < 1e-9,
+        "{start} {sweep}"
+    );
+    assert_eq!(ed.analysis().dof, Some(7));
+}

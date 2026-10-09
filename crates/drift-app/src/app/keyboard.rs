@@ -171,6 +171,12 @@ impl DriftApp {
                 let now = ctx.input(|i| i.time);
                 self.set_status(self.editor.slot_mode.label().to_owned(), false, now);
             }
+            if kind == ToolKind::Circle
+                && let Some(i) = ToolKind::CIRCLES.iter().position(|k| *k == current)
+            {
+                // C again: the next of circle, ellipse, partial ellipse.
+                kind = ToolKind::CIRCLES[(i + 1) % ToolKind::CIRCLES.len()];
+            }
             if kind == ToolKind::Arc {
                 kind = if let Some(i) = ToolKind::ARCS.iter().position(|k| *k == current) {
                     // A again: the next arc type.

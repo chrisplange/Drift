@@ -94,6 +94,9 @@ browser (WebGPU, with a WebGL2 fallback).
     - B picks the base point (snaps to points, e.g. a corner of the selection).
     - Click or Enter places it; Esc or right-click cancels.
     - Snapped and typed moves land exactly.
+- **Polygons, slots and ellipses:** regular polygons (K; type the sides, inscribed or
+  circumscribed), straight / centre / arc slots (U, again to switch) and ellipses and partial
+  ellipses (C again from the circle), all built to stay true when dimensioned or dragged.
 - **Blocks (furniture and symbols):** make a block from the selection or start from the
   furniture library; place copies (I; R turns, X mirrors); double-click a copy to edit the
   block and every copy updates; explode, replace and count copies. DXF blocks and inserts

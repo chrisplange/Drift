@@ -547,6 +547,24 @@ fn property_rows(ui: &mut egui::Ui, shape: &Shape, units: Units) {
             row(ui, "Sweep", deg(sweep));
             row(ui, "Arc length", len(radius * sweep));
         }
+        Shape::Ellipse {
+            center,
+            major,
+            minor,
+            sweep,
+            ..
+        } => {
+            row(ui, "Center", pt(center));
+            row(
+                ui,
+                "Semi-axes",
+                format!("{} × {}", len(major.length()), len(minor)),
+            );
+            row(ui, "Rotation", deg(major.y.atan2(major.x).rem_euclid(TAU)));
+            if sweep < TAU {
+                row(ui, "Sweep", deg(sweep));
+            }
+        }
     }
 }
 

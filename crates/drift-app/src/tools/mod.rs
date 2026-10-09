@@ -19,6 +19,7 @@ mod circle;
 mod corners;
 mod curve_ops;
 mod dimension;
+mod ellipse;
 mod fill;
 mod line;
 mod offset_mirror;
@@ -47,9 +48,9 @@ pub use self::{
     underlay::{UnderlayMode, UnderlayTool},
 };
 pub use self::{
-    arc::ArcTool, circle::CircleTool, dimension::DimensionTool, line::LineTool, point::PointTool,
-    rectangle::RectangleTool, select::SelectTool, tangent_arc::TangentArcTool,
-    three_point_arc::ThreePointArcTool,
+    arc::ArcTool, circle::CircleTool, dimension::DimensionTool, ellipse::EllipseTool,
+    line::LineTool, point::PointTool, rectangle::RectangleTool, select::SelectTool,
+    tangent_arc::TangentArcTool, three_point_arc::ThreePointArcTool,
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -147,6 +148,8 @@ pub enum ToolKind {
     Rectangle,
     Polygon,
     Circle,
+    Ellipse,
+    EllipseArc,
     /// Centre-point arc.
     Arc,
     ThreePointArc,
@@ -174,12 +177,14 @@ pub enum ToolKind {
 }
 
 impl ToolKind {
-    pub const ALL: [ToolKind; 24] = [
+    pub const ALL: [ToolKind; 26] = [
         ToolKind::Select,
         ToolKind::Line,
         ToolKind::Rectangle,
         ToolKind::Polygon,
         ToolKind::Circle,
+        ToolKind::Ellipse,
+        ToolKind::EllipseArc,
         ToolKind::Arc,
         ToolKind::ThreePointArc,
         ToolKind::TangentArc,
@@ -211,6 +216,8 @@ impl ToolKind {
                 ToolKind::Rectangle,
                 ToolKind::Polygon,
                 ToolKind::Circle,
+                ToolKind::Ellipse,
+                ToolKind::EllipseArc,
                 ToolKind::Arc,
                 ToolKind::ThreePointArc,
                 ToolKind::TangentArc,
@@ -244,6 +251,9 @@ impl ToolKind {
         ),
     ];
 
+    /// The circle tools, in the order pressing C cycles through them.
+    pub const CIRCLES: [ToolKind; 3] = [ToolKind::Circle, ToolKind::Ellipse, ToolKind::EllipseArc];
+
     /// The arc tools, in the order pressing A cycles through them.
     pub const ARCS: [ToolKind; 3] = [ToolKind::Arc, ToolKind::ThreePointArc, ToolKind::TangentArc];
 
@@ -255,6 +265,8 @@ impl ToolKind {
             ToolKind::Polygon => "Polygon",
             ToolKind::Slot => "Slot",
             ToolKind::Circle => "Circle",
+            ToolKind::Ellipse => "Ellipse",
+            ToolKind::EllipseArc => "Partial ellipse",
             ToolKind::Arc => "Arc",
             ToolKind::ThreePointArc => "3-pt arc",
             ToolKind::TangentArc => "Tangent arc",
@@ -289,6 +301,8 @@ impl ToolKind {
             }
             ToolKind::Slot => "Straight, centre or arc slot (press U again to switch), then width",
             ToolKind::Circle => "Centre, then a point on the circle (or type the diameter)",
+            ToolKind::Ellipse => "Centre, one axis end, then the other axis (C again: partial)",
+            ToolKind::EllipseArc => "An ellipse's centre and axes, then where it starts and ends",
             ToolKind::Arc => "Centre, start, end. Press A again for other arc types",
             ToolKind::ThreePointArc => "Start, end, then a point on the arc",
             ToolKind::TangentArc => "Continues tangent from the end of a line or arc",
@@ -321,7 +335,8 @@ impl ToolKind {
             ToolKind::Rectangle => 'R',
             ToolKind::Polygon => 'K',
             ToolKind::Slot => 'U',
-            ToolKind::Circle => 'C',
+            // C selects the circle; pressed again it cycles through the ellipse tools.
+            ToolKind::Circle | ToolKind::Ellipse | ToolKind::EllipseArc => 'C',
             // A selects the centre arc; pressed again it cycles through the arc tools.
             ToolKind::Arc | ToolKind::ThreePointArc | ToolKind::TangentArc => 'A',
             ToolKind::Point => 'P',
@@ -352,6 +367,8 @@ impl ToolKind {
             ToolKind::Polygon => Box::<PolygonTool>::default(),
             ToolKind::Slot => Box::<SlotTool>::default(),
             ToolKind::Circle => Box::<CircleTool>::default(),
+            ToolKind::Ellipse => Box::<EllipseTool>::default(),
+            ToolKind::EllipseArc => Box::new(EllipseTool::partial()),
             ToolKind::Arc => Box::<ArcTool>::default(),
             ToolKind::ThreePointArc => Box::<ThreePointArcTool>::default(),
             ToolKind::TangentArc => Box::<TangentArcTool>::default(),

@@ -136,6 +136,26 @@ pub fn tool(painter: &egui::Painter, rect: Rect, kind: ToolKind, color: Color32)
             p.dot(4.0, 16.0, 1.8);
             p.dot(16.0, 4.0, 1.8);
         }
+        ToolKind::Ellipse => {
+            let pts: Vec<(f32, f32)> = (0..32)
+                .map(|k| {
+                    let t = std::f32::consts::TAU * k as f32 / 32.0;
+                    (10.0 + 7.5 * t.cos(), 10.0 + 4.6 * t.sin())
+                })
+                .collect();
+            p.poly(&pts, true);
+            p.dot(10.0, 10.0, 0.9);
+        }
+        ToolKind::EllipseArc => {
+            let pts: Vec<(f32, f32)> = (0..=20)
+                .map(|k| {
+                    let t = std::f32::consts::PI * (1.0 + k as f32 / 20.0);
+                    (10.0 + 7.5 * t.cos(), 11.5 + 4.6 * t.sin())
+                })
+                .collect();
+            p.poly(&pts, false);
+            p.dot(10.0, 11.5, 0.9);
+        }
         ToolKind::Polygon => {
             let pts: Vec<(f32, f32)> = (0..6)
                 .map(|k| {
@@ -385,7 +405,7 @@ pub fn tool_row(
     key: Option<&str>,
     draw: impl FnOnce(&egui::Painter, Rect, Color32),
 ) -> egui::Response {
-    let size = vec2(ui.available_width(), 27.0);
+    let size = vec2(ui.available_width(), 24.0);
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
     response.widget_info(|| {
         egui::WidgetInfo::selected(egui::WidgetType::Button, true, selected, label)

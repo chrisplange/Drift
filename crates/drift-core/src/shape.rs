@@ -1,4 +1,4 @@
-use std::f64::consts::{FRAC_PI_2, TAU};
+use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
 use glam::DVec2;
 
@@ -33,6 +33,74 @@ pub enum Shape {
         start: f64,
         sweep: f64,
     },
+    /// An ellipse, or the counter-clockwise part of one: the points
+    /// `center + major·cos t + minor·perp(major̂)·sin t` for `t` from `start` over `sweep`
+    /// (parametric angles; a whole ellipse sweeps `TAU`).
+    Ellipse {
+        center: DVec2,
+        /// The first semi-axis, as a vector from the centre.
+        major: DVec2,
+        /// The length of the other semi-axis (at 90° counter-clockwise from `major`).
+        minor: f64,
+        start: f64,
+        sweep: f64,
+    },
+}
+
+/// A point of an ellipse at parametric angle `t`.
+pub fn ellipse_point(center: DVec2, major: DVec2, minor: f64, t: f64) -> DVec2 {
+    let n = major.perp().normalize_or_zero() * minor;
+    center + major * t.cos() + n * t.sin()
+}
+
+/// An ellipse (or part of one) as connected points, at least `min_segments` segments and
+/// finer for big ones.
+pub fn flatten_ellipse(
+    center: DVec2,
+    major: DVec2,
+    minor: f64,
+    start: f64,
+    sweep: f64,
+    min_segments: usize,
+) -> Vec<DVec2> {
+    let n = ((sweep.abs() / TAU) * 128.0)
+        .ceil()
+        .max(min_segments as f64) as usize;
+    (0..=n)
+        .map(|i| ellipse_point(center, major, minor, start + sweep * i as f64 / n as f64))
+        .collect()
+}
+
+/// The points an ellipse entity is made of: its centre, the ends of its two semi-axes, and
+/// (for part of one) its start and end.
+pub fn ellipse_handles(
+    center: DVec2,
+    major: DVec2,
+    minor: f64,
+    start: f64,
+    sweep: f64,
+) -> ([DVec2; 3], Option<[DVec2; 2]>) {
+    let axes = [
+        center,
+        center + major,
+        center + major.perp().normalize_or_zero() * minor,
+    ];
+    let ends = (sweep < TAU - 1e-9).then(|| {
+        [
+            ellipse_point(center, major, minor, start),
+            ellipse_point(center, major, minor, start + sweep),
+        ]
+    });
+    (axes, ends)
+}
+
+/// The parametric angle of the point of an ellipse in the direction of `p` from its centre.
+pub fn ellipse_angle(center: DVec2, major: DVec2, minor: f64, p: DVec2) -> f64 {
+    let a = major.length();
+    let u = major.normalize_or_zero();
+    let d = p - center;
+    let (x, y) = (d.dot(u), d.dot(u.perp()));
+    (y / minor.max(1e-300)).atan2(x / a.max(1e-300))
 }
 
 impl Shape {
@@ -53,8 +121,32 @@ impl Shape {
                 start,
                 sweep,
             } => arc_bounds(center, radius, start, sweep),
+            Shape::Ellipse {
+                center,
+                major,
+                minor,
+                start,
+                sweep,
+            } => ellipse_bounds(center, major, minor, start, sweep),
         }
     }
+}
+
+fn ellipse_bounds(center: DVec2, major: DVec2, minor: f64, start: f64, sweep: f64) -> Bounds {
+    let at = |t: f64| ellipse_point(center, major, minor, t);
+    let mut bounds = Bounds::from_point(at(start));
+    bounds.include(at(start + sweep));
+    // Where x and y peak: dx/dt = 0 and dy/dt = 0, each twice a turn.
+    let (a, phi) = (major.length(), major.y.atan2(major.x));
+    let tx = (-minor * phi.sin()).atan2(a * phi.cos());
+    let ty = (minor * phi.cos()).atan2(a * phi.sin());
+    for t0 in [tx, tx + PI, ty, ty + PI] {
+        let off = (t0 - start).rem_euclid(TAU);
+        if sweep >= TAU || off <= sweep {
+            bounds.include(at(start + off));
+        }
+    }
+    bounds
 }
 
 fn arc_bounds(center: DVec2, radius: f64, start: f64, sweep: f64) -> Bounds {

@@ -154,6 +154,24 @@ impl Instance {
                     sweep,
                 }
             }
+            Shape::Ellipse {
+                center,
+                major,
+                minor,
+                start,
+                sweep,
+            } => {
+                // Mirroring reverses the direction: parametric angle t becomes −t.
+                let start = if self.mirror { -(start + sweep) } else { start };
+                let c = self.apply(center);
+                Shape::Ellipse {
+                    center: c,
+                    major: self.apply(center + major) - c,
+                    minor: minor * self.scale,
+                    start,
+                    sweep,
+                }
+            }
         }
     }
 
@@ -184,6 +202,23 @@ impl Instance {
                 Shape::Arc {
                     center: self.invert(center),
                     radius: radius / self.scale,
+                    start,
+                    sweep,
+                }
+            }
+            Shape::Ellipse {
+                center,
+                major,
+                minor,
+                start,
+                sweep,
+            } => {
+                let start = if self.mirror { -(start + sweep) } else { start };
+                let c = self.invert(center);
+                Shape::Ellipse {
+                    center: c,
+                    major: self.invert(center + major) - c,
+                    minor: minor / self.scale,
                     start,
                     sweep,
                 }

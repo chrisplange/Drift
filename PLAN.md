@@ -1246,6 +1246,43 @@ written but hasn't run yet (no GitHub repo).*
     distance, or the cap's diameter for arc slots).
 - **Not yet:** 3-point arc slots; a drawing-scale readout of a circumscribed size.
 
+*Part 2 as built (2026-10-09): ellipses.*
+- **Model (format v13 `ellipse` entities):**
+  - An ellipse is three points: centre, the end of one semi-axis (`major`) and the end of
+    the other (`minor`), the last kept on the perpendicular through the centre by one
+    equation (5 freedoms).
+  - A partial ellipse adds start and end points held on it (7 freedoms), counter-clockwise.
+  - Being points, the axis ends snap, drag, rotate, mirror and take Distance dimensions with
+    no special cases.
+  - `Shape::Ellipse` uses parametric angles (a whole one sweeps 2π). Exact bounds come from
+    where x and y peak; a shared flattening helper serves output and regions.
+- **Solver:**
+  - A point-on-ellipse equation (stretch across the major axis to a circle of radius a,
+    then its distance from it) with an analytic gradient, checked by the finite-difference
+    test.
+  - Point on curve takes ellipses (a new `Curve` slot). Tangent, Equal and other circular
+    relations stay circles-and-arcs only.
+- **Tools:**
+  - Ellipse: centre, one axis end, then the other axis (or type half-lengths).
+  - Partial ellipse: the same, then start and end, picked on the ellipse.
+  - C cycles Circle → Ellipse → Partial ellipse. Live previews at every step; a level or
+    plumb axis gets Horizontal / Vertical points; typed sizes become Distance dimensions.
+- **Geometry:**
+  - Nearest point (sampling plus golden-section refinement), box selection, quadrant snaps
+    at all four axis ends, underlay snaps.
+  - Fills work inside ellipses (they take part in regions as fine straight edges).
+- **Output:**
+  - SVG: exact elliptical arc commands. PDF and the sheet preview: flattened.
+  - DXF: ELLIPSE both ways, with the axes swapped when the second is the longer (DXF wants
+    a ratio ≤ 1). A sweep within 1e-5 of a full turn reads back as a whole ellipse.
+  - Blocks, Shift+D, mirror and patterns copy ellipses. The inspector shows the semi-axes
+    and rotation, and the dimension tool on an ellipse measures its first semi-axis.
+- **Toolbar:** rows are 24 px so all 26 tools fit an 800 px window.
+- **Not yet:**
+  - Trim, extend, split, fillet and offset with ellipses: ellipses don't cut or get cut.
+  - Tangency to ellipses.
+  - Splitting a fill region where an ellipse crosses another curve.
+
 **M10 — Polish and release (ongoing)**
 - Themes, command palette, keybinding config, crash recovery, PWA offline install, and
   accessibility pass.

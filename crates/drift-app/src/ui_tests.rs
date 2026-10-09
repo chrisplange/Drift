@@ -1937,3 +1937,45 @@ fn polygons_and_slots_from_the_toolbar() {
     h.run();
     save_png("drift_ui_polygon_slots.png", &mut h);
 }
+
+#[test]
+fn c_cycles_to_ellipses_and_draws_them() {
+    let Some(mut h) = harness() else { return };
+    let v = DVec2::new;
+    for expected in [
+        ToolKind::Circle,
+        ToolKind::Ellipse,
+        ToolKind::EllipseArc,
+        ToolKind::Circle,
+    ] {
+        h.key_press(Key::C);
+        h.run();
+        assert_eq!(h.state().tool.kind(), expected);
+    }
+    h.key_press(Key::C);
+    h.run();
+    for at in [v(-40.0, 10.0), v(-10.0, 22.0), v(-36.0, 24.0)] {
+        click_world(&mut h, at);
+    }
+    h.key_press(Key::C);
+    h.run();
+    for at in [v(30.0, -10.0), v(60.0, -10.0), v(30.0, 2.0), v(59.0, -6.0)] {
+        click_world(&mut h, at);
+    }
+    h.hover_at(screen(&h, v(5.0, -5.0)));
+    h.run();
+    save_png("drift_ui_ellipse_preview.png", &mut h);
+    click_world(&mut h, v(5.0, -5.0));
+    let kinds: Vec<&str> = h
+        .state()
+        .editor
+        .doc
+        .iter()
+        .filter(|(_, e)| !e.kind.is_point())
+        .map(|(_, e)| e.kind.type_name())
+        .collect();
+    assert_eq!(kinds, ["Ellipse", "Elliptical arc"]);
+    h.key_press(Key::Escape);
+    h.run();
+    save_png("drift_ui_ellipses.png", &mut h);
+}

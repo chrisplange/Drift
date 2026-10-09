@@ -63,6 +63,15 @@ pub enum Prim {
         start: f64,
         sweep: f64,
     },
+    /// An ellipse, or the counter-clockwise part of one from parametric angle `start` over
+    /// `sweep` (a whole one sweeps 2π): `center + major·cos t + perp(major̂)·minor·sin t`.
+    Ellipse {
+        center: DVec2,
+        major: DVec2,
+        minor: f64,
+        start: f64,
+        sweep: f64,
+    },
     /// A filled area: outer rings and holes, filled even–odd, and the same area as triangles
     /// (for formats without even–odd fills, such as DXF). A `mask` is a paper-coloured patch
     /// behind text (left out of DXF).
@@ -89,6 +98,20 @@ pub enum Prim {
         align: Align,
         text: String,
     },
+}
+
+/// An ellipse prim as connected points (for outputs without ellipses); other prims give none.
+pub fn prim_points(prim: &Prim) -> Vec<DVec2> {
+    match *prim {
+        Prim::Ellipse {
+            center,
+            major,
+            minor,
+            start,
+            sweep,
+        } => drift_core::shape::flatten_ellipse(center, major, minor, start, sweep, 64),
+        _ => Vec::new(),
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -215,6 +238,16 @@ impl Drawing {
                     *center *= f;
                     *radius *= f;
                 }
+                Prim::Ellipse {
+                    center,
+                    major,
+                    minor,
+                    ..
+                } => {
+                    *center *= f;
+                    *major *= f;
+                    *minor *= f;
+                }
                 Prim::Fill {
                     rings, triangles, ..
                 } => {
@@ -302,6 +335,7 @@ impl Drawing {
                     b.include(*center - DVec2::splat(*radius));
                     b.include(*center + DVec2::splat(*radius));
                 }
+                Prim::Ellipse { .. } => prim_points(&item.prim).iter().for_each(|p| b.include(*p)),
                 Prim::Fill { rings, .. } => rings.iter().flatten().for_each(|p| b.include(*p)),
                 Prim::Text {
                     at, height, text, ..
@@ -373,6 +407,28 @@ impl Transform {
                     center: self.p(*center),
                     radius: radius * self.scale,
                     start: start + self.angle,
+                    sweep: *sweep,
+                }
+            }
+            Prim::Ellipse {
+                center,
+                major,
+                minor,
+                start,
+                sweep,
+            } => {
+                // Mirroring reverses the direction: parametric angle t becomes −t.
+                let start = if self.mirror {
+                    -(start + sweep)
+                } else {
+                    *start
+                };
+                let c = self.p(*center);
+                Prim::Ellipse {
+                    center: c,
+                    major: self.p(*center + *major) - c,
+                    minor: minor * self.scale,
+                    start,
                     sweep: *sweep,
                 }
             }

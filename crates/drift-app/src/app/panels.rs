@@ -319,7 +319,7 @@ impl DriftApp {
                 for (i, (title, group)) in ToolKind::SECTIONS.iter().enumerate() {
                     if wide {
                         if !title.is_empty() {
-                            ui.add_space(if i > 0 { 10.0 } else { 2.0 });
+                            ui.add_space(if i > 0 { 7.0 } else { 2.0 });
                             theme::caps_header(ui, title);
                             ui.add_space(2.0);
                         }

@@ -125,6 +125,26 @@ impl RefIndex {
                         }
                     }
                 }
+                Shape::Ellipse {
+                    center,
+                    major,
+                    minor,
+                    start,
+                    sweep,
+                } => {
+                    let at = |t: f64| drift_core::shape::ellipse_point(center, major, minor, t);
+                    offer(center, SnapKind::Center);
+                    if sweep < std::f64::consts::TAU {
+                        offer(at(start), SnapKind::Endpoint);
+                        offer(at(start + sweep), SnapKind::Endpoint);
+                    }
+                    for k in 0..4 {
+                        let t = f64::from(k) * FRAC_PI_2;
+                        if angle_in_sweep(t, start, sweep) {
+                            offer(at(t), SnapKind::Quadrant);
+                        }
+                    }
+                }
             }
             if !matches!(shape, Shape::Point(_)) {
                 offer(nearest_point(shape, p), SnapKind::OnCurve);

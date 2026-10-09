@@ -193,6 +193,19 @@ fn shape_prim(s: &Space, shape: &Shape) -> Option<Prim> {
                 sweep,
             }
         }
+        Shape::Ellipse {
+            center,
+            major,
+            minor,
+            start,
+            sweep,
+        } => Prim::Ellipse {
+            center: s.at(center),
+            major: major * s.k,
+            minor: minor * s.k,
+            start,
+            sweep,
+        },
         Shape::Point(_) => return None,
     })
 }
@@ -553,6 +566,12 @@ pub fn paint_drawing(
                 start,
                 sweep,
             } => line(arc_points(*center, *radius, *start, *sweep)),
+            Prim::Ellipse { .. } => line(
+                drift_draft::page::prim_points(&it.prim)
+                    .into_iter()
+                    .map(&to_screen)
+                    .collect(),
+            ),
             Prim::Fill {
                 rings,
                 triangles,

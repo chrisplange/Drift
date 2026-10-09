@@ -891,3 +891,58 @@ fn the_example_plate_is_fully_defined() {
         }
     }
 }
+
+#[test]
+fn ellipses_have_five_freedoms_and_keep_their_shape() {
+    let mut doc = Document::new();
+    let c = doc.add_point(v(0.0, 0.0));
+    let m = doc.add_point(v(20.0, 0.0));
+    // Off the perpendicular: moved onto it when added.
+    let n = doc.add_point(v(1.0, 10.0));
+    let e = doc.add_ellipse(c, m, n).unwrap();
+    assert!(doc.point(n).unwrap().distance(v(0.0, 10.0_f64.hypot(1.0))) < 1e-9);
+    assert_eq!(analyze(&doc).dof, Some(5));
+    // A point held on it.
+    let p = doc.add_point(v(10.0, 9.0));
+    doc.add_constraint(Constraint::PointOnCurve { point: p, curve: e })
+        .unwrap();
+    let report = solved(&mut doc);
+    assert!(report.converged);
+    assert_eq!(report.dof, Some(6));
+    // On the ellipse as it is now (the solve may move it too).
+    let [pc, pm, pn, q] = [c, m, n, p].map(|id| doc.point(id).unwrap());
+    let (a, b) = (pm.distance(pc), pn.distance(pc));
+    let u = (pm - pc).normalize();
+    let d = q - pc;
+    assert!(((d.dot(u) / a).powi(2) + (d.dot(u.perp()) / b).powi(2) - 1.0).abs() < 1e-9);
+
+    // An elliptical arc: seven (its ends are free along it).
+    let mut doc = Document::new();
+    let [c, m, n, s, t] = [
+        v(0.0, 0.0),
+        v(30.0, 0.0),
+        v(0.0, 10.0),
+        v(30.0, 1.0),
+        v(-1.0, 10.0),
+    ]
+    .map(|q| doc.add_point(q));
+    doc.add_ellipse_arc(c, m, n, s, t).unwrap();
+    assert_eq!(analyze(&doc).dof, Some(7));
+    // Turning the major axis drags the minor one round with it.
+    doc.set_point(m, v(0.0, 30.0)).unwrap();
+    let report = solve(
+        &mut doc,
+        &SolveOptions {
+            analyze: true,
+            dragged: vec![Param::X(m), Param::Y(m)],
+            ..Default::default()
+        },
+    );
+    assert!(report.converged);
+    let (pc, pm, pn) = (
+        doc.point(c).unwrap(),
+        doc.point(m).unwrap(),
+        doc.point(n).unwrap(),
+    );
+    assert!((pm - pc).dot(pn - pc).abs() < 1e-6);
+}

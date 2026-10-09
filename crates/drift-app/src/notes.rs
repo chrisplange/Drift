@@ -75,6 +75,11 @@ fn centre(doc: &Document, id: EntityId) -> Option<(DVec2, f64)> {
             let c = doc.point(center).ok()?;
             Some((c, c.distance(doc.point(start).ok()?)))
         }
+        EntityKind::Ellipse { center, major, .. }
+        | EntityKind::EllipseArc { center, major, .. } => {
+            let c = doc.point(center).ok()?;
+            Some((c, c.distance(doc.point(major).ok()?)))
+        }
         EntityKind::Point(p) => Some((p, 0.0)),
         EntityKind::Line { .. } => None,
     }

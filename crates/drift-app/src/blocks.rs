@@ -221,6 +221,24 @@ impl Editor {
                     );
                     self.doc.add_arc(c, s, e).ok()
                 }
+                Shape::Ellipse {
+                    center,
+                    major,
+                    minor,
+                    start,
+                    sweep,
+                } => {
+                    let (axes, ends) =
+                        drift_core::shape::ellipse_handles(center, major, minor, start, sweep);
+                    let [c, m, n] = axes.map(|q| point(&mut self.doc, q));
+                    match ends {
+                        Some([s, e]) => {
+                            let (s, e) = (point(&mut self.doc, s), point(&mut self.doc, e));
+                            self.doc.add_ellipse_arc(c, m, n, s, e).ok()
+                        }
+                        None => self.doc.add_ellipse(c, m, n).ok(),
+                    }
+                }
             };
             if let Some(e) = made {
                 let _ = self.doc.set_entity_layer(e, layer);

@@ -1405,6 +1405,28 @@ zooms to fit; F is Fillet (again for Chamfer).
     palette.
   - Help → Keyboard shortcuts (or ?) is grouped into sections, shows keycaps, and filters as
     you type.
+- **Part 3 (done): memory safety.** Prompted by a system-wide out-of-memory freeze while
+  Drift was open (the logs did not show which program was responsible).
+  - A memory guard (`drift_platform::memory`): a background thread ends the app at 8 GB
+    (`DRIFT_MEMORY_LIMIT_MB` overrides) and leaves a note, so the next start says what
+    happened and restores the autosave. The UI warns at 3 GB. Help shows current use.
+  - Bounds on everything found that could grow without limit: the rotate tool's angle arc
+    (points grew with the typed angle), arc and ellipse flattening counts, sketch text length
+    (500 typed, 2,000 outlined), undo history (500 steps), the text outline cache, and GPU
+    instance buffers (now shrink after a peak).
+  - Exports no longer become the document's file: exporting a PDF, SVG or DXF used to rename
+    the sketch to the export, so Ctrl+S would overwrite it. Save only ever writes `.drift`.
+  - Ctrl+P opens the PDF viewer once per press, not once per key repeat.
+  - Memory torture tests (`mem_tests.rs`, opt-in): zoom extremes, huge and tiny text, dense
+    hatches, 10k–200k entities, 300k-segment underlays, geometry out to 1e300, imperial
+    units, every panel, the sheet preview and random input. Worst peak: +0.8 GB at 115k
+    entities; everything else under +0.2 GB, with nothing retained.
+    `cargo test --release -p drift-app mem_ -- --ignored --nocapture --test-threads=1`
+  - A soak mode for the real window: `DRIFT_SOAK=<seconds>` makes the app drive itself
+    (drawing, zooming, resizing, minimising) and log memory to `<temp>/drift/soak.log`.
+    170 s / 7,900 frames: flat at 435 MB.
+  - Not yet: the idle baseline is about 400 MB plus 250–300 MB of GPU memory, most of it
+    the graphics backend; worth a look.
 - Themes, keybinding config, crash recovery, PWA offline install, and accessibility pass.
 - Performance profiling against targets (WASM first), plus native packaging (MSI, dmg, AppImage /
   Flatpak).

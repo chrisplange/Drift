@@ -79,6 +79,10 @@ impl OutlinePen for Pen {
 /// The contours of `text` in `font` with capitals `height` tall, starting at `at` on the
 /// baseline and turned `angle` degrees counter-clockwise. Characters the font lacks are
 /// skipped (with a space's width).
+/// The most characters of a text that are outlined (a line of sketch text, not a document):
+/// each one is tens of curves, redrawn every frame.
+pub const MAX_OUTLINE_CHARS: usize = 2000;
+
 pub fn text_contours(
     text: &str,
     font: TextFont,
@@ -86,6 +90,8 @@ pub fn text_contours(
     at: DVec2,
     angle: f64,
 ) -> Vec<Vec<Shape>> {
+    let text: String = text.chars().take(MAX_OUTLINE_CHARS).collect();
+    let text = text.as_str();
     let Ok(f) = FontRef::new(font_bytes(font)) else {
         return Vec::new();
     };

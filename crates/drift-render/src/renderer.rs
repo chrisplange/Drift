@@ -246,8 +246,11 @@ impl InstanceBuffer {
     fn upload<T: bytemuck::Pod>(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, data: &[T]) {
         let bytes = bytemuck::cast_slice::<T, u8>(data);
         let len = bytes.len() as u64;
-        if len > self.capacity {
-            self.capacity = len.next_power_of_two();
+        // Grow to fit; shrink again when a peak (a huge underlay, say) has passed, so its
+        // memory isn't held for the rest of the session.
+        let roomy = self.capacity > Self::INITIAL_CAPACITY && len < self.capacity / 8;
+        if len > self.capacity || roomy {
+            self.capacity = len.next_power_of_two().max(Self::INITIAL_CAPACITY);
             self.buffer = Self::create(device, self.label, self.capacity);
         }
         if len > 0 {

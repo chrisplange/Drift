@@ -47,7 +47,22 @@ impl DriftApp {
         if consume(cmd(Key::Backslash)) {
             self.dock_view.hide_all = !self.dock_view.hide_all;
         }
-        if consume(cmd(Key::P)) {
+        // Print opens the system's PDF viewer: once per press, not once per key repeat while
+        // the keys are held.
+        let fresh = ctx.input(|i| {
+            i.events.iter().any(|e| {
+                matches!(
+                    e,
+                    egui::Event::Key {
+                        key: Key::P,
+                        pressed: true,
+                        repeat: false,
+                        ..
+                    }
+                )
+            })
+        });
+        if consume(cmd(Key::P)) && fresh {
             let painter = ctx.layer_painter(egui::LayerId::background());
             self.print(&painter);
         }

@@ -6,6 +6,8 @@ use eframe::egui;
 fn main() -> eframe::Result {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
+    drift_app::start_memory_guard();
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Drift")
@@ -13,8 +15,14 @@ fn main() -> eframe::Result {
             .with_min_inner_size([480.0, 320.0]),
         ..Default::default()
     };
+    // A soak test (DRIFT_SOAK) keeps its own settings and session.
+    let app_id = if std::env::var_os("DRIFT_SOAK").is_some() {
+        "DriftSoak"
+    } else {
+        "Drift"
+    };
     eframe::run_native(
-        "Drift",
+        app_id,
         options,
         Box::new(|cc| Ok(Box::new(drift_app::DriftApp::new(cc)))),
     )

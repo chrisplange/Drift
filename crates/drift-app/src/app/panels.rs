@@ -356,9 +356,13 @@ impl DriftApp {
                     self.benchmark = Some(run_benchmark());
                 }
                 ui.separator();
+                let memory = match self.memory.0 {
+                    0 => String::new(),
+                    bytes => format!(" · {} MB", bytes / (1024 * 1024)),
+                };
                 ui.label(
                     egui::RichText::new(format!(
-                        "Drift {} · {}",
+                        "Drift {} · {}{memory}",
                         env!("CARGO_PKG_VERSION"),
                         self.backend
                     ))

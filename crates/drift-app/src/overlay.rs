@@ -171,8 +171,9 @@ pub fn rotate_guide(
     let v = map.to_screen(from) - c;
     let a0 = v.y.atan2(v.x);
     let dir = |a: f32| vec2(a.cos(), a.sin());
-    // Screen angles turn clockwise, so a counter-clockwise turn is negative.
-    let sweep = -(deg.to_radians() as f32);
+    // Screen angles turn clockwise, so a counter-clockwise turn is negative. Whole turns
+    // (a typed 3600°, say) add nothing to the picture, and must not add points to it.
+    let sweep = -((deg % 360.0).to_radians() as f32);
     painter.extend(egui::Shape::dashed_line(
         &[c, c + dir(a0) * (r + 14.0)],
         Stroke::new(1.0, colors.snap.gamma_multiply(0.7)),
@@ -180,7 +181,7 @@ pub fn rotate_guide(
         3.0,
     ));
     painter.line_segment([c, c + dir(a0 + sweep) * (r + 14.0)], stroke);
-    let n = ((sweep.abs() / 0.08).ceil() as usize).max(2);
+    let n = (sweep.abs() / 0.08).ceil().clamp(2.0, 128.0) as usize;
     let arc: Vec<Pos2> = (0..=n)
         .map(|k| c + dir(a0 + sweep * k as f32 / n as f32) * r)
         .collect();

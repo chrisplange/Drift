@@ -10,6 +10,9 @@ use drift_core::{
 
 use crate::editor::Editor;
 
+/// The longest sketch text that can be typed or pasted.
+pub const MAX_TEXT_CHARS: usize = 500;
+
 /// A text's outlines and their bounds, for the text as it was when they were made.
 #[derive(Clone)]
 pub struct TextOutline {
@@ -52,7 +55,12 @@ impl Editor {
             contours: Rc::new(contours),
             bounds,
         };
-        self.text_cache.borrow_mut().outlines.insert(id, o.clone());
+        let mut cache = self.text_cache.borrow_mut();
+        cache.outlines.insert(id, o.clone());
+        // Forget outlines of texts that no longer exist.
+        if cache.outlines.len() > self.doc.texts().count() + 32 {
+            cache.outlines.retain(|id, _| self.doc.text(*id).is_some());
+        }
         Some(o)
     }
 
@@ -142,10 +150,11 @@ impl Editor {
         let Some(mut t) = self.doc.text(id).cloned() else {
             return;
         };
+        let words: String = words.chars().take(MAX_TEXT_CHARS).collect();
         if t.text == words {
             return;
         }
-        t.text = words.to_owned();
+        t.text = words;
         self.doc.begin();
         self.doc.set_text(id, t);
         let tx = self.doc.commit("Type text");

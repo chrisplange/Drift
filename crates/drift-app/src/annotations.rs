@@ -885,7 +885,7 @@ pub fn paint_dimension(
             start,
             sweep,
         } => {
-            let steps = ((sweep.abs() / TAU32) * 64.0).ceil().max(2.0) as usize;
+            let steps = ((sweep.abs() / TAU32) * 64.0).ceil().clamp(2.0, 256.0) as usize;
             let points: Vec<Pos2> = (0..=steps)
                 .map(|k| {
                     let a = start + sweep * k as f32 / steps as f32;

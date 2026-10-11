@@ -2782,11 +2782,19 @@ pub struct History {
 }
 
 impl History {
+    /// How many steps can be undone; older ones are forgotten, so a long session's history
+    /// can't grow without bound.
+    pub const MAX_STEPS: usize = 500;
+
     /// Record a committed transaction. Empty transactions are dropped.
     pub fn push(&mut self, tx: Transaction) {
         if !tx.is_empty() {
             self.undo.push(tx);
             self.redo.clear();
+            if self.undo.len() > Self::MAX_STEPS {
+                let extra = self.undo.len() - Self::MAX_STEPS;
+                self.undo.drain(..extra);
+            }
         }
     }
 

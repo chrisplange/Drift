@@ -183,7 +183,8 @@ pub fn flatten_ellipse(
 ) -> Vec<DVec2> {
     let n = ((sweep.abs() / TAU) * 128.0)
         .ceil()
-        .max(min_segments as f64) as usize;
+        .max(min_segments as f64)
+        .min(4096.0) as usize;
     (0..=n)
         .map(|i| ellipse_point(center, major, minor, start + sweep * i as f64 / n as f64))
         .collect()

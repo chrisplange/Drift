@@ -24,6 +24,7 @@ impl DriftApp {
         let edit = ui.add(
             egui::TextEdit::singleline(&mut words)
                 .hint_text("Type the text")
+                .char_limit(crate::texts::MAX_TEXT_CHARS)
                 .desired_width(f32::INFINITY),
         );
         // Just placed with the Text tool: type straight away.

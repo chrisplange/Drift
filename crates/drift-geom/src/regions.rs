@@ -115,7 +115,7 @@ impl Edge {
                 start,
                 sweep,
             } => {
-                let n = ((sweep.abs() / max_angle).ceil() as usize).max(1);
+                let n = (sweep.abs() / max_angle).ceil().clamp(1.0, 4096.0) as usize;
                 for k in 0..n {
                     let a = start + sweep * k as f64 / n as f64;
                     out.push(center + radius * DVec2::from_angle(a));

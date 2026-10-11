@@ -4,6 +4,8 @@
 //! later as [`FileEvent`]s. Call [`Files::take_events`] each frame; the `wake` callback passed to
 //! [`Files::new`] is invoked when an event arrives so the UI can repaint.
 
+pub mod memory;
+
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -21,6 +23,11 @@ pub enum FileEvent {
     Saved {
         name: String,
         path: Option<FilePath>,
+    },
+    /// A copy in another format (PDF, SVG, DXF) was written; the document's own file is
+    /// unchanged.
+    Exported {
+        name: String,
     },
     /// A file was handed to the system (or browser) viewer, e.g. to print it.
     Shown {
@@ -108,6 +115,37 @@ impl Files {
         {
             let _ = file_type;
             self.post(web::download(suggested_name, &contents));
+        }
+    }
+
+    /// Ask the user where to write an export (a PDF, SVG or DXF copy), then write it. Unlike
+    /// [`Files::save_as`], this reports [`FileEvent::Exported`]: the export does not become
+    /// the document's file.
+    pub fn export(&self, suggested_name: &str, file_type: FileType, contents: Vec<u8>) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let this = self.clone();
+            let name = suggested_name.to_owned();
+            spawn(async move {
+                let dialog = rfd::AsyncFileDialog::new()
+                    .add_filter(file_type.name, file_type.extensions)
+                    .set_file_name(&name);
+                if let Some(handle) = dialog.save_file().await {
+                    let path = handle.path().to_owned();
+                    this.post(match write_native(path, &contents) {
+                        FileEvent::Saved { name, .. } => FileEvent::Exported { name },
+                        other => other,
+                    });
+                }
+            });
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = file_type;
+            self.post(match web::download(suggested_name, &contents) {
+                FileEvent::Saved { name, .. } => FileEvent::Exported { name },
+                other => other,
+            });
         }
     }
 

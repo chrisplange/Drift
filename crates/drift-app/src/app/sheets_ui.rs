@@ -178,7 +178,7 @@ impl DriftApp {
     pub(crate) fn export_pdf(&mut self, painter: &egui::Painter) {
         let bytes = self.pdf_bytes(painter);
         let name = format!("{}.pdf", self.file_stem());
-        self.files.save_as(&name, PDF_FILE, bytes);
+        self.files.export(&name, PDF_FILE, bytes);
     }
 
     /// The current sheet as SVG.
@@ -194,7 +194,7 @@ impl DriftApp {
     pub(crate) fn export_svg(&mut self, painter: &egui::Painter) {
         let text = self.svg_text(painter);
         let name = format!("{}.svg", self.file_stem());
-        self.files.save_as(&name, SVG_FILE, text.into_bytes());
+        self.files.export(&name, SVG_FILE, text.into_bytes());
     }
 
     pub(crate) fn dxf_text(&mut self, painter: &egui::Painter) -> String {
@@ -207,7 +207,7 @@ impl DriftApp {
     pub(crate) fn export_dxf(&mut self, painter: &egui::Painter) {
         let text = self.dxf_text(painter);
         let name = format!("{}.dxf", self.file_stem());
-        self.files.save_as(&name, DXF_FILE, text.into_bytes());
+        self.files.export(&name, DXF_FILE, text.into_bytes());
     }
 
     /// Open the sheets as a PDF in the system viewer (a browser tab on the web) to print.

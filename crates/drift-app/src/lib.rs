@@ -13,6 +13,8 @@ pub mod editor;
 pub mod fills;
 mod icons;
 mod layers_ui;
+#[cfg(test)]
+mod mem_tests;
 pub mod modify;
 mod notes;
 pub mod output;
@@ -20,6 +22,7 @@ mod overlay;
 mod parameters;
 #[cfg(test)]
 mod perf_tests;
+mod soak;
 pub mod texts;
 mod theme;
 pub mod tools;
@@ -249,6 +252,17 @@ pub struct DriftApp {
     import_as_underlay: bool,
     /// A multi-page PDF waiting for its page to be chosen.
     pending_pdf: Option<app::underlays_ui::PendingPdf>,
+    /// Memory in use (bytes) as of the last check, when that was, and whether the user has
+    /// been warned that it's high.
+    memory: (u64, f64, bool),
+    /// The self-driving soak test, when `DRIFT_SOAK` asks for one.
+    soak: Option<soak::Soak>,
+}
+
+/// Start the memory guard: past a hard limit the app ends itself rather than exhaust the
+/// machine (see `drift_platform::memory`). Call once from the native entry point.
+pub fn start_memory_guard() {
+    drift_platform::memory::start_guard();
 }
 
 impl DriftApp {
@@ -327,10 +341,21 @@ impl DriftApp {
             always_endpoints: false,
             import_as_underlay: false,
             pending_pdf: None,
+            memory: (0, f64::NEG_INFINITY, false),
+            soak: soak::Soak::from_env(),
         };
+        if let Some(mb) = drift_platform::memory::take_stop_note() {
+            app.editor.notice = Some(format!(
+                "Drift stopped itself last time: it was using {:.1} GB of memory.                  Your last autosave has been restored.",
+                mb as f64 / 1024.0
+            ));
+        }
         theme::install_fonts(&cc.egui_ctx);
         theme::apply(&cc.egui_ctx);
-        if let Some(storage) = cc.storage {
+        // A soak test starts from an empty sketch.
+        if let Some(storage) = cc.storage
+            && app.soak.is_none()
+        {
             app.restore_session(storage);
         }
         app
@@ -638,6 +663,7 @@ impl eframe::App for DriftApp {
         if let Some(notice) = self.editor.notice.take() {
             self.set_status(notice, true, now);
         }
+        self.check_memory(now);
         self.editor.auto_relations = self.auto_relations;
         self.editor.always_endpoints = self.always_endpoints;
         // Text placed but left empty goes once it's no longer picked.
@@ -691,6 +717,10 @@ impl eframe::App for DriftApp {
         if self.ui_signature() != before {
             ctx.request_repaint();
         }
+    }
+
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        self.soak_input(ctx, raw_input);
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {

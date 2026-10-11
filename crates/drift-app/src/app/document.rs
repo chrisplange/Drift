@@ -2,7 +2,45 @@
 
 use crate::*;
 
+/// Whether a path names a sketch (by its extension).
+fn is_sketch_file(path: &std::path::Path) -> bool {
+    path.extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case(drift_io::EXTENSION))
+}
+
 impl DriftApp {
+    /// Once a second: note how much memory is in use, and warn (once) when it's far more
+    /// than any sketch should need. The guard thread ends the app at the hard limit.
+    pub(crate) fn check_memory(&mut self, now: f64) {
+        use drift_platform::memory;
+        let (_, checked, warned) = self.memory;
+        if now - checked < 1.0 {
+            return;
+        }
+        let used = memory::used().unwrap_or(0);
+        // Only where the guard runs: a test process holds many app instances at once.
+        let high = memory::guarded() && used > memory::WARN_BYTES;
+        if high && !warned {
+            let gb = |b: u64| b as f64 / (1024.0 * 1024.0 * 1024.0);
+            self.set_status(
+                format!(
+                    "Drift is using {:.1} GB of memory, far more than usual. Save your work:                      it stops itself at {:.0} GB to protect the system.",
+                    gb(used),
+                    gb(memory::limit())
+                ),
+                true,
+                now,
+            );
+        }
+        // Warn again only after it has come back down.
+        let warned = if used < memory::WARN_BYTES / 4 * 3 {
+            false
+        } else {
+            warned || high
+        };
+        self.memory = (used, now, warned);
+    }
+
     pub(crate) fn is_dirty(&self) -> bool {
         self.file.clean_revision != Some(self.editor.doc.revision())
     }
@@ -87,7 +125,15 @@ impl DriftApp {
                 let path = storage
                     .get_string(KEY_PATH)
                     .filter(|p| !p.is_empty() && cfg!(not(target_arch = "wasm32")))
-                    .map(FilePath::from);
+                    .map(FilePath::from)
+                    .filter(|p| is_sketch_file(p));
+                // An older build could leave an export's name here (e.g. "Plan.pdf").
+                let name = if name.to_ascii_lowercase().ends_with(".drift") {
+                    name
+                } else {
+                    let stem = name.rsplit_once('.').map_or(name.as_str(), |(s, _)| s);
+                    format!("{stem}.drift")
+                };
                 let dirty = storage.get_string(KEY_DIRTY).as_deref() == Some("1");
                 self.replace_document(doc, name, path, meta, !dirty);
             }
@@ -135,9 +181,10 @@ impl DriftApp {
     }
 
     pub(crate) fn save(&mut self) {
+        // Only ever overwrite a sketch file: never an export or an imported drawing.
         match &self.file.path {
-            Some(path) => self.files.save_to(path, &self.file_bytes()),
-            None => self.save_as(),
+            Some(path) if is_sketch_file(path) => self.files.save_to(path, &self.file_bytes()),
+            _ => self.save_as(),
         }
     }
 
@@ -195,6 +242,9 @@ impl DriftApp {
                         self.file.path = path;
                     }
                     self.file.clean_revision = Some(self.editor.doc.revision());
+                }
+                FileEvent::Exported { name } => {
+                    self.set_status(format!("Exported {name}"), false, now);
                 }
                 FileEvent::Shown { name } => {
                     self.set_status(format!("Opened {name} in the system viewer"), false, now);

@@ -179,7 +179,7 @@ fn example_opens_and_fits() {
 }
 
 #[derive(Default)]
-struct MemoryStorage(std::collections::HashMap<String, String>);
+pub(crate) struct MemoryStorage(std::collections::HashMap<String, String>);
 
 impl eframe::Storage for MemoryStorage {
     fn get_string(&self, key: &str) -> Option<String> {
@@ -2272,4 +2272,45 @@ fn context_bar_canvas_menu_and_shortcuts() {
     h.run();
     h.run();
     save_png("drift_ui_shortcuts.png", &mut h);
+}
+
+#[test]
+fn exports_never_become_the_documents_file() {
+    use eframe::Storage as _;
+    let Some(mut h) = harness() else { return };
+    h.key_press(Key::C);
+    h.run();
+    click_world(&mut h, DVec2::new(0.0, 0.0));
+    click_world(&mut h, DVec2::new(25.0, 0.0));
+    // A session left by a build that took an exported PDF for the sketch's own file.
+    let mut storage = MemoryStorage::default();
+    eframe::App::save(h.state_mut(), &mut storage);
+    storage.set_string(crate::KEY_NAME, "Plan.pdf".into());
+    storage.set_string(crate::KEY_PATH, "/home/me/Desktop/Plan.pdf".into());
+    let Some(mut fresh) = harness() else { return };
+    fresh.state_mut().restore_session(&storage);
+    // The name is a sketch's again, and Save can't overwrite the PDF.
+    assert_eq!(fresh.state().file.name, "Plan.drift");
+    assert!(fresh.state().file.path.is_none());
+}
+
+#[test]
+fn long_text_and_long_histories_are_bounded() {
+    let Some(mut h) = harness() else { return };
+    let ed = &mut h.state_mut().editor;
+    let id = ed.add_text(drift_core::SketchText::new("", DVec2::ZERO, 5.0));
+    ed.type_text(id, &"x".repeat(50_000), false);
+    assert_eq!(
+        ed.doc.text(id).unwrap().text.chars().count(),
+        crate::texts::MAX_TEXT_CHARS
+    );
+    // Far more edits than the history keeps: the oldest steps are forgotten.
+    for k in 0..drift_core::History::MAX_STEPS + 50 {
+        ed.update_text(id, |t| t.height = 5.0 + k as f64);
+    }
+    let mut undone = 0;
+    while ed.undo() {
+        undone += 1;
+    }
+    assert_eq!(undone, drift_core::History::MAX_STEPS);
 }

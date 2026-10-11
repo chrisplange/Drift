@@ -8,9 +8,13 @@ fn main() -> eframe::Result {
 
     drift_app::start_memory_guard();
 
+    // The window icon (drawn by assets/make_icon.py).
+    let icon =
+        eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon.png")).unwrap_or_default();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Drift")
+            .with_icon(icon)
             .with_inner_size([1280.0, 800.0])
             .with_min_inner_size([480.0, 320.0]),
         ..Default::default()
@@ -24,6 +28,15 @@ fn main() -> eframe::Result {
     eframe::run_native(
         app_id,
         options,
-        Box::new(|cc| Ok(Box::new(drift_app::DriftApp::new(cc)))),
+        Box::new(|cc| {
+            let mut app = drift_app::DriftApp::new(cc);
+            // A sketch named on the command line (double-clicked in the file manager) opens.
+            if let Some(path) = std::env::args_os().nth(1).map(std::path::PathBuf::from)
+                && path.is_file()
+            {
+                app.open_file(path);
+            }
+            Ok(Box::new(app))
+        }),
     )
 }

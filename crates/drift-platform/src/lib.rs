@@ -94,6 +94,33 @@ impl Files {
         });
     }
 
+    /// Open a file by its path (a recent file, or one passed on the command line). Native
+    /// only.
+    pub fn open_path(&self, path: &FilePath) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            self.post(match std::fs::read(path) {
+                Ok(contents) => FileEvent::Opened {
+                    name,
+                    path: Some(path.clone()),
+                    contents,
+                },
+                Err(e) => FileEvent::Failed(format!("could not open {}: {e}", path.display())),
+            });
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = path;
+            self.post(FileEvent::Failed(
+                "opening a path is not supported on the web".into(),
+            ));
+        }
+    }
+
     /// Ask the user where to save, then write `contents` there. On the web this downloads the
     /// file under `suggested_name`.
     pub fn save_as(&self, suggested_name: &str, file_type: FileType, contents: Vec<u8>) {

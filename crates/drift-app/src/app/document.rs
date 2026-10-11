@@ -114,7 +114,15 @@ impl DriftApp {
         if let Some(prefs) = storage.get_string(KEY_VIEW) {
             self.apply_view_prefs(&prefs);
         }
-        let Some(text) = storage.get_string(KEY_DOCUMENT) else {
+        if let Some(recent) = storage.get_string(KEY_RECENT) {
+            self.recent = recent
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .map(FilePath::from)
+                .take(MAX_RECENT)
+                .collect();
+        }
+        let Some(text) = storage.get_string(KEY_DOCUMENT).filter(|t| !t.is_empty()) else {
             return;
         };
         match drift_io::load(&text) {
@@ -141,6 +149,47 @@ impl DriftApp {
         }
     }
 
+    /// Put a sketch at the top of the recent files.
+    pub(crate) fn remember(&mut self, path: FilePath) {
+        if !is_sketch_file(&path) {
+            return;
+        }
+        self.recent.retain(|p| *p != path);
+        self.recent.insert(0, path);
+        self.recent.truncate(MAX_RECENT);
+    }
+
+    /// Open a sketch by its path (the command line, or a file dropped on the window).
+    pub fn open_file(&mut self, path: FilePath) {
+        if is_sketch_file(&path) {
+            self.remember(path);
+            self.request(Pending::Recent(0));
+        } else {
+            // A PDF or DXF is brought into the open sketch, which stays.
+            self.files.open_path(&path);
+        }
+    }
+
+    /// The window was asked to close: with unsaved changes, hold it and ask first.
+    pub(crate) fn handle_close(&mut self, ctx: &egui::Context) {
+        if cfg!(target_arch = "wasm32") {
+            return;
+        }
+        let asked = ctx.input(|i| i.viewport().close_requested());
+        if asked && !self.quit_confirmed {
+            if self.is_dirty() {
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                self.pending = Some(Pending::Quit);
+            } else {
+                self.quit_confirmed = true;
+            }
+        }
+        if self.quit_confirmed && !asked && !self.quit_sent {
+            self.quit_sent = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+    }
+
     /// Run `action` now, or ask first if it would discard unsaved changes.
     pub(crate) fn request(&mut self, action: Pending) {
         if self.is_dirty() {
@@ -153,6 +202,7 @@ impl DriftApp {
     pub(crate) fn perform(&mut self, action: Pending) {
         match action {
             Pending::New => {
+                self.show_start = !cfg!(test);
                 self.replace_document(
                     Document::new(),
                     UNTITLED.into(),
@@ -162,6 +212,12 @@ impl DriftApp {
                 );
             }
             Pending::Open => self.files.open(DRIFT_FILE),
+            Pending::Recent(i) => {
+                if let Some(path) = self.recent.get(i).cloned() {
+                    self.files.open_path(&path);
+                }
+            }
+            Pending::Quit => self.quit_confirmed = true,
             Pending::Example => {
                 self.replace_document(
                     demo::mounting_plate(),
@@ -230,6 +286,9 @@ impl DriftApp {
                     match drift_io::load(&text) {
                         Ok((doc, meta)) => {
                             self.set_status(format!("Opened {name}"), false, now);
+                            if let Some(p) = &path {
+                                self.remember(p.clone());
+                            }
                             self.replace_document(doc, name, path, meta, true);
                         }
                         Err(e) => self.set_status(format!("Could not open {name}: {e}"), true, now),
@@ -238,10 +297,19 @@ impl DriftApp {
                 FileEvent::Saved { name, path } => {
                     self.set_status(format!("Saved {name}"), false, now);
                     self.file.name = name;
+                    if let Some(p) = &path {
+                        self.remember(p.clone());
+                    }
                     if path.is_some() {
                         self.file.path = path;
                     }
                     self.file.clean_revision = Some(self.editor.doc.revision());
+                    // Saved from the unsaved-changes prompt: carry on with what was asked.
+                    if let Some((action, revision)) = self.after_save.take()
+                        && revision == self.editor.doc.revision()
+                    {
+                        self.perform(action);
+                    }
                 }
                 FileEvent::Exported { name } => {
                     self.set_status(format!("Exported {name}"), false, now);
@@ -249,7 +317,11 @@ impl DriftApp {
                 FileEvent::Shown { name } => {
                     self.set_status(format!("Opened {name} in the system viewer"), false, now);
                 }
-                FileEvent::Failed(message) => self.set_status(message, true, now),
+                FileEvent::Failed(message) => {
+                    // A recent file that has gone is dropped from the list.
+                    self.recent.retain(|p| p.exists());
+                    self.set_status(message, true, now);
+                }
             }
         }
     }

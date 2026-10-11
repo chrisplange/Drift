@@ -3,7 +3,7 @@
 use crate::*;
 
 /// Keys as keycaps ("Ctrl+Z / Ctrl+Y"); descriptions ("Click inside a closed area") as text.
-fn keycaps(ui: &mut egui::Ui, keys: &str) {
+pub(crate) fn keycaps(ui: &mut egui::Ui, keys: &str) {
     ui.spacing_mut().item_spacing.x = 4.0;
     for (i, piece) in keys.split(" / ").enumerate() {
         if i > 0 {
@@ -47,6 +47,9 @@ fn keycaps(ui: &mut egui::Ui, keys: &str) {
 impl DriftApp {
     pub(crate) fn dialogs(&mut self, ctx: &egui::Context) {
         self.underlay_dialog(ctx);
+        self.start_panel(ctx);
+        self.about_window(ctx);
+        self.settings_window(ctx);
         if let Some((constraint, placement)) = self.editor.pending_driven {
             let mut choice = None;
             let modal = egui::Modal::new(egui::Id::new("driven")).show(ctx, |ui| {
@@ -80,32 +83,56 @@ impl DriftApp {
         }
 
         if let Some(action) = self.pending {
+            #[derive(PartialEq)]
+            enum Choice {
+                Save,
+                Discard,
+                Cancel,
+            }
             let mut choice = None;
             let modal = egui::Modal::new(egui::Id::new("discard")).show(ctx, |ui| {
-                ui.set_width(320.0);
-                ui.heading("Discard unsaved changes?");
+                ui.set_width(360.0);
+                ui.heading(format!("Save changes to {}?", self.file.name));
                 ui.add_space(6.0);
-                ui.label(format!(
-                    "{} has changes that haven't been saved.",
-                    self.file.name
-                ));
-                ui.add_space(10.0);
+                ui.label(if action == Pending::Quit {
+                    "Your changes will be lost if you close without saving."
+                } else {
+                    "Your changes will be lost if you don't save them."
+                });
+                ui.add_space(12.0);
                 ui.horizontal(|ui| {
-                    if ui.button("Discard changes").clicked() {
-                        choice = Some(true);
+                    let accent = theme::accent(ui.visuals().dark_mode);
+                    let save =
+                        egui::Button::new(egui::RichText::new("Save").color(egui::Color32::WHITE))
+                            .fill(accent);
+                    if ui.add(save).clicked() {
+                        choice = Some(Choice::Save);
+                    }
+                    if ui.button("Don't save").clicked() {
+                        choice = Some(Choice::Discard);
                     }
                     if ui.button("Cancel").clicked() {
-                        choice = Some(false);
+                        choice = Some(Choice::Cancel);
                     }
                 });
             });
             if modal.should_close() && choice.is_none() {
-                choice = Some(false);
+                choice = Some(Choice::Cancel);
             }
-            if let Some(discard) = choice {
+            if let Some(choice) = choice {
                 self.pending = None;
-                if discard {
-                    self.perform(action);
+                match choice {
+                    Choice::Save => {
+                        // Carry on once the file is written (a cancelled save dialog
+                        // leaves things as they are).
+                        self.after_save = Some((action, self.editor.doc.revision()));
+                        self.save();
+                    }
+                    Choice::Discard => {
+                        self.discard_session = action == Pending::Quit;
+                        self.perform(action);
+                    }
+                    Choice::Cancel => {}
                 }
             }
         }

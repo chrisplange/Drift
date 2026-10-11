@@ -7,6 +7,7 @@ mod annotations;
 mod app;
 pub mod blocks;
 mod canvas;
+pub mod clipboard;
 pub mod curves;
 mod dock;
 pub mod editor;
@@ -77,6 +78,10 @@ const KEY_PATH: &str = "drift.path";
 const KEY_DIRTY: &str = "drift.dirty";
 /// View preferences (grid, axes, snapping, thin lines, colours, annotations).
 const KEY_VIEW: &str = "drift.view";
+/// Recently opened or saved sketches, one path per line, newest first.
+const KEY_RECENT: &str = "drift.recent";
+/// How many recent files are remembered.
+const MAX_RECENT: usize = 10;
 
 /// The open file and whether it has unsaved changes.
 struct FileState {
@@ -93,6 +98,10 @@ enum Pending {
     New,
     Open,
     Example,
+    /// Open the nth recent file.
+    Recent(usize),
+    /// Close the window.
+    Quit,
 }
 
 /// A dimension value being edited in place on the canvas.
@@ -184,6 +193,22 @@ pub struct DriftApp {
     /// Where the side panels are (docked, floating or hidden).
     layout: dock::Layout,
     dock_view: app::dock_ui::DockView,
+    /// Recently opened or saved sketches, newest first.
+    recent: Vec<FilePath>,
+    /// What to do once the save in progress has finished (Save in the unsaved-changes
+    /// prompt), and the document revision it was asked at.
+    after_save: Option<(Pending, u64)>,
+    /// Closing was confirmed (or nothing was unsaved): let the window close.
+    quit_confirmed: bool,
+    quit_sent: bool,
+    /// "Don't save" on quitting: the session isn't kept for the next start.
+    discard_session: bool,
+    /// The start panel over an empty sketch.
+    show_start: bool,
+    show_about: bool,
+    show_settings: bool,
+    /// What was last copied or cut here (for Edit → Paste).
+    clipboard: Option<String>,
     /// The command palette, while open.
     palette: Option<app::palette::Palette>,
     recent_commands: Vec<app::palette::Command>,
@@ -246,6 +271,8 @@ pub struct DriftApp {
     show_combs: bool,
     /// The text being typed into (its edits merge into one undo step).
     text_typing: Option<drift_core::TextId>,
+    /// The text whose in-place field has been given the keyboard.
+    text_focused: Option<drift_core::TextId>,
     /// Show every end point, or only those of hovered or picked curves (as in Illustrator).
     always_endpoints: bool,
     /// The next opened file becomes an underlay (File → Import underlay).
@@ -300,6 +327,16 @@ impl DriftApp {
             shortcut_filter: String::new(),
             layout: Default::default(),
             dock_view: Default::default(),
+            recent: Vec::new(),
+            after_save: None,
+            quit_confirmed: false,
+            quit_sent: false,
+            discard_session: false,
+            // Tests drive the bare canvas.
+            show_start: !cfg!(test),
+            show_about: false,
+            show_settings: false,
+            clipboard: None,
             palette: None,
             recent_commands: Vec::new(),
             backend,
@@ -338,6 +375,7 @@ impl DriftApp {
             new_block_name: String::new(),
             show_combs: true,
             text_typing: None,
+            text_focused: None,
             always_endpoints: false,
             import_as_underlay: false,
             pending_pdf: None,
@@ -449,6 +487,10 @@ const SHORTCUTS: &[(&str, &[(&str, &str)])] = &[
             ("U", "Slot; press again for centre and arc slots"),
             ("P", "Point"),
             ("I", "Place block: R turns, X mirrors"),
+            (
+                "Shift+T",
+                "Text: click where it starts and type; Enter finishes",
+            ),
             ("X / Y (while drawing)", "Lock to the X or Y axis"),
             (
                 "0-9 . - (  (while drawing)",
@@ -525,6 +567,16 @@ const SHORTCUTS: &[(&str, &[(&str, &str)])] = &[
                 "Rotate: type an angle, B picks the pivot",
             ),
             ("Shift+D", "Duplicate in place and move the copy"),
+            (
+                "Ctrl+C / Ctrl+X / Ctrl+V",
+                "Copy, cut and paste (under the pointer); works between windows",
+            ),
+            ("Ctrl+Shift+V", "Paste in place"),
+            (
+                "Arrow keys",
+                "Nudge the selection one grid step; ten with Shift",
+            ),
+            ("Double-click text", "Type into it in place"),
             ("X", "Toggle construction"),
             (
                 "Ctrl+G / Ctrl+Shift+G",
@@ -545,6 +597,7 @@ const SHORTCUTS: &[(&str, &[(&str, &str)])] = &[
         "View",
         &[
             ("Shift+F / double middle-click", "Zoom to fit"),
+            ("Shift+Z", "Zoom to the selection"),
             ("Middle / right drag", "Pan"),
             ("Scroll / pinch", "Zoom at the cursor"),
             ("Alt+D / Alt+R", "Show or hide dimensions / relations"),
@@ -573,13 +626,16 @@ const SHORTCUTS: &[(&str, &[(&str, &str)])] = &[
             ("Ctrl+Z / Ctrl+Y", "Undo / redo"),
             ("Ctrl+S / Ctrl+Shift+S", "Save / save as"),
             ("Ctrl+N / Ctrl+O", "New / open"),
+            ("Ctrl+,", "Preferences"),
             ("Ctrl+P", "Print (the sheets as a PDF)"),
             ("?", "This list"),
         ],
     ),
 ];
 
-fn property_rows(ui: &mut egui::Ui, shape: &Shape, units: Units) {
+/// Read-only facts about a shape. With `sizes_shown`, the sizes the inspector offers as
+/// fields (length, radius, diameter, a point's coordinates) are left out.
+fn property_rows(ui: &mut egui::Ui, shape: &Shape, units: Units, sizes_shown: bool) {
     let row = |ui: &mut egui::Ui, name: &str, value: String| {
         theme::row(ui, name, |ui| {
             ui.monospace(value);
@@ -596,20 +652,26 @@ fn property_rows(ui: &mut egui::Ui, shape: &Shape, units: Units) {
     let deg = |a: f64| format!("{:.4}°", a.to_degrees());
     match *shape {
         Shape::Point(p) => {
-            row(ui, "X", len(p.x));
-            row(ui, "Y", len(p.y));
+            if !sizes_shown {
+                row(ui, "X", len(p.x));
+                row(ui, "Y", len(p.y));
+            }
         }
         Shape::Line { a, b } => {
             let d = b - a;
+            if !sizes_shown {
+                row(ui, "Length", len(d.length()));
+            }
             row(ui, "Start", pt(a));
             row(ui, "End", pt(b));
-            row(ui, "Length", len(d.length()));
             row(ui, "Angle", deg(d.y.atan2(d.x)));
         }
         Shape::Circle { center, radius } => {
+            if !sizes_shown {
+                row(ui, "Radius", len(radius));
+                row(ui, "Diameter", len(2.0 * radius));
+            }
             row(ui, "Center", pt(center));
-            row(ui, "Radius", len(radius));
-            row(ui, "Diameter", len(2.0 * radius));
         }
         Shape::Arc {
             center,
@@ -617,8 +679,10 @@ fn property_rows(ui: &mut egui::Ui, shape: &Shape, units: Units) {
             start,
             sweep,
         } => {
+            if !sizes_shown {
+                row(ui, "Radius", len(radius));
+            }
             row(ui, "Center", pt(center));
-            row(ui, "Radius", len(radius));
             row(ui, "Start angle", deg(start.rem_euclid(TAU)));
             row(ui, "End angle", deg((start + sweep).rem_euclid(TAU)));
             row(ui, "Sweep", deg(sweep));
@@ -664,6 +728,14 @@ impl eframe::App for DriftApp {
             self.set_status(notice, true, now);
         }
         self.check_memory(now);
+        self.handle_close(&ctx);
+        // A sketch dropped on the window opens.
+        let dropped = ctx.input(|i| i.raw.dropped_files.first().map(|f| f.path().to_owned()));
+        if let Some(path) = dropped
+            && cfg!(not(target_arch = "wasm32"))
+        {
+            self.open_file(path);
+        }
         self.editor.auto_relations = self.auto_relations;
         self.editor.always_endpoints = self.always_endpoints;
         // Text placed but left empty goes once it's no longer picked.
@@ -724,6 +796,18 @@ impl eframe::App for DriftApp {
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        storage.set_string(KEY_VIEW, self.view_prefs());
+        let recent: Vec<String> = self
+            .recent
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
+        storage.set_string(KEY_RECENT, recent.join("\n"));
+        if self.discard_session {
+            // "Don't save" on quitting: start fresh next time.
+            storage.set_string(KEY_DOCUMENT, String::new());
+            return;
+        }
         let mut meta = self.file.meta.clone();
         meta.generator = Some(format!("Drift {}", env!("CARGO_PKG_VERSION")));
         storage.set_string(KEY_DOCUMENT, drift_io::save(&self.editor.doc, &meta));
@@ -736,7 +820,6 @@ impl eframe::App for DriftApp {
             .unwrap_or_default();
         storage.set_string(KEY_PATH, path);
         storage.set_string(KEY_DIRTY, if self.is_dirty() { "1" } else { "0" }.into());
-        storage.set_string(KEY_VIEW, self.view_prefs());
     }
 
     fn auto_save_interval(&self) -> std::time::Duration {

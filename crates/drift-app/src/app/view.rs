@@ -550,6 +550,7 @@ impl DriftApp {
         // The notes as laid out now (a tool may have just placed one).
         let notes = self.layout_notes(&annotation_painter, &map);
         self.note_editor(&ctx, &notes);
+        self.text_editor(&ctx, &map);
         if let (Some(p), Some(pos)) = (self.pointer, pos) {
             let mut label = Vec::new();
             if let Some(snap) = p.snap {

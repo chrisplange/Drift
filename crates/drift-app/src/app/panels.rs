@@ -58,6 +58,123 @@ fn kind_icon(kind: &drift_core::EntityKind) -> ToolKind {
     }
 }
 
+/// A size typed into the inspector.
+enum SizeEdit {
+    /// Set (or add) this dimension to the typed value.
+    Dimension(Constraint, String),
+    /// Move a point: its id, the axis (0 = X, 1 = Y) and the typed coordinate.
+    Point(drift_core::EntityId, usize, String),
+}
+
+/// A value field in the inspector: shows `shown`, and returns what was typed when Return is
+/// pressed on something different. The text being typed lives in egui's memory.
+fn value_field(ui: &mut egui::Ui, key: egui::Id, shown: &str, tip: &str) -> Option<String> {
+    let mut text = ui
+        .data(|d| d.get_temp::<String>(key))
+        .unwrap_or_else(|| shown.to_owned());
+    let response = ui
+        .add(
+            egui::TextEdit::singleline(&mut text)
+                .id(key.with("field"))
+                .font(egui::TextStyle::Monospace)
+                .desired_width(118.0),
+        )
+        .on_hover_text(tip);
+    if response.has_focus() {
+        ui.data_mut(|d| d.insert_temp(key, text.clone()));
+    }
+    if response.lost_focus() {
+        ui.data_mut(|d| d.remove::<String>(key));
+        if ui.input(|i| i.key_pressed(egui::Key::Enter)) && text.trim() != shown {
+            return Some(text.trim().to_owned());
+        }
+    }
+    None
+}
+
+/// The sizes of a picked entity that can be typed: a line's length, a circle's or arc's
+/// radius (and diameter), a point's coordinates. Typing one sets the dimension that drives
+/// it, or adds that dimension.
+fn size_rows(ui: &mut egui::Ui, ed: &Editor, id: drift_core::EntityId) -> Option<SizeEdit> {
+    use drift_core::EntityKind as K;
+    let entity = ed.doc.get(id)?;
+    let units = ed.doc.units();
+    let mut out = None;
+    let mut dimension = |ui: &mut egui::Ui, label: &str, wanted: Constraint, measured: f64| {
+        let existing = ed.size_dimension(&wanted);
+        let driven = existing.is_some_and(|c| ed.doc.is_driven(c));
+        // A linked dimension shows its expression; otherwise the value as it would be typed.
+        let same_kind = existing
+            .and_then(|c| ed.doc.constraint(c))
+            .is_some_and(|c| std::mem::discriminant(c) == std::mem::discriminant(&wanted));
+        let shown = existing
+            .filter(|_| same_kind)
+            .and_then(|c| ed.dimension_edit_text(c))
+            .unwrap_or_else(|| units.format_length(measured));
+        theme::row(ui, label, |ui| {
+            if driven {
+                ui.monospace(format!("({shown})"))
+                    .on_hover_text("A reference dimension: it follows the geometry");
+                return;
+            }
+            let tip = if existing.is_some() {
+                "Dimensioned: type a new value (units and variables work, e.g. 2in or =width/2)"
+            } else {
+                "Type a value to dimension it (units and variables work, e.g. 2in or =width/2)"
+            };
+            let key = egui::Id::new(("size", id.0, label));
+            if let Some(text) = value_field(ui, key, &shown, tip) {
+                out = Some(SizeEdit::Dimension(wanted, text));
+            }
+            if existing.is_some() {
+                ui.label(egui::RichText::new("dim").small().weak())
+                    .on_hover_text("Set by a dimension");
+            }
+        });
+    };
+    match entity.kind {
+        K::Line { a, b } => {
+            let length = ed.doc.point(a).ok()?.distance(ed.doc.point(b).ok()?);
+            let wanted = Constraint::Distance {
+                a,
+                b,
+                value: length,
+            };
+            dimension(ui, "Length", wanted, length);
+        }
+        K::Circle { .. } | K::Arc { .. } => {
+            let radius = drift_solver::radius_of(&ed.doc, id)?;
+            let wanted = Constraint::Radius {
+                curve: id,
+                value: radius,
+            };
+            dimension(ui, "Radius", wanted, radius);
+            if matches!(entity.kind, K::Circle { .. }) {
+                let wanted = Constraint::Diameter {
+                    curve: id,
+                    value: 2.0 * radius,
+                };
+                dimension(ui, "Diameter", wanted, 2.0 * radius);
+            }
+        }
+        K::Point(p) => {
+            for (axis, label, v) in [(0, "X", p.x), (1, "Y", p.y)] {
+                theme::row(ui, label, |ui| {
+                    let key = egui::Id::new(("coordinate", id.0, axis));
+                    let shown = units.format_length(v);
+                    if let Some(text) =
+                        value_field(ui, key, &shown, "Type a coordinate to move the point")
+                    {
+                        out = Some(SizeEdit::Point(id, axis, text));
+                    }
+                });
+            }
+        }
+        _ => {}
+    }
+    out
+}
+
 /// A figure for the empty inspector: a number over a caption.
 fn stat(ui: &mut egui::Ui, value: usize, caption: &str, width: f32) {
     let (r, _) = ui.allocate_exact_size(egui::vec2(width, 52.0), egui::Sense::hover());
@@ -105,6 +222,35 @@ impl DriftApp {
                 {
                     self.request(Pending::Open);
                 }
+                ui.menu_button("Open recent", |ui| {
+                    if self.recent.is_empty() {
+                        ui.label(egui::RichText::new("No recent sketches").weak());
+                    }
+                    let mut chosen = None;
+                    for (i, path) in self.recent.iter().enumerate() {
+                        let name = path
+                            .file_name()
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_default();
+                        if ui
+                            .button(name)
+                            .on_hover_text(path.to_string_lossy())
+                            .clicked()
+                        {
+                            chosen = Some(i);
+                        }
+                    }
+                    if !self.recent.is_empty() {
+                        ui.separator();
+                        if ui.button("Clear the list").clicked() {
+                            self.recent.clear();
+                        }
+                    }
+                    if let Some(i) = chosen {
+                        self.request(Pending::Recent(i));
+                        ui.close();
+                    }
+                });
                 if ui.button("Open example").clicked() {
                     self.request(Pending::Example);
                 }
@@ -193,6 +339,50 @@ impl DriftApp {
                     .clicked()
                 {
                     self.redo();
+                }
+                ui.separator();
+                let ctx = ui.ctx().clone();
+                let now = ui.input(|i| i.time);
+                let can_copy = !self.editor.selection.is_empty()
+                    || !self.editor.selected_instances.is_empty()
+                    || self.editor.selected_text.is_some();
+                if ui
+                    .add_enabled(
+                        can_copy,
+                        egui::Button::new("Cut").shortcut_text(shortcut("X", false)),
+                    )
+                    .clicked()
+                {
+                    self.cut(&ctx);
+                }
+                if ui
+                    .add_enabled(
+                        can_copy,
+                        egui::Button::new("Copy").shortcut_text(shortcut("C", false)),
+                    )
+                    .clicked()
+                {
+                    self.copy(&ctx);
+                }
+                if ui
+                    .add_enabled(
+                        self.clipboard.is_some(),
+                        egui::Button::new("Paste").shortcut_text(shortcut("V", false)),
+                    )
+                    .on_hover_text("Under the pointer, or in the middle of the view")
+                    .clicked()
+                {
+                    self.paste_copied(false, now);
+                }
+                if ui
+                    .add_enabled(
+                        self.clipboard.is_some(),
+                        egui::Button::new("Paste in place").shortcut_text(shortcut("V", true)),
+                    )
+                    .on_hover_text("Where it was copied from")
+                    .clicked()
+                {
+                    self.paste_copied(true, now);
                 }
                 ui.separator();
                 let has_selection = !self.editor.selection.is_empty();
@@ -286,6 +476,13 @@ impl DriftApp {
                     self.set_tool(ToolKind::Select);
                     self.editor.select_all();
                 }
+                ui.separator();
+                if ui
+                    .add(egui::Button::new("Preferences…").shortcut_text(shortcut(",", false)))
+                    .clicked()
+                {
+                    self.show_settings = true;
+                }
             });
             ui.menu_button("View", |ui| {
                 if ui
@@ -356,6 +553,9 @@ impl DriftApp {
                     self.benchmark = Some(run_benchmark());
                 }
                 ui.separator();
+                if ui.button("About Drift").clicked() {
+                    self.show_about = true;
+                }
                 let memory = match self.memory.0 {
                     0 => String::new(),
                     bytes => format!(" · {} MB", bytes / (1024 * 1024)),
@@ -401,7 +601,7 @@ impl DriftApp {
                             icons::tool(p, r, kind, c)
                         };
                         let response = if wide {
-                            let key = kind.shortcut().map(|c| c.to_string());
+                            let key = kind.shortcut_label();
                             icons::tool_row(ui, selected, kind.label(), key.as_deref(), draw)
                         } else {
                             icons::button(ui, 38.0, selected, kind.label(), draw)
@@ -409,7 +609,7 @@ impl DriftApp {
                         let response = response.on_hover_ui(|ui| {
                             ui.horizontal(|ui| {
                                 ui.label(egui::RichText::new(kind.label()).family(theme::bold()));
-                                if let Some(c) = kind.shortcut() {
+                                if let Some(c) = kind.shortcut_label() {
                                     ui.label(egui::RichText::new(c.to_string()).monospace().weak());
                                 }
                             });
@@ -422,6 +622,81 @@ impl DriftApp {
                 }
                 ui.add_space(6.0);
             });
+    }
+
+    /// Zoom so that 100% is life size on a 96 dpi screen, about the middle of the canvas.
+    pub(crate) fn zoom_to_percent(&mut self, percent: f64) {
+        let target = percent / 100.0 * 96.0 / 25.4;
+        self.fit_target = None;
+        // The view's origin is the canvas centre.
+        self.camera.zoom_at(DVec2::ZERO, target / self.camera.scale);
+    }
+
+    /// Fit the view to what is selected. False with nothing selected.
+    pub(crate) fn zoom_to_selection(&mut self) -> bool {
+        let ed = &self.editor;
+        let mut bounds: Bounds = ed
+            .selection
+            .iter()
+            .filter_map(|id| ed.doc.shape(*id))
+            .map(|s| s.bounds())
+            .collect();
+        for id in &ed.selected_instances {
+            if let Some(i) = ed.doc.instance(*id) {
+                bounds.include(i.at);
+            }
+        }
+        if let Some(o) = ed.selected_text.and_then(|t| ed.text_outline(t)) {
+            bounds.include(o.bounds.min);
+            bounds.include(o.bounds.max);
+        }
+        if bounds.is_empty() {
+            return false;
+        }
+        // A single point has no size to fit: show some room around it.
+        if bounds.min == bounds.max {
+            let pad = DVec2::splat(grid_info(&self.camera, self.imperial()).major);
+            bounds.min -= pad;
+            bounds.max += pad;
+        }
+        self.fit_target = Some(bounds);
+        true
+    }
+
+    /// The status bar's zoom menu.
+    fn zoom_menu(&mut self, ui: &mut egui::Ui) {
+        if ui
+            .add(egui::Button::new("Zoom to fit").shortcut_text("Shift+F"))
+            .clicked()
+        {
+            self.fit_target = Some(self.fit_bounds());
+            ui.close();
+        }
+        let picked = !self.editor.selection.is_empty()
+            || !self.editor.selected_instances.is_empty()
+            || self.editor.selected_text.is_some();
+        if ui
+            .add_enabled(
+                picked,
+                egui::Button::new("Zoom to selection").shortcut_text("Shift+Z"),
+            )
+            .clicked()
+        {
+            self.zoom_to_selection();
+            ui.close();
+        }
+        ui.separator();
+        for percent in [25.0, 50.0, 100.0, 200.0, 400.0] {
+            let label = if percent == 100.0 {
+                "100% (life size)".to_owned()
+            } else {
+                format!("{percent:.0}%")
+            };
+            if ui.button(label).clicked() {
+                self.zoom_to_percent(percent);
+                ui.close();
+            }
+        }
     }
 
     /// View → Panels: show or hide each panel; hide them all; reset the layout.
@@ -524,6 +799,7 @@ impl DriftApp {
                 });
             }
         }
+        let mut size_edit = None;
         match selection.as_slice() {
             [] if !ed.selected_midpoints.is_empty() => {}
             [] if ed.selected_region.is_some() => {}
@@ -576,7 +852,8 @@ impl DriftApp {
                     &format!("{id} · {layer}"),
                 );
                 theme::section(ui, "Geometry");
-                property_rows(ui, shape, ed.doc.units());
+                size_edit = size_rows(ui, ed, *id);
+                property_rows(ui, shape, ed.doc.units(), true);
             }
             many => {
                 let mut counts = std::collections::BTreeMap::new();
@@ -622,8 +899,33 @@ impl DriftApp {
             self.appearance_panel(ui);
         }
 
-        self.constraint_buttons(ui);
         let now = ui.input(|i| i.time);
+        match size_edit {
+            Some(SizeEdit::Dimension(wanted, text)) => {
+                if let Err(e) = self.editor.set_size(wanted, &text) {
+                    self.set_status(format!("Can't use {text}: {e}"), true, now);
+                }
+            }
+            Some(SizeEdit::Point(id, axis, text)) => {
+                match self.editor.evaluate_text(&text, Kind::Length) {
+                    Ok(v) => {
+                        if let Ok(mut to) = self.editor.doc.point(id) {
+                            to[axis] = v.value;
+                            if !self.editor.move_point_to(id, to) {
+                                self.set_status(
+                                    "That point is held by its relations".into(),
+                                    true,
+                                    now,
+                                );
+                            }
+                        }
+                    }
+                    Err(e) => self.set_status(format!("Can't use {text}: {e}"), true, now),
+                }
+            }
+            None => {}
+        }
+        self.constraint_buttons(ui);
         self.pattern_panel(ui, now);
         self.constraint_list(ui);
 
@@ -934,12 +1236,17 @@ impl DriftApp {
                 ui.spacing_mut().item_spacing.x = 6.0;
                 // Zoom as a percentage of real size on a 96 dpi screen.
                 let zoom = self.camera.scale * 25.4 / 96.0 * 100.0;
-                ui.label(
-                    egui::RichText::new(format!("{zoom:.0}%"))
-                        .monospace()
-                        .color(ui.visuals().weak_text_color()),
-                )
-                .on_hover_text(format!("{:.4} px/mm", self.camera.scale));
+                let button = ui
+                    .add(
+                        egui::Button::new(
+                            egui::RichText::new(format!("{zoom:.0}%"))
+                                .monospace()
+                                .color(ui.visuals().weak_text_color()),
+                        )
+                        .frame_when_inactive(false),
+                    )
+                    .on_hover_text("Zoom: click for fit, selection and fixed sizes");
+                egui::Popup::menu(&button).show(|ui| self.zoom_menu(ui));
                 if !self.editor.doc.is_empty() {
                     let analysis = self.editor.analysis();
                     let dark = ui.visuals().dark_mode;

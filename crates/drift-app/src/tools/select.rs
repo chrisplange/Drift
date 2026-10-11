@@ -610,6 +610,17 @@ impl Tool for SelectTool {
             }
             // Double-click a group's member to edit inside the group.
             Input::DoubleClick(p) => {
+                // Sketch text: type into it where it stands.
+                if ed
+                    .index
+                    .pick(p.raw, p.tolerance, |id| !ed.is_locked(id))
+                    .is_none()
+                    && let Some(t) = ed.text_at(p.raw, p.tolerance)
+                {
+                    ed.selected_text = Some(t);
+                    ed.editing_text = Some(t);
+                    return;
+                }
                 if ed
                     .index
                     .pick(p.raw, p.tolerance, |id| !ed.is_locked(id))

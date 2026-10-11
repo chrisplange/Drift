@@ -27,6 +27,10 @@ pub(crate) enum Command {
     Undo,
     Redo,
     SelectAll,
+    Cut,
+    Copy,
+    Paste,
+    PasteInPlace,
     Delete,
     Duplicate,
     Group,
@@ -35,8 +39,12 @@ pub(crate) enum Command {
     Explode,
     Construction,
     ZoomToFit,
+    ZoomToSelection,
+    ZoomLifeSize,
     SheetPreview,
     Shortcuts,
+    Preferences,
+    About,
     Theme(egui::ThemePreference),
 }
 
@@ -217,6 +225,15 @@ impl DriftApp {
         add(Command::Undo, "Undo", "Edit", ctrl("Z"));
         add(Command::Redo, "Redo", "Edit", ctrl_shift("Z"));
         add(Command::SelectAll, "Select all", "Edit", ctrl("A"));
+        add(Command::Cut, "Cut", "Edit", ctrl("X"));
+        add(Command::Copy, "Copy", "Edit", ctrl("C"));
+        add(Command::Paste, "Paste", "Edit", ctrl("V"));
+        add(
+            Command::PasteInPlace,
+            "Paste in place",
+            "Edit",
+            ctrl_shift("V"),
+        );
         add(Command::Delete, "Delete selection", "Edit", "Del".into());
         add(Command::Duplicate, "Duplicate", "Edit", "Shift+D".into());
         add(Command::Group, "Group", "Edit", ctrl("G"));
@@ -236,6 +253,18 @@ impl DriftApp {
         );
         add(Command::ZoomToFit, "Zoom to fit", "View", "Shift+F".into());
         add(
+            Command::ZoomToSelection,
+            "Zoom to selection",
+            "View",
+            "Shift+Z".into(),
+        );
+        add(
+            Command::ZoomLifeSize,
+            "Zoom to 100% (life size)",
+            "View",
+            String::new(),
+        );
+        add(
             Command::SheetPreview,
             "Sheet preview",
             "View",
@@ -253,12 +282,9 @@ impl DriftApp {
             "Panels",
             String::new(),
         );
-        add(
-            Command::Shortcuts,
-            "Keyboard shortcuts",
-            "Help",
-            String::new(),
-        );
+        add(Command::Shortcuts, "Keyboard shortcuts", "Help", "?".into());
+        add(Command::Preferences, "Preferences…", "Edit", ctrl(","));
+        add(Command::About, "About Drift", "Help", String::new());
         for (pref, label) in [
             (egui::ThemePreference::Dark, "Dark appearance"),
             (egui::ThemePreference::Light, "Light appearance"),
@@ -305,7 +331,7 @@ impl DriftApp {
                     command: Command::Tool(kind),
                     title: kind.label().to_owned(),
                     group: "Tool",
-                    keys: kind.shortcut().map(String::from).unwrap_or_default(),
+                    keys: kind.shortcut_label().unwrap_or_default(),
                     words: kind.description(),
                     on: None,
                 },
@@ -373,6 +399,10 @@ impl DriftApp {
                 self.set_tool(ToolKind::Select);
                 self.editor.select_all();
             }
+            Command::Cut => self.cut(ctx),
+            Command::Copy => self.copy(ctx),
+            Command::Paste => self.paste_copied(false, now),
+            Command::PasteInPlace => self.paste_copied(true, now),
             Command::Delete => self.editor.delete_selection(),
             Command::Duplicate => {
                 self.set_tool(ToolKind::Select);
@@ -395,6 +425,10 @@ impl DriftApp {
             Command::Explode => self.editor.explode_selected(),
             Command::Construction => self.editor.toggle_construction(),
             Command::ZoomToFit => self.fit_target = Some(self.fit_bounds()),
+            Command::ZoomToSelection => {
+                self.zoom_to_selection();
+            }
+            Command::ZoomLifeSize => self.zoom_to_percent(100.0),
             Command::SheetPreview => {
                 if self.current_sheet().is_none() {
                     self.add_sheet();
@@ -403,6 +437,8 @@ impl DriftApp {
                 self.preview.zoom = 0.0;
             }
             Command::Shortcuts => self.show_shortcuts = true,
+            Command::Preferences => self.show_settings = true,
+            Command::About => self.show_about = true,
             Command::Theme(pref) => ctx.set_theme(pref),
         }
     }

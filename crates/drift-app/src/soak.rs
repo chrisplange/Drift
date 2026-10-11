@@ -129,6 +129,9 @@ impl DriftApp {
             soak.line(&format!(
                 "done: first {first} MB, peak {peak} MB, last {last} MB"
             ));
+            // Close without asking about the scribbles.
+            self.quit_confirmed = true;
+            self.discard_session = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             return;
         }

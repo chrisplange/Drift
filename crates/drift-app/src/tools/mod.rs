@@ -344,6 +344,14 @@ impl ToolKind {
         }
     }
 
+    /// The shortcut as shown to the user: the key, or "Shift+T" for the text tool.
+    pub fn shortcut_label(self) -> Option<String> {
+        match self {
+            ToolKind::Text => Some("Shift+T".to_owned()),
+            _ => self.shortcut().map(String::from),
+        }
+    }
+
     pub fn shortcut(self) -> Option<char> {
         Some(match self {
             ToolKind::Select => 'S',

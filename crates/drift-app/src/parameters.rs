@@ -100,7 +100,7 @@ impl DriftApp {
         }
     }
 
-    fn units_section(&mut self, ui: &mut egui::Ui) {
+    pub(crate) fn units_section(&mut self, ui: &mut egui::Ui) {
         crate::theme::section(ui, "Units");
         let mut units = self.editor.doc.units();
         let before = units;

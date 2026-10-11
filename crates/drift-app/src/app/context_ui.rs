@@ -374,6 +374,12 @@ impl DriftApp {
         };
         let n = self.editor.selection.len() + self.editor.selected_instances.len();
         if n == 0 {
+            if self.clipboard.is_some()
+                && item(ui, "Paste here", &app::panels::shortcut("V", false))
+            {
+                ui.close();
+                self.paste_copied(false, now);
+            }
             if item(ui, "Select all", &app::panels::shortcut("A", false)) {
                 self.editor.select_all();
                 ui.close();
@@ -399,6 +405,21 @@ impl DriftApp {
             return;
         }
         ui.label(egui::RichText::new(format!("{n} selected")).small().weak());
+        let ctx = ui.ctx().clone();
+        if item(ui, "Cut", &app::panels::shortcut("X", false)) {
+            ui.close();
+            self.cut(&ctx);
+            return;
+        }
+        if item(ui, "Copy", &app::panels::shortcut("C", false)) {
+            ui.close();
+            self.copy(&ctx);
+        }
+        if self.clipboard.is_some() && item(ui, "Paste", &app::panels::shortcut("V", false)) {
+            ui.close();
+            self.paste_copied(false, now);
+            return;
+        }
         if item(ui, "Duplicate", "Shift+D") {
             ui.close();
             self.duplicate_and_grab();

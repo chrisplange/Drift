@@ -292,7 +292,7 @@ pub struct Editor {
     pub selected_text: Option<drift_core::TextId>,
     pub hovered_text: Option<drift_core::TextId>,
     pub(crate) text_cache: std::cell::RefCell<crate::texts::TextCache>,
-    /// Text just placed: the inspector focuses its field once.
+    /// The text being typed in place on the canvas (just placed, or double-clicked).
     pub editing_text: Option<drift_core::TextId>,
     /// Cap height for new text (0: the default).
     pub text_height: f64,
@@ -1545,123 +1545,134 @@ impl Editor {
     /// block copies. The copies become the
     /// selection. Returns how many things were copied.
     pub fn duplicate_selection(&mut self) -> usize {
-        let curves: Vec<EntityId> = self.selection.iter().copied().collect();
-        let instances: Vec<drift_core::InstanceId> =
-            self.selected_instances.iter().copied().collect();
-        if curves.is_empty() && instances.is_empty() {
+        let picked = crate::clipboard::Picked {
+            curves: self.selection.iter().copied().collect(),
+            instances: self.selected_instances.iter().copied().collect(),
+            texts: Vec::new(),
+            fills: self.selected_fills.iter().copied().collect(),
+        };
+        if picked.curves.is_empty() && picked.instances.is_empty() {
             return 0;
         }
-        // Everything copied: the picked entities and the points they're defined by.
-        let mut sources: BTreeSet<EntityId> = BTreeSet::new();
-        for &id in &curves {
-            if let Some(e) = self.doc.get(id) {
-                sources.insert(id);
-                sources.extend(e.kind.points());
-            }
-        }
+        let source = self.doc.clone();
         self.doc.begin();
-        let mut map: std::collections::BTreeMap<EntityId, EntityId> = Default::default();
-        // Points first, then the curves that use them.
-        let (points, others): (Vec<EntityId>, Vec<EntityId>) = sources
-            .iter()
-            .partition(|id| self.doc.get(**id).is_some_and(|e| e.kind.is_point()));
-        for id in points.into_iter().chain(others) {
-            let Some(e) = self.doc.get(id).cloned() else {
-                continue;
-            };
-            let made = match e.kind {
-                EntityKind::Point(p) => Ok(self.doc.add_point(p)),
-                EntityKind::Line { a, b } => self.doc.add_line(map[&a], map[&b]),
-                EntityKind::Circle { center, radius } => self.doc.add_circle(map[&center], radius),
-                EntityKind::Arc { center, start, end } => {
-                    self.doc.add_arc(map[&center], map[&start], map[&end])
-                }
-                EntityKind::Ellipse {
-                    center,
-                    major,
-                    minor,
-                } => self.doc.add_ellipse(map[&center], map[&major], map[&minor]),
-                EntityKind::EllipseArc {
-                    center,
-                    major,
-                    minor,
-                    start,
-                    end,
-                } => self.doc.add_ellipse_arc(
-                    map[&center],
-                    map[&major],
-                    map[&minor],
-                    map[&start],
-                    map[&end],
-                ),
-                EntityKind::Bezier { a, c1, c2, b } => {
-                    self.doc.add_bezier(map[&a], map[&c1], map[&c2], map[&b])
-                }
-            };
-            if let Ok(copy) = made {
-                let _ = self.doc.set_entity_layer(copy, e.layer);
-                self.doc.set_style(copy, e.style);
-                let _ = self.doc.set_appearance(copy, e.appearance);
-                map.insert(id, copy);
-            }
-        }
-        // Relations and dimensions entirely within the copied geometry come along, except
-        // fixed positions (the copy would be pinned where the original is).
-        let constraints: Vec<(ConstraintId, Constraint)> = self
-            .doc
-            .constraints()
-            .filter(|(_, c)| !matches!(c, Constraint::Fix { .. }))
-            .filter(|(_, c)| c.entities().all(|e| map.contains_key(&e)))
-            .map(|(id, c)| (id, *c))
-            .collect();
-        for (id, c) in constraints {
-            let placement = self.doc.placement(id);
-            if let Ok(copy) = self.doc.add_constraint(c.map_entities(|e| map[&e]))
-                && let Some(offset) = placement
-            {
-                let _ = self.doc.set_placement(copy, offset);
-            }
-        }
-        // Fills and hatches whose whole boundary was copied follow onto the copy.
-        let fills: Vec<(drift_core::FillId, drift_core::Fill)> = self
-            .doc
-            .fills()
-            .filter(|(_, f)| {
-                !f.boundary.is_empty() && f.boundary.iter().all(|e| map.contains_key(e))
-            })
-            .map(|(id, f)| (id, f.clone()))
-            .collect();
-        let mut fill_copies = BTreeSet::new();
-        for (id, mut fill) in fills {
-            fill.boundary = fill.boundary.iter().map(|e| map[e]).collect();
-            fill.boundary.sort_unstable();
-            // On the original's layer and in its place in the draw order.
-            let copy = self.doc.add_fill(fill.clone());
-            self.doc.set_fill(copy, fill);
-            if self.selected_fills.contains(&id) {
-                fill_copies.insert(copy);
-            }
-        }
-        let mut copies = Vec::new();
-        for id in instances {
-            if let Some(i) = self.doc.instance(id).copied()
-                && let Ok(copy) = self.doc.add_instance(i)
-            {
-                let _ = self.doc.set_instance(copy, i);
-                copies.push(copy);
-            }
-        }
+        let made = crate::clipboard::copy_into(&source, &mut self.doc, &picked, DVec2::ZERO, true);
         self.commit("Duplicate");
-        let n = curves.iter().filter(|id| map.contains_key(id)).count() + copies.len();
-        self.selection = curves
+        self.selection = picked
+            .curves
             .iter()
-            .filter_map(|id| map.get(id).copied())
+            .filter_map(|id| made.entities.get(id).copied())
             .collect();
-        self.selected_instances = copies.into_iter().collect();
-        self.selected_fills = fill_copies;
+        let n = self.selection.len() + made.instances.len();
+        self.selected_instances = made.instances.into_iter().collect();
+        self.selected_fills = made.fills;
         self.selected_region = None;
         self.selected_annotation = None;
         n
+    }
+
+    /// The dimension that already sets what `wanted` would (a line's length is the distance
+    /// between its ends, either way round; a circle's radius and diameter are one size).
+    pub fn size_dimension(&self, wanted: &Constraint) -> Option<ConstraintId> {
+        let same = |c: &Constraint| match (c, wanted) {
+            (
+                Constraint::Distance { a: a1, b: b1, .. },
+                Constraint::Distance { a: a2, b: b2, .. },
+            ) => (a1 == a2 && b1 == b2) || (a1 == b2 && b1 == a2),
+            (
+                Constraint::Radius { curve: c1, .. } | Constraint::Diameter { curve: c1, .. },
+                Constraint::Radius { curve: c2, .. } | Constraint::Diameter { curve: c2, .. },
+            ) => c1 == c2,
+            _ => false,
+        };
+        self.doc
+            .constraints()
+            .find(|(_, c)| same(c))
+            .map(|(id, _)| id)
+    }
+
+    /// Set a size typed into the inspector (`text` may use units and variables): changes the
+    /// dimension that already sets it, or adds one.
+    pub fn set_size(&mut self, wanted: Constraint, text: &str) -> Result<ConstraintId, EditError> {
+        let evaluated = self.evaluate_text(text, dimension_kind(&wanted))?;
+        if let Some(id) = self.size_dimension(&wanted) {
+            let existing = self.doc.constraint(id).copied().expect("found above");
+            // A radius typed where the diameter is dimensioned (or the reverse).
+            let factor = match (&existing, &wanted) {
+                (Constraint::Diameter { .. }, Constraint::Radius { .. }) => 2.0,
+                (Constraint::Radius { .. }, Constraint::Diameter { .. }) => 0.5,
+                _ => 1.0,
+            };
+            if factor == 1.0 {
+                self.set_dimension_text(id, text)?;
+            } else {
+                let value = self.doc.units().format_length(evaluated.value * factor);
+                self.set_dimension_text(id, &value)?;
+            }
+            return Ok(id);
+        }
+        let c = wanted.with_value(evaluated.value);
+        let id = self.add_constraints(c.type_name(), &[c])?[0];
+        if !evaluated.references.is_empty() {
+            // Keep the link to the variables it was typed with.
+            self.set_dimension_text(id, text)?;
+        }
+        Ok(id)
+    }
+
+    /// Move a point to typed coordinates (one undo step). False if relations hold it.
+    pub fn move_point_to(&mut self, point: EntityId, to: DVec2) -> bool {
+        let Ok(from) = self.doc.point(point) else {
+            return false;
+        };
+        if from == to {
+            return true;
+        }
+        self.doc.begin();
+        let dragged: Vec<Param> = Param::point(point).into_iter().collect();
+        if !self.drag(&[point], to - from, &dragged) {
+            self.doc.rollback();
+            self.sync();
+            return false;
+        }
+        self.commit("Move point")
+    }
+
+    /// Move the selection (curves, block copies, the picked text) by `delta` as one undo
+    /// step. `None` with nothing picked; `Some(false)` if relations hold it in place.
+    pub fn nudge(&mut self, delta: DVec2) -> Option<bool> {
+        let ids: Vec<EntityId> = self.selection.iter().copied().collect();
+        let instances = self.picked_instances();
+        let text = self.selected_text;
+        if ids.is_empty() && instances.is_empty() && text.is_none() {
+            return None;
+        }
+        self.doc.begin();
+        self.move_instances(&instances, delta);
+        if let Some(id) = text
+            && let Some(mut t) = self.doc.text(id).cloned()
+        {
+            t.at += delta;
+            self.doc.set_text(id, t);
+        }
+        if !ids.is_empty() {
+            let dragged: Vec<Param> = self
+                .doc
+                .defining_points(ids.iter().copied())
+                .iter()
+                .copied()
+                .flat_map(Param::point)
+                .collect();
+            if !self.drag(&ids, delta, &dragged) {
+                self.doc.rollback();
+                self.sync();
+                return Some(false);
+            }
+        }
+        if let Some(seed) = &mut self.selected_region {
+            *seed += delta;
+        }
+        Some(self.commit("Nudge"))
     }
 
     /// The curves joined end to end with `start` (lines and arcs meeting at shared end

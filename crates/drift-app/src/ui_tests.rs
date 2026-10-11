@@ -2314,3 +2314,223 @@ fn long_text_and_long_histories_are_bounded() {
     }
     assert_eq!(undone, drift_core::History::MAX_STEPS);
 }
+
+#[test]
+fn copy_paste_and_nudge_on_the_canvas() {
+    let Some(mut h) = harness() else { return };
+    h.get_by_label("Rectangle").click();
+    h.run();
+    click_world(&mut h, DVec2::new(-40.0, -20.0));
+    click_world(&mut h, DVec2::new(40.0, 30.0));
+    h.key_press(Key::Escape);
+    h.run();
+    h.key_press(Key::Escape);
+    h.run();
+    h.state_mut().editor.select_all();
+    h.run();
+    // Ctrl+C then Ctrl+V with the pointer elsewhere: a second rectangle centred there.
+    h.event(Event::Copy);
+    h.run();
+    let copied = h.state().clipboard.clone().expect("copied");
+    let at = DVec2::new(70.0, 45.0);
+    h.hover_at(screen(&h, at));
+    h.run();
+    h.event(Event::Paste(copied));
+    h.run();
+    assert_eq!(lines(&h), 8);
+    let pasted: drift_core::Bounds = h
+        .state()
+        .editor
+        .selection
+        .iter()
+        .filter_map(|id| h.state().editor.doc.shape(*id))
+        .map(|s| s.bounds())
+        .collect();
+    assert!(
+        ((pasted.min + pasted.max) * 0.5 - at).length() < 1.0,
+        "{pasted:?}"
+    );
+    // Arrow keys nudge the pasted copy by a grid step; Shift by ten.
+    let step = drift_render::grid_info(&h.state().camera, false).minor;
+    h.key_press(Key::ArrowRight);
+    h.run();
+    h.key_press_modifiers(EguiModifiers::SHIFT, Key::ArrowUp);
+    h.run();
+    let moved: drift_core::Bounds = h
+        .state()
+        .editor
+        .selection
+        .iter()
+        .filter_map(|id| h.state().editor.doc.shape(*id))
+        .map(|s| s.bounds())
+        .collect();
+    assert!((moved.min - pasted.min - DVec2::new(step, 10.0 * step)).length() < 1e-6);
+    // Plain text pastes as sketch text.
+    h.event(Event::Paste("Kitchen".into()));
+    h.run();
+    assert_eq!(h.state().editor.doc.texts().count(), 1);
+    save_png("drift_ui_pasted.png", &mut h);
+}
+
+#[test]
+fn sizes_typed_in_the_inspector_become_dimensions() {
+    use drift_core::Constraint;
+    let Some(mut h) = harness() else { return };
+    h.key_press(Key::L);
+    h.run();
+    click_world(&mut h, DVec2::new(-30.0, 0.0));
+    click_world(&mut h, DVec2::new(20.0, 0.0));
+    h.key_press(Key::Escape);
+    h.run();
+    h.key_press(Key::Escape);
+    h.run();
+    let (line, a, b) = h
+        .state()
+        .editor
+        .doc
+        .iter()
+        .find_map(|(id, e)| match e.kind {
+            EntityKind::Line { a, b } => Some((id, a, b)),
+            _ => None,
+        })
+        .unwrap();
+    let ed = &mut h.state_mut().editor;
+    let wanted = Constraint::Distance { a, b, value: 0.0 };
+    // No dimension yet: typing a length adds one; typing again changes it.
+    assert!(ed.size_dimension(&wanted).is_none());
+    let id = ed.set_size(wanted, "80").unwrap();
+    assert!((ed.doc.point(a).unwrap().distance(ed.doc.point(b).unwrap()) - 80.0).abs() < 1e-6);
+    assert_eq!(ed.set_size(wanted, "2in").unwrap(), id);
+    assert!((ed.doc.point(a).unwrap().distance(ed.doc.point(b).unwrap()) - 50.8).abs() < 1e-6);
+    assert_eq!(
+        ed.doc
+            .constraints()
+            .filter(|(_, c)| c.value().is_some())
+            .count(),
+        1
+    );
+    // The field is in the inspector.
+    ed.selection = [line].into();
+    h.run();
+    h.run();
+    save_png("drift_ui_inspector_sizes.png", &mut h);
+    // A circle's radius typed where its diameter is dimensioned changes that dimension.
+    h.key_press(Key::C);
+    h.run();
+    click_world(&mut h, DVec2::new(0.0, 40.0));
+    click_world(&mut h, DVec2::new(10.0, 40.0));
+    h.key_press(Key::Escape);
+    h.run();
+    let circle = h
+        .state()
+        .editor
+        .doc
+        .iter()
+        .find_map(|(id, e)| matches!(e.kind, EntityKind::Circle { .. }).then_some(id))
+        .unwrap();
+    let ed = &mut h.state_mut().editor;
+    let d = ed
+        .set_size(
+            Constraint::Diameter {
+                curve: circle,
+                value: 0.0,
+            },
+            "30",
+        )
+        .unwrap();
+    let r = ed
+        .set_size(
+            Constraint::Radius {
+                curve: circle,
+                value: 0.0,
+            },
+            "25",
+        )
+        .unwrap();
+    assert_eq!(d, r);
+    assert!((drift_solver::radius_of(&ed.doc, circle).unwrap() - 25.0).abs() < 1e-6);
+}
+
+#[test]
+fn start_panel_recent_files_and_the_quit_prompt() {
+    use eframe::Storage as _;
+    let Some(mut h) = harness() else { return };
+    h.state_mut().show_start = true;
+    // A sketch on disk, opened by its path as from the command line.
+    let dir = std::env::temp_dir().join("drift-tests");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("Recent test.drift");
+    let text = drift_io::save(&drift_core::demo::mounting_plate(), &Default::default());
+    std::fs::write(&path, text).unwrap();
+    h.state_mut().remember(path.clone());
+    h.run();
+    h.run();
+    save_png("drift_ui_start.png", &mut h);
+    // The panel lists it; clicking opens it and the panel goes.
+    h.get_by_label("Recent test").click();
+    h.run();
+    h.run();
+    assert!(!h.state().editor.doc.is_empty());
+    assert_eq!(h.state().file.path.as_ref(), Some(&path));
+    assert!(!h.state().show_start);
+    // Closing with unsaved changes asks; "Don't save" lets the window go and drops the
+    // session, keeping the recent list.
+    h.state_mut().editor.select_all();
+    h.state_mut().editor.delete_selection();
+    assert!(h.state().is_dirty());
+    h.state_mut().pending = Some(crate::Pending::Quit);
+    h.run();
+    save_png("drift_ui_quit_prompt.png", &mut h);
+    h.get_by_label("Don't save").click();
+    h.run();
+    assert!(h.state().quit_confirmed && h.state().discard_session);
+    let mut storage = MemoryStorage::default();
+    eframe::App::save(h.state_mut(), &mut storage);
+    assert_eq!(storage.get_string(crate::KEY_DOCUMENT).as_deref(), Some(""));
+    let Some(mut fresh) = harness() else { return };
+    fresh.state_mut().restore_session(&storage);
+    assert!(fresh.state().editor.doc.is_empty());
+    assert_eq!(fresh.state().recent, std::slice::from_ref(&path));
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn text_is_typed_in_place_and_windows_open() {
+    let Some(mut h) = harness() else { return };
+    h.key_press_modifiers(EguiModifiers::SHIFT, Key::T);
+    h.run();
+    assert_eq!(h.state().tool.kind(), ToolKind::Text);
+    click_world(&mut h, DVec2::new(-20.0, 10.0));
+    h.run();
+    assert!(h.state().editor.editing_text.is_some());
+    h.event(Event::Text("Hall".into()));
+    h.run();
+    h.run();
+    save_png("drift_ui_text_in_place.png", &mut h);
+    let texts: Vec<String> = h
+        .state()
+        .editor
+        .doc
+        .texts()
+        .map(|(_, t)| t.text.clone())
+        .collect();
+    assert_eq!(texts, ["Hall"]);
+    h.key_press(Key::Enter);
+    h.run();
+    h.run();
+    assert!(h.state().editor.editing_text.is_none());
+    // Zoom presets, and zoom to the selection.
+    h.state_mut().zoom_to_percent(100.0);
+    assert!((h.state().camera.scale - 96.0 / 25.4).abs() < 1e-9);
+    assert!(h.state_mut().zoom_to_selection());
+    // Preferences and About open from their commands.
+    h.state_mut().show_settings = true;
+    h.run();
+    h.run();
+    save_png("drift_ui_preferences.png", &mut h);
+    h.state_mut().show_settings = false;
+    h.state_mut().show_about = true;
+    h.run();
+    h.run();
+    save_png("drift_ui_about.png", &mut h);
+}

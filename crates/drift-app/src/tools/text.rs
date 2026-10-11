@@ -1,5 +1,5 @@
-//! Text: click where a line of text starts (on its baseline); type it in the inspector,
-//! where it shows live on the canvas.
+//! Text: click where a line of text starts (on its baseline) and type; it shows live on
+//! the canvas. Return or a click elsewhere finishes it.
 
 use super::*;
 
@@ -16,7 +16,7 @@ impl Tool for TextTool {
     }
 
     fn hint(&self) -> String {
-        "Text: click where it starts (its baseline), then type it in the inspector".into()
+        "Text: click where it starts (its baseline), then type · Enter finishes".into()
     }
 
     fn handle(&mut self, input: Input, ed: &mut Editor) {

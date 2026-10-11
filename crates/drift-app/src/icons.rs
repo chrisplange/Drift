@@ -354,6 +354,30 @@ pub fn tool(painter: &egui::Painter, rect: Rect, kind: ToolKind, color: Color32)
     }
 }
 
+/// Drift's mark: a "D" drawn as a sketch (a line and an arc joined at two points) on a blue
+/// tile. The app icon (`apps/native/assets`) is the same drawing.
+pub fn logo(painter: &egui::Painter, rect: Rect) {
+    let s = rect.width().min(rect.height());
+    let p = |x: f32, y: f32| rect.min + vec2(x * s, y * s);
+    painter.rect_filled(
+        Rect::from_min_size(rect.min, Vec2::splat(s)),
+        s * 0.22,
+        Color32::from_rgb(0x0a, 0x84, 0xff),
+    );
+    let stroke = Stroke::new((s * 0.085).max(1.5), Color32::WHITE);
+    painter.line_segment([p(0.38, 0.26), p(0.38, 0.74)], stroke);
+    let bowl: Vec<Pos2> = (0..=32)
+        .map(|k| {
+            let a = -FRAC_PI_2 + PI * k as f32 / 32.0;
+            p(0.38 + 0.24 * a.cos(), 0.5 + 0.24 * a.sin())
+        })
+        .collect();
+    painter.add(Shape::line(bowl, stroke));
+    for y in [0.26, 0.74] {
+        painter.circle_filled(p(0.38, y), s * 0.075, Color32::WHITE);
+    }
+}
+
 /// Draw a view toggle's icon in `rect`.
 pub fn glyph(painter: &egui::Painter, rect: Rect, glyph: Glyph, color: Color32) {
     let p = pen(painter, rect, color);

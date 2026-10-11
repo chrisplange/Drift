@@ -14,6 +14,9 @@ impl DriftApp {
             self.open_palette();
             return;
         }
+        if consume(cmd(Key::Comma)) {
+            self.show_settings = !self.show_settings;
+        }
         // Order matters: check the more specific (Shift) variants first.
         if consume(cmd_shift(Key::Z)) || consume(cmd(Key::Y)) {
             self.redo();
@@ -84,6 +87,7 @@ impl DriftApp {
             }
             return;
         }
+        self.edit_keys(ctx);
         // ? lists the shortcuts.
         if ctx.input(|i| {
             i.events
@@ -195,6 +199,15 @@ impl DriftApp {
         };
         if alt_only(Key::D) {
             self.show_dimensions = !self.show_dimensions;
+        }
+        // Shift+Z: fit the view to the selection.
+        if ctx.input(|i| i.modifiers.shift_only() && i.key_pressed(Key::Z)) {
+            self.zoom_to_selection();
+        }
+        // Shift+T: the text tool (T alone trims).
+        if ctx.input(|i| i.modifiers.shift_only() && i.key_pressed(Key::T)) {
+            self.switch_tool(ToolKind::Text);
+            return;
         }
         if alt_only(Key::R) {
             self.show_relations = !self.show_relations;

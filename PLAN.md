@@ -1427,6 +1427,31 @@ zooms to fit; F is Fillet (again for Chamfer).
     170 s / 7,900 frames: flat at 435 MB.
   - Not yet: the idle baseline is about 400 MB plus 250–300 MB of GPU memory, most of it
     the graphics backend; worth a look.
+- **Part 4 (done): alpha readiness.** Version is now 0.1.0-alpha.1.
+  - Clipboard: Ctrl+C / X / V copy the selection as a small Drift document on the system
+    clipboard (curves, relations and dimensions among them, fills, block copies with their
+    blocks, sketch text), so paste works between windows. Paste lands under the pointer;
+    Ctrl+Shift+V pastes in place. Layers and blocks are matched by name. Plain text pastes
+    as sketch text. Duplicate shares the same copy routine (`clipboard.rs`).
+  - Closing with unsaved changes asks: Save, Don't save, Cancel (also for New and Open).
+    "Don't save" on quitting drops the session, so the next start is fresh.
+  - Recent files (File → Open recent, ten kept) and a start panel over an empty sketch:
+    New, Open, the example, recent files and three tips.
+  - App icon (drawn by `apps/native/assets/make_icon.py`; `.ico` ready for the installer),
+    Help → About with version and system details to copy into a bug report.
+  - A sketch passed on the command line or dropped on the window opens (PDF and DXF files
+    dropped are imported into the open sketch).
+  - Inspector sizes are fields: a line's length, a circle's or arc's radius and diameter,
+    a point's coordinates. Typing one sets the dimension that drives it or adds one (units
+    and variables work).
+  - Arrow keys nudge the selection one grid step, ten with Shift.
+  - Edit → Preferences (Ctrl+,): appearance, units, grid and snapping, display, window and
+    memory in one window.
+  - Text: Shift+T picks the tool; text is typed in place on the canvas (double-click a text
+    to type into it again).
+  - The status bar's zoom is a menu: fit, selection (Shift+Z), and 25–400%.
+  - Not yet: the icon embedded in the executable and the `.drift` file association (both
+    installer work); align and distribute; configurable keys.
 - Themes, keybinding config, crash recovery, PWA offline install, and accessibility pass.
 - Performance profiling against targets (WASM first), plus native packaging (MSI, dmg, AppImage /
   Flatpak).

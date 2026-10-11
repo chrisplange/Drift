@@ -310,7 +310,7 @@ impl DriftApp {
                     ui.close();
                 }
                 if ui
-                    .add(egui::Button::new("Zoom to fit").shortcut_text("⇧F"))
+                    .add(egui::Button::new("Zoom to fit").shortcut_text("Shift+F"))
                     .clicked()
                 {
                     self.fit_target = Some(self.fit_bounds());
@@ -319,14 +319,14 @@ impl DriftApp {
                 ui.separator();
                 toggle_item(ui, &mut self.show_grid, "Grid", &shortcut("'", false));
                 toggle_item(ui, &mut self.show_axes, "Origin axes", "");
-                toggle_item(ui, &mut self.grid_snap, "Snap to grid", "⇧G");
+                toggle_item(ui, &mut self.grid_snap, "Snap to grid", "Shift+G");
                 ui.separator();
                 toggle_item(ui, &mut self.thin_lines, "Thin lines", "W");
                 toggle_item(
                     ui,
                     &mut self.status_colors,
                     "Constraint status colours",
-                    "⇧C",
+                    "Shift+C",
                 );
                 toggle_item(ui, &mut self.always_endpoints, "Always show end points", "");
                 ui.separator();
@@ -632,6 +632,28 @@ impl DriftApp {
         ui.add_space(10.0);
     }
 
+    /// Add a relation or dimension offered for the selection. Returns a new dimension (to
+    /// type its value into).
+    pub(crate) fn apply_constraint_option(
+        &mut self,
+        option: &crate::editor::ConstraintOption,
+        is_dimension: bool,
+        now: f64,
+    ) -> Option<ConstraintId> {
+        let added = match option.constraints.as_slice() {
+            [c] if is_dimension => self.editor.add_dimension(*c, None).map(|id| vec![id]),
+            constraints => self.editor.add_constraints(option.label, constraints),
+        };
+        match added {
+            Ok(ids) if is_dimension => ids.first().copied(),
+            Ok(_) => None,
+            Err(e) => {
+                self.set_status(format!("{}: {e}", option.label), true, now);
+                None
+            }
+        }
+    }
+
     /// Relations and dimensions that fit the selection, as chips.
     pub(crate) fn constraint_buttons(&mut self, ui: &mut egui::Ui) {
         let relations = self.editor.relation_options();
@@ -656,20 +678,11 @@ impl DriftApp {
                     }
                 }
             });
-            if let Some(option) = chosen {
-                let added = match option.constraints.as_slice() {
-                    [c] if is_dimension => self.editor.add_dimension(*c, None).map(|id| vec![id]),
-                    constraints => self.editor.add_constraints(option.label, constraints),
-                };
-                match added {
-                    Ok(ids) => {
-                        if is_dimension {
-                            // Let the user type the value straight away.
-                            self.focus_dimension = ids.first().copied();
-                        }
-                    }
-                    Err(e) => self.set_status(format!("{}: {e}", option.label), true, now),
-                }
+            if let Some(option) = chosen
+                && let Some(id) = self.apply_constraint_option(&option, is_dimension, now)
+            {
+                // Let the user type the value straight away.
+                self.focus_dimension = Some(id);
             }
         }
         if !pins.is_empty() {

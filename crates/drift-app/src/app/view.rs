@@ -333,6 +333,19 @@ impl DriftApp {
                     .handle(Input::DragEnd(released, mods), &mut self.editor);
             }
         }
+        // With the select tool, right-click opens a menu for what's under the pointer (picking
+        // it first, as in Illustrator) or for the view.
+        let menu_tool = self.tool.kind() == ToolKind::Select && !self.tool.is_busy();
+        if menu_tool
+            && response.secondary_clicked()
+            && let Some(h) = self.editor.hovered
+            && !self.editor.selection.contains(&h)
+        {
+            self.editor.selection = [h].into_iter().collect();
+        }
+        if menu_tool || response.context_menu_opened() {
+            response.context_menu(|ui| self.canvas_menu(ui));
+        }
         if response.clicked_by(PointerButton::Secondary) {
             if self.tool.is_modal() {
                 // Right-click cancels a grab, as in Blender.

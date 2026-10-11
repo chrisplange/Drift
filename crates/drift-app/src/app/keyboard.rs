@@ -69,6 +69,14 @@ impl DriftApp {
             }
             return;
         }
+        // ? lists the shortcuts.
+        if ctx.input(|i| {
+            i.events
+                .iter()
+                .any(|e| matches!(e, egui::Event::Text(t) if t == "?"))
+        }) {
+            self.show_shortcuts = !self.show_shortcuts;
+        }
         if consume(cmd(Key::A)) {
             self.set_tool(ToolKind::Select);
             self.editor.select_all();

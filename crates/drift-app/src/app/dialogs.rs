@@ -2,6 +2,48 @@
 
 use crate::*;
 
+/// Keys as keycaps ("Ctrl+Z / Ctrl+Y"); descriptions ("Click inside a closed area") as text.
+fn keycaps(ui: &mut egui::Ui, keys: &str) {
+    ui.spacing_mut().item_spacing.x = 4.0;
+    for (i, piece) in keys.split(" / ").enumerate() {
+        if i > 0 {
+            ui.label(egui::RichText::new("/").weak());
+        }
+        let is_key = !piece.contains(' ') || piece.len() <= 3;
+        if !is_key {
+            ui.label(egui::RichText::new(piece).weak());
+            continue;
+        }
+        let text = egui::RichText::new(piece).monospace().size(11.5);
+        let galley = egui::WidgetText::from(text).into_galley(
+            ui,
+            Some(egui::TextWrapMode::Extend),
+            f32::INFINITY,
+            egui::TextStyle::Monospace,
+        );
+        let size = galley.size() + egui::vec2(12.0, 6.0);
+        let (r, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+        let v = ui.visuals();
+        ui.painter().rect(
+            r,
+            5.0,
+            v.faint_bg_color,
+            egui::Stroke::new(1.0, theme::hairline(ui)),
+            egui::StrokeKind::Inside,
+        );
+        // A deeper bottom edge, like a key.
+        ui.painter().line_segment(
+            [
+                r.left_bottom() + egui::vec2(3.0, -0.5),
+                r.right_bottom() + egui::vec2(-3.0, -0.5),
+            ],
+            egui::Stroke::new(1.5, theme::hairline(ui)),
+        );
+        ui.painter()
+            .galley(r.min + egui::vec2(6.0, 3.0), galley, v.text_color());
+    }
+}
+
 impl DriftApp {
     pub(crate) fn dialogs(&mut self, ctx: &egui::Context) {
         self.underlay_dialog(ctx);
@@ -83,26 +125,77 @@ impl DriftApp {
             self.benchmark = None;
         }
 
+        let mut open = self.show_shortcuts;
+        let mut close = false;
+        let filter = &mut self.shortcut_filter;
         egui::Window::new("Keyboard shortcuts")
-            .open(&mut self.show_shortcuts)
-            .resizable(false)
+            .open(&mut open)
+            .resizable(true)
             .collapsible(false)
+            .default_size([660.0, 560.0])
+            .pivot(egui::Align2::CENTER_CENTER)
+            .default_pos(ctx.content_rect().center())
             .show(ctx, |ui| {
-                egui::Grid::new("shortcuts")
-                    .num_columns(2)
-                    .spacing([18.0, 6.0])
+                let field = ui.add(
+                    egui::TextEdit::singleline(filter)
+                        .hint_text("Filter, e.g. \"dimension\" or \"Ctrl\"")
+                        .desired_width(f32::INFINITY),
+                );
+                // Focus the filter as the window opens.
+                let seen = egui::Id::new("shortcuts_seen");
+                if !ui.data(|d| d.get_temp::<bool>(seen).unwrap_or(false)) {
+                    field.request_focus();
+                    ui.data_mut(|d| d.insert_temp(seen, true));
+                }
+                if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                    close = true;
+                }
+                let query = filter.trim().to_lowercase();
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        for (keys, action) in SHORTCUTS {
-                            ui.label(
-                                egui::RichText::new(*keys)
-                                    .monospace()
-                                    .color(ui.visuals().weak_text_color()),
-                            );
-                            ui.label(*action);
-                            ui.end_row();
+                        let mut any = false;
+                        for (section, rows) in SHORTCUTS {
+                            let rows: Vec<&(&str, &str)> = rows
+                                .iter()
+                                .filter(|(k, a)| {
+                                    query.is_empty()
+                                        || k.to_lowercase().contains(&query)
+                                        || a.to_lowercase().contains(&query)
+                                        || section.to_lowercase().contains(&query)
+                                })
+                                .collect();
+                            if rows.is_empty() {
+                                continue;
+                            }
+                            any = true;
+                            theme::section(ui, section);
+                            for (keys, action) in rows {
+                                ui.horizontal(|ui| {
+                                    ui.allocate_ui_with_layout(
+                                        egui::vec2(230.0, 22.0),
+                                        egui::Layout::left_to_right(egui::Align::Center)
+                                            .with_main_wrap(true),
+                                        |ui| {
+                                            ui.set_min_width(230.0);
+                                            keycaps(ui, keys);
+                                        },
+                                    );
+                                    ui.add(egui::Label::new(*action).wrap());
+                                });
+                                ui.add_space(3.0);
+                            }
+                        }
+                        if !any {
+                            ui.add_space(12.0);
+                            ui.label(egui::RichText::new("No shortcut matches").weak());
                         }
                     });
             });
+        self.show_shortcuts = open && !close;
+        if !self.show_shortcuts {
+            ctx.data_mut(|d| d.remove::<bool>(egui::Id::new("shortcuts_seen")));
+        }
     }
 
     /// A cheap fingerprint of the state the panels display.

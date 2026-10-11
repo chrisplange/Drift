@@ -2219,3 +2219,57 @@ fn text_tool_places_and_types_live() {
     assert!(moved.distance(t.at + v(0.0, -20.0)) < 1.0, "{moved:?}");
     save_png("drift_ui_text.png", &mut h);
 }
+
+#[test]
+fn context_bar_canvas_menu_and_shortcuts() {
+    let Some(mut h) = harness() else { return };
+    // The polygon's options are in the context bar.
+    h.key_press(Key::K);
+    h.run();
+    save_png("drift_ui_context_polygon.png", &mut h);
+    h.get_by_label("Circumscribed").click();
+    h.run();
+    assert!(h.state().editor.polygon_circumscribed);
+    // Draw a rectangle, then right-click one side: it's picked and the menu offers actions.
+    h.key_press(Key::R);
+    h.run();
+    click_world(&mut h, DVec2::new(-40.0, -20.0));
+    click_world(&mut h, DVec2::new(40.0, 30.0));
+    h.key_press(Key::Escape);
+    h.run();
+    h.key_press(Key::Escape);
+    h.run();
+    let at = screen(&h, DVec2::new(20.0, -20.0));
+    h.hover_at(at);
+    h.run();
+    for pressed in [true, false] {
+        h.event(Event::PointerButton {
+            pos: at,
+            button: PointerButton::Secondary,
+            pressed,
+            modifiers: EguiModifiers::NONE,
+        });
+        h.run();
+    }
+    h.run();
+    assert_eq!(h.state().editor.selection.len(), 1);
+    let line = *h.state().editor.selection.iter().next().unwrap();
+    save_png("drift_ui_canvas_menu.png", &mut h);
+    h.get_by_label_contains("Toggle construction").click();
+    h.run();
+    assert_eq!(
+        h.state().editor.doc.get(line).unwrap().style,
+        drift_core::LineKind::Construction
+    );
+    // The selection's actions are in the context bar.
+    save_png("drift_ui_context_selection.png", &mut h);
+    // ? opens the shortcuts, filtered as you type.
+    h.event(Event::Text("?".into()));
+    h.run();
+    h.run();
+    assert!(h.state().show_shortcuts);
+    h.event(Event::Text("dimension".into()));
+    h.run();
+    h.run();
+    save_png("drift_ui_shortcuts.png", &mut h);
+}

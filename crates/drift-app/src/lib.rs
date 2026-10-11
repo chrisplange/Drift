@@ -176,6 +176,8 @@ pub struct DriftApp {
     pending: Option<Pending>,
     status: Option<Status>,
     show_shortcuts: bool,
+    /// Text filtering the shortcuts list.
+    shortcut_filter: String,
     /// Where the side panels are (docked, floating or hidden).
     layout: dock::Layout,
     dock_view: app::dock_ui::DockView,
@@ -281,6 +283,7 @@ impl DriftApp {
             pending: None,
             status: None,
             show_shortcuts: false,
+            shortcut_filter: String::new(),
             layout: Default::default(),
             dock_view: Default::default(),
             palette: None,
@@ -399,138 +402,156 @@ fn release_pos(ui: &egui::Ui, button: PointerButton) -> Option<egui::Pos2> {
     })
 }
 
-const SHORTCUTS: &[(&str, &str)] = &[
-    ("S / Esc", "Select tool"),
-    ("L", "Line (polyline)"),
-    ("R", "Rectangle"),
-    ("C", "Circle"),
+/// Keyboard shortcuts by section, for Help → Keyboard shortcuts.
+const SHORTCUTS: &[(&str, &[(&str, &str)])] = &[
     (
-        "A",
-        "Arc: centre-point; press again for 3-point, then tangent arc",
+        "Draw",
+        &[
+            ("S / Esc", "Select tool"),
+            ("L", "Line (polyline)"),
+            ("B", "Pen: click for corners, drag for smooth points"),
+            ("R", "Rectangle"),
+            ("K", "Polygon; X switches inscribed / circumscribed"),
+            ("C", "Circle; press again for ellipse, then partial ellipse"),
+            (
+                "A",
+                "Arc: centre-point; press again for 3-point, then tangent arc",
+            ),
+            (
+                "A / L (while drawing)",
+                "Switch between line and tangent arc, continuing from the last point",
+            ),
+            ("U", "Slot; press again for centre and arc slots"),
+            ("P", "Point"),
+            ("I", "Place block: R turns, X mirrors"),
+            ("X / Y (while drawing)", "Lock to the X or Y axis"),
+            (
+                "0-9 . - (  (while drawing)",
+                "Type exact values; Tab switches field, Enter applies",
+            ),
+            (
+                "=  (while drawing)",
+                "Start with a variable name or expression, e.g. =width/2",
+            ),
+            (
+                "Units in typed values",
+                "25mm, 2in, 3\", 1'-6 1/2\", 30deg; bare numbers use the display unit",
+            ),
+            ("Enter / right-click", "Finish a polyline"),
+            ("Alt (hold)", "Place without snapping"),
+        ],
     ),
     (
-        "A / L (while drawing)",
-        "Switch between line and tangent arc, continuing from the last point",
-    ),
-    ("P", "Point"),
-    ("D", "Smart Dimension"),
-    (
-        "Click more points (after a horizontal or vertical dimension)",
-        "Chain dimensions along the row; B switches to baseline",
-    ),
-    ("H", "Fill / hatch: click inside a closed area"),
-    (
-        "N",
-        "Note: click to place, or click geometry first for a leader; Return finishes",
-    ),
-    (
-        "Ordinate, Callout, Centre mark",
-        "Toolbar: ordinate rows (X / Y), hole and chamfer callouts, centre marks and lines",
+        "Annotate",
+        &[
+            ("D", "Smart dimension"),
+            (
+                "Click more points (after a horizontal or vertical dimension)",
+                "Chain dimensions along the row; B switches to baseline",
+            ),
+            (
+                "N",
+                "Note: click to place, or click geometry first for a leader; Return finishes",
+            ),
+            ("H", "Fill / hatch: click inside a closed area"),
+            ("Double-click a dimension", "Edit its value"),
+            ("Drag a dimension", "Move its label"),
+        ],
     ),
     (
-        "T",
-        "Trim: click a piece to remove it, or drag across pieces",
-    ),
-    ("E", "Extend a line or arc end to the next curve"),
-    (
-        "O",
-        "Offset: click a curve (and its chain), then the side; type the distance",
-    ),
-    ("M", "Mirror the selection: click the line to mirror about"),
-    (
-        "Split, Fillet, Chamfer",
-        "Toolbar: split a curve; round / cut a two-line corner (type the size)",
-    ),
-    (
-        "Click inside a closed area",
-        "Select the region: area, perimeter and centroid in Properties",
+        "Modify",
+        &[
+            (
+                "T",
+                "Trim: click a piece to remove it, or drag across pieces",
+            ),
+            ("E", "Extend a line or arc end to the next curve"),
+            ("O", "Offset: click a curve (and its chain), then the side"),
+            ("M", "Mirror the selection about a line you click"),
+            ("F", "Fillet; press again for chamfer (type the size)"),
+        ],
     ),
     (
-        "Click near a line's middle",
-        "Pick its midpoint (e.g. point + midpoint -> Midpoint)",
+        "Selection",
+        &[
+            (
+                "Click / drag",
+                "Select, or box-select; Shift adds, Ctrl toggles",
+            ),
+            (
+                "Right-click",
+                "Menu for the selection (relations, dimensions, layers) or the view",
+            ),
+            (
+                "Tab",
+                "Select the chain of curves joined end to end with the one under the pointer",
+            ),
+            (
+                "Click inside a closed area",
+                "Select the region: area, perimeter and centroid in the inspector",
+            ),
+            ("Click near a line's middle", "Pick its midpoint"),
+            (
+                "G",
+                "Move: X / Y lock an axis, type dX Tab dY, B picks the base point",
+            ),
+            (
+                "R (with a selection)",
+                "Rotate: type an angle, B picks the pivot",
+            ),
+            ("Shift+D", "Duplicate in place and move the copy"),
+            ("X", "Toggle construction"),
+            (
+                "Ctrl+G / Ctrl+Shift+G",
+                "Group / ungroup; double-click a group to enter it",
+            ),
+            ("Ctrl+A", "Select all"),
+            (
+                "Del",
+                "Delete the selection, or the picked relation / dimension",
+            ),
+            (
+                "Esc / right-click",
+                "Cancel the operation, or clear the selection",
+            ),
+        ],
     ),
     (
-        "0-9 . - (  (while drawing)",
-        "Type exact values; Tab switches field, Enter applies",
+        "View",
+        &[
+            ("Shift+F / double middle-click", "Zoom to fit"),
+            ("Middle / right drag", "Pan"),
+            ("Scroll / pinch", "Zoom at the cursor"),
+            ("Alt+D / Alt+R", "Show or hide dimensions / relations"),
+            ("Shift+G", "Snap to grid"),
+            (
+                "Shift+C",
+                "Colour curves by constraint status, or by their own and their layer's colours",
+            ),
+            ("Ctrl+'", "Show or hide the grid"),
+            ("W", "Thin lines: every line one pixel wide"),
+        ],
     ),
     (
-        "=  (while drawing)",
-        "Start with a variable name or expression, e.g. =width/2",
+        "Panels and files",
+        &[
+            (
+                "Ctrl+K / Ctrl+Shift+P",
+                "Command palette: any tool, setting, panel or command",
+            ),
+            ("Ctrl+L", "Show or hide the Layers panel"),
+            ("Ctrl+\\", "Hide all panels, and bring them back"),
+            (
+                "Drag a panel's tab",
+                "Onto the canvas to float it, or onto either side to dock it",
+            ),
+            ("Ctrl+Z / Ctrl+Y", "Undo / redo"),
+            ("Ctrl+S / Ctrl+Shift+S", "Save / save as"),
+            ("Ctrl+N / Ctrl+O", "New / open"),
+            ("Ctrl+P", "Print (the sheets as a PDF)"),
+            ("?", "This list"),
+        ],
     ),
-    (
-        "Units in typed values",
-        "25mm, 2in, 3\", 1'-6 1/2\", 30deg; bare numbers use the display unit",
-    ),
-    ("Double-click a dimension", "Edit its value"),
-    ("Drag a dimension", "Move its label"),
-    ("Enter / right-click", "Finish polyline"),
-    ("Esc", "Cancel operation / clear selection"),
-    (
-        "Del",
-        "Delete selection, or the picked relation / dimension",
-    ),
-    (
-        "X",
-        "Toggle construction (while drawing a line or moving: lock to the X axis)",
-    ),
-    ("Y", "While drawing a line or moving: lock to the Y axis"),
-    ("Ctrl+A", "Select all"),
-    ("Ctrl+Z / Ctrl+Y", "Undo / redo"),
-    ("Ctrl+S / Ctrl+Shift+S", "Save / save as"),
-    ("Ctrl+N / Ctrl+O", "New / open"),
-    ("Ctrl+P", "Print (opens the sheets as a PDF)"),
-    (
-        "Ctrl+K / Ctrl+Shift+P",
-        "Command palette: type any tool, setting, panel or command",
-    ),
-    ("Ctrl+L", "Show or hide the Layers panel"),
-    (
-        "Ctrl+\\",
-        "Hide all panels for a clear view, and bring them back",
-    ),
-    (
-        "Drag a panel's tab",
-        "Onto the canvas to float it, or onto either side to dock it (right-click for the same)",
-    ),
-    (
-        "R (with a selection)",
-        "Rotate it: type an angle, 15° steps stick, B picks the pivot, click / Enter places",
-    ),
-    (
-        "Tab",
-        "Select the chain of curves joined end to end with the one under the pointer (or the selection)",
-    ),
-    (
-        "I",
-        "Place block: copies of the block picked in the Blocks tab (R turns, X mirrors); \
-         double-click a copy to edit the block",
-    ),
-    (
-        "Shift+D",
-        "Duplicate the selection in place and move the copy (Esc leaves it where it was)",
-    ),
-    (
-        "Ctrl+G / Ctrl+Shift+G",
-        "Group / ungroup the selection; double-click a group to edit inside it, Esc leaves",
-    ),
-    ("Shift+F / double middle-click", "Zoom to fit"),
-    ("F", "Fillet; press again for chamfer"),
-    ("Alt+D / Alt+R", "Show or hide dimensions / relations"),
-    ("Shift+G", "Toggle grid snapping"),
-    (
-        "Shift+C",
-        "Colour curves by constraint status, or by their own and their layer's colours",
-    ),
-    ("Ctrl+'", "Show or hide the grid"),
-    ("W", "Thin lines: draw every line one pixel wide"),
-    (
-        "G (with a selection)",
-        "Move it: X / Y lock an axis, type dX Tab dY (or a distance), B picks the base point, \
-         click / Enter places, Esc / right-click cancels",
-    ),
-    ("Alt (hold)", "Place without snapping"),
-    ("Middle / right drag", "Pan"),
-    ("Scroll / pinch", "Zoom at cursor"),
 ];
 
 fn property_rows(ui: &mut egui::Ui, shape: &Shape, units: Units) {
@@ -638,6 +659,9 @@ impl eframe::App for DriftApp {
         egui::Panel::top("menu")
             .frame(frame(8, 3))
             .show(ui, |ui| self.menu_bar(ui));
+        egui::Panel::top("context")
+            .frame(frame(10, 3))
+            .show(ui, |ui| self.context_bar(ui));
         egui::Panel::bottom("status")
             .frame(frame(12, 4))
             .show(ui, |ui| self.status_bar(ui, now));

@@ -1392,6 +1392,19 @@ zooms to fit; F is Fillet (again for Chamfer).
     headers with hairlines, floating scroll bars and a shorter tooltip delay.
   - Not yet: keybinding config, drag-to-reorder for floating panels, and tear-off for more
     than one panel per window.
+- **Part 2 (done): context bar, canvas menu, shortcuts sheet.**
+  - A context bar under the menu shows the active tool and its options: polygon sides and
+    inscribed / circumscribed; slot kind; circle / ellipse / partial ellipse; arc kind;
+    fillet / chamfer; text height; curvature combs for the pen; annotation visibility.
+  - With the select tool the bar holds selection actions (duplicate, move, rotate, mirror,
+    group, construction, make block, delete). At the right, a search field opens the
+    command palette.
+  - Right-click on the canvas (select tool) picks what's under the pointer and opens a menu:
+    edit actions, Add relation / Add dimension submenus, Move to layer, select chain,
+    explode and delete. With nothing picked: select all, zoom to fit, grid, snap and the
+    palette.
+  - Help → Keyboard shortcuts (or ?) is grouped into sections, shows keycaps, and filters as
+    you type.
 - Themes, keybinding config, crash recovery, PWA offline install, and accessibility pass.
 - Performance profiling against targets (WASM first), plus native packaging (MSI, dmg, AppImage /
   Flatpak).

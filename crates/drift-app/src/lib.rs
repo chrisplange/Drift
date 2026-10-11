@@ -271,6 +271,8 @@ pub struct DriftApp {
     show_combs: bool,
     /// The text being typed into (its edits merge into one undo step).
     text_typing: Option<drift_core::TextId>,
+    /// A text field had the keyboard at the end of the last frame.
+    text_was_focused: bool,
     /// The text whose in-place field has been given the keyboard.
     text_focused: Option<drift_core::TextId>,
     /// Show every end point, or only those of hovered or picked curves (as in Illustrator).
@@ -375,6 +377,7 @@ impl DriftApp {
             new_block_name: String::new(),
             show_combs: true,
             text_typing: None,
+            text_was_focused: false,
             text_focused: None,
             always_endpoints: false,
             import_as_underlay: false,
@@ -633,69 +636,35 @@ const SHORTCUTS: &[(&str, &[(&str, &str)])] = &[
     ),
 ];
 
-/// Read-only facts about a shape. With `sizes_shown`, the sizes the inspector offers as
-/// fields (length, radius, diameter, a point's coordinates) are left out.
-fn property_rows(ui: &mut egui::Ui, shape: &Shape, units: Units, sizes_shown: bool) {
+/// Read-only facts about a shape, beyond the values the inspector offers as fields
+/// (lengths, radii, positions and a line's angle).
+fn property_rows(ui: &mut egui::Ui, shape: &Shape, units: Units) {
     let row = |ui: &mut egui::Ui, name: &str, value: String| {
         theme::row(ui, name, |ui| {
             ui.monospace(value);
         });
     };
-    let pt = |p: DVec2| {
-        format!(
-            "{}, {}",
-            units.format_readout(p.x),
-            units.format_readout(p.y)
-        )
-    };
     let len = |v: f64| units.format_readout(v);
     let deg = |a: f64| format!("{:.4}°", a.to_degrees());
     match *shape {
-        Shape::Point(p) => {
-            if !sizes_shown {
-                row(ui, "X", len(p.x));
-                row(ui, "Y", len(p.y));
-            }
-        }
-        Shape::Line { a, b } => {
-            let d = b - a;
-            if !sizes_shown {
-                row(ui, "Length", len(d.length()));
-            }
-            row(ui, "Start", pt(a));
-            row(ui, "End", pt(b));
-            row(ui, "Angle", deg(d.y.atan2(d.x)));
-        }
-        Shape::Circle { center, radius } => {
-            if !sizes_shown {
-                row(ui, "Radius", len(radius));
-                row(ui, "Diameter", len(2.0 * radius));
-            }
-            row(ui, "Center", pt(center));
-        }
+        Shape::Point(_) | Shape::Line { .. } | Shape::Circle { .. } => {}
         Shape::Arc {
-            center,
             radius,
             start,
             sweep,
+            ..
         } => {
-            if !sizes_shown {
-                row(ui, "Radius", len(radius));
-            }
-            row(ui, "Center", pt(center));
             row(ui, "Start angle", deg(start.rem_euclid(TAU)));
             row(ui, "End angle", deg((start + sweep).rem_euclid(TAU)));
             row(ui, "Sweep", deg(sweep));
             row(ui, "Arc length", len(radius * sweep));
         }
         Shape::Ellipse {
-            center,
             major,
             minor,
             sweep,
             ..
         } => {
-            row(ui, "Center", pt(center));
             row(
                 ui,
                 "Semi-axes",
@@ -711,14 +680,18 @@ fn property_rows(ui: &mut egui::Ui, shape: &Shape, units: Units, sizes_shown: bo
                 .windows(2)
                 .map(|w| w[0].distance(w[1]))
                 .sum();
-            row(ui, "Start", pt(p[0]));
-            row(ui, "End", pt(p[3]));
             row(ui, "Length", len(length));
         }
     }
 }
 
 impl eframe::App for DriftApp {
+    /// Runs every frame, including while the window is covered or minimised (when `ui`
+    /// doesn't): a close request must be answered here or it goes through unasked.
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.handle_close(ctx);
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         let now = ctx.input(|i| i.time);
@@ -728,7 +701,6 @@ impl eframe::App for DriftApp {
             self.set_status(notice, true, now);
         }
         self.check_memory(now);
-        self.handle_close(&ctx);
         // A sketch dropped on the window opens.
         let dropped = ctx.input(|i| i.raw.dropped_files.first().map(|f| f.path().to_owned()));
         if let Some(path) = dropped
@@ -784,6 +756,7 @@ impl eframe::App for DriftApp {
 
         self.dialogs(&ctx);
         self.update_title(&ctx);
+        self.text_was_focused = ctx.text_edit_focused();
         // Panels drawn earlier in the frame may show stale state if a later panel (e.g. the
         // canvas) changed it. egui only repaints on input, so ask for one more frame.
         if self.ui_signature() != before {

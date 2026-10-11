@@ -340,15 +340,18 @@ fn split(curves: &[Shape]) -> Vec<(Edge, usize)> {
                 start,
                 sweep,
             } => {
-                // Ellipses take part as fine straight edges (they aren't cut by crossings).
-                let pts =
-                    drift_core::shape::flatten_ellipse(center, major, minor, start, sweep, 48);
+                // Ellipses take part as fine straight edges, with a vertex at each crossing.
+                let end = sweep.min(TAU);
+                let pts = chords_through(&c, end, 48, |t| {
+                    drift_core::shape::ellipse_point(center, major, minor, start + t)
+                });
                 for w in pts.windows(2) {
                     edges.push((Edge::Line { a: w[0], b: w[1] }, source));
                 }
             }
             Shape::Bezier { p } => {
-                for w in drift_core::shape::flatten_bezier(&p, 24).windows(2) {
+                let pts = chords_through(&c, 1.0, 24, |t| drift_core::shape::bezier_point(&p, t));
+                for w in pts.windows(2) {
                     edges.push((Edge::Line { a: w[0], b: w[1] }, source));
                 }
             }
@@ -357,6 +360,31 @@ fn split(curves: &[Shape]) -> Vec<(Edge, usize)> {
     }
     edges.retain(|(e, _)| e.length() > 0.0);
     edges
+}
+
+/// A curve over parameters `0..=end` as `n` chords, plus a vertex exactly at each cut (so
+/// edges of the curves crossing it meet it at a shared point).
+fn chords_through(
+    cuts: &[(f64, DVec2)],
+    end: f64,
+    n: usize,
+    at: impl Fn(f64) -> DVec2,
+) -> Vec<DVec2> {
+    let inner: Vec<(f64, DVec2)> = cuts
+        .iter()
+        .copied()
+        .filter(|(t, _)| *t > 0.0 && *t < end)
+        .collect();
+    // A sample right beside a cut gives way to the cut's exact point (the ends stay).
+    let near = end / (n as f64 * 50.0);
+    let mut stops: Vec<(f64, DVec2)> = (0..=n)
+        .map(|k| end * k as f64 / n as f64)
+        .filter(|t| *t == 0.0 || *t == end || !inner.iter().any(|(c, _)| (c - t).abs() < near))
+        .map(|t| (t, at(t)))
+        .collect();
+    stops.extend(inner);
+    stops.sort_by(|x, y| x.0.total_cmp(&y.0));
+    stops.into_iter().map(|(_, p)| p).collect()
 }
 
 /// Find the closed regions formed by `curves`.

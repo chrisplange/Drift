@@ -74,7 +74,10 @@ impl DriftApp {
             self.show_grid = !self.show_grid;
         }
 
-        if ctx.text_edit_focused() {
+        // Keys belong to a text field while it has the keyboard, and for the frame in which
+        // it gives it up: egui drops a field's focus on Esc before this runs, and that Esc
+        // must not also clear the selection.
+        if ctx.text_edit_focused() || self.text_was_focused {
             return;
         }
         // The sheet preview takes no drawing keys: Esc (or F) returns to the model.
@@ -278,7 +281,7 @@ impl DriftApp {
         {
             ctx.memory_mut(|m| m.surrender_focus(id));
         }
-        if fields.is_empty() || ctx.text_edit_focused() {
+        if fields.is_empty() || ctx.text_edit_focused() || self.text_was_focused {
             self.typing = None;
             self.tool.set_typed([None; 2]);
             return;

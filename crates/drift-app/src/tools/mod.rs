@@ -332,7 +332,7 @@ impl ToolKind {
             ToolKind::CentreMark => "Centre marks on circles; centre lines between features",
             ToolKind::Trim => "Remove a piece up to the curves that cut it; drag to trim several",
             ToolKind::Extend => "Lengthen a line or arc to the next curve",
-            ToolKind::Split => "Cut a line or arc in two at a point",
+            ToolKind::Split => "Cut a curve in two at a point (a circle or ellipse into halves)",
             ToolKind::Fillet => "Round the corner where two lines meet",
             ToolKind::Chamfer => "Cut the corner where two lines meet",
             ToolKind::Offset => "A parallel copy of a curve and the curves connected to it",

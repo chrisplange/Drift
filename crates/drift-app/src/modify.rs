@@ -13,6 +13,19 @@ fn invalid(msg: impl Into<String>) -> EditError {
     EditError::Invalid(msg.into())
 }
 
+/// One curve of an offset, in travel order along the chain.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct OffsetPiece {
+    pub shape: Shape,
+    /// Which curve of the chain it is the offset of.
+    pub source: usize,
+    /// Whether travel runs the way the shape is stored (arcs are stored counter-clockwise
+    /// whichever way the chain passes through them).
+    pub forward: bool,
+    /// A straight bridge across a corner that opened up, rather than an offset of `source`.
+    pub bridge: bool,
+}
+
 /// Where a curve is cut by another one.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Cut {
@@ -276,13 +289,9 @@ impl Editor {
         let own_ends: Vec<DVec2> = self
             .doc
             .get(id)
-            .map(|e| match e.kind {
-                EntityKind::Line { a, b } => vec![a, b],
-                EntityKind::Arc { start, end, .. } => vec![start, end],
-                _ => Vec::new(),
-            })
-            .unwrap_or_default()
+            .and_then(|e| e.kind.ends())
             .into_iter()
+            .flatten()
             .filter_map(|p| self.doc.point(p).ok())
             .collect();
         let mut bounds = shape.bounds();
@@ -297,19 +306,20 @@ impl Editor {
                 continue;
             };
             for hit in intersect(&shape, &other_shape) {
-                if own_ends.iter().any(|e| e.distance(hit.at) <= tol) {
+                let near = tol.max(1e-7 * (1.0 + hit.at.length()));
+                if own_ends.iter().any(|e| e.distance(hit.at) <= near) {
                     continue;
                 }
+                // Numeric hits (ellipses, curves) are a little looser than exact ones.
+                let near = tol.max(1e-7 * (1.0 + hit.at.length()));
                 let point = self.doc.get(other).and_then(|e| {
-                    let ends: Vec<EntityId> = match e.kind {
-                        EntityKind::Line { a, b } => vec![a, b],
-                        EntityKind::Arc { start, end, .. } => vec![start, end],
-                        _ => Vec::new(),
-                    };
-                    ends.into_iter()
-                        .find(|p| self.doc.point(*p).is_ok_and(|q| q.distance(hit.at) <= tol))
+                    e.kind
+                        .ends()
+                        .into_iter()
+                        .flatten()
+                        .find(|p| self.doc.point(*p).is_ok_and(|q| q.distance(hit.at) <= near))
                 });
-                if cuts.iter().any(|c| c.at.distance(hit.at) <= tol) {
+                if cuts.iter().any(|c| c.at.distance(hit.at) <= near) {
                     continue;
                 }
                 cuts.push(Cut {
@@ -348,12 +358,19 @@ impl Editor {
     ) -> Result<(Option<Cut>, Option<Cut>), EditError> {
         let shape = self
             .curve_shape(id)
-            .ok_or_else(|| invalid("pick a line, arc or circle"))?;
+            .ok_or_else(|| invalid("pick a curve"))?;
         let cuts = self.cuts(id);
         let tc = param_of(&shape, click);
-        if let Shape::Circle { .. } = shape {
+        let closed = match shape {
+            Shape::Circle { .. } => true,
+            Shape::Ellipse { sweep, .. } => sweep >= TAU,
+            _ => false,
+        };
+        if closed {
             if cuts.len() < 2 {
-                return Err(invalid("a circle needs two cutting curves to trim"));
+                return Err(invalid(
+                    "a circle or ellipse needs two cutting curves to trim",
+                ));
             }
             let lo = cuts
                 .iter()
@@ -374,8 +391,9 @@ impl Editor {
         let shape = self.curve_shape(id)?;
         let (lo, hi) = self.trim_span(id, click).ok()?;
         let end = match shape {
-            Shape::Line { .. } => 1.0,
+            Shape::Line { .. } | Shape::Bezier { .. } => 1.0,
             Shape::Arc { sweep, .. } => sweep,
+            Shape::Ellipse { sweep, .. } if sweep < TAU => sweep,
             _ => 0.0,
         };
         Some(match (lo, hi) {
@@ -489,11 +507,159 @@ impl Editor {
                         )
                         .map_err(doc_err)?;
                 }
+                (
+                    EntityKind::Ellipse {
+                        center,
+                        major,
+                        minor,
+                    },
+                    Some(l),
+                    Some(h),
+                ) => {
+                    let pl = self.cut_point(&l);
+                    let ph = self.cut_point(&h);
+                    // As for a circle: what remains runs counter-clockwise from the cut
+                    // after the click round to the cut before it.
+                    self.doc
+                        .set_entity_kind(
+                            id,
+                            EntityKind::EllipseArc {
+                                center,
+                                major,
+                                minor,
+                                start: ph,
+                                end: pl,
+                            },
+                        )
+                        .map_err(doc_err)?;
+                }
+                (
+                    EntityKind::EllipseArc {
+                        center,
+                        major,
+                        minor,
+                        start,
+                        end,
+                    },
+                    lo,
+                    hi,
+                ) => {
+                    let arc = |start, end| EntityKind::EllipseArc {
+                        center,
+                        major,
+                        minor,
+                        start,
+                        end,
+                    };
+                    match (lo, hi) {
+                        (None, Some(h)) => {
+                            let p = self.cut_point(&h);
+                            self.doc.set_entity_kind(id, arc(p, end)).map_err(doc_err)?;
+                            self.doc.remove_if_orphaned(start);
+                        }
+                        (Some(l), None) => {
+                            let p = self.cut_point(&l);
+                            self.doc
+                                .set_entity_kind(id, arc(start, p))
+                                .map_err(doc_err)?;
+                            self.doc.remove_if_orphaned(end);
+                        }
+                        (Some(l), Some(h)) => {
+                            let pl = self.cut_point(&l);
+                            let ph = self.cut_point(&h);
+                            self.doc
+                                .set_entity_kind(id, arc(start, pl))
+                                .map_err(doc_err)?;
+                            // The other piece shares the centre and axes: one ellipse still.
+                            let rest = self
+                                .doc
+                                .add_ellipse_arc(center, major, minor, ph, end)
+                                .map_err(doc_err)?;
+                            self.doc.copy_look(id, rest);
+                        }
+                        (None, None) => unreachable!(),
+                    }
+                }
+                (EntityKind::Bezier { a, c1, c2, b }, lo, hi) => {
+                    let Some(Shape::Bezier { p: whole }) = self.doc.shape(id) else {
+                        return Err(invalid("nothing to trim here"));
+                    };
+                    let part = |t0: f64, t1: f64| drift_core::shape::bezier_piece(&whole, t0, t1);
+                    match (lo, hi) {
+                        (None, Some(h)) => {
+                            // Keep the far part: its handles shrink along their own lines,
+                            // so a smooth join at the far end stays smooth.
+                            let q = part(h.t, 1.0);
+                            let p = self.cut_point(&h);
+                            self.forget_smooth(a, c1);
+                            self.doc.set_point(c1, q[1]).map_err(doc_err)?;
+                            self.doc.set_point(c2, q[2]).map_err(doc_err)?;
+                            self.doc
+                                .set_entity_kind(id, EntityKind::Bezier { a: p, c1, c2, b })
+                                .map_err(doc_err)?;
+                            self.doc.remove_if_orphaned(a);
+                        }
+                        (Some(l), None) => {
+                            let q = part(0.0, l.t);
+                            let p = self.cut_point(&l);
+                            self.forget_smooth(b, c2);
+                            self.doc.set_point(c1, q[1]).map_err(doc_err)?;
+                            self.doc.set_point(c2, q[2]).map_err(doc_err)?;
+                            self.doc
+                                .set_entity_kind(id, EntityKind::Bezier { a, c1, c2, b: p })
+                                .map_err(doc_err)?;
+                            self.doc.remove_if_orphaned(b);
+                        }
+                        (Some(l), Some(h)) => {
+                            // Two pieces: each keeps the handle at its original end and
+                            // gets a new one at its cut.
+                            let (first, second) = (part(0.0, l.t), part(h.t, 1.0));
+                            let pl = self.cut_point(&l);
+                            let ph = self.cut_point(&h);
+                            self.doc.set_point(c1, first[1]).map_err(doc_err)?;
+                            let c2_first = self.doc.add_point(first[2]);
+                            self.doc
+                                .set_entity_kind(
+                                    id,
+                                    EntityKind::Bezier {
+                                        a,
+                                        c1,
+                                        c2: c2_first,
+                                        b: pl,
+                                    },
+                                )
+                                .map_err(doc_err)?;
+                            let c1_second = self.doc.add_point(second[1]);
+                            self.doc.set_point(c2, second[2]).map_err(doc_err)?;
+                            let rest =
+                                self.doc.add_bezier(ph, c1_second, c2, b).map_err(doc_err)?;
+                            self.doc.copy_look(id, rest);
+                        }
+                        (None, None) => unreachable!(),
+                    }
+                }
                 _ => return Err(invalid("nothing to trim here")),
             }
             Ok(())
         })();
         self.finish(result, "Trim")
+    }
+
+    /// Drop the smooth-join relation holding `handle` in line through `end`: the curve no
+    /// longer ends there once that end is trimmed away.
+    fn forget_smooth(&mut self, end: EntityId, handle: EntityId) {
+        let gone: Vec<ConstraintId> = self
+            .doc
+            .constraints()
+            .filter(|(_, c)| {
+                matches!(c, Constraint::Smooth { point, a, b }
+                    if *point == end && (*a == handle || *b == handle))
+            })
+            .map(|(id, _)| id)
+            .collect();
+        for id in gone {
+            self.doc.remove_constraint(id);
+        }
     }
 
     /// Roll back on error, or solve and commit (reporting conflicts).
@@ -607,30 +773,23 @@ impl Editor {
         self.finish(result, "Extend")
     }
 
-    /// Split curve `id` at the point nearest `at`, returning the new shared point.
+    /// Cut a curve in two at the point nearest `at`, keeping the pieces on the original
+    /// path: lines stay collinear, arcs keep their circle, elliptical arcs their ellipse,
+    /// and pen curves join smoothly. A circle or whole ellipse, which has no ends, is cut
+    /// into two halves: at the point and opposite it. Returns the point at the cut.
     pub fn split_at(&mut self, id: EntityId, at: DVec2) -> Result<EntityId, EditError> {
         let shape = self
             .curve_shape(id)
-            .ok_or_else(|| invalid("pick a line or arc"))?;
+            .ok_or_else(|| invalid("pick a curve"))?;
         let kind = self.doc.get(id).map(|e| e.kind).expect("checked");
         let t = param_of(&shape, at);
         let p = point_at(&shape, t);
         let tol = self.tol_for(&shape);
-        let near_end = match kind {
-            EntityKind::Line { a, b }
-            | EntityKind::Arc {
-                start: a, end: b, ..
-            } => [a, b].iter().any(|e| {
-                self.doc
-                    .point(*e)
-                    .is_ok_and(|q| q.distance(p) <= tol.max(1e-6))
-            }),
-            _ => {
-                return Err(invalid(
-                    "a circle can't be split at one point: trim it instead",
-                ));
-            }
-        };
+        let near_end = kind.ends().into_iter().flatten().any(|e| {
+            self.doc
+                .point(e)
+                .is_ok_and(|q| q.distance(p) <= tol.max(1e-6))
+        });
         if near_end {
             return Err(invalid("that's an end already"));
         }
@@ -668,7 +827,109 @@ impl Editor {
                         .doc
                         .add_constraint(Constraint::Equal { a: id, b: rest });
                 }
-                _ => unreachable!(),
+                EntityKind::Circle { center, .. } => {
+                    // Two half circles on the one centre.
+                    let far = self.doc.add_point(point_at(&shape, t + TAU / 2.0));
+                    self.doc
+                        .set_entity_kind(
+                            id,
+                            EntityKind::Arc {
+                                center,
+                                start: m,
+                                end: far,
+                            },
+                        )
+                        .map_err(doc_err)?;
+                    let rest = self.doc.add_arc(center, far, m).map_err(doc_err)?;
+                    self.doc.copy_look(id, rest);
+                    let _ = self
+                        .doc
+                        .add_constraint(Constraint::Equal { a: id, b: rest });
+                }
+                EntityKind::Ellipse {
+                    center,
+                    major,
+                    minor,
+                } => {
+                    // Two halves sharing the centre and axes: one ellipse still.
+                    let far = self.doc.add_point(point_at(&shape, t + TAU / 2.0));
+                    self.doc
+                        .set_entity_kind(
+                            id,
+                            EntityKind::EllipseArc {
+                                center,
+                                major,
+                                minor,
+                                start: m,
+                                end: far,
+                            },
+                        )
+                        .map_err(doc_err)?;
+                    let rest = self
+                        .doc
+                        .add_ellipse_arc(center, major, minor, far, m)
+                        .map_err(doc_err)?;
+                    self.doc.copy_look(id, rest);
+                }
+                EntityKind::EllipseArc {
+                    center,
+                    major,
+                    minor,
+                    start,
+                    end,
+                } => {
+                    self.doc
+                        .set_entity_kind(
+                            id,
+                            EntityKind::EllipseArc {
+                                center,
+                                major,
+                                minor,
+                                start,
+                                end: m,
+                            },
+                        )
+                        .map_err(doc_err)?;
+                    let rest = self
+                        .doc
+                        .add_ellipse_arc(center, major, minor, m, end)
+                        .map_err(doc_err)?;
+                    self.doc.copy_look(id, rest);
+                }
+                EntityKind::Bezier { a, c1, c2, b } => {
+                    let Some(Shape::Bezier { p: whole }) = self.doc.shape(id) else {
+                        return Err(invalid("nothing to split here"));
+                    };
+                    // Each piece keeps the handle at its original end (shortened along its
+                    // own line, so a smooth join there stays smooth) and gets a new one at
+                    // the cut; the two new handles are kept in line, so the path stays
+                    // smooth through the cut.
+                    let first = drift_core::shape::bezier_piece(&whole, 0.0, t);
+                    let second = drift_core::shape::bezier_piece(&whole, t, 1.0);
+                    self.doc.set_point(c1, first[1]).map_err(doc_err)?;
+                    let before = self.doc.add_point(first[2]);
+                    self.doc
+                        .set_entity_kind(
+                            id,
+                            EntityKind::Bezier {
+                                a,
+                                c1,
+                                c2: before,
+                                b: m,
+                            },
+                        )
+                        .map_err(doc_err)?;
+                    let after = self.doc.add_point(second[1]);
+                    self.doc.set_point(c2, second[2]).map_err(doc_err)?;
+                    let rest = self.doc.add_bezier(m, after, c2, b).map_err(doc_err)?;
+                    self.doc.copy_look(id, rest);
+                    let _ = self.doc.add_constraint(Constraint::Smooth {
+                        point: m,
+                        a: before,
+                        b: after,
+                    });
+                }
+                EntityKind::Point(_) => unreachable!("curve_shape gave a curve"),
             }
             Ok(())
         })();
@@ -800,23 +1061,22 @@ impl Editor {
         Ok(line.expect("added"))
     }
 
-    /// The connected chain of lines and arcs through `id` (stopping where more than two curves
-    /// meet), in order, with each curve's direction (true = as stored), and whether it
-    /// closes.
+    /// The connected chain of curves through `id` (lines, arcs, elliptical arcs and pen
+    /// curves joined end to end, stopping where more than two meet), in order, with each
+    /// curve's direction (true = as stored), and whether it closes.
     pub fn chain(&self, id: EntityId) -> (Vec<(EntityId, bool)>, bool) {
-        let ends = |c: EntityId| match self.doc.get(c).map(|e| e.kind) {
-            Some(EntityKind::Line { a, b })
-            | Some(EntityKind::Arc {
-                start: a, end: b, ..
-            }) => Some((a, b)),
-            _ => None,
+        let ends = |c: EntityId| {
+            self.doc
+                .get(c)
+                .and_then(|e| e.kind.ends())
+                .map(|[a, b]| (a, b))
         };
         let Some((a0, b0)) = ends(id) else {
             return (
                 vec![(id, true)],
                 matches!(
                     self.doc.get(id).map(|e| e.kind),
-                    Some(EntityKind::Circle { .. })
+                    Some(EntityKind::Circle { .. } | EntityKind::Ellipse { .. })
                 ),
             );
         };
@@ -874,34 +1134,61 @@ impl Editor {
     }
 
     /// Offset shapes for a chain at signed distance `d` (positive = left of the direction of
-    /// travel), with corners rejoined. Circles: positive = outward.
+    /// travel), in travel order, with corners rejoined. Circles and whole ellipses:
+    /// positive = outward. Ellipses and pen curves, whose offsets aren't curves of their own
+    /// kind, come out as runs of Béziers fitted to the true offset.
     pub fn offset_shapes(
         &self,
         chain: &[(EntityId, bool)],
         closed: bool,
         d: f64,
-    ) -> Result<Vec<Shape>, EditError> {
-        let mut pieces: Vec<Shape> = Vec::new();
-        for &(id, forward) in chain {
+    ) -> Result<Vec<OffsetPiece>, EditError> {
+        let mut pieces: Vec<OffsetPiece> = Vec::new();
+        let fitted = |e: drift_geom::offset::OffsetError| match e {
+            drift_geom::offset::OffsetError::TooTight => {
+                invalid("the offset is larger than the curve's tightest bend on that side")
+            }
+            drift_geom::offset::OffsetError::Degenerate => invalid("the curve is too short"),
+        };
+        for (source, &(id, forward)) in chain.iter().enumerate() {
             let shape = self.curve_shape(id).ok_or_else(|| invalid("not a curve"))?;
-            pieces.push(match shape {
+            let exact = |shape| OffsetPiece {
+                shape,
+                source,
+                forward,
+                bridge: false,
+            };
+            // How closely fitted curves follow the true offset.
+            let tol = 1e-4 * shape.bounds().size().max_element().max(d.abs()).max(1e-6);
+            let mut curves = |at: &dyn Fn(f64) -> DVec2,
+                              span: f64,
+                              d: f64,
+                              start_with: usize|
+             -> Result<(), EditError> {
+                let fit = drift_geom::offset::offset_curve(at, span, d, tol, start_with);
+                for p in fit.map_err(fitted)? {
+                    pieces.push(OffsetPiece {
+                        shape: Shape::Bezier { p },
+                        source,
+                        // Fitted in travel order.
+                        forward: true,
+                        bridge: false,
+                    });
+                }
+                Ok(())
+            };
+            match shape {
                 Shape::Line { a, b } => {
                     let (p, q) = if forward { (a, b) } else { (b, a) };
                     let n = (q - p).perp().normalize() * d;
-                    Shape::Line { a: p + n, b: q + n }
+                    pieces.push(exact(Shape::Line { a: p + n, b: q + n }));
                 }
                 Shape::Circle { center, radius } => {
                     let r = radius + d;
                     if r <= 0.0 {
                         return Err(invalid("the offset is larger than the radius"));
                     }
-                    Shape::Circle { center, radius: r }
-                }
-                Shape::Ellipse { .. } => {
-                    return Err(invalid("offsetting ellipses isn't supported yet"));
-                }
-                Shape::Bezier { .. } => {
-                    return Err(invalid("offsetting curves isn't supported yet"));
+                    pieces.push(exact(Shape::Circle { center, radius: r }));
                 }
                 Shape::Arc {
                     center,
@@ -914,45 +1201,105 @@ impl Editor {
                     if r <= 0.0 {
                         return Err(invalid("the offset is larger than an arc's radius"));
                     }
-                    Shape::Arc {
+                    pieces.push(exact(Shape::Arc {
                         center,
                         radius: r,
                         start,
                         sweep,
+                    }));
+                }
+                Shape::Ellipse {
+                    center,
+                    major,
+                    minor,
+                    start,
+                    sweep,
+                } => {
+                    let point = |a: f64| drift_core::shape::ellipse_point(center, major, minor, a);
+                    if sweep >= TAU {
+                        // Counter-clockwise, outward being to the right.
+                        curves(&|u| point(start + u), TAU, -d, 4)?;
+                    } else {
+                        let quarters = (sweep / (TAU / 4.0)).ceil().max(1.0) as usize;
+                        if forward {
+                            curves(&|u| point(start + u), sweep, d, quarters)?;
+                        } else {
+                            curves(&|u| point(start + sweep - u), sweep, d, quarters)?;
+                        }
+                    }
+                }
+                Shape::Bezier { p } => {
+                    if forward {
+                        curves(&|u| drift_core::shape::bezier_point(&p, u), 1.0, d, 1)?;
+                    } else {
+                        curves(&|u| drift_core::shape::bezier_point(&p, 1.0 - u), 1.0, d, 1)?;
                     }
                 }
                 Shape::Point(_) => return Err(invalid("not a curve")),
-            });
+            }
         }
-        // Rejoin consecutive pieces at their corners.
-        let n = pieces.len();
-        let joins = if closed { n } else { n.saturating_sub(1) };
-        for i in 0..joins {
-            let j = (i + 1) % n;
-            let (fi, fj) = (chain[i].1, chain[j].1);
-            let end_i = piece_end(&pieces[i], fi, true);
-            let start_j = piece_end(&pieces[j], fj, false);
-            let tol = self.tol_for(&pieces[i]).max(1e-9);
-            if end_i.distance(start_j) <= tol * 10.0 {
+        // Rejoin the offsets of neighbouring curves at their corners (pieces fitted to one
+        // curve already run on from each other).
+        let mut k = 0;
+        while k < pieces.len() {
+            let n = pieces.len();
+            let j = if k + 1 < n {
+                k + 1
+            } else if closed && n > 1 {
+                0
+            } else {
+                break;
+            };
+            if pieces[k].source == pieces[j].source {
+                k += 1;
                 continue;
             }
+            let end_i = piece_end(&pieces[k].shape, pieces[k].forward, true);
+            let start_j = piece_end(&pieces[j].shape, pieces[j].forward, false);
+            let tol = self.tol_for(&pieces[k].shape).max(1e-9);
+            if end_i.distance(start_j) <= tol * 10.0 {
+                k += 1;
+                continue;
+            }
+            let (orig, orig_forward) = chain[pieces[k].source];
             let corner = self
                 .doc
-                .shape(chain[i].0)
-                .map(|s| piece_end(&s, fi, true))
+                .shape(orig)
+                .map(|s| piece_end(&s, orig_forward, true))
                 .unwrap_or(end_i);
-            let hit = intersect_unbounded(&pieces[i], &pieces[j])
+            let hit = intersect_unbounded(&pieces[k].shape, &pieces[j].shape)
                 .into_iter()
                 .min_by(|a, b| a.at.distance(corner).total_cmp(&b.at.distance(corner)));
-            if let Some(h) = hit {
-                set_piece_end(&mut pieces[i], fi, true, h.at);
-                set_piece_end(&mut pieces[j], fj, false, h.at);
+            let curved = |s: &Shape| matches!(s, Shape::Bezier { .. });
+            match hit {
+                Some(h) => {
+                    let (fk, fj) = (pieces[k].forward, pieces[j].forward);
+                    set_piece_end(&mut pieces[k].shape, fk, true, h.at);
+                    set_piece_end(&mut pieces[j].shape, fj, false, h.at);
+                }
+                // Fitted curves can't be extended to meet: bridge the opened corner.
+                None if curved(&pieces[k].shape) || curved(&pieces[j].shape) => {
+                    let bridge = OffsetPiece {
+                        shape: Shape::Line {
+                            a: end_i,
+                            b: start_j,
+                        },
+                        source: pieces[k].source,
+                        forward: true,
+                        bridge: true,
+                    };
+                    pieces.insert(k + 1, bridge);
+                    k += 1;
+                }
+                None => {}
             }
+            k += 1;
         }
         // Lines whose direction flipped have been offset past their length.
-        for (k, &(id, forward)) in chain.iter().enumerate() {
+        for piece in pieces.iter().filter(|p| !p.bridge) {
+            let (id, forward) = chain[piece.source];
             if let (Some(Shape::Line { a, b }), Shape::Line { a: oa, b: ob }) =
-                (self.doc.shape(id), pieces[k])
+                (self.doc.shape(id), piece.shape)
             {
                 let dir = if forward { b - a } else { a - b };
                 if (ob - oa).dot(dir) <= 0.0 {
@@ -993,12 +1340,32 @@ impl Editor {
                 // Left of counter-clockwise travel is inside.
                 if inside == forward { 1.0 } else { -1.0 }
             }
+            Some((shape @ (Shape::Ellipse { .. } | Shape::Bezier { .. }), forward)) => {
+                // Which side of the curve's direction at its nearest point.
+                let t = param_of(&shape, side);
+                let p = point_at(&shape, t);
+                let along = point_at(&shape, t + 1e-6) - point_at(&shape, t - 1e-6);
+                let left = along.perp_dot(side - p) >= 0.0;
+                match shape {
+                    // A whole ellipse: outward is positive (and to the right, anticlockwise).
+                    Shape::Ellipse { sweep, .. } if sweep >= TAU => {
+                        if left {
+                            -1.0
+                        } else {
+                            1.0
+                        }
+                    }
+                    _ if left == forward => 1.0,
+                    _ => -1.0,
+                }
+            }
             _ => 1.0,
         }
     }
 
     /// Offset the chain through curve `id` by `distance` towards `side`. Lines stay parallel
-    /// at the distance; arcs and circles share their centre.
+    /// at the distance; arcs and circles share their centre. Ellipses and pen curves give
+    /// smooth pen curves along the offset (a copy: they don't follow later changes).
     pub fn offset(
         &mut self,
         id: EntityId,
@@ -1015,42 +1382,41 @@ impl Editor {
         self.doc.begin();
         let mut created = Vec::new();
         let result = (|| -> Result<(), EditError> {
-            // Points at each piece's start and end in travel order; joined corners share one.
+            // Points at each piece's start and end in travel order; pieces that meet share
+            // one.
             let n = pieces.len();
+            let same = |a: DVec2, b: DVec2| a.distance(b) <= 1e-9 * b.abs().max_element().max(1.0);
             let mut starts = Vec::with_capacity(n);
-            let mut ends = Vec::with_capacity(n);
+            let mut ends: Vec<(EntityId, DVec2)> = Vec::with_capacity(n);
             for (k, piece) in pieces.iter().enumerate() {
-                let fwd = chain[k].1;
-                let s = piece_end(piece, fwd, false);
-                let e = piece_end(piece, fwd, true);
+                let s = piece_end(&piece.shape, piece.forward, false);
+                let e = piece_end(&piece.shape, piece.forward, true);
                 let start_point = match ends.last() {
-                    Some(&(prev, at))
-                        if k > 0
-                            && DVec2::distance(at, s) <= 1e-9 * s.abs().max_element().max(1.0) =>
-                    {
-                        prev
-                    }
+                    Some(&(prev, at)) if same(at, s) => prev,
                     _ => self.doc.add_point(s),
                 };
                 starts.push(start_point);
-                let end_point = if closed
+                let closes = closed
                     && k == n - 1
                     && starts[0] != start_point
-                    && self
-                        .doc
-                        .point(starts[0])
-                        .is_ok_and(|q| q.distance(e) <= 1e-9 * e.abs().max_element().max(1.0))
-                {
+                    && self.doc.point(starts[0]).is_ok_and(|q| same(q, e));
+                let end_point = if closes {
                     starts[0]
                 } else {
                     self.doc.add_point(e)
                 };
                 ends.push((end_point, e));
             }
+            // The handles of the fitted curves made so far: (piece, its start handle, its
+            // end handle), to keep runs of them smooth where they join.
+            let mut handles: Vec<(usize, EntityId, EntityId)> = Vec::new();
             for (k, piece) in pieces.iter().enumerate() {
-                let (orig, fwd) = chain[k];
+                let (orig, _) = chain[piece.source];
                 let (s, e) = (starts[k], ends[k].0);
-                let new = match (*piece, self.doc.get(orig).map(|x| x.kind)) {
+                let new = match (piece.shape, self.doc.get(orig).map(|x| x.kind)) {
+                    (Shape::Line { .. }, _) if piece.bridge => {
+                        self.doc.add_line(s, e).map_err(doc_err)?
+                    }
                     (Shape::Line { .. }, _) => {
                         let line = self.doc.add_line(s, e).map_err(doc_err)?;
                         let _ = self
@@ -1068,13 +1434,45 @@ impl Editor {
                     }
                     (Shape::Arc { .. }, Some(EntityKind::Arc { center, .. })) => {
                         // Stored counter-clockwise: start/end follow the original's.
-                        let (a, b) = if fwd { (s, e) } else { (e, s) };
+                        let (a, b) = if piece.forward { (s, e) } else { (e, s) };
                         self.doc.add_arc(center, a, b).map_err(doc_err)?
+                    }
+                    (Shape::Bezier { p }, _) => {
+                        let c1 = self.doc.add_point(p[1]);
+                        let c2 = self.doc.add_point(p[2]);
+                        let curve = self.doc.add_bezier(s, c1, c2, e).map_err(doc_err)?;
+                        // Smooth where it runs on from the piece before.
+                        if let Some(&(prev, _, before)) = handles.last()
+                            && prev + 1 == k
+                            && ends[prev].0 == s
+                        {
+                            let _ = self.doc.add_constraint(Constraint::Smooth {
+                                point: s,
+                                a: before,
+                                b: c1,
+                            });
+                        }
+                        handles.push((k, c1, c2));
+                        curve
                     }
                     _ => return Err(invalid("unexpected curve")),
                 };
                 self.doc.copy_look(orig, new);
                 created.push(new);
+            }
+            // A closed run of fitted curves (a whole ellipse's offset) is smooth where its
+            // last piece meets its first.
+            if let (Some(&(0, first, _)), Some(&(last, _, before))) =
+                (handles.first(), handles.last())
+                && n > 1
+                && last == n - 1
+                && ends[last].0 == starts[0]
+            {
+                let _ = self.doc.add_constraint(Constraint::Smooth {
+                    point: starts[0],
+                    a: before,
+                    b: first,
+                });
             }
             Ok(())
         })();
@@ -1379,6 +1777,17 @@ fn set_piece_end(shape: &mut Shape, forward: bool, last: bool, to: DVec2) {
                 let end = *start + *sweep;
                 *start = angle;
                 *sweep = (end - angle).rem_euclid(TAU);
+            }
+        }
+        // Fitted curves run in travel order: keep the part before (or after) the point.
+        Shape::Bezier { p } => {
+            let t = drift_geom::nearest_on_bezier(p, to).1;
+            if last && t > 1e-6 {
+                *p = drift_core::shape::bezier_piece(p, 0.0, t);
+                p[3] = to;
+            } else if !last && t < 1.0 - 1e-6 {
+                *p = drift_core::shape::bezier_piece(p, t, 1.0);
+                p[0] = to;
             }
         }
         _ => {}
@@ -1796,5 +2205,405 @@ mod tests {
             count(&ed, |c| matches!(c, Constraint::Horizontal { .. })),
             1
         );
+    }
+
+    #[test]
+    fn trim_cuts_lines_and_ellipses_where_they_cross() {
+        let mut ed = Editor::default();
+        ed.doc.begin();
+        let [c, m, n] = [v(0.0, 0.0), v(20.0, 0.0), v(0.0, 10.0)].map(|p| ed.doc.add_point(p));
+        let ellipse = ed.doc.add_ellipse(c, m, n).unwrap();
+        let [a, b, p, q] =
+            [v(-30.0, 0.0), v(30.0, 0.0), v(0.0, -20.0), v(0.0, 20.0)].map(|p| ed.doc.add_point(p));
+        let across = ed.doc.add_line(a, b).unwrap();
+        let upright = ed.doc.add_line(p, q).unwrap();
+        ed.commit("Setup");
+        // The stretch of the line between the upright and the ellipse goes: one piece ends at
+        // the crossing, the other on the ellipse.
+        ed.trim_at(across, v(8.0, 0.0)).unwrap();
+        let mut xs: Vec<f64> = lines(&ed)
+            .into_iter()
+            .filter(|(a, b)| a.y.abs() < 1e-6 && b.y.abs() < 1e-6)
+            .flat_map(|(a, b)| [a.x, b.x])
+            .collect();
+        xs.sort_by(f64::total_cmp);
+        assert_eq!(xs.len(), 4);
+        for (x, want) in xs.iter().zip([-30.0, 0.0, 20.0, 30.0]) {
+            assert!((x - want).abs() < 1e-6, "{xs:?}");
+        }
+        // The upright's top, outside the ellipse, goes: it now ends on the ellipse.
+        ed.trim_at(upright, v(0.0, 16.0)).unwrap();
+        let (lo, hi) = ends(&ed, upright);
+        assert!(
+            close(lo, v(0.0, -20.0)) && hi.distance(v(0.0, 10.0)) < 1e-6,
+            "{hi:?}"
+        );
+        // The ellipse's first quarter, between the line's end and the upright's, goes: an
+        // elliptical arc the long way round.
+        ed.trim_at(ellipse, v(14.142, 7.071)).unwrap();
+        assert!(matches!(
+            ed.doc.get(ellipse).unwrap().kind,
+            EntityKind::EllipseArc { .. }
+        ));
+        let Some(Shape::Ellipse { start, sweep, .. }) = ed.doc.shape(ellipse) else {
+            panic!("an elliptical arc")
+        };
+        assert!((start - TAU / 4.0).abs() < 1e-6 && (sweep - 0.75 * TAU).abs() < 1e-6);
+        // And a piece out of the arc's middle (the third quarter): two arcs of one ellipse.
+        ed.trim_at(ellipse, v(-14.142, -7.071)).unwrap();
+        let arcs: Vec<f64> = ed
+            .doc
+            .iter()
+            .filter(|(_, e)| matches!(e.kind, EntityKind::EllipseArc { .. }))
+            .filter_map(|(id, _)| match ed.doc.shape(id) {
+                Some(Shape::Ellipse { sweep, .. }) => Some(sweep),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(arcs.len(), 2);
+        assert!(
+            arcs.iter().all(|s| (s - TAU / 4.0).abs() < 1e-6),
+            "{arcs:?}"
+        );
+        // Each trim is one undo step.
+        for _ in 0..4 {
+            ed.undo();
+        }
+        assert!(matches!(
+            ed.doc.get(ellipse).unwrap().kind,
+            EntityKind::Ellipse { .. }
+        ));
+        assert_eq!(lines(&ed).len(), 2);
+    }
+
+    #[test]
+    fn trim_cuts_lines_and_pen_curves_where_they_cross() {
+        let mut ed = Editor::default();
+        ed.doc.begin();
+        let [a, c1, c2, b] =
+            [v(0.0, 0.0), v(0.0, 20.0), v(40.0, 20.0), v(40.0, 0.0)].map(|p| ed.doc.add_point(p));
+        let arch = ed.doc.add_bezier(a, c1, c2, b).unwrap();
+        let [p, q] = [v(-10.0, 10.0), v(50.0, 10.0)].map(|p| ed.doc.add_point(p));
+        let across = ed.doc.add_line(p, q).unwrap();
+        ed.commit("Setup");
+        let original = [v(0.0, 0.0), v(0.0, 20.0), v(40.0, 20.0), v(40.0, 0.0)];
+        let on_arch = |p: DVec2| drift_geom::nearest_on_bezier(&original, p).0.distance(p) < 1e-6;
+        // The line's left end, outside the arch, goes: it starts on the curve.
+        ed.trim_at(across, v(-5.0, 10.0)).unwrap();
+        let (start, end) = ends(&ed, across);
+        assert!(on_arch(start) && close(end, v(50.0, 10.0)), "{start:?}");
+        // The arch's top, between the two crossings, goes: two curves, each a part of the
+        // original, ending where the line crosses.
+        ed.trim_at(arch, v(20.0, 15.0)).unwrap();
+        let pieces: Vec<[DVec2; 4]> = ed
+            .doc
+            .iter()
+            .filter_map(|(id, e)| match (e.kind, ed.doc.shape(id)) {
+                (EntityKind::Bezier { .. }, Some(Shape::Bezier { p })) => Some(p),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(pieces.len(), 2);
+        for piece in &pieces {
+            for k in 0..=8 {
+                let at = drift_core::shape::bezier_point(piece, f64::from(k) / 8.0);
+                assert!(on_arch(at), "{at:?}");
+            }
+            // One end at the line (y = 10), the other an original end.
+            let ys = [piece[0].y, piece[3].y];
+            assert!(
+                ys.iter().any(|y| (y - 10.0).abs() < 1e-6) && ys.iter().any(|y| y.abs() < 1e-9)
+            );
+        }
+        // What's left of the first piece beyond... nothing cuts it now but the line at its
+        // end, so trimming it removes it whole.
+        ed.trim_at(arch, pieces[0][0]).unwrap();
+        assert!(ed.doc.get(arch).is_none());
+        ed.undo();
+        ed.undo();
+        ed.undo();
+        assert_eq!(ed.doc.shape(arch), Some(Shape::Bezier { p: original }));
+    }
+
+    /// The pen curves in the sketch, as control points.
+    fn beziers(ed: &Editor) -> Vec<[DVec2; 4]> {
+        ed.doc
+            .iter()
+            .filter_map(|(id, e)| match (e.kind, ed.doc.shape(id)) {
+                (EntityKind::Bezier { .. }, Some(Shape::Bezier { p })) => Some(p),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// An ellipse with semi-axes 20 and 10 about the origin.
+    fn with_ellipse() -> (Editor, EntityId) {
+        let mut ed = Editor::default();
+        ed.doc.begin();
+        let [c, m, n] = [v(0.0, 0.0), v(20.0, 0.0), v(0.0, 10.0)].map(|p| ed.doc.add_point(p));
+        let ellipse = ed.doc.add_ellipse(c, m, n).unwrap();
+        ed.commit("Ellipse");
+        (ed, ellipse)
+    }
+
+    const ARCH: [DVec2; 4] = [
+        DVec2::new(0.0, 0.0),
+        DVec2::new(0.0, 20.0),
+        DVec2::new(40.0, 20.0),
+        DVec2::new(40.0, 0.0),
+    ];
+
+    fn with_arch() -> (Editor, EntityId) {
+        let mut ed = Editor::default();
+        ed.doc.begin();
+        let [a, c1, c2, b] = ARCH.map(|p| ed.doc.add_point(p));
+        let arch = ed.doc.add_bezier(a, c1, c2, b).unwrap();
+        ed.commit("Arch");
+        (ed, arch)
+    }
+
+    #[test]
+    fn split_cuts_a_pen_curve_into_two_on_the_same_path() {
+        let (mut ed, arch) = with_arch();
+        let at = drift_core::shape::bezier_point(&ARCH, 0.3);
+        let m = ed.split_at(arch, at).unwrap();
+        assert!(ed.doc.point(m).unwrap().distance(at) < 1e-9);
+        let pieces = beziers(&ed);
+        assert_eq!(pieces.len(), 2);
+        // Both lie on the original, one from each end to the cut.
+        for piece in &pieces {
+            for k in 0..=8 {
+                let p = drift_core::shape::bezier_point(piece, f64::from(k) / 8.0);
+                assert!(drift_geom::nearest_on_bezier(&ARCH, p).0.distance(p) < 1e-9);
+            }
+        }
+        assert!(
+            pieces
+                .iter()
+                .any(|p| close(p[0], ARCH[0]) && p[3].distance(at) < 1e-9)
+        );
+        assert!(
+            pieces
+                .iter()
+                .any(|p| p[0].distance(at) < 1e-9 && close(p[3], ARCH[3]))
+        );
+        // Smooth through the cut, and it stays so when the cut point is dragged.
+        assert_eq!(count(&ed, |c| matches!(c, Constraint::Smooth { .. })), 1);
+        assert!(ed.move_point_to(m, at + v(1.0, 3.0)));
+        let pieces = beziers(&ed);
+        let (into, out_of) = pieces.iter().fold((DVec2::ZERO, DVec2::ZERO), |(i, o), p| {
+            if p[3].distance(at + v(1.0, 3.0)) < 1e-6 {
+                (p[3] - p[2], o)
+            } else {
+                (i, p[1] - p[0])
+            }
+        });
+        assert!(into.normalize().perp_dot(out_of.normalize()).abs() < 1e-6);
+        // An end isn't a place to split; one undo step each.
+        assert!(ed.split_at(arch, ARCH[0]).is_err());
+        ed.undo();
+        ed.undo();
+        assert_eq!(beziers(&ed), [ARCH]);
+    }
+
+    #[test]
+    fn split_cuts_ellipses_and_circles() {
+        // A whole ellipse: two halves, at the point and opposite it, on the same axes.
+        let (mut ed, ellipse) = with_ellipse();
+        let m = ed.split_at(ellipse, v(0.0, 10.0)).unwrap();
+        assert!(ed.doc.point(m).unwrap().distance(v(0.0, 10.0)) < 1e-9);
+        let arcs: Vec<(EntityId, f64, f64)> = ed
+            .doc
+            .iter()
+            .filter_map(|(id, _)| match ed.doc.shape(id) {
+                Some(Shape::Ellipse { start, sweep, .. }) => Some((id, start, sweep)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(arcs.len(), 2);
+        assert!(
+            arcs.iter()
+                .all(|(_, _, sweep)| (sweep - TAU / 2.0).abs() < 1e-9)
+        );
+        // A half splits again where it's clicked.
+        let (half, start, _) = arcs[0];
+        let Some(shape) = ed.doc.shape(half) else {
+            panic!()
+        };
+        let at = point_at(&shape, TAU / 8.0);
+        ed.split_at(half, at).unwrap();
+        let sweeps: Vec<f64> = ed
+            .doc
+            .iter()
+            .filter_map(|(id, _)| match ed.doc.shape(id) {
+                Some(Shape::Ellipse { sweep, .. }) => Some(sweep),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(sweeps.len(), 3);
+        assert!(
+            (sweeps.iter().sum::<f64>() - TAU).abs() < 1e-9,
+            "{sweeps:?} from {start}"
+        );
+        // A circle splits into two half arcs.
+        let mut ed = Editor::default();
+        ed.doc.begin();
+        let c = ed.doc.add_point(v(5.0, 5.0));
+        let circle = ed.doc.add_circle(c, 8.0).unwrap();
+        ed.commit("Circle");
+        ed.split_at(circle, v(13.0, 5.0)).unwrap();
+        let arcs: Vec<f64> = ed
+            .doc
+            .iter()
+            .filter_map(|(id, _)| match ed.doc.shape(id) {
+                Some(Shape::Arc { radius, sweep, .. }) => {
+                    assert!((radius - 8.0).abs() < 1e-9);
+                    Some(sweep)
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(arcs.len(), 2);
+        assert!(arcs.iter().all(|s| (s - TAU / 2.0).abs() < 1e-9));
+    }
+
+    /// How far `p` is from the ellipse of `with_ellipse`.
+    fn off_ellipse(p: DVec2) -> f64 {
+        (0..20_000)
+            .map(|k| {
+                let a = TAU * f64::from(k) / 20_000.0;
+                v(20.0 * a.cos(), 10.0 * a.sin()).distance(p)
+            })
+            .fold(f64::INFINITY, f64::min)
+    }
+
+    #[test]
+    fn offset_follows_ellipses() {
+        // Outside: a closed, smooth run of pen curves 3 from the ellipse all round.
+        let (mut ed, ellipse) = with_ellipse();
+        let made = ed.offset(ellipse, 3.0, v(30.0, 0.0)).unwrap();
+        let curves = beziers(&ed);
+        assert_eq!(curves.len(), made.len());
+        assert!(curves.len() >= 4);
+        for c in &curves {
+            for k in 0..=8 {
+                let p = drift_core::shape::bezier_point(c, f64::from(k) / 8.0);
+                assert!((off_ellipse(p) - 3.0).abs() < 5e-3, "{}", off_ellipse(p));
+                assert!(p.length() > 10.0, "outside");
+            }
+        }
+        // Closed: every end is another's start; smooth at every join.
+        for c in &curves {
+            assert_eq!(
+                curves.iter().filter(|o| o[0].distance(c[3]) < 1e-9).count(),
+                1
+            );
+        }
+        assert_eq!(
+            count(&ed, |c| matches!(c, Constraint::Smooth { .. })),
+            curves.len()
+        );
+        // Inside works up to the tightest bend (10² / 20 = 5), then says why not.
+        let inner = ed.offset(ellipse, 4.0, v(0.0, 0.0)).unwrap();
+        let p = match ed.doc.shape(inner[0]) {
+            Some(Shape::Bezier { p }) => p[0],
+            _ => panic!("a pen curve"),
+        };
+        assert!((off_ellipse(p) - 4.0).abs() < 5e-3 && p.length() < 20.0);
+        let err = ed.offset(ellipse, 6.0, v(0.0, 0.0)).unwrap_err();
+        assert!(err.to_string().contains("tightest bend"), "{err}");
+        // One undo step each.
+        ed.undo();
+        ed.undo();
+        assert!(beziers(&ed).is_empty());
+    }
+
+    #[test]
+    fn offset_follows_pen_curves_and_mixed_paths() {
+        // A line running into an arch (a corner between them), then a line out of it.
+        let mut ed = Editor::default();
+        ed.doc.begin();
+        let [a, c1, c2, b] = ARCH.map(|p| ed.doc.add_point(p));
+        let arch = ed.doc.add_bezier(a, c1, c2, b).unwrap();
+        let start = ed.doc.add_point(v(-30.0, 0.0));
+        let end = ed.doc.add_point(v(70.0, 0.0));
+        let lead_in = ed.doc.add_line(start, a).unwrap();
+        ed.doc.add_line(b, end).unwrap();
+        ed.commit("Path");
+        let (chain, closed) = ed.chain(arch);
+        assert_eq!(chain.len(), 3);
+        assert!(!closed);
+        // Above the path (outside the arch): the corners open, so they're bridged.
+        let made = ed.offset(lead_in, 4.0, v(-20.0, 10.0)).unwrap();
+        let on_offset = |p: DVec2| {
+            let to_arch = drift_geom::nearest_on_bezier(&ARCH, p).0.distance(p);
+            let to_lines = if p.x < 0.0 || p.x > 40.0 {
+                p.y.abs()
+            } else {
+                f64::INFINITY
+            };
+            to_arch.min(to_lines)
+        };
+        let mut lines_made = 0;
+        let mut curves_made = 0;
+        for id in &made {
+            match ed.doc.shape(*id) {
+                Some(Shape::Line { a, b }) => {
+                    lines_made += 1;
+                    // The two offsets of the lines sit 4 above them.
+                    if (a.y - 4.0).abs() < 1e-6 && (b.y - 4.0).abs() < 1e-6 {
+                        assert!(a.x.min(b.x) < -20.0 || a.x.max(b.x) > 60.0);
+                    }
+                }
+                Some(Shape::Bezier { p }) => {
+                    curves_made += 1;
+                    for k in 0..=8 {
+                        let q = drift_core::shape::bezier_point(&p, f64::from(k) / 8.0);
+                        assert!((on_offset(q) - 4.0).abs() < 5e-3, "{}", on_offset(q));
+                    }
+                }
+                other => panic!("unexpected {other:?}"),
+            }
+        }
+        assert!(
+            curves_made >= 1 && lines_made >= 2,
+            "{curves_made} curves, {lines_made} lines"
+        );
+        // The result is one connected path: every piece's end meets the next piece's start.
+        let mut ends: Vec<DVec2> = Vec::new();
+        for id in &made {
+            match ed.doc.shape(*id) {
+                Some(Shape::Line { a, b }) => ends.extend([a, b]),
+                Some(Shape::Bezier { p }) => ends.extend([p[0], p[3]]),
+                _ => {}
+            }
+        }
+        let loose = ends
+            .iter()
+            .filter(|p| ends.iter().filter(|q| q.distance(**p) < 1e-6).count() == 1)
+            .count();
+        assert_eq!(loose, 2, "only the path's two ends are free");
+        // Below (inside the arch) the offsets cross and are cut where they meet.
+        ed.undo();
+        let made = ed.offset(lead_in, 2.0, v(-20.0, -10.0)).unwrap();
+        let mut ends: Vec<DVec2> = Vec::new();
+        for id in &made {
+            match ed.doc.shape(*id) {
+                Some(Shape::Line { a, b }) => ends.extend([a, b]),
+                Some(Shape::Bezier { p }) => ends.extend([p[0], p[3]]),
+                _ => {}
+            }
+        }
+        let loose = ends
+            .iter()
+            .filter(|p| ends.iter().filter(|q| q.distance(**p) < 1e-6).count() == 1)
+            .count();
+        assert_eq!(loose, 2);
+        // A lone arch offsets to curves ending square to its ends.
+        let (mut ed, arch) = with_arch();
+        ed.offset(arch, 5.0, v(20.0, 30.0)).unwrap();
+        let curves: Vec<[DVec2; 4]> = beziers(&ed).into_iter().filter(|p| *p != ARCH).collect();
+        assert!(curves.iter().any(|p| p[0].distance(v(-5.0, 0.0)) < 1e-6));
+        assert!(curves.iter().any(|p| p[3].distance(v(45.0, 0.0)) < 1e-6));
     }
 }

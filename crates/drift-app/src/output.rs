@@ -428,6 +428,7 @@ fn annotations(ed: &Editor, painter: &egui::Painter, s: &Space, d: &mut Drawing)
                 angle: -f64::from(angle),
                 align: Align::Left,
                 text,
+                style: Default::default(),
             },
         };
         d.items.push(item(ANNOTATION_LAYER, pen, prim, s.clipped));
@@ -511,20 +512,13 @@ pub fn fit_sheet(b: Bounds, sheet: &mut Sheet) {
     if b.is_empty() {
         return;
     }
+    // The view is centred in the space clear of the title block.
     let area = drift_draft::sheet::drawing_area(sheet);
-    let mut room = area.size();
-    if let Some(tb) = drift_draft::sheet::title_block_bounds(sheet) {
-        // Keep clear of the title block: use the space above it.
-        room.y -= tb.size().y;
-    }
-    // A little air around the drawing.
+    let clear = drift_draft::sheet::view_area(sheet);
+    // A good margin of air around the drawing.
     let extent = b.size() * 1.1;
-    sheet.scale = drift_core::sheets::fit_scale(extent, room * 0.95);
-    let shift = match drift_draft::sheet::title_block_bounds(sheet) {
-        Some(tb) => DVec2::new(0.0, tb.size().y / 2.0) * sheet.scale,
-        None => DVec2::ZERO,
-    };
-    sheet.center = b.center() - shift;
+    sheet.scale = drift_core::sheets::fit_scale(extent, clear.size() * 0.9);
+    sheet.center = b.center() - (clear.center() - area.center()) * sheet.scale;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -564,7 +558,9 @@ pub fn paint_drawing(
             }
         };
         let arc_points = |c: DVec2, r: f64, start: f64, sweep: f64| -> Vec<Pos2> {
-            let n = ((sweep.abs() * r * f64::from(px)).sqrt().ceil() as usize).clamp(8, 256);
+            // Fine enough that the chords stay within a tenth of a pixel of the arc.
+            let n =
+                ((sweep.abs() * (r * f64::from(px)).sqrt() * 1.2).ceil() as usize).clamp(12, 512);
             (0..=n)
                 .map(|k| to_screen(c + DVec2::from_angle(start + sweep * k as f64 / n as f64) * r))
                 .collect()
@@ -622,21 +618,37 @@ pub fn paint_drawing(
                 angle,
                 align,
                 text,
+                style,
             } => {
                 let size = (*height / CAP_HEIGHT) as f32 * px;
                 if size < 1.5 {
                     continue;
                 }
-                let galley =
-                    p.layout_no_wrap(text.clone(), egui::FontId::proportional(size), color);
+                let family = if style.bold {
+                    crate::theme::bold()
+                } else {
+                    egui::FontFamily::Proportional
+                };
+                let job = egui::text::LayoutJob::single_section(
+                    text.clone(),
+                    egui::TextFormat {
+                        font_id: egui::FontId::new(size, family),
+                        color,
+                        extra_letter_spacing: style.tracking as f32 * size,
+                        ..Default::default()
+                    },
+                );
+                let galley = p.layout_job(job);
                 let Some(first) = galley.rows.first().and_then(|r| r.row.glyphs.first()) else {
                     continue;
                 };
                 let ascent = galley.rows[0].pos.y + first.pos.y;
+                // Tracking trails the last letter too; it isn't part of the measure.
+                let width = galley.size().x - style.tracking as f32 * size;
                 let shift = match align {
                     Align::Left => 0.0,
-                    Align::Center => galley.size().x / 2.0,
-                    Align::Right => galley.size().x,
+                    Align::Center => width / 2.0,
+                    Align::Right => width,
                 };
                 let screen_angle = -(*angle as f32);
                 let rot = egui::emath::Rot2::from_angle(screen_angle);

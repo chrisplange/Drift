@@ -2534,3 +2534,201 @@ fn text_is_typed_in_place_and_windows_open() {
     h.run();
     save_png("drift_ui_about.png", &mut h);
 }
+
+#[test]
+fn inspector_fields_take_typed_values() {
+    use eframe::egui::accesskit::Role;
+    let Some(mut h) = harness() else { return };
+    h.key_press(Key::L);
+    h.run();
+    click_world(&mut h, DVec2::new(-30.0, 0.0));
+    click_world(&mut h, DVec2::new(20.0, 10.0));
+    h.key_press(Key::Escape);
+    h.run();
+    h.key_press(Key::Escape);
+    h.run();
+    click_world(&mut h, DVec2::new(5.0, 7.0));
+    h.run();
+    assert_eq!(h.state().editor.selection.len(), 1);
+    // The line's fields, in order: Length, Angle, Start X, Start Y, End X, End Y.
+    fn type_into(h: &mut Harness<'_, DriftApp>, field: usize, text: &str, finish: Key) {
+        let fields: Vec<_> = h.get_all_by_role(Role::TextInput).collect();
+        // (Once the length is dimensioned, that dimension's own row adds a seventh below.)
+        assert!(fields.len() >= 6, "a line's six fields");
+        fields[field].click();
+        h.run();
+        h.event(Event::Key {
+            key: Key::A,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: EguiModifiers::COMMAND,
+        });
+        h.event(Event::Text(text.into()));
+        h.run();
+        h.key_press(finish);
+        h.run();
+        h.run();
+    }
+    let ends = |h: &Harness<'_, DriftApp>| {
+        let doc = &h.state().editor.doc;
+        doc.iter()
+            .find_map(|(_, e)| match e.kind {
+                EntityKind::Line { a, b } => Some((doc.point(a).unwrap(), doc.point(b).unwrap())),
+                _ => None,
+            })
+            .unwrap()
+    };
+    // A length, leaving the field with Tab rather than Return: it still applies, as a
+    // dimension.
+    type_into(&mut h, 0, "80", Key::Tab);
+    let (a, b) = ends(&h);
+    assert!(
+        (a.distance(b) - 80.0).abs() < 1e-6,
+        "length {}",
+        a.distance(b)
+    );
+    assert_eq!(h.state().editor.doc.constraint_count(), 1);
+    // An angle turns the line about its start, keeping the length.
+    type_into(&mut h, 1, "90", Key::Enter);
+    let (a2, b2) = ends(&h);
+    assert!((a2 - a).length() < 1e-6, "the start stays");
+    assert!((b2 - (a + DVec2::new(0.0, 80.0))).length() < 1e-5, "{b2:?}");
+    // A coordinate moves that end; the dimensioned length holds, so the line follows.
+    type_into(&mut h, 2, "10", Key::Enter);
+    let (a3, b3) = ends(&h);
+    assert!((a3.x - 10.0).abs() < 1e-6, "{a3:?}");
+    assert!((a3.distance(b3) - 80.0).abs() < 1e-6);
+    save_png("drift_ui_field_typed.png", &mut h);
+    // Esc leaves things as they were.
+    type_into(&mut h, 3, "55", Key::Escape);
+    assert_eq!(ends(&h), (a3, b3));
+    assert_eq!(
+        h.state().editor.selection.len(),
+        1,
+        "Esc in a field keeps the selection"
+    );
+    // In feet and inches a bare number is inches.
+    let mut units = h.state().editor.doc.units();
+    units.length = drift_core::LengthFormat::Architectural;
+    h.state_mut().editor.set_units(units);
+    h.run();
+    type_into(&mut h, 0, "30", Key::Enter);
+    let (a4, b4) = ends(&h);
+    assert!(
+        (a4.distance(b4) - 762.0).abs() < 1e-6,
+        "{}",
+        a4.distance(b4)
+    );
+    type_into(&mut h, 0, "2'-6 1/2\"", Key::Enter);
+    let (a5, b5) = ends(&h);
+    assert!(
+        (a5.distance(b5) - 774.7).abs() < 1e-6,
+        "{}",
+        a5.distance(b5)
+    );
+}
+
+#[test]
+fn offsets_and_splits_of_ellipses_and_pen_curves_draw() {
+    let Some(mut h) = harness() else { return };
+    let v = DVec2::new;
+    let ed = &mut h.state_mut().editor;
+    ed.doc.begin();
+    let [c, m, n] = [v(-45.0, 0.0), v(-15.0, 10.0), v(-50.0, 15.0)].map(|p| ed.doc.add_point(p));
+    let ellipse = ed.doc.add_ellipse(c, m, n).unwrap();
+    let pts =
+        [v(15.0, -20.0), v(15.0, 25.0), v(60.0, 30.0), v(70.0, -5.0)].map(|p| ed.doc.add_point(p));
+    let arch = ed.doc.add_bezier(pts[0], pts[1], pts[2], pts[3]).unwrap();
+    let tail = ed.doc.add_point(v(90.0, -30.0));
+    let line = ed.doc.add_line(pts[3], tail).unwrap();
+    ed.commit("Shapes");
+    // Offsets on both sides of each, then a split of the ellipse and of the pen curve.
+    let centre = ed.doc.point(c).unwrap();
+    ed.offset(ellipse, 6.0, centre + v(80.0, 0.0)).unwrap();
+    ed.offset(ellipse, 5.0, centre).unwrap();
+    ed.offset(line, 5.0, v(40.0, 40.0)).unwrap();
+    ed.offset(line, 4.0, v(40.0, 0.0)).unwrap();
+    ed.split_at(ellipse, centre + v(30.0, 10.0)).unwrap();
+    let at = ed
+        .doc
+        .shape(arch)
+        .map(|s| crate::modify::point_at(&s, 0.4))
+        .unwrap();
+    ed.split_at(arch, at).unwrap();
+    let fit = h.state().fit_bounds();
+    h.state_mut().fit_target = Some(fit);
+    h.state_mut().always_endpoints = true;
+    h.state_mut().status_colors = false;
+    h.run();
+    h.run();
+    save_png("drift_ui_offset_split_curves.png", &mut h);
+}
+
+#[test]
+fn modern_sheet_layout() {
+    let Some(mut h) = harness() else { return };
+    h.get_by_label("File").click();
+    h.run();
+    h.get_by_label("Open example").click();
+    h.run();
+    h.state_mut().add_sheet();
+    let id = h.state().current_sheet().expect("a sheet");
+    let mut sheet = h.state().editor.doc.sheet(id).cloned().unwrap();
+    assert_eq!(sheet.title_block, drift_core::TitleBlock::Modern);
+    sheet.fields.title = "Mounting plate".into();
+    sheet.fields.number = "DR-0142".into();
+    sheet.fields.company = "Northlight Works".into();
+    sheet.fields.author = "C. Lange".into();
+    sheet.fields.checked = "M. Okafor".into();
+    sheet.fields.material = "6061-T6, anodised".into();
+    sheet.fields.date = "2026-10-11".into();
+    sheet.name = "General arrangement".into();
+    for (rev, text) in [
+        ("A", "First issue"),
+        ("B", "Slot lengthened to 30; holes on Ø52"),
+    ] {
+        sheet.revisions.push(drift_core::Revision {
+            rev: rev.into(),
+            date: "2026-10-11".into(),
+            description: text.into(),
+            by: "CL".into(),
+        });
+    }
+    h.state_mut().update_sheet(id, sheet, false);
+    h.state_mut().sheet_preview = true;
+    h.state_mut().preview.zoom = 0.0;
+    h.state_mut().dock_view.hide_all = true;
+    h.run();
+    h.run();
+    save_png("drift_ui_sheet_modern.png", &mut h);
+    let painter = h.ctx.layer_painter(egui::LayerId::background());
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/tmp");
+    let pdf = h.state_mut().pdf_bytes(&painter);
+    let text = String::from_utf8_lossy(&pdf);
+    assert!(text.contains("/BaseFont /Helvetica-Bold"));
+    assert!(text.contains("(Mounting plate) Tj") && text.contains("(DR-0142) Tj"));
+    assert!(
+        text.contains("(NORTHLIGHT WORKS) Tj"),
+        "the company, in tracked capitals"
+    );
+    std::fs::write(dir.join("drift_sheet_modern.pdf"), &pdf).unwrap();
+    std::fs::write(
+        dir.join("drift_sheet_modern.svg"),
+        h.state_mut().svg_text(&painter),
+    )
+    .unwrap();
+    // The same on A4 upright, where the strip has far less room.
+    let mut narrow = h.state().editor.doc.sheet(id).cloned().unwrap();
+    narrow.paper = drift_core::PaperSize::A4;
+    narrow.portrait = true;
+    let bounds = h.state().fit_bounds();
+    crate::output::fit_sheet(bounds, &mut narrow);
+    h.state_mut().update_sheet(id, narrow, false);
+    h.run();
+    std::fs::write(
+        dir.join("drift_sheet_modern_a4.pdf"),
+        h.state_mut().pdf_bytes(&painter),
+    )
+    .unwrap();
+}

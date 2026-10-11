@@ -1505,7 +1505,10 @@ impl Document {
                 Slot::Circular => {
                     matches!(kind, EntityKind::Circle { .. } | EntityKind::Arc { .. })
                 }
-                Slot::LineOrCircular => !kind.is_point() && !kind.is_ellipse(),
+                Slot::LineOrCircular => matches!(
+                    kind,
+                    EntityKind::Line { .. } | EntityKind::Circle { .. } | EntityKind::Arc { .. }
+                ),
                 Slot::Curve => !kind.is_point(),
             };
             if !ok {

@@ -1620,7 +1620,8 @@ impl Editor {
         Ok(id)
     }
 
-    /// Move a point to typed coordinates (one undo step). False if relations hold it.
+    /// Move a point to typed coordinates (one undo step), its relations pulling the rest
+    /// along. False, with nothing changed, if they hold it somewhere else.
     pub fn move_point_to(&mut self, point: EntityId, to: DVec2) -> bool {
         let Ok(from) = self.doc.point(point) else {
             return false;
@@ -1631,11 +1632,46 @@ impl Editor {
         self.doc.begin();
         let dragged: Vec<Param> = Param::point(point).into_iter().collect();
         if !self.drag(&[point], to - from, &dragged) {
+            // Too far for one solve: go in steps.
+            const STEPS: u32 = 16;
+            for _ in 0..STEPS {
+                self.drag(&[point], (to - from) / f64::from(STEPS), &dragged);
+            }
+        }
+        // A drag follows the target closely rather than exactly: close what's left.
+        for _ in 0..4 {
+            let Ok(now) = self.doc.point(point) else {
+                break;
+            };
+            if now.distance(to) < 1e-10 {
+                break;
+            }
+            self.drag(&[point], to - now, &dragged);
+        }
+        let allowed = 1e-6 * (1.0 + (to - from).length());
+        let reached = self
+            .doc
+            .point(point)
+            .is_ok_and(|p| p.distance(to) <= allowed);
+        if !reached {
             self.doc.rollback();
             self.sync();
             return false;
         }
         self.commit("Move point")
+    }
+
+    /// Turn a line about its start to an angle (degrees anticlockwise from +X), keeping its
+    /// length. False if its relations hold its direction.
+    pub fn set_line_angle(&mut self, line: EntityId, degrees: f64) -> bool {
+        let Some(EntityKind::Line { a, b }) = self.doc.get(line).map(|e| e.kind) else {
+            return false;
+        };
+        let (Ok(pa), Ok(pb)) = (self.doc.point(a), self.doc.point(b)) else {
+            return false;
+        };
+        let to = pa + DVec2::from_angle(degrees.to_radians()) * pa.distance(pb);
+        self.move_point_to(b, to)
     }
 
     /// Move the selection (curves, block copies, the picked text) by `delta` as one undo

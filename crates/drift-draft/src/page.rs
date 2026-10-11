@@ -101,7 +101,34 @@ pub enum Prim {
         angle: f64,
         align: Align,
         text: String,
+        style: TextStyle,
     },
+}
+
+/// How a line of text is set.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct TextStyle {
+    /// The bold weight.
+    pub bold: bool,
+    /// Extra space after every letter, as a fraction of the font size (0.1 opens small
+    /// capitals out nicely).
+    pub tracking: f64,
+}
+
+impl TextStyle {
+    pub const REGULAR: TextStyle = TextStyle {
+        bold: false,
+        tracking: 0.0,
+    };
+    pub const BOLD: TextStyle = TextStyle {
+        bold: true,
+        tracking: 0.0,
+    };
+
+    pub fn tracked(mut self, tracking: f64) -> Self {
+        self.tracking = tracking;
+        self
+    }
 }
 
 /// An ellipse prim as connected points (for outputs without ellipses); other prims give none.
@@ -214,6 +241,54 @@ impl Drawing {
                 angle: 0.0,
                 align,
                 text,
+                style: TextStyle::REGULAR,
+            },
+        );
+    }
+
+    /// A line of text in a given weight and tracking.
+    #[allow(clippy::too_many_arguments)]
+    pub fn styled_text(
+        &mut self,
+        layer: &str,
+        pen: Pen,
+        at: DVec2,
+        height: f64,
+        align: Align,
+        style: TextStyle,
+        text: impl Into<String>,
+    ) {
+        let text = text.into();
+        if text.trim().is_empty() {
+            return;
+        }
+        self.push(
+            layer,
+            pen,
+            Prim::Text {
+                at,
+                height,
+                angle: 0.0,
+                align,
+                text,
+                style,
+            },
+        );
+    }
+
+    /// A filled rectangle in the pen's colour.
+    pub fn filled_rect(&mut self, layer: &str, pen: Pen, min: DVec2, max: DVec2) {
+        let corners = [min, DVec2::new(max.x, min.y), max, DVec2::new(min.x, max.y)];
+        self.push(
+            layer,
+            pen,
+            Prim::Fill {
+                rings: vec![corners.to_vec()],
+                triangles: vec![
+                    [corners[0], corners[1], corners[2]],
+                    [corners[0], corners[2], corners[3]],
+                ],
+                mask: false,
             },
         );
     }
@@ -346,9 +421,13 @@ impl Drawing {
                 }
                 Prim::Fill { rings, .. } => rings.iter().flatten().for_each(|p| b.include(*p)),
                 Prim::Text {
-                    at, height, text, ..
+                    at,
+                    height,
+                    text,
+                    style,
+                    ..
                 } => {
-                    let w = text_width(text, *height);
+                    let w = styled_width(text, *height, *style);
                     b.include(*at - DVec2::new(w, *height * 0.3));
                     b.include(*at + DVec2::new(w, *height * 1.2));
                 }
@@ -461,12 +540,14 @@ impl Transform {
                 angle,
                 align,
                 text,
+                style,
             } => Prim::Text {
                 at: self.p(*at),
                 height: height * self.scale,
                 angle: angle + self.angle,
                 align: *align,
                 text: text.clone(),
+                style: *style,
             },
             Prim::Insert { .. } => prim.clone(),
         }
@@ -493,16 +574,36 @@ const HELVETICA: [u16; 95] = [
     222, 833, 556, 556, 556, 556, 333, 500, 278, 556, 500, 722, 500, 500, 500, 334, 260, 334, 584,
 ];
 
+/// Helvetica Bold advance widths (per 1000 em) for ASCII 32–126.
+const HELVETICA_BOLD: [u16; 95] = [
+    278, 333, 474, 556, 556, 889, 722, 238, 333, 333, 389, 584, 278, 333, 278, 278, 556, 556, 556,
+    556, 556, 556, 556, 556, 556, 556, 333, 333, 584, 584, 584, 611, 975, 722, 722, 722, 722, 667,
+    611, 778, 722, 278, 556, 722, 611, 833, 722, 778, 667, 778, 722, 667, 611, 722, 667, 944, 667,
+    667, 611, 333, 278, 333, 584, 556, 333, 556, 611, 556, 611, 556, 333, 611, 611, 278, 278, 556,
+    278, 889, 611, 611, 611, 611, 389, 556, 333, 611, 556, 778, 556, 556, 500, 389, 280, 389, 584,
+];
+
 /// Helvetica's cap height per em: text `height` (cap height) → font size.
 pub const CAP_HEIGHT: f64 = 0.718;
 
 /// The width of `text` in Helvetica at cap height `height` (mm).
 pub fn text_width(text: &str, height: f64) -> f64 {
+    styled_width(text, height, TextStyle::REGULAR)
+}
+
+/// The width of `text` at cap height `height` (mm) in a weight and tracking (the tracking
+/// after the last letter isn't counted).
+pub fn styled_width(text: &str, height: f64, style: TextStyle) -> f64 {
     let size = height / CAP_HEIGHT;
+    let table = if style.bold {
+        &HELVETICA_BOLD
+    } else {
+        &HELVETICA
+    };
     let units: u32 = text
         .chars()
         .map(|c| match c as u32 {
-            32..=126 => u32::from(HELVETICA[(c as u32 - 32) as usize]),
+            32..=126 => u32::from(table[(c as u32 - 32) as usize]),
             0xD8 | 0xF8 => 778, // Ø ø
             0xB1 | 0xD7 => 584, // ± ×
             0xB0 => 400,        // °
@@ -510,7 +611,8 @@ pub fn text_width(text: &str, height: f64) -> f64 {
             _ => 556,
         })
         .sum();
-    f64::from(units) / 1000.0 * size
+    let gaps = text.chars().count().saturating_sub(1) as f64;
+    (f64::from(units) / 1000.0 + gaps * style.tracking) * size
 }
 
 #[cfg(test)]

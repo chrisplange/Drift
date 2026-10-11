@@ -6,7 +6,7 @@
 //! ```json
 //! {
 //!   "format": "drift",
-//!   "version": 15,
+//!   "version": 16,
 //!   "meta": {"title":"Bracket","units":"mm","generator":"Drift 0.1.0"},
 //!   "display": {"length":"architectural","fraction":16},
 //!   "variables": [
@@ -67,8 +67,8 @@ pub const EXTENSION: &str = "drift";
 /// (paper, scale, view, title block and revisions) (M8); 9 = adds `groups`; 10 = adds `blocks`
 /// and `instances`; 11 = adds a layer's `fill` colour; 12 = adds `underlays` (M8.5); 13 = adds
 /// `ellipse` entities; 14 = adds `bezier` curves and `smooth` relations; 15 = adds `texts`
-/// (M9).
-pub const FORMAT_VERSION: u32 = 15;
+/// (M9); 16 = adds the `modern` title block.
+pub const FORMAT_VERSION: u32 = 16;
 const FORMAT_TAG: &str = "drift";
 
 /// Document-level properties stored alongside the geometry.
@@ -1604,7 +1604,7 @@ mod tests {
         let text = save(&doc, &Metadata::default());
         let expected = r#"{
   "format": "drift",
-  "version": 15,
+  "version": 16,
   "meta": {"units":"mm"},
   "entities": [
     {"type":"point","id":"e1","at":[0.0,0.0]},
@@ -2195,7 +2195,7 @@ mod tests {
         doc.add_text(drift_core::SketchText::new("A", DVec2::ZERO, 3.0));
 
         let text = save(&doc, &Metadata::default());
-        assert!(text.contains("\"version\": 15"));
+        assert!(text.contains("\"version\": 16"));
         assert!(
             text.contains(r#"{"a":[80.0,20.0,30.0,0.0,90.0]}"#),
             "{text}"

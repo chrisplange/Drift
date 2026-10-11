@@ -124,7 +124,7 @@ impl DriftApp {
     }
 
     /// Change a sheet. Typing into its fields merges into one undo step.
-    fn update_sheet(&mut self, id: SheetId, sheet: Sheet, typing: bool) {
+    pub(crate) fn update_sheet(&mut self, id: SheetId, sheet: Sheet, typing: bool) {
         if self.editor.doc.sheet(id) == Some(&sheet) {
             return;
         }

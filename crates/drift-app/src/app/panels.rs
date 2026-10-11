@@ -58,17 +58,26 @@ fn kind_icon(kind: &drift_core::EntityKind) -> ToolKind {
     }
 }
 
-/// A size typed into the inspector.
+/// A value typed into the inspector.
 enum SizeEdit {
     /// Set (or add) this dimension to the typed value.
     Dimension(Constraint, String),
     /// Move a point: its id, the axis (0 = X, 1 = Y) and the typed coordinate.
     Point(drift_core::EntityId, usize, String),
+    /// Turn a line about its start to the typed angle.
+    Angle(drift_core::EntityId, String),
 }
 
-/// A value field in the inspector: shows `shown`, and returns what was typed when Return is
-/// pressed on something different. The text being typed lives in egui's memory.
-fn value_field(ui: &mut egui::Ui, key: egui::Id, shown: &str, tip: &str) -> Option<String> {
+/// A value field in the inspector: shows `shown`, and returns what was typed once the field
+/// is left (Return, Tab or a click elsewhere) with something different in it. Esc puts the
+/// old value back. The text being typed lives in egui's memory.
+fn value_field(
+    ui: &mut egui::Ui,
+    key: egui::Id,
+    shown: &str,
+    width: f32,
+    tip: &str,
+) -> Option<String> {
     let mut text = ui
         .data(|d| d.get_temp::<String>(key))
         .unwrap_or_else(|| shown.to_owned());
@@ -77,7 +86,7 @@ fn value_field(ui: &mut egui::Ui, key: egui::Id, shown: &str, tip: &str) -> Opti
             egui::TextEdit::singleline(&mut text)
                 .id(key.with("field"))
                 .font(egui::TextStyle::Monospace)
-                .desired_width(118.0),
+                .desired_width(width),
         )
         .on_hover_text(tip);
     if response.has_focus() {
@@ -85,22 +94,26 @@ fn value_field(ui: &mut egui::Ui, key: egui::Id, shown: &str, tip: &str) -> Opti
     }
     if response.lost_focus() {
         ui.data_mut(|d| d.remove::<String>(key));
-        if ui.input(|i| i.key_pressed(egui::Key::Enter)) && text.trim() != shown {
-            return Some(text.trim().to_owned());
+        let cancelled = ui.input(|i| i.key_pressed(egui::Key::Escape));
+        let typed = text.trim();
+        if !cancelled && !typed.is_empty() && typed != shown {
+            return Some(typed.to_owned());
         }
     }
     None
 }
 
-/// The sizes of a picked entity that can be typed: a line's length, a circle's or arc's
-/// radius (and diameter), a point's coordinates. Typing one sets the dimension that drives
-/// it, or adds that dimension.
+/// The values of a picked entity that can be typed. Sizes (a line's length, a circle's or
+/// arc's radius and diameter) set the dimension that drives them, or add one. Positions (a
+/// point, a line's ends, a centre) and a line's angle move the geometry, as far as its
+/// relations allow.
 fn size_rows(ui: &mut egui::Ui, ed: &Editor, id: drift_core::EntityId) -> Option<SizeEdit> {
     use drift_core::EntityKind as K;
+    const UNITS: &str = "units and variables work, e.g. 2in or =width/2";
     let entity = ed.doc.get(id)?;
     let units = ed.doc.units();
-    let mut out = None;
-    let mut dimension = |ui: &mut egui::Ui, label: &str, wanted: Constraint, measured: f64| {
+    let out = std::cell::RefCell::new(None);
+    let dimension = |ui: &mut egui::Ui, label: &str, wanted: Constraint, measured: f64| {
         let existing = ed.size_dimension(&wanted);
         let driven = existing.is_some_and(|c| ed.doc.is_driven(c));
         // A linked dimension shows its expression; otherwise the value as it would be typed.
@@ -118,13 +131,13 @@ fn size_rows(ui: &mut egui::Ui, ed: &Editor, id: drift_core::EntityId) -> Option
                 return;
             }
             let tip = if existing.is_some() {
-                "Dimensioned: type a new value (units and variables work, e.g. 2in or =width/2)"
+                format!("Set by a dimension: type a new value ({UNITS})")
             } else {
-                "Type a value to dimension it (units and variables work, e.g. 2in or =width/2)"
+                format!("Type a value to dimension it ({UNITS})")
             };
             let key = egui::Id::new(("size", id.0, label));
-            if let Some(text) = value_field(ui, key, &shown, tip) {
-                out = Some(SizeEdit::Dimension(wanted, text));
+            if let Some(text) = value_field(ui, key, &shown, 118.0, &tip) {
+                *out.borrow_mut() = Some(SizeEdit::Dimension(wanted, text));
             }
             if existing.is_some() {
                 ui.label(egui::RichText::new("dim").small().weak())
@@ -132,17 +145,43 @@ fn size_rows(ui: &mut egui::Ui, ed: &Editor, id: drift_core::EntityId) -> Option
             }
         });
     };
+    // A point's coordinates, as two fields on one row.
+    let position = |ui: &mut egui::Ui, label: &str, point: drift_core::EntityId| {
+        let Ok(p) = ed.doc.point(point) else { return };
+        theme::row(ui, label, |ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            for (axis, name, v) in [(0, "X", p.x), (1, "Y", p.y)] {
+                let key = egui::Id::new(("coordinate", point.0, axis));
+                let tip = format!("{name}: type a coordinate to move it ({UNITS})");
+                if let Some(text) = value_field(ui, key, &units.format_length(v), 84.0, &tip) {
+                    *out.borrow_mut() = Some(SizeEdit::Point(point, axis, text));
+                }
+            }
+        });
+    };
     match entity.kind {
         K::Line { a, b } => {
-            let length = ed.doc.point(a).ok()?.distance(ed.doc.point(b).ok()?);
+            let (pa, pb) = (ed.doc.point(a).ok()?, ed.doc.point(b).ok()?);
+            let length = pa.distance(pb);
             let wanted = Constraint::Distance {
                 a,
                 b,
                 value: length,
             };
             dimension(ui, "Length", wanted, length);
+            let d = pb - pa;
+            let shown = units.format_angle(d.y.atan2(d.x).to_degrees());
+            theme::row(ui, "Angle", |ui| {
+                let key = egui::Id::new(("angle", id.0));
+                let tip = "Type an angle to turn the line about its start (anticlockwise from +X)";
+                if let Some(text) = value_field(ui, key, &shown, 118.0, tip) {
+                    *out.borrow_mut() = Some(SizeEdit::Angle(id, text));
+                }
+            });
+            position(ui, "Start", a);
+            position(ui, "End", b);
         }
-        K::Circle { .. } | K::Arc { .. } => {
+        K::Circle { center, .. } | K::Arc { center, .. } => {
             let radius = drift_solver::radius_of(&ed.doc, id)?;
             let wanted = Constraint::Radius {
                 curve: id,
@@ -156,23 +195,16 @@ fn size_rows(ui: &mut egui::Ui, ed: &Editor, id: drift_core::EntityId) -> Option
                 };
                 dimension(ui, "Diameter", wanted, 2.0 * radius);
             }
+            position(ui, "Center", center);
         }
-        K::Point(p) => {
-            for (axis, label, v) in [(0, "X", p.x), (1, "Y", p.y)] {
-                theme::row(ui, label, |ui| {
-                    let key = egui::Id::new(("coordinate", id.0, axis));
-                    let shown = units.format_length(v);
-                    if let Some(text) =
-                        value_field(ui, key, &shown, "Type a coordinate to move the point")
-                    {
-                        out = Some(SizeEdit::Point(id, axis, text));
-                    }
-                });
-            }
+        K::Point(_) => position(ui, "Position", id),
+        K::Ellipse { center, .. } | K::EllipseArc { center, .. } => position(ui, "Center", center),
+        K::Bezier { a, b, .. } => {
+            position(ui, "Start", a);
+            position(ui, "End", b);
         }
-        _ => {}
     }
-    out
+    out.into_inner()
 }
 
 /// A figure for the empty inspector: a number over a caption.
@@ -853,7 +885,7 @@ impl DriftApp {
                 );
                 theme::section(ui, "Geometry");
                 size_edit = size_rows(ui, ed, *id);
-                property_rows(ui, shape, ed.doc.units(), true);
+                property_rows(ui, shape, ed.doc.units());
             }
             many => {
                 let mut counts = std::collections::BTreeMap::new();
@@ -918,6 +950,20 @@ impl DriftApp {
                                     now,
                                 );
                             }
+                        }
+                    }
+                    Err(e) => self.set_status(format!("Can't use {text}: {e}"), true, now),
+                }
+            }
+            Some(SizeEdit::Angle(line, text)) => {
+                match self.editor.evaluate_text(&text, Kind::Angle) {
+                    Ok(v) => {
+                        if !self.editor.set_line_angle(line, v.value) {
+                            self.set_status(
+                                "That line's direction is held by its relations".into(),
+                                true,
+                                now,
+                            );
                         }
                     }
                     Err(e) => self.set_status(format!("Can't use {text}: {e}"), true, now),

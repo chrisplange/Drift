@@ -145,3 +145,37 @@ impl DriftApp {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use drift_core::{Constraint, DVec2};
+
+    use crate::editor::Editor;
+
+    #[test]
+    fn typed_positions_and_angles_move_dimensioned_lines() {
+        let mut ed = Editor::default();
+        ed.doc.begin();
+        let a = ed.doc.add_point(DVec2::new(-44.0, -3.0));
+        let b = ed.doc.add_point(DVec2::new(-44.0, 77.0));
+        let line = ed.doc.add_line(a, b).unwrap();
+        ed.doc
+            .add_constraint(Constraint::Distance { a, b, value: 80.0 })
+            .unwrap();
+        ed.commit("Line");
+        // The start moves; the length holds, so the line follows.
+        let moved = ed.move_point_to(a, DVec2::new(10.0, -3.0));
+        assert!(moved);
+        let (pa, pb) = (ed.doc.point(a).unwrap(), ed.doc.point(b).unwrap());
+        assert!((pa - DVec2::new(10.0, -3.0)).length() < 1e-6);
+        assert!((pa.distance(pb) - 80.0).abs() < 1e-6);
+        // Turned to 0°: the end lies along +X from the start.
+        assert!(ed.set_line_angle(line, 0.0));
+        let (pa, pb) = (ed.doc.point(a).unwrap(), ed.doc.point(b).unwrap());
+        assert!((pb - pa - DVec2::new(80.0, 0.0)).length() < 1e-5, "{pb:?}");
+        // One undo step each.
+        ed.undo();
+        ed.undo();
+        assert_eq!(ed.doc.point(a).unwrap(), DVec2::new(-44.0, -3.0));
+    }
+}

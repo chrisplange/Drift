@@ -412,6 +412,7 @@ fn write_item(
             angle,
             align,
             text,
+            ..
         } => {
             head(o, "TEXT");
             o.point(10, *at);

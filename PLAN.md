@@ -1452,6 +1452,51 @@ zooms to fit; F is Fillet (again for Chamfer).
   - The status bar's zoom is a menu: fit, selection (Shift+Z), and 25–400%.
   - Not yet: the icon embedded in the executable and the `.drift` file association (both
     installer work); align and distribute; configurable keys.
+- **Part 5 (done): inspector editing; trim with ellipses and pen curves.**
+  - Inspector fields apply when left by Return, Tab or a click elsewhere (they needed
+    Return before, so a typed value was easily lost); Esc restores the old value.
+  - A line's Angle, Start and End, a circle's, arc's and ellipse's Centre and a curve's ends
+    are fields too. Sizes (length, radius, diameter) set or add a dimension; positions and
+    angles move the geometry as far as its relations allow.
+  - Esc in any text field no longer also clears the selection (egui drops the field's focus
+    before the app's key handling ran).
+  - Intersections with ellipses and Béziers (`intersect.rs`, numeric: sampled chords give
+    starting guesses that Newton's method polishes; tangent touches found; overlapping
+    curves give none). Lines extend to ellipses and curves.
+  - Trim cuts lines, arcs and circles where ellipses and pen curves cross them, and cuts
+    ellipses (into elliptical arcs sharing their axes), elliptical arcs and pen curves
+    (into shorter curves on the same path, keeping smooth joins at the ends that remain).
+  - Closed areas bounded partly by an ellipse or pen curve crossing other curves are now
+    found, so they can be filled.
+  - "Point on curve" works for pen curves (`Equation::OnBezier`); the document accepted it
+    before but the solver had no case for it and would have stopped the app. Relations that
+    need a line or circle no longer accept a pen curve.
+  - The unsaved-changes prompt now also catches a close request while the window is
+    covered or minimised (eframe runs only `App::logic` then, so the handling moved there),
+    and brings the window forward.
+  - Split works on every curve: a pen curve becomes two on the same path, joined smoothly;
+    an elliptical arc becomes two arcs of the same ellipse; a whole ellipse or a circle
+    (which used to refuse) becomes two halves, cut at the point and opposite it.
+  - Offset works on ellipses and pen curves, alone or in a path with lines and arcs
+    (chains now run through every kind of open curve). Their offsets aren't curves of the
+    same kind, so they come out as smooth runs of pen curves fitted to the true offset
+    (`drift_geom::offset`, within 0.01% of the shape's size); they're copies, not linked
+    to the original as offset lines and arcs are. Too large an inward offset says so. A
+    corner that opens between a curve and its neighbour is bridged with a straight line.
+- **Part 6 (done): the modern sheet.** A new default title block, "Modern" (ISO 7200 and
+  ASME Y14.1 remain as choices; format v16).
+  - In the Swiss manner: an even 10 mm margin, a hairline frame, and a full-width strip
+    under one strong rule. No boxes round the cells.
+  - The title is the largest type on the sheet, under the company in small tracked
+    capitals. Drawn, checked, date and material sit as grey labels over plain values;
+    the drawing number is bold; the sheet number is reversed out of a black square.
+  - The revision table follows suit: labels, a rule, rows parted by hairlines.
+  - It adapts to the paper (A4 upright to A0); long values shrink a little, then are cut.
+  - The drawing model gained bold text and letter-spacing (`TextStyle`), carried through
+    PDF (Helvetica Bold, character spacing), SVG and the preview, and filled rectangles.
+  - Preview arcs are drawn finely enough to look round at any zoom.
+  - Not yet: other typefaces (PDF would need to embed them), a logo, and user-defined
+    title blocks.
 - Themes, keybinding config, crash recovery, PWA offline install, and accessibility pass.
 - Performance profiling against targets (WASM first), plus native packaging (MSI, dmg, AppImage /
   Flatpak).

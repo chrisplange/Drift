@@ -35,7 +35,10 @@ impl OffsetTool {
             .fold(f64::INFINITY, f64::min);
         self.side = Some((at, d));
         let signed = ed.offset_side(chain, at) * self.distance().unwrap_or(d);
-        self.shapes = ed.offset_shapes(chain, *closed, signed).unwrap_or_default();
+        self.shapes = ed
+            .offset_shapes(chain, *closed, signed)
+            .map(|pieces| pieces.into_iter().map(|p| p.shape).collect())
+            .unwrap_or_default();
     }
 
     fn place(&mut self, ed: &mut Editor) {

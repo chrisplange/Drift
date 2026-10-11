@@ -135,6 +135,11 @@ impl DriftApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             return;
         }
+        // Leave a prompt alone (random keys would answer it).
+        if self.pending.is_some() {
+            self.soak = Some(soak);
+            return;
+        }
         if entities > MAX_ENTITIES {
             self.perform(crate::Pending::New);
         }

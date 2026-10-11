@@ -104,6 +104,14 @@ pub enum Equation {
         major: [usize; 2],
         minor: [usize; 2],
     },
+    /// A point on a cubic Bézier: its offset from the nearest point of the curve, measured
+    /// along the curve's normal there, is zero. `ctrl` are the four control points (an
+    /// anchor, its handle, the other handle, the other anchor). Beyond an end the curve
+    /// carries on along its tangent.
+    OnBezier {
+        point: [usize; 2],
+        ctrl: [[usize; 2]; 4],
+    },
     /// `sin(θ − φ) = 0`, where θ is the angle from line 1 to line 2. Params are
     /// `[ax, ay, bx, by]` for each line.
     Angle {
@@ -168,6 +176,9 @@ impl Equation {
                 .chain(minor)
                 .copied()
                 .collect(),
+            Equation::OnBezier { point, ctrl } => {
+                point.iter().chain(ctrl.iter().flatten()).copied().collect()
+            }
         }
     }
 
@@ -175,6 +186,56 @@ impl Equation {
     /// callers must sum duplicates).
     pub fn eval(&self, val: &impl Fn(usize) -> f64, grad: &mut Vec<(usize, f64)>) -> f64 {
         match *self {
+            Equation::OnBezier { point, ctrl } => {
+                use drift_core::DVec2;
+                use drift_core::shape::{bezier_point, bezier_second, bezier_tangent};
+                let at = |p: [usize; 2]| DVec2::new(val(p[0]), val(p[1]));
+                let p = at(point);
+                let c = ctrl.map(at);
+                // The nearest point of the curve: the best of a coarse scan, refined by
+                // Newton's method on (B(t) − P)·B′(t) = 0.
+                let mut t = (0..=16)
+                    .map(|k| f64::from(k) / 16.0)
+                    .min_by(|a, b| {
+                        bezier_point(&c, *a)
+                            .distance_squared(p)
+                            .total_cmp(&bezier_point(&c, *b).distance_squared(p))
+                    })
+                    .unwrap_or(0.5);
+                for _ in 0..24 {
+                    let (d, d1, d2) = (
+                        bezier_point(&c, t) - p,
+                        bezier_tangent(&c, t),
+                        bezier_second(&c, t),
+                    );
+                    let slope = d1.dot(d1) + d.dot(d2);
+                    if slope.abs() < 1e-18 {
+                        break;
+                    }
+                    let next = (t - d.dot(d1) / slope).clamp(0.0, 1.0);
+                    if (next - t).abs() < 1e-14 {
+                        t = next;
+                        break;
+                    }
+                    t = next;
+                }
+                let on = bezier_point(&c, t);
+                let tangent = bezier_tangent(&c, t);
+                let n = if tangent.length_squared() > 1e-24 {
+                    tangent.perp().normalize()
+                } else {
+                    (p - on).try_normalize().unwrap_or(DVec2::Y)
+                };
+                // At the nearest point the offset is along the normal, so to first order
+                // only the points' own movement along it changes the residual.
+                let u = 1.0 - t;
+                let weights = [u * u * u, 3.0 * u * u * t, 3.0 * u * t * t, t * t * t];
+                grad.extend([(point[0], n.x), (point[1], n.y)]);
+                for (k, w) in weights.into_iter().enumerate() {
+                    grad.extend([(ctrl[k][0], -w * n.x), (ctrl[k][1], -w * n.y)]);
+                }
+                (p - on).dot(n)
+            }
             Equation::OnEllipse {
                 point,
                 center,
@@ -483,6 +544,37 @@ mod tests {
         ];
         for eq in eqs {
             check_gradient(eq, &X);
+        }
+    }
+
+    #[test]
+    fn point_on_a_bezier() {
+        // An arch from (0, 0) to (4, 0), and points on, above and beside it.
+        let curve = [[2, 3], [4, 5], [6, 7], [8, 9]];
+        let eq = Equation::OnBezier {
+            point: [0, 1],
+            ctrl: curve,
+        };
+        let arch = [0.0, 0.0, 0.3, 2.1, 3.6, 2.4, 4.0, 0.0];
+        let with = |px: f64, py: f64| {
+            let mut x = vec![px, py];
+            x.extend(arch);
+            x
+        };
+        for (px, py) in [(1.0, 2.5), (2.2, 0.6), (3.4, 1.9), (0.9, 0.4)] {
+            check_gradient(eq, &with(px, py));
+        }
+        // A point of the curve itself has no offset.
+        let c = [
+            drift_core::DVec2::new(0.0, 0.0),
+            drift_core::DVec2::new(0.3, 2.1),
+            drift_core::DVec2::new(3.6, 2.4),
+            drift_core::DVec2::new(4.0, 0.0),
+        ];
+        for t in [0.0, 0.2, 0.55, 1.0] {
+            let p = drift_core::shape::bezier_point(&c, t);
+            let x = with(p.x, p.y);
+            assert!(eq.eval(&|i| x[i], &mut Vec::new()).abs() < 1e-12);
         }
     }
 

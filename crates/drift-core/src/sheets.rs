@@ -114,8 +114,10 @@ impl PaperSize {
 /// Which title block a sheet carries.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum TitleBlock {
-    /// ISO 7200: a 180 mm block in the bottom-right corner.
+    /// Drift's own: a full-width strip along the bottom, set in the Swiss manner.
     #[default]
+    Modern,
+    /// ISO 7200: a 180 mm block in the bottom-right corner.
     Iso,
     /// ASME Y14.1: a block along the bottom-right with the drawing number and size.
     Ansi,
@@ -123,10 +125,16 @@ pub enum TitleBlock {
 }
 
 impl TitleBlock {
-    pub const ALL: [TitleBlock; 3] = [TitleBlock::Iso, TitleBlock::Ansi, TitleBlock::None];
+    pub const ALL: [TitleBlock; 4] = [
+        TitleBlock::Modern,
+        TitleBlock::Iso,
+        TitleBlock::Ansi,
+        TitleBlock::None,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
+            TitleBlock::Modern => "Modern",
             TitleBlock::Iso => "ISO 7200",
             TitleBlock::Ansi => "ASME Y14.1",
             TitleBlock::None => "None",
@@ -135,6 +143,7 @@ impl TitleBlock {
 
     pub fn key(self) -> &'static str {
         match self {
+            TitleBlock::Modern => "modern",
             TitleBlock::Iso => "iso",
             TitleBlock::Ansi => "ansi",
             TitleBlock::None => "none",
@@ -189,7 +198,7 @@ impl Sheet {
             portrait: false,
             scale: 1.0,
             center: DVec2::ZERO,
-            title_block: TitleBlock::Iso,
+            title_block: TitleBlock::Modern,
             fields: TitleFields::default(),
             revisions: Vec::new(),
         }

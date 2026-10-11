@@ -1,4 +1,5 @@
-//! Intersections between lines, circles and arcs.
+//! Intersections between curves: lines, circles and arcs exactly; ellipses and Béziers
+//! numerically.
 //!
 //! Every hit records where it lies along both curves (a [`Param`]), which is what trimming,
 //! splitting and region building need. The rules for touching cases are explicit:
@@ -77,7 +78,7 @@ fn curve(shape: &Shape, extended: bool) -> Option<Curve> {
             radius,
             span: (!extended).then_some((start, sweep)),
         },
-        // Ellipses don't cut or get cut yet.
+        // Ellipses and Béziers go through `intersect_numeric`.
         Shape::Point(_) | Shape::Ellipse { .. } | Shape::Bezier { .. } => return None,
     })
 }
@@ -170,6 +171,10 @@ pub fn intersect_unbounded(a: &Shape, b: &Shape) -> Vec<Hit> {
 }
 
 fn intersect_with(a: &Shape, a_ext: bool, b: &Shape, b_ext: bool) -> Vec<Hit> {
+    let free = |s: &Shape| matches!(s, Shape::Ellipse { .. } | Shape::Bezier { .. });
+    if free(a) || free(b) {
+        return intersect_numeric(a, a_ext, b, b_ext);
+    }
     let (Some(ca), Some(cb)) = (curve(a, a_ext), curve(b, b_ext)) else {
         return Vec::new();
     };
@@ -233,6 +238,274 @@ fn intersect_with(a: &Shape, a_ext: bool, b: &Shape, b_ext: bool) -> Vec<Hit> {
         });
     }
     hits
+}
+
+// --- Ellipses and Béziers ---------------------------------------------------------------
+//
+// These have no closed-form intersections worth the trouble, so any pair involving one is
+// solved numerically: both curves are sampled into chords, chords that cross (or come
+// within their sag of each other, for tangent touches) give starting guesses, and each
+// guess is polished by Newton's method on the two parameters.
+
+/// A curve as a function of its parameter over `lo..=hi` (the same parameters as
+/// [`Param`]; an ellipse's is its angle from its start).
+#[derive(Clone, Copy)]
+struct Para {
+    shape: Shape,
+    lo: f64,
+    hi: f64,
+    /// A full circle or ellipse: the parameter wraps.
+    closed: bool,
+}
+
+impl Para {
+    /// `extended` lengthens a line to span `reach` and takes an arc's whole circle.
+    fn new(shape: &Shape, extended: bool, reach: &drift_core::Bounds) -> Option<Self> {
+        let (shape, lo, hi, closed) = match *shape {
+            Shape::Point(_) => return None,
+            Shape::Line { a, b } => {
+                let d = b - a;
+                let len2 = d.length_squared();
+                if len2 == 0.0 {
+                    return None;
+                }
+                let (mut lo, mut hi) = (0.0f64, 1.0f64);
+                if extended && !reach.is_empty() {
+                    for c in [
+                        reach.min,
+                        reach.max,
+                        DVec2::new(reach.min.x, reach.max.y),
+                        DVec2::new(reach.max.x, reach.min.y),
+                    ] {
+                        let t = (c - a).dot(d) / len2;
+                        lo = lo.min(t - 0.01);
+                        hi = hi.max(t + 0.01);
+                    }
+                }
+                (*shape, lo, hi, false)
+            }
+            Shape::Circle { .. } => (*shape, 0.0, TAU, true),
+            Shape::Arc { center, radius, .. } if extended => {
+                (Shape::Circle { center, radius }, 0.0, TAU, true)
+            }
+            Shape::Arc { sweep, .. } => (*shape, 0.0, sweep, false),
+            Shape::Ellipse { sweep, .. } if sweep >= TAU => (*shape, 0.0, TAU, true),
+            Shape::Ellipse { sweep, .. } => (*shape, 0.0, sweep, false),
+            Shape::Bezier { .. } => (*shape, 0.0, 1.0, false),
+        };
+        Some(Self {
+            shape,
+            lo,
+            hi,
+            closed,
+        })
+    }
+
+    fn at(&self, t: f64) -> DVec2 {
+        match self.shape {
+            Shape::Line { a, b } => {
+                if t == 0.0 {
+                    a
+                } else if t == 1.0 {
+                    b
+                } else {
+                    a + (b - a) * t
+                }
+            }
+            Shape::Circle { center, radius } => center + radius * DVec2::from_angle(t),
+            Shape::Arc {
+                center,
+                radius,
+                start,
+                ..
+            } => center + radius * DVec2::from_angle(start + t),
+            Shape::Ellipse {
+                center,
+                major,
+                minor,
+                start,
+                ..
+            } => drift_core::shape::ellipse_point(center, major, minor, start + t),
+            Shape::Bezier { p } => drift_core::shape::bezier_point(&p, t),
+            Shape::Point(p) => p,
+        }
+    }
+
+    /// The derivative with respect to the parameter (by central differences).
+    fn tangent(&self, t: f64) -> DVec2 {
+        let h = 1e-6 * (self.hi - self.lo);
+        (self.at(t + h) - self.at(t - h)) / (2.0 * h)
+    }
+
+    /// Keep a parameter on the curve: wrapped round a closed one, clamped to an open one.
+    fn fit(&self, t: f64) -> f64 {
+        if self.closed {
+            t.rem_euclid(TAU)
+        } else {
+            t.clamp(self.lo, self.hi)
+        }
+    }
+
+    /// How many chords to sample it into.
+    fn chords(&self) -> usize {
+        let span = self.hi - self.lo;
+        match self.shape {
+            Shape::Line { .. } | Shape::Point(_) => 1,
+            Shape::Circle { .. } | Shape::Arc { .. } => {
+                ((span / TAU) * 96.0).ceil().max(6.0) as usize
+            }
+            Shape::Ellipse { .. } => ((span / TAU) * 128.0).ceil().max(8.0) as usize,
+            Shape::Bezier { .. } => 48,
+        }
+    }
+
+    /// The curve as chords: (start parameter, end parameter, start, end, sag).
+    fn sample(&self) -> Vec<(f64, f64, DVec2, DVec2, f64)> {
+        let n = self.chords();
+        let step = (self.hi - self.lo) / n as f64;
+        let mut out = Vec::with_capacity(n);
+        let mut t0 = self.lo;
+        let mut p0 = self.at(t0);
+        for k in 1..=n {
+            let t1 = if k == n {
+                self.hi
+            } else {
+                self.lo + step * k as f64
+            };
+            let p1 = self.at(t1);
+            // How far the curve bows from the chord (zero for a line).
+            let sag = self.at((t0 + t1) * 0.5).distance((p0 + p1) * 0.5);
+            out.push((t0, t1, p0, p1, sag));
+            (t0, p0) = (t1, p1);
+        }
+        out
+    }
+}
+
+/// The closest approach of segments `p0`→`p1` and `q0`→`q1`: fractions along each and the
+/// distance between those points.
+fn segment_approach(p0: DVec2, p1: DVec2, q0: DVec2, q1: DVec2) -> (f64, f64, f64) {
+    let (d1, d2, r) = (p1 - p0, q1 - q0, p0 - q0);
+    let (a, e, f) = (d1.length_squared(), d2.length_squared(), d2.dot(r));
+    let (s, u);
+    if a <= f64::EPSILON && e <= f64::EPSILON {
+        (s, u) = (0.0, 0.0);
+    } else if a <= f64::EPSILON {
+        (s, u) = (0.0, (f / e).clamp(0.0, 1.0));
+    } else {
+        let c = d1.dot(r);
+        if e <= f64::EPSILON {
+            (s, u) = ((-c / a).clamp(0.0, 1.0), 0.0);
+        } else {
+            let b = d1.dot(d2);
+            let denom = a * e - b * b;
+            let mut s0 = if denom > f64::EPSILON * a * e {
+                ((b * f - c * e) / denom).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            let mut u0 = (b * s0 + f) / e;
+            if u0 < 0.0 {
+                u0 = 0.0;
+                s0 = (-c / a).clamp(0.0, 1.0);
+            } else if u0 > 1.0 {
+                u0 = 1.0;
+                s0 = ((b - c) / a).clamp(0.0, 1.0);
+            }
+            (s, u) = (s0, u0);
+        }
+    }
+    let gap = (p0 + d1 * s).distance(q0 + d2 * u);
+    (s, u, gap)
+}
+
+/// Intersections where either curve is an ellipse or a Bézier.
+fn intersect_numeric(a: &Shape, a_ext: bool, b: &Shape, b_ext: bool) -> Vec<Hit> {
+    let (Some(ca), Some(cb)) = (
+        Para::new(a, a_ext, &b.bounds()),
+        Para::new(b, b_ext, &a.bounds()),
+    ) else {
+        return Vec::new();
+    };
+    let scale = scale_of(a).max(scale_of(b));
+    let tol = tolerance(scale);
+    // Roots found from different starting guesses agree to well within this.
+    let same = 1e-7 * scale.max(1.0);
+    let (sa, sb) = (ca.sample(), cb.sample());
+    let mut hits: Vec<Hit> = Vec::new();
+    for &(t0, t1, p0, p1, sag_a) in &sa {
+        let (lo, hi) = (p0.min(p1), p0.max(p1));
+        for &(u0, u1, q0, q1, sag_b) in &sb {
+            let reach = sag_a + sag_b + tol;
+            let (qlo, qhi) = (q0.min(q1), q0.max(q1));
+            if qlo.x > hi.x + reach
+                || qhi.x < lo.x - reach
+                || qlo.y > hi.y + reach
+                || qhi.y < lo.y - reach
+            {
+                continue;
+            }
+            let (s, u, gap) = segment_approach(p0, p1, q0, q1);
+            if gap > reach {
+                continue;
+            }
+            let Some((t, v, tangent)) =
+                polish(&ca, &cb, t0 + (t1 - t0) * s, u0 + (u1 - u0) * u, tol)
+            else {
+                continue;
+            };
+            let at = ca.at(t);
+            if hits.iter().any(|h| h.at.distance(at) <= same) {
+                continue;
+            }
+            hits.push(Hit {
+                at,
+                t: [t, v],
+                tangent,
+            });
+            // More crossings than two such curves can have: they run along each other, and
+            // overlapping curves don't cut each other.
+            if hits.len() > 9 {
+                return Vec::new();
+            }
+        }
+    }
+    hits
+}
+
+/// Newton's method on both parameters from a starting guess. Returns the parameters where
+/// the curves meet (within `tol`) and whether they touch rather than cross.
+fn polish(a: &Para, b: &Para, mut t: f64, mut u: f64, tol: f64) -> Option<(f64, f64, bool)> {
+    for _ in 0..60 {
+        let f = a.at(t) - b.at(u);
+        if f.length() <= tol * 0.01 {
+            break;
+        }
+        let (da, db) = (a.tangent(t), b.tangent(u));
+        // Least squares with a little damping, so a tangent touch (where the two
+        // directions agree) still makes progress.
+        let (m00, m01, m11) = (da.dot(da), -da.dot(db), db.dot(db));
+        let damp = 1e-12 * (m00 + m11);
+        let det = (m00 + damp) * (m11 + damp) - m01 * m01;
+        if det.abs() < f64::MIN_POSITIVE {
+            break;
+        }
+        let (g0, g1) = (-da.dot(f), db.dot(f));
+        let dt = ((m11 + damp) * g0 - m01 * g1) / det;
+        let du = ((m00 + damp) * g1 - m01 * g0) / det;
+        let (nt, nu) = (a.fit(t + dt), b.fit(u + du));
+        if nt == t && nu == u {
+            break;
+        }
+        (t, u) = (nt, nu);
+    }
+    if a.at(t).distance(b.at(u)) > tol.max(1e-9) * 10.0 {
+        return None;
+    }
+    let (da, db) = (a.tangent(t), b.tangent(u));
+    let cross = da.perp_dot(db).abs();
+    let tangent = cross <= 1e-6 * da.length() * db.length();
+    Some((t, u, tangent))
 }
 
 /// Intersection of the infinite lines through `p`→`q` and `r`→`s`; none if parallel.
@@ -465,5 +738,105 @@ mod tests {
             }
         }
         assert!(count > 1000, "{count} hits");
+    }
+
+    fn ellipse(center: DVec2, major: DVec2, minor: f64) -> Shape {
+        Shape::Ellipse {
+            center,
+            major,
+            minor,
+            start: 0.0,
+            sweep: TAU,
+        }
+    }
+
+    fn near(a: DVec2, b: DVec2) -> bool {
+        a.distance(b) < 1e-7
+    }
+
+    #[test]
+    fn lines_cut_ellipses() {
+        let e = ellipse(v(0.0, 0.0), v(10.0, 0.0), 5.0);
+        // Along the major axis: both ends of it, with the ellipse's angle as its parameter.
+        let mut h = intersect(&line(v(-20.0, 0.0), v(20.0, 0.0)), &e);
+        h.sort_by(|a, b| a.at.x.total_cmp(&b.at.x));
+        assert_eq!(h.len(), 2);
+        assert!(near(h[0].at, v(-10.0, 0.0)) && near(h[1].at, v(10.0, 0.0)));
+        assert!((h[0].t[0] - 0.25).abs() < 1e-7 && (h[1].t[0] - 0.75).abs() < 1e-7);
+        assert!((h[0].t[1] - PI).abs() < 1e-7);
+        assert!(h[1].t[1].abs() < 1e-7 || (h[1].t[1] - TAU).abs() < 1e-7);
+        // A slanted chord of a turned ellipse: both hits lie on both curves.
+        let turned = ellipse(v(3.0, -2.0), v(8.0, 6.0), 4.0);
+        let chord = line(v(-12.0, -9.0), v(15.0, 8.0));
+        let h = intersect(&chord, &turned);
+        assert_eq!(h.len(), 2);
+        for hit in &h {
+            let Shape::Ellipse {
+                center,
+                major,
+                minor,
+                ..
+            } = turned
+            else {
+                unreachable!()
+            };
+            let on = drift_core::shape::ellipse_point(center, major, minor, hit.t[1]);
+            assert!(near(on, hit.at), "{hit:?}");
+            assert!(near(v(-12.0, -9.0) + v(27.0, 17.0) * hit.t[0], hit.at));
+            assert!(!hit.tangent);
+        }
+        // Touching the top: one tangent hit. Missing it: none. A segment that stops short: none.
+        let h = intersect(&line(v(-20.0, 5.0), v(20.0, 5.0)), &e);
+        assert_eq!(h.len(), 1);
+        assert!(
+            h[0].tangent && h[0].at.distance(v(0.0, 5.0)) < 1e-4,
+            "{h:?}"
+        );
+        assert!(intersect(&line(v(-20.0, 5.5), v(20.0, 5.5)), &e).is_empty());
+        assert!(intersect(&line(v(-20.0, 0.0), v(-12.0, 0.0)), &e).is_empty());
+        // Extended, that segment reaches both sides.
+        let h = intersect_extended(&line(v(-20.0, 0.0), v(-12.0, 0.0)), &e);
+        assert_eq!(h.len(), 2);
+        assert!(h.iter().all(|x| x.t[0] > 1.0));
+    }
+
+    #[test]
+    fn curves_cut_and_are_cut() {
+        let arch = Shape::Bezier {
+            p: [v(0.0, 0.0), v(0.0, 20.0), v(40.0, 20.0), v(40.0, 0.0)],
+        };
+        // A line across the arch at y = 10: 60·t·(1 − t) = 10.
+        let mut h = intersect(&arch, &line(v(-10.0, 10.0), v(50.0, 10.0)));
+        h.sort_by(|a, b| a.t[0].total_cmp(&b.t[0]));
+        assert_eq!(h.len(), 2);
+        let root = 0.5 - (0.25f64 - 1.0 / 6.0).sqrt();
+        assert!((h[0].t[0] - root).abs() < 1e-7 && (h[1].t[0] - (1.0 - root)).abs() < 1e-7);
+        assert!(h.iter().all(|x| (x.at.y - 10.0).abs() < 1e-7));
+        // A circle through it, an ellipse through a circle (four places), two curves.
+        assert_eq!(intersect(&arch, &circle(v(20.0, 0.0), 16.0)).len(), 2);
+        let e = ellipse(v(0.0, 0.0), v(10.0, 0.0), 5.0);
+        assert_eq!(intersect(&e, &circle(v(0.0, 0.0), 7.0)).len(), 4);
+        let dip = Shape::Bezier {
+            p: [v(0.0, 12.0), v(10.0, -8.0), v(30.0, -8.0), v(40.0, 12.0)],
+        };
+        let h = intersect(&arch, &dip);
+        assert_eq!(h.len(), 2);
+        for hit in &h {
+            let on = drift_core::shape::bezier_point(
+                &[v(0.0, 12.0), v(10.0, -8.0), v(30.0, -8.0), v(40.0, 12.0)],
+                hit.t[1],
+            );
+            assert!(near(on, hit.at));
+        }
+        // Curves meeting end to end touch at that end only.
+        let next = Shape::Bezier {
+            p: [v(40.0, 0.0), v(40.0, -20.0), v(80.0, -20.0), v(80.0, 0.0)],
+        };
+        let h = intersect(&arch, &next);
+        assert_eq!(h.len(), 1);
+        assert!(near(h[0].at, v(40.0, 0.0)));
+        // The same curve twice: overlapping curves don't cut each other.
+        assert!(intersect(&arch, &arch).is_empty());
+        assert!(intersect(&e, &e).is_empty());
     }
 }

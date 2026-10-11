@@ -238,8 +238,19 @@ fn item_svg(out: &mut String, item: &Item, h: f64, lts: f64) {
             angle,
             align,
             text,
+            style,
         } => {
             let [r, g, b] = pen.color.0;
+            let mut look = String::new();
+            if style.bold {
+                look.push_str(r#" font-weight="700""#);
+            }
+            if style.tracking != 0.0 {
+                look.push_str(&format!(
+                    r#" letter-spacing="{}""#,
+                    num(style.tracking * height / CAP_HEIGHT)
+                ));
+            }
             let anchor = match align {
                 Align::Left => "start",
                 Align::Center => "middle",
@@ -257,7 +268,7 @@ fn item_svg(out: &mut String, item: &Item, h: f64, lts: f64) {
             };
             let _ = writeln!(
                 out,
-                r##"<text x="{}" y="{}" font-family="Helvetica, Arial, sans-serif" font-size="{}" fill="#{r:02x}{g:02x}{b:02x}" stroke="none" text-anchor="{anchor}"{rotate}>{}</text>"##,
+                r##"<text x="{}" y="{}" font-family="Helvetica, Arial, sans-serif" font-size="{}"{look} fill="#{r:02x}{g:02x}{b:02x}" stroke="none" text-anchor="{anchor}"{rotate}>{}</text>"##,
                 num(at.x),
                 num(y(at.y)),
                 num(height / CAP_HEIGHT),

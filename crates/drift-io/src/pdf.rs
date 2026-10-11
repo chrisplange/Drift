@@ -5,7 +5,7 @@
 use std::fmt::Write as _;
 
 use drift_core::DVec2;
-use drift_draft::page::{Align, CAP_HEIGHT, Drawing, Item, Prim, dash_pattern, text_width};
+use drift_draft::page::{Align, CAP_HEIGHT, Drawing, Item, Prim, dash_pattern, styled_width};
 
 const PT_PER_MM: f64 = 72.0 / 25.4;
 
@@ -141,8 +141,9 @@ fn item_ops(out: &mut String, text: &mut Vec<u8>, item: &Item, lts: f64) {
             angle,
             align,
             text: s,
+            style,
         } => {
-            let width = text_width(s, *height);
+            let width = styled_width(s, *height, *style);
             let shift = match align {
                 Align::Left => 0.0,
                 Align::Center => width / 2.0,
@@ -157,11 +158,13 @@ fn item_ops(out: &mut String, text: &mut Vec<u8>, item: &Item, lts: f64) {
             out.clear();
             text.extend_from_slice(
                 format!(
-                    "BT\n{} {} {} rg\n/F1 {} Tf\n{} {} {} {} {} Tm\n",
+                    "BT\n{} {} {} rg\n/{} {} Tf\n{} Tc\n{} {} {} {} {} Tm\n",
                     n(r),
                     n(g),
                     n(b),
+                    if style.bold { "F2" } else { "F1" },
                     n(size),
+                    n(style.tracking * size),
                     n(c),
                     n(s_),
                     n(-s_),
@@ -212,8 +215,8 @@ fn page_content(d: &Drawing) -> Vec<u8> {
 /// Write drawings as a PDF, one page each.
 pub fn write(pages: &[Drawing], title: &str) -> Vec<u8> {
     let mut objects: Vec<Vec<u8>> = Vec::new();
-    // 1: catalog, 2: pages, 3: font, 4: info; then per page: page, content.
-    let page_ids: Vec<usize> = (0..pages.len()).map(|i| 5 + 2 * i).collect();
+    // 1: catalog, 2: pages, 3: font, 4: info, 5: bold font; then per page: page, content.
+    let page_ids: Vec<usize> = (0..pages.len()).map(|i| 6 + 2 * i).collect();
     objects.push(b"<< /Type /Catalog /Pages 2 0 R >>".to_vec());
     let kids: Vec<String> = page_ids.iter().map(|id| format!("{id} 0 R")).collect();
     objects.push(
@@ -232,12 +235,16 @@ pub fn write(pages: &[Drawing], title: &str) -> Vec<u8> {
     info.extend_from_slice(&pdf_string(title));
     info.extend_from_slice(b" >>");
     objects.push(info);
+    objects.push(
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>"
+            .to_vec(),
+    );
     for (i, d) in pages.iter().enumerate() {
         let content_id = page_ids[i] + 1;
         objects.push(
             format!(
                 "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {} {}] /Contents {content_id} 0 R \
-                 /Resources << /Font << /F1 3 0 R >> >> >>",
+                 /Resources << /Font << /F1 3 0 R /F2 5 0 R >> >> >>",
                 n(d.size.x * PT_PER_MM),
                 n(d.size.y * PT_PER_MM)
             )

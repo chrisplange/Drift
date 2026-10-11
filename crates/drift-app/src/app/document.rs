@@ -179,6 +179,10 @@ impl DriftApp {
         if asked && !self.quit_confirmed {
             if self.is_dirty() {
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                // Bring the window up so the question is seen.
+                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                ctx.request_repaint();
                 self.pending = Some(Pending::Quit);
             } else {
                 self.quit_confirmed = true;

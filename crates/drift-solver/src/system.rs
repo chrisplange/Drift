@@ -315,6 +315,10 @@ impl System {
                             major: point(major),
                             minor: point(minor),
                         },
+                        Some(EntityKind::Bezier { a, c1, c2, b }) => Equation::OnBezier {
+                            point: point(p),
+                            ctrl: [point(a), point(c1), point(c2), point(b)],
+                        },
                         _ => {
                             let c = center(curve);
                             Equation::EqualLength {

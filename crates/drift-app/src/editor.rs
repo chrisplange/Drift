@@ -80,6 +80,8 @@ pub struct Pointer {
     pub units: Units,
     /// Alt is held (places freely, without snapping; the pen breaks a handle with it).
     pub alt: bool,
+    /// Lines being drawn turn in steps of this many degrees, if angle snapping is on.
+    pub angle_step: Option<f64>,
 }
 
 impl Pointer {
@@ -92,6 +94,7 @@ impl Pointer {
             relations: true,
             units: Units::default(),
             alt: false,
+            angle_step: None,
         }
     }
 
@@ -1184,6 +1187,11 @@ impl Editor {
     /// Add a dimension a tool created from typed field `field`, linked to the typed
     /// expression if it used variables. Call inside a transaction.
     pub fn add_typed_dimension(&mut self, field: usize, c: Constraint) -> Option<ConstraintId> {
+        // With automatic relations off a typed value only sizes what is being drawn (the
+        // tools place the geometry at that size already): nothing is left to hold it.
+        if !self.auto_relations {
+            return None;
+        }
         let id = self.doc.add_constraint(c).ok()?;
         if let Some(expr) = self.typed_exprs.get(field).cloned().flatten() {
             // Only if it still evaluates to this value (tools may take an absolute value).
@@ -1746,6 +1754,42 @@ impl Editor {
             self.set_dimension_text(id, text)?;
         }
         Ok(id)
+    }
+
+    /// Give the geometry the size `wanted` describes, once: as [`Editor::set_size`], but
+    /// without leaving a dimension behind to hold it (one undo step). For sizes typed in
+    /// the inspector while automatic relations are off.
+    pub fn resize_once(&mut self, wanted: Constraint, text: &str) -> Result<(), EditError> {
+        let evaluated = self.evaluate_text(text, dimension_kind(&wanted))?;
+        let c = wanted.with_value(evaluated.value);
+        let degenerate_before = drift_solver::degenerate_entities(&self.doc);
+        self.doc.begin();
+        let id = match self.doc.add_constraint(c) {
+            Ok(id) => id,
+            Err(e) => {
+                self.doc.rollback();
+                self.sync();
+                return Err(EditError::Invalid(e.to_string()));
+            }
+        };
+        self.settle_fillet(&c);
+        let report = self.solve(&[]);
+        let error = if self.new_conflicts(&report) {
+            Some(EditError::Conflict)
+        } else if self.new_degeneracy(&degenerate_before) {
+            Some(EditError::Degenerate)
+        } else {
+            None
+        };
+        if let Some(error) = error {
+            self.doc.rollback();
+            self.sync();
+            return Err(error);
+        }
+        // The geometry is where the size put it; the size itself isn't kept.
+        self.doc.remove_constraint(id);
+        self.commit("Resize");
+        Ok(())
     }
 
     /// Move a point to typed coordinates (one undo step), its relations pulling the rest

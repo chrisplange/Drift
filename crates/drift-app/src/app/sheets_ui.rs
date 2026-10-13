@@ -28,6 +28,17 @@ pub(crate) enum ViewAction {
     Remove,
 }
 
+/// What an import brought in and what it couldn't, shown until closed.
+#[derive(Clone, Debug)]
+pub(crate) struct ImportSummary {
+    pub title: String,
+    pub summary: String,
+    /// Kinds of object left out, with counts.
+    pub skipped: Vec<String>,
+    /// What was read approximately, in sentences.
+    pub notes: Vec<String>,
+}
+
 /// How the sheet preview is looked at.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct PreviewView {
@@ -292,7 +303,9 @@ impl DriftApp {
         self.files.open_externally(&name, &bytes);
     }
 
-    /// Add a DXF file's curves to the document, as one undo step.
+    /// Add a DXF file to the document, as one undo step: its curves, text, hatches, blocks
+    /// and layouts. What came in, and what couldn't, is listed in a report that stays up
+    /// until it is closed.
     pub(crate) fn import_dxf(&mut self, name: &str, text: &str, now: f64) {
         let unit = self.editor.doc.units().length.mm_per_unit();
         match drift_io::dxf::read(text, unit) {
@@ -301,34 +314,105 @@ impl DriftApp {
                 self.editor.doc.begin();
                 let report = drift_io::dxf::add_to_document(&mut self.editor.doc, &import);
                 self.editor.commit("Import DXF");
-                let skipped: usize = report.skipped.values().sum();
-                let mut msg = format!(
-                    "Imported {} curve(s) from {name}{}",
-                    report.curves,
-                    if report.layers > 0 {
-                        format!(" on {} new layer(s)", report.layers)
-                    } else {
-                        String::new()
+                let mut came_in = Vec::new();
+                let mut count = |n: usize, one: &str, many: &str| {
+                    if n > 0 {
+                        came_in.push(format!("{n} {}", if n == 1 { one } else { many }));
                     }
-                );
-                if report.copies > 0 {
-                    msg.push_str(&format!(
-                        ", {} block copies ({} new blocks)",
-                        report.copies, report.blocks
-                    ));
+                };
+                count(report.curves, "curve", "curves");
+                count(report.texts, "line of text", "lines of text");
+                count(report.fills, "hatch or fill", "hatches and fills");
+                count(report.copies, "block copy", "block copies");
+                count(report.blocks, "block", "blocks");
+                count(report.dimensions, "dimension", "dimensions");
+                count(report.layers, "new layer", "new layers");
+                count(report.sheets, "sheet", "sheets");
+                let summary = if came_in.is_empty() {
+                    format!("Nothing to import in {name}")
+                } else {
+                    format!("Imported {} from {name}", came_in.join(", "))
+                };
+                let skipped: Vec<String> = report
+                    .skipped
+                    .iter()
+                    .map(|(kind, n)| format!("{n} × {kind}"))
+                    .collect();
+                // Anything left out or read approximately is worth more than a passing
+                // message.
+                if !skipped.is_empty() || !report.notes.is_empty() {
+                    self.import_report = Some(ImportSummary {
+                        title: name.to_owned(),
+                        summary: summary.clone(),
+                        skipped,
+                        notes: report.notes.clone(),
+                    });
                 }
-                if skipped > 0 {
-                    let kinds: Vec<String> = report
-                        .skipped
-                        .iter()
-                        .map(|(k, n)| format!("{n} {k}"))
-                        .collect();
-                    msg.push_str(&format!("; skipped {}", kinds.join(", ")));
-                }
-                self.set_status(msg, false, now);
+                self.set_status(summary, false, now);
                 self.fit_target = Some(self.fit_bounds());
             }
             Err(e) => self.set_status(format!("Could not import {name}: {e}"), true, now),
+        }
+    }
+
+    /// The report of the last import, until it is closed.
+    pub(crate) fn import_report_window(&mut self, ctx: &egui::Context) {
+        let Some(report) = &self.import_report else {
+            return;
+        };
+        let mut open = true;
+        let mut close = false;
+        egui::Window::new(format!("Import: {}", report.title))
+            .id(egui::Id::new("import_report"))
+            .open(&mut open)
+            .resizable(false)
+            .collapsible(false)
+            .pivot(egui::Align2::CENTER_CENTER)
+            .default_pos(ctx.content_rect().center())
+            .show(ctx, |ui| {
+                ui.set_width(420.0);
+                ui.label(&report.summary);
+                if !report.skipped.is_empty() {
+                    theme::section(ui, "Left out");
+                    ui.label(
+                        egui::RichText::new("Kinds of object Drift doesn't read yet:")
+                            .small()
+                            .weak(),
+                    );
+                    for line in &report.skipped {
+                        ui.label(line);
+                    }
+                }
+                if !report.notes.is_empty() {
+                    theme::section(ui, "Read with changes");
+                    for note in &report.notes {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label("•");
+                            ui.label(note);
+                        });
+                    }
+                }
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Close").clicked() {
+                        close = true;
+                    }
+                    if ui
+                        .button("Copy")
+                        .on_hover_text("Copy this report")
+                        .clicked()
+                    {
+                        let mut text = report.summary.clone();
+                        for line in report.skipped.iter().chain(&report.notes) {
+                            text.push('\n');
+                            text.push_str(line);
+                        }
+                        ui.ctx().copy_text(text);
+                    }
+                });
+            });
+        if close || !open {
+            self.import_report = None;
         }
     }
 

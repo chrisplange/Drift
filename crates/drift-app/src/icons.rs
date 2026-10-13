@@ -12,6 +12,8 @@ use crate::tools::ToolKind;
 pub enum Glyph {
     Grid,
     Snap,
+    /// Angle snapping: two rays and the arc between them.
+    Angle,
     Thin,
     Axes,
     Eye,
@@ -411,6 +413,11 @@ pub fn glyph(painter: &egui::Painter, rect: Rect, glyph: Glyph, color: Color32) 
             p.line((15.5, 9.0), (15.5, 4.0));
             p.line((2.8, 4.0), (6.2, 4.0));
             p.line((13.8, 4.0), (17.2, 4.0));
+        }
+        Glyph::Angle => {
+            p.line((3.5, 16.0), (17.0, 16.0));
+            p.line((3.5, 16.0), (13.5, 4.5));
+            p.arc(3.5, 16.0, 8.0, -0.86, 0.86);
         }
         Glyph::Thin => {
             for (y, w) in [(5.0, 3.2), (10.0, 1.8), (15.0, 0.9)] {

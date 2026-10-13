@@ -48,6 +48,9 @@ use crate::editor::{Editor, Guide, GuideKind, Pointer};
 use crate::overlay::{OverlayColors, ScreenMap};
 use crate::tools::{Axis, Input, Modifiers, Overlay, Tool, ToolKey, ToolKind};
 
+/// The steps angle snapping offers, in degrees.
+pub(crate) const ANGLE_STEPS: [f64; 3] = [5.0, 15.0, 45.0];
+
 /// Zoom factor per logical point of scroll.
 const SCROLL_ZOOM_SPEED: f64 = 0.0015;
 /// Margin left around geometry when zooming to fit, in logical points.
@@ -279,6 +282,8 @@ pub struct DriftApp {
     /// The view picked on the current sheet, and a change to its views to make.
     sheet_view: usize,
     pending_view: Option<app::sheets_ui::ViewAction>,
+    /// The report of the last import, until it is closed.
+    import_report: Option<app::sheets_ui::ImportSummary>,
     /// The name typed for a new block.
     new_block_name: String,
     /// Curvature combs on picked curves.
@@ -291,6 +296,8 @@ pub struct DriftApp {
     text_focused: Option<drift_core::TextId>,
     /// Show every end point, or only those of hovered or picked curves (as in Illustrator).
     always_endpoints: bool,
+    /// Lines are drawn at multiples of this many degrees (angle snapping), if on.
+    angle_snap: Option<f64>,
     /// The next opened file becomes an underlay (File → Import underlay).
     import_as_underlay: bool,
     /// A multi-page PDF waiting for its page to be chosen.
@@ -396,12 +403,14 @@ impl DriftApp {
             view_drag: None,
             sheet_view: 0,
             pending_view: None,
+            import_report: None,
             new_block_name: String::new(),
             show_combs: true,
             text_typing: None,
             text_was_focused: false,
             text_focused: None,
             always_endpoints: false,
+            angle_snap: None,
             import_as_underlay: false,
             pending_pdf: None,
             memory: (0, f64::NEG_INFINITY, false),

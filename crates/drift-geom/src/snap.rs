@@ -19,6 +19,8 @@ pub enum SnapKind {
     Quadrant,
     /// Nearest point on a curve. `entity` is the curve.
     OnCurve,
+    /// The sketch's origin, (0, 0). No entity.
+    Origin,
     /// Grid intersection.
     Grid,
 }
@@ -32,6 +34,7 @@ impl SnapKind {
             SnapKind::Midpoint => "Midpoint",
             SnapKind::Quadrant => "Quadrant",
             SnapKind::OnCurve => "On curve",
+            SnapKind::Origin => "Origin",
             SnapKind::Grid => "Grid",
         }
     }
@@ -48,7 +51,7 @@ impl SnapKind {
     pub fn priority(self) -> u8 {
         match self {
             SnapKind::Endpoint | SnapKind::Point | SnapKind::Center => 0,
-            SnapKind::Midpoint | SnapKind::Quadrant => 1,
+            SnapKind::Midpoint | SnapKind::Quadrant | SnapKind::Origin => 1,
             SnapKind::OnCurve => 2,
             SnapKind::Grid => 3,
         }

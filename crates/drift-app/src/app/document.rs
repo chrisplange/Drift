@@ -84,6 +84,7 @@ impl DriftApp {
             .map(|(k, v)| format!("{k}={}", u8::from(*v)))
             .collect();
         prefs.push(format!("wheel={}", self.wheel.mode.key()));
+        prefs.push(format!("asnap={}", self.angle_snap.unwrap_or(0.0)));
         prefs.extend(self.layout.prefs());
         prefs.join(";")
     }
@@ -97,6 +98,12 @@ impl DriftApp {
             };
             let on = value == "1";
             match key {
+                "asnap" => {
+                    self.angle_snap = value
+                        .parse::<f64>()
+                        .ok()
+                        .filter(|step| ANGLE_STEPS.contains(step));
+                }
                 "wheel" => {
                     if let Some(mode) = crate::app::view::WheelMode::from_key(value) {
                         self.wheel.mode = mode;
@@ -277,7 +284,7 @@ impl DriftApp {
                     }
                     let text = String::from_utf8_lossy(&contents);
                     if name.to_ascii_lowercase().ends_with(".dxf") {
-                        self.import_dxf(&name, &text, now);
+                        self.import_dxf(&name, &drift_io::dxf::decode(&contents), now);
                         continue;
                     }
                     if lower.ends_with(".svg") {

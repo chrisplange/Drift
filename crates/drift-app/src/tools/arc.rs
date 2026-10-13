@@ -112,6 +112,7 @@ impl ArcTool {
         match ed.doc.add_arc(c, first, last) {
             Ok(arc) => {
                 if let Some(value) = self.radius_dimension
+                    && ed.auto_relations
                     && let Ok(id) = ed
                         .doc
                         .add_constraint(Constraint::Radius { curve: arc, value })

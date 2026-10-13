@@ -1699,6 +1699,23 @@ zooms to fit; F is Fillet (again for Chamfer).
   - Not done: justified text; vertical anchoring (middle, bottom) as a property rather
     than worked out on import; wrapping uses the font Drift shows, so a DXF paragraph set
     in a font we don't have may break at different words; no hyphenation.
+- **Typing straight onto the canvas (done).** Text is typed where it stands, with a caret
+  and a selection in the text itself, instead of in a field under it.
+  - The keyboard still goes to an egui text field, kept out of sight (clipped away, beside
+    the caret), so the clipboard, composed characters, word jumps and the platform's keys
+    work as in any field. Drift reads the field's cursor each frame and draws the caret and
+    selection from `Paragraph` (`caret`, `selection`), so they turn and scale with the text.
+  - The pointer: a press in the text puts the caret at the nearest gap (`index_at`), a
+    drag selects, Shift extends, a double click picks a word, a triple click everything.
+    A press elsewhere on the canvas finishes. Up, Down, Home and End go by the lines as
+    set on the canvas (`line_step`, `line_ends`), not the field's own.
+  - The text tool on an existing text types into it from the click; a double click with
+    the select tool puts the caret where it was clicked.
+  - Text with capitals under 6 points on screen keeps the field under it.
+  - Not checked by hand: the composing window's place (it is told the caret), caret blink
+    and drag feel. Known: characters the font lacks are measured by the drawing font but
+    shown from the fallback, so the caret can sit slightly off after them; a rotated
+    text's hit area is its upright bounding box.
 - **Workspace notes, next: tabs for separate drawings (design, not built).** A tab bar
   along the top, one drawing per tab, as Revit and Illustrator have.
   - What a tab owns: the editor (document, selection, undo history), its file (name, path,

@@ -302,6 +302,17 @@ pub struct DriftApp {
     text_was_focused: bool,
     /// The text whose in-place field has been given the keyboard.
     text_focused: Option<drift_core::TextId>,
+    /// The caret in the text being typed on the canvas: the gap it is at, and the gap the
+    /// selection runs from (the same when nothing is selected).
+    text_cursor: Option<(usize, usize)>,
+    /// A caret to give the text's field before it next reads the keyboard.
+    text_set_cursor: Option<(usize, usize)>,
+    /// The pointer went down in the text being typed and hasn't come up.
+    text_grip: bool,
+    /// The pointer was used in the text being typed this frame.
+    text_touched: bool,
+    /// When the caret last moved (it shows steadily for a moment, then blinks).
+    text_blink: f64,
     /// Show every end point, or only those of hovered or picked curves (as in Illustrator).
     always_endpoints: bool,
     /// Lines are drawn at multiples of this many degrees (angle snapping), if on.
@@ -418,6 +429,11 @@ impl DriftApp {
             text_typing: None,
             text_was_focused: false,
             text_focused: None,
+            text_cursor: None,
+            text_set_cursor: None,
+            text_grip: false,
+            text_touched: false,
+            text_blink: 0.0,
             always_endpoints: false,
             angle_snap: None,
             import_as_underlay: false,

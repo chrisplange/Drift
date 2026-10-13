@@ -4065,6 +4065,232 @@ fn sketch_text_runs_to_several_lines() {
     assert!(!saved.contains("align") && !saved.contains("spacing") && !saved.contains("wrap"));
 }
 
+/// The middle of the caret before character `gap` of a text, in the drawing.
+fn text_gap(h: &Harness<'_, DriftApp>, id: drift_core::TextId, gap: usize) -> DVec2 {
+    let t = h.state().editor.doc.text(id).unwrap();
+    let [foot, head] = drift_draft::outline::Paragraph {
+        text: &t.text,
+        font: &t.font,
+        height: t.height,
+        at: t.at,
+        angle: t.angle,
+        align: t.align,
+        spacing: t.spacing,
+        wrap: t.wrap,
+    }
+    .caret(gap);
+    (foot + head) / 2.0
+}
+
+#[test]
+fn text_is_typed_straight_onto_the_canvas() {
+    let Some(mut h) = harness() else { return };
+    let words = |h: &Harness<'_, DriftApp>, id| h.state().editor.doc.text(id).unwrap().text.clone();
+    h.key_press_modifiers(EguiModifiers::SHIFT, Key::T);
+    h.run();
+    click_world(&mut h, DVec2::new(-60.0, 10.0));
+    h.run();
+    let id = h.state().editor.editing_text.expect("typing in place");
+    assert_eq!(
+        h.state().text_cursor,
+        Some((0, 0)),
+        "a caret in the empty text"
+    );
+    h.event(Event::Text("HELLO WORLD".into()));
+    h.run();
+    assert_eq!(words(&h, id), "HELLO WORLD");
+    assert_eq!(
+        h.state().text_cursor,
+        Some((11, 11)),
+        "the caret follows the typing"
+    );
+    // No field shows: the keyboard's field is out of sight.
+    assert!(h.query_by_label_contains("Type the text").is_none());
+
+    // The arrow keys move the caret; typing goes in where it is.
+    for _ in 0..5 {
+        h.key_press(Key::ArrowLeft);
+        h.run();
+    }
+    assert_eq!(h.state().text_cursor, Some((6, 6)));
+    h.event(Event::Text("BIG ".into()));
+    h.run();
+    assert_eq!(words(&h, id), "HELLO BIG WORLD");
+
+    // A click in the text puts the caret at the nearest gap, and the typing goes on.
+    let at = text_gap(&h, id, 5) + DVec2::new(0.3, 0.0);
+    click_world(&mut h, at);
+    h.run();
+    assert_eq!(h.state().editor.editing_text, Some(id), "still typing");
+    assert_eq!(h.state().text_cursor, Some((5, 5)));
+    h.event(Event::Text("!".into()));
+    h.run();
+    assert_eq!(words(&h, id), "HELLO! BIG WORLD");
+    assert_eq!(
+        h.state().editor.doc.texts().count(),
+        1,
+        "the click made no new text"
+    );
+
+    // End, a new line, and Up and Down by the lines on the canvas.
+    h.key_press(Key::End);
+    h.run();
+    assert_eq!(h.state().text_cursor, Some((16, 16)));
+    h.key_press_modifiers(EguiModifiers::SHIFT, Key::Enter);
+    h.run();
+    h.event(Event::Text("ab".into()));
+    h.run();
+    assert_eq!(words(&h, id), "HELLO! BIG WORLD\nab");
+    assert_eq!(h.state().text_cursor, Some((19, 19)));
+    h.key_press(Key::ArrowUp);
+    h.run();
+    let (up, _) = h.state().text_cursor.unwrap();
+    assert!(
+        (1..=3).contains(&up),
+        "above the end of the second line: {up}"
+    );
+    h.key_press(Key::Home);
+    h.run();
+    assert_eq!(h.state().text_cursor, Some((0, 0)));
+    h.key_press_modifiers(EguiModifiers::SHIFT, Key::ArrowDown);
+    h.run();
+    assert_eq!(
+        h.state().text_cursor,
+        Some((17, 0)),
+        "Shift selects as it goes"
+    );
+    h.key_press(Key::ArrowDown);
+    h.run();
+    assert_eq!(
+        h.state().text_cursor,
+        Some((19, 19)),
+        "off the bottom: the end"
+    );
+
+    // A double click picks a word, and typing replaces it.
+    let at = screen(&h, text_gap(&h, id, 8));
+    h.hover_at(at);
+    h.run();
+    // (The harness's frames are a quarter of a second apart: allow that between clicks.)
+    h.ctx
+        .options_mut(|o| o.input_options.max_double_click_delay = 5.0);
+    for _ in 0..2 {
+        button(&h, at, true);
+        h.step();
+        button(&h, at, false);
+        h.step();
+    }
+    h.run();
+    assert_eq!(h.state().text_cursor, Some((10, 7)), "BIG");
+    assert_eq!(h.state().editor.editing_text, Some(id));
+    h.event(Event::Text("SMALL".into()));
+    h.run();
+    assert_eq!(words(&h, id), "HELLO! SMALL WORLD\nab");
+
+    // A drag selects from where it began to where it is.
+    let (from, to) = (
+        screen(&h, text_gap(&h, id, 7) + DVec2::new(0.3, 0.0)),
+        screen(&h, text_gap(&h, id, 12) + DVec2::new(0.3, 0.0)),
+    );
+    h.hover_at(from);
+    h.run();
+    button(&h, from, true);
+    h.run();
+    h.hover_at(to);
+    h.run();
+    assert_eq!(h.state().text_cursor, Some((12, 7)));
+    button(&h, to, false);
+    h.run();
+    h.run();
+    assert_eq!(
+        h.state().text_cursor,
+        Some((12, 7)),
+        "kept when the button comes up"
+    );
+    assert_eq!(h.state().editor.editing_text, Some(id));
+    save_png("drift_ui_live_text.png", &mut h);
+    // Shift and a click selects up to the click.
+    let at = screen(&h, text_gap(&h, id, 18) + DVec2::new(0.3, 0.0));
+    h.hover_at(at);
+    h.run();
+    h.event_modifiers(
+        Event::PointerButton {
+            pos: at,
+            button: PointerButton::Primary,
+            pressed: true,
+            modifiers: EguiModifiers::SHIFT,
+        },
+        EguiModifiers::SHIFT,
+    );
+    h.run();
+    button(&h, at, false);
+    h.run();
+    assert_eq!(h.state().text_cursor, Some((18, 7)));
+
+    // Enter finishes. All of it was one undo step after the placing.
+    h.key_press(Key::Enter);
+    h.run();
+    h.run();
+    assert_eq!(h.state().editor.editing_text, None);
+    assert_eq!(
+        words(&h, id),
+        "HELLO! SMALL WORLD\nab",
+        "Enter adds no line"
+    );
+    h.state_mut().undo();
+    assert_eq!(words(&h, id), "");
+    h.state_mut().redo();
+
+    // The text tool on a text types into it, from the click; a press elsewhere finishes.
+    let at = text_gap(&h, id, 3) + DVec2::new(0.3, 0.0);
+    click_world(&mut h, at);
+    h.run();
+    assert_eq!(h.state().editor.editing_text, Some(id));
+    assert_eq!(h.state().text_cursor, Some((3, 3)));
+    assert_eq!(h.state().editor.doc.texts().count(), 1);
+    h.key_press(Key::S);
+    h.event(Event::Text("S".into()));
+    h.run();
+    assert_eq!(
+        h.state().tool.kind(),
+        ToolKind::Text,
+        "S was typed, not a shortcut"
+    );
+    assert_eq!(words(&h, id), "HELSLO! SMALL WORLD\nab");
+    let away = screen(&h, DVec2::new(40.0, -60.0));
+    h.hover_at(away);
+    h.run();
+    button(&h, away, true);
+    h.run();
+    assert_ne!(
+        h.state().editor.editing_text,
+        Some(id),
+        "the press ended the typing"
+    );
+    button(&h, away, false);
+    h.run();
+    h.key_press(Key::Escape);
+    h.run();
+    h.run();
+    assert_eq!(h.state().editor.editing_text, None);
+
+    // Too small on screen to aim a caret at: a field under the text takes the typing.
+    h.state_mut().camera.scale = 0.2;
+    h.run();
+    h.state_mut().editor.selected_text = Some(id);
+    h.state_mut().editor.editing_text = Some(id);
+    h.run();
+    h.run();
+    assert_eq!(h.state().editor.editing_text, Some(id));
+    h.event(Event::Text("!".into()));
+    h.run();
+    assert_eq!(words(&h, id), "HELSLO! SMALL WORLD\nab!");
+    h.key_press(Key::Enter);
+    h.run();
+    h.run();
+    assert_eq!(h.state().editor.editing_text, None);
+}
+
 #[test]
 fn g_moves_a_picked_text() {
     let Some(mut h) = harness() else { return };

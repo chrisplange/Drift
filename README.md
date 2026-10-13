@@ -203,8 +203,9 @@ Then open <http://127.0.0.1:8080>.
 
 Installers (see [`scripts/`](scripts) and [`installer/`](installer)): `package-windows.ps1`
 builds an Inno Setup installer and `package-macos.sh` a universal `.app` in a disk image. The
-`Package` workflow runs both on GitHub. They are new and unsigned: neither has been through a
-release yet.
+`Package` workflow runs both on GitHub, and for a version tag (`v0.1.0-alpha.2`) puts them
+on a draft release with their checksums. They are unsigned, so Windows SmartScreen and macOS
+Gatekeeper ask for confirmation the first time each is opened.
 
 Tests, including headless UI tests that drive the real app (GPU tests are skipped automatically
 when no graphics adapter is available):

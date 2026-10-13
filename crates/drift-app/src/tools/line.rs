@@ -171,6 +171,23 @@ impl Tool for LineTool {
         if p.exact_snap().is_some() {
             return;
         }
+        // Angle snapping: the segment turns in steps, and is as long as the pointer is far
+        // along that direction. (An exact snap, above, still wins: the line goes to it.)
+        if let Some(step) = p.angle_step.filter(|s| *s > 0.0) {
+            let target = p.snap.map_or(p.raw, |grid| grid.at);
+            let d = target - last.pos;
+            if d.length() <= p.tolerance {
+                return;
+            }
+            let degrees = (d.y.atan2(d.x).to_degrees() / step).round() * step;
+            let u = exact_direction(degrees);
+            p.guide = Some(Guide {
+                at: last.pos + u * d.dot(u).max(0.0),
+                kind: relation_for_angle(degrees).unwrap_or(GuideKind::Aligned),
+                from: [Some(last.pos), None],
+            });
+            return;
+        }
         let at = p.pos();
         let d = at - last.pos;
         let tol = p.tolerance;

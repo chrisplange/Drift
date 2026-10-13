@@ -9,6 +9,7 @@ impl DriftApp {
         pointer.relations = self.auto_relations;
         pointer.units = self.editor.doc.units();
         pointer.alt = !snap;
+        pointer.angle_step = self.angle_snap.filter(|_| snap);
         if snap && self.tool.wants_snap() {
             let options = SnapOptions {
                 tolerance: pointer.tolerance,

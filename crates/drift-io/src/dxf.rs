@@ -1,5 +1,5 @@
-//! DXF: writing a [`Drawing`] as R12 (AC1009) ASCII DXF, which every CAD program reads, and
-//! reading lines, circles, arcs, polylines (with bulges) and points from any ASCII DXF.
+//! DXF: writing a [`Drawing`] as R12 (AC1009) ASCII DXF, which every CAD program reads.
+//! Reading any ASCII DXF is in `dxf_import` (re-exported here).
 //!
 //! Output keeps layers (colour and line type) and line types; R12 has no line weights, so
 //! they are dropped. Fills become SOLID triangles. Text uses DXF's `%%c` / `%%d` / `%%p`
@@ -9,10 +9,7 @@ use std::collections::BTreeMap;
 use std::f64::consts::TAU;
 use std::fmt::Write as _;
 
-use drift_core::{
-    DVec2, Document, EntityId, Layer, LayerId, LengthFormat, LineType, LineWeight, Rgb, Shape,
-    Units,
-};
+use drift_core::{DVec2, LengthFormat, LineType, Rgb, Shape, Units};
 use drift_draft::page::{Align, Drawing, Prim, dash_pattern};
 
 /// The AutoCAD Color Index entries we map to and from (index, colour).
@@ -45,12 +42,37 @@ pub fn aci(c: Rgb) -> u8 {
         .map_or(7, |(i, _)| *i)
 }
 
-fn aci_rgb(index: i64) -> Option<Rgb> {
-    ACI.iter()
-        .find(|(i, _)| i64::from(*i) == index)
-        .map(|(_, c)| Rgb(*c))
-        // 7 is "black or white by background": layers of that colour use the default.
-        .filter(|_| index != 7)
+/// The colour of an AutoCAD Color Index entry (1 to 255). 7 is "black or white by
+/// background", which is Drift's default colour: `None`.
+pub(crate) fn aci_rgb(index: i64) -> Option<Rgb> {
+    if !(1..=255).contains(&index) || index == 7 {
+        return None;
+    }
+    if let Some((_, c)) = ACI.iter().find(|(i, _)| i64::from(*i) == index) {
+        return Some(Rgb(*c));
+    }
+    if index >= 250 {
+        let v = [51, 80, 105, 130, 190, 255][(index - 250) as usize];
+        return Some(Rgb([v, v, v]));
+    }
+    // 10 to 249: twenty-four hues, each in five shades, each shade full and half strength.
+    let hue = ((index - 10) / 10) as f64 * 15.0;
+    let shade = (index % 10) / 2;
+    let value = [1.0, 0.8, 0.6, 0.5, 0.3][shade as usize];
+    let saturation = if index % 2 == 0 { 1.0 } else { 0.5 };
+    let c = value * saturation;
+    let x = c * (1.0 - ((hue / 60.0) % 2.0 - 1.0).abs());
+    let (r, g, b) = match (hue / 60.0) as i64 {
+        0 => (c, x, 0.0),
+        1 => (x, c, 0.0),
+        2 => (0.0, c, x),
+        3 => (0.0, x, c),
+        4 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    };
+    let m = value - c;
+    let byte = |v: f64| ((v + m) * 255.0).round().clamp(0.0, 255.0) as u8;
+    Some(Rgb([byte(r), byte(g), byte(b)]))
 }
 
 fn line_type_name(t: LineType) -> &'static str {
@@ -63,7 +85,7 @@ fn line_type_name(t: LineType) -> &'static str {
     }
 }
 
-fn parse_line_type(name: &str) -> LineType {
+pub(crate) fn parse_line_type(name: &str) -> LineType {
     match name.to_ascii_uppercase().as_str() {
         n if n.starts_with("DASHED") => LineType::Dashed,
         n if n.starts_with("HIDDEN") => LineType::Hidden,
@@ -453,16 +475,12 @@ fn write_item(
 }
 
 // ---------------------------------------------------------------------------------------------
-// Reading
+// Reading (see `dxf_import`)
 
-/// A curve read from a DXF file (world millimetres).
-#[derive(Clone, Debug, PartialEq)]
-pub struct DxfEntity {
-    pub layer: String,
-    pub shape: Shape,
-    pub line_type: Option<LineType>,
-    pub color: Option<Rgb>,
-}
+pub use crate::dxf_import::{
+    DxfBlock, DxfEntity, DxfHatch, DxfImport, DxfInsert, DxfLayer, DxfLayout, DxfText, DxfViewport,
+    ImportReport, add_to_document, decode, read,
+};
 
 /// The curves of a DXF import as underlay curves (in mm), with copies of blocks expanded.
 /// Points are left out.
@@ -519,44 +537,8 @@ pub fn underlay_prims(import: &DxfImport) -> Vec<drift_core::RefPrim> {
     out
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct DxfLayer {
-    pub name: String,
-    pub color: Option<Rgb>,
-    pub line_type: LineType,
-}
-
-/// A block definition read from a DXF file: its curves relative to its base point.
-#[derive(Clone, Debug, PartialEq)]
-pub struct DxfBlock {
-    pub name: String,
-    pub entities: Vec<DxfEntity>,
-}
-
-/// A placed copy of a block (an INSERT).
-#[derive(Clone, Debug, PartialEq)]
-pub struct DxfInsert {
-    pub block: String,
-    pub layer: String,
-    pub at: DVec2,
-    /// Degrees.
-    pub angle: f64,
-    pub scale: f64,
-    pub mirror: bool,
-}
-
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct DxfImport {
-    pub entities: Vec<DxfEntity>,
-    pub layers: Vec<DxfLayer>,
-    pub blocks: Vec<DxfBlock>,
-    pub inserts: Vec<DxfInsert>,
-    /// Entity types that were skipped, with counts (text, splines…).
-    pub skipped: BTreeMap<String, usize>,
-}
-
 /// Millimetres per drawing unit from `$INSUNITS` (`None` for unitless files).
-fn unit_scale(code: i64) -> Option<f64> {
+pub(crate) fn unit_scale(code: i64) -> Option<f64> {
     Some(match code {
         1 => 25.4,
         2 => 304.8,
@@ -573,7 +555,7 @@ fn unit_scale(code: i64) -> Option<f64> {
 
 /// An arc from `a` to `b` with DXF bulge (tan of a quarter of the included angle; positive is
 /// counter-clockwise).
-fn bulge_arc(a: DVec2, b: DVec2, bulge: f64) -> Shape {
+pub(crate) fn bulge_arc(a: DVec2, b: DVec2, bulge: f64) -> Shape {
     let chord = b - a;
     let theta = 4.0 * bulge.atan();
     let r = chord.length() / (2.0 * (theta / 2.0).sin().abs());
@@ -593,447 +575,10 @@ fn bulge_arc(a: DVec2, b: DVec2, bulge: f64) -> Shape {
     }
 }
 
-/// Read the curves of an ASCII DXF file. Files that don't say their units (`$INSUNITS`
-/// missing or 0) are read in `default_mm_per_unit` (the document's display unit).
-pub fn read(text: &str, default_mm_per_unit: f64) -> Result<DxfImport, String> {
-    let lines: Vec<&str> = text.lines().map(str::trim).collect();
-    if lines.len() < 2 {
-        return Err("empty file".into());
-    }
-    let mut pairs: Vec<(i32, &str)> = Vec::with_capacity(lines.len() / 2);
-    for chunk in lines.chunks(2) {
-        let [code, value] = chunk else {
-            break;
-        };
-        let code: i32 = code
-            .parse()
-            .map_err(|_| format!("not an ASCII DXF file (bad group code {code:?})"))?;
-        pairs.push((code, value));
-    }
-    let mut out = DxfImport::default();
-    let mut skipped: BTreeMap<String, usize> = BTreeMap::new();
-    // The block being read in the BLOCKS section, and its base point.
-    let mut block: Option<(DxfBlock, DVec2)> = None;
-    // Units come from the header, which precedes the entities.
-    let mut scale = default_mm_per_unit;
-    let mut section = "";
-    let mut i = 0;
-    // Collect one entity's group codes from `i` (just after its `0` pair) to the next `0`.
-    let take = |i: &mut usize| -> Vec<(i32, &str)> {
-        let start = *i;
-        while *i < pairs.len() && pairs[*i].0 != 0 {
-            *i += 1;
-        }
-        pairs[start..*i].to_vec()
-    };
-    let f = |groups: &[(i32, &str)], code: i32| -> Option<f64> {
-        groups
-            .iter()
-            .find(|(c, _)| *c == code)
-            .and_then(|(_, v)| v.parse().ok())
-    };
-    let s = |groups: &[(i32, &str)], code: i32| -> Option<String> {
-        groups
-            .iter()
-            .find(|(c, _)| *c == code)
-            .map(|(_, v)| (*v).to_owned())
-    };
-    while i < pairs.len() {
-        let (code, value) = pairs[i];
-        i += 1;
-        if code == 9 && value == "$INSUNITS" && section == "HEADER" {
-            if let Some((70, v)) = pairs.get(i).copied() {
-                scale = unit_scale(v.parse().unwrap_or(0)).unwrap_or(default_mm_per_unit);
-            }
-            continue;
-        }
-        if code != 0 {
-            continue;
-        }
-        match value {
-            "SECTION" => {
-                section = pairs.get(i).map_or("", |p| p.1);
-                i += 1;
-            }
-            "ENDSEC" => section = "",
-            "EOF" => break,
-            "BLOCK" if section == "BLOCKS" => {
-                let g = take(&mut i);
-                let base = DVec2::new(f(&g, 10).unwrap_or(0.0), f(&g, 20).unwrap_or(0.0)) * scale;
-                block = Some((
-                    DxfBlock {
-                        name: s(&g, 2).unwrap_or_default(),
-                        entities: Vec::new(),
-                    },
-                    base,
-                ));
-            }
-            "ENDBLK" if section == "BLOCKS" => {
-                take(&mut i);
-                // Model and paper space blocks (*Model_Space…) aren't user blocks.
-                if let Some((b, _)) = block.take()
-                    && !b.name.starts_with('*')
-                    && !b.name.is_empty()
-                {
-                    out.blocks.push(b);
-                }
-            }
-            "INSERT" if section == "ENTITIES" => {
-                let g = take(&mut i);
-                let (Some(name), Some(x), Some(y)) = (s(&g, 2), f(&g, 10), f(&g, 20)) else {
-                    continue;
-                };
-                let sx = f(&g, 41).unwrap_or(1.0);
-                out.inserts.push(DxfInsert {
-                    block: name,
-                    layer: s(&g, 8).unwrap_or_else(|| "0".into()),
-                    at: DVec2::new(x, y) * scale,
-                    angle: f(&g, 50).unwrap_or(0.0),
-                    scale: sx.abs().max(1e-9),
-                    mirror: sx < 0.0,
-                });
-            }
-            "LAYER" if section == "TABLES" => {
-                let g = take(&mut i);
-                if let Some(name) = s(&g, 2) {
-                    out.layers.push(DxfLayer {
-                        name,
-                        color: f(&g, 62).and_then(|c| aci_rgb(c.abs() as i64)),
-                        line_type: s(&g, 6).map_or(LineType::Continuous, |t| parse_line_type(&t)),
-                    });
-                }
-            }
-            kind if section == "ENTITIES" || (section == "BLOCKS" && block.is_some()) => {
-                let g = take(&mut i);
-                // Curves of a block are kept relative to its base point.
-                let (target, shift) = match &mut block {
-                    Some((b, base)) if section == "BLOCKS" => (&mut b.entities, *base),
-                    _ => (&mut out.entities, DVec2::ZERO),
-                };
-                let layer = s(&g, 8).unwrap_or_else(|| "0".into());
-                let line_type = s(&g, 6)
-                    .filter(|t| !t.eq_ignore_ascii_case("BYLAYER"))
-                    .map(|t| parse_line_type(&t));
-                let color = f(&g, 62).and_then(|c| aci_rgb(c as i64));
-                let p = |x: i32| -> Option<DVec2> {
-                    Some(DVec2::new(f(&g, x)?, f(&g, x + 10)?) * scale - shift)
-                };
-                let mut push = |shape: Shape| {
-                    target.push(DxfEntity {
-                        layer: layer.clone(),
-                        shape,
-                        line_type,
-                        color,
-                    });
-                };
-                match kind {
-                    "LINE" => {
-                        if let (Some(a), Some(b)) = (p(10), p(11)) {
-                            push(Shape::Line { a, b });
-                        }
-                    }
-                    "POINT" => {
-                        if let Some(a) = p(10) {
-                            push(Shape::Point(a));
-                        }
-                    }
-                    "CIRCLE" => {
-                        if let (Some(c), Some(r)) = (p(10), f(&g, 40)) {
-                            push(Shape::Circle {
-                                center: c,
-                                radius: r * scale,
-                            });
-                        }
-                    }
-                    "ARC" => {
-                        if let (Some(c), Some(r), Some(a0), Some(a1)) =
-                            (p(10), f(&g, 40), f(&g, 50), f(&g, 51))
-                        {
-                            let start = a0.to_radians();
-                            push(Shape::Arc {
-                                center: c,
-                                radius: r * scale,
-                                start,
-                                sweep: (a1.to_radians() - start).rem_euclid(TAU),
-                            });
-                        }
-                    }
-                    "ELLIPSE" => {
-                        // Centre, the major axis end (relative to it), the minor/major ratio and
-                        // parametric start / end angles (radians).
-                        if let (Some(c), Some(mx), Some(my), Some(ratio)) =
-                            (p(10), f(&g, 11), f(&g, 21), f(&g, 40))
-                        {
-                            let major = DVec2::new(mx, my) * scale;
-                            let t0 = f(&g, 41).unwrap_or(0.0);
-                            let t1 = f(&g, 42).unwrap_or(TAU);
-                            // A whole one may come back a hair short of a turn (six
-                            // decimals), or as 0 → 0.
-                            let mut sweep = (t1 - t0).rem_euclid(TAU);
-                            if sweep < 1e-5 || sweep > TAU - 1e-5 {
-                                sweep = TAU;
-                            }
-                            if major.length() > 0.0 && ratio > 0.0 {
-                                push(Shape::Ellipse {
-                                    center: c,
-                                    major,
-                                    minor: major.length() * ratio,
-                                    start: t0,
-                                    sweep,
-                                });
-                            }
-                        }
-                    }
-                    "LWPOLYLINE" => {
-                        let closed = f(&g, 70).is_some_and(|v| (v as i64) & 1 == 1);
-                        // Vertices: each 10/20, optionally followed by a 42 bulge.
-                        let mut verts: Vec<(DVec2, f64)> = Vec::new();
-                        let mut x = None;
-                        for (code, v) in &g {
-                            let v: f64 = v.parse().unwrap_or(0.0);
-                            match code {
-                                10 => x = Some(v),
-                                20 => {
-                                    if let Some(x) = x.take() {
-                                        verts.push((DVec2::new(x, v) * scale - shift, 0.0));
-                                    }
-                                }
-                                42 => {
-                                    if let Some(last) = verts.last_mut() {
-                                        last.1 = v;
-                                    }
-                                }
-                                _ => {}
-                            }
-                        }
-                        polyline(&verts, closed, &mut push);
-                    }
-                    "POLYLINE" => {
-                        let closed = f(&g, 70).is_some_and(|v| (v as i64) & 1 == 1);
-                        let mut verts = Vec::new();
-                        while i < pairs.len() && pairs[i] == (0, "VERTEX") {
-                            i += 1;
-                            let v = take(&mut i);
-                            if let (Some(x), Some(y)) = (f(&v, 10), f(&v, 20)) {
-                                verts.push((
-                                    DVec2::new(x, y) * scale - shift,
-                                    f(&v, 42).unwrap_or(0.0),
-                                ));
-                            }
-                        }
-                        if i < pairs.len() && pairs[i] == (0, "SEQEND") {
-                            i += 1;
-                            take(&mut i);
-                        }
-                        polyline(&verts, closed, &mut push);
-                    }
-                    other => *skipped.entry(other.to_owned()).or_insert(0) += 1,
-                }
-            }
-            _ => {}
-        }
-    }
-    out.skipped = skipped;
-    Ok(out)
-}
-
-fn polyline(verts: &[(DVec2, f64)], closed: bool, push: &mut impl FnMut(Shape)) {
-    let n = verts.len();
-    let segments = if closed { n } else { n.saturating_sub(1) };
-    for k in 0..segments {
-        let (a, bulge) = verts[k];
-        let b = verts[(k + 1) % n].0;
-        if a.distance(b) <= 1e-12 {
-            continue;
-        }
-        push(if bulge.abs() > 1e-12 {
-            bulge_arc(a, b, bulge)
-        } else {
-            Shape::Line { a, b }
-        });
-    }
-}
-
-/// What an import added.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct ImportReport {
-    pub curves: usize,
-    pub layers: usize,
-    /// Blocks created, and copies placed.
-    pub blocks: usize,
-    pub copies: usize,
-    pub skipped: BTreeMap<String, usize>,
-}
-
-/// Add an import's curves to a document (inside the caller's transaction), on layers of the
-/// same names. Ends that coincide (within 1e-6 of the drawing's size) share one point, so the
-/// imported outlines stay connected.
-pub fn add_to_document(doc: &mut Document, import: &DxfImport) -> ImportReport {
-    let mut report = ImportReport {
-        skipped: import.skipped.clone(),
-        ..Default::default()
-    };
-    let mut extent = drift_core::Bounds::EMPTY;
-    for e in &import.entities {
-        let b = e.shape.bounds();
-        extent.include(b.min);
-        extent.include(b.max);
-    }
-    let tol = if extent.is_empty() {
-        1e-9
-    } else {
-        (extent.max - extent.min).max_element().max(1.0) * 1e-6
-    };
-    // Layers by name ("0" is the default layer).
-    let mut layer_ids: BTreeMap<String, LayerId> = doc
-        .layers()
-        .map(|(id, l)| (l.name.to_ascii_uppercase(), id))
-        .collect();
-    let mut layer_of = |doc: &mut Document, name: &str, report: &mut ImportReport| -> LayerId {
-        let key = name.to_ascii_uppercase();
-        if let Some(id) = layer_ids.get(&key) {
-            return *id;
-        }
-        let info = import
-            .layers
-            .iter()
-            .find(|l| l.name.eq_ignore_ascii_case(name));
-        let mut layer = Layer::new(name);
-        layer.color = info.and_then(|l| l.color);
-        layer.line_type = info.map_or(LineType::Continuous, |l| l.line_type);
-        layer.weight = LineWeight::default();
-        let id = doc.add_layer(layer);
-        layer_ids.insert(key, id);
-        report.layers += 1;
-        id
-    };
-    // Shared points, found through a grid of cells `tol` wide.
-    let mut points: BTreeMap<(i64, i64), Vec<(DVec2, EntityId)>> = BTreeMap::new();
-    let mut point = |doc: &mut Document, p: DVec2| -> EntityId {
-        let cell = ((p.x / tol).round() as i64, (p.y / tol).round() as i64);
-        for dx in -1..=1 {
-            for dy in -1..=1 {
-                if let Some(list) = points.get(&(cell.0 + dx, cell.1 + dy))
-                    && let Some((_, id)) = list.iter().find(|(q, _)| q.distance(p) <= tol)
-                {
-                    return *id;
-                }
-            }
-        }
-        let id = doc.add_point(p);
-        points.entry(cell).or_default().push((p, id));
-        id
-    };
-    for e in &import.entities {
-        let layer = layer_of(doc, &e.layer, &mut report);
-        let id = match e.shape {
-            Shape::Line { a, b } => {
-                let (pa, pb) = (point(doc, a), point(doc, b));
-                if pa == pb {
-                    continue;
-                }
-                doc.add_line(pa, pb).ok()
-            }
-            Shape::Circle { center, radius } => {
-                let c = point(doc, center);
-                doc.add_circle(c, radius).ok()
-            }
-            Shape::Arc {
-                center,
-                radius,
-                start,
-                sweep,
-            } => {
-                let c = point(doc, center);
-                let s = point(doc, center + DVec2::from_angle(start) * radius);
-                let e2 = point(doc, center + DVec2::from_angle(start + sweep) * radius);
-                if s == e2 {
-                    doc.add_circle(c, radius).ok()
-                } else {
-                    doc.add_arc(c, s, e2).ok()
-                }
-            }
-            Shape::Ellipse {
-                center,
-                major,
-                minor,
-                start,
-                sweep,
-            } => {
-                let (axes, ends) =
-                    drift_core::shape::ellipse_handles(center, major, minor, start, sweep);
-                let [c, m, n] = axes.map(|q| point(doc, q));
-                match ends {
-                    Some([s, e2]) => {
-                        let (s, e2) = (point(doc, s), point(doc, e2));
-                        doc.add_ellipse_arc(c, m, n, s, e2).ok()
-                    }
-                    None => doc.add_ellipse(c, m, n).ok(),
-                }
-            }
-            Shape::Bezier { p } => {
-                let [a, c1, c2, b] = p.map(|q| point(doc, q));
-                doc.add_bezier(a, c1, c2, b).ok()
-            }
-            Shape::Point(p) => Some(point(doc, p)),
-        };
-        let Some(id) = id else {
-            continue;
-        };
-        let _ = doc.set_entity_layer(id, layer);
-        if e.color.is_some() || e.line_type.is_some() {
-            let mut look = doc.get(id).map(|x| x.appearance).unwrap_or_default();
-            look.color = e.color.or(look.color);
-            look.line_type = e.line_type.or(look.line_type);
-            let _ = doc.set_appearance(id, look);
-        }
-        report.curves += 1;
-    }
-    // Copies of blocks: each block is created once (or found by name), then placed.
-    for insert in &import.inserts {
-        let block = match doc.block_named(&insert.block) {
-            Some(b) => b,
-            None => {
-                let Some(def) = import.blocks.iter().find(|b| b.name == insert.block) else {
-                    continue;
-                };
-                let items = def
-                    .entities
-                    .iter()
-                    .map(|e| drift_core::BlockItem {
-                        shape: e.shape,
-                        style: drift_core::LineKind::Solid,
-                        appearance: drift_core::Appearance {
-                            color: e.color,
-                            weight: None,
-                            line_type: e.line_type,
-                        },
-                    })
-                    .collect();
-                report.blocks += 1;
-                doc.add_block(drift_core::Block {
-                    name: def.name.clone(),
-                    items,
-                })
-            }
-        };
-        let layer = layer_of(doc, &insert.layer, &mut report);
-        let mut copy = drift_core::Instance::new(block, insert.at);
-        copy.angle = insert.angle;
-        copy.scale = insert.scale;
-        copy.mirror = insert.mirror;
-        if let Ok(id) = doc.add_instance(copy) {
-            copy.layer = layer;
-            let _ = doc.set_instance(id, copy);
-            report.copies += 1;
-        }
-    }
-    report
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use drift_core::Document;
     use drift_draft::page::{LayerInfo, Pen};
 
     #[test]
@@ -1086,7 +631,12 @@ mod tests {
         assert!(text.contains("%%c10 %%p0.1"));
         let back = read(&text, 1.0).unwrap();
         assert_eq!(back.entities.len(), 4, "{:?}", back.skipped);
-        assert_eq!(back.skipped.get("TEXT"), Some(&1));
+        assert!(back.skipped.is_empty(), "{:?}", back.skipped);
+        // The centred text comes back as text, its codes decoded, from its left end.
+        assert_eq!(back.texts.len(), 1);
+        assert_eq!(back.texts[0].text, "Ø10 ±0.1");
+        assert!((back.texts[0].height - 3.5).abs() < 1e-9);
+        assert!(back.texts[0].at.x < 5.0 && (back.texts[0].at.y - 5.0).abs() < 1e-6);
         let centre = back
             .layers
             .iter()

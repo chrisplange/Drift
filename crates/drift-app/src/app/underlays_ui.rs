@@ -62,7 +62,7 @@ impl DriftApp {
         let lower = name.to_ascii_lowercase();
         if lower.ends_with(".dxf") {
             let unit = self.editor.doc.units().length.mm_per_unit();
-            let text = String::from_utf8_lossy(&bytes);
+            let text = drift_io::dxf::decode(&bytes);
             let result = self.editor.import_dxf_underlay(name, &text, unit);
             self.underlay_imported(name, result, now);
             return;

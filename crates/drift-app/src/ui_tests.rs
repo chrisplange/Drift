@@ -3647,3 +3647,225 @@ fn text_can_use_the_computers_fonts() {
     let height = system.bounds.max.y - system.bounds.min.y;
     assert!(height > 9.0 && height < 16.0, "{height}");
 }
+
+#[test]
+fn angle_snap_is_on_the_status_bar() {
+    let Some(mut h) = harness() else { return };
+    assert_eq!(h.state().angle_snap, None);
+    h.get_by_label("Angle snap").click();
+    h.run();
+    save_png("drift_ui_angle_snap.png", &mut h);
+    h.get_by_label("Every 15°").click();
+    h.run();
+    assert_eq!(h.state().angle_snap, Some(15.0));
+    assert!(h.state().view_prefs().contains("asnap=15"));
+    // A line drawn with it on goes at a multiple of 15 degrees.
+    h.get_by_label("Line").click();
+    h.run();
+    click_world(&mut h, DVec2::new(0.0, 0.0));
+    click_world(&mut h, DVec2::new(40.0, 21.0));
+    h.key_press(Key::Escape);
+    h.run();
+    let ed = &h.state().editor;
+    let (a, b) = ed
+        .doc
+        .iter()
+        .find_map(|(id, _)| match ed.doc.shape(id) {
+            Some(drift_core::Shape::Line { a, b }) => Some((a, b)),
+            _ => None,
+        })
+        .expect("a line");
+    let degrees = (b - a).y.atan2((b - a).x).to_degrees();
+    assert!((degrees - 30.0).abs() < 1e-6, "{degrees}");
+    // Off again from the same menu.
+    h.get_by_label("Angle snap").click();
+    h.run();
+    h.get_by_label("Off").click();
+    h.run();
+    assert_eq!(h.state().angle_snap, None);
+}
+
+#[test]
+fn a_dxf_from_a_live_project_comes_in_whole() {
+    let Some(mut h) = harness() else { return };
+    let pairs: &[(i32, &str)] = &[
+        (0, "SECTION"),
+        (2, "HEADER"),
+        (9, "$INSUNITS"),
+        (70, "4"),
+        (0, "ENDSEC"),
+        (0, "SECTION"),
+        (2, "BLOCKS"),
+        (0, "BLOCK"),
+        (2, "*D1"),
+        (10, "0"),
+        (20, "0"),
+        (0, "LINE"),
+        (8, "0"),
+        (10, "0"),
+        (20, "-10"),
+        (11, "60"),
+        (21, "-10"),
+        (0, "MTEXT"),
+        (8, "0"),
+        (10, "30"),
+        (20, "-9"),
+        (40, "2.5"),
+        (71, "8"),
+        (1, "60"),
+        (0, "ENDBLK"),
+        (0, "ENDSEC"),
+        (0, "SECTION"),
+        (2, "ENTITIES"),
+        // A room, hatched, with a round column left clear.
+        (0, "LWPOLYLINE"),
+        (8, "WALLS"),
+        (90, "4"),
+        (70, "1"),
+        (10, "0"),
+        (20, "0"),
+        (10, "60"),
+        (20, "0"),
+        (10, "60"),
+        (20, "40"),
+        (10, "0"),
+        (20, "40"),
+        (0, "CIRCLE"),
+        (8, "WALLS"),
+        (10, "30"),
+        (20, "20"),
+        (40, "6"),
+        (0, "HATCH"),
+        (8, "FLOOR"),
+        (2, "ANSI31"),
+        (70, "0"),
+        (91, "2"),
+        (92, "3"),
+        (72, "0"),
+        (73, "1"),
+        (93, "4"),
+        (10, "0"),
+        (20, "0"),
+        (10, "60"),
+        (20, "0"),
+        (10, "60"),
+        (20, "40"),
+        (10, "0"),
+        (20, "40"),
+        (97, "0"),
+        (92, "16"),
+        (93, "1"),
+        (72, "2"),
+        (10, "30"),
+        (20, "20"),
+        (40, "6"),
+        (50, "0"),
+        (51, "360"),
+        (73, "1"),
+        (97, "0"),
+        (75, "0"),
+        (76, "1"),
+        (52, "0"),
+        (41, "1"),
+        (98, "0"),
+        (0, "SPLINE"),
+        (8, "WALLS"),
+        (71, "3"),
+        (40, "0"),
+        (40, "0"),
+        (40, "0"),
+        (40, "0"),
+        (40, "1"),
+        (40, "1"),
+        (40, "1"),
+        (40, "1"),
+        (10, "70"),
+        (20, "0"),
+        (10, "80"),
+        (20, "20"),
+        (10, "90"),
+        (20, "20"),
+        (10, "100"),
+        (20, "0"),
+        (0, "MTEXT"),
+        (8, "NOTES"),
+        (10, "0"),
+        (20, "55"),
+        (40, "3"),
+        (71, "7"),
+        (1, "ROOM 101\\PSee detail"),
+        (0, "DIMENSION"),
+        (8, "DIMS"),
+        (2, "*D1"),
+        (70, "32"),
+        (0, "3DSOLID"),
+        (8, "0"),
+        // On the layout: a title, and a window onto the room at 1:2.
+        (0, "TEXT"),
+        (67, "1"),
+        (8, "TITLE"),
+        (10, "10"),
+        (20, "10"),
+        (40, "5"),
+        (1, "PLAN"),
+        (0, "VIEWPORT"),
+        (67, "1"),
+        (10, "150"),
+        (20, "100"),
+        (40, "60"),
+        (41, "40"),
+        (69, "2"),
+        (68, "2"),
+        (12, "30"),
+        (22, "20"),
+        (45, "80"),
+        (0, "ENDSEC"),
+        (0, "EOF"),
+    ];
+    let text: String = pairs
+        .iter()
+        .map(|(c, v)| format!("{c:>3}\n{v}\n"))
+        .collect();
+    h.state_mut().import_dxf("room.dxf", &text, 0.0);
+    h.run_steps(3);
+    let app = h.state_mut();
+    let doc = &app.editor.doc;
+    // Text: the paragraph's two lines and the dimension's number.
+    let words: Vec<String> = doc.texts().map(|(_, t)| t.text.clone()).collect();
+    assert!(words.contains(&"ROOM 101".to_owned()) && words.contains(&"See detail".to_owned()));
+    assert!(words.contains(&"60".to_owned()));
+    // The layout is a sheet with one view at 1:2; its title text isn't in the model.
+    assert!(!words.contains(&"PLAN".to_owned()));
+    let sheet = doc.sheets().next().expect("a sheet").1.clone();
+    assert_eq!(sheet.views.len(), 1);
+    assert_eq!(sheet.views[0].scale, 2.0);
+    assert_eq!(sheet.views[0].center, DVec2::new(30.0, 20.0));
+    // The hatch is a live fill: the app finds its area among the sketch's regions, with
+    // the column as a hole, and it follows the walls.
+    let fills: Vec<drift_core::FillId> = doc.fills().map(|(id, _)| id).collect();
+    assert_eq!(fills.len(), 1);
+    let shapes = app.editor.fill_shapes();
+    let shape = &shapes[&fills[0]];
+    assert!(!shape.lost, "the fill found its boundary");
+    assert_eq!(shape.region.holes.len(), 1);
+    let floor = 60.0 * 40.0 - std::f64::consts::PI * 36.0;
+    assert!(
+        (shape.region.area - floor).abs() < 1e-3,
+        "{}",
+        shape.region.area
+    );
+    // The room's outline is there once, not doubled by the hatch.
+    assert!(app.editor.overlapping().is_empty());
+    // What couldn't come in is reported, and stays up.
+    let report = app.import_report.clone().expect("a report");
+    assert!(report.summary.contains("1 hatch or fill") && report.summary.contains("1 sheet"));
+    assert_eq!(report.skipped, vec!["1 × 3DSOLID".to_owned()]);
+    assert!(report.notes.iter().any(|n| n.contains("1 dimension")));
+    assert!(report.notes.iter().any(|n| n.contains("drawn on layouts")));
+    h.run_steps(2);
+    save_png("drift_ui_dxf_import.png", &mut h);
+    // One undo takes the whole import out.
+    h.state_mut().undo();
+    assert_eq!(h.state().editor.doc.texts().count(), 0);
+    assert_eq!(h.state().editor.doc.sheets().count(), 0);
+}

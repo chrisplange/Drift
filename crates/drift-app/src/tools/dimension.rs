@@ -40,6 +40,22 @@ pub struct DimensionTool {
     pub(super) run: Option<Run>,
 }
 
+/// Lines within this of parallel are dimensioned by the distance between them: lines drawn
+/// by eye as parallel, without a relation, are rarely exact.
+const PARALLEL_DEGREES: f64 = 1.0;
+
+/// Whether two lines are parallel, or nearly.
+fn alongside(ed: &Editor, l1: EntityId, l2: EntityId) -> bool {
+    let dir = |l| match ed.doc.shape(l) {
+        Some(Shape::Line { a, b }) => (b - a).try_normalize(),
+        _ => None,
+    };
+    match (dir(l1), dir(l2)) {
+        (Some(u), Some(v)) => u.perp_dot(v).abs() <= PARALLEL_DEGREES.to_radians().sin(),
+        _ => false,
+    }
+}
+
 impl DimensionTool {
     /// The base implied by clicking one thing alone (a midpoint needs a second pick).
     pub(super) fn single(ed: &Editor, t: Target) -> Option<DimBase> {
@@ -73,7 +89,15 @@ impl DimensionTool {
             line_of(second),
         ) {
             (Some(p), Some(q), ..) if p != q => Some(DimBase::Points(p, q)),
-            (.., Some((l1, ..)), Some((l2, ..))) => Some(DimBase::Angle(l1, l2)),
+            // Two lines: the angle between them, or, if they run alongside each other, the
+            // distance between them (from the first line's start to the second line).
+            (.., Some((l1, a1, _)), Some((l2, ..))) if l1 != l2 => {
+                if alongside(ed, l1, l2) {
+                    Some(DimBase::PointLine(a1, l2))
+                } else {
+                    Some(DimBase::Angle(l1, l2))
+                }
+            }
             (Some(p), None, None, Some((l, a, b))) | (None, Some(p), Some((l, a, b)), None)
                 if p != l && p != a && p != b =>
             {

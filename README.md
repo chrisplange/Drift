@@ -20,7 +20,8 @@ browser (WebGPU, with a WebGL2 fallback).
   a tangent arc from the last point and L switches back to lines.
   Click point by point, or press, drag and release. Or type exact values while drawing:
   X/Y for the first point, then length/angle, width/height, diameter, radius or sweep (Tab
-  switches field, Enter applies). Typed sizes become dimensions.
+  switches field, Enter applies). Typed sizes become dimensions (with Auto relations off
+  they only set the size).
 - **Automatic relations and inference:** nearly horizontal or vertical lines snap straight and
   get the relation; rectangles come with their H/V relations. Points placed on (or dropped onto)
   a curve or a midpoint stay there. Dashed inference lines align new points with points you've
@@ -29,8 +30,9 @@ browser (WebGPU, with a WebGL2 fallback).
 - **Relations pie (Q):** with something selected, hold Q, flick towards a relation and let
   go (or tap Q and click). Each relation has a fixed place; one already there is lit and
   comes off; one that would over-define the sketch says so first.
-- **Smart Dimension (D):** click a line, circle, arc, two points, two lines, or a point and a
-  line, then place the label. Its position chooses aligned, horizontal or vertical. Type the
+- **Smart Dimension (D):** click a line, circle, arc, two points, two lines (their angle, or
+  the distance between them if they run alongside), or a point and a line, then place the
+  label. Its position chooses aligned, horizontal or vertical. Type the
   value straight away. The number sits in the middle of its line, or just outside a line too
   short for it.
 - **Dimensions and relations on the canvas:** drag dimension labels to move them, double-click
@@ -65,7 +67,11 @@ browser (WebGPU, with a WebGL2 fallback).
   - A logo for the title block from an SVG file, kept in the drawing.
   - Export true-scale vector PDF (every sheet) and SVG, or DXF (R12, with layers and line
     types).
-  - Import DXF drawings (lines, arcs, circles, polylines with bulges).
+  - Import DXF drawings from other CAD programs: lines, arcs, circles, ellipses, polylines,
+    splines, text and paragraph text, hatches (as live fills), blocks (nested, arrayed,
+    stretched, with attributes), dimensions (as drawn), layers with colours, weights and
+    line types, and paper-space layouts as sheets with their viewports as views. A report
+    lists anything left out or read approximately.
   - Print (Ctrl/⌘+P).
 - **Drafting:**
   - ISO 129 or ASME Y14.5 dimension styles: aligned or horizontal text, arrowheads, zeros
@@ -100,8 +106,9 @@ browser (WebGPU, with a WebGL2 fallback).
   - Changing units never moves geometry, and rounded labels are marked `~`.
 - **Free directions:** View → Show free directions draws arrows showing how each
   under-defined point can still move.
-- **Snapping:** end points, centres, midpoints, quadrants and nearest-on-curve, plus optional grid
-  snapping (Shift+G). Hold Alt to place freely. Snapping onto an existing point connects to it.
+- **Snapping:** end points, centres, midpoints, quadrants, nearest-on-curve and the origin, plus
+  optional grid snapping (Shift+G). Hold Alt to place freely. Snapping onto an existing point
+  connects to it. **Angle snap** (status bar, beside grid snap) draws lines at every 5°, 15° or 45°.
 - **Blender-style keys:**
   - **Axis locks while drawing lines:** X / Y lock the current segment to an axis. The lock
     lasts for that segment only, and adds the H/V relation when Auto relations is on.

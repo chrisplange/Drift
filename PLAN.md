@@ -1604,6 +1604,72 @@ zooms to fit; F is Fillet (again for Chamfer).
     two more annotation tools it may want grouping or fly-outs.
   - Files are format v18. Each bump (v17, v18) locks out older builds, which matters once
     testers hold different versions.
+- **Workspace notes, round 1 (done).**
+  - Two lines that run alongside each other (within 1 degree of parallel) dimension by the
+    distance between them; before, any two lines gave an angle, which for parallel lines
+    was a dimension of 0 degrees.
+  - With automatic relations off, a typed size only sizes: a length typed in the inspector
+    resizes the geometry and keeps no dimension (`Editor::resize_once`), and values typed
+    while drawing (length, radius, width and height) leave none either. A dimension that is
+    already there is still edited by the inspector's field.
+  - The origin is a snap target (`SnapKind::Origin`), shown as a ring. A sketch point lying
+    on it comes first, so lines still join to that point.
+  - Angle snapping for the line tool (status bar, beside grid snap: off, 5, 15 or 45 degrees): the
+    segment turns in steps and is as long as the pointer is far along that direction. A
+    step on an axis gets its horizontal or vertical relation as usual; an exact snap to a
+    point still wins; Alt places freely. Kept with the view preferences.
+- **DXF import, second version (done).** The reader (`drift-io/src/dxf_import.rs`) was
+  rewritten so a drawing from a live project comes in whole.
+  - Model space and paper space are kept apart. Before, entities drawn on a layout were
+    mixed into the model. Each layout becomes a sheet (named from its LAYOUT object, with
+    its paper size) and each viewport a framed view at its scale and centre.
+  - Splines: B-splines of degree 1 to 3 convert to lines and cubic Béziers exactly (by knot
+    insertion); weighted and higher-degree spans are fitted in quarters (a quarter circle is
+    within a few millionths of its radius); splines stored as fit points get a curve
+    through them.
+  - TEXT, MTEXT, and block attributes become sketch text: alignment and attachment points
+    are worked out from the text's measured width, `%%c` and `\U+XXXX` codes are decoded
+    and MTEXT formatting is stripped. Files that aren't UTF-8 are read as Windows Latin.
+  - Hatches become live fills: boundaries from polyline, line, arc, ellipse and spline
+    edges; a boundary that coincides with a curve already in the drawing shares it rather
+    than doubling it; the fill is seeded from the file's seed point or a point found inside.
+  - Blocks: nested inserts are expanded into their parent; an insert scaled unevenly, an
+    array (MINSERT) or one drawn mirrored is expanded into curves (circles become
+    ellipses); constant attributes and attribute values come in as text.
+  - Dimensions come in as the geometry in their anonymous block: they look the same but no
+    longer measure.
+  - Layers: off / frozen, locked, not plotted, line weight, true colour, and the whole
+    colour index. Custom line types take the nearest of Drift's five by their dash pattern.
+  - Entities drawn "from behind" (extrusion 0, 0, -1) are un-mirrored, a common cause of
+    arcs and blocks landing on the wrong side.
+  - Binary DXF and DWG files are named as such in the error. Everything left out is counted
+    by kind, and everything read approximately is explained, in an import report that stays
+    up until closed.
+  - Not done: associative dimensions (re-creating Drift dimensions from DXF ones); what is
+    drawn on a layout itself (title blocks, notes); text inside blocks moving with the
+    block; wrapping MTEXT to its width; text styles and fonts; MLEADER, TOLERANCE, images,
+    3D solids, tables; solid fills of SOLID / TRACE (read as outlines); binary DXF. Export
+    is still R12: text, layers, blocks and curves go out, but hatches as solid triangles
+    and no dimensions, layouts or splines as such.
+  - To try a real file without the app: `DRIFT_DXF=path cargo test -p drift-io probe --
+    --ignored --nocapture` prints what came in, what was skipped and the notes.
+- **Workspace notes, next: tabs for separate drawings (design, not built).** A tab bar
+  along the top, one drawing per tab, as Revit and Illustrator have.
+  - What a tab owns: the editor (document, selection, undo history), its file (name, path,
+    saved revision), the camera and fit target, the current sheet and sheet preview state,
+    and the picked relation or annotation. What stays shared: preferences, the panel
+    layout, the clipboard (so copy and paste work across drawings), fonts, the tool.
+  - How: `DriftApp` keeps those per-drawing fields as it does now, for the tab in front,
+    and a list of the others parked in a `Workspace` struct; switching tabs swaps them. This
+    keeps the hundreds of `self.editor` uses as they are.
+  - New and Open make a tab instead of replacing the drawing (an untouched, empty Untitled
+    tab is reused). Closing a tab with unsaved changes asks, as closing the window does;
+    closing the window asks once per unsaved tab.
+  - Autosave and session restore keep every open drawing, not one: the stored session
+    becomes a list, with which tab was in front.
+  - Things to settle first: whether a block library or layers should be copyable between
+    tabs beyond the clipboard; whether the memory guard needs a per-tab count; the browser
+    build's storage limit with several drawings in one session.
 - **Alpha feedback, phase 4: content and parametric blocks.** A library of common
   imperial items; blocks with their own parameters (doors and windows at custom sizes),
   which needs its own design.

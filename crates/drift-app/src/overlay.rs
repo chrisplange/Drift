@@ -96,6 +96,11 @@ pub fn snap_marker(painter: &egui::Painter, map: &ScreenMap, snap: &Snap, color:
             painter.line_segment([c + vec2(-s, -s), c + vec2(s, s)], stroke);
             painter.line_segment([c + vec2(-s, s), c + vec2(s, -s)], stroke);
         }
+        SnapKind::Origin => {
+            // A ring round the crossing of the axes.
+            painter.circle_stroke(c, s + 2.0, stroke);
+            painter.circle_filled(c, 2.0, color);
+        }
         SnapKind::Grid => {
             painter.line_segment([c - vec2(s, 0.0), c + vec2(s, 0.0)], stroke);
             painter.line_segment([c - vec2(0.0, s), c + vec2(0.0, s)], stroke);

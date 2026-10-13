@@ -45,6 +45,7 @@ use serde::{Deserialize, Serialize};
 mod blocks;
 mod drafting;
 pub mod dxf;
+mod dxf_import;
 pub mod pdf;
 pub mod pdf_import;
 mod sheets;

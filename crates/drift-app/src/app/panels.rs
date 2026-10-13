@@ -957,7 +957,16 @@ impl DriftApp {
         let now = ui.input(|i| i.time);
         match size_edit {
             Some(SizeEdit::Dimension(wanted, text)) => {
-                if let Err(e) = self.editor.set_size(wanted, &text) {
+                // A dimension already there is edited. Otherwise the size is added as a
+                // dimension, unless automatic relations are off: then it only resizes.
+                let keeps =
+                    self.editor.auto_relations || self.editor.size_dimension(&wanted).is_some();
+                let result = if keeps {
+                    self.editor.set_size(wanted, &text).map(|_| ())
+                } else {
+                    self.editor.resize_once(wanted, &text)
+                };
+                if let Err(e) = result {
                     self.set_status(format!("Can't use {text}: {e}"), true, now);
                 }
             }
@@ -1393,6 +1402,7 @@ impl DriftApp {
                     }
                     .format_length(minor)
                 };
+                let angle_snap = &mut self.angle_snap;
                 for (glyph, value, tip) in [
                     (
                         Glyph::Thin,
@@ -1430,6 +1440,32 @@ impl DriftApp {
                     {
                         *value = !*value;
                     }
+                    // Angle snapping sits with grid snapping: a click opens its steps.
+                    if glyph == Glyph::Snap {
+                        let tip = match *angle_snap {
+                            Some(step) => format!(
+                                "Angle snap: lines are drawn every {step}° (Alt places freely)"
+                            ),
+                            None => "Angle snap: draw lines at every 5°, 15° or 45°".to_owned(),
+                        };
+                        let on = angle_snap.is_some();
+                        let button = icons::button(ui, 22.0, on, "Angle snap", |p, r, c| {
+                            icons::glyph(p, r, Glyph::Angle, c)
+                        })
+                        .on_hover_text(tip);
+                        egui::Popup::menu(&button).show(|ui| {
+                            ui.set_min_width(130.0);
+                            if ui.radio(angle_snap.is_none(), "Off").clicked() {
+                                *angle_snap = None;
+                            }
+                            for step in crate::ANGLE_STEPS {
+                                let picked = *angle_snap == Some(step);
+                                if ui.radio(picked, format!("Every {step}°")).clicked() {
+                                    *angle_snap = Some(step);
+                                }
+                            }
+                        });
+                    }
                 }
             });
             let _ = right;
@@ -1438,7 +1474,7 @@ impl DriftApp {
         let hint = self.tool.hint();
         let rect = ui.min_rect();
         let left = rect.left() + 262.0;
-        let right = rect.right() - 420.0;
+        let right = rect.right() - 446.0;
         if right - left > 40.0 {
             let area = egui::Rect::from_min_max(
                 egui::pos2(left, rect.top()),

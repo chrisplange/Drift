@@ -341,7 +341,7 @@ fn three_point_arc_bulges_through_the_third_point() {
 
 #[test]
 fn three_point_arc_takes_typed_values_and_refuses_collinear_points() {
-    let mut ed = Editor::default();
+    let mut ed = with_auto_relations();
     let mut tool = ThreePointArcTool::default();
     click(&mut ed, &mut tool, v(0.0, 0.0));
     let p = ptr(&ed, &tool, v(3.0, 1.0));
@@ -417,6 +417,7 @@ fn tangent_arcs_continue_lines_and_chain() {
 #[test]
 fn tangent_arc_takes_a_typed_radius_and_sweep() {
     let (mut ed, _) = line_end_fixture();
+    ed.auto_relations = true;
     let mut tool = TangentArcTool::default();
     click(&mut ed, &mut tool, v(10.0, 0.0));
     let p = ptr(&ed, &tool, v(14.0, 3.0));
@@ -1464,6 +1465,203 @@ fn a_chamfer_is_resized_in_place_and_corners_can_be_put_back() {
     let arc = ed.doc.add_arc(c, a, b).unwrap();
     ed.commit("Arc");
     assert!(ed.remove_corner_cut(arc).is_err());
+}
+
+#[test]
+fn typed_sizes_leave_no_dimension_when_automatic_relations_are_off() {
+    for relations in [false, true] {
+        let mut ed = Editor::default();
+        ed.auto_relations = relations;
+        let mut tool = LineTool::default();
+        click(&mut ed, &mut tool, v(0.0, 0.0));
+        let p = ptr(&ed, &tool, v(8.0, 0.2));
+        tool.set_typed([Some(25.0), Some(0.0)]);
+        tool.commit_typed(&p, &mut ed);
+        tool.handle(Input::Finish, &mut ed);
+        // The line is 25 long either way.
+        let line = ed
+            .doc
+            .iter()
+            .find(|(_, e)| matches!(e.kind, EntityKind::Line { .. }))
+            .map(|(id, _)| id)
+            .unwrap();
+        assert_eq!(line_ends(&ed, line), (v(0.0, 0.0), v(25.0, 0.0)));
+        // Only with automatic relations is it held there, by a length (and a horizontal).
+        let held = ed.doc.constraint_count();
+        assert_eq!(held, if relations { 2 } else { 0 });
+
+        // The inspector's length field: off, it resizes and keeps nothing; on, it adds the
+        // dimension. One undo step either way.
+        let EntityKind::Line { a, b } = ed.doc.get(line).unwrap().kind else {
+            unreachable!()
+        };
+        let wanted = Constraint::Distance { a, b, value: 0.0 };
+        if relations {
+            assert!(
+                ed.size_dimension(&wanted).is_some(),
+                "the typed length is there to edit"
+            );
+        } else {
+            ed.resize_once(wanted, "40").unwrap();
+            assert_eq!(ed.doc.constraint_count(), 0);
+            let (p, q) = line_ends(&ed, line);
+            assert!((p.distance(q) - 40.0).abs() < 1e-7);
+            ed.undo();
+            let (p, q) = line_ends(&ed, line);
+            assert!((p.distance(q) - 25.0).abs() < 1e-9);
+            assert!(
+                ed.resize_once(wanted, "-3").is_err(),
+                "a bad size is refused"
+            );
+            assert_eq!(ed.doc.constraint_count(), 0);
+        }
+    }
+}
+
+#[test]
+fn two_lines_dimension_by_distance_when_they_run_alongside() {
+    use crate::tools::dimension::DimBase;
+    use crate::tools::select::Target;
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    let line = |ed: &mut Editor, a: DVec2, b: DVec2| {
+        let (pa, pb) = (ed.doc.add_point(a), ed.doc.add_point(b));
+        ed.doc.add_line(pa, pb).unwrap()
+    };
+    let base = line(&mut ed, v(0.0, 0.0), v(40.0, 0.0));
+    // Drawn by eye as parallel (a third of a degree off), exactly parallel but reversed,
+    // and clearly at an angle.
+    let nearly = line(&mut ed, v(0.0, 10.0), v(40.0, 10.25));
+    let reversed = line(&mut ed, v(40.0, 20.0), v(0.0, 20.0));
+    let skew = line(&mut ed, v(0.0, 30.0), v(40.0, 38.0));
+    ed.commit("Lines");
+    let pair =
+        |ed: &Editor, other| DimensionTool::pair(ed, Target::Entity(base), Target::Entity(other));
+    for other in [nearly, reversed] {
+        match pair(&ed, other) {
+            Some(DimBase::PointLine(point, to)) => {
+                assert_eq!(to, other);
+                assert_eq!(ed.doc.point(point).unwrap(), v(0.0, 0.0));
+            }
+            got => panic!("{got:?}"),
+        }
+    }
+    assert!(matches!(pair(&ed, skew), Some(DimBase::Angle(..))));
+    // The distance it measures is the gap between the lines.
+    let Some(base_dim) = pair(&ed, reversed) else {
+        unreachable!()
+    };
+    let c = DimensionTool::dimension(&ed, base_dim, v(20.0, 10.0)).unwrap();
+    assert!(
+        matches!(c, Constraint::PointLineDistance { value, .. } if (value - 20.0).abs() < 1e-9)
+    );
+}
+
+#[test]
+fn the_origin_is_a_snap_target() {
+    use drift_geom::SnapKind;
+    let mut ed = Editor::default();
+    let options = SnapOptions {
+        tolerance: TOL,
+        grid: None,
+    };
+    // An empty sketch: near the origin snaps to it; further away, nothing.
+    let s = ed
+        .snap(v(0.2, -0.3), options, |_| false)
+        .expect("the origin");
+    assert_eq!(
+        (s.at, s.kind, s.entity),
+        (DVec2::ZERO, SnapKind::Origin, None)
+    );
+    assert!(ed.snap(v(3.0, 0.0), options, |_| false).is_none());
+    // A line through it: the origin wins over a point along the line.
+    ed.doc.begin();
+    let a = ed.doc.add_point(v(-10.0, 0.0));
+    let b = ed.doc.add_point(v(10.0, 0.0));
+    ed.doc.add_line(a, b).unwrap();
+    ed.commit("Line");
+    let s = ed.snap(v(0.2, 0.1), options, |_| false).unwrap();
+    assert_eq!(s.kind, SnapKind::Origin);
+    // A point of the sketch at the origin comes first: it can be joined to.
+    ed.doc.begin();
+    let o = ed.doc.add_point(DVec2::ZERO);
+    ed.commit("Point");
+    let s = ed.snap(v(0.2, 0.1), options, |_| false).unwrap();
+    assert_eq!((s.kind, s.entity), (SnapKind::Point, Some(o)));
+    // A line drawn to it lands exactly on (0, 0).
+    let mut ed = Editor::default();
+    let mut tool = LineTool::default();
+    let click_snapped = |ed: &mut Editor, tool: &mut LineTool, at: DVec2| {
+        let mut p = Pointer::new(at, TOL);
+        p.snap = ed.snap(at, options, |_| false);
+        tool.handle(Input::Click(p, Modifiers::default()), ed);
+    };
+    click_snapped(&mut ed, &mut tool, v(20.0, 15.0));
+    click_snapped(&mut ed, &mut tool, v(0.3, -0.2));
+    tool.handle(Input::Finish, &mut ed);
+    let line = ed
+        .doc
+        .iter()
+        .find(|(_, e)| matches!(e.kind, EntityKind::Line { .. }))
+        .map(|(id, _)| id)
+        .unwrap();
+    assert_eq!(line_ends(&ed, line), (v(20.0, 15.0), DVec2::ZERO));
+}
+
+#[test]
+fn lines_turn_in_steps_with_angle_snapping() {
+    let mut ed = with_auto_relations();
+    let mut tool = LineTool::default();
+    click(&mut ed, &mut tool, v(0.0, 0.0));
+    let aim = |ed: &Editor, tool: &LineTool, at: DVec2, step: Option<f64>| {
+        let mut p = Pointer::new(at, TOL);
+        p.angle_step = step;
+        if tool.wants_snap() {
+            p.snap = ed.index.snap(
+                at,
+                SnapOptions {
+                    tolerance: TOL,
+                    grid: None,
+                },
+                |id| tool.snap_excludes(ed, id),
+            );
+        }
+        tool.refine_pointer(&mut p);
+        p
+    };
+    // 28 degrees up: with 15 degree steps the line goes at 30, as long as the pointer is
+    // far along that direction.
+    let at = DVec2::from_angle(28f64.to_radians()) * 20.0;
+    let p = aim(&ed, &tool, at, Some(15.0));
+    let got = p.pos();
+    assert!(
+        (got.y.atan2(got.x).to_degrees() - 30.0).abs() < 1e-9,
+        "{got:?}"
+    );
+    assert!((got.length() - 20.0 * 2f64.to_radians().cos()).abs() < 1e-9);
+    assert_eq!(p.auto_relation(), None, "30 degrees is no relation");
+    // 45 degree steps from 50 degrees: 45. Off: where the pointer is.
+    let at = DVec2::from_angle(50f64.to_radians()) * 20.0;
+    let got = aim(&ed, &tool, at, Some(45.0)).pos();
+    assert!((got.x - got.y).abs() < 1e-9 && got.x > 0.0);
+    assert_eq!(aim(&ed, &tool, at, None).pos(), at);
+    // A step that lands on an axis is exactly on it, and gets its relation.
+    let p = aim(&ed, &tool, v(-30.0, 1.0), Some(5.0));
+    assert_eq!(p.pos().y, 0.0);
+    assert!((p.pos().x + 30.0).abs() < 1e-9);
+    assert_eq!(p.auto_relation(), Some(GuideKind::Horizontal));
+    tool.handle(Input::Click(p, Modifiers::default()), &mut ed);
+    assert!(matches!(
+        line_relations(&ed)[..],
+        [Constraint::Horizontal { .. }]
+    ));
+    // An exact snap still wins: the next line goes to the point, off the steps.
+    ed.doc.begin();
+    let target = ed.doc.add_point(v(-20.0, 13.0));
+    ed.commit("Point");
+    let p = aim(&ed, &tool, v(-20.1, 13.1), Some(45.0));
+    assert_eq!(p.snapped_point(), Some(target));
+    assert_eq!(p.pos(), v(-20.0, 13.0));
 }
 
 #[test]

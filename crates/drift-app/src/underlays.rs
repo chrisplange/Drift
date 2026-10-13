@@ -141,6 +141,17 @@ impl Editor {
         exclude: impl Fn(EntityId) -> bool,
     ) -> Option<Snap> {
         let sketch = self.index.snap(p, options, exclude);
+        // The origin is always there to snap to. A point of the sketch at it comes first (it
+        // can be joined to); anything else there gives way.
+        let sketch = match sketch {
+            Some(s) if s.kind.is_point() => Some(s),
+            _ if p.length() <= options.tolerance => Some(Snap {
+                at: DVec2::ZERO,
+                kind: SnapKind::Origin,
+                entity: None,
+            }),
+            other => other,
+        };
         let Some(reference) = self.underlay_snap(p, options.tolerance) else {
             return sketch;
         };

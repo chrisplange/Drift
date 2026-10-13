@@ -643,6 +643,7 @@ impl Tool for SelectTool {
                 {
                     ed.selected_text = Some(t);
                     ed.editing_text = Some(t);
+                    ed.text_caret_at = Some(p.raw);
                     return;
                 }
                 if ed

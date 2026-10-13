@@ -1,5 +1,5 @@
 //! Text: click where a line of text starts (on its baseline) and type; it shows live on
-//! the canvas. Return or a click elsewhere finishes it.
+//! the canvas. Return or a click elsewhere finishes it. A click on a text types into it.
 
 use super::*;
 
@@ -16,7 +16,7 @@ impl Tool for TextTool {
     }
 
     fn hint(&self) -> String {
-        "Text: click where it starts (its baseline), then type · Enter finishes · Shift+Enter: new line".into()
+        "Text: click where it starts (its baseline) or in a text, then type · Enter finishes · Shift+Enter: new line".into()
     }
 
     fn handle(&mut self, input: Input, ed: &mut Editor) {
@@ -29,6 +29,13 @@ impl Tool for TextTool {
             10.0
         };
         ed.selection.clear();
+        // On a text: type into it, from where it was clicked.
+        if let Some(t) = ed.text_at(p.raw, p.tolerance) {
+            ed.selected_text = Some(t);
+            ed.editing_text = Some(t);
+            ed.text_caret_at = Some(p.raw);
+            return;
+        }
         ed.add_text(drift_core::SketchText::new("", p.pos(), height));
         ed.editing_text = ed.selected_text;
     }

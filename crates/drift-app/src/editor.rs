@@ -307,6 +307,8 @@ pub struct Editor {
     pub(crate) overlap_cache: std::cell::RefCell<Option<(u64, std::rc::Rc<Vec<EntityId>>)>>,
     /// The text being typed in place on the canvas (just placed, or double-clicked).
     pub editing_text: Option<drift_core::TextId>,
+    /// Where the caret was asked to go in the text being typed (a click that began it).
+    pub text_caret_at: Option<DVec2>,
     /// Cap height for new text (0: the default).
     pub text_height: f64,
     /// Bézier handles and their owners, by document revision.

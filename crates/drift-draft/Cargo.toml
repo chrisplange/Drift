@@ -13,6 +13,8 @@ drift-geom.workspace = true
 # Glyph outlines for sketch text, from the fonts egui ships with.
 skrifa = "0.44"
 epaint_default_fonts = "0.36.2"
+roxmltree = "0.21.1"
+lyon_tessellation.workspace = true
 
 [lints]
 workspace = true

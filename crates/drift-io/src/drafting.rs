@@ -197,6 +197,24 @@ pub(crate) enum AnnotationRecord {
         axis: String,
         at: f64,
     },
+    Section {
+        id: String,
+        a: [f64; 2],
+        b: [f64; 2],
+        label: String,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        sheet: String,
+        #[serde(default, skip_serializing_if = "is_false")]
+        flip: bool,
+    },
+    Elevation {
+        id: String,
+        at: [f64; 2],
+        angle: f64,
+        label: String,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        sheet: String,
+    },
 }
 
 pub(crate) fn annotation_record(id: AnnotationId, a: &Annotation) -> AnnotationRecord {
@@ -260,6 +278,32 @@ pub(crate) fn annotation_record(id: AnnotationId, a: &Annotation) -> AnnotationR
             }
             .into(),
             at: *at,
+        },
+        Annotation::Section {
+            a,
+            b,
+            label,
+            sheet,
+            flip,
+        } => AnnotationRecord::Section {
+            id,
+            a: a.to_array(),
+            b: b.to_array(),
+            label: label.clone(),
+            sheet: sheet.clone(),
+            flip: *flip,
+        },
+        Annotation::Elevation {
+            at,
+            angle,
+            label,
+            sheet,
+        } => AnnotationRecord::Elevation {
+            id,
+            at: at.to_array(),
+            angle: *angle,
+            label: label.clone(),
+            sheet: sheet.clone(),
         },
     }
 }
@@ -352,6 +396,47 @@ pub(crate) fn parse_annotation(
                     point,
                     axis,
                     at,
+                },
+            )
+        }
+        AnnotationRecord::Section {
+            id,
+            a,
+            b,
+            label,
+            sheet,
+            flip,
+        } => {
+            let (a, b) = (finite(&id, a)?, finite(&id, b)?);
+            (
+                id,
+                Annotation::Section {
+                    a,
+                    b,
+                    label,
+                    sheet,
+                    flip,
+                },
+            )
+        }
+        AnnotationRecord::Elevation {
+            id,
+            at,
+            angle,
+            label,
+            sheet,
+        } => {
+            let at = finite(&id, at)?;
+            if !angle.is_finite() {
+                return Err(LoadError::NonFinite(id));
+            }
+            (
+                id,
+                Annotation::Elevation {
+                    at,
+                    angle,
+                    label,
+                    sheet,
                 },
             )
         }

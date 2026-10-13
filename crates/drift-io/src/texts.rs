@@ -10,11 +10,11 @@ fn is_zero(x: &f64) -> bool {
 }
 
 fn is_sans(f: &String) -> bool {
-    f == TextFont::Sans.name()
+    *f == TextFont::Sans.name()
 }
 
 fn sans() -> String {
-    TextFont::Sans.name().to_owned()
+    TextFont::Sans.name()
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -41,7 +41,7 @@ pub(crate) fn text_record(id: TextId, t: &SketchText) -> TextRecord {
         at: t.at.to_array(),
         height: t.height,
         angle: t.angle,
-        font: t.font.name().to_owned(),
+        font: t.font.name(),
         layer: (t.layer != LayerId::DEFAULT).then(|| t.layer.to_string()),
         color: t.appearance.color.map(Rgb::hex),
     }

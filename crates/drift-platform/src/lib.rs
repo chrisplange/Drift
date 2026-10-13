@@ -4,6 +4,7 @@
 //! later as [`FileEvent`]s. Call [`Files::take_events`] each frame; the `wake` callback passed to
 //! [`Files::new`] is invoked when an event arrives so the UI can repaint.
 
+pub mod fonts;
 pub mod memory;
 
 use std::path::PathBuf;

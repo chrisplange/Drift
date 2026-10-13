@@ -280,6 +280,19 @@ impl DriftApp {
                         self.import_dxf(&name, &text, now);
                         continue;
                     }
+                    if lower.ends_with(".svg") {
+                        match self.set_logo(&text) {
+                            Ok(()) => self.set_status(
+                                format!("{name} is now the title block logo"),
+                                false,
+                                now,
+                            ),
+                            Err(e) => {
+                                self.set_status(format!("Could not use {name}: {e}"), true, now)
+                            }
+                        }
+                        continue;
+                    }
                     if name.to_ascii_lowercase().ends_with(".pat") {
                         match self.import_patterns(&text) {
                             Ok(n) => self.set_status(
@@ -337,6 +350,15 @@ impl DriftApp {
     }
 
     /// Add the patterns in a `.pat` file to the document (replacing same-named ones).
+    /// Make an SVG the title blocks' logo (one undo step), if it can be read.
+    pub(crate) fn set_logo(&mut self, svg: &str) -> Result<(), String> {
+        drift_draft::logo::parse(svg)?;
+        self.editor.doc.begin();
+        self.editor.doc.set_logo(svg.to_owned());
+        self.editor.commit("Title block logo");
+        Ok(())
+    }
+
     pub(crate) fn import_patterns(&mut self, text: &str) -> Result<usize, String> {
         let new = drift_draft::parse_pat(text)?;
         if new.is_empty() {

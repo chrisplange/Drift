@@ -1016,6 +1016,9 @@ fn modify_tools_from_the_toolbar() {
     save_png("drift_ui_trim_preview.png", &mut h);
     click_world(&mut h, v(0.0, 0.3));
     assert_eq!(lines(&h), 4, "the middle piece went, leaving two");
+    // Fillet is past the bottom of the tool list at this window height: scroll to it.
+    h.get_by_label("Fillet").scroll_to_me();
+    h.run();
     h.get_by_label("Fillet").click();
     h.run();
     assert_eq!(h.state().tool.kind(), ToolKind::Fillet);
@@ -1526,7 +1529,7 @@ fn sheets_preview_and_export() {
     let sheet = h.state().editor.doc.sheet(id).cloned().unwrap();
     assert!(h.state().sheet_preview);
     // The 120 × 80 plate with its dimensions fits A3 at 1:1, above the title block.
-    assert_eq!(sheet.scale, 1.0);
+    assert_eq!(sheet.views[0].scale, 1.0);
     save_png("drift_ui_sheet.png", &mut h);
 
     let painter = h.ctx.layer_painter(egui::LayerId::background());
@@ -1576,7 +1579,7 @@ fn sheets_preview_and_export() {
 
     // A sheet can leave the dimensions out (a presentation copy); the model keeps them.
     let mut plain = sheet.clone();
-    plain.dimensions = false;
+    plain.views[0].dimensions = false;
     h.state_mut().editor.doc.begin();
     h.state_mut().editor.doc.set_sheet(id, plain);
     h.state_mut().editor.commit("Hide dimensions");
@@ -1587,9 +1590,9 @@ fn sheets_preview_and_export() {
     assert!(saved.contains(r#""dimensions":false"#) && !saved.contains(r#""notes""#));
     let (loaded, _) = drift_io::load(&saved).unwrap();
     let back = loaded.sheets().next().unwrap().1;
-    assert!(!back.dimensions && back.notes);
+    assert!(!back.views[0].dimensions && back.views[0].notes);
     h.state_mut().undo();
-    assert!(h.state().editor.doc.sheet(id).unwrap().dimensions);
+    assert!(h.state().editor.doc.sheet(id).unwrap().views[0].dimensions);
     h.run();
 
     // Dragging on the sheet moves the drawing within it, as one undo step.
@@ -1605,13 +1608,16 @@ fn sheets_preview_and_export() {
     }
     button(&h, from + egui::vec2(40.0, 0.0), false);
     h.run();
-    let moved = h.state().editor.doc.sheet(id).unwrap().center;
+    let moved = h.state().editor.doc.sheet(id).unwrap().views[0].center;
     assert!(
-        moved.x < sheet.center.x - 1.0,
+        moved.x < sheet.views[0].center.x - 1.0,
         "dragging right moves the drawing right"
     );
     h.state_mut().undo();
-    assert_eq!(h.state().editor.doc.sheet(id).unwrap().center, sheet.center);
+    assert_eq!(
+        h.state().editor.doc.sheet(id).unwrap().views[0].center,
+        sheet.views[0].center
+    );
     // Esc returns to the model.
     h.key_press(Key::Escape);
     h.run();
@@ -3198,4 +3204,446 @@ fn a_radius_typed_for_a_fillet_keeps_its_lines() {
             .iter()
             .all(|end| f.far.iter().any(|far| far.distance(*end) < 1e-9))
     }
+}
+
+#[test]
+fn a_sheet_holds_several_views() {
+    use crate::app::sheets_ui::{ViewGrip, dragged_view};
+    use drift_core::ViewFrame;
+    let Some(mut h) = harness() else { return };
+    h.get_by_label("File").click();
+    h.run();
+    h.get_by_label("Open example").click();
+    h.run();
+    h.state_mut().show_panel(Panel::Sheets);
+    h.run();
+    h.get_by_label("New sheet").click();
+    h.run();
+    h.run();
+    let id = h.state().current_sheet().expect("a sheet");
+    let sheet = |h: &Harness<'_, DriftApp>| h.state().editor.doc.sheet(id).cloned().unwrap();
+    assert_eq!(sheet(&h).views.len(), 1);
+    assert!(
+        sheet(&h).views[0].frame.is_none(),
+        "the first view fills the sheet"
+    );
+
+    // Add view: a second one, in its own frame beside nothing yet, titled, and picked.
+    h.get_by_label("Add view").click();
+    h.run();
+    h.run();
+    let s = sheet(&h);
+    assert_eq!(s.views.len(), 2);
+    let added = s.views[1].clone();
+    let frame = added.frame.expect("framed");
+    assert!(added.title && added.name == "View 2");
+    assert_eq!(h.state().sheet_view, 1);
+    let area = drift_draft::sheet::view_area(&s);
+    let b = frame.bounds();
+    assert!(
+        b.min.x >= area.min.x && b.max.x <= area.max.x,
+        "on the sheet"
+    );
+    assert!(b.min.y >= area.min.y && b.max.y <= area.max.y);
+
+    // A detail at another scale: the title block says so.
+    let mut detail = s.clone();
+    detail.views[1].scale = 0.5;
+    detail.views[1].name = "Detail A".into();
+    detail.views[1].frame = Some(ViewFrame {
+        at: DVec2::new(330.0, 200.0),
+        size: DVec2::new(100.0, 80.0),
+    });
+    detail.views[1].center = DVec2::new(84.0, 40.0);
+    detail.views[1].border = true;
+    h.state_mut().editor.doc.begin();
+    h.state_mut().editor.doc.set_sheet(id, detail.clone());
+    h.state_mut().editor.commit("Detail");
+    h.run();
+    h.run();
+    save_png("drift_ui_sheet_views.png", &mut h);
+    let painter = h.ctx.layer_painter(egui::LayerId::background());
+    let pdf = h.state_mut().pdf_bytes(&painter);
+    let text = String::from_utf8_lossy(&pdf);
+    assert!(text.contains("(Detail A) Tj"), "the view's title");
+    assert!(text.contains("(SCALE 2:1) Tj"), "its scale under it");
+    assert!(
+        text.contains("(As shown) Tj"),
+        "mixed scales in the title block"
+    );
+    // Each view is seen through its own window.
+    let windows = text.matches(" re W n").count();
+    assert!(windows >= 2, "{windows} clip windows");
+    let svg = h.state_mut().svg_text(&painter);
+    assert!(svg.contains(r#"<clipPath id="view2">"#));
+
+    // On the sheet: a press inside the detail takes hold of it (to move it on the paper);
+    // with Alt, of the drawing inside it. Its handles crop it.
+    let rect = h.state().canvas_rect;
+    let s = sheet(&h);
+    let app = h.state();
+    let zoom = f64::from(app.preview.zoom);
+    let to_screen = |p: DVec2| {
+        let d = (p - app.preview.center) * zoom;
+        rect.center() + egui::vec2(d.x as f32, -d.y as f32)
+    };
+    let inside = to_screen(DVec2::new(330.0, 200.0));
+    assert_eq!(
+        app.view_grip_at(rect, &s, inside, false),
+        Some((1, ViewGrip::Move))
+    );
+    assert_eq!(
+        app.view_grip_at(rect, &s, inside, true),
+        Some((1, ViewGrip::Pan))
+    );
+    let corner = to_screen(DVec2::new(380.0, 240.0));
+    assert_eq!(
+        app.view_grip_at(rect, &s, corner, false),
+        Some((1, ViewGrip::Resize(1, 1)))
+    );
+    // Outside it: the view that fills the sheet, which only pans.
+    let elsewhere = to_screen(DVec2::new(100.0, 150.0));
+    assert_eq!(
+        app.view_grip_at(rect, &s, elsewhere, false),
+        Some((0, ViewGrip::Pan))
+    );
+
+    // Drag the detail 30 mm to the left on the paper.
+    let from = inside;
+    let to = inside - egui::vec2((30.0 * zoom) as f32, 0.0);
+    h.hover_at(from);
+    h.run();
+    button(&h, from, true);
+    h.run();
+    for k in 1..=4 {
+        h.hover_at(from + (to - from) * (k as f32 / 4.0));
+        h.run();
+    }
+    button(&h, to, false);
+    h.run();
+    let moved = sheet(&h).views[1].clone();
+    let at = moved.frame.unwrap().at;
+    assert!(
+        (at.x - 300.0).abs() < 0.5 && (at.y - 200.0).abs() < 0.5,
+        "{at:?}"
+    );
+    assert_eq!(
+        moved.center, detail.views[1].center,
+        "the drawing moved with it"
+    );
+    h.state_mut().undo();
+    assert_eq!(sheet(&h).views[1].frame, detail.views[1].frame);
+
+    // Cropping: the upper right corner pulled in by (20, 10) mm. The frame shrinks about
+    // its other corner, and the drawing stays where it was on the paper.
+    let was = &detail.views[1];
+    let cropped = dragged_view(was, ViewGrip::Resize(1, 1), DVec2::new(-20.0, -10.0));
+    let f = cropped.frame.unwrap();
+    assert_eq!(f.size, DVec2::new(80.0, 70.0));
+    assert_eq!(f.bounds().min, was.frame.unwrap().bounds().min);
+    let on_paper = |v: &drift_core::SheetView, world: DVec2| {
+        v.frame.unwrap().at + (world - v.center) / v.scale
+    };
+    let probe = DVec2::new(90.0, 45.0);
+    assert!(on_paper(&cropped, probe).distance(on_paper(was, probe)) < 1e-9);
+    // Never inside out.
+    let tiny = dragged_view(was, ViewGrip::Resize(1, 1), DVec2::new(-500.0, -500.0));
+    assert_eq!(tiny.frame.unwrap().size, DVec2::splat(10.0));
+
+    // Delete removes the picked view; the last one stays.
+    assert_eq!(h.state().sheet_view, 1);
+    h.key_press(Key::Delete);
+    h.run();
+    assert_eq!(sheet(&h).views.len(), 1);
+    h.key_press(Key::Delete);
+    h.run();
+    assert_eq!(sheet(&h).views.len(), 1);
+    h.state_mut().undo();
+    assert_eq!(sheet(&h).views.len(), 2);
+}
+
+#[test]
+fn sheets_from_before_views_open_as_they_were() {
+    // A v17 sheet: one view written as the sheet's own scale and centre, with dimensions off.
+    let text = r#"{
+  "format": "drift",
+  "version": 17,
+  "meta": {"units":"mm"},
+  "entities": [],
+  "sheets": [
+    {"id":"s1","name":"Plate","paper":"A3","scale":2.5,"center":[60.0,40.0],"title_block":"modern","dimensions":false}
+  ]
+}"#;
+    let (doc, _) = drift_io::load(text).unwrap();
+    let sheet = doc.sheets().next().unwrap().1;
+    assert_eq!(sheet.views.len(), 1);
+    let v = &sheet.views[0];
+    assert_eq!((v.scale, v.center), (2.5, DVec2::new(60.0, 40.0)));
+    assert!(v.frame.is_none() && !v.dimensions && v.notes && !v.title);
+    assert_eq!(sheet.scale_text(), "1:2.5");
+    // Saved again, it is written as a view.
+    let saved = drift_io::save(&doc, &Default::default());
+    assert!(
+        saved.contains(r#""views":[{"scale":2.5,"center":[60.0,40.0],"dimensions":false}]"#),
+        "{saved}"
+    );
+    let (again, _) = drift_io::load(&saved).unwrap();
+    assert_eq!(again.sheets().next().unwrap().1, sheet);
+}
+
+#[test]
+fn section_and_elevation_marks() {
+    use drift_core::Annotation;
+    let Some(mut h) = harness() else { return };
+    h.get_by_label("File").click();
+    h.run();
+    h.get_by_label("Open example").click();
+    h.run();
+    let marks = |h: &Harness<'_, DriftApp>| -> Vec<Annotation> {
+        h.state()
+            .editor
+            .doc
+            .annotations()
+            .map(|(_, a)| a.clone())
+            .collect()
+    };
+    // A section across the plate: two clicks. It gets the first free letter.
+    h.get_by_label("Section mark").click();
+    h.run();
+    assert_eq!(h.state().tool.kind(), ToolKind::Section);
+    click_world(&mut h, DVec2::new(0.0, 40.0));
+    assert!(h.state().tool.is_busy());
+    click_world(&mut h, DVec2::new(120.0, 40.0));
+    match marks(&h).as_slice() {
+        [
+            Annotation::Section {
+                a,
+                b,
+                label,
+                sheet,
+                flip,
+            },
+        ] => {
+            assert!(
+                a.distance(DVec2::new(0.0, 40.0)) < 1.0
+                    && b.distance(DVec2::new(120.0, 40.0)) < 1.0
+            );
+            assert_eq!((label.as_str(), sheet.as_str(), *flip), ("A", "", false));
+        }
+        other => panic!("{other:?}"),
+    }
+    click_world(&mut h, DVec2::new(60.0, 0.0));
+    click_world(&mut h, DVec2::new(60.0, 80.0));
+    assert!(matches!(&marks(&h)[1], Annotation::Section { label, .. } if label == "B"));
+
+    // An elevation mark: where it goes, then towards what it looks at (in 15° steps).
+    h.get_by_label("Elevation mark").click();
+    h.run();
+    click_world(&mut h, DVec2::new(130.0, -10.0));
+    click_world(&mut h, DVec2::new(110.0, 11.0));
+    let id = match marks(&h).as_slice() {
+        [
+            ..,
+            Annotation::Elevation {
+                at, angle, label, ..
+            },
+        ] => {
+            assert!(at.distance(DVec2::new(130.0, -10.0)) < 1.0);
+            assert_eq!((*angle, label.as_str()), (135.0, "1"));
+            h.state()
+                .editor
+                .selected_annotation
+                .expect("the new mark is picked")
+        }
+        other => panic!("{other:?}"),
+    };
+    // The inspector names the sheet it is drawn on.
+    let mut named = h.state().editor.doc.annotation(id).cloned().unwrap();
+    if let Annotation::Elevation { sheet, .. } = &mut named {
+        *sheet = "A-201".into();
+    }
+    h.state_mut().editor.doc.begin();
+    h.state_mut()
+        .editor
+        .doc
+        .set_annotation(id, named.clone())
+        .unwrap();
+    h.state_mut().editor.commit("Sheet");
+    h.get_by_label("Select").click();
+    h.run();
+    h.state_mut().fit_target = Some(h.state().fit_bounds());
+    h.run();
+    h.run();
+    save_png("drift_ui_marks.png", &mut h);
+
+    // With the select tool a mark is dragged whole.
+    let from = screen(&h, DVec2::new(40.0, 40.0));
+    let to = from + egui::vec2(0.0, -30.0);
+    h.hover_at(from);
+    h.run();
+    button(&h, from, true);
+    h.run();
+    for k in 1..=4 {
+        h.hover_at(from + (to - from) * (k as f32 / 4.0));
+        h.run();
+    }
+    button(&h, to, false);
+    h.run();
+    match &marks(&h)[0] {
+        Annotation::Section { a, b, .. } => {
+            assert!(
+                a.y > 41.0 && (a.y - b.y).abs() < 1e-9,
+                "moved up, still level"
+            );
+            assert!((b.x - a.x - 120.0).abs() < 1.0, "the same length");
+        }
+        other => panic!("{other:?}"),
+    }
+    h.state_mut().undo();
+
+    // They are saved, and print with the notes.
+    let saved = drift_io::save(&h.state().editor.doc, &Default::default());
+    assert!(saved.contains(r#""type":"section""#) && saved.contains(r#""sheet":"A-201""#));
+    let (loaded, _) = drift_io::load(&saved).unwrap();
+    let back: Vec<Annotation> = loaded.annotations().map(|(_, a)| a.clone()).collect();
+    assert_eq!(back, marks(&h));
+    let painter = h.ctx.layer_painter(egui::LayerId::background());
+    let pdf = h.state_mut().pdf_bytes(&painter);
+    let text = String::from_utf8_lossy(&pdf);
+    assert!(
+        text.contains("(A-201) Tj") && text.contains("(B) Tj"),
+        "marks print"
+    );
+}
+
+#[test]
+fn a_logo_goes_in_the_title_block() {
+    let Some(mut h) = harness() else { return };
+    h.get_by_label("File").click();
+    h.run();
+    h.get_by_label("Open example").click();
+    h.run();
+    h.state_mut().show_panel(Panel::Sheets);
+    h.run();
+    h.get_by_label("New sheet").click();
+    h.run();
+    h.run();
+    let painter = h.ctx.layer_painter(egui::LayerId::background());
+    let before = h.state_mut().svg_text(&painter);
+    assert!(!before.contains("#ff6600"));
+    // A mark and a wordmark's worth of shapes: a disc with a hole, and a bar.
+    let logo = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 20">
+  <path fill="#ff6600" fill-rule="evenodd" d="M10 0a10 10 0 1 0 .001 0zM10 5a5 5 0 1 1-.001 0z"/>
+  <rect x="26" y="6" width="34" height="8" fill="#111114"/>
+</svg>"##;
+    // What can't be read is refused, and nothing changes.
+    assert!(
+        h.state_mut()
+            .set_logo("<svg><text>Acme</text></svg>")
+            .is_err()
+    );
+    assert!(h.state().editor.doc.logo().is_empty());
+    h.state_mut().set_logo(logo).unwrap();
+    h.run();
+    h.run();
+    save_png("drift_ui_sheet_logo.png", &mut h);
+    let svg = h.state_mut().svg_text(&painter);
+    assert!(
+        svg.contains(r##"fill="#ff6600" fill-rule="evenodd""##),
+        "the logo is drawn"
+    );
+    // In the strip, at the left, as large as its room (16 mm tall, 44 mm wide) allows.
+    let page = h.state_mut().editor.doc.sheets().next().unwrap().1.clone();
+    let border = drift_draft::sheet::border(&page);
+    let parsed = drift_draft::logo::parse(logo).unwrap();
+    let mut d = drift_draft::page::Drawing::new(page.size());
+    drift_draft::sheet::draw_frame(&page, (1, 1), Some(&parsed), &mut d);
+    let orange = d
+        .items
+        .iter()
+        .find(|i| i.pen.color == drift_core::Rgb([0xff, 0x66, 0x00]))
+        .expect("the mark");
+    let drift_draft::page::Prim::Fill { rings, .. } = &orange.prim else {
+        panic!("a fill");
+    };
+    let (mut lo, mut hi) = (DVec2::splat(f64::MAX), DVec2::splat(f64::MIN));
+    for q in rings.iter().flatten() {
+        lo = lo.min(*q);
+        hi = hi.max(*q);
+    }
+    // (This one is three times as wide as tall, so the 44 mm of width decides.)
+    assert!((hi.y - lo.y - 44.0 / 3.0).abs() < 0.05, "{lo:?} {hi:?}");
+    assert!(lo.x >= border.min.x + 4.9 && lo.y >= border.min.y + 3.9);
+    // It is kept in the file, and is one undo step.
+    let saved = drift_io::save(&h.state().editor.doc, &Default::default());
+    let (loaded, _) = drift_io::load(&saved).unwrap();
+    assert_eq!(loaded.logo(), logo);
+    h.state_mut().undo();
+    assert!(h.state().editor.doc.logo().is_empty());
+}
+
+#[test]
+fn text_can_use_the_computers_fonts() {
+    use crate::Editor;
+    use drift_core::{SketchText, TextFont};
+    let mut ed = Editor::default();
+    let outline_of = |ed: &mut Editor, font: TextFont| {
+        ed.doc.begin();
+        let mut text = SketchText::new("Rag", DVec2::ZERO, 10.0);
+        text.font = font;
+        let id = ed.doc.add_text(text);
+        ed.commit("Text");
+        ed.text_outline(id).expect("an outline")
+    };
+    let sans = outline_of(&mut ed, TextFont::Sans);
+
+    // A font that isn't installed: the text is drawn in the built-in sans, and says so.
+    let missing = TextFont::System("No Such Typeface 123".into());
+    let fallback = outline_of(&mut ed, missing.clone());
+    assert_eq!(fallback.contours, sans.contours);
+    assert_eq!(
+        drift_draft::outline::font_known("No Such Typeface 123"),
+        Some(false)
+    );
+    // It keeps its name in the file all the same.
+    let saved = drift_io::save(&ed.doc, &Default::default());
+    assert!(
+        saved.contains(r#""font":"system:No Such Typeface 123""#),
+        "{saved}"
+    );
+    let (loaded, _) = drift_io::load(&saved).unwrap();
+    assert!(loaded.texts().any(|(_, t)| t.font == missing));
+    assert_eq!(TextFont::from_name("system:"), None);
+    assert_eq!(TextFont::from_name("serif"), None);
+
+    // One that is: its own outlines. (Whatever this computer has; none in a bare CI image.)
+    let families = drift_platform::fonts::families();
+    let Some(family) = ["Arial", "Helvetica", "DejaVu Sans", "Liberation Sans"]
+        .into_iter()
+        .find(|f| families.iter().any(|x| x == f))
+        .map(str::to_owned)
+        .or_else(|| families.first().cloned())
+    else {
+        eprintln!("no system fonts here; skipping the rest");
+        return;
+    };
+    assert!(
+        families
+            .windows(2)
+            .all(|w| w[0].to_lowercase() <= w[1].to_lowercase())
+    );
+    let system = outline_of(&mut ed, TextFont::System(family.clone()));
+    assert_eq!(
+        drift_draft::outline::font_known(&family),
+        Some(true),
+        "{family}"
+    );
+    assert!(!system.contours.is_empty());
+    assert_ne!(
+        system.contours, sans.contours,
+        "{family} is not the built-in sans"
+    );
+    // Capitals are as tall as asked, whatever the font.
+    let height = system.bounds.max.y - system.bounds.min.y;
+    assert!(height > 9.0 && height < 16.0, "{height}");
 }

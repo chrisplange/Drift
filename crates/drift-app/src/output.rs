@@ -32,7 +32,8 @@ struct Space {
     k: f64,
     /// The drawing scale annotations are sized for (1 : n).
     n: f64,
-    clipped: bool,
+    /// The window the view is seen through (a view's frame on a sheet).
+    clip: Option<Bounds>,
     /// Copies of blocks as block definitions and inserts (DXF), rather than their curves.
     inserts: bool,
     /// Whether dimensions, and notes and callouts, are drawn (a sheet can leave them out).
@@ -46,12 +47,12 @@ impl Space {
     }
 }
 
-fn item(layer: &str, pen: Pen, prim: Prim, clipped: bool) -> Item {
+fn item(layer: &str, pen: Pen, prim: Prim, clip: Option<Bounds>) -> Item {
     Item {
         layer: layer.to_owned(),
         pen,
         prim,
-        clipped,
+        clip,
     }
 }
 
@@ -86,7 +87,7 @@ fn geometry(ed: &Editor, s: &Space, d: &mut Drawing) {
         let Some(shape) = doc.shape(id) else { continue };
         if let Some(prim) = shape_prim(s, &shape) {
             let pen = pen_for(e.style, e.appearance, layer);
-            d.items.push(item(&layer.name, pen, prim, s.clipped));
+            d.items.push(item(&layer.name, pen, prim, s.clip));
         }
     }
     // Sketch text: its outlines.
@@ -103,7 +104,7 @@ fn geometry(ed: &Editor, s: &Space, d: &mut Drawing) {
         let pen = pen_for(LineKind::Solid, t.appearance, layer);
         for shape in outline.contours.iter().flatten() {
             if let Some(prim) = shape_prim(s, shape) {
-                d.items.push(item(&layer.name, pen, prim, s.clipped));
+                d.items.push(item(&layer.name, pen, prim, s.clip));
             }
         }
     }
@@ -137,7 +138,7 @@ fn geometry(ed: &Editor, s: &Space, d: &mut Drawing) {
                             "0",
                             pen_for(it.style, it.appearance, layer),
                             prim,
-                            false,
+                            None,
                         ))
                     })
                     .collect();
@@ -156,7 +157,7 @@ fn geometry(ed: &Editor, s: &Space, d: &mut Drawing) {
                     scale: copy.scale * s.k,
                     mirror: copy.mirror,
                 },
-                s.clipped,
+                s.clip,
             ));
         } else {
             for it in doc.instance_items(id) {
@@ -165,7 +166,7 @@ fn geometry(ed: &Editor, s: &Space, d: &mut Drawing) {
                 }
                 if let Some(prim) = shape_prim(s, &it.shape) {
                     let pen = pen_for(it.style, it.appearance, layer);
-                    d.items.push(item(&layer.name, pen, prim, s.clipped));
+                    d.items.push(item(&layer.name, pen, prim, s.clip));
                 }
             }
         }
@@ -270,7 +271,7 @@ fn fills(ed: &mut Editor, patterns: &PatternLibrary, s: &Space, d: &mut Drawing)
                     triangles: triangles.clone(),
                     mask: false,
                 },
-                s.clipped,
+                s.clip,
             ));
         };
         match &fill.kind {
@@ -302,12 +303,8 @@ fn fills(ed: &mut Editor, patterns: &PatternLibrary, s: &Space, d: &mut Drawing)
                 let width = fill.weight.map_or(HAIRLINE, |w| w.mm().max(HAIRLINE));
                 let pen = Pen::new(width).with_color(color);
                 for [a, b] in hatching.segments {
-                    d.items.push(item(
-                        &layer_name,
-                        pen,
-                        Prim::Line(s.at(a), s.at(b)),
-                        s.clipped,
-                    ));
+                    d.items
+                        .push(item(&layer_name, pen, Prim::Line(s.at(a), s.at(b)), s.clip));
                 }
             }
         }
@@ -323,7 +320,7 @@ fn centre_lines(ed: &Editor, s: &Space, d: &mut Drawing) {
                 ANNOTATION_LAYER,
                 pen,
                 Prim::Line(s.at(p), s.at(q)),
-                s.clipped,
+                s.clip,
             ));
         }
     }
@@ -376,7 +373,9 @@ fn annotations(ed: &Editor, painter: &egui::Painter, s: &Space, d: &mut Drawing)
             Some(
                 drift_core::Annotation::Note { .. }
                 | drift_core::Annotation::HoleCallout { .. }
-                | drift_core::Annotation::ChamferCallout { .. },
+                | drift_core::Annotation::ChamferCallout { .. }
+                | drift_core::Annotation::Section { .. }
+                | drift_core::Annotation::Elevation { .. },
             ) => s.notes,
             _ => true,
         };
@@ -447,7 +446,7 @@ fn annotations(ed: &Editor, painter: &egui::Painter, s: &Space, d: &mut Drawing)
                 style: Default::default(),
             },
         };
-        d.items.push(item(ANNOTATION_LAYER, pen, prim, s.clipped));
+        d.items.push(item(ANNOTATION_LAYER, pen, prim, s.clip));
     }
     d.layer(LayerInfo {
         name: ANNOTATION_LAYER.into(),
@@ -471,8 +470,8 @@ fn view(
     annotations(ed, painter, s, d);
 }
 
-/// A sheet as printed: the view of the sketch at the sheet's scale, clipped to the drawing
-/// area, under the border, title block and revision table.
+/// A sheet as printed: each view of the sketch at its scale, seen through its frame, under
+/// the views' titles, the border, title block and revision table.
 pub fn sheet_drawing(
     ed: &mut Editor,
     patterns: &PatternLibrary,
@@ -481,20 +480,44 @@ pub fn sheet_drawing(
     number: (usize, usize),
 ) -> Drawing {
     let mut d = Drawing::new(sheet.size());
-    let area = drift_draft::sheet::drawing_area(sheet);
-    d.clip = Some(area);
-    let space = Space {
-        world: sheet.center,
-        page: area.center(),
-        k: 1.0 / sheet.scale,
-        n: sheet.scale,
-        clipped: true,
-        inserts: false,
-        dimensions: sheet.dimensions,
-        notes: sheet.notes,
-    };
-    view(ed, patterns, painter, &space, &mut d);
-    drift_draft::sheet::draw_frame(sheet, number, &mut d);
+    for v in &sheet.views {
+        let frame = drift_draft::sheet::view_frame(sheet, v);
+        if v.frame.is_some() {
+            // A framed view is a piece of paper of its own: it covers what is under it.
+            let c = [
+                frame.min,
+                DVec2::new(frame.max.x, frame.min.y),
+                frame.max,
+                DVec2::new(frame.min.x, frame.max.y),
+            ];
+            d.push(
+                drift_draft::sheet::FRAME_LAYER,
+                Pen::new(0.0),
+                Prim::Fill {
+                    rings: vec![c.to_vec()],
+                    triangles: vec![[c[0], c[1], c[2]], [c[0], c[2], c[3]]],
+                    mask: true,
+                },
+            );
+        }
+        let space = Space {
+            world: v.center,
+            page: frame.center(),
+            k: 1.0 / v.scale,
+            n: v.scale,
+            clip: Some(frame),
+            inserts: false,
+            dimensions: v.dimensions,
+            notes: v.notes,
+        };
+        view(ed, patterns, painter, &space, &mut d);
+    }
+    drift_draft::sheet::draw_views(sheet, &mut d);
+    // (An unreadable logo was refused when it was chosen; one from a file is skipped.)
+    let logo = Some(ed.doc.logo())
+        .filter(|svg| !svg.is_empty())
+        .and_then(|svg| drift_draft::logo::parse(svg).ok());
+    drift_draft::sheet::draw_frame(sheet, number, logo.as_ref(), &mut d);
     d
 }
 
@@ -513,7 +536,7 @@ pub fn model_drawing(
         page: DVec2::ZERO,
         k: 1.0,
         n,
-        clipped: false,
+        clip: None,
         inserts: true,
         dimensions: true,
         notes: true,
@@ -526,19 +549,63 @@ pub fn model_drawing(
     d
 }
 
-/// Centre a sheet's view on `b` (the sketch with its dimension labels, in world mm) and pick
-/// the largest preferred scale that fits it in the drawing area, clear of the title block.
-pub fn fit_sheet(b: Bounds, sheet: &mut Sheet) {
-    if b.is_empty() {
+/// Centre view `index` of a sheet on `b` (the sketch with its dimension labels, in world
+/// mm) at the largest preferred scale that fits. A view that fills the sheet is fitted in the
+/// drawing area clear of the title block; one with a frame, in its frame.
+pub fn fit_view(b: Bounds, sheet: &mut Sheet, index: usize) {
+    if b.is_empty() || index >= sheet.views.len() {
         return;
     }
-    // The view is centred in the space clear of the title block.
-    let area = drift_draft::sheet::drawing_area(sheet);
-    let clear = drift_draft::sheet::view_area(sheet);
     // A good margin of air around the drawing.
     let extent = b.size() * 1.1;
-    sheet.scale = drift_core::sheets::fit_scale(extent, clear.size() * 0.9);
-    sheet.center = b.center() - (clear.center() - area.center()) * sheet.scale;
+    let (scale, center) = match sheet.views[index].frame {
+        Some(frame) => (
+            drift_core::sheets::fit_scale(extent, frame.size * 0.9),
+            b.center(),
+        ),
+        None => {
+            // Centred in the space clear of the title block.
+            let area = drift_draft::sheet::drawing_area(sheet);
+            let clear = drift_draft::sheet::view_area(sheet);
+            let scale = drift_core::sheets::fit_scale(extent, clear.size() * 0.9);
+            (scale, b.center() - (clear.center() - area.center()) * scale)
+        }
+    };
+    sheet.views[index].scale = scale;
+    sheet.views[index].center = center;
+}
+
+/// Fit a sheet's first view (see [`fit_view`]).
+pub fn fit_sheet(b: Bounds, sheet: &mut Sheet) {
+    fit_view(b, sheet, 0);
+}
+
+/// A new view of `b` (world mm) at 1 : `scale`, in a frame just big enough for it, placed
+/// where there is room on the sheet: beside the views already there if it fits, else in the
+/// middle.
+pub fn framed_view(b: Bounds, sheet: &Sheet, scale: f64) -> drift_core::SheetView {
+    let mut v = drift_core::SheetView::new(scale, b.center());
+    let area = drift_draft::sheet::view_area(sheet);
+    let size = (b.size() / scale + DVec2::splat(10.0))
+        .max(DVec2::splat(20.0))
+        .min(area.size());
+    // To the right of the frames already placed, top-aligned with the area.
+    let taken = sheet
+        .views
+        .iter()
+        .filter_map(|v| v.frame)
+        .map(|f| f.bounds().max.x)
+        .fold(area.min.x, f64::max);
+    let gap = 12.0;
+    let at = if taken + gap + size.x <= area.max.x {
+        DVec2::new(taken + gap + size.x * 0.5, area.max.y - gap - size.y * 0.5)
+    } else {
+        area.center()
+    };
+    let at = at.max(area.min + size * 0.5).min(area.max - size * 0.5);
+    v.frame = Some(drift_core::ViewFrame { at, size });
+    v.title = true;
+    v
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -552,16 +619,19 @@ pub fn paint_drawing(
     px: f32,
 ) {
     let d = &d.exploded();
-    let clip = d.clip.map(|c| {
-        let (a, b) = (to_screen(c.min), to_screen(c.max));
-        egui::Rect::from_two_pos(a, b).intersect(painter.clip_rect())
-    });
-    let clipped = clip.map(|r| painter.with_clip_rect(r));
+    // A painter per window the items are seen through (kept while the window is the same).
+    let mut window: Option<(Bounds, egui::Painter)> = None;
     for it in &d.items {
-        let p = if it.clipped {
-            clipped.as_ref().unwrap_or(painter)
-        } else {
-            painter
+        if let Some(c) = it.clip
+            && window.as_ref().is_none_or(|(w, _)| *w != c)
+        {
+            let (a, b) = (to_screen(c.min), to_screen(c.max));
+            let rect = egui::Rect::from_two_pos(a, b).intersect(painter.clip_rect());
+            window = Some((c, painter.with_clip_rect(rect)));
+        }
+        let p = match (&it.clip, &window) {
+            (Some(_), Some((_, clipped))) => clipped,
+            _ => painter,
         };
         let [r, g, b] = it.pen.color.0;
         let color = Color32::from_rgb(r, g, b);

@@ -1551,23 +1551,45 @@ zooms to fit; F is Fillet (again for Chamfer).
     lower right). Hold Q, flick and let go; or tap Q and click. One already on the selection
     is lit and choosing it takes it off; ones that don't fit are dimmed; one that would
     over-define the sketch says so before it is chosen. Relations only: D is for dimensions.
-  - Still to do for corners (with phase 3): re-size a chamfer that is already there, and
-    "Remove fillet" to put the sharp corner back.
-  - Dimension numbers: the dimension tool places the number in the middle of its line. Where
-    it doesn't fit between the extension lines it is drawn just outside, on the side it was
-    nearer. A label dragged near the middle settles there; dragged elsewhere it stays.
-    Decided at layout time, so the screen, sheets and exports each get what fits them.
-  - A picked hatch has two handles on the canvas: a square that moves the pattern's origin
-    (snapping to points, curves and the grid) and a round one that turns it in 15 degree
-    steps (Alt: freely). Each drag is one undo step.
-  - Each sheet can leave out dimensions (ordinates included) and notes and callouts
-    (Sheets panel, View, Show). Format v17: two optional flags on a sheet.
-  - The top bar has the selection's stroke weight and line type beside the stroke swatch,
-    each a menu of line samples with "By layer" first.
-- **Alpha feedback, phase 3: sheets, second version (design first).** Several views per
-  sheet (a change to the sheet model and file format); a Revit-like sheet editor for
-  placing, scaling and titling views; system fonts (PDF needs to embed them); an SVG logo
-  in title blocks; section flags and elevation markers.
+- **Alpha feedback, phase 3 (done): sheets, second version.**
+  - A sheet holds several views (`Sheet::views`, each a `SheetView`): a window onto the
+    model with its own scale, centre, title, and whether it shows dimensions and notes. A
+    view either fills the sheet's drawing area (what a new sheet's one view does, and it
+    follows the paper size) or has a frame: a place and size on the paper. A framed view is
+    opaque, like a piece of paper laid on the sheet. Format v18: `views` on a sheet; a sheet
+    from before (its one view written as the sheet's own scale and centre) reads as it was.
+  - The sheet editor (the canvas in sheet mode): click a view to pick it; drag it to move it
+    on the paper; drag its handles to crop it (the drawing stays put on the paper); Alt-drag
+    slides the drawing inside it; Delete removes it (a sheet keeps one). The Sheets panel
+    lists the views and has the picked one's title, scale, Fit, Fills sheet / Framed, and
+    what it shows. "Add view" makes a framed view of the selection in the model, or of the
+    whole drawing, placed beside the views already there.
+  - A view's title is its name in bold over a rule with its scale beneath, numbered in a
+    ring when a sheet has several. The title block's scale reads "As shown" when the views'
+    scales differ.
+  - Output: every item carries the window it is seen through (`Item::clip`), so PDF, SVG and
+    the preview clip each view to its own frame.
+  - Section and elevation marks (Annotate): a section is a cutting line with a lettered flag
+    at each end, pointing the way it looks; an elevation is a numbered flag. Each can name
+    the sheet it is drawn on (in the lower half of the ring). They take the next free letter
+    or number, are dragged whole, print with the notes, and are edited in the inspector
+    (label, sheet, flip / direction).
+  - A logo for the title blocks, from an SVG file (Sheets panel, Title block, Logo). It is
+    kept in the drawing's file. `drift_draft::logo` reads paths and the basic shapes, flat
+    fills and strokes, groups and transforms; not gradients (drawn black), text (convert it
+    to outlines), images or style sheets. In the modern strip it leads, beside the title; in
+    the ISO and ASME blocks it sits in the company's cell.
+  - System fonts for sketch text (`TextFont::System(family)`): the font menu lists the
+    computer's families, with a field to find one. Text is drawn and exported as outlines,
+    so nothing has to be embedded in a PDF. Where a font isn't installed the text is shown
+    in the built-in sans, says so in the inspector, and keeps the font's name. Desktop
+    only: a browser gives no access to installed fonts.
+  - Corners: the chamfer tool re-sizes a chamfer that is already there (a line between two
+    lines that would meet beyond it), as the fillet tool does a fillet. "Remove fillet" /
+    "Remove chamfer" on the canvas menu puts the sharp corner back.
+  - Not done: titles and number rings can't be dragged off their views; views don't snap to
+    one another when moved; a section mark's ends are moved together (re-draw it to change
+    its length); marks don't look up a view's number or sheet by themselves.
 - **Alpha feedback, phase 4: content and parametric blocks.** A library of common
   imperial items; blocks with their own parameters (doors and windows at custom sizes),
   which needs its own design.

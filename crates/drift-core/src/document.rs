@@ -324,6 +324,7 @@ enum Key {
     DimNote(ConstraintId),
     Draft,
     Patterns,
+    Logo,
     Sheet(SheetId),
     Group(GroupId),
     Block(BlockId),
@@ -350,6 +351,7 @@ enum Record {
     DimNote(DimNote),
     Draft(DraftStyle),
     Patterns(String),
+    Logo(String),
     Sheet(Sheet),
     Group(Group),
     Block(Block),
@@ -397,6 +399,8 @@ pub struct Document {
     draft: DraftStyle,
     /// Hatch patterns imported from `.pat` files, as `.pat` text, so they travel with the file.
     patterns: String,
+    /// The title blocks' logo, as SVG text ("" for none), so it travels with the file.
+    logo: String,
     sheets: BTreeMap<SheetId, Sheet>,
     groups: BTreeMap<GroupId, Group>,
     blocks: BTreeMap<BlockId, Block>,
@@ -436,6 +440,7 @@ impl PartialEq for Document {
             && self.dim_notes == other.dim_notes
             && self.draft == other.draft
             && self.patterns == other.patterns
+            && self.logo == other.logo
             && self.sheets == other.sheets
             && self.groups == other.groups
             && self.blocks == other.blocks
@@ -464,6 +469,7 @@ impl Default for Document {
             dim_notes: BTreeMap::new(),
             draft: DraftStyle::default(),
             patterns: String::new(),
+            logo: String::new(),
             sheets: BTreeMap::new(),
             groups: BTreeMap::new(),
             blocks: BTreeMap::new(),
@@ -714,6 +720,7 @@ impl Document {
             Key::DimNote(id) => self.dim_notes.get(&id).cloned().map(Record::DimNote),
             Key::Draft => Some(Record::Draft(self.draft)),
             Key::Patterns => Some(Record::Patterns(self.patterns.clone())),
+            Key::Logo => Some(Record::Logo(self.logo.clone())),
             Key::Sheet(id) => self.sheets.get(&id).cloned().map(Record::Sheet),
             Key::Group(id) => self.groups.get(&id).cloned().map(Record::Group),
             Key::Block(id) => self.blocks.get(&id).cloned().map(Record::Block),
@@ -823,6 +830,8 @@ impl Document {
             (Key::Draft, _) => {}
             (Key::Patterns, Some(Record::Patterns(p))) => self.patterns = p,
             (Key::Patterns, _) => {}
+            (Key::Logo, Some(Record::Logo(l))) => self.logo = l,
+            (Key::Logo, _) => {}
             (Key::Text(id), Some(Record::Text(t))) => {
                 self.texts.insert(id, t);
             }
@@ -1877,6 +1886,7 @@ impl Document {
         keys.extend(self.dim_notes.keys().map(|id| Key::DimNote(*id)));
         keys.push(Key::Draft);
         keys.push(Key::Patterns);
+        keys.push(Key::Logo);
         keys.extend(self.sheets.keys().map(|id| Key::Sheet(*id)));
         keys.extend(self.groups.keys().map(|id| Key::Group(*id)));
         keys.extend(self.blocks.keys().map(|id| Key::Block(*id)));
@@ -2750,6 +2760,18 @@ impl Document {
         if self.patterns != pat {
             self.touch_key(Key::Patterns);
             self.patterns = pat;
+        }
+    }
+
+    /// The logo drawn in the sheets' title blocks, as SVG text ("" for none).
+    pub fn logo(&self) -> &str {
+        &self.logo
+    }
+
+    pub fn set_logo(&mut self, svg: String) {
+        if self.logo != svg {
+            self.touch_key(Key::Logo);
+            self.logo = svg;
         }
     }
 

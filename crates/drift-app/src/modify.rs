@@ -162,12 +162,34 @@ pub fn piece(shape: &Shape, t0: f64, t1: f64) -> Shape {
     }
 }
 
+/// An existing chamfer: the corner its two lines would meet at, their far ends, the lines, the
+/// cut's end points (on the first and second line), and how far it cuts along each.
+#[derive(Clone, Copy, Debug)]
+pub struct ChamferInfo {
+    pub corner: DVec2,
+    pub far: [DVec2; 2],
+    pub lines: [EntityId; 2],
+    pub ends: [EntityId; 2],
+    pub legs: [f64; 2],
+}
+
+impl ChamferInfo {
+    /// Half the angle between the lines, and the shorter line's length from the corner.
+    pub fn half_angle_and_room(&self) -> (f64, f64) {
+        let (a, b) = (self.far[0] - self.corner, self.far[1] - self.corner);
+        let cos = (a.normalize().dot(b.normalize())).clamp(-1.0, 1.0);
+        (cos.acos() / 2.0, a.length().min(b.length()))
+    }
+}
+
 /// An existing fillet: the corner its two lines would meet at, their far ends, the arc's end
 /// points (on the first and second line) and centre point, and its radius.
 #[derive(Clone, Copy, Debug)]
 pub struct FilletInfo {
     pub corner: DVec2,
     pub far: [DVec2; 2],
+    /// The two lines it joins.
+    pub lines: [EntityId; 2],
     pub ends: [EntityId; 2],
     pub center: EntityId,
     pub radius: f64,
@@ -1012,6 +1034,125 @@ impl Editor {
         Ok(arc.expect("added"))
     }
 
+    /// The one line that meets curve `of` at its end point `tip` (nothing else may use the
+    /// point): the line, where `tip` is, and where the line's other end is.
+    fn line_at_end(&self, of: EntityId, tip: EntityId) -> Option<(EntityId, DVec2, DVec2)> {
+        let mut others = self.doc.users_of(tip).filter(|u| *u != of);
+        let line = others.next()?;
+        if others.next().is_some() {
+            return None;
+        }
+        let EntityKind::Line { a, b } = self.doc.get(line)?.kind else {
+            return None;
+        };
+        let far = if a == tip { b } else { a };
+        Some((line, self.doc.point(tip).ok()?, self.doc.point(far).ok()?))
+    }
+
+    /// The chamfer a line is, if it is one: a line whose ends each join one other line, the
+    /// two of which would meet at a corner beyond it. `legs` are how far it cuts along each.
+    pub fn chamfer_at(&self, cut: EntityId) -> Option<ChamferInfo> {
+        let EntityKind::Line { a, b } = self.doc.get(cut)?.kind else {
+            return None;
+        };
+        let ((line1, t1, far1), (line2, t2, far2)) =
+            (self.line_at_end(cut, a)?, self.line_at_end(cut, b)?);
+        let (l1, l2) = (far1.distance(t1), far2.distance(t2));
+        if line1 == line2 || l1 <= 0.0 || l2 <= 0.0 {
+            return None;
+        }
+        let (u1, u2) = ((far1 - t1) / l1, (far2 - t2) / l2);
+        let cross = u1.perp_dot(u2);
+        if cross.abs() < 1e-9 {
+            return None;
+        }
+        // Where the two lines meet, behind both ends of the cut.
+        let k = (t2 - t1).perp_dot(u2) / cross;
+        let corner = t1 + u1 * k;
+        let legs = [-k, (t2 - corner).dot(u2)];
+        if legs[0] <= 1e-9 || legs[1] <= 1e-9 {
+            return None;
+        }
+        Some(ChamferInfo {
+            corner,
+            far: [far1, far2],
+            lines: [line1, line2],
+            ends: [a, b],
+            legs,
+        })
+    }
+
+    /// The cut a chamfer would be at distances `d1` / `d2` from its corner, for previews.
+    pub fn rechamfer_preview(&self, cut: EntityId, d1: f64, d2: f64) -> Option<Shape> {
+        let c = self.chamfer_at(cut)?;
+        let fits = |d: f64, far: DVec2| d > 0.0 && d < far.distance(c.corner);
+        (fits(d1, c.far[0]) && fits(d2, c.far[1])).then(|| Shape::Line {
+            a: c.corner + (c.far[0] - c.corner).normalize() * d1,
+            b: c.corner + (c.far[1] - c.corner).normalize() * d2,
+        })
+    }
+
+    /// Give a chamfer new distances (one undo step): its ends slide along their lines, which
+    /// keep their directions.
+    pub fn rechamfer(&mut self, cut: EntityId, d1: f64, d2: f64) -> Result<(), EditError> {
+        let Some(c) = self.chamfer_at(cut) else {
+            return Err(invalid("that line isn't a chamfer between two lines"));
+        };
+        let Some(Shape::Line { a, b }) = self.rechamfer_preview(cut, d1, d2) else {
+            return Err(invalid(
+                "the distances must be positive and shorter than the lines",
+            ));
+        };
+        self.doc.begin();
+        let _ = self.doc.set_point(c.ends[0], a);
+        let _ = self.doc.set_point(c.ends[1], b);
+        let dragged: Vec<Param> = c.ends.iter().flat_map(|p| Param::point(*p)).collect();
+        let report = self.solve(&dragged);
+        let held = [(c.ends[0], a), (c.ends[1], b)].iter().all(|(id, at)| {
+            self.doc
+                .point(*id)
+                .is_ok_and(|p| p.distance(*at) <= 1e-6 * d1.max(d2).max(1.0))
+        });
+        let result = if self.new_conflicts(&report) || !held {
+            Err(EditError::Conflict)
+        } else {
+            Ok(())
+        };
+        self.finish(result, "Chamfer size")
+    }
+
+    /// Put the sharp corner back where a fillet or a chamfer is: the two lines run on to
+    /// where they meet, and the arc or cut goes (one undo step).
+    pub fn remove_corner_cut(&mut self, cut: EntityId) -> Result<(), EditError> {
+        let (corner, lines, ends, label) = if let Some(f) = self.fillet_at(cut) {
+            (f.corner, f.lines, f.ends, "Remove fillet")
+        } else if let Some(c) = self.chamfer_at(cut) {
+            (c.corner, c.lines, c.ends, "Remove chamfer")
+        } else {
+            return Err(invalid(
+                "that isn't a fillet or a chamfer between two lines",
+            ));
+        };
+        self.doc.begin();
+        let result = (|| -> Result<(), EditError> {
+            let p = self.doc.add_point(corner);
+            self.replace_end(lines[0], ends[0], p)?;
+            self.replace_end(lines[1], ends[1], p)?;
+            // The arc's centre goes with it; its ends are now unused.
+            let centre = match self.doc.get(cut).map(|e| e.kind) {
+                Some(EntityKind::Arc { center, .. }) => Some(center),
+                _ => None,
+            };
+            self.doc.delete([cut]);
+            for point in ends.into_iter().chain(centre) {
+                self.doc.remove_if_orphaned(point);
+            }
+            Ok(())
+        })();
+        self.selection.remove(&cut);
+        self.finish(result, label)
+    }
+
     /// The fillet an arc is, if it is one: an arc whose ends each join one line, tangent to
     /// it. The corner is where those lines would meet.
     pub fn fillet_at(&self, arc: EntityId) -> Option<FilletInfo> {
@@ -1019,19 +1160,8 @@ impl Editor {
             return None;
         };
         let c = self.doc.point(center).ok()?;
-        let side = |tip: EntityId| -> Option<(DVec2, DVec2)> {
-            let mut others = self.doc.users_of(tip).filter(|u| *u != arc);
-            let line = others.next()?;
-            if others.next().is_some() {
-                return None;
-            }
-            let EntityKind::Line { a, b } = self.doc.get(line)?.kind else {
-                return None;
-            };
-            let far = if a == tip { b } else { a };
-            Some((self.doc.point(tip).ok()?, self.doc.point(far).ok()?))
-        };
-        let ((t1, far1), (t2, far2)) = (side(start)?, side(end)?);
+        let ((line1, t1, far1), (line2, t2, far2)) =
+            (self.line_at_end(arc, start)?, self.line_at_end(arc, end)?);
         let radius = t1.distance(c);
         let (l1, l2) = (far1.distance(t1), far2.distance(t2));
         if radius <= 0.0 || l1 <= 0.0 || l2 <= 0.0 {
@@ -1056,6 +1186,7 @@ impl Editor {
         Some(FilletInfo {
             corner,
             far: [far1, far2],
+            lines: [line1, line2],
             ends: [start, end],
             center,
             radius,

@@ -21,6 +21,17 @@ pub struct TextOutline {
     pub bounds: Bounds,
 }
 
+/// Find a system font on the computer the first time text needs it (the built-in fonts are
+/// always there). A font that isn't installed is remembered as missing, and its text is
+/// drawn in the built-in sans.
+pub fn ensure_font(font: &drift_core::TextFont) {
+    if let drift_core::TextFont::System(family) = font
+        && drift_draft::outline::font_known(family).is_none()
+    {
+        drift_draft::outline::register_font(family, drift_platform::fonts::load(family));
+    }
+}
+
 /// Outlines by text, rebuilt only when a text changes.
 #[derive(Default)]
 pub struct TextCache {
@@ -36,9 +47,10 @@ impl Editor {
         {
             return Some(o.clone());
         }
+        ensure_font(&text.font);
         let contours = drift_draft::outline::text_contours(
             &text.text,
-            text.font,
+            &text.font,
             text.height,
             text.at,
             text.angle,

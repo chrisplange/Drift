@@ -185,13 +185,14 @@ fn page_content(d: &Drawing) -> Vec<u8> {
     let d = &d.exploded();
     let mut bytes = Vec::new();
     let mut out = String::from("1 J 1 j\n");
-    let mut clipping = false;
+    // Runs of items seen through the same window share a clip.
+    let mut clipping: Option<drift_core::Bounds> = None;
     for item in &d.items {
-        let clip = item.clipped && d.clip.is_some();
-        if clip != clipping {
-            if clipping {
+        if item.clip != clipping {
+            if clipping.is_some() {
                 out.push_str("Q\n");
-            } else if let Some(c) = d.clip {
+            }
+            if let Some(c) = item.clip {
                 let size = c.max - c.min;
                 let _ = writeln!(
                     out,
@@ -201,11 +202,11 @@ fn page_content(d: &Drawing) -> Vec<u8> {
                     n(size.y * PT_PER_MM)
                 );
             }
-            clipping = clip;
+            clipping = item.clip;
         }
         item_ops(&mut out, &mut bytes, item, d.line_type_scale);
     }
-    if clipping {
+    if clipping.is_some() {
         out.push_str("Q\n");
     }
     bytes.extend_from_slice(out.as_bytes());
@@ -290,7 +291,7 @@ mod tests {
     #[test]
     fn writes_a_valid_true_scale_pdf() {
         let mut d = Drawing::new(DVec2::new(297.0, 210.0));
-        d.clip = Some(Bounds {
+        let window = Some(Bounds {
             min: DVec2::splat(10.0),
             max: DVec2::new(287.0, 200.0),
         });
@@ -302,7 +303,7 @@ mod tests {
                 center: DVec2::new(50.0, 50.0),
                 radius: 10.0,
             },
-            clipped: true,
+            clip: window,
         });
         d.text(
             "notes",

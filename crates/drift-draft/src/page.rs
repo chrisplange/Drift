@@ -151,8 +151,8 @@ pub struct Item {
     pub layer: String,
     pub pen: Pen,
     pub prim: Prim,
-    /// Clipped to the drawing's viewport (geometry seen through a sheet's drawing area).
-    pub clipped: bool,
+    /// The window the item is seen through, if any (a view's frame on a sheet).
+    pub clip: Option<Bounds>,
 }
 
 /// Layer properties for formats that keep layers (DXF).
@@ -176,8 +176,6 @@ pub struct Drawing {
     /// Paper size (or, for model space, the extents' size). The page spans (0, 0) to `size`.
     pub size: DVec2,
     pub items: Vec<Item>,
-    /// The viewport `clipped` items are cut to.
-    pub clip: Option<Bounds>,
     pub layers: Vec<LayerInfo>,
     /// Line type pattern scale (model space at 1 : n uses n).
     pub line_type_scale: f64,
@@ -199,7 +197,7 @@ impl Drawing {
             layer: layer.to_owned(),
             pen,
             prim,
-            clipped: false,
+            clip: None,
         });
     }
 
@@ -299,15 +297,15 @@ impl Drawing {
         let mut d = self.clone();
         d.size *= f;
         d.line_type_scale *= f;
-        d.clip = d.clip.map(|c| Bounds {
-            min: c.min * f,
-            max: c.max * f,
-        });
         let items = d
             .items
             .iter_mut()
             .chain(d.blocks.iter_mut().flat_map(|b| b.items.iter_mut()));
         for item in items {
+            item.clip = item.clip.map(|c| Bounds {
+                min: c.min * f,
+                max: c.max * f,
+            });
             match &mut item.prim {
                 Prim::Line(a, b) => {
                     *a *= f;
@@ -384,7 +382,7 @@ impl Drawing {
                             },
                             pen: inner.pen,
                             prim: t.prim(&inner.prim),
-                            clipped: item.clipped,
+                            clip: item.clip,
                         });
                     }
                 }

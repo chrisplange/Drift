@@ -190,6 +190,10 @@ pub struct DriftApp {
     pending: Option<Pending>,
     status: Option<Status>,
     show_shortcuts: bool,
+    /// The computer's font families (found when the font menu is first opened), and what is
+    /// typed to narrow them down.
+    font_families: Option<Vec<String>>,
+    font_filter: String,
     /// The relations pie (Q), while it is open.
     pie: Option<app::pie::Pie>,
     /// Text filtering the shortcuts list.
@@ -272,6 +276,9 @@ pub struct DriftApp {
     /// The previewed page, as of a document revision.
     preview_cache: Option<(u64, drift_core::SheetId, drift_draft::page::Drawing)>,
     view_drag: Option<app::sheets_ui::ViewDrag>,
+    /// The view picked on the current sheet, and a change to its views to make.
+    sheet_view: usize,
+    pending_view: Option<app::sheets_ui::ViewAction>,
     /// The name typed for a new block.
     new_block_name: String,
     /// Curvature combs on picked curves.
@@ -334,6 +341,8 @@ impl DriftApp {
             pending: None,
             status: None,
             show_shortcuts: false,
+            font_families: None,
+            font_filter: String::new(),
             pie: None,
             shortcut_filter: String::new(),
             layout: Default::default(),
@@ -385,6 +394,8 @@ impl DriftApp {
             preview: Default::default(),
             preview_cache: None,
             view_drag: None,
+            sheet_view: 0,
+            pending_view: None,
             new_block_name: String::new(),
             show_combs: true,
             text_typing: None,

@@ -1190,7 +1190,7 @@ mod tests {
                     layer: "0".into(),
                     pen: Pen::new(0.25),
                     prim: Prim::Line(DVec2::new(-200.0, 0.0), DVec2::new(200.0, 0.0)),
-                    clipped: false,
+                    clip: None,
                 },
                 Item {
                     layer: "0".into(),
@@ -1201,7 +1201,7 @@ mod tests {
                         start: 0.0,
                         sweep: std::f64::consts::FRAC_PI_2,
                     },
-                    clipped: false,
+                    clip: None,
                 },
             ],
         });

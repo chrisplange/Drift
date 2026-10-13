@@ -202,6 +202,24 @@ pub enum Annotation {
         axis: OrdinateAxis,
         at: f64,
     },
+    /// A section mark: the cutting line from `a` to `b`, with a flag at each end carrying
+    /// its letter and, if given, the sheet the section is drawn on. The flags point the way
+    /// the section looks: to the left of a → b, or the right if `flip`.
+    Section {
+        a: DVec2,
+        b: DVec2,
+        label: String,
+        sheet: String,
+        flip: bool,
+    },
+    /// An elevation mark at `at`: a flag pointing the way the elevation looks (`angle`,
+    /// degrees counter-clockwise from +x), with its number and, if given, its sheet.
+    Elevation {
+        at: DVec2,
+        angle: f64,
+        label: String,
+        sheet: String,
+    },
 }
 
 impl Annotation {
@@ -217,6 +235,7 @@ impl Annotation {
             Annotation::Centreline { a, b } => vec![*a, *b],
             Annotation::ChamferCallout { line, .. } => vec![*line],
             Annotation::Ordinate { origin, point, .. } => vec![*origin, *point],
+            Annotation::Section { .. } | Annotation::Elevation { .. } => Vec::new(),
         }
     }
 
@@ -229,6 +248,8 @@ impl Annotation {
             Annotation::HoleCallout { .. } => "Hole callout",
             Annotation::ChamferCallout { .. } => "Chamfer callout",
             Annotation::Ordinate { .. } => "Ordinate dimension",
+            Annotation::Section { .. } => "Section mark",
+            Annotation::Elevation { .. } => "Elevation mark",
         }
     }
 
@@ -257,6 +278,7 @@ impl Annotation {
                 swap(origin);
                 swap(point);
             }
+            Annotation::Section { .. } | Annotation::Elevation { .. } => {}
         }
     }
 }

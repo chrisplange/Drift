@@ -2,7 +2,7 @@
 //! and DXF import.
 
 use drift_core::sheets::{PREFERRED_SCALES, scale_label};
-use drift_core::{PaperSize, Revision, Sheet, SheetId, TitleBlock};
+use drift_core::{PaperSize, Revision, Sheet, SheetId, SheetView, TitleBlock, ViewFrame};
 use drift_draft::page::Drawing;
 use drift_platform::FileType;
 
@@ -21,6 +21,13 @@ pub(crate) const DXF_FILE: FileType = FileType {
     extensions: &["dxf"],
 };
 
+/// A change to the sheet's views asked for from the panel, made once its own edits are in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ViewAction {
+    Add,
+    Remove,
+}
+
 /// How the sheet preview is looked at.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct PreviewView {
@@ -30,12 +37,80 @@ pub(crate) struct PreviewView {
     pub zoom: f32,
 }
 
-/// A view move in progress: the sheet's view centre and the pointer when it started.
-#[derive(Clone, Copy, Debug)]
+/// What a drag on a view in the sheet editor does.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum ViewGrip {
+    /// Slide the drawing inside the view.
+    Pan,
+    /// Move the view on the paper.
+    Move,
+    /// Move an edge or corner of its frame: which way each axis' edge goes (-1 the lower,
+    /// 1 the upper, 0 neither).
+    Resize(i8, i8),
+}
+
+/// A drag on a view in progress: the view as it was, and the pointer, when it started.
+#[derive(Clone, Debug)]
 pub(crate) struct ViewDrag {
     sheet: SheetId,
-    center: DVec2,
+    index: usize,
+    grip: ViewGrip,
+    was: SheetView,
     from: egui::Pos2,
+}
+
+/// The smallest a view's frame can be made (paper mm), and how near a handle counts (points).
+const MIN_FRAME: f64 = 10.0;
+const HANDLE_REACH: f32 = 8.0;
+
+/// The eight handles of a frame: which way each resizes (see [`ViewGrip::Resize`]).
+const HANDLES: [(i8, i8); 8] = [
+    (-1, -1),
+    (0, -1),
+    (1, -1),
+    (1, 0),
+    (1, 1),
+    (0, 1),
+    (-1, 1),
+    (-1, 0),
+];
+
+/// `was` after a drag of `paper` millimetres by `grip`.
+pub(crate) fn dragged_view(was: &SheetView, grip: ViewGrip, paper: DVec2) -> SheetView {
+    let mut v = was.clone();
+    match (grip, was.frame) {
+        (ViewGrip::Pan, _) | (ViewGrip::Move, None) => v.center = was.center - paper * was.scale,
+        (ViewGrip::Move, Some(f)) => {
+            v.frame = Some(ViewFrame {
+                at: f.at + paper,
+                ..f
+            });
+        }
+        (ViewGrip::Resize(..), None) => {}
+        (ViewGrip::Resize(dx, dy), Some(f)) => {
+            let b = f.bounds();
+            let (mut min, mut max) = (b.min, b.max);
+            // The dragged edges follow the pointer, never past the opposite ones.
+            match dx {
+                -1 => min.x = (min.x + paper.x).min(max.x - MIN_FRAME),
+                1 => max.x = (max.x + paper.x).max(min.x + MIN_FRAME),
+                _ => {}
+            }
+            match dy {
+                -1 => min.y = (min.y + paper.y).min(max.y - MIN_FRAME),
+                1 => max.y = (max.y + paper.y).max(min.y + MIN_FRAME),
+                _ => {}
+            }
+            let at = (min + max) * 0.5;
+            v.frame = Some(ViewFrame {
+                at,
+                size: max - min,
+            });
+            // The drawing stays where it is on the paper: the frame only crops it.
+            v.center = was.center + (at - f.at) * was.scale;
+        }
+    }
+    v
 }
 
 /// Today's date as `YYYY-MM-DD` (UTC).
@@ -348,35 +423,7 @@ impl DriftApp {
         ) {
             sheet.portrait = portrait;
         }
-        theme::section(ui, "View");
-        theme::row(ui, "Scale", |ui| {
-            egui::ComboBox::from_id_salt("sheet_scale")
-                .selected_text(scale_label(sheet.scale))
-                .width(90.0)
-                .show_ui(ui, |ui| {
-                    for n in PREFERRED_SCALES {
-                        ui.selectable_value(&mut sheet.scale, n, scale_label(n));
-                    }
-                });
-            if ui
-                .button("Fit")
-                .on_hover_text("Centre the drawing on the sheet at the largest scale that fits")
-                .clicked()
-            {
-                crate::output::fit_sheet(self.fit_bounds(), &mut sheet);
-            }
-        });
-        ui.label(
-            egui::RichText::new("Drag on the sheet to move the drawing within it.")
-                .small()
-                .weak(),
-        );
-        theme::row(ui, "Show", |ui| {
-            ui.checkbox(&mut sheet.dimensions, "Dimensions")
-                .on_hover_text("Dimensions and ordinates, on this sheet");
-            ui.checkbox(&mut sheet.notes, "Notes")
-                .on_hover_text("Notes and callouts, on this sheet");
-        });
+        typing |= self.views_section(ui, &mut sheet);
         theme::section(ui, "Title block");
         egui::ComboBox::from_id_salt("title_block")
             .selected_text(sheet.title_block.label())
@@ -386,6 +433,24 @@ impl DriftApp {
                     ui.selectable_value(&mut sheet.title_block, t, t.label());
                 }
             });
+        theme::row(ui, "Logo", |ui| {
+            let has = !self.editor.doc.logo().is_empty();
+            if ui
+                .button(if has { "Replace…" } else { "Choose SVG…" })
+                .on_hover_text(
+                    "A logo for every sheet's title block, from an SVG file (with its text \
+                     converted to outlines). It is kept in the drawing's file.",
+                )
+                .clicked()
+            {
+                self.files.open(SVG_FILE);
+            }
+            if has && ui.button("Remove").clicked() {
+                self.editor.doc.begin();
+                self.editor.doc.set_logo(String::new());
+                self.editor.commit("Remove logo");
+            }
+        });
         let f = &mut sheet.fields;
         for (label, value, hint) in [
             ("Title", &mut f.title, "Drawing title"),
@@ -466,6 +531,14 @@ impl DriftApp {
         }
         if sheet != original {
             self.update_sheet(id, sheet, typing);
+        }
+        match self.pending_view.take() {
+            Some(ViewAction::Add) => {
+                self.add_view(id);
+                self.sheet_preview = true;
+            }
+            Some(ViewAction::Remove) => self.remove_view(id),
+            None => {}
         }
         theme::section(ui, "Output");
         self.output_buttons(ui);
@@ -596,38 +669,7 @@ impl DriftApp {
             self.preview.center -=
                 DVec2::new(f64::from(d.x), -f64::from(d.y)) / f64::from(self.preview.zoom);
         }
-        // Primary drag moves the view of the sketch within the sheet.
-        if response.drag_started_by(PointerButton::Primary)
-            && let Some(from) = ui.input(|i| i.pointer.press_origin())
-        {
-            self.view_drag = Some(ViewDrag {
-                sheet: id,
-                center: sheet.center,
-                from,
-            });
-            self.editor.doc.begin();
-        }
-        if let Some(drag) = self.view_drag {
-            if let Some(pos) = response.interact_pointer_pos() {
-                let d = pos - drag.from;
-                let paper =
-                    DVec2::new(f64::from(d.x), -f64::from(d.y)) / f64::from(self.preview.zoom);
-                let mut moved = sheet.clone();
-                moved.center = drag.center - paper * sheet.scale;
-                self.editor.doc.set_sheet(drag.sheet, moved);
-            }
-            if !response.dragged_by(PointerButton::Primary) {
-                self.view_drag = None;
-                self.editor.commit("Move sheet view");
-            }
-        }
-        if response.hovered() {
-            ui.ctx().set_cursor_icon(if self.view_drag.is_some() {
-                egui::CursorIcon::Grabbing
-            } else {
-                egui::CursorIcon::Grab
-            });
-        }
+        self.view_input(ui, &response, rect, id, &sheet);
 
         let zoom = self.preview.zoom;
         let to_screen = |p: DVec2| self.paper_to_preview(rect, p);
@@ -647,9 +689,11 @@ impl DriftApp {
                 zoom,
             );
         }
+        self.paint_view_frames(&painter, rect, &sheet, ui.visuals().dark_mode);
         // What this is, and how to leave.
         let info = format!(
-            "{} · {} {} · {}  —  drag to move the drawing · Esc returns to the model",
+            "{} · {} {} · {}  —  drag a view to move it (Alt: the drawing inside it) · Esc \
+             returns to the model",
             sheet.name,
             sheet.paper.label(),
             if sheet.portrait {
@@ -657,7 +701,7 @@ impl DriftApp {
             } else {
                 "landscape"
             },
-            scale_label(sheet.scale)
+            sheet.scale_text()
         );
         let galley = painter.layout_no_wrap(
             info,
@@ -671,6 +715,357 @@ impl DriftApp {
             ui.visuals().window_fill.gamma_multiply(0.92),
         );
         painter.galley(at, galley, ui.visuals().text_color());
+    }
+
+    /// The view of `sheet` picked in the sheet editor and the Sheets panel.
+    pub(crate) fn current_view(&self, sheet: &Sheet) -> usize {
+        self.sheet_view.min(sheet.views.len().saturating_sub(1))
+    }
+
+    /// A view's frame on screen.
+    fn view_rect(&self, rect: egui::Rect, sheet: &Sheet, view: &SheetView) -> egui::Rect {
+        let b = drift_draft::sheet::view_frame(sheet, view);
+        egui::Rect::from_two_pos(
+            self.paper_to_preview(rect, b.min),
+            self.paper_to_preview(rect, b.max),
+        )
+    }
+
+    /// Where a frame's handles are on screen, with what each one resizes.
+    fn view_handles(frame: egui::Rect) -> [(egui::Pos2, (i8, i8)); 8] {
+        HANDLES.map(|(dx, dy)| {
+            let x = match dx {
+                -1 => frame.left(),
+                1 => frame.right(),
+                _ => frame.center().x,
+            };
+            // Paper y is up: the lower edge is at the bottom of the screen.
+            let y = match dy {
+                -1 => frame.bottom(),
+                1 => frame.top(),
+                _ => frame.center().y,
+            };
+            (egui::pos2(x, y), (dx, dy))
+        })
+    }
+
+    /// What a press at `pos` would take hold of: a handle of the picked view, else the view
+    /// under the pointer (one with a frame before one that fills the sheet).
+    pub(crate) fn view_grip_at(
+        &self,
+        rect: egui::Rect,
+        sheet: &Sheet,
+        pos: egui::Pos2,
+        alt: bool,
+    ) -> Option<(usize, ViewGrip)> {
+        let picked = self.current_view(sheet);
+        if let Some(v) = sheet.views.get(picked).filter(|v| v.frame.is_some()) {
+            let frame = self.view_rect(rect, sheet, v);
+            if let Some((_, (dx, dy))) = Self::view_handles(frame)
+                .into_iter()
+                .find(|(at, _)| at.distance(pos) <= HANDLE_REACH)
+            {
+                return Some((picked, ViewGrip::Resize(dx, dy)));
+            }
+        }
+        let under = |framed: bool| {
+            sheet.views.iter().enumerate().rev().find(|(_, v)| {
+                v.frame.is_some() == framed && self.view_rect(rect, sheet, v).contains(pos)
+            })
+        };
+        let (index, view) = under(true).or_else(|| under(false))?;
+        let grip = if alt || view.frame.is_none() {
+            ViewGrip::Pan
+        } else {
+            ViewGrip::Move
+        };
+        Some((index, grip))
+    }
+
+    /// Pick, move, resize and pan the sheet's views with the primary button.
+    fn view_input(
+        &mut self,
+        ui: &egui::Ui,
+        response: &egui::Response,
+        rect: egui::Rect,
+        id: SheetId,
+        sheet: &Sheet,
+    ) {
+        let alt = ui.input(|i| i.modifiers.alt);
+        if response.drag_started_by(PointerButton::Primary)
+            && let Some(from) = ui.input(|i| i.pointer.press_origin())
+            && let Some((index, grip)) = self.view_grip_at(rect, sheet, from, alt)
+        {
+            self.sheet_view = index;
+            self.view_drag = Some(ViewDrag {
+                sheet: id,
+                index,
+                grip,
+                was: sheet.views[index].clone(),
+                from,
+            });
+            self.editor.doc.begin();
+        }
+        if let Some(drag) = self.view_drag.clone() {
+            if let Some(pos) = response.interact_pointer_pos()
+                && drag.index < sheet.views.len()
+            {
+                let d = pos - drag.from;
+                let paper =
+                    DVec2::new(f64::from(d.x), -f64::from(d.y)) / f64::from(self.preview.zoom);
+                let mut moved = sheet.clone();
+                moved.views[drag.index] = dragged_view(&drag.was, drag.grip, paper);
+                self.editor.doc.set_sheet(drag.sheet, moved);
+            }
+            if !response.dragged_by(PointerButton::Primary) {
+                self.view_drag = None;
+                self.editor.commit(match drag.grip {
+                    ViewGrip::Pan => "Move sheet view",
+                    ViewGrip::Move => "Move view on sheet",
+                    ViewGrip::Resize(..) => "Resize view",
+                });
+            }
+        } else if response.clicked_by(PointerButton::Primary)
+            && let Some(pos) = response.interact_pointer_pos()
+            && let Some((index, _)) = self.view_grip_at(rect, sheet, pos, false)
+        {
+            self.sheet_view = index;
+        }
+        if response.hovered() {
+            let grip = self.view_drag.as_ref().map(|d| d.grip).or_else(|| {
+                response
+                    .hover_pos()
+                    .and_then(|p| self.view_grip_at(rect, sheet, p, alt))
+                    .map(|(_, g)| g)
+            });
+            let dragging = self.view_drag.is_some();
+            ui.ctx().set_cursor_icon(match grip {
+                Some(ViewGrip::Resize(0, _)) => egui::CursorIcon::ResizeVertical,
+                Some(ViewGrip::Resize(_, 0)) => egui::CursorIcon::ResizeHorizontal,
+                Some(ViewGrip::Resize(dx, dy)) if dx == dy => egui::CursorIcon::ResizeNeSw,
+                Some(ViewGrip::Resize(..)) => egui::CursorIcon::ResizeNwSe,
+                Some(ViewGrip::Move) => egui::CursorIcon::Move,
+                Some(ViewGrip::Pan) if dragging => egui::CursorIcon::Grabbing,
+                Some(ViewGrip::Pan) => egui::CursorIcon::Grab,
+                None => egui::CursorIcon::Default,
+            });
+        }
+    }
+
+    /// The editor's marks over the page (they don't print): the picked view's frame and
+    /// handles, and the frame of the one under the pointer.
+    fn paint_view_frames(
+        &self,
+        painter: &egui::Painter,
+        rect: egui::Rect,
+        sheet: &Sheet,
+        dark: bool,
+    ) {
+        let accent = theme::accent(dark);
+        let picked = self.current_view(sheet);
+        let hover = painter
+            .ctx()
+            .input(|i| i.pointer.hover_pos())
+            .filter(|p| rect.contains(*p))
+            .and_then(|p| self.view_grip_at(rect, sheet, p, false))
+            .map(|(i, _)| i);
+        for (i, view) in sheet.views.iter().enumerate() {
+            let frame = self.view_rect(rect, sheet, view);
+            // With one view filling the sheet there is nothing to tell apart.
+            if sheet.views.len() == 1 && view.frame.is_none() {
+                continue;
+            }
+            if i == picked {
+                painter.rect_stroke(
+                    frame,
+                    0.0,
+                    egui::Stroke::new(1.5, accent),
+                    egui::StrokeKind::Outside,
+                );
+                if view.frame.is_some() {
+                    for (at, _) in Self::view_handles(frame) {
+                        let knob = egui::Rect::from_center_size(at, egui::Vec2::splat(7.0));
+                        painter.rect_filled(knob, 1.0, egui::Color32::WHITE);
+                        painter.rect_stroke(
+                            knob,
+                            1.0,
+                            egui::Stroke::new(1.5, accent),
+                            egui::StrokeKind::Middle,
+                        );
+                    }
+                }
+            } else {
+                let alpha = if hover == Some(i) { 0.9 } else { 0.35 };
+                painter.rect_stroke(
+                    frame,
+                    0.0,
+                    egui::Stroke::new(1.0, accent.gamma_multiply(alpha)),
+                    egui::StrokeKind::Outside,
+                );
+            }
+        }
+    }
+
+    /// Add a view to a sheet: of the selection if there is one, else of the whole sketch, at
+    /// the scale of the views already there. Returns its index.
+    pub(crate) fn add_view(&mut self, id: SheetId) -> Option<usize> {
+        let mut sheet = self.editor.doc.sheet(id)?.clone();
+        let ed = &self.editor;
+        let picked: Bounds = ed
+            .selection
+            .iter()
+            .filter_map(|e| ed.doc.shape(*e))
+            .map(|s| s.bounds())
+            .collect();
+        let bounds = if picked.is_empty() || picked.min == picked.max {
+            self.fit_bounds()
+        } else {
+            picked
+        };
+        if bounds.is_empty() {
+            return None;
+        }
+        let scale = sheet.views.first().map_or(1.0, |v| v.scale);
+        let mut view = crate::output::framed_view(bounds, &sheet, scale);
+        view.name = format!("View {}", sheet.views.len() + 1);
+        sheet.views.push(view);
+        let index = sheet.views.len() - 1;
+        self.editor.doc.begin();
+        self.editor.doc.set_sheet(id, sheet);
+        self.editor.commit("Add view");
+        self.sheet_view = index;
+        Some(index)
+    }
+
+    /// Remove the picked view (a sheet keeps at least one).
+    pub(crate) fn remove_view(&mut self, id: SheetId) {
+        let Some(mut sheet) = self.editor.doc.sheet(id).cloned() else {
+            return;
+        };
+        if sheet.views.len() < 2 {
+            return;
+        }
+        let index = self.current_view(&sheet);
+        sheet.views.remove(index);
+        self.editor.doc.begin();
+        self.editor.doc.set_sheet(id, sheet);
+        self.editor.commit("Remove view");
+        self.sheet_view = index.saturating_sub(1);
+    }
+
+    /// The Sheets panel's Views section: the sheet's views, and the picked one's settings.
+    /// Returns true if text was typed (so the edits merge into one undo step).
+    fn views_section(&mut self, ui: &mut egui::Ui, sheet: &mut Sheet) -> bool {
+        let mut typing = false;
+        theme::section(ui, "Views");
+        let picked = self.current_view(sheet);
+        let several = sheet.views.len() > 1;
+        if several {
+            for (i, v) in sheet.views.iter().enumerate() {
+                let name = if v.name.trim().is_empty() {
+                    "View"
+                } else {
+                    v.name.trim()
+                };
+                let text = format!("{}  {name}  ·  {}", i + 1, scale_label(v.scale));
+                if ui
+                    .add_sized(
+                        [ui.available_width(), 22.0],
+                        egui::Button::selectable(picked == i, text),
+                    )
+                    .clicked()
+                {
+                    self.sheet_view = i;
+                }
+            }
+        }
+        let picked = self.current_view(sheet);
+        let bounds = self.fit_bounds();
+        let area = drift_draft::sheet::view_area(sheet);
+        let Some(view) = sheet.views.get_mut(picked) else {
+            return false;
+        };
+        let mut fit = false;
+        theme::row(ui, "Title", |ui| {
+            typing |= ui
+                .add(
+                    egui::TextEdit::singleline(&mut view.name)
+                        .hint_text("Plan, Detail A…")
+                        .desired_width(ui.available_width() - 8.0),
+                )
+                .changed();
+        });
+        theme::row(ui, "Scale", |ui| {
+            egui::ComboBox::from_id_salt("sheet_scale")
+                .selected_text(scale_label(view.scale))
+                .width(90.0)
+                .show_ui(ui, |ui| {
+                    for n in PREFERRED_SCALES {
+                        ui.selectable_value(&mut view.scale, n, scale_label(n));
+                    }
+                });
+            fit = ui
+                .button("Fit")
+                .on_hover_text("Centre the drawing in the view at the largest scale that fits")
+                .clicked();
+        });
+        theme::row(ui, "Frame", |ui| {
+            let framed = view.frame.is_some();
+            if let Some(framed) =
+                theme::segmented(ui, framed, &[(false, "Fills sheet"), (true, "Framed")])
+            {
+                view.frame = framed.then(|| {
+                    // A frame over the middle of the sheet, to drag and crop from there.
+                    let size = area.size() * 0.6;
+                    ViewFrame {
+                        at: area.center(),
+                        size,
+                    }
+                });
+            }
+        });
+        theme::row(ui, "Show", |ui| {
+            ui.checkbox(&mut view.dimensions, "Dimensions")
+                .on_hover_text("Dimensions and ordinates, in this view");
+            ui.checkbox(&mut view.notes, "Notes")
+                .on_hover_text("Notes and callouts, in this view");
+        });
+        theme::row(ui, "", |ui| {
+            ui.checkbox(&mut view.title, "Title")
+                .on_hover_text("Its title and scale, written under it");
+            ui.add_enabled(
+                view.frame.is_some(),
+                egui::Checkbox::new(&mut view.border, "Border"),
+            )
+            .on_hover_text("Print the frame's outline");
+        });
+        if fit {
+            crate::output::fit_view(bounds, sheet, picked);
+        }
+        ui.label(
+            egui::RichText::new(
+                "On the sheet: drag a view to move it, its handles to crop it, and Alt-drag to \
+                 slide the drawing inside it.",
+            )
+            .small()
+            .weak(),
+        );
+        ui.horizontal(|ui| {
+            if ui
+                .button("Add view")
+                .on_hover_text(
+                    "A new view in its own frame: of the selection in the model if there is \
+                     one, else of the whole drawing",
+                )
+                .clicked()
+            {
+                self.pending_view = Some(ViewAction::Add);
+            }
+            if several && ui.button("Remove view").clicked() {
+                self.pending_view = Some(ViewAction::Remove);
+            }
+        });
+        typing
     }
 
     fn paper_to_preview(&self, rect: egui::Rect, p: DVec2) -> egui::Pos2 {

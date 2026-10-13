@@ -1375,6 +1375,98 @@ fn an_arc_that_is_not_a_fillet_is_left_to_the_usual_tools() {
 }
 
 #[test]
+fn a_chamfer_is_resized_in_place_and_corners_can_be_put_back() {
+    let corner_point = |ed: &Editor| {
+        ed.doc
+            .iter()
+            .find(|(_, e)| e.kind == EntityKind::Point(v(0.0, 0.0)))
+            .map(|(id, _)| id)
+    };
+    // The corner fixture, cut 4 along x and 2 along y.
+    let mut ed = corner_fixture();
+    let cut = ed.chamfer(corner_point(&ed).unwrap(), 4.0, 2.0).unwrap();
+    let c = ed.chamfer_at(cut).expect("a chamfer");
+    assert!(c.corner.length() < 1e-9);
+    let mut legs = c.legs;
+    legs.sort_by(f64::total_cmp);
+    assert!((legs[0] - 2.0).abs() < 1e-9 && (legs[1] - 4.0).abs() < 1e-9);
+    // A side of a plain triangle is not a chamfer: its neighbours already meet.
+    let mut tri = Editor::default();
+    tri.doc.begin();
+    let p = [v(0.0, 0.0), v(10.0, 0.0), v(0.0, 10.0)].map(|at| tri.doc.add_point(at));
+    let sides = [(0, 1), (1, 2), (2, 0)].map(|(a, b)| tri.doc.add_line(p[a], p[b]).unwrap());
+    tri.commit("Triangle");
+    assert!(sides.iter().all(|s| tri.chamfer_at(*s).is_none()));
+
+    // The chamfer tool on it: it starts as it is; moved, both distances become the same.
+    let mut tool = ChamferTool::default();
+    let middle = v(2.0, 1.0);
+    let p = ptr(&ed, &tool, middle);
+    tool.handle(Input::Hover(p), &mut ed);
+    assert_eq!(ed.hovered, Some(cut), "the chamfer lights up");
+    click(&mut ed, &mut tool, middle);
+    assert!(tool.is_modal());
+    let p = ptr(&ed, &tool, v(2.5, 2.5));
+    tool.handle(Input::Hover(p), &mut ed);
+    click(&mut ed, &mut tool, v(2.5, 2.5));
+    let c = ed.chamfer_at(cut).expect("still a chamfer");
+    assert!(
+        (c.legs[0] - 5.0).abs() < 1e-7 && (c.legs[1] - 5.0).abs() < 1e-7,
+        "{:?}",
+        c.legs
+    );
+    assert!(c.corner.length() < 1e-7);
+    let mut far = c.far;
+    far.sort_by(|a, b| a.x.total_cmp(&b.x));
+    assert_eq!(
+        far,
+        [v(0.0, 10.0), v(20.0, 0.0)],
+        "the lines' far ends stay"
+    );
+    assert_eq!(lines(&ed.doc), 3);
+    // Too large for the shorter line: refused, nothing changed.
+    assert!(ed.rechamfer(cut, 5.0, 12.0).is_err() || ed.rechamfer(cut, 12.0, 5.0).is_err());
+
+    // Remove chamfer: the two lines run on to the corner again.
+    ed.remove_corner_cut(cut).unwrap();
+    assert_eq!(lines(&ed.doc), 2);
+    let corner = corner_point(&ed).expect("the corner is back");
+    assert!(ed.corner(corner).is_ok(), "two lines meet there");
+    ed.undo();
+    assert!(ed.chamfer_at(cut).is_some());
+
+    // Remove fillet, with and without its relations.
+    for relations in [false, true] {
+        let (mut ed, arc, _) = filleted_fixture(relations);
+        ed.selection = [arc].into();
+        ed.remove_corner_cut(arc).unwrap();
+        assert_eq!((lines(&ed.doc), arcs(&ed.doc)), (2, 0));
+        assert_eq!(
+            ed.doc.constraint_count(),
+            0,
+            "its tangents and radius went with it"
+        );
+        assert!(ed.selection.is_empty());
+        let corner = corner_point(&ed).expect("the corner is back");
+        assert!(ed.corner(corner).is_ok());
+        // Only the lines' four ends are left (three points: the corner is shared).
+        let points = ed.doc.iter().filter(|(_, e)| e.kind.is_point()).count();
+        assert_eq!(points, 3);
+        ed.undo();
+        assert!(ed.fillet_at(arc).is_some());
+    }
+    // An arc on its own has no corner to put back.
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    let c = ed.doc.add_point(v(0.0, 0.0));
+    let a = ed.doc.add_point(v(5.0, 0.0));
+    let b = ed.doc.add_point(v(0.0, 5.0));
+    let arc = ed.doc.add_arc(c, a, b).unwrap();
+    ed.commit("Arc");
+    assert!(ed.remove_corner_cut(arc).is_err());
+}
+
+#[test]
 fn sizing_steps_are_round_numbers() {
     use super::corners::round_step;
     for (min, step) in [

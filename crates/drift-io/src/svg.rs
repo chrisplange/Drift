@@ -48,16 +48,33 @@ pub fn write(d: &Drawing) -> String {
         num(h)
     );
     let _ = writeln!(out, "<title>Drift drawing</title>");
-    if let Some(c) = d.clip {
-        let _ = writeln!(
-            out,
-            r#"<defs><clipPath id="view"><rect x="{}" y="{}" width="{}" height="{}"/></clipPath></defs>"#,
-            num(c.min.x),
-            num(y(c.max.y)),
-            num(c.max.x - c.min.x),
-            num(c.max.y - c.min.y)
-        );
+    // One clip path per window the items are seen through (a sheet's views).
+    let mut windows: Vec<drift_core::Bounds> = Vec::new();
+    for c in d.items.iter().filter_map(|i| i.clip) {
+        if !windows.contains(&c) {
+            windows.push(c);
+        }
     }
+    if !windows.is_empty() {
+        out.push_str("<defs>");
+        for (k, c) in windows.iter().enumerate() {
+            let _ = write!(
+                out,
+                r#"<clipPath id="view{}"><rect x="{}" y="{}" width="{}" height="{}"/></clipPath>"#,
+                k + 1,
+                num(c.min.x),
+                num(y(c.max.y)),
+                num(c.max.x - c.min.x),
+                num(c.max.y - c.min.y)
+            );
+        }
+        out.push_str("</defs>\n");
+    }
+    let window_of = |item: &drift_draft::page::Item| {
+        item.clip
+            .and_then(|c| windows.iter().position(|w| *w == c))
+            .map_or(0, |k| k + 1)
+    };
     let _ = writeln!(
         out,
         r#"<rect width="{}" height="{}" fill="white"/>"#,
@@ -65,17 +82,17 @@ pub fn write(d: &Drawing) -> String {
         num(h)
     );
     // Consecutive items on the same layer (and clip) share a group.
-    let mut open: Option<(&str, bool)> = None;
+    let mut open: Option<(&str, usize)> = None;
     for item in &d.items {
-        let key = (item.layer.as_str(), item.clipped && d.clip.is_some());
+        let key = (item.layer.as_str(), window_of(item));
         if open != Some(key) {
             if open.is_some() {
                 out.push_str("</g>\n");
             }
-            let clip = if key.1 {
-                r#" clip-path="url(#view)""#
+            let clip = if key.1 > 0 {
+                format!(r#" clip-path="url(#view{})""#, key.1)
             } else {
-                ""
+                String::new()
             };
             let _ = writeln!(
                 out,
@@ -288,7 +305,7 @@ mod tests {
     #[test]
     fn writes_true_scale_svg() {
         let mut d = Drawing::new(DVec2::new(297.0, 210.0));
-        d.clip = Some(Bounds {
+        let window = Some(Bounds {
             min: DVec2::splat(10.0),
             max: DVec2::new(287.0, 200.0),
         });
@@ -302,7 +319,7 @@ mod tests {
                 start: 0.0,
                 sweep: std::f64::consts::PI * 1.5,
             },
-            clipped: true,
+            clip: window,
         });
         d.text(
             "notes",
@@ -318,7 +335,7 @@ mod tests {
         // Arc from (60, 50) to (50, 40) the long way round, y flipped.
         assert!(svg.contains(r#"M 60 160 A 10 10 0 1 0 50 170"#), "{svg}");
         assert!(svg.contains("stroke-dasharray=\"12 1.5 1.5 1.5\""));
-        assert!(svg.contains(r#"clip-path="url(#view)""#));
+        assert!(svg.contains(r#"clip-path="url(#view1)""#));
         assert!(svg.contains("data-layer=\"Walls &amp; doors\""));
         assert!(svg.contains("Ø6 &lt;THRU&gt;"));
         assert!(svg.contains(r#"text-anchor="middle""#));

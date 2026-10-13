@@ -39,7 +39,7 @@ mod three_point_arc;
 mod underlay;
 
 pub use self::{
-    annotate::{CalloutTool, CentreMarkTool, NoteTool, OrdinateTool},
+    annotate::{CalloutTool, CentreMarkTool, ElevationTool, NoteTool, OrdinateTool, SectionTool},
     corners::{ChamferTool, FilletTool},
     curve_ops::{ExtendTool, SplitTool, TrimTool},
     fill::FillTool,
@@ -168,6 +168,10 @@ pub enum ToolKind {
     Note,
     Callout,
     CentreMark,
+    /// A section's cutting line, with a flag at each end.
+    Section,
+    /// An elevation's flag.
+    Elevation,
     Fill,
     Trim,
     Extend,
@@ -183,7 +187,7 @@ pub enum ToolKind {
 }
 
 impl ToolKind {
-    pub const ALL: [ToolKind; 28] = [
+    pub const ALL: [ToolKind; 30] = [
         ToolKind::Select,
         ToolKind::Line,
         ToolKind::Pen,
@@ -204,6 +208,8 @@ impl ToolKind {
         ToolKind::Note,
         ToolKind::Callout,
         ToolKind::CentreMark,
+        ToolKind::Section,
+        ToolKind::Elevation,
         ToolKind::Fill,
         ToolKind::Trim,
         ToolKind::Extend,
@@ -244,6 +250,8 @@ impl ToolKind {
                 ToolKind::Note,
                 ToolKind::Callout,
                 ToolKind::CentreMark,
+                ToolKind::Section,
+                ToolKind::Elevation,
                 ToolKind::Fill,
             ],
         ),
@@ -290,6 +298,8 @@ impl ToolKind {
             ToolKind::Note => "Note",
             ToolKind::Callout => "Callout",
             ToolKind::CentreMark => "Centre mark",
+            ToolKind::Section => "Section mark",
+            ToolKind::Elevation => "Elevation mark",
             ToolKind::Trim => "Trim",
             ToolKind::Extend => "Extend",
             ToolKind::Split => "Split",
@@ -330,6 +340,8 @@ impl ToolKind {
             ToolKind::Note => "Text, with a leader if you start on geometry",
             ToolKind::Callout => "Hole (4× Ø6 THRU) and chamfer (2 × 45°) callouts",
             ToolKind::CentreMark => "Centre marks on circles; centre lines between features",
+            ToolKind::Section => "A section's cutting line, with a lettered flag at each end",
+            ToolKind::Elevation => "A numbered flag pointing the way an elevation looks",
             ToolKind::Trim => "Remove a piece up to the curves that cut it; drag to trim several",
             ToolKind::Extend => "Lengthen a line or arc to the next curve",
             ToolKind::Split => "Cut a curve in two at a point (a circle or ellipse into halves)",
@@ -377,6 +389,8 @@ impl ToolKind {
             // F selects the fillet; pressed again it switches to the chamfer.
             ToolKind::Fillet | ToolKind::Chamfer => 'F',
             ToolKind::Split
+            | ToolKind::Section
+            | ToolKind::Elevation
             | ToolKind::Ordinate
             | ToolKind::Callout
             | ToolKind::CentreMark
@@ -409,6 +423,8 @@ impl ToolKind {
             ToolKind::Note => Box::<NoteTool>::default(),
             ToolKind::Callout => Box::<CalloutTool>::default(),
             ToolKind::CentreMark => Box::<CentreMarkTool>::default(),
+            ToolKind::Section => Box::<SectionTool>::default(),
+            ToolKind::Elevation => Box::<ElevationTool>::default(),
             ToolKind::Trim => Box::<TrimTool>::default(),
             ToolKind::Extend => Box::<ExtendTool>::default(),
             ToolKind::Split => Box::<SplitTool>::default(),

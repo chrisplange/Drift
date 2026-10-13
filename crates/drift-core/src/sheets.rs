@@ -3,6 +3,8 @@
 
 use glam::DVec2;
 
+use crate::Bounds;
+
 /// Stable identifier of a sheet.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SheetId(pub u32);
@@ -176,22 +178,69 @@ pub struct TitleFields {
     pub material: String,
 }
 
+/// Where a view sits on the paper: its middle and its size, in paper millimetres.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ViewFrame {
+    pub at: DVec2,
+    pub size: DVec2,
+}
+
+impl ViewFrame {
+    pub fn bounds(&self) -> Bounds {
+        Bounds {
+            min: self.at - self.size * 0.5,
+            max: self.at + self.size * 0.5,
+        }
+    }
+}
+
+/// A view of the sketch on a sheet: a window onto the model at a scale.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SheetView {
+    /// Its title (`Plan`, `Detail A`), written under it; may be empty.
+    pub name: String,
+    /// The drawing scale, 1 : `scale`.
+    pub scale: f64,
+    /// The world point at the middle of the view.
+    pub center: DVec2,
+    /// Where it sits on the paper. `None` fills the sheet's drawing area (and follows the
+    /// paper size): what a sheet's one view does until it is given a frame.
+    pub frame: Option<ViewFrame>,
+    /// Show dimensions (ordinates included) in this view.
+    pub dimensions: bool,
+    /// Show notes and callouts in this view.
+    pub notes: bool,
+    /// Write the title and scale under the view.
+    pub title: bool,
+    /// Draw the frame's outline.
+    pub border: bool,
+}
+
+impl SheetView {
+    pub fn new(scale: f64, center: DVec2) -> Self {
+        Self {
+            name: String::new(),
+            scale,
+            center,
+            frame: None,
+            dimensions: true,
+            notes: true,
+            title: false,
+            border: false,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Sheet {
     pub name: String,
     pub paper: PaperSize,
     pub portrait: bool,
-    /// The drawing scale, 1 : `scale`.
-    pub scale: f64,
-    /// The world point at the centre of the drawing area.
-    pub center: DVec2,
+    /// The views of the sketch on the sheet, in drawing order.
+    pub views: Vec<SheetView>,
     pub title_block: TitleBlock,
     pub fields: TitleFields,
     pub revisions: Vec<Revision>,
-    /// Show dimensions (ordinates included) on this sheet.
-    pub dimensions: bool,
-    /// Show notes and callouts on this sheet.
-    pub notes: bool,
 }
 
 impl Sheet {
@@ -200,13 +249,21 @@ impl Sheet {
             name: name.into(),
             paper: PaperSize::A3,
             portrait: false,
-            scale: 1.0,
-            center: DVec2::ZERO,
+            views: vec![SheetView::new(1.0, DVec2::ZERO)],
             title_block: TitleBlock::Modern,
             fields: TitleFields::default(),
             revisions: Vec::new(),
-            dimensions: true,
-            notes: true,
+        }
+    }
+
+    /// The scale for the title block: the views' scale if they share one, else `As shown`.
+    pub fn scale_text(&self) -> String {
+        match self.views.split_first() {
+            None => "-".into(),
+            Some((first, rest)) if rest.iter().all(|v| v.scale == first.scale) => {
+                scale_label(first.scale)
+            }
+            Some(_) => "As shown".into(),
         }
     }
 

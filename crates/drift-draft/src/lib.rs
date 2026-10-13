@@ -3,6 +3,7 @@
 //! and sheet borders, title blocks and revision tables.
 
 pub mod hatch;
+pub mod logo;
 pub mod outline;
 pub mod page;
 pub mod pattern;

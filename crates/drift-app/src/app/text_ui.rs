@@ -126,12 +126,49 @@ impl DriftApp {
         theme::row(ui, "Font", |ui| {
             egui::ComboBox::from_id_salt(("text_font", id.0))
                 .selected_text(t.font.label())
+                .width(ui.available_width() - 8.0)
+                .height(360.0)
                 .show_ui(ui, |ui| {
-                    for f in TextFont::ALL {
-                        ui.selectable_value(&mut edited.font, f, f.label());
+                    ui.set_min_width(200.0);
+                    for f in TextFont::BUILT_IN {
+                        let label = f.label();
+                        ui.selectable_value(&mut edited.font, f, label);
+                    }
+                    // The computer's fonts, found the first time the menu is opened.
+                    let families = self
+                        .font_families
+                        .get_or_insert_with(drift_platform::fonts::families);
+                    if families.is_empty() {
+                        return;
+                    }
+                    ui.separator();
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.font_filter)
+                            .hint_text("Find a font…")
+                            .desired_width(f32::INFINITY),
+                    );
+                    let wanted = self.font_filter.trim().to_lowercase();
+                    for family in families
+                        .iter()
+                        .filter(|f| wanted.is_empty() || f.to_lowercase().contains(&wanted))
+                    {
+                        let font = TextFont::System(family.clone());
+                        ui.selectable_value(&mut edited.font, font, family);
                     }
                 });
         });
+        if let TextFont::System(family) = &t.font
+            && drift_draft::outline::font_known(family) == Some(false)
+        {
+            ui.label(
+                egui::RichText::new(format!(
+                    "{family} isn't installed on this computer: shown in Sans. The text keeps \
+                     the font's name, and uses it where it is installed."
+                ))
+                .small()
+                .color(egui::Color32::from_rgb(0xff, 0x9f, 0x0a)),
+            );
+        }
         if edited != t {
             self.editor.text_height = edited.height;
             self.editor.update_text(id, |x| *x = edited);

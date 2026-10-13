@@ -2,15 +2,63 @@
 //! Béziers, at a cap height, from its baseline start, turned by an angle. Quadratic glyph
 //! curves (TrueType) are raised to cubics exactly.
 
+use std::collections::HashMap;
+use std::sync::{Arc, OnceLock, RwLock};
+
 use drift_core::{DVec2, Shape, TextFont};
 use skrifa::instance::{LocationRef, Size};
 use skrifa::outline::{DrawSettings, OutlinePen};
 use skrifa::{FontRef, MetadataProvider};
 
-fn font_bytes(font: TextFont) -> &'static [u8] {
+/// A system font's file and the face's index in it; `None` once it is known to be missing.
+type Loaded = Option<(Arc<Vec<u8>>, u32)>;
+
+/// System fonts made known with [`register_font`], by family name.
+fn registry() -> &'static RwLock<HashMap<String, Loaded>> {
+    static FONTS: OnceLock<RwLock<HashMap<String, Loaded>>> = OnceLock::new();
+    FONTS.get_or_init(Default::default)
+}
+
+/// Make a system font's file known for outlining text (`None`: it isn't installed here, so
+/// text in it falls back to the built-in sans).
+pub fn register_font(family: &str, font: Option<(Vec<u8>, u32)>) {
+    // A file that doesn't read as a font counts as missing.
+    let font = font
+        .filter(|(data, index)| FontRef::from_index(data, *index).is_ok())
+        .map(|(data, index)| (Arc::new(data), index));
+    if let Ok(mut fonts) = registry().write() {
+        fonts.insert(family.to_owned(), font);
+    }
+}
+
+/// Whether a system font is known: `None` if it hasn't been looked for yet, else whether it
+/// was found.
+pub fn font_known(family: &str) -> Option<bool> {
+    registry()
+        .read()
+        .ok()?
+        .get(family)
+        .map(|font| font.is_some())
+}
+
+/// The font's file and face index: a built-in one, or a registered system font (the built-in
+/// sans where that isn't installed).
+fn font_data(font: &TextFont) -> (Arc<Vec<u8>>, u32) {
+    static BUILT_IN: OnceLock<[Arc<Vec<u8>>; 2]> = OnceLock::new();
+    let built_in = BUILT_IN.get_or_init(|| {
+        [
+            Arc::new(epaint_default_fonts::UBUNTU_LIGHT.to_vec()),
+            Arc::new(epaint_default_fonts::HACK_REGULAR.to_vec()),
+        ]
+    });
     match font {
-        TextFont::Sans => epaint_default_fonts::UBUNTU_LIGHT,
-        TextFont::Mono => epaint_default_fonts::HACK_REGULAR,
+        TextFont::Sans => (built_in[0].clone(), 0),
+        TextFont::Mono => (built_in[1].clone(), 0),
+        TextFont::System(family) => registry()
+            .read()
+            .ok()
+            .and_then(|fonts| fonts.get(family).cloned().flatten())
+            .unwrap_or_else(|| (built_in[0].clone(), 0)),
     }
 }
 
@@ -85,14 +133,15 @@ pub const MAX_OUTLINE_CHARS: usize = 2000;
 
 pub fn text_contours(
     text: &str,
-    font: TextFont,
+    font: &TextFont,
     height: f64,
     at: DVec2,
     angle: f64,
 ) -> Vec<Vec<Shape>> {
     let text: String = text.chars().take(MAX_OUTLINE_CHARS).collect();
     let text = text.as_str();
-    let Ok(f) = FontRef::new(font_bytes(font)) else {
+    let (data, index) = font_data(font);
+    let Ok(f) = FontRef::from_index(&data, index) else {
         return Vec::new();
     };
     let metrics = f.metrics(Size::unscaled(), LocationRef::default());
@@ -155,7 +204,7 @@ mod tests {
 
     #[test]
     fn letters_have_closed_outlines_at_the_cap_height() {
-        let contours = text_contours("HO", TextFont::Sans, 10.0, DVec2::ZERO, 0.0);
+        let contours = text_contours("HO", &TextFont::Sans, 10.0, DVec2::ZERO, 0.0);
         // H is one contour, O two (outside and counter).
         assert_eq!(contours.len(), 3);
         for c in &contours {
@@ -178,7 +227,7 @@ mod tests {
             "{bounds:?}"
         );
         // Turned 90°: it rises along +y from the start.
-        let turned = text_contours("H", TextFont::Mono, 10.0, DVec2::new(5.0, 5.0), 90.0);
+        let turned = text_contours("H", &TextFont::Mono, 10.0, DVec2::new(5.0, 5.0), 90.0);
         let b: drift_core::Bounds = turned.iter().flatten().map(Shape::bounds).collect();
         assert!(b.max.x <= 5.0 + 1e-9 && b.min.y >= 5.0 - 1e-9, "{b:?}");
     }

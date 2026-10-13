@@ -279,6 +279,22 @@ pub fn tool(painter: &egui::Painter, rect: Rect, kind: ToolKind, color: Color32)
             p.dashed((1.5, 10.0), (18.5, 10.0));
             p.dashed((10.0, 1.5), (10.0, 18.5));
         }
+        ToolKind::Section => {
+            // A cutting line with a flag at each end, both looking up.
+            p.dashed((6.0, 13.0), (14.0, 13.0));
+            p.circle(3.8, 13.0, 2.6);
+            p.circle(16.2, 13.0, 2.6);
+            p.arrow_head((3.8, 6.5), vec2(0.0, -1.0));
+            p.arrow_head((16.2, 6.5), vec2(0.0, -1.0));
+            p.line((3.8, 10.4), (3.8, 7.5));
+            p.line((16.2, 10.4), (16.2, 7.5));
+        }
+        ToolKind::Elevation => {
+            // A flag: a ring with a pointer.
+            p.circle(10.0, 12.0, 4.6);
+            p.poly(&[(5.4, 12.0), (10.0, 3.5), (14.6, 12.0)], false);
+            p.line((5.4, 12.0), (14.6, 12.0));
+        }
         ToolKind::Fill => {
             p.poly(&[(3.5, 4.5), (16.5, 4.5), (16.5, 15.5), (3.5, 15.5)], true);
             for k in 0..4 {

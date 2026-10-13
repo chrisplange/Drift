@@ -1,6 +1,7 @@
 //! Sheet furniture: the border, the title block (Drift's modern strip, ISO 7200 or
 //! ASME Y14.1 style) and the revision table, drawn into a [`Drawing`] in paper millimetres.
 
+use drift_core::SheetView;
 use drift_core::sheets::scale_label;
 use drift_core::{Bounds, DVec2, Rgb, Sheet, TitleBlock};
 
@@ -74,6 +75,90 @@ pub fn view_area(sheet: &Sheet) -> Bounds {
     area
 }
 
+/// Where a view is on the paper: its own frame, or the whole drawing area.
+pub fn view_frame(sheet: &Sheet, view: &SheetView) -> Bounds {
+    view.frame
+        .map_or_else(|| drawing_area(sheet), |f| f.bounds())
+}
+
+/// How far under a view its title reaches (paper mm), for laying views out.
+pub const VIEW_TITLE_DEPTH: f64 = 11.0;
+
+/// The views' outlines and titles: a title is the view's name in bold over a rule, with its
+/// scale beneath, at the frame's lower left. Views are numbered in order when a sheet has
+/// more than one.
+pub fn draw_views(sheet: &Sheet, d: &mut Drawing) {
+    let several = sheet.views.len() > 1;
+    for (i, view) in sheet.views.iter().enumerate() {
+        let frame = view_frame(sheet, view);
+        if view.border && view.frame.is_some() {
+            d.rect(FRAME_LAYER, Pen::new(THIN_PEN), frame.min, frame.max);
+        }
+        if !view.title {
+            continue;
+        }
+        // Inside the drawing area's corner for a view that fills it.
+        let (x, top) = if view.frame.is_some() {
+            (frame.min.x, frame.min.y - 2.0)
+        } else {
+            (frame.min.x + 6.0, frame.min.y + 6.0 + VIEW_TITLE_DEPTH)
+        };
+        let ink = Pen::new(TEXT_PEN).with_color(INK);
+        let name = if view.name.trim().is_empty() {
+            "View".to_owned()
+        } else {
+            view.name.trim().to_owned()
+        };
+        let mut left = x;
+        if several {
+            // The view's number, in a ring.
+            let centre = DVec2::new(x + 3.2, top - 3.2);
+            d.push(
+                FRAME_LAYER,
+                Pen::new(RULE_PEN).with_color(INK),
+                Prim::Circle {
+                    center: centre,
+                    radius: 3.2,
+                },
+            );
+            d.styled_text(
+                FRAME_LAYER,
+                ink,
+                centre - DVec2::new(0.0, 1.25),
+                2.5,
+                Align::Center,
+                TextStyle::BOLD,
+                (i + 1).to_string(),
+            );
+            left += 8.4;
+        }
+        let room = (frame.max.x - left).max(30.0);
+        let (text, height) = fitted(&name, 3.2, TextStyle::BOLD, room);
+        d.styled_text(
+            FRAME_LAYER,
+            ink,
+            DVec2::new(left, top - 3.6),
+            height,
+            Align::Left,
+            TextStyle::BOLD,
+            text.clone(),
+        );
+        let rule = styled_width(&text, height, TextStyle::BOLD).max(24.0) + 4.0;
+        d.line(
+            FRAME_LAYER,
+            Pen::new(RULE_PEN).with_color(INK),
+            DVec2::new(left, top - 5.2),
+            DVec2::new(left + rule.min(room), top - 5.2),
+        );
+        label(
+            d,
+            DVec2::new(left, top - 8.4),
+            &format!("Scale {}", scale_label(view.scale)),
+            MUTED,
+        );
+    }
+}
+
 /// The title block's outline, if the sheet has one.
 pub fn title_block_bounds(sheet: &Sheet) -> Option<Bounds> {
     let b = border(sheet);
@@ -112,10 +197,16 @@ fn cell(d: &mut Drawing, min: DVec2, max: DVec2, label: &str, value: &str, value
     );
 }
 
-/// Draw the border, title block and revision table. `sheet_no` is (this sheet, of how many).
-pub fn draw_frame(sheet: &Sheet, sheet_no: (usize, usize), d: &mut Drawing) {
+/// Draw the border, title block and revision table. `sheet_no` is (this sheet, of how many);
+/// `logo` goes in the title block.
+pub fn draw_frame(
+    sheet: &Sheet,
+    sheet_no: (usize, usize),
+    logo: Option<&crate::logo::Logo>,
+    d: &mut Drawing,
+) {
     if sheet.title_block == TitleBlock::Modern {
-        draw_modern(sheet, sheet_no, d);
+        draw_modern(sheet, sheet_no, logo, d);
         return;
     }
     let b = border(sheet);
@@ -150,7 +241,7 @@ pub fn draw_frame(sheet: &Sheet, sheet_no: (usize, usize), d: &mut Drawing) {
     );
 
     let f = &sheet.fields;
-    let scale = scale_label(sheet.scale);
+    let scale = sheet.scale_text();
     let sheet_text = format!("{} / {}", sheet_no.0, sheet_no.1);
     let rev = sheet.revision().unwrap_or("-").to_owned();
     if let Some(tb) = title_block_bounds(sheet) {
@@ -165,6 +256,17 @@ pub fn draw_frame(sheet: &Sheet, sheet_no: (usize, usize), d: &mut Drawing) {
             _ => ["Company", "Drawn by", "Checked by", "Material"],
         };
         let values = [&f.company, &f.author, &f.checked, &f.material];
+        // The logo, at the right of the company's cell.
+        if let Some(logo) = logo {
+            let room = DVec2::new(left_w * 0.45, row - 2.0);
+            let k = (room.x / logo.size.x).min(room.y / logo.size.y);
+            let w = logo.size.x * k;
+            let area = Bounds {
+                min: DVec2::new(xl - 1.2 - w, y1 - row + 1.0),
+                max: DVec2::new(xl - 1.2, y1 - 1.0),
+            };
+            logo.draw(d, FRAME_LAYER, area);
+        }
         for (k, (label, value)) in labels.iter().zip(values).enumerate() {
             let top = y1 - row * k as f64;
             let label = if k == 1 && !f.date.is_empty() {
@@ -319,7 +421,12 @@ fn field_sized(
     );
 }
 
-fn draw_modern(sheet: &Sheet, sheet_no: (usize, usize), d: &mut Drawing) {
+fn draw_modern(
+    sheet: &Sheet,
+    sheet_no: (usize, usize),
+    logo: Option<&crate::logo::Logo>,
+    d: &mut Drawing,
+) {
     let b = border(sheet);
     let (x0, y0, x1) = (b.min.x, b.min.y, b.max.x);
     let y1 = y0 + STRIP;
@@ -415,7 +522,7 @@ fn draw_modern(sheet: &Sheet, sheet_no: (usize, usize), d: &mut Drawing) {
         nx + pad + half,
         bottom,
         "Scale",
-        &scale_label(sheet.scale),
+        &sheet.scale_text(),
         half - pad,
         false,
     );
@@ -450,8 +557,26 @@ fn draw_modern(sheet: &Sheet, sheet_no: (usize, usize), d: &mut Drawing) {
         hero_end = mx;
     }
 
+    // The logo leads the strip, with the title beside it.
+    let mut hx = x0 + 5.0;
+    if let Some(logo) = logo {
+        let area = Bounds {
+            min: DVec2::new(hx, y0 + 4.0),
+            max: DVec2::new(hx + ((hero_end - hx) * 0.3).min(44.0), y1 - 4.0),
+        };
+        let used = logo.draw(d, FRAME_LAYER, area);
+        if used > 0.0 {
+            hx += used + 5.0;
+            d.line(
+                FRAME_LAYER,
+                faint,
+                DVec2::new(hx - 0.4, y0 + 3.0),
+                DVec2::new(hx - 0.4, y1 - 3.0),
+            );
+            hx += 4.0;
+        }
+    }
     // The title: the largest type on the sheet, under whose drawing it is.
-    let hx = x0 + 5.0;
     let room = hero_end - hx - 6.0;
     let title = if f.title.trim().is_empty() {
         &sheet.name
@@ -655,7 +780,7 @@ mod tests {
     fn frame_fits_the_paper_and_fills_the_block() {
         let mut sheet = Sheet::new("Plate");
         sheet.title_block = TitleBlock::Iso;
-        sheet.scale = 2.0;
+        sheet.views[0].scale = 2.0;
         sheet.fields.number = "DR-001".into();
         sheet.fields.author = "CP".into();
         sheet.revisions.push(Revision {
@@ -665,7 +790,7 @@ mod tests {
             by: "CP".into(),
         });
         let mut d = Drawing::new(sheet.size());
-        draw_frame(&sheet, (1, 2), &mut d);
+        draw_frame(&sheet, (1, 2), None, &mut d);
         let b = d.bounds();
         assert!(b.min.x >= -1e-9 && b.min.y >= -1e-9);
         assert!(b.max.x <= 420.0 + 1e-9 && b.max.y <= 297.0 + 1e-9);
@@ -706,7 +831,7 @@ mod tests {
                 by: "CL".into(),
             });
             let mut d = Drawing::new(sheet.size());
-            draw_frame(&sheet, (3, 12), &mut d);
+            draw_frame(&sheet, (3, 12), None, &mut d);
             let b = border(&sheet);
             // The view sits above the strip; the strip spans the frame.
             let area = drawing_area(&sheet);

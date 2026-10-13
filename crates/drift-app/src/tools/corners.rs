@@ -23,6 +23,15 @@ fn fillet_under(ed: &Editor, p: &Pointer) -> Option<EntityId> {
     ed.fillet_at(arc).map(|_| arc)
 }
 
+/// The chamfer under the pointer: a line between two lines that would meet beyond it.
+fn chamfer_under(ed: &Editor, p: &Pointer) -> Option<(EntityId, crate::modify::ChamferInfo)> {
+    if p.snapped_point().is_some() {
+        return None;
+    }
+    let cut = super::curve_ops::curve_under(ed, p)?;
+    ed.chamfer_at(cut).map(|c| (cut, c))
+}
+
 fn default_size(ed: &Editor) -> f64 {
     // A round number in the document's units.
     if ed.doc.units().length.is_metric() {
@@ -349,6 +358,12 @@ impl ChamferTool {
         let (d1, d2) = match (self.sizing, self.distances) {
             // Sized with the pointer: the same distance along both lines.
             (Some(s), _) if s.moved => (s.size, s.size),
+            // A chamfer that is already there, not yet moved: as it is.
+            (Some(Sizing { arc: Some(cut), .. }), _) => ed
+                .chamfer_at(cut)
+                .map_or((default_size(ed), default_size(ed)), |c| {
+                    (c.legs[0], c.legs[1])
+                }),
             (_, Some(d)) => d,
             _ => (default_size(ed), default_size(ed)),
         };
@@ -359,8 +374,24 @@ impl ChamferTool {
     }
 
     fn begin(&mut self, p: &Pointer, ed: &mut Editor) -> bool {
+        // A chamfer that is already there is re-sized in place.
+        if let Some((cut, c)) = chamfer_under(ed, p) {
+            let (half, room) = c.half_angle_and_room();
+            self.sizing = Some(Sizing {
+                corner: cut,
+                arc: Some(cut),
+                at: c.corner,
+                half,
+                room,
+                start: p.raw,
+                moved: false,
+                size: c.legs[0],
+            });
+            self.hover = None;
+            return true;
+        }
         let Some(corner) = corner_under(ed, p) else {
-            ed.notice = Some("Chamfer: click a corner where two lines meet".into());
+            ed.notice = Some("Chamfer: click a corner where two lines meet, or a chamfer".into());
             return false;
         };
         let size = self.distances(ed).0;
@@ -381,8 +412,12 @@ impl ChamferTool {
         let Some(s) = self.sizing.take() else {
             return;
         };
-        match ed.chamfer(s.corner, d1, d2) {
-            Ok(_) => self.distances = Some((d1, d2)),
+        let done = match s.arc {
+            Some(cut) => ed.rechamfer(cut, d1, d2),
+            None => ed.chamfer(s.corner, d1, d2).map(|_| ()),
+        };
+        match done {
+            Ok(()) => self.distances = Some((d1, d2)),
             Err(e) => ed.notice = Some(format!("Chamfer: {e}")),
         }
     }
@@ -406,7 +441,15 @@ impl Tool for ChamferTool {
     fn handle(&mut self, input: Input, ed: &mut Editor) {
         match input {
             Input::Hover(p) if self.sizing.is_some() => self.follow(&p),
-            Input::Hover(p) => self.hover = corner_under(ed, &p),
+            Input::Hover(p) => {
+                self.hover = corner_under(ed, &p);
+                // A chamfer that would be re-sized lights up (a corner comes first).
+                ed.hovered = if self.hover.is_none() {
+                    chamfer_under(ed, &p).map(|(cut, _)| cut)
+                } else {
+                    None
+                };
+            }
             Input::Click(p, _) if self.sizing.is_some() => {
                 self.follow(&p);
                 self.apply(ed);
@@ -470,12 +513,13 @@ impl Tool for ChamferTool {
 
     fn editor_preview(&self, ed: &Editor) -> Vec<SketchItem> {
         let (d1, d2) = self.distances(ed);
-        self.sizing
-            .map(|s| s.corner)
-            .or(self.hover)
-            .and_then(|c| ed.chamfer_preview(c, d1, d2))
-            .map(preview)
-            .into_iter()
-            .collect()
+        match self.sizing {
+            Some(Sizing { arc: Some(cut), .. }) => ed.rechamfer_preview(cut, d1, d2),
+            Some(s) => ed.chamfer_preview(s.corner, d1, d2),
+            None => self.hover.and_then(|c| ed.chamfer_preview(c, d1, d2)),
+        }
+        .map(preview)
+        .into_iter()
+        .collect()
     }
 }

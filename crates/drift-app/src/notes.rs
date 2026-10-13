@@ -26,6 +26,19 @@ pub struct NoteText {
     pub rect: Rect,
 }
 
+/// A piece of a section or elevation mark, on screen, in drawing order.
+#[derive(Clone, Debug)]
+pub enum Mark {
+    /// A thin line through these points.
+    Stroke(Vec<Pos2>),
+    /// A filled convex shape (a flag's pointer, a cutting line's heavy end).
+    Solid(Vec<Pos2>),
+    /// A paper-coloured patch (the inside of a flag's ring).
+    Blank(Vec<Pos2>),
+    /// Text at a size (logical points).
+    Text(NoteText, f32),
+}
+
 /// An annotation laid out for drawing and picking.
 #[derive(Clone, Debug)]
 pub struct NoteLayout {
@@ -36,6 +49,8 @@ pub struct NoteLayout {
     pub end: LeaderEnd,
     /// Centre lines, on screen (for picking; the GPU draws them).
     pub segments: Vec<[Pos2; 2]>,
+    /// The pieces of a section or elevation mark.
+    pub marks: Vec<Mark>,
 }
 
 impl NoteLayout {
@@ -57,8 +72,14 @@ impl NoteLayout {
             };
             (a + ab * t - p).length() <= 4.0
         };
+        let on_mark = |m: &Mark| match m {
+            Mark::Stroke(points) => points.windows(2).any(|w| near(w[0], w[1])),
+            Mark::Blank(points) => Rect::from_points(points).contains(p),
+            Mark::Solid(_) | Mark::Text(..) => false,
+        };
         self.segments.iter().any(|[a, b]| near(*a, *b))
             || self.leader.windows(2).any(|w| near(w[0], w[1]))
+            || self.marks.iter().any(on_mark)
     }
 
     /// Where an in-place text editor goes.
@@ -256,6 +277,9 @@ pub fn label_world(doc: &Document, a: &Annotation) -> Option<DVec2> {
             })
         }
         Annotation::CentreMark { .. } | Annotation::Centreline { .. } => None,
+        // A mark is dragged whole, by its first end.
+        Annotation::Section { a, .. } => Some(*a),
+        Annotation::Elevation { at, .. } => Some(*at),
     }
 }
 
@@ -284,8 +308,114 @@ pub fn with_label_at(doc: &Document, a: &Annotation, to: DVec2) -> Option<Annota
             };
         }
         Annotation::CentreMark { .. } | Annotation::Centreline { .. } => return None,
+        Annotation::Section { a, b, .. } => {
+            *b += to - *a;
+            *a = to;
+        }
+        Annotation::Elevation { at, .. } => *at = to,
     }
     Some(a)
+}
+
+/// The next unused label for a new section (`A`, `B` … then `A1` …) or elevation (`1`,
+/// `2` …).
+pub fn next_mark_label(doc: &Document, section: bool) -> String {
+    let used: Vec<&str> = doc
+        .annotations()
+        .filter_map(|(_, a)| match a {
+            Annotation::Section { label, .. } if section => Some(label.as_str()),
+            Annotation::Elevation { label, .. } if !section => Some(label.as_str()),
+            _ => None,
+        })
+        .collect();
+    let free = |label: &String| !used.contains(&label.as_str());
+    if section {
+        (0..)
+            .flat_map(|round: u32| {
+                ('A'..='Z').map(move |c| {
+                    if round == 0 {
+                        c.to_string()
+                    } else {
+                        format!("{c}{round}")
+                    }
+                })
+            })
+            .find(free)
+            .expect("an unbounded supply")
+    } else {
+        (1u32..)
+            .map(|n| n.to_string())
+            .find(free)
+            .expect("an unbounded supply")
+    }
+}
+
+/// A flag: a ring at `c` holding the label (over the sheet it refers to, if given), with a
+/// solid pointer towards `look` (a unit vector on screen).
+fn flag(
+    painter: &egui::Painter,
+    c: Pos2,
+    look: egui::Vec2,
+    label: &str,
+    sheet: &str,
+    font: f32,
+    marks: &mut Vec<Mark>,
+) {
+    let r = flag_radius(font);
+    let side = look.rot90();
+    marks.push(Mark::Solid(vec![
+        c + side * r,
+        c + look * (r * 1.62),
+        c - side * r,
+    ]));
+    let ring: Vec<Pos2> = (0..=40)
+        .map(|k| {
+            let a = k as f32 / 40.0 * std::f32::consts::TAU;
+            c + vec2(a.cos(), a.sin()) * r
+        })
+        .collect();
+    marks.push(Mark::Blank(ring.clone()));
+    marks.push(Mark::Stroke(ring));
+    let shown = if label.trim().is_empty() {
+        " "
+    } else {
+        label.trim()
+    };
+    if sheet.trim().is_empty() {
+        marks.push(Mark::Text(
+            place_text(painter, shown.to_owned(), c, 0.0, font),
+            font,
+        ));
+    } else {
+        // The label over a rule, and under it the sheet (smaller, to fit the ring).
+        marks.push(Mark::Stroke(vec![c - vec2(r, 0.0), c + vec2(r, 0.0)]));
+        let small = font * 0.72;
+        marks.push(Mark::Text(
+            place_text(
+                painter,
+                shown.to_owned(),
+                c - vec2(0.0, r * 0.45),
+                0.0,
+                font * 0.9,
+            ),
+            font * 0.9,
+        ));
+        marks.push(Mark::Text(
+            place_text(
+                painter,
+                sheet.trim().to_owned(),
+                c + vec2(0.0, r * 0.45),
+                0.0,
+                small,
+            ),
+            small,
+        ));
+    }
+}
+
+/// The radius of a mark's ring for a text size (logical points).
+pub fn flag_radius(font: f32) -> f32 {
+    font * 1.15 + 3.0
 }
 
 /// The value an ordinate dimension shows.
@@ -371,6 +501,7 @@ pub fn layout_annotations(
                 .into_iter()
                 .map(|(p, q)| [s(p), s(q)])
                 .collect(),
+            marks: Vec::new(),
         };
         match a {
             Annotation::Note { text, at, leader } => {
@@ -385,6 +516,59 @@ pub fn layout_annotations(
                 layout.text = Some(t);
             }
             Annotation::CentreMark { .. } | Annotation::Centreline { .. } => {}
+            Annotation::Section {
+                a,
+                b,
+                label,
+                sheet,
+                flip,
+            } => {
+                let (sa, sb) = (s(*a), s(*b));
+                let along = (sb - sa).normalized();
+                let along = if along.is_finite() {
+                    along
+                } else {
+                    vec2(1.0, 0.0)
+                };
+                // The section looks to the left of a → b (in the sketch, y up), or the right.
+                let world =
+                    (*b - *a).normalize_or(DVec2::X).perp() * if *flip { -1.0 } else { 1.0 };
+                let look = vec2(world.x as f32, -world.y as f32);
+                let r = flag_radius(font);
+                // The cutting line, heavy where it leaves each flag.
+                layout.marks.push(Mark::Stroke(vec![sa, sb]));
+                let heavy = (r * 1.4).min((sb - sa).length() * 0.3);
+                let w = look * 1.1;
+                for (end, dir) in [(sa, along), (sb, -along)] {
+                    layout.marks.push(Mark::Solid(vec![
+                        end + w,
+                        end + dir * heavy + w,
+                        end + dir * heavy - w,
+                        end - w,
+                    ]));
+                }
+                for (end, out) in [(sa, -along), (sb, along)] {
+                    flag(
+                        painter,
+                        end + out * r,
+                        look,
+                        label,
+                        sheet,
+                        font,
+                        &mut layout.marks,
+                    );
+                }
+            }
+            Annotation::Elevation {
+                at,
+                angle,
+                label,
+                sheet,
+            } => {
+                let d = DVec2::from_angle(angle.to_radians());
+                let look = vec2(d.x as f32, -d.y as f32);
+                flag(painter, s(*at), look, label, sheet, font, &mut layout.marks);
+            }
             Annotation::HoleCallout { curve, at, suffix } => {
                 let (Some((c, r)), Some(text)) =
                     (centre(doc, *curve), hole_callout_text(doc, *curve, suffix))
@@ -469,6 +653,22 @@ pub fn paint_annotation(
         AnnotationState::Preview => colors.preview,
     };
     let stroke = Stroke::new(1.0, color);
+    for mark in &layout.marks {
+        match mark {
+            Mark::Stroke(points) => pen.line(points, stroke),
+            Mark::Solid(points) => pen.polygon(points.clone(), color),
+            Mark::Blank(points) => pen.mask(points.clone(), colors.text_background),
+            Mark::Text(t, size) => {
+                let galley = pen.painter().layout(
+                    t.text.clone(),
+                    FontId::proportional(*size),
+                    color,
+                    f32::INFINITY,
+                );
+                pen.text(t.center - galley.size() / 2.0, galley, 0.0, color);
+            }
+        }
+    }
     if layout.leader.len() >= 2 {
         pen.line(&layout.leader, stroke);
         let (tip, next) = (layout.leader[0], layout.leader[1]);
@@ -501,7 +701,7 @@ pub fn paint_annotation(
             pen.highlight(t.rect, color);
         }
     }
-    if state != AnnotationState::Normal && layout.text.is_none() {
+    if state != AnnotationState::Normal && layout.text.is_none() && layout.marks.is_empty() {
         // Centre marks: mark their ends so a picked one shows.
         for [a, b] in &layout.segments {
             pen.dot(*a, 2.0, color);
@@ -616,5 +816,32 @@ mod tests {
             anchor_at(&doc, Some(p), None, DVec2::ZERO),
             Anchor::Point(p)
         );
+    }
+
+    #[test]
+    fn marks_take_the_next_free_label() {
+        let mut doc = Document::new();
+        assert_eq!(next_mark_label(&doc, true), "A");
+        assert_eq!(next_mark_label(&doc, false), "1");
+        for label in ["A", "C"] {
+            doc.add_annotation(Annotation::Section {
+                a: DVec2::ZERO,
+                b: DVec2::X,
+                label: label.into(),
+                sheet: String::new(),
+                flip: false,
+            })
+            .unwrap();
+        }
+        doc.add_annotation(Annotation::Elevation {
+            at: DVec2::ZERO,
+            angle: 0.0,
+            label: "1".into(),
+            sheet: String::new(),
+        })
+        .unwrap();
+        // Gaps are filled; sections and elevations are numbered apart.
+        assert_eq!(next_mark_label(&doc, true), "B");
+        assert_eq!(next_mark_label(&doc, false), "2");
     }
 }

@@ -6,7 +6,7 @@
 //! ```json
 //! {
 //!   "format": "drift",
-//!   "version": 17,
+//!   "version": 18,
 //!   "meta": {"title":"Bracket","units":"mm","generator":"Drift 0.1.0"},
 //!   "display": {"length":"architectural","fraction":16},
 //!   "variables": [
@@ -68,7 +68,7 @@ pub const EXTENSION: &str = "drift";
 /// and `instances`; 11 = adds a layer's `fill` colour; 12 = adds `underlays` (M8.5); 13 = adds
 /// `ellipse` entities; 14 = adds `bezier` curves and `smooth` relations; 15 = adds `texts`
 /// (M9); 16 = adds the `modern` title block.
-pub const FORMAT_VERSION: u32 = 17;
+pub const FORMAT_VERSION: u32 = 18;
 const FORMAT_TAG: &str = "drift";
 
 /// Document-level properties stored alongside the geometry.
@@ -771,6 +771,9 @@ struct FileRecord {
     /// Imported hatch patterns, as `.pat` text.
     #[serde(default)]
     patterns: Option<String>,
+    /// The title blocks' logo, as SVG text.
+    #[serde(default)]
+    logo: Option<String>,
     #[serde(default)]
     sheets: Vec<sheets::SheetRecord>,
     #[serde(default)]
@@ -923,6 +926,10 @@ pub fn save(doc: &Document, meta: &Metadata) -> String {
     if !doc.custom_patterns().is_empty() {
         let p = serde_json::to_string(doc.custom_patterns()).expect("patterns serialize");
         out.push_str(&format!("  \"patterns\": {p},\n"));
+    }
+    if !doc.logo().is_empty() {
+        let l = serde_json::to_string(doc.logo()).expect("logo serializes");
+        out.push_str(&format!("  \"logo\": {l},\n"));
     }
     if let Some(d) = drafting::draft_record(&doc.draft_style()) {
         let d = serde_json::to_string(&d).expect("drafting serializes");
@@ -1411,6 +1418,9 @@ pub fn load(text: &str) -> Result<(Document, Metadata), LoadError> {
     if let Some(p) = file.patterns {
         doc.set_custom_patterns(p);
     }
+    if let Some(l) = file.logo {
+        doc.set_logo(l);
+    }
     for b in file.blocks {
         let id_text = b.id.clone();
         let (id, block) = blocks::parse_block(b)?;
@@ -1561,7 +1571,8 @@ pub fn migrate(value: serde_json::Value) -> Result<serde_json::Value, LoadError>
         // v1 → v2: constraints were introduced; a v1 file simply has none.
         value["constraints"] = serde_json::Value::Array(Vec::new());
     }
-    // v2 → v17 only added optional fields, sections and constraint types: nothing to convert.
+    // v2 → v18 only added optional fields, sections and constraint types: nothing to convert
+    // (a sheet's single view from before v18 is read as it was written).
     value["version"] = FORMAT_VERSION.into();
     Ok(value)
 }
@@ -1604,7 +1615,7 @@ mod tests {
         let text = save(&doc, &Metadata::default());
         let expected = r#"{
   "format": "drift",
-  "version": 17,
+  "version": 18,
   "meta": {"units":"mm"},
   "entities": [
     {"type":"point","id":"e1","at":[0.0,0.0]},
@@ -2071,11 +2082,23 @@ mod tests {
         style.scale = 50.0;
         doc.set_draft_style(style);
         doc.set_custom_patterns("*MINE, Mine\n0, 0,0, 0,2\n".into());
+        doc.set_logo(
+            r##"<svg viewBox="0 0 4 2"><rect width="4" height="2" fill="#f60"/></svg>"##.into(),
+        );
         let mut sheet = drift_core::Sheet::new("Plate");
         sheet.paper = drift_core::PaperSize::Custom(500.0, 350.0);
         sheet.portrait = true;
-        sheet.scale = 2.5;
-        sheet.center = DVec2::new(60.0, 40.0);
+        sheet.views[0].scale = 2.5;
+        sheet.views[0].center = DVec2::new(60.0, 40.0);
+        let mut detail_view = drift_core::SheetView::new(0.5, DVec2::new(12.0, 8.0));
+        detail_view.name = "Detail A".into();
+        detail_view.frame = Some(drift_core::ViewFrame {
+            at: DVec2::new(400.0, 250.0),
+            size: DVec2::new(120.0, 90.0),
+        });
+        detail_view.title = true;
+        detail_view.border = true;
+        sheet.views.push(detail_view);
         sheet.title_block = drift_core::TitleBlock::Ansi;
         sheet.fields.title = "Mounting plate".into();
         sheet.fields.number = "DR-001".into();
@@ -2087,8 +2110,8 @@ mod tests {
         });
         doc.add_sheet(sheet);
         let mut detail = drift_core::Sheet::new("Detail");
-        detail.dimensions = false;
-        detail.notes = false;
+        detail.views[0].dimensions = false;
+        detail.views[0].notes = false;
         doc.add_sheet(detail);
         let chair = doc.add_block(drift_core::Block {
             name: "Chair".into(),
@@ -2198,7 +2221,7 @@ mod tests {
         doc.add_text(drift_core::SketchText::new("A", DVec2::ZERO, 3.0));
 
         let text = save(&doc, &Metadata::default());
-        assert!(text.contains("\"version\": 17"));
+        assert!(text.contains("\"version\": 18"));
         assert!(
             text.contains(r#"{"a":[80.0,20.0,30.0,0.0,90.0]}"#),
             "{text}"

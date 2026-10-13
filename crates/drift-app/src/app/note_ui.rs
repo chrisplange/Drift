@@ -15,6 +15,25 @@ pub(crate) struct NoteEdit {
     pub new: bool,
 }
 
+/// A mark's label and the sheet it refers to.
+fn mark_fields(ui: &mut egui::Ui, label: &mut String, sheet: &mut String, example: &str) {
+    theme::row(ui, "Label", |ui| {
+        ui.add(
+            egui::TextEdit::singleline(label)
+                .hint_text(example)
+                .desired_width(60.0),
+        );
+    });
+    theme::row(ui, "On sheet", |ui| {
+        ui.add(
+            egui::TextEdit::singleline(sheet)
+                .hint_text("A-201, 02…")
+                .desired_width(ui.available_width() - 8.0),
+        )
+        .on_hover_text("The sheet the view is drawn on: written in the lower half of the flag");
+    });
+}
+
 impl DriftApp {
     pub(crate) fn layout_notes(&self, painter: &egui::Painter, map: &ScreenMap) -> Vec<NoteLayout> {
         if !self.show_dimensions {
@@ -379,6 +398,56 @@ impl DriftApp {
                         .small()
                         .weak(),
                 );
+            }
+            Annotation::Section {
+                a: from,
+                b: to,
+                label,
+                sheet,
+                flip,
+            } => {
+                theme::section(ui, "Mark");
+                mark_fields(ui, label, sheet, "A");
+                theme::row(ui, "Looks", |ui| {
+                    if ui
+                        .button("Flip")
+                        .on_hover_text("Look the other way across the cutting line")
+                        .clicked()
+                    {
+                        *flip = !*flip;
+                    }
+                    if ui
+                        .button("Swap ends")
+                        .on_hover_text("Run the cutting line the other way (the flags stay)")
+                        .clicked()
+                    {
+                        std::mem::swap(from, to);
+                        *flip = !*flip;
+                    }
+                });
+            }
+            Annotation::Elevation {
+                angle,
+                label,
+                sheet,
+                ..
+            } => {
+                theme::section(ui, "Mark");
+                mark_fields(ui, label, sheet, "1");
+                theme::row(ui, "Looks", |ui| {
+                    ui.add(
+                        egui::DragValue::new(angle)
+                            .speed(1.0)
+                            .range(-360.0..=360.0)
+                            .suffix("°"),
+                    );
+                    for (text, degrees) in [("→", 0.0), ("↑", 90.0), ("←", 180.0), ("↓", 270.0)]
+                    {
+                        if ui.small_button(text).clicked() {
+                            *angle = degrees;
+                        }
+                    }
+                });
             }
         }
         if edited != a {

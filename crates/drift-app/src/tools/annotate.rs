@@ -444,3 +444,147 @@ impl Tool for OrdinateTool {
         true
     }
 }
+
+// ---------------------------------------------------------------------------------------------
+// Section and elevation marks
+
+/// Two clicks: the ends of a section's cutting line. It gets the next free letter; which way
+/// it looks, and the sheet it refers to, are set in the inspector.
+#[derive(Default)]
+pub struct SectionTool {
+    first: Option<DVec2>,
+    hover: Option<DVec2>,
+}
+
+impl Tool for SectionTool {
+    fn kind(&self) -> ToolKind {
+        ToolKind::Section
+    }
+
+    fn hint(&self) -> String {
+        if self.first.is_some() {
+            "Click where the cutting line ends".into()
+        } else {
+            "Click where the section's cutting line starts".into()
+        }
+    }
+
+    fn is_busy(&self) -> bool {
+        self.first.is_some()
+    }
+
+    fn handle(&mut self, input: Input, ed: &mut Editor) {
+        match input {
+            Input::Hover(p) | Input::Drag(p) => self.hover = Some(p.pos()),
+            Input::Click(p, _) => match self.first.take() {
+                None => self.first = Some(p.pos()),
+                Some(a) if a != p.pos() => {
+                    let mark = Annotation::Section {
+                        a,
+                        b: p.pos(),
+                        label: notes::next_mark_label(&ed.doc, true),
+                        sheet: String::new(),
+                        flip: false,
+                    };
+                    add_annotation(ed, mark, "Section mark");
+                }
+                Some(a) => self.first = Some(a),
+            },
+            Input::Finish => self.first = None,
+            _ => {}
+        }
+    }
+
+    fn cancel(&mut self, _ed: &mut Editor) -> bool {
+        self.first.take().is_some()
+    }
+
+    fn preview(&self, _pointer: Option<&Pointer>) -> Vec<SketchItem> {
+        match (self.first, self.hover) {
+            (Some(a), Some(b)) if a != b => vec![preview_leader(a, b)],
+            _ => Vec::new(),
+        }
+    }
+}
+
+/// Click where an elevation's flag goes, then towards what it looks at (in 15° steps; Alt:
+/// freely). It gets the next free number.
+#[derive(Default)]
+pub struct ElevationTool {
+    at: Option<DVec2>,
+    hover: Option<DVec2>,
+}
+
+impl ElevationTool {
+    /// The direction from the flag to the pointer, in degrees.
+    fn aim(at: DVec2, p: &Pointer) -> Option<f64> {
+        let v = p.raw - at;
+        if v.length() <= p.tolerance {
+            return None;
+        }
+        let degrees = v.y.atan2(v.x).to_degrees();
+        Some(if p.alt {
+            (degrees * 10.0).round() / 10.0
+        } else {
+            (degrees / 15.0).round() * 15.0
+        })
+    }
+}
+
+impl Tool for ElevationTool {
+    fn kind(&self) -> ToolKind {
+        ToolKind::Elevation
+    }
+
+    fn hint(&self) -> String {
+        if self.at.is_some() {
+            "Click towards what the elevation looks at (Alt: any angle)".into()
+        } else {
+            "Click where the elevation mark goes".into()
+        }
+    }
+
+    fn is_busy(&self) -> bool {
+        self.at.is_some()
+    }
+
+    fn wants_snap(&self) -> bool {
+        // The second click only aims.
+        self.at.is_none()
+    }
+
+    fn handle(&mut self, input: Input, ed: &mut Editor) {
+        match input {
+            Input::Hover(p) | Input::Drag(p) => self.hover = Some(p.raw),
+            Input::Click(p, _) => match self.at {
+                None => self.at = Some(p.pos()),
+                Some(at) => {
+                    let Some(angle) = Self::aim(at, &p) else {
+                        return;
+                    };
+                    self.at = None;
+                    let mark = Annotation::Elevation {
+                        at,
+                        angle,
+                        label: notes::next_mark_label(&ed.doc, false),
+                        sheet: String::new(),
+                    };
+                    add_annotation(ed, mark, "Elevation mark");
+                }
+            },
+            Input::Finish => self.at = None,
+            _ => {}
+        }
+    }
+
+    fn cancel(&mut self, _ed: &mut Editor) -> bool {
+        self.at.take().is_some()
+    }
+
+    fn preview(&self, _pointer: Option<&Pointer>) -> Vec<SketchItem> {
+        match (self.at, self.hover) {
+            (Some(a), Some(b)) if a != b => vec![preview_leader(a, b)],
+            _ => Vec::new(),
+        }
+    }
+}

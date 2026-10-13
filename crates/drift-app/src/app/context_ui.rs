@@ -879,6 +879,26 @@ impl DriftApp {
                 self.editor.ungroup();
                 ui.close();
             }
+            let cut = (self.editor.selection.len() == 1)
+                .then(|| self.editor.selection.iter().next().copied())
+                .flatten()
+                .and_then(|id| {
+                    if self.editor.fillet_at(id).is_some() {
+                        Some((id, "Remove fillet"))
+                    } else if self.editor.chamfer_at(id).is_some() {
+                        Some((id, "Remove chamfer"))
+                    } else {
+                        None
+                    }
+                });
+            if let Some((id, label)) = cut
+                && item(ui, label, "")
+            {
+                ui.close();
+                if let Err(e) = self.editor.remove_corner_cut(id) {
+                    self.set_status(format!("{label}: {e}"), true, now);
+                }
+            }
             if item(ui, "Toggle construction", "X") {
                 self.editor.toggle_construction();
                 ui.close();

@@ -88,6 +88,14 @@ impl DriftApp {
             if ctx.input(|i| i.key_pressed(Key::F) && i.modifiers.shift_only()) {
                 self.preview.zoom = 0.0;
             }
+            // Delete removes the picked view (a sheet keeps at least one).
+            if ctx.input(|i| {
+                i.modifiers.is_none()
+                    && (i.key_pressed(Key::Delete) || i.key_pressed(Key::Backspace))
+            }) && let Some(id) = self.current_sheet()
+            {
+                self.remove_view(id);
+            }
             return;
         }
         // Q: the relations pie, which keeps the keys while it is open.

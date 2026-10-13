@@ -17,35 +17,52 @@ impl std::fmt::Display for TextId {
     }
 }
 
-/// The typefaces text can use (built in, so files open the same everywhere).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+/// The typefaces text can use: two built in (so files open the same everywhere), or one
+/// installed on the computer.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub enum TextFont {
     /// A clean sans-serif (Ubuntu Light).
     #[default]
     Sans,
     /// A monospaced font (Hack).
     Mono,
+    /// A font installed on the computer, by its family name. Where it isn't installed the
+    /// text is shown in the built-in sans, and keeps the name.
+    System(String),
 }
 
 impl TextFont {
-    pub const ALL: [TextFont; 2] = [TextFont::Sans, TextFont::Mono];
+    pub const BUILT_IN: [TextFont; 2] = [TextFont::Sans, TextFont::Mono];
+    /// What a system font's name is written with in a file: `system:Helvetica Neue`.
+    const SYSTEM_PREFIX: &'static str = "system:";
 
-    pub fn name(self) -> &'static str {
+    /// The name in a file.
+    pub fn name(&self) -> String {
         match self {
-            TextFont::Sans => "sans",
-            TextFont::Mono => "mono",
+            TextFont::Sans => "sans".into(),
+            TextFont::Mono => "mono".into(),
+            TextFont::System(family) => format!("{}{family}", Self::SYSTEM_PREFIX),
         }
     }
 
-    pub fn label(self) -> &'static str {
+    pub fn label(&self) -> String {
         match self {
-            TextFont::Sans => "Sans",
-            TextFont::Mono => "Monospace",
+            TextFont::Sans => "Sans".into(),
+            TextFont::Mono => "Monospace".into(),
+            TextFont::System(family) => family.clone(),
         }
     }
 
     pub fn from_name(s: &str) -> Option<TextFont> {
-        Self::ALL.into_iter().find(|f| f.name() == s)
+        match s {
+            "sans" => Some(TextFont::Sans),
+            "mono" => Some(TextFont::Mono),
+            _ => s
+                .strip_prefix(Self::SYSTEM_PREFIX)
+                .map(str::trim)
+                .filter(|family| !family.is_empty())
+                .map(|family| TextFont::System(family.to_owned())),
+        }
     }
 }
 

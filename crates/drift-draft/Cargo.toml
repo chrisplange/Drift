@@ -1,0 +1,20 @@
+[package]
+name = "drift-draft"
+description = "Drafting for Drift: hatch patterns (.pat), exact hatch clipping, text outlines"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+drift-core.workspace = true
+drift-geom.workspace = true
+# Glyph outlines for sketch text, from the fonts egui ships with.
+skrifa = "0.44"
+epaint_default_fonts = "0.36.2"
+roxmltree = "0.21.1"
+lyon_tessellation.workspace = true
+
+[lints]
+workspace = true

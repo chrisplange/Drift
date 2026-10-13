@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  lint:
+    name: Format and lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets
+      - name: Clippy (wasm32)
+        run: cargo clippy --target wasm32-unknown-unknown -p drift-core -p drift-geom -p drift-io -p drift-platform -p drift-solver -p drift-render -p drift-app -p drift-web
+
+  test:
+    name: Test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install software Vulkan (lavapipe) for GPU render tests
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers
+      - run: cargo test --workspace
+      - name: Upload render test images
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: render-tests-${{ matrix.os }}
+          path: target/tmp/*.png
+          if-no-files-found: ignore
+
+  deny:
+    name: Licences and advisories
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+
+  web:
+    name: Web build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: trunk
+      - name: Build
+        working-directory: apps/web
+        run: >
+          trunk build --release --cargo-profile web-release
+          --public-url "/${{ github.event.repository.name }}/"
+      - name: Check bundle size (budget 6 MB gzipped)
+        run: |
+          size=$(gzip -9 -c apps/web/dist/*.wasm | wc -c)
+          echo "WASM gzipped: $((size / 1024)) KiB" | tee -a "$GITHUB_STEP_SUMMARY"
+          test "$size" -lt $((6 * 1024 * 1024))
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: apps/web/dist
+
+  deploy:
+    name: Deploy to GitHub Pages
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [lint, test, web]
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

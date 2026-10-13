@@ -1,0 +1,29 @@
+[package]
+name = "drift-app"
+description = "Drift application shell: UI, tools and canvas interaction"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+drift-core.workspace = true
+drift-draft.workspace = true
+drift-geom.workspace = true
+drift-io.workspace = true
+drift-platform.workspace = true
+drift-render.workspace = true
+drift-solver.workspace = true
+eframe.workspace = true
+glam.workspace = true
+log.workspace = true
+lyon_tessellation.workspace = true
+web-time = "1"
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+egui_kittest = { version = "0.36.2", features = ["eframe", "wgpu", "snapshot"] }
+pollster = "1.0"

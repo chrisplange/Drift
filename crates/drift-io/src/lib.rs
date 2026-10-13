@@ -6,7 +6,7 @@
 //! ```json
 //! {
 //!   "format": "drift",
-//!   "version": 16,
+//!   "version": 17,
 //!   "meta": {"title":"Bracket","units":"mm","generator":"Drift 0.1.0"},
 //!   "display": {"length":"architectural","fraction":16},
 //!   "variables": [
@@ -68,7 +68,7 @@ pub const EXTENSION: &str = "drift";
 /// and `instances`; 11 = adds a layer's `fill` colour; 12 = adds `underlays` (M8.5); 13 = adds
 /// `ellipse` entities; 14 = adds `bezier` curves and `smooth` relations; 15 = adds `texts`
 /// (M9); 16 = adds the `modern` title block.
-pub const FORMAT_VERSION: u32 = 16;
+pub const FORMAT_VERSION: u32 = 17;
 const FORMAT_TAG: &str = "drift";
 
 /// Document-level properties stored alongside the geometry.
@@ -1561,7 +1561,7 @@ pub fn migrate(value: serde_json::Value) -> Result<serde_json::Value, LoadError>
         // v1 → v2: constraints were introduced; a v1 file simply has none.
         value["constraints"] = serde_json::Value::Array(Vec::new());
     }
-    // v2 → v15 only added optional fields, sections and constraint types: nothing to convert.
+    // v2 → v17 only added optional fields, sections and constraint types: nothing to convert.
     value["version"] = FORMAT_VERSION.into();
     Ok(value)
 }
@@ -1604,7 +1604,7 @@ mod tests {
         let text = save(&doc, &Metadata::default());
         let expected = r#"{
   "format": "drift",
-  "version": 16,
+  "version": 17,
   "meta": {"units":"mm"},
   "entities": [
     {"type":"point","id":"e1","at":[0.0,0.0]},
@@ -2086,7 +2086,10 @@ mod tests {
             by: "CP".into(),
         });
         doc.add_sheet(sheet);
-        doc.add_sheet(drift_core::Sheet::new("Detail"));
+        let mut detail = drift_core::Sheet::new("Detail");
+        detail.dimensions = false;
+        detail.notes = false;
+        doc.add_sheet(detail);
         let chair = doc.add_block(drift_core::Block {
             name: "Chair".into(),
             items: vec![
@@ -2195,7 +2198,7 @@ mod tests {
         doc.add_text(drift_core::SketchText::new("A", DVec2::ZERO, 3.0));
 
         let text = save(&doc, &Metadata::default());
-        assert!(text.contains("\"version\": 16"));
+        assert!(text.contains("\"version\": 17"));
         assert!(
             text.contains(r#"{"a":[80.0,20.0,30.0,0.0,90.0]}"#),
             "{text}"

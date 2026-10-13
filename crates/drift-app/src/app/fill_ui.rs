@@ -232,6 +232,15 @@ impl DriftApp {
             }
             theme::section(ui, "Style");
             let mut style = FillStyle::of(&fill);
+            if fills.len() == 1 && matches!(fill.kind, FillKind::Hatch(_)) {
+                ui.label(
+                    egui::RichText::new(
+                        "On the canvas, drag the square handle to move the pattern (it snaps to points) and the round one to turn it.",
+                    )
+                    .small()
+                    .weak(),
+                );
+            }
             if fill_style_editor(ui, &mut style, &self.hatch_patterns, dark, "selected") {
                 self.editor.doc.begin();
                 for id in &fills {

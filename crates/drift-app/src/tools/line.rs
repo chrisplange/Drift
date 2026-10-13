@@ -60,16 +60,10 @@ impl LineTool {
             ed.sync();
             return;
         };
-        match self.lock {
-            // An explicit axis lock always gets its relation.
-            Some(axis) => {
-                let _ = ed.doc.add_constraint(match axis {
-                    Axis::X => Constraint::Horizontal { line },
-                    Axis::Y => Constraint::Vertical { line },
-                });
-            }
-            None => auto_relation(ed, relation, line),
-        }
+        // A locked segment is drawn exactly along its axis either way; it is only kept there
+        // by a relation when automatic relations are on.
+        let relation = self.lock.map(Axis::relation).or(relation);
+        auto_relation(ed, relation, line);
         if let Some(value) = length {
             ed.add_typed_dimension(0, Constraint::Distance { a, b, value });
         }

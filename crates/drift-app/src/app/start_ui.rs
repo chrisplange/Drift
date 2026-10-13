@@ -329,6 +329,28 @@ impl DriftApp {
             "Add relations automatically while drawing",
         )
         .on_hover_text("Horizontal, vertical, coincident, tangent and so on, as you snap");
+        theme::section(ui, "Mouse and trackpad");
+        theme::row(ui, "Scrolling", |ui| {
+            for mode in crate::app::view::WheelMode::ALL {
+                ui.selectable_value(&mut self.wheel.mode, mode, mode.label())
+                    .on_hover_text(match mode {
+                        crate::app::view::WheelMode::Auto => {
+                            "A mouse wheel zooms; two fingers on a trackpad pan, and a pinch zooms"
+                        }
+                        crate::app::view::WheelMode::Zoom => {
+                            "Scrolling always zooms (if a trackpad isn't recognised as one, or you prefer it)"
+                        }
+                        crate::app::view::WheelMode::Pan => {
+                            "Scrolling always pans; Ctrl + scroll zooms"
+                        }
+                    });
+            }
+        });
+        ui.label(
+            egui::RichText::new("The middle or right mouse button drags the view either way.")
+                .small()
+                .weak(),
+        );
         theme::section(ui, "Display");
         ui.checkbox(
             &mut self.status_colors,

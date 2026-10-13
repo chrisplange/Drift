@@ -120,7 +120,8 @@ impl DimensionTool {
         let Some(c) = Self::dimension(ed, base, at) else {
             return;
         };
-        let offset = crate::annotations::dimension_anchor(&ed.doc, &c).map(|anchor| at - anchor);
+        let offset = crate::annotations::dimension_anchor(&ed.doc, &c)
+            .map(|anchor| crate::annotations::centred_offset(&ed.doc, &c, at - anchor));
         match ed.add_dimension(c, offset) {
             Ok(id) => {
                 ed.pending_edit = Some(id);
@@ -203,7 +204,8 @@ impl DimensionTool {
         let Some((c, at)) = Self::run_dimension(ed, &run, q, step) else {
             return false;
         };
-        let offset = crate::annotations::dimension_anchor(&ed.doc, &c).map(|anchor| at - anchor);
+        let offset = crate::annotations::dimension_anchor(&ed.doc, &c)
+            .map(|anchor| crate::annotations::centred_offset(&ed.doc, &c, at - anchor));
         let added = match ed.add_dimension(c, offset) {
             Ok(id) => Some(id),
             Err(crate::editor::EditError::Redundant | crate::editor::EditError::Conflict) => {
@@ -354,6 +356,9 @@ impl Tool for DimensionTool {
         let at = pointer?.raw;
         let c = Self::dimension(ed, self.base?, at)?;
         let anchor = crate::annotations::dimension_anchor(&ed.doc, &c)?;
-        Some((c, at - anchor))
+        Some((
+            c,
+            crate::annotations::centred_offset(&ed.doc, &c, at - anchor),
+        ))
     }
 }

@@ -24,7 +24,7 @@ impl DriftApp {
             let gb = |b: u64| b as f64 / (1024.0 * 1024.0 * 1024.0);
             self.set_status(
                 format!(
-                    "Drift is using {:.1} GB of memory, far more than usual. Save your work:                      it stops itself at {:.0} GB to protect the system.",
+                    "Drift is using {:.1} GB of memory, far more than usual. Save your work: it stops itself at {:.0} GB to protect the system.",
                     gb(used),
                     gb(memory::limit())
                 ),
@@ -83,6 +83,7 @@ impl DriftApp {
             .iter()
             .map(|(k, v)| format!("{k}={}", u8::from(*v)))
             .collect();
+        prefs.push(format!("wheel={}", self.wheel.mode.key()));
         prefs.extend(self.layout.prefs());
         prefs.join(";")
     }
@@ -96,6 +97,11 @@ impl DriftApp {
             };
             let on = value == "1";
             match key {
+                "wheel" => {
+                    if let Some(mode) = crate::app::view::WheelMode::from_key(value) {
+                        self.wheel.mode = mode;
+                    }
+                }
                 "grid" => self.show_grid = on,
                 "axes" => self.show_axes = on,
                 "snap" => self.grid_snap = on,

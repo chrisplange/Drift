@@ -72,6 +72,10 @@ pub(super) enum SelectDrag {
         start: DVec2,
         from: DVec2,
     },
+    /// Dragging a fillet's arc: it is re-sized in place, its lines keeping their directions.
+    Fillet {
+        arc: EntityId,
+    },
     /// Dragging a circle's edge: the radius follows the pointer (drag its centre to move it).
     Radius {
         circle: EntityId,
@@ -393,6 +397,9 @@ impl Tool for SelectTool {
             Some(SelectDrag::Radius { .. }) => {
                 "Resizing the circle (drag its centre to move it) · Esc to cancel".into()
             }
+            Some(SelectDrag::Fillet { .. }) => {
+                "Resizing the fillet in steps (Alt: freely) · Esc to cancel".into()
+            }
             None => "Click to select · Shift to add · Ctrl to toggle · drag to move or box-select"
                 .into(),
         }
@@ -437,6 +444,7 @@ impl Tool for SelectTool {
                     Some(SelectDrag::Box { .. }) => None,
                     Some(SelectDrag::Move { point, .. }) => *point,
                     Some(SelectDrag::Radius { circle, .. }) => Some(*circle),
+                    Some(SelectDrag::Fillet { arc }) => Some(*arc),
                     Some(SelectDrag::Text { .. }) => None,
                     None => match pick_target(ed, &p) {
                         Some(Target::Entity(id)) => Some(id),
@@ -667,6 +675,12 @@ impl Tool for SelectTool {
                             self.drag = Some(SelectDrag::Radius { circle: id, center });
                             return;
                         }
+                        // A lone fillet grabbed by its arc is re-sized where it is.
+                        if ed.selection.len() == 1 && ed.fillet_at(id).is_some() {
+                            ed.doc.begin();
+                            self.drag = Some(SelectDrag::Fillet { arc: id });
+                            return;
+                        }
                         let is_point = ed.doc.get(id).is_some_and(|e| e.kind.is_point());
                         let point = (is_point && ed.selection.len() == 1).then_some(id);
                         let ids: Vec<EntityId> = ed.selection.iter().copied().collect();
@@ -760,6 +774,22 @@ impl Tool for SelectTool {
                         ed.doc.set_text(*id, t);
                     }
                 }
+                Some(SelectDrag::Fillet { arc }) => {
+                    if let Some(f) = ed.fillet_at(*arc) {
+                        let (half, room) = f.half_angle_and_room();
+                        let free = Pointer {
+                            alt: p.alt,
+                            units: p.units,
+                            ..Pointer::new(p.raw, p.tolerance)
+                        };
+                        if let Some(r) =
+                            super::corners::fillet_radius_at(f.corner, half, room, &free)
+                            && (r - f.radius).abs() > 1e-9
+                        {
+                            ed.drag_fillet(*arc, r);
+                        }
+                    }
+                }
                 Some(SelectDrag::Radius { circle, center }) => {
                     let r = p.pos().distance(*center);
                     let current = drift_solver::radius_of(&ed.doc, *circle);
@@ -848,6 +878,9 @@ impl Tool for SelectTool {
                 Some(SelectDrag::Radius { .. }) => {
                     ed.commit("Resize circle");
                 }
+                Some(SelectDrag::Fillet { .. }) => {
+                    ed.commit("Fillet radius");
+                }
                 Some(SelectDrag::Text { .. }) => {
                     ed.commit("Move text");
                 }
@@ -861,7 +894,12 @@ impl Tool for SelectTool {
             return true;
         }
         match self.drag.take() {
-            Some(SelectDrag::Move { .. } | SelectDrag::Radius { .. } | SelectDrag::Text { .. }) => {
+            Some(
+                SelectDrag::Move { .. }
+                | SelectDrag::Radius { .. }
+                | SelectDrag::Fillet { .. }
+                | SelectDrag::Text { .. },
+            ) => {
                 ed.doc.rollback();
                 ed.sync();
                 true

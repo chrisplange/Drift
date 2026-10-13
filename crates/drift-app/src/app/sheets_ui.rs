@@ -371,6 +371,12 @@ impl DriftApp {
                 .small()
                 .weak(),
         );
+        theme::row(ui, "Show", |ui| {
+            ui.checkbox(&mut sheet.dimensions, "Dimensions")
+                .on_hover_text("Dimensions and ordinates, on this sheet");
+            ui.checkbox(&mut sheet.notes, "Notes")
+                .on_hover_text("Notes and callouts, on this sheet");
+        });
         theme::section(ui, "Title block");
         egui::ComboBox::from_id_salt("title_block")
             .selected_text(sheet.title_block.label())
@@ -572,8 +578,10 @@ impl DriftApp {
         }
         // Zoom at the pointer, pan with middle / right drag.
         if let Some(pos) = response.hover_pos() {
-            let (scroll, pinch) = ui.input(|i| (i.smooth_scroll_delta.y, i.zoom_delta()));
-            let factor = (scroll * 0.002).exp() * pinch;
+            let (pan, factor) = self.wheel.read(ui);
+            let factor = factor as f32;
+            self.preview.center -=
+                DVec2::new(f64::from(pan.x), -f64::from(pan.y)) / f64::from(self.preview.zoom);
             if factor != 1.0 {
                 let before = self.preview_to_paper(rect, pos);
                 self.preview.zoom = (self.preview.zoom * factor).clamp(0.05, 200.0);

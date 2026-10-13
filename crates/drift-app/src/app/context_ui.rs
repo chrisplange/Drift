@@ -184,6 +184,102 @@ fn swatch(ui: &mut egui::Ui, s: Swatch<'_>) -> Option<Edit> {
     out
 }
 
+/// Dash lengths of a line type's sample (points; empty for a continuous line).
+fn sample_dashes(t: drift_core::LineType) -> &'static [f32] {
+    use drift_core::LineType as T;
+    match t {
+        T::Continuous => &[],
+        T::Dashed => &[6.0, 3.0],
+        T::Hidden => &[3.0, 2.0],
+        T::Center => &[9.0, 2.0, 2.0, 2.0],
+        T::Phantom => &[9.0, 2.0, 2.0, 2.0, 2.0, 2.0],
+    }
+}
+
+/// A line drawn across `rect`, as a sample of a weight (mm; 0 is the hairline) and type.
+fn line_sample(ui: &egui::Ui, rect: egui::Rect, mm: f64, t: drift_core::LineType) {
+    let width = ((mm as f32) * crate::annotations::PT_PER_MM).clamp(0.6, 7.0);
+    let stroke = egui::Stroke::new(width, ui.visuals().text_color());
+    let (a, b) = (rect.left_center(), rect.right_center());
+    let dashes = sample_dashes(t);
+    if dashes.is_empty() {
+        ui.painter().line_segment([a, b], stroke);
+        return;
+    }
+    let mut x = a.x;
+    'row: loop {
+        for pair in dashes.chunks(2) {
+            if x >= b.x {
+                break 'row;
+            }
+            let end = (x + pair[0]).min(b.x);
+            ui.painter()
+                .line_segment([egui::pos2(x, a.y), egui::pos2(end, a.y)], stroke);
+            x = end + pair.get(1).copied().unwrap_or(2.0);
+        }
+    }
+}
+
+/// A menu of stroke settings on the bar: "By layer" (showing what the layer gives), then
+/// each option with a sample of the line. Returns the pick.
+#[allow(clippy::too_many_arguments)]
+fn stroke_menu<T: Copy + PartialEq>(
+    ui: &mut egui::Ui,
+    id: &str,
+    width: f32,
+    current: Option<T>,
+    from_layer: T,
+    options: &[T],
+    label: impl Fn(T) -> String,
+    sample: impl Fn(&egui::Ui, egui::Rect, T),
+    hover: &str,
+) -> Option<Option<T>> {
+    let mut picked = None;
+    let shown = current.unwrap_or(from_layer);
+    let closed = egui::ComboBox::from_id_salt(id)
+        .width(width)
+        // Every option at once: nothing to scroll for.
+        .height(420.0)
+        .selected_text("")
+        .show_ui(ui, |ui| {
+            ui.set_min_width(170.0);
+            let mut row = |ui: &mut egui::Ui, value: Option<T>, text: String| {
+                let r = ui.selectable_label(current == value, text);
+                let room = egui::Rect::from_min_max(
+                    egui::pos2(r.rect.right() - 62.0, r.rect.top()),
+                    egui::pos2(r.rect.right() - 8.0, r.rect.bottom()),
+                );
+                sample(ui, room, value.unwrap_or(from_layer));
+                if r.clicked() {
+                    picked = Some(value);
+                }
+            };
+            row(ui, None, "By layer".to_owned());
+            ui.separator();
+            for &option in options {
+                row(ui, Some(option), label(option));
+            }
+        })
+        .response;
+    // The closed menu shows the line itself, dimmed while it comes from the layer.
+    let room = closed.rect.shrink2(egui::vec2(8.0, 0.0));
+    let room = egui::Rect::from_min_max(room.min, egui::pos2(room.right() - 14.0, room.bottom()));
+    if current.is_none() {
+        ui.scope(|ui| {
+            ui.set_opacity(0.55);
+            sample(ui, room, shown);
+        });
+    } else {
+        sample(ui, room, shown);
+    }
+    closed.on_hover_text(format!(
+        "{hover}: {}{}",
+        label(shown),
+        if current.is_none() { " (by layer)" } else { "" }
+    ));
+    picked
+}
+
 impl DriftApp {
     /// The selection's layer, stroke and fill, as in a drawing program's control bar: a
     /// layer menu and two colour swatches. Each swatch edits the colour of the selection
@@ -273,6 +369,36 @@ impl DriftApp {
                     self.editor.update_layer(layer_id, l);
                 }
                 None => {}
+            }
+            // Its weight and line type, beside it: the curves' own, or the layer's.
+            let look = entity.appearance;
+            let weight = stroke_menu(
+                ui,
+                "bar_weight",
+                58.0,
+                look.weight,
+                layer.weight,
+                &drift_core::LineWeight::ISO,
+                |w: drift_core::LineWeight| w.label(),
+                |ui, rect, w| line_sample(ui, rect, w.mm(), drift_core::LineType::Continuous),
+                "Stroke weight",
+            );
+            if let Some(w) = weight {
+                self.editor.update_selection_appearance(|a| a.weight = w);
+            }
+            let kind = stroke_menu(
+                ui,
+                "bar_line_type",
+                58.0,
+                look.line_type,
+                layer.line_type,
+                &drift_core::LineType::ALL,
+                |t: drift_core::LineType| t.label().to_owned(),
+                |ui, rect, t| line_sample(ui, rect, 0.35, t),
+                "Line type",
+            );
+            if let Some(t) = kind {
+                self.editor.update_selection_appearance(|a| a.line_type = t);
             }
         }
 
@@ -760,6 +886,10 @@ impl DriftApp {
             if item(ui, "Select chain", "Tab") {
                 self.editor.select_chain();
                 ui.close();
+            }
+            if item(ui, "Relations…", "Q") {
+                ui.close();
+                self.open_pie(ui.ctx());
             }
             let layers: Vec<(drift_core::LayerId, String)> = self
                 .editor

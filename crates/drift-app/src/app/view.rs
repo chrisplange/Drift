@@ -109,14 +109,9 @@ impl DriftApp {
             && let Some(dim) = dim_at(origin)
             && let Some(id) = dim.id
         {
-            let label = dim.anchor
-                + self.editor.doc.placement(id).unwrap_or_else(|| {
-                    annotations::default_offset(
-                        &self.editor.doc,
-                        &dim.constraint,
-                        self.camera.scale,
-                    )
-                });
+            // From where the number is drawn (it may have been centred, or moved outside a
+            // tight dimension), so it doesn't jump as the drag begins.
+            let label = map.to_world(dim.handle);
             self.label_drag = Some((id, map.to_world(origin) - label));
             self.selected_constraint = Some(id);
             self.editor.doc.begin();
@@ -282,7 +277,9 @@ impl DriftApp {
         // While a note's text is being typed, a click on the canvas only finishes it.
         let typing_note = self.note_edit.is_some()
             && (response.clicked() || response.drag_started() || response.dragged());
+        let hatch = self.hatch_handles(&map);
         let consumed = typing_note
+            || self.hatch_input(ui, &response, &map, hatch.as_ref(), snap)
             || self.note_input(ui, &response, &map, &notes, &dims, &glyphs, pos)
             || self.annotation_input(ui, &response, &map, &dims, &glyphs, pos);
         if consumed {
@@ -391,6 +388,11 @@ impl DriftApp {
         }
         if self.tool.kind() != ToolKind::Select && response.hovered() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
+        } else if response.hovered()
+            && !self.tool.is_modal()
+            && let Some(icon) = self.fillet_cursor()
+        {
+            ui.ctx().set_cursor_icon(icon);
         }
 
         // Fills and hatches under the geometry (GPU).
@@ -512,6 +514,10 @@ impl DriftApp {
                 };
                 overlay::region_fill(&painter, &map, &shape.region, color.gamma_multiply(alpha));
             }
+        }
+        // Drawn where the handles are now (a drag this frame has moved them).
+        if let Some(h) = self.hatch_handles(&map) {
+            self.paint_hatch_handles(&painter, &map, &h, &colors);
         }
         self.paint_ghosts(&painter, &map);
         if let Some(region) = self.editor.region() {
@@ -711,6 +717,27 @@ impl DriftApp {
         }
     }
 
+    /// Over a fillet's arc that a drag would re-size (rather than move): a resize cursor
+    /// along the way it grows, towards its corner.
+    fn fillet_cursor(&self) -> Option<egui::CursorIcon> {
+        let ed = &self.editor;
+        let arc = ed.hovered?;
+        let alone = ed.selection.len() == 1 || !ed.selection.contains(&arc);
+        let f = ed.fillet_at(arc).filter(|_| alone)?;
+        let Some(drift_core::Shape::Arc { center, .. }) = ed.doc.shape(arc) else {
+            return None;
+        };
+        let v = f.corner - center;
+        // Screen directions: y is down.
+        let eighth = (v.y.atan2(v.x) / std::f64::consts::FRAC_PI_4).round() as i64;
+        Some(match eighth.rem_euclid(4) {
+            0 => egui::CursorIcon::ResizeHorizontal,
+            1 => egui::CursorIcon::ResizeNeSw,
+            2 => egui::CursorIcon::ResizeVertical,
+            _ => egui::CursorIcon::ResizeNwSe,
+        })
+    }
+
     pub(crate) fn pan_and_zoom(
         &mut self,
         ui: &egui::Ui,
@@ -746,12 +773,109 @@ impl DriftApp {
         }
 
         if let Some(pos) = response.hover_pos() {
-            let (scroll, pinch) = ui.input(|i| (i.smooth_scroll_delta.y, i.zoom_delta()));
-            let factor = (f64::from(scroll) * SCROLL_ZOOM_SPEED).exp() * f64::from(pinch);
+            let (pan, factor) = self.wheel.read(ui);
+            if pan != egui::Vec2::ZERO {
+                self.camera
+                    .pan(DVec2::new(f64::from(pan.x), f64::from(pan.y)));
+                self.fit_target = None;
+            }
             if factor != 1.0 {
                 self.camera.zoom_at(to_view(pos), factor);
                 self.fit_target = None;
             }
         }
+    }
+}
+
+/// What the scroll wheel, or two fingers on a trackpad, do over the canvas.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WheelMode {
+    /// A mouse wheel zooms and a trackpad pans, as far as the two can be told apart.
+    #[default]
+    Auto,
+    Zoom,
+    /// Scrolling pans; Ctrl + scroll (and a pinch) zooms.
+    Pan,
+}
+
+impl WheelMode {
+    pub const ALL: [WheelMode; 3] = [WheelMode::Auto, WheelMode::Zoom, WheelMode::Pan];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            WheelMode::Auto => "Automatic",
+            WheelMode::Zoom => "Zoom",
+            WheelMode::Pan => "Pan",
+        }
+    }
+
+    pub fn key(self) -> &'static str {
+        match self {
+            WheelMode::Auto => "auto",
+            WheelMode::Zoom => "zoom",
+            WheelMode::Pan => "pan",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|m| m.key() == key)
+    }
+}
+
+/// Scroll input for a view that pans and zooms (the canvas, the sheet preview).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Wheel {
+    pub mode: WheelMode,
+    /// The scroll gesture in progress looks like a trackpad's.
+    trackpad: bool,
+    /// When the last scroll event arrived (events close together are one gesture).
+    last: f64,
+}
+
+/// Whether one scroll event looks like a trackpad's rather than a wheel's notch. Trackpads
+/// report in points on macOS, and as small, fractional or sideways amounts elsewhere; a
+/// wheel reports whole notches straight up or down. (A free-spinning wheel or a touch mouse
+/// can look like a trackpad, hence the preference.)
+fn looks_like_trackpad(unit: egui::MouseWheelUnit, delta: egui::Vec2) -> bool {
+    match unit {
+        egui::MouseWheelUnit::Point => {
+            // Browsers report wheels in points too, a notch being 100 or so.
+            !cfg!(target_arch = "wasm32") || delta.x != 0.0 || delta.y.abs() < 50.0
+        }
+        egui::MouseWheelUnit::Line => delta.x != 0.0 || (delta.y - delta.y.round()).abs() > 1e-3,
+        egui::MouseWheelUnit::Page => false,
+    }
+}
+
+impl Wheel {
+    /// This frame's pan (in points, the way the content moves) and zoom factor.
+    pub fn read(&mut self, ui: &egui::Ui) -> (egui::Vec2, f64) {
+        ui.input(|i| {
+            for event in &i.events {
+                if let egui::Event::MouseWheel { unit, delta, .. } = event {
+                    let looks = looks_like_trackpad(*unit, *delta);
+                    // A gesture that has looked like a trackpad's stays one: its fast
+                    // middle can report whole numbers.
+                    self.trackpad = looks || (self.trackpad && i.time - self.last < 0.3);
+                    self.last = i.time;
+                }
+            }
+            // Ctrl + scroll and pinches arrive as a zoom factor, with no scroll left over.
+            let pinch = f64::from(i.zoom_delta());
+            let scroll = i.smooth_scroll_delta;
+            let pans = match self.mode {
+                WheelMode::Auto => self.trackpad,
+                WheelMode::Zoom => false,
+                WheelMode::Pan => true,
+            };
+            if pans {
+                (scroll, pinch)
+            } else {
+                (
+                    egui::Vec2::ZERO,
+                    (f64::from(scroll.y) * SCROLL_ZOOM_SPEED).exp() * pinch,
+                )
+            }
+        })
     }
 }

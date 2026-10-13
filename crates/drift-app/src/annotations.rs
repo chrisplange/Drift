@@ -101,6 +101,30 @@ pub fn dimension_anchor(doc: &Document, c: &Constraint) -> Option<DVec2> {
     })
 }
 
+/// A label offset for a newly placed dimension: as far from the geometry as the pointer is,
+/// with the number in the middle of the dimension line. (Dragging the label afterwards moves
+/// it along the line too.)
+pub fn centred_offset(doc: &Document, c: &Constraint, offset: DVec2) -> DVec2 {
+    let p = |id| doc.ref_point(id);
+    let across = |a: Option<DVec2>, b: Option<DVec2>| match (a, b) {
+        (Some(a), Some(b)) if a != b => {
+            let n = (b - a).normalize().perp();
+            n * offset.dot(n)
+        }
+        _ => offset,
+    };
+    match *c {
+        Constraint::Distance { a, b, .. } => across(p(a), p(b)),
+        Constraint::PointLineDistance { point, line, .. } => {
+            let q = p(point);
+            across(q, q.and_then(|q| foot(doc, q, line)))
+        }
+        Constraint::HorizontalDistance { .. } => DVec2::new(0.0, offset.y),
+        Constraint::VerticalDistance { .. } => DVec2::new(offset.x, 0.0),
+        _ => offset,
+    }
+}
+
 /// Where a dimension's label goes when the user hasn't placed it.
 pub fn default_offset(doc: &Document, c: &Constraint, scale: f64) -> DVec2 {
     let d = DEFAULT_OFFSET_PT / scale;
@@ -325,10 +349,12 @@ pub struct DimLayout {
     /// `None` for a dimension that doesn't exist yet (a tool preview).
     pub id: Option<ConstraintId>,
     pub constraint: Constraint,
-    pub anchor: DVec2,
     pub label: DimText,
     /// The label's centre.
     pub text_pos: Pos2,
+    /// The point a drag of the label moves: on the dimension line for a linear dimension
+    /// (the text may sit above it), else the label's centre.
+    pub handle: Pos2,
     /// The label's bounds on screen (of the rotated text, for aligned labels).
     pub text_rect: Rect,
     /// The label's rotation (radians, screen y-down): 0 for horizontal text.
@@ -731,6 +757,37 @@ fn reading_angle(u: Vec2) -> f32 {
     a
 }
 
+/// Where a linear dimension's number goes along its line (`along` from the first end of a
+/// line `len` long; `half` is half the text's extent along it). Between the extension lines
+/// it is drawn to the middle; where it doesn't fit there, it goes just outside, on the side
+/// it was nearer. A number placed outside stays where it was put.
+fn settle_label(along: f32, len: f32, half: f32, style: &DimStyle) -> f32 {
+    if !(0.0..=len).contains(&along) {
+        return along;
+    }
+    let headless = matches!(style.arrow, ArrowStyle::Tick | ArrowStyle::Dot);
+    let arrows_fit = len > 2.5 * style.arrow_len || style.arrow == ArrowStyle::Tick;
+    // Text above the line only has to clear the extension lines; text in the line also has
+    // to leave the arrows visible.
+    let room = if style.aligned || headless {
+        2.0 * half + 4.0
+    } else {
+        2.0 * half + 2.0 * style.arrow_len + 6.0
+    };
+    let mid = len / 2.0;
+    if room <= len && arrows_fit {
+        if (along - mid).abs() <= (len * 0.15).max(8.0) {
+            mid
+        } else {
+            along
+        }
+    } else {
+        // Clear of the arrow, which points inward from outside when the line is short.
+        let lead = half + 4.0 + if arrows_fit { 0.0 } else { style.arrow_len };
+        if along < mid - 0.5 { -lead } else { len + lead }
+    }
+}
+
 /// Lay out a dimension. `placement` is the label offset from the anchor (world units). A
 /// driven dimension shows the geometry's current measurement in parentheses.
 pub fn layout_dimension(
@@ -851,6 +908,25 @@ pub fn layout_dimension(
     let driven = id.is_some_and(|id| doc.is_driven(id));
     let text = dimension_label(doc, id, c);
     let galleys = label_galleys(painter, &text, style.text, Color32::WHITE);
+    let text_pos = match &shape {
+        DimShape::Linear { d, .. } => {
+            let u = dir(d[0], d[1]);
+            let half = if style.aligned {
+                galleys.size.x / 2.0
+            } else {
+                (u.x.abs() * galleys.size.x + u.y.abs() * galleys.size.y) / 2.0
+            };
+            let along = settle_label(
+                (text_pos - d[0]).dot(u),
+                (d[1] - d[0]).length(),
+                half,
+                &style,
+            );
+            d[0] + u * along
+        }
+        _ => text_pos,
+    };
+    let handle = text_pos;
     // ISO: linear dimension text above the line and parallel to it.
     let (text_pos, angle) = match &shape {
         DimShape::Linear { d, .. } if style.aligned => {
@@ -864,9 +940,9 @@ pub fn layout_dimension(
     Some(DimLayout {
         id,
         constraint: *c,
-        anchor,
         label: text,
         text_pos,
+        handle,
         text_rect,
         angle,
         shape,
@@ -1388,5 +1464,58 @@ mod tests {
         // Default offset for a horizontal line's length is straight up (left normal).
         let off = default_offset(&doc, &dist, 2.0);
         assert!(off.x.abs() < 1e-12 && off.y > 0.0);
+    }
+
+    #[test]
+    fn numbers_sit_mid_line_or_just_outside_a_tight_one() {
+        // Text in the line, with arrowheads.
+        let style = DimStyle {
+            aligned: false,
+            arrow: ArrowStyle::Closed,
+            ..DimStyle::default()
+        };
+        let a = style.arrow_len;
+        // Room to spare: near the middle is the middle; well off it stays where it was put.
+        assert!((settle_label(95.0, 200.0, 20.0, &style) - (100.0)).abs() < 1e-3);
+        assert!((settle_label(40.0, 200.0, 20.0, &style) - (40.0)).abs() < 1e-3);
+        // Placed outside the extension lines: left alone.
+        assert!((settle_label(-30.0, 200.0, 20.0, &style) - (-30.0)).abs() < 1e-3);
+        assert!((settle_label(260.0, 200.0, 20.0, &style) - (260.0)).abs() < 1e-3);
+        // Too tight for the text and its arrows: just outside, on the nearer side (after
+        // the far end when it was in the middle).
+        let len = 40.0 + a;
+        assert!((settle_label(len / 2.0, len, 20.0, &style) - (len + 24.0)).abs() < 1e-3);
+        assert!((settle_label(3.0, len, 20.0, &style) - (-24.0)).abs() < 1e-3);
+        // Shorter than its arrows, which then point in from outside: clear of them too.
+        let len = 2.0 * a;
+        assert!((settle_label(a, len, 20.0, &style) - (len + 24.0 + a)).abs() < 1e-3);
+        // Text above the line only has to fit between the extension lines.
+        let iso = DimStyle {
+            aligned: true,
+            ..style
+        };
+        let len = 44.0 + a;
+        assert!((settle_label(len / 2.0 + 2.0, len, 20.0, &iso) - (len / 2.0)).abs() < 1e-3);
+    }
+
+    #[test]
+    fn new_dimensions_are_centred_on_their_line() {
+        let mut doc = Document::new();
+        doc.begin();
+        let a = doc.add_point(DVec2::new(0.0, 0.0));
+        let b = doc.add_point(DVec2::new(40.0, 0.0));
+        let c = doc.add_point(DVec2::new(40.0, 30.0));
+        doc.commit("Points");
+        let off = DVec2::new(13.0, 7.0);
+        let value = 0.0;
+        // Along the measured direction the offset goes; across it, it is kept.
+        let d = centred_offset(&doc, &Constraint::Distance { a, b, value }, off);
+        assert!(d.distance(DVec2::new(0.0, 7.0)) < 1e-12);
+        let d = centred_offset(&doc, &Constraint::Distance { a, b: c, value }, off);
+        assert!(d.dot(DVec2::new(40.0, 30.0)).abs() < 1e-9 && d.length() > 1.0);
+        let h = Constraint::HorizontalDistance { a, b: c, value };
+        assert_eq!(centred_offset(&doc, &h, off), DVec2::new(0.0, 7.0));
+        let v = Constraint::VerticalDistance { a, b: c, value };
+        assert_eq!(centred_offset(&doc, &v, off), DVec2::new(13.0, 0.0));
     }
 }

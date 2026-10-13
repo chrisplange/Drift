@@ -1574,6 +1574,24 @@ fn sheets_preview_and_export() {
         "the bore and four bolt holes (the bolt circle is construction)"
     );
 
+    // A sheet can leave the dimensions out (a presentation copy); the model keeps them.
+    let mut plain = sheet.clone();
+    plain.dimensions = false;
+    h.state_mut().editor.doc.begin();
+    h.state_mut().editor.doc.set_sheet(id, plain);
+    h.state_mut().editor.commit("Hide dimensions");
+    let pdf = h.state_mut().pdf_bytes(&painter);
+    let text = String::from_utf8_lossy(&pdf);
+    assert!(!text.contains("(120) Tj") && text.contains("(1:1) Tj"));
+    let saved = drift_io::save(&h.state().editor.doc, &Default::default());
+    assert!(saved.contains(r#""dimensions":false"#) && !saved.contains(r#""notes""#));
+    let (loaded, _) = drift_io::load(&saved).unwrap();
+    let back = loaded.sheets().next().unwrap().1;
+    assert!(!back.dimensions && back.notes);
+    h.state_mut().undo();
+    assert!(h.state().editor.doc.sheet(id).unwrap().dimensions);
+    h.run();
+
     // Dragging on the sheet moves the drawing within it, as one undo step.
     let rect = h.state().canvas_rect;
     let from = rect.center();
@@ -2829,4 +2847,355 @@ fn control_bar_overlap_warning_and_corner_angles() {
             .collect::<Vec<_>>(),
         [walls[7]]
     );
+}
+
+#[test]
+fn a_wheel_zooms_and_a_trackpad_pans() {
+    use crate::app::view::WheelMode;
+    let Some(mut h) = harness() else { return };
+    let at = h.state().canvas_rect.center() + egui::vec2(60.0, 40.0);
+    let scroll = |h: &mut Harness<'static, DriftApp>, unit, delta| {
+        h.hover_at(at);
+        h.run();
+        let before = h.state().camera;
+        h.event(Event::MouseWheel {
+            unit,
+            delta,
+            phase: egui::TouchPhase::Move,
+            modifiers: Default::default(),
+        });
+        // The scroll is smoothed over a few frames.
+        h.run();
+        h.run();
+        (before, h.state().camera)
+    };
+    use egui::MouseWheelUnit::{Line, Point};
+    // A wheel notch zooms about the pointer.
+    let (before, after) = scroll(&mut h, Line, egui::vec2(0.0, 1.0));
+    assert!(after.scale > before.scale * 1.01, "zoomed in");
+    // Two fingers on a trackpad (points; or fractional, sideways lines) pan: right and down
+    // moves the drawing right and down.
+    for (unit, delta) in [
+        (Point, egui::vec2(30.0, 20.0)),
+        (Line, egui::vec2(0.4, 0.3)),
+    ] {
+        let (before, after) = scroll(&mut h, unit, delta);
+        assert_eq!(after.scale, before.scale, "{unit:?}");
+        assert!(after.center.x < before.center.x && after.center.y > before.center.y);
+    }
+    // The preference overrides the guess either way.
+    h.state_mut().wheel.mode = WheelMode::Zoom;
+    let (before, after) = scroll(&mut h, Point, egui::vec2(0.0, 30.0));
+    assert!(after.scale > before.scale && h.state().view_prefs().contains("wheel=zoom"));
+    h.state_mut().wheel.mode = WheelMode::Pan;
+    let (before, after) = scroll(&mut h, Line, egui::vec2(0.0, 1.0));
+    assert_eq!(after.scale, before.scale);
+    assert!(after.center.y > before.center.y);
+    // Ctrl + scroll still zooms.
+    h.hover_at(at);
+    let before = h.state().camera.scale;
+    h.event(Event::MouseWheel {
+        unit: Line,
+        delta: egui::vec2(0.0, 1.0),
+        phase: egui::TouchPhase::Move,
+        modifiers: EguiModifiers::CTRL,
+    });
+    h.run();
+    h.run();
+    assert!(h.state().camera.scale > before);
+    h.state_mut().apply_view_prefs("wheel=auto");
+    assert_eq!(h.state().wheel.mode, WheelMode::Auto);
+}
+
+#[test]
+fn hatch_handles_move_and_turn_the_pattern() {
+    let Some(mut h) = harness() else { return };
+    h.get_by_label("Rectangle").click();
+    h.run();
+    click_world(&mut h, DVec2::new(10.0, 10.0));
+    click_world(&mut h, DVec2::new(70.0, 50.0));
+    h.get_by_label("Fill / hatch").click();
+    h.run();
+    click_world(&mut h, DVec2::new(40.0, 30.0));
+    h.get_by_label("Select").click();
+    h.run();
+    click_world(&mut h, DVec2::new(40.0, 30.0));
+    h.run();
+    let hatch = |h: &Harness<'_, DriftApp>| {
+        let ed = &h.state().editor;
+        let id = *ed
+            .selected_fills
+            .iter()
+            .next()
+            .expect("the hatch is picked");
+        match &ed.doc.fill(id).unwrap().kind {
+            drift_core::FillKind::Hatch(hatch) => hatch.clone(),
+            other => panic!("{other:?}"),
+        }
+    };
+    let drag = |h: &mut Harness<'static, DriftApp>, from: Pos2, to: Pos2| {
+        h.hover_at(from);
+        h.run();
+        button(h, from, true);
+        h.run();
+        for k in 1..=5 {
+            h.hover_at(from + (to - from) * (k as f32 / 5.0));
+            h.run();
+        }
+        button(h, to, false);
+        h.run();
+    };
+    // A new hatch's origin is the sketch's, outside the area: the handle shows in the
+    // middle. Dragged to a corner, the origin snaps onto it.
+    assert_eq!(hatch(&h).origin, DVec2::ZERO);
+    let map = screen_map(&h);
+    let handles = h.state_mut().hatch_handles(&map).expect("handles");
+    assert!(
+        handles.at.distance(DVec2::new(40.0, 30.0)) < 1e-3,
+        "{:?}",
+        handles.at
+    );
+    let corner = screen(&h, DVec2::new(10.0, 10.0));
+    drag(&mut h, handles.origin, corner + egui::vec2(2.0, -1.0));
+    let origin = hatch(&h).origin;
+    assert!(origin.distance(DVec2::new(10.0, 10.0)) < 1e-3, "{origin:?}");
+    assert!(
+        h.state()
+            .editor
+            .doc
+            .iter()
+            .any(|(_, e)| e.kind == EntityKind::Point(origin)),
+        "exactly on the corner point"
+    );
+    assert_eq!(h.state().editor.selected_fills.len(), 1, "still picked");
+    // The round handle turns the pattern, in 15 degree steps.
+    let map = screen_map(&h);
+    let handles = h.state_mut().hatch_handles(&map).expect("handles");
+    assert_eq!(handles.at, origin);
+    let before = hatch(&h).angle;
+    let to = handles.origin + egui::vec2(40.0, -22.0);
+    drag(&mut h, handles.angle, to);
+    let after = hatch(&h).angle;
+    assert!(
+        (after - 30.0).abs() < 1e-9 && after != before,
+        "{before} -> {after}"
+    );
+    h.run();
+    save_png("drift_ui_hatch_handles.png", &mut h);
+    // Each drag is one undo step.
+    h.state_mut().undo();
+    assert_eq!(hatch(&h).angle, before);
+    h.state_mut().undo();
+    assert_eq!(hatch(&h).origin, DVec2::ZERO);
+}
+
+#[test]
+fn control_bar_sets_stroke_weight_and_line_type() {
+    use egui_kittest::kittest::Queryable as _;
+    let Some(mut h) = harness() else { return };
+    h.get_by_label("Line").click();
+    h.run();
+    click_world(&mut h, DVec2::new(-30.0, 0.0));
+    click_world(&mut h, DVec2::new(30.0, 0.0));
+    h.key_press(Key::Escape);
+    h.run();
+    h.get_by_label("Select").click();
+    h.run();
+    click_world(&mut h, DVec2::new(12.0, 0.0));
+    h.run();
+    let look = |h: &Harness<'_, DriftApp>| {
+        let ed = &h.state().editor;
+        let id = *ed.selection.iter().next().expect("the line is picked");
+        ed.doc.get(id).unwrap().appearance
+    };
+    assert!(look(&h).is_by_layer());
+    save_png("drift_ui_control_bar_stroke.png", &mut h);
+    // The bar's menus, in order: layer, stroke weight, line type.
+    let menu = |h: &mut Harness<'static, DriftApp>, index: usize, item: &str| {
+        let mut combos: Vec<_> = h
+            .get_all_by_role(egui::accesskit::Role::ComboBox)
+            .filter(|c| c.rect().top() < 64.0)
+            .collect();
+        combos.sort_by(|a, b| a.rect().left().total_cmp(&b.rect().left()));
+        combos[index].click();
+        h.run();
+        // (The inspector has "By layer" menus too: the bar's is the one on the left.)
+        h.get_all_by_label(item)
+            .min_by(|a, b| a.rect().left().total_cmp(&b.rect().left()))
+            .expect("the menu's row")
+            .click();
+        h.run();
+        h.run();
+    };
+    menu(&mut h, 1, "0.50 mm");
+    assert_eq!(look(&h).weight, Some(drift_core::LineWeight(50)));
+    menu(&mut h, 2, "Hidden");
+    assert_eq!(look(&h).line_type, Some(drift_core::LineType::Hidden));
+    save_png("drift_ui_control_bar_stroke_set.png", &mut h);
+    // Back to the layer's.
+    menu(&mut h, 1, "By layer");
+    assert_eq!(look(&h).weight, None);
+    assert_eq!(look(&h).line_type, Some(drift_core::LineType::Hidden));
+}
+
+#[test]
+fn relations_pie_toggles_relations_on_the_selection() {
+    use drift_core::Constraint;
+    let Some(mut h) = harness() else { return };
+    let v = DVec2::new;
+    // Two lines, a little off parallel.
+    let ed = &mut h.state_mut().editor;
+    ed.doc.begin();
+    let p = [
+        v(-40.0, -10.0),
+        v(20.0, -8.0),
+        v(-40.0, 15.0),
+        v(25.0, 20.0),
+    ]
+    .map(|at| ed.doc.add_point(at));
+    let a = ed.doc.add_line(p[0], p[1]).unwrap();
+    let b = ed.doc.add_line(p[2], p[3]).unwrap();
+    ed.commit("Lines");
+    h.run();
+    let has = |h: &Harness<'_, DriftApp>, want: fn(&Constraint) -> bool| {
+        h.state().editor.doc.constraints().any(|(_, c)| want(c))
+    };
+    let parallel = |c: &Constraint| matches!(c, Constraint::Parallel { .. });
+    let equal = |c: &Constraint| matches!(c, Constraint::Equal { .. });
+    let at = h.state().canvas_rect.center();
+    h.hover_at(at);
+    h.run();
+    h.state_mut().editor.selection = [a, b].into();
+    h.run();
+
+    // Hold Q, move up and to the right (Parallel's place), let go: a flick.
+    h.key_down(Key::Q);
+    h.run();
+    let center = h.state().pie.as_ref().expect("the pie opens").center;
+    assert_eq!(center, at);
+    let slices = h.state().pie_slices();
+    let labels: Vec<_> = slices
+        .iter()
+        .map(|s| (s.label, s.option.is_some(), s.on))
+        .collect();
+    assert_eq!(
+        labels,
+        [
+            ("Horizontal", true, false),
+            ("Parallel", true, false),
+            ("Vertical", true, false),
+            ("Perpendicular", true, false),
+            ("Equal", true, false),
+            ("Fix", true, false),
+            ("Collinear", true, false),
+            ("Midpoint", false, false),
+        ]
+    );
+    h.hover_at(center + egui::vec2(60.0, -60.0));
+    h.run();
+    save_png("drift_ui_relations_pie.png", &mut h);
+    h.key_up(Key::Q);
+    h.run();
+    assert!(h.state().pie.is_none());
+    assert!(has(&h, parallel), "parallel added");
+    assert_eq!(h.state().editor.selection.len(), 2, "still picked");
+
+    // A tap of Q leaves the ring open: Parallel is lit, and Perpendicular would now
+    // over-define the sketch (it says so; choosing it is refused and nothing changes).
+    h.hover_at(at);
+    h.run();
+    h.key_press(Key::Q);
+    h.run();
+    assert!(h.state().pie.as_ref().is_some_and(|p| !p.held));
+    assert!(h.state().pie_slices()[1].on);
+    // While it is open, other keys are its own: L doesn't start the line tool.
+    h.key_press(Key::L);
+    h.run();
+    assert_eq!(h.state().tool.kind(), ToolKind::Select);
+    // Click Equal (to the left).
+    let left = at - egui::vec2(110.0, 0.0);
+    h.hover_at(left);
+    h.run();
+    button(&h, left, true);
+    h.run();
+    button(&h, left, false);
+    h.run();
+    assert!(h.state().pie.is_none());
+    assert!(has(&h, equal), "equal added");
+    assert_eq!(
+        h.state().editor.selection.len(),
+        2,
+        "the click didn't reach the canvas"
+    );
+
+    // Flick towards Parallel again: it comes off (one undo step puts it back).
+    h.hover_at(at);
+    h.run();
+    h.key_down(Key::Q);
+    h.run();
+    h.hover_at(at + egui::vec2(60.0, -60.0));
+    h.run();
+    h.key_up(Key::Q);
+    h.run();
+    assert!(!has(&h, parallel) && has(&h, equal));
+    h.state_mut().undo();
+    assert!(has(&h, parallel));
+
+    // Esc closes it, and so does Q again; neither changes anything.
+    let before = h.state().editor.doc.constraint_count();
+    h.key_press(Key::Q);
+    h.run();
+    assert!(h.state().pie.is_some());
+    h.key_press(Key::Escape);
+    h.run();
+    assert!(h.state().pie.is_none());
+    h.key_press(Key::Q);
+    h.run();
+    h.key_press(Key::Q);
+    h.run();
+    assert!(h.state().pie.is_none());
+    assert_eq!(h.state().editor.doc.constraint_count(), before);
+    assert_eq!(h.state().editor.selection.len(), 2);
+}
+
+#[test]
+fn a_radius_typed_for_a_fillet_keeps_its_lines() {
+    let Some(mut h) = harness() else { return };
+    let v = DVec2::new;
+    // A plain corner, filleted with automatic relations off: nothing holds the lines.
+    let ed = &mut h.state_mut().editor;
+    ed.auto_relations = false;
+    ed.doc.begin();
+    let corner = ed.doc.add_point(v(0.0, 0.0));
+    let ends = [v(60.0, 10.0), v(-5.0, 40.0)].map(|at| ed.doc.add_point(at));
+    ed.doc.add_line(corner, ends[0]).unwrap();
+    ed.doc.add_line(corner, ends[1]).unwrap();
+    ed.commit("Corner");
+    let arc = ed.fillet(corner, 6.0).unwrap();
+    assert_eq!(ed.doc.constraint_count(), 0);
+    // The radius typed in the inspector becomes a dimension; the fillet takes that size
+    // where it is.
+    let wanted = drift_core::Constraint::Radius {
+        curve: arc,
+        value: 0.0,
+    };
+    let id = ed.set_size(wanted, "10").unwrap();
+    let f = ed.fillet_at(arc).expect("still a fillet");
+    assert!((f.radius - 10.0).abs() < 1e-7);
+    assert!(
+        f.corner.length() < 1e-7,
+        "the lines still meet where they did"
+    );
+    assert!(kept(&f));
+    // And editing that dimension afterwards, the same.
+    ed.set_dimension(id, 4.0).unwrap();
+    let f = ed.fillet_at(arc).expect("still a fillet");
+    assert!((f.radius - 4.0).abs() < 1e-7 && f.corner.length() < 1e-7);
+    assert!(kept(&f));
+    /// The lines' far ends are where they were (in either order).
+    fn kept(f: &crate::modify::FilletInfo) -> bool {
+        [DVec2::new(60.0, 10.0), DVec2::new(-5.0, 40.0)]
+            .iter()
+            .all(|end| f.far.iter().any(|far| far.distance(*end) < 1e-9))
+    }
 }

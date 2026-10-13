@@ -90,6 +90,10 @@ impl DriftApp {
             }
             return;
         }
+        // Q: the relations pie, which keeps the keys while it is open.
+        if self.pie_keys(ctx) {
+            return;
+        }
         self.edit_keys(ctx);
         // ? lists the shortcuts.
         if ctx.input(|i| {

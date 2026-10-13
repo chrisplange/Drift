@@ -172,7 +172,7 @@ impl Tool for TangentArcTool {
     fn hint(&self) -> String {
         match self.start {
             None => "Click the end of a line or arc to start a tangent arc".into(),
-            Some(_) => "Click the arc's end, or type radius (Tab: sweep) · L: lines · Enter /                         right-click to finish"
+            Some(_) => "Click the arc's end, or type radius (Tab: sweep) · L: lines · Enter / right-click to finish"
                 .into(),
         }
     }

@@ -35,6 +35,9 @@ struct Space {
     clipped: bool,
     /// Copies of blocks as block definitions and inserts (DXF), rather than their curves.
     inserts: bool,
+    /// Whether dimensions, and notes and callouts, are drawn (a sheet can leave them out).
+    dimensions: bool,
+    notes: bool,
 }
 
 impl Space {
@@ -356,7 +359,7 @@ fn annotations(ed: &Editor, painter: &egui::Painter, s: &Space, d: &mut Drawing)
     let recorder = Recorder::new(painter);
     let colors = print_colors();
     for (id, c) in doc.constraints() {
-        if !c.is_dimension() {
+        if !c.is_dimension() || !s.dimensions {
             continue;
         }
         if let Some(layout) =
@@ -367,6 +370,19 @@ fn annotations(ed: &Editor, painter: &egui::Painter, s: &Space, d: &mut Drawing)
     }
     let style = annotations::DimStyle::of(&doc.draft_style());
     for layout in notes::layout_annotations(painter, doc, &map) {
+        // Ordinates are dimensions; centre marks are linework, and always drawn.
+        let shown = match doc.annotation(layout.id) {
+            Some(drift_core::Annotation::Ordinate { .. }) => s.dimensions,
+            Some(
+                drift_core::Annotation::Note { .. }
+                | drift_core::Annotation::HoleCallout { .. }
+                | drift_core::Annotation::ChamferCallout { .. },
+            ) => s.notes,
+            _ => true,
+        };
+        if !shown {
+            continue;
+        }
         notes::paint_annotation(&recorder, &layout, AnnotationState::Normal, &colors, &style);
     }
     let to_page = |p: Pos2| s.at(map.to_world(p));
@@ -474,6 +490,8 @@ pub fn sheet_drawing(
         n: sheet.scale,
         clipped: true,
         inserts: false,
+        dimensions: sheet.dimensions,
+        notes: sheet.notes,
     };
     view(ed, patterns, painter, &space, &mut d);
     drift_draft::sheet::draw_frame(sheet, number, &mut d);
@@ -497,6 +515,8 @@ pub fn model_drawing(
         n,
         clipped: false,
         inserts: true,
+        dimensions: true,
+        notes: true,
     };
     view(ed, patterns, painter, &space, &mut d);
     let b = d.bounds();

@@ -188,6 +188,10 @@ pub struct Sheet {
     pub title_block: TitleBlock,
     pub fields: TitleFields,
     pub revisions: Vec<Revision>,
+    /// Show dimensions (ordinates included) on this sheet.
+    pub dimensions: bool,
+    /// Show notes and callouts on this sheet.
+    pub notes: bool,
 }
 
 impl Sheet {
@@ -201,6 +205,8 @@ impl Sheet {
             title_block: TitleBlock::Modern,
             fields: TitleFields::default(),
             revisions: Vec::new(),
+            dimensions: true,
+            notes: true,
         }
     }
 

@@ -209,8 +209,8 @@ impl DriftApp {
                     // Zoom at the pointer.
                     let amount = (soak.next() % 400) as f32 - 200.0;
                     raw.events.push(Event::MouseWheel {
-                        unit: egui::MouseWheelUnit::Point,
-                        delta: egui::vec2(0.0, amount),
+                        unit: egui::MouseWheelUnit::Line,
+                        delta: egui::vec2(0.0, (amount / 50.0).round()),
                         phase: egui::TouchPhase::Move,
                         modifiers: Modifiers::NONE,
                     });

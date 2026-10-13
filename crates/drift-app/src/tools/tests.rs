@@ -75,7 +75,7 @@ fn line_relations(ed: &Editor) -> Vec<Constraint> {
 
 #[test]
 fn axis_locks_apply_per_segment() {
-    let mut ed = Editor::default();
+    let mut ed = with_auto_relations();
     let mut tool = LineTool::default();
     assert!(
         !tool.lock_axis(Axis::X),
@@ -110,8 +110,37 @@ fn axis_locks_apply_per_segment() {
 }
 
 #[test]
-fn axis_lock_toggles_and_works_with_typed_lengths() {
+fn an_axis_lock_adds_no_relation_when_automatic_relations_are_off() {
     let mut ed = Editor::default();
+    assert!(!ed.auto_relations);
+    let mut tool = LineTool::default();
+    click(&mut ed, &mut tool, v(0.0, 0.0));
+    assert!(tool.lock_axis(Axis::X));
+    click(&mut ed, &mut tool, v(30.0, 17.0));
+    assert!(tool.lock_axis(Axis::Y));
+    // A typed length along the locked axis, too.
+    let p = ptr(&ed, &tool, v(34.0, 9.0));
+    tool.set_typed([Some(25.0), None]);
+    tool.commit_typed(&p, &mut ed);
+    tool.handle(Input::Finish, &mut ed);
+    // The segments are still drawn exactly along their axes...
+    let ends: Vec<_> = ed
+        .doc
+        .iter()
+        .filter_map(|(_, e)| match e.kind {
+            EntityKind::Line { a, b } => Some((ed.doc.point(a).unwrap(), ed.doc.point(b).unwrap())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(ends[0], (v(0.0, 0.0), v(30.0, 0.0)));
+    assert_eq!(ends[1], (v(30.0, 0.0), v(30.0, 25.0)));
+    // ...but nothing holds them there: only the typed length is recorded.
+    assert!(line_relations(&ed).is_empty());
+}
+
+#[test]
+fn axis_lock_toggles_and_works_with_typed_lengths() {
+    let mut ed = with_auto_relations();
     let mut tool = LineTool::default();
     click(&mut ed, &mut tool, v(10.0, 10.0));
     tool.lock_axis(Axis::Y);
@@ -1113,7 +1142,12 @@ fn fillet_and_chamfer_tools_use_typed_sizes() {
         matches!(tool.editor_preview(&ed)[..], [SketchItem { shape: Shape::Arc { radius, .. }, .. }]
         if (radius - 4.0).abs() < 1e-12)
     );
+    // The first click picks the corner (sizing begins at the last radius); a second click
+    // without moving applies it.
     click(&mut ed, &mut tool, v(0.1, 0.1));
+    assert!(tool.is_modal() && arcs(&ed.doc) == 0);
+    click(&mut ed, &mut tool, v(0.1, 0.1));
+    assert!(!tool.is_busy());
     let arc = ed
         .doc
         .iter()
@@ -1133,12 +1167,236 @@ fn fillet_and_chamfer_tools_use_typed_sizes() {
     let p = ptr(&ed, &tool, v(0.0, 0.0));
     tool.commit_typed(&p, &mut ed);
     click(&mut ed, &mut tool, v(0.0, 0.0));
+    click(&mut ed, &mut tool, v(0.0, 0.0));
     assert_eq!(lines(&ed.doc), 3);
     assert!(
         !ed.doc
             .iter()
             .any(|(_, e)| e.kind == EntityKind::Point(v(0.0, 0.0)))
     );
+}
+
+#[test]
+fn fillet_and_chamfer_size_with_the_pointer_in_steps() {
+    let radius = |ed: &Editor| {
+        ed.doc.iter().find_map(|(id, e)| match e.kind {
+            EntityKind::Arc { .. } => match ed.doc.shape(id) {
+                Some(Shape::Arc { radius, .. }) => Some(radius),
+                _ => None,
+            },
+            _ => None,
+        })
+    };
+    let mut ed = corner_fixture();
+    let mut tool = FilletTool::default();
+    click(&mut ed, &mut tool, v(0.0, 0.0));
+    // The arc passes under the pointer: at a right angle its middle is r(sqrt 2 - 1) from
+    // the corner, so 1.3 mm out is a radius near 3.14, stepped to a round 3.
+    let p = ptr(&ed, &tool, v(0.92, 0.92));
+    assert!(p.snap.is_none(), "no snapping while sizing");
+    tool.handle(Input::Hover(p), &mut ed);
+    let shown = tool.editor_preview(&ed);
+    assert!(
+        matches!(shown[..], [SketchItem { shape: Shape::Arc { radius, .. }, .. }]
+            if (radius - 3.0).abs() < 1e-9),
+        "{shown:?}"
+    );
+    assert_eq!(tool.measurement(&p).as_deref(), Some("R 3.0000 mm"));
+    // Alt sizes freely; far out, the size stops where the shorter line runs out.
+    let mut free = ptr(&ed, &tool, v(0.92, 0.92));
+    free.alt = true;
+    tool.handle(Input::Hover(free), &mut ed);
+    let r = match tool.editor_preview(&ed)[..] {
+        [
+            SketchItem {
+                shape: Shape::Arc { radius, .. },
+                ..
+            },
+        ] => radius,
+        _ => panic!("a preview"),
+    };
+    assert!((r - 0.92 * 2f64.sqrt() / (2f64.sqrt() - 1.0)).abs() < 1e-9);
+    let far = ptr(&ed, &tool, v(40.0, 40.0));
+    tool.handle(Input::Hover(far), &mut ed);
+    assert!(!tool.editor_preview(&ed).is_empty(), "still fits the lines");
+    // Esc leaves the corner alone; the tool stays.
+    assert!(tool.cancel(&mut ed));
+    assert!(radius(&ed).is_none() && !tool.is_modal());
+    // Press on the corner, drag out and release: one gesture. The radius is remembered.
+    let p = ptr(&ed, &tool, v(0.0, 0.0));
+    tool.handle(Input::DragStart(p, Modifiers::default()), &mut ed);
+    let p = ptr(&ed, &tool, v(1.5, 1.5));
+    tool.handle(Input::Drag(p), &mut ed);
+    tool.handle(Input::DragEnd(p, Modifiers::default()), &mut ed);
+    assert!((radius(&ed).unwrap() - 5.0).abs() < 1e-9);
+    assert_eq!(tool.measurement(&p).as_deref(), Some("R 5.0000 mm"));
+    // A radius typed while sizing goes on that corner.
+    let mut ed = corner_fixture();
+    click(&mut ed, &mut tool, v(0.0, 0.0));
+    tool.set_typed([Some(2.5), None]);
+    let p = ptr(&ed, &tool, v(3.0, 3.0));
+    tool.commit_typed(&p, &mut ed);
+    assert!((radius(&ed).unwrap() - 2.5).abs() < 1e-9);
+
+    // The chamfer's cut passes under the pointer: both distances the same round number.
+    let mut ed = corner_fixture();
+    let mut tool = ChamferTool::default();
+    click(&mut ed, &mut tool, v(0.0, 0.0));
+    let p = ptr(&ed, &tool, v(1.45, 1.45));
+    tool.handle(Input::Hover(p), &mut ed);
+    click(&mut ed, &mut tool, v(1.45, 1.45));
+    let cut = ed
+        .doc
+        .iter()
+        .filter_map(|(id, _)| match ed.doc.shape(id) {
+            Some(Shape::Line { a, b }) if a.x != b.x && a.y != b.y => Some((a, b)),
+            _ => None,
+        })
+        .next()
+        .expect("the chamfer");
+    let (on_x, on_y) = if cut.0.y == 0.0 { cut } else { (cut.1, cut.0) };
+    assert!(on_x.distance(v(3.0, 0.0)) < 1e-9 && on_y.distance(v(0.0, 3.0)) < 1e-9);
+}
+
+/// The corner fixture, filleted at radius 4: the arc, and a point on its middle.
+fn filleted_fixture(relations: bool) -> (Editor, EntityId, DVec2) {
+    let mut ed = corner_fixture();
+    ed.auto_relations = relations;
+    let corner = ed
+        .doc
+        .iter()
+        .find(|(_, e)| e.kind == EntityKind::Point(v(0.0, 0.0)))
+        .map(|(id, _)| id)
+        .unwrap();
+    let arc = ed.fillet(corner, 4.0).unwrap();
+    let middle = v(4.0, 4.0) - DVec2::splat(4.0 / 2f64.sqrt());
+    (ed, arc, middle)
+}
+
+/// The fillet arc's centre and radius, and the far ends of the two lines.
+fn fillet_state(ed: &Editor, arc: EntityId) -> (DVec2, f64, Vec<DVec2>) {
+    let Some(Shape::Arc { center, radius, .. }) = ed.doc.shape(arc) else {
+        panic!("an arc");
+    };
+    let mut far: Vec<DVec2> = ed
+        .doc
+        .iter()
+        .filter_map(|(id, _)| match ed.doc.shape(id) {
+            Some(Shape::Line { a, b }) => Some(if a.length() > b.length() { a } else { b }),
+            _ => None,
+        })
+        .collect();
+    far.sort_by(|a, b| a.x.total_cmp(&b.x));
+    (center, radius, far)
+}
+
+#[test]
+fn a_fillet_is_resized_in_place() {
+    for relations in [false, true] {
+        let (mut ed, arc, middle) = filleted_fixture(relations);
+        let relations_before = ed.doc.constraint_count();
+        assert!(ed.fillet_at(arc).is_some());
+        // The fillet tool on a fillet that is already there: sizing starts from its radius.
+        let mut tool = FilletTool::default();
+        let p = ptr(&ed, &tool, middle);
+        tool.handle(Input::Hover(p), &mut ed);
+        assert_eq!(ed.hovered, Some(arc), "the fillet lights up");
+        click(&mut ed, &mut tool, middle);
+        assert!(tool.is_modal());
+        assert_eq!(tool.measurement(&p).as_deref(), Some("R 4.0000 mm"));
+        // Out to where a radius-5 arc would pass, and click.
+        let p = ptr(&ed, &tool, v(1.5, 1.5));
+        tool.handle(Input::Hover(p), &mut ed);
+        assert!(
+            matches!(tool.editor_preview(&ed)[..], [SketchItem { shape: Shape::Arc { radius, .. }, .. }]
+                if (radius - 5.0).abs() < 1e-9)
+        );
+        click(&mut ed, &mut tool, v(1.5, 1.5));
+        assert!(!tool.is_busy());
+        // The arc is still tangent to both lines, which haven't turned or moved their far
+        // ends; no relation was added, and a radius dimension took the new value.
+        let (centre, radius, far) = fillet_state(&ed, arc);
+        assert!(centre.distance(v(5.0, 5.0)) < 1e-7 && (radius - 5.0).abs() < 1e-7);
+        assert_eq!(far, vec![v(0.0, 10.0), v(20.0, 0.0)]);
+        assert_eq!(ed.doc.constraint_count(), relations_before);
+        assert_eq!(lines(&ed.doc), 2);
+        assert_eq!(arcs(&ed.doc), 1);
+        if relations {
+            assert!(ed.doc.constraints().any(
+                |(_, c)| matches!(c, Constraint::Radius { value, .. } if (*value - 5.0).abs() < 1e-9)
+            ));
+            assert!(ed.analysis().conflicts.is_empty());
+        }
+        // One undo step.
+        ed.undo();
+        assert!((fillet_state(&ed, arc).1 - 4.0).abs() < 1e-9);
+
+        // With the select tool, dragging the arc does the same.
+        let mut select = SelectTool::default();
+        let p = ptr(&ed, &select, middle);
+        select.handle(Input::DragStart(p, Modifiers::default()), &mut ed);
+        for at in [v(1.0, 1.0), v(0.7, 0.7), v(0.85, 0.85)] {
+            let p = ptr(&ed, &select, at);
+            select.handle(Input::Drag(p), &mut ed);
+        }
+        let p = ptr(&ed, &select, v(0.85, 0.85));
+        select.handle(Input::DragEnd(p, Modifiers::default()), &mut ed);
+        let (centre, radius, far) = fillet_state(&ed, arc);
+        assert!((radius - 3.0).abs() < 1e-7, "{radius}");
+        assert!(centre.distance(v(3.0, 3.0)) < 1e-7);
+        assert_eq!(far, vec![v(0.0, 10.0), v(20.0, 0.0)]);
+        ed.undo();
+        assert!((fillet_state(&ed, arc).1 - 4.0).abs() < 1e-9);
+        // A radius the lines have no room for is refused, with nothing changed.
+        assert!(ed.refillet(arc, 12.0).is_err());
+        assert!((fillet_state(&ed, arc).1 - 4.0).abs() < 1e-9);
+    }
+}
+
+#[test]
+fn an_arc_that_is_not_a_fillet_is_left_to_the_usual_tools() {
+    // An arc on its own, and one that meets a line at an angle.
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    let c = ed.doc.add_point(v(0.0, 0.0));
+    let a = ed.doc.add_point(v(5.0, 0.0));
+    let b = ed.doc.add_point(v(0.0, 5.0));
+    let arc = ed.doc.add_arc(c, a, b).unwrap();
+    ed.commit("Arc");
+    assert!(ed.fillet_at(arc).is_none());
+    ed.doc.begin();
+    let far_a = ed.doc.add_point(v(12.0, 3.0));
+    let far_b = ed.doc.add_point(v(-6.0, 5.0));
+    ed.doc.add_line(a, far_a).unwrap();
+    ed.doc.add_line(b, far_b).unwrap();
+    ed.commit("Lines");
+    assert!(ed.fillet_at(arc).is_none(), "the first line isn't tangent");
+    assert!(ed.refillet(arc, 2.0).is_err());
+}
+
+#[test]
+fn sizing_steps_are_round_numbers() {
+    use super::corners::round_step;
+    for (min, step) in [
+        (0.07, 0.1),
+        (0.11, 0.2),
+        (0.3, 0.5),
+        (0.6, 1.0),
+        (1.0, 1.0),
+        (40.0, 50.0),
+    ] {
+        assert!((round_step(min, true) - step).abs() < 1e-12, "{min}");
+    }
+    let inch = drift_core::units::MM_PER_INCH;
+    for (min, step) in [
+        (0.1, 1.0 / 64.0),
+        (3.0, 0.125),
+        (7.0, 0.5),
+        (300.0, 12.0),
+        (2000.0, 120.0),
+    ] {
+        assert!((round_step(min, false) - step * inch).abs() < 1e-9, "{min}");
+    }
 }
 
 #[test]

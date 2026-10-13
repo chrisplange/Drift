@@ -181,6 +181,8 @@ pub struct DriftApp {
     fit_target: Option<Bounds>,
     /// Last pointer position of an in-progress pan drag.
     pan_anchor: Option<egui::Pos2>,
+    /// What scrolling does over the canvas, and the gesture in progress.
+    wheel: app::view::Wheel,
     pointer: Option<Pointer>,
     grid_snap: bool,
     files: Files,
@@ -188,6 +190,8 @@ pub struct DriftApp {
     pending: Option<Pending>,
     status: Option<Status>,
     show_shortcuts: bool,
+    /// The relations pie (Q), while it is open.
+    pie: Option<app::pie::Pie>,
     /// Text filtering the shortcuts list.
     shortcut_filter: String,
     /// Where the side panels are (docked, floating or hidden).
@@ -257,6 +261,9 @@ pub struct DriftApp {
     /// An annotation label being dragged, and the grab offset (world units).
     note_drag: Option<(drift_core::AnnotationId, DVec2)>,
     note_edit: Option<app::note_ui::NoteEdit>,
+    /// A picked hatch's handle being dragged, and what its origin snapped to.
+    hatch_drag: Option<(drift_core::FillId, app::hatch_ui::HatchGrip)>,
+    hatch_snap: Option<drift_geom::Snap>,
     /// The sheet shown in the Sheets tab and the preview.
     active_sheet: Option<drift_core::SheetId>,
     /// The canvas shows the current sheet as it prints, instead of the model.
@@ -314,6 +321,7 @@ impl DriftApp {
             painter,
             fit_target: Some(EMPTY_VIEW),
             pan_anchor: None,
+            wheel: Default::default(),
             pointer: None,
             grid_snap: false,
             files,
@@ -326,6 +334,7 @@ impl DriftApp {
             pending: None,
             status: None,
             show_shortcuts: false,
+            pie: None,
             shortcut_filter: String::new(),
             layout: Default::default(),
             dock_view: Default::default(),
@@ -368,6 +377,8 @@ impl DriftApp {
             fill_meshes: Default::default(),
             hatch_patterns: Default::default(),
             note_drag: None,
+            hatch_drag: None,
+            hatch_snap: None,
             note_edit: None,
             active_sheet: None,
             sheet_preview: false,
@@ -387,7 +398,7 @@ impl DriftApp {
         };
         if let Some(mb) = drift_platform::memory::take_stop_note() {
             app.editor.notice = Some(format!(
-                "Drift stopped itself last time: it was using {:.1} GB of memory.                  Your last autosave has been restored.",
+                "Drift stopped itself last time: it was using {:.1} GB of memory. Your last autosave has been restored.",
                 mb as f64 / 1024.0
             ));
         }
@@ -587,6 +598,10 @@ const SHORTCUTS: &[(&str, &[(&str, &str)])] = &[
             ),
             ("Ctrl+A", "Select all"),
             (
+                "Q",
+                "Relations pie for the selection: hold and flick, or tap and click",
+            ),
+            (
                 "Del",
                 "Delete the selection, or the picked relation / dimension",
             ),
@@ -602,7 +617,10 @@ const SHORTCUTS: &[(&str, &[(&str, &str)])] = &[
             ("Shift+F / double middle-click", "Zoom to fit"),
             ("Shift+Z", "Zoom to the selection"),
             ("Middle / right drag", "Pan"),
-            ("Scroll / pinch", "Zoom at the cursor"),
+            (
+                "Scroll / pinch",
+                "Zoom at the cursor (two fingers on a trackpad pan)",
+            ),
             ("Alt+D / Alt+R", "Show or hide dimensions / relations"),
             ("Shift+G", "Snap to grid"),
             (

@@ -9,6 +9,14 @@ fn is_false(b: &bool) -> bool {
     !*b
 }
 
+fn is_true(b: &bool) -> bool {
+    *b
+}
+
+fn yes() -> bool {
+    true
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct FieldsRecord {
@@ -58,6 +66,11 @@ pub(crate) struct SheetRecord {
     fields: FieldsRecord,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     revisions: Vec<RevisionRecord>,
+    /// Written only when hidden on the sheet.
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    dimensions: bool,
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    notes: bool,
 }
 
 pub(crate) fn sheet_record(id: SheetId, s: &Sheet) -> SheetRecord {
@@ -74,6 +87,8 @@ pub(crate) fn sheet_record(id: SheetId, s: &Sheet) -> SheetRecord {
         scale: s.scale,
         center: s.center.to_array(),
         title_block: s.title_block.key().into(),
+        dimensions: s.dimensions,
+        notes: s.notes,
         fields: FieldsRecord {
             title: f.title.clone(),
             number: f.number.clone(),
@@ -123,6 +138,8 @@ pub(crate) fn parse_sheet(r: SheetRecord) -> Result<(SheetId, Sheet), LoadError>
         scale: r.scale,
         center,
         title_block,
+        dimensions: r.dimensions,
+        notes: r.notes,
         fields: TitleFields {
             title: f.title,
             number: f.number,

@@ -1512,8 +1512,9 @@ zooms to fit; F is Fillet (again for Chamfer).
   - "Automatic relations" off now means none are added, anywhere: trim, extend, split,
     fillet, offset and mirror go through `Editor::relate`, and polygons, slots and tangent
     and three-point arcs come out as plain geometry. Trimmed ends that meet still share a
-    point, so an outline closed by trimming stays closed. (Relations the user asks for, the
-    pen's smooth points, an explicit X / Y lock and typed dimensions are not "automatic".)
+    point, so an outline closed by trimming stays closed. An X / Y lock still draws the
+    segment along its axis, without the horizontal / vertical relation. (Relations the user
+    asks for, the pen's smooth points and typed dimensions are not "automatic".)
   - Panels: the blue drop zones show only while a panel is dragged by its tab or header;
     closing a floating panel puts it back in the dock it came from.
   - Paste goes straight into a move. A fill is deleted with its boundary (one undo step).
@@ -1526,12 +1527,43 @@ zooms to fit; F is Fillet (again for Chamfer).
   - Regions: curves drawn along each other (the touching walls of two rectangles, a line
     drawn twice) no longer merge or leak areas. A status-bar warning counts overlapping
     curves and selects them when clicked.
-- **Alpha feedback, phase 2: interaction polish.** Trackpad two-finger pan (with a
-  preference where the system can't tell a trackpad from a wheel); interactive fillet and
-  chamfer sized by moving the mouse in steps; dimension numbers centred by default and
-  moved out when the space is too tight; hatch alignment and offset handles; show or hide
-  dimensions per sheet; stroke weight and line type on the top bar, beside the stroke and
-  fill swatches.
+- **Alpha feedback, phase 2 (done): interaction polish.**
+  - Scrolling: a mouse wheel zooms and two fingers on a trackpad pan (a pinch, or Ctrl +
+    scroll, zooms). The two are told apart per gesture: points on macOS, and small,
+    fractional or sideways amounts elsewhere, are a trackpad. Preferences has Automatic /
+    Zoom / Pan for when the guess is wrong (a free-spinning wheel, a touch mouse). The sheet
+    preview follows the same setting.
+  - Fillet and chamfer are sized on the canvas, as Blender's bevel is: click (or press on) a
+    corner, move to size it in round steps a few pixels apart (Alt: freely), click to apply.
+    The arc or cut passes under the pointer. A second click without moving reuses the last
+    size; a typed value applies to the corner being sized; Esc or right-click cancels.
+    A fillet that is already there (an arc between two lines, tangent to both) is re-sized
+    in place: clicked with the fillet tool, or dragged by its arc with the select tool. Its
+    ends slide along their lines and its centre along the bisector (`Editor::drag_fillet`),
+    so the lines keep their directions and nothing else moves; a radius dimension on it
+    takes the new value. The same holds wherever the radius is set: typed in the inspector
+    or on its dimension, the fillet is put where that radius has it before the solve
+    (`Editor::settle_fillet`). Over a fillet the select tool shows a resize cursor.
+  - Relations pie (Q, or Relations… in the canvas menu): the relations that fit the
+    selection in a ring at the pointer, each at a fixed place (Horizontal right, Vertical up,
+    Parallel / Tangent upper right, Perpendicular / Concentric upper left, Equal left, Fix
+    lower left, Coincident / Collinear / On curve / Coradial down, Midpoint / Symmetric
+    lower right). Hold Q, flick and let go; or tap Q and click. One already on the selection
+    is lit and choosing it takes it off; ones that don't fit are dimmed; one that would
+    over-define the sketch says so before it is chosen. Relations only: D is for dimensions.
+  - Still to do for corners (with phase 3): re-size a chamfer that is already there, and
+    "Remove fillet" to put the sharp corner back.
+  - Dimension numbers: the dimension tool places the number in the middle of its line. Where
+    it doesn't fit between the extension lines it is drawn just outside, on the side it was
+    nearer. A label dragged near the middle settles there; dragged elsewhere it stays.
+    Decided at layout time, so the screen, sheets and exports each get what fits them.
+  - A picked hatch has two handles on the canvas: a square that moves the pattern's origin
+    (snapping to points, curves and the grid) and a round one that turns it in 15 degree
+    steps (Alt: freely). Each drag is one undo step.
+  - Each sheet can leave out dimensions (ordinates included) and notes and callouts
+    (Sheets panel, View, Show). Format v17: two optional flags on a sheet.
+  - The top bar has the selection's stroke weight and line type beside the stroke swatch,
+    each a menu of line samples with "By layer" first.
 - **Alpha feedback, phase 3: sheets, second version (design first).** Several views per
   sheet (a change to the sheet model and file format); a Revit-like sheet editor for
   placing, scaling and titling views; system fonts (PDF needs to embed them); an SVG logo

@@ -6,6 +6,7 @@ use std::f64::consts::TAU;
 
 use drift_core::{Constraint, ConstraintId, DVec2, EntityId, EntityKind, Shape, arc_shape};
 use drift_geom::intersect::{self, intersect, intersect_extended, intersect_unbounded};
+use drift_solver::Param;
 
 use crate::editor::{EditError, Editor};
 
@@ -158,6 +159,26 @@ pub fn piece(shape: &Shape, t0: f64, t1: f64) -> Shape {
             p: drift_core::shape::bezier_piece(&p, t0, t1),
         },
         Shape::Point(p) => Shape::Point(p),
+    }
+}
+
+/// An existing fillet: the corner its two lines would meet at, their far ends, the arc's end
+/// points (on the first and second line) and centre point, and its radius.
+#[derive(Clone, Copy, Debug)]
+pub struct FilletInfo {
+    pub corner: DVec2,
+    pub far: [DVec2; 2],
+    pub ends: [EntityId; 2],
+    pub center: EntityId,
+    pub radius: f64,
+}
+
+impl FilletInfo {
+    /// Half the angle between the lines, and the shorter line's length from the corner.
+    pub fn half_angle_and_room(&self) -> (f64, f64) {
+        let (a, b) = (self.far[0] - self.corner, self.far[1] - self.corner);
+        let cos = (a.normalize().dot(b.normalize())).clamp(-1.0, 1.0);
+        (cos.acos() / 2.0, a.length().min(b.length()))
     }
 }
 
@@ -989,6 +1010,158 @@ impl Editor {
         })();
         self.finish(result, "Fillet")?;
         Ok(arc.expect("added"))
+    }
+
+    /// The fillet an arc is, if it is one: an arc whose ends each join one line, tangent to
+    /// it. The corner is where those lines would meet.
+    pub fn fillet_at(&self, arc: EntityId) -> Option<FilletInfo> {
+        let EntityKind::Arc { center, start, end } = self.doc.get(arc)?.kind else {
+            return None;
+        };
+        let c = self.doc.point(center).ok()?;
+        let side = |tip: EntityId| -> Option<(DVec2, DVec2)> {
+            let mut others = self.doc.users_of(tip).filter(|u| *u != arc);
+            let line = others.next()?;
+            if others.next().is_some() {
+                return None;
+            }
+            let EntityKind::Line { a, b } = self.doc.get(line)?.kind else {
+                return None;
+            };
+            let far = if a == tip { b } else { a };
+            Some((self.doc.point(tip).ok()?, self.doc.point(far).ok()?))
+        };
+        let ((t1, far1), (t2, far2)) = (side(start)?, side(end)?);
+        let radius = t1.distance(c);
+        let (l1, l2) = (far1.distance(t1), far2.distance(t2));
+        if radius <= 0.0 || l1 <= 0.0 || l2 <= 0.0 {
+            return None;
+        }
+        let (u1, u2) = ((far1 - t1) / l1, (far2 - t2) / l2);
+        // Tangent at both ends (to a tolerance that survives a solve).
+        let tangent = |t: DVec2, u: DVec2| ((t - c) / radius).dot(u).abs() < 1e-6;
+        if !tangent(t1, u1) || !tangent(t2, u2) {
+            return None;
+        }
+        // Where the two lines meet, behind both tangent points.
+        let cross = u1.perp_dot(u2);
+        if cross.abs() < 1e-9 {
+            return None;
+        }
+        let k = (t2 - t1).perp_dot(u2) / cross;
+        let corner = t1 + u1 * k;
+        if k >= 0.0 || (t2 - corner).dot(u2) <= 0.0 {
+            return None;
+        }
+        Some(FilletInfo {
+            corner,
+            far: [far1, far2],
+            ends: [start, end],
+            center,
+            radius,
+        })
+    }
+
+    /// The arc a fillet would be at radius `r`, for previews.
+    pub fn refillet_preview(&self, arc: EntityId, r: f64) -> Option<Shape> {
+        let f = self.fillet_at(arc)?;
+        let (t1, t2, c, _) = fillet_geometry(f.corner, f.far[0], f.far[1], r).ok()?;
+        // The arc keeps its direction: its start stays on the first line.
+        Some(arc_shape(c, t1, t2))
+    }
+
+    /// Resize a fillet in place, inside an open transaction: its ends slide along their
+    /// lines and its centre along the bisector, so the lines keep their directions and
+    /// nothing else has to move. A radius dimension on it takes the new value. False, with
+    /// nothing changed, if it isn't a fillet, the radius doesn't fit, or relations hold it.
+    pub fn drag_fillet(&mut self, arc: EntityId, r: f64) -> bool {
+        let Some(f) = self.fillet_at(arc) else {
+            return false;
+        };
+        let Ok((t1, t2, c, _)) = fillet_geometry(f.corner, f.far[0], f.far[1], r) else {
+            return false;
+        };
+        let points = [(f.ends[0], t1), (f.ends[1], t2), (f.center, c)];
+        let before: Vec<(EntityId, DVec2)> = points
+            .iter()
+            .filter_map(|(id, _)| Some((*id, self.doc.point(*id).ok()?)))
+            .collect();
+        // A driving radius or diameter dimension follows.
+        let sized: Vec<(drift_core::ConstraintId, Constraint)> = self
+            .doc
+            .constraints_on(arc)
+            .filter(|id| !self.doc.is_driven(*id))
+            .filter_map(|id| Some((id, *self.doc.constraint(id)?)))
+            .filter(|(_, k)| matches!(k, Constraint::Radius { .. } | Constraint::Diameter { .. }))
+            .collect();
+        for (id, at) in points {
+            let _ = self.doc.set_point(id, at);
+        }
+        for (id, k) in &sized {
+            let value = if matches!(k, Constraint::Diameter { .. }) {
+                2.0 * r
+            } else {
+                r
+            };
+            let _ = self.doc.set_constraint(*id, k.with_value(value));
+        }
+        let dragged: Vec<Param> = points
+            .iter()
+            .flat_map(|(id, _)| Param::point(*id))
+            .collect();
+        let report = self.solve(&dragged);
+        let held = points.iter().all(|(id, at)| {
+            self.doc
+                .point(*id)
+                .is_ok_and(|p| p.distance(*at) <= 1e-6 * r.max(1.0))
+        });
+        let ok = !self.new_conflicts(&report) && held;
+        if !ok {
+            for (id, at) in before {
+                let _ = self.doc.set_point(id, at);
+            }
+            for (id, k) in sized {
+                let _ = self.doc.set_constraint(id, k);
+            }
+            self.solve(&dragged);
+        }
+        self.index.update(&self.doc);
+        ok
+    }
+
+    /// Before a radius or diameter dimension on a fillet is solved for: put the fillet where
+    /// that radius has it (ends along their lines, centre on the bisector), inside the open
+    /// transaction. The solve then has nothing to move, where it would otherwise be free to
+    /// swing the lines. Does nothing for other curves, or a radius the lines have no room for.
+    pub(crate) fn settle_fillet(&mut self, sized: &Constraint) {
+        let (arc, r) = match *sized {
+            Constraint::Radius { curve, value } => (curve, value),
+            Constraint::Diameter { curve, value } => (curve, value / 2.0),
+            _ => return,
+        };
+        let Some(f) = self.fillet_at(arc) else {
+            return;
+        };
+        if let Ok((t1, t2, c, _)) = fillet_geometry(f.corner, f.far[0], f.far[1], r) {
+            for (id, at) in [(f.ends[0], t1), (f.ends[1], t2), (f.center, c)] {
+                let _ = self.doc.set_point(id, at);
+            }
+        }
+    }
+
+    /// Give a fillet a new radius (one undo step). See [`Editor::drag_fillet`].
+    pub fn refillet(&mut self, arc: EntityId, r: f64) -> Result<(), EditError> {
+        let Some(f) = self.fillet_at(arc) else {
+            return Err(invalid("that arc isn't a fillet between two lines"));
+        };
+        fillet_geometry(f.corner, f.far[0], f.far[1], r)?;
+        self.doc.begin();
+        let result = if self.drag_fillet(arc, r) {
+            Ok(())
+        } else {
+            Err(EditError::Conflict)
+        };
+        self.finish(result, "Fillet radius")
     }
 
     /// Replace a line's end point `from` with `to`.

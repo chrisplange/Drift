@@ -380,7 +380,7 @@ impl Editor {
         )
     }
 
-    fn solve(&mut self, dragged: &[Param]) -> SolveReport {
+    pub(crate) fn solve(&mut self, dragged: &[Param]) -> SolveReport {
         drift_solver::solve(
             &mut self.doc,
             &SolveOptions {
@@ -399,7 +399,7 @@ impl Editor {
 
     /// True if `report` has conflicts that weren't there before this edit (a document that was
     /// already conflicting shouldn't make every later edit fail).
-    fn new_conflicts(&self, report: &SolveReport) -> bool {
+    pub(crate) fn new_conflicts(&self, report: &SolveReport) -> bool {
         !report.converged
             && report
                 .conflicts
@@ -616,6 +616,7 @@ impl Editor {
                     return Err(EditError::Invalid(e.to_string()));
                 }
             }
+            self.settle_fillet(c);
         }
         self.check_new_constraints(label, &ids, &before, &degenerate_before)?;
         Ok(ids)
@@ -1216,6 +1217,7 @@ impl Editor {
             self.sync();
             return Err(EditError::Invalid(e.to_string()));
         }
+        self.settle_fillet(&current.with_value(value));
         let report = self.solve(&[]);
         let error = if self.new_conflicts(&report) {
             Some(EditError::Conflict)
@@ -1237,6 +1239,83 @@ impl Editor {
         self.doc.begin();
         self.doc.remove_constraint(id);
         self.commit("Delete constraint");
+    }
+
+    /// The relation like `wanted` that is already on the sketch: the same kind, on the same
+    /// geometry.
+    fn existing_relation(&self, wanted: &Constraint) -> Option<ConstraintId> {
+        let on = |c: &Constraint| {
+            let mut ids: Vec<EntityId> = c.entities().collect();
+            ids.sort_unstable();
+            ids
+        };
+        let target = on(wanted);
+        let first = *target.first()?;
+        self.doc.constraints_on(first).find(|id| {
+            self.doc.constraint(*id).is_some_and(|c| {
+                std::mem::discriminant(c) == std::mem::discriminant(wanted) && on(c) == target
+            })
+        })
+    }
+
+    /// The relations of `option` that are already on the sketch.
+    pub fn existing_relations(&self, option: &ConstraintOption) -> Vec<ConstraintId> {
+        option
+            .constraints
+            .iter()
+            .filter_map(|c| self.existing_relation(c))
+            .collect()
+    }
+
+    /// The relations of `option` that aren't on the sketch yet.
+    pub fn missing_relations(&self, option: &ConstraintOption) -> Vec<Constraint> {
+        option
+            .constraints
+            .iter()
+            .filter(|c| self.existing_relation(c).is_none())
+            .copied()
+            .collect()
+    }
+
+    /// Whether everything `option` would add is already there.
+    pub fn has_relations(&self, option: &ConstraintOption) -> bool {
+        !option.constraints.is_empty() && self.missing_relations(option).is_empty()
+    }
+
+    /// Take relations off (one undo step).
+    pub fn remove_relations(&mut self, ids: &[ConstraintId]) {
+        if ids.is_empty() {
+            return;
+        }
+        self.doc.begin();
+        for id in ids {
+            self.doc.remove_constraint(*id);
+        }
+        self.commit("Remove relation");
+    }
+
+    /// Whether adding `constraints` would over-define the sketch. Nothing is changed.
+    pub fn would_conflict(&mut self, constraints: &[Constraint]) -> bool {
+        if constraints.is_empty() {
+            return false;
+        }
+        self.doc.begin();
+        let added = constraints
+            .iter()
+            .all(|c| self.doc.add_constraint(*c).is_ok());
+        let bad = !added || {
+            let report = drift_solver::solve(
+                &mut self.doc,
+                &SolveOptions {
+                    analyze: true,
+                    ..Default::default()
+                },
+            );
+            self.new_conflicts(&report)
+        };
+        self.doc.rollback();
+        self.sync();
+        bad
     }
 
     /// Relations that fit the current selection.

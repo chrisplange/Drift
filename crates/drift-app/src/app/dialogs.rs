@@ -50,6 +50,7 @@ impl DriftApp {
         self.start_panel(ctx);
         self.about_window(ctx);
         self.settings_window(ctx);
+        self.relation_pie(ctx);
         if let Some((constraint, placement)) = self.editor.pending_driven {
             let mut choice = None;
             let modal = egui::Modal::new(egui::Id::new("driven")).show(ctx, |ui| {

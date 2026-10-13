@@ -325,6 +325,7 @@ enum Key {
     Draft,
     Patterns,
     Logo,
+    Fonts,
     Sheet(SheetId),
     Group(GroupId),
     Block(BlockId),
@@ -352,6 +353,7 @@ enum Record {
     Draft(DraftStyle),
     Patterns(String),
     Logo(String),
+    Fonts(crate::fonts::FontSet),
     Sheet(Sheet),
     Group(Group),
     Block(Block),
@@ -401,6 +403,8 @@ pub struct Document {
     patterns: String,
     /// The title blocks' logo, as SVG text ("" for none), so it travels with the file.
     logo: String,
+    /// Fonts kept in the drawing, and the one its annotations are set in.
+    fonts: crate::fonts::FontSet,
     sheets: BTreeMap<SheetId, Sheet>,
     groups: BTreeMap<GroupId, Group>,
     blocks: BTreeMap<BlockId, Block>,
@@ -441,6 +445,7 @@ impl PartialEq for Document {
             && self.draft == other.draft
             && self.patterns == other.patterns
             && self.logo == other.logo
+            && self.fonts == other.fonts
             && self.sheets == other.sheets
             && self.groups == other.groups
             && self.blocks == other.blocks
@@ -470,6 +475,7 @@ impl Default for Document {
             draft: DraftStyle::default(),
             patterns: String::new(),
             logo: String::new(),
+            fonts: Default::default(),
             sheets: BTreeMap::new(),
             groups: BTreeMap::new(),
             blocks: BTreeMap::new(),
@@ -721,6 +727,7 @@ impl Document {
             Key::Draft => Some(Record::Draft(self.draft)),
             Key::Patterns => Some(Record::Patterns(self.patterns.clone())),
             Key::Logo => Some(Record::Logo(self.logo.clone())),
+            Key::Fonts => Some(Record::Fonts(self.fonts.clone())),
             Key::Sheet(id) => self.sheets.get(&id).cloned().map(Record::Sheet),
             Key::Group(id) => self.groups.get(&id).cloned().map(Record::Group),
             Key::Block(id) => self.blocks.get(&id).cloned().map(Record::Block),
@@ -832,6 +839,8 @@ impl Document {
             (Key::Patterns, _) => {}
             (Key::Logo, Some(Record::Logo(l))) => self.logo = l,
             (Key::Logo, _) => {}
+            (Key::Fonts, Some(Record::Fonts(f))) => self.fonts = f,
+            (Key::Fonts, _) => {}
             (Key::Text(id), Some(Record::Text(t))) => {
                 self.texts.insert(id, t);
             }
@@ -1887,6 +1896,7 @@ impl Document {
         keys.push(Key::Draft);
         keys.push(Key::Patterns);
         keys.push(Key::Logo);
+        keys.push(Key::Fonts);
         keys.extend(self.sheets.keys().map(|id| Key::Sheet(*id)));
         keys.extend(self.groups.keys().map(|id| Key::Group(*id)));
         keys.extend(self.blocks.keys().map(|id| Key::Block(*id)));
@@ -2773,6 +2783,29 @@ impl Document {
             self.touch_key(Key::Logo);
             self.logo = svg;
         }
+    }
+
+    /// The fonts kept in the drawing, and the one its annotations are set in.
+    pub fn fonts(&self) -> &crate::fonts::FontSet {
+        &self.fonts
+    }
+
+    pub fn set_fonts(&mut self, fonts: crate::fonts::FontSet) {
+        if self.fonts != fonts {
+            self.touch_key(Key::Fonts);
+            self.fonts = fonts;
+        }
+    }
+
+    /// The families the drawing uses: its annotations' font, and its texts' system fonts.
+    pub fn fonts_in_use(&self) -> BTreeSet<String> {
+        let mut used: BTreeSet<String> = self.fonts.drawing.iter().cloned().collect();
+        for text in self.texts.values() {
+            if let crate::texts::TextFont::System(family) = &text.font {
+                used.insert(family.clone());
+            }
+        }
+        used
     }
 
     pub fn draft_style(&self) -> DraftStyle {

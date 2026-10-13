@@ -287,6 +287,21 @@ impl DriftApp {
                         self.import_dxf(&name, &drift_io::dxf::decode(&contents), now);
                         continue;
                     }
+                    if lower.ends_with(".ttf") || lower.ends_with(".otf") {
+                        match self.editor.add_font_file(contents) {
+                            Ok(family) => self.set_status(
+                                format!(
+                                    "{family} is now kept in this drawing: pick it in a font menu"
+                                ),
+                                false,
+                                now,
+                            ),
+                            Err(e) => {
+                                self.set_status(format!("Could not add {name}: {e}"), true, now)
+                            }
+                        }
+                        continue;
+                    }
                     if lower.ends_with(".svg") {
                         match self.set_logo(&text) {
                             Ok(()) => self.set_status(

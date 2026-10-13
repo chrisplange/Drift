@@ -295,6 +295,14 @@ pub struct Editor {
     pub selected_text: Option<drift_core::TextId>,
     pub hovered_text: Option<drift_core::TextId>,
     pub(crate) text_cache: std::cell::RefCell<crate::texts::TextCache>,
+    /// The drawing's font as loaded, by its family and file.
+    #[allow(clippy::type_complexity)]
+    pub(crate) font_cache: std::cell::RefCell<
+        Option<(
+            (String, usize),
+            Option<std::rc::Rc<drift_draft::font::DrawingFont>>,
+        )>,
+    >,
     /// Overlapping curves, as of a document revision.
     pub(crate) overlap_cache: std::cell::RefCell<Option<(u64, std::rc::Rc<Vec<EntityId>>)>>,
     /// The text being typed in place on the canvas (just placed, or double-clicked).

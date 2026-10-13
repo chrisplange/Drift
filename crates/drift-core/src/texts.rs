@@ -66,22 +66,73 @@ impl TextFont {
     }
 }
 
-/// A line of text in the sketch.
+/// How the lines of a text sit against its anchor point.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum TextAlign {
+    #[default]
+    Left,
+    Center,
+    Right,
+}
+
+impl TextAlign {
+    pub const ALL: [TextAlign; 3] = [TextAlign::Left, TextAlign::Center, TextAlign::Right];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            TextAlign::Left => "left",
+            TextAlign::Center => "center",
+            TextAlign::Right => "right",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            TextAlign::Left => "Left",
+            TextAlign::Center => "Centre",
+            TextAlign::Right => "Right",
+        }
+    }
+
+    pub fn from_name(s: &str) -> Option<TextAlign> {
+        Self::ALL.into_iter().find(|a| a.name() == s)
+    }
+
+    /// How much of a line's width lies before the anchor: none, half or all of it.
+    pub fn factor(self) -> f64 {
+        match self {
+            TextAlign::Left => 0.0,
+            TextAlign::Center => 0.5,
+            TextAlign::Right => 1.0,
+        }
+    }
+}
+
+/// Text in the sketch: one line or several (separated by `\n`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct SketchText {
     pub text: String,
-    /// The start of the baseline.
+    /// The anchor: on the first line's baseline, at its start, middle or end as `align`
+    /// says. Further lines hang below it.
     pub at: DVec2,
     /// Height of capital letters, in sketch units (mm).
     pub height: f64,
     /// Counter-clockwise, in degrees.
     pub angle: f64,
     pub font: TextFont,
+    pub align: TextAlign,
+    /// From one baseline to the next, in cap heights.
+    pub spacing: f64,
+    /// Lines longer than this (mm) are broken at spaces. `None`: only where the text says.
+    pub wrap: Option<f64>,
     pub layer: LayerId,
     pub appearance: Appearance,
 }
 
 impl SketchText {
+    /// The usual distance from one baseline to the next, in cap heights.
+    pub const SPACING: f64 = 1.6;
+
     pub fn new(text: impl Into<String>, at: DVec2, height: f64) -> Self {
         Self {
             text: text.into(),
@@ -89,6 +140,9 @@ impl SketchText {
             height,
             angle: 0.0,
             font: TextFont::Sans,
+            align: TextAlign::Left,
+            spacing: Self::SPACING,
+            wrap: None,
             layer: LayerId::DEFAULT,
             appearance: Appearance::default(),
         }

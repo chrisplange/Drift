@@ -181,6 +181,8 @@ pub struct Drawing {
     pub line_type_scale: f64,
     /// Blocks that `Insert` items refer to.
     pub blocks: Vec<BlockDef>,
+    /// The font its text is set in (`None`: the standard look, Helvetica).
+    pub font: Option<std::rc::Rc<crate::font::DrawingFont>>,
 }
 
 impl Drawing {
@@ -592,6 +594,10 @@ pub fn text_width(text: &str, height: f64) -> f64 {
 /// The width of `text` at cap height `height` (mm) in a weight and tracking (the tracking
 /// after the last letter isn't counted).
 pub fn styled_width(text: &str, height: f64, style: TextStyle) -> f64 {
+    // In the drawing's own font, where it has one.
+    if let Some(font) = crate::font::drawing_font() {
+        return font.face(style.bold).0.width(text, height, style.tracking);
+    }
     let size = height / CAP_HEIGHT;
     let table = if style.bold {
         &HELVETICA_BOLD

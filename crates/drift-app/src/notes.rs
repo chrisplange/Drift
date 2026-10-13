@@ -6,7 +6,7 @@ use drift_core::{
     Anchor, Annotation, AnnotationId, DVec2, Document, DraftStyle, Emphasis, EntityId, EntityKind,
     LeaderEnd, LineKind, OrdinateAxis, Shape, SketchItem,
 };
-use eframe::egui::{self, Color32, FontId, Pos2, Rect, Stroke, vec2};
+use eframe::egui::{self, Color32, Pos2, Rect, Stroke, vec2};
 
 use crate::annotations::{AnnotationColors, AnnotationState, DimStyle, PT_PER_MM, Pen};
 use crate::overlay::ScreenMap;
@@ -442,7 +442,7 @@ fn place_text(
 ) -> NoteText {
     let galley = painter.layout(
         text.clone(),
-        FontId::proportional(font),
+        crate::fonts::drafting_font(font, false),
         Color32::WHITE,
         f32::INFINITY,
     );
@@ -661,7 +661,7 @@ pub fn paint_annotation(
             Mark::Text(t, size) => {
                 let galley = pen.painter().layout(
                     t.text.clone(),
-                    FontId::proportional(*size),
+                    crate::fonts::drafting_font(*size, false),
                     color,
                     f32::INFINITY,
                 );
@@ -690,7 +690,7 @@ pub fn paint_annotation(
     if let Some(t) = &layout.text {
         let galley = pen.painter().layout(
             t.text.clone(),
-            FontId::proportional(style.text),
+            crate::fonts::drafting_font(style.text, false),
             color,
             f32::INFINITY,
         );

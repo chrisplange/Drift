@@ -41,6 +41,16 @@ pub fn font_known(family: &str) -> Option<bool> {
         .map(|font| font.is_some())
 }
 
+/// The bytes of a built-in font (the sans, or the monospaced one).
+pub fn builtin_font(mono: bool) -> Arc<Vec<u8>> {
+    font_data(if mono {
+        &TextFont::Mono
+    } else {
+        &TextFont::Sans
+    })
+    .0
+}
+
 /// The font's file and face index: a built-in one, or a registered system font (the built-in
 /// sans where that isn't installed).
 fn font_data(font: &TextFont) -> (Arc<Vec<u8>>, u32) {
@@ -138,10 +148,131 @@ pub fn text_contours(
     at: DVec2,
     angle: f64,
 ) -> Vec<Vec<Shape>> {
-    let text: String = text.chars().take(MAX_OUTLINE_CHARS).collect();
-    let text = text.as_str();
+    let (data, index) = font_data(font);
+    contours_in(&data, index, text, height, at, angle, 0.0)
+}
+
+/// How wide `text` is in `font` with capitals `height` tall (advance widths, so a trailing
+/// space counts).
+pub fn line_width(text: &str, font: &TextFont, height: f64) -> f64 {
     let (data, index) = font_data(font);
     let Ok(f) = FontRef::from_index(&data, index) else {
+        return 0.0;
+    };
+    let metrics = f.metrics(Size::unscaled(), LocationRef::default());
+    let em = f64::from(metrics.units_per_em.max(1));
+    let cap = metrics
+        .cap_height
+        .map(f64::from)
+        .filter(|c| *c > 0.0)
+        .unwrap_or(0.7 * em);
+    let charmap = f.charmap();
+    let advances = f.glyph_metrics(Size::unscaled(), LocationRef::default());
+    let space = charmap
+        .map(' ')
+        .and_then(|g| advances.advance_width(g))
+        .map_or(0.3 * em, f64::from);
+    let units: f64 = text
+        .chars()
+        .map(|ch| {
+            charmap
+                .map(ch)
+                .and_then(|g| advances.advance_width(g))
+                .map_or(space, f64::from)
+        })
+        .sum();
+    units * height / cap
+}
+
+/// The lines a text is set in: where it breaks itself (`\n`), and, with a `wrap` width, at
+/// the spaces that keep each line within it. A word longer than the width has a line to
+/// itself.
+pub fn paragraph_lines(text: &str, font: &TextFont, height: f64, wrap: Option<f64>) -> Vec<String> {
+    let mut lines = Vec::new();
+    for line in text.split('\n') {
+        let line = line.trim_end_matches('\r');
+        let Some(width) = wrap.filter(|w| *w > 0.0) else {
+            lines.push(line.to_owned());
+            continue;
+        };
+        let mut current = String::new();
+        for word in line.split(' ') {
+            let candidate = if current.is_empty() {
+                word.to_owned()
+            } else {
+                format!("{current} {word}")
+            };
+            if !current.is_empty() && line_width(&candidate, font, height) > width {
+                lines.push(std::mem::take(&mut current));
+                current = word.to_owned();
+            } else {
+                current = candidate;
+            }
+        }
+        lines.push(current);
+    }
+    lines
+}
+
+/// A text of one or more lines.
+#[derive(Clone, Copy, Debug)]
+pub struct Paragraph<'a> {
+    pub text: &'a str,
+    pub font: &'a TextFont,
+    /// Cap height.
+    pub height: f64,
+    /// The anchor: on the first baseline, at each line's start, middle or end per `align`.
+    pub at: DVec2,
+    /// Degrees counter-clockwise.
+    pub angle: f64,
+    pub align: drift_core::TextAlign,
+    /// Baseline to baseline, in cap heights.
+    pub spacing: f64,
+    pub wrap: Option<f64>,
+}
+
+impl Paragraph<'_> {
+    /// Each line with where its baseline starts.
+    pub fn lines(&self) -> Vec<(String, DVec2)> {
+        let rotor = DVec2::from_angle(self.angle.to_radians());
+        paragraph_lines(self.text, self.font, self.height, self.wrap)
+            .into_iter()
+            .enumerate()
+            .map(|(k, line)| {
+                let across =
+                    -self.align.factor() * line_width(line.trim_end(), self.font, self.height);
+                let down = -(k as f64) * self.spacing * self.height;
+                let start = self.at + rotor.rotate(DVec2::new(across, down));
+                (line, start)
+            })
+            .collect()
+    }
+
+    /// The outlines of every line (see [`text_contours`]).
+    pub fn contours(&self) -> Vec<Vec<Shape>> {
+        self.lines()
+            .into_iter()
+            .flat_map(|(line, start)| {
+                text_contours(&line, self.font, self.height, start, self.angle)
+            })
+            .collect()
+    }
+}
+
+/// The contours of `text` in a font file's face (see [`text_contours`]), with `tracking` (a
+/// fraction of the font size) added after each letter.
+pub fn contours_in(
+    data: &[u8],
+    index: u32,
+    text: &str,
+    height: f64,
+    at: DVec2,
+    angle: f64,
+    tracking: f64,
+) -> Vec<Vec<Shape>> {
+    let text: String = text.chars().take(MAX_OUTLINE_CHARS).collect();
+    let text = text.as_str();
+    let Ok(f) = FontRef::from_index(data, index) else {
         return Vec::new();
     };
     let metrics = f.metrics(Size::unscaled(), LocationRef::default());
@@ -168,7 +299,7 @@ pub fn text_contours(
     };
     for ch in text.chars() {
         let Some(gid) = charmap.map(ch) else {
-            pen.offset += space;
+            pen.offset += space + tracking * em;
             continue;
         };
         if let Some(glyph) = glyphs.get(gid) {
@@ -176,7 +307,7 @@ pub fn text_contours(
             let _ = glyph.draw(settings, &mut pen);
             pen.finish();
         }
-        pen.offset += advances.advance_width(gid).map_or(space, f64::from);
+        pen.offset += advances.advance_width(gid).map_or(space, f64::from) + tracking * em;
     }
     let rotor = DVec2::from_angle(angle.to_radians());
     let place = |p: DVec2| at + rotor.rotate(p * scale);
@@ -230,5 +361,68 @@ mod tests {
         let turned = text_contours("H", &TextFont::Mono, 10.0, DVec2::new(5.0, 5.0), 90.0);
         let b: drift_core::Bounds = turned.iter().flatten().map(Shape::bounds).collect();
         assert!(b.max.x <= 5.0 + 1e-9 && b.min.y >= 5.0 - 1e-9, "{b:?}");
+    }
+
+    #[test]
+    fn paragraphs_break_align_and_wrap() {
+        use drift_core::TextAlign;
+        let font = TextFont::Sans;
+        let para = |text: &'static str, align, wrap| Paragraph {
+            text,
+            font: &TextFont::Sans,
+            height: 10.0,
+            at: DVec2::new(100.0, 50.0),
+            angle: 0.0,
+            align,
+            spacing: 1.5,
+            wrap,
+        };
+        // Two lines: the second a line spacing below the first, both from the anchor.
+        let left = para("HO\nH", TextAlign::Left, None).lines();
+        assert_eq!(left.len(), 2);
+        assert_eq!(left[0], ("HO".to_owned(), DVec2::new(100.0, 50.0)));
+        assert_eq!(left[1], ("H".to_owned(), DVec2::new(100.0, 35.0)));
+        // Centred and right-aligned lines sit about, and end at, the anchor.
+        let (wide, narrow) = (line_width("HO", &font, 10.0), line_width("H", &font, 10.0));
+        assert!(wide > narrow && narrow > 5.0);
+        let centre = para("HO\nH", TextAlign::Center, None).lines();
+        assert!((centre[0].1.x - (100.0 - wide / 2.0)).abs() < 1e-9);
+        assert!((centre[1].1.x - (100.0 - narrow / 2.0)).abs() < 1e-9);
+        let right = para("HO\nH", TextAlign::Right, None).lines();
+        assert!((right[1].1.x - (100.0 - narrow)).abs() < 1e-9);
+        // The outlines are where the lines are: the second line's are a spacing lower.
+        let contours = para("H\nH", TextAlign::Left, None).contours();
+        let ys: Vec<f64> = contours
+            .iter()
+            .flatten()
+            .map(|s| s.bounds().min.y)
+            .collect();
+        let (top, bottom) = (
+            ys.iter().copied().fold(f64::MIN, f64::max),
+            ys.iter().copied().fold(f64::MAX, f64::min),
+        );
+        assert!(
+            (bottom - 35.0).abs() < 1e-6 && top >= 50.0 - 1e-6,
+            "{bottom} {top}"
+        );
+        // Turned a quarter turn, lines stack to the right (down, turned).
+        let mut turned = para("H\nH", TextAlign::Left, None);
+        turned.angle = 90.0;
+        assert!(turned.lines()[1].1.distance(DVec2::new(115.0, 50.0)) < 1e-9);
+
+        // Wrapping: lines break at spaces to stay within the width; the text's own breaks
+        // stay; a word wider than the width has a line to itself.
+        let text = "HO HO HO HO\nHOHOHOHOHO H";
+        let width = line_width("HO HO", &font, 10.0) + 0.01;
+        let lines = paragraph_lines(text, &font, 10.0, Some(width));
+        assert_eq!(lines, ["HO HO", "HO HO", "HOHOHOHOHO", "H"]);
+        assert!(
+            lines[..2]
+                .iter()
+                .all(|l| line_width(l, &font, 10.0) <= width)
+        );
+        assert_eq!(paragraph_lines(text, &font, 10.0, None).len(), 2);
+        // A blank line is a line.
+        assert_eq!(paragraph_lines("A\n\nB", &font, 10.0, None), ["A", "", "B"]);
     }
 }

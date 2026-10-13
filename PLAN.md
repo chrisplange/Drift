@@ -1653,6 +1653,52 @@ zooms to fit; F is Fillet (again for Chamfer).
     and no dimensions, layouts or splines as such.
   - To try a real file without the app: `DRIFT_DXF=path cargo test -p drift-io probe --
     --ignored --nocapture` prints what came in, what was skipped and the notes.
+- **Fonts, second version (done): fonts kept in drawings, and one font for a drawing's
+  annotations.**
+  - A drawing keeps the fonts it uses (`Document::fonts`, a `FontSet`): each family's
+    regular face and its bold one where it has one. Picking an installed family for text
+    keeps it automatically; "Add a font file…" in any font menu keeps a `.ttf` / `.otf`
+    from disk, which is also how the browser build gets fonts. Format v19: `fonts`, with the
+    files as base64; only families something is set in are written.
+  - A font isn't kept where its licence flags forbid embedding, or where its file is over
+    12 MB (full CJK fonts). It is then used from this computer only, and the app says so.
+  - The drawing's font (Parameters, Drafting, Font) is what dimensions, notes, callouts,
+    marks, view titles and title blocks are set in. `None` is the standard look, unchanged:
+    Helvetica in print.
+  - One measure everywhere: `drift_draft::font` holds the drawing's font for the thread;
+    `styled_width` and the cap-height ratio come from it, so sheet layout, the screen and
+    each output agree. On screen the font is given to egui under its own family, with the
+    interface's fonts behind it for characters it lacks.
+  - PDF: the font is embedded whole (compressed) as a composite font, text is written by
+    glyph, and a glyph-to-Unicode map keeps it selectable and searchable in any script the
+    font covers. Without a bold face, bold is the regular face filled and stroked. A font
+    that can't be embedded (licence, or a face from a font collection) has its text drawn
+    as outlines. SVG names the family, with the standard ones behind it.
+  - Checked by writing a PDF, parsing it with another library (the font file comes back
+    byte for byte and the text extracts as typed), and rendering it with Inkscape.
+  - Not done: shaping (kerning, ligatures, right-to-left, complex scripts); a fallback
+    font inside PDFs for characters the drawing's font lacks (they show as its "missing"
+    box in print, though the screen falls back); multi-line sketch text and alignment;
+    italic and other weights; SHX fonts and DXF text styles; fonts inside SVG; subsetting
+    (a kept font adds its whole size to the file and to each PDF); the font scan still
+    blocks the interface once; the title block's sheet number can crowd in a wide font.
+- **Multi-line sketch text (done).** A text can run to several lines.
+  - `SketchText` gains `align` (left, centre, right), `spacing` (baseline to baseline in
+    cap heights, 1.6 by default) and `wrap` (a width lines are broken at spaces to stay
+    within). Its anchor is on the first line's baseline, at the start, middle or end of
+    each line as the alignment says, so centred and right-aligned text grows about its
+    anchor as it is typed. Written to the file only where they differ from a plain line.
+  - Typing: Enter finishes as before; Shift+Enter starts a new line, on the canvas and in
+    the inspector. The inspector has Align, Spacing and Wrap; changing the alignment moves
+    the anchor rather than the text.
+  - Layout is `drift_draft::outline::Paragraph`: the text's own breaks, then greedy
+    wrapping by measured advance widths; each line is outlined as before.
+  - DXF import: MTEXT is one text with its line breaks, its attachment as alignment, its
+    line spacing and its width as the wrap; TEXT and attributes keep centre and right
+    alignment instead of being converted to a left-hand position.
+  - Not done: justified text; vertical anchoring (middle, bottom) as a property rather
+    than worked out on import; wrapping uses the font Drift shows, so a DXF paragraph set
+    in a font we don't have may break at different words; no hyphenation.
 - **Workspace notes, next: tabs for separate drawings (design, not built).** A tab bar
   along the top, one drawing per tab, as Revit and Illustrator have.
   - What a tab owns: the editor (document, selection, undo history), its file (name, path,

@@ -438,7 +438,7 @@ fn annotations(ed: &Editor, painter: &egui::Painter, s: &Space, d: &mut Drawing)
                 text,
             } => Prim::Text {
                 at: to_page(baseline),
-                height: len(size) * CAP_HEIGHT,
+                height: len(size) * drift_draft::font::cap_ratio(),
                 // Screen angles turn clockwise (y down); page angles counter-clockwise.
                 angle: -f64::from(angle),
                 align: Align::Left,
@@ -480,6 +480,9 @@ pub fn sheet_drawing(
     number: (usize, usize),
 ) -> Drawing {
     let mut d = Drawing::new(sheet.size());
+    // The drawing's own font, for everything measured and written from here on.
+    d.font = ed.drawing_font();
+    drift_draft::font::set_drawing_font(d.font.clone());
     for v in &sheet.views {
         let frame = drift_draft::sheet::view_frame(sheet, v);
         if v.frame.is_some() {
@@ -710,15 +713,15 @@ pub fn paint_drawing(
                 text,
                 style,
             } => {
-                let size = (*height / CAP_HEIGHT) as f32 * px;
+                let cap = d
+                    .font
+                    .as_ref()
+                    .map_or(CAP_HEIGHT, |f| f.face(style.bold).0.cap_ratio());
+                let size = (*height / cap) as f32 * px;
                 if size < 1.5 {
                     continue;
                 }
-                let family = if style.bold {
-                    crate::theme::bold()
-                } else {
-                    egui::FontFamily::Proportional
-                };
+                let family = crate::fonts::drafting_font(size, style.bold).family;
                 let job = egui::text::LayoutJob::single_section(
                     text.clone(),
                     egui::TextFormat {

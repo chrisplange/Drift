@@ -41,6 +41,11 @@ pub fn bold() -> FontFamily {
 /// egui's fonts kept as fallbacks for symbols. Fonts are read from the system at run time:
 /// nothing is bundled or downloaded. The web build keeps egui's default fonts.
 pub fn install_fonts(ctx: &egui::Context) {
+    ctx.set_fonts(font_definitions());
+}
+
+/// The interface's fonts (see [`install_fonts`]).
+pub fn font_definitions() -> egui::FontDefinitions {
     let mut fonts = egui::FontDefinitions::default();
     let defaults = fonts
         .families
@@ -103,7 +108,7 @@ pub fn install_fonts(ctx: &egui::Context) {
     {
         fonts.families.insert(bold(), defaults);
     }
-    ctx.set_fonts(fonts);
+    fonts
 }
 
 /// Apply the light and dark styles.

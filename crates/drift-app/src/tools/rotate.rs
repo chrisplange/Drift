@@ -22,6 +22,8 @@ pub(super) struct Spin {
     pub(super) applied: Option<f64>,
     /// Copies of blocks turning too (as they were when the rotate began).
     pub(super) instances: Vec<(drift_core::InstanceId, drift_core::Instance)>,
+    /// The picked sketch text turning too, with its anchor and angle as they were.
+    pub(super) text: Option<(drift_core::TextId, DVec2, f64)>,
 }
 
 impl Spin {
@@ -47,6 +49,9 @@ impl Spin {
                 ed.rotate_geometry(&self.ids, &self.points, self.pivot, angle);
             }
             ed.rotate_instances(&self.instances, self.pivot, angle);
+            if let Some(text) = self.text {
+                ed.turn_text(text, self.pivot, angle);
+            }
         }
         ed.sync();
     }
@@ -110,10 +115,13 @@ impl SelectTool {
         }
         // A picked fill or hatch turns with the curves around it.
         let instances = ed.picked_instances();
+        let text = ed
+            .selected_text
+            .and_then(|id| ed.doc.text(id).map(|t| (id, t.at, t.angle)));
         let ids: Vec<EntityId> = if ed.selection.is_empty() {
             match ed.selected_fill_curves() {
                 Some((ids, _)) => ids,
-                None if !instances.is_empty() => Vec::new(),
+                None if !instances.is_empty() || text.is_some() => Vec::new(),
                 None => return false,
             }
         } else {
@@ -123,6 +131,8 @@ impl SelectTool {
             // Only copies of blocks: one turns about its insertion point, several about
             // their middle.
             match instances.as_slice() {
+                // Only a text: it turns about its anchor.
+                [] => text.map(|t| t.1),
                 [(_, i)] => Some(i.at),
                 _ => {
                     let mut b = Bounds::EMPTY;
@@ -153,6 +163,7 @@ impl SelectTool {
             picking_pivot: false,
             applied: Some(0.0),
             instances,
+            text,
         });
         true
     }
@@ -167,6 +178,9 @@ impl SelectTool {
         }
         ed.doc.begin();
         ed.rotate_instances(&spin.instances, spin.pivot, angle);
+        if let Some(text) = spin.text {
+            ed.turn_text(text, spin.pivot, angle);
+        }
         let (ok, removed) = if spin.ids.is_empty() {
             (true, Vec::new())
         } else {

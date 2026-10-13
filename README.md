@@ -122,9 +122,14 @@ browser (WebGPU, with a WebGL2 fallback).
   points, Alt to break a handle, click the first point to close. Handles show on picked curves,
   anchors carry their handles, smooth points keep their tangent, and curvature combs show
   how the curve bends.
-- **Text:** a line of text drawn as true outlines at a real size (for engraving or signage):
-  click, type and watch it update; set height, angle and font (two built in, or any font
-  installed on the computer in the desktop app); convert it to curves.
+- **Text:** text drawn as true outlines at a real size (for engraving or signage), in one
+  line or several (Shift+Enter), aligned left, centre or right, optionally wrapped to a width:
+  click, type and watch it update; set height, angle and font (two built in, any font
+  installed on the computer, or a font file you add); convert it to curves.
+- **Fonts travel with the drawing:** a font the drawing uses is kept inside its file (where
+  the font's licence allows), so it looks the same on another computer and in the browser.
+  A drawing can also have its own font for dimensions, notes and title blocks (Parameters →
+  Drafting → Font); PDFs embed it, so the text stays selectable and searchable.
 - **Polygons, slots and ellipses:** regular polygons (K; type the sides, inscribed or
   circumscribed), straight / centre / arc slots (U, again to switch) and ellipses and partial
   ellipses (C again from the circle), all built to stay true when dimensioned or dragged.

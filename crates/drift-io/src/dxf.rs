@@ -632,11 +632,12 @@ mod tests {
         let back = read(&text, 1.0).unwrap();
         assert_eq!(back.entities.len(), 4, "{:?}", back.skipped);
         assert!(back.skipped.is_empty(), "{:?}", back.skipped);
-        // The centred text comes back as text, its codes decoded, from its left end.
+        // The centred text comes back as text, its codes decoded, still centred on its point.
         assert_eq!(back.texts.len(), 1);
         assert_eq!(back.texts[0].text, "Ø10 ±0.1");
         assert!((back.texts[0].height - 3.5).abs() < 1e-9);
-        assert!(back.texts[0].at.x < 5.0 && (back.texts[0].at.y - 5.0).abs() < 1e-6);
+        assert_eq!(back.texts[0].align, drift_core::TextAlign::Center);
+        assert!(back.texts[0].at.distance(DVec2::new(5.0, 5.0)) < 1e-6);
         let centre = back
             .layers
             .iter()

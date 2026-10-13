@@ -50,6 +50,8 @@ impl DriftApp {
         theme::row(ui, "Text", |ui| {
             mm_field(ui, &mut style.text_height, 1.0..=20.0);
         });
+        self.drawing_font_row(ui);
+        self.kept_fonts_note(ui);
         theme::row(ui, "Arrows", |ui| {
             egui::ComboBox::from_id_salt("arrow_style")
                 .selected_text(style.arrow.label())

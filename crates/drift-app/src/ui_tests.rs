@@ -3832,7 +3832,10 @@ fn a_dxf_from_a_live_project_comes_in_whole() {
     let doc = &app.editor.doc;
     // Text: the paragraph's two lines and the dimension's number.
     let words: Vec<String> = doc.texts().map(|(_, t)| t.text.clone()).collect();
-    assert!(words.contains(&"ROOM 101".to_owned()) && words.contains(&"See detail".to_owned()));
+    assert!(
+        words.contains(&"ROOM 101\nSee detail".to_owned()),
+        "{words:?}"
+    );
     assert!(words.contains(&"60".to_owned()));
     // The layout is a sheet with one view at 1:2; its title text isn't in the model.
     assert!(!words.contains(&"PLAN".to_owned()));
@@ -3868,4 +3871,301 @@ fn a_dxf_from_a_live_project_comes_in_whole() {
     h.state_mut().undo();
     assert_eq!(h.state().editor.doc.texts().count(), 0);
     assert_eq!(h.state().editor.doc.sheets().count(), 0);
+}
+
+#[test]
+fn the_drawing_font_is_kept_in_the_drawing_and_used_everywhere() {
+    let Some(mut h) = harness() else { return };
+    h.get_by_label("File").click();
+    h.run();
+    h.get_by_label("Open example").click();
+    h.run();
+    // A font file added to the drawing (the built-in monospaced one stands in for a file
+    // the user picked): it is kept under its own family name.
+    let hack = drift_draft::outline::builtin_font(true);
+    let family = h.state_mut().editor.add_font_file(hack.to_vec()).unwrap();
+    assert_eq!(family, "Hack");
+    assert!(
+        h.state_mut()
+            .editor
+            .add_font_file(b"not a font".to_vec())
+            .is_err()
+    );
+    // A second one that nothing will be set in.
+    let ubuntu = drift_draft::outline::builtin_font(false);
+    assert_eq!(
+        h.state_mut().editor.add_font_file(ubuntu.to_vec()).unwrap(),
+        "Ubuntu"
+    );
+    // Nothing is set in it yet: the standard look.
+    assert!(h.state().editor.drawing_font().is_none());
+    let painter = h.ctx.layer_painter(egui::LayerId::background());
+    h.state_mut().show_panel(Panel::Sheets);
+    h.run();
+    h.get_by_label("New sheet").click();
+    h.run();
+    h.run();
+    let standard = h.state_mut().pdf_bytes(&painter);
+    assert!(String::from_utf8_lossy(&standard).contains("/BaseFont /Helvetica"));
+
+    // Make it the drawing's font: dimensions, notes and the title block are set in it.
+    assert_eq!(
+        h.state_mut().editor.set_drawing_font(Some("Hack".into())),
+        None
+    );
+    let font = h.state().editor.drawing_font().expect("the drawing's font");
+    assert_eq!(font.regular.family, "Hack");
+    // The screen's text renderer takes it over a frame.
+    h.run();
+    h.run();
+    assert!(matches!(
+        h.state().screen_font,
+        crate::fonts::ScreenFont::Ready(_)
+    ));
+    assert_eq!(
+        crate::fonts::drafting_font(12.0, false).family,
+        egui::FontFamily::Name("drawing".into())
+    );
+    save_png("drift_ui_drawing_font_sheet.png", &mut h);
+    let pdf = h.state_mut().pdf_bytes(&painter);
+    let text = String::from_utf8_lossy(&pdf);
+    assert!(text.starts_with("%PDF-1.6") && text.contains("/BaseFont /Hack"));
+    assert!(text.contains("/Subtype /Type0") && !text.contains("/Helvetica"));
+    assert!(
+        pdf.len() > standard.len() + 50_000,
+        "the font is in the file"
+    );
+    std::fs::write(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/tmp/drift_font.pdf"),
+        &pdf,
+    )
+    .unwrap();
+    let svg = h.state_mut().svg_text(&painter);
+    assert!(svg.contains("font-family=\"'Hack', Helvetica"));
+    // In the model too: a dimension's number is laid out in it.
+    h.key_press(Key::Escape);
+    h.run();
+    h.run();
+    save_png("drift_ui_drawing_font_model.png", &mut h);
+
+    // Saved with the drawing: the font in use goes into the file, the unused one doesn't.
+    let saved = drift_io::save(&h.state().editor.doc, &Default::default());
+    assert!(saved.contains(r#""drawing":"Hack""#));
+    assert!(saved.contains(r#""family":"Hack""#) && !saved.contains(r#""family":"Ubuntu""#));
+    let (loaded, _) = drift_io::load(&saved).unwrap();
+    assert_eq!(loaded.fonts().drawing.as_deref(), Some("Hack"));
+    assert_eq!(loaded.fonts().embedded["Hack"].regular.data, hack);
+    // Opened where the font isn't installed, it is still there to draw with.
+    let mut elsewhere = crate::Editor::new(loaded);
+    assert_eq!(elsewhere.drawing_font().unwrap().regular.family, "Hack");
+    assert_eq!(elsewhere.drawing_font_missing(), None);
+    // A name with no font behind it falls back to the standard look, and says so.
+    let mut fonts = elsewhere.doc.fonts().clone();
+    fonts.drawing = Some("No Such Typeface 123".into());
+    elsewhere.doc.begin();
+    elsewhere.doc.set_fonts(fonts);
+    elsewhere.commit("Font");
+    assert!(elsewhere.drawing_font().is_none());
+    assert_eq!(
+        elsewhere.drawing_font_missing().as_deref(),
+        Some("No Such Typeface 123")
+    );
+
+    // Back to the standard look is one undo step, and one choice.
+    h.state_mut().undo();
+    assert!(h.state().editor.drawing_font().is_none());
+    h.state_mut().redo();
+    h.state_mut().editor.set_drawing_font(None);
+    h.run();
+    h.run();
+    assert_eq!(h.state().screen_font, crate::fonts::ScreenFont::Standard);
+    assert_eq!(
+        crate::fonts::drafting_font(12.0, false).family,
+        egui::FontFamily::Proportional
+    );
+}
+
+#[test]
+fn sketch_text_runs_to_several_lines() {
+    use drift_core::{SketchText, TextAlign};
+    let Some(mut h) = harness() else { return };
+    // Place a text and type two lines: Shift+Enter starts the second, Enter finishes.
+    h.key_press_modifiers(EguiModifiers::SHIFT, Key::T);
+    h.run();
+    assert_eq!(h.state().tool.kind(), ToolKind::Text);
+    click_world(&mut h, DVec2::new(-20.0, 10.0));
+    h.run();
+    let id = h.state().editor.editing_text.expect("typing in place");
+    h.event(Event::Text("PLAN".into()));
+    h.run();
+    h.key_press_modifiers(EguiModifiers::SHIFT, Key::Enter);
+    h.run();
+    assert!(h.state().editor.editing_text.is_some(), "still typing");
+    h.event(Event::Text("Level 2".into()));
+    h.run();
+    h.key_press(Key::Enter);
+    h.run();
+    h.run();
+    assert!(h.state().editor.editing_text.is_none(), "Enter finishes");
+    let text = h.state().editor.doc.text(id).cloned().unwrap();
+    assert_eq!(text.text, "PLAN\nLevel 2");
+    assert_eq!(
+        (text.align, text.spacing, text.wrap),
+        (TextAlign::Left, SketchText::SPACING, None)
+    );
+    // The outlines cover both lines: the second a line spacing below the first.
+    let one_line = text.height;
+    let bounds = h.state().editor.text_outline(id).unwrap().bounds;
+    assert!(bounds.max.y - bounds.min.y > one_line * 2.0);
+    assert!(
+        bounds.min.y < text.at.y - one_line,
+        "the second line hangs below the anchor"
+    );
+
+    // Centred: the lines sit about the anchor. Wrapped: more lines, within the width.
+    let width_of = |h: &Harness<'_, DriftApp>| {
+        let b = h.state().editor.text_outline(id).unwrap().bounds;
+        (b.min.x, b.max.x, b.min.y)
+    };
+    let (left, right, low) = width_of(&h);
+    h.state_mut()
+        .editor
+        .update_text(id, |t| t.align = TextAlign::Center);
+    let (cl, cr, _) = width_of(&h);
+    assert!(
+        ((cl + cr) / 2.0 - text.at.x).abs() < 0.5,
+        "centred on the anchor"
+    );
+    assert!(((cr - cl) - (right - left)).abs() < 1e-6);
+    h.state_mut().editor.update_text(id, |t| {
+        t.align = TextAlign::Left;
+        t.text = "one two three four five six".into();
+        t.wrap = Some((right - left) * 0.9);
+    });
+    let (wl, wr, wrapped_low) = width_of(&h);
+    assert!(wr - wl <= (right - left) * 0.9 + 1e-6);
+    assert!(wrapped_low < low, "wrapping made more lines");
+    h.run();
+    save_png("drift_ui_multiline_text.png", &mut h);
+
+    // Saved and loaded as it is.
+    h.state_mut().editor.update_text(id, |t| {
+        t.align = TextAlign::Right;
+        t.spacing = 2.0;
+    });
+    let saved = drift_io::save(&h.state().editor.doc, &Default::default());
+    assert!(saved.contains(r#""align":"right""#) && saved.contains(r#""spacing":2.0"#));
+    assert!(saved.contains(r#""wrap":"#));
+    let (loaded, _) = drift_io::load(&saved).unwrap();
+    assert_eq!(loaded.text(id), h.state().editor.doc.text(id));
+    // A plain one-line text writes none of it.
+    let mut plain = drift_core::Document::new();
+    plain.add_text(SketchText::new("A", DVec2::ZERO, 3.0));
+    let saved = drift_io::save(&plain, &Default::default());
+    assert!(!saved.contains("align") && !saved.contains("spacing") && !saved.contains("wrap"));
+}
+
+#[test]
+fn g_moves_a_picked_text() {
+    let Some(mut h) = harness() else { return };
+    // Type a text; the text tool is still in hand, the text picked.
+    h.key_press_modifiers(EguiModifiers::SHIFT, Key::T);
+    h.run();
+    click_world(&mut h, DVec2::new(-30.0, 10.0));
+    h.run();
+    let id = h.state().editor.editing_text.expect("typing in place");
+    h.event(Event::Text("MOVE ME".into()));
+    h.run();
+    h.key_press(Key::Enter);
+    h.run();
+    h.run();
+    assert_eq!(h.state().editor.selected_text, Some(id));
+    let from = h.state().editor.doc.text(id).unwrap().at;
+    // G: the select tool takes over and the text follows the pointer; a click places it.
+    let start = screen(&h, DVec2::new(-30.0, 10.0));
+    h.hover_at(start);
+    h.run();
+    h.key_press(Key::G);
+    h.run();
+    assert_eq!(h.state().tool.kind(), ToolKind::Select);
+    assert!(h.state().tool.is_modal(), "moving the text");
+    let to = screen(&h, DVec2::new(10.0, -15.0));
+    h.hover_at(to);
+    h.run();
+    let moving = h.state().editor.doc.text(id).unwrap().at;
+    assert!(
+        (moving - from - DVec2::new(40.0, -25.0)).length() < 1.0,
+        "{moving:?}"
+    );
+    button(&h, to, true);
+    h.run();
+    button(&h, to, false);
+    h.run();
+    assert!(!h.state().tool.is_modal());
+    let placed = h.state().editor.doc.text(id).unwrap().at;
+    assert!((placed - from - DVec2::new(40.0, -25.0)).length() < 1.0);
+    assert_eq!(h.state().editor.selected_text, Some(id), "still picked");
+    // One undo step; and Esc during a move puts it back.
+    h.state_mut().undo();
+    assert_eq!(h.state().editor.doc.text(id).unwrap().at, from);
+    h.hover_at(start);
+    h.run();
+    h.key_press(Key::G);
+    h.run();
+    h.hover_at(to);
+    h.run();
+    assert_ne!(h.state().editor.doc.text(id).unwrap().at, from);
+    h.key_press(Key::Escape);
+    h.run();
+    assert_eq!(h.state().editor.doc.text(id).unwrap().at, from);
+    // Y locks the move to an axis, as for anything else.
+    h.hover_at(start);
+    h.run();
+    h.key_press(Key::G);
+    h.run();
+    h.key_press(Key::Y);
+    h.run();
+    h.hover_at(to);
+    h.run();
+    let locked = h.state().editor.doc.text(id).unwrap().at;
+    assert!((locked.x - from.x).abs() < 1e-9 && (locked.y - from.y + 25.0).abs() < 1.0);
+    h.key_press(Key::Escape);
+    h.run();
+}
+
+#[test]
+fn r_turns_a_picked_text_about_its_anchor() {
+    let Some(mut h) = harness() else { return };
+    let ed = &mut h.state_mut().editor;
+    ed.doc.begin();
+    let id = ed.doc.add_text(drift_core::SketchText::new(
+        "TURN",
+        DVec2::new(10.0, 5.0),
+        6.0,
+    ));
+    ed.commit("Text");
+    ed.selected_text = Some(id);
+    h.run();
+    // R with the select tool: the text turns about its anchor as the pointer goes round.
+    h.hover_at(screen(&h, DVec2::new(40.0, 5.0)));
+    h.run();
+    h.key_press(Key::R);
+    h.run();
+    assert!(h.state().tool.is_modal(), "rotating the text");
+    // Straight up from the anchor: a quarter turn.
+    let up = screen(&h, DVec2::new(10.0, 45.0));
+    h.hover_at(up);
+    h.run();
+    button(&h, up, true);
+    h.run();
+    button(&h, up, false);
+    h.run();
+    let text = h.state().editor.doc.text(id).cloned().unwrap();
+    assert!((text.angle - 90.0).abs() < 1e-6, "{}", text.angle);
+    assert!(
+        text.at.distance(DVec2::new(10.0, 5.0)) < 1e-9,
+        "about its own anchor"
+    );
+    h.state_mut().undo();
+    assert_eq!(h.state().editor.doc.text(id).unwrap().angle, 0.0);
 }

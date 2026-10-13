@@ -7,17 +7,16 @@ constraints, built for technical drawings and design exploration. It is written 
 on the GPU with [wgpu](https://wgpu.rs), and runs natively on Windows, macOS and Linux and in the
 browser (WebGPU, with a WebGL2 fallback).
 
-> **Status: early development (milestone M6).** You can draw and modify (trim, extend, split,
-> fillet, chamfer, offset, mirror, patterns), constrain with SolidWorks-style relations and
-> dimensions, drive them from variables and expressions, measure closed regions, organise
-> geometry on layers with colours and line weights, work in metric or imperial units, and save
-> it all. Drafting (dimension styles, notes, hatching) comes next. See [PLAN.md](PLAN.md) for
-> the roadmap.
+> **Status: alpha (0.1.0-alpha.1).** Drawing, modifying, constraints, parameters, drafting,
+> fills and hatches, blocks, underlays, sheets and PDF / SVG / DXF output all work, and three
+> rounds of alpha tester feedback are in. Expect rough edges, and save often. Files saved by
+> a newer build don't open in an older one. See [PLAN.md](PLAN.md) for what was built in each
+> milestone, what was left out, and what comes next.
 
 ## What works today
 
 - **Drawing tools:** polyline (L), rectangle (R), circle (C), arcs (A: centre-point; press A
-  again for 3-point, then tangent arc) and point (P). While drawing a polyline, A continues with
+  again for 3-point, then tangent arc) and point (V). While drawing a polyline, A continues with
   a tangent arc from the last point and L switches back to lines.
   Click point by point, or press, drag and release. Or type exact values while drawing:
   X/Y for the first point, then length/angle, width/height, diameter, radius or sweep (Tab
@@ -25,15 +24,24 @@ browser (WebGPU, with a WebGL2 fallback).
 - **Automatic relations and inference:** nearly horizontal or vertical lines snap straight and
   get the relation; rectangles come with their H/V relations. Points placed on (or dropped onto)
   a curve or a midpoint stay there. Dashed inference lines align new points with points you've
-  just hovered.
+  just hovered. With **Auto relations** off (top bar), nothing adds a relation on its own:
+  not drawing, not the modify tools, not an axis lock.
+- **Relations pie (Q):** with something selected, hold Q, flick towards a relation and let
+  go (or tap Q and click). Each relation has a fixed place; one already there is lit and
+  comes off; one that would over-define the sketch says so first.
 - **Smart Dimension (D):** click a line, circle, arc, two points, two lines, or a point and a
   line, then place the label. Its position chooses aligned, horizontal or vertical. Type the
-  value straight away.
+  value straight away. The number sits in the middle of its line, or just outside a line too
+  short for it.
 - **Dimensions and relations on the canvas:** drag dimension labels to move them, double-click
   to edit the value, and click relation symbols to pick them (Delete removes them).
 - **Modify tools:**
-  - Trim (T): click a piece, or drag across pieces. Extend (E) and Split.
-  - Fillet and Chamfer at two-line corners. Fillets are tangent and dimensioned.
+  - Trim (T): click a piece, or drag across pieces (the drag leaves a trail). Extend (E) and
+    Split. They work on lines, arcs, circles, ellipses and pen curves.
+  - Fillet and Chamfer (F, F again): click a corner, move to size it in round steps, click to
+    apply; or type the size. One that is already there is re-sized in place (click it with
+    the tool, or drag a fillet's arc), its lines keeping their directions. Right-click one
+    for Remove fillet / Remove chamfer.
   - Offset (O) on connected chains; the corners rejoin.
   - Mirror (M) with symmetric relations.
   - Linear and circular patterns.
@@ -45,10 +53,16 @@ browser (WebGPU, with a WebGL2 fallback).
   - Built-in ANSI and material patterns (concrete, earth, insulation, brick, block…) plus
     imported AutoCAD / Revit `.pat` files.
   - Scale, angle, drafting or model size, background colour and draw order.
+  - A picked hatch has handles on the canvas to move the pattern's origin (it snaps) and to
+    turn it.
   - Hatch lines are clipped exactly and stay crisp at any zoom.
 - **Sheets and output:**
-  - Lay the drawing out on A4–A0 or ANSI A–E paper at a scale, with an ISO or ASME title block
+  - Lay the drawing out on A4–A0 or ANSI A–E paper, with a modern, ISO or ASME title block
     and a revision table, and preview it exactly as it prints.
+  - A sheet holds several views of the sketch, each with its own scale, title and frame:
+    drag a view to move it, its handles to crop it, Alt-drag to slide the drawing inside it.
+    Each view chooses whether to show dimensions and notes.
+  - A logo for the title block from an SVG file, kept in the drawing.
   - Export true-scale vector PDF (every sheet) and SVG, or DXF (R12, with layers and line
     types).
   - Import DXF drawings (lines, arcs, circles, polylines with bulges).
@@ -61,12 +75,15 @@ browser (WebGPU, with a WebGL2 fallback).
   - Chain and baseline dimensions (Shift+click after a horizontal or vertical dimension) and
     ordinate dimensions.
   - Notes with leaders (N), hole and chamfer callouts, centre marks and centre lines.
+  - Section marks (a cutting line with a lettered flag at each end) and elevation marks, each
+    able to name the sheet it is drawn on.
 - **Layers:**
   - Colours, ISO line weights and line types (continuous, dashed, hidden, centre, phantom),
     by layer or per entity.
   - Show / lock / print flags. Locked geometry stays fixed.
-  - A Layers panel (Ctrl/⌘+L) that floats over the canvas or docks left or right, for
-    switching layers and showing / locking them while drawing.
+  - A Layers panel (Ctrl/⌘+L) for switching layers and showing / locking them while drawing.
+  - The top bar shows the selection's layer, stroke and fill colour, stroke weight and line
+    type, each for the selection itself or its layer.
   - A Revit-style **thin lines** toggle (W), and a choice between constraint-status colours
     and layer colours.
 - **Parameters (Parameters tab):**
@@ -87,19 +104,20 @@ browser (WebGPU, with a WebGL2 fallback).
   snapping (Shift+G). Hold Alt to place freely. Snapping onto an existing point connects to it.
 - **Blender-style keys:**
   - **Axis locks while drawing lines:** X / Y lock the current segment to an axis. The lock
-    lasts for that segment only and adds the H/V relation.
+    lasts for that segment only, and adds the H/V relation when Auto relations is on.
   - **Moving with G:** G moves the selection.
     - X / Y lock an axis.
     - Type an exact offset (dX, Tab, dY), or a distance when locked.
     - B picks the base point (snaps to points, e.g. a corner of the selection).
     - Click or Enter places it; Esc or right-click cancels.
     - Snapped and typed moves land exactly.
-- **Pen curves (B):** draw like Illustrator or Affinity: click for corners, drag for smooth
+- **Pen curves (P):** draw like Illustrator or Affinity: click for corners, drag for smooth
   points, Alt to break a handle, click the first point to close. Handles show on picked curves,
   anchors carry their handles, smooth points keep their tangent, and curvature combs show
   how the curve bends.
 - **Text:** a line of text drawn as true outlines at a real size (for engraving or signage):
-  click, type and watch it update; set height, angle and font; convert it to curves.
+  click, type and watch it update; set height, angle and font (two built in, or any font
+  installed on the computer in the desktop app); convert it to curves.
 - **Polygons, slots and ellipses:** regular polygons (K; type the sides, inscribed or
   circumscribed), straight / centre / arc slots (U, again to switch) and ellipses and partial
   ellipses (C again from the circle), all built to stay true when dimensioned or dragged.
@@ -139,9 +157,15 @@ browser (WebGPU, with a WebGL2 fallback).
 - **Live readouts:** cursor coordinates, the length, angle or radius of what you're drawing, and
   exact values of the selection in the properties panel.
 
-- **Native-feeling interface:** system fonts, light and dark themes, an icon toolbar with
-  descriptive tooltips, and a segmented Inspector / Parameters / Layers sidebar. The status bar
-  carries grid, axes, snap and thin-line toggles; the grid can also be hidden with Ctrl/⌘+'.
+- **Interface:** light and dark themes, an icon toolbar with descriptive tooltips, and panels
+  (Inspector, Parameters, Layers, Sheets, Blocks) that dock left or right, float, or collapse
+  to a rail. A command palette (Ctrl/⌘+K) finds every command. The status bar carries grid,
+  axes, snap and thin-line toggles; the grid can also be hidden with Ctrl/⌘+'.
+- **Mouse and trackpad:** a wheel zooms at the cursor; two fingers on a trackpad pan and a
+  pinch zooms; the middle or right button drags the view. Preferences can force scrolling to
+  zoom or to pan.
+- **Safety nets:** the session is autosaved and restored; closing with unsaved changes asks
+  first; and Drift stops itself before a fault could exhaust the computer's memory.
 
 See **Help → Keyboard shortcuts** in the app for the full list.
 
@@ -165,6 +189,11 @@ cd apps/web && trunk serve
 
 Then open <http://127.0.0.1:8080>.
 
+Installers (see [`scripts/`](scripts) and [`installer/`](installer)): `package-windows.ps1`
+builds an Inno Setup installer and `package-macos.sh` a universal `.app` in a disk image. The
+`Package` workflow runs both on GitHub. They are new and unsigned: neither has been through a
+release yet.
+
 Tests, including headless UI tests that drive the real app (GPU tests are skipped automatically
 when no graphics adapter is available):
 
@@ -178,14 +207,15 @@ cargo test --workspace
 |---|---|
 | `crates/drift-core` | Document model, transactions and undo history (`f64`, mm, y-up) |
 | `crates/drift-geom` | Exact geometry: nearest points, intersections, regions, R-tree picking and snapping |
-| `crates/drift-draft` | Drafting: `.pat` hatch patterns and exact hatch clipping, the page display list shared by all outputs, sheet borders, title blocks and revision tables |
+| `crates/drift-draft` | Drafting: `.pat` hatch patterns and exact hatch clipping, text outlines, the SVG logo reader, the page display list shared by all outputs, sheet borders, title blocks and revision tables |
 | `crates/drift-solver` | Constraint solver: substitution, sparse weighted least-norm Newton, DOF analysis |
 | `crates/drift-io` | The `.drift` file format (versioned JSON); PDF, SVG and DXF output; DXF import |
-| `crates/drift-platform` | File dialogs and saving on desktop and web |
+| `crates/drift-platform` | File dialogs and saving on desktop and web, system fonts, the memory guard |
 | `crates/drift-render` | wgpu canvas renderer: camera, frame builder, SDF shaders (WebGL2-compatible) |
 | `crates/drift-app` | eframe/egui application: editor, tools, panels; headless UI tests |
 | `apps/native` | Desktop binary |
 | `apps/web` | Browser entry point and Trunk config |
+| `installer`, `scripts` | Windows and macOS packaging |
 
 
 ## Licence

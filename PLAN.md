@@ -1590,6 +1590,20 @@ zooms to fit; F is Fillet (again for Chamfer).
   - Not done: titles and number rings can't be dragged off their views; views don't snap to
     one another when moved; a section mark's ends are moved together (re-draw it to change
     its length); marks don't look up a view's number or sheet by themselves.
+- **Open after phase 3 (as of 2026-10-13).** Not features: things built but not yet proven.
+  - The repository is on GitHub (`chrisplange/Drift`); phases 1 to 3 arrived as its first
+    pull request, from the branch `drift-alpha`.
+  - Packaging has never been through a release. The Windows installer script needs Inno
+    Setup 6 and has not been compiled; the macOS script and the `Package` workflow have not
+    run. Builds are unsigned.
+  - Checked only through the headless test harness, not by hand in the window: trackpad
+    panning on real hardware (and on a Mac), the fillet resize cursor, the relations pie's
+    flick distances, the top bar's colour pop-ups, the logo file picker, the font menu, the
+    Windows clipboard path, and the unsaved-changes prompt on closing.
+  - The tool list is taller than the window at about 800 px of height (it scrolls). With
+    two more annotation tools it may want grouping or fly-outs.
+  - Files are format v18. Each bump (v17, v18) locks out older builds, which matters once
+    testers hold different versions.
 - **Alpha feedback, phase 4: content and parametric blocks.** A library of common
   imperial items; blocks with their own parameters (doors and windows at custom sizes),
   which needs its own design.

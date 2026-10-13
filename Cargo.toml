@@ -6,7 +6,9 @@ members = ["crates/*", "apps/*"]
 version = "0.1.0-alpha.1"
 edition = "2024"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/drift-cad/drift"
+repository = "https://github.com/chrisplange/Drift"
+# Not published to crates.io: the crates are parts of one application.
+publish = false
 rust-version = "1.92"
 
 [workspace.dependencies]

@@ -2,6 +2,7 @@
 //! lines clipped exactly to closed regions, the page display list that output formats share,
 //! and sheet borders, title blocks and revision tables.
 
+pub mod font;
 pub mod hatch;
 pub mod logo;
 pub mod outline;

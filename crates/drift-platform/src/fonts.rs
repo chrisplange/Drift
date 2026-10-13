@@ -13,6 +13,11 @@ pub fn load(family: &str) -> Option<(Vec<u8>, u32)> {
     imp::load(family)
 }
 
+/// The bold face of a family, if it has one of its own.
+pub fn load_bold(family: &str) -> Option<(Vec<u8>, u32)> {
+    imp::load_bold(family)
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 mod imp {
     use std::sync::OnceLock;
@@ -50,6 +55,21 @@ mod imp {
         })?;
         db.with_face_data(id, |data, index| (data.to_vec(), index))
     }
+
+    pub fn load_bold(family: &str) -> Option<(Vec<u8>, u32)> {
+        let db = database();
+        let id = db.query(&Query {
+            families: &[Family::Name(family)],
+            weight: Weight::BOLD,
+            stretch: Stretch::Normal,
+            style: Style::Normal,
+        })?;
+        // The nearest match may be the regular face again.
+        if db.face(id)?.weight.0 < 600 {
+            return None;
+        }
+        db.with_face_data(id, |data, index| (data.to_vec(), index))
+    }
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -59,6 +79,10 @@ mod imp {
     }
 
     pub fn load(_family: &str) -> Option<(Vec<u8>, u32)> {
+        None
+    }
+
+    pub fn load_bold(_family: &str) -> Option<(Vec<u8>, u32)> {
         None
     }
 }

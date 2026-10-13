@@ -12,6 +12,7 @@ pub mod curves;
 mod dock;
 pub mod editor;
 pub mod fills;
+pub mod fonts;
 mod icons;
 mod layers_ui;
 #[cfg(test)]
@@ -68,6 +69,11 @@ const DRIFT_FILE: FileType = FileType {
     name: "Drift sketch",
     extensions: &[drift_io::EXTENSION],
 };
+pub(crate) const FONT_FILE: FileType = FileType {
+    name: "Font",
+    extensions: &["ttf", "otf"],
+};
+
 const PAT_FILE: FileType = FileType {
     name: "Hatch patterns",
     extensions: &["pat"],
@@ -197,6 +203,8 @@ pub struct DriftApp {
     /// typed to narrow them down.
     font_families: Option<Vec<String>>,
     font_filter: String,
+    /// Where the screen's text renderer is with the drawing's font.
+    screen_font: fonts::ScreenFont,
     /// The relations pie (Q), while it is open.
     pie: Option<app::pie::Pie>,
     /// Text filtering the shortcuts list.
@@ -350,6 +358,7 @@ impl DriftApp {
             show_shortcuts: false,
             font_families: None,
             font_filter: String::new(),
+            screen_font: Default::default(),
             pie: None,
             shortcut_filter: String::new(),
             layout: Default::default(),
@@ -423,6 +432,7 @@ impl DriftApp {
             ));
         }
         theme::install_fonts(&cc.egui_ctx);
+        fonts::reset_screen();
         theme::apply(&cc.egui_ctx);
         // A soak test starts from an empty sketch.
         if let Some(storage) = cc.storage
@@ -735,6 +745,7 @@ impl eframe::App for DriftApp {
         let now = ctx.input(|i| i.time);
         let before = self.ui_signature();
         self.handle_file_events(now);
+        fonts::sync_screen(&ctx, &self.editor, &mut self.screen_font);
         if let Some(notice) = self.editor.notice.take() {
             self.set_status(notice, true, now);
         }

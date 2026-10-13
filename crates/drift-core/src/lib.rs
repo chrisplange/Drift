@@ -10,6 +10,7 @@ pub mod demo;
 pub mod document;
 pub mod drafting;
 pub mod expr;
+pub mod fonts;
 pub mod groups;
 pub mod layers;
 pub mod params;
@@ -30,6 +31,7 @@ pub use drafting::{
     Anchor, Annotation, AnnotationId, ArrowStyle, DimNote, DraftStyle, Fill, FillId, FillKind,
     Hatch, Leader, LeaderEnd, OrdinateAxis, Standard, Tolerance,
 };
+pub use fonts::{EmbeddedFont, FontFile, FontSet};
 pub use glam::DVec2;
 pub use groups::{Group, GroupId};
 pub use layers::{Appearance, Layer, LayerId, LineType, LineWeight, Rgb};
@@ -37,6 +39,6 @@ pub use shape::{DofState, Emphasis, LineKind, Shape, SketchItem};
 pub use sheets::{
     PaperSize, Revision, Sheet, SheetId, SheetView, TitleBlock, TitleFields, ViewFrame,
 };
-pub use texts::{SketchText, TextFont, TextId};
+pub use texts::{SketchText, TextAlign, TextFont, TextId};
 pub use underlays::{RefPrim, Underlay, UnderlayId};
 pub use units::{Kind, LengthFormat, Quantity, Units};

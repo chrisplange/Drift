@@ -143,10 +143,24 @@ impl DriftApp {
         };
         let x_claimed = claimed(Key::X, ToolKey::X);
         claimed(Key::Y, ToolKey::Y);
-        claimed(Key::G, ToolKey::G);
+        let g_claimed = claimed(Key::G, ToolKey::G);
         claimed(Key::B, ToolKey::B);
         // R rotates a selection (with the select tool); otherwise it's the rectangle tool.
         let r_claimed = claimed(Key::R, ToolKey::R);
+        // G with another tool in hand moves what is picked: the select tool takes over.
+        let picked = !self.editor.selection.is_empty()
+            || !self.editor.selected_instances.is_empty()
+            || self.editor.selected_text.is_some();
+        if pressed(Key::G)
+            && !g_claimed
+            && picked
+            && self.tool.kind() != ToolKind::Select
+            && !self.tool.is_busy()
+        {
+            self.set_tool(ToolKind::Select);
+            self.tool
+                .key(ToolKey::G, self.pointer.as_ref(), &mut self.editor);
+        }
         if ctx.input(|i| i.modifiers.shift_only() && i.key_pressed(Key::G)) {
             self.grid_snap = !self.grid_snap;
         }

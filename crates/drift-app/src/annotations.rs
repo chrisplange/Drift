@@ -11,7 +11,7 @@ use drift_core::{
     ArrowStyle, Constraint, ConstraintId, DVec2, Document, DraftStyle, EntityId, EntityKind,
     Tolerance, Units,
 };
-use eframe::egui::{self, Color32, FontId, Pos2, Rect, Stroke, StrokeKind, Vec2, pos2, vec2};
+use eframe::egui::{self, Color32, Pos2, Rect, Stroke, StrokeKind, Vec2, pos2, vec2};
 
 use crate::overlay::ScreenMap;
 
@@ -508,8 +508,8 @@ fn label_galleys(
     font: f32,
     color: Color32,
 ) -> LabelGalleys {
-    let main = FontId::proportional(font);
-    let small = FontId::proportional(font * 0.72);
+    let main = crate::fonts::drafting_font(font, false);
+    let small = crate::fonts::drafting_font(font * 0.72, false);
     let before = painter.layout_no_wrap(text.before.clone(), main.clone(), color);
     let after = painter.layout_no_wrap(text.after.clone(), main, color);
     let stack = text.stack.as_ref().map(|(u, l)| {

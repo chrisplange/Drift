@@ -6,7 +6,7 @@
 //! ```json
 //! {
 //!   "format": "drift",
-//!   "version": 18,
+//!   "version": 19,
 //!   "meta": {"title":"Bracket","units":"mm","generator":"Drift 0.1.0"},
 //!   "display": {"length":"architectural","fraction":16},
 //!   "variables": [
@@ -46,6 +46,7 @@ mod blocks;
 mod drafting;
 pub mod dxf;
 mod dxf_import;
+mod fonts;
 pub mod pdf;
 pub mod pdf_import;
 mod sheets;
@@ -69,7 +70,7 @@ pub const EXTENSION: &str = "drift";
 /// and `instances`; 11 = adds a layer's `fill` colour; 12 = adds `underlays` (M8.5); 13 = adds
 /// `ellipse` entities; 14 = adds `bezier` curves and `smooth` relations; 15 = adds `texts`
 /// (M9); 16 = adds the `modern` title block.
-pub const FORMAT_VERSION: u32 = 18;
+pub const FORMAT_VERSION: u32 = 19;
 const FORMAT_TAG: &str = "drift";
 
 /// Document-level properties stored alongside the geometry.
@@ -775,6 +776,9 @@ struct FileRecord {
     /// The title blocks' logo, as SVG text.
     #[serde(default)]
     logo: Option<String>,
+    /// The fonts the drawing carries, and the one its annotations are set in.
+    #[serde(default)]
+    fonts: Option<fonts::FontsRecord>,
     #[serde(default)]
     sheets: Vec<sheets::SheetRecord>,
     #[serde(default)]
@@ -931,6 +935,10 @@ pub fn save(doc: &Document, meta: &Metadata) -> String {
     if !doc.logo().is_empty() {
         let l = serde_json::to_string(doc.logo()).expect("logo serializes");
         out.push_str(&format!("  \"logo\": {l},\n"));
+    }
+    if let Some(record) = fonts::fonts_record(doc.fonts(), &doc.fonts_in_use()) {
+        let f = serde_json::to_string(&record).expect("fonts serialize");
+        out.push_str(&format!("  \"fonts\": {f},\n"));
     }
     if let Some(d) = drafting::draft_record(&doc.draft_style()) {
         let d = serde_json::to_string(&d).expect("drafting serializes");
@@ -1422,6 +1430,9 @@ pub fn load(text: &str) -> Result<(Document, Metadata), LoadError> {
     if let Some(l) = file.logo {
         doc.set_logo(l);
     }
+    if let Some(f) = file.fonts {
+        doc.set_fonts(fonts::parse_fonts(f)?);
+    }
     for b in file.blocks {
         let id_text = b.id.clone();
         let (id, block) = blocks::parse_block(b)?;
@@ -1572,7 +1583,7 @@ pub fn migrate(value: serde_json::Value) -> Result<serde_json::Value, LoadError>
         // v1 → v2: constraints were introduced; a v1 file simply has none.
         value["constraints"] = serde_json::Value::Array(Vec::new());
     }
-    // v2 → v18 only added optional fields, sections and constraint types: nothing to convert
+    // v2 → v19 only added optional fields, sections and constraint types: nothing to convert
     // (a sheet's single view from before v18 is read as it was written).
     value["version"] = FORMAT_VERSION.into();
     Ok(value)
@@ -1616,7 +1627,7 @@ mod tests {
         let text = save(&doc, &Metadata::default());
         let expected = r#"{
   "format": "drift",
-  "version": 18,
+  "version": 19,
   "meta": {"units":"mm"},
   "entities": [
     {"type":"point","id":"e1","at":[0.0,0.0]},
@@ -2222,7 +2233,7 @@ mod tests {
         doc.add_text(drift_core::SketchText::new("A", DVec2::ZERO, 3.0));
 
         let text = save(&doc, &Metadata::default());
-        assert!(text.contains("\"version\": 18"));
+        assert!(text.contains("\"version\": 19"));
         assert!(
             text.contains(r#"{"a":[80.0,20.0,30.0,0.0,90.0]}"#),
             "{text}"

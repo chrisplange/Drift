@@ -1,6 +1,6 @@
 //! File records for sketch text (format 15).
 
-use drift_core::{DVec2, LayerId, Rgb, SketchText, TextFont, TextId};
+use drift_core::{DVec2, LayerId, Rgb, SketchText, TextAlign, TextFont, TextId};
 use serde::{Deserialize, Serialize};
 
 use crate::{LoadError, parse_layer_id, parse_prefixed};
@@ -28,6 +28,15 @@ pub(crate) struct TextRecord {
     angle: f64,
     #[serde(default = "sans", skip_serializing_if = "is_sans")]
     font: String,
+    /// `center` or `right`; left when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    align: Option<String>,
+    /// Line spacing in cap heights, when not the usual.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    spacing: Option<f64>,
+    /// The width lines are wrapped to (mm).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    wrap: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     layer: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -42,6 +51,9 @@ pub(crate) fn text_record(id: TextId, t: &SketchText) -> TextRecord {
         height: t.height,
         angle: t.angle,
         font: t.font.name(),
+        align: (t.align != TextAlign::Left).then(|| t.align.name().to_owned()),
+        spacing: (t.spacing != SketchText::SPACING).then_some(t.spacing),
+        wrap: t.wrap,
         layer: (t.layer != LayerId::DEFAULT).then(|| t.layer.to_string()),
         color: t.appearance.color.map(Rgb::hex),
     }
@@ -68,6 +80,22 @@ pub(crate) fn parse_text(r: TextRecord) -> Result<(TextId, SketchText), LoadErro
     let mut text = SketchText::new(r.text.clone(), at, r.height);
     text.angle = r.angle;
     text.font = font;
+    text.align = match &r.align {
+        Some(a) => TextAlign::from_name(a).ok_or_else(|| bad("align"))?,
+        None => TextAlign::Left,
+    };
+    if let Some(spacing) = r.spacing {
+        if !(spacing.is_finite() && spacing > 0.0) {
+            return Err(bad("spacing"));
+        }
+        text.spacing = spacing;
+    }
+    if let Some(wrap) = r.wrap {
+        if !(wrap.is_finite() && wrap > 0.0) {
+            return Err(bad("wrap"));
+        }
+        text.wrap = Some(wrap);
+    }
     text.layer = layer;
     text.appearance.color = match &r.color {
         Some(c) => Some(Rgb::parse(c).ok_or_else(|| bad("color"))?),

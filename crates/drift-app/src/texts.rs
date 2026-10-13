@@ -11,7 +11,7 @@ use drift_core::{
 use crate::editor::Editor;
 
 /// The longest sketch text that can be typed or pasted.
-pub const MAX_TEXT_CHARS: usize = 500;
+pub const MAX_TEXT_CHARS: usize = 2000;
 
 /// A text's outlines and their bounds, for the text as it was when they were made.
 #[derive(Clone)]
@@ -21,21 +21,17 @@ pub struct TextOutline {
     pub bounds: Bounds,
 }
 
-/// Find a system font on the computer the first time text needs it (the built-in fonts are
-/// always there). A font that isn't installed is remembered as missing, and its text is
-/// drawn in the built-in sans.
-pub fn ensure_font(font: &drift_core::TextFont) {
-    if let drift_core::TextFont::System(family) = font
-        && drift_draft::outline::font_known(family).is_none()
-    {
-        drift_draft::outline::register_font(family, drift_platform::fonts::load(family));
-    }
-}
-
 /// Outlines by text, rebuilt only when a text changes.
 #[derive(Default)]
 pub struct TextCache {
     outlines: HashMap<TextId, TextOutline>,
+}
+
+impl TextCache {
+    /// Forget every outline (a font arrived or changed).
+    pub fn clear(&mut self) {
+        self.outlines.clear();
+    }
 }
 
 impl Editor {
@@ -47,14 +43,18 @@ impl Editor {
         {
             return Some(o.clone());
         }
-        ensure_font(&text.font);
-        let contours = drift_draft::outline::text_contours(
-            &text.text,
-            &text.font,
-            text.height,
-            text.at,
-            text.angle,
-        );
+        self.ensure_font(&text.font);
+        let contours = drift_draft::outline::Paragraph {
+            text: &text.text,
+            font: &text.font,
+            height: text.height,
+            at: text.at,
+            angle: text.angle,
+            align: text.align,
+            spacing: text.spacing,
+            wrap: text.wrap,
+        }
+        .contours();
         let mut bounds: Bounds = contours.iter().flatten().map(Shape::bounds).collect();
         if bounds.is_empty() {
             // Empty or blank text: a cap-height box so it can still be picked.
@@ -74,6 +74,25 @@ impl Editor {
             cache.outlines.retain(|id, _| self.doc.text(*id).is_some());
         }
         Some(o)
+    }
+
+    /// Put a text's anchor at `at`, inside an open transaction (a move in progress).
+    pub fn place_text(&mut self, id: TextId, at: DVec2) {
+        if let Some(mut text) = self.doc.text(id).cloned() {
+            text.at = at;
+            self.doc.set_text(id, text);
+        }
+    }
+
+    /// Turn a text about `pivot` by `degrees` from where it was (its id, anchor and angle),
+    /// inside an open transaction.
+    pub fn turn_text(&mut self, was: (TextId, DVec2, f64), pivot: DVec2, degrees: f64) {
+        let (id, at, angle) = was;
+        if let Some(mut text) = self.doc.text(id).cloned() {
+            text.at = pivot + DVec2::from_angle(degrees.to_radians()).rotate(at - pivot);
+            text.angle = (angle + degrees).rem_euclid(360.0);
+            self.doc.set_text(id, text);
+        }
     }
 
     /// The text under `p` (inside its bounds, with `tol` to spare), smallest first.

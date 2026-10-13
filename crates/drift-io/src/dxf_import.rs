@@ -13,7 +13,8 @@ use std::f64::consts::TAU;
 
 use drift_core::{
     DVec2, Document, EntityId, Fill, FillKind, Hatch, Layer, LayerId, LineType, LineWeight,
-    PaperSize, Rgb, Shape, Sheet, SheetView, SketchText, TextFont, TitleBlock, ViewFrame,
+    PaperSize, Rgb, Shape, Sheet, SheetView, SketchText, TextAlign, TextFont, TitleBlock,
+    ViewFrame,
 };
 
 use crate::dxf::{aci_rgb, bulge_arc, parse_line_type, unit_scale};
@@ -33,7 +34,8 @@ pub struct DxfEntity {
     pub weight: Option<LineWeight>,
 }
 
-/// A line of text: its baseline's start, cap height, and angle in degrees.
+/// Text of one or more lines (`\n` between them): its anchor on the first baseline (at the
+/// start, middle or end of each line, per `align`), cap height, and angle in degrees.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DxfText {
     pub layer: String,
@@ -42,6 +44,11 @@ pub struct DxfText {
     pub height: f64,
     pub angle: f64,
     pub color: Option<Rgb>,
+    pub align: TextAlign,
+    /// Baseline to baseline in cap heights, where the file says.
+    pub spacing: Option<f64>,
+    /// The width lines are wrapped to (mm), for paragraph text that has one.
+    pub wrap: Option<f64>,
 }
 
 /// A hatch or solid fill: its boundary loops as curves.
@@ -527,6 +534,7 @@ fn mtext_lines(raw: &str) -> Vec<String> {
 }
 
 /// How wide `text` is at a cap height (in the built-in sans, which is what it is shown in).
+#[cfg(test)]
 fn text_width(text: &str, height: f64) -> f64 {
     if text.trim().is_empty() {
         return 0.0;
@@ -1324,31 +1332,39 @@ impl<'a> Reader<'a> {
                 let angle = raw.f(50).unwrap_or(0.0);
                 let dir = DVec2::from_angle(angle.to_radians());
                 // Aligned any way but left / baseline, it hangs from its second point.
-                let anchored = h_align != 0 || v_align != 0;
+                // ("Aligned" and "fit" run between two points: from the first.)
+                let anchored = (h_align != 0 || v_align != 0) && !matches!(h_align, 3 | 5);
                 let mut at = if anchored {
                     raw.p(11).or(raw.p(10))
                 } else {
                     raw.p(10)
                 }
                 .unwrap_or(DVec2::ZERO);
-                let width = if h_align == 0 || h_align > 2 && h_align != 4 {
-                    0.0
-                } else {
-                    text_width(&text, height)
+                let align = match h_align {
+                    1 | 4 => TextAlign::Center,
+                    2 => TextAlign::Right,
+                    _ => TextAlign::Left,
                 };
-                match h_align {
-                    1 | 4 => at -= dir * (width / 2.0),
-                    2 => at -= dir * width,
-                    // Aligned and fit run between two points: from the first.
-                    3 | 5 => at = raw.p(10).unwrap_or(at),
-                    _ => {}
-                }
                 match (h_align, v_align) {
                     (4, _) | (_, 2) => at -= dir.perp() * (height / 2.0),
                     (_, 3) => at -= dir.perp() * height,
                     _ => {}
                 }
-                self.push_text(sink, &m, &layer, color, text, at, height, angle);
+                self.push_text(
+                    sink,
+                    &m,
+                    DxfText {
+                        layer,
+                        text,
+                        at,
+                        height,
+                        angle,
+                        color,
+                        align,
+                        spacing: None,
+                        wrap: None,
+                    },
+                );
             }
             "MTEXT" => {
                 let Some(height) = raw.f(40).filter(|h| *h > 0.0) else {
@@ -1361,10 +1377,14 @@ impl<'a> Reader<'a> {
                         whole.push_str(v);
                     }
                 }
-                let lines = mtext_lines(&whole);
+                let mut lines = mtext_lines(&whole);
+                while lines.last().is_some_and(|l| l.trim().is_empty()) {
+                    lines.pop();
+                }
                 if lines.iter().all(|l| l.trim().is_empty()) {
                     return;
                 }
+                let text = lines.join("\n");
                 let Some(at) = raw.p(10) else {
                     return;
                 };
@@ -1375,33 +1395,44 @@ impl<'a> Reader<'a> {
                 };
                 let dir = DVec2::from_angle(angle.to_radians());
                 let attach = raw.int(71).unwrap_or(1).clamp(1, 9);
-                let pitch = height * 5.0 / 3.0 * raw.f(44).unwrap_or(1.0).clamp(0.25, 4.0);
-                let n = lines.len() as f64;
-                // The first baseline, from where the block of lines hangs.
-                let block = height + (n - 1.0) * pitch;
+                let spacing = 5.0 / 3.0 * raw.f(44).unwrap_or(1.0).clamp(0.25, 4.0);
+                let wrap = raw.f(41).filter(|w| *w > 0.0);
+                let align = match (attach - 1) % 3 {
+                    0 => TextAlign::Left,
+                    1 => TextAlign::Center,
+                    _ => TextAlign::Right,
+                };
+                // How many lines it makes at its width, to hang the block from its top,
+                // middle or bottom.
+                let count =
+                    drift_draft::outline::paragraph_lines(&text, &TextFont::Sans, height, wrap)
+                        .len()
+                        .max(1) as f64;
+                let block = height + (count - 1.0) * spacing * height;
                 let top = match (attach - 1) / 3 {
                     0 => 0.0,
                     1 => block / 2.0,
                     _ => block,
                 };
+                // With a width, the lines sit in a box that the attachment point is on the
+                // left, middle or right of: the same side the anchor is on.
+                let first_baseline = at + dir.perp() * (top - height);
                 let m = local(raw.flipped());
-                for (k, line) in lines.into_iter().enumerate() {
-                    if line.trim().is_empty() {
-                        continue;
-                    }
-                    let across = match (attach - 1) % 3 {
-                        0 => 0.0,
-                        1 => text_width(&line, height) / 2.0,
-                        _ => text_width(&line, height),
-                    };
-                    let base = at - dir * across + dir.perp() * (top - height - k as f64 * pitch);
-                    self.push_text(sink, &m, &layer, color, line, base, height, angle);
-                }
-                if raw.f(41).is_some_and(|w| w > 0.0) {
-                    self.notes.insert(
-                        "Paragraph text keeps its own line breaks; lines aren't re-wrapped to a width.",
-                    );
-                }
+                self.push_text(
+                    sink,
+                    &m,
+                    DxfText {
+                        layer,
+                        text,
+                        at: first_baseline,
+                        height,
+                        angle,
+                        color,
+                        align,
+                        spacing: Some(spacing),
+                        wrap,
+                    },
+                );
             }
             "HATCH" => {
                 let mut fitted = false;
@@ -1555,22 +1586,13 @@ impl<'a> Reader<'a> {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn push_text(
-        &mut self,
-        sink: &mut Sink,
-        m: &Xf,
-        layer: &str,
-        color: Option<Rgb>,
-        text: String,
-        at: DVec2,
-        height: f64,
-        angle: f64,
-    ) {
-        let dir = DVec2::from_angle(angle.to_radians());
+    /// Add text given in a record's own coordinates and units.
+    fn push_text(&mut self, sink: &mut Sink, m: &Xf, text: DxfText) {
+        let dir = DVec2::from_angle(text.angle.to_radians());
         let along = m.vector(dir);
         let up = m.vector(dir.perp());
-        let height = height * up.length();
+        let scale = up.length();
+        let height = text.height * scale;
         if !(height > 0.0 && height.is_finite()) {
             return;
         }
@@ -1579,12 +1601,11 @@ impl<'a> Reader<'a> {
                 .insert("Mirrored text was read the right way round, at its mirrored position.");
         }
         sink.texts.push(DxfText {
-            layer: layer.to_owned(),
-            text,
-            at: m.point(at),
+            at: m.point(text.at),
             height,
             angle: along.y.atan2(along.x).to_degrees(),
-            color,
+            wrap: text.wrap.map(|w| w * along.length()),
+            ..text
         });
     }
 }
@@ -2273,6 +2294,9 @@ pub fn add_to_document(doc: &mut Document, import: &DxfImport) -> ImportReport {
     let add_text = |doc: &mut Document, t: &DxfText, layer: LayerId| {
         let mut text = SketchText::new(t.text.clone(), t.at, t.height);
         text.angle = t.angle.rem_euclid(360.0);
+        text.align = t.align;
+        text.spacing = t.spacing.unwrap_or(SketchText::SPACING);
+        text.wrap = t.wrap;
         let id = doc.add_text(text.clone());
         text.layer = layer;
         text.appearance.color = t.color;
@@ -2401,6 +2425,7 @@ pub fn add_to_document(doc: &mut Document, import: &DxfImport) -> ImportReport {
                 at: copy.apply(t.at),
                 height: t.height * insert.scale,
                 angle: t.angle + insert.angle,
+                wrap: t.wrap.map(|w| w * insert.scale),
                 ..t.clone()
             };
             let text_layer = if t.layer == "0" {
@@ -2693,35 +2718,75 @@ mod tests {
         let texts = &back.texts;
         assert_eq!(
             texts.len(),
-            4,
-            "blank text is left out; the paragraph is two lines"
+            3,
+            "blank text is left out; the paragraph is one text"
         );
         assert_eq!(texts[0].text, "Ø12 ±0.1 45°");
         assert_eq!(
             (texts[0].at, texts[0].height, texts[0].layer.as_str()),
             (DVec2::new(5.0, 7.0), 2.5, "NOTES")
         );
-        assert_eq!(texts[0].color, Some(Rgb([255, 0, 0])));
-        // Right-aligned and vertical: its start is below the point by its own width.
+        assert_eq!(
+            (texts[0].color, texts[0].align),
+            (Some(Rgb([255, 0, 0])), TextAlign::Left)
+        );
+        // Right-aligned and vertical: it keeps its alignment, anchored on its second point.
         assert!((texts[1].angle - 90.0).abs() < 1e-9);
-        let width = text_width("END", 3.0);
-        assert!(width > 4.0 && close(texts[1].at, DVec2::new(50.0, 20.0 - width)));
-        // The paragraph: codes gone, the stack as a fraction, the escape decoded.
-        assert_eq!(texts[2].text, "GENERAL NOTES");
-        assert_eq!(texts[3].text, "All dims 1/2 Ø10");
-        // Centred on (100, 50): the two baselines straddle it, each line centred across.
-        assert!(texts[2].at.y > 50.0 && texts[3].at.y < 50.0);
-        let mid = |t: &DxfText| t.at.x + text_width(&t.text, t.height) / 2.0;
-        assert!((mid(&texts[2]) - 100.0).abs() < 1e-6 && (mid(&texts[3]) - 100.0).abs() < 1e-6);
-        let block = (texts[2].at.y + texts[2].height) + texts[3].at.y;
-        assert!((block / 2.0 - 50.0).abs() < 1e-6, "vertically centred");
+        assert_eq!(
+            (texts[1].at, texts[1].align),
+            (DVec2::new(50.0, 20.0), TextAlign::Right)
+        );
+        assert!(text_width("END", 3.0) > 4.0);
+        // The paragraph: one text of two lines, codes gone, the stack as a fraction, the
+        // escape decoded.
+        let para = &texts[2];
+        assert_eq!(para.text, "GENERAL NOTES\nAll dims 1/2 Ø10");
+        assert_eq!(para.align, TextAlign::Center);
+        assert!((para.spacing.unwrap() - 5.0 / 3.0).abs() < 1e-12);
+        assert_eq!(para.wrap, None);
+        // Centred on (100, 50) both ways: the anchor is on its centre line, and the two
+        // baselines straddle the middle.
+        assert_eq!(para.at.x, 100.0);
+        let second = para.at.y - para.spacing.unwrap() * para.height;
+        assert!(((para.at.y + para.height + second) / 2.0 - 50.0).abs() < 1e-9);
+
+        // With a width, long lines wrap, and the block hangs from its top left corner.
+        let wide = entities(&[
+            (0, "MTEXT"),
+            (10, "0"),
+            (20, "100"),
+            (40, "2"),
+            (41, "30"),
+            (71, "1"),
+            (1, "one two three four five six seven eight nine ten"),
+        ]);
+        let wrapped = read(&wide, 1.0).unwrap();
+        let w = &wrapped.texts[0];
+        assert_eq!((w.wrap, w.align), (Some(30.0), TextAlign::Left));
+        assert_eq!(
+            w.at,
+            DVec2::new(0.0, 98.0),
+            "the first baseline, a cap height down"
+        );
+        let lines =
+            drift_draft::outline::paragraph_lines(&w.text, &TextFont::Sans, w.height, w.wrap);
+        assert!(lines.len() >= 2, "{lines:?}");
+        assert!(lines.iter().all(|l| text_width(l, 2.0) <= 30.0));
+        assert_eq!(lines.join(" "), w.text);
 
         // Into a document: text on its layer, in its colour.
         let mut doc = Document::new();
         doc.begin();
         let report = add_to_document(&mut doc, &back);
         doc.commit("Import");
-        assert_eq!(report.texts, 4);
+        assert_eq!(report.texts, 3);
+        let para = doc
+            .texts()
+            .map(|(_, t)| t.clone())
+            .find(|t| t.text.contains('\n'))
+            .unwrap();
+        assert_eq!((para.align, para.wrap), (TextAlign::Center, None));
+        assert!((para.spacing - 5.0 / 3.0).abs() < 1e-12);
         let first = doc
             .texts()
             .map(|(_, t)| t.clone())

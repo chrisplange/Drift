@@ -104,6 +104,8 @@ pub(super) struct Grab {
     pub(super) applied: DVec2,
     /// Copies of blocks moving too (as they were when the move began).
     pub(super) instances: Vec<(drift_core::InstanceId, drift_core::Instance)>,
+    /// The picked sketch text moving too, and where its anchor was.
+    pub(super) text: Option<(drift_core::TextId, DVec2)>,
 }
 
 impl Grab {
@@ -135,6 +137,9 @@ impl Grab {
         }
         if self.ids.is_empty() || ed.drag(&self.ids, step, &self.dragged()) {
             ed.move_instances(&self.instances, offset);
+            if let Some((id, from)) = self.text {
+                ed.place_text(id, from + offset);
+            }
             self.applied = offset;
         }
     }
@@ -166,6 +171,9 @@ impl SelectTool {
             None
         };
         let instances = ed.picked_instances();
+        let text = ed
+            .selected_text
+            .and_then(|id| ed.doc.text(id).map(|t| (id, t.at)));
         let (ids, base) = match (&region, fill) {
             (Some(r), _) => (ed.region_curves(r), r.centroid),
             (None, Some((ids, centre))) => (ids, centre),
@@ -173,13 +181,17 @@ impl SelectTool {
             (None, None) if ed.selection.is_empty() && !instances.is_empty() => {
                 (Vec::new(), instances[0].1.at)
             }
+            // Only a text: its anchor is the base.
+            (None, None) if ed.selection.is_empty() && text.is_some() => {
+                (Vec::new(), text.map_or(p.raw, |t| t.1))
+            }
             (None, None) => {
                 let ids: Vec<EntityId> = ed.selection.iter().copied().collect();
                 let base = ed.move_base(&ids, p.raw, false);
                 (ids, base)
             }
         };
-        if ids.is_empty() && instances.is_empty() {
+        if ids.is_empty() && instances.is_empty() && text.is_none() {
             ed.notice = Some("Select something to move first".into());
             return true;
         }
@@ -196,6 +208,7 @@ impl SelectTool {
             typed: [None; 2],
             applied: DVec2::ZERO,
             instances,
+            text,
         });
         true
     }
@@ -216,6 +229,9 @@ impl SelectTool {
         }
         ed.doc.begin();
         ed.move_instances(&grab.instances, offset);
+        if let Some((id, from)) = grab.text {
+            ed.place_text(id, from + offset);
+        }
         let dragged = grab.dragged();
         if !grab.ids.is_empty() && !ed.drag(&grab.ids, offset, &dragged) {
             // Too far for one solve (constraints pull the rest along): go in steps.

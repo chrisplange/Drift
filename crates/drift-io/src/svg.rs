@@ -101,7 +101,7 @@ pub fn write(d: &Drawing) -> String {
             );
             open = Some(key);
         }
-        item_svg(&mut out, item, h, d.line_type_scale);
+        item_svg(&mut out, item, h, d.line_type_scale, d.font.as_deref());
     }
     if open.is_some() {
         out.push_str("</g>\n");
@@ -110,7 +110,13 @@ pub fn write(d: &Drawing) -> String {
     out
 }
 
-fn item_svg(out: &mut String, item: &Item, h: f64, lts: f64) {
+fn item_svg(
+    out: &mut String,
+    item: &Item,
+    h: f64,
+    lts: f64,
+    font: Option<&drift_draft::font::DrawingFont>,
+) {
     let y = |v: f64| h - v;
     let pen = &item.pen;
     match &item.prim {
@@ -258,6 +264,11 @@ fn item_svg(out: &mut String, item: &Item, h: f64, lts: f64) {
             style,
         } => {
             let [r, g, b] = pen.color.0;
+            // The drawing's font by name (SVG can't carry it), then the standard ones.
+            let family = font.map_or(String::new(), |f| {
+                format!("'{}', ", escape(&f.regular.family))
+            });
+            let cap = font.map_or(CAP_HEIGHT, |f| f.face(style.bold).0.cap_ratio());
             let mut look = String::new();
             if style.bold {
                 look.push_str(r#" font-weight="700""#);
@@ -265,7 +276,7 @@ fn item_svg(out: &mut String, item: &Item, h: f64, lts: f64) {
             if style.tracking != 0.0 {
                 look.push_str(&format!(
                     r#" letter-spacing="{}""#,
-                    num(style.tracking * height / CAP_HEIGHT)
+                    num(style.tracking * height / cap)
                 ));
             }
             let anchor = match align {
@@ -285,10 +296,10 @@ fn item_svg(out: &mut String, item: &Item, h: f64, lts: f64) {
             };
             let _ = writeln!(
                 out,
-                r##"<text x="{}" y="{}" font-family="Helvetica, Arial, sans-serif" font-size="{}"{look} fill="#{r:02x}{g:02x}{b:02x}" stroke="none" text-anchor="{anchor}"{rotate}>{}</text>"##,
+                r##"<text x="{}" y="{}" font-family="{family}Helvetica, Arial, sans-serif" font-size="{}"{look} fill="#{r:02x}{g:02x}{b:02x}" stroke="none" text-anchor="{anchor}"{rotate}>{}</text>"##,
                 num(at.x),
                 num(y(at.y)),
-                num(height / CAP_HEIGHT),
+                num(height / cap),
                 escape(text)
             );
         }

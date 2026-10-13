@@ -143,9 +143,7 @@ impl TangentArcTool {
             ed.sync();
             return;
         };
-        let _ = ed
-            .doc
-            .add_constraint(Constraint::Tangent { a: curve, b: arc });
+        ed.relate(Constraint::Tangent { a: curve, b: arc });
         if let Some(value) = radius {
             ed.add_typed_dimension(0, Constraint::Radius { curve: arc, value });
         }

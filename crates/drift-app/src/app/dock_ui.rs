@@ -23,6 +23,8 @@ pub(crate) struct DockView {
     /// Tabs and docks as laid out this frame, for dropping.
     tabs: Vec<(Side, egui::Rect)>,
     docks: [Option<egui::Rect>; 2],
+    /// The header of each floating panel as last drawn (the part that docks it when dragged).
+    headers: HashMap<Panel, egui::Rect>,
     /// Where a panel just floated by dropping should appear.
     float_at: HashMap<Panel, egui::Pos2>,
     was_wide: Option<bool>,
@@ -432,8 +434,17 @@ impl DriftApp {
                     })
                     .show(ui, |ui| self.panel_body(ui, p));
             });
+            // Dragged by its header, a floating panel can be docked. Dragging inside it (a
+            // slider, a list, empty space) is just using it: no drop zones.
+            let by_header = ctx.input(|i| i.pointer.press_origin()).is_some_and(|at| {
+                self.dock_view
+                    .headers
+                    .get(&p)
+                    .is_some_and(|bar| bar.contains(at))
+            });
             if let Some(shown) = shown
                 && shown.response.dragged()
+                && by_header
                 && self.dock_view.drag.is_none()
             {
                 self.dock_view.drag = Some((p, true));
@@ -474,14 +485,13 @@ impl DriftApp {
             egui::Vec2::splat(24.0),
         );
         let more = close.translate(egui::vec2(-26.0, 0.0));
-        let tip = if p == Panel::Layers {
-            format!("Close ({})", app::panels::shortcut("L", false))
-        } else {
-            "Close".to_owned()
-        };
+        // Closing a floating panel puts it back in the dock it came from (the menu beside it
+        // can hide it altogether).
+        let tip = format!("Back to the {} dock", self.layout.home(p).name());
         if icon_at(ui, close, ui.id().with("close"), Glyph::Close, &tip).clicked() {
-            self.layout.move_to(p, Place::Hidden, None);
+            self.layout.redock(p);
         }
+        self.dock_view.headers.insert(p, bar);
         let menu = icon_at(ui, more, ui.id().with("more"), Glyph::More, "Dock or close");
         egui::Popup::menu(&menu).show(|ui| self.panel_menu(ui, p));
     }
@@ -546,7 +556,9 @@ impl DriftApp {
                     egui::FontId::new(13.0, theme::bold()),
                     accent,
                 );
-            } else {
+            } else if !window {
+                // A tab being dragged shows where it could go; a window being moved only
+                // lights a dock up once it is over it.
                 painter.rect(
                     r,
                     8.0,

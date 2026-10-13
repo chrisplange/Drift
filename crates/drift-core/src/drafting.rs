@@ -556,10 +556,10 @@ mod tests {
                 leader: None,
             })
         );
-        // Fills survive (they report a lost boundary instead).
+        // A fill goes with its boundary: without one of its curves there is no area left.
         let fill = doc.add_fill(Fill::new(lines, DVec2::splat(5.0), FillKind::Solid));
         doc.delete([lines_first(&doc)]);
-        assert!(doc.fill(fill).is_some());
+        assert!(doc.fill(fill).is_none());
     }
 
     fn lines_first(doc: &Document) -> EntityId {

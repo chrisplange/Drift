@@ -356,7 +356,7 @@ impl ToolKind {
         Some(match self {
             ToolKind::Select => 'S',
             ToolKind::Line => 'L',
-            ToolKind::Pen => 'B',
+            ToolKind::Pen => 'P',
             ToolKind::Rectangle => 'R',
             ToolKind::Polygon => 'K',
             ToolKind::Slot => 'U',
@@ -364,7 +364,8 @@ impl ToolKind {
             ToolKind::Circle | ToolKind::Ellipse | ToolKind::EllipseArc => 'C',
             // A selects the centre arc; pressed again it cycles through the arc tools.
             ToolKind::Arc | ToolKind::ThreePointArc | ToolKind::TangentArc => 'A',
-            ToolKind::Point => 'P',
+            // V for vertex (P is the pen, as in Illustrator).
+            ToolKind::Point => 'V',
             ToolKind::Block => 'I',
             ToolKind::Dimension => 'D',
             ToolKind::Fill => 'H',

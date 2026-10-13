@@ -1307,6 +1307,17 @@ impl Document {
         for id in dangling {
             self.remove_measurement(id);
         }
+        // A fill whose boundary lost a curve has no area left to fill: it goes too (and
+        // comes back with the curve on undo).
+        let emptied: Vec<FillId> = self
+            .fills
+            .iter()
+            .filter(|(_, f)| f.boundary.iter().any(|e| doomed.contains(e)))
+            .map(|(id, _)| *id)
+            .collect();
+        for id in emptied {
+            self.remove_fill(id);
+        }
         self.drop_dangling_annotations();
         self.prune_groups();
     }

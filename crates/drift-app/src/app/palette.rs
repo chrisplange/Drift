@@ -27,6 +27,7 @@ pub(crate) enum Command {
     Undo,
     Redo,
     SelectAll,
+    SelectOverlapping,
     Cut,
     Copy,
     Paste,
@@ -225,6 +226,12 @@ impl DriftApp {
         add(Command::Undo, "Undo", "Edit", ctrl("Z"));
         add(Command::Redo, "Redo", "Edit", ctrl_shift("Z"));
         add(Command::SelectAll, "Select all", "Edit", ctrl("A"));
+        add(
+            Command::SelectOverlapping,
+            "Select overlapping curves",
+            "Edit",
+            String::new(),
+        );
         add(Command::Cut, "Cut", "Edit", ctrl("X"));
         add(Command::Copy, "Copy", "Edit", ctrl("C"));
         add(Command::Paste, "Paste", "Edit", ctrl("V"));
@@ -399,6 +406,7 @@ impl DriftApp {
                 self.set_tool(ToolKind::Select);
                 self.editor.select_all();
             }
+            Command::SelectOverlapping => self.select_overlapping(now),
             Command::Cut => self.cut(ctx),
             Command::Copy => self.copy(ctx),
             Command::Paste => self.paste_copied(false, now),

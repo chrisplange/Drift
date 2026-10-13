@@ -475,7 +475,7 @@ const SHORTCUTS: &[(&str, &[(&str, &str)])] = &[
         &[
             ("S / Esc", "Select tool"),
             ("L", "Line (polyline)"),
-            ("B", "Pen: click for corners, drag for smooth points"),
+            ("P", "Pen: click for corners, drag for smooth points"),
             ("R", "Rectangle"),
             ("K", "Polygon; X switches inscribed / circumscribed"),
             ("C", "Circle; press again for ellipse, then partial ellipse"),
@@ -488,7 +488,7 @@ const SHORTCUTS: &[(&str, &[(&str, &str)])] = &[
                 "Switch between line and tangent arc, continuing from the last point",
             ),
             ("U", "Slot; press again for centre and arc slots"),
-            ("P", "Point"),
+            ("V", "Point (a vertex)"),
             ("I", "Place block: R turns, X mirrors"),
             (
                 "Shift+T",

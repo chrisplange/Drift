@@ -46,7 +46,15 @@ impl DriftApp {
         let at = self.paste_point();
         if clipboard::is_fragment(text) {
             match self.editor.paste(text, (!in_place).then_some(at)) {
-                Ok(n) => self.set_status(format!("Pasted {n}"), false, now),
+                Ok(n) => {
+                    self.set_status(format!("Pasted {n}"), false, now);
+                    // Straight into a move, to put the copy where it belongs (as after
+                    // duplicating); Esc leaves it where it landed.
+                    if !in_place && self.pointer.is_some() {
+                        self.tool
+                            .key(ToolKey::G, self.pointer.as_ref(), &mut self.editor);
+                    }
+                }
                 Err(e) => self.set_status(format!("Can't paste that: {e}"), true, now),
             }
             return;

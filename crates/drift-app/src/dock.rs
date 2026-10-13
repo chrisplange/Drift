@@ -102,6 +102,8 @@ pub struct Layout {
     pub floating: Vec<Panel>,
     /// Where each hidden panel was, so showing it again puts it back.
     pub last: HashMap<Panel, Place>,
+    /// The dock each panel was last in: where a floating panel goes back to when closed.
+    pub home: HashMap<Panel, Side>,
 }
 
 impl Default for Layout {
@@ -113,6 +115,7 @@ impl Default for Layout {
             collapsed: [false, false],
             floating: Vec::new(),
             last: HashMap::new(),
+            home: HashMap::new(),
         }
     }
 }
@@ -180,6 +183,12 @@ impl Layout {
         self.take(p);
         match place {
             Place::Dock(side) => {
+                // Only the left is recorded; anything else is at home on the right.
+                if side == Side::Left {
+                    self.home.insert(p, side);
+                } else {
+                    self.home.remove(&p);
+                }
                 let i = side.index();
                 let at = index
                     .unwrap_or(self.docks[i].len())
@@ -191,6 +200,16 @@ impl Layout {
             Place::Float => self.floating.push(p),
             Place::Hidden => {}
         }
+    }
+
+    /// The dock a floating panel came from (the right one if it never was docked).
+    pub fn home(&self, p: Panel) -> Side {
+        self.home.get(&p).copied().unwrap_or(Side::Right)
+    }
+
+    /// Put a floating panel back in the dock it came from.
+    pub fn redock(&mut self, p: Panel) {
+        self.move_to(p, Place::Dock(self.home(p)), None);
     }
 
     /// Bring a panel into view: in front of its dock (opening it), or back where it was if
@@ -255,6 +274,15 @@ impl Layout {
             .collect();
         last.sort();
         out.push(format!("dock_last={}", last.join(",")));
+        // Only the left needs saying: the right is the default.
+        let mut home: Vec<&str> = self
+            .home
+            .iter()
+            .filter(|(_, side)| **side == Side::Left)
+            .map(|(p, _)| p.key())
+            .collect();
+        home.sort_unstable();
+        out.push(format!("dock_home_left={}", home.join(",")));
         out
     }
 
@@ -270,6 +298,7 @@ impl Layout {
             collapsed: [false, false],
             floating: Vec::new(),
             last: HashMap::new(),
+            home: HashMap::new(),
         };
         let panels = |v: &str| -> Vec<Panel> { v.split(',').filter_map(Panel::parse).collect() };
         for (key, value) in pairs {
@@ -282,6 +311,11 @@ impl Layout {
                 "dock_collapsed" => {
                     let b = value.as_bytes();
                     layout.collapsed = [b.first() == Some(&b'1'), b.get(1) == Some(&b'1')];
+                }
+                "dock_home_left" => {
+                    for p in panels(value) {
+                        layout.home.insert(p, Side::Left);
+                    }
                 }
                 "dock_last" => {
                     for entry in value.split(',') {
@@ -317,6 +351,11 @@ impl Layout {
                 layout.active[i] = layout.docks[i].first().copied();
             }
         }
+        // A panel in the left dock is at home there, whatever was saved.
+        for p in layout.docks[0].clone() {
+            layout.home.insert(p, Side::Left);
+        }
+        layout.home.retain(|_, side| *side == Side::Left);
         *self = layout;
     }
 }
@@ -355,6 +394,20 @@ mod tests {
         l.move_to(Panel::Layers, Place::Dock(Side::Right), Some(0));
         assert!(l.dock(Side::Left).is_empty() && l.active[0].is_none());
         assert_eq!(l.dock(Side::Right)[0], Panel::Layers);
+    }
+
+    #[test]
+    fn a_floating_panel_goes_home_when_closed() {
+        let mut l = Layout::default();
+        l.move_to(Panel::Layers, Place::Dock(Side::Left), None);
+        l.move_to(Panel::Layers, Place::Float, None);
+        l.move_to(Panel::Blocks, Place::Float, None);
+        l.redock(Panel::Layers);
+        l.redock(Panel::Blocks);
+        assert_eq!(l.place(Panel::Layers), Place::Dock(Side::Left));
+        assert_eq!(l.place(Panel::Blocks), Place::Dock(Side::Right));
+        // Back in front, so the click that closed the window shows where it went.
+        assert!(l.is_shown(Panel::Layers) && l.is_shown(Panel::Blocks));
     }
 
     #[test]

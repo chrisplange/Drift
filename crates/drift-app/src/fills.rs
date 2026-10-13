@@ -545,13 +545,13 @@ mod tests {
         assert!(!shape.lost);
         assert!((shape.region.centroid.x - 120.0).abs() < 1e-6);
 
-        // Delete an edge: the boundary is lost, the last shape is kept.
+        // Delete an edge: there is no area left, so the fill goes with it, and comes back
+        // with it.
         ed.doc.begin();
         ed.doc.delete([lines[1]]);
         ed.commit("Delete");
-        let shape = ed.fill_shapes()[&id].clone();
-        assert!(shape.lost);
-        assert!((shape.region.centroid.x - 120.0).abs() < 1e-6);
+        assert!(ed.doc.fill(id).is_none());
+        assert!(!ed.fill_shapes().contains_key(&id));
         ed.undo();
         assert!(!ed.fill_shapes()[&id].lost);
     }

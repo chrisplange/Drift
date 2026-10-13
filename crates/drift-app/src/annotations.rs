@@ -124,11 +124,10 @@ pub fn default_offset(doc: &Document, c: &Constraint, scale: f64) -> DVec2 {
             let r = drift_solver::radius_of(doc, curve).unwrap_or(0.0);
             diagonal * (r + d)
         }
-        Constraint::Angle { a, b, .. } => {
-            let bisector = match (line_dir_from_vertex(doc, a), line_dir_from_vertex(doc, b)) {
-                (Some(u1), Some(u2)) if (u1 + u2).length() > 1e-9 => (u1 + u2).normalize(),
-                _ => diagonal,
-            };
+        Constraint::Angle { a, b, degrees } => {
+            // Inside the dimensioned angle, between the lines themselves where it can be.
+            let bisector =
+                angle_sectors(doc, a, b, degrees).map_or(diagonal, |sectors| sectors[0].bisector());
             bisector * d * 2.0
         }
         _ => DVec2::ZERO,
@@ -172,12 +171,77 @@ fn angle_vertex(doc: &Document, l1: EntityId, l2: EntityId) -> Option<DVec2> {
     Some(a1 + d1 * t)
 }
 
-/// Unit direction of a line pointing away from its intersection with the other line, toward
-/// its farther end point.
-fn line_dir_from_vertex(doc: &Document, line: EntityId) -> Option<DVec2> {
+/// Unit direction along a line from `vertex` (where it meets the other line of an angle)
+/// toward the line itself: its end farther from the vertex.
+fn ray_from(doc: &Document, line: EntityId, vertex: DVec2) -> Option<DVec2> {
     let (a, b) = line_points(doc, line)?;
-    let d = b - a;
-    (d.length() > 0.0).then(|| d.normalize())
+    let far = if a.distance_squared(vertex) >= b.distance_squared(vertex) {
+        a
+    } else {
+        b
+    };
+    (far - vertex)
+        .try_normalize()
+        .or_else(|| (b - a).try_normalize())
+}
+
+/// One of the four angles two crossing lines make: from the direction `from`, turning
+/// `sweep` radians (counter-clockwise positive).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Sector {
+    pub from: DVec2,
+    pub sweep: f64,
+}
+
+impl Sector {
+    pub fn bisector(&self) -> DVec2 {
+        DVec2::from_angle(self.from.y.atan2(self.from.x) + self.sweep / 2.0)
+    }
+
+    pub fn to(&self) -> DVec2 {
+        DVec2::from_angle(self.from.y.atan2(self.from.x) + self.sweep)
+    }
+}
+
+/// The two angles between lines `a` and `b` that measure `degrees` (they are opposite each
+/// other across the vertex). The first starts on line `a` itself, and when the angle between
+/// the lines as drawn is the one dimensioned it ends on line `b` too; the second is its
+/// mirror image through the vertex.
+pub fn angle_sectors(
+    doc: &Document,
+    a: EntityId,
+    b: EntityId,
+    degrees: f64,
+) -> Option<[Sector; 2]> {
+    let vertex = angle_vertex(doc, a, b)?;
+    let (r1, r2) = (ray_from(doc, a, vertex)?, ray_from(doc, b, vertex)?);
+    // From line a's ray to line b's, the short way round.
+    let between = r1.perp_dot(r2).atan2(r1.dot(r2));
+    let corner = between.abs().to_degrees();
+    let sweep = if (corner - degrees).abs() <= (180.0 - corner - degrees).abs() {
+        between
+    } else {
+        // The dimension is of the other angle: from line a to line b carried on through
+        // the vertex.
+        between - std::f64::consts::PI * between.signum()
+    };
+    Some([Sector { from: r1, sweep }, Sector { from: -r1, sweep }])
+}
+
+/// The order of two lines for an angle dimension that measures the angle between them as
+/// they are drawn (at their corner), rather than its supplement.
+pub fn corner_order(doc: &Document, a: EntityId, b: EntityId) -> (EntityId, EntityId) {
+    let corner = (|| {
+        let vertex = angle_vertex(doc, a, b)?;
+        let (r1, r2) = (ray_from(doc, a, vertex)?, ray_from(doc, b, vertex)?);
+        Some(r1.perp_dot(r2).atan2(r1.dot(r2)).abs().to_degrees())
+    })();
+    let measured = drift_solver::measure(doc, &Constraint::Angle { a, b, degrees: 0.0 });
+    match (corner, measured) {
+        // The solver measures a → b; the other order measures the supplement.
+        (Some(corner), Some(m)) if (m - corner).abs() > (180.0 - m - corner).abs() => (b, a),
+        _ => (a, b),
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -188,8 +252,10 @@ pub enum DimShape {
     Radius { center: Pos2, tip: Pos2, from: Pos2 },
     /// A line across the circle through its centre, arrows at both ends.
     Diameter { ends: [Pos2; 2] },
-    /// An arc around `center` from screen angle `start` sweeping `sweep` (radians, y-down).
+    /// An arc around `center` from screen angle `start` sweeping `sweep` (radians, y-down),
+    /// with an extension line to each end the measured line doesn't reach.
     Angular {
+        extensions: [Option<[Pos2; 2]>; 2],
         center: Pos2,
         radius: f32,
         start: f32,
@@ -738,14 +804,40 @@ pub fn layout_dimension(
         }
         Constraint::Angle { a, b, degrees } => {
             let center = s(anchor);
-            let u1 = line_dir_from_vertex(doc, a)?;
-            line_dir_from_vertex(doc, b)?;
+            // Of the two angles that measure this, the one the label sits in.
+            let sectors = angle_sectors(doc, a, b, degrees)?;
+            let toward = vec2(label.x - center.x, -(label.y - center.y));
+            let toward = DVec2::new(f64::from(toward.x), f64::from(toward.y));
+            let sector = if sectors[1].bisector().dot(toward) > sectors[0].bisector().dot(toward) {
+                sectors[1]
+            } else {
+                sectors[0]
+            };
             // Screen angles are y-down, so world counter-clockwise is negative.
-            let start = (-u1.y).atan2(u1.x) as f32;
-            let sweep = -(degrees.to_radians() as f32);
+            let start = (-sector.from.y).atan2(sector.from.x) as f32;
+            let sweep = -(sector.sweep as f32);
             let radius = (label - center).length().max(12.0);
+            // Where an end of the arc is off its line, an extension line reaches it.
+            let reach = |line: EntityId, dir: DVec2| -> Option<[Pos2; 2]> {
+                let (pa, pb) = line_points(doc, line)?;
+                let (sa, sb) = (s(pa), s(pb));
+                let tip = center + vec2(dir.x as f32, -dir.y as f32) * radius;
+                let along = sb - sa;
+                let t = if along.length_sq() > 0.0 {
+                    (tip - sa).dot(along) / along.length_sq()
+                } else {
+                    0.0
+                };
+                if (-0.001..=1.001).contains(&t) {
+                    return None;
+                }
+                let near = if t < 0.0 { sa } else { sb };
+                let out = (tip - near).normalized();
+                Some([near + out * 2.0, tip + out * 5.0])
+            };
             (
                 DimShape::Angular {
+                    extensions: [reach(a, sector.from), reach(b, sector.to())],
                     center,
                     radius,
                     start,
@@ -880,11 +972,15 @@ pub fn paint_dimension(
             arrow(pen, ends[1], u, color, style);
         }
         DimShape::Angular {
+            extensions,
             center,
             radius,
             start,
             sweep,
         } => {
+            for ext in extensions.iter().flatten() {
+                pen.line(ext, stroke);
+            }
             let steps = ((sweep.abs() / TAU32) * 64.0).ceil().clamp(2.0, 256.0) as usize;
             let points: Vec<Pos2> = (0..=steps)
                 .map(|k| {

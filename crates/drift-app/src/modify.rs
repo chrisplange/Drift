@@ -341,7 +341,7 @@ impl Editor {
             return p;
         }
         let p = self.doc.add_point(cut.at);
-        let _ = self.doc.add_constraint(Constraint::PointOnCurve {
+        self.relate(Constraint::PointOnCurve {
             point: p,
             curve: cut.other,
         });
@@ -435,9 +435,7 @@ impl Editor {
                             .map_err(doc_err)?;
                         let rest = self.doc.add_line(ph, b).map_err(doc_err)?;
                         self.doc.copy_look(id, rest);
-                        let _ = self
-                            .doc
-                            .add_constraint(Constraint::Collinear { a: id, b: rest });
+                        self.relate(Constraint::Collinear { a: id, b: rest });
                     }
                     (None, None) => unreachable!(),
                 },
@@ -485,9 +483,7 @@ impl Editor {
                             .map_err(doc_err)?;
                         let rest = self.doc.add_arc(center, ph, end).map_err(doc_err)?;
                         self.doc.copy_look(id, rest);
-                        let _ = self
-                            .doc
-                            .add_constraint(Constraint::Equal { a: id, b: rest });
+                        self.relate(Constraint::Equal { a: id, b: rest });
                     }
                     (None, None) => unreachable!(),
                 },
@@ -762,7 +758,7 @@ impl Editor {
             match existing {
                 Some(q) => self.doc.merge_points(end, q).map_err(doc_err)?,
                 None => {
-                    let _ = self.doc.add_constraint(Constraint::PointOnCurve {
+                    self.relate(Constraint::PointOnCurve {
                         point: end,
                         curve: other,
                     });
@@ -806,9 +802,7 @@ impl Editor {
                         .map_err(doc_err)?;
                     let rest = self.doc.add_line(m, b).map_err(doc_err)?;
                     self.doc.copy_look(id, rest);
-                    let _ = self
-                        .doc
-                        .add_constraint(Constraint::Collinear { a: id, b: rest });
+                    self.relate(Constraint::Collinear { a: id, b: rest });
                 }
                 EntityKind::Arc { center, start, end } => {
                     self.doc
@@ -823,9 +817,7 @@ impl Editor {
                         .map_err(doc_err)?;
                     let rest = self.doc.add_arc(center, m, end).map_err(doc_err)?;
                     self.doc.copy_look(id, rest);
-                    let _ = self
-                        .doc
-                        .add_constraint(Constraint::Equal { a: id, b: rest });
+                    self.relate(Constraint::Equal { a: id, b: rest });
                 }
                 EntityKind::Circle { center, .. } => {
                     // Two half circles on the one centre.
@@ -842,9 +834,7 @@ impl Editor {
                         .map_err(doc_err)?;
                     let rest = self.doc.add_arc(center, far, m).map_err(doc_err)?;
                     self.doc.copy_look(id, rest);
-                    let _ = self
-                        .doc
-                        .add_constraint(Constraint::Equal { a: id, b: rest });
+                    self.relate(Constraint::Equal { a: id, b: rest });
                 }
                 EntityKind::Ellipse {
                     center,
@@ -923,7 +913,7 @@ impl Editor {
                     self.doc.set_point(c2, second[2]).map_err(doc_err)?;
                     let rest = self.doc.add_bezier(m, after, c2, b).map_err(doc_err)?;
                     self.doc.copy_look(id, rest);
-                    let _ = self.doc.add_constraint(Constraint::Smooth {
+                    self.relate(Constraint::Smooth {
                         point: m,
                         a: before,
                         b: after,
@@ -991,13 +981,9 @@ impl Editor {
             let a = self.doc.add_arc(pc, s, e).map_err(doc_err)?;
             arc = Some(a);
             for line in [l1, l2] {
-                let _ = self
-                    .doc
-                    .add_constraint(Constraint::Tangent { a: line, b: a });
+                self.relate(Constraint::Tangent { a: line, b: a });
             }
-            let _ = self
-                .doc
-                .add_constraint(Constraint::Radius { curve: a, value: r });
+            self.relate(Constraint::Radius { curve: a, value: r });
             self.doc.remove_if_orphaned(p);
             Ok(())
         })();
@@ -1419,10 +1405,8 @@ impl Editor {
                     }
                     (Shape::Line { .. }, _) => {
                         let line = self.doc.add_line(s, e).map_err(doc_err)?;
-                        let _ = self
-                            .doc
-                            .add_constraint(Constraint::Parallel { a: orig, b: line });
-                        let _ = self.doc.add_constraint(Constraint::PointLineDistance {
+                        self.relate(Constraint::Parallel { a: orig, b: line });
+                        self.relate(Constraint::PointLineDistance {
                             point: s,
                             line: orig,
                             value: distance,
@@ -1446,7 +1430,7 @@ impl Editor {
                             && prev + 1 == k
                             && ends[prev].0 == s
                         {
-                            let _ = self.doc.add_constraint(Constraint::Smooth {
+                            self.relate(Constraint::Smooth {
                                 point: s,
                                 a: before,
                                 b: c1,
@@ -1468,7 +1452,7 @@ impl Editor {
                 && last == n - 1
                 && ends[last].0 == starts[0]
             {
-                let _ = self.doc.add_constraint(Constraint::Smooth {
+                self.relate(Constraint::Smooth {
                     point: starts[0],
                     a: before,
                     b: first,
@@ -1513,9 +1497,7 @@ impl Editor {
                 } else {
                     let q = self.doc.add_point(reflect(at));
                     map.insert(p, q);
-                    let _ = self
-                        .doc
-                        .add_constraint(Constraint::Symmetric { a: p, b: q, axis });
+                    self.relate(Constraint::Symmetric { a: p, b: q, axis });
                     if self.doc.users_of(p).next().is_none() {
                         created.push(q);
                     }
@@ -1536,7 +1518,7 @@ impl Editor {
                     }
                     EntityKind::Circle { center, radius } => {
                         let c = self.doc.add_circle(m(center), radius).map_err(doc_err)?;
-                        let _ = self.doc.add_constraint(Constraint::Equal { a: id, b: c });
+                        self.relate(Constraint::Equal { a: id, b: c });
                         c
                     }
                     // A reflection reverses direction: swap the ends to stay counter-clockwise.
@@ -1804,13 +1786,20 @@ mod tests {
         DVec2::new(x, y)
     }
 
+    /// An empty sketch with automatic relations on, as the app starts.
+    fn related() -> Editor {
+        let mut ed = Editor::default();
+        ed.auto_relations = true;
+        ed
+    }
+
     fn close(a: DVec2, b: DVec2) -> bool {
         a.distance(b) < 1e-9
     }
 
     /// An editor with lines between the given point pairs; returns the line ids.
     fn with_lines(lines: &[(DVec2, DVec2)]) -> (Editor, Vec<EntityId>) {
-        let mut ed = Editor::default();
+        let mut ed = related();
         ed.doc.begin();
         let ids = lines
             .iter()
@@ -1994,7 +1983,7 @@ mod tests {
 
     /// Two lines meeting at the origin: along +x (length 20) and +y (length 10).
     fn corner() -> (Editor, EntityId) {
-        let mut ed = Editor::default();
+        let mut ed = related();
         ed.doc.begin();
         let p = ed.doc.add_point(v(0.0, 0.0));
         let a = ed.doc.add_point(v(20.0, 0.0));
@@ -2048,7 +2037,7 @@ mod tests {
 
     /// A connected polyline through the points.
     fn polyline(points: &[DVec2], closed: bool) -> (Editor, Vec<EntityId>) {
-        let mut ed = Editor::default();
+        let mut ed = related();
         ed.doc.begin();
         let ps: Vec<EntityId> = points.iter().map(|p| ed.doc.add_point(*p)).collect();
         let n = ps.len();
@@ -2107,7 +2096,7 @@ mod tests {
 
     #[test]
     fn offset_circles_share_their_centre() {
-        let mut ed = Editor::default();
+        let mut ed = related();
         ed.doc.begin();
         let c = ed.doc.add_point(v(0.0, 0.0));
         let circle = ed.doc.add_circle(c, 5.0).unwrap();
@@ -2209,7 +2198,7 @@ mod tests {
 
     #[test]
     fn trim_cuts_lines_and_ellipses_where_they_cross() {
-        let mut ed = Editor::default();
+        let mut ed = related();
         ed.doc.begin();
         let [c, m, n] = [v(0.0, 0.0), v(20.0, 0.0), v(0.0, 10.0)].map(|p| ed.doc.add_point(p));
         let ellipse = ed.doc.add_ellipse(c, m, n).unwrap();
@@ -2278,7 +2267,7 @@ mod tests {
 
     #[test]
     fn trim_cuts_lines_and_pen_curves_where_they_cross() {
-        let mut ed = Editor::default();
+        let mut ed = related();
         ed.doc.begin();
         let [a, c1, c2, b] =
             [v(0.0, 0.0), v(0.0, 20.0), v(40.0, 20.0), v(40.0, 0.0)].map(|p| ed.doc.add_point(p));
@@ -2338,7 +2327,7 @@ mod tests {
 
     /// An ellipse with semi-axes 20 and 10 about the origin.
     fn with_ellipse() -> (Editor, EntityId) {
-        let mut ed = Editor::default();
+        let mut ed = related();
         ed.doc.begin();
         let [c, m, n] = [v(0.0, 0.0), v(20.0, 0.0), v(0.0, 10.0)].map(|p| ed.doc.add_point(p));
         let ellipse = ed.doc.add_ellipse(c, m, n).unwrap();
@@ -2354,7 +2343,7 @@ mod tests {
     ];
 
     fn with_arch() -> (Editor, EntityId) {
-        let mut ed = Editor::default();
+        let mut ed = related();
         ed.doc.begin();
         let [a, c1, c2, b] = ARCH.map(|p| ed.doc.add_point(p));
         let arch = ed.doc.add_bezier(a, c1, c2, b).unwrap();
@@ -2446,7 +2435,7 @@ mod tests {
             "{sweeps:?} from {start}"
         );
         // A circle splits into two half arcs.
-        let mut ed = Editor::default();
+        let mut ed = related();
         ed.doc.begin();
         let c = ed.doc.add_point(v(5.0, 5.0));
         let circle = ed.doc.add_circle(c, 8.0).unwrap();
@@ -2521,7 +2510,7 @@ mod tests {
     #[test]
     fn offset_follows_pen_curves_and_mixed_paths() {
         // A line running into an arch (a corner between them), then a line out of it.
-        let mut ed = Editor::default();
+        let mut ed = related();
         ed.doc.begin();
         let [a, c1, c2, b] = ARCH.map(|p| ed.doc.add_point(p));
         let arch = ed.doc.add_bezier(a, c1, c2, b).unwrap();
@@ -2605,5 +2594,43 @@ mod tests {
         let curves: Vec<[DVec2; 4]> = beziers(&ed).into_iter().filter(|p| *p != ARCH).collect();
         assert!(curves.iter().any(|p| p[0].distance(v(-5.0, 0.0)) < 1e-6));
         assert!(curves.iter().any(|p| p[3].distance(v(45.0, 0.0)) < 1e-6));
+    }
+
+    #[test]
+    fn nothing_is_related_when_automatic_relations_are_off() {
+        // A square crossed by a line, and a corner to fillet: with relations off, trimming,
+        // splitting, filleting, offsetting and mirroring leave plain geometry.
+        let (mut ed, ids) = with_lines(&[
+            (v(0.0, 0.0), v(20.0, 0.0)),
+            (v(10.0, -10.0), v(10.0, 10.0)),
+            (v(30.0, 0.0), v(30.0, 10.0)),
+        ]);
+        ed.auto_relations = false;
+        ed.trim_at(ids[0], v(15.0, 0.0)).unwrap();
+        ed.split_at(ids[1], v(10.0, 5.0)).unwrap();
+        ed.offset(ids[2], 2.0, v(40.0, 5.0)).unwrap();
+        ed.selection = [ids[2]].into();
+        ed.mirror(&[ids[2]], ids[1]).unwrap();
+        assert_eq!(ed.doc.constraint_count(), 0, "no relations at all");
+        // The cut end is where the lines crossed, and free to move.
+        let (a, b) = ends(&ed, ids[0]);
+        assert!(close(a, v(0.0, 0.0)) && close(b, v(10.0, 0.0)));
+        // Trimming the crossing line back to that corner joins the two (one shared point),
+        // so a closed outline made by trimming stays closed.
+        let (mut ed, ids) =
+            with_lines(&[(v(0.0, 0.0), v(20.0, 0.0)), (v(10.0, -10.0), v(10.0, 10.0))]);
+        ed.auto_relations = false;
+        ed.trim_at(ids[0], v(15.0, 0.0)).unwrap();
+        ed.trim_at(ids[1], v(10.0, -5.0)).unwrap();
+        let corner = |id| match ed.doc.get(id).unwrap().kind {
+            EntityKind::Line { a, b } => [a, b],
+            _ => unreachable!(),
+        };
+        let shared = corner(ids[0])
+            .iter()
+            .filter(|p| corner(ids[1]).contains(p))
+            .count();
+        assert_eq!(shared, 1, "the trimmed ends share a point");
+        assert_eq!(ed.doc.constraint_count(), 0);
     }
 }

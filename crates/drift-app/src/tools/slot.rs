@@ -269,16 +269,14 @@ impl SlotTool {
                     let axis = ed.doc.add_line(e1, e2)?;
                     ed.doc.set_style(axis, LineKind::Construction);
                     for (line, arc) in [(top, end1), (top, end2), (bottom, end1), (bottom, end2)] {
-                        ed.doc
-                            .add_constraint(Constraint::Tangent { a: line, b: arc })?;
+                        ed.relate(Constraint::Tangent { a: line, b: arc });
                     }
-                    ed.doc
-                        .add_constraint(Constraint::Equal { a: end1, b: end2 })?;
+                    ed.relate(Constraint::Equal { a: end1, b: end2 });
                     if let Some(m) = m {
-                        ed.doc.add_constraint(Constraint::Midpoint {
+                        ed.relate(Constraint::Midpoint {
                             point: m,
                             line: axis,
-                        })?;
+                        });
                     }
                     let scale = c1.distance(c2).max(1.0) * 1e-9;
                     if (c1.y - c2.y).abs() < scale {
@@ -336,8 +334,7 @@ impl SlotTool {
                         (cap_s, outer),
                         (cap_s, inner),
                     ] {
-                        ed.doc
-                            .add_constraint(Constraint::Tangent { a: cap, b: arc })?;
+                        ed.relate(Constraint::Tangent { a: cap, b: arc });
                     }
                     if width_typed {
                         ed.add_typed_dimension(

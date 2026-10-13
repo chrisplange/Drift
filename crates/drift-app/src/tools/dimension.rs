@@ -101,7 +101,10 @@ impl DimensionTool {
             }
             DimBase::Circular(curve, true) => Constraint::Diameter { curve, value: 0.0 },
             DimBase::Circular(curve, false) => Constraint::Radius { curve, value: 0.0 },
-            DimBase::Angle(a, b) => Constraint::Angle { a, b, degrees: 0.0 },
+            DimBase::Angle(a, b) => {
+                let (a, b) = crate::annotations::corner_order(&ed.doc, a, b);
+                Constraint::Angle { a, b, degrees: 0.0 }
+            }
             DimBase::PointLine(point, line) => Constraint::PointLineDistance {
                 point,
                 line,

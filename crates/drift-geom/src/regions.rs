@@ -268,6 +268,10 @@ fn split(curves: &[Shape]) -> Vec<(Edge, usize)> {
                 cuts[i].push((h.t[0], h.at));
                 cuts[j].push((h.t[1], h.at));
             }
+            // Curves lying along each other don't cross, but each is cut where the other
+            // ends, so the stretch they share becomes the same edge in both.
+            ends_on(&curves[i], &curves[j], pad, &mut cuts[i]);
+            ends_on(&curves[j], &curves[i], pad, &mut cuts[j]);
         }
     }
     let mut edges = Vec::new();
@@ -362,6 +366,63 @@ fn split(curves: &[Shape]) -> Vec<(Edge, usize)> {
     edges
 }
 
+/// Cut `curve` (a line, arc or circle) where an end of `other` lies on it, within `tol`.
+fn ends_on(curve: &Shape, other: &Shape, tol: f64, cuts: &mut Vec<(f64, DVec2)>) {
+    let ends: [DVec2; 2] = match *other {
+        Shape::Line { a, b } => [a, b],
+        Shape::Arc {
+            center,
+            radius,
+            start,
+            sweep,
+        } => [
+            center + radius * DVec2::from_angle(start),
+            center + radius * DVec2::from_angle(start + sweep),
+        ],
+        Shape::Bezier { p } => [p[0], p[3]],
+        _ => return,
+    };
+    for p in ends {
+        match *curve {
+            Shape::Line { a, b } => {
+                let d = b - a;
+                let len = d.length();
+                if len == 0.0 {
+                    continue;
+                }
+                let t = (p - a).dot(d) / (len * len);
+                let off = d.perp_dot(p - a).abs() / len;
+                // Strictly inside: an end at an end is already a shared vertex.
+                if off <= tol && t * len > tol && (1.0 - t) * len > tol {
+                    cuts.push((t, a + d * t));
+                }
+            }
+            Shape::Arc {
+                center,
+                radius,
+                start,
+                sweep,
+            } => {
+                let r = p - center;
+                if (r.length() - radius).abs() > tol {
+                    continue;
+                }
+                let t = (r.y.atan2(r.x) - start).rem_euclid(TAU);
+                if t * radius > tol && (sweep - t) * radius > tol {
+                    cuts.push((t, p));
+                }
+            }
+            Shape::Circle { center, radius } => {
+                let r = p - center;
+                if (r.length() - radius).abs() <= tol {
+                    cuts.push((r.y.atan2(r.x).rem_euclid(TAU), p));
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 /// A curve over parameters `0..=end` as `n` chords, plus a vertex exactly at each cut (so
 /// edges of the curves crossing it meet it at a shared point).
 fn chords_through(
@@ -418,12 +479,30 @@ pub fn regions(curves: &[Shape]) -> Vec<Region> {
         grid.entry((kx, ky)).or_default().push(verts.len() - 1);
         verts.len() - 1
     };
-    // Half-edges: 2k forward, 2k+1 backward.
+    // Half-edges: 2k forward, 2k+1 backward. The same edge twice (curves drawn on top of
+    // each other) counts once: an edge is known by its ends and its middle.
     let mut half: Vec<(usize, usize, Edge)> = Vec::new(); // (from, to, geometry)
-    for (e, _) in &edges {
+    let mut source_of: Vec<usize> = Vec::new();
+    let mut seen: std::collections::HashSet<(usize, usize, i64, i64)> =
+        std::collections::HashSet::new();
+    for (e, source) in &edges {
         let (u, v) = (vertex(e.start()), vertex(e.end()));
+        let middle = match *e {
+            Edge::Line { a, b } => (a + b) * 0.5,
+            Edge::Arc {
+                center,
+                radius,
+                start,
+                sweep,
+            } => center + radius * DVec2::from_angle(start + sweep * 0.5),
+        };
+        let (mx, my) = key(middle);
+        if !seen.insert((u.min(v), u.max(v), mx, my)) {
+            continue;
+        }
         half.push((u, v, *e));
         half.push((v, u, e.reversed()));
+        source_of.push(*source);
     }
     // Prune dangling edges (vertices of degree one) repeatedly.
     let mut alive = vec![true; half.len()];
@@ -492,7 +571,7 @@ pub fn regions(curves: &[Shape]) -> Vec<Region> {
         while !used[h] {
             used[h] = true;
             lp.push(half[h].2);
-            sources.push(edges[h / 2].1);
+            sources.push(source_of[h / 2]);
             let v = half[h].1;
             let twin = h ^ 1;
             let list = &out[v];
@@ -725,5 +804,34 @@ mod tests {
         assert_eq!(plate.outer.curves(), vec![0, 1, 2, 3]);
         assert_eq!(plate.holes[0].curves(), vec![4]);
         assert_eq!(plate.outer.sources.len(), plate.outer.edges.len());
+    }
+
+    #[test]
+    fn abutting_rectangles_with_overlapping_edges_stay_two_regions() {
+        // Side by side, each with its own copy of the shared wall.
+        let mut curves = rect(0.0, 0.0, 10.0, 10.0);
+        curves.extend(rect(10.0, 0.0, 20.0, 10.0));
+        let found = regions(&curves);
+        let mut areas: Vec<f64> = found.iter().map(|r| r.area).collect();
+        areas.sort_by(f64::total_cmp);
+        assert_eq!(areas.len(), 2, "{areas:?}");
+        assert!(areas.iter().all(|a| (a - 100.0).abs() < 1e-9), "{areas:?}");
+        // A taller neighbour: its wall overlaps only part of the way.
+        let mut curves = rect(0.0, 0.0, 10.0, 10.0);
+        curves.extend(rect(10.0, -5.0, 20.0, 20.0));
+        let found = regions(&curves);
+        let mut areas: Vec<f64> = found.iter().map(|r| r.area).collect();
+        areas.sort_by(f64::total_cmp);
+        assert_eq!(areas.len(), 2, "{areas:?}");
+        assert!(
+            (areas[0] - 100.0).abs() < 1e-9 && (areas[1] - 250.0).abs() < 1e-9,
+            "{areas:?}"
+        );
+        // The same rectangle drawn twice is one region, not two stacked.
+        let mut curves = rect(0.0, 0.0, 10.0, 10.0);
+        curves.extend(rect(0.0, 0.0, 10.0, 10.0));
+        let found = regions(&curves);
+        assert_eq!(found.len(), 1);
+        assert!((found[0].area - 100.0).abs() < 1e-9);
     }
 }

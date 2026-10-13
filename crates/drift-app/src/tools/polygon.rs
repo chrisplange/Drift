@@ -118,6 +118,11 @@ impl PolygonTool {
             for i in 0..sides {
                 lines.push(ed.doc.add_line(points[i], points[(i + 1) % sides])?);
             }
+            if !ed.auto_relations {
+                // Plain lines: no construction circle holding them regular.
+                ed.doc.delete([circle]);
+                return Ok(());
+            }
             for &point in &points {
                 ed.doc.add_constraint(Constraint::PointOnCurve {
                     point,

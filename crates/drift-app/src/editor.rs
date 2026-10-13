@@ -292,6 +292,8 @@ pub struct Editor {
     pub selected_text: Option<drift_core::TextId>,
     pub hovered_text: Option<drift_core::TextId>,
     pub(crate) text_cache: std::cell::RefCell<crate::texts::TextCache>,
+    /// Overlapping curves, as of a document revision.
+    pub(crate) overlap_cache: std::cell::RefCell<Option<(u64, std::rc::Rc<Vec<EntityId>>)>>,
     /// The text being typed in place on the canvas (just placed, or double-clicked).
     pub editing_text: Option<drift_core::TextId>,
     /// Cap height for new text (0: the default).
@@ -1442,14 +1444,10 @@ impl Editor {
                     },
                 )
             }
-            ([], [a, b], []) => push(
-                "Angle",
-                Constraint::Angle {
-                    a: *a,
-                    b: *b,
-                    degrees: 0.0,
-                },
-            ),
+            ([], [a, b], []) => {
+                let (a, b) = crate::annotations::corner_order(&self.doc, *a, *b);
+                push("Angle", Constraint::Angle { a, b, degrees: 0.0 })
+            }
             ([], [], [curve]) => push(
                 "Radius",
                 Constraint::Radius {
@@ -1569,6 +1567,57 @@ impl Editor {
         self.selected_region = None;
         self.selected_annotation = None;
         n
+    }
+
+    /// Curves drawn on top of other curves (the later-made one of each pair): the same line
+    /// twice, or walls of abutting shapes that run along each other. They are easy to make
+    /// by accident and confuse trimming and selection. Found once per change.
+    pub fn overlapping(&self) -> std::rc::Rc<Vec<EntityId>> {
+        let revision = self.doc.revision();
+        if let Some((r, found)) = &*self.overlap_cache.borrow()
+            && *r == revision
+        {
+            return found.clone();
+        }
+        let mut found = Vec::new();
+        for (id, e) in self.doc.iter() {
+            if e.kind.is_point() {
+                continue;
+            }
+            let Some(shape) = self.index.shape(id) else {
+                continue;
+            };
+            if !matches!(
+                shape,
+                Shape::Line { .. } | Shape::Arc { .. } | Shape::Circle { .. }
+            ) {
+                continue;
+            }
+            let under = self.index.query(shape.bounds()).into_iter().any(|other| {
+                other < id
+                    && self
+                        .index
+                        .shape(other)
+                        .is_some_and(|s| drift_geom::intersect::overlapping(shape, s))
+            });
+            if under {
+                found.push(id);
+            }
+        }
+        let found = std::rc::Rc::new(found);
+        *self.overlap_cache.borrow_mut() = Some((revision, found.clone()));
+        found
+    }
+
+    /// Add a relation that an operation infers (a trimmed end kept on the curve that cut it,
+    /// mirrored points kept symmetric, a fillet kept tangent...), inside its transaction. With
+    /// automatic relations off nothing is added: the geometry is left as plain geometry.
+    /// Relations the user asks for by name don't come through here.
+    pub fn relate(&mut self, relation: Constraint) -> Option<ConstraintId> {
+        if !self.auto_relations {
+            return None;
+        }
+        self.doc.add_constraint(relation).ok()
     }
 
     /// The dimension that already sets what `wanted` would (a line's length is the distance

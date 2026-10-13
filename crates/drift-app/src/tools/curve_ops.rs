@@ -22,6 +22,53 @@ fn report(ed: &mut Editor, what: &str, result: Result<(), crate::editor::EditErr
 pub struct TrimTool {
     hover: Option<(EntityId, DVec2)>,
     dragging: bool,
+    /// Where the drag has been, to show what it passed through.
+    trail: Vec<DVec2>,
+}
+
+impl TrimTool {
+    /// Trim every curve the pointer crossed between its last position and `to`.
+    fn sweep(&mut self, to: DVec2, tolerance: f64, ed: &mut Editor) {
+        let Some(&from) = self.trail.last() else {
+            self.trail.push(to);
+            return;
+        };
+        // Tiny movements wait until they add up.
+        if from.distance(to) < tolerance * 0.5 {
+            return;
+        }
+        self.trail.push(to);
+        let path = Shape::Line { a: from, b: to };
+        let mut bounds = path.bounds();
+        bounds.include(bounds.min - DVec2::splat(tolerance));
+        bounds.include(bounds.max + DVec2::splat(tolerance));
+        // Where the path crosses each curve, nearest the start first.
+        let mut crossed: Vec<(f64, EntityId, DVec2)> = Vec::new();
+        for id in ed.index.query(bounds) {
+            if ed.is_locked(id) {
+                continue;
+            }
+            let Some(shape) = ed
+                .doc
+                .get(id)
+                .filter(|e| !e.kind.is_point())
+                .and_then(|_| ed.doc.shape(id))
+            else {
+                continue;
+            };
+            for hit in drift_geom::intersect::intersect(&path, &shape) {
+                crossed.push((hit.t[0], id, hit.at));
+            }
+        }
+        crossed.sort_by(|a, b| a.0.total_cmp(&b.0));
+        for (_, id, at) in crossed {
+            // Each piece crossed is its own undo step; failures are skipped quietly (and a
+            // curve an earlier trim removed is simply gone).
+            if ed.doc.contains(id) {
+                let _ = ed.trim_at(id, at);
+            }
+        }
+    }
 }
 
 impl Tool for TrimTool {
@@ -46,15 +93,23 @@ impl Tool for TrimTool {
                 }
                 self.hover = None;
             }
-            Input::DragStart(p, _) | Input::Drag(p) => {
+            Input::DragStart(p, _) => {
                 self.dragging = true;
+                self.trail = vec![p.raw];
                 if let Some(id) = curve_under(ed, &p) {
-                    // Each piece crossed is its own undo step; failures are skipped quietly.
                     let _ = ed.trim_at(id, p.raw);
                 }
                 self.hover = None;
             }
-            Input::DragEnd(..) => self.dragging = false,
+            Input::Drag(p) => {
+                self.dragging = true;
+                self.sweep(p.raw, p.tolerance, ed);
+                self.hover = None;
+            }
+            Input::DragEnd(..) => {
+                self.dragging = false;
+                self.trail.clear();
+            }
             _ => {}
         }
     }
@@ -71,8 +126,14 @@ impl Tool for TrimTool {
         false
     }
 
+    /// The path dragged so far, as SolidWorks' power trim leaves a trail.
     fn preview(&self, _pointer: Option<&Pointer>) -> Vec<SketchItem> {
-        Vec::new()
+        self.trail
+            .windows(2)
+            .map(|w| {
+                SketchItem::new(Shape::Line { a: w[0], b: w[1] }).with_emphasis(Emphasis::Preview)
+            })
+            .collect()
     }
 
     fn editor_preview(&self, ed: &Editor) -> Vec<SketchItem> {

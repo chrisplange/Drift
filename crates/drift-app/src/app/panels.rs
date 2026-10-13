@@ -656,6 +656,29 @@ impl DriftApp {
             });
     }
 
+    /// Select the curves that lie on top of others (the later-made of each pair).
+    pub(crate) fn select_overlapping(&mut self, now: f64) {
+        let found = self.editor.overlapping();
+        if found.is_empty() {
+            self.set_status("No curves overlap".into(), false, now);
+            return;
+        }
+        self.abort_operation();
+        if self.tool.kind() != ToolKind::Select {
+            self.set_tool(ToolKind::Select);
+        }
+        self.editor.selection = found.iter().copied().collect();
+        self.set_status(
+            format!(
+                "Selected {} overlapping curve(s). Delete removes them and leaves the ones \
+                 underneath",
+                found.len()
+            ),
+            false,
+            now,
+        );
+    }
+
     /// Zoom so that 100% is life size on a 96 dpi screen, about the middle of the canvas.
     pub(crate) fn zoom_to_percent(&mut self, percent: f64) {
         let target = percent / 100.0 * 96.0 / 25.4;
@@ -1311,6 +1334,32 @@ impl DriftApp {
                     };
                     theme::pill(ui, &text, color)
                         .on_hover_text("Degrees of freedom: how much the sketch can still move");
+                }
+                // Curves drawn on top of others: a warning that selects them when clicked.
+                // (Not re-counted in the middle of a drag.)
+                let overlaps = if self.tool.is_busy() {
+                    self.editor
+                        .overlap_cache
+                        .borrow()
+                        .as_ref()
+                        .map(|(_, found)| found.clone())
+                        .unwrap_or_default()
+                } else {
+                    self.editor.overlapping()
+                };
+                if !overlaps.is_empty() {
+                    let amber = egui::Color32::from_rgb(0xff, 0x9f, 0x0a);
+                    let pill = theme::pill(ui, &format!("{} overlapping", overlaps.len()), amber);
+                    let click = ui
+                        .interact(pill.rect, ui.id().with("overlaps"), egui::Sense::click())
+                        .on_hover_text(
+                            "Curves drawn on top of other curves (the same line twice, or the \
+                             touching sides of two shapes). Click to select the ones on top; \
+                             Delete then removes them and leaves those underneath.",
+                        );
+                    if click.clicked() {
+                        self.select_overlapping(_now);
+                    }
                 }
                 let mut units = self.editor.doc.units();
                 let short = |f: drift_core::LengthFormat| match f {

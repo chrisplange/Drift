@@ -356,6 +356,7 @@ fn tangents(ed: &Editor) -> usize {
 #[test]
 fn tangent_arcs_continue_lines_and_chain() {
     let (mut ed, end) = line_end_fixture();
+    ed.auto_relations = true;
     let mut tool = TangentArcTool::default();
     click(&mut ed, &mut tool, v(10.1, 0.1)); // snaps to the line's end
     assert_eq!(tool.chain_end(), Some(end));
@@ -1880,7 +1881,7 @@ fn arcs(doc: &Document) -> usize {
 
 #[test]
 fn polygon_is_regular_with_four_freedoms() {
-    let mut ed = Editor::default();
+    let mut ed = with_auto_relations();
     let mut tool = PolygonTool::default();
     // Default: six sides, inscribed; the pointer off any 15° step.
     click(&mut ed, &mut tool, v(0.0, 0.0));
@@ -1937,7 +1938,7 @@ fn polygon_is_regular_with_four_freedoms() {
 #[test]
 fn slots_keep_their_shape_and_freedoms() {
     // Straight: two end centres, then the width.
-    let mut ed = Editor::default();
+    let mut ed = with_auto_relations();
     let mut tool = SlotTool::default();
     click(&mut ed, &mut tool, v(0.0, 0.0));
     click(&mut ed, &mut tool, v(30.0, 10.0));
@@ -1950,7 +1951,7 @@ fn slots_keep_their_shape_and_freedoms() {
     assert_eq!(ed.analysis().dof, Some(5), "two centres and a width");
 
     // Centre slot, horizontal, typed length and width: only the middle moves.
-    let mut ed = Editor::default();
+    let mut ed = with_auto_relations();
     ed.auto_relations = true;
     ed.slot_mode = SlotMode::Centre;
     let mut tool = SlotTool::default();
@@ -1984,7 +1985,7 @@ fn slots_keep_their_shape_and_freedoms() {
     );
 
     // Arc slot: centre, start, end (drawn clockwise), width.
-    let mut ed = Editor::default();
+    let mut ed = with_auto_relations();
     ed.slot_mode = SlotMode::Arc;
     let mut tool = SlotTool::default();
     click(&mut ed, &mut tool, v(0.0, 0.0));

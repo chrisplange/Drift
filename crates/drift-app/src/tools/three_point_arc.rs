@@ -108,9 +108,7 @@ impl ThreePointArcTool {
                     && point != s
                     && point != e
                 {
-                    let _ = ed
-                        .doc
-                        .add_constraint(Constraint::PointOnCurve { point, curve: arc });
+                    ed.relate(Constraint::PointOnCurve { point, curve: arc });
                 }
                 ed.commit("3-point arc");
             }

@@ -1508,6 +1508,37 @@ zooms to fit; F is Fillet (again for Chamfer).
   - Not yet: the installer compiled and tried (no Inno Setup on the development machine);
     the macOS script run at all (it needs a Mac); code signing and notarisation; opening a
     double-clicked sketch on macOS (so no file association there).
+- **Alpha feedback, phase 1 (done): fixes and quick wins.**
+  - "Automatic relations" off now means none are added, anywhere: trim, extend, split,
+    fillet, offset and mirror go through `Editor::relate`, and polygons, slots and tangent
+    and three-point arcs come out as plain geometry. Trimmed ends that meet still share a
+    point, so an outline closed by trimming stays closed. (Relations the user asks for, the
+    pen's smooth points, an explicit X / Y lock and typed dimensions are not "automatic".)
+  - Panels: the blue drop zones show only while a panel is dragged by its tab or header;
+    closing a floating panel puts it back in the dock it came from.
+  - Paste goes straight into a move. A fill is deleted with its boundary (one undo step).
+  - P is the pen and V the point. Trim's drag leaves a trail and cuts everything it crosses.
+  - The top bar is a control bar: the selection's layer, stroke and fill (each for the
+    selection or its layer), Construction and an Actions menu; Auto relations and End
+    points toggles at the right.
+  - Angle dimensions sit between the two lines as drawn, on the side the label is on, with
+    extension lines where needed; new ones measure the corner rather than its supplement.
+  - Regions: curves drawn along each other (the touching walls of two rectangles, a line
+    drawn twice) no longer merge or leak areas. A status-bar warning counts overlapping
+    curves and selects them when clicked.
+- **Alpha feedback, phase 2: interaction polish.** Trackpad two-finger pan (with a
+  preference where the system can't tell a trackpad from a wheel); interactive fillet and
+  chamfer sized by moving the mouse in steps; dimension numbers centred by default and
+  moved out when the space is too tight; hatch alignment and offset handles; show or hide
+  dimensions per sheet; stroke weight and line type on the top bar, beside the stroke and
+  fill swatches.
+- **Alpha feedback, phase 3: sheets, second version (design first).** Several views per
+  sheet (a change to the sheet model and file format); a Revit-like sheet editor for
+  placing, scaling and titling views; system fonts (PDF needs to embed them); an SVG logo
+  in title blocks; section flags and elevation markers.
+- **Alpha feedback, phase 4: content and parametric blocks.** A library of common
+  imperial items; blocks with their own parameters (doors and windows at custom sizes),
+  which needs its own design.
 - Themes, keybinding config, crash recovery, PWA offline install, and accessibility pass.
 - Performance profiling against targets (WASM first), plus native packaging (MSI, dmg, AppImage /
   Flatpak).

@@ -143,7 +143,7 @@ fn click_uses_release_position_when_events_are_batched() {
     // Regression: when a slow frame batches the release with later pointer motion, the click
     // must land where the button was released, not where the pointer ended up.
     let Some(mut h) = harness() else { return };
-    h.key_press(Key::P);
+    h.key_press(Key::V);
     h.run();
     let target = DVec2::new(12.5, -7.5);
     let pos = screen(&h, target);
@@ -589,7 +589,7 @@ fn smart_dimension_from_a_midpoint() {
     click_world(&mut h, DVec2::new(40.0, 0.0));
     h.key_press(Key::Escape);
     h.run();
-    h.key_press(Key::P);
+    h.key_press(Key::V);
     h.run();
     click_world(&mut h, DVec2::new(15.0, 25.0));
 
@@ -2054,7 +2054,7 @@ fn c_cycles_to_ellipses_and_draws_them() {
 fn pen_draws_curves_like_illustrator() {
     let Some(mut h) = harness() else { return };
     let v = DVec2::new;
-    h.key_press(Key::B);
+    h.key_press(Key::P);
     h.run();
     assert_eq!(h.state().tool.kind(), ToolKind::Pen);
     click_world(&mut h, v(-60.0, -10.0));
@@ -2350,6 +2350,12 @@ fn copy_paste_and_nudge_on_the_canvas() {
         ((pasted.min + pasted.max) * 0.5 - at).length() < 1.0,
         "{pasted:?}"
     );
+    // The paste went straight into a move; Esc leaves the copy where it landed.
+    assert!(h.state().tool.is_modal(), "moving the pasted copy");
+    h.key_press(Key::Escape);
+    h.run();
+    assert!(!h.state().tool.is_modal());
+    assert_eq!(lines(&h), 8);
     // Arrow keys nudge the pasted copy by a grid step; Shift by ten.
     let step = drift_render::grid_info(&h.state().camera, false).minor;
     h.key_press(Key::ArrowRight);
@@ -2731,4 +2737,96 @@ fn modern_sheet_layout() {
         h.state_mut().pdf_bytes(&painter),
     )
     .unwrap();
+}
+
+#[test]
+fn control_bar_overlap_warning_and_corner_angles() {
+    use drift_core::Constraint;
+    let Some(mut h) = harness() else { return };
+    let v = DVec2::new;
+    let ed = &mut h.state_mut().editor;
+    // Two rooms side by side, each with its own copy of the wall between them.
+    ed.doc.begin();
+    let mut walls = Vec::new();
+    for x in [-60.0, -20.0] {
+        let c = [
+            v(x, -20.0),
+            v(x + 40.0, -20.0),
+            v(x + 40.0, 20.0),
+            v(x, 20.0),
+        ]
+        .map(|p| ed.doc.add_point(p));
+        for i in 0..4 {
+            walls.push(ed.doc.add_line(c[i], c[(i + 1) % 4]).unwrap());
+        }
+    }
+    // A corner whose second line is stored pointing into it: a 40° corner.
+    let apex = ed.doc.add_point(v(40.0, -20.0));
+    let along = ed.doc.add_point(v(90.0, -20.0));
+    let up = ed
+        .doc
+        .add_point(v(40.0, -20.0) + 50.0 * DVec2::from_angle(40f64.to_radians()));
+    let base = ed.doc.add_line(apex, along).unwrap();
+    let arm = ed.doc.add_line(up, apex).unwrap();
+    ed.commit("Rooms");
+    // Each room fills on its own, though the wall between them is doubled.
+    let regions = ed.regions();
+    let mut areas: Vec<f64> = regions.iter().map(|r| r.area).collect();
+    areas.sort_by(f64::total_cmp);
+    assert_eq!(areas.len(), 2, "{areas:?}");
+    assert!(areas.iter().all(|a| (a - 1600.0).abs() < 1e-6));
+    // The doubled wall is reported: the later-made of the pair.
+    let overlaps = ed.overlapping();
+    assert_eq!(overlaps.len(), 1);
+    assert_eq!(overlaps[0], walls[7], "the second room's left wall");
+    // An angle dimension measures the corner as drawn (40°, not 140°), whichever way the
+    // lines are stored, and sits between them.
+    let (a, b) = crate::annotations::corner_order(&ed.doc, base, arm);
+    let angle = Constraint::Angle { a, b, degrees: 0.0 };
+    let measured = drift_solver::measure(&ed.doc, &angle).unwrap();
+    assert!((measured - 40.0).abs() < 1e-9, "{measured}");
+    let id = ed
+        .add_dimension(
+            Constraint::Angle {
+                a,
+                b,
+                degrees: measured,
+            },
+            None,
+        )
+        .unwrap();
+    let sectors = crate::annotations::angle_sectors(&ed.doc, a, b, measured).unwrap();
+    let inside = DVec2::from_angle(20f64.to_radians());
+    assert!(
+        sectors[0].bisector().dot(inside) > 0.999,
+        "{:?}",
+        sectors[0]
+    );
+    assert!(ed.doc.constraint(id).is_some());
+    // Pick a wall: the bar shows its layer, stroke and fill, and the settings at the right.
+    ed.selection = [walls[0]].into();
+    let fit = h.state().fit_bounds();
+    h.state_mut().fit_target = Some(fit);
+    h.run();
+    h.run();
+    save_png("drift_ui_control_bar.png", &mut h);
+    {
+        use eframe::egui::accesskit::Role;
+        h.get_by_role_and_label(Role::Button, "Stroke");
+        h.get_by_role_and_label(Role::Button, "Fill");
+    }
+    // The setting is one click away, and the warning selects the doubled wall.
+    h.get_by_label("Auto relations").click();
+    h.run();
+    assert!(!h.state().auto_relations);
+    h.state_mut().select_overlapping(0.0);
+    assert_eq!(
+        h.state()
+            .editor
+            .selection
+            .iter()
+            .copied()
+            .collect::<Vec<_>>(),
+        [walls[7]]
+    );
 }

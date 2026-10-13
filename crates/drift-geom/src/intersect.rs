@@ -570,6 +570,57 @@ fn circle_circle(c1: DVec2, r1: f64, c2: DVec2, r2: f64, tol: f64) -> Vec<(DVec2
     vec![(base + n * h, false), (base - n * h, false)]
 }
 
+/// Whether two curves lie along each other for some length: lines on one line that share a
+/// stretch, or arcs and circles of one circle whose sweeps share a stretch. Curves that only
+/// meet at a point (end to end, or crossing) don't overlap. Ellipses and Béziers aren't
+/// checked.
+pub fn overlapping(a: &Shape, b: &Shape) -> bool {
+    let tol = tolerance(scale_of(a).max(scale_of(b))) * 100.0;
+    let span = |s: &Shape| match *s {
+        Shape::Circle { center, radius } => Some((center, radius, 0.0, TAU)),
+        Shape::Arc {
+            center,
+            radius,
+            start,
+            sweep,
+        } => Some((center, radius, start, sweep)),
+        _ => None,
+    };
+    match (a, b) {
+        (Shape::Line { a: p, b: q }, Shape::Line { a: r, b: s }) => {
+            let d = *q - *p;
+            let len = d.length();
+            if len <= tol {
+                return false;
+            }
+            let u = d / len;
+            // Both ends of the other line on this one's line...
+            if u.perp_dot(*r - *p).abs() > tol || u.perp_dot(*s - *p).abs() > tol {
+                return false;
+            }
+            // ...and a stretch in common.
+            let (t0, t1) = ((*r - *p).dot(u), (*s - *p).dot(u));
+            t0.max(t1).min(len) - t0.min(t1).max(0.0) > tol
+        }
+        _ => {
+            let (Some((c1, r1, s1, w1)), Some((c2, r2, s2, w2))) = (span(a), span(b)) else {
+                return false;
+            };
+            if c1.distance(c2) > tol || (r1 - r2).abs() > tol {
+                return false;
+            }
+            if w1 >= TAU || w2 >= TAU {
+                return true;
+            }
+            // The second arc's start, measured round from the first's.
+            let from = (s2 - s1).rem_euclid(TAU);
+            let slack = tol / r1;
+            // It begins inside the first, or wraps round to cover the first's start.
+            from < w1 - slack || from + w2 > TAU + slack
+        }
+    }
+}
+
 /// Whether `angle` (radians) lies on an arc's sweep: re-exported for callers that work in
 /// parameters.
 pub fn on_sweep(angle: f64, start: f64, sweep: f64) -> bool {
@@ -838,5 +889,39 @@ mod tests {
         // The same curve twice: overlapping curves don't cut each other.
         assert!(intersect(&arch, &arch).is_empty());
         assert!(intersect(&e, &e).is_empty());
+    }
+
+    #[test]
+    fn overlapping_curves_share_a_stretch() {
+        let wall = line(v(10.0, 0.0), v(10.0, 10.0));
+        // The same line, a longer one along it, and one that only pokes into it.
+        assert!(overlapping(&wall, &wall));
+        assert!(overlapping(&wall, &line(v(10.0, 20.0), v(10.0, -5.0))));
+        assert!(overlapping(&wall, &line(v(10.0, 8.0), v(10.0, 30.0))));
+        // End to end, parallel beside it, and crossing: not overlapping.
+        assert!(!overlapping(&wall, &line(v(10.0, 10.0), v(10.0, 30.0))));
+        assert!(!overlapping(&wall, &line(v(10.5, 0.0), v(10.5, 10.0))));
+        assert!(!overlapping(&wall, &line(v(0.0, 5.0), v(20.0, 5.0))));
+        // Arcs of one circle.
+        let arc = |start: f64, sweep: f64| Shape::Arc {
+            center: v(0.0, 0.0),
+            radius: 5.0,
+            start,
+            sweep,
+        };
+        assert!(overlapping(&arc(0.0, PI), &arc(PI / 2.0, PI)));
+        assert!(
+            overlapping(&arc(0.0, PI), &arc(1.5 * PI, PI)),
+            "wraps round"
+        );
+        assert!(
+            !overlapping(&arc(0.0, PI), &arc(PI, PI / 2.0)),
+            "end to end"
+        );
+        assert!(overlapping(&circle(v(0.0, 0.0), 5.0), &arc(1.0, 0.5)));
+        assert!(!overlapping(
+            &circle(v(0.0, 0.0), 5.0),
+            &circle(v(0.0, 0.0), 6.0)
+        ));
     }
 }

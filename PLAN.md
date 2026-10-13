@@ -1497,6 +1497,17 @@ zooms to fit; F is Fillet (again for Chamfer).
   - Preview arcs are drawn finely enough to look round at any zoom.
   - Not yet: other typefaces (PDF would need to embed them), a logo, and user-defined
     title blocks.
+- **Part 7 (in progress): packaging.**
+  - `drift.exe` carries its icon and version details (`apps/native/build.rs`, winresource).
+  - `scripts/package-windows.ps1` builds `dist/`: a portable zip, and with Inno Setup 6 the
+    installer from `installer/windows/drift.iss` (per-user by default, Start menu entry,
+    optional desktop icon, `.drift` association, clean upgrade and uninstall).
+  - `scripts/package-macos.sh` builds a universal `Drift.app` in a `.dmg` (Apple silicon
+    and Intel, icon from `icon-mac.png`, ad-hoc signed unless `CODESIGN_IDENTITY` is set).
+  - `.github/workflows/package.yml` runs both on GitHub runners (by hand or on a `v*` tag).
+  - Not yet: the installer compiled and tried (no Inno Setup on the development machine);
+    the macOS script run at all (it needs a Mac); code signing and notarisation; opening a
+    double-clicked sketch on macOS (so no file association there).
 - Themes, keybinding config, crash recovery, PWA offline install, and accessibility pass.
 - Performance profiling against targets (WASM first), plus native packaging (MSI, dmg, AppImage /
   Flatpak).

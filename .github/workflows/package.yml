@@ -1,0 +1,50 @@
+name: Package
+
+# Builds the downloads: the Windows installer and zip, and the universal macOS disk image.
+# Run it by hand from the Actions tab, or push a tag like v0.1.0-alpha.1.
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows:
+    name: Windows installer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+      - name: Package
+        shell: pwsh
+        run: scripts\package-windows.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: drift-windows
+          path: |
+            dist/*.exe
+            dist/*.zip
+          if-no-files-found: error
+
+  macos:
+    name: macOS universal
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - name: Package
+        run: scripts/package-macos.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: drift-macos
+          path: dist/*.dmg
+          if-no-files-found: error

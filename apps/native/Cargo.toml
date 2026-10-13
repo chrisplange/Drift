@@ -12,5 +12,8 @@ drift-app.workspace = true
 eframe.workspace = true
 env_logger = "0.11"
 
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+
 [lints]
 workspace = true

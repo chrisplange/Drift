@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Drift.app's description of itself. scripts/package-macos.sh fills in @VERSION@ (shown to
+     people) and @BUILD@ (numbers only). -->
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>Drift</string>
+    <key>CFBundleDisplayName</key>
+    <string>Drift</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.drift-cad.drift</string>
+    <key>CFBundleExecutable</key>
+    <string>drift</string>
+    <key>CFBundleIconFile</key>
+    <string>Drift</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleShortVersionString</key>
+    <string>@VERSION@</string>
+    <key>CFBundleVersion</key>
+    <string>@BUILD@</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>11.0</string>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.graphics-design</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
+    <key>NSSupportsAutomaticGraphicsSwitching</key>
+    <true/>
+</dict>
+</plist>

@@ -265,6 +265,9 @@ pub struct Editor {
     pub chain_preview: Option<(EntityId, BTreeSet<EntityId>)>,
     /// Closed areas are found from each layer's curves separately.
     pub regions_by_layer: bool,
+    /// A click inside a closed area picks it only when a fill or hatch is in it (an empty
+    /// outline's inside picks nothing).
+    pub regions_need_fill: bool,
     /// How the dimension tool goes on after a horizontal or vertical dimension.
     pub dim_mode: DimMode,
     /// Chain dimensions end with an overall dimension (a reference) outside them.
@@ -348,6 +351,7 @@ impl Editor {
         let mut editor = Self {
             doc,
             auto_relations: true,
+            regions_need_fill: true,
             ..Default::default()
         };
         // Bring linked dimensions up to date with their expressions (not an undo step).

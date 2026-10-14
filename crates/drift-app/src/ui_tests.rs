@@ -1066,11 +1066,28 @@ fn clicking_inside_closed_geometry_selects_its_region() {
     use std::f64::consts::PI;
 
     let Some(mut h) = harness() else { return };
+    // Preferences kept on the editor survive opening a drawing.
+    h.state_mut().editor.pick_filter = crate::editor::PickFilter::Points;
     h.get_by_label("File").click();
     h.run();
     h.get_by_label("Open example").click();
     h.run();
     h.run();
+    assert_eq!(
+        h.state().editor.pick_filter,
+        crate::editor::PickFilter::Points
+    );
+    h.state_mut().editor.pick_filter = crate::editor::PickFilter::All;
+    // By default an area is picked only where it is filled: the plate is empty.
+    assert!(h.state().editor.regions_need_fill);
+    click_world(&mut h, DVec2::new(100.0, 10.0));
+    assert!(
+        h.state_mut().editor.region().is_none(),
+        "an empty outline picks nothing"
+    );
+    assert!(h.state().view_prefs().contains("rfill=1"));
+    // With that off, the inside of any closed outline picks it.
+    h.state_mut().editor.regions_need_fill = false;
     click_world(&mut h, DVec2::new(100.0, 10.0));
     let region = h.state_mut().editor.region().expect("the plate region");
     assert_eq!(region.holes.len(), 6, "bore, four bolt holes and the slot");

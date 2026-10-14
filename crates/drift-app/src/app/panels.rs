@@ -890,13 +890,12 @@ impl DriftApp {
                     ui.add_space(4.0);
                     ui.label(egui::RichText::new("Nothing selected").size(14.0).weak());
                     ui.add_space(2.0);
-                    ui.label(
-                        egui::RichText::new(
-                            "Click geometry to inspect it, or inside a closed area to measure it.",
-                        )
-                        .small()
-                        .weak(),
-                    );
+                    let hint = if self.editor.regions_need_fill {
+                        "Click geometry, or a fill or hatch, to inspect it."
+                    } else {
+                        "Click geometry to inspect it, or inside a closed area to measure it."
+                    };
+                    ui.label(egui::RichText::new(hint).small().weak());
                 });
                 theme::section(ui, "Sketch");
                 let curves = ed.doc.iter().filter(|(_, e)| !e.kind.is_point()).count();

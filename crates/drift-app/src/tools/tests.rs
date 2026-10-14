@@ -3501,3 +3501,36 @@ fn fractional_inches_read_write_and_save() {
     let (loaded, _) = drift_io::load(&saved).unwrap();
     assert_eq!(loaded.units().length, LengthFormat::FractionalInch);
 }
+
+#[test]
+fn areas_are_picked_only_where_filled_when_asked() {
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    // Two rooms side by side; the right one hatched.
+    let p = [
+        v(0.0, 0.0),
+        v(10.0, 0.0),
+        v(20.0, 0.0),
+        v(20.0, 10.0),
+        v(10.0, 10.0),
+        v(0.0, 10.0),
+    ]
+    .map(|q| ed.doc.add_point(q));
+    for (a, b) in [(0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 0), (1, 4)] {
+        ed.doc.add_line(p[a], p[b]).unwrap();
+    }
+    ed.commit("Setup");
+    ed.add_fill_at(v(15.0, 5.0)).unwrap();
+    ed.regions_need_fill = true;
+    let mut tool = SelectTool::default();
+    // The empty room: nothing.
+    click(&mut ed, &mut tool, v(5.0, 5.0));
+    assert!(ed.selected_region.is_none() && ed.selected_fills.is_empty());
+    // The filled one: its fill.
+    click(&mut ed, &mut tool, v(15.0, 5.0));
+    assert_eq!(ed.selected_fills.len(), 1);
+    // Off: the empty room's area.
+    ed.regions_need_fill = false;
+    click(&mut ed, &mut tool, v(5.0, 5.0));
+    assert!(ed.region().is_some());
+}

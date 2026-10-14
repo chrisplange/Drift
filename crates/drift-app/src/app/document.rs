@@ -56,7 +56,24 @@ impl DriftApp {
         self.tool.cancel(&mut self.editor);
         self.tool = ToolKind::Select.create();
         let revision = doc.revision();
+        // Preferences kept on the editor carry over to the next drawing.
+        let was = &self.editor;
+        let kept = (
+            was.regions_by_layer,
+            was.regions_need_fill,
+            was.pick_filter,
+            was.dim_mode,
+            was.dim_overall,
+        );
         self.editor = Editor::new(doc);
+        let ed = &mut self.editor;
+        (
+            ed.regions_by_layer,
+            ed.regions_need_fill,
+            ed.pick_filter,
+            ed.dim_mode,
+            ed.dim_overall,
+        ) = kept;
         self.fit_target = Some(self.fit_bounds());
         self.file = FileState {
             name,
@@ -81,6 +98,7 @@ impl DriftApp {
             ("rscale", self.round_scale),
             ("hidden", self.show_hidden_annotations),
             ("rlayer", self.editor.regions_by_layer),
+            ("rfill", self.editor.regions_need_fill),
         ];
         let mut prefs: Vec<String> = flags
             .iter()
@@ -134,6 +152,7 @@ impl DriftApp {
                 "rscale" => self.round_scale = on,
                 "hidden" => self.show_hidden_annotations = on,
                 "rlayer" => self.editor.regions_by_layer = on,
+                "rfill" => self.editor.regions_need_fill = on,
                 _ => {}
             }
         }

@@ -1852,6 +1852,11 @@ zooms to fit; F is Fillet (again for Chamfer).
   setting as feet-inches. DXF writes it as $LUNITS 5 (fractional). Typing a bare mixed
   number, `35 1/2`, now reads as one number in the drawing's unit (before, an error);
   `10-1/2` is still arithmetic.
+- **Areas picked only where filled (done).** Preferences → Closed areas → "Pick an area
+  only where it is filled or hatched" (`rfill`, on by default): a click inside a fill or
+  hatch picks it; inside an empty outline, nothing (it was the area, to measure). Off
+  brings back area picking. Preferences kept on the editor (areas per layer, this, the
+  select filter, the dimension row mode) now carry over when a drawing is opened.
 - **Workspace notes, next: tabs for separate drawings (design, not built).** A tab bar
   along the top, one drawing per tab, as Revit and Illustrator have.
   - What a tab owns: the editor (document, selection, undo history), its file (name, path,

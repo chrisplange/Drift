@@ -347,6 +347,15 @@ impl DriftApp {
              hatching on other layers don't cut it up or close it. Its outline must then be \
              all on one layer (a door line on another layer leaves a wall open)",
         );
+        ui.checkbox(
+            &mut self.editor.regions_need_fill,
+            "Pick an area only where it is filled or hatched",
+        )
+        .on_hover_text(
+            "On: a click inside a solid fill or hatch picks it, and a click inside an empty \
+             outline picks nothing (box selection starts there). Off: it picks the area, to \
+             measure it",
+        );
         theme::section(ui, "Mouse and trackpad");
         theme::row(ui, "Scrolling", |ui| {
             for mode in crate::app::view::WheelMode::ALL {

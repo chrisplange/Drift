@@ -645,8 +645,9 @@ const SHORTCUTS: &[(&str, &[(&str, &str)])] = &[
                 "Select the chain of curves joined end to end with the one under the pointer",
             ),
             (
-                "Click inside a closed area",
-                "Select the region: area, perimeter and centroid in the inspector",
+                "Click inside a fill or hatch",
+                "Select it (inside an empty outline too, with Preferences → Closed areas → \
+                 pick only where filled turned off: area, perimeter and centroid)",
             ),
             ("Click near a line's middle", "Pick its midpoint"),
             (

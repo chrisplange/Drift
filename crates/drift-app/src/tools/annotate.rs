@@ -448,12 +448,33 @@ impl Tool for OrdinateTool {
 // ---------------------------------------------------------------------------------------------
 // Section and elevation marks
 
+/// X / Y while a mark's line is being drawn: lock it to that axis, or unlock it if it
+/// already is. Not claimed before the first click.
+fn toggle_lock(lock: &mut Option<Axis>, drawing: bool, key: ToolKey) -> bool {
+    let axis = match key {
+        ToolKey::X => Axis::X,
+        ToolKey::Y => Axis::Y,
+        _ => return false,
+    };
+    if !drawing {
+        return false;
+    }
+    *lock = if *lock == Some(axis) {
+        None
+    } else {
+        Some(axis)
+    };
+    true
+}
+
 /// Two clicks: the ends of a section's cutting line. It gets the next free letter; which way
 /// it looks, and the sheet it refers to, are set in the inspector.
 #[derive(Default)]
 pub struct SectionTool {
     first: Option<DVec2>,
     hover: Option<DVec2>,
+    /// X / Y: the cutting line runs along that axis.
+    lock: Option<Axis>,
 }
 
 impl Tool for SectionTool {
@@ -463,7 +484,7 @@ impl Tool for SectionTool {
 
     fn hint(&self) -> String {
         if self.first.is_some() {
-            "Click where the cutting line ends".into()
+            "Click where the cutting line ends · X / Y: along an axis".into()
         } else {
             "Click where the section's cutting line starts".into()
         }
@@ -471,6 +492,20 @@ impl Tool for SectionTool {
 
     fn is_busy(&self) -> bool {
         self.first.is_some()
+    }
+
+    fn refine_pointer(&self, p: &mut Pointer) {
+        if let Some(from) = self.first {
+            super::line::steer(from, self.lock, p);
+        }
+    }
+
+    fn key(&mut self, key: ToolKey, _pointer: Option<&Pointer>, _ed: &mut Editor) -> bool {
+        toggle_lock(&mut self.lock, self.first.is_some(), key)
+    }
+
+    fn axis_lock(&self) -> Option<(DVec2, Axis)> {
+        Some((self.first?, self.lock?))
     }
 
     fn handle(&mut self, input: Input, ed: &mut Editor) {
@@ -487,15 +522,20 @@ impl Tool for SectionTool {
                         flip: false,
                     };
                     add_annotation(ed, mark, "Section mark");
+                    self.lock = None;
                 }
                 Some(a) => self.first = Some(a),
             },
-            Input::Finish => self.first = None,
+            Input::Finish => {
+                self.first = None;
+                self.lock = None;
+            }
             _ => {}
         }
     }
 
     fn cancel(&mut self, _ed: &mut Editor) -> bool {
+        self.lock = None;
         self.first.take().is_some()
     }
 
@@ -507,26 +547,29 @@ impl Tool for SectionTool {
     }
 }
 
-/// Click where an elevation's flag goes, then towards what it looks at (in 15° steps; Alt:
-/// freely). It gets the next free number.
+/// Click where an elevation's flag goes, then towards what it looks at (along an axis with
+/// X / Y, in the document's angle steps when angle snapping is on; Alt: freely). It gets
+/// the next free number.
 #[derive(Default)]
 pub struct ElevationTool {
     at: Option<DVec2>,
     hover: Option<DVec2>,
+    /// X / Y: it looks along that axis.
+    lock: Option<Axis>,
 }
 
 impl ElevationTool {
-    /// The direction from the flag to the pointer, in degrees.
+    /// The direction from the flag to the (steered) pointer, in degrees.
     fn aim(at: DVec2, p: &Pointer) -> Option<f64> {
-        let v = p.raw - at;
+        let v = p.pos() - at;
         if v.length() <= p.tolerance {
             return None;
         }
         let degrees = v.y.atan2(v.x).to_degrees();
-        Some(if p.alt {
-            (degrees * 10.0).round() / 10.0
-        } else {
-            (degrees / 15.0).round() * 15.0
+        // Steered onto an axis or an angle step, it is exact; otherwise to a tenth.
+        Some(match p.guide {
+            Some(_) => (degrees * 1e6).round() / 1e6,
+            None => (degrees * 10.0).round() / 10.0,
         })
     }
 }
@@ -538,10 +581,27 @@ impl Tool for ElevationTool {
 
     fn hint(&self) -> String {
         if self.at.is_some() {
-            "Click towards what the elevation looks at (Alt: any angle)".into()
+            "Click towards what the elevation looks at · X / Y: along an axis · Alt: any angle"
+                .into()
         } else {
             "Click where the elevation mark goes".into()
         }
+    }
+
+    fn refine_pointer(&self, p: &mut Pointer) {
+        if let Some(from) = self.at {
+            // Aiming: no snap target decides it, only the axis or the angle step.
+            p.snap = None;
+            super::line::steer(from, self.lock, p);
+        }
+    }
+
+    fn key(&mut self, key: ToolKey, _pointer: Option<&Pointer>, _ed: &mut Editor) -> bool {
+        toggle_lock(&mut self.lock, self.at.is_some(), key)
+    }
+
+    fn axis_lock(&self) -> Option<(DVec2, Axis)> {
+        Some((self.at?, self.lock?))
     }
 
     fn is_busy(&self) -> bool {
@@ -555,7 +615,7 @@ impl Tool for ElevationTool {
 
     fn handle(&mut self, input: Input, ed: &mut Editor) {
         match input {
-            Input::Hover(p) | Input::Drag(p) => self.hover = Some(p.raw),
+            Input::Hover(p) | Input::Drag(p) => self.hover = Some(p.pos()),
             Input::Click(p, _) => match self.at {
                 None => self.at = Some(p.pos()),
                 Some(at) => {
@@ -563,6 +623,7 @@ impl Tool for ElevationTool {
                         return;
                     };
                     self.at = None;
+                    self.lock = None;
                     let mark = Annotation::Elevation {
                         at,
                         angle,
@@ -572,12 +633,16 @@ impl Tool for ElevationTool {
                     add_annotation(ed, mark, "Elevation mark");
                 }
             },
-            Input::Finish => self.at = None,
+            Input::Finish => {
+                self.at = None;
+                self.lock = None;
+            }
             _ => {}
         }
     }
 
     fn cancel(&mut self, _ed: &mut Editor) -> bool {
+        self.lock = None;
         self.at.take().is_some()
     }
 

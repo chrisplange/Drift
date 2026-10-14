@@ -108,7 +108,7 @@ browser (WebGPU, with a WebGL2 fallback).
   under-defined point can still move.
 - **Snapping:** end points, centres, midpoints, quadrants, nearest-on-curve and the origin, plus
   optional grid snapping (Shift+G). Hold Alt to place freely. Snapping onto an existing point
-  connects to it. **Angle snap** (status bar, beside grid snap) draws lines at every 5°, 15° or 45°.
+  connects to it. **Angle snap** (status bar, beside grid snap) draws lines at every 1°, 5°, 15° or 45°.
 - **Blender-style keys:**
   - **Axis locks while drawing lines:** X / Y lock the current segment to an axis. The lock
     lasts for that segment only, and adds the H/V relation when Auto relations is on.

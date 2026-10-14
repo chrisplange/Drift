@@ -509,6 +509,8 @@ pub(crate) struct DraftRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     alt_units: Option<String>,
     scale: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    color: Option<String>,
 }
 
 pub(crate) fn draft_record(s: &DraftStyle) -> Option<DraftRecord> {
@@ -533,6 +535,7 @@ pub(crate) fn draft_record(s: &DraftStyle) -> Option<DraftRecord> {
                 .map(|(_, n)| (*n).to_owned())
         }),
         scale: s.scale,
+        color: s.color.map(Rgb::hex),
     })
 }
 
@@ -580,6 +583,10 @@ pub(crate) fn parse_draft(r: DraftRecord) -> Result<DraftStyle, LoadError> {
             None => None,
         },
         scale: positive(r.scale, "scale")?,
+        color: match &r.color {
+            Some(c) => Some(Rgb::parse(c).ok_or_else(|| bad("color"))?),
+            None => None,
+        },
     })
 }
 

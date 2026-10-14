@@ -6,7 +6,7 @@
 //! ```json
 //! {
 //!   "format": "drift",
-//!   "version": 19,
+//!   "version": 20,
 //!   "meta": {"title":"Bracket","units":"mm","generator":"Drift 0.1.0"},
 //!   "display": {"length":"architectural","fraction":16},
 //!   "variables": [
@@ -69,8 +69,10 @@ pub const EXTENSION: &str = "drift";
 /// (paper, scale, view, title block and revisions) (M8); 9 = adds `groups`; 10 = adds `blocks`
 /// and `instances`; 11 = adds a layer's `fill` colour; 12 = adds `underlays` (M8.5); 13 = adds
 /// `ellipse` entities; 14 = adds `bezier` curves and `smooth` relations; 15 = adds `texts`
-/// (M9); 16 = adds the `modern` title block.
-pub const FORMAT_VERSION: u32 = 19;
+/// (M9); 16 = adds the `modern` title block; 17 = adds sheet flags; 18 = adds a sheet's
+/// `views`; 19 = adds `fonts` and a text's `align`, `spacing` and `wrap`; 20 = adds the
+/// drafting style's `color`.
+pub const FORMAT_VERSION: u32 = 20;
 const FORMAT_TAG: &str = "drift";
 
 /// Document-level properties stored alongside the geometry.
@@ -1583,7 +1585,7 @@ pub fn migrate(value: serde_json::Value) -> Result<serde_json::Value, LoadError>
         // v1 → v2: constraints were introduced; a v1 file simply has none.
         value["constraints"] = serde_json::Value::Array(Vec::new());
     }
-    // v2 → v19 only added optional fields, sections and constraint types: nothing to convert
+    // v2 → v20 only added optional fields, sections and constraint types: nothing to convert
     // (a sheet's single view from before v18 is read as it was written).
     value["version"] = FORMAT_VERSION.into();
     Ok(value)
@@ -1627,7 +1629,7 @@ mod tests {
         let text = save(&doc, &Metadata::default());
         let expected = r#"{
   "format": "drift",
-  "version": 19,
+  "version": 20,
   "meta": {"units":"mm"},
   "entities": [
     {"type":"point","id":"e1","at":[0.0,0.0]},
@@ -2092,6 +2094,7 @@ mod tests {
         style.arrow = ArrowStyle::Tick;
         style.alt_units = Some(LengthFormat::Millimetre);
         style.scale = 50.0;
+        style.color = Some(drift_core::Rgb([0x20, 0xa0, 0xff]));
         doc.set_draft_style(style);
         doc.set_custom_patterns("*MINE, Mine\n0, 0,0, 0,2\n".into());
         doc.set_logo(
@@ -2233,7 +2236,7 @@ mod tests {
         doc.add_text(drift_core::SketchText::new("A", DVec2::ZERO, 3.0));
 
         let text = save(&doc, &Metadata::default());
-        assert!(text.contains("\"version\": 19"));
+        assert!(text.contains("\"version\": 20"));
         assert!(
             text.contains(r#"{"a":[80.0,20.0,30.0,0.0,90.0]}"#),
             "{text}"

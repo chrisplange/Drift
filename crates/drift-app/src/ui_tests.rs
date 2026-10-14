@@ -401,6 +401,43 @@ fn smart_dimension_place_type_drag_and_delete_relation() {
     h.run();
     assert_eq!(h.state().editor.doc.placement(id), before);
 
+    // A double click just outside the corner of the text still edits it, with the select
+    // tool and with the dimension tool. (The harness's frames are a quarter of a second
+    // apart: allow two of them between clicks.)
+    h.ctx
+        .options_mut(|o| o.input_options.max_double_click_delay = 0.6);
+    for tool in [Key::S, Key::D] {
+        h.key_press(tool);
+        h.run();
+        let rect = first_dimension(&h).text_rect;
+        let near = rect.right_top() + egui::vec2(4.0, -4.0);
+        h.hover_at(near);
+        h.run();
+        for _ in 0..2 {
+            button(&h, near, true);
+            h.step();
+            button(&h, near, false);
+            h.step();
+        }
+        h.run();
+        assert_eq!(
+            h.state().dimension_edit.as_ref().map(|e| e.id),
+            Some(id),
+            "{tool:?}"
+        );
+        assert_eq!(
+            h.state().editor.doc.constraint_count(),
+            2,
+            "no new dimension"
+        );
+        h.key_press(Key::Escape);
+        h.run();
+        h.key_press(Key::Escape);
+        h.run();
+    }
+    h.key_press(Key::S);
+    h.run();
+
     // Pick the horizontal relation's glyph and delete it.
     let glyph = layout_glyphs(&h.state().editor.doc, &screen_map(&h))
         .into_iter()
@@ -3436,11 +3473,12 @@ fn section_and_elevation_marks() {
     click_world(&mut h, DVec2::new(60.0, 80.0));
     assert!(matches!(&marks(&h)[1], Annotation::Section { label, .. } if label == "B"));
 
-    // An elevation mark: where it goes, then towards what it looks at (in 15° steps).
+    // An elevation mark: where it goes, then towards what it looks at (as pointed, with
+    // angle snapping off).
     h.get_by_label("Elevation mark").click();
     h.run();
     click_world(&mut h, DVec2::new(130.0, -10.0));
-    click_world(&mut h, DVec2::new(110.0, 11.0));
+    click_world(&mut h, DVec2::new(110.0, 10.0));
     let id = match marks(&h).as_slice() {
         [
             ..,
@@ -3449,7 +3487,8 @@ fn section_and_elevation_marks() {
             },
         ] => {
             assert!(at.distance(DVec2::new(130.0, -10.0)) < 1.0);
-            assert_eq!((*angle, label.as_str()), (135.0, "1"));
+            assert!((*angle - 135.0).abs() < 0.05, "{angle}");
+            assert_eq!(label.as_str(), "1");
             h.state()
                 .editor
                 .selected_annotation
@@ -4289,6 +4328,77 @@ fn text_is_typed_straight_onto_the_canvas() {
     h.run();
     h.run();
     assert_eq!(h.state().editor.editing_text, None);
+}
+
+#[test]
+fn transform_handles_on_the_canvas() {
+    use drift_core::Constraint;
+    let Some(mut h) = harness() else { return };
+    // A 40 × 24 rectangle with square corners, picked.
+    let c = {
+        let ed = &mut h.state_mut().editor;
+        ed.doc.begin();
+        let c = [
+            DVec2::new(-20.0, -12.0),
+            DVec2::new(20.0, -12.0),
+            DVec2::new(20.0, 12.0),
+            DVec2::new(-20.0, 12.0),
+        ]
+        .map(|p| ed.doc.add_point(p));
+        let l = [0, 1, 2, 3].map(|i| ed.doc.add_line(c[i], c[(i + 1) % 4]).unwrap());
+        for (i, line) in l.iter().enumerate() {
+            let r = if i % 2 == 0 {
+                Constraint::Horizontal { line: *line }
+            } else {
+                Constraint::Vertical { line: *line }
+            };
+            ed.doc.add_constraint(r).unwrap();
+        }
+        ed.commit("Setup");
+        ed.selection = l.iter().copied().collect();
+        c
+    };
+    h.run();
+    save_png("drift_ui_transform_box.png", &mut h);
+    let cursor = |h: &Harness<'_, DriftApp>| h.output().platform_output.cursor_icon;
+
+    // The top-right handle sits the pick radius outside the corner, on screen.
+    let handle = screen(&h, DVec2::new(20.0, 12.0)) + egui::vec2(8.0, -8.0);
+    h.hover_at(handle);
+    h.run();
+    assert_eq!(cursor(&h), egui::CursorIcon::ResizeNeSw);
+    let side = screen(&h, DVec2::new(-20.0, 0.0)) + egui::vec2(-8.0, 0.0);
+    h.hover_at(side);
+    h.run();
+    assert_eq!(cursor(&h), egui::CursorIcon::ResizeHorizontal);
+
+    // Dragged half as far again from the opposite corner: it grows by half about it.
+    let corner = screen(&h, DVec2::new(-20.0, -12.0));
+    let to = corner + (handle - corner) * 1.5;
+    h.hover_at(handle);
+    h.run();
+    button(&h, handle, true);
+    h.run();
+    h.hover_at(to);
+    h.run();
+    assert!(h.state().tool.is_busy(), "scaling");
+    button(&h, to, false);
+    h.run();
+    h.run();
+    let at = |h: &Harness<'_, DriftApp>, i: usize| h.state().editor.doc.point(c[i]).unwrap();
+    assert!(
+        at(&h, 0).distance(DVec2::new(-20.0, -12.0)) < 1e-6,
+        "the anchor stays"
+    );
+    assert!(
+        at(&h, 2).distance(DVec2::new(40.0, 24.0)) < 0.05,
+        "{:?}",
+        at(&h, 2)
+    );
+    assert_eq!(h.state().editor.selection.len(), 4, "still picked");
+    save_png("drift_ui_transform_scaled.png", &mut h);
+    h.state_mut().undo();
+    assert_eq!(at(&h, 2), DVec2::new(20.0, 12.0), "one undo step");
 }
 
 #[test]

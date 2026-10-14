@@ -1,7 +1,7 @@
 name: Package
 
 # Builds the downloads: the Windows installer and zip, and the universal macOS disk image.
-# Run it by hand from the Actions tab, or push a tag like v0.1.0-alpha.1.
+# Run it by hand from the Actions tab, or push a tag like v0.1.0-alpha.2.
 
 on:
   workflow_dispatch:
@@ -48,3 +48,34 @@ jobs:
           name: drift-macos
           path: dist/*.dmg
           if-no-files-found: error
+
+  release:
+    name: Draft release
+    # Only for a version tag: the files go on a draft release, to look over and publish.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the tag is the version in Cargo.toml
+        run: |
+          version=$(awk '/^\[workspace\.package\]/{p=1} p && /^version/{gsub(/[" ]/,"",$0); sub(/version=/,""); print; exit}' Cargo.toml)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "tag $GITHUB_REF_NAME does not match Cargo.toml's version $version" >&2
+            exit 1
+          fi
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum Drift-* > SHA256SUMS.txt && cat SHA256SUMS.txt
+      - name: Draft the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/Drift-* dist/SHA256SUMS.txt \
+            --draft --prerelease --title "Drift ${GITHUB_REF_NAME#v}" --generate-notes

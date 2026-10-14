@@ -7,7 +7,7 @@ constraints, built for technical drawings and design exploration. It is written 
 on the GPU with [wgpu](https://wgpu.rs), and runs natively on Windows, macOS and Linux and in the
 browser (WebGPU, with a WebGL2 fallback).
 
-> **Status: alpha (0.1.0-alpha.1).** Drawing, modifying, constraints, parameters, drafting,
+> **Status: alpha (0.1.0-alpha.2).** Drawing, modifying, constraints, parameters, drafting,
 > fills and hatches, blocks, underlays, sheets and PDF / SVG / DXF output all work, and three
 > rounds of alpha tester feedback are in. Expect rough edges, and save often. Files saved by
 > a newer build don't open in an older one. See [PLAN.md](PLAN.md) for what was built in each
@@ -203,8 +203,9 @@ Then open <http://127.0.0.1:8080>.
 
 Installers (see [`scripts/`](scripts) and [`installer/`](installer)): `package-windows.ps1`
 builds an Inno Setup installer and `package-macos.sh` a universal `.app` in a disk image. The
-`Package` workflow runs both on GitHub. They are new and unsigned: neither has been through a
-release yet.
+`Package` workflow runs both on GitHub, and for a version tag (`v0.1.0-alpha.2`) puts them
+on a draft release with their checksums. They are unsigned, so Windows SmartScreen and macOS
+Gatekeeper ask for confirmation the first time each is opened.
 
 Tests, including headless UI tests that drive the real app (GPU tests are skipped automatically
 when no graphics adapter is available):

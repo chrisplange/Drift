@@ -111,22 +111,22 @@ impl DriftApp {
             _ => {}
         }
         ui.add_space(4.0);
-        let formats = if units.length.is_metric() {
-            LengthFormat::METRIC
+        let formats: &[LengthFormat] = if units.length.is_metric() {
+            &LengthFormat::METRIC
         } else {
-            LengthFormat::IMPERIAL
+            &LengthFormat::IMPERIAL
         };
         crate::theme::row(ui, "Format", |ui| {
             egui::ComboBox::from_id_salt("length_format")
                 .selected_text(units.length.label())
                 .width(ui.available_width() - 4.0)
                 .show_ui(ui, |ui| {
-                    for f in formats {
+                    for &f in formats {
                         ui.selectable_value(&mut units.length, f, f.label());
                     }
                 });
         });
-        if units.length == LengthFormat::Architectural {
+        if units.length.is_fractional() {
             crate::theme::row(ui, "Round to", |ui| {
                 egui::ComboBox::from_id_salt("fraction")
                     .selected_text(format!("1/{}\"", units.fraction))

@@ -1,7 +1,7 @@
 //! Sheets: the Sheets tab, the sheet preview on the canvas, PDF / SVG / DXF export, printing
 //! and DXF import.
 
-use drift_core::sheets::{PREFERRED_SCALES, scale_label};
+use drift_core::sheets::{ARCHITECTURAL_SCALES, ENGINEERING_SCALES, PREFERRED_SCALES, scale_label};
 use drift_core::{PaperSize, Revision, Sheet, SheetId, SheetView, TitleBlock, ViewFrame};
 use drift_draft::page::Drawing;
 use drift_platform::FileType;
@@ -195,7 +195,7 @@ impl DriftApp {
         let mut sheet = Sheet::new(name);
         sheet.fields.title = self.file_stem();
         sheet.fields.date = today();
-        crate::output::fit_sheet(self.fit_bounds(), &mut sheet);
+        crate::output::fit_sheet(self.fit_bounds(), &mut sheet, self.imperial());
         sheet
     }
 
@@ -231,7 +231,7 @@ impl DriftApp {
     }
 
     /// Every sheet as a page (or, with no sheets, a fitted A3 sheet).
-    fn pages(&mut self, painter: &egui::Painter) -> Vec<Drawing> {
+    pub(crate) fn pages(&mut self, painter: &egui::Painter) -> Vec<Drawing> {
         let sheets: Vec<Sheet> = self.editor.doc.sheets().map(|(_, s)| s.clone()).collect();
         let sheets = if sheets.is_empty() {
             vec![self.fresh_sheet("Sheet 1")]
@@ -910,14 +910,25 @@ impl DriftApp {
                 && drag.index < sheet.views.len()
             {
                 let d = pos - drag.from;
-                let paper =
+                let mut paper =
                     DVec2::new(f64::from(d.x), -f64::from(d.y)) / f64::from(self.preview.zoom);
+                // Edges, middles and drawings line up with the other views' (Ctrl: freely).
+                self.view_guides.clear();
+                if !ui.input(|i| i.modifiers.command) {
+                    let tol = 6.0 / f64::from(self.preview.zoom);
+                    let (snapped, guides) = crate::app::view_align::snap_drag(
+                        sheet, drag.index, &drag.was, drag.grip, paper, tol,
+                    );
+                    paper = snapped;
+                    self.view_guides = guides;
+                }
                 let mut moved = sheet.clone();
                 moved.views[drag.index] = dragged_view(&drag.was, drag.grip, paper);
                 self.editor.doc.set_sheet(drag.sheet, moved);
             }
             if !response.dragged_by(PointerButton::Primary) {
                 self.view_drag = None;
+                self.view_guides.clear();
                 self.editor.commit(match drag.grip {
                     ViewGrip::Pan => "Move sheet view",
                     ViewGrip::Move => "Move view on sheet",
@@ -968,6 +979,30 @@ impl DriftApp {
             .filter(|p| rect.contains(*p))
             .and_then(|p| self.view_grip_at(rect, sheet, p, false))
             .map(|(i, _)| i);
+        // The lines a dragged view snapped to, across the sheet: frames in the accent, drawings
+        // lining up in magenta.
+        let paper = sheet.size();
+        for g in &self.view_guides {
+            let (a, b) = if g.vertical {
+                (DVec2::new(g.at, 0.0), DVec2::new(g.at, paper.y))
+            } else {
+                (DVec2::new(0.0, g.at), DVec2::new(paper.x, g.at))
+            };
+            let color = if g.drawings {
+                egui::Color32::from_rgb(0xe0, 0x3c, 0xc8)
+            } else {
+                accent
+            };
+            painter.extend(egui::Shape::dashed_line(
+                &[
+                    self.paper_to_preview(rect, a),
+                    self.paper_to_preview(rect, b),
+                ],
+                egui::Stroke::new(1.0, color),
+                6.0,
+                4.0,
+            ));
+        }
         for (i, view) in sheet.views.iter().enumerate() {
             let frame = self.view_rect(rect, sheet, view);
             // With one view filling the sheet there is nothing to tell apart.
@@ -1056,6 +1091,7 @@ impl DriftApp {
     /// Returns true if text was typed (so the edits merge into one undo step).
     fn views_section(&mut self, ui: &mut egui::Ui, sheet: &mut Sheet) -> bool {
         let mut typing = false;
+        let imperial = self.imperial();
         theme::section(ui, "Views");
         let picked = self.current_view(sheet);
         let several = sheet.views.len() > 1;
@@ -1098,9 +1134,34 @@ impl DriftApp {
             egui::ComboBox::from_id_salt("sheet_scale")
                 .selected_text(scale_label(view.scale))
                 .width(90.0)
+                .height(420.0)
                 .show_ui(ui, |ui| {
-                    for n in PREFERRED_SCALES {
-                        ui.selectable_value(&mut view.scale, n, scale_label(n));
+                    ui.set_min_width(150.0);
+                    // The scales for the drawing's units first.
+                    let metric: Vec<f64> = PREFERRED_SCALES.to_vec();
+                    let arch: Vec<f64> = ARCHITECTURAL_SCALES.iter().map(|(n, _)| *n).collect();
+                    let eng: Vec<f64> = ENGINEERING_SCALES.iter().map(|(n, _)| *n).collect();
+                    let groups = if imperial {
+                        [
+                            ("Architectural", arch),
+                            ("Engineering", eng),
+                            ("Metric", metric),
+                        ]
+                    } else {
+                        [
+                            ("Metric", metric),
+                            ("Architectural", arch),
+                            ("Engineering", eng),
+                        ]
+                    };
+                    for (k, (name, scales)) in groups.into_iter().enumerate() {
+                        if k > 0 {
+                            ui.separator();
+                        }
+                        ui.label(egui::RichText::new(name).small().weak());
+                        for n in scales {
+                            ui.selectable_value(&mut view.scale, n, scale_label(n));
+                        }
                     }
                 });
             fit = ui
@@ -1139,12 +1200,16 @@ impl DriftApp {
             .on_hover_text("Print the frame's outline");
         });
         if fit {
-            crate::output::fit_view(bounds, sheet, picked);
+            crate::output::fit_view(bounds, sheet, picked, imperial);
+        }
+        if several {
+            self.align_row(ui, sheet, picked);
         }
         ui.label(
             egui::RichText::new(
                 "On the sheet: drag a view to move it, its handles to crop it, and Alt-drag to \
-                 slide the drawing inside it.",
+                 slide the drawing inside it. Edges and drawings snap into line (Ctrl: \
+                 freely).",
             )
             .small()
             .weak(),
@@ -1165,6 +1230,89 @@ impl DriftApp {
             }
         });
         typing
+    }
+
+    /// Align the picked view with another: frame edges and middles, or lining the drawings
+    /// up (same scale).
+    fn align_row(&mut self, ui: &mut egui::Ui, sheet: &mut Sheet, picked: usize) {
+        use crate::app::view_align::{AlignTo, align_view};
+        let name = |i: usize, v: &SheetView| {
+            let n = v.name.trim();
+            if n.is_empty() {
+                format!("View {}", i + 1)
+            } else {
+                format!("{} {n}", i + 1)
+            }
+        };
+        let others: Vec<(usize, String)> = sheet
+            .views
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i != picked)
+            .map(|(i, v)| (i, name(i, v)))
+            .collect();
+        let mut with = self
+            .align_with
+            .filter(|w| others.iter().any(|(i, _)| i == w))
+            .unwrap_or(others[0].0);
+        theme::row(ui, "Align with", |ui| {
+            let shown = others
+                .iter()
+                .find(|(i, _)| *i == with)
+                .map_or(String::new(), |(_, n)| n.clone());
+            egui::ComboBox::from_id_salt("align_with")
+                .selected_text(shown)
+                .width(ui.available_width() - 8.0)
+                .show_ui(ui, |ui| {
+                    for (i, n) in &others {
+                        ui.selectable_value(&mut with, *i, n);
+                    }
+                });
+        });
+        self.align_with = Some(with);
+        let framed = sheet.views[picked].frame.is_some();
+        let same_scale = (sheet.views[picked].scale - sheet.views[with].scale).abs()
+            <= 1e-9 * sheet.views[picked].scale.max(1.0);
+        let mut how = None;
+        ui.horizontal_wrapped(|ui| {
+            for (a, label, hint) in AlignTo::FRAMES {
+                if ui
+                    .add_enabled(framed, egui::Button::new(label).small())
+                    .on_hover_text(hint)
+                    .on_disabled_hover_text("A view that fills the sheet has no frame to align")
+                    .clicked()
+                {
+                    how = Some(a);
+                }
+            }
+        });
+        ui.horizontal_wrapped(|ui| {
+            for (a, label, hint) in [
+                (
+                    AlignTo::DrawingsAcross,
+                    "Drawings level",
+                    "Side by side: the same height of the model at the same height on the \
+                     paper (floors meet)",
+                ),
+                (
+                    AlignTo::DrawingsDown,
+                    "Drawings in line",
+                    "One above the other: the same x of the model at the same x on the paper",
+                ),
+            ] {
+                if ui
+                    .add_enabled(same_scale, egui::Button::new(label).small())
+                    .on_hover_text(hint)
+                    .on_disabled_hover_text("Only drawings at the same scale line up")
+                    .clicked()
+                {
+                    how = Some(a);
+                }
+            }
+        });
+        if let Some(a) = how {
+            align_view(sheet, picked, with, a);
+        }
     }
 
     fn paper_to_preview(&self, rect: egui::Rect, p: DVec2) -> egui::Pos2 {

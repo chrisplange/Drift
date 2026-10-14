@@ -2,9 +2,9 @@
 //! prefixes / suffixes / tolerances, and the drafting style.
 
 use drift_core::{
-    Anchor, Annotation, AnnotationId, ArrowStyle, DVec2, DimNote, Document, DocumentError,
-    DraftStyle, EntityId, Fill, FillId, FillKind, Hatch, LayerId, Leader, LeaderEnd, LineWeight,
-    OrdinateAxis, Rgb, Standard, Tolerance,
+    Anchor, Annotation, AnnotationId, AnnotationRef, ArrowStyle, DVec2, DimNote, Document,
+    DocumentError, DraftStyle, EntityId, Fill, FillId, FillKind, Hatch, LayerId, Leader, LeaderEnd,
+    LineWeight, OrdinateAxis, Rgb, Shown, Standard, Tolerance,
 };
 use serde::{Deserialize, Serialize};
 
@@ -484,13 +484,63 @@ pub(crate) fn dim_note(
     prefix: Option<String>,
     suffix: Option<String>,
     tol: Option<ToleranceRecord>,
+    below: Option<String>,
+    text: Option<String>,
 ) -> Option<DimNote> {
     let note = DimNote {
         prefix: prefix.unwrap_or_default(),
         suffix: suffix.unwrap_or_default(),
         tolerance: parse_tolerance(tol),
+        below: below.unwrap_or_default(),
+        text: text.unwrap_or_default(),
     };
     (!note.is_empty()).then_some(note)
+}
+
+/// Where a dimension (`c…`) or annotation (`n…`) is shown, when not everywhere.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ShownRecord {
+    of: String,
+    #[serde(default = "yes", skip_serializing_if = "is_yes")]
+    canvas: bool,
+    #[serde(default = "yes", skip_serializing_if = "is_yes")]
+    sheets: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_yes(b: &bool) -> bool {
+    *b
+}
+
+pub(crate) fn shown_record(r: AnnotationRef, s: Shown) -> ShownRecord {
+    ShownRecord {
+        of: match r {
+            AnnotationRef::Dimension(id) => id.to_string(),
+            AnnotationRef::Annotation(id) => id.to_string(),
+        },
+        canvas: s.canvas,
+        sheets: s.sheets,
+    }
+}
+
+pub(crate) fn parse_shown(r: ShownRecord) -> Result<(AnnotationRef, Shown), LoadError> {
+    let of = if r.of.starts_with('c') {
+        AnnotationRef::Dimension(drift_core::ConstraintId(parse_prefixed(&r.of, 'c')?))
+    } else {
+        AnnotationRef::Annotation(AnnotationId(parse_prefixed(&r.of, 'n')?))
+    };
+    Ok((
+        of,
+        Shown {
+            canvas: r.canvas,
+            sheets: r.sheets,
+        },
+    ))
 }
 
 /// The drafting style; written in full when it isn't the default.

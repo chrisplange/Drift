@@ -1671,7 +1671,7 @@ zooms to fit; F is Fillet (again for Chamfer).
     interface's fonts behind it for characters it lacks.
   - PDF: the font is embedded whole (compressed) as a composite font, text is written by
     glyph, and a glyph-to-Unicode map keeps it selectable and searchable in any script the
-    font covers. Without a bold face, bold is the regular face filled and stroked. A font
+    font covers. Without a bold face, bold is set in the regular face (it was faked by stroking; that read as a smudge, and was dropped). A font
     that can't be embedded (licence, or a face from a font collection) has its text drawn
     as outlines. SVG names the family, with the standard ones behind it.
   - Checked by writing a PDF, parsing it with another library (the font file comes back
@@ -1775,6 +1775,83 @@ zooms to fit; F is Fillet (again for Chamfer).
     already held level) was refused as "already implied" though it still held something
     new. Relations are now accepted when degrees of freedom drop; a dimension or fix that
     leaves another implied is still refused as over-defining.
+- **Dimension text and where annotations show (done).** Format v21.
+  - A dimension's note gains `below` (a line under the dimension line, `TO FACE OF STUD`)
+    and `text` (shown in place of the value, `EQ`; the dimension still holds, and the
+    inspector says what). Tolerances and alternate units don't show with text in place of
+    the value. Under ISO's aligned text the `below` line sits under the dimension line,
+    the value above it.
+  - Quick chips (×, Ø, ±, TYP, REF, MIN, MAX, VIF, THRU, EQ) toggle on and off, in the
+    inspector and under the value editor that opens on the canvas, which also has before
+    and after fields. The inspector has Driven (reference) as a checkbox.
+  - Every dimension and annotation can be off the canvas and/or off sheets
+    (`Document::shown`, keyed by `AnnotationRef`; only the exceptions are stored).
+    Hidden on the canvas: not drawn or pickable. Off sheets: left out of sheets, PDF,
+    SVG, DXF and print, with a struck-through-sheet badge on the canvas. Hiding is display
+    only: a hidden dimension still holds.
+  - Set from the inspector's Show section, the right-click menu and the palette; Shift+
+    click picks several dimensions and notes to set at once. Alt+H (View → Hidden
+    annotations, the palette, or the status bar's "N hidden" pill) shows hidden ones faded
+    so they can be picked and shown again; it is kept as a preference (`hidden`).
+  - The view-wide switches (View → Dimensions and notes; a sheet view's Dimensions and
+    Notes) still apply on top.
+  - Not done: hiding in one sheet view only (Revit's "hide in view"); box selection of
+    dimensions and notes.
+- **Imperial sheet scales, selection filters, chain mode (done).**
+  - Sheet views offer architectural (3" to 1/32" = 1'-0") and engineering (1" = 10' to
+    200') scales beside the metric ones, grouped, the document's units first. They are
+    written as they are (`1/4" = 1'-0"`) on the title block and view titles: none of
+    their ratios is a metric one, so the number says which. Fit picks from them for a
+    drawing in feet and inches. Not done: typed custom scales, a scale bar.
+  - The select tool's bar: All / Edges / Points (also in the palette). Edges or Points
+    filter clicks, boxes and hover; areas, fills, text and blocks are picked only with
+    All. A points-only box takes every point in it. Dimensions and notes have their own
+    picking and aren't filtered.
+  - The dimension tool's bar: Single / Chain / Baseline, and Overall. In Chain or
+    Baseline, after a horizontal or vertical dimension, plain clicks on points or lines
+    (a line gives its nearer end) go on along the row; an empty click, Enter or Esc ends
+    it. With Overall, a chain ends with the overall dimension a step outside, as a
+    reference. Shift+click still continues a row in Single mode. Not done: rows along a
+    slanted direction (needs a projected-distance dimension).
+- **Tab chains like Revit; areas per layer (done).**
+  - Tab over a curve highlights its chain (`Editor::chain_preview`) instead of picking it;
+    Tab again goes back to the one curve; a click on the highlighted chain picks it
+    (Shift adds, Ctrl takes away); moving off it clears it. Tab with nothing under the
+    pointer still widens the selection to whole chains. Tab no longer moves keyboard focus
+    to the File menu.
+  - Preferences → Closed areas → "Find closed areas on each layer separately"
+    (`rlayer`): areas are found from each layer's curves alone, so furniture or notes on
+    other layers neither cut nor close them. An outline split across layers then doesn't
+    close.
+- **Text fixes (done).**
+  - Sketch text goes to sheets and exports as text, line by line in its own font from each
+    line's start (`Prim::Text { font }`), not as its glyph outlines. DXF: TEXT. SVG: text
+    naming its font. PDF: text in the embedded drawing font when that is its font;
+    otherwise its glyphs filled (a PDF writes text only in fonts it carries). Sheet
+    preview: filled glyphs.
+  - No faked bold: without a bold face (a variable font such as Bahnschrift keeps its
+    weights inside one face), bold text is set in the regular face instead of being
+    stroked, which read as a smudge. Not done: bold from a variable font's weight axis.
+  - The font menus' "Find a font" field no longer closes the menu when clicked; a pick
+    does.
+  - `probe_export` (ignored test): `DRIFT_FILE=… DRIFT_OUT=…` writes a drawing's sheets
+    to PDF and SVG, to check output by eye.
+- **Chain fix and view alignment (done).**
+  - Chain dimensions in the window: the value editor that opens on a dimension just placed
+    shows only its value (the before/after fields and chips, under it, covered the next
+    wall to click, so a link was skipped); they show when a dimension is opened to edit.
+    The dimension tool ignores the select tool's pick filter.
+  - Sheet views line up (`app/view_align.rs`): dragging a view snaps its frame's edges and
+    middle to other frames' and to the drawing area's, and, for views at the same scale,
+    its drawing level or in line with theirs (preferred when both are in reach), with
+    dashed guides (magenta for drawings); Ctrl places freely. Resizing snaps the dragged
+    edge. The Views section's "Align with" another view: Left, Centre, Right, Top, Middle,
+    Bottom, Drawings level, Drawings in line (a view filling the sheet slides its drawing).
+- **Fractional inches (done).** A length format, "Inches (fractions)" (`fractional_in` in
+  the file): `35 1/2"`, `108"`, never split into feet, rounded to the same fraction
+  setting as feet-inches. DXF writes it as $LUNITS 5 (fractional). Typing a bare mixed
+  number, `35 1/2`, now reads as one number in the drawing's unit (before, an error);
+  `10-1/2` is still arithmetic.
 - **Workspace notes, next: tabs for separate drawings (design, not built).** A tab bar
   along the top, one drawing per tab, as Revit and Illustrator have.
   - What a tab owns: the editor (document, selection, undo history), its file (name, path,

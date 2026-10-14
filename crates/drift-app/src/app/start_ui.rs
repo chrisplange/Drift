@@ -337,6 +337,16 @@ impl DriftApp {
             "A scale handle with Alt steps the picked geometry's width and height through \
              round sizes in the document's units, finer as you zoom in. Off: any size",
         );
+        theme::section(ui, "Closed areas");
+        ui.checkbox(
+            &mut self.editor.regions_by_layer,
+            "Find closed areas on each layer separately",
+        )
+        .on_hover_text(
+            "On: an area is closed only by curves on one layer, so furniture, notes or \
+             hatching on other layers don't cut it up or close it. Its outline must then be \
+             all on one layer (a door line on another layer leaves a wall open)",
+        );
         theme::section(ui, "Mouse and trackpad");
         theme::row(ui, "Scrolling", |ui| {
             for mode in crate::app::view::WheelMode::ALL {

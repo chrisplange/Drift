@@ -71,7 +71,9 @@ impl DriftApp {
     ) -> Vec<DimLayout> {
         let doc = &self.editor.doc;
         doc.constraints()
-            .filter(|(_, c)| c.is_dimension())
+            .filter(|(id, c)| {
+                c.is_dimension() && self.on_canvas(drift_core::AnnotationRef::Dimension(*id))
+            })
             .filter_map(|(id, c)| {
                 annotations::layout_dimension(painter, doc, Some(id), c, doc.placement(id), map)
             })
@@ -153,17 +155,34 @@ impl DriftApp {
             return true;
         }
         if response.clicked_by(PointerButton::Primary) {
+            let shift = crate::app::visibility_ui::shift_click(ui);
             if let Some(id) = at.and_then(hit) {
-                self.selected_constraint = Some(id);
+                let is_dimension = self
+                    .editor
+                    .doc
+                    .constraint(id)
+                    .is_some_and(|c| c.is_dimension());
+                if shift && is_dimension {
+                    self.toggle_annotation_pick(drift_core::AnnotationRef::Dimension(id));
+                } else {
+                    self.annotation_picks.clear();
+                    self.selected_constraint = Some(id);
+                }
                 self.editor.selection.clear();
                 return true;
             }
             self.selected_constraint = None;
+            self.annotation_picks.clear();
         }
         false
     }
 
     pub(crate) fn open_dimension_edit(&mut self, id: ConstraintId) {
+        self.open_dimension_editor(id, true);
+    }
+
+    /// Open the in-place value editor, with or without the text around the value.
+    pub(crate) fn open_dimension_editor(&mut self, id: ConstraintId, extras: bool) {
         if self.editor.doc.is_driven(id) {
             self.editor.notice = Some(
                 "A driven dimension follows the geometry: untick Driven in the constraint list \
@@ -177,6 +196,7 @@ impl DriftApp {
                 id,
                 text,
                 focus: true,
+                extras,
             });
         }
     }
@@ -195,8 +215,17 @@ impl DriftApp {
             return;
         };
         let field = egui::Id::new("dimension_edit_field");
-        let mut keep = true;
-        egui::Area::new(egui::Id::new("dimension_edit"))
+        let first = edit.focus;
+        // The text around the value is edited here too: before and after it, and the
+        // common notes (TYP, EQ…) a click away.
+        let mut note = self
+            .editor
+            .doc
+            .dim_note(edit.id)
+            .cloned()
+            .unwrap_or_default();
+        let was = note.clone();
+        let area = egui::Area::new(egui::Id::new("dimension_edit"))
             .fixed_pos(at - egui::vec2(45.0, 11.0))
             .order(egui::Order::Foreground)
             .show(ctx, |ui| {
@@ -217,16 +246,57 @@ impl DriftApp {
                         state.store(ctx, field);
                     }
                     edit.focus = false;
-                } else if response.lost_focus() {
-                    keep = false;
-                    if ui.input(|i| i.key_pressed(Key::Enter))
-                        && Some(&edit.text) != self.editor.dimension_edit_text(edit.id).as_ref()
-                        && let Err(e) = self.editor.set_dimension_text(edit.id, &edit.text)
-                    {
-                        self.set_status(format!("Can't use {}: {e}", edit.text), true, now);
-                    }
                 }
+                if !edit.extras {
+                    return;
+                }
+                ui.add_space(2.0);
+                egui::Frame::popup(ui.style())
+                    .inner_margin(egui::Margin::same(4))
+                    .show(ui, |ui| {
+                        ui.set_max_width(250.0);
+                        ui.horizontal(|ui| {
+                            ui.add(
+                                egui::TextEdit::singleline(&mut note.prefix)
+                                    .hint_text("before")
+                                    .desired_width(70.0),
+                            )
+                            .on_hover_text("Text before the value (4×)");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut note.suffix)
+                                    .hint_text("after")
+                                    .desired_width(110.0),
+                            )
+                            .on_hover_text("Text after the value (THRU)");
+                        });
+                        super::drafting_ui::dimension_chips(ui, &mut note);
+                    });
             });
+        // Enter applies the value and finishes; Esc, or a press anywhere else, finishes.
+        let (enter, escape, outside) = ctx.input(|i| {
+            (
+                i.key_pressed(Key::Enter),
+                i.key_pressed(Key::Escape),
+                i.pointer.any_pressed()
+                    && i.pointer
+                        .interact_pos()
+                        .is_some_and(|p| !area.response.rect.contains(p)),
+            )
+        });
+        let mut keep = first || !(enter || escape || outside);
+        if !first
+            && enter
+            && Some(&edit.text) != self.editor.dimension_edit_text(edit.id).as_ref()
+            && let Err(e) = self.editor.set_dimension_text(edit.id, &edit.text)
+        {
+            self.set_status(format!("Can't use {}: {e}", edit.text), true, now);
+            keep = false;
+        }
+        if note != was {
+            self.editor.doc.begin();
+            self.editor.doc.set_dim_note(edit.id, Some(note));
+            self.editor.commit("Dimension text");
+        }
         if keep {
             self.dimension_edit = Some(edit);
         }
@@ -353,6 +423,38 @@ impl DriftApp {
         {
             self.editor.selection = [h].into_iter().collect();
         }
+        // On a dimension or annotation: pick it (unless it already is), for its menu.
+        if menu_tool && response.secondary_clicked() && self.editor.hovered.is_none() {
+            let hovered = self
+                .hovered_constraint
+                .filter(|id| {
+                    self.editor
+                        .doc
+                        .constraint(*id)
+                        .is_some_and(|c| c.is_dimension())
+                })
+                .map(drift_core::AnnotationRef::Dimension)
+                .or(self
+                    .editor
+                    .hovered_annotation
+                    .map(drift_core::AnnotationRef::Annotation));
+            if let Some(r) = hovered
+                && !self.annotation_picked(r)
+            {
+                self.annotation_picks.clear();
+                self.editor.selection.clear();
+                match r {
+                    drift_core::AnnotationRef::Dimension(id) => {
+                        self.selected_constraint = Some(id);
+                        self.editor.selected_annotation = None;
+                    }
+                    drift_core::AnnotationRef::Annotation(id) => {
+                        self.editor.selected_annotation = Some(id);
+                        self.selected_constraint = None;
+                    }
+                }
+            }
+        }
         if menu_tool || response.context_menu_opened() {
             response.context_menu(|ui| self.canvas_menu(ui));
         }
@@ -369,8 +471,9 @@ impl DriftApp {
         }
         // Tool events may have changed the document (and the pointer's snap targets).
         self.editor.sync();
+        // Just placed: only its value (the next pick of a chain may be under the rest).
         if let Some(id) = self.editor.pending_edit.take() {
-            self.open_dimension_edit(id);
+            self.open_dimension_editor(id, false);
         }
         if let Some(id) = self.editor.pending_note_edit.take() {
             self.open_note_edit(id, true);
@@ -441,6 +544,7 @@ impl DriftApp {
                 &self.editor.doc,
                 self.editor.selected_annotation,
                 self.editor.hovered_annotation,
+                &|id| self.on_canvas(drift_core::AnnotationRef::Annotation(id)),
             ));
         }
         items.extend(
@@ -620,9 +724,12 @@ impl DriftApp {
     ) {
         let colors = AnnotationColors::new(dark);
         let dim_colors = AnnotationColors::drafting(dark, self.editor.doc.draft_style().color);
+        let faded = dim_colors.faded();
         let conflicts = &self.editor.analysis().conflicts;
         let state = |id: ConstraintId| {
-            if self.selected_constraint == Some(id) || self.label_drag.is_some_and(|d| d.0 == id) {
+            if self.annotation_picked(drift_core::AnnotationRef::Dimension(id))
+                || self.label_drag.is_some_and(|d| d.0 == id)
+            {
                 AnnotationState::Selected
             } else if self.hovered_constraint == Some(id) {
                 AnnotationState::Hovered
@@ -636,7 +743,16 @@ impl DriftApp {
             if let Some(id) = dim.id
                 && self.dimension_edit.as_ref().is_none_or(|e| e.id != id)
             {
-                annotations::paint_dimension(painter, dim, state(id), &dim_colors);
+                // Hidden on the canvas (drawn only while hidden ones are shown): faded.
+                let shown = self
+                    .editor
+                    .doc
+                    .shown(drift_core::AnnotationRef::Dimension(id));
+                let look = if shown.canvas { &dim_colors } else { &faded };
+                annotations::paint_dimension(painter, dim, state(id), look);
+                if !shown.sheets {
+                    Self::paint_off_sheets_badge(painter, dim.text_rect.right_top(), look.normal);
+                }
                 // Mark midpoints the dimension measures to (a line in a point slot).
                 for (e, slot) in dim.constraint.slots() {
                     if slot == drift_core::Slot::PointOrMidpoint

@@ -29,6 +29,9 @@ pub(crate) enum Command {
     SelectAll,
     SelectOverlapping,
     CheckSketch,
+    HideAnnotations,
+    AnnotationsOffSheets,
+    PickFilter(crate::editor::PickFilter),
     Cut,
     Copy,
     Paste,
@@ -61,6 +64,7 @@ pub(crate) enum ViewFlag {
     Endpoints,
     Dimensions,
     Relations,
+    Hidden,
     Free,
     Ghosts,
     Combs,
@@ -68,7 +72,7 @@ pub(crate) enum ViewFlag {
 }
 
 impl ViewFlag {
-    const ALL: [ViewFlag; 12] = [
+    const ALL: [ViewFlag; 13] = [
         ViewFlag::Grid,
         ViewFlag::Axes,
         ViewFlag::Snap,
@@ -77,6 +81,7 @@ impl ViewFlag {
         ViewFlag::Endpoints,
         ViewFlag::Dimensions,
         ViewFlag::Relations,
+        ViewFlag::Hidden,
         ViewFlag::Free,
         ViewFlag::Ghosts,
         ViewFlag::Combs,
@@ -93,6 +98,7 @@ impl ViewFlag {
             ViewFlag::Endpoints => "Always show end points",
             ViewFlag::Dimensions => "Dimensions and notes",
             ViewFlag::Relations => "Relations",
+            ViewFlag::Hidden => "Hidden annotations (faded)",
             ViewFlag::Free => "Free directions",
             ViewFlag::Ghosts => "Variant ghosts",
             ViewFlag::Combs => "Curvature combs",
@@ -108,6 +114,7 @@ impl ViewFlag {
             ViewFlag::Status => "Shift+C".into(),
             ViewFlag::Dimensions => "Alt+D".into(),
             ViewFlag::Relations => "Alt+R".into(),
+            ViewFlag::Hidden => "Alt+H".into(),
             _ => String::new(),
         }
     }
@@ -186,6 +193,7 @@ impl DriftApp {
             ViewFlag::Endpoints => &mut self.always_endpoints,
             ViewFlag::Dimensions => &mut self.show_dimensions,
             ViewFlag::Relations => &mut self.show_relations,
+            ViewFlag::Hidden => &mut self.show_hidden_annotations,
             ViewFlag::Free => &mut self.params.show_free,
             ViewFlag::Ghosts => &mut self.params.show_ghosts,
             ViewFlag::Combs => &mut self.show_combs,
@@ -239,6 +247,30 @@ impl DriftApp {
             "Edit",
             String::new(),
         );
+        for (f, title) in [
+            (crate::editor::PickFilter::Edges, "Select edges only"),
+            (crate::editor::PickFilter::Points, "Select points only"),
+            (
+                crate::editor::PickFilter::All,
+                "Select anything (no filter)",
+            ),
+        ] {
+            add(Command::PickFilter(f), title, "Edit", String::new());
+        }
+        if !self.picked_annotations().is_empty() {
+            add(
+                Command::HideAnnotations,
+                "Hide picked dimensions and notes on the canvas",
+                "Edit",
+                String::new(),
+            );
+            add(
+                Command::AnnotationsOffSheets,
+                "Leave picked dimensions and notes off sheets",
+                "Edit",
+                String::new(),
+            );
+        }
         add(Command::Cut, "Cut", "Edit", ctrl("X"));
         add(Command::Copy, "Copy", "Edit", ctrl("C"));
         add(Command::Paste, "Paste", "Edit", ctrl("V"));
@@ -415,6 +447,20 @@ impl DriftApp {
             }
             Command::SelectOverlapping => self.select_overlapping(now),
             Command::CheckSketch => self.open_sketch_check(),
+            Command::PickFilter(f) => {
+                if self.tool.kind() != ToolKind::Select {
+                    self.set_tool(ToolKind::Select);
+                }
+                self.set_pick_filter(f);
+            }
+            Command::HideAnnotations => {
+                let refs = self.picked_annotations();
+                self.set_annotations_shown(&refs, Some(false), None, now);
+            }
+            Command::AnnotationsOffSheets => {
+                let refs = self.picked_annotations();
+                self.set_annotations_shown(&refs, None, Some(false), now);
+            }
             Command::Cut => self.cut(ctx),
             Command::Copy => self.copy(ctx),
             Command::Paste => self.paste_copied(false, now),

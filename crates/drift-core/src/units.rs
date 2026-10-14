@@ -115,6 +115,8 @@ pub enum LengthFormat {
     Foot,
     /// Feet and inches with fractions (architectural).
     Architectural,
+    /// Inches with fractions, however long (`35 1/2"`, `108"`): millwork and shop drawings.
+    FractionalInch,
 }
 
 impl LengthFormat {
@@ -123,11 +125,20 @@ impl LengthFormat {
         LengthFormat::Centimetre,
         LengthFormat::Metre,
     ];
-    pub const IMPERIAL: [LengthFormat; 3] = [
+    pub const IMPERIAL: [LengthFormat; 4] = [
         LengthFormat::Inch,
+        LengthFormat::FractionalInch,
         LengthFormat::Foot,
         LengthFormat::Architectural,
     ];
+
+    /// Shown in fractions of an inch (rounded to [`Units::fraction`]).
+    pub fn is_fractional(self) -> bool {
+        matches!(
+            self,
+            LengthFormat::Architectural | LengthFormat::FractionalInch
+        )
+    }
 
     pub fn is_metric(self) -> bool {
         Self::METRIC.contains(&self)
@@ -139,7 +150,9 @@ impl LengthFormat {
             LengthFormat::Millimetre => 1.0,
             LengthFormat::Centimetre => 10.0,
             LengthFormat::Metre => 1000.0,
-            LengthFormat::Inch | LengthFormat::Architectural => MM_PER_INCH,
+            LengthFormat::Inch | LengthFormat::Architectural | LengthFormat::FractionalInch => {
+                MM_PER_INCH
+            }
             LengthFormat::Foot => 12.0 * MM_PER_INCH,
         }
     }
@@ -150,7 +163,7 @@ impl LengthFormat {
             LengthFormat::Millimetre => "mm",
             LengthFormat::Centimetre => "cm",
             LengthFormat::Metre => "m",
-            LengthFormat::Inch | LengthFormat::Architectural => "in",
+            LengthFormat::Inch | LengthFormat::Architectural | LengthFormat::FractionalInch => "in",
             LengthFormat::Foot => "ft",
         }
     }
@@ -163,6 +176,7 @@ impl LengthFormat {
             LengthFormat::Inch => "Decimal inches",
             LengthFormat::Foot => "Decimal feet",
             LengthFormat::Architectural => "Feet-inches (fractions)",
+            LengthFormat::FractionalInch => "Inches (fractions)",
         }
     }
 }
@@ -173,7 +187,7 @@ pub struct Units {
     pub length: LengthFormat,
     /// Decimal places for decimal formats (trailing zeros are trimmed on dimensions).
     pub decimals: u8,
-    /// Architectural fractions are rounded to 1/`fraction` inch (a power of two, 2–64).
+    /// Fractions of an inch are rounded to 1/`fraction` (a power of two, 2–64).
     pub fraction: u16,
     /// Architectural: show `0'-6"` rather than `6"`.
     pub zero_feet: bool,
@@ -213,6 +227,7 @@ impl Units {
     pub fn format_length(&self, mm: f64) -> String {
         match self.length {
             LengthFormat::Architectural => self.feet_inches(mm),
+            LengthFormat::FractionalInch => self.fraction_inches(mm, false),
             f => {
                 let v = trim(&format!(
                     "{:.*}",
@@ -232,6 +247,7 @@ impl Units {
     pub fn format_readout(&self, mm: f64) -> String {
         match self.length {
             LengthFormat::Architectural => self.feet_inches(mm),
+            LengthFormat::FractionalInch => self.fraction_inches(mm, false),
             f => {
                 let d = usize::from(self.decimals.max(1)) + 1;
                 let v = format!("{:.*}", d, mm / f.mm_per_unit() + 0.0);
@@ -247,7 +263,7 @@ impl Units {
     /// True if [`format_length`](Self::format_length) shows `mm` without rounding.
     pub fn is_exact(&self, mm: f64) -> bool {
         let shown = match self.length {
-            LengthFormat::Architectural => {
+            LengthFormat::Architectural | LengthFormat::FractionalInch => {
                 let n = (mm / MM_PER_INCH * f64::from(self.fraction)).round();
                 n / f64::from(self.fraction) * MM_PER_INCH
             }
@@ -265,7 +281,7 @@ impl Units {
             LengthFormat::Millimetre => (1.0, "mm²"),
             LengthFormat::Centimetre => (100.0, "cm²"),
             LengthFormat::Metre => (1e6, "m²"),
-            LengthFormat::Inch => (MM_PER_INCH * MM_PER_INCH, "in²"),
+            LengthFormat::Inch | LengthFormat::FractionalInch => (MM_PER_INCH * MM_PER_INCH, "in²"),
             LengthFormat::Foot => (144.0 * MM_PER_INCH * MM_PER_INCH, "ft²"),
             LengthFormat::Architectural => {
                 let ft2 = 144.0 * MM_PER_INCH * MM_PER_INCH;
@@ -316,12 +332,21 @@ impl Units {
     }
 
     fn feet_inches(&self, mm: f64) -> String {
+        self.fraction_inches(mm, true)
+    }
+
+    /// Inches and a fraction (`35 1/2"`), with whole feet split off (`2'-11 1/2"`) when
+    /// `feet`.
+    fn fraction_inches(&self, mm: f64, feet: bool) -> String {
         let den = i64::from(self.fraction.max(1));
         let n = (mm / MM_PER_INCH * den as f64).round() as i64;
         let sign = if n < 0 { "-" } else { "" };
         let n = n.abs();
-        let feet = n / (12 * den);
-        let rest = n % (12 * den);
+        let (whole_feet, rest) = if feet {
+            (n / (12 * den), n % (12 * den))
+        } else {
+            (0, n)
+        };
         let inches = rest / den;
         let mut num = rest % den;
         let mut d = den;
@@ -332,11 +357,11 @@ impl Units {
         }
         let inch_part = match (inches, num) {
             (i, 0) => format!("{i}\""),
-            (0, f) if feet == 0 => format!("{f}/{d}\""),
+            (0, f) if whole_feet == 0 => format!("{f}/{d}\""),
             (i, f) => format!("{i} {f}/{d}\""),
         };
-        if feet > 0 || self.zero_feet {
-            format!("{sign}{feet}'-{inch_part}")
+        if feet && (whole_feet > 0 || self.zero_feet) {
+            format!("{sign}{whole_feet}'-{inch_part}")
         } else {
             format!("{sign}{inch_part}")
         }
@@ -409,6 +434,28 @@ mod tests {
         // A metric value shown in fractions is rounded.
         assert!(!u.is_exact(10.0));
         assert!(u.is_exact(inches(6.5)));
+    }
+
+    #[test]
+    fn fractional_inch_formats() {
+        let u = Units {
+            length: LengthFormat::FractionalInch,
+            ..Units::default()
+        };
+        let inches = |i: f64| i * MM_PER_INCH;
+        // However long, in inches: no feet.
+        assert_eq!(u.format_length(inches(35.5)), "35 1/2\"");
+        assert_eq!(u.format_length(inches(108.0)), "108\"");
+        assert_eq!(u.format_length(inches(0.375)), "3/8\"");
+        assert_eq!(u.format_length(inches(-6.5)), "-6 1/2\"");
+        assert_eq!(u.format_readout(inches(12.0625)), "12 1/16\"");
+        // Rounded to the chosen fraction, and said to be when it isn't exact.
+        let eighths = Units { fraction: 8, ..u };
+        assert_eq!(eighths.format_length(inches(35.53)), "35 1/2\"");
+        assert!(!eighths.is_exact(inches(35.53)) && eighths.is_exact(inches(35.5)));
+        assert_eq!(u.format_area(inches(10.0) * inches(12.0)), "120 in²");
+        assert!(LengthFormat::FractionalInch.is_fractional() && !u.length.is_metric());
+        assert_eq!(u.length.mm_per_unit(), MM_PER_INCH);
     }
 
     #[test]

@@ -121,6 +121,10 @@ struct DimensionEdit {
     text: String,
     /// Focus (and select all) on the next frame.
     focus: bool,
+    /// With the text around the value (before, after, the chips): when a dimension is
+    /// opened to edit it, not when it opens just placed (where it would cover the next pick
+    /// of a chain).
+    extras: bool,
 }
 
 /// Numbers being typed into the active drawing tool.
@@ -289,11 +293,19 @@ pub struct DriftApp {
     /// The previewed page, as of a document revision.
     preview_cache: Option<(u64, drift_core::SheetId, drift_draft::page::Drawing)>,
     view_drag: Option<app::sheets_ui::ViewDrag>,
+    /// The lines a view being dragged has snapped to.
+    view_guides: Vec<app::view_align::AlignGuide>,
+    /// The view the picked one is aligned with (the Views section's "Align with").
+    align_with: Option<usize>,
     /// The view picked on the current sheet, and a change to its views to make.
     sheet_view: usize,
     pending_view: Option<app::sheets_ui::ViewAction>,
     /// The report of the last import, until it is closed.
     import_report: Option<app::sheets_ui::ImportSummary>,
+    /// Dimensions and annotations hidden on the canvas are drawn (faded) and can be picked.
+    show_hidden_annotations: bool,
+    /// Dimensions and annotations picked with Shift as well as the picked one.
+    annotation_picks: Vec<drift_core::AnnotationRef>,
     /// The Check sketch window, while it is open.
     sketch_check: Option<app::checker_ui::SketchCheck>,
     /// How far apart two ends may be for the sketch checker to take them as meant to meet
@@ -432,10 +444,14 @@ impl DriftApp {
             preview: Default::default(),
             preview_cache: None,
             view_drag: None,
+            view_guides: Vec::new(),
+            align_with: None,
             sheet_view: 0,
             pending_view: None,
             import_report: None,
             sketch_check: None,
+            show_hidden_annotations: false,
+            annotation_picks: Vec::new(),
             gap_tolerance: crate::checker::DEFAULT_TOLERANCE,
             new_block_name: String::new(),
             show_combs: true,

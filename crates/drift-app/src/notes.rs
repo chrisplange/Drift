@@ -154,9 +154,10 @@ pub fn centre_items(
     doc: &Document,
     selected: Option<AnnotationId>,
     hovered: Option<AnnotationId>,
+    shown: &dyn Fn(AnnotationId) -> bool,
 ) -> Vec<SketchItem> {
     let mut out = Vec::new();
-    for (id, a) in doc.annotations() {
+    for (id, a) in doc.annotations().filter(|(id, _)| shown(*id)) {
         let emphasis = if selected == Some(id) {
             Emphasis::Selected
         } else if hovered == Some(id) {

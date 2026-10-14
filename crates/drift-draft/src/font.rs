@@ -126,7 +126,7 @@ impl Face {
 }
 
 /// The drawing's font: a regular face, and a bold one where the family has one (otherwise
-/// bold is the regular face thickened).
+/// bold is set in the regular face).
 #[derive(Clone, Debug, PartialEq)]
 pub struct DrawingFont {
     pub regular: Face,
@@ -134,12 +134,13 @@ pub struct DrawingFont {
 }
 
 impl DrawingFont {
-    /// The face for a weight, and whether bold has to be faked by thickening it.
-    pub fn face(&self, bold: bool) -> (&Face, bool) {
+    /// The face for a weight. Without a bold face, bold text is set in the regular one:
+    /// bold isn't faked by stroking the outlines (a variable font, such as Bahnschrift, has
+    /// its weights inside one face, and a stroke reads as a smudge).
+    pub fn face(&self, bold: bool) -> &Face {
         match (&self.bold, bold) {
-            (Some(b), true) => (b, false),
-            (None, true) => (&self.regular, true),
-            (_, false) => (&self.regular, false),
+            (Some(b), true) => b,
+            _ => &self.regular,
         }
     }
 }
@@ -211,8 +212,8 @@ mod tests {
             "a different font, a different width"
         );
         assert_eq!(cap_ratio(), font.regular.cap_ratio());
-        // Without a bold face, bold is the regular face (thickened when drawn).
-        assert!(font.face(true).1);
+        // Without a bold face, bold is the regular face, as it is.
+        assert!(std::ptr::eq(font.face(true), &font.regular));
         assert_eq!(
             styled_width("Rev", 3.0, TextStyle::BOLD),
             font.regular.width("Rev", 3.0, 0.0)

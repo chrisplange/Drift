@@ -90,6 +90,21 @@ impl AnnotationColors {
         }
     }
 
+    /// The same colours, faded: for dimensions and annotations hidden on the canvas, while
+    /// hidden ones are shown.
+    pub fn faded(&self) -> Self {
+        let f = |c: Color32| c.gamma_multiply(0.4);
+        Self {
+            normal: f(self.normal),
+            hovered: f(self.hovered),
+            selected: f(self.selected),
+            conflict: f(self.conflict),
+            preview: f(self.preview),
+            driven: f(self.driven),
+            ..*self
+        }
+    }
+
     fn color(&self, state: AnnotationState) -> Color32 {
         match state {
             AnnotationState::Normal => self.normal,
@@ -345,13 +360,14 @@ impl Default for DimStyle {
     }
 }
 
-/// A dimension's text: the main part, an optional stacked pair (deviations or limits) and a
-/// trailing part.
+/// A dimension's text: the main part, an optional stacked pair (deviations or limits), a
+/// trailing part, and a line under the dimension line.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct DimText {
     pub before: String,
     pub stack: Option<(String, String)>,
     pub after: String,
+    pub below: String,
 }
 
 impl DimText {
@@ -471,6 +487,12 @@ pub fn dimension_label(doc: &Document, id: Option<ConstraintId>, c: &Constraint)
         ""
     };
     let mut text = match &note.tolerance {
+        // Text instead of the value (`EQ`): no tolerance or alternate units, which are of
+        // the value.
+        _ if !note.text.is_empty() => DimText {
+            before: format!("{mark}{prefix}{}{suffix}", note.text),
+            ..Default::default()
+        },
         Tolerance::None => DimText {
             before: format!("{mark}{prefix}{main}{suffix}{alt}"),
             ..Default::default()
@@ -487,6 +509,7 @@ pub fn dimension_label(doc: &Document, id: Option<ConstraintId>, c: &Constraint)
             before: format!("{mark}{prefix}{main}"),
             stack: Some((signed(*upper), signed(-*lower))),
             after: format!("{suffix}{alt}"),
+            ..Default::default()
         },
         Tolerance::Limits { upper, lower } => {
             let sign = match c {
@@ -498,6 +521,7 @@ pub fn dimension_label(doc: &Document, id: Option<ConstraintId>, c: &Constraint)
                 before: format!("{mark}{prefix}{sign}"),
                 stack: Some((fmt(value + upper), fmt(value - lower))),
                 after: format!("{suffix}{alt}"),
+                ..Default::default()
             }
         }
     };
@@ -505,6 +529,7 @@ pub fn dimension_label(doc: &Document, id: Option<ConstraintId>, c: &Constraint)
         text.before = format!("({}", text.before);
         text.after = format!("{})", text.after);
     }
+    text.below = note.below;
     text
 }
 
@@ -517,12 +542,23 @@ fn dir(a: Pos2, b: Pos2) -> Vec2 {
     }
 }
 
-/// Galleys of a dimension label, laid out in its own (unrotated) frame.
+/// Galleys of a dimension label, laid out in its own (unrotated) frame: the value's row,
+/// and under it the `below` line, `gap` lower.
 struct LabelGalleys {
     before: std::sync::Arc<egui::Galley>,
     stack: Option<[std::sync::Arc<egui::Galley>; 2]>,
     after: std::sync::Arc<egui::Galley>,
+    below: Option<std::sync::Arc<egui::Galley>>,
+    /// The value's row: its width and height.
+    row: Vec2,
+    gap: f32,
     size: Vec2,
+}
+
+/// The gap between a label's row and its `below` line: room for the dimension line to run
+/// between them where the text sits above the line (ISO), else a little space.
+fn below_gap(straddles: bool) -> f32 {
+    if straddles { 3.0 } else { 1.0 }
 }
 
 fn label_galleys(
@@ -530,6 +566,7 @@ fn label_galleys(
     text: &DimText,
     font: f32,
     color: Color32,
+    straddles: bool,
 ) -> LabelGalleys {
     let main = crate::fonts::drafting_font(font, false);
     let small = crate::fonts::drafting_font(font * 0.72, false);
@@ -548,11 +585,21 @@ fn label_galleys(
         .size()
         .y
         .max(stack.as_ref().map_or(0.0, |[u, l]| u.size().y + l.size().y));
-    let size = vec2(before.size().x + stack_w + after.size().x, height);
+    let row = vec2(before.size().x + stack_w + after.size().x, height);
+    let below = (!text.below.is_empty())
+        .then(|| painter.layout_no_wrap(text.below.clone(), small.clone(), color));
+    let gap = below_gap(straddles);
+    let size = match &below {
+        Some(b) => vec2(row.x.max(b.size().x), row.y + gap + b.size().y),
+        None => row,
+    };
     LabelGalleys {
         before,
         stack,
         after,
+        below,
+        row,
+        gap,
         size,
     }
 }
@@ -756,9 +803,11 @@ fn paint_label(
         let pos = center + rot * (origin + local);
         pen.text(pos, galley.clone(), angle, color);
     };
-    let mid = g.size.y / 2.0;
-    place(&g.before, vec2(0.0, mid - g.before.size().y / 2.0));
-    let mut x = g.before.size().x;
+    // The row, centred across the label; the line under it, too.
+    let mid = g.row.y / 2.0;
+    let left = (g.size.x - g.row.x) / 2.0;
+    place(&g.before, vec2(left, mid - g.before.size().y / 2.0));
+    let mut x = left + g.before.size().x;
     if let Some([u, l]) = &g.stack {
         let top = mid - (u.size().y + l.size().y) / 2.0;
         place(u, vec2(x + 2.0, top));
@@ -766,6 +815,9 @@ fn paint_label(
         x += u.size().x.max(l.size().x) + 3.0;
     }
     place(&g.after, vec2(x, mid - g.after.size().y / 2.0));
+    if let Some(b) = &g.below {
+        place(b, vec2((g.size.x - b.size().x) / 2.0, g.row.y + g.gap));
+    }
 }
 
 /// Readable text direction along `u`: never upside down (vertical reads bottom to top).
@@ -943,7 +995,8 @@ pub fn layout_dimension(
     };
     let driven = id.is_some_and(|id| doc.is_driven(id));
     let text = dimension_label(doc, id, c);
-    let galleys = label_galleys(painter, &text, style.text, Color32::WHITE);
+    let straddles = matches!(shape, DimShape::Linear { .. }) && style.aligned;
+    let galleys = label_galleys(painter, &text, style.text, Color32::WHITE, straddles);
     let text_pos = match &shape {
         DimShape::Linear { d, .. } => {
             let u = dir(d[0], d[1]);
@@ -968,7 +1021,11 @@ pub fn layout_dimension(
         DimShape::Linear { d, .. } if style.aligned => {
             let angle = reading_angle(dir(d[0], d[1]));
             let up = egui::emath::Rot2::from_angle(angle) * vec2(0.0, -1.0);
-            (text_pos + up * (galleys.size.y / 2.0 + 1.5), angle)
+            // The row's foot just above the line (and a `below` line just under it).
+            (
+                text_pos + up * (galleys.row.y + 1.5 - galleys.size.y / 2.0),
+                angle,
+            )
         }
         _ => (text_pos, 0.0),
     };
@@ -1108,7 +1165,8 @@ pub fn paint_dimension(
             }
         }
     }
-    let galleys = label_galleys(pen.painter(), &dim.label, style.text, color);
+    let straddles = matches!(dim.shape, DimShape::Linear { .. }) && style.aligned;
+    let galleys = label_galleys(pen.painter(), &dim.label, style.text, color, straddles);
     paint_label(
         pen,
         dim.text_pos,
@@ -1474,6 +1532,7 @@ mod tests {
             prefix: prefix.into(),
             suffix: suffix.into(),
             tolerance,
+            ..Default::default()
         };
         doc.set_dim_note(dia, Some(note("4×", "THRU", Tolerance::None)));
         assert_eq!(label(&doc, dia).plain(), "4× Ø6 THRU");
@@ -1507,6 +1566,31 @@ mod tests {
             )),
         );
         assert_eq!(label(&doc, len).stack, Some(("25.2".into(), "24.9".into())));
+        // A line under the dimension line, and text in place of the value (no tolerance,
+        // which is of the value).
+        doc.set_dim_note(
+            len,
+            Some(DimNote {
+                suffix: "TYP".into(),
+                tolerance: Tolerance::Symmetric(0.1),
+                below: "TO FACE OF STUD".into(),
+                ..Default::default()
+            }),
+        );
+        let t = label(&doc, len);
+        assert_eq!(
+            (t.plain().as_str(), t.below.as_str()),
+            ("25 ±0.1 TYP", "TO FACE OF STUD")
+        );
+        doc.set_dim_note(
+            len,
+            Some(DimNote {
+                text: "EQ".into(),
+                tolerance: Tolerance::Symmetric(0.1),
+                ..Default::default()
+            }),
+        );
+        assert_eq!(label(&doc, len).plain(), "EQ");
         doc.set_dim_note(len, None);
         let mut style = doc.draft_style();
         style.alt_units = Some(LengthFormat::Inch);

@@ -40,6 +40,9 @@ impl DriftApp {
             return Vec::new();
         }
         notes::layout_annotations(painter, &self.editor.doc, map)
+            .into_iter()
+            .filter(|l| self.on_canvas(drift_core::AnnotationRef::Annotation(l.id)))
+            .collect()
     }
 
     /// Hover, pick, drag and double-click annotations. Dimensions and relation glyphs under
@@ -113,11 +116,16 @@ impl DriftApp {
         }
         if response.clicked_by(PointerButton::Primary) {
             if let Some(id) = at.and_then(note_at) {
-                self.editor.selected_annotation = Some(id);
+                if crate::app::visibility_ui::shift_click(ui) {
+                    self.toggle_annotation_pick(drift_core::AnnotationRef::Annotation(id));
+                } else {
+                    self.annotation_picks.clear();
+                    self.editor.selected_annotation = Some(id);
+                    self.selected_constraint = None;
+                }
                 self.editor.selection.clear();
                 self.editor.selected_fills.clear();
                 self.editor.selected_region = None;
-                self.selected_constraint = None;
                 return true;
             }
             self.editor.selected_annotation = None;
@@ -128,13 +136,14 @@ impl DriftApp {
     pub(crate) fn paint_notes(&self, painter: &egui::Painter, layouts: &[NoteLayout], dark: bool) {
         let draft = self.editor.doc.draft_style();
         let colors = AnnotationColors::drafting(dark, draft.color);
+        let faded = colors.faded();
         let style = annotations::DimStyle::of(&draft);
         for l in layouts {
             if self.note_edit.as_ref().is_some_and(|e| e.id == l.id) {
                 continue;
             }
-            let state = if self.editor.selected_annotation == Some(l.id)
-                || self.note_drag.is_some_and(|d| d.0 == l.id)
+            let r = drift_core::AnnotationRef::Annotation(l.id);
+            let state = if self.annotation_picked(r) || self.note_drag.is_some_and(|d| d.0 == l.id)
             {
                 AnnotationState::Selected
             } else if self.editor.hovered_annotation == Some(l.id) {
@@ -142,7 +151,14 @@ impl DriftApp {
             } else {
                 AnnotationState::Normal
             };
-            notes::paint_annotation(painter, l, state, &colors, &style);
+            let shown = self.editor.doc.shown(r);
+            let look = if shown.canvas { &colors } else { &faded };
+            notes::paint_annotation(painter, l, state, look, &style);
+            if !shown.sheets
+                && let Some(at) = crate::app::visibility_ui::note_badge_at(l)
+            {
+                Self::paint_off_sheets_badge(painter, at, look.normal);
+            }
         }
     }
 
@@ -456,6 +472,7 @@ impl DriftApp {
             let _ = self.editor.doc.set_annotation(id, edited);
             self.editor.commit("Edit note");
         }
+        self.visibility_section(ui);
         ui.add_space(10.0);
         if ui
             .add_sized(

@@ -2790,7 +2790,7 @@ fn modern_sheet_layout() {
     narrow.paper = drift_core::PaperSize::A4;
     narrow.portrait = true;
     let bounds = h.state().fit_bounds();
-    crate::output::fit_sheet(bounds, &mut narrow);
+    crate::output::fit_sheet(bounds, &mut narrow, false);
     h.state_mut().update_sheet(id, narrow, false);
     h.run();
     std::fs::write(
@@ -3345,9 +3345,10 @@ fn a_sheet_holds_several_views() {
         Some((0, ViewGrip::Pan))
     );
 
-    // Drag the detail 30 mm to the left on the paper.
+    // Drag the detail 30 mm to the left on the paper (Ctrl held: freely, not snapping).
     let from = inside;
     let to = inside - egui::vec2((30.0 * zoom) as f32, 0.0);
+    h.event(Event::ModifiersChanged(EguiModifiers::COMMAND));
     h.hover_at(from);
     h.run();
     button(&h, from, true);
@@ -3357,6 +3358,8 @@ fn a_sheet_holds_several_views() {
         h.run();
     }
     button(&h, to, false);
+    h.run();
+    h.event(Event::ModifiersChanged(EguiModifiers::NONE));
     h.run();
     let moved = sheet(&h).views[1].clone();
     let at = moved.frame.unwrap().at;
@@ -4579,4 +4582,659 @@ fn r_turns_a_picked_text_about_its_anchor() {
     );
     h.state_mut().undo();
     assert_eq!(h.state().editor.doc.text(id).unwrap().angle, 0.0);
+}
+
+#[test]
+fn dimensions_hide_leave_sheets_and_take_text() {
+    use drift_core::{AnnotationRef, Constraint};
+    let Some(mut h) = harness() else { return };
+    // A 40 × 24 rectangle with its width and height dimensioned.
+    let (width, height) = {
+        let ed = &mut h.state_mut().editor;
+        ed.doc.begin();
+        let p = [
+            DVec2::new(-20.0, -12.0),
+            DVec2::new(20.0, -12.0),
+            DVec2::new(20.0, 12.0),
+            DVec2::new(-20.0, 12.0),
+        ]
+        .map(|at| ed.doc.add_point(at));
+        for i in 0..4 {
+            ed.doc.add_line(p[i], p[(i + 1) % 4]).unwrap();
+        }
+        ed.commit("Setup");
+        let w = ed
+            .add_dimension(
+                Constraint::HorizontalDistance {
+                    a: p[0],
+                    b: p[1],
+                    value: 40.0,
+                },
+                Some(DVec2::new(0.0, -10.0)),
+            )
+            .unwrap();
+        let ht = ed
+            .add_dimension(
+                Constraint::VerticalDistance {
+                    a: p[1],
+                    b: p[2],
+                    value: 24.0,
+                },
+                Some(DVec2::new(10.0, 0.0)),
+            )
+            .unwrap();
+        (w, ht)
+    };
+    h.run();
+    let painter = |h: &Harness<'_, DriftApp>| {
+        egui::Painter::new(
+            h.ctx.clone(),
+            egui::LayerId::background(),
+            h.state().canvas_rect,
+        )
+    };
+    let laid_out = |h: &Harness<'_, DriftApp>| -> Vec<drift_core::ConstraintId> {
+        h.state()
+            .layout_dimensions(&painter(h), &screen_map(h))
+            .iter()
+            .filter_map(|d| d.id)
+            .collect()
+    };
+    let dim_text = |h: &Harness<'_, DriftApp>, id| {
+        h.state()
+            .layout_dimensions(&painter(h), &screen_map(h))
+            .into_iter()
+            .find(|d| d.id == Some(id))
+            .unwrap()
+            .text_rect
+            .center()
+    };
+    let on_sheets = |h: &mut Harness<'_, DriftApp>| -> Vec<String> {
+        let p = painter(h);
+        let app = h.state_mut();
+        let d = crate::output::model_drawing(&mut app.editor, &app.hatch_patterns, &p);
+        d.items
+            .iter()
+            .filter_map(|i| match &i.prim {
+                drift_draft::page::Prim::Text { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .collect()
+    };
+    assert_eq!(laid_out(&h).len(), 2);
+
+    // Pick the width: the inspector has Driven, and Show.
+    let at = dim_text(&h, width);
+    h.hover_at(at);
+    h.run();
+    button(&h, at, true);
+    h.run();
+    button(&h, at, false);
+    h.run();
+    assert_eq!(h.state().selected_constraint, Some(width));
+    h.get_by_label("Driven (reference)").click();
+    h.run();
+    assert!(h.state().editor.doc.is_driven(width));
+    h.get_by_label("Driven (reference)").click();
+    h.run();
+    assert!(!h.state().editor.doc.is_driven(width), "driving again");
+
+    // Off sheets: still on the canvas, gone from output.
+    assert!(on_sheets(&mut h).iter().any(|t| t.contains("40")));
+    h.get_by_label("On sheets, in print and export").click();
+    h.run();
+    assert!(
+        !h.state()
+            .editor
+            .doc
+            .shown(AnnotationRef::Dimension(width))
+            .sheets
+    );
+    assert_eq!(laid_out(&h).len(), 2);
+    let texts = on_sheets(&mut h);
+    assert!(!texts.iter().any(|t| t.contains("40")) && texts.iter().any(|t| t.contains("24")));
+
+    // Hidden on the canvas: not drawn or pickable; Alt+H shows it, faded, to pick again.
+    h.get_by_label("On the canvas").click();
+    h.run();
+    assert_eq!(laid_out(&h), vec![height]);
+    assert!(
+        h.query_by_label("1 hidden").is_some(),
+        "the status bar counts it"
+    );
+    save_png("drift_ui_dimension_hidden.png", &mut h);
+    h.key_press_modifiers(EguiModifiers::ALT, Key::H);
+    h.run();
+    assert!(h.state().show_hidden_annotations);
+    assert_eq!(laid_out(&h).len(), 2);
+    save_png("drift_ui_dimension_hidden_shown.png", &mut h);
+    // It still holds: the width can't be dragged out of 40.
+    let x = h.state().editor.doc.constraint(width).unwrap().value();
+    assert_eq!(x, Some(40.0));
+    // Undo brings it back.
+    h.state_mut().undo();
+    h.state_mut().undo();
+    assert!(
+        h.state()
+            .editor
+            .doc
+            .shown(AnnotationRef::Dimension(width))
+            .is_default()
+    );
+
+    // Shift+click picks both; hiding applies to both. (The message about hiding has faded.)
+    h.state_mut().status = None;
+    let (a, b) = (dim_text(&h, width), dim_text(&h, height));
+    h.hover_at(a);
+    h.run();
+    button(&h, a, true);
+    h.run();
+    button(&h, a, false);
+    h.run();
+    h.hover_at(b);
+    h.run();
+    h.event_modifiers(
+        Event::PointerButton {
+            pos: b,
+            button: PointerButton::Primary,
+            pressed: true,
+            modifiers: EguiModifiers::SHIFT,
+        },
+        EguiModifiers::SHIFT,
+    );
+    // (One frame: the harness's frames are a quarter of a second, and a press held much
+    // longer is no click.)
+    h.step();
+    h.event_modifiers(
+        Event::PointerButton {
+            pos: b,
+            button: PointerButton::Primary,
+            pressed: false,
+            modifiers: EguiModifiers::SHIFT,
+        },
+        EguiModifiers::SHIFT,
+    );
+    h.run();
+    assert_eq!(h.state().picked_annotations().len(), 2);
+    assert!(h.query_by_label_contains("For the 2 picked").is_some());
+    h.get_by_label("On the canvas").click();
+    h.run();
+    let doc = &h.state().editor.doc;
+    assert!(!doc.shown(AnnotationRef::Dimension(width)).canvas);
+    assert!(!doc.shown(AnnotationRef::Dimension(height)).canvas);
+    h.state_mut().undo();
+    h.state_mut().show_hidden_annotations = false;
+    h.state_mut().status = None;
+    h.run();
+
+    // Double-click the value: TYP and EQ are a click away; the line under is in the
+    // inspector.
+    h.ctx
+        .options_mut(|o| o.input_options.max_double_click_delay = 0.6);
+    let at = dim_text(&h, width);
+    h.hover_at(at);
+    h.run();
+    for _ in 0..2 {
+        button(&h, at, true);
+        h.step();
+        button(&h, at, false);
+        h.step();
+    }
+    h.run();
+    assert!(h.state().dimension_edit.is_some());
+    // (The inspector has the same chips: this one is by the dimension.)
+    h.get_all_by_label("TYP")
+        .min_by(|p, q| {
+            let d = |n: &egui_kittest::Node<'_>| n.rect().center().distance(at);
+            d(p).total_cmp(&d(q))
+        })
+        .unwrap()
+        .click();
+    h.run();
+    assert_eq!(h.state().editor.doc.dim_note(width).unwrap().suffix, "TYP");
+    assert!(h.state().dimension_edit.is_some(), "still open");
+    save_png("drift_ui_dimension_chips.png", &mut h);
+    h.key_press(Key::Escape);
+    h.run();
+    h.run();
+    assert!(h.state().dimension_edit.is_none());
+    let label = |h: &Harness<'_, DriftApp>| {
+        h.state()
+            .layout_dimensions(&painter(h), &screen_map(h))
+            .into_iter()
+            .find(|d| d.id == Some(width))
+            .unwrap()
+            .label
+    };
+    assert_eq!(label(&h).plain(), "40 TYP");
+    let mut note = h.state().editor.doc.dim_note(width).cloned().unwrap();
+    note.text = "EQ".into();
+    note.below = "TO FACE OF STUD".into();
+    let ed = &mut h.state_mut().editor;
+    ed.doc.begin();
+    ed.doc.set_dim_note(width, Some(note));
+    ed.commit("Text");
+    h.run();
+    let l = label(&h);
+    assert_eq!(
+        (l.plain().as_str(), l.below.as_str()),
+        ("EQ TYP", "TO FACE OF STUD")
+    );
+    let texts = on_sheets(&mut h);
+    assert!(texts.iter().any(|t| t == "TO FACE OF STUD"), "{texts:?}");
+    save_png("drift_ui_dimension_text_below.png", &mut h);
+
+    // Notes too: hidden on the canvas they aren't laid out; off sheets they aren't output.
+    let note = {
+        let ed = &mut h.state_mut().editor;
+        ed.doc.begin();
+        let id = ed
+            .doc
+            .add_annotation(drift_core::Annotation::Note {
+                text: "SEE DETAIL".into(),
+                at: DVec2::new(30.0, 20.0),
+                leader: None,
+            })
+            .unwrap();
+        ed.commit("Note");
+        id
+    };
+    h.run();
+    let notes =
+        |h: &Harness<'_, DriftApp>| h.state().layout_notes(&painter(h), &screen_map(h)).len();
+    assert_eq!(notes(&h), 1);
+    assert!(on_sheets(&mut h).iter().any(|t| t == "SEE DETAIL"));
+    let r = AnnotationRef::Annotation(note);
+    h.state_mut()
+        .set_annotations_shown(&[r], Some(false), Some(false), 0.0);
+    h.state_mut().status = None;
+    h.run();
+    assert_eq!(notes(&h), 0);
+    assert!(!on_sheets(&mut h).iter().any(|t| t == "SEE DETAIL"));
+    // Saved and loaded as it is.
+    let saved = drift_io::save(&h.state().editor.doc, &Default::default());
+    let (loaded, _) = drift_io::load(&saved).unwrap();
+    assert!(!loaded.shown(r).canvas && !loaded.shown(r).sheets);
+}
+
+#[test]
+fn top_bar_switches_for_dimensions_selection_and_sheet_scales() {
+    let Some(mut h) = harness() else { return };
+    // The dimension tool's row mode and overall.
+    h.key_press(Key::D);
+    h.run();
+    h.get_by_label("Chain").click();
+    h.run();
+    assert_eq!(h.state().editor.dim_mode, crate::editor::DimMode::Chain);
+    h.get_by_label("Overall").click();
+    h.run();
+    assert!(h.state().editor.dim_overall);
+    save_png("drift_ui_dimension_chain_bar.png", &mut h);
+    // The select tool's filter.
+    h.key_press(Key::S);
+    h.run();
+    h.get_by_label("Edges").click();
+    h.run();
+    assert_eq!(
+        h.state().editor.pick_filter,
+        crate::editor::PickFilter::Edges
+    );
+    h.get_by_label("All").click();
+    h.run();
+    assert_eq!(h.state().editor.pick_filter, crate::editor::PickFilter::All);
+    // Sheet scales in feet and inches: the architectural ones, written as they are.
+    let mut units = h.state().editor.doc.units();
+    units.length = drift_core::LengthFormat::Architectural;
+    h.state_mut().editor.set_units(units);
+    let mut sheet = drift_core::Sheet::new("A-101");
+    sheet.views[0].scale = 48.0;
+    assert_eq!(sheet.scale_text(), "1/4\" = 1'-0\"");
+}
+
+#[test]
+fn tab_highlights_a_chain_and_a_click_picks_it() {
+    let Some(mut h) = harness() else { return };
+    // An L of two joined lines, and a line on its own.
+    let (l1, l2) = {
+        let ed = &mut h.state_mut().editor;
+        ed.doc.begin();
+        let p = [
+            DVec2::new(-20.0, 0.0),
+            DVec2::new(20.0, 0.0),
+            DVec2::new(20.0, 20.0),
+        ]
+        .map(|at| ed.doc.add_point(at));
+        let l1 = ed.doc.add_line(p[0], p[1]).unwrap();
+        let l2 = ed.doc.add_line(p[1], p[2]).unwrap();
+        let (a, b) = (
+            ed.doc.add_point(DVec2::new(-20.0, -20.0)),
+            ed.doc.add_point(DVec2::new(20.0, -20.0)),
+        );
+        ed.doc.add_line(a, b).unwrap();
+        ed.commit("Setup");
+        (l1, l2)
+    };
+    h.run();
+    let on = screen(&h, DVec2::new(-5.0, 0.0));
+    h.hover_at(on);
+    h.run();
+    // Tab: highlighted, not picked.
+    h.key_press(Key::Tab);
+    h.run();
+    assert!(h.state().editor.selection.is_empty());
+    let preview = h.state().editor.chain_preview.clone().expect("highlighted");
+    assert_eq!(preview.1, [l1, l2].into());
+    assert!(
+        h.ctx.memory(|m| m.focused()).is_none(),
+        "Tab didn't move to a button"
+    );
+    save_png("drift_ui_tab_chain.png", &mut h);
+    // Tab again: back to the one line.
+    h.key_press(Key::Tab);
+    h.run();
+    assert!(h.state().editor.chain_preview.is_none());
+    h.key_press(Key::Tab);
+    h.run();
+    // A click picks the chain.
+    button(&h, on, true);
+    h.run();
+    button(&h, on, false);
+    h.run();
+    assert_eq!(h.state().editor.selection, [l1, l2].into());
+    assert!(h.state().editor.chain_preview.is_none());
+    // Moving off the chain clears a highlight.
+    h.key_press(Key::Escape);
+    h.run();
+    h.state_mut().editor.selection.clear();
+    h.key_press(Key::Tab);
+    h.run();
+    assert!(h.state().editor.chain_preview.is_some());
+    h.hover_at(screen(&h, DVec2::new(0.0, 40.0)));
+    h.run();
+    assert!(h.state().editor.chain_preview.is_none());
+}
+
+/// Export a drawing's sheets to PDF and SVG, for looking at by hand:
+/// `DRIFT_FILE=path DRIFT_OUT=dir cargo test -p drift-app probe_export -- --ignored`.
+#[test]
+#[ignore]
+fn probe_export() {
+    let (Ok(path), Ok(out)) = (std::env::var("DRIFT_FILE"), std::env::var("DRIFT_OUT")) else {
+        return;
+    };
+    let Some(mut h) = harness() else { return };
+    let text = std::fs::read_to_string(&path).unwrap();
+    let (doc, meta) = drift_io::load(&text).unwrap();
+    h.state_mut()
+        .replace_document(doc, "probe".into(), None, meta, true);
+    h.run();
+    h.run();
+    let painter = egui::Painter::new(
+        h.ctx.clone(),
+        egui::LayerId::background(),
+        h.state().canvas_rect,
+    );
+    let pages = h.state_mut().pages(&painter);
+    let out = std::path::Path::new(&out);
+    std::fs::write(out.join("probe.pdf"), drift_io::pdf::write(&pages, "probe")).unwrap();
+    for (i, p) in pages.iter().enumerate() {
+        std::fs::write(out.join(format!("probe-{i}.svg")), drift_io::svg::write(p)).unwrap();
+    }
+    eprintln!("wrote {} page(s)", pages.len());
+}
+
+#[test]
+fn finding_a_font_keeps_the_menu_open_and_a_pick_closes_it() {
+    use egui::accesskit::Role;
+    let families = drift_platform::fonts::families();
+    let Some(family) = ["Arial", "Verdana", "DejaVu Sans", "Liberation Sans"]
+        .into_iter()
+        .find(|f| families.iter().any(|x| x == f))
+        .map(str::to_owned)
+    else {
+        eprintln!("no familiar system fonts here; skipping");
+        return;
+    };
+    let Some(mut h) = harness() else { return };
+    let id = {
+        let ed = &mut h.state_mut().editor;
+        ed.add_text(drift_core::SketchText::new("ROOM", DVec2::ZERO, 10.0))
+    };
+    h.run();
+    h.run();
+    // The inspector's Font menu: the combo box on the Font row.
+    let row = h.get_by_label("Font").rect().center().y;
+    h.get_all_by_role(Role::ComboBox)
+        .find(|c| (c.rect().center().y - row).abs() < 12.0)
+        .expect("the font menu")
+        .click();
+    h.run();
+    assert!(h.query_by_label("On this computer").is_some(), "open");
+    // Click into "Find a font…" and type: the menu stays open.
+    h.get_all_by_role(Role::TextInput)
+        .filter(|n| n.rect().center().y > row)
+        .min_by(|a, b| a.rect().top().total_cmp(&b.rect().top()))
+        .expect("the find field")
+        .click();
+    h.run();
+    assert!(
+        h.query_by_label("On this computer").is_some(),
+        "still open after the click"
+    );
+    h.event(Event::Text(family[..4].to_owned()));
+    h.run();
+    assert!(
+        h.query_by_label("On this computer").is_some(),
+        "still open while typing"
+    );
+    // A pick closes it.
+    h.get_all_by_label(&family)
+        .max_by(|a, b| a.rect().top().total_cmp(&b.rect().top()))
+        .expect("the family in the list")
+        .click();
+    h.run();
+    h.run();
+    assert!(
+        h.query_by_label("On this computer").is_none(),
+        "closed by the pick"
+    );
+    assert_eq!(
+        h.state().editor.doc.text(id).unwrap().font,
+        drift_core::TextFont::System(family)
+    );
+}
+
+#[test]
+fn sketch_text_goes_out_as_text() {
+    use drift_draft::page::Prim;
+    let Some(mut h) = harness() else { return };
+    {
+        let ed = &mut h.state_mut().editor;
+        let mut t = drift_core::SketchText::new("ROOM 101\nSee detail", DVec2::new(5.0, 5.0), 4.0);
+        t.align = drift_core::TextAlign::Center;
+        ed.add_text(t);
+    }
+    h.run();
+    let painter = egui::Painter::new(
+        h.ctx.clone(),
+        egui::LayerId::background(),
+        h.state().canvas_rect,
+    );
+    let app = h.state_mut();
+    let d = crate::output::model_drawing(&mut app.editor, &app.hatch_patterns, &painter);
+    // Two lines of text in the text's font, and no curves.
+    let texts: Vec<(String, f64, Option<drift_core::TextFont>)> = d
+        .items
+        .iter()
+        .filter_map(|i| match &i.prim {
+            Prim::Text {
+                text, height, font, ..
+            } => Some((text.clone(), *height, font.clone())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        texts,
+        vec![
+            ("ROOM 101".into(), 4.0, Some(drift_core::TextFont::Sans)),
+            ("See detail".into(), 4.0, Some(drift_core::TextFont::Sans)),
+        ]
+    );
+    assert!(
+        !d.items
+            .iter()
+            .any(|i| matches!(i.prim, Prim::Line(..) | Prim::Bezier { .. })),
+        "no outline curves"
+    );
+    // DXF: TEXT entities. SVG: text in its font. PDF: filled glyphs, never stroked.
+    let dxf = drift_io::dxf::write(&d, drift_io::dxf::DxfUnits::MM);
+    assert!(dxf.contains("ROOM 101") && dxf.contains("See detail"));
+    let svg = drift_io::svg::write(&d);
+    assert!(
+        svg.contains(">ROOM 101</text>") && svg.contains("'Ubuntu'"),
+        "{svg}"
+    );
+    let pdf = String::from_utf8_lossy(&drift_io::pdf::write(std::slice::from_ref(&d), "Text"))
+        .into_owned();
+    assert!(!pdf.contains(" B\n") && !pdf.contains("2 Tr"));
+}
+
+#[test]
+fn chain_dimensions_in_the_window() {
+    let Some(mut h) = harness() else { return };
+    // Four vertical walls along a floor, as in an elevation.
+    {
+        let ed = &mut h.state_mut().editor;
+        ed.doc.begin();
+        for x in [-30.0, -10.0, 15.0, 30.0] {
+            let a = ed.doc.add_point(DVec2::new(x, 0.0));
+            let b = ed.doc.add_point(DVec2::new(x, 20.0));
+            ed.doc.add_line(a, b).unwrap();
+        }
+        ed.commit("Setup");
+        // A filter left on in the select tool doesn't hold the dimension tool back.
+        ed.pick_filter = crate::editor::PickFilter::Edges;
+    }
+    h.run();
+    h.key_press(Key::D);
+    h.run();
+    h.get_by_label("Chain").click();
+    h.run();
+    let values = |h: &Harness<'_, DriftApp>| -> Vec<f64> {
+        h.state()
+            .editor
+            .doc
+            .constraints()
+            .filter_map(|(_, c)| c.value())
+            .collect()
+    };
+    // The first: two wall tops, placed above. Its value opens to type, alone: nothing
+    // around it covers the next wall.
+    click_world(&mut h, DVec2::new(-30.0, 20.0));
+    click_world(&mut h, DVec2::new(-10.0, 20.0));
+    click_world(&mut h, DVec2::new(-20.0, 26.0));
+    h.run();
+    assert!(h.state().dimension_edit.as_ref().is_some_and(|e| !e.extras));
+    assert!(
+        h.query_by_label("TYP").is_none(),
+        "no chips under a value just placed"
+    );
+    // Then each next wall along the row: a top, then a wall clicked partway up.
+    click_world(&mut h, DVec2::new(15.0, 20.0));
+    h.run();
+    click_world(&mut h, DVec2::new(30.0, 12.0));
+    h.run();
+    assert_eq!(values(&h), vec![20.0, 25.0, 15.0]);
+    save_png("drift_ui_chain_window.png", &mut h);
+}
+
+#[test]
+fn views_line_up_on_the_sheet() {
+    use drift_core::ViewFrame;
+    let Some(mut h) = harness() else { return };
+    h.get_by_label("File").click();
+    h.run();
+    h.get_by_label("Open example").click();
+    h.run();
+    h.state_mut().show_panel(Panel::Sheets);
+    h.run();
+    h.get_by_label("New sheet").click();
+    h.run();
+    h.run();
+    let id = h.state().current_sheet().expect("a sheet");
+    // Two framed elevations at the same scale, side by side and not level.
+    let mut s = h.state().editor.doc.sheet(id).cloned().unwrap();
+    let mut a = s.views[0].clone();
+    a.frame = Some(ViewFrame {
+        at: DVec2::new(130.0, 160.0),
+        size: DVec2::new(160.0, 120.0),
+    });
+    let mut b = a.clone();
+    b.name = "North".into();
+    b.center += DVec2::new(10.0, -7.0);
+    b.frame = Some(ViewFrame {
+        at: DVec2::new(320.0, 150.0),
+        size: DVec2::new(140.0, 100.0),
+    });
+    s.views = vec![a, b];
+    h.state_mut().editor.doc.begin();
+    h.state_mut().editor.doc.set_sheet(id, s);
+    h.state_mut().editor.commit("Views");
+    h.state_mut().sheet_view = 1;
+    h.state_mut().sheet_preview = true;
+    h.run();
+    h.run();
+    let offset = |h: &Harness<'_, DriftApp>, i: usize| {
+        let s = h.state().editor.doc.sheet(id).unwrap();
+        drift_draft::sheet::view_frame(s, &s.views[i]).center()
+            - s.views[i].center / s.views[i].scale
+    };
+    assert!(
+        (offset(&h, 0).y - offset(&h, 1).y).abs() > 0.1,
+        "not level yet"
+    );
+    // "Drawings level": the second's drawing moves to the first's height.
+    h.get_by_label("Drawings level").click();
+    h.run();
+    assert!((offset(&h, 0).y - offset(&h, 1).y).abs() < 1e-9);
+    // Top: the frames' tops level; one undo step each.
+    h.get_by_label("Top").click();
+    h.run();
+    let top = |h: &Harness<'_, DriftApp>, i: usize| {
+        let s = h.state().editor.doc.sheet(id).unwrap();
+        drift_draft::sheet::view_frame(s, &s.views[i]).max.y
+    };
+    assert!((top(&h, 0) - top(&h, 1)).abs() < 1e-9);
+    h.state_mut().undo();
+    assert!(
+        (offset(&h, 0).y - offset(&h, 1).y).abs() < 1e-9,
+        "back to level drawings"
+    );
+
+    // Dragging the second view a little off level snaps it back, with a guide.
+    let mid = {
+        let app = h.state();
+        let s = app.editor.doc.sheet(id).unwrap();
+        let f = drift_draft::sheet::view_frame(s, &s.views[1]);
+        let r = app.canvas_rect;
+        let d = (f.center() - app.preview.center) * f64::from(app.preview.zoom);
+        r.center() + egui::vec2(d.x as f32, -d.y as f32)
+    };
+    h.hover_at(mid);
+    h.run();
+    button(&h, mid, true);
+    h.run();
+    h.hover_at(mid + egui::vec2(10.0, 0.0));
+    h.run();
+    h.hover_at(mid + egui::vec2(25.0, 3.0));
+    h.run();
+    assert!(!h.state().view_guides.is_empty(), "a guide while snapped");
+    save_png("drift_ui_view_guides.png", &mut h);
+    button(&h, mid + egui::vec2(25.0, 3.0), false);
+    h.run();
+    assert!(
+        (offset(&h, 0).y - offset(&h, 1).y).abs() < 1e-9,
+        "snapped level again"
+    );
+    assert!(h.state().view_guides.is_empty());
 }

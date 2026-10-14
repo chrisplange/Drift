@@ -75,6 +75,8 @@ impl DriftApp {
             .selected_text(shown)
             .width(ui.available_width() - 8.0)
             .height(380.0)
+            // Clicking into "Find a font" mustn't close it; a pick does.
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
             .show_ui(ui, |ui| {
                 ui.set_min_width(220.0);
                 if for_text {
@@ -117,6 +119,9 @@ impl DriftApp {
                     .font_families
                     .get_or_insert_with(drift_platform::fonts::families);
                 if families.is_empty() {
+                    if picked.is_some() {
+                        ui.close();
+                    }
                     return;
                 }
                 ui.separator();
@@ -135,6 +140,9 @@ impl DriftApp {
                     if ui.selectable_label(is(family), family).clicked() {
                         picked = Some(FontPick::Family(family.clone()));
                     }
+                }
+                if picked.is_some() {
+                    ui.close();
                 }
             });
         picked

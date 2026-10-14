@@ -90,22 +90,42 @@ fn geometry(ed: &Editor, s: &Space, d: &mut Drawing) {
             d.items.push(item(&layer.name, pen, prim, s.clip));
         }
     }
-    // Sketch text: its outlines.
-    for (id, t) in doc.texts() {
+    // Sketch text: as text, line by line in its own font, each line from its own start (so
+    // nothing downstream needs to measure it to align it).
+    for (_, t) in doc.texts() {
         let Some(layer) = doc.layer(t.layer) else {
             continue;
         };
         if !layer.visible || !layer.printable {
             continue;
         }
-        let Some(outline) = ed.text_outline(id) else {
-            continue;
-        };
+        ed.ensure_font(&t.font);
         let pen = pen_for(LineKind::Solid, t.appearance, layer);
-        for shape in outline.contours.iter().flatten() {
-            if let Some(prim) = shape_prim(s, shape) {
-                d.items.push(item(&layer.name, pen, prim, s.clip));
+        let paragraph = drift_draft::outline::Paragraph {
+            text: &t.text,
+            font: &t.font,
+            height: t.height,
+            at: t.at,
+            angle: t.angle,
+            align: t.align,
+            spacing: t.spacing,
+            wrap: t.wrap,
+        };
+        for (line, start) in paragraph.lines() {
+            let line = line.trim_end().to_owned();
+            if line.is_empty() {
+                continue;
             }
+            let prim = Prim::Text {
+                at: s.at(start),
+                height: t.height * s.k,
+                angle: t.angle.to_radians(),
+                align: Align::Left,
+                text: line,
+                style: Default::default(),
+                font: Some(t.font.clone()),
+            };
+            d.items.push(item(&layer.name, pen, prim, s.clip));
         }
     }
     // Copies of blocks: their curves (sheets), or block definitions and inserts (DXF).
@@ -314,7 +334,12 @@ fn fills(ed: &mut Editor, patterns: &PatternLibrary, s: &Space, d: &mut Drawing)
 /// Centre marks and centre lines.
 fn centre_lines(ed: &Editor, s: &Space, d: &mut Drawing) {
     let pen = Pen::new(THIN).with_type(LineType::Center);
-    for (_, a) in ed.doc.annotations() {
+    let on_sheets = |id| {
+        ed.doc
+            .shown(drift_core::AnnotationRef::Annotation(id))
+            .sheets
+    };
+    for (_, a) in ed.doc.annotations().filter(|(id, _)| on_sheets(*id)) {
         for (p, q) in notes::centre_segments(&ed.doc, a) {
             d.items.push(item(
                 ANNOTATION_LAYER,
@@ -356,7 +381,10 @@ fn annotations(ed: &Editor, painter: &egui::Painter, s: &Space, d: &mut Drawing)
     let recorder = Recorder::new(painter);
     let colors = print_colors();
     for (id, c) in doc.constraints() {
-        if !c.is_dimension() || !s.dimensions {
+        if !c.is_dimension()
+            || !s.dimensions
+            || !doc.shown(drift_core::AnnotationRef::Dimension(id)).sheets
+        {
             continue;
         }
         if let Some(layout) =
@@ -379,7 +407,11 @@ fn annotations(ed: &Editor, painter: &egui::Painter, s: &Space, d: &mut Drawing)
             ) => s.notes,
             _ => true,
         };
-        if !shown {
+        if !shown
+            || !doc
+                .shown(drift_core::AnnotationRef::Annotation(layout.id))
+                .sheets
+        {
             continue;
         }
         notes::paint_annotation(&recorder, &layout, AnnotationState::Normal, &colors, &style);
@@ -444,6 +476,7 @@ fn annotations(ed: &Editor, painter: &egui::Painter, s: &Space, d: &mut Drawing)
                 align: Align::Left,
                 text,
                 style: Default::default(),
+                font: None,
             },
         };
         d.items.push(item(ANNOTATION_LAYER, pen, prim, s.clip));
@@ -555,7 +588,7 @@ pub fn model_drawing(
 /// Centre view `index` of a sheet on `b` (the sketch with its dimension labels, in world
 /// mm) at the largest preferred scale that fits. A view that fills the sheet is fitted in the
 /// drawing area clear of the title block; one with a frame, in its frame.
-pub fn fit_view(b: Bounds, sheet: &mut Sheet, index: usize) {
+pub fn fit_view(b: Bounds, sheet: &mut Sheet, index: usize, imperial: bool) {
     if b.is_empty() || index >= sheet.views.len() {
         return;
     }
@@ -563,14 +596,14 @@ pub fn fit_view(b: Bounds, sheet: &mut Sheet, index: usize) {
     let extent = b.size() * 1.1;
     let (scale, center) = match sheet.views[index].frame {
         Some(frame) => (
-            drift_core::sheets::fit_scale(extent, frame.size * 0.9),
+            drift_core::sheets::fit_scale(extent, frame.size * 0.9, imperial),
             b.center(),
         ),
         None => {
             // Centred in the space clear of the title block.
             let area = drift_draft::sheet::drawing_area(sheet);
             let clear = drift_draft::sheet::view_area(sheet);
-            let scale = drift_core::sheets::fit_scale(extent, clear.size() * 0.9);
+            let scale = drift_core::sheets::fit_scale(extent, clear.size() * 0.9, imperial);
             (scale, b.center() - (clear.center() - area.center()) * scale)
         }
     };
@@ -579,8 +612,8 @@ pub fn fit_view(b: Bounds, sheet: &mut Sheet, index: usize) {
 }
 
 /// Fit a sheet's first view (see [`fit_view`]).
-pub fn fit_sheet(b: Bounds, sheet: &mut Sheet) {
-    fit_view(b, sheet, 0);
+pub fn fit_sheet(b: Bounds, sheet: &mut Sheet, imperial: bool) {
+    fit_view(b, sheet, 0, imperial);
 }
 
 /// A new view of `b` (world mm) at 1 : `scale`, in a frame just big enough for it, placed
@@ -705,6 +738,33 @@ pub fn paint_drawing(
                     p.add(egui::Shape::mesh(mesh));
                 }
             }
+            // Sketch text in its own font: its glyphs, filled.
+            Prim::Text {
+                at,
+                height,
+                angle,
+                text,
+                font: Some(font),
+                ..
+            } => {
+                let contours = drift_draft::outline::text_contours(
+                    text,
+                    font,
+                    *height,
+                    *at,
+                    angle.to_degrees(),
+                );
+                let rings = drift_draft::outline::contour_rings(&contours);
+                let mut mesh = egui::Mesh::default();
+                for t in drift_draft::logo::triangulate(&rings, false) {
+                    let base = mesh.vertices.len() as u32;
+                    for q in t {
+                        mesh.colored_vertex(to_screen(q), color);
+                    }
+                    mesh.add_triangle(base, base + 1, base + 2);
+                }
+                p.add(egui::Shape::mesh(mesh));
+            }
             Prim::Text {
                 at,
                 height,
@@ -712,11 +772,12 @@ pub fn paint_drawing(
                 align,
                 text,
                 style,
+                font: None,
             } => {
                 let cap = d
                     .font
                     .as_ref()
-                    .map_or(CAP_HEIGHT, |f| f.face(style.bold).0.cap_ratio());
+                    .map_or(CAP_HEIGHT, |f| f.face(style.bold).cap_ratio());
                 let size = (*height / cap) as f32 * px;
                 if size < 1.5 {
                     continue;

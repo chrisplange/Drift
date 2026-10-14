@@ -79,6 +79,8 @@ impl DriftApp {
             ("auto", self.auto_relations),
             ("ends", self.always_endpoints),
             ("rscale", self.round_scale),
+            ("hidden", self.show_hidden_annotations),
+            ("rlayer", self.editor.regions_by_layer),
         ];
         let mut prefs: Vec<String> = flags
             .iter()
@@ -130,6 +132,8 @@ impl DriftApp {
                 "auto" => self.auto_relations = on,
                 "ends" => self.always_endpoints = on,
                 "rscale" => self.round_scale = on,
+                "hidden" => self.show_hidden_annotations = on,
+                "rlayer" => self.editor.regions_by_layer = on,
                 _ => {}
             }
         }

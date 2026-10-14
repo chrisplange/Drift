@@ -289,17 +289,69 @@ pub const PREFERRED_SCALES: [f64; 22] = [
     500.0, 1000.0, 2000.0, 2500.0, 5000.0, 10000.0,
 ];
 
-/// The largest preferred scale (smallest `n`) at which `extent` (world mm) fits in `room`
-/// (paper mm).
-pub fn fit_scale(extent: DVec2, room: DVec2) -> f64 {
-    PREFERRED_SCALES
+/// Architectural scales (inches on paper to a foot), as 1 : n and as they are written.
+pub const ARCHITECTURAL_SCALES: [(f64, &str); 12] = [
+    (4.0, "3\" = 1'-0\""),
+    (8.0, "1-1/2\" = 1'-0\""),
+    (12.0, "1\" = 1'-0\""),
+    (16.0, "3/4\" = 1'-0\""),
+    (24.0, "1/2\" = 1'-0\""),
+    (32.0, "3/8\" = 1'-0\""),
+    (48.0, "1/4\" = 1'-0\""),
+    (64.0, "3/16\" = 1'-0\""),
+    (96.0, "1/8\" = 1'-0\""),
+    (128.0, "3/32\" = 1'-0\""),
+    (192.0, "1/16\" = 1'-0\""),
+    (384.0, "1/32\" = 1'-0\""),
+];
+
+/// Engineering (civil) scales: an inch on paper to so many feet.
+pub const ENGINEERING_SCALES: [(f64, &str); 8] = [
+    (120.0, "1\" = 10'"),
+    (240.0, "1\" = 20'"),
+    (360.0, "1\" = 30'"),
+    (480.0, "1\" = 40'"),
+    (600.0, "1\" = 50'"),
+    (720.0, "1\" = 60'"),
+    (1200.0, "1\" = 100'"),
+    (2400.0, "1\" = 200'"),
+];
+
+/// The scales a drawing in feet and inches fits to: full and half size, then the
+/// architectural and engineering scales.
+fn imperial_scales() -> impl Iterator<Item = f64> {
+    [1.0, 2.0]
         .into_iter()
-        .find(|n| extent.x / n <= room.x && extent.y / n <= room.y)
-        .unwrap_or(*PREFERRED_SCALES.last().expect("scales"))
+        .chain(ARCHITECTURAL_SCALES.iter().map(|(n, _)| *n))
+        .chain(ENGINEERING_SCALES.iter().map(|(n, _)| *n))
 }
 
-/// A scale as it is written on a drawing: `1:50`, `2:1`.
+/// The largest preferred scale (smallest `n`) at which `extent` (world mm) fits in `room`
+/// (paper mm): from the architectural and engineering scales for a drawing in feet and
+/// inches, else the metric ones.
+pub fn fit_scale(extent: DVec2, room: DVec2, imperial: bool) -> f64 {
+    let fits = |n: &f64| extent.x / n <= room.x && extent.y / n <= room.y;
+    if imperial {
+        imperial_scales().find(fits).unwrap_or(2400.0)
+    } else {
+        PREFERRED_SCALES
+            .into_iter()
+            .find(fits)
+            .unwrap_or(*PREFERRED_SCALES.last().expect("scales"))
+    }
+}
+
+/// A scale as it is written on a drawing: `1:50`, `2:1`, `1/4" = 1'-0"`, `1" = 20'`. (The
+/// architectural and engineering ratios are none of the metric ones, so a scale is always
+/// written the way it was chosen.)
 pub fn scale_label(n: f64) -> String {
+    if let Some((_, label)) = ARCHITECTURAL_SCALES
+        .iter()
+        .chain(&ENGINEERING_SCALES)
+        .find(|(m, _)| (m - n).abs() < 1e-9)
+    {
+        return (*label).to_owned();
+    }
     let trim = |v: f64| {
         let s = format!("{v:.3}");
         s.trim_end_matches('0').trim_end_matches('.').to_owned()
@@ -326,12 +378,31 @@ mod tests {
         assert_eq!(scale_label(50.0), "1:50");
         assert_eq!(scale_label(0.5), "2:1");
         assert_eq!(scale_label(1.0), "1:1");
+        // Architectural and engineering scales are written their own way.
+        assert_eq!(scale_label(48.0), "1/4\" = 1'-0\"");
+        assert_eq!(scale_label(96.0), "1/8\" = 1'-0\"");
+        assert_eq!(scale_label(240.0), "1\" = 20'");
+        // None of them is a metric scale.
+        for (n, _) in ARCHITECTURAL_SCALES.iter().chain(&ENGINEERING_SCALES) {
+            assert!(!PREFERRED_SCALES.contains(n), "{n}");
+        }
+        // A 40 ft × 30 ft plan on a 24 × 36 sheet's drawing area fits at 1/4" = 1'-0" in
+        // feet and inches, at 1:50 in millimetres.
+        let plan = DVec2::new(40.0 * 304.8, 30.0 * 304.8);
+        let room = DVec2::new(800.0, 560.0);
+        assert_eq!(fit_scale(plan, room, true), 24.0);
+        assert_eq!(fit_scale(plan * 2.0, room, true), 48.0);
+        assert_eq!(fit_scale(plan * 2.0, room, false), 50.0);
         assert_eq!(
-            fit_scale(DVec2::new(120.0, 80.0), DVec2::new(380.0, 230.0)),
+            fit_scale(DVec2::new(120.0, 80.0), DVec2::new(380.0, 230.0), false),
             0.5
         );
         assert_eq!(
-            fit_scale(DVec2::new(12_000.0, 8000.0), DVec2::new(380.0, 230.0)),
+            fit_scale(
+                DVec2::new(12_000.0, 8000.0),
+                DVec2::new(380.0, 230.0),
+                false
+            ),
             50.0
         );
     }

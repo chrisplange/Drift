@@ -3284,3 +3284,220 @@ fn collinear_between_level_lines_is_not_taken_as_implied() {
         Err(EditError::Redundant)
     ));
 }
+
+#[test]
+fn selection_filters_pick_only_edges_or_only_points() {
+    use crate::editor::PickFilter;
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    let c = [v(0.0, 0.0), v(10.0, 0.0), v(10.0, 6.0), v(0.0, 6.0)].map(|p| ed.doc.add_point(p));
+    let l = [0, 1, 2, 3].map(|i| ed.doc.add_line(c[i], c[(i + 1) % 4]).unwrap());
+    ed.commit("Setup");
+    let mut tool = SelectTool::default();
+    let m = Modifiers::default();
+    let boxed = |ed: &mut Editor, tool: &mut SelectTool| {
+        ed.selection.clear();
+        let start = ptr(ed, tool, v(-2.0, -2.0));
+        tool.handle(Input::DragStart(start, m), ed);
+        let end = ptr(ed, tool, v(12.0, 8.0));
+        tool.handle(Input::Drag(end), ed);
+        tool.handle(Input::DragEnd(end, m), ed);
+        ed.selection.clone()
+    };
+    // Anything: a box takes the curves (their end points come with them).
+    assert_eq!(boxed(&mut ed, &mut tool), l.iter().copied().collect());
+    // Edges only: the box takes the four lines; a click on a corner takes a line, not the
+    // point; a click inside picks no area.
+    ed.pick_filter = PickFilter::Edges;
+    let picked = boxed(&mut ed, &mut tool);
+    assert_eq!(picked, l.iter().copied().collect());
+    ed.selection.clear();
+    click(&mut ed, &mut tool, v(0.0, 0.0));
+    assert!(ed.selection.len() == 1 && l.iter().any(|id| ed.selection.contains(id)));
+    click(&mut ed, &mut tool, v(5.0, 3.0));
+    assert!(ed.selected_region.is_none(), "no areas with a filter on");
+    // Points only: the box takes the four corners; a click on a line takes nothing.
+    ed.pick_filter = PickFilter::Points;
+    let picked = boxed(&mut ed, &mut tool);
+    assert_eq!(picked, c.iter().copied().collect());
+    ed.selection.clear();
+    click(&mut ed, &mut tool, v(5.0, 0.0));
+    assert!(ed.selection.is_empty());
+    click(&mut ed, &mut tool, v(10.0, 6.0));
+    assert_eq!(ed.selection, [c[2]].into());
+    // A grouped rectangle gives only what the filter allows.
+    ed.selection = l.iter().copied().collect();
+    ed.pick_filter = PickFilter::All;
+    ed.make_group();
+    ed.selection.clear();
+    ed.pick_filter = PickFilter::Edges;
+    click(&mut ed, &mut tool, v(5.0, 0.0));
+    assert_eq!(ed.selection, l.iter().copied().collect());
+}
+
+#[test]
+fn chain_mode_runs_dimensions_along_a_row_and_ends_with_an_overall() {
+    use super::dimension::DimensionTool;
+    use crate::editor::DimMode;
+    // Three wall ends along y = 0, and a wall standing at x = 40.
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    let p = [0.0, 10.0, 25.0].map(|x| ed.doc.add_point(v(x, 0.0)));
+    let (foot, top) = (
+        ed.doc.add_point(v(40.0, 0.0)),
+        ed.doc.add_point(v(40.0, 20.0)),
+    );
+    ed.doc.add_line(foot, top).unwrap();
+    ed.commit("Setup");
+    let rows = |ed: &Editor| -> Vec<(EntityId, EntityId, f64, bool)> {
+        ed.doc
+            .constraints()
+            .filter_map(|(id, c)| match *c {
+                Constraint::HorizontalDistance { a, b, value } => {
+                    Some((a, b, value, ed.doc.is_driven(id)))
+                }
+                _ => None,
+            })
+            .collect()
+    };
+    ed.dim_mode = DimMode::Chain;
+    ed.dim_overall = true;
+    let mut tool = DimensionTool::default();
+    // The first: two points, placed above them.
+    click(&mut ed, &mut tool, v(0.0, 0.0));
+    click(&mut ed, &mut tool, v(10.0, 0.0));
+    click(&mut ed, &mut tool, v(5.0, 8.0));
+    ed.pending_edit = None;
+    assert_eq!(rows(&ed), vec![(p[0], p[1], 10.0, false)]);
+    // Plain clicks go on along the row: a point, then the wall (its nearer end, the foot).
+    click(&mut ed, &mut tool, v(25.0, 0.0));
+    click(&mut ed, &mut tool, v(40.0, 3.0));
+    assert_eq!(
+        rows(&ed)[1..],
+        [(p[1], p[2], 15.0, false), (p[2], foot, 15.0, false)]
+    );
+    // A click on nothing ends it, with the overall outside the row, as a reference.
+    click(&mut ed, &mut tool, v(20.0, -30.0));
+    let all = rows(&ed);
+    assert_eq!(all.len(), 4, "{all:?}");
+    assert_eq!(all[3], (p[0], foot, 40.0, true));
+    let overall = ed.doc.constraints().last().unwrap().0;
+    let chain = ed
+        .doc
+        .constraints()
+        .find(|(_, c)| matches!(c, Constraint::HorizontalDistance { .. }))
+        .unwrap()
+        .0;
+    let (oy, cy) = (
+        ed.doc.placement(overall).unwrap().y,
+        ed.doc.placement(chain).unwrap().y,
+    );
+    assert!(oy > cy, "outside the chain: {oy} {cy}");
+    assert!(tool.run.is_none());
+
+    // Baseline: each from the first point, each a step further out; no overall.
+    let mut ed2 = Editor::default();
+    ed2.doc.begin();
+    let q = [0.0, 10.0, 25.0, 40.0].map(|x| ed2.doc.add_point(v(x, 0.0)));
+    ed2.commit("Setup");
+    ed2.dim_mode = DimMode::Baseline;
+    ed2.dim_overall = true;
+    let mut tool = DimensionTool::default();
+    click(&mut ed2, &mut tool, v(0.0, 0.0));
+    click(&mut ed2, &mut tool, v(10.0, 0.0));
+    click(&mut ed2, &mut tool, v(5.0, 8.0));
+    click(&mut ed2, &mut tool, v(25.0, 0.0));
+    click(&mut ed2, &mut tool, v(40.0, 0.0));
+    tool.handle(Input::Finish, &mut ed2);
+    let all = rows(&ed2);
+    assert_eq!(
+        all.iter().map(|r| (r.0, r.1, r.2)).collect::<Vec<_>>(),
+        vec![(q[0], q[1], 10.0), (q[0], q[2], 25.0), (q[0], q[3], 40.0)]
+    );
+
+    // Single: a plain click starts afresh (Shift+click still goes on).
+    let mut ed3 = Editor::default();
+    ed3.doc.begin();
+    for x in [0.0, 10.0, 25.0] {
+        ed3.doc.add_point(v(x, 0.0));
+    }
+    ed3.commit("Setup");
+    let mut tool = DimensionTool::default();
+    click(&mut ed3, &mut tool, v(0.0, 0.0));
+    click(&mut ed3, &mut tool, v(10.0, 0.0));
+    click(&mut ed3, &mut tool, v(5.0, 8.0));
+    click(&mut ed3, &mut tool, v(25.0, 0.0));
+    assert_eq!(rows(&ed3).len(), 1, "a new pick, not a chain");
+}
+
+#[test]
+fn closed_areas_can_be_found_per_layer() {
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    let other = ed.doc.add_layer(drift_core::Layer::new("Furniture"));
+    // A 20 × 10 room, and a line across it on another layer.
+    let c = [v(0.0, 0.0), v(20.0, 0.0), v(20.0, 10.0), v(0.0, 10.0)].map(|p| ed.doc.add_point(p));
+    for i in 0..4 {
+        ed.doc.add_line(c[i], c[(i + 1) % 4]).unwrap();
+    }
+    let (a, b) = (
+        ed.doc.add_point(v(10.0, -5.0)),
+        ed.doc.add_point(v(10.0, 15.0)),
+    );
+    let across = ed.doc.add_line(a, b).unwrap();
+    ed.doc.set_entity_layer(across, other).unwrap();
+    ed.commit("Setup");
+    // All together, the line cuts the room in two.
+    assert_eq!(ed.regions().len(), 2);
+    // Per layer, the room is whole.
+    ed.regions_by_layer = true;
+    let regions = ed.regions();
+    assert_eq!(regions.len(), 1);
+    assert!((regions[0].area - 200.0).abs() < 1e-6);
+    // Its outline is the room's four lines (the curve indices still name the right ones).
+    let outline = ed.region_curves(&regions[0]);
+    assert_eq!(outline.len(), 4);
+    assert!(!outline.contains(&across));
+    // A wall moved to the other layer leaves the room open.
+    let wall = ed
+        .doc
+        .iter()
+        .find(|(_, e)| matches!(e.kind, EntityKind::Line { a, .. } if a == c[0]))
+        .unwrap()
+        .0;
+    ed.doc.begin();
+    ed.doc.set_entity_layer(wall, other).unwrap();
+    ed.commit("Layer");
+    assert!(ed.regions().is_empty());
+    ed.regions_by_layer = false;
+    assert_eq!(ed.regions().len(), 2);
+}
+
+#[test]
+fn fractional_inches_read_write_and_save() {
+    use drift_core::{LengthFormat, Units};
+    let mut ed = Editor::default();
+    let units = Units {
+        length: LengthFormat::FractionalInch,
+        ..Units::default()
+    };
+    ed.set_units(units);
+    let inch = drift_core::units::MM_PER_INCH;
+    for (typed, inches) in [
+        ("35 1/2", 35.5),
+        ("108", 108.0),
+        ("3/8", 0.375),
+        ("9'", 108.0),
+    ] {
+        let v = ed
+            .evaluate_text(typed, drift_core::Kind::Length)
+            .unwrap_or_else(|e| panic!("{typed}: {e:?}"))
+            .value;
+        assert!((v - inches * inch).abs() < 1e-9, "{typed}: {v}");
+    }
+    assert_eq!(ed.doc.units().format_length(35.5 * inch), "35 1/2\"");
+    let saved = drift_io::save(&ed.doc, &Default::default());
+    assert!(saved.contains("fractional_in"), "{saved}");
+    let (loaded, _) = drift_io::load(&saved).unwrap();
+    assert_eq!(loaded.units().length, LengthFormat::FractionalInch);
+}

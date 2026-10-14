@@ -7,6 +7,7 @@ mod annotations;
 mod app;
 pub mod blocks;
 mod canvas;
+pub mod checker;
 pub mod clipboard;
 pub mod curves;
 mod dock;
@@ -293,6 +294,11 @@ pub struct DriftApp {
     pending_view: Option<app::sheets_ui::ViewAction>,
     /// The report of the last import, until it is closed.
     import_report: Option<app::sheets_ui::ImportSummary>,
+    /// The Check sketch window, while it is open.
+    sketch_check: Option<app::checker_ui::SketchCheck>,
+    /// How far apart two ends may be for the sketch checker to take them as meant to meet
+    /// (mm).
+    gap_tolerance: f64,
     /// The name typed for a new block.
     new_block_name: String,
     /// Curvature combs on picked curves.
@@ -429,6 +435,8 @@ impl DriftApp {
             sheet_view: 0,
             pending_view: None,
             import_report: None,
+            sketch_check: None,
+            gap_tolerance: crate::checker::DEFAULT_TOLERANCE,
             new_block_name: String::new(),
             show_combs: true,
             round_scale: true,

@@ -4402,6 +4402,81 @@ fn transform_handles_on_the_canvas() {
 }
 
 #[test]
+fn check_sketch_finds_and_fixes_gaps() {
+    let Some(mut h) = harness() else { return };
+    // A 40 × 30 outline whose last corner misses by 0.3, and a line stopping 0.2 short.
+    let (corner, end) = {
+        let ed = &mut h.state_mut().editor;
+        ed.doc.begin();
+        let p = [
+            DVec2::new(-20.0, -15.0),
+            DVec2::new(20.0, -15.0),
+            DVec2::new(20.0, 15.0),
+            DVec2::new(-20.0, 15.0),
+            DVec2::new(-20.0, -14.7),
+        ]
+        .map(|at| ed.doc.add_point(at));
+        for i in 0..4 {
+            ed.doc.add_line(p[i], p[i + 1]).unwrap();
+        }
+        let (a, b) = (
+            ed.doc.add_point(DVec2::new(40.0, 0.0)),
+            ed.doc.add_point(DVec2::new(20.2, 0.0)),
+        );
+        ed.doc.add_line(a, b).unwrap();
+        ed.commit("Setup");
+        (p[4], b)
+    };
+    h.run();
+    assert!(h.state_mut().editor.regions().is_empty(), "not closed");
+
+    // Edit → Check sketch…: two issues, marked on the canvas.
+    h.get_by_label("Edit").click();
+    h.run();
+    h.get_by_label("Check sketch…").click();
+    h.run();
+    h.run();
+    assert!(h.state().sketch_check.is_some());
+    assert_eq!(h.state_mut().sketch_issues().len(), 2);
+    assert!(h.query_by_label("Fix all (2)").is_some());
+    save_png("drift_ui_check_sketch.png", &mut h);
+
+    // Show picks the first and zooms to it.
+    h.get_all_by_label("Show").next().unwrap().click();
+    h.run();
+    h.run();
+    assert!(h.state().editor.selection.contains(&corner));
+
+    // Fix all: one undo step; the outline closes and the line reaches it.
+    h.get_by_label("Fix all (2)").click();
+    h.run();
+    h.run();
+    assert!(!h.state().editor.doc.contains(corner), "joined");
+    assert_eq!(h.state_mut().editor.regions().len(), 1, "closed");
+    let x = h.state().editor.doc.point(end).unwrap().x;
+    assert!((x - 20.0).abs() < 1e-6, "{x}");
+    assert!(h.state_mut().sketch_issues().is_empty());
+    h.state_mut().undo();
+    assert!(h.state().editor.doc.contains(corner));
+    h.run();
+    assert_eq!(h.state_mut().sketch_issues().len(), 2);
+
+    // The tolerance is kept with the preferences.
+    h.state_mut().gap_tolerance = 0.25;
+    assert!(h.state().view_prefs().contains("gaptol=0.25"));
+    assert_eq!(
+        h.state_mut().sketch_issues().len(),
+        1,
+        "only the closer one"
+    );
+    // (Laid out again with one row fewer before the Close button is found.)
+    h.run();
+    h.get_by_label("Close").click();
+    h.run();
+    assert!(h.state().sketch_check.is_none());
+}
+
+#[test]
 fn g_moves_a_picked_text() {
     let Some(mut h) = harness() else { return };
     // Type a text; the text tool is still in hand, the text picked.

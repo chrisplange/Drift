@@ -417,6 +417,18 @@ impl DriftApp {
                     self.paste_copied(true, now);
                 }
                 ui.separator();
+                if ui
+                    .button("Check sketch…")
+                    .on_hover_text(
+                        "Find ends that nearly meet but don't, ends short of a curve, and \
+                         curves of no length, and fix them",
+                    )
+                    .clicked()
+                {
+                    self.open_sketch_check();
+                    ui.close();
+                }
+                ui.separator();
                 let has_selection = !self.editor.selection.is_empty();
                 if ui
                     .add_enabled(

@@ -1,6 +1,7 @@
 //! `DriftApp` behaviour, split by area.
 
 mod blocks_ui;
+pub(crate) mod checker_ui;
 mod context_ui;
 pub(crate) mod dialogs;
 pub(crate) mod dock_ui;

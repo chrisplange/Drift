@@ -1746,6 +1746,35 @@ zooms to fit; F is Fillet (again for Chamfer).
   By default white on the dark canvas and charcoal on the light one (they were teal); a
   chosen colour that would vanish into the canvas falls back to the default. Relation
   glyphs keep their own colours, and paper output is unchanged.
+- **Check sketch (done).** Edit → Check sketch… (also the palette, and the DXF import
+  summary) finds what keeps a profile from closing (`checker.rs`): two open ends closer
+  than a tolerance (default 0.5 mm, a preference, `gaptol`), an open end short of or just
+  past another curve, and lines or arcs of no length. An open end is a solid curve's end
+  that nothing else uses or holds (a coincidence, point-on-curve or midpoint relation);
+  construction and locked curves are left out.
+  - Fixes: a gap's two ends are joined into one point (the end held by more relations
+    and dimensions stays; on a tie, the older); a short end gets a point-on-curve
+    relation, with the curve held where it is; a curve of no length is removed and its
+    ends joined. Each is kept only if the sketch still solves; Fix all is one undo step
+    and reports what it had to leave.
+  - The window lists the issues (Show picks and zooms to one) and rings them on the
+    canvas while it is open.
+  - Solver fix found on the way: two fixes on one point (as when two fixed points are
+    merged) now agree or are reported as a conflict; the second used to replace the
+    first silently.
+  - Not done: ends that need a line extended (well past the tolerance) are only extend's
+    job; no check runs by itself after an import (the summary offers it).
+- **Solver fixes from alpha use.**
+  - The step limit (no iteration moves geometry further than this, so it can't jump onto
+    another solution) was the spread of the values being solved. A lone unknown — the free
+    end of a dimension from a fixed point — has no spread, so it crawled 1 mm per iteration
+    and gave up after 100: a width from a fixed corner on a large panel was refused as a
+    conflict, and a snapped drag with a vertical jump of over 100 mm was refused. The limit
+    is now the whole drawing's extent.
+  - A relation of several equations with one already implied (collinear between two lines
+    already held level) was refused as "already implied" though it still held something
+    new. Relations are now accepted when degrees of freedom drop; a dimension or fix that
+    leaves another implied is still refused as over-defining.
 - **Workspace notes, next: tabs for separate drawings (design, not built).** A tab bar
   along the top, one drawing per tab, as Revit and Illustrator have.
   - What a tab owns: the editor (document, selection, undo history), its file (name, path,

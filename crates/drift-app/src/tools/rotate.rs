@@ -24,6 +24,8 @@ pub(super) struct Spin {
     pub(super) instances: Vec<(drift_core::InstanceId, drift_core::Instance)>,
     /// The picked sketch text turning too, with its anchor and angle as they were.
     pub(super) text: Option<(drift_core::TextId, DVec2, f64)>,
+    /// Begun by dragging a turn handle: letting go places it.
+    pub(super) by_handle: bool,
 }
 
 impl Spin {
@@ -53,6 +55,10 @@ impl Spin {
                 ed.turn_text(text, self.pivot, angle);
             }
         }
+        ed.region_motion = Some(crate::editor::RegionMotion::Turn {
+            pivot: self.pivot,
+            degrees: angle,
+        });
         ed.sync();
     }
 
@@ -164,6 +170,42 @@ impl SelectTool {
             applied: Some(0.0),
             instances,
             text,
+            by_handle: false,
+        });
+        true
+    }
+
+    /// Start turning the geometry in a transform box about its middle, from the pointer
+    /// (dragging a turn handle).
+    pub(super) fn start_turn(
+        &mut self,
+        p: &Pointer,
+        frame: &crate::transform::TransformBox,
+        ed: &mut Editor,
+    ) -> bool {
+        if self.drag.is_some() || self.grab.is_some() || self.spin.is_some() {
+            return false;
+        }
+        let pivot = frame.bounds.center();
+        let reference = p.raw - pivot;
+        if reference.length() < 1e-12 {
+            return false;
+        }
+        let points = ed.doc.defining_points(frame.ids.iter().copied());
+        ed.doc.begin();
+        self.spin = Some(Spin {
+            ids: frame.ids.clone(),
+            points,
+            pivot,
+            reference,
+            pointer: p.raw,
+            angle: 0.0,
+            typed: None,
+            picking_pivot: false,
+            applied: Some(0.0),
+            instances: Vec::new(),
+            text: None,
+            by_handle: true,
         });
         true
     }
@@ -171,6 +213,7 @@ impl SelectTool {
     pub(super) fn confirm_spin(&mut self, ed: &mut Editor) {
         let Some(spin) = self.spin.take() else { return };
         let angle = spin.current();
+        ed.region_motion = None;
         ed.doc.rollback();
         if angle.abs() < 1e-12 || spin.picking_pivot {
             ed.sync();
@@ -214,6 +257,7 @@ impl SelectTool {
         if self.spin.take().is_none() {
             return false;
         }
+        ed.region_motion = None;
         ed.doc.rollback();
         ed.sync();
         true
@@ -247,6 +291,7 @@ impl SelectTool {
                 }
             }
             Input::Finish => self.confirm_spin(ed),
+            Input::DragEnd(..) if spin.by_handle => self.confirm_spin(ed),
             _ => {}
         }
         true

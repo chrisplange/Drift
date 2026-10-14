@@ -1645,6 +1645,13 @@ fn lines_turn_in_steps_with_angle_snapping() {
     let got = aim(&ed, &tool, at, Some(45.0)).pos();
     assert!((got.x - got.y).abs() < 1e-9 && got.x > 0.0);
     assert_eq!(aim(&ed, &tool, at, None).pos(), at);
+    // 1 degree steps: 28.4 degrees goes at exactly 28.
+    let at = DVec2::from_angle(28.4f64.to_radians()) * 20.0;
+    let got = aim(&ed, &tool, at, Some(1.0)).pos();
+    assert!(
+        (got.y.atan2(got.x).to_degrees() - 28.0).abs() < 1e-9,
+        "{got:?}"
+    );
     // A step that lands on an axis is exactly on it, and gets its relation.
     let p = aim(&ed, &tool, v(-30.0, 1.0), Some(5.0));
     assert_eq!(p.pos().y, 0.0);
@@ -1819,6 +1826,321 @@ fn grab_moves_a_selected_region_from_its_centroid() {
     assert_eq!(ed.doc.point(c[0]).unwrap(), v(45.0, 47.0));
     let region = ed.region().expect("still selected");
     assert!(region.centroid.distance(ed.doc.point(target).unwrap()) < 1e-9);
+}
+
+#[test]
+fn a_selected_region_stays_lit_while_it_moves() {
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    let c = [v(0.0, 0.0), v(10.0, 0.0), v(10.0, 6.0), v(0.0, 6.0)].map(|p| ed.doc.add_point(p));
+    for i in 0..4 {
+        ed.doc.add_line(c[i], c[(i + 1) % 4]).unwrap();
+    }
+    ed.commit("Setup");
+    let mut tool = SelectTool::default();
+    let m = Modifiers::default();
+    let centroid = |ed: &mut Editor| ed.region().expect("still lit").centroid;
+    // Where the outline's middle is now.
+    let middle = |ed: &Editor| ed.doc.point(c[0]).unwrap() + v(5.0, 3.0);
+    click(&mut ed, &mut tool, v(2.0, 2.0));
+    assert_eq!(centroid(&mut ed), v(5.0, 3.0));
+
+    // G: well clear of where it was, the region is still picked, where it now is.
+    let p = ptr(&ed, &tool, v(2.0, 2.0));
+    tool.key(ToolKey::G, Some(&p), &mut ed);
+    let to = ptr(&ed, &tool, v(40.0, 30.0));
+    tool.handle(Input::Hover(to), &mut ed);
+    assert!(middle(&ed).distance(v(5.0, 3.0)) > 30.0, "moved well clear");
+    assert!(centroid(&mut ed).distance(middle(&ed)) < 1e-9);
+    // Esc puts it back, still picked.
+    tool.cancel(&mut ed);
+    assert_eq!(centroid(&mut ed), v(5.0, 3.0));
+
+    // Dragging its outline: the same, and it stays picked where it lands.
+    let start = ptr(&ed, &tool, v(5.0, 0.0));
+    tool.handle(Input::DragStart(start, m), &mut ed);
+    let to = ptr(&ed, &tool, v(65.0, 0.0));
+    tool.handle(Input::Drag(to), &mut ed);
+    assert!(middle(&ed).distance(v(5.0, 3.0)) > 30.0, "moved well clear");
+    assert!(centroid(&mut ed).distance(middle(&ed)) < 1e-9);
+    tool.handle(Input::DragEnd(to, m), &mut ed);
+    assert!(ed.region_motion.is_none());
+    let landed = middle(&ed);
+    assert!(centroid(&mut ed).distance(landed) < 1e-9);
+
+    // R: it turns with its outline.
+    let p = ptr(&ed, &tool, landed - v(3.0, 1.0));
+    tool.key(ToolKey::R, Some(&p), &mut ed);
+    let spin = tool.spin.as_mut().unwrap();
+    spin.typed = Some(90.0);
+    let pivot = spin.pivot;
+    spin.apply(&mut ed);
+    let turned = pivot + DVec2::from_angle(90f64.to_radians()).rotate(landed - pivot);
+    assert!(centroid(&mut ed).distance(turned) < 1e-6);
+    tool.confirm_spin(&mut ed);
+    assert!(ed.region_motion.is_none());
+    assert!(centroid(&mut ed).distance(turned) < 1e-6);
+}
+
+/// Drag from `from` to `to` with the select tool, holding (Shift, Ctrl, Alt) on the way.
+fn drag_with(
+    ed: &mut Editor,
+    tool: &mut SelectTool,
+    from: DVec2,
+    to: DVec2,
+    keys: (bool, bool, bool),
+) {
+    let m = Modifiers::default();
+    let start = ptr(ed, tool, from);
+    tool.handle(Input::DragStart(start, m), ed);
+    let mut end = ptr(ed, tool, to);
+    (end.shift, end.command, end.alt) = keys;
+    tool.handle(Input::Drag(end), ed);
+    tool.handle(Input::DragEnd(end, m), ed);
+}
+
+#[test]
+fn transform_handles_scale_stretch_and_turn() {
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    let c = [v(0.0, 0.0), v(10.0, 0.0), v(10.0, 6.0), v(0.0, 6.0)].map(|p| ed.doc.add_point(p));
+    let l = [0, 1, 2, 3].map(|i| ed.doc.add_line(c[i], c[(i + 1) % 4]).unwrap());
+    for (i, line) in l.iter().enumerate() {
+        let r = if i % 2 == 0 {
+            Constraint::Horizontal { line: *line }
+        } else {
+            Constraint::Vertical { line: *line }
+        };
+        ed.doc.add_constraint(r).unwrap();
+    }
+    ed.commit("Setup");
+    ed.selection = l.iter().copied().collect();
+    let mut tool = SelectTool::default();
+    let at = |ed: &Editor, i: usize| ed.doc.point(c[i]).unwrap();
+    let none = (false, false, false);
+    // The handles sit a pick tolerance outside the geometry (TOL here).
+    let (right, corner) = (v(10.5, 3.0), v(10.5, 6.5));
+
+    // The right side stretches sideways, from the left side; still a rectangle.
+    drag_with(&mut ed, &mut tool, right, v(15.5, 3.0), none);
+    let sx = 15.5 / 10.5;
+    assert!(
+        at(&ed, 2).distance(v(10.0 * sx, 6.0)) < 1e-6,
+        "{:?}",
+        at(&ed, 2)
+    );
+    assert_eq!(at(&ed, 0), v(0.0, 0.0));
+    assert!(
+        (at(&ed, 1).x - at(&ed, 2).x).abs() < 1e-9,
+        "the side stays vertical"
+    );
+    ed.undo();
+    assert_eq!(at(&ed, 2), v(10.0, 6.0), "one undo step");
+
+    // A corner with Shift keeps the shape (the larger factor).
+    drag_with(
+        &mut ed,
+        &mut tool,
+        corner,
+        v(21.0, 7.0),
+        (true, false, false),
+    );
+    assert!(
+        at(&ed, 2).distance(v(20.0, 12.0)) < 1e-6,
+        "{:?}",
+        at(&ed, 2)
+    );
+    ed.undo();
+    // With Ctrl, about the middle.
+    drag_with(
+        &mut ed,
+        &mut tool,
+        corner,
+        v(16.0, 9.5),
+        (false, true, false),
+    );
+    let sy = 6.5 / 3.5;
+    assert!(
+        at(&ed, 2).distance(v(15.0, 3.0 + 3.0 * sy)) < 1e-6,
+        "{:?}",
+        at(&ed, 2)
+    );
+    assert!(
+        at(&ed, 0).distance(v(-5.0, 3.0 - 3.0 * sy)) < 1e-6,
+        "{:?}",
+        at(&ed, 0)
+    );
+    ed.undo();
+
+    // A dimensioned width holds; with Alt it scales too.
+    ed.doc.begin();
+    let width = ed
+        .doc
+        .add_constraint(Constraint::Distance {
+            a: c[0],
+            b: c[1],
+            value: 10.0,
+        })
+        .unwrap();
+    ed.commit("Width");
+    drag_with(&mut ed, &mut tool, corner, v(21.0, 13.0), none);
+    assert!(
+        at(&ed, 2).distance(v(10.0, 12.0)) < 1e-6,
+        "{:?}",
+        at(&ed, 2)
+    );
+    assert_eq!(ed.doc.constraint(width).unwrap().value(), Some(10.0));
+    ed.undo();
+    drag_with(
+        &mut ed,
+        &mut tool,
+        corner,
+        v(21.0, 13.0),
+        (false, false, true),
+    );
+    assert!(
+        at(&ed, 2).distance(v(20.0, 12.0)) < 1e-6,
+        "{:?}",
+        at(&ed, 2)
+    );
+    assert_eq!(ed.doc.constraint(width).unwrap().value(), Some(20.0));
+    ed.undo();
+
+    // Esc mid-drag puts it back.
+    let start = ptr(&ed, &tool, corner);
+    tool.handle(Input::DragStart(start, Modifiers::default()), &mut ed);
+    tool.handle(Input::Drag(ptr(&ed, &tool, v(30.0, 30.0))), &mut ed);
+    assert_ne!(at(&ed, 2), v(10.0, 6.0));
+    tool.cancel(&mut ed);
+    assert_eq!(at(&ed, 2), v(10.0, 6.0));
+
+    // Just outside a corner turns about the middle; letting go places it.
+    let from = v(11.2, 7.2);
+    let to = v(5.0, 3.0) + DVec2::from_angle(90f64.to_radians()).rotate(from - v(5.0, 3.0));
+    drag_with(&mut ed, &mut tool, from, to, none);
+    assert!(tool.spin.is_none(), "placed on letting go");
+    assert!(at(&ed, 0).distance(v(8.0, -2.0)) < 1e-6, "{:?}", at(&ed, 0));
+    ed.undo();
+    assert_eq!(at(&ed, 0), v(0.0, 0.0));
+}
+
+#[test]
+fn a_held_stretch_keeps_the_area_picked_and_alt_scales_only_along_it() {
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    let c =
+        [v(0.0, 0.0), v(100.0, 0.0), v(100.0, 100.0), v(0.0, 100.0)].map(|p| ed.doc.add_point(p));
+    let l = [0, 1, 2, 3].map(|i| ed.doc.add_line(c[i], c[(i + 1) % 4]).unwrap());
+    for (i, line) in l.iter().enumerate() {
+        let r = if i % 2 == 0 {
+            Constraint::Horizontal { line: *line }
+        } else {
+            Constraint::Vertical { line: *line }
+        };
+        ed.doc.add_constraint(r).unwrap();
+    }
+    let width = ed
+        .doc
+        .add_constraint(Constraint::HorizontalDistance {
+            a: c[0],
+            b: c[1],
+            value: 100.0,
+        })
+        .unwrap();
+    let height = ed
+        .doc
+        .add_constraint(Constraint::VerticalDistance {
+            a: c[1],
+            b: c[2],
+            value: 100.0,
+        })
+        .unwrap();
+    ed.commit("Setup");
+    let mut tool = SelectTool::default();
+    // Picked near its right side, so a stretch that the width holds back would leave the
+    // point it is remembered by far outside it.
+    click(&mut ed, &mut tool, v(90.0, 50.0));
+    assert!(ed.region().is_some());
+    let side = v(100.5, 50.0);
+
+    // Held: drag the right side far out. It stays 100 wide, and stays picked throughout.
+    let m = Modifiers::default();
+    let start = ptr(&ed, &tool, side);
+    tool.handle(Input::DragStart(start, m), &mut ed);
+    let far = ptr(&ed, &tool, v(400.0, 50.0));
+    tool.handle(Input::Drag(far), &mut ed);
+    assert!(ed.region().is_some(), "lit while dragging");
+    tool.handle(Input::DragEnd(far, m), &mut ed);
+    assert!(ed.region().is_some(), "still picked after");
+    assert!((ed.doc.point(c[1]).unwrap().x - 100.0).abs() < 1e-6);
+
+    // With Alt, the width follows the stretch and the height doesn't.
+    drag_with(
+        &mut ed,
+        &mut tool,
+        side,
+        v(300.0, 50.0),
+        (false, false, true),
+    );
+    // A round width (whole millimetres at this zoom), not 298.507.
+    let w = ed.doc.constraint(width).unwrap().value().unwrap();
+    assert!((w - 299.0).abs() < 1e-6, "{w}");
+    assert_eq!(ed.doc.constraint(height).unwrap().value(), Some(100.0));
+    assert!((ed.doc.point(c[2]).unwrap().y - 100.0).abs() < 1e-6);
+    assert!(ed.region().is_some(), "picked where it landed");
+
+    // With round sizes turned off, the width is whatever the pointer makes it.
+    ed.undo();
+    let start = ptr(&ed, &tool, side);
+    tool.handle(Input::DragStart(start, m), &mut ed);
+    let mut end = ptr(&ed, &tool, v(300.0, 50.0));
+    end.alt = true;
+    end.round_scale = false;
+    tool.handle(Input::Drag(end), &mut ed);
+    tool.handle(Input::DragEnd(end, m), &mut ed);
+    let w = ed.doc.constraint(width).unwrap().value().unwrap();
+    assert!((w - 100.0 * 300.0 / 100.5).abs() < 1e-6, "{w}");
+}
+
+#[test]
+fn dragging_inside_a_picked_area_moves_it() {
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    let c = [v(0.0, 0.0), v(10.0, 0.0), v(10.0, 6.0), v(0.0, 6.0)].map(|p| ed.doc.add_point(p));
+    for i in 0..4 {
+        ed.doc.add_line(c[i], c[(i + 1) % 4]).unwrap();
+    }
+    ed.commit("Setup");
+    let mut tool = SelectTool::default();
+    // Not picked: a drag inside box-selects (and moves nothing).
+    drag_with(
+        &mut ed,
+        &mut tool,
+        v(3.0, 3.0),
+        v(13.0, 3.0),
+        (false, false, false),
+    );
+    assert_eq!(ed.doc.point(c[0]).unwrap(), v(0.0, 0.0));
+    // Picked: the drag moves it, and it stays picked.
+    click(&mut ed, &mut tool, v(2.0, 2.0));
+    assert!(ed.region().is_some());
+    drag_with(
+        &mut ed,
+        &mut tool,
+        v(3.0, 3.0),
+        v(13.0, 3.0),
+        (false, false, false),
+    );
+    assert_eq!(ed.doc.point(c[0]).unwrap(), v(10.0, 0.0));
+    assert!(
+        ed.region()
+            .expect("still picked")
+            .centroid
+            .distance(v(15.0, 3.0))
+            < 1e-9
+    );
+    ed.undo();
+    assert_eq!(ed.doc.point(c[0]).unwrap(), v(0.0, 0.0));
 }
 
 #[test]
@@ -2726,4 +3048,85 @@ fn pen_alt_breaks_handles_and_toggles_points() {
     assert!(ed.smooth_at(middle).is_none());
     tool.handle(Input::Click(p, Modifiers::default()), &mut ed);
     assert!(ed.smooth_at(middle).is_some());
+}
+
+/// Click at `at` as the canvas would: snapped, then steered by the tool, with the document's
+/// angle step.
+fn click_steered(ed: &mut Editor, tool: &mut dyn Tool, at: DVec2, step: Option<f64>) {
+    let mut p = ptr(ed, tool, at);
+    p.angle_step = step;
+    tool.refine_pointer(&mut p);
+    tool.handle(Input::Hover(p), ed);
+    tool.handle(Input::Click(p, Modifiers::default()), ed);
+}
+
+fn last_mark(ed: &Editor) -> drift_core::Annotation {
+    ed.doc.annotations().last().map(|(_, a)| a.clone()).unwrap()
+}
+
+#[test]
+fn section_lines_follow_axis_locks_and_angle_snap() {
+    use super::annotate::SectionTool;
+    use drift_core::Annotation;
+    let mut ed = Editor::default();
+    let mut tool = SectionTool::default();
+    let ends = |ed: &Editor| match last_mark(ed) {
+        Annotation::Section { a, b, .. } => (a, b),
+        other => panic!("{other:?}"),
+    };
+    // X before the first click isn't claimed (it keeps its usual meaning).
+    assert!(!tool.key(ToolKey::X, None, &mut ed));
+    // X: the cutting line runs along X, wherever the pointer is.
+    click_steered(&mut ed, &mut tool, v(0.0, 0.0), None);
+    assert!(tool.key(ToolKey::X, None, &mut ed));
+    assert_eq!(tool.axis_lock(), Some((v(0.0, 0.0), Axis::X)));
+    click_steered(&mut ed, &mut tool, v(40.0, 13.0), None);
+    assert_eq!(ends(&ed), (v(0.0, 0.0), v(40.0, 0.0)));
+    assert_eq!(tool.axis_lock(), None, "the lock ends with the mark");
+    // Y.
+    click_steered(&mut ed, &mut tool, v(0.0, 0.0), None);
+    tool.key(ToolKey::Y, None, &mut ed);
+    click_steered(&mut ed, &mut tool, v(7.0, -30.0), None);
+    assert_eq!(ends(&ed), (v(0.0, 0.0), v(0.0, -30.0)));
+    // With angle snapping at 45°, a cut drawn at about 40° lands on 45°.
+    click_steered(&mut ed, &mut tool, v(0.0, 0.0), Some(45.0));
+    click_steered(&mut ed, &mut tool, v(30.0, 25.0), Some(45.0));
+    let (a, b) = ends(&ed);
+    let d = b - a;
+    assert!((d.y.atan2(d.x).to_degrees() - 45.0).abs() < 1e-9, "{d:?}");
+    // Without it, the cut goes where it is clicked.
+    click_steered(&mut ed, &mut tool, v(0.0, 0.0), None);
+    click_steered(&mut ed, &mut tool, v(30.0, 25.0), None);
+    assert_eq!(ends(&ed), (v(0.0, 0.0), v(30.0, 25.0)));
+}
+
+#[test]
+fn elevations_aim_along_axis_locks_and_angle_snap() {
+    use super::annotate::ElevationTool;
+    use drift_core::Annotation;
+    let mut ed = Editor::default();
+    let mut tool = ElevationTool::default();
+    let angle = |ed: &Editor| match last_mark(ed) {
+        Annotation::Elevation { angle, .. } => angle,
+        other => panic!("{other:?}"),
+    };
+    // Y: it looks straight down, though aimed well off it.
+    click_steered(&mut ed, &mut tool, v(0.0, 0.0), None);
+    assert!(tool.key(ToolKey::Y, None, &mut ed));
+    click_steered(&mut ed, &mut tool, v(9.0, -20.0), None);
+    assert_eq!(angle(&ed), -90.0);
+    // X, aimed left.
+    click_steered(&mut ed, &mut tool, v(0.0, 0.0), None);
+    tool.key(ToolKey::X, None, &mut ed);
+    click_steered(&mut ed, &mut tool, v(-20.0, 6.0), None);
+    assert_eq!(angle(&ed).abs(), 180.0);
+    // The document's angle step: 30° steps take 40° to 30°.
+    click_steered(&mut ed, &mut tool, v(0.0, 0.0), Some(30.0));
+    let toward = DVec2::from_angle(40f64.to_radians()) * 20.0;
+    click_steered(&mut ed, &mut tool, toward, Some(30.0));
+    assert!((angle(&ed) - 30.0).abs() < 1e-6, "{}", angle(&ed));
+    // With angle snapping off, it aims where it is pointed.
+    click_steered(&mut ed, &mut tool, v(0.0, 0.0), None);
+    click_steered(&mut ed, &mut tool, toward, None);
+    assert!((angle(&ed) - 40.0).abs() < 0.05, "{}", angle(&ed));
 }

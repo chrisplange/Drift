@@ -406,6 +406,9 @@ pub struct DraftStyle {
     pub alt_units: Option<LengthFormat>,
     /// The drawing scale as 1 : `scale` (drafting hatch patterns are scaled by it).
     pub scale: f64,
+    /// The colour dimensions and notes are drawn in on the canvas; `None` is the theme's
+    /// (white on the dark canvas, charcoal on the light one).
+    pub color: Option<crate::Rgb>,
 }
 
 impl DraftStyle {
@@ -422,6 +425,7 @@ impl DraftStyle {
             leading_zero: true,
             alt_units: None,
             scale: 1.0,
+            color: None,
         }
     }
 
@@ -438,6 +442,7 @@ impl DraftStyle {
             leading_zero: true,
             alt_units: None,
             scale: 1.0,
+            color: None,
         }
     }
 

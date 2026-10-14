@@ -314,3 +314,19 @@ pub fn toast(painter: &egui::Painter, rect: Rect, text: &str, error: bool, dark:
         fg.gamma_multiply(fade),
     );
 }
+
+/// A small curved arrow: what dragging here does is turn.
+pub fn turn_glyph(painter: &egui::Painter, at: Pos2, color: Color32) {
+    let r = 6.0;
+    let stroke = Stroke::new(1.5, color);
+    let arc: Vec<Pos2> = (0..=12)
+        .map(|i| {
+            let a = std::f32::consts::PI * (0.15 + 1.2 * i as f32 / 12.0);
+            at + vec2(a.cos(), -a.sin()) * r
+        })
+        .collect();
+    let tip = arc[arc.len() - 1];
+    painter.add(egui::Shape::line(arc, stroke));
+    painter.line_segment([tip, tip + vec2(-3.5, -1.0)], stroke);
+    painter.line_segment([tip, tip + vec2(0.5, -3.5)], stroke);
+}

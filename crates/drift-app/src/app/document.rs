@@ -78,6 +78,7 @@ impl DriftApp {
             ("rels", self.show_relations),
             ("auto", self.auto_relations),
             ("ends", self.always_endpoints),
+            ("rscale", self.round_scale),
         ];
         let mut prefs: Vec<String> = flags
             .iter()
@@ -118,6 +119,7 @@ impl DriftApp {
                 "rels" => self.show_relations = on,
                 "auto" => self.auto_relations = on,
                 "ends" => self.always_endpoints = on,
+                "rscale" => self.round_scale = on,
                 _ => {}
             }
         }

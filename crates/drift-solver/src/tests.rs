@@ -147,6 +147,36 @@ fn conflicting_fixes_through_coincidence_are_reported() {
 }
 
 #[test]
+fn two_fixes_on_one_point_agree_or_conflict() {
+    // As when two fixed points are merged into one.
+    let mut doc = Document::new();
+    let a = doc.add_point(v(0.0, 0.0));
+    doc.add_constraint(Constraint::Fix {
+        point: a,
+        at: v(0.0, 0.0),
+    })
+    .unwrap();
+    let same = doc
+        .add_constraint(Constraint::Fix {
+            point: a,
+            at: v(0.0, 0.0),
+        })
+        .unwrap();
+    let report = solved(&mut doc);
+    assert!(report.converged && report.conflicts.is_empty());
+    doc.remove_constraint(same);
+    let apart = doc
+        .add_constraint(Constraint::Fix {
+            point: a,
+            at: v(0.2, 0.0),
+        })
+        .unwrap();
+    let report = solved(&mut doc);
+    assert!(!report.converged);
+    assert!(report.conflicts.contains(&apart), "{report:?}");
+}
+
+#[test]
 fn redundancy_is_detected() {
     let mut doc = Document::new();
     let (p, l) = quad(&mut doc, DVec2::ZERO);
@@ -945,4 +975,40 @@ fn ellipses_have_five_freedoms_and_keep_their_shape() {
         doc.point(n).unwrap(),
     );
     assert!((pm - pc).dot(pn - pc).abs() < 1e-6);
+}
+
+#[test]
+fn a_dimension_from_a_fixed_point_reaches_far() {
+    // A 1219 × 2726 mm panel fixed at a corner, its width dimensioned to 1500: the free
+    // corner is the only unknown, and must still move 280 mm in a few iterations (it used
+    // to crawl a millimetre per iteration and give up).
+    let mut doc = Document::new();
+    let p = [
+        v(0.0, 0.0),
+        v(1219.2, 0.0),
+        v(1219.2, 2725.7),
+        v(0.0, 2725.7),
+    ]
+    .map(|c| doc.add_point(c));
+    for i in 0..4 {
+        doc.add_line(p[i], p[(i + 1) % 4]).unwrap();
+    }
+    doc.add_constraint(Constraint::Fix {
+        point: p[0],
+        at: v(0.0, 0.0),
+    })
+    .unwrap();
+    doc.add_constraint(Constraint::HorizontalDistance {
+        a: p[0],
+        b: p[1],
+        value: 1500.0,
+    })
+    .unwrap();
+    let report = solved(&mut doc);
+    assert!(
+        report.converged && report.conflicts.is_empty(),
+        "{report:?}"
+    );
+    assert!(report.iterations < 10, "{}", report.iterations);
+    assert!((doc.point(p[1]).unwrap().x - 1500.0).abs() < 1e-6);
 }

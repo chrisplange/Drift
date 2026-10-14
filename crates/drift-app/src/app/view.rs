@@ -536,6 +536,7 @@ impl DriftApp {
             self.paint_hatch_handles(&painter, &map, &h, &colors);
         }
         self.paint_ghosts(&painter, &map);
+        self.paint_check_markers(&painter, &map);
         self.paint_transform_box(&painter, &map, &colors, ui.visuals().dark_mode);
         if let Some(region) = self.editor.region() {
             overlay::region_fill(&painter, &map, &region, colors.window.gamma_multiply(0.22));

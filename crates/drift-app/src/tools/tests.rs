@@ -3130,3 +3130,157 @@ fn elevations_aim_along_axis_locks_and_angle_snap() {
     click_steered(&mut ed, &mut tool, toward, None);
     assert!((angle(&ed) - 40.0).abs() < 0.05, "{}", angle(&ed));
 }
+
+#[test]
+fn a_fixed_panel_stretches_by_drag_and_by_dimension() {
+    use super::rectangle::RectangleTool;
+    // A 4 ft × 8 ft 11 1/16 in panel drawn from the origin (horizontal and vertical sides),
+    // its corner fixed there and its height dimensioned.
+    let mut ed = with_auto_relations();
+    let mut tool = RectangleTool::default();
+    click(&mut ed, &mut tool, v(0.0, 0.0));
+    click(&mut ed, &mut tool, v(1219.2, 2725.7));
+    let point_at = |ed: &Editor, p: DVec2| {
+        ed.doc
+            .iter()
+            .find(|(id, e)| e.kind.is_point() && ed.doc.point(*id).unwrap().distance(p) < 1e-6)
+            .unwrap()
+            .0
+    };
+    let (a, b, c, d) = (
+        point_at(&ed, v(0.0, 0.0)),
+        point_at(&ed, v(1219.2, 0.0)),
+        point_at(&ed, v(1219.2, 2725.7)),
+        point_at(&ed, v(0.0, 2725.7)),
+    );
+    let line = |ed: &Editor, p: EntityId, q: EntityId| {
+        ed.doc
+            .iter()
+            .find(|(_, e)| {
+                matches!(e.kind, EntityKind::Line { a, b } if (a, b) == (p, q) || (a, b) == (q, p))
+            })
+            .unwrap()
+            .0
+    };
+    ed.add_constraints(
+        "Fix",
+        &[Constraint::Fix {
+            point: a,
+            at: v(0.0, 0.0),
+        }],
+    )
+    .unwrap();
+    ed.add_constraints(
+        "Height",
+        &[Constraint::Distance {
+            a: d,
+            b: a,
+            value: 2725.7,
+        }],
+    )
+    .unwrap();
+
+    // Dragging the right side half a metre in one go, the pointer also 150 mm higher (as a
+    // snap to a coarse imperial grid can take it): the side can only slide sideways, and
+    // does.
+    let right = line(&ed, b, c);
+    let mut select = SelectTool::default();
+    let m = Modifiers::default();
+    let start = ptr(&ed, &select, v(1219.2, 1200.0));
+    select.handle(Input::DragStart(start, m), &mut ed);
+    let to = ptr(&ed, &select, v(1719.2, 1350.0));
+    select.handle(Input::Drag(to), &mut ed);
+    select.handle(Input::DragEnd(to, m), &mut ed);
+    assert!(
+        (ed.doc.point(b).unwrap().x - 1719.2).abs() < 1e-6,
+        "{:?}",
+        ed.doc.point(b)
+    );
+    assert_eq!(
+        ed.doc.point(a).unwrap(),
+        v(0.0, 0.0),
+        "the fixed corner stays"
+    );
+    let _ = right;
+
+    // A width dimension of 1500 takes it there.
+    ed.add_constraints(
+        "Width",
+        &[Constraint::HorizontalDistance {
+            a,
+            b,
+            value: 1500.0,
+        }],
+    )
+    .expect("a width from the fixed corner");
+    assert!((ed.doc.point(c).unwrap().x - 1500.0).abs() < 1e-6);
+    assert!((ed.doc.point(c).unwrap().y - 2725.7).abs() < 1e-6);
+}
+
+#[test]
+fn collinear_between_level_lines_is_not_taken_as_implied() {
+    use super::rectangle::RectangleTool;
+    use crate::editor::EditError;
+    // Two rectangles with level sides, the left one held: its corner fixed and its height
+    // dimensioned. Their tops are level but at different heights.
+    let mut ed = with_auto_relations();
+    let mut tool = RectangleTool::default();
+    click(&mut ed, &mut tool, v(0.0, 0.0));
+    click(&mut ed, &mut tool, v(40.0, 30.0));
+    let mut tool = RectangleTool::default();
+    click(&mut ed, &mut tool, v(60.0, 0.0));
+    click(&mut ed, &mut tool, v(90.0, 50.0));
+    let point_at = |ed: &Editor, p: DVec2| {
+        ed.doc
+            .iter()
+            .find(|(id, e)| e.kind.is_point() && ed.doc.point(*id).unwrap().distance(p) < 1e-6)
+            .unwrap()
+            .0
+    };
+    let line_between = |ed: &Editor, p: EntityId, q: EntityId| {
+        ed.doc
+            .iter()
+            .find(|(_, e)| {
+                matches!(e.kind, EntityKind::Line { a, b } if (a, b) == (p, q) || (a, b) == (q, p))
+            })
+            .unwrap()
+            .0
+    };
+    let (a, d) = (point_at(&ed, v(0.0, 0.0)), point_at(&ed, v(0.0, 30.0)));
+    let left_top = line_between(&ed, point_at(&ed, v(40.0, 30.0)), d);
+    let right_top = line_between(
+        &ed,
+        point_at(&ed, v(90.0, 50.0)),
+        point_at(&ed, v(60.0, 50.0)),
+    );
+    ed.add_constraints(
+        "Fix",
+        &[Constraint::Fix {
+            point: a,
+            at: v(0.0, 0.0),
+        }],
+    )
+    .unwrap();
+    ed.add_constraints(
+        "Height",
+        &[Constraint::Distance {
+            a: d,
+            b: a,
+            value: 30.0,
+        }],
+    )
+    .unwrap();
+    let collinear = Constraint::Collinear {
+        a: left_top,
+        b: right_top,
+    };
+    ed.add_constraints("Collinear", &[collinear])
+        .expect("collinear holds something new: the heights");
+    let p = point_at(&ed, v(90.0, 30.0));
+    assert!((ed.doc.point(p).unwrap().y - 30.0).abs() < 1e-6);
+    // Now it is implied.
+    assert!(matches!(
+        ed.add_constraints("Collinear", &[collinear]),
+        Err(EditError::Redundant)
+    ));
+}

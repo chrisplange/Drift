@@ -675,8 +675,9 @@ impl Editor {
         } else if self.new_degeneracy(degenerate_before) {
             Some(EditError::Degenerate)
         } else if ids.iter().all(|id| report.redundant.contains(id))
-            || report.dependent_equations > before.dependent_equations
             || report.dof == before.dof
+            || (report.dependent_equations > before.dependent_equations
+                && !self.only_relations(ids))
         {
             Some(EditError::Redundant)
         } else {
@@ -689,6 +690,19 @@ impl Editor {
         }
         self.commit(label);
         Ok(())
+    }
+
+    /// Whether constraints are all relations of shape (no dimension and no fix). A relation
+    /// of several equations may have one already implied — collinear between two lines
+    /// already held level, say — and still hold something new; that is fine, since relations
+    /// can't disagree in value. A dimension or a fix that leaves another one implied
+    /// over-defines the sketch instead.
+    fn only_relations(&self, ids: &[ConstraintId]) -> bool {
+        ids.iter().all(|id| {
+            self.doc
+                .constraint(*id)
+                .is_some_and(|c| !c.is_dimension() && !matches!(c, Constraint::Fix { .. }))
+        })
     }
 
     /// Add a dimension with its label placed at `placement` (offset from its anchor), as one

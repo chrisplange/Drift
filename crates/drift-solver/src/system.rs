@@ -184,6 +184,25 @@ impl System {
         let mut conflicts = Vec::new();
         let mut redundant = Vec::new();
         let mut rows = Vec::new();
+        // Pin a parameter. A second pin on the same parameter (two fixes on one point, as
+        // when two fixed points are merged) agrees, or conflicts.
+        let length_tol = tol.length;
+        let pin = |fixed: &mut HashMap<usize, (f64, ConstraintId)>,
+                   problems: (&mut Vec<ConstraintId>, &mut Vec<ConstraintId>),
+                   param: usize,
+                   v: f64,
+                   cid: ConstraintId| {
+            let (conflicts, redundant) = problems;
+            match fixed.get(&param) {
+                Some(&(old, _)) if (old - v).abs() > length_tol * old.abs().max(1.0) => {
+                    conflicts.push(cid);
+                }
+                Some(_) => redundant.push(cid),
+                None => {
+                    fixed.insert(param, (v, cid));
+                }
+            }
+        };
         // Collinear relations are built after all merges are known (see below).
         let mut collinear = Vec::new();
 
@@ -216,12 +235,12 @@ impl System {
                 Constraint::VerticalPoints { a, b } => equalities.push((x(a), x(b))),
                 Constraint::Fix { point: p, at } => {
                     for (param, v) in point(p).into_iter().zip([at.x, at.y]) {
-                        fixed.insert(param, (v, cid));
+                        pin(&mut fixed, (&mut conflicts, &mut redundant), param, v, cid);
                     }
                 }
                 Constraint::FixRadius { curve, radius: r } => match radius(curve) {
                     Length::Param(p) => {
-                        fixed.insert(p, (r, cid));
+                        pin(&mut fixed, (&mut conflicts, &mut redundant), p, r, cid)
                     }
                     length => rows.push(Row {
                         equation: Equation::LengthValue { length, value: r },

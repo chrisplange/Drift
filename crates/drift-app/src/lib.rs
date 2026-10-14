@@ -7,6 +7,7 @@ mod annotations;
 mod app;
 pub mod blocks;
 mod canvas;
+pub mod checker;
 pub mod clipboard;
 pub mod curves;
 mod dock;
@@ -28,6 +29,7 @@ mod soak;
 pub mod texts;
 mod theme;
 pub mod tools;
+pub mod transform;
 #[cfg(test)]
 mod ui_tests;
 pub mod underlays;
@@ -50,7 +52,7 @@ use crate::overlay::{OverlayColors, ScreenMap};
 use crate::tools::{Axis, Input, Modifiers, Overlay, Tool, ToolKey, ToolKind};
 
 /// The steps angle snapping offers, in degrees.
-pub(crate) const ANGLE_STEPS: [f64; 3] = [5.0, 15.0, 45.0];
+pub(crate) const ANGLE_STEPS: [f64; 4] = [1.0, 5.0, 15.0, 45.0];
 
 /// Zoom factor per logical point of scroll.
 const SCROLL_ZOOM_SPEED: f64 = 0.0015;
@@ -292,10 +294,17 @@ pub struct DriftApp {
     pending_view: Option<app::sheets_ui::ViewAction>,
     /// The report of the last import, until it is closed.
     import_report: Option<app::sheets_ui::ImportSummary>,
+    /// The Check sketch window, while it is open.
+    sketch_check: Option<app::checker_ui::SketchCheck>,
+    /// How far apart two ends may be for the sketch checker to take them as meant to meet
+    /// (mm).
+    gap_tolerance: f64,
     /// The name typed for a new block.
     new_block_name: String,
     /// Curvature combs on picked curves.
     show_combs: bool,
+    /// Alt-scaling steps the picked geometry through round sizes (rather than any size).
+    round_scale: bool,
     /// The text being typed into (its edits merge into one undo step).
     text_typing: Option<drift_core::TextId>,
     /// A text field had the keyboard at the end of the last frame.
@@ -311,6 +320,8 @@ pub struct DriftApp {
     text_grip: bool,
     /// The pointer was used in the text being typed this frame.
     text_touched: bool,
+    /// Shift and Ctrl (Cmd) as they are held this frame, for the pointer.
+    keys_held: (bool, bool),
     /// When the caret last moved (it shows steadily for a moment, then blinks).
     text_blink: f64,
     /// Show every end point, or only those of hovered or picked curves (as in Illustrator).
@@ -424,8 +435,11 @@ impl DriftApp {
             sheet_view: 0,
             pending_view: None,
             import_report: None,
+            sketch_check: None,
+            gap_tolerance: crate::checker::DEFAULT_TOLERANCE,
             new_block_name: String::new(),
             show_combs: true,
+            round_scale: true,
             text_typing: None,
             text_was_focused: false,
             text_focused: None,
@@ -433,6 +447,7 @@ impl DriftApp {
             text_set_cursor: None,
             text_grip: false,
             text_touched: false,
+            keys_held: (false, false),
             text_blink: 0.0,
             always_endpoints: false,
             angle_snap: None,

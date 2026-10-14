@@ -149,61 +149,9 @@ impl Tool for LineTool {
     }
 
     fn refine_pointer(&self, p: &mut Pointer) {
-        let Some(last) = self.last else { return };
-        if let Some(axis) = self.lock {
-            // Project onto the axis through the last point. A snap target off the axis still
-            // sets how far along it goes (shown with a guide line from the target); it is only
-            // reused if it lies exactly on the axis.
-            let u = axis.dir();
-            let target = p.pos();
-            let at = last.pos + u * (target - last.pos).dot(u);
-            let reference = p.snap.map(|s| s.at).filter(|q| *q != at);
-            if reference.is_some() {
-                p.snap = None;
-            }
-            p.guide = Some(Guide {
-                at,
-                kind: axis.relation(),
-                from: [Some(last.pos), reference],
-            });
-            return;
+        if let Some(last) = self.last {
+            steer(last.pos, self.lock, p);
         }
-        if p.exact_snap().is_some() {
-            return;
-        }
-        // Angle snapping: the segment turns in steps, and is as long as the pointer is far
-        // along that direction. (An exact snap, above, still wins: the line goes to it.)
-        if let Some(step) = p.angle_step.filter(|s| *s > 0.0) {
-            let target = p.snap.map_or(p.raw, |grid| grid.at);
-            let d = target - last.pos;
-            if d.length() <= p.tolerance {
-                return;
-            }
-            let degrees = (d.y.atan2(d.x).to_degrees() / step).round() * step;
-            let u = exact_direction(degrees);
-            p.guide = Some(Guide {
-                at: last.pos + u * d.dot(u).max(0.0),
-                kind: relation_for_angle(degrees).unwrap_or(GuideKind::Aligned),
-                from: [Some(last.pos), None],
-            });
-            return;
-        }
-        let at = p.pos();
-        let d = at - last.pos;
-        let tol = p.tolerance;
-        let (kind, at) = if d.y.abs() <= tol && d.x.abs() > tol {
-            (GuideKind::Horizontal, DVec2::new(at.x, last.pos.y))
-        } else if d.x.abs() <= tol && d.y.abs() > tol {
-            (GuideKind::Vertical, DVec2::new(last.pos.x, at.y))
-        } else {
-            return;
-        };
-        let other = p.guide.and_then(|g| g.from[0]);
-        p.guide = Some(Guide {
-            at,
-            kind,
-            from: [Some(last.pos), other],
-        });
     }
 
     fn fields(&self) -> &'static [&'static str] {
@@ -290,4 +238,64 @@ impl Tool for LineTool {
             p.units.format_readout(d.length())
         ))
     }
+}
+
+/// Steer the pointer for a segment from `from`: along a locked axis (X / Y), else in the
+/// document's angle steps, else onto the horizontal or vertical when it is nearly there.
+/// An exact snap still decides where an unlocked segment ends.
+pub(super) fn steer(from: DVec2, lock: Option<Axis>, p: &mut Pointer) {
+    if let Some(axis) = lock {
+        // Project onto the axis through `from`. A snap target off the axis still
+        // sets how far along it goes (shown with a guide line from the target); it is only
+        // reused if it lies exactly on the axis.
+        let u = axis.dir();
+        let target = p.pos();
+        let at = from + u * (target - from).dot(u);
+        let reference = p.snap.map(|s| s.at).filter(|q| *q != at);
+        if reference.is_some() {
+            p.snap = None;
+        }
+        p.guide = Some(Guide {
+            at,
+            kind: axis.relation(),
+            from: [Some(from), reference],
+        });
+        return;
+    }
+    if p.exact_snap().is_some() {
+        return;
+    }
+    // Angle snapping: the segment turns in steps, and is as long as the pointer is far
+    // along that direction. (An exact snap, above, still wins: the line goes to it.)
+    if let Some(step) = p.angle_step.filter(|s| *s > 0.0) {
+        let target = p.snap.map_or(p.raw, |grid| grid.at);
+        let d = target - from;
+        if d.length() <= p.tolerance {
+            return;
+        }
+        let degrees = (d.y.atan2(d.x).to_degrees() / step).round() * step;
+        let u = exact_direction(degrees);
+        p.guide = Some(Guide {
+            at: from + u * d.dot(u).max(0.0),
+            kind: relation_for_angle(degrees).unwrap_or(GuideKind::Aligned),
+            from: [Some(from), None],
+        });
+        return;
+    }
+    let at = p.pos();
+    let d = at - from;
+    let tol = p.tolerance;
+    let (kind, at) = if d.y.abs() <= tol && d.x.abs() > tol {
+        (GuideKind::Horizontal, DVec2::new(at.x, from.y))
+    } else if d.x.abs() <= tol && d.y.abs() > tol {
+        (GuideKind::Vertical, DVec2::new(from.x, at.y))
+    } else {
+        return;
+    };
+    let other = p.guide.and_then(|g| g.from[0]);
+    p.guide = Some(Guide {
+        at,
+        kind,
+        from: [Some(from), other],
+    });
 }

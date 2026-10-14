@@ -126,8 +126,9 @@ impl DriftApp {
     }
 
     pub(crate) fn paint_notes(&self, painter: &egui::Painter, layouts: &[NoteLayout], dark: bool) {
-        let colors = AnnotationColors::new(dark);
-        let style = annotations::DimStyle::of(&self.editor.doc.draft_style());
+        let draft = self.editor.doc.draft_style();
+        let colors = AnnotationColors::drafting(dark, draft.color);
+        let style = annotations::DimStyle::of(&draft);
         for l in layouts {
             if self.note_edit.as_ref().is_some_and(|e| e.id == l.id) {
                 continue;

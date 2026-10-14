@@ -496,14 +496,15 @@ fn newton(
                 lambda * 10.0
             };
         }
-        // Limit the step so a single iteration can't fling geometry onto another branch.
+        // Limit the step so a single iteration can't fling geometry onto another branch: no
+        // further than the drawing is across. (Not the spread of this component's own
+        // unknowns: a lone unknown, such as the free end of a dimension from a fixed point,
+        // has none, and would crawl a millimetre at a time.)
         let Some(mut delta) = solved else { break };
-        let (lo, hi) = comp
-            .unknowns
+        let (lo, hi) = values
             .iter()
-            .map(|g| values[*g])
             .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), v| {
-                (lo.min(v), hi.max(v))
+                (lo.min(*v), hi.max(*v))
             });
         let max_step = (hi - lo).max(1.0);
         let biggest = delta.iter().fold(0.0f64, |acc, d| acc.max(d.abs()));

@@ -81,6 +81,17 @@ pub(super) enum SelectDrag {
         circle: EntityId,
         center: DVec2,
     },
+    /// Dragging a transform handle: the geometry scales (a corner) or stretches (a side).
+    Scale {
+        frame: crate::transform::TransformBox,
+        points: BTreeSet<EntityId>,
+        /// The handle's side along each axis.
+        handle: (i8, i8),
+        /// Pointer where the drag began.
+        press: DVec2,
+        /// The scale applied now: its anchor, factors, and whether dimensions scaled too.
+        applied: Option<(DVec2, DVec2, bool)>,
+    },
 }
 
 /// A Blender-style modal move (G): the selection follows the pointer from a base point until a
@@ -141,6 +152,7 @@ impl Grab {
                 ed.place_text(id, from + offset);
             }
             self.applied = offset;
+            ed.region_motion = Some(crate::editor::RegionMotion::Move(offset));
         }
     }
 }
@@ -213,11 +225,66 @@ impl SelectTool {
         true
     }
 
+    /// A drag that starts on a transform handle scales, stretches or turns what the box is
+    /// around. True when it did.
+    fn start_handle_drag(&mut self, p: &Pointer, ed: &mut Editor) -> bool {
+        use crate::transform::Handle;
+        let Some(frame) = ed.transform_box() else {
+            return false;
+        };
+        match frame.handle_at(
+            p.raw,
+            crate::transform::handle_reach(p.tolerance),
+            p.tolerance,
+        ) {
+            Some(Handle::Scale { x, y }) => {
+                let points = ed.doc.defining_points(frame.ids.iter().copied());
+                ed.doc.begin();
+                self.drag = Some(SelectDrag::Scale {
+                    frame,
+                    points,
+                    handle: (x, y),
+                    press: p.raw,
+                    applied: None,
+                });
+                true
+            }
+            Some(Handle::Turn { .. }) => self.start_turn(p, &frame, ed),
+            None => false,
+        }
+    }
+
+    /// A drag that starts inside a picked area moves it (its outline), from its centroid.
+    /// True when it did.
+    fn start_region_drag(&mut self, p: &Pointer, ed: &mut Editor) -> bool {
+        let Some(region) = ed.region().filter(|r| r.contains(p.raw)) else {
+            return false;
+        };
+        let ids = ed.region_curves(&region);
+        if !ed.selection.iter().all(|id| ids.contains(id)) || ids.iter().any(|id| ed.is_locked(*id))
+        {
+            return false;
+        }
+        let points = ed.doc.defining_points(ids.iter().copied());
+        ed.doc.begin();
+        self.drag = Some(SelectDrag::Move {
+            ids,
+            points,
+            start: p.raw,
+            base: region.centroid,
+            applied: DVec2::ZERO,
+            point: None,
+            instances: Vec::new(),
+        });
+        true
+    }
+
     /// Confirm the move for the pointer at `target`. The final offset is applied again in one
     /// step from the original geometry, so typed and snapped moves land exactly.
     pub(super) fn confirm_grab(&mut self, ed: &mut Editor) {
         let Some(grab) = self.grab.take() else { return };
         let offset = grab.offset();
+        ed.region_motion = None;
         // A picked region moves with its outline.
         if let Some(seed) = &mut ed.selected_region {
             *seed += offset;
@@ -247,6 +314,7 @@ impl SelectTool {
         if self.grab.take().is_none() {
             return false;
         }
+        ed.region_motion = None;
         ed.doc.rollback();
         ed.sync();
         true
@@ -355,6 +423,35 @@ impl Tool for SelectTool {
     }
 
     fn measurement(&self, p: &Pointer) -> Option<String> {
+        if let Some(SelectDrag::Scale {
+            applied,
+            frame,
+            handle,
+            ..
+        }) = &self.drag
+        {
+            let (_, s, dims) = (*applied)?;
+            if dims {
+                // The sizes the dimensions come to, along the axes that change.
+                let size = (frame.bounds.max - frame.bounds.min) * s;
+                let w = format!("W {}", p.units.format_readout(size.x));
+                let h = format!("H {}", p.units.format_readout(size.y));
+                let both = (s.x - s.y).abs() < 1e-9 || (handle.0 != 0 && handle.1 != 0);
+                let text = match (handle.0 != 0, handle.1 != 0) {
+                    _ if both => format!("{w}  {h}"),
+                    (true, _) => w,
+                    _ => h,
+                };
+                return Some(format!("{text} (dimensions too)"));
+            }
+            let percent = |f: f64| format!("{:.0}%", f * 100.0);
+            let size = if (s.x - s.y).abs() < 1e-9 {
+                percent(s.x)
+            } else {
+                format!("{} × {}", percent(s.x), percent(s.y))
+            };
+            return Some(format!("Scale {size}"));
+        }
         if let Some(spin) = &self.spin {
             return Some(if spin.picking_pivot {
                 "Pivot".into()
@@ -416,6 +513,9 @@ impl Tool for SelectTool {
             Some(SelectDrag::Fillet { .. }) => {
                 "Resizing the fillet in steps (Alt: freely) · Esc to cancel".into()
             }
+            Some(SelectDrag::Scale { .. }) => "Scaling: dimensions hold · Shift: keep the \
+                 shape · Ctrl: about the middle · Alt: scale the dimensions too · Esc to cancel"
+                .into(),
             None => "Click to select · Shift to add · Ctrl to toggle · drag to move or box-select"
                 .into(),
         }
@@ -461,7 +561,7 @@ impl Tool for SelectTool {
                     Some(SelectDrag::Move { point, .. }) => *point,
                     Some(SelectDrag::Radius { circle, .. }) => Some(*circle),
                     Some(SelectDrag::Fillet { arc }) => Some(*arc),
-                    Some(SelectDrag::Text { .. }) => None,
+                    Some(SelectDrag::Text { .. } | SelectDrag::Scale { .. }) => None,
                     None => match pick_target(ed, &p) {
                         Some(Target::Entity(id)) => Some(id),
                         Some(Target::Midpoint(line)) => {
@@ -668,6 +768,9 @@ impl Tool for SelectTool {
             }
             Input::Finish => {}
             Input::DragStart(p, mods) => {
+                if self.start_handle_drag(&p, ed) {
+                    return;
+                }
                 let hidden = ed.hidden_handles();
                 let hit = ed
                     .index
@@ -754,6 +857,7 @@ impl Tool for SelectTool {
                             instances,
                         });
                     }
+                    None if self.start_region_drag(&p, ed) => {}
                     None => {
                         // Dragging inside a picked fill moves its area; elsewhere, box-select.
                         let picked_fill = ed
@@ -785,6 +889,48 @@ impl Tool for SelectTool {
             }
             Input::Drag(p) => match &mut self.drag {
                 Some(SelectDrag::Box { current, .. }) => *current = p.raw,
+                Some(SelectDrag::Scale {
+                    frame,
+                    points,
+                    handle,
+                    press,
+                    applied,
+                }) => {
+                    // Shift keeps the shape, Ctrl scales about the middle, Alt scales the
+                    // dimensions too (each as far as the stretch runs along it).
+                    let dims = p.alt;
+                    let anchor = frame.anchor(handle.0, handle.1, p.command);
+                    let mut scale =
+                        crate::transform::scale_for(*handle, anchor, *press, p.raw, p.shift);
+                    if dims && p.round_scale {
+                        // Round sizes, in steps that suit the zoom (as fillets are sized).
+                        let step = super::corners::round_step(
+                            p.tolerance * 1.5,
+                            p.units.length.is_metric(),
+                        );
+                        let size = frame.bounds.max - frame.bounds.min;
+                        scale = crate::transform::round_scale(scale, *handle, size, step, p.shift);
+                    }
+                    let wanted = Some((anchor, scale, dims));
+                    if wanted != *applied {
+                        ed.doc.rollback();
+                        ed.doc.begin();
+                        if ed.scale_geometry(&frame.ids, points, anchor, scale, dims) {
+                            *applied = wanted;
+                        } else {
+                            // Impossible: stay at the last scale that worked.
+                            ed.doc.rollback();
+                            ed.doc.begin();
+                            if let Some((a, s, d)) = *applied {
+                                ed.scale_geometry(&frame.ids, points, a, s, d);
+                            }
+                        }
+                        ed.region_motion = applied.map(|(anchor, scale, _)| {
+                            crate::editor::RegionMotion::Scale { anchor, scale }
+                        });
+                        ed.sync();
+                    }
+                }
                 Some(SelectDrag::Text { id, start, from }) => {
                     if let Some(mut t) = ed.doc.text(*id).cloned() {
                         t.at = *from + (p.raw - *start);
@@ -832,6 +978,7 @@ impl Tool for SelectTool {
                         if ids.is_empty() || ed.drag(ids, step, &dragged) {
                             ed.move_instances(instances, offset);
                             *applied = offset;
+                            ed.region_motion = Some(crate::editor::RegionMotion::Move(offset));
                         }
                     }
                 }
@@ -859,6 +1006,7 @@ impl Tool for SelectTool {
                     ed.selected_instances.extend(copies);
                 }
                 Some(SelectDrag::Move { point, applied, .. }) => {
+                    ed.region_motion = None;
                     if let Some(seed) = &mut ed.selected_region {
                         *seed += applied;
                     }
@@ -895,6 +1043,31 @@ impl Tool for SelectTool {
                 Some(SelectDrag::Radius { .. }) => {
                     ed.commit("Resize circle");
                 }
+                Some(SelectDrag::Scale {
+                    frame,
+                    points,
+                    applied,
+                    ..
+                }) => {
+                    ed.region_motion = None;
+                    // Applied again in one step from the original geometry.
+                    ed.doc.rollback();
+                    if let Some((anchor, scale, dims)) =
+                        applied.filter(|(_, s, _)| *s != DVec2::ONE)
+                    {
+                        ed.doc.begin();
+                        if ed.scale_geometry(&frame.ids, &points, anchor, scale, dims) {
+                            if let Some(seed) = &mut ed.selected_region {
+                                *seed = anchor + (*seed - anchor) * scale;
+                            }
+                            ed.commit("Scale");
+                        } else {
+                            ed.doc.rollback();
+                            ed.notice = Some("Can't scale that far".into());
+                        }
+                    }
+                    ed.sync();
+                }
                 Some(SelectDrag::Fillet { .. }) => {
                     ed.commit("Fillet radius");
                 }
@@ -915,8 +1088,10 @@ impl Tool for SelectTool {
                 SelectDrag::Move { .. }
                 | SelectDrag::Radius { .. }
                 | SelectDrag::Fillet { .. }
-                | SelectDrag::Text { .. },
+                | SelectDrag::Text { .. }
+                | SelectDrag::Scale { .. },
             ) => {
+                ed.region_motion = None;
                 ed.doc.rollback();
                 ed.sync();
                 true

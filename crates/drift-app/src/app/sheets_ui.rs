@@ -362,6 +362,7 @@ impl DriftApp {
         };
         let mut open = true;
         let mut close = false;
+        let mut check = false;
         egui::Window::new(format!("Import: {}", report.title))
             .id(egui::Id::new("import_report"))
             .open(&mut open)
@@ -398,6 +399,17 @@ impl DriftApp {
                         close = true;
                     }
                     if ui
+                        .button("Check sketch…")
+                        .on_hover_text(
+                            "Drawings from other programs often have ends that nearly meet: \
+                             find and fix them",
+                        )
+                        .clicked()
+                    {
+                        check = true;
+                        close = true;
+                    }
+                    if ui
                         .button("Copy")
                         .on_hover_text("Copy this report")
                         .clicked()
@@ -411,6 +423,9 @@ impl DriftApp {
                     }
                 });
             });
+        if check {
+            self.open_sketch_check();
+        }
         if close || !open {
             self.import_report = None;
         }

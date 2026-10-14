@@ -17,6 +17,11 @@ use crate::overlay::ScreenMap;
 
 /// Default distance of a dimension label from the geometry, in logical points.
 const DEFAULT_OFFSET_PT: f64 = 28.0;
+/// The least a linear dimension's line stands off what it measures, on screen (points): it
+/// keeps to the side it was placed on, however close it is dragged.
+pub const RELIEF_PT: f32 = 12.0;
+/// How far around a dimension's text a click still lands on it (points).
+pub const TEXT_REACH: f32 = 6.0;
 const GLYPH_SIZE: f32 = 15.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,6 +69,24 @@ impl AnnotationColors {
                 text_background: Color32::from_rgb(0xfb, 0xfb, 0xfa),
                 glyph_background: Color32::from_rgb(0xe8, 0xea, 0xee),
             }
+        }
+    }
+
+    /// The colours dimensions and notes are drawn in: the drawing's own colour if it has one
+    /// that shows against the canvas, otherwise white on the dark canvas and charcoal on the
+    /// light one. (Relation glyphs keep the theme's colours.)
+    pub fn drafting(dark: bool, color: Option<drift_core::Rgb>) -> Self {
+        let theme = if dark {
+            Color32::WHITE
+        } else {
+            Color32::from_rgb(0x33, 0x36, 0x3a)
+        };
+        let normal = color
+            .and_then(|c| crate::editor::contrast(c.0, dark))
+            .map_or(theme, |[r, g, b]| Color32::from_rgb(r, g, b));
+        Self {
+            normal,
+            ..Self::new(dark)
         }
     }
 
@@ -788,6 +811,17 @@ fn settle_label(along: f32, len: f32, half: f32, style: &DimStyle) -> f32 {
     }
 }
 
+/// Where a dimension line goes across its extension lines: at `at`, but at least
+/// [`RELIEF_PT`] beyond the span `lo..=hi` its ends lie in, on the side it is on (the far
+/// side of `hi` when it is on neither).
+fn relieved(at: f32, lo: f32, hi: f32) -> f32 {
+    if at < lo || (at <= hi && at - lo < hi - at) {
+        at.min(lo - RELIEF_PT)
+    } else {
+        at.max(hi + RELIEF_PT)
+    }
+}
+
 /// Lay out a dimension. `placement` is the label offset from the anchor (world units). A
 /// driven dimension shows the geometry's current measurement in parentheses.
 pub fn layout_dimension(
@@ -809,7 +843,7 @@ pub fn layout_dimension(
     let linear = |p1: Pos2, p2: Pos2| {
         let u = dir(p1, p2);
         let n = u.rot90();
-        let d = (label - p1).dot(n);
+        let d = relieved((label - p1).dot(n), 0.0, 0.0);
         let d1 = p1 + n * d;
         let d2 = p2 + n * d;
         let along = (label - d1).dot(u);
@@ -830,13 +864,15 @@ pub fn layout_dimension(
         }
         Constraint::HorizontalDistance { a, b, .. } => {
             let (p1, p2) = (s(p(a)?), s(p(b)?));
-            let d = [pos2(p1.x, label.y), pos2(p2.x, label.y)];
-            (DimShape::Linear { p: [p1, p2], d }, label)
+            let y = relieved(label.y, p1.y.min(p2.y), p1.y.max(p2.y));
+            let d = [pos2(p1.x, y), pos2(p2.x, y)];
+            (DimShape::Linear { p: [p1, p2], d }, pos2(label.x, y))
         }
         Constraint::VerticalDistance { a, b, .. } => {
             let (p1, p2) = (s(p(a)?), s(p(b)?));
-            let d = [pos2(label.x, p1.y), pos2(label.x, p2.y)];
-            (DimShape::Linear { p: [p1, p2], d }, label)
+            let x = relieved(label.x, p1.x.min(p2.x), p1.x.max(p2.x));
+            let d = [pos2(x, p1.y), pos2(x, p2.y)];
+            (DimShape::Linear { p: [p1, p2], d }, pos2(x, label.y))
         }
         Constraint::Radius { curve, .. } | Constraint::Diameter { curve, .. } => {
             let center = s(center_of(doc, curve)?);
@@ -1339,6 +1375,40 @@ pub fn paint_auto_relation(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn dimensions_take_the_drawings_colour_or_the_canvas_default() {
+        use drift_core::Rgb;
+        // White on the dark canvas, charcoal on the light one; relation glyphs keep theirs.
+        assert_eq!(
+            AnnotationColors::drafting(true, None).normal,
+            Color32::WHITE
+        );
+        let charcoal = AnnotationColors::drafting(false, None).normal;
+        assert_eq!(charcoal, Color32::from_rgb(0x33, 0x36, 0x3a));
+        assert_ne!(AnnotationColors::new(true).normal, Color32::WHITE);
+        // A chosen colour shows on both canvases...
+        let red = Some(Rgb([0xd0, 0x30, 0x30]));
+        assert_eq!(
+            AnnotationColors::drafting(true, red).normal,
+            Color32::from_rgb(0xd0, 0x30, 0x30)
+        );
+        assert_eq!(
+            AnnotationColors::drafting(false, red).normal,
+            Color32::from_rgb(0xd0, 0x30, 0x30)
+        );
+        // ...unless it would vanish into one: black on the dark canvas falls back to white.
+        let black = Some(Rgb([0, 0, 0]));
+        assert_eq!(
+            AnnotationColors::drafting(true, black).normal,
+            Color32::WHITE
+        );
+        assert_eq!(
+            AnnotationColors::drafting(false, black).normal,
+            Color32::BLACK
+        );
+    }
+
     use super::*;
 
     #[test]
@@ -1444,6 +1514,20 @@ mod tests {
         assert_eq!(label(&doc, len).plain(), "25 [0.984\"]");
         doc.set_driven(len, true).unwrap();
         assert_eq!(label(&doc, len).plain(), "(25 [0.984\"])");
+    }
+
+    #[test]
+    fn dimension_lines_keep_clear_of_what_they_measure() {
+        // Placed well clear: where it was put.
+        assert_eq!(relieved(40.0, 100.0, 100.0), 40.0);
+        assert_eq!(relieved(160.0, 100.0, 100.0), 160.0);
+        // Dragged close (or onto the geometry): held off on its side.
+        assert_eq!(relieved(95.0, 100.0, 100.0), 100.0 - RELIEF_PT);
+        assert_eq!(relieved(104.0, 100.0, 100.0), 100.0 + RELIEF_PT);
+        assert_eq!(relieved(100.0, 100.0, 100.0), 100.0 + RELIEF_PT);
+        // Between two ends at different heights: off the nearer one, outside both.
+        assert_eq!(relieved(105.0, 100.0, 140.0), 100.0 - RELIEF_PT);
+        assert_eq!(relieved(130.0, 100.0, 140.0), 140.0 + RELIEF_PT);
     }
 
     #[test]

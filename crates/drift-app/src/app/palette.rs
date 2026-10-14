@@ -28,6 +28,7 @@ pub(crate) enum Command {
     Redo,
     SelectAll,
     SelectOverlapping,
+    CheckSketch,
     Cut,
     Copy,
     Paste,
@@ -232,6 +233,12 @@ impl DriftApp {
             "Edit",
             String::new(),
         );
+        add(
+            Command::CheckSketch,
+            "Check sketch (gaps, short ends)…",
+            "Edit",
+            String::new(),
+        );
         add(Command::Cut, "Cut", "Edit", ctrl("X"));
         add(Command::Copy, "Copy", "Edit", ctrl("C"));
         add(Command::Paste, "Paste", "Edit", ctrl("V"));
@@ -407,6 +414,7 @@ impl DriftApp {
                 self.editor.select_all();
             }
             Command::SelectOverlapping => self.select_overlapping(now),
+            Command::CheckSketch => self.open_sketch_check(),
             Command::Cut => self.cut(ctx),
             Command::Copy => self.copy(ctx),
             Command::Paste => self.paste_copied(false, now),

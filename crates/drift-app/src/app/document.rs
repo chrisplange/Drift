@@ -78,6 +78,7 @@ impl DriftApp {
             ("rels", self.show_relations),
             ("auto", self.auto_relations),
             ("ends", self.always_endpoints),
+            ("rscale", self.round_scale),
         ];
         let mut prefs: Vec<String> = flags
             .iter()
@@ -85,6 +86,7 @@ impl DriftApp {
             .collect();
         prefs.push(format!("wheel={}", self.wheel.mode.key()));
         prefs.push(format!("asnap={}", self.angle_snap.unwrap_or(0.0)));
+        prefs.push(format!("gaptol={}", self.gap_tolerance));
         prefs.extend(self.layout.prefs());
         prefs.join(";")
     }
@@ -104,6 +106,15 @@ impl DriftApp {
                         .ok()
                         .filter(|step| ANGLE_STEPS.contains(step));
                 }
+                "gaptol" => {
+                    if let Some(t) = value
+                        .parse::<f64>()
+                        .ok()
+                        .filter(|t| *t > 0.0 && t.is_finite())
+                    {
+                        self.gap_tolerance = t;
+                    }
+                }
                 "wheel" => {
                     if let Some(mode) = crate::app::view::WheelMode::from_key(value) {
                         self.wheel.mode = mode;
@@ -118,6 +129,7 @@ impl DriftApp {
                 "rels" => self.show_relations = on,
                 "auto" => self.auto_relations = on,
                 "ends" => self.always_endpoints = on,
+                "rscale" => self.round_scale = on,
                 _ => {}
             }
         }

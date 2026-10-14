@@ -1614,7 +1614,7 @@ zooms to fit; F is Fillet (again for Chamfer).
     already there is still edited by the inspector's field.
   - The origin is a snap target (`SnapKind::Origin`), shown as a ring. A sketch point lying
     on it comes first, so lines still join to that point.
-  - Angle snapping for the line tool (status bar, beside grid snap: off, 5, 15 or 45 degrees): the
+  - Angle snapping for the line tool (status bar, beside grid snap: off, 1, 5, 15 or 45 degrees): the
     segment turns in steps and is as long as the pointer is far along that direction. A
     step on an axis gets its horizontal or vertical relation as usual; an exact snap to a
     point still wins; Alt places freely. Kept with the view preferences.
@@ -1716,6 +1716,65 @@ zooms to fit; F is Fillet (again for Chamfer).
     and drag feel. Known: characters the font lacks are measured by the drawing font but
     shown from the fallback, so the caret can sit slightly off after them; a rotated
     text's hit area is its upright bounding box.
+- **Transform handles and moving picked areas (done).**
+  - A picked area's blue fill follows a move or turn while it happens (G, a drag, R); it
+    was dropped as soon as the outline left the point it is remembered by
+    (`Editor::region_motion`).
+  - Dragging inside a picked area moves it, as dragging inside a picked fill already did.
+    Inside an area that isn't picked, a drag still box-selects.
+  - With the select tool, two or more picked curves or a picked area get a box a pick
+    radius outside them (`transform.rs`). Corner handles scale, side handles stretch,
+    just outside a corner turns about the box's middle (a drag, reusing R's turn).
+    Shift keeps the shape, Ctrl scales about the middle, Alt scales the dimensions too.
+  - Scaling lets the solver decide: points go where the scale takes them, then driving
+    dimensions and relations hold (a dimensioned width stays while a free height
+    stretches), and the result is shifted so the anchor stays put. With Alt, each driving
+    length entirely inside the picked geometry takes what it measures once scaled, so it
+    changes only as far as the stretch runs along it (a side handle changes widths, not
+    heights); angles are left as they are. Circles keep their size when stretched along
+    one axis. Alt-scaling steps the width and height through round sizes in the
+    document's units (1 / 2 / 5 steps, finer zoomed in, as fillets are sized) and the
+    readout shows them; Preferences → "Round sizes when scaling with dimensions" turns
+    that off (`rscale`).
+  - A picked area is found again by its curves when a change leaves its point outside it
+    (a stretch the dimensions held back), so it stays picked.
+  - Not done: no box for a lone curve, or when text or block copies are picked with the
+    curves (they don't scale yet); no typed scale factor; a corner scale that isn't
+    uniform gives circles the mean of the two factors.
+- **Dimension colour (done).** The drafting style has a `color` (format v20): what
+  dimensions and notes are drawn in on the canvas, set in Parameters → Drafting → Colour.
+  By default white on the dark canvas and charcoal on the light one (they were teal); a
+  chosen colour that would vanish into the canvas falls back to the default. Relation
+  glyphs keep their own colours, and paper output is unchanged.
+- **Check sketch (done).** Edit → Check sketch… (also the palette, and the DXF import
+  summary) finds what keeps a profile from closing (`checker.rs`): two open ends closer
+  than a tolerance (default 0.5 mm, a preference, `gaptol`), an open end short of or just
+  past another curve, and lines or arcs of no length. An open end is a solid curve's end
+  that nothing else uses or holds (a coincidence, point-on-curve or midpoint relation);
+  construction and locked curves are left out.
+  - Fixes: a gap's two ends are joined into one point (the end held by more relations
+    and dimensions stays; on a tie, the older); a short end gets a point-on-curve
+    relation, with the curve held where it is; a curve of no length is removed and its
+    ends joined. Each is kept only if the sketch still solves; Fix all is one undo step
+    and reports what it had to leave.
+  - The window lists the issues (Show picks and zooms to one) and rings them on the
+    canvas while it is open.
+  - Solver fix found on the way: two fixes on one point (as when two fixed points are
+    merged) now agree or are reported as a conflict; the second used to replace the
+    first silently.
+  - Not done: ends that need a line extended (well past the tolerance) are only extend's
+    job; no check runs by itself after an import (the summary offers it).
+- **Solver fixes from alpha use.**
+  - The step limit (no iteration moves geometry further than this, so it can't jump onto
+    another solution) was the spread of the values being solved. A lone unknown — the free
+    end of a dimension from a fixed point — has no spread, so it crawled 1 mm per iteration
+    and gave up after 100: a width from a fixed corner on a large panel was refused as a
+    conflict, and a snapped drag with a vertical jump of over 100 mm was refused. The limit
+    is now the whole drawing's extent.
+  - A relation of several equations with one already implied (collinear between two lines
+    already held level) was refused as "already implied" though it still held something
+    new. Relations are now accepted when degrees of freedom drop; a dimension or fix that
+    leaves another implied is still refused as over-defining.
 - **Workspace notes, next: tabs for separate drawings (design, not built).** A tab bar
   along the top, one drawing per tab, as Revit and Illustrator have.
   - What a tab owns: the editor (document, selection, undo history), its file (name, path,

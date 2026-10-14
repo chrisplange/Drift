@@ -80,6 +80,12 @@ pub struct Pointer {
     pub units: Units,
     /// Alt is held (places freely, without snapping; the pen breaks a handle with it).
     pub alt: bool,
+    /// Shift is held.
+    pub shift: bool,
+    /// Ctrl (Cmd on macOS) is held.
+    pub command: bool,
+    /// Scaling with dimensions (Alt) steps through round sizes.
+    pub round_scale: bool,
     /// Lines being drawn turn in steps of this many degrees, if angle snapping is on.
     pub angle_step: Option<f64>,
 }
@@ -94,6 +100,9 @@ impl Pointer {
             relations: true,
             units: Units::default(),
             alt: false,
+            shift: false,
+            command: false,
+            round_scale: true,
             angle_step: None,
         }
     }
@@ -246,6 +255,13 @@ pub struct Editor {
     /// A point inside the selected region (regions are recomputed, so they're picked by a
     /// point rather than an id).
     pub selected_region: Option<DVec2>,
+    /// A move or turn in progress, which the selected region's point follows until it is
+    /// confirmed (or cancelled).
+    pub region_motion: Option<RegionMotion>,
+    /// The curves bounding the selected region when it was last found, so it can be found
+    /// again when a move takes it somewhere its point doesn't follow (a dimension held part
+    /// of it back).
+    region_outline: Option<BTreeSet<EntityId>>,
     /// The entity each curve passed to the region finder came from (by index).
     region_ids: std::rc::Rc<Vec<EntityId>>,
     pub selected_fills: BTreeSet<drift_core::FillId>,
@@ -365,7 +381,10 @@ impl Editor {
     }
 
     /// The entities a drag of `ids` can move (cached while the structure is unchanged).
-    fn drag_scope(&self, ids: &[EntityId]) -> std::rc::Rc<std::collections::HashSet<EntityId>> {
+    pub(crate) fn drag_scope(
+        &self,
+        ids: &[EntityId],
+    ) -> std::rc::Rc<std::collections::HashSet<EntityId>> {
         let structure = (self.doc.len(), self.doc.constraints().count());
         if let Some((key, s, scope)) = &*self.drag_scope.borrow()
             && key == ids
@@ -378,7 +397,7 @@ impl Editor {
         scope
     }
 
-    fn solve_in(
+    pub(crate) fn solve_in(
         &mut self,
         dragged: &[Param],
         scope: std::rc::Rc<std::collections::HashSet<EntityId>>,
@@ -656,8 +675,9 @@ impl Editor {
         } else if self.new_degeneracy(degenerate_before) {
             Some(EditError::Degenerate)
         } else if ids.iter().all(|id| report.redundant.contains(id))
-            || report.dependent_equations > before.dependent_equations
             || report.dof == before.dof
+            || (report.dependent_equations > before.dependent_equations
+                && !self.only_relations(ids))
         {
             Some(EditError::Redundant)
         } else {
@@ -670,6 +690,19 @@ impl Editor {
         }
         self.commit(label);
         Ok(())
+    }
+
+    /// Whether constraints are all relations of shape (no dimension and no fix). A relation
+    /// of several equations may have one already implied — collinear between two lines
+    /// already held level, say — and still hold something new; that is fine, since relations
+    /// can't disagree in value. A dimension or a fix that leaves another one implied
+    /// over-defines the sketch instead.
+    fn only_relations(&self, ids: &[ConstraintId]) -> bool {
+        ids.iter().all(|id| {
+            self.doc
+                .constraint(*id)
+                .is_some_and(|c| !c.is_dimension() && !matches!(c, Constraint::Fix { .. }))
+        })
     }
 
     /// Add a dimension with its label placed at `placement` (offset from its anchor), as one
@@ -796,15 +829,58 @@ impl Editor {
         self.region_ids.clone()
     }
 
-    /// The selected region, if its seed point is still inside one.
+    /// The selected region: the one its point is in, or, when a change took the region
+    /// away from its point, the one bounded by the same curves.
     pub fn region(&mut self) -> Option<drift_geom::regions::Region> {
-        let seed = self.selected_region?;
+        let Some(seed) = self.selected_region else {
+            self.region_outline = None;
+            return None;
+        };
+        let seed = self.region_motion.map_or(seed, |m| m.apply(seed));
         let regions = self.regions();
-        let found = drift_geom::regions::region_at(&regions, seed).cloned();
-        if found.is_none() {
-            self.selected_region = None;
+        if let Some(found) = drift_geom::regions::region_at(&regions, seed) {
+            let outline = self.outline_of(found);
+            if self.region_outline.as_ref() != Some(&outline) {
+                self.region_outline = Some(outline);
+            }
+            return Some(found.clone());
         }
-        found
+        // Its point is outside it now: find it by its curves, and put the point back inside.
+        let same = self.region_outline.as_ref().and_then(|outline| {
+            regions
+                .iter()
+                .find(|r| self.outline_of(r) == *outline)
+                .cloned()
+        });
+        match same {
+            Some(region) => {
+                let inside = interior_point(&region, seed);
+                match self.region_motion {
+                    // Mid-move: the point follows the region until the move lands.
+                    Some(_) => self.region_motion = Some(RegionMotion::At(inside)),
+                    None => self.selected_region = Some(inside),
+                }
+                Some(region)
+            }
+            None => {
+                // Mid-move the outline may cross itself for a moment: keep the pick until
+                // it lands.
+                if self.region_motion.is_none() {
+                    self.selected_region = None;
+                    self.region_outline = None;
+                }
+                None
+            }
+        }
+    }
+
+    /// The curves bounding a region (from the last [`regions`](Self::regions)).
+    fn outline_of(&self, region: &drift_geom::regions::Region) -> BTreeSet<EntityId> {
+        std::iter::once(&region.outer)
+            .chain(&region.holes)
+            .flat_map(|l| l.curves())
+            .filter_map(|i| self.region_ids.get(i).copied())
+            .collect()
     }
 
     // ----- Parameters ------------------------------------------------------------------------
@@ -2862,4 +2938,52 @@ fn exact_rotor(degrees: f64) -> DVec2 {
 pub fn is_quarter_turn(degrees: f64) -> bool {
     let q = degrees / 90.0;
     (q - q.round()).abs() <= 1e-9
+}
+
+/// How a move or a turn in progress has carried the geometry so far.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum RegionMotion {
+    Move(DVec2),
+    Turn {
+        pivot: DVec2,
+        degrees: f64,
+    },
+    Scale {
+        anchor: DVec2,
+        scale: DVec2,
+    },
+    /// Found again by its curves: the point is here for now.
+    At(DVec2),
+}
+
+impl RegionMotion {
+    pub fn apply(self, p: DVec2) -> DVec2 {
+        match self {
+            Self::Move(offset) => p + offset,
+            Self::Turn { pivot, degrees } => {
+                pivot + DVec2::from_angle(degrees.to_radians()).rotate(p - pivot)
+            }
+            Self::Scale { anchor, scale } => anchor + (p - anchor) * scale,
+            Self::At(at) => at,
+        }
+    }
+}
+
+/// A point inside a region: `near` if it is, else its centroid, else the first of a grid
+/// over its bounds that is.
+fn interior_point(region: &drift_geom::regions::Region, near: DVec2) -> DVec2 {
+    if region.contains(near) {
+        return near;
+    }
+    if region.contains(region.centroid) {
+        return region.centroid;
+    }
+    let (b, n) = (region.bounds, 24);
+    (1..n)
+        .flat_map(|i| (1..n).map(move |j| (i, j)))
+        .map(|(i, j)| {
+            b.min + (b.max - b.min) * DVec2::new(f64::from(i), f64::from(j)) / f64::from(n)
+        })
+        .find(|p| region.contains(*p))
+        .unwrap_or(region.centroid)
 }

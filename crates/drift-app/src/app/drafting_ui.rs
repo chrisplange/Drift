@@ -33,6 +33,7 @@ impl DriftApp {
             style = DraftStyle {
                 scale: style.scale,
                 alt_units: style.alt_units,
+                color: style.color,
                 ..DraftStyle::preset(standard)
             };
         }
@@ -100,6 +101,17 @@ impl DriftApp {
                     }
                 });
         });
+        let dark = ui.visuals().dark_mode;
+        theme::row(ui, "Colour", |ui| {
+            if let Some(color) = crate::layers_ui::color_choice(ui, style.color, "Default", dark) {
+                style.color = color;
+            }
+        })
+        .response
+        .on_hover_text(
+            "What dimensions and notes are drawn in on the canvas. Default: white on the \
+             dark canvas, charcoal on the light one",
+        );
         if style != before {
             self.editor.doc.begin();
             self.editor.doc.set_draft_style(style);

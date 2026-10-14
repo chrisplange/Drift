@@ -329,6 +329,14 @@ impl DriftApp {
             "Add relations automatically while drawing",
         )
         .on_hover_text("Horizontal, vertical, coincident, tangent and so on, as you snap");
+        ui.checkbox(
+            &mut self.round_scale,
+            "Round sizes when scaling with dimensions (Alt)",
+        )
+        .on_hover_text(
+            "A scale handle with Alt steps the picked geometry's width and height through \
+             round sizes in the document's units, finer as you zoom in. Off: any size",
+        );
         theme::section(ui, "Mouse and trackpad");
         theme::row(ui, "Scrolling", |ui| {
             for mode in crate::app::view::WheelMode::ALL {

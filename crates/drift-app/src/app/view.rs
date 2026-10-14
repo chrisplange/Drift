@@ -9,6 +9,8 @@ impl DriftApp {
         pointer.relations = self.auto_relations;
         pointer.units = self.editor.doc.units();
         pointer.alt = !snap;
+        (pointer.shift, pointer.command) = self.keys_held;
+        pointer.round_scale = self.round_scale;
         pointer.angle_step = self.angle_snap.filter(|_| snap);
         if snap && self.tool.wants_snap() {
             let options = SnapOptions {
@@ -88,7 +90,15 @@ impl DriftApp {
         pos: Option<egui::Pos2>,
     ) -> bool {
         let idle = self.tool.kind() == ToolKind::Select && !self.tool.is_busy();
-        let dim_at = |p: egui::Pos2| dims.iter().rev().find(|d| d.text_rect.contains(p));
+        // Dimensions can be picked and edited between dimensions too (the text is no use to
+        // the dimension tool, which picks geometry).
+        let annotating = idle || (self.tool.kind() == ToolKind::Dimension && !self.tool.is_busy());
+        // Anywhere on a dimension's text, with a little to spare around it.
+        let dim_at = |p: egui::Pos2| {
+            dims.iter()
+                .rev()
+                .find(|d| d.text_rect.expand(annotations::TEXT_REACH).contains(p))
+        };
         let glyph_at = |p: egui::Pos2| glyphs.iter().rev().find(|g| g.rect.contains(p));
         let hit = |p: egui::Pos2| {
             dim_at(p)
@@ -96,7 +106,7 @@ impl DriftApp {
                 .or_else(|| glyph_at(p).map(|g| g.id))
         };
 
-        self.hovered_constraint = if idle && self.label_drag.is_none() {
+        self.hovered_constraint = if annotating && self.label_drag.is_none() {
             pos.and_then(hit)
         } else {
             None
@@ -132,7 +142,7 @@ impl DriftApp {
             }
             return true;
         }
-        if !idle {
+        if !annotating {
             return false;
         }
         let at = release_pos(ui, PointerButton::Primary).or(pos);
@@ -253,6 +263,7 @@ impl DriftApp {
             )
         });
         let snap = !alt; // hold Alt to place freely
+        self.keys_held = (mods.shift, mods.command);
 
         // Annotations are laid out first so they can take pointer input before the tool.
         let annotation_painter = ui.painter_at(rect);
@@ -353,6 +364,9 @@ impl DriftApp {
                 self.tool.handle(Input::Finish, &mut self.editor);
             }
         }
+        if !self.tool.is_busy() {
+            self.editor.region_motion = None;
+        }
         // Tool events may have changed the document (and the pointer's snap targets).
         self.editor.sync();
         if let Some(id) = self.editor.pending_edit.take() {
@@ -392,7 +406,7 @@ impl DriftApp {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
         } else if response.hovered()
             && !self.tool.is_modal()
-            && let Some(icon) = self.fillet_cursor()
+            && let Some(icon) = self.transform_cursor().or_else(|| self.fillet_cursor())
         {
             ui.ctx().set_cursor_icon(icon);
         }
@@ -522,6 +536,8 @@ impl DriftApp {
             self.paint_hatch_handles(&painter, &map, &h, &colors);
         }
         self.paint_ghosts(&painter, &map);
+        self.paint_check_markers(&painter, &map);
+        self.paint_transform_box(&painter, &map, &colors, ui.visuals().dark_mode);
         if let Some(region) = self.editor.region() {
             overlay::region_fill(&painter, &map, &region, colors.window.gamma_multiply(0.22));
         }
@@ -603,6 +619,7 @@ impl DriftApp {
         dark: bool,
     ) {
         let colors = AnnotationColors::new(dark);
+        let dim_colors = AnnotationColors::drafting(dark, self.editor.doc.draft_style().color);
         let conflicts = &self.editor.analysis().conflicts;
         let state = |id: ConstraintId| {
             if self.selected_constraint == Some(id) || self.label_drag.is_some_and(|d| d.0 == id) {
@@ -619,7 +636,7 @@ impl DriftApp {
             if let Some(id) = dim.id
                 && self.dimension_edit.as_ref().is_none_or(|e| e.id != id)
             {
-                annotations::paint_dimension(painter, dim, state(id), &colors);
+                annotations::paint_dimension(painter, dim, state(id), &dim_colors);
                 // Mark midpoints the dimension measures to (a line in a point slot).
                 for (e, slot) in dim.constraint.slots() {
                     if slot == drift_core::Slot::PointOrMidpoint
@@ -630,7 +647,7 @@ impl DriftApp {
                         && let Some(m) = self.editor.doc.ref_point(e)
                     {
                         let color = match state(id) {
-                            AnnotationState::Normal => colors.normal,
+                            AnnotationState::Normal => dim_colors.normal,
                             AnnotationState::Hovered => colors.hovered,
                             AnnotationState::Selected => colors.selected,
                             AnnotationState::Conflict => colors.conflict,
@@ -717,6 +734,91 @@ impl DriftApp {
                 );
             }
         }
+    }
+
+    /// The transform box, when the select tool has one to show (not while a modal move or
+    /// turn is under way): a thin frame with square handles.
+    fn transform_box_shown(&mut self) -> Option<crate::transform::TransformBox> {
+        (self.tool.kind() == ToolKind::Select && !self.tool.is_modal())
+            .then(|| self.editor.transform_box())
+            .flatten()
+    }
+
+    fn paint_transform_box(
+        &mut self,
+        painter: &egui::Painter,
+        map: &ScreenMap,
+        colors: &OverlayColors,
+        dark: bool,
+    ) {
+        let Some(frame) = self.transform_box_shown() else {
+            return;
+        };
+        let pad = PICK_RADIUS / self.camera.scale;
+        let b = frame.padded(pad);
+        let (a, c) = (map.to_screen(b.min), map.to_screen(b.max));
+        let stroke = egui::Stroke::new(1.0, colors.window);
+        painter.rect_stroke(
+            egui::Rect::from_two_pos(a, c),
+            0.0,
+            stroke,
+            egui::StrokeKind::Middle,
+        );
+        let fill = if dark {
+            egui::Color32::from_rgb(0x1b, 0x1d, 0x21)
+        } else {
+            egui::Color32::WHITE
+        };
+        for (_, at) in frame.scale_handles(pad) {
+            let square = egui::Rect::from_center_size(map.to_screen(at), egui::vec2(7.0, 7.0));
+            painter.rect_filled(square, 0.0, fill);
+            painter.rect_stroke(square, 0.0, stroke, egui::StrokeKind::Middle);
+        }
+        // Over a turn handle: a curved arrow by the pointer.
+        if let Some(p) = self.pointer
+            && let Some(crate::transform::Handle::Turn { .. }) = frame.handle_at(
+                p.raw,
+                crate::transform::handle_reach(p.tolerance),
+                p.tolerance,
+            )
+        {
+            let at = map.to_screen(p.raw) + egui::vec2(14.0, -14.0);
+            overlay::turn_glyph(painter, at, colors.window);
+        }
+    }
+
+    /// The cursor over a transform handle, or inside a picked area a drag would move.
+    fn transform_cursor(&mut self) -> Option<egui::CursorIcon> {
+        use crate::transform::Handle;
+        let p = self.pointer?;
+        if let Some(frame) = self.transform_box_shown() {
+            match frame.handle_at(
+                p.raw,
+                crate::transform::handle_reach(p.tolerance),
+                p.tolerance,
+            ) {
+                // Screen y is down: a handle on the same side along both axes is on the
+                // rising diagonal.
+                Some(Handle::Scale { x, y }) => {
+                    return Some(match (x, y) {
+                        (0, _) => egui::CursorIcon::ResizeVertical,
+                        (_, 0) => egui::CursorIcon::ResizeHorizontal,
+                        _ if x == y => egui::CursorIcon::ResizeNeSw,
+                        _ => egui::CursorIcon::ResizeNwSe,
+                    });
+                }
+                Some(Handle::Turn { .. }) => return Some(egui::CursorIcon::Default),
+                None => {}
+            }
+        }
+        if self.tool.kind() == ToolKind::Select
+            && !self.tool.is_busy()
+            && self.editor.hovered.is_none()
+            && self.editor.region().is_some_and(|r| r.contains(p.raw))
+        {
+            return Some(egui::CursorIcon::Move);
+        }
+        None
     }
 
     /// Over a fillet's arc that a drag would re-size (rather than move): a resize cursor

@@ -14,10 +14,7 @@ use std::rc::Rc;
 
 use drift_core::{DVec2, Shape};
 use drift_draft::font::{DrawingFont, Face};
-use drift_draft::page::{Align, CAP_HEIGHT, Drawing, Item, Prim, dash_pattern, styled_width};
-
-/// How much thicker a faked bold is drawn, as a fraction of the font size.
-const FAUX_BOLD: f64 = 0.035;
+use drift_draft::page::{Align, CAP_HEIGHT, Drawing, Item, Prim, dash_pattern};
 
 /// The drawing's font as a PDF uses it, and the glyphs used so far in each weight: glyph id
 /// to its advance (ems) and the character it stands for.
@@ -181,8 +178,9 @@ fn item_ops(
             align,
             text: s,
             style,
+            font: sketch,
         } => {
-            let width = styled_width(s, *height, *style);
+            let width = drift_draft::page::line_width_in(s, *height, *style, sketch.as_ref());
             let shift = match align {
                 Align::Left => 0.0,
                 Align::Center => width / 2.0,
@@ -190,13 +188,41 @@ fn item_ops(
             };
             let dir = DVec2::from_angle(*angle);
             let origin = *at - dir * shift;
+            // Sketch text is written as text in the drawing's font when that is its font and
+            // the PDF carries it; in any other font, its glyphs are filled (a PDF can only
+            // write text in a font it carries).
+            if let Some(f) = sketch {
+                let carried = match (f, fonts.as_deref()) {
+                    (drift_core::TextFont::System(family), Some(fonts)) => {
+                        fonts.embed && fonts.font.regular.family == *family
+                    }
+                    _ => false,
+                };
+                if !carried {
+                    let contours = drift_draft::outline::text_contours(
+                        s,
+                        f,
+                        *height,
+                        origin,
+                        angle.to_degrees(),
+                    );
+                    let _ = writeln!(out, "{} {} {} rg", n(r), n(g), n(b));
+                    for ring in drift_draft::outline::contour_rings(&contours) {
+                        for (k, p) in ring.iter().enumerate() {
+                            let _ = writeln!(out, "{} {}", pt(*p), if k == 0 { "m" } else { "l" });
+                        }
+                        out.push_str("h\n");
+                    }
+                    out.push_str("f\n");
+                    return;
+                }
+            }
             if let Some(fonts) = fonts {
                 let font = fonts.font.clone();
-                let (face, faux) = font.face(style.bold);
+                let face = font.face(style.bold);
                 let size = height / face.cap_ratio() * PT_PER_MM;
-                let thicken = FAUX_BOLD * size;
                 if !fonts.embed {
-                    // Its outlines, filled (and stroked, for a faked bold).
+                    // Its outlines, filled.
                     let contours = drift_draft::outline::contours_in(
                         &face.data,
                         face.index,
@@ -230,18 +256,7 @@ fn item_ops(
                         }
                         out.push_str("h\n");
                     }
-                    if faux {
-                        let _ = writeln!(
-                            out,
-                            "{} {} {} RG {} w [] 0 d B",
-                            n(r),
-                            n(g),
-                            n(b),
-                            n(thicken)
-                        );
-                    } else {
-                        out.push_str("f\n");
-                    }
+                    out.push_str("f\n");
                     return;
                 }
                 // By glyph, in the embedded font.
@@ -270,20 +285,7 @@ fn item_ops(
                     n(c),
                     pt(origin)
                 );
-                if faux {
-                    let _ = writeln!(
-                        out,
-                        "2 Tr {} {} {} RG {} w [] 0 d",
-                        n(r),
-                        n(g),
-                        n(b),
-                        n(thicken)
-                    );
-                }
                 let _ = writeln!(out, "{hex} Tj");
-                if faux {
-                    out.push_str("0 Tr\n");
-                }
                 out.push_str("ET\n");
                 return;
             }
@@ -502,7 +504,7 @@ pub fn write(pages: &[Drawing], title: &str) -> Vec<u8> {
     info.extend_from_slice(b" >>");
     objects.push(info);
     objects.push(match &embedded {
-        // Without a bold face, bold text is the regular face thickened.
+        // Without a bold face, bold text is set in the regular face.
         Some(font) => match &font.bold {
             Some(bold) => type0(bold, true, after_pages + 4),
             None => type0(&font.regular, false, after_pages),
@@ -680,8 +682,8 @@ mod font_tests {
         assert!(text.contains("/Subtype /Type0") && text.contains("/CIDFontType2"));
         assert!(text.contains("/BaseFont /Ubuntu") && text.contains("/FontFile2"));
         assert!(!text.contains("/Helvetica"), "no stand-in font");
-        // Bold without a bold face: the regular face, filled and stroked.
-        assert!(text.contains("2 Tr") && text.contains("0 Tr"));
+        // Bold without a bold face: the regular face, as it is (no stroke).
+        assert!(!text.contains("2 Tr") && !text.contains(" RG "));
         // The font file is in there whole, compressed: it comes back byte for byte.
         let parsed = lopdf::Document::load_mem(&pdf).expect("a PDF another reader accepts");
         let file = parsed
@@ -725,9 +727,9 @@ mod font_tests {
         let text = String::from_utf8_lossy(&pdf);
         assert!(text.starts_with("%PDF-1.4"));
         assert!(!text.contains("/FontFile2") && !text.contains("Tj"));
-        // Curves and closed paths instead; the faked bold is filled and stroked.
+        // Curves and closed paths instead, filled (bold too: never stroked).
         assert!(
-            text.matches(" c\n").count() > 50 && text.contains("h\nf\n") && text.contains(" B\n")
+            text.matches(" c\n").count() > 50 && text.contains("h\nf\n") && !text.contains(" B\n")
         );
         assert!(lopdf::Document::load_mem(&pdf).is_ok());
         // And with no drawing font at all, nothing has changed: Helvetica by name.

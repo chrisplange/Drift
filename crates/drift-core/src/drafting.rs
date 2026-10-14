@@ -311,17 +311,55 @@ impl Tolerance {
     }
 }
 
-/// Text around a dimension's value: a prefix (`4×`), a suffix (`THRU`) and a tolerance.
+/// Text around a dimension's value: a prefix (`4×`), a suffix (`THRU`), a tolerance, a line
+/// of text under the dimension line (`TO FACE OF STUD`), and text shown instead of the value
+/// (`EQ`; the dimension still holds its value).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct DimNote {
     pub prefix: String,
     pub suffix: String,
     pub tolerance: Tolerance,
+    pub below: String,
+    pub text: String,
 }
 
 impl DimNote {
     pub fn is_empty(&self) -> bool {
-        self.prefix.is_empty() && self.suffix.is_empty() && self.tolerance == Tolerance::None
+        self.prefix.is_empty()
+            && self.suffix.is_empty()
+            && self.tolerance == Tolerance::None
+            && self.below.is_empty()
+            && self.text.is_empty()
+    }
+}
+
+/// A dimension or an annotation, for what applies to both (whether it is shown).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum AnnotationRef {
+    Dimension(crate::ConstraintId),
+    Annotation(AnnotationId),
+}
+
+/// Where a dimension or annotation is shown: on the canvas, and on sheets (and so in
+/// print and export). Hiding one never changes the geometry: a hidden dimension still holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Shown {
+    pub canvas: bool,
+    pub sheets: bool,
+}
+
+impl Default for Shown {
+    fn default() -> Self {
+        Self {
+            canvas: true,
+            sheets: true,
+        }
+    }
+}
+
+impl Shown {
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
     }
 }
 
@@ -460,7 +498,7 @@ impl DraftStyle {
     /// so (decimal formats only).
     pub fn length(&self, units: &Units, mm: f64) -> String {
         let text = units.format_length(mm);
-        if units.length == LengthFormat::Architectural {
+        if units.length.is_fractional() {
             return text;
         }
         let split = text

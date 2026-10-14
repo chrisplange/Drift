@@ -179,12 +179,14 @@ impl DxfUnits {
             LengthFormat::Inch => (1, 2, 0),
             LengthFormat::Foot => (2, 2, 0),
             LengthFormat::Architectural => (1, 4, 0),
+            // $LUNITS 5: fractional.
+            LengthFormat::FractionalInch => (1, 5, 0),
         };
         DxfUnits {
             mm_per_unit: units.length.mm_per_unit(),
             insunits,
             lunits,
-            luprec: if lunits == 4 {
+            luprec: if lunits == 4 || lunits == 5 {
                 i32::from(units.fraction).trailing_zeros() as i32
             } else {
                 decimals

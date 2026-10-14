@@ -22,3 +22,5 @@ pub(crate) mod start_ui;
 pub(crate) mod text_ui;
 pub(crate) mod underlays_ui;
 pub(crate) mod view;
+pub(crate) mod view_align;
+pub(crate) mod visibility_ui;

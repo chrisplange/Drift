@@ -640,6 +640,25 @@ impl DriftApp {
                 );
             }
             ToolKind::Dimension | ToolKind::Ordinate | ToolKind::Note | ToolKind::Callout => {
+                if kind == ToolKind::Dimension {
+                    // How horizontal and vertical dimensions go on.
+                    if let Some(m) = choice(
+                        ui,
+                        self.editor.dim_mode,
+                        &crate::editor::DimMode::ALL.map(|m| (m, m.label())),
+                    ) {
+                        self.editor.dim_mode = m;
+                    }
+                    ui.add_enabled(
+                        self.editor.dim_mode == crate::editor::DimMode::Chain,
+                        egui::Checkbox::new(&mut self.editor.dim_overall, "Overall"),
+                    )
+                    .on_hover_text(
+                        "When a chain ends, add the overall dimension outside it (as a \
+                         reference: the chain already holds it)",
+                    );
+                    divider(ui);
+                }
                 ui.checkbox(&mut self.show_dimensions, "Show dimensions")
                     .on_hover_text("Alt+D");
                 ui.checkbox(&mut self.show_relations, "Show relations")
@@ -654,8 +673,39 @@ impl DriftApp {
         }
     }
 
+    /// Pick only edges, only points, or anything; what is picked now keeps only what the
+    /// filter allows.
+    pub(crate) fn set_pick_filter(&mut self, filter: crate::editor::PickFilter) {
+        let ed = &mut self.editor;
+        ed.pick_filter = filter;
+        if !filter.anything() {
+            let doc = &ed.doc;
+            ed.selection.retain(|id| filter.allows(doc, *id));
+            ed.selected_fills.clear();
+            ed.selected_instances.clear();
+            ed.selected_text = None;
+            ed.selected_region = None;
+            ed.selected_midpoints.clear();
+        }
+    }
+
     /// Quick actions for the selection (the select tool's options).
     fn selection_actions(&mut self, ui: &mut egui::Ui, now: f64) {
+        // What a click or a box picks: always offered with nothing picked; with something
+        // picked (the bar is full), only while a filter is on.
+        let picked = !self.editor.selection.is_empty()
+            || !self.editor.selected_instances.is_empty()
+            || !self.editor.selected_fills.is_empty();
+        if !picked || !self.editor.pick_filter.anything() {
+            if let Some(f) = choice(
+                ui,
+                self.editor.pick_filter,
+                &crate::editor::PickFilter::ALL.map(|f| (f, f.label())),
+            ) {
+                self.set_pick_filter(f);
+            }
+            divider(ui);
+        }
         let ed = &self.editor;
         let n = ed.selection.len() + ed.selected_instances.len();
         if n == 0 && !ed.selected_fills.is_empty() {
@@ -667,7 +717,7 @@ impl DriftApp {
         if n == 0 {
             caption(
                 ui,
-                "Click or drag to select · Tab picks a chain · double-click a group to enter it",
+                "Click or drag to select · Tab highlights a chain · double-click a group to enter it",
             );
             return;
         }
@@ -772,6 +822,52 @@ impl DriftApp {
                 .clicked()
         };
         let n = self.editor.selection.len() + self.editor.selected_instances.len();
+        // Picked dimensions and notes: where they show.
+        let refs = self.picked_annotations();
+        if n == 0 && !refs.is_empty() {
+            let doc = &self.editor.doc;
+            let all = |f: fn(drift_core::Shown) -> bool| refs.iter().all(|r| f(doc.shown(*r)));
+            let (canvas, sheets) = (all(|s| s.canvas), all(|s| s.sheets));
+            let what = if refs.len() == 1 {
+                "1 picked".to_owned()
+            } else {
+                format!("{} picked", refs.len())
+            };
+            ui.label(egui::RichText::new(what).small().weak());
+            let canvas_label = if canvas {
+                "Hide on canvas"
+            } else {
+                "Show on canvas"
+            };
+            if ui.button(canvas_label).clicked() {
+                self.set_annotations_shown(&refs, Some(!canvas), None, now);
+                ui.close();
+            }
+            let sheets_label = if sheets {
+                "Leave off sheets"
+            } else {
+                "Show on sheets"
+            };
+            if ui
+                .button(sheets_label)
+                .on_hover_text("Sheets, PDF, SVG, DXF and print")
+                .clicked()
+            {
+                self.set_annotations_shown(&refs, None, Some(!sheets), now);
+                ui.close();
+            }
+            let mut hidden = self.show_hidden_annotations;
+            if ui
+                .add(egui::Checkbox::new(
+                    &mut hidden,
+                    "Show hidden annotations (Alt+H)",
+                ))
+                .changed()
+            {
+                self.show_hidden_annotations = hidden;
+            }
+            ui.separator();
+        }
         if n == 0 {
             if self.clipboard.is_some()
                 && item(ui, "Paste here", &app::panels::shortcut("V", false))

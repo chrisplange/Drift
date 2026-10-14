@@ -262,13 +262,23 @@ fn item_svg(
             align,
             text,
             style,
+            font: sketch,
         } => {
             let [r, g, b] = pen.color.0;
-            // The drawing's font by name (SVG can't carry it), then the standard ones.
-            let family = font.map_or(String::new(), |f| {
-                format!("'{}', ", escape(&f.regular.family))
-            });
-            let cap = font.map_or(CAP_HEIGHT, |f| f.face(style.bold).0.cap_ratio());
+            // Sketch text names its own font; other text, the drawing's (SVG can't carry
+            // fonts); then the standard ones.
+            let family = match sketch {
+                Some(drift_core::TextFont::Sans) => "'Ubuntu', ".to_owned(),
+                Some(drift_core::TextFont::Mono) => "'Hack', monospace, ".to_owned(),
+                Some(drift_core::TextFont::System(f)) => format!("'{}', ", escape(f)),
+                None => font.map_or(String::new(), |f| {
+                    format!("'{}', ", escape(&f.regular.family))
+                }),
+            };
+            let cap = match sketch {
+                Some(f) => height / drift_draft::outline::em_size(f, *height),
+                None => font.map_or(CAP_HEIGHT, |f| f.face(style.bold).cap_ratio()),
+            };
             let mut look = String::new();
             if style.bold {
                 look.push_str(r#" font-weight="700""#);

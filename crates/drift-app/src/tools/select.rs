@@ -25,22 +25,37 @@ impl Target {
 pub(super) const MIDPOINT_PICK: f64 = 0.6;
 
 pub(super) fn pick_target(ed: &Editor, p: &Pointer) -> Option<Target> {
+    pick_target_with(ed, p, ed.pick_filter)
+}
+
+/// What the pointer is on, as `filter` lets it pick.
+pub(super) fn pick_target_with(
+    ed: &Editor,
+    p: &Pointer,
+    filter: crate::editor::PickFilter,
+) -> Option<Target> {
     let hidden = ed.hidden_handles();
-    let is_point =
-        |id: EntityId| !hidden.contains(&id) && ed.doc.get(id).is_some_and(|e| e.kind.is_point());
+    let is_point = |id: EntityId| {
+        !hidden.contains(&id)
+            && filter.allows(&ed.doc, id)
+            && ed.doc.get(id).is_some_and(|e| e.kind.is_point())
+    };
     if let Some(id) = ed.index.pick(p.raw, p.tolerance, is_point) {
         return Some(Target::Entity(id));
     }
     // A tighter radius than for picking, so clicking near (not on) the middle of a line still
-    // picks the line.
-    if let Some(line) = ed
-        .index
-        .pick_midpoint(p.raw, MIDPOINT_PICK * p.tolerance, |_| true)
+    // picks the line. (Not with a filter on: a midpoint is neither an edge nor an end.)
+    if filter.anything()
+        && let Some(line) = ed
+            .index
+            .pick_midpoint(p.raw, MIDPOINT_PICK * p.tolerance, |_| true)
     {
         return Some(Target::Midpoint(line));
     }
     ed.index
-        .pick(p.raw, p.tolerance, |id| !hidden.contains(&id))
+        .pick(p.raw, p.tolerance, |id| {
+            !hidden.contains(&id) && filter.allows(&ed.doc, id)
+        })
         .map(Target::Entity)
 }
 
@@ -589,8 +604,33 @@ impl Tool for SelectTool {
                 } else {
                     None
                 };
+                // A chain highlighted by Tab lasts while the pointer stays on it.
+                if let Some((_, set)) = &ed.chain_preview
+                    && !ed.hovered.is_some_and(|h| set.contains(&h))
+                {
+                    ed.chain_preview = None;
+                }
             }
             Input::Click(p, mods) => {
+                // A chain highlighted by Tab: the click picks it (Shift adds it, Ctrl takes
+                // it away).
+                if let Some((_, set)) = ed.chain_preview.take()
+                    && ed.hovered.is_some_and(|h| set.contains(&h))
+                {
+                    if mods.command {
+                        ed.selection.retain(|id| !set.contains(id));
+                    } else {
+                        if !mods.shift {
+                            ed.selection.clear();
+                            ed.selected_fills.clear();
+                            ed.selected_instances.clear();
+                            ed.selected_region = None;
+                        }
+                        ed.selection.extend(set);
+                        ed.expand_groups();
+                    }
+                    return;
+                }
                 if let Some(Target::Midpoint(line)) = pick_target(ed, &p) {
                     if mods.command {
                         if !ed.selected_midpoints.remove(&line) {
@@ -613,8 +653,10 @@ impl Tool for SelectTool {
                     ed.index
                         .pick(p.raw, p.tolerance, |id| ed.pickable(id, &hidden))
                 };
+                let anything = ed.pick_filter.anything();
                 // Sketch text (anywhere in its box).
                 if hit.is_none()
+                    && anything
                     && let Some(t) = ed.text_at(p.raw, p.tolerance)
                 {
                     ed.selected_text = Some(t);
@@ -628,7 +670,7 @@ impl Tool for SelectTool {
                 }
                 ed.selected_text = None;
                 // A copy of a block (on its curves, or inside it).
-                let copy = if hit.is_none() {
+                let copy = if hit.is_none() && anything {
                     ed.instance_at(p.raw, p.tolerance)
                 } else {
                     None
@@ -656,7 +698,7 @@ impl Tool for SelectTool {
                 }
                 // Clicking inside a fill (not on a curve) picks the fill; inside another
                 // closed area, the region.
-                let fill = if hit.is_none() {
+                let fill = if hit.is_none() && anything {
                     ed.fill_at(p.raw)
                 } else {
                     None
@@ -683,11 +725,13 @@ impl Tool for SelectTool {
                     return;
                 }
                 ed.selected_region = match hit {
-                    None => {
+                    // (A filled area was picked as its fill above: with areas picked only
+                    // where filled, an empty outline's inside picks nothing.)
+                    None if anything && !ed.regions_need_fill => {
                         let regions = ed.regions();
                         drift_geom::regions::region_at(&regions, p.raw).map(|_| p.raw)
                     }
-                    Some(_) => None,
+                    _ => None,
                 };
                 // Picking outside the open group closes it.
                 if let (Some(g), Some(id)) = (ed.open_group, hit)
@@ -819,7 +863,9 @@ impl Tool for SelectTool {
                         });
                     }
                     // Sketch text: drag it by its body.
-                    None if ed.text_at(p.raw, p.tolerance).is_some() => {
+                    None if ed.pick_filter.anything()
+                        && ed.text_at(p.raw, p.tolerance).is_some() =>
+                    {
                         let id = ed.text_at(p.raw, p.tolerance).expect("checked");
                         ed.selected_text = Some(id);
                         let from = ed.doc.text(id).map_or(p.raw, |t| t.at);
@@ -832,7 +878,9 @@ impl Tool for SelectTool {
                     }
                     // A copy of a block: drag it (and the rest of the selection) by its
                     // insertion point.
-                    None if ed.instance_at(p.raw, p.tolerance).is_some() => {
+                    None if ed.pick_filter.anything()
+                        && ed.instance_at(p.raw, p.tolerance).is_some() =>
+                    {
                         let c = ed.instance_at(p.raw, p.tolerance).expect("checked");
                         if !ed.selected_instances.contains(&c) {
                             if !mods.shift && !mods.command {
@@ -857,12 +905,13 @@ impl Tool for SelectTool {
                             instances,
                         });
                     }
-                    None if self.start_region_drag(&p, ed) => {}
+                    None if ed.pick_filter.anything() && self.start_region_drag(&p, ed) => {}
                     None => {
                         // Dragging inside a picked fill moves its area; elsewhere, box-select.
-                        let picked_fill = ed
-                            .fill_at(p.raw)
-                            .is_some_and(|f| ed.selected_fills.contains(&f));
+                        let picked_fill = ed.pick_filter.anything()
+                            && ed
+                                .fill_at(p.raw)
+                                .is_some_and(|f| ed.selected_fills.contains(&f));
                         match picked_fill.then(|| ed.selected_fill_curves()).flatten() {
                             Some((ids, centre)) => {
                                 let points = ed.doc.defining_points(ids.iter().copied());
@@ -990,20 +1039,36 @@ impl Tool for SelectTool {
                     let mut rect = Bounds::from_point(start);
                     rect.include(p.raw);
                     let crossing = p.raw.x < start.x;
-                    let found: Vec<EntityId> = ed
-                        .index
-                        .select_in_rect(&rect, crossing)
-                        .into_iter()
-                        .filter(|id| ed.pickable(*id, &hidden))
-                        .collect();
+                    // Points only: every point in the box (a box otherwise takes curves, and only
+                    // standalone points).
+                    let found: Vec<EntityId> =
+                        if ed.pick_filter == crate::editor::PickFilter::Points {
+                            ed.index
+                                .query(rect)
+                                .filter(|id| {
+                                    matches!(ed.index.shape(*id), Some(Shape::Point(q))
+                                        if q.x >= rect.min.x && q.x <= rect.max.x
+                                            && q.y >= rect.min.y && q.y <= rect.max.y)
+                                        && ed.pickable(*id, &hidden)
+                                })
+                                .collect()
+                        } else {
+                            ed.index
+                                .select_in_rect(&rect, crossing)
+                                .into_iter()
+                                .filter(|id| ed.pickable(*id, &hidden))
+                                .collect()
+                        };
                     if !mods.shift && !mods.command {
                         ed.selection.clear();
                         ed.selected_instances.clear();
                     }
                     ed.selection.extend(found);
                     ed.expand_groups();
-                    let copies = ed.instances_in(&rect, crossing);
-                    ed.selected_instances.extend(copies);
+                    if ed.pick_filter.anything() {
+                        let copies = ed.instances_in(&rect, crossing);
+                        ed.selected_instances.extend(copies);
+                    }
                 }
                 Some(SelectDrag::Move { point, applied, .. }) => {
                     ed.region_motion = None;

@@ -94,7 +94,8 @@ pub enum Prim {
         mirror: bool,
     },
     /// A line of text. `at` is on the baseline, at the left, centre or right per `align`.
-    /// `angle` is counter-clockwise in radians; `height` is the cap height in mm.
+    /// `angle` is counter-clockwise in radians; `height` is the cap height in mm. `font` is
+    /// sketch text's own font; `None` is the drawing's font (annotations, title blocks).
     Text {
         at: DVec2,
         height: f64,
@@ -102,6 +103,7 @@ pub enum Prim {
         align: Align,
         text: String,
         style: TextStyle,
+        font: Option<drift_core::TextFont>,
     },
 }
 
@@ -242,6 +244,7 @@ impl Drawing {
                 align,
                 text,
                 style: TextStyle::REGULAR,
+                font: None,
             },
         );
     }
@@ -272,6 +275,7 @@ impl Drawing {
                 align,
                 text,
                 style,
+                font: None,
             },
         );
     }
@@ -425,9 +429,10 @@ impl Drawing {
                     height,
                     text,
                     style,
+                    font,
                     ..
                 } => {
-                    let w = styled_width(text, *height, *style);
+                    let w = line_width_in(text, *height, *style, font.as_ref());
                     b.include(*at - DVec2::new(w, *height * 0.3));
                     b.include(*at + DVec2::new(w, *height * 1.2));
                 }
@@ -541,6 +546,7 @@ impl Transform {
                 align,
                 text,
                 style,
+                font,
             } => Prim::Text {
                 at: self.p(*at),
                 height: height * self.scale,
@@ -548,9 +554,24 @@ impl Transform {
                 align: *align,
                 text: text.clone(),
                 style: *style,
+                font: font.clone(),
             },
             Prim::Insert { .. } => prim.clone(),
         }
+    }
+}
+
+/// How wide a line of text is: in its own font (sketch text), else as the drawing's font
+/// sets it (see [`styled_width`]).
+pub fn line_width_in(
+    text: &str,
+    height: f64,
+    style: TextStyle,
+    font: Option<&drift_core::TextFont>,
+) -> f64 {
+    match font {
+        Some(f) => crate::outline::line_width(text, f, height),
+        None => styled_width(text, height, style),
     }
 }
 
@@ -596,7 +617,7 @@ pub fn text_width(text: &str, height: f64) -> f64 {
 pub fn styled_width(text: &str, height: f64, style: TextStyle) -> f64 {
     // In the drawing's own font, where it has one.
     if let Some(font) = crate::font::drawing_font() {
-        return font.face(style.bold).0.width(text, height, style.tracking);
+        return font.face(style.bold).width(text, height, style.tracking);
     }
     let size = height / CAP_HEIGHT;
     let table = if style.bold {

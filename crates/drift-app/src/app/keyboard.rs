@@ -123,13 +123,27 @@ impl DriftApp {
             if let Some(id) = ctx.memory(|m| m.focused()) {
                 ctx.memory_mut(|m| m.surrender_focus(id));
             }
+            // Nor move it to the next button (the File menu) as Tab otherwise does.
+            ctx.memory_mut(|m| m.move_focus(egui::FocusDirection::None));
             if self.tool.kind() != ToolKind::Select {
                 self.set_tool(ToolKind::Select);
             }
-            let n = self.editor.select_chain();
-            if n > 0 {
-                let now = ctx.input(|i| i.time);
-                self.set_status(format!("Selected a chain of {n}"), false, now);
+            let now = ctx.input(|i| i.time);
+            match self.editor.preview_chain() {
+                // Over a curve: its chain is highlighted, for a click to pick.
+                Some(0) => {}
+                Some(n) => self.set_status(
+                    format!("A chain of {n}: click to pick it · Tab again for the one curve"),
+                    false,
+                    now,
+                ),
+                // Over nothing: the selection widens to whole chains.
+                None => {
+                    let n = self.editor.select_chain();
+                    if n > 0 {
+                        self.set_status(format!("Selected a chain of {n}"), false, now);
+                    }
+                }
             }
         }
 
@@ -228,6 +242,10 @@ impl DriftApp {
         };
         if alt_only(Key::D) {
             self.show_dimensions = !self.show_dimensions;
+        }
+        // Alt+H: show (faded) or hide again the dimensions and annotations hidden on the canvas.
+        if alt_only(Key::H) {
+            self.show_hidden_annotations = !self.show_hidden_annotations;
         }
         // Shift+Z: fit the view to the selection.
         if ctx.input(|i| i.modifiers.shift_only() && i.key_pressed(Key::Z)) {

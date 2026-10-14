@@ -437,6 +437,60 @@ impl Paragraph<'_> {
     }
 }
 
+/// The size a font is set at (its em) for capitals `height` tall.
+pub fn em_size(font: &TextFont, height: f64) -> f64 {
+    let (data, index) = font_data(font);
+    let Ok(f) = FontRef::from_index(&data, index) else {
+        return height / 0.7;
+    };
+    let metrics = f.metrics(Size::unscaled(), LocationRef::default());
+    let em = f64::from(metrics.units_per_em.max(1));
+    let cap = metrics
+        .cap_height
+        .map(f64::from)
+        .filter(|c| *c > 0.0)
+        .unwrap_or(0.7 * em);
+    height * em / cap
+}
+
+/// Glyph contours as closed rings of points (curves flattened), for filling.
+pub fn contour_rings(contours: &[Vec<Shape>]) -> Vec<Vec<DVec2>> {
+    contours
+        .iter()
+        .map(|contour| {
+            let mut ring = Vec::new();
+            for piece in contour {
+                match *piece {
+                    Shape::Line { a, b } => {
+                        if ring.is_empty() {
+                            ring.push(a);
+                        }
+                        ring.push(b);
+                    }
+                    Shape::Bezier { p } => {
+                        if ring.is_empty() {
+                            ring.push(p[0]);
+                        }
+                        for k in 1..=8 {
+                            let t = f64::from(k) / 8.0;
+                            let u = 1.0 - t;
+                            ring.push(
+                                p[0] * (u * u * u)
+                                    + p[1] * (3.0 * u * u * t)
+                                    + p[2] * (3.0 * u * t * t)
+                                    + p[3] * (t * t * t),
+                            );
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            ring
+        })
+        .filter(|r| r.len() >= 3)
+        .collect()
+}
+
 /// The contours of `text` in a font file's face (see [`text_contours`]), with `tracking` (a
 /// fraction of the font size) added after each letter.
 pub fn contours_in(

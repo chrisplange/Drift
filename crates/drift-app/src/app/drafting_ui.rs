@@ -143,6 +143,21 @@ impl DriftApp {
             crate::constraint_label(&self.editor.doc, &c),
             &shown,
         );
+        let now = ui.input(|i| i.time);
+        // Driven: a reference that reports the geometry's size rather than setting it.
+        let driven = self.editor.doc.is_driven(id);
+        let mut want = driven;
+        if ui
+            .checkbox(&mut want, "Driven (reference)")
+            .on_hover_text(
+                "A driven dimension reports the geometry's size, in parentheses, and doesn't \
+                 hold it. Untick to make it drive the geometry again",
+            )
+            .changed()
+            && let Err(e) = self.editor.set_driven(id, want)
+        {
+            self.set_status(format!("Can't make it driving: it {e}"), true, now);
+        }
         let mut note = self.editor.doc.dim_note(id).cloned().unwrap_or_default();
         let before = note.clone();
         theme::section(ui, "Text");
@@ -160,29 +175,37 @@ impl DriftApp {
                     .desired_width(ui.available_width() - 8.0),
             );
         });
-        ui.horizontal_wrapped(|ui| {
-            for (text, prefix) in [("×", true), ("Ø", true), ("THRU", false), ("TYP", false)] {
-                if ui
-                    .small_button(text)
-                    .on_hover_text(if prefix {
-                        "Add to the prefix"
-                    } else {
-                        "Add to the suffix"
-                    })
-                    .clicked()
-                {
-                    let target = if prefix {
-                        &mut note.prefix
-                    } else {
-                        &mut note.suffix
-                    };
-                    if !target.is_empty() && !target.ends_with(' ') && !prefix {
-                        target.push(' ');
-                    }
-                    target.push_str(text);
-                }
-            }
+        dimension_chips(ui, &mut note);
+        theme::row(ui, "Under line", |ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut note.below)
+                    .hint_text("e.g. TO FACE OF STUD")
+                    .desired_width(ui.available_width() - 8.0),
+            )
+            .on_hover_text("A line of text under the dimension line");
         });
+        theme::row(ui, "Show instead", |ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut note.text)
+                    .hint_text("e.g. EQ (the value still holds)")
+                    .desired_width(ui.available_width() - 8.0),
+            )
+            .on_hover_text(
+                "Text shown in place of the value, such as EQ or VARIES. The dimension still \
+                 holds its value",
+            );
+        });
+        if !note.text.is_empty() {
+            let value = format!("{}{}", label.before, label.after);
+            ui.label(
+                egui::RichText::new(format!(
+                    "Holds {}",
+                    self.editor.dimension_edit_text(id).unwrap_or(value)
+                ))
+                .small()
+                .weak(),
+            );
+        }
         theme::section(ui, "Tolerance");
         let kinds = [
             Tolerance::None,
@@ -255,6 +278,7 @@ impl DriftApp {
             self.editor.doc.set_dim_note(id, Some(note));
             self.editor.commit("Dimension text");
         }
+        self.visibility_section(ui);
         ui.add_space(8.0);
         ui.label(
             egui::RichText::new("Double-click the dimension on the canvas to change its value.")
@@ -263,4 +287,56 @@ impl DriftApp {
         );
         true
     }
+}
+
+/// The quick texts for a dimension: before the value (×, Ø, ±) and after it (TYP, REF,
+/// MIN, MAX, VIF, THRU), and EQ in place of the value. A chip already there comes off.
+pub(crate) fn dimension_chips(ui: &mut egui::Ui, note: &mut drift_core::DimNote) {
+    // (text, where it goes: -1 before, 1 after, 0 instead of the value, what it means)
+    const CHIPS: [(&str, i8, &str); 10] = [
+        ("×", -1, "Before the value: a count, such as 4×"),
+        ("Ø", -1, "Before the value: a diameter"),
+        ("±", -1, "Before the value"),
+        ("TYP", 1, "Typical: the same elsewhere"),
+        ("REF", 1, "Reference only"),
+        ("MIN", 1, "Minimum"),
+        ("MAX", 1, "Maximum"),
+        ("VIF", 1, "Verify in field"),
+        ("THRU", 1, "Through"),
+        (
+            "EQ",
+            0,
+            "Equal: shown instead of the value, which still holds",
+        ),
+    ];
+    ui.horizontal_wrapped(|ui| {
+        for (text, place, hint) in CHIPS {
+            let on = match place {
+                -1 => note.prefix.contains(text),
+                1 => note.suffix.split_whitespace().any(|w| w == text),
+                _ => note.text == text,
+            };
+            if ui.selectable_label(on, text).on_hover_text(hint).clicked() {
+                match place {
+                    0 => note.text = if on { String::new() } else { text.to_owned() },
+                    -1 if on => note.prefix = note.prefix.replace(text, "").trim().to_owned(),
+                    -1 => note.prefix.push_str(text),
+                    _ if on => {
+                        note.suffix = note
+                            .suffix
+                            .split_whitespace()
+                            .filter(|w| *w != text)
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                    }
+                    _ => {
+                        if !note.suffix.is_empty() && !note.suffix.ends_with(' ') {
+                            note.suffix.push(' ');
+                        }
+                        note.suffix.push_str(text);
+                    }
+                }
+            }
+        }
+    });
 }

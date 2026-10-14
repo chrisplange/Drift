@@ -155,6 +155,22 @@ impl Lexer<'_> {
         (d != 0.0).then_some((n / d, k))
     }
 
+    /// A whole number and a fraction with no mark, `35 1/2` (in the context's unit, as a
+    /// bare number is). Spaces, not `-`, join them: `10-1/2` stays arithmetic.
+    fn mixed_at(&self, i: usize) -> Option<(f64, usize)> {
+        let c = &self.chars;
+        let (n, j) = self.integer_at(i)?;
+        let mut k = j;
+        while c.get(k) == Some(&' ') {
+            k += 1;
+        }
+        if k == j {
+            return None;
+        }
+        let (f, end) = self.fraction_at(k)?;
+        Some((n + f, end))
+    }
+
     /// Inches: `6"`, `6.5"`, `3/8"`, `6-1/2"`, `6 1/2"`. Returns inches and the end.
     fn inches_at(&self, i: usize) -> Option<(f64, usize)> {
         let c = &self.chars;
@@ -224,6 +240,9 @@ impl Lexer<'_> {
             {
                 if let Some((q, end)) = self.imperial_at(i) {
                     out.push((Tok::Literal(q), start, end));
+                    i = end;
+                } else if let Some((v, end)) = self.mixed_at(i) {
+                    out.push((Tok::Num(v), start, end));
                     i = end;
                 } else if let Some((v, end)) = self.number_at(i) {
                     out.push((Tok::Num(v), start, end));
@@ -835,6 +854,9 @@ mod tests {
         assert!((mm("2' - 6\"") - 18.0 * inch).abs() < 1e-12);
         // Not imperial: plain arithmetic.
         assert_eq!(eval("10-1/2").unwrap(), Quantity::number(9.5));
+        // A whole number and a fraction, no mark: one number (inches, in an inch drawing).
+        assert_eq!(eval("35 1/2").unwrap(), Quantity::number(35.5));
+        assert_eq!(eval("2 * 35 1/2").unwrap(), Quantity::number(71.0));
         assert!((mm("1' + 1\"") - 13.0 * inch).abs() < 1e-12);
     }
 

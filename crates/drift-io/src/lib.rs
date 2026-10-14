@@ -6,7 +6,7 @@
 //! ```json
 //! {
 //!   "format": "drift",
-//!   "version": 20,
+//!   "version": 21,
 //!   "meta": {"title":"Bracket","units":"mm","generator":"Drift 0.1.0"},
 //!   "display": {"length":"architectural","fraction":16},
 //!   "variables": [
@@ -71,8 +71,9 @@ pub const EXTENSION: &str = "drift";
 /// `ellipse` entities; 14 = adds `bezier` curves and `smooth` relations; 15 = adds `texts`
 /// (M9); 16 = adds the `modern` title block; 17 = adds sheet flags; 18 = adds a sheet's
 /// `views`; 19 = adds `fonts` and a text's `align`, `spacing` and `wrap`; 20 = adds the
-/// drafting style's `color`.
-pub const FORMAT_VERSION: u32 = 20;
+/// drafting style's `color`; 21 = adds `shown` (where dimensions and annotations show) and a
+/// dimension's `below` and `text`.
+pub const FORMAT_VERSION: u32 = 21;
 const FORMAT_TAG: &str = "drift";
 
 /// Document-level properties stored alongside the geometry.
@@ -326,6 +327,12 @@ struct ConstraintRecord {
     suffix: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     tol: Option<drafting::ToleranceRecord>,
+    /// A line of text under the dimension line.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    below: Option<String>,
+    /// Text shown instead of the value (`EQ`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    text: Option<String>,
 }
 
 /// How lengths and angles are displayed. Every field is optional (defaults apply).
@@ -344,13 +351,14 @@ struct DisplayRecord {
     angle_decimals: Option<u8>,
 }
 
-const LENGTH_FORMATS: [(LengthFormat, &str); 6] = [
+const LENGTH_FORMATS: [(LengthFormat, &str); 7] = [
     (LengthFormat::Millimetre, "mm"),
     (LengthFormat::Centimetre, "cm"),
     (LengthFormat::Metre, "m"),
     (LengthFormat::Inch, "in"),
     (LengthFormat::Foot, "ft"),
     (LengthFormat::Architectural, "architectural"),
+    (LengthFormat::FractionalInch, "fractional_in"),
 ];
 
 impl DisplayRecord {
@@ -772,6 +780,9 @@ struct FileRecord {
     fills: Vec<drafting::FillRecord>,
     #[serde(default)]
     annotations: Vec<drafting::AnnotationRecord>,
+    /// Dimensions and annotations not shown everywhere.
+    #[serde(default)]
+    shown: Vec<drafting::ShownRecord>,
     /// Imported hatch patterns, as `.pat` text.
     #[serde(default)]
     patterns: Option<String>,
@@ -1007,6 +1018,8 @@ pub fn save(doc: &Document, meta: &Metadata) -> String {
                 r.prefix = (!n.prefix.is_empty()).then(|| n.prefix.clone());
                 r.suffix = (!n.suffix.is_empty()).then(|| n.suffix.clone());
                 r.tol = drafting::tolerance_record(&n.tolerance);
+                r.below = (!n.below.is_empty()).then(|| n.below.clone());
+                r.text = (!n.text.is_empty()).then(|| n.text.clone());
             }
             serde_json::to_string(&r).expect("constraint serializes")
         })
@@ -1047,6 +1060,12 @@ pub fn save(doc: &Document, meta: &Metadata) -> String {
         .map(|(id, a)| {
             serde_json::to_string(&drafting::annotation_record(id, a))
                 .expect("annotation serializes")
+        })
+        .collect();
+    let shown: Vec<String> = doc
+        .shown_settings()
+        .map(|(r, s)| {
+            serde_json::to_string(&drafting::shown_record(r, s)).expect("shown serializes")
         })
         .collect();
     let sheets: Vec<String> = doc
@@ -1093,6 +1112,7 @@ pub fn save(doc: &Document, meta: &Metadata) -> String {
         ("variants", &variants),
         ("fills", &fills),
         ("annotations", &annotations),
+        ("shown", &shown),
         ("sheets", &sheets),
         ("groups", &groups),
         ("blocks", &block_lines),
@@ -1353,7 +1373,13 @@ pub fn load(text: &str) -> Result<(Document, Metadata), LoadError> {
     let mut notes = Vec::new();
     for mut rec in file.constraints {
         let expr = rec.expr.take();
-        let note = drafting::dim_note(rec.prefix.take(), rec.suffix.take(), rec.tol.take());
+        let note = drafting::dim_note(
+            rec.prefix.take(),
+            rec.suffix.take(),
+            rec.tol.take(),
+            rec.below.take(),
+            rec.text.take(),
+        );
         let (id, c, label, is_driven) = parse_constraint(rec)?;
         if let Some(e) = expr {
             exprs.push((id, e));
@@ -1426,6 +1452,10 @@ pub fn load(text: &str) -> Result<(Document, Metadata), LoadError> {
         }
     }
     drafting::insert_all(&mut doc, file.fills, file.annotations)?;
+    for r in file.shown {
+        let (of, shown) = drafting::parse_shown(r)?;
+        doc.set_shown(of, shown);
+    }
     if let Some(p) = file.patterns {
         doc.set_custom_patterns(p);
     }
@@ -1585,7 +1615,7 @@ pub fn migrate(value: serde_json::Value) -> Result<serde_json::Value, LoadError>
         // v1 → v2: constraints were introduced; a v1 file simply has none.
         value["constraints"] = serde_json::Value::Array(Vec::new());
     }
-    // v2 → v20 only added optional fields, sections and constraint types: nothing to convert
+    // v2 → v21 only added optional fields, sections and constraint types: nothing to convert
     // (a sheet's single view from before v18 is read as it was written).
     value["version"] = FORMAT_VERSION.into();
     Ok(value)
@@ -1629,7 +1659,7 @@ mod tests {
         let text = save(&doc, &Metadata::default());
         let expected = r#"{
   "format": "drift",
-  "version": 20,
+  "version": 21,
   "meta": {"units":"mm"},
   "entities": [
     {"type":"point","id":"e1","at":[0.0,0.0]},
@@ -2080,16 +2110,38 @@ mod tests {
             },
             Tolerance::Fit("H7".into()),
         ];
-        for (id, t) in dims.iter().zip(tolerances) {
+        for (k, (id, t)) in dims.iter().zip(tolerances).enumerate() {
             doc.set_dim_note(
                 *id,
                 Some(DimNote {
                     prefix: "4×".into(),
                     suffix: "THRU".into(),
                     tolerance: t,
+                    // A line under one, text instead of the value on another.
+                    below: if k == 0 {
+                        "TO FACE OF STUD".into()
+                    } else {
+                        String::new()
+                    },
+                    text: if k == 1 { "EQ".into() } else { String::new() },
                 }),
             );
         }
+        // One hidden on the canvas, one left off sheets.
+        doc.set_shown(
+            drift_core::AnnotationRef::Dimension(dims[0]),
+            drift_core::Shown {
+                canvas: false,
+                sheets: true,
+            },
+        );
+        doc.set_shown(
+            drift_core::AnnotationRef::Dimension(dims[1]),
+            drift_core::Shown {
+                canvas: true,
+                sheets: false,
+            },
+        );
         let mut style = DraftStyle::asme();
         style.arrow = ArrowStyle::Tick;
         style.alt_units = Some(LengthFormat::Millimetre);
@@ -2236,11 +2288,13 @@ mod tests {
         doc.add_text(drift_core::SketchText::new("A", DVec2::ZERO, 3.0));
 
         let text = save(&doc, &Metadata::default());
-        assert!(text.contains("\"version\": 20"));
+        assert!(text.contains("\"version\": 21"));
         assert!(
             text.contains(r#"{"a":[80.0,20.0,30.0,0.0,90.0]}"#),
             "{text}"
         );
+        assert!(text.contains(r#""below":"TO FACE OF STUD""#) && text.contains(r#""text":"EQ""#));
+        assert!(text.contains(r#""shown": ["#) && text.contains(r#""canvas":false"#));
         let (loaded, _) = load(&text).unwrap();
         assert_eq!(loaded, doc);
         assert_eq!(save(&loaded, &Metadata::default()), text);

@@ -1,6 +1,6 @@
 //! Smart Dimension: the dimension type follows the picks and the label position.
 
-use super::select::{Target, pick_target};
+use super::select::{Target, pick_target_with};
 use super::*;
 
 /// What a dimension measures, before its exact type is chosen by where the label goes.
@@ -38,6 +38,10 @@ pub struct DimensionTool {
     pub(super) base: Option<DimBase>,
     /// Chain / baseline dimensioning after a horizontal or vertical dimension.
     pub(super) run: Option<Run>,
+    /// The row goes on with plain clicks (Chain or Baseline mode).
+    continuous: bool,
+    /// The last baseline step (for an overall placed when the row ends by a key).
+    step: f64,
 }
 
 /// Lines within this of parallel are dimensioned by the distance between them: lines drawn
@@ -156,7 +160,7 @@ impl DimensionTool {
                         last: b,
                         horizontal: true,
                         line: at.y,
-                        baseline: false,
+                        baseline: ed.dim_mode == crate::editor::DimMode::Baseline,
                         count: 1,
                     }),
                     Constraint::VerticalDistance { a, b, .. } => Some(Run {
@@ -164,7 +168,7 @@ impl DimensionTool {
                         last: b,
                         horizontal: false,
                         line: at.x,
-                        baseline: false,
+                        baseline: ed.dim_mode == crate::editor::DimMode::Baseline,
                         count: 1,
                     }),
                     _ => None,
@@ -258,6 +262,73 @@ impl DimensionTool {
         ed.selected_midpoints.clear();
     }
 
+    /// End a chain: with Overall on and two or more dimensions in it, an overall dimension
+    /// (a reference, since the chain already holds it) a step outside the row.
+    fn end_run(&mut self, ed: &mut Editor, step: f64) {
+        let Some(run) = self.run.take() else {
+            return;
+        };
+        if !ed.dim_overall
+            || ed.dim_mode != crate::editor::DimMode::Chain
+            || run.baseline
+            || run.count < 2
+        {
+            return;
+        }
+        let (Some(pb), Some(pl)) = (ed.doc.ref_point(run.base), ed.doc.ref_point(run.last)) else {
+            return;
+        };
+        let across = if run.horizontal { pb.y } else { pb.x };
+        let away = if run.line >= across { 1.0 } else { -1.0 };
+        let line = run.line + away * step;
+        let mid = (pb + pl) * 0.5;
+        let (c, at) = if run.horizontal {
+            (
+                Constraint::HorizontalDistance {
+                    a: run.base,
+                    b: run.last,
+                    value: 0.0,
+                },
+                DVec2::new(mid.x, line),
+            )
+        } else {
+            (
+                Constraint::VerticalDistance {
+                    a: run.base,
+                    b: run.last,
+                    value: 0.0,
+                },
+                DVec2::new(line, mid.y),
+            )
+        };
+        let Some(value) = drift_solver::measure(&ed.doc, &c) else {
+            return;
+        };
+        let c = c.with_value(value);
+        let offset = crate::annotations::dimension_anchor(&ed.doc, &c)
+            .map(|anchor| crate::annotations::centred_offset(&ed.doc, &c, at - anchor));
+        if let Err(e) = ed.add_driven_dimension(c, offset) {
+            ed.notice = Some(format!("Overall: {e}"));
+        }
+    }
+
+    /// The point a pick adds to a row: a point or midpoint, or a line's end nearer `at`.
+    fn run_point(ed: &Editor, t: Target, at: DVec2) -> Option<EntityId> {
+        if let Some(p) = t.point_ref(ed) {
+            return Some(p);
+        }
+        let Target::Entity(id) = t else { return None };
+        let EntityKind::Line { a, b } = ed.doc.get(id)?.kind else {
+            return None;
+        };
+        let (pa, pb) = (ed.doc.point(a).ok()?, ed.doc.point(b).ok()?);
+        Some(if pa.distance(at) <= pb.distance(at) {
+            a
+        } else {
+            b
+        })
+    }
+
     /// Show what has been picked: entities highlighted, midpoints marked.
     pub(super) fn show_pick(ed: &mut Editor, t: Target, first: bool) {
         if first {
@@ -289,10 +360,20 @@ impl Tool for DimensionTool {
             && self.first.is_none()
             && self.base.is_none()
         {
-            return if run.baseline {
-                "Shift+click points for baseline dimensions from the same base (B: chain)".into()
-            } else {
-                "Shift+click points to chain dimensions along the row (B: baseline)".into()
+            return match (self.continuous, run.baseline) {
+                (true, true) => "Click points or lines for baseline dimensions from the same \
+                                 base · B: chain · Enter, Esc or an empty click ends"
+                    .into(),
+                (true, false) => "Click points or lines to chain dimensions along the row · \
+                                  B: baseline · Enter, Esc or an empty click ends"
+                    .into(),
+                (false, true) => {
+                    "Shift+click points for baseline dimensions from the same base (B: chain)"
+                        .into()
+                }
+                (false, false) => {
+                    "Shift+click points to chain dimensions along the row (B: baseline)".into()
+                }
             };
         }
         match (self.first, self.base) {
@@ -309,23 +390,31 @@ impl Tool for DimensionTool {
             Input::Hover(p) => {
                 ed.hovered = None;
                 ed.hovered_midpoint = None;
-                match pick_target(ed, &p) {
+                match pick_target_with(ed, &p, crate::editor::PickFilter::All) {
                     Some(Target::Entity(id)) => ed.hovered = Some(id),
                     Some(Target::Midpoint(line)) => ed.hovered_midpoint = Some(line),
                     None => {}
                 }
             }
             Input::Click(p, mods) => {
-                let picked = pick_target(ed, &p);
-                // Continuing a chain / baseline row: Shift+click on a point adds the next one.
+                let picked = pick_target_with(ed, &p, crate::editor::PickFilter::All);
+                let step = p.tolerance * BASELINE_STEP;
+                self.step = step;
+                // Continuing a chain / baseline row: in Chain or Baseline mode a click on a
+                // point or line adds the next one (Shift+click, in Single mode). A click on
+                // nothing ends the row.
+                self.continuous = ed.dim_mode != crate::editor::DimMode::Single;
                 if self.run.is_some() && self.first.is_none() && self.base.is_none() {
-                    if mods.shift
-                        && let Some(q) = picked.and_then(|t| t.point_ref(ed))
-                        && self.extend_run(ed, q, p.tolerance * BASELINE_STEP)
+                    if (mods.shift || self.continuous)
+                        && let Some(q) = picked.and_then(|t| Self::run_point(ed, t, p.raw))
+                        && self.extend_run(ed, q, step)
                     {
                         return;
                     }
-                    self.run = None;
+                    self.end_run(ed, step);
+                    if self.continuous && picked.is_none() {
+                        return;
+                    }
                 }
                 // A second pick combines with the first; otherwise a click places.
                 if let (Some(first), Some(t)) = (self.first, picked)
@@ -347,13 +436,18 @@ impl Tool for DimensionTool {
                     Self::show_pick(ed, t, true);
                 }
             }
-            Input::Finish => self.reset(ed),
+            Input::Finish => {
+                self.end_run(ed, self.step);
+                self.reset(ed);
+            }
             _ => {}
         }
     }
 
     fn cancel(&mut self, ed: &mut Editor) -> bool {
-        let had = self.is_busy();
+        // Esc ends a row (with its overall) and keeps the tool.
+        let had = self.is_busy() || self.run.is_some();
+        self.end_run(ed, self.step);
         self.reset(ed);
         had
     }

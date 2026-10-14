@@ -28,8 +28,8 @@ pub use document::{
     Variable, VariableId, Variant, VariantId, arc_shape, dimension_kind,
 };
 pub use drafting::{
-    Anchor, Annotation, AnnotationId, ArrowStyle, DimNote, DraftStyle, Fill, FillId, FillKind,
-    Hatch, Leader, LeaderEnd, OrdinateAxis, Standard, Tolerance,
+    Anchor, Annotation, AnnotationId, AnnotationRef, ArrowStyle, DimNote, DraftStyle, Fill, FillId,
+    FillKind, Hatch, Leader, LeaderEnd, OrdinateAxis, Shown, Standard, Tolerance,
 };
 pub use fonts::{EmbeddedFont, FontFile, FontSet};
 pub use glam::DVec2;

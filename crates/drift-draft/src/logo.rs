@@ -527,7 +527,8 @@ fn outlines(node: roxmltree::Node) -> Vec<Sub> {
 }
 
 /// The triangles that fill `rings`.
-fn triangulate(rings: &[Vec<DVec2>], even_odd: bool) -> Vec<[DVec2; 3]> {
+/// Triangles filling closed rings (by the even-odd or non-zero rule).
+pub fn triangulate(rings: &[Vec<DVec2>], even_odd: bool) -> Vec<[DVec2; 3]> {
     let mut builder = Path::builder();
     for ring in rings.iter().filter(|r| r.len() >= 3) {
         builder.begin(point(ring[0].x as f32, ring[0].y as f32));

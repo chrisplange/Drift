@@ -322,6 +322,7 @@ enum Key {
     Fill(FillId),
     Annotation(AnnotationId),
     DimNote(ConstraintId),
+    Shown(crate::AnnotationRef),
     Draft,
     Patterns,
     Logo,
@@ -350,6 +351,7 @@ enum Record {
     Fill(Fill),
     Annotation(Annotation),
     DimNote(DimNote),
+    Shown(crate::Shown),
     Draft(DraftStyle),
     Patterns(String),
     Logo(String),
@@ -398,6 +400,8 @@ pub struct Document {
     annotations: BTreeMap<AnnotationId, Annotation>,
     /// Prefixes, suffixes and tolerances of dimensions.
     dim_notes: BTreeMap<ConstraintId, DimNote>,
+    /// Dimensions and annotations not shown everywhere (the rest are).
+    shown: BTreeMap<crate::AnnotationRef, crate::Shown>,
     draft: DraftStyle,
     /// Hatch patterns imported from `.pat` files, as `.pat` text, so they travel with the file.
     patterns: String,
@@ -442,6 +446,7 @@ impl PartialEq for Document {
             && self.fills == other.fills
             && self.annotations == other.annotations
             && self.dim_notes == other.dim_notes
+            && self.shown == other.shown
             && self.draft == other.draft
             && self.patterns == other.patterns
             && self.logo == other.logo
@@ -472,6 +477,7 @@ impl Default for Document {
             fills: BTreeMap::new(),
             annotations: BTreeMap::new(),
             dim_notes: BTreeMap::new(),
+            shown: BTreeMap::new(),
             draft: DraftStyle::default(),
             patterns: String::new(),
             logo: String::new(),
@@ -724,6 +730,7 @@ impl Document {
             Key::Fill(id) => self.fills.get(&id).cloned().map(Record::Fill),
             Key::Annotation(id) => self.annotations.get(&id).cloned().map(Record::Annotation),
             Key::DimNote(id) => self.dim_notes.get(&id).cloned().map(Record::DimNote),
+            Key::Shown(r) => self.shown.get(&r).copied().map(Record::Shown),
             Key::Draft => Some(Record::Draft(self.draft)),
             Key::Patterns => Some(Record::Patterns(self.patterns.clone())),
             Key::Logo => Some(Record::Logo(self.logo.clone())),
@@ -832,6 +839,12 @@ impl Document {
             }
             (Key::DimNote(id), _) => {
                 self.dim_notes.remove(&id);
+            }
+            (Key::Shown(r), Some(Record::Shown(s))) => {
+                self.shown.insert(r, s);
+            }
+            (Key::Shown(r), _) => {
+                self.shown.remove(&r);
             }
             (Key::Draft, Some(Record::Draft(d))) => self.draft = d,
             (Key::Draft, _) => {}
@@ -1893,6 +1906,7 @@ impl Document {
         keys.extend(self.fills.keys().map(|id| Key::Fill(*id)));
         keys.extend(self.annotations.keys().map(|id| Key::Annotation(*id)));
         keys.extend(self.dim_notes.keys().map(|id| Key::DimNote(*id)));
+        keys.extend(self.shown.keys().map(|r| Key::Shown(*r)));
         keys.push(Key::Draft);
         keys.push(Key::Patterns);
         keys.push(Key::Logo);
@@ -2387,6 +2401,44 @@ impl Document {
 
     pub fn dim_notes(&self) -> impl Iterator<Item = (ConstraintId, &DimNote)> {
         self.dim_notes.iter().map(|(id, n)| (*id, n))
+    }
+
+    /// Where a dimension or annotation is shown (everywhere, unless set otherwise).
+    pub fn shown(&self, r: crate::AnnotationRef) -> crate::Shown {
+        self.shown.get(&r).copied().unwrap_or_default()
+    }
+
+    /// The dimensions and annotations not shown everywhere, that still exist.
+    pub fn shown_settings(
+        &self,
+    ) -> impl Iterator<Item = (crate::AnnotationRef, crate::Shown)> + '_ {
+        self.shown
+            .iter()
+            .filter(|(r, _)| self.annotation_ref_exists(**r))
+            .map(|(r, s)| (*r, *s))
+    }
+
+    /// Whether the dimension or annotation is there.
+    pub fn annotation_ref_exists(&self, r: crate::AnnotationRef) -> bool {
+        match r {
+            crate::AnnotationRef::Dimension(id) => {
+                self.constraints.get(&id).is_some_and(|c| c.is_dimension())
+            }
+            crate::AnnotationRef::Annotation(id) => self.annotations.contains_key(&id),
+        }
+    }
+
+    /// Set where a dimension or annotation is shown (the default, everywhere, is not kept).
+    pub fn set_shown(&mut self, r: crate::AnnotationRef, shown: crate::Shown) {
+        if self.shown(r) == shown || !self.annotation_ref_exists(r) {
+            return;
+        }
+        self.touch_key(Key::Shown(r));
+        if shown.is_default() {
+            self.shown.remove(&r);
+        } else {
+            self.shown.insert(r, shown);
+        }
     }
 
     /// Set (or clear, with `None` or an empty note) a dimension's prefix, suffix and tolerance.

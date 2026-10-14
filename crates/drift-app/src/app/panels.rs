@@ -577,6 +577,12 @@ impl DriftApp {
                     "Dimensions and notes",
                     "Alt+D",
                 );
+                toggle_item(
+                    ui,
+                    &mut self.show_hidden_annotations,
+                    "Hidden annotations (faded)",
+                    "Alt+H",
+                );
                 toggle_item(ui, &mut self.show_relations, "Relations", "Alt+R");
                 toggle_item(ui, &mut self.params.show_free, "Free directions", "");
                 toggle_item(ui, &mut self.params.show_ghosts, "Variant ghosts", "");
@@ -884,13 +890,12 @@ impl DriftApp {
                     ui.add_space(4.0);
                     ui.label(egui::RichText::new("Nothing selected").size(14.0).weak());
                     ui.add_space(2.0);
-                    ui.label(
-                        egui::RichText::new(
-                            "Click geometry to inspect it, or inside a closed area to measure it.",
-                        )
-                        .small()
-                        .weak(),
-                    );
+                    let hint = if self.editor.regions_need_fill {
+                        "Click geometry, or a fill or hatch, to inspect it."
+                    } else {
+                        "Click geometry to inspect it, or inside a closed area to measure it."
+                    };
+                    ui.label(egui::RichText::new(hint).small().weak());
                 });
                 theme::section(ui, "Sketch");
                 let curves = ed.doc.iter().filter(|(_, e)| !e.kind.is_point()).count();
@@ -1382,9 +1387,32 @@ impl DriftApp {
                         self.select_overlapping(_now);
                     }
                 }
+                let hidden = self.hidden_annotation_count();
+                if hidden > 0 {
+                    let grey = ui.visuals().weak_text_color();
+                    let text = if self.show_hidden_annotations {
+                        format!("{hidden} hidden, shown")
+                    } else {
+                        format!("{hidden} hidden")
+                    };
+                    let pill = theme::pill(ui, &text, grey);
+                    let click =
+                        ui.interact(pill.rect, ui.id().with("hidden"), egui::Sense::click());
+                    click.widget_info(|| {
+                        egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &text)
+                    });
+                    let click = click.on_hover_text(
+                        "Dimensions and annotations hidden on the canvas. Click (or Alt+H) \
+                             to show them faded, so they can be picked and shown again",
+                    );
+                    if click.clicked() {
+                        self.show_hidden_annotations = !self.show_hidden_annotations;
+                    }
+                }
                 let mut units = self.editor.doc.units();
                 let short = |f: drift_core::LengthFormat| match f {
                     drift_core::LengthFormat::Architectural => "ft-in",
+                    drift_core::LengthFormat::FractionalInch => "in ½",
                     f => f.symbol(),
                 };
                 egui::ComboBox::from_id_salt("status_units")

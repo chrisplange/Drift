@@ -258,6 +258,20 @@ pub struct Editor {
     /// A move or turn in progress, which the selected region's point follows until it is
     /// confirmed (or cancelled).
     pub region_motion: Option<RegionMotion>,
+    /// What the select tool picks: everything, or only edges (curves) or only points.
+    pub pick_filter: PickFilter,
+    /// Tab over a curve: its chain, highlighted to be picked by the next click (the curve
+    /// the pointer was on, and the chain).
+    pub chain_preview: Option<(EntityId, BTreeSet<EntityId>)>,
+    /// Closed areas are found from each layer's curves separately.
+    pub regions_by_layer: bool,
+    /// A click inside a closed area picks it only when a fill or hatch is in it (an empty
+    /// outline's inside picks nothing).
+    pub regions_need_fill: bool,
+    /// How the dimension tool goes on after a horizontal or vertical dimension.
+    pub dim_mode: DimMode,
+    /// Chain dimensions end with an overall dimension (a reference) outside them.
+    pub dim_overall: bool,
     /// The curves bounding the selected region when it was last found, so it can be found
     /// again when a move takes it somewhere its point doesn't follow (a dimension held part
     /// of it back).
@@ -337,6 +351,7 @@ impl Editor {
         let mut editor = Self {
             doc,
             auto_relations: true,
+            regions_need_fill: true,
             ..Default::default()
         };
         // Bring linked dimensions up to date with their expressions (not an undo step).
@@ -805,11 +820,15 @@ impl Editor {
     /// The closed regions formed by solid curves (construction and centre lines are
     /// references, not boundaries), recomputed when the document changes.
     pub fn regions(&mut self) -> std::rc::Rc<Vec<drift_geom::regions::Region>> {
-        let revision = self.doc.revision();
+        // (Switching per-layer finding on or off counts as a change.)
+        let revision = self.doc.revision() * 2 + u64::from(self.regions_by_layer);
         if let Some((r, regions)) = &self.regions
             && *r == revision
         {
             return regions.clone();
+        }
+        if self.regions_by_layer {
+            return self.regions_per_layer(revision);
         }
         let (ids, curves): (Vec<EntityId>, Vec<Shape>) = self
             .doc
@@ -818,6 +837,44 @@ impl Editor {
             .filter_map(|(id, _)| Some((id, self.doc.shape(id)?)))
             .unzip();
         let regions = std::rc::Rc::new(drift_geom::regions::regions(&curves));
+        self.regions = Some((revision, regions.clone()));
+        self.region_ids = std::rc::Rc::new(ids);
+        regions
+    }
+
+    /// Closed areas found from each layer's curves on their own: an outline on one layer
+    /// isn't closed or cut by curves on another.
+    fn regions_per_layer(
+        &mut self,
+        revision: u64,
+    ) -> std::rc::Rc<Vec<drift_geom::regions::Region>> {
+        let mut by_layer: std::collections::BTreeMap<drift_core::LayerId, Vec<(EntityId, Shape)>> =
+            Default::default();
+        for (id, e) in self.doc.iter() {
+            if e.kind.is_point() || e.style != LineKind::Solid {
+                continue;
+            }
+            if let Some(shape) = self.doc.shape(id) {
+                by_layer.entry(e.layer).or_default().push((id, shape));
+            }
+        }
+        let mut ids = Vec::new();
+        let mut all = Vec::new();
+        for (_, curves) in by_layer {
+            let offset = ids.len();
+            let shapes: Vec<Shape> = curves.iter().map(|(_, s)| *s).collect();
+            ids.extend(curves.iter().map(|(id, _)| *id));
+            for mut r in drift_geom::regions::regions(&shapes) {
+                // Curve indices into this layer's curves become indices into all of them.
+                for l in std::iter::once(&mut r.outer).chain(&mut r.holes) {
+                    for s in &mut l.sources {
+                        *s += offset;
+                    }
+                }
+                all.push(r);
+            }
+        }
+        let regions = std::rc::Rc::new(all);
         self.regions = Some((revision, regions.clone()));
         self.region_ids = std::rc::Rc::new(ids);
         regions
@@ -1998,8 +2055,36 @@ impl Editor {
         chain
     }
 
-    /// Tab: select the chain under the pointer, or widen the selection to whole chains.
-    /// Returns how many curves are selected.
+    /// Tab over a curve: highlight its chain, to be picked by a click (Revit's Tab); Tab
+    /// again goes back to the one curve. Returns the chain's size, 0 for the one curve, or
+    /// `None` if the pointer isn't on a curve.
+    pub fn preview_chain(&mut self) -> Option<usize> {
+        let h = self
+            .hovered
+            .filter(|h| self.doc.get(*h).is_some_and(|e| !e.kind.is_point()))?;
+        if self
+            .chain_preview
+            .as_ref()
+            .is_some_and(|(_, set)| set.contains(&h))
+        {
+            self.chain_preview = None;
+            return Some(0);
+        }
+        let mut chain = self.chain_of(h);
+        if let Some(g) = self.open_group.and_then(|g| self.doc.group(g)) {
+            chain.retain(|id| g.members.contains(id));
+        }
+        if chain.len() < 2 {
+            self.chain_preview = None;
+            return Some(0);
+        }
+        let n = chain.len();
+        self.chain_preview = Some((h, chain));
+        Some(n)
+    }
+
+    /// Tab with nothing under the pointer: widen the selection to whole chains. Returns how
+    /// many curves are selected.
     pub fn select_chain(&mut self) -> usize {
         let seeds: Vec<EntityId> = match self.hovered {
             Some(h) if self.doc.get(h).is_some_and(|e| !e.kind.is_point()) => vec![h],
@@ -2047,13 +2132,17 @@ impl Editor {
 
     /// What picking `id` selects: its whole group, unless that group is open.
     pub fn pick_set(&self, id: EntityId) -> BTreeSet<EntityId> {
-        match self.doc.group_of(id) {
+        let set: BTreeSet<EntityId> = match self.doc.group_of(id) {
             Some(g) if self.open_group != Some(g) => self
                 .doc
                 .group(g)
                 .map_or_else(|| [id].into(), |g| g.members.clone()),
             _ => [id].into(),
-        }
+        };
+        // With a filter on, a group gives only what the filter lets through.
+        set.into_iter()
+            .filter(|e| *e == id || self.pick_filter.allows(&self.doc, *e))
+            .collect()
     }
 
     /// Widen the selection to whole groups (except the open one).
@@ -2277,6 +2366,10 @@ impl Editor {
             } else if self.hovered == Some(id)
                 || self.highlight.contains(&id)
                 || self.snapped_point == Some(id)
+                || self
+                    .chain_preview
+                    .as_ref()
+                    .is_some_and(|(_, set)| set.contains(&id))
             {
                 Emphasis::Hovered
             } else {
@@ -2986,4 +3079,67 @@ fn interior_point(region: &drift_geom::regions::Region, near: DVec2) -> DVec2 {
         })
         .find(|p| region.contains(*p))
         .unwrap_or(region.centroid)
+}
+
+/// What the select tool picks.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PickFilter {
+    /// Anything: points, curves, areas, fills, text and blocks.
+    #[default]
+    All,
+    /// Only curves (lines, arcs, circles…).
+    Edges,
+    /// Only points (ends, centres, standalone points).
+    Points,
+}
+
+impl PickFilter {
+    pub const ALL: [PickFilter; 3] = [PickFilter::All, PickFilter::Edges, PickFilter::Points];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            PickFilter::All => "All",
+            PickFilter::Edges => "Edges",
+            PickFilter::Points => "Points",
+        }
+    }
+
+    /// Whether an entity may be picked.
+    pub fn allows(self, doc: &drift_core::Document, id: EntityId) -> bool {
+        let is_point = doc.get(id).is_some_and(|e| e.kind.is_point());
+        match self {
+            PickFilter::All => true,
+            PickFilter::Edges => !is_point,
+            PickFilter::Points => is_point,
+        }
+    }
+
+    /// Whether areas, fills, text and blocks may be picked (only with no filter).
+    pub fn anything(self) -> bool {
+        self == PickFilter::All
+    }
+}
+
+/// How the dimension tool goes on after placing a horizontal or vertical dimension.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DimMode {
+    /// One at a time (Shift+click still continues a row).
+    #[default]
+    Single,
+    /// Each click adds the next dimension along the row, end to end.
+    Chain,
+    /// Each click adds a dimension from the same base, each a step further out.
+    Baseline,
+}
+
+impl DimMode {
+    pub const ALL: [DimMode; 3] = [DimMode::Single, DimMode::Chain, DimMode::Baseline];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            DimMode::Single => "Single",
+            DimMode::Chain => "Chain",
+            DimMode::Baseline => "Baseline",
+        }
+    }
 }

@@ -9,8 +9,9 @@ pub(super) struct Spin {
     pub(super) ids: Vec<EntityId>,
     pub(super) points: BTreeSet<EntityId>,
     pub(super) pivot: DVec2,
-    /// The direction the turn is measured from: always 0° (pointing right), so angles are
-    /// absolute, whatever the pointer's position when the rotate began.
+    /// The direction the turn is measured from: 0° (pointing right), so angles are absolute
+    /// whatever the pointer's position when the rotate began; or, rotating by reference, the
+    /// direction from the pivot to a picked point (so it turns to meet the pointer's).
     pub(super) reference: DVec2,
     /// The pointer's latest position.
     pub(super) pointer: DVec2,
@@ -18,6 +19,8 @@ pub(super) struct Spin {
     pub(super) angle: f64,
     pub(super) typed: Option<f64>,
     pub(super) picking_pivot: bool,
+    /// Picking the reference point (R again): the turn is then measured from it.
+    pub(super) picking_reference: bool,
     /// The angle the geometry is turned to now (so an unchanged angle isn't re-applied).
     pub(super) applied: Option<f64>,
     /// Copies of blocks turning too (as they were when the rotate began).
@@ -29,17 +32,18 @@ pub(super) struct Spin {
 }
 
 impl Spin {
+    /// Picking a point (the pivot or the reference): nothing is turned meanwhile.
+    pub(super) fn picking(&self) -> bool {
+        self.picking_pivot || self.picking_reference
+    }
+
     pub(super) fn current(&self) -> f64 {
         self.typed.unwrap_or(self.angle)
     }
 
     /// Re-apply the turn from the original geometry (if it changed).
     pub(super) fn apply(&mut self, ed: &mut Editor) {
-        let angle = if self.picking_pivot {
-            0.0
-        } else {
-            self.current()
-        };
+        let angle = if self.picking() { 0.0 } else { self.current() };
         if self.applied == Some(angle) {
             return;
         }
@@ -63,10 +67,11 @@ impl Spin {
     }
 
     /// Follow the pointer: its angle about the pivot, from 0° (pointing right). Exact snaps
-    /// give exact angles; otherwise nearby multiples of 15° stick. Close to the pivot the
-    /// angle is undefined, so it stays put.
+    /// give exact angles; otherwise nearby multiples of 15° stick (the grid and inference
+    /// lines don't: they'd make the angle jump). Close to the pivot the angle is undefined,
+    /// so it stays put.
     pub(super) fn track(&mut self, p: &Pointer) {
-        self.pointer = p.pos();
+        self.pointer = p.exact_snap().map_or(p.raw, |s| s.at);
         if (self.pointer - self.pivot).length() <= p.tolerance {
             return;
         }
@@ -168,6 +173,7 @@ impl SelectTool {
             angle: 0.0,
             typed: None,
             picking_pivot: false,
+            picking_reference: false,
             applied: Some(0.0),
             instances,
             text,
@@ -203,6 +209,7 @@ impl SelectTool {
             angle: 0.0,
             typed: None,
             picking_pivot: false,
+            picking_reference: false,
             applied: Some(0.0),
             instances: Vec::new(),
             text: None,
@@ -216,7 +223,7 @@ impl SelectTool {
         let angle = spin.current();
         ed.region_motion = None;
         ed.doc.rollback();
-        if angle.abs() < 1e-12 || spin.picking_pivot {
+        if angle.abs() < 1e-12 || spin.picking() {
             ed.sync();
             return;
         }
@@ -273,7 +280,7 @@ impl SelectTool {
         ed.hovered_midpoint = None;
         match input {
             Input::Hover(p) | Input::Drag(p) => {
-                if spin.picking_pivot {
+                if spin.picking() {
                     spin.pointer = p.pos();
                 } else {
                     spin.track(&p);
@@ -285,8 +292,20 @@ impl SelectTool {
                     spin.pivot = p.pos();
                     spin.pointer = p.pos();
                     spin.picking_pivot = false;
+                    // From a new pivot, angles are absolute again until a reference is picked.
+                    spin.reference = DVec2::X;
                     spin.angle = 0.0;
                     spin.typed = None;
+                } else if spin.picking_reference {
+                    // The reference: the turn is measured from the pivot's direction to it.
+                    let to = p.pos() - spin.pivot;
+                    if to.length() > p.tolerance {
+                        spin.reference = to;
+                        spin.pointer = p.pos();
+                        spin.picking_reference = false;
+                        spin.angle = 0.0;
+                        spin.typed = None;
+                    }
                 } else {
                     self.confirm_spin(ed);
                 }
@@ -298,14 +317,24 @@ impl SelectTool {
         true
     }
 
-    /// Modal keys during a rotate: B picks a new pivot; others are swallowed.
+    /// Modal keys during a rotate: B picks a new pivot; R rotates by reference (pick a point
+    /// to turn from: it turns to meet the pointer); others are swallowed.
     pub(super) fn spin_key(&mut self, key: ToolKey, ed: &mut Editor) -> bool {
         let Some(spin) = &mut self.spin else {
             return false;
         };
-        if key == ToolKey::B {
-            spin.picking_pivot = true;
-            spin.apply(ed);
+        match key {
+            ToolKey::B => {
+                spin.picking_reference = false;
+                spin.picking_pivot = true;
+                spin.apply(ed);
+            }
+            ToolKey::R if !spin.picking_pivot => {
+                spin.picking_reference = true;
+                spin.typed = None;
+                spin.apply(ed);
+            }
+            _ => {}
         }
         true
     }
@@ -320,7 +349,7 @@ impl SelectTool {
                 spin.pivot
             },
             from: spin.pivot + spin.reference,
-            degrees: if spin.picking_pivot {
+            degrees: if spin.picking() {
                 None
             } else {
                 Some(spin.current())

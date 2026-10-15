@@ -3,6 +3,8 @@
 
 use std::f32::consts::{FRAC_PI_2, PI};
 
+use drift_core::DVec2;
+
 use eframe::egui::{self, Color32, Pos2, Rect, Shape, Stroke, Vec2, pos2, vec2};
 
 use crate::tools::ToolKind;
@@ -372,28 +374,95 @@ pub fn tool(painter: &egui::Painter, rect: Rect, kind: ToolKind, color: Color32)
     }
 }
 
-/// Drift's mark: a "D" drawn as a sketch (a line and an arc joined at two points) on a blue
-/// tile. The app icon (`apps/native/assets`) is the same drawing.
+/// A D's closed contour: the stem side, the top bar, a super-elliptic bowl (squarer than a
+/// circle) and the bottom bar, with sharp corners. Lengths are fractions of the tile.
+#[allow(clippy::too_many_arguments)]
+fn d_contour(x0: f64, y0: f64, y1: f64, xb: f64, rx: f64, ry: f64, cy: f64) -> Vec<DVec2> {
+    const N: f64 = 2.6;
+    const K: usize = 64;
+    let mut pts = vec![
+        DVec2::new(xb, y1),
+        DVec2::new(x0, y1),
+        DVec2::new(x0, y0),
+        DVec2::new(xb, y0),
+    ];
+    let lobe = |v: f64| v.abs().powf(2.0 / N).copysign(v);
+    for i in 1..K {
+        let t = -std::f64::consts::FRAC_PI_2 + std::f64::consts::PI * i as f64 / K as f64;
+        pts.push(DVec2::new(xb + rx * lobe(t.cos()), cy + ry * lobe(t.sin())));
+    }
+    pts
+}
+
+/// Drift's mark: a bold white Swiss sans-serif "D", centred on a flat charcoal tile with a
+/// hairline rim. The app icon (`apps/native/assets/make_icon.py`) is the same drawing.
 pub fn logo(painter: &egui::Painter, rect: Rect) {
     let s = rect.width().min(rect.height());
-    let p = |x: f32, y: f32| rect.min + vec2(x * s, y * s);
-    painter.rect_filled(
-        Rect::from_min_size(rect.min, Vec2::splat(s)),
-        s * 0.22,
-        Color32::from_rgb(0x0a, 0x84, 0xff),
+    let tile = Rect::from_min_size(rect.min, Vec2::splat(s));
+    painter.rect_filled(tile, s * 0.225, Color32::from_rgb(0x16, 0x18, 0x1c));
+    painter.rect_stroke(
+        tile,
+        s * 0.225,
+        Stroke::new(1.0, Color32::from_rgb(0x2c, 0x30, 0x37)),
+        egui::StrokeKind::Inside,
     );
-    let stroke = Stroke::new((s * 0.085).max(1.5), Color32::WHITE);
-    painter.line_segment([p(0.38, 0.26), p(0.38, 0.74)], stroke);
-    let bowl: Vec<Pos2> = (0..=32)
-        .map(|k| {
-            let a = -FRAC_PI_2 + PI * k as f32 / 32.0;
-            p(0.38 + 0.24 * a.cos(), 0.5 + 0.24 * a.sin())
+    // The letter, in tile fractions (as `letter` in make_icon.py).
+    let (x0, y0, y1) = (0.305, 0.245, 0.755);
+    let h = y1 - y0;
+    let w = 0.80 * h;
+    let (ry, rx) = (h / 2.0, 0.60 * w);
+    let (xb, cy) = (x0 + w - rx, (y0 + y1) / 2.0);
+    let t = 0.15;
+    let outer = d_contour(
+        x0 - t / 2.0,
+        y0 - t / 2.0,
+        y1 + t / 2.0,
+        xb,
+        rx + t / 2.0,
+        ry + t / 2.0,
+        cy,
+    );
+    let inner = d_contour(
+        x0 + t / 2.0,
+        y0 + t / 2.0,
+        y1 - t / 2.0,
+        xb,
+        rx - t / 2.0,
+        ry - t / 2.0,
+        cy,
+    );
+    // Centred on the tile.
+    let (lo, hi) = outer
+        .iter()
+        .fold((DVec2::INFINITY, DVec2::NEG_INFINITY), |(lo, hi), p| {
+            (lo.min(*p), hi.max(*p))
+        });
+    let shift = DVec2::splat(0.5) - (lo + hi) / 2.0;
+    let to = |p: DVec2| {
+        let q = p + shift;
+        tile.min + vec2(q.x as f32 * s, q.y as f32 * s)
+    };
+    let mut mesh = egui::Mesh::default();
+    let white = Color32::from_rgb(0xf4, 0xf5, 0xf7);
+    // A filled mesh isn't antialiased: a hairline round each contour feathers its edges.
+    let edges: Vec<Shape> = [&outer, &inner]
+        .into_iter()
+        .map(|ring| {
+            Shape::closed_line(
+                ring.iter().map(|p| to(*p)).collect(),
+                Stroke::new(0.8, white),
+            )
         })
         .collect();
-    painter.add(Shape::line(bowl, stroke));
-    for y in [0.26, 0.74] {
-        painter.circle_filled(p(0.38, y), s * 0.075, Color32::WHITE);
+    for tri in drift_draft::logo::triangulate(&[outer, inner], true) {
+        let base = mesh.vertices.len() as u32;
+        for p in tri {
+            mesh.colored_vertex(to(p), white);
+        }
+        mesh.add_triangle(base, base + 1, base + 2);
     }
+    painter.add(Shape::mesh(mesh));
+    painter.extend(edges);
 }
 
 /// Draw a view toggle's icon in `rect`.

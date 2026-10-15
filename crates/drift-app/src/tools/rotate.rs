@@ -126,6 +126,7 @@ impl SelectTool {
             .and_then(|id| ed.doc.text(id).map(|t| (id, t.at, t.angle)));
         let ids: Vec<EntityId> = if ed.selection.is_empty() {
             match ed.selected_fill_curves() {
+                Some((ids, _)) if ed.refuse_locked(&ids) => return false,
                 Some((ids, _)) => ids,
                 None if !instances.is_empty() || text.is_some() => Vec::new(),
                 None => return false,

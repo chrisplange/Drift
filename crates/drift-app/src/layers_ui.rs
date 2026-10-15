@@ -58,6 +58,13 @@ impl Editor {
         Ok(())
     }
 
+    /// Move a layer to `index` in the draw order (0 at the bottom), one undo step.
+    pub fn reorder_layer(&mut self, id: LayerId, index: usize) {
+        self.doc.begin();
+        self.doc.reorder_layer(id, index);
+        self.commit("Reorder layers");
+    }
+
     pub fn set_current_layer(&mut self, id: LayerId) {
         self.doc.begin();
         let _ = self.doc.set_current_layer(id);
@@ -215,6 +222,9 @@ impl DriftApp {
             .filter_map(|id| self.editor.doc.get(*id).map(|e| e.layer))
             .collect();
         let mut status = None;
+        // The list reads top down as the layers stack: the top one draws over the rest.
+        let layers: Vec<(LayerId, Layer)> = layers.into_iter().rev().collect();
+        let mut rows: Vec<(LayerId, egui::Rect)> = Vec::new();
         egui::ScrollArea::vertical()
             .id_salt("layers_scroll")
             .auto_shrink([false, false])
@@ -224,70 +234,109 @@ impl DriftApp {
                     let mut edited = layer.clone();
                     let is_current = id == current;
                     let open = self.expanded_layers.contains(&id);
-                    let row = egui::Frame::new()
-                        .fill(if is_current {
-                            accent.gamma_multiply(0.16)
-                        } else if open {
-                            ui.visuals().faint_bg_color
-                        } else {
-                            egui::Color32::TRANSPARENT
-                        })
-                        .corner_radius(7.0)
-                        .inner_margin(egui::Margin::symmetric(4, 2))
-                        .show(ui, |ui| {
-                            self.layer_row(
-                                ui,
-                                id,
-                                &layer,
-                                &mut edited,
-                                is_current,
-                                open,
-                                &counts,
-                                &picked,
-                            );
-                            if open {
-                                self.layer_details(ui, id, &mut edited, has_selection, &mut status);
+                    // The whole row: a click makes the layer current, a drag moves it in
+                    // the order (its own buttons and fields take their clicks first).
+                    let row = ui.scope_builder(
+                        egui::UiBuilder::new()
+                            .id_salt(("layer_row", id))
+                            .sense(egui::Sense::click_and_drag()),
+                        |ui| {
+                            egui::Frame::new()
+                                .fill(if is_current {
+                                    accent.gamma_multiply(0.16)
+                                } else if open {
+                                    ui.visuals().faint_bg_color
+                                } else {
+                                    egui::Color32::TRANSPARENT
+                                })
+                                .corner_radius(7.0)
+                                .inner_margin(egui::Margin::symmetric(4, 2))
+                                .show(ui, |ui| {
+                                    self.layer_row(
+                                        ui,
+                                        id,
+                                        &layer,
+                                        &mut edited,
+                                        is_current,
+                                        open,
+                                        &counts,
+                                        &picked,
+                                    );
+                                    if open {
+                                        self.layer_details(
+                                            ui,
+                                            id,
+                                            &mut edited,
+                                            has_selection,
+                                            &mut status,
+                                        );
+                                    }
+                                });
+                        },
+                    );
+                    let row = row.response;
+                    rows.push((id, row.rect));
+                    if row.clicked() && !is_current {
+                        self.editor.set_current_layer(id);
+                    }
+                    if row.drag_started() {
+                        self.layer_drag = Some(id);
+                    }
+                    if self.layer_drag.is_none() && row.hovered() && !is_current {
+                        ui.painter().rect_stroke(
+                            row.rect,
+                            7.0,
+                            egui::Stroke::new(1.0, ui.visuals().widgets.hovered.bg_stroke.color),
+                            egui::StrokeKind::Inside,
+                        );
+                    }
+                    row.on_hover_text("Click to make current · drag to reorder (top draws on top)")
+                        .context_menu(|ui| {
+                            if ui.button("Make current").clicked() {
+                                self.editor.set_current_layer(id);
+                                ui.close();
+                            }
+                            if ui
+                                .add_enabled(id != LayerId::DEFAULT, egui::Button::new("Rename"))
+                                .clicked()
+                            {
+                                self.renaming_layer = Some(id);
+                                ui.close();
+                            }
+                            if ui.button("Select all on this layer").clicked() {
+                                self.editor.select_layer(id);
+                                ui.close();
+                            }
+                            if ui
+                                .add_enabled(
+                                    has_selection,
+                                    egui::Button::new("Move selection here"),
+                                )
+                                .clicked()
+                            {
+                                self.editor.move_selection_to_layer(id);
+                                ui.close();
+                            }
+                            ui.separator();
+                            if ui
+                                .add_enabled(
+                                    id != LayerId::DEFAULT,
+                                    egui::Button::new("Delete layer"),
+                                )
+                                .clicked()
+                            {
+                                if let Err(e) = self.editor.remove_layer(id) {
+                                    status = Some(e);
+                                }
+                                ui.close();
                             }
                         });
-                    row.response.context_menu(|ui| {
-                        if ui.button("Make current").clicked() {
-                            self.editor.set_current_layer(id);
-                            ui.close();
-                        }
-                        if ui
-                            .add_enabled(id != LayerId::DEFAULT, egui::Button::new("Rename"))
-                            .clicked()
-                        {
-                            self.renaming_layer = Some(id);
-                            ui.close();
-                        }
-                        if ui.button("Select all on this layer").clicked() {
-                            self.editor.select_layer(id);
-                            ui.close();
-                        }
-                        if ui
-                            .add_enabled(has_selection, egui::Button::new("Move selection here"))
-                            .clicked()
-                        {
-                            self.editor.move_selection_to_layer(id);
-                            ui.close();
-                        }
-                        ui.separator();
-                        if ui
-                            .add_enabled(id != LayerId::DEFAULT, egui::Button::new("Delete layer"))
-                            .clicked()
-                        {
-                            if let Err(e) = self.editor.remove_layer(id) {
-                                status = Some(e);
-                            }
-                            ui.close();
-                        }
-                    });
                     if edited != layer && self.editor.doc.layer(id).is_some() {
                         self.editor.update_layer(id, edited);
                     }
                     ui.add_space(1.0);
                 }
+                self.drag_layer(ui, &rows);
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
                     if ui
@@ -336,6 +385,17 @@ impl DriftApp {
         let accent = crate::theme::accent(dark);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 5.0;
+            // The active (current) layer's dot; a faint ring on the others.
+            let (dot, _) = ui.allocate_exact_size(egui::vec2(10.0, 22.0), egui::Sense::hover());
+            if is_current {
+                ui.painter().circle_filled(dot.center(), 4.0, accent);
+            } else {
+                ui.painter().circle_stroke(
+                    dot.center(),
+                    3.5,
+                    egui::Stroke::new(1.0, ui.visuals().weak_text_color().gamma_multiply(0.6)),
+                );
+            }
             let (chev, r) = ui.allocate_exact_size(egui::vec2(14.0, 22.0), egui::Sense::click());
             let c = chev.center();
             let color = if r.hovered() {
@@ -394,6 +454,13 @@ impl DriftApp {
                 );
                 edited.locked = locked;
                 icon_toggle(ui, &mut edited.visible, Glyph::Eye, true, "Show or hide");
+                icon_toggle(
+                    ui,
+                    &mut edited.snappable,
+                    Glyph::Snap,
+                    true,
+                    "Snap to this layer's geometry (off: it can still be picked and edited)",
+                );
                 ui.add_space(4.0);
                 let n = counts.get(&id).copied().unwrap_or(0);
                 ui.label(egui::RichText::new(n.to_string()).small().weak())
@@ -410,6 +477,50 @@ impl DriftApp {
                 });
             });
         });
+    }
+
+    /// A layer row being dragged: a line where it would go, and on release, the move.
+    fn drag_layer(&mut self, ui: &mut egui::Ui, rows: &[(LayerId, egui::Rect)]) {
+        let Some(dragged) = self.layer_drag else {
+            return;
+        };
+        let (Some(pointer), down) =
+            ui.input(|i| (i.pointer.interact_pos(), i.pointer.primary_down()))
+        else {
+            self.layer_drag = None;
+            return;
+        };
+        // The gap the pointer is nearest: before row `slot` (rows top down).
+        let slot = rows
+            .iter()
+            .position(|(_, r)| pointer.y < r.center().y)
+            .unwrap_or(rows.len());
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+        if let (Some(first), Some(last)) = (rows.first(), rows.last()) {
+            let y = rows
+                .get(slot)
+                .map_or(last.1.bottom() + 1.0, |(_, r)| r.top() - 1.0);
+            let accent = crate::theme::accent(ui.visuals().dark_mode);
+            ui.painter().line_segment(
+                [
+                    egui::pos2(first.1.left(), y),
+                    egui::pos2(first.1.right(), y),
+                ],
+                egui::Stroke::new(2.0, accent),
+            );
+        }
+        if down {
+            return;
+        }
+        self.layer_drag = None;
+        let Some(from) = rows.iter().position(|(id, _)| *id == dragged) else {
+            return;
+        };
+        // Where it lands in the list, then in the draw order (the list is top down).
+        let at = if from < slot { slot - 1 } else { slot };
+        if at != from {
+            self.editor.reorder_layer(dragged, rows.len() - 1 - at);
+        }
     }
 
     /// A layer's name, or the field renaming it.
@@ -650,6 +761,53 @@ mod tests {
         let l2 = ed.doc.add_line(c, d).unwrap();
         ed.commit("Lines");
         (ed, layer, [l1, l2])
+    }
+
+    #[test]
+    fn layers_reorder_and_keep_their_order_in_files() {
+        let (mut ed, frame, lines) = two_layers();
+        let notes = ed.add_layer("Notes");
+        let order = |ed: &Editor| ed.doc.layers().map(|(id, _)| id).collect::<Vec<_>>();
+        // New layers go on top.
+        assert_eq!(order(&ed), [LayerId::DEFAULT, frame, notes]);
+        ed.reorder_layer(notes, 0);
+        assert_eq!(order(&ed), [notes, LayerId::DEFAULT, frame]);
+        ed.undo();
+        assert_eq!(order(&ed), [LayerId::DEFAULT, frame, notes]);
+        ed.redo();
+        let text = drift_io::save(&ed.doc, &Default::default());
+        let (loaded, _) = drift_io::load(&text).unwrap();
+        assert_eq!(
+            loaded.layers().map(|(id, _)| id).collect::<Vec<_>>(),
+            [notes, LayerId::DEFAULT, frame]
+        );
+        // Curves draw layer by layer: Frame's line (on top of layer 0 now) comes last.
+        let [l1, _] = lines;
+        let frame_line = ed.doc.shape(l1);
+        let last = ed
+            .items()
+            .into_iter()
+            .rev()
+            .find(|i| !matches!(i.shape, drift_core::Shape::Point(_)))
+            .map(|i| i.shape);
+        assert_eq!(last, frame_line);
+    }
+
+    #[test]
+    fn non_snappable_layers_are_not_snapped_to() {
+        let (mut ed, frame, _) = two_layers();
+        let options = drift_geom::SnapOptions {
+            tolerance: 1.0,
+            grid: None,
+        };
+        let near = |ed: &Editor, p: DVec2| ed.snap(p, options, |_| false).map(|s| s.at);
+        assert_eq!(near(&ed, v(10.2, 0.1)), Some(v(10.0, 0.0)));
+        let mut off = ed.doc.layer(frame).cloned().unwrap();
+        off.snappable = false;
+        ed.update_layer(frame, off);
+        assert_ne!(near(&ed, v(10.2, 0.1)), Some(v(10.0, 0.0)));
+        // Layer 0 still snaps; Frame's line can still be picked.
+        assert_eq!(near(&ed, v(10.2, 6.9)), Some(v(10.0, 7.0)));
     }
 
     fn ends(ed: &Editor, line: EntityId) -> [EntityId; 2] {

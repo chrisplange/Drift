@@ -140,7 +140,8 @@ impl Editor {
         options: SnapOptions,
         exclude: impl Fn(EntityId) -> bool,
     ) -> Option<Snap> {
-        let snap = self.snap_sketch_and_underlays(p, options, exclude);
+        let snap =
+            self.snap_sketch_and_underlays(p, options, |id| exclude(id) || !self.snappable(id));
         let Some(block) = self.block_snap(p, options.tolerance) else {
             return snap;
         };
@@ -154,6 +155,23 @@ impl Editor {
                 }
             }
             _ => Some(block),
+        }
+    }
+
+    /// Whether the pointer may snap to an entity: its layer is snappable (for a point, the
+    /// layer of a curve it belongs to, if any is).
+    pub fn snappable(&self, id: EntityId) -> bool {
+        let on = |e: EntityId| self.doc.layer_of(e).snappable;
+        match self.doc.get(id) {
+            Some(e) if e.kind.is_point() => {
+                let mut users = self.doc.users_of(id).peekable();
+                if users.peek().is_none() {
+                    on(id)
+                } else {
+                    users.any(on)
+                }
+            }
+            _ => on(id),
         }
     }
 

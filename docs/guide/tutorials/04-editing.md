@@ -58,6 +58,18 @@ Without an axis lock, type the X offset, Tab, then the Y offset. Press B to choo
 different base point first: click a point (it snaps), then move. Click or Enter places; Esc
 or a right-click cancels. Snapped and typed moves land exactly.
 
+### Moving a picked area or hatch
+
+A picked hatch (or area) moves with its outline: press G, or drag inside it. Lines that
+aren't part of it but share a corner with it, like a wall running on past a room, behave
+according to **Auto relations**:
+
+- **On:** the joins hold, so those lines stretch to follow.
+- **Off:** the outline lets go of them. They stay where they are and the join is split.
+  One Ctrl+Z puts it back, joined.
+
+Picked lines moved on their own always stretch the lines joined to them.
+
 Other ways to move:
 
 - **Drag** picked geometry. Drop an end point on another point to join them.
@@ -139,6 +151,9 @@ cutting curve).
 A second click without moving reuses the last size. Esc or a right-click cancels.
 
 Press F again for the **Chamfer** tool. Type its distance, and Tab for a second distance.
+
+A fillet or chamfer takes the look of the corner's lines: round a corner of construction
+lines and the arc is construction too.
 
 A fillet or chamfer that's already there can be resized: click it with the same tool, or
 drag a fillet's arc with the **Select** tool. Its lines keep their directions. To put the

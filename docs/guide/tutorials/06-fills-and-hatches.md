@@ -51,7 +51,8 @@ Pick a fill with the **Select** tool by clicking inside it. The **Inspector** sh
   hatch: **Pattern**, **Scale**, **Angle**, **Size** (**Drafting** or **Model**), the
   **Lines** colour and **Weight**, and a **Background** colour.
 - **Layer**, and **Bring to front** / **Send to back** for the order among fills on that
-  layer. Fills always draw beneath curves.
+  layer. Fills on a higher layer draw over those on lower ones (drag layers to reorder
+  them in the **Layers** panel). Fills always draw beneath curves.
 - **Area**, **Perimeter** and **Centroid**.
 
 **Drafting** patterns keep the same size on paper whatever the sheet's scale. **Model**
@@ -78,6 +79,9 @@ swatch of each.
 
 To use your own AutoCAD or Revit patterns, go to **Parameters → Hatch patterns → Import
 .pat…**. Imported patterns are stored in the drawing, so they travel with the file.
+
+A fill belongs to the curves around it: move or reshape them and it follows. A line drawn
+across a fill doesn't cut it; the fill keeps its whole area until its own outline changes.
 
 Hatches are clipped exactly to their boundary and stay crisp at any zoom. A hatch too dense
 to see at the current zoom is drawn as a tint.

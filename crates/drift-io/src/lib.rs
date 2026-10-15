@@ -6,7 +6,7 @@
 //! ```json
 //! {
 //!   "format": "drift",
-//!   "version": 22,
+//!   "version": 23,
 //!   "meta": {"title":"Bracket","units":"mm","generator":"Drift 0.1.0"},
 //!   "display": {"length":"architectural","fraction":16},
 //!   "variables": [
@@ -72,8 +72,9 @@ pub const EXTENSION: &str = "drift";
 /// (M9); 16 = adds the `modern` title block; 17 = adds sheet flags; 18 = adds a sheet's
 /// `views`; 19 = adds `fonts` and a text's `align`, `spacing` and `wrap`; 20 = adds the
 /// drafting style's `color`; 21 = adds `shown` (where dimensions and annotations show) and a
-/// dimension's `below` and `text`; 22 = adds a block's `fills`.
-pub const FORMAT_VERSION: u32 = 22;
+/// dimension's `below` and `text`; 22 = adds a block's `fills`; 23 = adds a layer's `snap`
+/// (and layers are listed in draw order).
+pub const FORMAT_VERSION: u32 = 23;
 const FORMAT_TAG: &str = "drift";
 
 /// Document-level properties stored alongside the geometry.
@@ -424,6 +425,9 @@ struct LayerRecord {
     locked: bool,
     #[serde(default = "yes", skip_serializing_if = "is_true")]
     print: bool,
+    /// Snapped to (v23); absent is yes.
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    snap: bool,
 }
 
 fn yes() -> bool {
@@ -978,6 +982,7 @@ pub fn save(doc: &Document, meta: &Metadata) -> String {
                     visible: l.visible,
                     locked: l.locked,
                     print: l.printable,
+                    snap: l.snappable,
                 })
                 .expect("layer serializes")
             })
@@ -1426,7 +1431,7 @@ pub fn load_with_notes(text: &str) -> Result<(Document, Metadata, Vec<String>), 
     if let Some(display) = &file.display {
         doc.set_units(display.to_units()?);
     }
-    for l in file.layers {
+    for (rank, l) in file.layers.into_iter().enumerate() {
         let id = parse_layer_id(&l.id)?;
         let line_type = LineType::from_name(&l.linetype).ok_or(LoadError::MissingField {
             id: l.id.clone(),
@@ -1457,6 +1462,9 @@ pub fn load_with_notes(text: &str) -> Result<(Document, Metadata, Vec<String>), 
                 visible: l.visible,
                 locked: l.locked,
                 printable: l.print,
+                snappable: l.snap,
+                // The file lists layers in draw order, bottom first.
+                order: i32::try_from(rank).unwrap_or(i32::MAX),
             },
         );
     }
@@ -1633,7 +1641,7 @@ pub fn migrate(value: serde_json::Value) -> Result<serde_json::Value, LoadError>
         // v1 → v2: constraints were introduced; a v1 file simply has none.
         value["constraints"] = serde_json::Value::Array(Vec::new());
     }
-    // v2 → v22 only added optional fields, sections and constraint types: nothing to convert
+    // v2 → v23 only added optional fields, sections and constraint types: nothing to convert
     // (a sheet's single view from before v18 is read as it was written).
     value["version"] = FORMAT_VERSION.into();
     Ok(value)
@@ -1704,7 +1712,7 @@ mod tests {
         let text = save(&doc, &Metadata::default());
         let expected = r#"{
   "format": "drift",
-  "version": 22,
+  "version": 23,
   "meta": {"units":"mm"},
   "entities": [
     {"type":"point","id":"e1","at":[0.0,0.0]},
@@ -1932,6 +1940,8 @@ mod tests {
             visible: true,
             locked: true,
             printable: true,
+            snappable: false,
+            order: 0,
         });
         let hidden = doc.add_layer(Layer {
             line_type: LineType::Hidden,
@@ -2342,7 +2352,7 @@ mod tests {
         doc.add_text(drift_core::SketchText::new("A", DVec2::ZERO, 3.0));
 
         let text = save(&doc, &Metadata::default());
-        assert!(text.contains("\"version\": 22"));
+        assert!(text.contains("\"version\": 23"));
         assert!(
             text.contains(r#"{"a":[80.0,20.0,30.0,0.0,90.0]}"#),
             "{text}"

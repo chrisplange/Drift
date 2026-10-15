@@ -90,6 +90,7 @@ fn docs_screenshots() {
     temporary_dimensions();
     fills();
     blocks();
+    layers();
     construction();
     annotation();
     sheets();
@@ -553,6 +554,51 @@ fn blocks() {
     h.run();
     click_world(&mut h, DVec2::new(1400.0, 1900.0));
     shot("blocks.png", &mut h);
+}
+
+fn layers() {
+    // A room's walls hatched on their own layer, a reference layer that isn't snapped to,
+    // and the walls' layer current.
+    let mut h = harness().unwrap();
+    let (walls, hatch, reference) = {
+        let ed = &mut h.state_mut().editor;
+        let walls = ed.add_layer("Walls");
+        let hatch = ed.add_layer("Hatch");
+        let reference = ed.add_layer("Survey (reference)");
+        for (id, rgb) in [
+            (walls, [0x5e, 0x7f, 0x5c]),
+            (hatch, [0xb0, 0x8a, 0x5a]),
+            (reference, [0x8a, 0x90, 0x99]),
+        ] {
+            let mut l = ed.doc.layer(id).cloned().unwrap();
+            l.color = Some(drift_core::Rgb(rgb));
+            if id == reference {
+                l.snappable = false;
+            }
+            ed.update_layer(id, l);
+        }
+        ed.set_current_layer(walls);
+        (walls, hatch, reference)
+    };
+    let _ = reference;
+    rectangle(&mut h, DVec2::ZERO, DVec2::new(4000.0, 3000.0), true);
+    rectangle(
+        &mut h,
+        DVec2::new(200.0, 200.0),
+        DVec2::new(3800.0, 2800.0),
+        true,
+    );
+    {
+        let ed = &mut h.state_mut().editor;
+        ed.set_current_layer(hatch);
+        ed.add_fill_at(DVec2::new(100.0, 1500.0)).unwrap();
+        ed.selected_fills.clear();
+        ed.set_current_layer(walls);
+    }
+    fit(&mut h);
+    h.state_mut().show_panel(Panel::Layers);
+    h.run();
+    shot("layers.png", &mut h);
 }
 
 fn construction() {

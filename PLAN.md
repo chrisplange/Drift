@@ -1901,6 +1901,20 @@ zooms to fit; F is Fillet (again for Chamfer).
   what the tool draws, geometry or construction, also a choice at the start of every drawing
   tool's bar. Drawn construction shows in the preview; the mode carries across tools and
   opened files.
+- **Batch after alpha 3 (done).**
+  - Fillets and chamfers take their corner's look: construction stays construction.
+  - A picked area or hatch whose outline is on a locked layer can't be moved, turned or
+    scaled (G, drag, rotate, transform handles); it says why. (Hatching a locked outline
+    in the first place: to revisit.)
+  - A curve drawn across a fill no longer cuts it: the fill keeps its whole area, found
+    again without the curves that cross its outline (holes inside stay).
+  - Moving a picked area or hatch with automatic relations off lets go of curves that
+    aren't moving with it (each shared point is split); with them on, joins hold and the
+    neighbours stretch, as before.
+  - Layers: drag a row to reorder (top of the list draws on top: curves and fills, canvas
+    and output); a dot marks the current layer and a click anywhere on a row makes it
+    current; a magnet per layer turns snapping to it off (it stays pickable). Format v23:
+    a layer's `snap`, and layers listed in draw order.
 - **Workspace notes, next: tabs for separate drawings (design, not built).** A tab bar
   along the top, one drawing per tab, as Revit and Illustrator have.
   - What a tab owns: the editor (document, selection, undo history), its file (name, path,

@@ -1022,6 +1022,8 @@ impl Editor {
             self.replace_end(l2, p, p2)?;
             let (s, e) = if ccw { (p1, p2) } else { (p2, p1) };
             let a = self.doc.add_arc(pc, s, e).map_err(doc_err)?;
+            // The round takes the corner's look (construction stays construction).
+            self.doc.copy_look(l1, a);
             arc = Some(a);
             for line in [l1, l2] {
                 self.relate(Constraint::Tangent { a: line, b: a });
@@ -1343,7 +1345,10 @@ impl Editor {
             let (p1, p2) = (self.doc.add_point(a), self.doc.add_point(b));
             self.replace_end(l1, p, p1)?;
             self.replace_end(l2, p, p2)?;
-            line = Some(self.doc.add_line(p1, p2).map_err(doc_err)?);
+            let cut = self.doc.add_line(p1, p2).map_err(doc_err)?;
+            // The cut takes the corner's look (construction stays construction).
+            self.doc.copy_look(l1, cut);
+            line = Some(cut);
             self.doc.remove_if_orphaned(p);
             Ok(())
         })();
@@ -2296,6 +2301,34 @@ mod tests {
         ed.doc.add_line(p, b).unwrap();
         ed.commit("Corner");
         (ed, p)
+    }
+
+    #[test]
+    fn fillets_and_chamfers_of_construction_lines_are_construction() {
+        for chamfer in [false, true] {
+            let (mut ed, p) = corner();
+            let lines: Vec<EntityId> = ed.doc.users_of(p).collect();
+            ed.doc.begin();
+            for l in &lines {
+                ed.doc.set_style(*l, drift_core::LineKind::Construction);
+            }
+            ed.commit("Construction");
+            let made = if chamfer {
+                ed.chamfer(p, 3.0, 3.0).unwrap()
+            } else {
+                ed.fillet(p, 3.0).unwrap()
+            };
+            assert_eq!(
+                ed.doc.get(made).unwrap().style,
+                drift_core::LineKind::Construction
+            );
+            for l in lines {
+                assert_eq!(
+                    ed.doc.get(l).unwrap().style,
+                    drift_core::LineKind::Construction
+                );
+            }
+        }
     }
 
     #[test]

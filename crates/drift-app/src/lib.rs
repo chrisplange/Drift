@@ -272,6 +272,8 @@ pub struct DriftApp {
     layer_names: std::collections::HashMap<drift_core::LayerId, String>,
     /// Layers showing their colours and line settings in the Layers panel.
     expanded_layers: std::collections::HashSet<drift_core::LayerId>,
+    /// A layer row being dragged to a new place in the order.
+    layer_drag: Option<drift_core::LayerId>,
     /// The layer whose name is being edited.
     renaming_layer: Option<drift_core::LayerId>,
     show_grid: bool,
@@ -434,6 +436,7 @@ impl DriftApp {
             status_colors: true,
             layer_names: Default::default(),
             expanded_layers: Default::default(),
+            layer_drag: None,
             renaming_layer: None,
             show_grid: true,
             show_axes: true,

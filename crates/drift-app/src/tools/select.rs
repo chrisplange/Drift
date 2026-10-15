@@ -132,6 +132,9 @@ pub(super) struct Grab {
     pub(super) instances: Vec<(drift_core::InstanceId, drift_core::Instance)>,
     /// The picked sketch text moving too, and where its anchor was.
     pub(super) text: Option<(drift_core::TextId, DVec2)>,
+    /// A picked area or hatch moving: it lets go of curves that aren't moving with it
+    /// (with automatic relations off; see [`Editor::detach_for_move`]).
+    pub(super) detach: bool,
 }
 
 impl Grab {
@@ -222,8 +225,15 @@ impl SelectTool {
             ed.notice = Some("Select something to move first".into());
             return true;
         }
-        let points = ed.doc.defining_points(ids.iter().copied());
+        if ed.refuse_locked(&ids) {
+            return true;
+        }
+        let area = region.is_some() || (ed.selection.is_empty() && !ed.selected_fills.is_empty());
         ed.doc.begin();
+        if area {
+            ed.detach_for_move(&ids);
+        }
+        let points = ed.doc.defining_points(ids.iter().copied());
         self.grab = Some(Grab {
             ids,
             points,
@@ -236,6 +246,7 @@ impl SelectTool {
             applied: DVec2::ZERO,
             instances,
             text,
+            detach: area,
         });
         true
     }
@@ -280,8 +291,9 @@ impl SelectTool {
         {
             return false;
         }
-        let points = ed.doc.defining_points(ids.iter().copied());
         ed.doc.begin();
+        ed.detach_for_move(&ids);
+        let points = ed.doc.defining_points(ids.iter().copied());
         self.drag = Some(SelectDrag::Move {
             ids,
             points,
@@ -314,7 +326,19 @@ impl SelectTool {
         if let Some((id, from)) = grab.text {
             ed.place_text(id, from + offset);
         }
-        let dragged = grab.dragged();
+        // Applied again from the original geometry: let go of the neighbours again too
+        // (the outline's points are new ones then).
+        let dragged = if grab.detach {
+            ed.detach_for_move(&grab.ids);
+            ed.doc
+                .defining_points(grab.ids.iter().copied())
+                .iter()
+                .copied()
+                .flat_map(Param::point)
+                .collect()
+        } else {
+            grab.dragged()
+        };
         if !grab.ids.is_empty() && !ed.drag(&grab.ids, offset, &dragged) {
             // Too far for one solve (constraints pull the rest along): go in steps.
             const STEPS: u32 = 16;
@@ -913,9 +937,11 @@ impl Tool for SelectTool {
                                 .fill_at(p.raw)
                                 .is_some_and(|f| ed.selected_fills.contains(&f));
                         match picked_fill.then(|| ed.selected_fill_curves()).flatten() {
+                            Some((ids, _)) if ed.refuse_locked(&ids) => {}
                             Some((ids, centre)) => {
-                                let points = ed.doc.defining_points(ids.iter().copied());
                                 ed.doc.begin();
+                                ed.detach_for_move(&ids);
+                                let points = ed.doc.defining_points(ids.iter().copied());
                                 self.drag = Some(SelectDrag::Move {
                                     ids,
                                     points,
@@ -1069,6 +1095,16 @@ impl Tool for SelectTool {
                         let copies = ed.instances_in(&rect, crossing);
                         ed.selected_instances.extend(copies);
                     }
+                }
+                Some(SelectDrag::Move {
+                    point: None,
+                    applied: DVec2::ZERO,
+                    ..
+                }) => {
+                    // Not moved after all: nothing to keep (not even a join let go).
+                    ed.region_motion = None;
+                    ed.doc.rollback();
+                    ed.sync();
                 }
                 Some(SelectDrag::Move { point, applied, .. }) => {
                     ed.region_motion = None;

@@ -140,6 +140,13 @@ pub struct Layer {
     pub locked: bool,
     /// Included in printed / exported output.
     pub printable: bool,
+    /// Its geometry can be snapped to (off: seen, and editable unless locked, but the pointer
+    /// doesn't snap to it).
+    pub snappable: bool,
+    /// Draw order: higher draws on top (ties by id). See [`Document::reorder_layer`].
+    ///
+    /// [`Document::reorder_layer`]: crate::Document::reorder_layer
+    pub order: i32,
 }
 
 impl Layer {
@@ -153,6 +160,8 @@ impl Layer {
             visible: true,
             locked: false,
             printable: true,
+            snappable: true,
+            order: 0,
         }
     }
 

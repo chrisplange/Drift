@@ -56,9 +56,18 @@ The drawing's settings and its parametric side.
 
 Ctrl+L shows or hides it.
 
-- Each layer is a row: its colour, name, the number of curves on it, and show and lock
-  switches. Click a name to make it the current layer (new geometry goes there);
-  double-click it to rename. The current layer is outlined.
+![The Layers panel: Walls is current (filled dot); the Survey layer's magnet is off, so it isn't snapped to](../images/layers.png)
+
+- Each layer is a row: a dot, its colour, name, the number of curves on it, and snap, show
+  and lock switches. The filled dot and highlighted row mark the **current layer**, where
+  new geometry goes. Click anywhere on a row to make that layer current; double-click the
+  name to rename it.
+- The list reads top down as the layers stack: the top layer draws over the ones below it,
+  on the canvas and in output. Drag a row up or down to change the order; a line shows
+  where it will go. New layers start at the top, and layer **0** starts at the bottom.
+- The magnet switch turns snapping to a layer's geometry off or on. With it off, the
+  pointer doesn't snap to that layer (or to block copies on it), but you can still pick
+  and edit its geometry. Use it for busy reference layers you're drawing over.
 - Click a row's arrow (**Colours and line settings**) to open it: **Stroke** colour
   (**Auto** is black or white to suit the theme), **Fill** colour (**Same as stroke** by
   default), **Line** weight and type, **Output** (**Printed and exported**), **Select all**,
@@ -70,7 +79,8 @@ Ctrl+L shows or hides it.
 
 Hidden layers aren't drawn, picked or snapped to, but their geometry still solves. Locked
 layers are drawn and can be snapped to and dimensioned against, but not picked; the solver
-holds their geometry still.
+holds their geometry still. A hatch or area whose outline is on a locked layer can't be
+moved, turned or scaled either: Drift says the layer is locked.
 
 The **Underlays** section, below the layers, lists the drawing's underlays. See
 [Underlays and DXF import](../tutorials/11-underlays-and-dxf.md).

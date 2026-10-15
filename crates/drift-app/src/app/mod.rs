@@ -22,6 +22,8 @@ pub(crate) mod start_ui;
 pub(crate) mod temp_dims_ui;
 pub(crate) mod text_ui;
 pub(crate) mod underlays_ui;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod update_ui;
 pub(crate) mod view;
 pub(crate) mod view_align;
 pub(crate) mod visibility_ui;

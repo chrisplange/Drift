@@ -34,6 +34,8 @@ pub mod transform;
 #[cfg(test)]
 mod ui_tests;
 pub mod underlays;
+#[cfg(not(target_arch = "wasm32"))]
+mod update;
 
 use std::f64::consts::TAU;
 
@@ -114,6 +116,9 @@ enum Pending {
     Recent(usize),
     /// Close the window.
     Quit,
+    /// Close the window and install the downloaded update.
+    #[cfg(not(target_arch = "wasm32"))]
+    Update,
 }
 
 /// A dimension value being edited in place on the canvas.
@@ -355,6 +360,9 @@ pub struct DriftApp {
     memory: (u64, f64, bool),
     /// The self-driving soak test, when `DRIFT_SOAK` asks for one.
     soak: Option<soak::Soak>,
+    /// Checking for, downloading and installing a newer Drift.
+    #[cfg(not(target_arch = "wasm32"))]
+    updates: app::update_ui::Updates,
 }
 
 /// Start the memory guard: past a hard limit the app ends itself rather than exhaust the
@@ -480,6 +488,8 @@ impl DriftApp {
             pending_pdf: None,
             memory: (0, f64::NEG_INFINITY, false),
             soak: soak::Soak::from_env(),
+            #[cfg(not(target_arch = "wasm32"))]
+            updates: Default::default(),
         };
         if let Some(mb) = drift_platform::memory::take_stop_note() {
             app.editor.notice = Some(format!(
@@ -831,6 +841,8 @@ impl eframe::App for DriftApp {
             self.set_status(notice, true, now);
         }
         self.check_memory(now);
+        #[cfg(not(target_arch = "wasm32"))]
+        self.updates_tick(&ctx, now);
         // A sketch dropped on the window opens.
         let dropped = ctx.input(|i| i.raw.dropped_files.first().map(|f| f.path().to_owned()));
         if let Some(path) = dropped
@@ -923,6 +935,16 @@ impl eframe::App for DriftApp {
             .unwrap_or_default();
         storage.set_string(KEY_PATH, path);
         storage.set_string(KEY_DIRTY, if self.is_dirty() { "1" } else { "0" }.into());
+    }
+
+    /// A downloaded update starts installing as Drift goes.
+    fn on_exit(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(plan) = self.updates.on_exit.take()
+            && let Err(e) = update::install::launch(&plan)
+        {
+            log::error!("{e}");
+        }
     }
 
     fn auto_save_interval(&self) -> std::time::Duration {

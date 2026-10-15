@@ -55,6 +55,42 @@ In the browser:
 - Fonts installed on your computer aren't available. Use **Add a font file…** in a font
   menu instead.
 
+### Updating
+
+From 0.1.0-alpha.5 on, Drift updates itself. When it starts it asks GitHub whether there is
+a newer release. If there is, a notice at the bottom right shows what's new, with three
+choices:
+
+- **Update now** downloads the new version and checks it (see below). Drift then closes,
+  installs it and opens again. If your sketch has unsaved changes you're asked to save
+  first. **Cancel** there keeps the download, and **Help → Restart to update** installs it
+  later.
+- **Later** hides the notice until Drift next starts.
+- **Skip this version** stops it being offered. A newer one still is, and **Help → Check
+  for updates…** shows a skipped one again.
+
+To check at any time, use **Help → Check for updates…**. To stop the check at start, turn
+off **Edit → Preferences → Updates → Check for updates when Drift starts**. The check only
+asks GitHub (`api.github.com`) for the list of Drift releases. Nothing about you or your
+drawings is sent.
+
+Before anything runs, Drift checks the download against the release's checksums. It also
+checks that those checksums are signed with Drift's release key, which is built into the
+app. A download that fails either check is never run.
+
+- **Windows:** this works if you used the installer. The update installs the same way as
+  before, without asking questions. If Drift was installed for all users, Windows asks for
+  administrator approval. With the portable zip, the notice links to the release page and
+  you update by hand.
+- **macOS:** Drift replaces itself in the folder it's in (usually Applications). If it
+  can't write there, it says so and you update by hand from the disk image. Updates
+  downloaded this way don't trigger the Gatekeeper warning again.
+- **Linux and the browser:** the browser version is always the latest. On Linux, pull
+  and rebuild.
+
+If the check fails (no connection, or GitHub is busy), the status bar says so briefly and
+nothing else happens.
+
 ## The start screen
 
 Drift opens with a start panel over an empty sketch.

@@ -22,7 +22,7 @@ drift-platform = { path = "crates/drift-platform" }
 drift-solver = { path = "crates/drift-solver" }
 
 bytemuck = { version = "1.23", features = ["derive"] }
-eframe = { version = "0.36.2", default-features = false, features = ["wgpu", "default_fonts", "persistence"] }
+eframe = { version = "0.36.2", default-features = false, features = ["wgpu", "default_fonts", "persistence", "links"] }
 glam = "0.34.1"
 log = "0.4"
 lyon_tessellation = "1"

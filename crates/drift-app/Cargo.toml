@@ -22,9 +22,25 @@ log.workspace = true
 lyon_tessellation.workspace = true
 web-time = "1"
 
+# The updater (native only): GitHub's releases API over HTTPS, checked with the operating
+# system's certificates, and the download verified against a minisign signature.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+minisign-verify = "0.3"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+semver = "1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.11"
+ureq = { version = "3.4", default-features = false, features = ["rustls-no-provider", "platform-verifier"] }
+
 [lints]
 workspace = true
 
 [dev-dependencies]
 egui_kittest = { version = "0.36.2", features = ["eframe", "wgpu", "snapshot"] }
 pollster = "1.0"
+
+# Signs test releases so the updater's verification can be checked (and makes the release
+# signing key: `cargo run -p drift-app --example update_key`).
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+minisign = { version = "0.10", default-features = false }

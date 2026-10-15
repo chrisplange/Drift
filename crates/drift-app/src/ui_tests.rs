@@ -14,6 +14,9 @@ use crate::tools::{Overlay, ToolKind};
 
 /// Screenshots for the user guide.
 mod docs;
+/// The update notice and Preferences → Updates.
+#[cfg(not(target_arch = "wasm32"))]
+mod updates;
 
 fn gpu_available() -> bool {
     let instance = wgpu::Instance::default();

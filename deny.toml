@@ -32,6 +32,12 @@ allow = [
     "Unlicense",
     "Zlib",
 ]
+# The updater's certificate checker (rustls-platform-verifier) depends on Mozilla's root
+# certificates only when built for wasm32, which the updater never is. cargo-deny merges
+# the targets, so it lists them; they are not part of any Drift build.
+exceptions = [
+    { allow = ["CDLA-Permissive-2.0"], crate = "webpki-root-certs" },
+]
 
 [bans]
 multiple-versions = "allow"

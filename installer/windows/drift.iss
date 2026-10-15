@@ -63,3 +63,11 @@ Root: HKA; Subkey: "Software\Classes\Drift.Sketch\shell\open\command"; ValueType
 
 [Run]
 Filename: "{app}\drift.exe"; Description: "{cm:LaunchProgram,Drift}"; Flags: nowait postinstall skipifsilent
+; Drift's in-app updater runs this installer with /SILENT /RELAUNCH=1: open Drift again after.
+Filename: "{app}\drift.exe"; Flags: nowait runasoriginaluser; Check: WantsRelaunch
+
+[Code]
+function WantsRelaunch: Boolean;
+begin
+  Result := ExpandConstant('{param:relaunch|0}') = '1';
+end;

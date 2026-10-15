@@ -31,9 +31,12 @@ fn parse_color(id: &str, c: &Option<String>) -> Result<Option<Rgb>, LoadError> {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct FillRecord {
+    /// (A block's fills have none.)
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     id: String,
     #[serde(rename = "type")]
     kind: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     boundary: Vec<String>,
     seed: [f64; 2],
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -62,17 +65,32 @@ pub(crate) struct FillRecord {
 }
 
 pub(crate) fn fill_record(doc: &Document, id: FillId, f: &Fill) -> FillRecord {
+    let mut r = style_record(f);
+    r.id = id.to_string();
+    // Curves deleted since are dropped: their ids could be reused.
+    r.boundary = f
+        .boundary
+        .iter()
+        .filter(|e| doc.contains(**e))
+        .map(|e| id_string(*e))
+        .collect();
+    r
+}
+
+/// A block's fill: its seed and style.
+pub(crate) fn block_fill_record(f: &Fill) -> FillRecord {
+    let mut r = style_record(f);
+    r.layer = None;
+    r.order = 0;
+    r
+}
+
+fn style_record(f: &Fill) -> FillRecord {
     let default = Fill::new(Vec::new(), DVec2::ZERO, FillKind::Solid);
     let mut r = FillRecord {
-        id: id.to_string(),
+        id: String::new(),
         kind: "solid".into(),
-        // Curves deleted since are dropped: their ids could be reused.
-        boundary: f
-            .boundary
-            .iter()
-            .filter(|e| doc.contains(**e))
-            .map(|e| id_string(*e))
-            .collect(),
+        boundary: Vec::new(),
         seed: f.seed.to_array(),
         pattern: None,
         scale: None,
@@ -105,6 +123,21 @@ pub(crate) fn fill_record(doc: &Document, id: FillId, f: &Fill) -> FillRecord {
 
 pub(crate) fn parse_fill(r: FillRecord) -> Result<(FillId, Fill), LoadError> {
     let id = FillId(parse_prefixed(&r.id, 'f')?);
+    Ok((id, parse_fill_body(r)?))
+}
+
+/// A block's fill.
+pub(crate) fn parse_block_fill(mut r: FillRecord, block: &str) -> Result<Fill, LoadError> {
+    if r.id.is_empty() {
+        r.id = block.to_owned();
+    }
+    let mut fill = parse_fill_body(r)?;
+    fill.boundary.clear();
+    fill.layer = LayerId::DEFAULT;
+    Ok(fill)
+}
+
+fn parse_fill_body(r: FillRecord) -> Result<Fill, LoadError> {
     let boundary: Result<Vec<EntityId>, _> = r.boundary.iter().map(|b| parse_id(b)).collect();
     let seed = DVec2::from_array(r.seed);
     if !seed.is_finite() {
@@ -135,7 +168,7 @@ pub(crate) fn parse_fill(r: FillRecord) -> Result<(FillId, Fill), LoadError> {
     }
     fill.weight = r.weight.map(LineWeight::nearest);
     fill.order = r.order;
-    Ok((id, fill))
+    Ok(fill)
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]

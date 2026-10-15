@@ -772,6 +772,53 @@ fn curve_relations_and_driven_dimensions_render() {
 }
 
 #[test]
+fn alt_c_draws_and_makes_construction_geometry() {
+    use drift_core::LineKind;
+    let Some(mut h) = harness() else { return };
+    let style_of_newest = |h: &Harness<'_, DriftApp>| {
+        let doc = &h.state().editor.doc;
+        doc.iter()
+            .filter(|(_, e)| !e.kind.is_point())
+            .max_by_key(|(id, _)| *id)
+            .map(|(_, e)| e.style)
+    };
+    h.key_press(Key::L);
+    h.run();
+    // The line tool's bar offers the line type; Alt+C switches it.
+    assert!(h.query_by_label("Construction").is_some());
+    h.key_press_modifiers(EguiModifiers::ALT, Key::C);
+    h.run();
+    assert!(h.state().editor.draw_construction);
+    assert_eq!(h.state().tool.kind(), ToolKind::Line, "not the circle tool");
+    click_world(&mut h, DVec2::new(-30.0, -10.0));
+    click_world(&mut h, DVec2::new(10.0, -10.0));
+    h.key_press(Key::Escape);
+    h.run();
+    assert_eq!(style_of_newest(&h), Some(LineKind::Construction));
+    // Back to geometry from the bar.
+    h.get_by_label("Geometry").click();
+    h.run();
+    assert!(!h.state().editor.draw_construction);
+    click_world(&mut h, DVec2::new(-30.0, 20.0));
+    click_world(&mut h, DVec2::new(10.0, 20.0));
+    h.key_press(Key::Escape);
+    h.run();
+    assert_eq!(style_of_newest(&h), Some(LineKind::Solid));
+    // With the select tool, Alt+C makes the picked line construction; X no longer does.
+    h.key_press(Key::Escape);
+    h.run();
+    assert_eq!(h.state().tool.kind(), ToolKind::Select);
+    click_world(&mut h, DVec2::new(-20.0, 20.0));
+    assert_eq!(h.state().editor.selection.len(), 1);
+    h.key_press(Key::X);
+    h.run();
+    assert_eq!(style_of_newest(&h), Some(LineKind::Solid));
+    h.key_press_modifiers(EguiModifiers::ALT, Key::C);
+    h.run();
+    assert_eq!(style_of_newest(&h), Some(LineKind::Construction));
+}
+
+#[test]
 fn x_and_y_keys_lock_line_segments() {
     let Some(mut h) = harness() else { return };
     h.key_press(Key::L);
@@ -1222,7 +1269,20 @@ fn fill_tool_hatches_and_fills_regions() {
     // Hatch the plate (the bore and holes stay open), then fill the bore solid.
     click_world(&mut h, DVec2::new(100.0, 15.0));
     assert_eq!(h.state().editor.doc.fills().count(), 1);
-    h.state_mut().editor.fill_style.kind = drift_core::FillKind::Solid;
+    // With the new hatch picked, the tool's bar and inspector still set the next fill's
+    // style, and the eyedropper is at hand.
+    h.run();
+    assert_eq!(h.state().editor.selected_fills.len(), 1);
+    assert!(h.query_by_label("New fills").is_some());
+    // (Solid is in the tool's bar and in the inspector.)
+    assert_eq!(h.query_all_by_label("Solid").count(), 2);
+    h.query_all_by_label("Solid").next().unwrap().click();
+    h.run();
+    assert_eq!(
+        h.state().editor.fill_style.kind,
+        drift_core::FillKind::Solid
+    );
+    assert!(h.query_all_by_label("Pick up a style").count() >= 1);
     click_world(&mut h, DVec2::new(75.0, 45.0));
     assert_eq!(h.state().editor.doc.fills().count(), 2);
     let shapes = h.state_mut().editor.fill_shapes();
@@ -1247,6 +1307,65 @@ fn fill_tool_hatches_and_fills_regions() {
     assert_eq!(h.state().editor.doc.fills().count(), 1);
     h.state_mut().undo();
     assert_eq!(h.state().editor.doc.fills().count(), 2);
+}
+
+#[test]
+fn temporary_dimensions_show_and_move_the_picked_wall() {
+    let Some(mut h) = harness() else { return };
+    // (Past the start screen.)
+    h.get_by_label("File").click();
+    h.run();
+    h.get_by_label("Open example").click();
+    h.run();
+    // Two walls 100 apart and a short one above.
+    let mut doc = drift_core::Document::new();
+    let mut wall = |y: f64, x0: f64, x1: f64| {
+        let a = doc.add_point(DVec2::new(x0, y));
+        let b = doc.add_point(DVec2::new(x1, y));
+        doc.add_line(a, b).unwrap()
+    };
+    let (low, mid) = (wall(0.0, 0.0, 400.0), wall(100.0, 0.0, 400.0));
+    wall(250.0, 100.0, 300.0);
+    h.state_mut()
+        .replace_document(doc, "walls".into(), None, Default::default(), true);
+    h.run();
+    h.run();
+    // (Off its middle, which picks the midpoint.)
+    click_world(&mut h, DVec2::new(120.0, 100.0));
+    h.run();
+    assert_eq!(h.state().editor.selection, [mid].into());
+    assert_eq!(h.state().temp_dims.dims.len(), 3, "length, above, below");
+    save_png("drift_ui_temp_dims.png", &mut h);
+    // Click the value between the walls and type a new one: the picked wall moves.
+    let below = h.state().temp_dims.values[2].1;
+    h.hover_at(below);
+    h.run();
+    button(&h, below, true);
+    h.run();
+    button(&h, below, false);
+    h.run();
+    assert!(
+        h.state().temp_dims.edit.is_some(),
+        "the value editor opened"
+    );
+    h.run();
+    h.event(egui::Event::Text("120".into()));
+    h.run();
+    h.key_press(Key::Enter);
+    h.run();
+    let y = |h: &Harness<'_, DriftApp>, l| match h.state().editor.doc.shape(l) {
+        Some(drift_core::Shape::Line { a, .. }) => a.y,
+        _ => f64::NAN,
+    };
+    assert!((y(&h, mid) - 120.0).abs() < 1e-6, "{}", y(&h, mid));
+    assert_eq!(y(&h, low), 0.0);
+    assert_eq!(h.state().editor.selection, [mid].into(), "still picked");
+    h.run();
+    save_png("drift_ui_temp_dims_moved.png", &mut h);
+    // The preference turns them off.
+    h.state_mut().show_temp_dims = false;
+    h.run();
+    assert!(h.state().temp_dims.dims.is_empty());
 }
 
 #[test]
@@ -5254,4 +5373,152 @@ fn views_line_up_on_the_sheet() {
         "snapped level again"
     );
     assert!(h.state().view_guides.is_empty());
+}
+
+#[test]
+fn chain_dimensions_from_wall_to_wall() {
+    let Some(mut h) = harness() else { return };
+    // Four walls standing on a floor, as in an elevation; picked by the walls themselves.
+    {
+        let ed = &mut h.state_mut().editor;
+        ed.doc.begin();
+        for x in [-30.0, -10.0, 15.0, 30.0] {
+            let a = ed.doc.add_point(DVec2::new(x, 0.0));
+            let b = ed.doc.add_point(DVec2::new(x, 20.0));
+            ed.doc.add_line(a, b).unwrap();
+        }
+        ed.commit("Setup");
+    }
+    h.run();
+    h.key_press(Key::D);
+    h.run();
+    h.get_by_label("Chain").click();
+    h.run();
+    h.get_by_label("Overall").click();
+    h.run();
+    let values = |h: &Harness<'_, DriftApp>| -> Vec<(f64, bool)> {
+        let doc = &h.state().editor.doc;
+        doc.constraints()
+            .filter_map(|(id, c)| c.value().map(|v| (v, doc.is_driven(id))))
+            .collect()
+    };
+    // Two walls, clicked partway up (not at their ends), placed above.
+    click_world(&mut h, DVec2::new(-30.0, 7.0));
+    click_world(&mut h, DVec2::new(-10.0, 9.0));
+    click_world(&mut h, DVec2::new(-20.0, 26.0));
+    h.run();
+    // Then the next walls, each clicked anywhere along it.
+    click_world(&mut h, DVec2::new(15.0, 4.0));
+    h.run();
+    click_world(&mut h, DVec2::new(30.0, 13.0));
+    h.run();
+    // An empty click ends it, with the overall as a reference.
+    click_world(&mut h, DVec2::new(0.0, -30.0));
+    h.run();
+    assert_eq!(
+        values(&h),
+        vec![(20.0, false), (25.0, false), (15.0, false), (60.0, true)]
+    );
+    // The row's labels stand level with the first's.
+    let doc = &h.state().editor.doc;
+    let ys: Vec<f64> = doc
+        .constraints()
+        .filter_map(|(id, c)| {
+            let anchor = crate::annotations::dimension_anchor(doc, c)?;
+            Some((anchor + doc.placement(id)?).y)
+        })
+        .collect();
+    assert!(ys[..3].iter().all(|y| (y - ys[0]).abs() < 1e-6), "{ys:?}");
+    assert!(ys[3] > ys[0], "the overall outside the row: {ys:?}");
+    save_png("drift_ui_chain_walls.png", &mut h);
+}
+
+#[test]
+fn clear_relations_on_a_selection() {
+    use drift_core::{Constraint, EntityKind};
+    let Some(mut h) = harness() else { return };
+    // A rectangle (level and plumb sides), its corner fixed and its height dimensioned.
+    let (left, bottom, corner, top_left) = {
+        let ed = &mut h.state_mut().editor;
+        ed.doc.begin();
+        let p = [
+            DVec2::new(-20.0, -10.0),
+            DVec2::new(20.0, -10.0),
+            DVec2::new(20.0, 10.0),
+            DVec2::new(-20.0, 10.0),
+        ]
+        .map(|at| ed.doc.add_point(at));
+        let l = [0, 1, 2, 3].map(|i| ed.doc.add_line(p[i], p[(i + 1) % 4]).unwrap());
+        for (i, line) in l.iter().enumerate() {
+            let c = if i % 2 == 0 {
+                Constraint::Horizontal { line: *line }
+            } else {
+                Constraint::Vertical { line: *line }
+            };
+            ed.doc.add_constraint(c).unwrap();
+        }
+        ed.commit("Setup");
+        let _ = EntityKind::Point(DVec2::ZERO);
+        (l[3], l[0], p[0], p[3])
+    };
+    {
+        let ed = &mut h.state_mut().editor;
+        ed.add_constraints(
+            "Fix",
+            &[Constraint::Fix {
+                point: corner,
+                at: DVec2::new(-20.0, -10.0),
+            }],
+        )
+        .unwrap();
+        ed.add_constraints(
+            "Height",
+            &[Constraint::Distance {
+                a: corner,
+                b: top_left,
+                value: 20.0,
+            }],
+        )
+        .unwrap();
+        ed.selection = [left, bottom].into();
+    }
+    h.run();
+    let count = |h: &Harness<'_, DriftApp>| {
+        let doc = &h.state().editor.doc;
+        (
+            doc.constraints().filter(|(_, c)| !c.is_dimension()).count(),
+            doc.constraints().filter(|(_, c)| c.is_dimension()).count(),
+        )
+    };
+    assert_eq!(
+        count(&h),
+        (5, 1),
+        "four sides level or plumb, a fix; a height"
+    );
+    // The two picked sides touch: their own level and plumb, and the fix on their corner.
+    // (At the foot of a long inspector: brought into view first.)
+    h.get_by_label("Clear relations (3)").scroll_to_me();
+    h.run();
+    h.get_by_label("Clear relations (3)").click();
+    h.run();
+    assert_eq!(
+        count(&h),
+        (2, 1),
+        "the other two sides keep theirs; the height stays"
+    );
+    // Corners stay joined: the two sides still share their corner point.
+    let doc = &h.state().editor.doc;
+    assert_eq!(doc.users_of(corner).count(), 2);
+    // One undo step brings them all back.
+    h.state_mut().undo();
+    assert_eq!(count(&h), (5, 1));
+    // Dimensions have their own button.
+    h.state_mut().editor.selection = [left, bottom].into();
+    h.run();
+    // (At the foot of a long inspector: brought into view first.)
+    h.get_by_label("Clear dimensions (1)").scroll_to_me();
+    h.run();
+    h.get_by_label("Clear dimensions (1)").click();
+    h.run();
+    assert_eq!(count(&h), (5, 0));
 }

@@ -19,6 +19,7 @@ pub(crate) mod patterns;
 pub(crate) mod pie;
 pub(crate) mod sheets_ui;
 pub(crate) mod start_ui;
+pub(crate) mod temp_dims_ui;
 pub(crate) mod text_ui;
 pub(crate) mod underlays_ui;
 pub(crate) mod view;

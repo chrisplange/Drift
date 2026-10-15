@@ -1,4 +1,4 @@
-//! File records for blocks and their placed copies (format 10).
+//! File records for blocks and their placed copies (format 10; a block's `fills`, 22).
 
 use drift_core::{
     Appearance, Block, BlockId, BlockItem, DVec2, Instance, InstanceId, LayerId, LineKind,
@@ -68,6 +68,8 @@ pub(crate) struct BlockRecord {
     pub(crate) id: String,
     name: String,
     items: Vec<ItemRecord>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    fills: Vec<crate::drafting::FillRecord>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -143,6 +145,11 @@ pub(crate) fn block_record(id: BlockId, b: &Block) -> BlockRecord {
         id: id.to_string(),
         name: b.name.clone(),
         items,
+        fills: b
+            .fills
+            .iter()
+            .map(crate::drafting::block_fill_record)
+            .collect(),
     }
 }
 
@@ -221,11 +228,17 @@ pub(crate) fn parse_block(r: BlockRecord) -> Result<(BlockId, Block), LoadError>
             appearance,
         });
     }
+    let fills = r
+        .fills
+        .into_iter()
+        .map(|f| crate::drafting::parse_block_fill(f, &r.id))
+        .collect::<Result<Vec<_>, _>>()?;
     Ok((
         BlockId(parse_prefixed(&r.id, 'b')?),
         Block {
             name: r.name,
             items,
+            fills,
         },
     ))
 }

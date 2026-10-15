@@ -2407,6 +2407,7 @@ pub fn add_to_document(doc: &mut Document, import: &DxfImport) -> ImportReport {
                 doc.add_block(drift_core::Block {
                     name: def.name.clone(),
                     items,
+                    fills: Vec::new(),
                 })
             }
         };

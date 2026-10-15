@@ -258,17 +258,21 @@ fn shape_prim(s: &Space, shape: &Shape) -> Option<Prim> {
 /// Fills and hatches, bottom first.
 fn fills(ed: &mut Editor, patterns: &PatternLibrary, s: &Space, d: &mut Drawing) {
     let shapes = ed.fill_shapes();
-    for id in ed.fills_in_order() {
-        let (Some(fill), Some(shape)) = (ed.doc.fill(id).cloned(), shapes.get(&id)) else {
-            continue;
-        };
+    let copies = ed.copy_fills();
+    let order = ed.fills_in_order();
+    let ed = &*ed;
+    // The sketch's fills, then copies' fills over them.
+    let fills = order
+        .iter()
+        .filter_map(|id| Some((ed.doc.fill(*id)?, &shapes.get(id)?.region)))
+        .chain(copies.iter().map(|c| (&c.fill, &c.region)));
+    for (fill, region) in fills {
         let layer = ed.doc.layer(fill.layer).cloned();
         if layer.as_ref().is_some_and(|l| !l.visible || !l.printable) {
             continue;
         }
         let layer_name = layer.as_ref().map_or("0".to_owned(), |l| l.name.clone());
         let own = fill.color.or(layer.as_ref().and_then(|l| l.fill_colour()));
-        let region = &shape.region;
         let rings: Vec<Vec<DVec2>> = std::iter::once(&region.outer)
             .chain(&region.holes)
             .map(|lp| lp.polygon(0.02).into_iter().map(|p| s.at(p)).collect())

@@ -57,12 +57,22 @@ pub use self::{
     tangent_arc::TangentArcTool, three_point_arc::ThreePointArcTool,
 };
 
+/// The geometry under the pointer that a temporary dimension's far end can measure to: a
+/// point, or a line (picked at its middle, the line).
+pub(crate) fn reference_at(ed: &Editor, p: &Pointer) -> Option<EntityId> {
+    select::pick_target_with(ed, p, crate::editor::PickFilter::All).map(|t| match t {
+        select::Target::Entity(id) | select::Target::Midpoint(id) => id,
+    })
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Modifiers {
     /// Add to the selection.
     pub shift: bool,
     /// Toggle in the selection (Ctrl, or Cmd on macOS).
     pub command: bool,
+    /// Alt (Option on macOS): place freely, or the Fill tool's eyedropper.
+    pub alt: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -271,6 +281,24 @@ impl ToolKind {
 
     /// The circle tools, in the order pressing C cycles through them.
     pub const CIRCLES: [ToolKind; 3] = [ToolKind::Circle, ToolKind::Ellipse, ToolKind::EllipseArc];
+
+    /// Whether the tool draws curves (which can be drawn as construction geometry).
+    pub fn draws_curves(self) -> bool {
+        matches!(
+            self,
+            ToolKind::Line
+                | ToolKind::Pen
+                | ToolKind::Rectangle
+                | ToolKind::Polygon
+                | ToolKind::Circle
+                | ToolKind::Ellipse
+                | ToolKind::EllipseArc
+                | ToolKind::Arc
+                | ToolKind::ThreePointArc
+                | ToolKind::TangentArc
+                | ToolKind::Slot
+        )
+    }
 
     /// The arc tools, in the order pressing A cycles through them.
     pub const ARCS: [ToolKind; 3] = [ToolKind::Arc, ToolKind::ThreePointArc, ToolKind::TangentArc];

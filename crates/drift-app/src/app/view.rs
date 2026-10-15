@@ -306,6 +306,7 @@ impl DriftApp {
         let (rect, response) =
             ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
         self.canvas_rect = rect;
+        self.editor.drawing_curves = self.tool.kind().draws_curves();
         let view_size = DVec2::new(f64::from(rect.width()), f64::from(rect.height()));
         self.editor.update_underlays();
         // A point the pointer snaps to lights up like a hovered one (as in Illustrator).
@@ -328,6 +329,7 @@ impl DriftApp {
                 Modifiers {
                     shift: i.modifiers.shift,
                     command: i.modifiers.command,
+                    alt: i.modifiers.alt,
                 },
                 i.modifiers.alt,
             )
@@ -348,6 +350,7 @@ impl DriftApp {
             Vec::new()
         };
         let notes = self.layout_notes(&annotation_painter, &map);
+        let temps = self.layout_temp_dims(&annotation_painter, &map);
 
         // Feed pointer input to the active tool.
         let dragging = response.dragged_by(PointerButton::Primary);
@@ -364,6 +367,7 @@ impl DriftApp {
             || self.text_pointer(ui, &response, &map)
             || self.hatch_input(ui, &response, &map, hatch.as_ref(), snap)
             || self.note_input(ui, &response, &map, &notes, &dims, &glyphs, pos)
+            || self.temp_dim_input(ui, &response, &map, &temps, pos)
             || self.annotation_input(ui, &response, &map, &dims, &glyphs, pos);
         if consumed {
             self.pointer = pos.map(|pos| self.make_pointer(&map, pos, snap));
@@ -570,7 +574,19 @@ impl DriftApp {
             };
             items.extend(self.editor.curvature_combs(28.0 / self.camera.scale, comb));
         }
-        items.extend(self.tool.preview(self.pointer.as_ref()));
+        let construction = self.editor.draw_construction && self.tool.kind().draws_curves();
+        items.extend(
+            self.tool
+                .preview(self.pointer.as_ref())
+                .into_iter()
+                .map(|item| {
+                    if construction && item.kind == drift_core::LineKind::Solid {
+                        item.with_kind(drift_core::LineKind::Construction)
+                    } else {
+                        item
+                    }
+                }),
+        );
         items.extend(self.tool.editor_preview(&self.editor));
         let ppp = f64::from(ui.ctx().pixels_per_point());
         let callback = self.painter.callback(
@@ -646,6 +662,7 @@ impl DriftApp {
             overlay::region_fill(&painter, &map, &region, colors.window.gamma_multiply(0.22));
         }
         self.paint_annotations(&painter, &map, &dims, &glyphs, ui.visuals().dark_mode);
+        self.paint_temp_dims(&painter, &map, &temps, ui.visuals().dark_mode);
         self.paint_notes(&painter, &notes, ui.visuals().dark_mode);
         self.paint_groups(&painter, &map, ui.visuals().dark_mode);
         self.paint_free_directions(&painter, &map);
@@ -675,6 +692,7 @@ impl DriftApp {
         let ctx = ui.ctx().clone();
         let now = ctx.input(|i| i.time);
         self.dimension_editor(&ctx, &dims, now);
+        self.temp_dim_editor(&ctx, &temps, now);
         // The notes as laid out now (a tool may have just placed one).
         let notes = self.layout_notes(&annotation_painter, &map);
         self.note_editor(&ctx, &notes);

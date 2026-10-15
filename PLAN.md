@@ -1857,6 +1857,47 @@ zooms to fit; F is Fillet (again for Chamfer).
   hatch picks it; inside an empty outline, nothing (it was the area, to measure). Off
   brings back area picking. Preferences kept on the editor (areas per layer, this, the
   select filter, the dimension row mode) now carry over when a drawing is opened.
+- **Clear relations, chains between walls, block snaps (done).**
+  - Clear relations / Clear dimensions on a selection (inspector, right-click, palette):
+    everything on its curves, their points and picked midpoints, so also what holds it to
+    unpicked geometry; one undo step; the hover and the message say what kinds. Shared
+    corners stay joined.
+  - Chains between walls: a row also starts from a dimension between parallel lines (or a
+    point and a line), and goes on wall to wall, measured square to them (any angle). A
+    wall picked at its middle is the wall; a chain goes on from whichever end is nearer
+    the click.
+  - Copies of blocks offer snap points: their box's corners, side middles and centre, the
+    insertion point, and their own curves' ends, middles and centres.
+- **Fill style before filling, eyedropper, fills in blocks (done).**
+  - The Fill tool's bar (Solid / Hatch, the colour or pattern) and inspector set the next
+    fill's style whatever is picked (a fill just made stays picked; clicking it again gives
+    it the current style).
+  - Eyedropper: Alt+click a fill or hatch (a copy of a block's too), or "Pick up a style"
+    then click; Escape leaves it.
+  - Blocks hold fills (format v22, a block's `fills`): Make block takes the fills of areas
+    its curves enclose; each copy fills its area, the hatch turning, mirroring and (model
+    patterns) scaling with it; Explode and Edit block turn them back into ordinary fills
+    and Finish takes them back. DXF writes a copy's fills in place, outside its block
+    definition.
+- **Temporary dimensions (done).** As in Revit: pick one line, circle or arc with the
+  select tool and dashed dimensions show: a line's length and the distance to the nearest
+  parallel line alongside it on each side (from that line's middle when it's alongside);
+  a circle's diameter, an arc's radius. Ones a dimension already shows are left out.
+  - Click a value and type: the picked curve moves (or resizes) to suit, the other end
+    staying put; one undo step, nothing kept holding it; "its relations hold it in place"
+    if they do.
+  - The lock beside a value makes it a real dimension where it shows (driven if the sketch
+    already holds it).
+  - Drag the square at a far end onto a point or another line to measure to that instead
+    (kept while the same curve stays picked).
+  - Preferences → Dimensions → "Show temporary dimensions on the picked geometry" (on by
+    default; `tdims`). Not yet: points, two picked curves, perpendicular neighbours (a wall's
+    ends to cross walls).
+- **Construction: Alt+C, and a drawing mode (done).** Alt+C (was X, which only locks an
+  axis now) toggles the picked curves' construction; with a drawing tool in hand it switches
+  what the tool draws, geometry or construction, also a choice at the start of every drawing
+  tool's bar. Drawn construction shows in the preview; the mode carries across tools and
+  opened files.
 - **Workspace notes, next: tabs for separate drawings (design, not built).** A tab bar
   along the top, one drawing per tab, as Revit and Illustrator have.
   - What a tab owns: the editor (document, selection, undo history), its file (name, path,

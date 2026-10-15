@@ -3,10 +3,12 @@
 //! A [`Block`] holds rigid curves in its own coordinates, with its base point at the origin.
 //! An [`Instance`] places a block with a position, rotation, scale, mirror and layer. Copies
 //! aren't solved: they're drawn, picked and snapped through their transform, and editing the
-//! block updates every copy.
+//! block updates every copy. A block can also hold fills and hatches of areas its curves
+//! enclose.
 
 use glam::DVec2;
 
+use crate::drafting::{Fill, FillKind};
 use crate::layers::{Appearance, LayerId};
 use crate::shape::{LineKind, Shape};
 
@@ -42,6 +44,10 @@ pub struct BlockItem {
 pub struct Block {
     pub name: String,
     pub items: Vec<BlockItem>,
+    /// Fills and hatches, bottom first. Each fills the area of the block's curves around
+    /// its `seed` (in block coordinates); its `boundary`, `layer` and `order` aren't used
+    /// (a copy's fills are on the copy's layer).
+    pub fills: Vec<Fill>,
 }
 
 impl Block {
@@ -178,6 +184,46 @@ impl Instance {
         }
     }
 
+    /// A block's fill in the world, on the copy's layer: its seed and its hatch go with the
+    /// copy (the pattern turns and mirrors with it, and a model pattern scales with it).
+    pub fn apply_fill(&self, f: &Fill) -> Fill {
+        let mut f = f.clone();
+        f.seed = self.apply(f.seed);
+        f.layer = self.layer;
+        if let FillKind::Hatch(h) = &mut f.kind {
+            h.origin = self.apply(h.origin);
+            let angle = if self.mirror {
+                180.0 - h.angle
+            } else {
+                h.angle
+            };
+            h.angle = (angle + self.angle).rem_euclid(360.0);
+            if h.model {
+                h.scale *= self.scale;
+            }
+        }
+        f
+    }
+
+    /// A world fill in block coordinates (the inverse of [`apply_fill`](Self::apply_fill)),
+    /// without its boundary, layer and order.
+    pub fn invert_fill(&self, f: &Fill) -> Fill {
+        let mut f = f.clone();
+        f.seed = self.invert(f.seed);
+        f.boundary.clear();
+        f.layer = LayerId::DEFAULT;
+        f.order = 0;
+        if let FillKind::Hatch(h) = &mut f.kind {
+            h.origin = self.invert(h.origin);
+            let angle = h.angle - self.angle;
+            h.angle = if self.mirror { 180.0 - angle } else { angle }.rem_euclid(360.0);
+            if h.model {
+                h.scale /= self.scale;
+            }
+        }
+        f
+    }
+
     /// A world shape in block coordinates (the inverse of [`apply_shape`](Self::apply_shape)).
     pub fn invert_shape(&self, s: &Shape) -> Shape {
         match *s {
@@ -292,6 +338,7 @@ mod tests {
         let mut history = History::default();
         let chair = Block {
             name: "Chair".into(),
+            fills: Vec::new(),
             items: vec![BlockItem {
                 shape: Shape::Line {
                     a: DVec2::new(-200.0, 0.0),

@@ -265,6 +265,11 @@ pub struct Editor {
     pub chain_preview: Option<(EntityId, BTreeSet<EntityId>)>,
     /// Closed areas are found from each layer's curves separately.
     pub regions_by_layer: bool,
+    /// Drawing tools draw construction geometry (Alt+C with a drawing tool in hand).
+    pub draw_construction: bool,
+    /// The tool in hand draws curves (kept up to date by the app): with
+    /// [`draw_construction`](Self::draw_construction), what it adds is construction.
+    pub drawing_curves: bool,
     /// A click inside a closed area picks it only when a fill or hatch is in it (an empty
     /// outline's inside picks nothing).
     pub regions_need_fill: bool,
@@ -284,6 +289,8 @@ pub struct Editor {
     pub fill_style: crate::fills::FillStyle,
     /// A fill whose boundary the Fill tool's next click re-picks.
     pub repick_fill: Option<drift_core::FillId>,
+    /// The Fill tool's next click picks up a fill's style instead of filling.
+    pub fill_eyedropper: bool,
     pub selected_annotation: Option<drift_core::AnnotationId>,
     pub hovered_annotation: Option<drift_core::AnnotationId>,
     /// A note just placed by a tool, whose text the UI should let the user type.
@@ -301,6 +308,8 @@ pub struct Editor {
         u64,
         std::rc::Rc<std::collections::BTreeMap<drift_core::FillId, crate::fills::FillShape>>,
     )>,
+    /// The fills of copies of blocks, in the world (by document revision).
+    pub(crate) copy_fills: Option<(u64, std::rc::Rc<Vec<crate::fills::CopyFill>>)>,
     /// Each fill's last region, kept for when its boundary is lost.
     pub(crate) last_fill_shapes:
         std::collections::HashMap<drift_core::FillId, drift_geom::regions::Region>,
@@ -466,6 +475,7 @@ impl Editor {
         }
         self.refresh_driven();
         self.adopt_into_open_group();
+        self.make_new_curves_construction();
         let tx = self.doc.commit(label);
         self.history.push(tx);
         self.sync();
@@ -1445,6 +1455,41 @@ impl Editor {
         self.commit("Remove relation");
     }
 
+    /// The relations and the dimensions on the selection: on its curves, their points, and
+    /// picked midpoints (so also those holding it to geometry that isn't picked).
+    pub fn selection_constraints(&self) -> (Vec<ConstraintId>, Vec<ConstraintId>) {
+        let mut on = self.doc.defining_points(self.selection.iter().copied());
+        on.extend(self.selection.iter().copied());
+        on.extend(self.selected_midpoints.iter().copied());
+        if on.is_empty() {
+            return (Vec::new(), Vec::new());
+        }
+        self.doc
+            .constraints()
+            .filter(|(_, c)| c.entities().any(|e| on.contains(&e)))
+            .map(|(id, c)| (id, c.is_dimension()))
+            .fold((Vec::new(), Vec::new()), |(mut r, mut d), (id, dim)| {
+                if dim {
+                    d.push(id);
+                } else {
+                    r.push(id);
+                }
+                (r, d)
+            })
+    }
+
+    /// Remove constraints as one undo step; how many went.
+    pub fn clear_constraints(&mut self, ids: &[ConstraintId], label: &str) -> usize {
+        if ids.is_empty() {
+            return 0;
+        }
+        self.doc.begin();
+        for id in ids {
+            self.doc.remove_constraint(*id);
+        }
+        if self.commit(label) { ids.len() } else { 0 }
+    }
+
     /// Whether adding `constraints` would over-define the sketch. Nothing is changed.
     pub fn would_conflict(&mut self, constraints: &[Constraint]) -> bool {
         if constraints.is_empty() {
@@ -2110,6 +2155,22 @@ impl Editor {
 
     /// While a group is open for editing, what's drawn joins it: curves and standalone points
     /// created in the open transaction (a curve's own points ride along with it).
+    /// Drawing construction geometry: the curves this transaction added become construction.
+    fn make_new_curves_construction(&mut self) {
+        if !(self.draw_construction && self.drawing_curves) {
+            return;
+        }
+        for id in self.doc.created_in_transaction() {
+            if self
+                .doc
+                .get(id)
+                .is_some_and(|e| !e.kind.is_point() && e.style == LineKind::Solid)
+            {
+                self.doc.set_style(id, LineKind::Construction);
+            }
+        }
+    }
+
     fn adopt_into_open_group(&mut self) {
         let Some(g) = self.open_group else { return };
         if self.doc.group(g).is_none() {
@@ -3064,7 +3125,7 @@ impl RegionMotion {
 
 /// A point inside a region: `near` if it is, else its centroid, else the first of a grid
 /// over its bounds that is.
-fn interior_point(region: &drift_geom::regions::Region, near: DVec2) -> DVec2 {
+pub(crate) fn interior_point(region: &drift_geom::regions::Region, near: DVec2) -> DVec2 {
     if region.contains(near) {
         return near;
     }

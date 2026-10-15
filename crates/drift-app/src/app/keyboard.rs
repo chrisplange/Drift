@@ -155,7 +155,7 @@ impl DriftApp {
                     .tool
                     .key(tool_key, self.pointer.as_ref(), &mut self.editor)
         };
-        let x_claimed = claimed(Key::X, ToolKey::X);
+        claimed(Key::X, ToolKey::X);
         claimed(Key::Y, ToolKey::Y);
         let g_claimed = claimed(Key::G, ToolKey::G);
         claimed(Key::B, ToolKey::B);
@@ -223,10 +223,6 @@ impl DriftApp {
                 None => self.editor.delete_selection(),
             }
         }
-        // X toggles construction unless a tool used it (an axis lock).
-        if pressed(Key::X) && !x_claimed {
-            self.editor.toggle_construction();
-        }
         if pressed(Key::W) {
             self.thin_lines = !self.thin_lines;
         }
@@ -242,6 +238,12 @@ impl DriftApp {
         };
         if alt_only(Key::D) {
             self.show_dimensions = !self.show_dimensions;
+        }
+        // Alt+C: with a drawing tool, draw construction geometry (or not); else make the
+        // picked curves construction (or not).
+        if alt_only(Key::C) {
+            let now = ctx.input(|i| i.time);
+            self.toggle_construction(now);
         }
         // Alt+H: show (faded) or hide again the dimensions and annotations hidden on the canvas.
         if alt_only(Key::H) {

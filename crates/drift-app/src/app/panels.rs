@@ -820,7 +820,8 @@ impl DriftApp {
 
     pub(crate) fn inspector(&mut self, ui: &mut egui::Ui) {
         self.block_edit_banner(ui);
-        if self.annotation_inspector(ui)
+        if self.fill_tool_inspector(ui)
+            || self.annotation_inspector(ui)
             || self.text_inspector(ui)
             || self.instance_inspector(ui)
             || self.fill_inspector(ui)
@@ -1281,6 +1282,41 @@ impl DriftApp {
                 egui::RichText::new(format!("… and {hidden_rows} more (pick less to see them)"))
                     .weak(),
             );
+        }
+        // Clearing all of them at once (on a selection).
+        if !everything {
+            let (relations, dims) = self.editor.selection_constraints();
+            let mut clear = None;
+            ui.horizontal_wrapped(|ui| {
+                if !relations.is_empty()
+                    && ui
+                        .button(format!("Clear relations ({})", relations.len()))
+                        .on_hover_text(format!(
+                            "Remove the relations on the selection, including those holding it \
+                             to what isn't picked: {}. Shared corners stay joined; dimensions \
+                             stay",
+                            crate::constraint_summary(&self.editor.doc, &relations)
+                        ))
+                        .clicked()
+                {
+                    clear = Some(false);
+                }
+                if !dims.is_empty()
+                    && ui
+                        .button(format!("Clear dimensions ({})", dims.len()))
+                        .on_hover_text(format!(
+                            "Remove the dimensions on the selection: {}",
+                            crate::constraint_summary(&self.editor.doc, &dims)
+                        ))
+                        .clicked()
+                {
+                    clear = Some(true);
+                }
+            });
+            if let Some(dimensions) = clear {
+                self.clear_selection_constraints(dimensions, now);
+                return;
+            }
         }
         if let Some(c) = select {
             self.editor.selection = c.entities().collect();

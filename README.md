@@ -145,7 +145,8 @@ browser (WebGPU, with a WebGL2 fallback).
   group to edit inside it.
 - **Selection and editing:** click, Shift-click and Ctrl-click; drag right for a window selection
   and left for a crossing selection. Drag to move. Drop an end point on another to join them.
-  Delete, construction toggle (X), and solid / construction / centre line styles.
+  Delete, construction toggle (Alt+C; with a drawing tool, it switches to drawing
+  construction geometry), and solid / construction / centre line styles.
 - **Constraints:** coincident, horizontal, vertical, parallel, perpendicular, collinear, equal,
   tangent, concentric, coradial, midpoint, on curve, symmetric and fix relations. Dimensions
   cover length, distance (aligned, horizontal, vertical, point-to-line), radius, diameter and

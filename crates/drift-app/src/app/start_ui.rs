@@ -337,6 +337,14 @@ impl DriftApp {
             "A scale handle with Alt steps the picked geometry's width and height through \
              round sizes in the document's units, finer as you zoom in. Off: any size",
         );
+        theme::section(ui, "Dimensions");
+        ui.checkbox(
+            &mut self.show_temp_dims,
+            "Show temporary dimensions on the picked geometry",
+        )
+        .on_hover_text(
+            "Pick one line, circle or arc to see its size and how far it is from its              neighbours. Click a value to type a new one (the picked geometry moves), the lock              to keep it as a dimension, and drag the square at its far end onto other geometry              to measure to that",
+        );
         theme::section(ui, "Closed areas");
         ui.checkbox(
             &mut self.editor.regions_by_layer,

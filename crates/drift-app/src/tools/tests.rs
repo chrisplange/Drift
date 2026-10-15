@@ -824,7 +824,7 @@ fn midpoints_can_be_hovered_picked_and_constrained() {
             p,
             Modifiers {
                 shift: true,
-                command: false,
+                ..Default::default()
             },
         ),
         &mut ed,
@@ -2207,7 +2207,7 @@ fn shift_click(ed: &mut Editor, tool: &mut dyn Tool, at: DVec2) {
     tool.handle(Input::Hover(p), ed);
     let shift = Modifiers {
         shift: true,
-        command: false,
+        ..Default::default()
     };
     tool.handle(Input::Click(p, shift), ed);
 }
@@ -2482,6 +2482,42 @@ fn groups_pick_together_and_open_for_editing() {
     assert!(ed.doc.groups().next().is_none());
     ed.undo();
     assert_eq!(ed.doc.group(g).unwrap().members, lines);
+}
+
+#[test]
+fn the_fill_tools_eyedropper_picks_up_a_style() {
+    use drift_core::FillKind;
+    let (mut ed, _) = rotated_rectangle_fixture();
+    ed.selection.clear();
+    if let FillKind::Hatch(h) = &mut ed.fill_style.kind {
+        h.angle = 45.0;
+    }
+    let hatched = ed.fill_style.clone();
+    ed.add_fill_at(v(5.0, 5.0)).unwrap();
+    ed.fill_style.kind = FillKind::Solid;
+    let mut tool = FillTool::default();
+    // Alt+click a fill: its style, and nothing filled.
+    let p = ptr(&ed, &tool, v(5.0, 5.0));
+    let alt = Modifiers {
+        alt: true,
+        ..Default::default()
+    };
+    tool.handle(Input::Click(p, alt), &mut ed);
+    assert_eq!(ed.fill_style, hatched);
+    assert_eq!(ed.doc.fills().count(), 1);
+    // The eyedropper button: the next click picks up a style, then filling resumes.
+    ed.fill_style.kind = FillKind::Solid;
+    ed.fill_eyedropper = true;
+    click(&mut ed, &mut tool, v(500.0, 500.0));
+    assert!(ed.notice.take().is_some(), "nothing there");
+    assert!(ed.fill_eyedropper, "still picking");
+    click(&mut ed, &mut tool, v(5.0, 5.0));
+    assert_eq!(ed.fill_style, hatched);
+    assert!(!ed.fill_eyedropper);
+    // Escape leaves it.
+    ed.fill_eyedropper = true;
+    assert!(tool.cancel(&mut ed));
+    assert!(!ed.fill_eyedropper);
 }
 
 #[test]
@@ -3533,4 +3569,68 @@ fn areas_are_picked_only_where_filled_when_asked() {
     ed.regions_need_fill = false;
     click(&mut ed, &mut tool, v(5.0, 5.0));
     assert!(ed.region().is_some());
+}
+
+#[test]
+fn copies_of_blocks_offer_snap_points() {
+    use drift_core::{Block, BlockItem, Instance};
+    use drift_geom::SnapKind;
+    let mut ed = Editor::default();
+    // A table: a 20 × 10 top with a round sink, placed at (100, 50) turned a quarter turn.
+    let line = |a: DVec2, b: DVec2| BlockItem {
+        shape: Shape::Line { a, b },
+        style: drift_core::LineKind::Solid,
+        appearance: Default::default(),
+    };
+    ed.doc.begin();
+    let block = ed.doc.add_block(Block {
+        name: "Table".into(),
+        fills: Vec::new(),
+        items: vec![
+            line(v(0.0, 0.0), v(20.0, 0.0)),
+            line(v(20.0, 0.0), v(20.0, 10.0)),
+            line(v(20.0, 10.0), v(0.0, 10.0)),
+            line(v(0.0, 10.0), v(0.0, 0.0)),
+            BlockItem {
+                shape: Shape::Circle {
+                    center: v(14.0, 5.0),
+                    radius: 2.0,
+                },
+                style: drift_core::LineKind::Solid,
+                appearance: Default::default(),
+            },
+        ],
+    });
+    ed.doc
+        .add_instance(Instance {
+            block,
+            at: v(100.0, 50.0),
+            angle: 90.0,
+            scale: 1.0,
+            mirror: false,
+            layer: Default::default(),
+        })
+        .unwrap();
+    ed.commit("Setup");
+    let options = SnapOptions {
+        tolerance: 1.0,
+        grid: None,
+    };
+    let snap = |ed: &Editor, p: DVec2| ed.snap(p, options, |_| false);
+    // Turned a quarter turn about its base point: the top runs from (90, 50) to (100, 70).
+    let b = ed.instance_bounds(ed.doc.instances().next().unwrap().0);
+    assert!(b.min.distance(v(90.0, 50.0)) < 1e-9 && b.max.distance(v(100.0, 70.0)) < 1e-9);
+    // A corner of the box (and of the top), the middle of a side, the centre, the sink's
+    // centre.
+    let s = snap(&ed, v(90.4, 69.7)).expect("a corner");
+    assert!(s.at.distance(v(90.0, 70.0)) < 1e-9 && s.kind == SnapKind::Endpoint);
+    let s = snap(&ed, v(95.3, 69.6)).expect("a side's middle");
+    assert!(s.at.distance(v(95.0, 70.0)) < 1e-9 && s.kind == SnapKind::Midpoint);
+    let s = snap(&ed, v(95.4, 59.7)).expect("the centre");
+    assert!(s.at.distance(v(95.0, 60.0)) < 1e-9);
+    let sink = v(95.0, 64.0);
+    let s = snap(&ed, sink + v(0.3, 0.2)).expect("the sink's centre");
+    assert!(s.at.distance(sink) < 1e-9 && s.kind == SnapKind::Center);
+    // Away from it: nothing.
+    assert!(snap(&ed, v(130.0, 30.0)).is_none());
 }

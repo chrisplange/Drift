@@ -70,6 +70,39 @@ fn swatch(ui: &mut egui::Ui, pattern: Option<&Pattern>, size: egui::Vec2) -> egu
     response
 }
 
+/// A menu of the hatch patterns, each with its swatch.
+fn pattern_combo(
+    ui: &mut egui::Ui,
+    h: &mut Hatch,
+    patterns: &PatternLibrary,
+    id: &str,
+    width: f32,
+) {
+    egui::ComboBox::from_id_salt(("hatch_pattern", id))
+        .selected_text(&h.pattern)
+        .width(width)
+        .height(360.0)
+        .show_ui(ui, |ui| {
+            for p in patterns.all() {
+                ui.horizontal(|ui| {
+                    swatch(ui, Some(p), egui::vec2(34.0, 18.0));
+                    let label = if p.description.is_empty() {
+                        p.name.clone()
+                    } else {
+                        format!("{}  ·  {}", p.name, p.description)
+                    };
+                    if ui
+                        .selectable_label(h.pattern.eq_ignore_ascii_case(&p.name), label)
+                        .clicked()
+                    {
+                        h.pattern = p.name.clone();
+                        h.model = p.model;
+                    }
+                });
+            }
+        });
+}
+
 /// Edit a fill style. Returns true if it changed.
 pub(crate) fn fill_style_editor(
     ui: &mut egui::Ui,
@@ -109,32 +142,8 @@ pub(crate) fn fill_style_editor(
             theme::row(ui, "Pattern", |ui| {
                 ui.horizontal(|ui| {
                     swatch(ui, patterns.get(&h.pattern), egui::vec2(34.0, 20.0));
-                    egui::ComboBox::from_id_salt(("hatch_pattern", id))
-                        .selected_text(&h.pattern)
-                        .width(ui.available_width() - 6.0)
-                        .height(360.0)
-                        .show_ui(ui, |ui| {
-                            for p in patterns.all() {
-                                ui.horizontal(|ui| {
-                                    swatch(ui, Some(p), egui::vec2(34.0, 18.0));
-                                    let label = if p.description.is_empty() {
-                                        p.name.clone()
-                                    } else {
-                                        format!("{}  ·  {}", p.name, p.description)
-                                    };
-                                    if ui
-                                        .selectable_label(
-                                            h.pattern.eq_ignore_ascii_case(&p.name),
-                                            label,
-                                        )
-                                        .clicked()
-                                    {
-                                        h.pattern = p.name.clone();
-                                        h.model = p.model;
-                                    }
-                                });
-                            }
-                        });
+                    let width = ui.available_width() - 6.0;
+                    pattern_combo(ui, h, patterns, id, width);
                 });
             });
             theme::row(ui, "Scale", |ui| {
@@ -334,25 +343,87 @@ impl DriftApp {
             }
             return true;
         }
-        if self.tool.kind() == ToolKind::Fill && self.editor.selection.is_empty() {
-            app::panels::title(ui, Some(ToolKind::Fill), "Fill / hatch", "New fills");
-            ui.label(
-                egui::RichText::new(if self.editor.repick_fill.is_some() {
-                    "Click inside the area that should be the fill's new boundary."
-                } else {
-                    "Click inside a closed area to fill it with this style."
-                })
-                .small()
-                .weak(),
-            );
-            theme::section(ui, "New fills");
-            let mut style = self.editor.fill_style.clone();
-            if fill_style_editor(ui, &mut style, &self.hatch_patterns, dark, "tool") {
-                self.editor.fill_style = style;
-            }
-            return true;
-        }
         false
+    }
+
+    /// The Fill tool's inspector: the style the next fill gets, whatever is selected (a
+    /// fill just made is selected; clicking it again gives it this style).
+    pub(crate) fn fill_tool_inspector(&mut self, ui: &mut egui::Ui) -> bool {
+        if self.tool.kind() != ToolKind::Fill {
+            return false;
+        }
+        let dark = ui.visuals().dark_mode;
+        self.hatch_patterns
+            .update(self.editor.doc.custom_patterns());
+        app::panels::title(ui, Some(ToolKind::Fill), "Fill / hatch", "New fills");
+        ui.label(
+            egui::RichText::new(if self.editor.repick_fill.is_some() {
+                "Click inside the area that should be the fill's new boundary."
+            } else if self.editor.fill_eyedropper {
+                "Click a fill or hatch to pick up its style."
+            } else {
+                "Click inside a closed area to fill it with this style; click a fill again to \
+                 give it this style. Alt+click a fill to pick up its style."
+            })
+            .small()
+            .weak(),
+        );
+        theme::section(ui, "New fills");
+        let mut style = self.editor.fill_style.clone();
+        if fill_style_editor(ui, &mut style, &self.hatch_patterns, dark, "tool") {
+            self.editor.fill_style = style;
+        }
+        ui.add_space(6.0);
+        self.eyedropper_button(ui);
+        true
+    }
+
+    fn eyedropper_button(&mut self, ui: &mut egui::Ui) {
+        let on = self.editor.fill_eyedropper;
+        if ui
+            .add(egui::Button::new("Pick up a style").selected(on))
+            .on_hover_text("Click a fill or hatch to use its style for new fills (or Alt+click it)")
+            .clicked()
+        {
+            self.editor.fill_eyedropper = !on;
+        }
+    }
+
+    /// The Fill tool's bar: solid or hatch, the colour or pattern, and the eyedropper.
+    pub(crate) fn fill_tool_bar(&mut self, ui: &mut egui::Ui) {
+        let dark = ui.visuals().dark_mode;
+        self.hatch_patterns
+            .update(self.editor.doc.custom_patterns());
+        let mut style = self.editor.fill_style.clone();
+        let solid = matches!(style.kind, FillKind::Solid);
+        if let Some(choice) =
+            app::context_ui::choice(ui, solid, &[(true, "Solid"), (false, "Hatch")])
+        {
+            style.kind = if choice {
+                FillKind::Solid
+            } else {
+                FillKind::Hatch(Hatch::new("ANSI31"))
+            };
+        }
+        match &mut style.kind {
+            FillKind::Solid => {
+                if let Some(c) = color_choice(ui, style.color, "By layer", dark) {
+                    style.color = c;
+                }
+            }
+            FillKind::Hatch(h) => {
+                swatch(
+                    ui,
+                    self.hatch_patterns.get(&h.pattern),
+                    egui::vec2(34.0, 20.0),
+                );
+                pattern_combo(ui, h, &self.hatch_patterns, "bar", 120.0);
+            }
+        }
+        if style != self.editor.fill_style {
+            self.editor.fill_style = style;
+        }
+        self.eyedropper_button(ui);
     }
 
     /// Buttons under a selected region's measurements: fill or hatch it.

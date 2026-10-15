@@ -5,7 +5,8 @@ use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 
 use drift_core::{
-    Bounds, DVec2, EntityId, Fill, FillId, FillKind, Hatch, LineWeight, Rgb, Shape, SketchItem,
+    Bounds, DVec2, EntityId, Fill, FillId, FillKind, Hatch, InstanceId, LineWeight, Rgb, Shape,
+    SketchItem,
 };
 use drift_draft::{Pattern, Placement};
 use drift_geom::regions::{Region, region_at};
@@ -24,6 +25,15 @@ const HATCH_SEGMENT_LIMIT: usize = 40_000;
 pub struct FillShape {
     pub region: Region,
     pub lost: bool,
+}
+
+/// A fill of a copy of a block, in the world: the block's `index`th fill, placed with the copy.
+#[derive(Clone, Debug)]
+pub struct CopyFill {
+    pub instance: InstanceId,
+    pub index: usize,
+    pub fill: Fill,
+    pub region: Region,
 }
 
 /// How new fills look (the Fill tool's settings), and the editable part of a fill.
@@ -175,6 +185,61 @@ impl Editor {
         out
     }
 
+    /// The fills of every copy of a block (but the one being edited), in the world, as of
+    /// the current document revision. A fill whose area the block's curves no longer
+    /// enclose is left out.
+    pub fn copy_fills(&mut self) -> Rc<Vec<CopyFill>> {
+        let revision = self.doc.revision();
+        if let Some((r, fills)) = &self.copy_fills
+            && *r == revision
+        {
+            return fills.clone();
+        }
+        let editing = self.block_edit.map(|e| e.instance);
+        let mut out = Vec::new();
+        for (id, copy) in self.doc.instances() {
+            let Some(block) = self.doc.block(copy.block) else {
+                continue;
+            };
+            if Some(id) == editing || block.fills.is_empty() {
+                continue;
+            }
+            let shapes: Vec<Shape> = self
+                .doc
+                .instance_items(id)
+                .into_iter()
+                .map(|item| item.shape)
+                .collect();
+            let regions = drift_geom::regions::regions(&shapes);
+            for (index, f) in block.fills.iter().enumerate() {
+                let fill = copy.apply_fill(f);
+                if let Some(region) = region_at(&regions, fill.seed) {
+                    out.push(CopyFill {
+                        instance: id,
+                        index,
+                        region: region.clone(),
+                        fill,
+                    });
+                }
+            }
+        }
+        let out = Rc::new(out);
+        self.copy_fills = Some((revision, out.clone()));
+        out
+    }
+
+    /// The style of the topmost visible fill of a copy of a block under `p`.
+    pub fn instance_fill_style_at(&mut self, p: DVec2) -> Option<FillStyle> {
+        let fills = self.copy_fills();
+        fills
+            .iter()
+            .rev()
+            .find(|c| {
+                self.doc.layer(c.fill.layer).is_none_or(|l| l.visible) && c.region.contains(p)
+            })
+            .map(|c| FillStyle::of(&c.fill))
+    }
+
     /// Fills in draw order (bottom first): by layer, then each fill's order.
     pub fn fills_in_order(&self) -> Vec<FillId> {
         let layer_pos: HashMap<_, usize> = self
@@ -214,6 +279,19 @@ impl Editor {
                 .is_none_or(|l| l.visible);
             visible && shapes.get(id).is_some_and(|s| s.region.contains(p))
         })
+    }
+
+    /// The eyedropper: make the style of the fill under `p` the Fill tool's style.
+    pub fn pick_up_fill_style(&mut self, p: DVec2) -> Result<(), String> {
+        let style = self
+            .fill_at(p)
+            .and_then(|id| self.doc.fill(id))
+            .map(FillStyle::of)
+            .or_else(|| self.instance_fill_style_at(p))
+            .ok_or("No fill or hatch here to pick up")?;
+        self.fill_style = style;
+        self.fill_eyedropper = false;
+        Ok(())
     }
 
     /// The outer boundary curves of the region at `p`.
@@ -358,15 +436,22 @@ pub fn tessellate(region: &Region, max_angle: f64) -> Option<(Vec<DVec2>, Vec<u3
 /// A tessellated fill: world vertices and triangle indices.
 type Mesh = Rc<(Vec<DVec2>, Vec<u32>)>;
 
+/// Which fill a tessellation is of: a fill, or a copy's fill.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum MeshKey {
+    Fill(FillId),
+    Copy(InstanceId, usize),
+}
+
 /// Tessellations by fill, kept while the document doesn't change.
 #[derive(Default)]
 pub struct MeshCache {
     revision: u64,
-    meshes: HashMap<FillId, Mesh>,
+    meshes: HashMap<MeshKey, Mesh>,
 }
 
 impl MeshCache {
-    fn get(&mut self, revision: u64, id: FillId, region: &Region) -> Mesh {
+    fn get(&mut self, revision: u64, id: MeshKey, region: &Region) -> Mesh {
         if self.revision != revision {
             self.revision = revision;
             self.meshes.clear();
@@ -417,23 +502,38 @@ pub fn fill_graphics(
 ) -> FillGraphics {
     let mut out = FillGraphics::default();
     let shapes = ed.fill_shapes();
+    let copies = ed.copy_fills();
+    let order = ed.fills_in_order();
+    let ed = &*ed;
     let revision = ed.doc.revision();
     let draft_scale = ed.doc.draft_style().scale;
-    for id in ed.fills_in_order() {
-        let (Some(fill), Some(shape)) = (ed.doc.fill(id), shapes.get(&id)) else {
-            continue;
-        };
+    // The sketch's fills, then copies' fills over them.
+    let fills = order
+        .iter()
+        .filter_map(|id| {
+            Some((
+                MeshKey::Fill(*id),
+                ed.doc.fill(*id)?,
+                &shapes.get(id)?.region,
+            ))
+        })
+        .chain(
+            copies
+                .iter()
+                .map(|c| (MeshKey::Copy(c.instance, c.index), &c.fill, &c.region)),
+        );
+    for (id, fill, region) in fills {
         let layer = ed.doc.layer(fill.layer);
         if layer.is_some_and(|l| !l.visible) {
             continue;
         }
-        let bounds = region_bounds(&shape.region);
+        let bounds = region_bounds(region);
         if !bounds.intersects(&view) {
             continue;
         }
         let own = fill.color.or(layer.and_then(|l| l.fill_colour()));
         let mut tint = |color: Rgb, alpha: f64, out: &mut FillGraphics| {
-            let mesh = cache.get(revision, id, &shape.region);
+            let mesh = cache.get(revision, id, region);
             let [r, g, b] = color.0;
             out.meshes.push(FillMesh {
                 vertices: mesh.0.clone(),
@@ -469,7 +569,7 @@ pub fn fill_graphics(
                     origin: h.origin,
                 };
                 let hatching = drift_draft::hatch(
-                    &shape.region,
+                    region,
                     pattern,
                     &placement,
                     Some(view),

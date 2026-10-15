@@ -132,9 +132,32 @@ impl Editor {
         best.map(|(s, _)| s)
     }
 
-    /// Snap to the sketch and to underlays: the sketch wins ties, and a grid snap only
-    /// applies when neither has anything closer.
+    /// Snap to the sketch, to copies of blocks and to underlays: the sketch wins ties, and a
+    /// grid snap only applies when nothing else is closer.
     pub fn snap(
+        &self,
+        p: DVec2,
+        options: SnapOptions,
+        exclude: impl Fn(EntityId) -> bool,
+    ) -> Option<Snap> {
+        let snap = self.snap_sketch_and_underlays(p, options, exclude);
+        let Some(block) = self.block_snap(p, options.tolerance) else {
+            return snap;
+        };
+        match snap {
+            Some(s) if s.kind != SnapKind::Grid => {
+                let (ds, db) = (s.at.distance(p), block.at.distance(p));
+                if (block.kind.priority(), db) < (s.kind.priority(), ds) {
+                    Some(block)
+                } else {
+                    Some(s)
+                }
+            }
+            _ => Some(block),
+        }
+    }
+
+    fn snap_sketch_and_underlays(
         &self,
         p: DVec2,
         options: SnapOptions,

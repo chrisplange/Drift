@@ -1,12 +1,12 @@
 //! Blocks in the editor: picking and placing copies, making a block from the selection,
 //! exploding copies, editing a block in place, and a starter furniture library.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::f64::consts::{FRAC_PI_2, PI};
 
 use drift_core::{
-    Appearance, Block, BlockId, BlockItem, Bounds, DVec2, EntityId, GroupId, Instance, InstanceId,
-    LineKind, Shape,
+    Appearance, Block, BlockId, BlockItem, Bounds, DVec2, EntityId, Fill, FillId, GroupId,
+    Instance, InstanceId, LineKind, Shape,
 };
 
 use crate::editor::Editor;
@@ -30,6 +30,95 @@ impl Editor {
             b.include(s.max);
         }
         b
+    }
+
+    /// The nearest snap point of a copy of a block within `tol` of `p`: its box's corners,
+    /// edge middles and centre, its insertion point, and its curves' ends, middles and
+    /// centres.
+    pub fn block_snap(&self, p: DVec2, tol: f64) -> Option<drift_geom::Snap> {
+        use drift_geom::{Snap, SnapKind};
+        let editing = self.block_edit.map(|e| e.instance);
+        let mut best: Option<(Snap, f64)> = None;
+        let mut offer = |at: DVec2, kind: SnapKind| {
+            let d = at.distance(p);
+            if d <= tol
+                && best
+                    .as_ref()
+                    .is_none_or(|(b, bd)| (kind.priority(), d) < (b.kind.priority(), *bd))
+            {
+                best = Some((
+                    Snap {
+                        at,
+                        kind,
+                        entity: None,
+                    },
+                    d,
+                ));
+            }
+        };
+        for (id, copy) in self.doc.instances() {
+            if Some(id) == editing || !self.instance_visible(copy) {
+                continue;
+            }
+            let b = self.instance_bounds(id);
+            if b.is_empty()
+                || p.x < b.min.x - tol
+                || p.x > b.max.x + tol
+                || p.y < b.min.y - tol
+                || p.y > b.max.y + tol
+            {
+                continue;
+            }
+            // The box: corners, the middles of its sides, its centre.
+            let (lo, hi, c) = (b.min, b.max, b.center());
+            for corner in [lo, DVec2::new(hi.x, lo.y), hi, DVec2::new(lo.x, hi.y)] {
+                offer(corner, SnapKind::Endpoint);
+            }
+            for mid in [
+                DVec2::new(c.x, lo.y),
+                DVec2::new(hi.x, c.y),
+                DVec2::new(c.x, hi.y),
+                DVec2::new(lo.x, c.y),
+            ] {
+                offer(mid, SnapKind::Midpoint);
+            }
+            offer(c, SnapKind::Center);
+            offer(copy.at, SnapKind::Point);
+            // Its own geometry.
+            for item in self.doc.instance_items(id) {
+                match item.shape {
+                    Shape::Line { a, b } => {
+                        offer(a, SnapKind::Endpoint);
+                        offer(b, SnapKind::Endpoint);
+                        offer((a + b) * 0.5, SnapKind::Midpoint);
+                    }
+                    Shape::Arc {
+                        center,
+                        radius,
+                        start,
+                        sweep,
+                    } => {
+                        offer(center, SnapKind::Center);
+                        offer(
+                            center + DVec2::from_angle(start) * radius,
+                            SnapKind::Endpoint,
+                        );
+                        offer(
+                            center + DVec2::from_angle(start + sweep) * radius,
+                            SnapKind::Endpoint,
+                        );
+                    }
+                    Shape::Circle { center, .. } => offer(center, SnapKind::Center),
+                    Shape::Bezier { p: q } => {
+                        offer(q[0], SnapKind::Endpoint);
+                        offer(q[3], SnapKind::Endpoint);
+                    }
+                    Shape::Point(q) => offer(q, SnapKind::Point),
+                    _ => {}
+                }
+            }
+        }
+        best.map(|(s, _)| s)
     }
 
     fn instance_visible(&self, i: &Instance) -> bool {
@@ -143,8 +232,12 @@ impl Editor {
         let same_layer = ids
             .iter()
             .all(|id| self.doc.get(*id).is_some_and(|e| e.layer == layer));
+        let (fills, filled) = self.capture_fills(&ids.iter().copied().collect(), &place);
         self.doc.begin();
-        let block = self.doc.add_block(Block { name, items });
+        let block = self.doc.add_block(Block { name, items, fills });
+        for f in filled {
+            self.doc.remove_fill(f);
+        }
         self.doc.delete(ids);
         let id = self
             .doc
@@ -196,7 +289,9 @@ impl Editor {
             id
         };
         let mut created = Vec::new();
-        for item in self.doc.instance_items(id) {
+        let items = self.doc.instance_items(id);
+        let mut made_from = vec![None; items.len()];
+        for (k, item) in items.iter().enumerate() {
             let made = match item.shape {
                 Shape::Point(p) => Some(point(&mut self.doc, p)),
                 Shape::Line { a, b } => {
@@ -249,9 +344,86 @@ impl Editor {
                 self.doc.set_style(e, item.style);
                 let _ = self.doc.set_appearance(e, item.appearance);
                 created.push(e);
+                made_from[k] = Some(e);
             }
         }
+        self.add_copy_fills(id, &items, &made_from);
         created
+    }
+
+    /// Fill what a copy's fills fill, now that its curves are entities (`made_from[k]` is
+    /// the entity the copy's `k`th curve became).
+    fn add_copy_fills(
+        &mut self,
+        id: InstanceId,
+        items: &[BlockItem],
+        made_from: &[Option<EntityId>],
+    ) {
+        let Some(copy) = self.doc.instance(id).copied() else {
+            return;
+        };
+        let fills = self
+            .doc
+            .block(copy.block)
+            .map(|b| b.fills.clone())
+            .unwrap_or_default();
+        if fills.is_empty() {
+            return;
+        }
+        let shapes: Vec<Shape> = items.iter().map(|item| item.shape).collect();
+        let regions = drift_geom::regions::regions(&shapes);
+        for f in &fills {
+            let mut fill = copy.apply_fill(f);
+            let Some(region) = drift_geom::regions::region_at(&regions, fill.seed) else {
+                continue;
+            };
+            let mut boundary: Vec<EntityId> = region
+                .outer
+                .curves()
+                .into_iter()
+                .filter_map(|i| made_from.get(i).copied().flatten())
+                .collect();
+            boundary.sort_unstable();
+            boundary.dedup();
+            if boundary.is_empty() {
+                continue;
+            }
+            fill.boundary = boundary;
+            let fid = self.doc.add_fill(fill.clone());
+            // On the copy's layer, over what is there.
+            if let Some(mut added) = self.doc.fill(fid).cloned() {
+                added.layer = copy.layer;
+                self.doc.set_fill(fid, added);
+            }
+        }
+    }
+
+    /// The fills of areas that `curves` enclose (each whose outline is all among them), in
+    /// block coordinates for a copy placed as `place`, bottom first; and those fills.
+    fn capture_fills(
+        &mut self,
+        curves: &BTreeSet<EntityId>,
+        place: &Instance,
+    ) -> (Vec<Fill>, Vec<FillId>) {
+        let shapes = self.fill_shapes();
+        let mut fills = Vec::new();
+        let mut ids = Vec::new();
+        for id in self.fills_in_order() {
+            let (Some(fill), Some(shape)) = (self.doc.fill(id), shapes.get(&id)) else {
+                continue;
+            };
+            if shape.lost
+                || fill.boundary.is_empty()
+                || !fill.boundary.iter().all(|e| curves.contains(e))
+            {
+                continue;
+            }
+            let mut f = fill.clone();
+            f.seed = crate::editor::interior_point(&shape.region, fill.seed);
+            fills.push(place.invert_fill(&f));
+            ids.push(id);
+        }
+        (fills, ids)
     }
 
     /// Replace the picked copies with ordinary geometry (picked afterwards).
@@ -341,8 +513,13 @@ impl Editor {
                 })
             })
             .collect();
+        let (fills, filled) = self.capture_fills(&group.members, &copy);
+        block.fills = fills;
         self.doc.begin();
         self.doc.set_block(edit.block, block);
+        for f in filled {
+            self.doc.remove_fill(f);
+        }
         self.doc.delete(group.members.iter().copied());
         self.doc.remove_group(edit.group);
         self.commit("Finish editing block");
@@ -562,6 +739,7 @@ pub fn starter_blocks() -> Vec<Block> {
     .map(|(name, items)| Block {
         name: name.into(),
         items,
+        fills: Vec::new(),
     })
     .collect()
 }
@@ -636,6 +814,60 @@ mod tests {
         );
         ed.undo();
         assert_eq!(ed.doc.instances().count(), 2);
+    }
+
+    #[test]
+    fn blocks_keep_their_fills() {
+        use drift_core::FillKind;
+        let (mut ed, lines) = square();
+        if let FillKind::Hatch(h) = &mut ed.fill_style.kind {
+            h.angle = 30.0;
+        }
+        ed.add_fill_at(DVec2::new(100.0, 100.0)).unwrap();
+        ed.selected_fills.clear();
+        ed.selection = lines;
+        let copy = ed.make_block("Rug").unwrap();
+        // The hatch went into the block, about its base point.
+        assert_eq!(ed.doc.fills().count(), 0);
+        let b = ed.doc.instance(copy).unwrap().block;
+        let kept = ed.doc.block(b).unwrap().fills.clone();
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].seed, DVec2::new(-100.0, -100.0));
+        // Each copy hatches its own square, the pattern turned with it.
+        ed.place_instance(b, DVec2::new(1000.0, 0.0), 90.0, false);
+        let fills = ed.copy_fills();
+        assert_eq!(fills.len(), 2);
+        assert!(
+            fills
+                .iter()
+                .all(|c| (c.region.area - 160_000.0).abs() < 1e-6)
+        );
+        let turned = fills.iter().find(|c| c.instance != copy).unwrap();
+        let FillKind::Hatch(h) = &turned.fill.kind else {
+            panic!("a hatch");
+        };
+        assert!((h.angle - 120.0).abs() < 1e-9, "{}", h.angle);
+        // The eyedropper picks up a copy's hatch as it shows.
+        ed.fill_style.kind = FillKind::Solid;
+        ed.pick_up_fill_style(DVec2::new(1000.0, 10.0)).unwrap();
+        assert!(
+            matches!(&ed.fill_style.kind, FillKind::Hatch(h) if (h.angle - 120.0).abs() < 1e-9)
+        );
+        // Exploding a copy hatches the area of its new curves.
+        let turned = turned.instance;
+        ed.selected_instances = [copy].into();
+        ed.explode_selected();
+        let (exploded, f) = ed.doc.fills().next().unwrap();
+        assert_eq!(f.boundary.len(), 4);
+        assert!(!ed.fill_shapes()[&exploded].lost);
+        // Editing in place: the copy's hatch is an ordinary one until editing finishes.
+        ed.edit_block(turned);
+        assert_eq!(ed.doc.fills().count(), 2);
+        assert!(ed.copy_fills().is_empty(), "the copy being edited");
+        ed.finish_block_edit();
+        assert_eq!(ed.doc.fills().count(), 1);
+        assert_eq!(ed.doc.block(b).unwrap().fills.len(), 1);
+        assert_eq!(ed.copy_fills().len(), 1);
     }
 
     #[test]

@@ -51,7 +51,11 @@ fn caption(ui: &mut egui::Ui, text: &str) {
 }
 
 /// A segmented choice sized to its labels (for the bar, where the full width isn't ours).
-fn choice<T: Copy + PartialEq>(ui: &mut egui::Ui, current: T, options: &[(T, &str)]) -> Option<T> {
+pub(super) fn choice<T: Copy + PartialEq>(
+    ui: &mut egui::Ui,
+    current: T,
+    options: &[(T, &str)],
+) -> Option<T> {
     let font = egui::FontId::proportional(12.0);
     let width: f32 = options
         .iter()
@@ -533,6 +537,18 @@ impl DriftApp {
     /// Options for the active tool.
     fn tool_options(&mut self, ui: &mut egui::Ui, kind: ToolKind, now: f64) {
         let units = self.editor.doc.units();
+        // What a drawing tool draws: geometry, or construction guides.
+        if kind.draws_curves() {
+            if let Some(c) = choice(
+                ui,
+                self.editor.draw_construction,
+                &[(false, "Geometry"), (true, "Construction")],
+            ) {
+                self.editor.draw_construction = c;
+            }
+            caption(ui, "Alt+C");
+            divider(ui);
+        }
         match kind {
             ToolKind::Select => self.selection_actions(ui, now),
             ToolKind::Circle | ToolKind::Ellipse | ToolKind::EllipseArc => {
@@ -632,6 +648,7 @@ impl DriftApp {
                     self.editor.text_height = shown * unit;
                 }
             }
+            ToolKind::Fill => self.fill_tool_bar(ui),
             ToolKind::Pen => {
                 ui.checkbox(&mut self.show_combs, "Curvature combs");
                 caption(
@@ -733,7 +750,7 @@ impl DriftApp {
             && bar_button(
                 ui,
                 "Construction",
-                "X",
+                "Alt+C",
                 "Toggle construction geometry (guides that don't print)",
             )
         {
@@ -934,6 +951,17 @@ impl DriftApp {
             ui.close();
             self.switch_tool(ToolKind::Mirror);
         }
+        let (on_relations, on_dims) = self.editor.selection_constraints();
+        if !on_relations.is_empty()
+            && item(ui, &format!("Clear relations ({})", on_relations.len()), "")
+        {
+            ui.close();
+            self.clear_selection_constraints(false, now);
+        }
+        if !on_dims.is_empty() && item(ui, &format!("Clear dimensions ({})", on_dims.len()), "") {
+            ui.close();
+            self.clear_selection_constraints(true, now);
+        }
         // Relations and dimensions that fit the selection.
         let relations = self.editor.relation_options();
         let dimensions = self.editor.dimension_options();
@@ -995,7 +1023,7 @@ impl DriftApp {
                     self.set_status(format!("{label}: {e}"), true, now);
                 }
             }
-            if item(ui, "Toggle construction", "X") {
+            if item(ui, "Toggle construction", "Alt+C") {
                 self.editor.toggle_construction();
                 ui.close();
             }

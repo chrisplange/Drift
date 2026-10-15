@@ -64,6 +64,7 @@ impl DriftApp {
             was.pick_filter,
             was.dim_mode,
             was.dim_overall,
+            was.draw_construction,
         );
         self.editor = Editor::new(doc);
         let ed = &mut self.editor;
@@ -73,6 +74,7 @@ impl DriftApp {
             ed.pick_filter,
             ed.dim_mode,
             ed.dim_overall,
+            ed.draw_construction,
         ) = kept;
         self.fit_target = Some(self.fit_bounds());
         self.file = FileState {
@@ -99,6 +101,7 @@ impl DriftApp {
             ("hidden", self.show_hidden_annotations),
             ("rlayer", self.editor.regions_by_layer),
             ("rfill", self.editor.regions_need_fill),
+            ("tdims", self.show_temp_dims),
         ];
         let mut prefs: Vec<String> = flags
             .iter()
@@ -153,6 +156,7 @@ impl DriftApp {
                 "hidden" => self.show_hidden_annotations = on,
                 "rlayer" => self.editor.regions_by_layer = on,
                 "rfill" => self.editor.regions_need_fill = on,
+                "tdims" => self.show_temp_dims = on,
                 _ => {}
             }
         }

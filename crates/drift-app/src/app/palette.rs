@@ -31,6 +31,8 @@ pub(crate) enum Command {
     CheckSketch,
     HideAnnotations,
     AnnotationsOffSheets,
+    ClearRelations,
+    ClearDimensions,
     PickFilter(crate::editor::PickFilter),
     Cut,
     Copy,
@@ -247,6 +249,23 @@ impl DriftApp {
             "Edit",
             String::new(),
         );
+        let (on_relations, on_dims) = self.editor.selection_constraints();
+        if !on_relations.is_empty() {
+            add(
+                Command::ClearRelations,
+                &format!("Clear relations on the selection ({})", on_relations.len()),
+                "Edit",
+                String::new(),
+            );
+        }
+        if !on_dims.is_empty() {
+            add(
+                Command::ClearDimensions,
+                &format!("Clear dimensions on the selection ({})", on_dims.len()),
+                "Edit",
+                String::new(),
+            );
+        }
         for (f, title) in [
             (crate::editor::PickFilter::Edges, "Select edges only"),
             (crate::editor::PickFilter::Points, "Select points only"),
@@ -295,7 +314,7 @@ impl DriftApp {
             Command::Construction,
             "Toggle construction",
             "Edit",
-            "X".into(),
+            "Alt+C".into(),
         );
         add(Command::ZoomToFit, "Zoom to fit", "View", "Shift+F".into());
         add(
@@ -453,6 +472,8 @@ impl DriftApp {
                 }
                 self.set_pick_filter(f);
             }
+            Command::ClearRelations => self.clear_selection_constraints(false, now),
+            Command::ClearDimensions => self.clear_selection_constraints(true, now),
             Command::HideAnnotations => {
                 let refs = self.picked_annotations();
                 self.set_annotations_shown(&refs, Some(false), None, now);

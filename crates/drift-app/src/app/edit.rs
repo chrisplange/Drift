@@ -3,6 +3,49 @@
 use crate::*;
 
 impl DriftApp {
+    /// Alt+C: a drawing tool's line type (geometry or construction), or else the picked
+    /// curves'.
+    pub(crate) fn toggle_construction(&mut self, now: f64) {
+        if self.tool.kind().draws_curves() {
+            let on = !self.editor.draw_construction;
+            self.editor.draw_construction = on;
+            let text = if on {
+                "Drawing construction geometry · Alt+C for geometry"
+            } else {
+                "Drawing geometry · Alt+C for construction"
+            };
+            self.set_status(text.into(), false, now);
+        } else {
+            self.editor.toggle_construction();
+        }
+    }
+
+    /// Clear the relations (or, with `dimensions`, the dimensions) on the selection, as one
+    /// undo step, and say what went.
+    pub(crate) fn clear_selection_constraints(&mut self, dimensions: bool, now: f64) {
+        let (relations, dims) = self.editor.selection_constraints();
+        let ids = if dimensions { dims } else { relations };
+        if ids.is_empty() {
+            return;
+        }
+        let what = crate::constraint_summary(&self.editor.doc, &ids);
+        let (label, kind) = if dimensions {
+            ("Clear dimensions", "dimension")
+        } else {
+            ("Clear relations", "relation")
+        };
+        let n = self.editor.clear_constraints(&ids, label);
+        if n > 0 {
+            self.selected_constraint = None;
+            let plural = if n == 1 { "" } else { "s" };
+            self.set_status(
+                format!("Removed {n} {kind}{plural} ({what}) · Ctrl+Z to undo"),
+                false,
+                now,
+            );
+        }
+    }
+
     /// Copy the selection to the clipboard (and remember it, for Edit → Paste).
     pub(crate) fn copy(&mut self, ctx: &egui::Context) {
         let now = ctx.input(|i| i.time);

@@ -6,7 +6,7 @@
 //! ```json
 //! {
 //!   "format": "drift",
-//!   "version": 21,
+//!   "version": 22,
 //!   "meta": {"title":"Bracket","units":"mm","generator":"Drift 0.1.0"},
 //!   "display": {"length":"architectural","fraction":16},
 //!   "variables": [
@@ -72,8 +72,8 @@ pub const EXTENSION: &str = "drift";
 /// (M9); 16 = adds the `modern` title block; 17 = adds sheet flags; 18 = adds a sheet's
 /// `views`; 19 = adds `fonts` and a text's `align`, `spacing` and `wrap`; 20 = adds the
 /// drafting style's `color`; 21 = adds `shown` (where dimensions and annotations show) and a
-/// dimension's `below` and `text`.
-pub const FORMAT_VERSION: u32 = 21;
+/// dimension's `below` and `text`; 22 = adds a block's `fills`.
+pub const FORMAT_VERSION: u32 = 22;
 const FORMAT_TAG: &str = "drift";
 
 /// Document-level properties stored alongside the geometry.
@@ -1615,7 +1615,7 @@ pub fn migrate(value: serde_json::Value) -> Result<serde_json::Value, LoadError>
         // v1 → v2: constraints were introduced; a v1 file simply has none.
         value["constraints"] = serde_json::Value::Array(Vec::new());
     }
-    // v2 → v21 only added optional fields, sections and constraint types: nothing to convert
+    // v2 → v22 only added optional fields, sections and constraint types: nothing to convert
     // (a sheet's single view from before v18 is read as it was written).
     value["version"] = FORMAT_VERSION.into();
     Ok(value)
@@ -1659,7 +1659,7 @@ mod tests {
         let text = save(&doc, &Metadata::default());
         let expected = r#"{
   "format": "drift",
-  "version": 21,
+  "version": 22,
   "meta": {"units":"mm"},
   "entities": [
     {"type":"point","id":"e1","at":[0.0,0.0]},
@@ -2182,6 +2182,15 @@ mod tests {
         doc.add_sheet(detail);
         let chair = doc.add_block(drift_core::Block {
             name: "Chair".into(),
+            fills: vec![drift_core::Fill::new(
+                Vec::new(),
+                DVec2::new(0.0, 50.0),
+                drift_core::FillKind::Hatch(drift_core::Hatch {
+                    angle: 30.0,
+                    origin: DVec2::new(5.0, 0.0),
+                    ..drift_core::Hatch::new("AR-BRSTD")
+                }),
+            )],
             items: vec![
                 drift_core::BlockItem {
                     shape: drift_core::Shape::Line {
@@ -2288,7 +2297,7 @@ mod tests {
         doc.add_text(drift_core::SketchText::new("A", DVec2::ZERO, 3.0));
 
         let text = save(&doc, &Metadata::default());
-        assert!(text.contains("\"version\": 21"));
+        assert!(text.contains("\"version\": 22"));
         assert!(
             text.contains(r#"{"a":[80.0,20.0,30.0,0.0,90.0]}"#),
             "{text}"

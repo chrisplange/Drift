@@ -213,7 +213,7 @@ fn line_points(doc: &Document, line: EntityId) -> Option<(DVec2, DVec2)> {
 }
 
 /// Foot of the perpendicular from `q` onto the (infinite) line.
-fn foot(doc: &Document, q: DVec2, line: EntityId) -> Option<DVec2> {
+pub(crate) fn foot(doc: &Document, q: DVec2, line: EntityId) -> Option<DVec2> {
     let (a, b) = line_points(doc, line)?;
     let d = b - a;
     let len2 = d.length_squared();

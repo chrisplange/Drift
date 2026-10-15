@@ -26,6 +26,7 @@ mod parameters;
 #[cfg(test)]
 mod perf_tests;
 mod soak;
+pub mod temp_dims;
 pub mod texts;
 mod theme;
 pub mod tools;
@@ -304,6 +305,9 @@ pub struct DriftApp {
     import_report: Option<app::sheets_ui::ImportSummary>,
     /// Dimensions and annotations hidden on the canvas are drawn (faded) and can be picked.
     show_hidden_annotations: bool,
+    /// Temporary dimensions show on a picked curve (a preference), and those showing.
+    show_temp_dims: bool,
+    temp_dims: app::temp_dims_ui::TempDims,
     /// Dimensions and annotations picked with Shift as well as the picked one.
     annotation_picks: Vec<drift_core::AnnotationRef>,
     /// The Check sketch window, while it is open.
@@ -451,6 +455,8 @@ impl DriftApp {
             import_report: None,
             sketch_check: None,
             show_hidden_annotations: false,
+            show_temp_dims: true,
+            temp_dims: Default::default(),
             annotation_picks: Vec::new(),
             gap_tolerance: crate::checker::DEFAULT_TOLERANCE,
             new_block_name: String::new(),
@@ -527,6 +533,23 @@ pub fn run_benchmark() -> Vec<String> {
 }
 
 /// A readable name for a constraint: a distance between a line's end points is its length.
+/// What a set of constraints is, by kind: "3 horizontal, 2 parallel, 1 fix".
+fn constraint_summary(doc: &Document, ids: &[ConstraintId]) -> String {
+    let mut counts: Vec<(&'static str, usize)> = Vec::new();
+    for c in ids.iter().filter_map(|id| doc.constraint(*id)) {
+        let name = constraint_label(doc, c);
+        match counts.iter_mut().find(|(n, _)| *n == name) {
+            Some((_, k)) => *k += 1,
+            None => counts.push((name, 1)),
+        }
+    }
+    counts
+        .iter()
+        .map(|(n, k)| format!("{k} {}", n.to_lowercase()))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 fn constraint_label(doc: &Document, c: &Constraint) -> &'static str {
     if let Constraint::Distance { a, b, .. } = c {
         let is_line = doc.iter().any(|(_, e)| {
@@ -669,7 +692,10 @@ const SHORTCUTS: &[(&str, &[(&str, &str)])] = &[
                 "Nudge the selection one grid step; ten with Shift",
             ),
             ("Double-click text", "Type into it in place"),
-            ("X", "Toggle construction"),
+            (
+                "Alt+C",
+                "Toggle construction (with a drawing tool: draw construction geometry)",
+            ),
             (
                 "Ctrl+G / Ctrl+Shift+G",
                 "Group / ungroup; double-click a group to enter it",

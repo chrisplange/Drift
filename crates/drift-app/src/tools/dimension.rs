@@ -14,15 +14,32 @@ pub(super) enum DimBase {
     PointLine(EntityId, EntityId),
 }
 
-/// A row of horizontal or vertical dimensions continuing from the last one placed: chained
-/// end to end, or all from the same base point (baseline), each a step further out.
+/// What a row of dimensions goes from and to: a point (or a line's midpoint), or a line
+/// (measured square to it).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum Link {
+    Point(EntityId),
+    Line(EntityId),
+}
+
+/// How a row's dimensions run.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum Way {
+    /// Horizontal (or vertical) distances between points; `line` is the label line's
+    /// coordinate across them (y for horizontal ones).
+    Axis { horizontal: bool, line: f64 },
+    /// Distances square to parallel lines (walls), `dir` along them; the labels stand
+    /// abreast of `at`.
+    Square { dir: DVec2, at: DVec2 },
+}
+
+/// A row of dimensions continuing from the last one placed: chained end to end, or all
+/// from the same base (baseline), each a step further out.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct Run {
-    base: EntityId,
-    last: EntityId,
-    horizontal: bool,
-    /// The label line's coordinate across the dimensions (y for horizontal ones).
-    line: f64,
+    base: Link,
+    last: Link,
+    way: Way,
     baseline: bool,
     count: u32,
 }
@@ -47,6 +64,44 @@ pub struct DimensionTool {
 /// Lines within this of parallel are dimensioned by the distance between them: lines drawn
 /// by eye as parallel, without a relation, are rarely exact.
 const PARALLEL_DEGREES: f64 = 1.0;
+
+/// How far apart two links of a row are: between points, or from a point to a line.
+fn link_distance(ed: &Editor, a: Link, b: Link) -> Option<f64> {
+    let at = |l: Link| match l {
+        Link::Point(p) => ed.doc.ref_point(p),
+        Link::Line(l) => line_start(ed, l).and_then(|p| ed.doc.ref_point(p)),
+    };
+    match (a, b) {
+        (Link::Line(l), other) | (other, Link::Line(l)) => {
+            let p = at(other)?;
+            Some(p.distance(crate::annotations::foot(&ed.doc, p, l)?))
+        }
+        (Link::Point(_), Link::Point(_)) => Some(at(a)?.distance(at(b)?)),
+    }
+}
+
+fn is_line(ed: &Editor, id: EntityId) -> bool {
+    matches!(
+        ed.doc.get(id).map(|e| e.kind),
+        Some(EntityKind::Line { .. })
+    )
+}
+
+/// A line's direction (unit).
+fn line_dir(ed: &Editor, l: EntityId) -> Option<DVec2> {
+    match ed.doc.shape(l)? {
+        Shape::Line { a, b } => (b - a).try_normalize(),
+        _ => None,
+    }
+}
+
+/// The point a line starts at.
+fn line_start(ed: &Editor, l: EntityId) -> Option<EntityId> {
+    match ed.doc.get(l)?.kind {
+        EntityKind::Line { a, .. } => Some(a),
+        _ => None,
+    }
+}
 
 /// Whether two lines are parallel, or nearly.
 fn alongside(ed: &Editor, l1: EntityId, l2: EntityId) -> bool {
@@ -153,24 +208,51 @@ impl DimensionTool {
         match ed.add_dimension(c, offset) {
             Ok(id) => {
                 ed.pending_edit = Some(id);
-                // Horizontal and vertical dimensions can continue as a chain or baseline row.
+                // Horizontal and vertical dimensions, and those square to a line (between
+                // walls), can continue as a chain or baseline row.
+                let baseline = ed.dim_mode == crate::editor::DimMode::Baseline;
+                let run = |base, last, way| Run {
+                    base,
+                    last,
+                    way,
+                    baseline,
+                    count: 1,
+                };
                 self.run = match c {
-                    Constraint::HorizontalDistance { a, b, .. } => Some(Run {
-                        base: a,
-                        last: b,
-                        horizontal: true,
-                        line: at.y,
-                        baseline: ed.dim_mode == crate::editor::DimMode::Baseline,
-                        count: 1,
-                    }),
-                    Constraint::VerticalDistance { a, b, .. } => Some(Run {
-                        base: a,
-                        last: b,
-                        horizontal: false,
-                        line: at.x,
-                        baseline: ed.dim_mode == crate::editor::DimMode::Baseline,
-                        count: 1,
-                    }),
+                    Constraint::HorizontalDistance { a, b, .. } => Some(run(
+                        Link::Point(a),
+                        Link::Point(b),
+                        Way::Axis {
+                            horizontal: true,
+                            line: at.y,
+                        },
+                    )),
+                    Constraint::VerticalDistance { a, b, .. } => Some(run(
+                        Link::Point(a),
+                        Link::Point(b),
+                        Way::Axis {
+                            horizontal: false,
+                            line: at.x,
+                        },
+                    )),
+                    Constraint::PointLineDistance { point, line, .. } => {
+                        line_dir(ed, line).map(|dir| {
+                            // Between two walls: the row goes from the first wall (the line
+                            // the point is the end of, alongside the second).
+                            let from = if is_line(ed, point) && alongside(ed, point, line) {
+                                // A wall picked at its midpoint is the wall.
+                                Link::Line(point)
+                            } else {
+                                ed.doc
+                                    .users_of(point)
+                                    .find(|l| {
+                                        *l != line && is_line(ed, *l) && alongside(ed, *l, line)
+                                    })
+                                    .map_or(Link::Point(point), Link::Line)
+                            };
+                            run(from, Link::Line(line), Way::Square { dir, at })
+                        })
+                    }
                     _ => None,
                 };
             }
@@ -178,58 +260,109 @@ impl DimensionTool {
         }
     }
 
-    /// The next dimension of a run, to point `q`, and where its label goes.
-    fn run_dimension(
+    /// The dimension of a row from `from` to `to`, and where its label goes: `out` steps
+    /// further from the geometry (a baseline row's later ones, or an overall).
+    fn link_dimension(
         ed: &Editor,
         run: &Run,
-        q: EntityId,
-        step: f64,
+        from: Link,
+        to: Link,
+        out: f64,
     ) -> Option<(Constraint, DVec2)> {
-        let from = if run.baseline { run.base } else { run.last };
-        if from == q {
+        if from == to {
             return None;
         }
-        let (pf, pq) = (ed.doc.ref_point(from)?, ed.doc.ref_point(q)?);
-        let pb = ed.doc.ref_point(run.base)?;
-        // Baseline rows step away from the geometry.
-        let across = if run.horizontal { pb.y } else { pb.x };
-        let away = if run.line >= across { 1.0 } else { -1.0 };
-        let line = if run.baseline {
-            run.line + away * step * f64::from(run.count)
-        } else {
-            run.line
-        };
-        let mid = (pf + pq) * 0.5;
-        let (c, at) = if run.horizontal {
-            (
-                Constraint::HorizontalDistance {
-                    a: from,
-                    b: q,
-                    value: 0.0,
-                },
-                DVec2::new(mid.x, line),
-            )
-        } else {
-            (
-                Constraint::VerticalDistance {
-                    a: from,
-                    b: q,
-                    value: 0.0,
-                },
-                DVec2::new(line, mid.y),
-            )
+        let (c, at) = match run.way {
+            Way::Axis { horizontal, line } => {
+                let (Link::Point(f), Link::Point(q)) = (from, to) else {
+                    return None;
+                };
+                let (pf, pq) = (ed.doc.ref_point(f)?, ed.doc.ref_point(q)?);
+                let base = match run.base {
+                    Link::Point(b) => ed.doc.ref_point(b)?,
+                    Link::Line(_) => pf,
+                };
+                // Rows step away from the geometry.
+                let across = if horizontal { base.y } else { base.x };
+                let away = if line >= across { 1.0 } else { -1.0 };
+                let line = line + away * out;
+                let mid = (pf + pq) * 0.5;
+                if horizontal {
+                    (
+                        Constraint::HorizontalDistance {
+                            a: f,
+                            b: q,
+                            value: 0.0,
+                        },
+                        DVec2::new(mid.x, line),
+                    )
+                } else {
+                    (
+                        Constraint::VerticalDistance {
+                            a: f,
+                            b: q,
+                            value: 0.0,
+                        },
+                        DVec2::new(line, mid.y),
+                    )
+                }
+            }
+            Way::Square { dir, at } => {
+                // Square to the lines: a point (or a line's start) to a line.
+                let (point, line) = match (from, to) {
+                    (Link::Line(lf), Link::Line(lq)) if alongside(ed, lf, lq) => {
+                        (line_start(ed, lf)?, lq)
+                    }
+                    (Link::Line(lf), Link::Point(q)) => (q, lf),
+                    (Link::Point(f), Link::Line(lq)) => (f, lq),
+                    _ => return None,
+                };
+                let p = ed.doc.ref_point(point)?;
+                let foot = crate::annotations::foot(&ed.doc, p, line)?;
+                let mid = (p + foot) * 0.5;
+                // Abreast of where the row was placed, further along the lines for `out`.
+                let along = (at - mid).dot(dir);
+                let away = if along >= 0.0 { 1.0 } else { -1.0 };
+                (
+                    Constraint::PointLineDistance {
+                        point,
+                        line,
+                        value: 0.0,
+                    },
+                    mid + dir * (along + away * out),
+                )
+            }
         };
         let c = c.with_value(drift_solver::measure(&ed.doc, &c)?);
         Some((c, at))
     }
 
-    /// Continue the run to point `q`. Dimensions that would over-define the sketch are added
-    /// as driven (reference) dimensions.
-    fn extend_run(&mut self, ed: &mut Editor, q: EntityId, step: f64) -> bool {
+    /// The next dimension of a run, to `q`, and where its label goes, and whether it goes
+    /// on from the row's first end (a chain goes on from whichever end `q` is nearer).
+    fn run_dimension(
+        ed: &Editor,
+        run: &Run,
+        q: Link,
+        step: f64,
+    ) -> Option<(Constraint, DVec2, bool)> {
+        if run.baseline {
+            let (c, at) = Self::link_dimension(ed, run, run.base, q, step * f64::from(run.count))?;
+            return Some((c, at, false));
+        }
+        let near = |l: Link| link_distance(ed, l, q).unwrap_or(f64::INFINITY);
+        let from_base = run.count > 0 && near(run.base) < near(run.last);
+        let from = if from_base { run.base } else { run.last };
+        let (c, at) = Self::link_dimension(ed, run, from, q, 0.0)?;
+        Some((c, at, from_base))
+    }
+
+    /// Continue the run to `q`. Dimensions that would over-define the sketch are added as
+    /// driven (reference) dimensions.
+    fn extend_run(&mut self, ed: &mut Editor, q: Link, step: f64) -> bool {
         let Some(mut run) = self.run else {
             return false;
         };
-        let Some((c, at)) = Self::run_dimension(ed, &run, q, step) else {
+        let Some((c, at, from_base)) = Self::run_dimension(ed, &run, q, step) else {
             return false;
         };
         let offset = crate::annotations::dimension_anchor(&ed.doc, &c)
@@ -248,7 +381,11 @@ impl DimensionTool {
         if added.is_none() {
             return false;
         }
-        run.last = q;
+        if from_base {
+            run.base = q;
+        } else {
+            run.last = q;
+        }
         run.count += 1;
         self.run = Some(run);
         true
@@ -275,40 +412,35 @@ impl DimensionTool {
         {
             return;
         }
-        let (Some(pb), Some(pl)) = (ed.doc.ref_point(run.base), ed.doc.ref_point(run.last)) else {
+        let Some((c, at)) = Self::link_dimension(ed, &run, run.base, run.last, step) else {
             return;
         };
-        let across = if run.horizontal { pb.y } else { pb.x };
-        let away = if run.line >= across { 1.0 } else { -1.0 };
-        let line = run.line + away * step;
-        let mid = (pb + pl) * 0.5;
-        let (c, at) = if run.horizontal {
-            (
-                Constraint::HorizontalDistance {
-                    a: run.base,
-                    b: run.last,
-                    value: 0.0,
-                },
-                DVec2::new(mid.x, line),
-            )
-        } else {
-            (
-                Constraint::VerticalDistance {
-                    a: run.base,
-                    b: run.last,
-                    value: 0.0,
-                },
-                DVec2::new(line, mid.y),
-            )
-        };
-        let Some(value) = drift_solver::measure(&ed.doc, &c) else {
-            return;
-        };
-        let c = c.with_value(value);
         let offset = crate::annotations::dimension_anchor(&ed.doc, &c)
             .map(|anchor| crate::annotations::centred_offset(&ed.doc, &c, at - anchor));
         if let Err(e) = ed.add_driven_dimension(c, offset) {
             ed.notice = Some(format!("Overall: {e}"));
+        }
+    }
+
+    /// What a pick adds to a row: for a row between points, a point or midpoint, or a line's
+    /// end nearer `at`; for a row square to lines, a line alongside them, or a point.
+    fn run_link(ed: &Editor, run: &Run, t: Target, at: DVec2) -> Option<Link> {
+        match run.way {
+            Way::Axis { .. } => Self::run_point(ed, t, at).map(Link::Point),
+            Way::Square { .. } => match t {
+                Target::Entity(id) | Target::Midpoint(id) if is_line(ed, id) => {
+                    let (Link::Line(last) | Link::Point(last)) = run.last;
+                    let parallel = match run.last {
+                        Link::Line(l) => alongside(ed, l, id),
+                        Link::Point(_) => match run.base {
+                            Link::Line(b) => alongside(ed, b, id),
+                            Link::Point(_) => true,
+                        },
+                    };
+                    (parallel && id != last).then_some(Link::Line(id))
+                }
+                _ => t.point_ref(ed).map(Link::Point),
+            },
         }
     }
 
@@ -406,7 +538,8 @@ impl Tool for DimensionTool {
                 self.continuous = ed.dim_mode != crate::editor::DimMode::Single;
                 if self.run.is_some() && self.first.is_none() && self.base.is_none() {
                     if (mods.shift || self.continuous)
-                        && let Some(q) = picked.and_then(|t| Self::run_point(ed, t, p.raw))
+                        && let Some(run) = self.run
+                        && let Some(q) = picked.and_then(|t| Self::run_link(ed, &run, t, p.raw))
                         && self.extend_run(ed, q, step)
                     {
                         return;

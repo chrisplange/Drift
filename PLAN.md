@@ -1051,7 +1051,7 @@ written but hasn't run yet (no GitHub repo).*
   - The canvas shows the page exactly as it prints.
   - Scroll zooms and middle / right drag pans. Dragging moves the drawing within the sheet,
     as one undo step.
-  - F refits and Esc returns to the model.
+  - Shift+F refits and Esc returns to the model.
 - **Output pipeline:**
   - `drift-draft::page` is a display list in millimetres (y up): lines, polylines, true arcs
     and circles, fills (rings and triangles, plus masks behind text) and Helvetica-metric text.
@@ -1232,8 +1232,9 @@ written but hasn't run yet (no GitHub repo).*
     four freedoms (centre, size, turn).
   - Rotation sticks to 15° steps within 2°, and a level or plumb side gets Horizontal /
     Vertical.
-  - A typed size is the circle's diameter (inscribed) or the centre-to-side distance
-    (circumscribed, i.e. half across flats).
+  - A typed size is the circle's radius (inscribed) or the centre-to-side distance
+    (circumscribed, i.e. half across flats). It is kept as the circle's diameter
+    dimension, or a centre-to-side distance.
   - Tangent-sided polygons were rejected: an even-sided one can collapse into a rhombus.
 - **Slot (U; U again cycles straight → centre → arc):**
   - Straight: two end centres, then the width. Centre: the middle, then an end centre.
@@ -1602,8 +1603,8 @@ zooms to fit; F is Fillet (again for Chamfer).
     Windows clipboard path, and the unsaved-changes prompt on closing.
   - The tool list is taller than the window at about 800 px of height (it scrolls). With
     two more annotation tools it may want grouping or fly-outs.
-  - Files are format v18. Each bump (v17, v18) locks out older builds, which matters once
-    testers hold different versions.
+  - Files were format v18 then (v22 as of 0.1.0-alpha.3). Each bump locks out older
+    builds, which matters once testers hold different versions.
 - **Workspace notes, round 1 (done).**
   - Two lines that run alongside each other (within 1 degree of parallel) dimension by the
     distance between them; before, any two lines gave an angle, which for parallel lines
@@ -1649,8 +1650,10 @@ zooms to fit; F is Fillet (again for Chamfer).
     drawn on a layout itself (title blocks, notes); text inside blocks moving with the
     block; wrapping MTEXT to its width; text styles and fonts; MLEADER, TOLERANCE, images,
     3D solids, tables; solid fills of SOLID / TRACE (read as outlines); binary DXF. Export
-    is still R12: text, layers, blocks and curves go out, but hatches as solid triangles
-    and no dimensions, layouts or splines as such.
+    is still R12 (AC1009): text, layers, blocks and curves go out, but hatches as solid
+    triangles and no dimensions or layouts. Ellipses and pen curves are written exactly,
+    as ELLIPSE and SPLINE entities, which R12 itself doesn't define: most programs read
+    them, but a strict R12 reader may skip them.
   - To try a real file without the app: `DRIFT_DXF=path cargo test -p drift-io probe --
     --ignored --nocapture` prints what came in, what was skipped and the notes.
 - **Fonts, second version (done): fonts kept in drawings, and one font for a drawing's

@@ -446,7 +446,7 @@ impl DriftApp {
                 if ui
                     .add_enabled(
                         has_selection,
-                        egui::Button::new("Toggle construction").shortcut_text("X"),
+                        egui::Button::new("Toggle construction").shortcut_text("Alt+C"),
                     )
                     .clicked()
                 {
@@ -1522,7 +1522,7 @@ impl DriftApp {
                             Some(step) => format!(
                                 "Angle snap: lines are drawn every {step}° (Alt places freely)"
                             ),
-                            None => "Angle snap: draw lines at every 5°, 15° or 45°".to_owned(),
+                            None => "Angle snap: draw lines at every 1°, 5°, 15° or 45°".to_owned(),
                         };
                         let on = angle_snap.is_some();
                         let button = icons::button(ui, 22.0, on, "Angle snap", |p, r, c| {

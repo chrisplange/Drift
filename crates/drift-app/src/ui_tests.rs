@@ -1257,6 +1257,53 @@ fn parameters_and_layers_tabs_render() {
 }
 
 #[test]
+fn layer_rows_pick_and_drag_to_reorder() {
+    let Some(mut h) = harness() else { return };
+    let (walls, doors, notes) = {
+        let ed = &mut h.state_mut().editor;
+        (
+            ed.add_layer("Walls"),
+            ed.add_layer("Doors"),
+            ed.add_layer("Notes"),
+        )
+    };
+    h.state_mut().show_panel(Panel::Layers);
+    h.run();
+    // The list reads top down: Notes, Doors, Walls (then 0).
+    let y = |h: &Harness<'_, DriftApp>, name: &str| h.get_by_label(name).rect().center().y;
+    assert!(y(&h, "Notes") < y(&h, "Doors") && y(&h, "Doors") < y(&h, "Walls"));
+    // A click in the row's empty space (right of the name) makes the layer current.
+    let row = |h: &Harness<'_, DriftApp>, name: &str| {
+        let r = h.get_by_label(name).rect();
+        egui::pos2(r.right() + 40.0, r.center().y)
+    };
+    let at = row(&h, "Walls");
+    h.hover_at(at);
+    h.run();
+    button(&h, at, true);
+    h.run();
+    button(&h, at, false);
+    h.run();
+    assert_eq!(h.state().editor.doc.current_layer(), walls);
+    save_png("drift_ui_layer_rows.png", &mut h);
+    // Drag Notes to just below Walls: second from the bottom of the draw order.
+    let (from, to) = (row(&h, "Notes"), row(&h, "Walls") + egui::vec2(0.0, 8.0));
+    h.hover_at(from);
+    h.run();
+    button(&h, from, true);
+    h.run();
+    for k in 1..=8 {
+        h.hover_at(from + (to - from) * (k as f32 / 8.0));
+        h.run();
+    }
+    button(&h, to, false);
+    h.run();
+    h.run();
+    let order: Vec<_> = h.state().editor.doc.layers().map(|(id, _)| id).collect();
+    assert_eq!(order, [drift_core::LayerId::DEFAULT, notes, walls, doors]);
+}
+
+#[test]
 fn fill_tool_hatches_and_fills_regions() {
     let Some(mut h) = harness() else { return };
     h.get_by_label("File").click();

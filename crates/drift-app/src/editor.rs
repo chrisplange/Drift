@@ -2366,6 +2366,49 @@ impl Editor {
         self.doc.layer_of(id).locked
     }
 
+    /// Refuse to move curves of which some are on a locked layer (a picked area or hatch
+    /// whose outline is locked): says so, and true if it refused.
+    pub fn refuse_locked(&mut self, ids: &[EntityId]) -> bool {
+        let locked = ids.iter().any(|id| self.is_locked(*id));
+        if locked {
+            self.notice =
+                Some("Its outline is on a locked layer: unlock the layer to move it".into());
+        }
+        locked
+    }
+
+    /// Moving a picked area or hatch with automatic relations off: its outline lets go of
+    /// curves that aren't moving with it (each point it shares with them is split, the
+    /// outline taking its own copy), so they stay put instead of stretching. With automatic
+    /// relations on, the joins hold. Inside the caller's transaction.
+    pub fn detach_for_move(&mut self, ids: &[EntityId]) {
+        if self.auto_relations {
+            return;
+        }
+        let moving: BTreeSet<EntityId> = ids.iter().copied().collect();
+        let mut split = false;
+        for p in self.doc.defining_points(ids.iter().copied()) {
+            let users: Vec<EntityId> = self.doc.users_of(p).collect();
+            if users.iter().all(|u| moving.contains(u)) {
+                continue;
+            }
+            let Ok(at) = self.doc.point(p) else {
+                continue;
+            };
+            let copy = self.doc.add_point(at);
+            for c in users.into_iter().filter(|u| moving.contains(u)) {
+                if let Some(mut kind) = self.doc.get(c).map(|e| e.kind) {
+                    kind.replace_point(p, copy);
+                    let _ = self.doc.set_entity_kind(c, kind);
+                }
+            }
+            split = true;
+        }
+        if split {
+            self.index.update(&self.doc);
+        }
+    }
+
     /// Render items: each entity with its layer's (or its own) weight and line type, and either
     /// constraint-status colours or layer colours (adjusted for contrast with the theme).
     pub fn items_styled(&self, status_colors: bool, dark: bool) -> Vec<SketchItem> {
@@ -2373,7 +2416,11 @@ impl Editor {
         let mut emphasized = Vec::new();
         let hidden = self.hidden_handles();
         let shown_ends = (!self.always_endpoints).then(|| self.touched_points());
-        for (id, entity) in self.doc.iter() {
+        // Layer by layer, in their draw order.
+        let ranks = self.doc.layer_ranks();
+        let mut entities: Vec<_> = self.doc.iter().collect();
+        entities.sort_by_key(|(_, e)| ranks.get(&e.layer).copied().unwrap_or(0));
+        for (id, entity) in entities {
             if hidden.contains(&id) {
                 continue;
             }

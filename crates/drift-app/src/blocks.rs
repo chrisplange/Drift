@@ -57,7 +57,8 @@ impl Editor {
             }
         };
         for (id, copy) in self.doc.instances() {
-            if Some(id) == editing || !self.instance_visible(copy) {
+            if Some(id) == editing || !self.instance_visible(copy) || !self.instance_snappable(copy)
+            {
                 continue;
             }
             let b = self.instance_bounds(id);
@@ -119,6 +120,10 @@ impl Editor {
             }
         }
         best.map(|(s, _)| s)
+    }
+
+    fn instance_snappable(&self, i: &Instance) -> bool {
+        self.doc.layer(i.layer).is_none_or(|l| l.snappable)
     }
 
     fn instance_visible(&self, i: &Instance) -> bool {

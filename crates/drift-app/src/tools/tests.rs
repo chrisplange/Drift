@@ -2520,6 +2520,122 @@ fn the_fill_tools_eyedropper_picks_up_a_style() {
     assert!(!ed.fill_eyedropper);
 }
 
+/// A 20 × 10 rectangle at the origin with a tail line from its corner (20, 10) out to
+/// (40, 10), and a hatch in the rectangle (picked).
+fn hatched_rectangle_with_tail(auto_relations: bool) -> (Editor, EntityId) {
+    let mut doc = Document::new();
+    let p =
+        [(0.0, 0.0), (20.0, 0.0), (20.0, 10.0), (0.0, 10.0)].map(|(x, y)| doc.add_point(v(x, y)));
+    for i in 0..4 {
+        doc.add_line(p[i], p[(i + 1) % 4]).unwrap();
+    }
+    let end = doc.add_point(v(40.0, 10.0));
+    let tail = doc.add_line(p[2], end).unwrap();
+    let mut ed = Editor::new(doc);
+    ed.auto_relations = auto_relations;
+    ed.add_fill_at(v(5.0, 5.0)).unwrap();
+    (ed, tail)
+}
+
+fn grab_by(ed: &mut Editor, offset: DVec2) {
+    let mut tool = SelectTool::default();
+    let start = ptr(ed, &tool, v(5.0, 5.0));
+    assert!(tool.key(ToolKey::G, Some(&start), ed));
+    tool.set_typed([Some(offset.x), Some(offset.y)]);
+    tool.commit_typed(&start, ed);
+}
+
+fn tail_ends(ed: &Editor, tail: EntityId) -> (DVec2, DVec2) {
+    match ed.doc.shape(tail) {
+        Some(Shape::Line { a, b }) => (a, b),
+        _ => panic!("the tail is a line"),
+    }
+}
+
+#[test]
+fn a_line_drawn_across_a_fill_leaves_it_whole() {
+    let (mut ed, _) = rotated_rectangle_fixture();
+    ed.selection.clear();
+    let fill = ed.add_fill_at(v(5.0, 5.0)).unwrap();
+    let area = |ed: &mut Editor| ed.fill_shapes()[&fill].clone();
+    assert!((area(&mut ed).region.area - 200.0).abs() < 1e-6);
+    // A line right across it, past both sides.
+    ed.doc.begin();
+    let a = ed.doc.add_point(v(10.0, -5.0));
+    let b = ed.doc.add_point(v(10.0, 15.0));
+    let across = ed.doc.add_line(a, b).unwrap();
+    ed.commit("Line");
+    let shape = area(&mut ed);
+    assert!(!shape.lost);
+    assert!(
+        (shape.region.area - 200.0).abs() < 1e-6,
+        "{}",
+        shape.region.area
+    );
+    // Its own outline still reshapes it; removing the line changes nothing.
+    ed.doc.begin();
+    ed.doc.delete([across]);
+    ed.commit("Delete");
+    assert!((area(&mut ed).region.area - 200.0).abs() < 1e-6);
+}
+
+#[test]
+fn a_hatch_on_a_locked_outline_does_not_move_it() {
+    let (mut ed, tail) = hatched_rectangle_with_tail(false);
+    let layer = ed.add_layer("Walls");
+    let curves: Vec<EntityId> = ed
+        .doc
+        .iter()
+        .filter(|(id, e)| !e.kind.is_point() && *id != tail)
+        .map(|(id, _)| id)
+        .collect();
+    ed.doc.begin();
+    for c in &curves {
+        ed.doc.set_entity_layer(*c, layer).unwrap();
+    }
+    ed.commit("Layer");
+    let mut locked = ed.doc.layer(layer).cloned().unwrap();
+    locked.locked = true;
+    ed.update_layer(layer, locked);
+    let before: Vec<_> = ed.doc.iter().map(|(id, e)| (id, *e)).collect();
+    // G refuses, and says why.
+    grab_by(&mut ed, v(30.0, 0.0));
+    assert!(ed.notice.take().is_some_and(|n| n.contains("locked")));
+    // Dragging inside the picked hatch refuses too.
+    let mut tool = SelectTool::default();
+    tool.handle(
+        Input::DragStart(ptr(&ed, &tool, v(5.0, 5.0)), Modifiers::default()),
+        &mut ed,
+    );
+    tool.handle(Input::Drag(ptr(&ed, &tool, v(25.0, 5.0))), &mut ed);
+    tool.handle(
+        Input::DragEnd(ptr(&ed, &tool, v(25.0, 5.0)), Modifiers::default()),
+        &mut ed,
+    );
+    let after: Vec<_> = ed.doc.iter().map(|(id, e)| (id, *e)).collect();
+    assert_eq!(before, after, "nothing moved");
+    assert!(ed.transform_box().is_none() || !ed.selection.is_empty());
+}
+
+#[test]
+fn a_moved_hatch_lets_go_of_neighbours_with_auto_relations_off() {
+    // Off: the rectangle moves, the tail stays where it was.
+    let (mut ed, tail) = hatched_rectangle_with_tail(false);
+    grab_by(&mut ed, v(0.0, 30.0));
+    assert_eq!(tail_ends(&ed, tail), (v(20.0, 10.0), v(40.0, 10.0)));
+    let shape = ed.fill_shapes().values().next().cloned().unwrap();
+    assert!((shape.region.centroid - v(10.0, 35.0)).length() < 1e-6);
+    // One undo puts it back, joined.
+    ed.undo();
+    let corner = ed.doc.iter().filter(|(_, e)| e.kind.is_point()).count();
+    assert_eq!(corner, 5, "the split corner is gone again");
+    // On: the join holds and the tail stretches.
+    let (mut ed, tail) = hatched_rectangle_with_tail(true);
+    grab_by(&mut ed, v(0.0, 30.0));
+    let (a, b) = tail_ends(&ed, tail);
+    assert!((a - v(20.0, 40.0)).length() < 1e-6 && b == v(40.0, 10.0));
+}
+
 #[test]
 fn moving_a_picked_hatch_moves_its_area() {
     let (mut ed, _) = rotated_rectangle_fixture();

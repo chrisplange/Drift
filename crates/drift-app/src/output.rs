@@ -76,7 +76,11 @@ fn geometry(ed: &Editor, s: &Space, d: &mut Drawing) {
             line_type: layer.line_type,
         });
     }
-    for (id, e) in doc.iter() {
+    // Layer by layer, in their draw order.
+    let ranks = doc.layer_ranks();
+    let mut entities: Vec<_> = doc.iter().collect();
+    entities.sort_by_key(|(_, e)| ranks.get(&e.layer).copied().unwrap_or(0));
+    for (id, e) in entities {
         if e.kind.is_point() || e.style == LineKind::Construction {
             continue;
         }

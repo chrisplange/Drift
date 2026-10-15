@@ -210,7 +210,9 @@ impl Editor {
             self.selection.iter().all(|id| outline.contains(id))
         });
         let ids: Vec<EntityId> = match region {
-            Some(r) => self.region_curves(&r),
+            // (No handles on a locked outline.)
+            Some(r) => Some(self.region_curves(&r))
+                .filter(|ids| !ids.iter().any(|id| self.is_locked(*id)))?,
             None => {
                 let curves: Vec<EntityId> = self
                     .selection

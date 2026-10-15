@@ -143,7 +143,8 @@ impl EntityKind {
         )
     }
 
-    fn replace_point(&mut self, from: EntityId, to: EntityId) {
+    /// Use point `to` wherever the entity uses `from`.
+    pub fn replace_point(&mut self, from: EntityId, to: EntityId) {
         let swap = |id: &mut EntityId| {
             if *id == from {
                 *id = to;
@@ -1735,8 +1736,36 @@ impl Document {
     // ----- Layers ----------------------------------------------------------------------------
 
     /// All layers in id order (layer "0" first).
+    /// The layers in draw order, bottom first.
     pub fn layers(&self) -> impl Iterator<Item = (LayerId, &Layer)> {
-        self.layers.iter().map(|(id, l)| (*id, l))
+        let mut layers: Vec<(LayerId, &Layer)> =
+            self.layers.iter().map(|(id, l)| (*id, l)).collect();
+        layers.sort_by_key(|(id, l)| (l.order, *id));
+        layers.into_iter()
+    }
+
+    /// Each layer's place in the draw order (0 at the bottom).
+    pub fn layer_ranks(&self) -> std::collections::HashMap<LayerId, usize> {
+        self.layers()
+            .enumerate()
+            .map(|(i, (id, _))| (id, i))
+            .collect()
+    }
+
+    /// Move a layer to `index` in the draw order (0 at the bottom).
+    pub fn reorder_layer(&mut self, id: LayerId, index: usize) {
+        let mut order: Vec<LayerId> = self.layers().map(|(l, _)| l).collect();
+        let Some(from) = order.iter().position(|l| *l == id) else {
+            return;
+        };
+        order.remove(from);
+        order.insert(index.min(order.len()), id);
+        for (rank, l) in order.into_iter().enumerate() {
+            if let Some(mut layer) = self.layers.get(&l).cloned() {
+                layer.order = i32::try_from(rank).unwrap_or(i32::MAX);
+                self.set_layer(l, layer);
+            }
+        }
     }
 
     pub fn layer(&self, id: LayerId) -> Option<&Layer> {
@@ -1755,7 +1784,9 @@ impl Document {
             .expect("layer 0 exists")
     }
 
-    pub fn add_layer(&mut self, layer: Layer) -> LayerId {
+    /// Add a layer, on top of the others.
+    pub fn add_layer(&mut self, mut layer: Layer) -> LayerId {
+        layer.order = self.layers.values().map(|l| l.order + 1).max().unwrap_or(0);
         let id = LayerId(self.next_param());
         self.touch_key(Key::Layer(id));
         self.layers.insert(id, layer);

@@ -1,12 +1,11 @@
 //! Blocks in the editor: picking and placing copies, making a block from the selection,
-//! exploding copies, editing a block in place, and a starter furniture library.
+//! exploding copies, editing a block in place, and adding blocks from the library.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::f64::consts::{FRAC_PI_2, PI};
 
 use drift_core::{
-    Appearance, Block, BlockId, BlockItem, Bounds, DVec2, EntityId, Fill, FillId, GroupId,
-    Instance, InstanceId, LineKind, Shape,
+    Block, BlockId, BlockItem, Bounds, DVec2, EntityId, Fill, FillId, GroupId, Instance,
+    InstanceId, Shape,
 };
 
 use crate::editor::Editor;
@@ -615,11 +614,16 @@ impl Editor {
             .collect()
     }
 
-    /// Add the starter furniture blocks the document doesn't have yet. Returns how many.
-    pub fn add_starter_blocks(&mut self) -> usize {
-        let missing: Vec<Block> = starter_blocks()
+    /// Add the library's blocks the document doesn't have yet (by name), in one step.
+    /// Returns how many.
+    pub fn add_library_blocks<'a>(
+        &mut self,
+        entries: impl IntoIterator<Item = &'a crate::library::Entry>,
+    ) -> usize {
+        let missing: Vec<Block> = entries
             .into_iter()
-            .filter(|b| self.doc.block_named(&b.name).is_none())
+            .filter(|e| self.doc.block_named(&e.block.name).is_none())
+            .map(|e| e.block.clone())
             .collect();
         if missing.is_empty() {
             return 0;
@@ -629,124 +633,39 @@ impl Editor {
         for b in missing {
             self.doc.add_block(b);
         }
-        self.commit("Add furniture blocks");
+        self.commit(if n == 1 { "Add block" } else { "Add blocks" });
         n
     }
-}
 
-// ---------------------------------------------------------------------------------------------
-// Starter library (millimetres, base point at the centre, front facing down)
-
-fn item(shape: Shape) -> BlockItem {
-    BlockItem {
-        shape,
-        style: LineKind::Solid,
-        appearance: Appearance::default(),
+    /// A library block in the document: the one of that name, or added now.
+    pub fn library_block(&mut self, entry: &crate::library::Entry) -> BlockId {
+        self.add_library_blocks([entry]);
+        self.doc.block_named(&entry.block.name).expect("just added")
     }
-}
 
-fn line(a: (f64, f64), b: (f64, f64)) -> BlockItem {
-    item(Shape::Line {
-        a: DVec2::new(a.0, a.1),
-        b: DVec2::new(b.0, b.1),
-    })
-}
-
-fn rect(x0: f64, y0: f64, x1: f64, y1: f64) -> Vec<BlockItem> {
-    vec![
-        line((x0, y0), (x1, y0)),
-        line((x1, y0), (x1, y1)),
-        line((x1, y1), (x0, y1)),
-        line((x0, y1), (x0, y0)),
-    ]
-}
-
-fn arc(c: (f64, f64), r: f64, start: f64, sweep: f64) -> BlockItem {
-    item(Shape::Arc {
-        center: DVec2::new(c.0, c.1),
-        radius: r,
-        start,
-        sweep,
-    })
-}
-
-/// A rectangle with rounded corners.
-fn rounded(x0: f64, y0: f64, x1: f64, y1: f64, r: f64) -> Vec<BlockItem> {
-    vec![
-        line((x0 + r, y0), (x1 - r, y0)),
-        arc((x1 - r, y0 + r), r, -FRAC_PI_2, FRAC_PI_2),
-        line((x1, y0 + r), (x1, y1 - r)),
-        arc((x1 - r, y1 - r), r, 0.0, FRAC_PI_2),
-        line((x1 - r, y1), (x0 + r, y1)),
-        arc((x0 + r, y1 - r), r, FRAC_PI_2, FRAC_PI_2),
-        line((x0, y1 - r), (x0, y0 + r)),
-        arc((x0 + r, y0 + r), r, PI, FRAC_PI_2),
-    ]
-}
-
-/// The built-in furniture blocks.
-pub fn starter_blocks() -> Vec<Block> {
-    let mut chair = rounded(-225.0, -225.0, 225.0, 200.0, 40.0);
-    chair.extend(rect(-225.0, 200.0, 225.0, 260.0));
-    let mut desk = rect(-700.0, -350.0, 700.0, 350.0);
-    desk.extend(rect(-650.0, -300.0, -250.0, 300.0));
-    let mut bed = rect(-800.0, -1000.0, 800.0, 1000.0);
-    bed.extend(rounded(-720.0, 650.0, -40.0, 930.0, 60.0));
-    bed.extend(rounded(40.0, 650.0, 720.0, 930.0, 60.0));
-    bed.push(line((-800.0, 450.0), (800.0, 450.0)));
-    let mut sofa = rounded(-1000.0, -450.0, 1000.0, 450.0, 60.0);
-    sofa.extend(rect(-1000.0, 200.0, 1000.0, 450.0));
-    sofa.extend(rect(-1000.0, -450.0, -800.0, 200.0));
-    sofa.extend(rect(800.0, -450.0, 1000.0, 200.0));
-    sofa.push(line((0.0, -450.0), (0.0, 200.0)));
-    let mut wc = rect(-200.0, 150.0, 200.0, 350.0);
-    wc.push(arc((0.0, -50.0), 180.0, -PI, PI));
-    wc.push(line((-180.0, -50.0), (-180.0, 150.0)));
-    wc.push(line((180.0, -50.0), (180.0, 150.0)));
-    let mut basin = rounded(-300.0, -225.0, 300.0, 225.0, 50.0);
-    basin.push(item(Shape::Circle {
-        center: DVec2::new(0.0, -20.0),
-        radius: 170.0,
-    }));
-    basin.push(item(Shape::Circle {
-        center: DVec2::new(0.0, 160.0),
-        radius: 20.0,
-    }));
-    // A door: 900 leaf, open 90°, its swing a thin arc. Base point at the hinge.
-    let door = vec![
-        line((0.0, 0.0), (0.0, 900.0)),
-        line((0.0, 900.0), (40.0, 900.0)),
-        line((40.0, 900.0), (40.0, 0.0)),
-        BlockItem {
-            shape: Shape::Arc {
-                center: DVec2::ZERO,
-                radius: 900.0,
-                start: 0.0,
-                sweep: FRAC_PI_2,
-            },
-            style: LineKind::Solid,
-            appearance: Appearance {
-                weight: Some(drift_core::LineWeight(0)),
-                ..Appearance::default()
-            },
-        },
-    ];
-    [
-        ("Chair", chair),
-        ("Desk 1400", desk),
-        ("Double bed", bed),
-        ("Sofa", sofa),
-        ("WC", wc),
-        ("Basin", basin),
-        ("Door 900", door),
-    ]
-    .into_iter()
-    .map(|(name, items)| Block {
-        name: name.into(),
-        items,
-        fills: Vec::new(),
-    })
-    .collect()
+    /// Delete the blocks that have no copies (but not one being edited). Returns how many.
+    pub fn purge_unused_blocks(&mut self) -> usize {
+        let counts = self.copy_counts();
+        let unused: Vec<BlockId> = self
+            .doc
+            .blocks()
+            .map(|(id, _)| id)
+            .filter(|id| counts.get(id).copied().unwrap_or(0) == 0)
+            .filter(|id| self.block_edit.is_none_or(|e| e.block != *id))
+            .collect();
+        if unused.is_empty() {
+            return 0;
+        }
+        self.doc.begin();
+        for id in &unused {
+            self.doc.remove_block(*id);
+        }
+        self.commit("Purge unused blocks");
+        if self.place_block.is_some_and(|b| unused.contains(&b)) {
+            self.place_block = None;
+        }
+        unused.len()
+    }
 }
 
 #[cfg(test)]
@@ -876,13 +795,22 @@ mod tests {
     }
 
     #[test]
-    fn starter_blocks_are_closed_and_named() {
-        let blocks = starter_blocks();
-        assert!(blocks.len() >= 7);
-        let names: BTreeSet<&str> = blocks.iter().map(|b| b.name.as_str()).collect();
-        assert_eq!(names.len(), blocks.len());
+    fn library_blocks_are_added_once_and_purged() {
+        let lib = crate::library::all();
+        let doors: Vec<_> = lib
+            .iter()
+            .filter(|e| e.category == crate::library::Category::Doors)
+            .collect();
         let (mut ed, _) = square();
-        assert_eq!(ed.add_starter_blocks(), blocks.len());
-        assert_eq!(ed.add_starter_blocks(), 0, "only once");
+        assert_eq!(ed.add_library_blocks(doors.iter().copied()), doors.len());
+        assert_eq!(ed.add_library_blocks(doors.iter().copied()), 0, "only once");
+        let door = ed.library_block(doors[0]);
+        assert_eq!(ed.doc.blocks().count(), doors.len(), "already there");
+        ed.place_instance(door, DVec2::ZERO, 0.0, false);
+        assert_eq!(ed.purge_unused_blocks(), doors.len() - 1);
+        assert_eq!(ed.doc.blocks().count(), 1);
+        assert_eq!(ed.purge_unused_blocks(), 0, "the placed one stays");
+        ed.undo();
+        assert_eq!(ed.doc.blocks().count(), doors.len());
     }
 }

@@ -1148,7 +1148,7 @@ written but hasn't run yet (no GitHub repo).*
   - The Place block tool (I) previews the copy at the pointer, snapping by its base point. R
     turns the next copy 90° and X mirrors it.
   - A starter furniture library: chair, desk, double bed, sofa, WC, basin and a 900 door
-    (mm).
+    (mm). Replaced in alpha 4 by the imperial block library (below).
 - **Copies on the canvas:**
   - Pick a copy on its curves or inside its outline; Shift / Ctrl and box selection work.
   - Drag it, G (base = insertion point) and R (about its insertion point; several about
@@ -1935,6 +1935,34 @@ zooms to fit; F is Fillet (again for Chamfer).
 - **Alpha feedback, phase 4: content and parametric blocks.** A library of common
   imperial items; blocks with their own parameters (doors and windows at custom sizes),
   which needs its own design.
+  - **Block library (built, alpha 4).** `drift-app/src/library/`, one file per category:
+    doors (single and double swing, French, pocket, bypass, bifold, cased opening,
+    exterior with sidelights), windows (fixed, single and double hung, casement, slider, in
+    a 6-1/2" wall), kitchen (base, wall and tall cabinets, sink bases, dishwasher, ranges,
+    refrigerators, islands), bath (toilets, vanities, tubs, showers, grab bars), furniture
+    (beds with and without nightstands, sofas, chairs, dining tables with chairs, desks,
+    dressers…) and laundry and utility (washer, dryer, water heaters, furnaces, utility
+    sink); about 150 types. It replaces the metric starter set.
+  - Each family is one generator taking its sizes (`swing_door(width, wall, swing)`,
+    `base_cabinet(width, depth)`…), and each category lists its standard sizes as a table
+    of those parameters. Names are "Family – Type" (`Door – Single Swing – 36"`). Base
+    points are fixed per family (doors at the hinge on the room-side wall face, cabinets at
+    the back-left corner, toilets and vanities at the wall centre, beds at the head-wall
+    centre, tables at the centre), documented in `library/mod.rs`, so replacing a copy's
+    block with another size keeps it in place. Sizes never use an instance's scale.
+  - Countertops and vanity tops carry a light solid block fill; swings, glass and bedding
+    are hairlines; wall cabinets, door heads and pockets are hidden lines.
+  - Blocks panel: a search over the drawing's blocks and the library; **In the drawing**
+    with **Purge unused** (blocks with no copies, one undo step); **Library** with a
+    category picker, families as headings and types as thumbnail tiles. A tile adds its
+    block once (by name) and starts placing it; **Add all** adds what's shown. Nothing is
+    added until it's used.
+  - Not yet: electrical symbols (they need text or paper-sized symbols, which the block
+    model doesn't have); elevations; garage doors and stairs.
+  - Towards parametric blocks: a family's generator becomes the definition and its
+    arguments the named parameters; the size table becomes its types; a copy then sets the
+    parameters instead of naming a type. The library's `Entry` (category, family, type,
+    nominal size) is the seed of that definition.
 - Themes, keybinding config, crash recovery, PWA offline install, and accessibility pass.
 - Performance profiling against targets (WASM first), plus native packaging (MSI, dmg, AppImage /
   Flatpak).

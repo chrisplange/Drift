@@ -16,6 +16,7 @@ pub mod fills;
 pub mod fonts;
 mod icons;
 mod layers_ui;
+pub mod library;
 #[cfg(test)]
 mod mem_tests;
 pub mod modify;
@@ -319,6 +320,10 @@ pub struct DriftApp {
     gap_tolerance: f64,
     /// The name typed for a new block.
     new_block_name: String,
+    /// The Blocks tab's search, over the drawing's blocks and the library.
+    block_search: String,
+    /// The library category the Blocks tab shows (`None`: all of them).
+    library_category: Option<library::Category>,
     /// Curvature combs on picked curves.
     show_combs: bool,
     /// Alt-scaling steps the picked geometry through round sizes (rather than any size).
@@ -463,6 +468,8 @@ impl DriftApp {
             annotation_picks: Vec::new(),
             gap_tolerance: crate::checker::DEFAULT_TOLERANCE,
             new_block_name: String::new(),
+            block_search: String::new(),
+            library_category: Some(library::Category::Doors),
             show_combs: true,
             round_scale: true,
             text_typing: None,

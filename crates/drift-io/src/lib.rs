@@ -1149,6 +1149,12 @@ fn push_array(out: &mut String, name: &str, items: &[String], more: bool) {
 
 /// Parse `.drift` JSON, upgrading older versions.
 pub fn load(text: &str) -> Result<(Document, Metadata), LoadError> {
+    load_with_notes(text).map(|(doc, meta, _)| (doc, meta))
+}
+
+/// Load a file, also saying what had to be left out to open it: relations that had become
+/// meaningless (a point held on a curve it is the end of), which older builds could save.
+pub fn load_with_notes(text: &str) -> Result<(Document, Metadata, Vec<String>), LoadError> {
     let value: serde_json::Value = serde_json::from_str(text)?;
     let value = migrate(value)?;
     let file: FileRecord = serde_json::from_value(value)?;
@@ -1398,7 +1404,16 @@ pub fn load(text: &str) -> Result<(Document, Metadata), LoadError> {
             labels.push((id, label));
         }
     }
-    let mut doc = Document::from_parts(entities, constraints).map_err(LoadError::Document)?;
+    let (mut doc, dropped) = Document::from_parts_dropping_degenerate(entities, constraints)
+        .map_err(LoadError::Document)?;
+    let notes_out: Vec<String> = dropped
+        .iter()
+        .map(|(id, why)| format!("{id} ({why})"))
+        .collect();
+    let gone = |id: &ConstraintId| dropped.iter().any(|(d, _)| d == id);
+    labels.retain(|(id, _)| !gone(id));
+    driven.retain(|id| !gone(id));
+    notes.retain(|(id, _)| !gone(id));
     for (id, label) in labels {
         doc.set_placement(id, label).map_err(LoadError::Document)?;
     }
@@ -1574,7 +1589,10 @@ pub fn load(text: &str) -> Result<(Document, Metadata), LoadError> {
             rec.value = Some(1.0);
         }
         let (_, c, ..) = parse_constraint(rec)?;
-        doc.insert_measurement(id, c).map_err(LoadError::Document)?;
+        match doc.insert_measurement(id, c) {
+            Ok(_) | Err(DocumentError::Degenerate(_)) => {}
+            Err(e) => return Err(LoadError::Document(e)),
+        }
     }
     for v in file.variants {
         let id = VariantId(parse_prefixed(&v.id, 'k')?);
@@ -1594,7 +1612,7 @@ pub fn load(text: &str) -> Result<(Document, Metadata), LoadError> {
             },
         );
     }
-    Ok((doc, file.meta))
+    Ok((doc, file.meta, notes_out))
 }
 
 /// Upgrade a parsed file of any supported version to the current [`FORMAT_VERSION`].
@@ -1626,6 +1644,33 @@ mod tests {
     use drift_core::{DVec2, demo};
 
     use super::*;
+
+    #[test]
+    fn a_point_held_on_its_own_curve_is_left_out_on_opening() {
+        // An alpha 2 file could hold one (left by joining points); it refused to open.
+        let mut doc = Document::new();
+        let a = doc.add_point(DVec2::ZERO);
+        let b = doc.add_point(DVec2::new(10.0, 0.0));
+        let p = doc.add_point(DVec2::new(5.0, 0.0));
+        let line = doc.add_line(a, b).unwrap();
+        let held = doc
+            .add_constraint(Constraint::PointOnCurve {
+                point: p,
+                curve: line,
+            })
+            .unwrap();
+        doc.add_constraint(Constraint::Horizontal { line }).unwrap();
+        let text = save(&doc, &Metadata::default());
+        let bad = text.replace(
+            &format!(r#""point":"{p}","curve":"{line}""#),
+            &format!(r#""point":"{b}","curve":"{line}""#),
+        );
+        assert_ne!(bad, text);
+        let (doc, _, notes) = load_with_notes(&bad).unwrap();
+        assert_eq!(notes, [format!("{held} (point on its own curve)")]);
+        assert_eq!(doc.constraints().count(), 1, "the horizontal stays");
+        assert!(load(&bad).is_ok());
+    }
 
     #[test]
     fn round_trip_is_exact() {

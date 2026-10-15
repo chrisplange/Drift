@@ -365,6 +365,9 @@ enum Record {
 }
 
 /// One undoable step: the before and after state of everything it touched.
+/// A constraint left out when opening a document, and why.
+pub type Dropped = (ConstraintId, &'static str);
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Transaction {
     pub label: String,
@@ -513,6 +516,35 @@ impl Document {
     }
 
     /// Rebuild a document from stored entities and constraints. Validates references.
+    /// Like [`from_parts`](Self::from_parts), but a constraint that has become meaningless
+    /// (a point held on its own curve, say, after its points were joined) is left out rather
+    /// than refusing the whole document. Returns what was left out and why.
+    pub fn from_parts_dropping_degenerate(
+        entities: impl IntoIterator<Item = (EntityId, Entity)>,
+        constraints: impl IntoIterator<Item = (ConstraintId, Constraint)>,
+    ) -> Result<(Self, Vec<Dropped>), DocumentError> {
+        let mut doc = Self::from_parts(entities, [])?;
+        let mut dropped = Vec::new();
+        let mut kept = BTreeMap::new();
+        for (id, c) in constraints {
+            match doc.validate(&c) {
+                Ok(()) => {
+                    kept.insert(id, c);
+                }
+                Err(DocumentError::Degenerate(why)) => dropped.push((id, why)),
+                Err(e) => return Err(e),
+            }
+        }
+        doc.next_constraint_id = kept
+            .keys()
+            .chain(dropped.iter().map(|(id, _)| id))
+            .map(|id| id.0 + 1)
+            .max()
+            .unwrap_or(1);
+        doc.constraints = kept;
+        Ok((doc, dropped))
+    }
+
     pub fn from_parts(
         entities: impl IntoIterator<Item = (EntityId, Entity)>,
         constraints: impl IntoIterator<Item = (ConstraintId, Constraint)>,
@@ -1449,8 +1481,9 @@ impl Document {
         for (id, mut c) in constrained {
             self.touch_constraint(id);
             c.replace_point(from, into);
-            if c.is_degenerate() {
-                // e.g. a coincidence between the two merged points: now implied.
+            if c.is_degenerate() || self.self_referencing(&c).is_some() {
+                // e.g. a coincidence between the two merged points (now implied), or a point
+                // held on a curve whose end it has become.
                 self.constraints.remove(&id);
             } else {
                 self.constraints.insert(id, c);
@@ -1465,7 +1498,7 @@ impl Document {
         for (id, mut c) in measured {
             self.touch_key(Key::Measurement(id));
             c.replace_point(from, into);
-            if c.is_degenerate() {
+            if c.is_degenerate() || self.self_referencing(&c).is_some() {
                 self.measurements.remove(&id);
             } else {
                 self.measurements.insert(id, c);
@@ -1525,6 +1558,34 @@ impl Document {
             .map(|(id, _)| *id)
     }
 
+    /// What makes a constraint refer to a curve's own points where that means nothing: a
+    /// curve's point held on the curve, symmetry about a line through the points, a line's
+    /// end at its own midpoint.
+    fn self_referencing(&self, constraint: &Constraint) -> Option<&'static str> {
+        let points_of = |id: &EntityId| self.entities.get(id).map(|e| e.kind.points());
+        match constraint {
+            Constraint::PointOnCurve { point, curve }
+                if points_of(curve).is_some_and(|mut ps| ps.any(|p| p == *point)) =>
+            {
+                Some("point on its own curve")
+            }
+            Constraint::Symmetric { a, b, axis }
+                if points_of(axis).is_some_and(|mut ps| ps.any(|p| p == *a || p == *b)) =>
+            {
+                Some("symmetric about a line through the points")
+            }
+            Constraint::Midpoint { point, line }
+                if matches!(
+                    self.entities.get(line).map(|e| e.kind),
+                    Some(EntityKind::Line { a, b }) if *point == a || *point == b
+                ) =>
+            {
+                Some("midpoint")
+            }
+            _ => None,
+        }
+    }
+
     /// Check that a constraint refers to existing entities of the right kinds.
     pub fn validate(&self, constraint: &Constraint) -> Result<(), DocumentError> {
         if constraint.is_degenerate() {
@@ -1561,33 +1622,10 @@ impl Document {
             }
             kinds.push(kind);
         }
-        // A curve's own defining point can't be constrained onto it; tangency needs at least
-        // one circular curve (enforced by the slot) and is meaningless between a curve and
-        // itself (caught by `is_degenerate`).
-        if let Constraint::PointOnCurve { point, curve } = constraint
-            && self
-                .entities
-                .get(curve)
-                .is_some_and(|e| e.kind.points().any(|p| p == *point))
-        {
-            return Err(DocumentError::Degenerate("point on its own curve"));
-        }
-        if let Constraint::Symmetric { a, b, axis } = constraint
-            && self
-                .entities
-                .get(axis)
-                .is_some_and(|e| e.kind.points().any(|p| p == *a || p == *b))
-        {
-            return Err(DocumentError::Degenerate(
-                "symmetric about a line through the points",
-            ));
-        }
-        // A line's own end point can't sit at its midpoint.
-        if let Constraint::Midpoint { point, .. } = constraint
-            && let EntityKind::Line { a, b } = kinds[1]
-            && (*point == a || *point == b)
-        {
-            return Err(DocumentError::Degenerate("midpoint"));
+        // Tangency needs at least one circular curve (enforced by the slot) and is
+        // meaningless between a curve and itself (caught by `is_degenerate`).
+        if let Some(why) = self.self_referencing(constraint) {
+            return Err(DocumentError::Degenerate(why));
         }
         // Equal needs two lines or two circular curves.
         if let Constraint::Equal { b, .. } = constraint {
@@ -3084,6 +3122,35 @@ mod tests {
             Err(DocumentError::Degenerate("merge"))
         );
         assert!(doc.contains(l1) && doc.contains(a));
+    }
+
+    #[test]
+    fn joining_a_point_onto_its_curves_end_drops_the_point_on_curve() {
+        // Regression: the relation survived the join, was saved, and the file then refused
+        // to open ("degenerate point on its own curve").
+        let mut doc = Document::new();
+        let a = doc.add_point(v(0.0, 0.0));
+        let b = doc.add_point(v(10.0, 0.0));
+        let p = doc.add_point(v(10.0, 0.0));
+        let line = doc.add_line(a, b).unwrap();
+        doc.add_constraint(Constraint::PointOnCurve {
+            point: p,
+            curve: line,
+        })
+        .unwrap();
+        doc.merge_points(p, b).unwrap();
+        assert_eq!(doc.constraints().count(), 0);
+        // And a document holding one anyway is opened without it.
+        let entities: Vec<_> = doc.iter().map(|(id, e)| (id, *e)).collect();
+        let bad = Constraint::PointOnCurve {
+            point: b,
+            curve: line,
+        };
+        assert!(Document::from_parts(entities.clone(), [(ConstraintId(4), bad)]).is_err());
+        let (doc, dropped) =
+            Document::from_parts_dropping_degenerate(entities, [(ConstraintId(4), bad)]).unwrap();
+        assert_eq!(dropped, [(ConstraintId(4), "point on its own curve")]);
+        assert_eq!(doc.constraints().count(), 0);
     }
 
     #[test]

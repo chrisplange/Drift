@@ -1,0 +1,75 @@
+# Preferences
+
+Open **Edit → Preferences…** (Ctrl+,). Most of these are also in the **View** menu, the
+status bar or the **Parameters** panel; this window gathers them in one place. Preferences
+are remembered between sessions and carry over when you open another drawing.
+
+## Appearance
+
+The light or dark theme, or follow the system. (Also **View → Appearance**.)
+
+## Units
+
+The open drawing's units: **Metric** or **Imperial**, the **Format**, **Decimals** or the
+fraction to **Round to**, and **Angles** decimals. These are saved in the drawing, not as a
+preference. See [Units and length formats](units.md).
+
+## Grid and snapping
+
+| Setting | What it does |
+|---|---|
+| **Show the grid** | Also Ctrl+' and the status bar. |
+| **Show the origin axes** | The red and green lines through the origin. |
+| **Snap to the grid** | Also Shift+G and the status bar. The arrow keys nudge the selection one grid step. |
+| **Add relations automatically while drawing** | The same as **Auto relations** in the top bar. |
+| **Round sizes when scaling with dimensions (Alt)** | With a transform handle and Alt, the width and height step through round sizes. Off: any size. |
+
+## Dimensions
+
+| Setting | What it does |
+|---|---|
+| **Show temporary dimensions on the picked geometry** | Revit-style temporary dimensions when one line, circle or arc is picked. See [Temporary dimensions](../tutorials/05-temporary-dimensions.md). |
+
+## Closed areas
+
+| Setting | What it does |
+|---|---|
+| **Find closed areas on each layer separately** | An area is closed only by curves on one layer, so furniture or notes on other layers don't cut it up. An outline must then be all on one layer. |
+| **Pick an area only where it is filled or hatched** | On (the default): clicking inside an empty outline picks nothing, so a box selection can start there. Off: it picks the area, to measure it. |
+
+## Mouse and trackpad
+
+**Scrolling**: **Automatic** (a mouse wheel zooms, two fingers on a trackpad pan, a pinch
+zooms), **Zoom** (scrolling always zooms) or **Pan** (scrolling always pans; Ctrl+scroll
+zooms). The middle or right mouse button drags the view either way.
+
+## Display
+
+| Setting | What it does |
+|---|---|
+| **Colour curves by constraint status** | Blue, white or black, and red by how well defined. Off: each curve's own or its layer's colour. Also Shift+C. |
+| **Thin lines (every line one pixel wide)** | For editing dense drawings. It never changes the drawing or its output. Also W. |
+| **Always show end points** | Off: end points show only on hovered or picked curves. Also **End points** in the top bar. |
+| **Show dimensions and notes** | Also Alt+D. |
+| **Show relations** | The relation symbols. Also Alt+R. |
+| **Curvature combs on picked curves** | Combs on pen curves showing how they bend. |
+
+## Window
+
+- **Reset panel layout** puts every panel back in the right dock.
+- **Show the start panel** brings the start panel back over an empty, unsaved sketch.
+
+## Memory
+
+Shows how much memory Drift is using. Drift warns at 3 GB and closes itself at 8 GB, so a
+fault can't exhaust the computer; the sketch is restored next time.
+
+## Elsewhere
+
+Some settings live outside this window:
+
+- **Gaps up to**, the sketch checker's tolerance, is in the **Check sketch** window and
+  remembered.
+- **Angle snap** (off, 1°, 5°, 15° or 45°) is in the status bar.
+- **View → Free directions**, **Variant ghosts** and **Hidden annotations** (Alt+H) are in
+  the **View** menu.

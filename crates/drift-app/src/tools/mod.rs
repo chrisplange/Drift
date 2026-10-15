@@ -116,7 +116,7 @@ pub enum Overlay {
 }
 
 /// Keys that tools can claim (Blender-style modal keys). Unclaimed keys keep their global
-/// meaning (e.g. X toggles construction).
+/// meaning (e.g. R picks the rectangle tool).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ToolKey {
     /// Lock to the X axis.

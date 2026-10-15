@@ -228,7 +228,7 @@ impl Tool for SplitTool {
     }
 
     fn hint(&self) -> String {
-        "Click a line or arc where it should be split".into()
+        "Click a curve where it should be split (a circle or ellipse into halves)".into()
     }
 
     fn handle(&mut self, input: Input, ed: &mut Editor) {

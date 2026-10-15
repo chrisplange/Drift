@@ -1,7 +1,8 @@
 //! Regular polygons: a centre, then a corner (inscribed) or the middle of a side
 //! (circumscribed). They're equal sides with every corner on a construction circle, so they
-//! stay regular. A typed size is the circle's diameter (inscribed) or the distance from the
-//! centre to a side (circumscribed: half the size across flats).
+//! stay regular. A typed size is the circle's radius (inscribed: centre to corner) or the
+//! distance from the centre to a side (circumscribed: half the size across flats); it is
+//! kept as the circle's diameter dimension or a centre-to-side distance.
 
 use super::*;
 use drift_core::LineKind;

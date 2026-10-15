@@ -1,7 +1,7 @@
 name: Package
 
 # Builds the downloads: the Windows installer and zip, and the universal macOS disk image.
-# Run it by hand from the Actions tab, or push a tag like v0.1.0-alpha.2.
+# Run it by hand from the Actions tab, or push a tag like v0.1.0-alpha.3.
 
 on:
   workflow_dispatch:

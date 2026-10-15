@@ -2,7 +2,9 @@
 //! Reading any ASCII DXF is in `dxf_import` (re-exported here).
 //!
 //! Output keeps layers (colour and line type) and line types; R12 has no line weights, so
-//! they are dropped. Fills become SOLID triangles. Text uses DXF's `%%c` / `%%d` / `%%p`
+//! they are dropped. Fills become SOLID triangles. Ellipses and Bézier curves are written
+//! exactly as ELLIPSE and SPLINE entities, which are newer than R12: most readers take
+//! them in an AC1009 file, but a strict R12 reader may skip them. Text uses DXF's `%%c` / `%%d` / `%%p`
 //! codes for Ø, ° and ±.
 
 use std::collections::BTreeMap;

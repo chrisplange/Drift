@@ -13,6 +13,9 @@ browser (WebGPU, with a WebGL2 fallback).
 > a newer build don't open in an older one. See [PLAN.md](PLAN.md) for what was built in each
 > milestone, what was left out, and what comes next.
 
+**New to Drift?** Read the [user guide](docs/guide/README.md): installing, a tour of the
+window, step-by-step tutorials, and reference pages for tools, panels, units and keys.
+
 ## What works today
 
 - **Drawing tools:** polyline (L), rectangle (R), circle (C), arcs (A: centre-point; press A
@@ -30,7 +33,7 @@ browser (WebGPU, with a WebGL2 fallback).
 - **Relations pie (Q):** with something selected, hold Q, flick towards a relation and let
   go (or tap Q and click). Each relation has a fixed place; one already there is lit and
   comes off; one that would over-define the sketch says so first.
-- **Smart Dimension (D):** click a line, circle, arc, two points, two lines (their angle, or
+- **Dimension (D), a smart dimension tool:** click a line, circle, arc, two points, two lines (their angle, or
   the distance between them if they run alongside), or a point and a line, then place the
   label. Its position chooses aligned, horizontal or vertical. Type the
   value straight away. The number sits in the middle of its line, or just outside a line too

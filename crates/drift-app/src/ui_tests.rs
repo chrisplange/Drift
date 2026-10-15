@@ -12,6 +12,9 @@ use crate::dock::{Panel, Place, Side};
 use crate::overlay::ScreenMap;
 use crate::tools::{Overlay, ToolKind};
 
+/// Screenshots for the user guide.
+mod docs;
+
 fn gpu_available() -> bool {
     let instance = wgpu::Instance::default();
     pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())).is_ok()

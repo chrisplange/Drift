@@ -343,7 +343,10 @@ impl DriftApp {
             "Show temporary dimensions on the picked geometry",
         )
         .on_hover_text(
-            "Pick one line, circle or arc to see its size and how far it is from its              neighbours. Click a value to type a new one (the picked geometry moves), the lock              to keep it as a dimension, and drag the square at its far end onto other geometry              to measure to that",
+            "Pick one line, circle or arc to see its size and how far it is from its \
+             neighbours. Click a value to type a new one (the picked geometry moves), the lock \
+             to keep it as a dimension, and drag the square at its far end onto other geometry \
+             to measure to that",
         );
         theme::section(ui, "Closed areas");
         ui.checkbox(

@@ -963,6 +963,9 @@ impl Editor {
         text: &str,
         kind: Kind,
     ) -> Result<drift_core::expr::Evaluated, EditError> {
+        // A leading `=` (as typed while drawing, `=width/2`) is allowed in every field.
+        let text = text.trim();
+        let text = text.strip_prefix('=').unwrap_or(text);
         params::evaluate_text(&self.doc, &self.evaluation, text, kind)
             .map_err(|e| EditError::Invalid(e.0))
     }
@@ -2919,7 +2922,8 @@ mod tests {
             "25 mm",
             "unit made explicit"
         );
-        ed.set_dimension_text(d, "w * 2").unwrap();
+        // A leading `=`, as typed while drawing, is taken too (and not stored).
+        ed.set_dimension_text(d, "=w * 2").unwrap();
         assert_eq!(ed.doc.expression(d), Some("w * 2"));
         assert!((length(&ed, a, b) - 50.0).abs() < 1e-9);
         ed.set_variable(w, "30mm").unwrap();

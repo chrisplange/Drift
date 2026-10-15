@@ -628,7 +628,7 @@ const SHORTCUTS: &[(&str, &[(&str, &str)])] = &[
     (
         "Annotate",
         &[
-            ("D", "Smart dimension"),
+            ("D", "Dimension: the kind follows what you click"),
             (
                 "Click more points (after a horizontal or vertical dimension)",
                 "Chain dimensions along the row; B switches to baseline",
@@ -729,6 +729,10 @@ const SHORTCUTS: &[(&str, &[(&str, &str)])] = &[
                 "Zoom at the cursor (two fingers on a trackpad pan)",
             ),
             ("Alt+D / Alt+R", "Show or hide dimensions / relations"),
+            (
+                "Alt+H",
+                "Show hidden dimensions and notes, faded, to pick and show them again",
+            ),
             ("Shift+G", "Snap to grid"),
             (
                 "Shift+C",
@@ -751,7 +755,7 @@ const SHORTCUTS: &[(&str, &[(&str, &str)])] = &[
                 "Drag a panel's tab",
                 "Onto the canvas to float it, or onto either side to dock it",
             ),
-            ("Ctrl+Z / Ctrl+Y", "Undo / redo"),
+            ("Ctrl+Z / Ctrl+Y or Ctrl+Shift+Z", "Undo / redo"),
             ("Ctrl+S / Ctrl+Shift+S", "Save / save as"),
             ("Ctrl+N / Ctrl+O", "New / open"),
             ("Ctrl+,", "Preferences"),

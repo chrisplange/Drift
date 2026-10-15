@@ -367,9 +367,19 @@ impl DriftApp {
                         }
                         continue;
                     }
-                    match drift_io::load(&text) {
-                        Ok((doc, meta)) => {
-                            self.set_status(format!("Opened {name}"), false, now);
+                    match drift_io::load_with_notes(&text) {
+                        Ok((doc, meta, dropped)) => {
+                            let status = if dropped.is_empty() {
+                                format!("Opened {name}")
+                            } else {
+                                format!(
+                                    "Opened {name}, leaving out {} relation(s) that had become \
+                                     meaningless: {}. Save to keep it that way",
+                                    dropped.len(),
+                                    dropped.join(", ")
+                                )
+                            };
+                            self.set_status(status, !dropped.is_empty(), now);
                             if let Some(p) = &path {
                                 self.remember(p.clone());
                             }

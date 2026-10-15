@@ -624,11 +624,16 @@ fn sparse_rank(jac: &[Vec<(usize, f64)>], n: usize) -> (usize, Vec<bool>) {
     qr_rank(&equilibrate(jac, n), n)
 }
 
-/// Prepare a Jacobian for rank decisions: drop round-off entries (e.g. gradients of two members
-/// of one substitution group that cancel), scale rows to unit length, then columns to unit
-/// length. Scaling changes neither the rank nor which unknowns are free, but it makes one
-/// tolerance meaningful for sketches mixing tiny and huge features.
+/// Prepare a Jacobian for rank decisions: drop negligible entries, scale rows to unit length,
+/// then columns to unit length. Scaling changes neither the rank nor which unknowns are free,
+/// but it makes one tolerance meaningful for sketches mixing tiny and huge features.
+///
+/// An entry below [`NEGLIGIBLE`] of its row's largest is dropped: round-off (e.g. gradients of
+/// two members of one substitution group that cancel), or geometry that is all but degenerate
+/// (two points a few nanometres off level, an angle of 1e-8 rad). Kept, column scaling would
+/// blow it up to unit size and rank decisions would turn on rounding.
 fn equilibrate(jac: &[Vec<(usize, f64)>], n: usize) -> Vec<Vec<(usize, f64)>> {
+    const NEGLIGIBLE: f64 = 1e-7;
     let mut rows: Vec<Vec<(usize, f64)>> = jac
         .iter()
         .map(|row| {
@@ -636,7 +641,7 @@ fn equilibrate(jac: &[Vec<(usize, f64)>], n: usize) -> Vec<Vec<(usize, f64)>> {
             let kept: Vec<(usize, f64)> = row
                 .iter()
                 .copied()
-                .filter(|(_, g)| g.abs() > 1e-12 * max)
+                .filter(|(_, g)| g.abs() > NEGLIGIBLE * max)
                 .collect();
             let norm = kept.iter().map(|(_, g)| g * g).sum::<f64>().sqrt();
             kept.into_iter().map(|(c, g)| (c, g / norm)).collect()

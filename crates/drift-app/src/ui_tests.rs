@@ -2049,12 +2049,19 @@ fn furniture_blocks_place_edit_and_export() {
     h.run();
     h.state_mut().show_panel(Panel::Blocks);
     h.run();
-    h.get_by_label("Add furniture library").click();
+    // Find a dining chair in the library: clicking it adds it and starts placing it.
+    h.state_mut().block_search = "chair dining".into();
     h.run();
-    let chair = h.state().editor.doc.block_named("Chair").expect("library");
+    h.get_by_label("Chair – Dining").click();
+    h.run();
+    let chair = h
+        .state()
+        .editor
+        .doc
+        .block_named("Chair – Dining")
+        .expect("library");
+    assert_eq!(h.state().editor.doc.blocks().count(), 1, "only that one");
     // Place two chairs (the second turned with R), then a bed.
-    h.state_mut().start_placing(chair);
-    h.run();
     assert_eq!(h.state().tool.kind(), ToolKind::Block);
     click_world(&mut h, DVec2::new(15.0, 70.0));
     let at = screen(&h, DVec2::new(105.0, 70.0));
@@ -2063,9 +2070,13 @@ fn furniture_blocks_place_edit_and_export() {
     h.key_press(Key::R);
     h.run();
     click_world(&mut h, DVec2::new(105.0, 70.0));
-    let bed = h.state().editor.doc.block_named("Double bed").unwrap();
-    h.state_mut().start_placing(bed);
-    click_world(&mut h, DVec2::new(60.0, 10.0));
+    let queen = crate::library::entry("Bed – Queen").unwrap();
+    let bed = h.state_mut().editor.library_block(queen);
+    // Clear of the chairs (the example is small; a bed isn't).
+    h.state_mut()
+        .editor
+        .place_instance(bed, DVec2::new(5000.0, 0.0), 0.0, false);
+    h.state_mut().editor.selected_instances.clear();
     assert_eq!(h.state().editor.doc.instances().count(), 3);
     let turned = h
         .state()
@@ -2087,7 +2098,17 @@ fn furniture_blocks_place_edit_and_export() {
     h.run();
     h.get_by_label("Select").click();
     h.run();
-    click_world(&mut h, DVec2::new(215.0, -130.0));
+    let first = h
+        .state()
+        .editor
+        .doc
+        .instances()
+        .find(|(_, i)| i.block == chair && i.angle == 0.0)
+        .map(|(_, i)| i.at)
+        .unwrap();
+    // On the left edge of the chair's seat, clear of the example.
+    let seat = 9.0 * crate::library::INCH - 0.5 * crate::library::INCH;
+    click_world(&mut h, first + DVec2::new(-seat, -300.0));
     assert_eq!(h.state().editor.selected_instances.len(), 1);
     h.state_mut().show_panel(Panel::Inspector);
     h.run();
@@ -5571,4 +5592,77 @@ fn clear_relations_on_a_selection() {
     h.get_by_label("Clear dimensions (1)").click();
     h.run();
     assert_eq!(count(&h), (5, 0));
+}
+
+/// Sheets of every library block, a category at a time at 1/4" = 1'-0" on a 96 dpi screen,
+/// to judge them by eye (`target/tmp/drift_library_*.png`).
+#[test]
+#[ignore]
+fn library_contact_sheets() {
+    use crate::library::{self, Category, INCH};
+    let Some(mut h) = harness() else { return };
+    // 1/4" on screen (24 px at 96 dpi) to a foot.
+    let scale = 24.0 / (12.0 * INCH);
+    for c in Category::ALL {
+        let entries: Vec<_> = library::all().iter().filter(|e| e.category == c).collect();
+        let mut page = 0;
+        let mut i = 0;
+        while i < entries.len() {
+            {
+                let ed = &mut h.state_mut().editor;
+                ed.set_units(drift_core::Units::architectural());
+                let ids: Vec<_> = ed.doc.blocks().map(|(id, _)| id).collect();
+                ed.doc.begin();
+                for id in ids {
+                    ed.doc.remove_block(id);
+                }
+                ed.commit("Clear");
+                ed.selected_instances.clear();
+            }
+            h.run();
+            let canvas = h.state().canvas_rect;
+            let width = canvas.width() as f64 / scale - 24.0 * INCH;
+            let height = canvas.height() as f64 / scale - 24.0 * INCH;
+            let (mut x, mut y, mut row) = (0.0, 0.0, 0.0f64);
+            while i < entries.len() {
+                let e = entries[i];
+                let b = e.block.bounds();
+                let size = b.max - b.min;
+                if x > 0.0 && x + size.x > width {
+                    x = 0.0;
+                    y -= row + 18.0 * INCH;
+                    row = 0.0;
+                }
+                if -y + size.y > height && y < 0.0 {
+                    break;
+                }
+                let id = h.state_mut().editor.library_block(e);
+                let at = DVec2::new(x, y - size.y) - b.min;
+                h.state_mut().editor.place_instance(id, at, 0.0, false);
+                x += size.x + 18.0 * INCH;
+                row = row.max(size.y);
+                i += 1;
+            }
+            let ed = &h.state().editor;
+            let mut bounds = drift_core::Bounds::EMPTY;
+            for (id, _) in ed.doc.instances() {
+                let b = ed.instance_bounds(id);
+                bounds.include(b.min);
+                bounds.include(b.max);
+            }
+            h.state_mut().editor.selected_instances.clear();
+            h.state_mut().fit_target = None;
+            h.state_mut().camera = drift_render::Camera {
+                center: bounds.center(),
+                scale,
+            };
+            h.run();
+            h.run();
+            page += 1;
+            save_png(
+                &format!("drift_library_{:?}_{page}.png", c).to_lowercase(),
+                &mut h,
+            );
+        }
+    }
 }

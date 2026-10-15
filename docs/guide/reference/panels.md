@@ -97,7 +97,14 @@ Sheets, views, title blocks and output: **New sheet**, **Show sheet** / **Back t
 
 ## Blocks
 
-The drawing's blocks: a thumbnail of each, how many copies are placed, and **New block**
-(a name and **Make**) when something is picked. Click a block to place copies; right-click
-it to rename it, select its copies or delete it. **Add furniture library** adds a starter
-set. See [Blocks](../tutorials/07-blocks.md).
+- **New block** (a name and **Make**), when something is picked.
+- A search field, over the drawing's blocks and the whole library.
+- **In the drawing:** the drawing's blocks, a thumbnail of each and how many copies are
+  placed. Click a block to place copies; right-click it to rename it, select its copies or
+  delete it. **Purge unused** deletes the blocks with no copies.
+- **Library:** a category (**Doors**, **Windows**, **Kitchen**, **Bath**, **Furniture**,
+  **Laundry and utility**, or all of them), its families and their sizes as tiles. Click a
+  tile to add that block (once) and place copies; a tile already in the drawing is
+  outlined. **Add all** adds every block shown without placing them.
+
+See [Blocks](../tutorials/07-blocks.md).

@@ -12,7 +12,7 @@ Everywhere: the command palette (Ctrl+K) finds any command by name, and ? lists 
 | Temporary dimensions on a picked wall | The same: pick one line and dashed dimensions appear. Click a value to type a new one; the lock makes it permanent; drag the far end's square to measure to something else. [Temporary dimensions](tutorials/05-temporary-dimensions.md). |
 | Tab to cycle and pick chains | Tab highlights the chain of connected curves under the pointer; click picks it. |
 | Thin lines (TL) | W, or the status bar. |
-| Families | Blocks, with a furniture library to start from. [Blocks](tutorials/07-blocks.md). No parametric blocks yet. |
+| Families | Blocks, with a library of US doors, windows, cabinets, fixtures and furniture, named "Family – Type". [Blocks](tutorials/07-blocks.md). No parametric blocks yet: each size is its own block. |
 | Sheets, views, view titles, scales | Sheets hold several views, each with its own scale and crop, a title and a number. Architectural and engineering scales are there. [Sheets and output](tutorials/10-sheets-and-output.md). |
 | Hide in view / hide on sheet | Each dimension and note can be off the canvas and / or off sheets. Not per view yet. |
 | Drafting vs model patterns | The same distinction for hatches. |

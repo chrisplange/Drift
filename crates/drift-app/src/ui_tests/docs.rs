@@ -515,44 +515,53 @@ fn fills() {
 }
 
 fn blocks() {
-    // A 4 × 3 m room with a bed, a desk and a chair from the furniture library.
+    // A 12' × 10' bedroom furnished from the library: a door, a window, a queen bed with
+    // nightstands, a desk with its chair, and a dresser.
+    use crate::library::{self, INCH};
     let mut h = harness().unwrap();
-    rectangle(&mut h, DVec2::ZERO, DVec2::new(4000.0, 3000.0), true);
+    h.state_mut()
+        .editor
+        .set_units(drift_core::Units::architectural());
+    let (w, d) = (144.0 * INCH, 120.0 * INCH);
+    rectangle(&mut h, DVec2::ZERO, DVec2::new(w, d), true);
     fit(&mut h);
     h.state_mut().show_panel(Panel::Blocks);
+    h.state_mut().library_category = Some(library::Category::Furniture);
     h.run();
-    h.get_by_label("Add furniture library").click();
+    // The bed from its tile: it's added and placed against the head wall.
+    h.get_by_label("Bed – Queen with Nightstands").click();
     h.run();
-    let doc = &h.state().editor.doc;
-    let bed = doc.block_named("Double bed").expect("library");
-    let desk = doc.block_named("Desk 1400").expect("library");
-    let chair = doc.block_named("Chair").expect("library");
-    h.state_mut().start_placing(bed);
-    h.run();
-    click_world(&mut h, DVec2::new(1400.0, 1900.0));
-    h.state_mut().start_placing(desk);
-    h.run();
-    h.hover_at(screen(&h, DVec2::new(3500.0, 1200.0)));
-    h.run();
-    h.key_press(Key::R);
-    h.run();
-    click_world(&mut h, DVec2::new(3500.0, 1200.0));
-    h.state_mut().start_placing(chair);
-    h.run();
-    h.hover_at(screen(&h, DVec2::new(3000.0, 1200.0)));
-    h.run();
-    h.key_press(Key::R);
-    h.run();
-    h.key_press(Key::R);
-    h.run();
-    h.key_press(Key::R);
-    h.run();
-    click_world(&mut h, DVec2::new(3000.0, 1200.0));
+    click_world(&mut h, DVec2::new(w / 2.0, d));
     h.key_press(Key::Escape);
+    h.run();
+    let ed = &mut h.state_mut().editor;
+    for (name, at, angle) in [
+        (
+            "Door – Single Swing – 32\"",
+            DVec2::new(40.0 * INCH, 0.0),
+            180.0,
+        ),
+        (
+            "Window – Double Hung – 36\"",
+            DVec2::new(0.0, 46.0 * INCH),
+            90.0,
+        ),
+        ("Desk – 48\" × 24\"", DVec2::new(w, 54.0 * INCH), -90.0),
+        (
+            "Chair – Desk",
+            DVec2::new(w - 50.0 * INCH, 54.0 * INCH),
+            90.0,
+        ),
+        ("Dresser – 60\" × 18\"", DVec2::new(96.0 * INCH, 0.0), 180.0),
+    ] {
+        let id = ed.library_block(library::entry(name).expect(name));
+        ed.place_instance(id, at, angle, false);
+    }
+    ed.selected_instances.clear();
     h.run();
     h.get_by_label("Select").click();
     h.run();
-    click_world(&mut h, DVec2::new(1400.0, 1900.0));
+    click_world(&mut h, DVec2::new(w / 2.0 - 30.0 * INCH, d - 2.0 * INCH));
     shot("blocks.png", &mut h);
 }
 

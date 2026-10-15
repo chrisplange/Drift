@@ -1,10 +1,10 @@
 # Blocks
 
-**What you'll make:** a 4 × 3 m room furnished from Drift's furniture library, and a block
+**What you'll make:** a 12' × 10' bedroom furnished from Drift's block library, and a block
 of your own. You'll place copies, turn them as you place them, and edit a block so that
 every copy updates.
 
-![A room with a double bed, a desk and a chair placed from the Blocks panel](../images/blocks.png)
+![A bedroom with a door, a window, a queen bed with nightstands, a desk, a desk chair and a dresser placed from the Blocks panel's library](../images/blocks.png)
 
 Time: about 10 minutes.
 
@@ -19,27 +19,57 @@ sketch down.
 
 ## 1. Draw the room
 
-1. Start a new sketch (Ctrl+N).
-2. Press R, click a first corner, type `4000`, Tab, `3000`, and press Enter.
+1. Start a new sketch (Ctrl+N), and set the units to **ft-in** at the bottom right.
+2. Press R, click a first corner, type `12'`, Tab, `10'`, and press Enter.
 3. Press Shift+F to fit it in the window.
 
-## 2. Add the furniture library
+## 2. The block library
 
-1. Open the **Blocks** panel (the cube icon, at the end of the panel tabs).
-2. Click **Add furniture library**. You get a chair, a 1400 desk, a double bed, a sofa, a
-   WC, a basin and a 900 door, all in millimetres.
+Open the **Blocks** panel (the cube icon, at the end of the panel tabs). Under **Library**,
+pick a category: **Doors**, **Windows**, **Kitchen**, **Bath**, **Furniture**, or **Laundry
+and utility**. Each family (**Door – Single Swing**, **Base Cabinet**, **Bed**…) shows its
+standard US sizes as tiles. The search field at the top searches every category, and the
+drawing's own blocks: try `queen` or `36 door`.
+
+Nothing is added to the drawing until you use it, so the list of the drawing's blocks
+stays short. **Add all** adds every block shown without placing them.
+
+The blocks are drawn to real sizes and clearances in plan, legible at 1/4" = 1'-0".
+Swings, glass and bedding are thin lines; wall cabinets and door heads are hidden lines;
+countertops and vanity tops have a light fill.
 
 ## 3. Place copies
 
-1. Click **Double bed** in the list. The **Place block** tool (I) starts, and a copy follows
-   the pointer, snapping by its base point.
-2. Click inside the room to place it. The tool keeps going, so you can place more.
-3. Click **Desk 1400**. Before you click to place it, press R to turn it 90°. Press R again
-   for each further quarter turn, and X to mirror it.
-4. Place a **Chair** at the desk the same way.
+1. Pick **Furniture** and click the **Queen with Nightstands** tile under **Bed**. It's
+   added to the drawing, and the **Place block** tool (I) starts: a copy follows the
+   pointer, snapping by its base point.
+2. Click the middle of the top wall to place it. The tool keeps going, so you can place
+   more.
+3. Search `desk`, and click **Desk – 48" × 24"** (a tile, or the row once it's in the
+   drawing). Before you click to place it against the right wall, press R to turn it 90°.
+   Press R again for each further quarter turn, and X to mirror it.
+4. Place a **Chair – Desk** at the desk, a **Dresser**, a **Door – Single Swing – 32"** and a
+   **Window – Double Hung – 36"** the same way.
 5. Press Esc to finish.
 
-The panel lists how many copies of each block are placed.
+The panel lists how many copies of each block are placed. **Purge unused** deletes the
+blocks that have none (Ctrl+Z brings them back).
+
+### Base points
+
+Each block is named "Family – Type", and every type of a family has the same base point,
+so replacing a copy with another size (**Block** in the **Inspector**) keeps it in place:
+
+| Blocks | Base point |
+|---|---|
+| Doors, openings, windows | The hinge side (or left end) of the opening, on the room-side face of the wall. The wall lies behind the base point, and doors swing into the room. Mirror a door for the other hand. |
+| Cabinets, appliances, counters, tubs, showers, washers, dryers, furnaces | The back-left corner, on the wall. |
+| Toilets, vanities, water heaters | The middle of the back, on the wall, so they stay on the plumbing line. |
+| Beds, sofas, chairs, desks, dressers | The middle of the back (a bed's head wall). |
+| Tables, islands, stools, free-standing tub | The centre. |
+
+Blocks face down in the block (the wall at the top), so turn them with R to face the
+room.
 
 ## 4. Change a copy
 
@@ -89,7 +119,8 @@ them back as blocks. See [Underlays and DXF import](11-underlays-and-dxf.md).
 
 ## What you learned
 
-- **Add furniture library** gives you a starting set; **Make** turns a selection into a
+- The **Library** holds doors, windows, kitchen, bath, furniture and utility blocks in
+  standard US sizes; a click adds one and places it. **Make** turns a selection into a
   block.
 - Clicking a block starts placing it; R turns and X mirrors the next copy.
 - Double-click a copy to edit the block; every copy follows.

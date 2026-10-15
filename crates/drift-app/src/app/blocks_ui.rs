@@ -11,26 +11,36 @@ fn thumbnail(ui: &mut egui::Ui, block: &drift_core::Block, size: f32) -> egui::R
     let visuals = ui.visuals();
     ui.painter()
         .rect_filled(rect, 6.0, visuals.extreme_bg_color);
+    paint_block(ui.painter(), rect.shrink(5.0), block, visuals.text_color());
+    response
+}
+
+/// A block's curves fitted into `rect`.
+fn paint_block(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    block: &drift_core::Block,
+    color: egui::Color32,
+) {
     let b = block.bounds();
     if b.is_empty() {
-        return response;
+        return;
     }
     let extent = (b.max - b.min).max_element().max(1e-9);
-    let scale = (size as f64 - 10.0) / extent;
+    let scale = rect.width().min(rect.height()) as f64 / extent;
     let c = b.center();
     let to = |p: DVec2| {
         let d = (p - c) * scale;
         rect.center() + egui::vec2(d.x as f32, -d.y as f32)
     };
-    let stroke = egui::Stroke::new(1.0, visuals.text_color());
+    let stroke = egui::Stroke::new(1.0, color);
     for item in &block.items {
         match item.shape {
             Shape::Line { a, b } => {
-                ui.painter().line_segment([to(a), to(b)], stroke);
+                painter.line_segment([to(a), to(b)], stroke);
             }
             Shape::Circle { center, radius } => {
-                ui.painter()
-                    .circle_stroke(to(center), (radius * scale) as f32, stroke);
+                painter.circle_stroke(to(center), (radius * scale) as f32, stroke);
             }
             Shape::Arc {
                 center,
@@ -46,7 +56,7 @@ fn thumbnail(ui: &mut egui::Ui, block: &drift_core::Block, size: f32) -> egui::R
                                 + DVec2::from_angle(start + sweep * k as f64 / n as f64) * radius)
                         })
                         .collect();
-                ui.painter().add(egui::Shape::line(pts, stroke));
+                painter.add(egui::Shape::line(pts, stroke));
             }
             Shape::Ellipse {
                 center,
@@ -60,18 +70,63 @@ fn thumbnail(ui: &mut egui::Ui, block: &drift_core::Block, size: f32) -> egui::R
                         .into_iter()
                         .map(to)
                         .collect();
-                ui.painter().add(egui::Shape::line(pts, stroke));
+                painter.add(egui::Shape::line(pts, stroke));
             }
             Shape::Bezier { p } => {
                 let pts = drift_core::shape::flatten_bezier(&p, 16)
                     .into_iter()
                     .map(to)
                     .collect();
-                ui.painter().add(egui::Shape::line(pts, stroke));
+                painter.add(egui::Shape::line(pts, stroke));
             }
             Shape::Point(_) => {}
         }
     }
+}
+
+/// A library type as a tile: its thumbnail over its type name. `added`: the drawing has it.
+fn library_tile(ui: &mut egui::Ui, entry: &crate::library::Entry, added: bool) -> egui::Response {
+    let size = egui::vec2(62.0, 76.0);
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    let name = entry.block.name.clone();
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), name.clone())
+    });
+    let visuals = ui.visuals();
+    let dark = visuals.dark_mode;
+    let thumb = egui::Rect::from_min_size(rect.min, egui::vec2(size.x, size.x));
+    let fill = if response.hovered() {
+        visuals.widgets.hovered.weak_bg_fill
+    } else {
+        visuals.extreme_bg_color
+    };
+    ui.painter().rect_filled(thumb, 6.0, fill);
+    if added {
+        ui.painter().rect_stroke(
+            thumb,
+            6.0,
+            egui::Stroke::new(1.5, theme::accent(dark).gamma_multiply(0.7)),
+            egui::StrokeKind::Inside,
+        );
+    }
+    paint_block(
+        ui.painter(),
+        thumb.shrink(7.0),
+        &entry.block,
+        visuals.text_color(),
+    );
+    let font = egui::FontId::proportional(11.0);
+    let galley = ui
+        .painter()
+        .layout(entry.type_name.clone(), font, visuals.text_color(), size.x);
+    ui.painter().galley(
+        egui::pos2(
+            rect.center().x - galley.size().x / 2.0,
+            thumb.bottom() + 2.0,
+        ),
+        galley,
+        visuals.text_color(),
+    );
     response
 }
 
@@ -118,13 +173,39 @@ impl DriftApp {
                 }
             });
         }
-        theme::section(ui, &format!("Blocks · {}", blocks.len()));
+        ui.add_space(6.0);
+        ui.add(
+            egui::TextEdit::singleline(&mut self.block_search)
+                .hint_text("Search blocks and the library")
+                .desired_width(ui.available_width()),
+        );
+        let search = self.block_search.trim().to_owned();
+        let words: Vec<String> = search.split_whitespace().map(str::to_lowercase).collect();
+        let shown: Vec<&(BlockId, drift_core::Block)> = blocks
+            .iter()
+            .filter(|(_, b)| {
+                let name = b.name.to_lowercase();
+                words.iter().all(|w| name.contains(w.as_str()))
+            })
+            .collect();
+        let unused = blocks
+            .iter()
+            .filter(|(id, _)| counts.get(id).copied().unwrap_or(0) == 0)
+            .count();
+        theme::section(
+            ui,
+            &if shown.len() == blocks.len() {
+                format!("In the drawing · {}", blocks.len())
+            } else {
+                format!("In the drawing · {} of {}", shown.len(), blocks.len())
+            },
+        );
         if blocks.is_empty() {
             ui.label(
                 egui::RichText::new(
                     "A block is drawn once and placed many times: edit it and every copy \
-                     updates. Select geometry and make one, or start from the furniture \
-                     library.",
+                     updates. Select geometry and make one, or pick one from the library \
+                     below.",
                 )
                 .weak(),
             );
@@ -132,7 +213,7 @@ impl DriftApp {
         let mut place = None;
         let mut delete = None;
         let mut rename = None;
-        for (id, block) in &blocks {
+        for (id, block) in shown {
             let picked =
                 self.tool.kind() == ToolKind::Block && self.editor.place_block == Some(*id);
             let row = egui::Frame::new()
@@ -207,6 +288,22 @@ impl DriftApp {
                 }
             });
         }
+        if unused > 0
+            && ui
+                .button("Purge unused")
+                .on_hover_text(format!(
+                    "Delete the {unused} block{} with no copies in the drawing",
+                    if unused == 1 { "" } else { "s" }
+                ))
+                .clicked()
+        {
+            let n = self.editor.purge_unused_blocks();
+            self.set_status(
+                format!("Purged {n} unused block{}", if n == 1 { "" } else { "s" }),
+                false,
+                now,
+            );
+        }
         if let Some(id) = place {
             self.start_placing(id);
         }
@@ -229,19 +326,98 @@ impl DriftApp {
                 self.editor.place_block = None;
             }
         }
-        ui.add_space(8.0);
-        let missing = crate::blocks::starter_blocks()
+        self.library_section(ui, &search, now);
+    }
+
+    /// The library: a category (or a search across all of them), its families and their
+    /// types. Clicking a type adds it to the drawing, once, and starts placing it.
+    fn library_section(&mut self, ui: &mut egui::Ui, search: &str, now: f64) {
+        use crate::library::{self, Category};
+        theme::section(ui, "Library");
+        let label = |c: Option<Category>| c.map_or("All categories", Category::label);
+        egui::ComboBox::from_id_salt("library_category")
+            .selected_text(label(self.library_category))
+            .width(ui.available_width())
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut self.library_category, None, label(None));
+                for c in Category::ALL {
+                    ui.selectable_value(&mut self.library_category, Some(c), label(Some(c)));
+                }
+            });
+        let entries: Vec<&library::Entry> = library::all()
             .iter()
-            .filter(|b| self.editor.doc.block_named(&b.name).is_none())
+            .filter(|e| {
+                if search.is_empty() {
+                    self.library_category.is_none_or(|c| e.category == c)
+                } else {
+                    e.matches(search)
+                }
+            })
+            .collect();
+        let missing = entries
+            .iter()
+            .filter(|e| self.editor.doc.block_named(&e.block.name).is_none())
             .count();
-        if missing > 0
-            && ui
-                .button("Add furniture library")
-                .on_hover_text("Chair, desk, bed, sofa, WC, basin and a 900 door, in millimetres")
-                .clicked()
-        {
-            let n = self.editor.add_starter_blocks();
-            self.set_status(format!("Added {n} furniture blocks"), false, now);
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new(if search.is_empty() {
+                    format!("{} types, in inches", entries.len())
+                } else {
+                    format!("{} found in all categories", entries.len())
+                })
+                .small()
+                .weak(),
+            );
+            if missing > 0
+                && ui
+                    .small_button("Add all")
+                    .on_hover_text(format!(
+                        "Add the {missing} shown that the drawing doesn't have yet, without \
+                         placing them"
+                    ))
+                    .clicked()
+            {
+                let n = self.editor.add_library_blocks(entries.iter().copied());
+                self.set_status(
+                    format!("Added {n} block{}", if n == 1 { "" } else { "s" }),
+                    false,
+                    now,
+                );
+            }
+        });
+        let mut chosen = None;
+        for family in entries.chunk_by(|a, b| a.family == b.family) {
+            ui.add_space(4.0);
+            ui.label(
+                egui::RichText::new(family[0].family)
+                    .small()
+                    .family(theme::bold()),
+            );
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
+                for e in family {
+                    let added = self.editor.doc.block_named(&e.block.name).is_some();
+                    let tile = library_tile(ui, e, added).on_hover_text(format!(
+                        "{}\n{}",
+                        e.block.name,
+                        if added {
+                            "In the drawing: click to place copies"
+                        } else {
+                            "Click to add it and place copies"
+                        }
+                    ));
+                    if tile.clicked() {
+                        chosen = Some(*e);
+                    }
+                }
+            });
+        }
+        if entries.is_empty() {
+            ui.label(egui::RichText::new("Nothing in the library matches.").weak());
+        }
+        if let Some(e) = chosen {
+            let id = self.editor.library_block(e);
+            self.start_placing(id);
         }
     }
 

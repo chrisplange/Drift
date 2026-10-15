@@ -136,8 +136,8 @@ window, step-by-step tutorials, and reference pages for tools, panels, units and
 - **Polygons, slots and ellipses:** regular polygons (K; type the sides, inscribed or
   circumscribed), straight / centre / arc slots (U, again to switch) and ellipses and partial
   ellipses (C again from the circle), all built to stay true when dimensioned or dragged.
-- **Blocks (furniture and symbols):** make a block from the selection or start from the
-  furniture library; place copies (I; R turns, X mirrors); double-click a copy to edit the
+- **Blocks (furniture and symbols):** make a block from the selection or pick one from the
+  library of US doors, windows, kitchen and bath fixtures, furniture and utility items; place copies (I; R turns, X mirrors); double-click a copy to edit the
   block and every copy updates; explode, replace and count copies. DXF blocks and inserts
   are kept both ways.
 - **Underlays:** trace over a PDF or DXF drawing. Import a page, calibrate its scale from

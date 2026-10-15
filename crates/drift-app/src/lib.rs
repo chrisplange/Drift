@@ -699,7 +699,7 @@ const SHORTCUTS: &[(&str, &[(&str, &str)])] = &[
             ),
             (
                 "R (with a selection)",
-                "Rotate: type an angle, B picks the pivot",
+                "Rotate: type an angle, B picks the pivot, R again rotates by reference",
             ),
             ("Shift+D", "Duplicate in place and move the copy"),
             (

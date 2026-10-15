@@ -295,9 +295,10 @@ impl Editor {
             .filter(|(_, e)| !e.kind.is_point() && e.style == drift_core::LineKind::Solid)
             .filter_map(|(id, _)| Some((id, self.doc.shape(id)?)))
             .filter(|(_, shape)| {
+                // The parameter at the curve's end (see `point_at`).
                 let end = match *shape {
-                    Shape::Line { .. } => 1.0,
-                    Shape::Arc { sweep, .. } => sweep,
+                    Shape::Line { .. } | Shape::Bezier { .. } => 1.0,
+                    Shape::Arc { sweep, .. } | Shape::Ellipse { sweep, .. } => sweep,
                     _ => TAU,
                 };
                 let tol = self.tol_for(shape) * 1e3;

@@ -1915,6 +1915,23 @@ zooms to fit; F is Fillet (again for Chamfer).
     and output); a dot marks the current layer and a click anywhere on a row makes it
     current; a magnet per layer turns snapping to it off (it stays pickable). Format v23:
     a layer's `snap`, and layers listed in draw order.
+- **Rotate snaps (done).** R's pivot (B, or the default) now snaps to geometry, the grid
+  and inference lines like any picked point; while turning, a snap onto geometry gives an
+  exact angle (the grid doesn't apply, so the angle doesn't jump). The select tool only
+  asked for snapping while moving before.
+- **Rotate by reference (done).** During R, R again picks a reference point (snapping, the
+  geometry back at its start meanwhile); the turn is then measured from the pivot's
+  direction to it, so snapping onto a target line turns that edge onto it (AutoCAD's
+  Rotate → Reference). A new pivot (B) resets to absolute angles.
+- **Pen curves in chains and areas (done).** Tab chains now run through pen curves and
+  elliptical arcs (any curve with two ends), and a picked area outlined by pen curves
+  moves (drag, G) and transforms: finding an area's outline probed pen curves at angles
+  instead of their 0–1 parameter, so they were never counted as part of it.
+- **New icon (done, to revisit).** A bold white Swiss sans-serif D (straight stem, flat
+  bars, squarish super-elliptic bowl), centred on a flat charcoal tile with a hairline rim.
+  `apps/native/assets/make_icon.py` writes the window icon, the Windows .ico and the macOS
+  icon source; `icons::logo` draws the same mark on the start screen. Linework variants
+  (outline, line with nodes) were drawn too; the user chose the bold one for now.
 - **In-app updates (built on `in-app-updates`).** A custom updater on GitHub Releases
   (native only; `crates/drift-app/src/update`), chosen over Velopack (it would replace the
   Inno Setup and dmg packaging) and `self_update` (it replaces a bare binary, which suits

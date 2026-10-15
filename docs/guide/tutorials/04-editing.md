@@ -94,7 +94,20 @@ Other ways to move:
 
 ![The rotate guide, here on the plate's four bolt holes: the pivot, the reference and the angle readout](../images/rotate.png)
 
-Press B to pick a different pivot. Esc or a right-click cancels.
+Press B to pick a different pivot; it snaps to points and the grid. Esc or a right-click
+cancels. While turning, snapping onto a point gives the exact angle to it.
+
+### Rotate by reference
+
+To turn an edge onto a line, as AutoCAD's Rotate → Reference does:
+
+1. Pick the geometry and press R.
+2. Press B and click the pivot, for example the corner the edge starts from.
+3. Press R again and click the reference: the edge's other end, or any point along it.
+4. Move to the target line and click when the pointer snaps onto it. The edge turns to meet
+   it.
+
+A typed angle turns that far from the reference.
 
 Quarter turns are exact. A turn by another angle removes horizontal and vertical relations
 inside the selection, and Drift says so. Geometry held in place by its relations (like the
@@ -196,6 +209,7 @@ Copies keep the relations within the selection. The fields take expressions.
 
 - Click, Shift, Ctrl and box selection; filters; Tab for chains.
 - G moves and R rotates, with X / Y locks, typed values and B for the base point or pivot.
+  R again rotates by reference.
 - The transform box scales and stretches; Alt scales the dimensions with it.
 - T, E, F, O and M trim, extend, fillet, offset and mirror; Split and patterns are in the
   palette and **Inspector**.

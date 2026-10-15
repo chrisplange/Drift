@@ -365,7 +365,7 @@ impl SelectTool {
             return (!grab.picking_base).then_some((&grab.points, grab.ids.as_slice()));
         }
         if let Some(spin) = &self.spin {
-            return (!spin.picking_pivot).then_some((&spin.points, spin.ids.as_slice()));
+            return (!spin.picking()).then_some((&spin.points, spin.ids.as_slice()));
         }
         match &self.drag {
             Some(SelectDrag::Move { points, ids, .. }) => Some((points, ids.as_slice())),
@@ -428,7 +428,7 @@ impl Tool for SelectTool {
 
     fn fields(&self) -> &'static [&'static str] {
         if let Some(spin) = &self.spin {
-            return if spin.picking_pivot { &[] } else { &["Angle"] };
+            return if spin.picking() { &[] } else { &["Angle"] };
         }
         match &self.grab {
             Some(grab) if !grab.picking_base => {
@@ -494,6 +494,8 @@ impl Tool for SelectTool {
         if let Some(spin) = &self.spin {
             return Some(if spin.picking_pivot {
                 "Pivot".into()
+            } else if spin.picking_reference {
+                "Reference".into()
             } else {
                 format!("Angle {}", p.units.format_angle(spin.current()))
             });
@@ -518,9 +520,13 @@ impl Tool for SelectTool {
         if let Some(spin) = &self.spin {
             return if spin.picking_pivot {
                 "Click the pivot (snaps to points) · Esc: cancel".into()
+            } else if spin.picking_reference {
+                "Click the reference: a point to turn from, e.g. along an edge (snaps) · \
+                 Esc: cancel"
+                    .into()
             } else {
                 "Rotate: click / Enter to place · type an angle · 15° steps stick · B: pivot · \
-                 Esc: cancel"
+                 R: by reference · Esc: cancel"
                     .into()
             };
         }
@@ -1248,7 +1254,11 @@ impl Tool for SelectTool {
     }
 
     fn wants_snap(&self) -> bool {
-        matches!(self.drag, Some(SelectDrag::Move { .. })) || self.grab.is_some()
+        // Moving, and rotating: a new pivot snaps to geometry and the grid; while turning,
+        // a snap onto geometry gives an exact angle.
+        matches!(self.drag, Some(SelectDrag::Move { .. }))
+            || self.grab.is_some()
+            || self.spin.is_some()
     }
 
     fn snap_excludes(&self, ed: &Editor, id: EntityId) -> bool {

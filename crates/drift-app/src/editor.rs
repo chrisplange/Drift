@@ -2074,15 +2074,15 @@ impl Editor {
         Some(self.commit("Nudge"))
     }
 
-    /// The curves joined end to end with `start` (lines and arcs meeting at shared end
-    /// points; circles stand alone), as Revit's Tab selects a chain of walls.
+    /// The curves joined end to end with `start` (lines, arcs, elliptical arcs and pen curves
+    /// meeting at shared end points; circles and ellipses stand alone), as Revit's Tab
+    /// selects a chain of walls.
     pub fn chain_of(&self, start: EntityId) -> BTreeSet<EntityId> {
         let ends = |id: EntityId| -> Vec<EntityId> {
-            match self.doc.get(id).map(|e| e.kind) {
-                Some(EntityKind::Line { a, b }) => vec![a, b],
-                Some(EntityKind::Arc { start, end, .. }) => vec![start, end],
-                _ => Vec::new(),
-            }
+            self.doc
+                .get(id)
+                .and_then(|e| e.kind.ends())
+                .map_or_else(Vec::new, Vec::from)
         };
         let mut chain = BTreeSet::new();
         if self.doc.get(start).is_none_or(|e| e.kind.is_point()) {

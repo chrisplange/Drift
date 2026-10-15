@@ -2711,6 +2711,67 @@ fn rotate_pivot_from_b_and_absolute_angles() {
 }
 
 #[test]
+fn a_rotates_new_pivot_snaps_to_geometry_and_the_grid() {
+    let (mut ed, _) = rotated_rectangle_fixture();
+    let mut tool = SelectTool::default();
+    let start = ptr(&ed, &tool, v(13.0, 27.0));
+    tool.key(ToolKey::R, Some(&start), &mut ed);
+    // Near a corner of the selection: onto the corner.
+    tool.key(ToolKey::B, None, &mut ed);
+    let near = ptr(&ed, &tool, v(0.3, -0.2));
+    tool.handle(Input::Hover(near), &mut ed);
+    tool.handle(Input::Click(near, Modifiers::default()), &mut ed);
+    assert_eq!(tool.spin.as_ref().unwrap().pivot, v(0.0, 0.0));
+    // In open space with grid snapping: onto the grid.
+    tool.key(ToolKey::B, None, &mut ed);
+    let open = ptr_grid(&ed, &tool, v(31.2, 18.6), Some(5.0));
+    tool.handle(Input::Hover(open), &mut ed);
+    tool.handle(Input::Click(open, Modifiers::default()), &mut ed);
+    assert_eq!(tool.spin.as_ref().unwrap().pivot, v(30.0, 20.0));
+    // Turning follows the pointer itself, not the grid.
+    let turn = ptr_grid(&ed, &tool, v(31.0, 31.0), Some(5.0));
+    tool.handle(Input::Hover(turn), &mut ed);
+    let angle = tool.spin.as_ref().unwrap().angle;
+    let raw = DVec2::X.angle_to(v(1.0, 11.0)).to_degrees();
+    assert!((angle - raw).abs() < 1e-9, "{angle} vs {raw}");
+}
+
+#[test]
+fn rotate_by_reference_turns_an_edge_onto_a_line() {
+    // The 20 × 10 rectangle, and a target line from its corner (0, 0) out to (-10, 40).
+    let (mut ed, ids) = rotated_rectangle_fixture();
+    ed.doc.begin();
+    let o = ed.doc.add_point(v(0.0, -0.0001));
+    let far = ed.doc.add_point(v(-10.0, 40.0));
+    ed.doc.add_line(o, far).unwrap();
+    ed.commit("Target");
+    let mut tool = SelectTool::default();
+    let start = ptr(&ed, &tool, v(13.0, 27.0));
+    tool.key(ToolKey::R, Some(&start), &mut ed);
+    // B: the pivot at the corner.
+    tool.key(ToolKey::B, None, &mut ed);
+    let at = ptr(&ed, &tool, v(0.2, 0.2));
+    tool.handle(Input::Click(at, Modifiers::default()), &mut ed);
+    assert_eq!(tool.spin.as_ref().unwrap().pivot, v(0.0, 0.0));
+    // R again: the reference is the far corner (20, 10), along the diagonal.
+    assert!(tool.key(ToolKey::R, None, &mut ed));
+    assert!(tool.spin.as_ref().unwrap().picking_reference);
+    let reference = ptr(&ed, &tool, v(19.8, 10.1));
+    tool.handle(Input::Hover(reference), &mut ed);
+    tool.handle(Input::Click(reference, Modifiers::default()), &mut ed);
+    // Turn onto the target line's end: the diagonal now lies along the line.
+    let target = ptr(&ed, &tool, v(-9.9, 39.8));
+    tool.handle(Input::Hover(target), &mut ed);
+    tool.handle(Input::Click(target, Modifiers::default()), &mut ed);
+    let corner = v(-10.0, 40.0).normalize() * v(20.0, 10.0).length();
+    let points: Vec<DVec2> = ids.iter().filter_map(|id| ed.doc.point(*id).ok()).collect();
+    assert!(
+        points.iter().any(|p| p.distance(corner) < 1e-6),
+        "{corner:?} in {points:?}"
+    );
+}
+
+#[test]
 fn clicking_inside_a_closed_area_picks_its_outline() {
     let (mut ed, _) = rotated_rectangle_fixture();
     ed.selection.clear();
@@ -3115,6 +3176,53 @@ fn pen_drag(ed: &mut Editor, tool: &mut dyn Tool, at: DVec2, to: DVec2, alt: boo
     q.alt = alt;
     tool.handle(Input::Drag(q), ed);
     tool.handle(Input::DragEnd(q, Modifiers::default()), ed);
+}
+
+#[test]
+fn pen_paths_chain_with_tab_and_their_areas_move() {
+    // A closed pen path: a corner, a smooth point dragged out, another, and back to the start.
+    let mut ed = Editor::default();
+    ed.regions_need_fill = false;
+    let mut tool = PenTool::default();
+    click(&mut ed, &mut tool, v(0.0, 0.0));
+    pen_drag(&mut ed, &mut tool, v(20.0, 12.0), v(28.0, 12.0), false);
+    pen_drag(&mut ed, &mut tool, v(40.0, 0.0), v(40.0, -6.0), false);
+    click(&mut ed, &mut tool, v(0.1, 0.1));
+    assert!(!tool.is_busy(), "closed");
+    let curves: BTreeSet<EntityId> = ed
+        .doc
+        .iter()
+        .filter(|(_, e)| !e.kind.is_point())
+        .map(|(id, _)| id)
+        .collect();
+    assert!(beziers(&ed.doc).len() >= 2);
+    // Tab's chain: the whole path, from any of its curves.
+    for c in &curves {
+        assert_eq!(&ed.chain_of(*c), &curves);
+    }
+    // Pick the area inside it, then G: it moves.
+    let mut select = SelectTool::default();
+    click(&mut ed, &mut select, v(20.0, 4.0));
+    let region = ed.region().expect("the area is picked");
+    assert_eq!(
+        ed.region_curves(&region)
+            .into_iter()
+            .collect::<BTreeSet<_>>(),
+        curves
+    );
+    let start = ptr(&ed, &select, v(20.0, 4.0));
+    assert!(select.key(ToolKey::G, Some(&start), &mut ed));
+    select.set_typed([Some(0.0), Some(30.0)]);
+    select.commit_typed(&start, &mut ed);
+    let ys: Vec<f64> = ed
+        .doc
+        .iter()
+        .filter_map(|(_, e)| match e.kind {
+            EntityKind::Point(p) => Some(p.y),
+            _ => None,
+        })
+        .collect();
+    assert!(ys.iter().all(|y| *y >= 23.0), "{ys:?}");
 }
 
 #[test]

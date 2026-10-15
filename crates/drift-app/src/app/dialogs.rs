@@ -53,6 +53,8 @@ impl DriftApp {
         self.relation_pie(ctx);
         self.import_report_window(ctx);
         self.sketch_check_window(ctx);
+        #[cfg(not(target_arch = "wasm32"))]
+        self.update_notice(ctx);
         if let Some((constraint, placement)) = self.editor.pending_driven {
             let mut choice = None;
             let modal = egui::Modal::new(egui::Id::new("driven")).show(ctx, |ui| {
@@ -97,10 +99,13 @@ impl DriftApp {
                 ui.set_width(360.0);
                 ui.heading(format!("Save changes to {}?", self.file.name));
                 ui.add_space(6.0);
-                ui.label(if action == Pending::Quit {
-                    "Your changes will be lost if you close without saving."
-                } else {
-                    "Your changes will be lost if you don't save them."
+                ui.label(match action {
+                    Pending::Quit => "Your changes will be lost if you close without saving.",
+                    #[cfg(not(target_arch = "wasm32"))]
+                    Pending::Update => {
+                        "Drift closes to install the update. Your changes will be lost if you don't save them."
+                    }
+                    _ => "Your changes will be lost if you don't save them.",
                 });
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
@@ -133,6 +138,10 @@ impl DriftApp {
                     }
                     Choice::Discard => {
                         self.discard_session = action == Pending::Quit;
+                        #[cfg(not(target_arch = "wasm32"))]
+                        {
+                            self.discard_session |= action == Pending::Update;
+                        }
                         self.perform(action);
                     }
                     Choice::Cancel => {}

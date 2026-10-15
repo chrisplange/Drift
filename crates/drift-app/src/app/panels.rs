@@ -603,6 +603,8 @@ impl DriftApp {
                     self.benchmark = Some(run_benchmark());
                 }
                 ui.separator();
+                #[cfg(not(target_arch = "wasm32"))]
+                self.updates_menu(ui);
                 if ui.button("About Drift").clicked() {
                     self.show_about = true;
                 }

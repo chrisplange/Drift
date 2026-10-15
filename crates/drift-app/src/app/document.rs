@@ -110,6 +110,13 @@ impl DriftApp {
         prefs.push(format!("wheel={}", self.wheel.mode.key()));
         prefs.push(format!("asnap={}", self.angle_snap.unwrap_or(0.0)));
         prefs.push(format!("gaptol={}", self.gap_tolerance));
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            prefs.push(format!("upchk={}", u8::from(self.updates.auto_check)));
+            if let Some(skipped) = &self.updates.skipped {
+                prefs.push(format!("upskip={skipped}"));
+            }
+        }
         prefs.extend(self.layout.prefs());
         prefs.join(";")
     }
@@ -157,6 +164,10 @@ impl DriftApp {
                 "rlayer" => self.editor.regions_by_layer = on,
                 "rfill" => self.editor.regions_need_fill = on,
                 "tdims" => self.show_temp_dims = on,
+                #[cfg(not(target_arch = "wasm32"))]
+                "upchk" => self.updates.auto_check = on,
+                #[cfg(not(target_arch = "wasm32"))]
+                "upskip" => self.updates.skipped = semver::Version::parse(value).ok(),
                 _ => {}
             }
         }
@@ -274,6 +285,8 @@ impl DriftApp {
                 }
             }
             Pending::Quit => self.quit_confirmed = true,
+            #[cfg(not(target_arch = "wasm32"))]
+            Pending::Update => self.install_update_and_quit(),
             Pending::Example => {
                 self.replace_document(
                     demo::mounting_plate(),

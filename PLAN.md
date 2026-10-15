@@ -1915,6 +1915,31 @@ zooms to fit; F is Fillet (again for Chamfer).
     and output); a dot marks the current layer and a click anywhere on a row makes it
     current; a magnet per layer turns snapping to it off (it stays pickable). Format v23:
     a layer's `snap`, and layers listed in draw order.
+- **In-app updates (built on `in-app-updates`).** A custom updater on GitHub Releases
+  (native only; `crates/drift-app/src/update`), chosen over Velopack (it would replace the
+  Inno Setup and dmg packaging) and `self_update` (it replaces a bare binary, which suits
+  the zip, not the installer).
+  - At start (a preference, on by default) and from Help → Check for updates…, a worker
+    thread asks the releases API for the newest published release above this version.
+    Pre-releases count while this is one, and a stable build is offered stable releases
+    only. Drafts are never listed. A non-blocking notice offers Update now / Later / Skip
+    this version. Failures are a status message.
+  - Trust: CI signs `SHA256SUMS.txt` with minisign. The trusted comment names the version,
+    so an old signed list can't be replayed on a new release. The app checks the signature
+    with the public key compiled in, then the download's SHA-256, before anything runs.
+    The release job fails if its signature doesn't verify with the key in the repository.
+  - Install: Windows runs the Inno Setup installer `/SILENT /CLOSEAPPLICATIONS /RELAUNCH=1`
+    as Drift exits, and `drift.iss` reopens Drift when it sees `/RELAUNCH=1`. macOS copies
+    the app out of the dmg beforehand. As Drift exits, a shell script waits for it, swaps
+    the bundle (putting the old one back if that fails), clears quarantine and opens it.
+    Copies not installed with the installer or as a bundle (the zip, builds) get a link
+    to the release page instead.
+  - Unsaved work goes through the usual save prompt (`Pending::Update`). Cancel keeps the
+    verified download for Help → Restart to update.
+  - Later: an update channel setting (alpha / stable); code signing. Authenticode would
+    remove SmartScreen's warning on first install. A Developer ID plus notarisation would
+    remove Gatekeeper's, and would let the updater check the new bundle's signature
+    (`codesign --verify`) as well as minisign.
 - **Workspace notes, next: tabs for separate drawings (design, not built).** A tab bar
   along the top, one drawing per tab, as Revit and Illustrator have.
   - What a tab owns: the editor (document, selection, undo history), its file (name, path,

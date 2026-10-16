@@ -19,10 +19,42 @@ group of the tool palette.
 4. Type `DEBURR ALL EDGES` and press Enter. (Shift+Enter starts a new line; Esc cancels.)
 
 For a note without a leader, click empty canvas in step 2 and go straight to typing.
+For several leaders, Shift+click more geometry after the first, then click where the text
+goes.
 
-Leaders attach to points or to spots on curves, so they follow the geometry when it moves.
-Pick a note and the **Inspector** has its text, the leader's **End** (**Arrow**, **Dot** or
-**None**) and **Remove leader**. Double-click a note to edit its text.
+Leaders attach to points, or anywhere along a line or curve, so they follow the geometry
+when it moves.
+
+### More leaders, and changing them
+
+Pick a note with **Select** and it shows grips:
+
+- **+** on either side of the text: drag from one to anything to add a leader there.
+- A square at each leader's end: drag it to attach the leader somewhere else.
+- A circle at a bent leader's bend, or at a curved leader's middle: drag it to move the
+  bend, or to bow the curve further, less, or the other way.
+- A diamond where a leader meets its shoulder: drag it along the text's line to lengthen
+  or shorten the shoulder (all the way in turns the shoulder off).
+
+Click a leader's line to pick just that leader, and press Delete to remove it. The text stays
+where it is. **Add leader** in the **Inspector** does the same as a **+**: click it, then
+click what the leader points to.
+
+The **Inspector** lists the note's leaders. For each:
+
+- **End:** **Arrow**, **Open arrow**, **Dot** or **None**.
+- **Shape:** **Straight**, **Bent** (through a bend you can drag), or **Curved** (drag its
+  middle to bow it).
+- **Shoulder:** a short level line into the text, as on Revit and SolidWorks notes; its
+  length is set on the canvas.
+- **×** removes it.
+
+### The text
+
+The **Inspector**'s **Style** section sets the note's text: a **Size** of its own (or the
+drafting style's), **B**old and *I*talic, **Align** (left, centre or right), **Wrap** to a
+width, a **Frame** (a box or a rounded box) and **Mask what's behind it**, which puts paper
+behind the text so it reads over hatches and lines. Double-click a note to edit its text.
 
 ## 2. A centre mark
 

@@ -6,7 +6,7 @@
 //! ```json
 //! {
 //!   "format": "drift",
-//!   "version": 23,
+//!   "version": 24,
 //!   "meta": {"title":"Bracket","units":"mm","generator":"Drift 0.1.0"},
 //!   "display": {"length":"architectural","fraction":16},
 //!   "variables": [
@@ -73,8 +73,10 @@ pub const EXTENSION: &str = "drift";
 /// `views`; 19 = adds `fonts` and a text's `align`, `spacing` and `wrap`; 20 = adds the
 /// drafting style's `color`; 21 = adds `shown` (where dimensions and annotations show) and a
 /// dimension's `below` and `text`; 22 = adds a block's `fills`; 23 = adds a layer's `snap`
-/// (and layers are listed in draw order).
-pub const FORMAT_VERSION: u32 = 23;
+/// (and layers are listed in draw order); 24 = notes have any number of `leaders` (each with a
+/// `bend` or `bulge` and a shoulder) and a text style (`align`, `wrap`, `frame`, `mask`,
+/// `bold`, `italic`, `height`).
+pub const FORMAT_VERSION: u32 = 24;
 const FORMAT_TAG: &str = "drift";
 
 /// Document-level properties stored alongside the geometry.
@@ -1641,7 +1643,7 @@ pub fn migrate(value: serde_json::Value) -> Result<serde_json::Value, LoadError>
         // v1 → v2: constraints were introduced; a v1 file simply has none.
         value["constraints"] = serde_json::Value::Array(Vec::new());
     }
-    // v2 → v23 only added optional fields, sections and constraint types: nothing to convert
+    // v2 → v24 only added optional fields, sections and constraint types: nothing to convert
     // (a sheet's single view from before v18 is read as it was written).
     value["version"] = FORMAT_VERSION.into();
     Ok(value)
@@ -1712,7 +1714,7 @@ mod tests {
         let text = save(&doc, &Metadata::default());
         let expected = r#"{
   "format": "drift",
-  "version": 23,
+  "version": 24,
   "meta": {"units":"mm"},
   "entities": [
     {"type":"point","id":"e1","at":[0.0,0.0]},
@@ -2060,6 +2062,33 @@ mod tests {
     }
 
     #[test]
+    fn a_note_with_its_one_leader_from_before_v24_loads() {
+        let text = r#"{
+  "format": "drift",
+  "version": 23,
+  "meta": {"units":"mm"},
+  "entities": [
+    {"type":"point","id":"e1","at":[0.0,0.0]}
+  ],
+  "annotations": [
+    {"type":"note","id":"n1","text":"Old","at":[5.0,2.0],"leader":{"to":{"point":"e1"},"end":"dot"}}
+  ]
+}"#;
+        let (doc, _) = load(text).unwrap();
+        let (_, note) = doc.annotations().next().unwrap();
+        let drift_core::Annotation::Note { leaders, at, .. } = note else {
+            panic!("a note");
+        };
+        assert_eq!(leaders.len(), 1);
+        assert_eq!(leaders[0].end, drift_core::LeaderEnd::Dot);
+        assert!(leaders[0].shoulder);
+        assert_eq!(*at, DVec2::new(5.0, 2.0));
+        // Saved again, as a list.
+        let saved = save(&doc, &Metadata::default());
+        assert!(saved.contains(r#""leaders":["#) && !saved.contains(r#""leader":"#));
+    }
+
+    #[test]
     fn drafting_round_trips() {
         use drift_core::{
             Anchor, Annotation, ArrowStyle, DimNote, DraftStyle, Fill, FillKind, Hatch, Leader,
@@ -2098,28 +2127,64 @@ mod tests {
         doc.add_annotation(Annotation::Note {
             text: "Deburr all edges\nBreak sharp corners".into(),
             at: DVec2::new(10.0, 20.0),
-            leader: None,
+            leaders: Vec::new(),
+            style: Default::default(),
         })
         .unwrap();
         doc.add_annotation(Annotation::Note {
             text: "Edge".into(),
             at: DVec2::new(-5.0, 3.0),
-            leader: Some(Leader {
+            leaders: vec![Leader {
                 to: Anchor::Curve {
                     curve: curves[0],
                     t: 0.25,
                 },
                 end: LeaderEnd::Dot,
-            }),
+                shape: drift_core::LeaderShape::Straight,
+                shoulder: true,
+                shoulder_len: drift_core::Leader::SHOULDER,
+            }],
+            style: Default::default(),
         })
         .unwrap();
         doc.add_annotation(Annotation::Note {
             text: "Here".into(),
             at: DVec2::new(1.0, 1.0),
-            leader: Some(Leader {
-                to: Anchor::Point(point),
-                end: LeaderEnd::Arrow,
-            }),
+            leaders: vec![
+                Leader {
+                    to: Anchor::Point(point),
+                    end: LeaderEnd::Arrow,
+                    shape: drift_core::LeaderShape::Straight,
+                    shoulder: true,
+                    shoulder_len: drift_core::Leader::SHOULDER,
+                },
+                Leader {
+                    to: Anchor::Free(DVec2::new(40.0, -2.0)),
+                    end: LeaderEnd::OpenArrow,
+                    shape: drift_core::LeaderShape::Bent(DVec2::new(3.0, 4.5)),
+                    shoulder: false,
+                    shoulder_len: drift_core::Leader::SHOULDER,
+                },
+                Leader {
+                    to: Anchor::Curve {
+                        curve: curves[1],
+                        t: 0.75,
+                    },
+                    end: LeaderEnd::None,
+                    shape: drift_core::LeaderShape::Curved(-0.3),
+                    shoulder: true,
+                    shoulder_len: 6.25,
+                },
+            ],
+            style: drift_core::NoteStyle {
+                align: drift_core::TextAlign::Center,
+                wrap: Some(42.5),
+                frame: drift_core::NoteFrame::Rounded,
+                mask: true,
+                bold: true,
+                italic: true,
+                height: Some(3.5),
+            },
         })
         .unwrap();
         doc.add_annotation(Annotation::CentreMark { curve: circle })
@@ -2352,7 +2417,7 @@ mod tests {
         doc.add_text(drift_core::SketchText::new("A", DVec2::ZERO, 3.0));
 
         let text = save(&doc, &Metadata::default());
-        assert!(text.contains("\"version\": 23"));
+        assert!(text.contains("\"version\": 24"));
         assert!(
             text.contains(r#"{"a":[80.0,20.0,30.0,0.0,90.0]}"#),
             "{text}"

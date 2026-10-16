@@ -283,6 +283,9 @@ fn item_svg(
             if style.bold {
                 look.push_str(r#" font-weight="700""#);
             }
+            if style.italic {
+                look.push_str(r#" font-style="italic""#);
+            }
             if style.tracking != 0.0 {
                 look.push_str(&format!(
                     r#" letter-spacing="{}""#,

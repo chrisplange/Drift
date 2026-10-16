@@ -4,7 +4,8 @@
 use drift_core::{
     Anchor, Annotation, AnnotationId, AnnotationRef, ArrowStyle, DVec2, DimNote, Document,
     DocumentError, DraftStyle, EntityId, Fill, FillId, FillKind, Hatch, LayerId, Leader, LeaderEnd,
-    LineWeight, OrdinateAxis, Rgb, Shown, Standard, Tolerance,
+    LeaderShape, LineWeight, NoteFrame, NoteStyle, OrdinateAxis, Rgb, Shown, Standard, TextAlign,
+    Tolerance,
 };
 use serde::{Deserialize, Serialize};
 
@@ -190,6 +191,93 @@ pub(crate) struct LeaderRecord {
     to: AnchorRecord,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     end: Option<String>,
+    /// A bent leader's bend, from its tip (v24).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    bend: Option<[f64; 2]>,
+    /// A curved leader's bow, as a fraction of its length (v24).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    bulge: Option<f64>,
+    /// Without a shoulder into the text (v24); absent has one.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    no_shoulder: bool,
+    /// The shoulder's length, paper mm (v24); absent is the usual length.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    shoulder: Option<f64>,
+}
+
+fn leader_record(l: &Leader) -> LeaderRecord {
+    LeaderRecord {
+        to: match l.to {
+            Anchor::Free(p) => AnchorRecord {
+                at: Some(p.to_array()),
+                ..Default::default()
+            },
+            Anchor::Point(e) => AnchorRecord {
+                point: Some(id_string(e)),
+                ..Default::default()
+            },
+            Anchor::Curve { curve, t } => AnchorRecord {
+                curve: Some(id_string(curve)),
+                t: Some(t),
+                ..Default::default()
+            },
+        },
+        end: (l.end != LeaderEnd::Arrow).then(|| l.end.key().to_owned()),
+        bend: match l.shape {
+            LeaderShape::Bent(b) => Some(b.to_array()),
+            _ => None,
+        },
+        bulge: match l.shape {
+            LeaderShape::Curved(k) => Some(k),
+            _ => None,
+        },
+        no_shoulder: !l.shoulder,
+        shoulder: (l.shoulder_len != Leader::SHOULDER).then_some(l.shoulder_len),
+    }
+}
+
+fn parse_leader(id: &str, l: &LeaderRecord) -> Result<Leader, LoadError> {
+    let missing = |field| LoadError::MissingField {
+        id: id.to_owned(),
+        field,
+    };
+    let finite = |v: [f64; 2]| {
+        let p = DVec2::from_array(v);
+        p.is_finite()
+            .then_some(p)
+            .ok_or_else(|| LoadError::NonFinite(id.to_owned()))
+    };
+    let to = match (l.to.at, &l.to.point, &l.to.curve) {
+        (Some(p), None, None) => Anchor::Free(finite(p)?),
+        (None, Some(p), None) => Anchor::Point(parse_id(p)?),
+        (None, None, Some(c)) => Anchor::Curve {
+            curve: parse_id(c)?,
+            t: l.to.t.ok_or_else(|| missing("t"))?,
+        },
+        _ => return Err(missing("to")),
+    };
+    let end = match &l.end {
+        Some(e) => LeaderEnd::parse(e).ok_or_else(|| missing("end"))?,
+        None => LeaderEnd::Arrow,
+    };
+    let shape = match (l.bend, l.bulge) {
+        (Some(b), _) => LeaderShape::Bent(finite(b)?),
+        (None, Some(k)) if k.is_finite() => LeaderShape::Curved(k.clamp(-1.0, 1.0)),
+        (None, Some(_)) => return Err(LoadError::NonFinite(id.to_owned())),
+        (None, None) => LeaderShape::Straight,
+    };
+    let shoulder_len = match l.shoulder {
+        Some(len) if len.is_finite() && len >= 0.0 => len.min(100.0),
+        Some(_) => return Err(missing("shoulder")),
+        None => Leader::SHOULDER,
+    };
+    Ok(Leader {
+        to,
+        end,
+        shape,
+        shoulder: !l.no_shoulder,
+        shoulder_len,
+    })
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -199,8 +287,27 @@ pub(crate) enum AnnotationRecord {
         id: String,
         text: String,
         at: [f64; 2],
+        /// The one leader notes had before v24 (read, not written).
+        #[serde(default, skip_serializing)]
+        leader: Option<Box<LeaderRecord>>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        leaders: Vec<LeaderRecord>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        leader: Option<LeaderRecord>,
+        align: Option<String>,
+        /// Wrap width, paper mm.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        wrap: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        frame: Option<String>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        mask: bool,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        bold: bool,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        italic: bool,
+        /// Text height, paper mm.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        height: Option<f64>,
     },
     CentreMark {
         id: String,
@@ -253,28 +360,24 @@ pub(crate) enum AnnotationRecord {
 pub(crate) fn annotation_record(id: AnnotationId, a: &Annotation) -> AnnotationRecord {
     let id = id.to_string();
     match a {
-        Annotation::Note { text, at, leader } => AnnotationRecord::Note {
+        Annotation::Note {
+            text,
+            at,
+            leaders,
+            style,
+        } => AnnotationRecord::Note {
             id,
             text: text.clone(),
             at: at.to_array(),
-            leader: leader.map(|l| LeaderRecord {
-                to: match l.to {
-                    Anchor::Free(p) => AnchorRecord {
-                        at: Some(p.to_array()),
-                        ..Default::default()
-                    },
-                    Anchor::Point(e) => AnchorRecord {
-                        point: Some(id_string(e)),
-                        ..Default::default()
-                    },
-                    Anchor::Curve { curve, t } => AnchorRecord {
-                        curve: Some(id_string(curve)),
-                        t: Some(t),
-                        ..Default::default()
-                    },
-                },
-                end: (l.end != LeaderEnd::Arrow).then(|| l.end.key().to_owned()),
-            }),
+            leader: None,
+            leaders: leaders.iter().map(leader_record).collect(),
+            align: (style.align != TextAlign::Left).then(|| style.align.name().to_owned()),
+            wrap: style.wrap,
+            frame: (style.frame != NoteFrame::None).then(|| style.frame.key().to_owned()),
+            mask: style.mask,
+            bold: style.bold,
+            italic: style.italic,
+            height: style.height,
         },
         Annotation::CentreMark { curve } => AnnotationRecord::CentreMark {
             id,
@@ -362,28 +465,54 @@ pub(crate) fn parse_annotation(
             text,
             at,
             leader,
+            leaders,
+            align,
+            wrap,
+            frame,
+            mask,
+            bold,
+            italic,
+            height,
         } => {
-            let leader = match leader {
-                None => None,
-                Some(l) => {
-                    let to = match (l.to.at, &l.to.point, &l.to.curve) {
-                        (Some(p), None, None) => Anchor::Free(finite(&id, p)?),
-                        (None, Some(p), None) => Anchor::Point(parse_id(p)?),
-                        (None, None, Some(c)) => Anchor::Curve {
-                            curve: parse_id(c)?,
-                            t: l.to.t.ok_or_else(|| missing(&id, "t"))?,
-                        },
-                        _ => return Err(missing(&id, "to")),
-                    };
-                    let end = match &l.end {
-                        Some(e) => LeaderEnd::parse(e).ok_or_else(|| missing(&id, "end"))?,
-                        None => LeaderEnd::Arrow,
-                    };
-                    Some(Leader { to, end })
-                }
+            let leaders = leader
+                .as_deref()
+                .into_iter()
+                .chain(&leaders)
+                .map(|l| parse_leader(&id, l))
+                .collect::<Result<Vec<_>, _>>()?;
+            let positive = |v: Option<f64>, field| match v {
+                Some(v) if v.is_finite() && v > 0.0 => Ok(Some(v)),
+                Some(_) => Err(missing(&id, field)),
+                None => Ok(None),
+            };
+            let style = NoteStyle {
+                align: match &align {
+                    Some(a) => TextAlign::ALL
+                        .into_iter()
+                        .find(|x| x.name() == a)
+                        .ok_or_else(|| missing(&id, "align"))?,
+                    None => TextAlign::Left,
+                },
+                wrap: positive(wrap, "wrap")?,
+                frame: match &frame {
+                    Some(f) => NoteFrame::parse(f).ok_or_else(|| missing(&id, "frame"))?,
+                    None => NoteFrame::None,
+                },
+                mask,
+                bold,
+                italic,
+                height: positive(height, "height")?,
             };
             let at = finite(&id, at)?;
-            (id, Annotation::Note { text, at, leader })
+            (
+                id,
+                Annotation::Note {
+                    text,
+                    at,
+                    leaders,
+                    style,
+                },
+            )
         }
         AnnotationRecord::CentreMark { id, curve } => {
             let curve = parse_id(&curve)?;

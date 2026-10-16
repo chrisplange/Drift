@@ -698,6 +698,8 @@ pub enum Recorded {
         angle: f32,
         size: f32,
         text: String,
+        bold: bool,
+        italic: bool,
     },
 }
 
@@ -750,11 +752,10 @@ impl Pen for Recorder<'_> {
         angle: f32,
         _color: Color32,
     ) {
-        let size = galley
-            .job
-            .sections
-            .first()
-            .map_or(12.0, |s| s.format.font_id.size);
+        let format = galley.job.sections.first().map(|s| &s.format);
+        let size = format.map_or(12.0, |f| f.font_id.size);
+        let bold = format.is_some_and(|f| crate::fonts::is_bold(&f.font_id.family));
+        let italic = format.is_some_and(|f| f.italics);
         let rot = egui::emath::Rot2::from_angle(angle);
         let mut items = self.items.borrow_mut();
         for placed in &galley.rows {
@@ -768,6 +769,8 @@ impl Pen for Recorder<'_> {
                 angle,
                 size,
                 text,
+                bold,
+                italic,
             });
         }
     }

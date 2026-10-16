@@ -14,7 +14,7 @@ use std::rc::Rc;
 
 use drift_core::{DVec2, Shape};
 use drift_draft::font::{DrawingFont, Face};
-use drift_draft::page::{Align, CAP_HEIGHT, Drawing, Item, Prim, dash_pattern};
+use drift_draft::page::{Align, CAP_HEIGHT, Drawing, ITALIC_SLANT, Item, Prim, dash_pattern};
 
 /// The drawing's font as a PDF uses it, and the glyphs used so far in each weight: glyph id
 /// to its advance (ems) and the character it stands for.
@@ -270,6 +270,7 @@ fn item_ops(
                 }
                 hex.push('>');
                 let (c, s_) = (angle.cos(), angle.sin());
+                let lean = if style.italic { ITALIC_SLANT } else { 0.0 };
                 let _ = writeln!(
                     out,
                     "BT\n{} {} {} rg\n/F{} {} Tf\n{} Tc\n{} {} {} {} {} Tm",
@@ -281,8 +282,8 @@ fn item_ops(
                     n(style.tracking * size),
                     n(c),
                     n(s_),
-                    n(-s_),
-                    n(c),
+                    n(-s_ + lean * c),
+                    n(c + lean * s_),
                     pt(origin)
                 );
                 let _ = writeln!(out, "{hex} Tj");
@@ -291,6 +292,7 @@ fn item_ops(
             }
             let size = height / CAP_HEIGHT * PT_PER_MM;
             let (c, s_) = (angle.cos(), angle.sin());
+            let lean = if style.italic { ITALIC_SLANT } else { 0.0 };
             // Text goes straight into the byte stream (it may hold non-UTF-8 bytes).
             text.extend_from_slice(out.as_bytes());
             out.clear();
@@ -305,8 +307,8 @@ fn item_ops(
                     n(style.tracking * size),
                     n(c),
                     n(s_),
-                    n(-s_),
-                    n(c),
+                    n(-s_ + lean * c),
+                    n(c + lean * s_),
                     pt(origin)
                 )
                 .as_bytes(),

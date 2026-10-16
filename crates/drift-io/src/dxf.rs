@@ -438,6 +438,7 @@ fn write_item(
             angle,
             align,
             text,
+            style,
             ..
         } => {
             head(o, "TEXT");
@@ -446,6 +447,10 @@ fn write_item(
             o.pair(1, dxf_text(text));
             if angle.abs() > 1e-9 {
                 o.num(50, angle.to_degrees());
+            }
+            if style.italic {
+                // The oblique angle, from upright.
+                o.num(51, drift_draft::page::ITALIC_SLANT.atan().to_degrees());
             }
             let h = match align {
                 Align::Left => 0,

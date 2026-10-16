@@ -1018,6 +1018,305 @@ fn a_tab_dropped_on_another_docks_tabs_goes_there() {
 }
 
 #[test]
+fn a_leaders_shoulder_and_curve_are_set_by_dragging() {
+    use drift_core::{Anchor, Annotation, Leader, LeaderShape};
+    let Some(mut h) = harness() else { return };
+    let id = {
+        let doc = &mut h.state_mut().editor.doc;
+        doc.begin();
+        let mut leader = Leader::to(Anchor::Free(DVec2::new(0.0, 0.0)));
+        leader.shape = LeaderShape::Curved(0.2);
+        let id = doc
+            .add_annotation(Annotation::Note {
+                text: "NOTE".into(),
+                at: DVec2::new(40.0, 20.0),
+                leaders: vec![leader],
+                style: Default::default(),
+            })
+            .unwrap();
+        let _ = doc.commit("Note");
+        id
+    };
+    h.state_mut().editor.selected_annotation = Some(id);
+    h.run();
+    let leader_path = |h: &Harness<'_, DriftApp>| {
+        let app = h.state();
+        let painter =
+            egui::Painter::new(h.ctx.clone(), egui::LayerId::background(), app.canvas_rect);
+        app.layout_notes(&painter, &screen_map(h))
+            .into_iter()
+            .find(|l| l.id == id)
+            .unwrap()
+            .leaders[0]
+            .clone()
+    };
+    let leader = |h: &Harness<'_, DriftApp>| match h.state().editor.doc.annotation(id) {
+        Some(Annotation::Note { leaders, .. }) => leaders[0],
+        _ => panic!("a note"),
+    };
+    let drag = |h: &mut Harness<'_, DriftApp>, from: Pos2, to: Pos2| {
+        h.hover_at(from);
+        h.run_steps(2);
+        button(h, from, true);
+        h.run_steps(2);
+        for k in 1..=6 {
+            h.hover_at(from + (to - from) * (k as f32 / 6.0));
+            h.run_steps(2);
+        }
+        button(h, to, false);
+        h.run_steps(4);
+    };
+    // The shoulder's grip, dragged 30 px further out: the shoulder is that much longer.
+    let path = leader_path(&h);
+    let grip = path.shoulder.expect("a shoulder grip");
+    let out = (grip.x - path.landing.x).signum();
+    let before = (grip.x - path.landing.x).abs();
+    drag(&mut h, grip, grip + egui::vec2(30.0 * out, 0.0));
+    let len = leader(&h).shoulder_len * f64::from(crate::annotations::PT_PER_MM);
+    assert!(
+        (len - f64::from(before + 30.0)).abs() < 1.5,
+        "{len} vs {}",
+        before + 30.0
+    );
+    // The curve's grip, dragged across the chord: it bows the other way.
+    let path = leader_path(&h);
+    let (mid, [a, b]) = path.curve.expect("a curve grip");
+    let across = (mid - (a + (b - a) * 0.5)) * -2.0;
+    drag(&mut h, mid, mid + across);
+    let LeaderShape::Curved(bow) = leader(&h).shape else {
+        panic!("still curved");
+    };
+    assert!(bow < -0.1, "bows the other way: {bow}");
+}
+
+#[test]
+fn note_text_stays_in_its_box_whatever_the_alignment() {
+    use crate::annotations::{AnnotationColors, AnnotationState, DimStyle, Recorded, Recorder};
+    use drift_core::{Annotation, NoteFrame, NoteStyle, TextAlign};
+    let Some(mut h) = harness() else { return };
+    let id = {
+        let doc = &mut h.state_mut().editor.doc;
+        doc.begin();
+        let id = doc
+            .add_annotation(Annotation::Note {
+                text: "SMOOTH FINISH
+ALL OVER"
+                    .into(),
+                at: DVec2::new(10.0, 10.0),
+                leaders: Vec::new(),
+                style: Default::default(),
+            })
+            .unwrap();
+        let _ = doc.commit("Note");
+        id
+    };
+    for align in TextAlign::ALL {
+        {
+            let doc = &mut h.state_mut().editor.doc;
+            doc.begin();
+            doc.set_annotation(
+                id,
+                Annotation::Note {
+                    text: "SMOOTH FINISH
+ALL OVER"
+                        .into(),
+                    at: DVec2::new(10.0, 10.0),
+                    leaders: Vec::new(),
+                    style: NoteStyle {
+                        align,
+                        frame: NoteFrame::Rounded,
+                        ..Default::default()
+                    },
+                },
+            )
+            .unwrap();
+            let _ = doc.commit("Align");
+        }
+        h.run();
+        let app = h.state();
+        let painter =
+            egui::Painter::new(h.ctx.clone(), egui::LayerId::background(), app.canvas_rect);
+        let layout = app
+            .layout_notes(&painter, &screen_map(&h))
+            .into_iter()
+            .find(|l| l.id == id)
+            .unwrap();
+        let rect = layout.text.as_ref().unwrap().rect;
+        let recorder = Recorder::new(&painter);
+        let style = DimStyle::of(&app.editor.doc.draft_style());
+        crate::notes::paint_annotation(
+            &recorder,
+            &layout,
+            AnnotationState::Normal,
+            &AnnotationColors::new(true),
+            &style,
+        );
+        let lines: Vec<(f32, String)> = recorder
+            .take()
+            .into_iter()
+            .filter_map(|r| match r {
+                Recorded::Text { baseline, text, .. } => Some((baseline.x, text)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(lines.len(), 2, "{align:?}");
+        for (x, text) in &lines {
+            assert!(
+                *x >= rect.left() - 0.5 && *x <= rect.right(),
+                "{align:?}: {text:?} starts at {x}, box {rect:?}"
+            );
+        }
+        // The shorter line sits as aligned.
+        let (long, short) = (lines[0].0, lines[1].0);
+        match align {
+            TextAlign::Left => assert!((short - long).abs() < 1.0, "{align:?}"),
+            TextAlign::Center | TextAlign::Right => assert!(short > long + 5.0, "{align:?}"),
+        }
+    }
+}
+
+#[test]
+fn notes_take_leaders_from_their_grips_and_lose_them_with_delete() {
+    use drift_core::{Annotation, LeaderShape, NoteFrame};
+    let Some(mut h) = harness() else { return };
+    h.get_by_label("File").click();
+    h.run();
+    h.get_by_label("Open example").click();
+    h.run();
+    // A note with a leader to the plate's bottom edge.
+    h.get_by_label("Note").click();
+    h.run();
+    click_world(&mut h, DVec2::new(30.0, 0.0));
+    click_world(&mut h, DVec2::new(-30.0, -25.0));
+    h.event(Event::Text("TYP.".into()));
+    h.run();
+    h.key_press(Key::Enter);
+    h.run();
+    h.get_by_label("Select").click();
+    h.run();
+    let note = |h: &Harness<'_, DriftApp>| {
+        let (id, a) = h
+            .state()
+            .editor
+            .doc
+            .annotations()
+            .find(|(_, a)| matches!(a, Annotation::Note { .. }))
+            .map(|(id, a)| (id, a.clone()))
+            .unwrap();
+        let Annotation::Note { leaders, .. } = a else {
+            unreachable!()
+        };
+        (id, leaders)
+    };
+    let (id, leaders) = note(&h);
+    assert_eq!(leaders.len(), 1);
+    // Pick it; drag from the + on its right to further along the bottom edge.
+    h.state_mut().editor.selected_annotation = Some(id);
+    h.run();
+    let painter = egui::Painter::new(
+        h.ctx.clone(),
+        egui::LayerId::background(),
+        h.state().canvas_rect,
+    );
+    let layout = h
+        .state()
+        .layout_notes(&painter, &screen_map(&h))
+        .into_iter()
+        .find(|l| l.id == id)
+        .unwrap();
+    let text = layout.text.as_ref().unwrap().rect;
+    let plus = egui::pos2(text.right() + 14.0, text.top() - 14.0 * 0.6);
+    let corner = screen(&h, DVec2::new(90.0, 0.0));
+    h.hover_at(plus);
+    h.run_steps(2);
+    button(&h, plus, true);
+    h.run_steps(2);
+    for k in 1..=8 {
+        h.hover_at(plus + (corner - plus) * (k as f32 / 8.0));
+        h.run_steps(2);
+    }
+    button(&h, corner, false);
+    h.run_steps(4);
+    let (_, leaders) = note(&h);
+    assert_eq!(leaders.len(), 2, "a second leader from the + grip");
+    assert!(
+        matches!(leaders[1].to, drift_core::Anchor::Curve { .. }),
+        "attached to the edge"
+    );
+    // Style it for the picture: a rounded frame, a mask, bold italic, a bent and a curved
+    // leader with an open arrow.
+    {
+        let doc = &mut h.state_mut().editor.doc;
+        let Some(Annotation::Note {
+            text,
+            at,
+            mut leaders,
+            mut style,
+        }) = doc.annotation(id).cloned()
+        else {
+            unreachable!()
+        };
+        style.frame = NoteFrame::Rounded;
+        style.mask = true;
+        style.bold = true;
+        style.italic = true;
+        leaders[0].shape = LeaderShape::Bent(DVec2::new(-12.0, -6.0));
+        leaders[1].shape = LeaderShape::Curved(0.25);
+        leaders[1].end = drift_core::LeaderEnd::OpenArrow;
+        doc.begin();
+        doc.set_annotation(
+            id,
+            Annotation::Note {
+                text,
+                at,
+                leaders,
+                style,
+            },
+        )
+        .unwrap();
+        let _ = doc.commit("Style");
+    }
+    h.run();
+    h.run();
+    save_png("drift_ui_note_leaders.png", &mut h);
+    // Click the second leader's line, then Delete: that leader goes, the text stays.
+    let layout = h
+        .state()
+        .layout_notes(&painter, &screen_map(&h))
+        .into_iter()
+        .find(|l| l.id == id)
+        .unwrap();
+    let path = &layout.leaders[1].points;
+    let on = path[path.len() / 2];
+    let before = layout.text.as_ref().unwrap().rect;
+    h.hover_at(on);
+    h.run();
+    button(&h, on, true);
+    h.run();
+    button(&h, on, false);
+    h.run();
+    assert_eq!(h.state().selected_leader, Some((id, 1)));
+    h.key_press(Key::Delete);
+    h.run();
+    let (_, leaders) = note(&h);
+    assert_eq!(leaders.len(), 1);
+    assert!(
+        h.state().editor.doc.annotation(id).is_some(),
+        "the note stays"
+    );
+    let after = h
+        .state()
+        .layout_notes(&painter, &screen_map(&h))
+        .into_iter()
+        .find(|l| l.id == id)
+        .unwrap()
+        .text
+        .unwrap()
+        .rect;
+    assert!((after.center() - before.center()).length() < 0.5);
+}
+
+#[test]
 fn alt_c_draws_and_makes_construction_geometry() {
     use drift_core::LineKind;
     let Some(mut h) = harness() else { return };
@@ -1691,9 +1990,9 @@ fn drafting_tools_annotate_the_plate() {
     h.run();
     assert!(h.state().note_edit.is_none());
     match annotations(&h).as_slice() {
-        [Annotation::Note { text, leader, .. }] => {
+        [Annotation::Note { text, leaders, .. }] => {
             assert_eq!(text, "DEBURR ALL EDGES");
-            assert!(leader.is_some());
+            assert_eq!(leaders.len(), 1);
         }
         other => panic!("{other:?}"),
     }
@@ -3325,6 +3624,23 @@ fn control_bar_overlap_warning_and_corner_angles() {
         use eframe::egui::accesskit::Role;
         h.get_by_role_and_label(Role::Button, "Stroke");
         h.get_by_role_and_label(Role::Button, "Fill");
+    }
+    // The tool's hint, in the middle of the status bar, stops short of every switch, however
+    // wide the right-hand group is (with this warning showing, and wider fonts, it used to lie
+    // over the leftmost ones and take their clicks).
+    let hint = h.get_by_label(&h.state().tool.hint()).rect();
+    for name in [
+        "Grid",
+        "Origin axes",
+        "End points",
+        "Auto relations",
+        "Status colours",
+    ] {
+        let r = h.get_by_label(name).rect();
+        assert!(
+            hint.right() <= r.left(),
+            "the hint {hint:?} over {name} {r:?}"
+        );
     }
     // The setting is one click away, and the warning selects the doubled wall.
     h.get_by_label("Auto relations").click();
@@ -5283,7 +5599,8 @@ fn dimensions_hide_leave_sheets_and_take_text() {
             .add_annotation(drift_core::Annotation::Note {
                 text: "SEE DETAIL".into(),
                 at: DVec2::new(30.0, 20.0),
-                leader: None,
+                leaders: Vec::new(),
+                style: Default::default(),
             })
             .unwrap();
         ed.commit("Note");

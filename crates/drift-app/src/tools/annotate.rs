@@ -1,7 +1,7 @@
 //! Drafting tools: notes with leaders, centre marks and centre lines, hole and chamfer
 //! callouts, and ordinate dimensions.
 
-use drift_core::{Annotation, Leader, LeaderEnd, OrdinateAxis};
+use drift_core::{Annotation, Leader, OrdinateAxis};
 
 use super::*;
 use crate::notes;
@@ -55,8 +55,8 @@ fn preview_leader(from: DVec2, to: DVec2) -> SketchItem {
 /// with a leader. The text is typed on the canvas.
 #[derive(Default)]
 pub struct NoteTool {
-    /// Where a leader starts (after clicking geometry).
-    target: Option<drift_core::Anchor>,
+    /// What its leaders point at (geometry clicked before the text; Shift+click adds more).
+    targets: Vec<drift_core::Anchor>,
     hover: Option<DVec2>,
 }
 
@@ -66,67 +66,81 @@ impl Tool for NoteTool {
     }
 
     fn hint(&self) -> String {
-        if self.target.is_some() {
-            "Click where the text goes".into()
-        } else {
-            "Click to place a note, or click geometry first for a leader to it".into()
+        match self.targets.len() {
+            0 => "Click to place a note, or click geometry first for a leader to it".into(),
+            1 => "Click where the text goes · Shift+click more geometry for more leaders".into(),
+            n => format!("{n} leaders · click where the text goes · Shift+click for another"),
         }
     }
 
     fn is_busy(&self) -> bool {
-        self.target.is_some()
+        !self.targets.is_empty()
     }
 
     fn handle(&mut self, input: Input, ed: &mut Editor) {
         match input {
             Input::Hover(p) | Input::Drag(p) => self.hover = Some(p.pos()),
-            Input::Click(p, _) => match self.target.take() {
-                Some(to) => {
-                    let Some(tip) = ed.doc.anchor_pos(&to) else {
-                        return;
-                    };
-                    let note = Annotation::Note {
-                        text: String::new(),
-                        at: p.pos() - tip,
-                        leader: Some(Leader {
-                            to,
-                            end: LeaderEnd::Arrow,
-                        }),
-                    };
-                    ed.pending_note_edit = add_annotation(ed, note, "Note");
+            Input::Click(p, mods) => {
+                // Geometry first (or, with leaders started, Shift+geometry): another leader.
+                if (self.targets.is_empty() || mods.shift)
+                    && let Some(to) = leader_target(ed, &p)
+                {
+                    self.targets.push(to);
+                    return;
                 }
-                None if p.snapped_point().is_some() || p.on_curve().is_some() => {
-                    self.target = Some(notes::anchor_at(
-                        &ed.doc,
-                        p.snapped_point(),
-                        p.on_curve(),
-                        p.pos(),
-                    ));
-                }
-                None => {
-                    let note = Annotation::Note {
-                        text: String::new(),
-                        at: p.pos(),
-                        leader: None,
-                    };
-                    ed.pending_note_edit = add_annotation(ed, note, "Note");
-                }
-            },
-            Input::Finish => self.target = None,
+                let leaders: Vec<Leader> = std::mem::take(&mut self.targets)
+                    .into_iter()
+                    .map(Leader::to)
+                    .collect();
+                let Some(at) = ed.doc.note_at(p.pos(), &leaders) else {
+                    return;
+                };
+                let note = Annotation::Note {
+                    text: String::new(),
+                    at,
+                    leaders,
+                    style: Default::default(),
+                };
+                ed.pending_note_edit = add_annotation(ed, note, "Note");
+            }
+            Input::Finish => self.targets.clear(),
             _ => {}
         }
     }
 
     fn cancel(&mut self, _ed: &mut Editor) -> bool {
-        self.target.take().is_some()
+        let busy = !self.targets.is_empty();
+        self.targets.clear();
+        busy
     }
 
     fn editor_preview(&self, ed: &Editor) -> Vec<SketchItem> {
-        match (self.target.and_then(|t| ed.doc.anchor_pos(&t)), self.hover) {
-            (Some(tip), Some(to)) => vec![preview_leader(tip, to), preview_vertex(tip)],
-            _ => Vec::new(),
-        }
+        let Some(to) = self.hover else {
+            return Vec::new();
+        };
+        self.targets
+            .iter()
+            .filter_map(|t| ed.doc.anchor_pos(t))
+            .flat_map(|tip| [preview_leader(tip, to), preview_vertex(tip)])
+            .collect()
     }
+}
+
+/// What a leader clicked at `p` points to: a point under the pointer, else the spot on the
+/// line or curve under it (whatever the automatic relations setting), else nothing.
+fn leader_target(ed: &Editor, p: &Pointer) -> Option<drift_core::Anchor> {
+    if let Some(point) = p.snapped_point() {
+        return Some(drift_core::Anchor::Point(point));
+    }
+    let curve = match select::pick_target_with(ed, p, crate::editor::PickFilter::All)? {
+        select::Target::Entity(id) | select::Target::Midpoint(id) => id,
+    };
+    if ed.doc.get(curve)?.kind.is_point() {
+        return Some(drift_core::Anchor::Point(curve));
+    }
+    // A spot on the curve: where the pointer is, onto the curve.
+    let at = drift_geom::nearest_point(&ed.doc.shape(curve)?, p.raw);
+    Some(notes::anchor_at(&ed.doc, None, Some(curve), at))
 }
 
 // ---------------------------------------------------------------------------------------------

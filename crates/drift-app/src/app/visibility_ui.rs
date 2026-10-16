@@ -218,5 +218,5 @@ pub(crate) fn note_badge_at(l: &NoteLayout) -> Option<egui::Pos2> {
     if let Some([_, b]) = l.segments.first() {
         return Some(*b);
     }
-    l.leader.last().copied()
+    l.leaders.first().and_then(|p| p.points.last().copied())
 }

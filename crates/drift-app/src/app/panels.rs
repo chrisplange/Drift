@@ -1342,7 +1342,7 @@ impl DriftApp {
     /// The status bar: cursor position, the tool's hint, then view toggles, units, the
     /// sketch's definition status and zoom. Messages appear as toasts over the canvas.
     pub(crate) fn status_bar(&mut self, ui: &mut egui::Ui, _now: f64) {
-        ui.horizontal(|ui| {
+        let cluster_left = ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 10.0;
             let units = self.editor.doc.units();
             let (x, y) = match self.pointer {
@@ -1563,14 +1563,17 @@ impl DriftApp {
                         });
                     }
                 }
+                    // Where the cluster's leftmost control starts.
+                    ui.min_rect().left()
                 });
-            let _ = right;
+            right.inner
         });
-        // The hint, in whatever space is left between the readout and the right cluster.
+        // The hint, in whatever space is left between the readout and the right cluster (as
+        // wide as it actually is, so the hint never lies over its controls).
         let hint = self.tool.hint();
         let rect = ui.min_rect();
         let left = rect.left() + 262.0;
-        let right = rect.right() - 446.0;
+        let right = cluster_left.inner - 12.0;
         if right - left > 40.0 {
             let area = egui::Rect::from_min_max(
                 egui::pos2(left, rect.top()),

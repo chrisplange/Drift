@@ -1955,6 +1955,15 @@ zooms to fit; F is Fillet (again for Chamfer).
   with old `dock_float` read as one panel per window): a grip strip moves the stack, a
   stacked panel's header pulls it out, dividers share the height. The full blue highlight
   is kept for a floating panel dropped onto a dock.
+- **Notes, fuller (done).** A note has any number of leaders (`leaders: Vec<Leader>`; `at`
+  stays relative to the first one's tip, so it follows that geometry; old single-leader
+  files load). Leaders point at points or anywhere along a line or curve; each has an end
+  (arrow, open arrow, dot, none), a shape (straight, bent through a draggable bend, curved
+  with a bow), and a shoulder into the text. The Note tool takes several (Shift+click more
+  geometry); a picked note has + grips to drag new ones from, square tip grips to re-attach,
+  bend grips; a clicked leader is picked and Delete removes it (the text stays). Text style:
+  size, bold, italic (PDF slant, SVG font-style, DXF oblique), alignment, wrap width, frame
+  (box, rounded) and mask. Deleting geometry drops only the leaders on it. Format v24.
 - **In-app updates (built on `in-app-updates`).** A custom updater on GitHub Releases
   (native only; `crates/drift-app/src/update`), chosen over Velopack (it would replace the
   Inno Setup and dmg packaging) and `self_update` (it replaces a bare binary, which suits

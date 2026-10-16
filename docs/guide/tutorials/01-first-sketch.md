@@ -11,7 +11,8 @@ Time: about 10 minutes.
 ## Before you start
 
 Start a new sketch (Ctrl+N, or **New sketch** on the start panel). Check that
-**Auto relations** in the top bar is on (highlighted). It is by default.
+**Auto relations** is on: its switch in the status bar at the bottom (a corner with a square
+mark) is highlighted. It is by default; Shift+Alt+R turns it off and on.
 
 The sketch is in millimetres unless you've changed it. The status bar's units menu (it
 shows **mm**) switches units at any time without moving anything; see

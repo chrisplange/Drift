@@ -28,7 +28,7 @@ window, step-by-step tutorials, and reference pages for tools, panels, units and
 - **Automatic relations and inference:** nearly horizontal or vertical lines snap straight and
   get the relation; rectangles come with their H/V relations. Points placed on (or dropped onto)
   a curve or a midpoint stay there. Dashed inference lines align new points with points you've
-  just hovered. With **Auto relations** off (top bar), nothing adds a relation on its own:
+  just hovered. With **Auto relations** off (status bar, Shift+Alt+R), nothing adds a relation on its own:
   not drawing, not the modify tools, not an axis lock.
 - **Relations pie (Q):** with something selected, hold Q, flick towards a relation and let
   go (or tap Q and click). Each relation has a fixed place; one already there is lit and

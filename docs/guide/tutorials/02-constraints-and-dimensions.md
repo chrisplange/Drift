@@ -100,6 +100,9 @@ and so on).
 - **The relations pie.** Hold Q, flick the pointer towards a relation and let go. Or tap Q
   and click one. Each relation always sits in the same place (horizontal to the right,
   vertical up, parallel and tangent upper right, and so on), so you learn the flicks.
+  While the pie is open you can also press a relation's letter, shown on it: Q then H for
+  horizontal, V vertical, L parallel, P perpendicular, E equal, F fix, M midpoint,
+  C concentric, R coradial, T tangent, S symmetric, I coincident, N collinear, O on curve.
 
 ![The relations pie for two picked lines, with Parallel highlighted](../images/relations-pie.png)
 

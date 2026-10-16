@@ -14,6 +14,15 @@ fn invalid(msg: impl Into<String>) -> EditError {
     EditError::Invalid(msg.into())
 }
 
+/// How far off a constraint may be and still count as met, relative to the coordinates' size.
+const UNMET: f64 = 1e-7;
+
+/// The constraints in a document before an edit, and those it didn't meet already.
+struct ConstraintState {
+    all: BTreeSet<ConstraintId>,
+    unmet: std::collections::HashSet<ConstraintId>,
+}
+
 /// One curve of an offset, in travel order along the chain.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct OffsetPiece {
@@ -182,54 +191,203 @@ impl ChamferInfo {
     }
 }
 
-/// An existing fillet: the corner its two lines would meet at, their far ends, the arc's end
-/// points (on the first and second line) and centre point, and its radius.
+/// An existing fillet: the corner its two curves (lines or arcs) would meet at, how they run
+/// from there, the curves, the arc's end points (on the first and second curve) and centre
+/// point, and its radius.
 #[derive(Clone, Copy, Debug)]
 pub struct FilletInfo {
     pub corner: DVec2,
-    pub far: [DVec2; 2],
-    /// The two lines it joins.
-    pub lines: [EntityId; 2],
+    pub arms: [Arm; 2],
+    /// The two curves it joins.
+    pub curves: [EntityId; 2],
     pub ends: [EntityId; 2],
     pub center: EntityId,
     pub radius: f64,
 }
 
 impl FilletInfo {
-    /// Half the angle between the lines, and the shorter line's length from the corner.
+    /// Half the angle between the curves at the corner, and the shorter one's length from it.
     pub fn half_angle_and_room(&self) -> (f64, f64) {
-        let (a, b) = (self.far[0] - self.corner, self.far[1] - self.corner);
-        let cos = (a.normalize().dot(b.normalize())).clamp(-1.0, 1.0);
-        (cos.acos() / 2.0, a.length().min(b.length()))
+        corner_angle(self.corner, self.arms)
     }
 }
 
-/// Fillet geometry at a corner `p` between rays towards `o1` and `o2`: tangent points,
-/// centre, and whether the arc runs counter-clockwise from the first tangent point.
+/// Half the angle between two arms where they leave `corner`, and the shorter one's length.
+pub fn corner_angle(corner: DVec2, arms: [Arm; 2]) -> (f64, f64) {
+    let (u1, u2) = (arms[0].dir(corner), arms[1].dir(corner));
+    let cos = u1.dot(u2).clamp(-1.0, 1.0);
+    (cos.acos() / 2.0, arms[0].length.min(arms[1].length))
+}
+
+/// One side of a corner: how the curve runs from the corner, and how far before it ends.
+#[derive(Clone, Copy, Debug)]
+pub struct Arm {
+    pub run: Run,
+    pub length: f64,
+}
+
+/// How a curve runs from a corner: a line in a direction, or around a circle one way.
+#[derive(Clone, Copy, Debug)]
+pub enum Run {
+    Line {
+        dir: DVec2,
+    },
+    Circle {
+        center: DVec2,
+        radius: f64,
+        ccw: bool,
+    },
+}
+
+impl Arm {
+    /// The direction it leaves `corner` in.
+    pub fn dir(&self, corner: DVec2) -> DVec2 {
+        match self.run {
+            Run::Line { dir } => dir,
+            Run::Circle { center, ccw, .. } => {
+                let out = (corner - center).normalize_or_zero();
+                if ccw { out.perp() } else { -out.perp() }
+            }
+        }
+    }
+
+    /// How far along it from `corner` the point `p` (on it) is.
+    fn along(&self, corner: DVec2, p: DVec2) -> f64 {
+        match self.run {
+            Run::Line { dir } => (p - corner).dot(dir),
+            Run::Circle {
+                center,
+                radius,
+                ccw,
+            } => {
+                let angle = |q: DVec2| (q.y - center.y).atan2(q.x - center.x);
+                let turn = angle(p) - angle(corner);
+                (if ccw { turn } else { -turn }).rem_euclid(TAU) * radius
+            }
+        }
+    }
+
+    /// The point on it nearest `c`.
+    fn foot(&self, corner: DVec2, c: DVec2) -> DVec2 {
+        match self.run {
+            Run::Line { dir } => corner + dir * (c - corner).dot(dir),
+            Run::Circle { center, radius, .. } => {
+                center + (c - center).normalize_or_zero() * radius
+            }
+        }
+    }
+
+    /// Its whole line or circle, through `corner`.
+    fn path(&self, corner: DVec2) -> Path {
+        match self.run {
+            Run::Line { dir } => Path::Line(corner, dir),
+            Run::Circle { center, radius, .. } => Path::Circle(center, radius),
+        }
+    }
+}
+
+/// A whole line (a point and a direction) or circle.
+#[derive(Clone, Copy, Debug)]
+enum Path {
+    Line(DVec2, DVec2),
+    Circle(DVec2, f64),
+}
+
+/// Where two paths cross (touching counts once).
+fn crossings(a: Path, b: Path) -> Vec<DVec2> {
+    fn line_circle(p: DVec2, d: DVec2, c: DVec2, r: f64) -> Vec<DVec2> {
+        let f = p + d * (c - p).dot(d);
+        let h2 = r * r - f.distance_squared(c);
+        if h2 < -1e-9 * r * r {
+            Vec::new()
+        } else if h2 <= 0.0 {
+            vec![f]
+        } else {
+            let h = h2.sqrt();
+            vec![f - d * h, f + d * h]
+        }
+    }
+    match (a, b) {
+        (Path::Line(p1, d1), Path::Line(p2, d2)) => {
+            let cross = d1.perp_dot(d2);
+            if cross.abs() < 1e-12 {
+                Vec::new()
+            } else {
+                vec![p1 + d1 * ((p2 - p1).perp_dot(d2) / cross)]
+            }
+        }
+        (Path::Line(p, d), Path::Circle(c, r)) | (Path::Circle(c, r), Path::Line(p, d)) => {
+            line_circle(p, d, c, r)
+        }
+        (Path::Circle(c1, r1), Path::Circle(c2, r2)) => {
+            let d = c1.distance(c2);
+            if d < 1e-12 {
+                return Vec::new();
+            }
+            let u = (c2 - c1) / d;
+            let a = (r1 * r1 - r2 * r2 + d * d) / (2.0 * d);
+            // Where the circles cross is where the line through the chord meets the first.
+            line_circle(c1 + u * a, u.perp(), c1, r1)
+        }
+    }
+}
+
+/// Fillet geometry where two curves leave `corner` along `arms`: tangent points, centre, and
+/// whether the arc runs counter-clockwise from the first tangent point. The centre is where
+/// the curves cross once each is offset by `r` towards the other.
 pub fn fillet_geometry(
-    p: DVec2,
-    o1: DVec2,
-    o2: DVec2,
+    corner: DVec2,
+    arms: [Arm; 2],
     r: f64,
 ) -> Result<(DVec2, DVec2, DVec2, bool), EditError> {
-    let (l1, l2) = (o1.distance(p), o2.distance(p));
-    let (u1, u2) = ((o1 - p) / l1, (o2 - p) / l2);
-    let cos = u1.dot(u2).clamp(-1.0, 1.0);
-    let alpha = cos.acos();
+    let lines = arms.iter().all(|a| matches!(a.run, Run::Line { .. }));
+    let curves = if lines { "lines" } else { "curves" };
+    let u = [arms[0].dir(corner), arms[1].dir(corner)];
+    let alpha = u[0].dot(u[1]).clamp(-1.0, 1.0).acos();
     if !(1e-6..=std::f64::consts::PI - 1e-6).contains(&alpha) {
-        return Err(invalid("the lines are in line: nothing to round"));
+        return Err(invalid(format!(
+            "the {curves} are in line: nothing to round"
+        )));
     }
     if !(r > 0.0 && r.is_finite()) {
         return Err(invalid("the radius must be positive"));
     }
-    let d = r / (alpha / 2.0).tan();
-    if d >= l1 || d >= l2 {
-        return Err(invalid("the radius is too large for these lines"));
+    let too_large = || invalid(format!("the radius is too large for these {curves}"));
+    let offset = |i: usize| -> Option<Path> {
+        let mut n = u[i].perp();
+        if n.dot(u[1 - i]) < 0.0 {
+            n = -n;
+        }
+        match arms[i].run {
+            Run::Line { dir } => Some(Path::Line(corner + n * r, dir)),
+            Run::Circle { center, radius, .. } => {
+                let grown = if n.dot(corner - center) > 0.0 {
+                    radius + r
+                } else {
+                    radius - r
+                };
+                (grown > 1e-12).then_some(Path::Circle(center, grown))
+            }
+        }
+    };
+    let (Some(o1), Some(o2)) = (offset(0), offset(1)) else {
+        return Err(too_large());
+    };
+    // Of the places that are both, the one nearest where a fillet between the curves'
+    // directions would have its centre.
+    let guess = corner + (u[0] + u[1]).normalize() * (r / (alpha / 2.0).sin());
+    let c = crossings(o1, o2)
+        .into_iter()
+        .min_by(|a, b| a.distance(guess).total_cmp(&b.distance(guess)))
+        .ok_or_else(too_large)?;
+    let t1 = arms[0].foot(corner, c);
+    let t2 = arms[1].foot(corner, c);
+    for (arm, t) in arms.iter().zip([t1, t2]) {
+        let d = arm.along(corner, t);
+        if !(d > 1e-9 && d < arm.length) {
+            return Err(too_large());
+        }
     }
-    let t1 = p + u1 * d;
-    let t2 = p + u2 * d;
-    let bisector = (u1 + u2).normalize();
-    let c = p + bisector * (r / (alpha / 2.0).sin());
     let ccw = (t1 - c).perp_dot(t2 - c) > 0.0;
     Ok((t1, t2, c, ccw))
 }
@@ -452,6 +610,7 @@ impl Editor {
         let (lo, hi) = self.trim_span(id, click)?;
         let kind = self.doc.get(id).map(|e| e.kind).expect("checked");
         let doc_err = |e: drift_core::DocumentError| invalid(e.to_string());
+        let before = self.constraint_state();
         self.doc.begin();
         let result = (|| -> Result<(), EditError> {
             match (kind, lo, hi) {
@@ -682,7 +841,7 @@ impl Editor {
             }
             Ok(())
         })();
-        self.finish(result, "Trim")
+        self.finish_reshape(result, "Trim", &before)
     }
 
     /// Drop the smooth-join relation holding `handle` in line through `end`: the curve no
@@ -703,6 +862,77 @@ impl Editor {
     }
 
     /// Roll back on error, or solve and commit (reporting conflicts).
+    /// The constraints there are, and those the geometry doesn't meet already: what
+    /// [`Editor::finish_reshape`] compares with.
+    fn constraint_state(&self) -> ConstraintState {
+        ConstraintState {
+            all: self.doc.constraints().map(|(id, _)| id).collect(),
+            unmet: drift_solver::unmet(&self.doc, UNMET),
+        }
+    }
+
+    /// Commit a change to curves' extent (a trim, an extension, a split, a fillet or a
+    /// chamfer). Relations it no longer meets as drawn, such as a trimmed line's equal
+    /// length to another or a midpoint, come off, rather than the solve pulling the rest of
+    /// the drawing round to meet them; the notice says which. A dimension or a fix it no
+    /// longer meets refuses the change instead.
+    fn finish_reshape(
+        &mut self,
+        result: Result<(), EditError>,
+        label: &str,
+        before: &ConstraintState,
+    ) -> Result<(), EditError> {
+        let mut freed: Vec<&'static str> = Vec::new();
+        let result = result.and_then(|()| {
+            let broken: Vec<(ConstraintId, Constraint)> = drift_solver::unmet(&self.doc, UNMET)
+                .into_iter()
+                .filter(|id| before.all.contains(id) && !before.unmet.contains(id))
+                .filter(|id| !self.doc.is_driven(*id))
+                .filter_map(|id| Some((id, *self.doc.constraint(id)?)))
+                .collect();
+            if let Some((_, c)) = broken
+                .iter()
+                .find(|(_, c)| c.is_dimension() || matches!(c, Constraint::Fix { .. }))
+            {
+                return Err(invalid(format!(
+                    "a {} holds it as it is",
+                    c.type_name().to_lowercase()
+                )));
+            }
+            for (id, c) in broken {
+                self.doc.remove_constraint(id);
+                freed.push(c.type_name());
+            }
+            Ok(())
+        });
+        self.finish(result, label)?;
+        if !freed.is_empty() {
+            freed.sort_unstable();
+            let mut names: Vec<String> = Vec::new();
+            for name in &freed {
+                let n = freed.iter().filter(|f| *f == name).count();
+                let named = if n > 1 {
+                    format!("{name} ×{n}")
+                } else {
+                    (*name).to_string()
+                };
+                if !names.contains(&named) {
+                    names.push(named);
+                }
+            }
+            self.notice = Some(format!(
+                "{label} took off {} that no longer held: {}",
+                if freed.len() == 1 {
+                    "a relation"
+                } else {
+                    "relations"
+                },
+                names.join(", ")
+            ));
+        }
+        Ok(())
+    }
+
     fn finish(&mut self, result: Result<(), EditError>, label: &str) -> Result<(), EditError> {
         match result {
             Err(e) => {
@@ -794,6 +1024,7 @@ impl Editor {
         if self.doc.users_of(end).count() > 1 {
             return Err(invalid("that end is connected to other geometry"));
         }
+        let before = self.constraint_state();
         self.doc.begin();
         let result = (|| -> Result<(), EditError> {
             let doc_err = |e: drift_core::DocumentError| invalid(e.to_string());
@@ -810,7 +1041,7 @@ impl Editor {
             }
             Ok(())
         })();
-        self.finish(result, "Extend")
+        self.finish_reshape(result, "Extend", &before)
     }
 
     /// Cut a curve in two at the point nearest `at`, keeping the pieces on the original
@@ -834,6 +1065,7 @@ impl Editor {
             return Err(invalid("that's an end already"));
         }
         let doc_err = |e: drift_core::DocumentError| invalid(e.to_string());
+        let before = self.constraint_state();
         self.doc.begin();
         let mut point = None;
         let result = (|| -> Result<(), EditError> {
@@ -967,7 +1199,7 @@ impl Editor {
             }
             Ok(())
         })();
-        self.finish(result, "Split")?;
+        self.finish_reshape(result, "Split", &before)?;
         Ok(point.expect("added"))
     }
 
@@ -988,16 +1220,63 @@ impl Editor {
         }
     }
 
+    /// How a line or an arc runs from its end point `end`: towards its other end.
+    pub fn arm(&self, curve: EntityId, end: EntityId) -> Option<Arm> {
+        let pos = |id| self.doc.point(id).ok();
+        match self.doc.get(curve)?.kind {
+            EntityKind::Line { a, b } if a == end || b == end => {
+                let (at, far) = (pos(end)?, pos(if a == end { b } else { a })?);
+                let length = at.distance(far);
+                (length > 0.0).then(|| Arm {
+                    run: Run::Line {
+                        dir: (far - at) / length,
+                    },
+                    length,
+                })
+            }
+            EntityKind::Arc {
+                center,
+                start,
+                end: last,
+            } if start != last && (start == end || last == end) => {
+                let (c, s, e) = (pos(center)?, pos(start)?, pos(last)?);
+                let radius = s.distance(c);
+                let angle = |q: DVec2| (q.y - c.y).atan2(q.x - c.x);
+                let sweep = (angle(e) - angle(s)).rem_euclid(TAU);
+                (radius > 0.0 && sweep > 0.0).then_some(Arm {
+                    // Stored counter-clockwise from its start.
+                    run: Run::Circle {
+                        center: c,
+                        radius,
+                        ccw: start == end,
+                    },
+                    length: radius * sweep,
+                })
+            }
+            _ => None,
+        }
+    }
+
+    /// The two curves (lines or arcs) meeting at a corner point, and how each runs from it,
+    /// for fillets.
+    pub fn fillet_corner(&self, p: EntityId) -> Result<[(EntityId, Arm); 2], EditError> {
+        let users: Vec<EntityId> = self.doc.users_of(p).collect();
+        let arms: Vec<(EntityId, Arm)> = users
+            .iter()
+            .filter_map(|id| Some((*id, self.arm(*id, p)?)))
+            .collect();
+        match arms.as_slice() {
+            [a1, a2] if users.len() == 2 => Ok([*a1, *a2]),
+            _ => Err(invalid(
+                "pick a corner where exactly two lines or arcs meet",
+            )),
+        }
+    }
+
     /// The fillet arc at corner `p` with radius `r`, for previews.
     pub fn fillet_preview(&self, p: EntityId, r: f64) -> Option<Shape> {
-        let [(_, o1), (_, o2)] = self.corner(p).ok()?;
-        let (t1, t2, c, ccw) = fillet_geometry(
-            self.doc.point(p).ok()?,
-            self.doc.point(o1).ok()?,
-            self.doc.point(o2).ok()?,
-            r,
-        )
-        .ok()?;
+        let [(_, a1), (_, a2)] = self.fillet_corner(p).ok()?;
+        let (t1, t2, c, ccw) = fillet_geometry(self.doc.point(p).ok()?, [a1, a2], r).ok()?;
         Some(if ccw {
             arc_shape(c, t1, t2)
         } else {
@@ -1005,12 +1284,13 @@ impl Editor {
         })
     }
 
-    /// Round the corner at point `p` with an arc of radius `r`, tangent to both lines.
+    /// Round the corner at point `p` with an arc of radius `r`, tangent to both curves.
     pub fn fillet(&mut self, p: EntityId, r: f64) -> Result<EntityId, EditError> {
-        let [(l1, o1), (l2, o2)] = self.corner(p)?;
-        let pos = |id| self.doc.point(id).unwrap_or_default();
-        let (t1, t2, c, ccw) = fillet_geometry(pos(p), pos(o1), pos(o2), r)?;
+        let [(l1, a1), (l2, a2)] = self.fillet_corner(p)?;
+        let at = self.doc.point(p).unwrap_or_default();
+        let (t1, t2, c, ccw) = fillet_geometry(at, [a1, a2], r)?;
         let doc_err = |e: drift_core::DocumentError| invalid(e.to_string());
+        let before = self.constraint_state();
         self.doc.begin();
         let mut arc = None;
         let result = (|| -> Result<(), EditError> {
@@ -1033,7 +1313,7 @@ impl Editor {
             self.doc.remove_if_orphaned(p);
             Ok(())
         })();
-        self.finish(result, "Fillet")?;
+        self.finish_reshape(result, "Fillet", &before)?;
         Ok(arc.expect("added"))
     }
 
@@ -1128,7 +1408,7 @@ impl Editor {
     /// where they meet, and the arc or cut goes (one undo step).
     pub fn remove_corner_cut(&mut self, cut: EntityId) -> Result<(), EditError> {
         let (corner, lines, ends, label) = if let Some(f) = self.fillet_at(cut) {
-            (f.corner, f.lines, f.ends, "Remove fillet")
+            (f.corner, f.curves, f.ends, "Remove fillet")
         } else if let Some(c) = self.chamfer_at(cut) {
             (c.corner, c.lines, c.ends, "Remove chamfer")
         } else {
@@ -1156,40 +1436,62 @@ impl Editor {
         self.finish(result, label)
     }
 
-    /// The fillet an arc is, if it is one: an arc whose ends each join one line, tangent to
-    /// it. The corner is where those lines would meet.
+    /// The one line or arc that meets curve `of` at its end point `tip` (nothing else may use
+    /// the point), and how it runs from there.
+    fn curve_at_end(&self, of: EntityId, tip: EntityId) -> Option<(EntityId, Arm)> {
+        let mut others = self.doc.users_of(tip).filter(|u| *u != of);
+        let curve = others.next()?;
+        if others.next().is_some() {
+            return None;
+        }
+        Some((curve, self.arm(curve, tip)?))
+    }
+
+    /// The fillet an arc is, if it is one: an arc whose ends each join one line or arc,
+    /// tangent to it. The corner is where those would meet, run on back past the arc.
     pub fn fillet_at(&self, arc: EntityId) -> Option<FilletInfo> {
         let EntityKind::Arc { center, start, end } = self.doc.get(arc)?.kind else {
             return None;
         };
         let c = self.doc.point(center).ok()?;
-        let ((line1, t1, far1), (line2, t2, far2)) =
-            (self.line_at_end(arc, start)?, self.line_at_end(arc, end)?);
+        let ((curve1, a1), (curve2, a2)) =
+            (self.curve_at_end(arc, start)?, self.curve_at_end(arc, end)?);
+        let (t1, t2) = (self.doc.point(start).ok()?, self.doc.point(end).ok()?);
         let radius = t1.distance(c);
-        let (l1, l2) = (far1.distance(t1), far2.distance(t2));
-        if radius <= 0.0 || l1 <= 0.0 || l2 <= 0.0 {
+        if curve1 == curve2 || radius <= 0.0 {
             return None;
         }
-        let (u1, u2) = ((far1 - t1) / l1, (far2 - t2) / l2);
         // Tangent at both ends (to a tolerance that survives a solve).
-        let tangent = |t: DVec2, u: DVec2| ((t - c) / radius).dot(u).abs() < 1e-6;
-        if !tangent(t1, u1) || !tangent(t2, u2) {
+        let tangent = |t: DVec2, a: &Arm| ((t - c) / radius).dot(a.dir(t)).abs() < 1e-6;
+        if !tangent(t1, &a1) || !tangent(t2, &a2) {
             return None;
         }
-        // Where the two lines meet, behind both tangent points.
-        let cross = u1.perp_dot(u2);
-        if cross.abs() < 1e-9 {
-            return None;
-        }
-        let k = (t2 - t1).perp_dot(u2) / cross;
-        let corner = t1 + u1 * k;
-        if k >= 0.0 || (t2 - corner).dot(u2) <= 0.0 {
-            return None;
-        }
+        // The arms from a corner behind both tangent points: the same curves, further back.
+        let from = |corner: DVec2, t: DVec2, a: Arm| -> Option<Arm> {
+            let run = a.run;
+            let back = Arm {
+                run,
+                length: f64::INFINITY,
+            }
+            .along(corner, t);
+            let whole = match a.run {
+                Run::Line { .. } => f64::INFINITY,
+                Run::Circle { radius, .. } => TAU * radius,
+            };
+            (back > 1e-9 && back + a.length < whole).then_some(Arm {
+                run,
+                length: back + a.length,
+            })
+        };
+        let middle = (t1 + t2) * 0.5;
+        let (corner, arms) = crossings(a1.path(t1), a2.path(t2))
+            .into_iter()
+            .filter_map(|k| Some((k, [from(k, t1, a1)?, from(k, t2, a2)?])))
+            .min_by(|(k1, _), (k2, _)| k1.distance(middle).total_cmp(&k2.distance(middle)))?;
         Some(FilletInfo {
             corner,
-            far: [far1, far2],
-            lines: [line1, line2],
+            arms,
+            curves: [curve1, curve2],
             ends: [start, end],
             center,
             radius,
@@ -1199,7 +1501,7 @@ impl Editor {
     /// The arc a fillet would be at radius `r`, for previews.
     pub fn refillet_preview(&self, arc: EntityId, r: f64) -> Option<Shape> {
         let f = self.fillet_at(arc)?;
-        let (t1, t2, c, _) = fillet_geometry(f.corner, f.far[0], f.far[1], r).ok()?;
+        let (t1, t2, c, _) = fillet_geometry(f.corner, f.arms, r).ok()?;
         // The arc keeps its direction: its start stays on the first line.
         Some(arc_shape(c, t1, t2))
     }
@@ -1212,7 +1514,7 @@ impl Editor {
         let Some(f) = self.fillet_at(arc) else {
             return false;
         };
-        let Ok((t1, t2, c, _)) = fillet_geometry(f.corner, f.far[0], f.far[1], r) else {
+        let Ok((t1, t2, c, _)) = fillet_geometry(f.corner, f.arms, r) else {
             return false;
         };
         let points = [(f.ends[0], t1), (f.ends[1], t2), (f.center, c)];
@@ -1276,7 +1578,7 @@ impl Editor {
         let Some(f) = self.fillet_at(arc) else {
             return;
         };
-        if let Ok((t1, t2, c, _)) = fillet_geometry(f.corner, f.far[0], f.far[1], r) {
+        if let Ok((t1, t2, c, _)) = fillet_geometry(f.corner, f.arms, r) {
             for (id, at) in [(f.ends[0], t1), (f.ends[1], t2), (f.center, c)] {
                 let _ = self.doc.set_point(id, at);
             }
@@ -1286,9 +1588,9 @@ impl Editor {
     /// Give a fillet a new radius (one undo step). See [`Editor::drag_fillet`].
     pub fn refillet(&mut self, arc: EntityId, r: f64) -> Result<(), EditError> {
         let Some(f) = self.fillet_at(arc) else {
-            return Err(invalid("that arc isn't a fillet between two lines"));
+            return Err(invalid("that arc isn't a fillet between two curves"));
         };
-        fillet_geometry(f.corner, f.far[0], f.far[1], r)?;
+        fillet_geometry(f.corner, f.arms, r)?;
         self.doc.begin();
         let result = if self.drag_fillet(arc, r) {
             Ok(())
@@ -1298,20 +1600,27 @@ impl Editor {
         self.finish(result, "Fillet radius")
     }
 
-    /// Replace a line's end point `from` with `to`.
+    /// Replace a line's or an arc's end point `from` with `to`.
     fn replace_end(
         &mut self,
         line: EntityId,
         from: EntityId,
         to: EntityId,
     ) -> Result<(), EditError> {
-        let Some(EntityKind::Line { a, b }) = self.doc.get(line).map(|e| e.kind) else {
-            return Err(invalid("not a line"));
-        };
-        let kind = if a == from {
-            EntityKind::Line { a: to, b }
-        } else {
-            EntityKind::Line { a, b: to }
+        let kind = match self.doc.get(line).map(|e| e.kind) {
+            Some(EntityKind::Line { a, b }) if a == from => EntityKind::Line { a: to, b },
+            Some(EntityKind::Line { a, .. }) => EntityKind::Line { a, b: to },
+            Some(EntityKind::Arc { center, start, end }) if start == from => EntityKind::Arc {
+                center,
+                start: to,
+                end,
+            },
+            Some(EntityKind::Arc { center, start, .. }) => EntityKind::Arc {
+                center,
+                start,
+                end: to,
+            },
+            _ => return Err(invalid("not a line or an arc")),
         };
         self.doc
             .set_entity_kind(line, kind)
@@ -1340,6 +1649,7 @@ impl Editor {
             ));
         };
         let doc_err = |e: drift_core::DocumentError| invalid(e.to_string());
+        let before = self.constraint_state();
         self.doc.begin();
         let mut line = None;
         let result = (|| -> Result<(), EditError> {
@@ -1353,7 +1663,7 @@ impl Editor {
             self.doc.remove_if_orphaned(p);
             Ok(())
         })();
-        self.finish(result, "Chamfer")?;
+        self.finish_reshape(result, "Chamfer", &before)?;
         Ok(line.expect("added"))
     }
 

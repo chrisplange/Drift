@@ -1046,7 +1046,12 @@ impl DriftApp {
     ) -> Option<ConstraintId> {
         let added = match option.constraints.as_slice() {
             [c] if is_dimension => self.editor.add_dimension(*c, None).map(|id| vec![id]),
-            constraints => self.editor.add_constraints(option.label, constraints),
+            constraints if is_dimension => self.editor.add_constraints(option.label, constraints),
+            // Only the relations that aren't there yet (some may already hold).
+            _ => match self.editor.missing_relations(option).as_slice() {
+                [] => Err(crate::editor::EditError::Redundant),
+                missing => self.editor.add_constraints(option.label, missing),
+            },
         };
         match added {
             Ok(ids) if is_dimension => ids.first().copied(),

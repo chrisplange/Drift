@@ -3917,10 +3917,11 @@ fn relations_pie_toggles_relations_on_the_selection() {
     h.run();
     assert!(h.state().pie.as_ref().is_some_and(|p| !p.held));
     assert!(h.state().pie_slices()[1].on);
-    // While it is open, other keys are its own: L doesn't start the line tool.
-    h.key_press(Key::L);
+    // While it is open, other keys are its own: D doesn't start the dimension tool.
+    h.key_press(Key::D);
     h.run();
     assert_eq!(h.state().tool.kind(), ToolKind::Select);
+    assert!(h.state().pie.is_some());
     // Click Equal (to the left).
     let left = at - egui::vec2(110.0, 0.0);
     h.hover_at(left);
@@ -3965,6 +3966,34 @@ fn relations_pie_toggles_relations_on_the_selection() {
     assert!(h.state().pie.is_none());
     assert_eq!(h.state().editor.doc.constraint_count(), before);
     assert_eq!(h.state().editor.selection.len(), 2);
+
+    // A relation's letter chooses it outright: tap Q, then E takes Equal off; hold Q and
+    // press E to put it back, and let go of Q without choosing anything else.
+    h.key_press(Key::Q);
+    h.run();
+    h.key_press(Key::E);
+    h.run();
+    assert!(h.state().pie.is_none());
+    assert!(!has(&h, equal) && has(&h, parallel));
+    h.key_down(Key::Q);
+    h.run();
+    h.hover_at(at + egui::vec2(60.0, -60.0));
+    h.run();
+    h.key_press(Key::E);
+    h.run();
+    h.key_up(Key::Q);
+    h.run();
+    assert!(has(&h, equal) && has(&h, parallel), "only Equal changed");
+    assert_eq!(h.state().tool.kind(), ToolKind::Select);
+    // One that doesn't fit leaves the ring open and says so.
+    h.key_press(Key::Q);
+    h.run();
+    h.key_press(Key::C);
+    h.run();
+    assert!(h.state().pie.is_some());
+    assert_eq!(h.state().tool.kind(), ToolKind::Select);
+    h.key_press(Key::Escape);
+    h.run();
 }
 
 #[test]
@@ -4005,7 +4034,12 @@ fn a_radius_typed_for_a_fillet_keeps_its_lines() {
     fn kept(f: &crate::modify::FilletInfo) -> bool {
         [DVec2::new(60.0, 10.0), DVec2::new(-5.0, 40.0)]
             .iter()
-            .all(|end| f.far.iter().any(|far| far.distance(*end) < 1e-9))
+            .all(|end| {
+                f.arms.iter().any(|a| {
+                    let far = f.corner + a.dir(f.corner) * a.length;
+                    far.distance(*end) < 1e-9
+                })
+            })
     }
 }
 

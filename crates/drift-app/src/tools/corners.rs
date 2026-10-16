@@ -1,20 +1,27 @@
-//! Fillet and Chamfer: click (or press on) a corner where two lines meet, then move the
+//! Fillet and Chamfer: click (or press on) a corner where two lines (for a fillet, lines or
+//! arcs) meet, then move the
 //! pointer to size it in steps and click to apply, as Blender's bevel does. The size can be
 //! typed at any time and is kept for the next corner.
 
 use super::*;
 
-/// The corner point under the pointer, if two lines meet there.
-fn corner_under(ed: &Editor, p: &Pointer) -> Option<EntityId> {
+/// The corner point under the pointer, if two lines meet there (or, for a fillet, two lines
+/// or arcs).
+fn corner_under(ed: &Editor, p: &Pointer, arcs: bool) -> Option<EntityId> {
     let point = p.snapped_point().or_else(|| {
         ed.index.pick(p.raw, p.tolerance, |id| {
             ed.doc.get(id).is_some_and(|e| e.kind.is_point())
         })
     })?;
-    ed.corner(point).ok().map(|_| point)
+    let found = if arcs {
+        ed.fillet_corner(point).is_ok()
+    } else {
+        ed.corner(point).is_ok()
+    };
+    found.then_some(point)
 }
 
-/// The fillet under the pointer: an arc between two lines, tangent to both.
+/// The fillet under the pointer: an arc between two lines or arcs, tangent to both.
 fn fillet_under(ed: &Editor, p: &Pointer) -> Option<EntityId> {
     if p.snapped_point().is_some() {
         return None;
@@ -114,21 +121,27 @@ struct Sizing {
 }
 
 impl Sizing {
-    fn begin(ed: &Editor, corner: EntityId, p: &Pointer, size: f64) -> Option<Self> {
-        let [(_, o1), (_, o2)] = ed.corner(corner).ok()?;
+    fn begin(ed: &Editor, corner: EntityId, p: &Pointer, size: f64, arcs: bool) -> Option<Self> {
         let at = ed.doc.point(corner).ok()?;
-        let (q1, q2) = (ed.doc.point(o1).ok()?, ed.doc.point(o2).ok()?);
-        let (l1, l2) = (q1.distance(at), q2.distance(at));
-        if l1 <= 0.0 || l2 <= 0.0 {
-            return None;
-        }
-        let cos = ((q1 - at) / l1).dot((q2 - at) / l2).clamp(-1.0, 1.0);
+        let (half, room) = if arcs {
+            let [(_, a1), (_, a2)] = ed.fillet_corner(corner).ok()?;
+            crate::modify::corner_angle(at, [a1, a2])
+        } else {
+            let [(_, o1), (_, o2)] = ed.corner(corner).ok()?;
+            let (q1, q2) = (ed.doc.point(o1).ok()?, ed.doc.point(o2).ok()?);
+            let (l1, l2) = (q1.distance(at), q2.distance(at));
+            if l1 <= 0.0 || l2 <= 0.0 {
+                return None;
+            }
+            let cos = ((q1 - at) / l1).dot((q2 - at) / l2).clamp(-1.0, 1.0);
+            (cos.acos() / 2.0, l1.min(l2))
+        };
         Some(Self {
             corner,
             arc: None,
             at,
-            half: cos.acos() / 2.0,
-            room: l1.min(l2),
+            half,
+            room,
             start: p.raw,
             moved: false,
             size,
@@ -204,11 +217,12 @@ impl FilletTool {
             self.hover = None;
             return self.sizing.is_some();
         }
-        let Some(corner) = corner_under(ed, p) else {
-            ed.notice = Some("Fillet: click a corner where two lines meet, or a fillet".into());
+        let Some(corner) = corner_under(ed, p, true) else {
+            ed.notice =
+                Some("Fillet: click a corner where two lines or arcs meet, or a fillet".into());
             return false;
         };
-        self.sizing = Sizing::begin(ed, corner, p, self.radius(ed));
+        self.sizing = Sizing::begin(ed, corner, p, self.radius(ed), true);
         self.hover = None;
         self.sizing.is_some()
     }
@@ -255,7 +269,7 @@ impl Tool for FilletTool {
             "Move to size the fillet (Alt: freely) · click to apply · type the radius · Esc cancels"
                 .into()
         } else {
-            "Click a corner where two lines meet (or a fillet), then move to size it".into()
+            "Click a corner where two lines or arcs meet (or a fillet), then move to size it".into()
         }
     }
 
@@ -264,7 +278,7 @@ impl Tool for FilletTool {
             Input::Hover(p) if self.sizing.is_some() => self.follow(&p),
             Input::Hover(p) => {
                 ed.hovered = fillet_under(ed, &p);
-                self.hover = corner_under(ed, &p);
+                self.hover = corner_under(ed, &p, true);
             }
             Input::Click(p, _) if self.sizing.is_some() => {
                 self.follow(&p);
@@ -390,12 +404,12 @@ impl ChamferTool {
             self.hover = None;
             return true;
         }
-        let Some(corner) = corner_under(ed, p) else {
+        let Some(corner) = corner_under(ed, p, false) else {
             ed.notice = Some("Chamfer: click a corner where two lines meet, or a chamfer".into());
             return false;
         };
         let size = self.distances(ed).0;
-        self.sizing = Sizing::begin(ed, corner, p, size);
+        self.sizing = Sizing::begin(ed, corner, p, size, false);
         self.hover = None;
         self.sizing.is_some()
     }
@@ -442,7 +456,7 @@ impl Tool for ChamferTool {
         match input {
             Input::Hover(p) if self.sizing.is_some() => self.follow(&p),
             Input::Hover(p) => {
-                self.hover = corner_under(ed, &p);
+                self.hover = corner_under(ed, &p, false);
                 // A chamfer that would be re-sized lights up (a corner comes first).
                 ed.hovered = if self.hover.is_none() {
                     chamfer_under(ed, &p).map(|(cut, _)| cut)

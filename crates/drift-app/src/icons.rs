@@ -25,6 +25,8 @@ pub enum Glyph {
     Status,
     /// End points always shown: a line with dots at its ends.
     Endpoints,
+    /// Automatic relations: two lines meeting square, with the perpendicular mark.
+    AutoRelations,
     // Panels.
     Inspector,
     Parameters,
@@ -518,6 +520,12 @@ pub fn glyph(painter: &egui::Painter, rect: Rect, glyph: Glyph, color: Color32) 
                 p.line((10.0, 6.0), (10.0, 9.5));
             }
             p.dot(10.0, 13.2, 1.1);
+        }
+        Glyph::AutoRelations => {
+            p.line((4.0, 4.0), (4.0, 16.0));
+            p.line((4.0, 16.0), (16.0, 16.0));
+            p.poly(&[(4.0, 10.5), (9.5, 10.5), (9.5, 16.0)], false);
+            p.dot(4.0, 16.0, 1.8);
         }
         Glyph::Endpoints => {
             p.line((5.0, 14.0), (15.0, 6.0));

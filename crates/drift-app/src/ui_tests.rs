@@ -805,6 +805,39 @@ fn drawing_tools_show_drifts_own_crosshair() {
 }
 
 #[test]
+fn auto_relations_and_end_points_live_in_the_status_bar_with_keys() {
+    let Some(mut h) = harness() else { return };
+    // One switch each, in the status bar at the bottom (not the top bar).
+    let bottom = h.state().canvas_rect.bottom();
+    for name in ["Auto relations", "End points"] {
+        let r = h.get_by_label(name).rect();
+        assert!(r.top() > bottom, "{name} at {r:?}");
+    }
+    assert!(h.state().auto_relations);
+    let both = EguiModifiers::SHIFT | EguiModifiers::ALT;
+    h.key_press_modifiers(both, Key::R);
+    h.run();
+    assert!(!h.state().auto_relations);
+    assert_eq!(
+        h.state().tool.kind(),
+        ToolKind::Select,
+        "not the rectangle tool"
+    );
+    h.key_press_modifiers(both, Key::R);
+    h.run();
+    assert!(h.state().auto_relations);
+    let shown = h.state().always_endpoints;
+    h.key_press_modifiers(both, Key::V);
+    h.run();
+    assert_eq!(h.state().always_endpoints, !shown);
+    assert_eq!(
+        h.state().tool.kind(),
+        ToolKind::Select,
+        "not the point tool"
+    );
+}
+
+#[test]
 fn alt_c_draws_and_makes_construction_geometry() {
     use drift_core::LineKind;
     let Some(mut h) = harness() else { return };

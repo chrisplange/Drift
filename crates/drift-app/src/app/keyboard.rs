@@ -239,6 +239,25 @@ impl DriftApp {
         if alt_only(Key::D) {
             self.show_dimensions = !self.show_dimensions;
         }
+        // Shift+Alt+R / Shift+Alt+V: automatic relations, and end points always shown.
+        let shift_alt = |key| {
+            ctx.input(|i| {
+                i.modifiers.alt && i.modifiers.shift && !i.modifiers.command && i.key_pressed(key)
+            })
+        };
+        if shift_alt(Key::R) {
+            self.auto_relations = !self.auto_relations;
+            let now = ctx.input(|i| i.time);
+            let text = if self.auto_relations {
+                "Auto relations on"
+            } else {
+                "Auto relations off: plain geometry, nothing added for you"
+            };
+            self.set_status(text.into(), false, now);
+        }
+        if shift_alt(Key::V) {
+            self.always_endpoints = !self.always_endpoints;
+        }
         // Alt+C: with a drawing tool, draw construction geometry (or not); else make the
         // picked curves construction (or not).
         if alt_only(Key::C) {

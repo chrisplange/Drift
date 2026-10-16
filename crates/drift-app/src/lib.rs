@@ -750,6 +750,14 @@ const SHORTCUTS: &[(&str, &[(&str, &str)])] = &[
             ),
             ("Alt+D / Alt+R", "Show or hide dimensions / relations"),
             (
+                "Shift+Alt+R",
+                "Automatic relations on or off (also in the status bar)",
+            ),
+            (
+                "Shift+Alt+V",
+                "Show every end point, or only those of hovered and picked curves",
+            ),
+            (
                 "Alt+H",
                 "Show hidden dimensions and notes, faded, to pick and show them again",
             ),

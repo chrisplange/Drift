@@ -156,7 +156,10 @@ the printout.
 
 You can rearrange the panels:
 
-- Drag a panel's tab onto the canvas to float it, or onto either side to dock it there.
+- Drag a tab along its bar to reorder the tabs, onto the canvas to float the panel, or onto
+  the other side's tabs to dock it there.
+- Drag a floating panel's header onto the top or bottom of another floating panel to stack
+  them in one window, as in Photoshop or Affinity.
 - Right-click a tab, or use its **⋯** menu, to dock, float or close it.
 - The **»** button collapses a dock to a narrow strip of icons.
 - Ctrl+\ hides every panel for a clear view, and brings them back.

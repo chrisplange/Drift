@@ -43,6 +43,7 @@ use drift_core::{
 use serde::{Deserialize, Serialize};
 
 mod blocks;
+pub mod clip;
 mod drafting;
 pub mod dxf;
 mod dxf_import;

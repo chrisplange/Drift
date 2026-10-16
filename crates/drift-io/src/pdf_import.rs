@@ -11,6 +11,7 @@ use std::rc::Rc;
 use drift_core::{DVec2, RefPrim, Rgb};
 use lopdf::{Dictionary, Document, Object};
 
+use crate::clip::{Clip, ClipCount, clip_paint};
 use crate::pdf_text::Font;
 use crate::vector::{Artwork, LayerFlags, Painted, Seg, Stroke, Subpath, Text};
 
@@ -98,7 +99,13 @@ struct PageDrawing {
     skipped_text: usize,
     skipped_images: usize,
     skipped_shadings: usize,
-    clipped: bool,
+    clipping: ClipCount,
+    /// What the drawing has that is left out: see-through colours, blend modes, soft masks.
+    transparency: bool,
+    blending: bool,
+    soft_masks: bool,
+    /// It has more than the reader takes, and was cut short.
+    cut_short: bool,
 }
 
 /// A run of text, in points on the upright page: where its baseline starts and ends, its
@@ -260,8 +267,22 @@ pub fn read_artwork(bytes: &[u8], number: u32, name: &str) -> Result<Artwork, St
         art.skipped
             .insert("gradient (shading)".into(), page.skipped_shadings);
     }
-    if page.clipped {
-        art.note("Clipping was left out: everything it hid came in too");
+    art.clipping = page.clipping;
+    art.note_clipping();
+    if page.transparency {
+        art.note("Transparency is left out: see-through colours come in solid");
+    }
+    if page.blending {
+        art.note("Blend modes (multiply, screen and the like) are left out");
+    }
+    if page.soft_masks {
+        art.note("Soft masks (fades) are left out");
+    }
+    if page.cut_short {
+        art.note(format!(
+            "The drawing is very large: only its first {} segments are read",
+            MAX_SEGMENTS
+        ));
     }
     if page.pages > 1 {
         art.note(format!("Page {} of {}", page.number, page.pages));
@@ -335,7 +356,11 @@ fn read_drawing(bytes: &[u8], number: u32) -> Result<PageDrawing, String> {
         skipped_text: 0,
         skipped_images: 0,
         skipped_shadings: 0,
-        clipped: false,
+        clipping: ClipCount::default(),
+        transparency: false,
+        blending: false,
+        soft_masks: false,
+        cut_short: false,
     };
     let content = doc.get_page_content(page_id);
     let (resources, inherited_ids) = doc
@@ -354,6 +379,8 @@ fn read_drawing(bytes: &[u8], number: u32) -> Result<PageDrawing, String> {
         stroke: Rgb([0, 0, 0]),
         fill: Rgb([0, 0, 0]),
         text: TextState::default(),
+        // Nothing shows beyond the page (an artboard, for Illustrator).
+        clips: vec![Rc::new(Clip::rect(DVec2::ZERO, size))],
     };
     reader.run(&content, state, &res, &mut Vec::new(), 0)?;
     Ok(PageDrawing {
@@ -366,7 +393,11 @@ fn read_drawing(bytes: &[u8], number: u32) -> Result<PageDrawing, String> {
         skipped_text: reader.skipped_text,
         skipped_images: reader.skipped_images,
         skipped_shadings: reader.skipped_shadings,
-        clipped: reader.clipped,
+        clipping: reader.clipping,
+        transparency: reader.transparency,
+        blending: reader.blending,
+        soft_masks: reader.soft_masks,
+        cut_short: reader.cut_short,
     })
 }
 
@@ -380,6 +411,8 @@ struct State {
     stroke: Rgb,
     fill: Rgb,
     text: TextState,
+    /// The clipping paths painting is seen through, outermost first.
+    clips: Vec<Rc<Clip>>,
 }
 
 /// The text state: font and size, spacing, scaling, leading, rise and rendering mode.
@@ -463,7 +496,11 @@ struct Reader<'a> {
     skipped_text: usize,
     skipped_images: usize,
     skipped_shadings: usize,
-    clipped: bool,
+    clipping: ClipCount,
+    transparency: bool,
+    blending: bool,
+    soft_masks: bool,
+    cut_short: bool,
 }
 
 impl<'a> Reader<'a> {
@@ -552,6 +589,10 @@ impl<'a> Reader<'a> {
         if t.mode == 3 || text.trim().is_empty() {
             return;
         }
+        // Text that a clip hides (or that's off the page).
+        if !gs.clips.iter().all(|c| c.contains(start)) {
+            return;
+        }
         let page = tm.then(&gs.ctm);
         let [a, b, c, d, _, _] = page.0;
         let size = t.size * (c * c + d * d).sqrt();
@@ -608,6 +649,7 @@ impl<'a> Reader<'a> {
         let mut tlm = Matrix::IDENTITY;
         for op in &content.operations {
             if self.segments >= MAX_SEGMENTS {
+                self.cut_short = true;
                 break;
             }
             let o = &op.operands;
@@ -651,6 +693,27 @@ impl<'a> Reader<'a> {
                         .and_then(|n| self.resource(resources, b"ExtGState", n))
                         .and_then(|e| e.as_dict().ok());
                     if let Some(ext) = ext {
+                        let alpha = |k: &[u8]| ext.get(k).ok().and_then(num);
+                        if alpha(b"CA").is_some_and(|a| a < 1.0)
+                            || alpha(b"ca").is_some_and(|a| a < 1.0)
+                        {
+                            self.transparency = true;
+                        }
+                        if ext
+                            .get(b"BM")
+                            .ok()
+                            .and_then(|b| b.as_name().ok())
+                            .is_some_and(|b| b != b"Normal" && b != b"Compatible")
+                        {
+                            self.blending = true;
+                        }
+                        if ext
+                            .get(b"SMask")
+                            .ok()
+                            .is_some_and(|m| m.as_name().ok() != Some(b"None".as_slice()))
+                        {
+                            self.soft_masks = true;
+                        }
                         if let Some(w) = ext.get(b"LW").ok().and_then(num) {
                             gs.width = w.max(0.0);
                         }
@@ -760,28 +823,55 @@ impl<'a> Reader<'a> {
                         }
                     }
                     let paths = std::mem::take(&mut subpaths);
-                    if std::mem::take(&mut clip_next) && operator == "n" {
-                        // A clipping path that isn't drawn.
-                        self.clipped = true;
-                        continue;
-                    }
+                    // A path ending in W clips what is painted after it (it is painted
+                    // through the clips before it first, if at all).
+                    let clips_after = std::mem::take(&mut clip_next);
                     let strokes = matches!(operator, "S" | "s" | "B" | "B*" | "b" | "b*");
                     let fills = matches!(operator, "f" | "F" | "f*" | "B" | "B*" | "b" | "b*");
-                    if paths.is_empty() || !(strokes || fills) {
-                        continue;
-                    }
-                    self.segments += paths.iter().map(|s| s.segs.len()).sum::<usize>();
-                    let scale = gs.scale();
-                    self.paths.push(PdfPath {
-                        subpaths: paths,
-                        stroke: strokes.then(|| Stroke {
+                    if !paths.is_empty() && (strokes || fills) {
+                        self.segments += paths.iter().map(|s| s.segs.len()).sum::<usize>();
+                        let (stroke_parts, fill_parts, clipped) = clip_paint(&paths, &gs.clips);
+                        self.clipping.add(clipped);
+                        let scale = gs.scale();
+                        let stroke = strokes.then(|| Stroke {
                             color: gs.stroke,
                             width: gs.width * scale,
                             dashes: gs.dashes.iter().map(|d| d * scale).collect(),
-                        }),
-                        fill: fills.then_some(gs.fill),
-                        layer: layers.iter().rev().find_map(Clone::clone),
-                    });
+                        });
+                        let fill = fills.then_some(gs.fill);
+                        let layer = layers.iter().rev().find_map(Clone::clone);
+                        if stroke_parts == fill_parts {
+                            if !stroke_parts.is_empty() {
+                                self.paths.push(PdfPath {
+                                    subpaths: stroke_parts,
+                                    stroke,
+                                    fill,
+                                    layer,
+                                });
+                            }
+                        } else {
+                            // Clipped differently: the outline and the fill apart.
+                            if stroke.is_some() && !stroke_parts.is_empty() {
+                                self.paths.push(PdfPath {
+                                    subpaths: stroke_parts,
+                                    stroke,
+                                    fill: None,
+                                    layer: layer.clone(),
+                                });
+                            }
+                            if fill.is_some() && !fill_parts.is_empty() {
+                                self.paths.push(PdfPath {
+                                    subpaths: fill_parts,
+                                    stroke: None,
+                                    fill,
+                                    layer,
+                                });
+                            }
+                        }
+                    }
+                    if clips_after && let Some(clip) = Clip::from_subpaths(&paths) {
+                        gs.clips.push(Rc::new(clip));
+                    }
                 }
                 "BT" => {
                     tm = Matrix::IDENTITY;
@@ -1304,5 +1394,56 @@ mod tests {
         // A 3.5 mm cap height.
         let cap = t.size * drift_draft::page::CAP_HEIGHT;
         assert!((cap - 3.5).abs() < 0.05, "{cap}");
+    }
+
+    #[test]
+    fn a_pdf_page_is_seen_through_its_clips_and_its_edges() {
+        use lopdf::{Stream, dictionary};
+        let mut doc = Document::with_version("1.6");
+        let pages = doc.new_object_id();
+        // A clip to a 100-point square, a line across it; then, unclipped, a line off the
+        // page's right edge and one wholly beyond it.
+        let content = b"q 0 0 100 100 re W n 1 w 50 50 m 300 50 l S Q \
+                        500 300 m 700 300 l S 800 300 m 900 300 l S"
+            .to_vec();
+        let contents = doc.add_object(Stream::new(dictionary! {}, content));
+        let page = doc.add_object(dictionary! {
+            "Type" => "Page", "Parent" => pages,
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            "Contents" => contents,
+        });
+        doc.objects.insert(
+            pages,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages", "Kids" => vec![page.into()], "Count" => 1,
+            }),
+        );
+        let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages });
+        doc.trailer.set("Root", catalog);
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).unwrap();
+
+        let art = read_artwork(&bytes, 1, "plan").unwrap();
+        let mm = drift_core::underlays::MM_PER_POINT;
+        let ends: Vec<(DVec2, DVec2)> = art
+            .paths
+            .iter()
+            .map(|p| {
+                let s = &p.subpaths[0];
+                (s.start / mm, s.segs.last().unwrap().end() / mm)
+            })
+            .collect();
+        assert_eq!(ends.len(), 2, "{ends:?}");
+        // Inside the clip: 50 to 100.
+        assert!(ends[0].0.distance(DVec2::new(50.0, 50.0)) < 1e-6);
+        assert!(
+            ends[0].1.distance(DVec2::new(100.0, 50.0)) < 1e-6,
+            "{:?}",
+            ends[0]
+        );
+        // To the page's edge.
+        assert!((ends[1].1.x - 612.0).abs() < 1e-6, "{:?}", ends[1]);
+        assert_eq!(art.clipping.trimmed, 2);
+        assert_eq!(art.clipping.hidden, 1);
     }
 }

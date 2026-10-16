@@ -106,16 +106,22 @@ earlier aren't read.
    - **Editable geometry** or **Underlay to trace**.
    - The **page** (an **artboard**, for an Illustrator file).
    - **Drawn at**: the scale the drawing is at on its paper. At 1:50, 1 mm on the paper is
-     50 mm in the sketch. The dialog shows how big that makes it. Drift sets it for you when
-     it can tell: it reads the drawing's dimensions (`28 1/2"`, `3'-6"`, `3600`) and measures
-     the lines they're written along, and, failing those, reads the scales written on it
-     (`SCALE: 1/4" = 1'-0"`). It says which it used, and how many agreed. A sheet with views
-     at several scales gets the one most of its dimensions are at.
+     50 mm in the sketch. The dialog shows how big that makes it. Where it can, Drift
+     **suggests** a scale and sets it: it reads the drawing's dimensions (`28 1/2"`, `3'-6"`,
+     `3600`) and measures the lines they're written along, and, failing those, reads the
+     scales written on it (`SCALE: 1/4" = 1'-0"`). It says which it used, how many agreed, and
+     how confident it is, and names a second scale when some views look to be at one.
+     Architectural sheets often have views at several scales: check the suggestion is the
+     one for the view you want. A scale you've chosen is never replaced.
    - **Then calibrate**, if you don't know the scale or want to check it. Once it's in,
      click two points on it (a wall's ends, say) and type their real distance: the import
      is scaled to fit, about the first point.
    - What to do with **edges of shapes that are filled but not outlined**: construction
      (they shape the fill and don't print, so it looks as it did) or lines (they print).
+   Under **Before you import**, the dialog lists what won't come across as it looks
+   (gradients, transparency, images left out, clipping it couldn't apply) and warns about a
+   very large drawing. Above about 400,000 curves it won't import as geometry: bring it in
+   as an underlay, or split it first.
 3. A report lists what came in and anything left out.
 
 What comes in:
@@ -133,8 +139,13 @@ What comes in:
 Imported artwork has no relations or dimensions: it is free to move and edit, and you add
 constraints where you want them.
 
-What doesn't: images, gradients (an SVG gradient comes in as its first colour),
-transparency, and clipping (what a clip hid comes in too). Illustrator's brushes, width
+Clipping is applied: what a clipping path, a mask or the edge of the artboard hides is left
+out, strokes are trimmed exactly where they leave it, and fills are cut to rectangular and
+other convex clips. A fill crossing a clip of another shape comes in whole, and the dialog
+says so.
+
+What doesn't come across: images, gradients (they come in as their first colour, so
+presentation artwork will look different), transparency, blend modes and soft masks. Illustrator's brushes, width
 profiles and effects come in as the filled shapes they draw, and text converted to outlines
 comes in as shapes. An SVG
 from Illustrator is read at Illustrator's size, 72 units to the inch.

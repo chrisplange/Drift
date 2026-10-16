@@ -195,14 +195,15 @@ impl DriftApp {
             }
             if let Some(g) = guess {
                 let label = drift_core::sheets::scale_label(g.scale);
-                let found = if g.written {
+                let sure = g.confidence();
+                let how = if g.written {
                     format!(
-                        "Written on the drawing: {label} ({} of {} scale labels)",
+                        "written on the drawing ({} of {} scale labels)",
                         g.agreeing, g.measured
                     )
                 } else {
                     format!(
-                        "From its dimensions: {label} ({} of {} agree{})",
+                        "from its dimensions: {} of {} agree{}",
                         g.agreeing,
                         g.measured,
                         if g.confirmed > 0 {
@@ -212,12 +213,32 @@ impl DriftApp {
                         }
                     )
                 };
-                ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(found).weak());
+                let confidence = if sure >= 0.7 {
+                    "high confidence"
+                } else if sure >= 0.4 {
+                    "medium confidence"
+                } else {
+                    "low confidence: its views may be at different scales"
+                };
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(
+                        egui::RichText::new(format!("Suggested: {label}, {how} ({confidence})"))
+                            .weak(),
+                    );
                     if (pending.scale - g.scale).abs() > 1e-9 && ui.small_button("Use").clicked() {
                         pending.scale = g.scale;
                     }
                 });
+                if let Some((other, n)) = g.runner_up {
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "Some views look to be at {} ({n}): check the scale is the one \
+                             for the view you want",
+                            drift_core::sheets::scale_label(other)
+                        ))
+                        .weak(),
+                    );
+                }
             }
             ui.checkbox(
                 &mut pending.calibrate,
@@ -267,7 +288,49 @@ impl DriftApp {
                         if art.layers.len() > 1 { "s" } else { "" }
                     ));
                     ui.label(egui::RichText::new(about.trim()).weak());
-                    paths + texts > 0
+                    // What won't come across as it looks, said before it's imported.
+                    let amber = egui::Color32::from_rgb(0xff, 0x9f, 0x0a);
+                    let mut heads_up: Vec<String> = art
+                        .notes
+                        .iter()
+                        .filter(|n| !n.starts_with("Page ") && !n.starts_with("Sized as"))
+                        .cloned()
+                        .collect();
+                    heads_up.extend(
+                        art.skipped
+                            .iter()
+                            .map(|(what, n)| format!("{n} × {what} left out")),
+                    );
+                    let curves = art.curve_count();
+                    let too_many = !underlay && curves > TOO_MANY_CURVES;
+                    if !underlay && curves > MANY_CURVES && !too_many {
+                        heads_up.push(format!(
+                            "About {curves} curves: the import may take a while, and the sketch \
+                             be slow to work in (an underlay is lighter)"
+                        ));
+                    }
+                    if !heads_up.is_empty() {
+                        ui.add_space(6.0);
+                        ui.label(egui::RichText::new("Before you import").strong());
+                        for line in &heads_up {
+                            ui.horizontal_wrapped(|ui| {
+                                ui.colored_label(amber, "⚠");
+                                ui.label(line);
+                            });
+                        }
+                    }
+                    if too_many {
+                        ui.add_space(4.0);
+                        ui.colored_label(
+                            ui.visuals().error_fg_color,
+                            format!(
+                                "About {curves} curves is more than a sketch can work with \
+                                 (over {TOO_MANY_CURVES}): import it as an underlay to trace, or \
+                                 split the drawing first"
+                            ),
+                        );
+                    }
+                    paths + texts > 0 && !too_many
                 }
                 Err(e) => {
                     ui.colored_label(ui.visuals().error_fg_color, e.as_str());
@@ -397,6 +460,11 @@ impl DriftApp {
 }
 
 use crate::app::underlays_ui::SCALES;
+
+/// Above this many curves an import as geometry is warned about, and above the second it is
+/// refused (an underlay takes it).
+const MANY_CURVES: usize = 50_000;
+const TOO_MANY_CURVES: usize = 400_000;
 
 /// Millimetres on paper, to a tenth.
 fn fmt_mm(v: f64) -> String {

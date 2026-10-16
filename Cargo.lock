@@ -1114,7 +1114,7 @@ checksum = "d8b14ccef22fc6f5a8f4d7d768562a182c04ce9a3b3157b91390b52ddfdf1a76"
 
 [[package]]
 name = "drift"
-version = "0.1.0-alpha.5"
+version = "0.1.0-alpha.6"
 dependencies = [
  "drift-app",
  "eframe",
@@ -1124,7 +1124,7 @@ dependencies = [
 
 [[package]]
 name = "drift-app"
-version = "0.1.0-alpha.5"
+version = "0.1.0-alpha.6"
 dependencies = [
  "drift-core",
  "drift-draft",
@@ -1152,14 +1152,14 @@ dependencies = [
 
 [[package]]
 name = "drift-core"
-version = "0.1.0-alpha.5"
+version = "0.1.0-alpha.6"
 dependencies = [
  "glam",
 ]
 
 [[package]]
 name = "drift-draft"
-version = "0.1.0-alpha.5"
+version = "0.1.0-alpha.6"
 dependencies = [
  "drift-core",
  "drift-geom",
@@ -1171,7 +1171,7 @@ dependencies = [
 
 [[package]]
 name = "drift-geom"
-version = "0.1.0-alpha.5"
+version = "0.1.0-alpha.6"
 dependencies = [
  "drift-core",
  "rstar",
@@ -1179,7 +1179,7 @@ dependencies = [
 
 [[package]]
 name = "drift-io"
-version = "0.1.0-alpha.5"
+version = "0.1.0-alpha.6"
 dependencies = [
  "drift-core",
  "drift-draft",
@@ -1191,7 +1191,7 @@ dependencies = [
 
 [[package]]
 name = "drift-platform"
-version = "0.1.0-alpha.5"
+version = "0.1.0-alpha.6"
 dependencies = [
  "fontdb",
  "js-sys",
@@ -1206,7 +1206,7 @@ dependencies = [
 
 [[package]]
 name = "drift-render"
-version = "0.1.0-alpha.5"
+version = "0.1.0-alpha.6"
 dependencies = [
  "bytemuck",
  "drift-core",
@@ -1219,7 +1219,7 @@ dependencies = [
 
 [[package]]
 name = "drift-solver"
-version = "0.1.0-alpha.5"
+version = "0.1.0-alpha.6"
 dependencies = [
  "drift-core",
  "proptest",
@@ -1227,7 +1227,7 @@ dependencies = [
 
 [[package]]
 name = "drift-web"
-version = "0.1.0-alpha.5"
+version = "0.1.0-alpha.6"
 dependencies = [
  "drift-app",
  "eframe",

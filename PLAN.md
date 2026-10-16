@@ -1938,6 +1938,10 @@ zooms to fit; F is Fillet (again for Chamfer).
   level with other dimensions, and Align / Space evenly for picked ones; (1, 2) panel tabs
   that move with the pointer as they're dragged (blue only when docking a floating panel),
   and floating panels stacking vertically. Key maps with presets: later.
+- **Crosshair (done).** Drawing and editing tools hide the system cursor over the canvas
+  and draw Drift's own crosshair (`app/crosshair.rs`): arm size 6–200 pt or full screen,
+  weight 0.5–3 pt, in Preferences → Crosshair (prefs `xsize`, `xfull`, `xweight`). The
+  select tool keeps the system arrow.
 - **In-app updates (built on `in-app-updates`).** A custom updater on GitHub Releases
   (native only; `crates/drift-app/src/update`), chosen over Velopack (it would replace the
   Inno Setup and dmg packaging) and `self_update` (it replaces a bare binary, which suits

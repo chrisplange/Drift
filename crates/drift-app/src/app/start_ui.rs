@@ -367,6 +367,8 @@ impl DriftApp {
              outline picks nothing (box selection starts there). Off: it picks the area, to \
              measure it",
         );
+        theme::section(ui, "Crosshair");
+        self.crosshair_prefs(ui);
         theme::section(ui, "Mouse and trackpad");
         theme::row(ui, "Scrolling", |ui| {
             for mode in crate::app::view::WheelMode::ALL {

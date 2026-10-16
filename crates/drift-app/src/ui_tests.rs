@@ -6386,3 +6386,53 @@ fn svg_artwork_is_imported_as_curves_on_its_layers_at_a_scale() {
     app.undo();
     assert_eq!(app.editor.doc.fills().count(), 0);
 }
+
+#[test]
+fn the_import_dialog_says_what_wont_come_across_before_importing() {
+    let Some(mut h) = harness() else { return };
+    // A gradient fill, a dimensioned line, and art off the artboard.
+    let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm" viewBox="0 0 100 100">
+  <defs><linearGradient id="g"><stop offset="0" stop-color="#336699"/><stop offset="1" stop-color="#fff"/></linearGradient></defs>
+  <rect x="10" y="10" width="30" height="20" fill="url(#g)"/>
+  <line x1="90" y1="50" x2="150" y2="50" stroke="black"/>
+</svg>"##;
+    h.state_mut()
+        .begin_vector_import("poster.svg", svg.as_bytes().to_vec(), 0.0);
+    h.run_steps(3);
+    save_png("drift_ui_import_heads_up.png", &mut h);
+    assert!(h.query_by_label("Before you import").is_some());
+    assert!(
+        h.query_by_label_contains("presentation artwork will look different")
+            .is_some()
+    );
+    assert!(h.query_by_label_contains("Clipping is applied").is_some());
+    h.state_mut().pending_import = None;
+    h.run_steps(2);
+
+    // Too big to edit: the import is refused (an underlay is offered instead).
+    let mut d = String::from("M 0 0");
+    for k in 1..=401_000 {
+        d.push_str(if k % 2 == 1 { " L 1 1" } else { " L 0 0" });
+    }
+    let big = format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm" viewBox="0 0 100 100"><path d="{d}" stroke="black" fill="none"/></svg>"#
+    );
+    h.state_mut()
+        .begin_vector_import("traced.svg", big.into_bytes(), 0.0);
+    h.run_steps(3);
+    assert!(
+        h.query_by_label_contains("more than a sketch can work with")
+            .is_some()
+    );
+    h.get_by_label("Import").click();
+    h.run_steps(2);
+    assert!(h.state().pending_import.is_some(), "refused: still asking");
+    assert_eq!(h.state().editor.doc.iter().count(), 0);
+    // As an underlay it's fine.
+    h.state_mut().pending_import.as_mut().unwrap().underlay = true;
+    h.run_steps(2);
+    h.get_by_label("Import").click();
+    h.run_steps(3);
+    assert!(h.state().pending_import.is_none());
+    assert_eq!(h.state().editor.doc.underlays().count(), 1);
+}

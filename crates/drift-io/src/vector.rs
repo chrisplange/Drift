@@ -115,6 +115,8 @@ pub struct Artwork {
     pub texts: Vec<Text>,
     pub layers: Vec<String>,
     pub layer_flags: BTreeMap<String, LayerFlags>,
+    /// What clipping (by clip paths, masks and the page) did.
+    pub clipping: crate::clip::ClipCount,
     pub skipped: BTreeMap<String, usize>,
     pub notes: Vec<String>,
 }
@@ -129,6 +131,50 @@ impl Artwork {
         if !self.notes.contains(&note) {
             self.notes.push(note);
         }
+    }
+
+    /// Notes on what clipping did, once the drawing is read.
+    pub(crate) fn note_clipping(&mut self) {
+        let c = self.clipping;
+        let plural = |n: usize| if n == 1 { "" } else { "s" };
+        let mut parts = Vec::new();
+        if c.trimmed > 0 {
+            parts.push(format!(
+                "{} path{} trimmed to what shows",
+                c.trimmed,
+                plural(c.trimmed)
+            ));
+        }
+        if c.hidden > 0 {
+            parts.push(format!(
+                "{} hidden one{} left out",
+                c.hidden,
+                plural(c.hidden)
+            ));
+        }
+        if !parts.is_empty() {
+            self.note(format!("Clipping is applied: {}", parts.join(", ")));
+        }
+        if c.whole > 0 {
+            self.note(format!(
+                "{} filled shape{} cross{} a clipping path too intricate to cut, and come{} in \
+                 whole: check around {}",
+                c.whole,
+                plural(c.whole),
+                if c.whole == 1 { "es" } else { "" },
+                if c.whole == 1 { "s" } else { "" },
+                if c.whole == 1 { "it" } else { "them" }
+            ));
+        }
+    }
+
+    /// How many curves it would be in a sketch, about.
+    pub fn curve_count(&self) -> usize {
+        self.paths
+            .iter()
+            .flat_map(|p| &p.subpaths)
+            .map(|s| s.segs.len() + usize::from(s.closed))
+            .sum()
     }
 
     /// A layer, added to the list the first time it is used.
@@ -274,6 +320,20 @@ pub struct ScaleGuess {
     pub written: bool,
     /// How many written scales say the same, when it was found from the dimensions.
     pub confirmed: usize,
+    /// The next most agreed-on scale and its count, when there is one: views at other
+    /// scales.
+    pub runner_up: Option<(f64, usize)>,
+}
+
+impl ScaleGuess {
+    /// How sure it is: the share of what was read that agrees.
+    pub fn confidence(&self) -> f64 {
+        if self.measured == 0 {
+            0.0
+        } else {
+            self.agreeing as f64 / self.measured as f64
+        }
+    }
 }
 
 /// A scale as a drawing writes it: `1/4" = 1'-0"`, `3/4" : 1'`, `SCALE: 1:50`, `1 : 100`.
@@ -524,8 +584,15 @@ pub fn guess_scale(art: &Artwork, unit_mm: f64) -> Option<ScaleGuess> {
             *stated.entry(n.to_bits()).or_insert(0) += 1;
         }
     }
-    let best = votes.into_iter().max_by_key(|(_, v)| *v);
-    if let Some((bits, agreeing)) = best
+    // The most agreed-on, and the next.
+    let ranked = |m: BTreeMap<u64, usize>| {
+        let mut v: Vec<(u64, usize)> = m.into_iter().collect();
+        v.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
+        v
+    };
+    let runner_up = |v: &[(u64, usize)]| v.get(1).map(|(b, n)| (f64::from_bits(*b), *n));
+    let measured_votes = ranked(votes);
+    if let Some(&(bits, agreeing)) = measured_votes.first()
         && agreeing >= 2
         && agreeing * 3 >= measured
     {
@@ -535,15 +602,18 @@ pub fn guess_scale(art: &Artwork, unit_mm: f64) -> Option<ScaleGuess> {
             measured,
             written: false,
             confirmed: stated.get(&bits).copied().unwrap_or(0),
+            runner_up: runner_up(&measured_votes).filter(|(_, n)| *n >= 2),
         });
     }
-    let (bits, agreeing) = stated.into_iter().max_by_key(|(_, v)| *v)?;
+    let stated = ranked(stated);
+    let &(bits, agreeing) = stated.first()?;
     Some(ScaleGuess {
         scale: f64::from_bits(bits),
         agreeing,
         measured: statements,
         written: true,
         confirmed: agreeing,
+        runner_up: runner_up(&stated),
     })
 }
 

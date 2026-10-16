@@ -14,6 +14,9 @@ use drift_core::{DVec2, Rgb, TextAlign};
 use kurbo::{Affine, BezPath, PathEl, Point};
 use roxmltree::{Document, Node, ParsingOptions};
 
+use std::rc::Rc;
+
+use crate::clip::{Clip, clip_paint};
 use crate::vector::{Artwork, Painted, Seg, Stroke, Subpath, Text};
 
 /// `<use>` copies and nested documents go at most this deep.
@@ -84,6 +87,12 @@ pub fn read(text: &str, name: &str) -> Result<Artwork, String> {
             .note("Sized as Illustrator draws: 72 SVG units to the inch (browsers show it at 96)");
     }
     let style = reader.style_of(root, &Style::default());
+    // Nothing shows beyond the paper (an artboard, for Illustrator).
+    let paper: Vec<Rc<Clip>> = if size.x > 0.0 && size.y > 0.0 {
+        vec![Rc::new(Clip::rect(DVec2::ZERO, size))]
+    } else {
+        Vec::new()
+    };
     for child in root.children().filter(Node::is_element) {
         // The root's groups are the layers, as Illustrator writes them.
         let layer = if child.has_tag_name("g") {
@@ -91,8 +100,9 @@ pub fn read(text: &str, name: &str) -> Result<Artwork, String> {
         } else {
             None
         };
-        reader.node(child, base, &style, layer.as_deref(), 0);
+        reader.node(child, base, &style, layer.as_deref(), &paper, 0);
     }
+    reader.art.note_clipping();
     if reader.art.paths.is_empty() && reader.art.texts.is_empty() {
         reader
             .art
@@ -603,6 +613,68 @@ impl<'a, 'input> Reader<'a, 'input> {
         s
     }
 
+    /// The region a `<clipPath>` or `<mask>` makes in the user space `ctm` maps from: its
+    /// shapes (or the shapes of what it uses). `None` for one sized to the clipped element
+    /// (`objectBoundingBox` units), or with nothing in it.
+    fn clip_of(&mut self, id: &str, ctm: Affine) -> Option<Clip> {
+        let node = *self.ids.get(id)?;
+        let units = node
+            .attribute("clipPathUnits")
+            .or_else(|| node.attribute("maskContentUnits"));
+        if units == Some("objectBoundingBox") {
+            return None;
+        }
+        let ctm = ctm
+            * node
+                .attribute("transform")
+                .map_or(Affine::IDENTITY, transform);
+        let mut subpaths_in: Vec<Subpath> = Vec::new();
+        let mut stack: Vec<(Node, Affine, usize)> = node
+            .children()
+            .filter(Node::is_element)
+            .map(|c| (c, ctm, 0))
+            .collect();
+        while let Some((n, m, depth)) = stack.pop() {
+            if depth > MAX_DEPTH {
+                continue;
+            }
+            let m = m * n.attribute("transform").map_or(Affine::IDENTITY, transform);
+            match n.tag_name().name() {
+                "g" => stack.extend(
+                    n.children()
+                        .filter(Node::is_element)
+                        .map(|c| (c, m, depth + 1)),
+                ),
+                "use" => {
+                    let href = n
+                        .attribute((XLINK, "href"))
+                        .or_else(|| n.attribute("href"))
+                        .map(|h| h.trim_start_matches('#').to_owned());
+                    if let Some(target) = href.and_then(|h| self.ids.get(&h).copied()) {
+                        let at = |k: &str| {
+                            n.attribute(k)
+                                .and_then(|v| user_length(v, 16.0))
+                                .unwrap_or(0.0)
+                        };
+                        stack.push((target, m * Affine::translate((at("x"), at("y"))), depth + 1));
+                    }
+                }
+                _ => {
+                    if let Some(path) = shape_path(n, 16.0).and_then(|d| BezPath::from_svg(&d).ok())
+                    {
+                        let mut parts = subpaths(&(m * path));
+                        // A clip shape is closed, however it's drawn.
+                        for p in &mut parts {
+                            p.closed = true;
+                        }
+                        subpaths_in.extend(parts);
+                    }
+                }
+            }
+        }
+        Clip::from_subpaths(&subpaths_in)
+    }
+
     /// The colour a paint comes to: a gradient's first stop, with a note.
     fn color_of(&mut self, paint: &Paint, style: &Style, opacity: f64) -> Option<Rgb> {
         if opacity <= 0.0 {
@@ -610,7 +682,7 @@ impl<'a, 'input> Reader<'a, 'input> {
         }
         if opacity < 1.0 {
             self.art
-                .note("Transparency was left out: see-through colours came in solid");
+                .note("Transparency is left out: see-through colours come in solid");
         }
         match paint {
             Paint::None => None,
@@ -636,7 +708,8 @@ impl<'a, 'input> Reader<'a, 'input> {
                 match stop {
                     Some(c) => {
                         self.art
-                            .note("Gradients came in as a solid fill of their first colour");
+                            .note("Gradients come in as a solid fill of their first colour: presentation artwork will look \
+                             different");
                         Some(c)
                     }
                     None => {
@@ -654,6 +727,7 @@ impl<'a, 'input> Reader<'a, 'input> {
         ctm: Affine,
         parent: &Style,
         layer: Option<&str>,
+        clips: &[Rc<Clip>],
         depth: usize,
     ) {
         if depth > MAX_DEPTH {
@@ -692,9 +766,29 @@ impl<'a, 'input> Reader<'a, 'input> {
             * node
                 .attribute("transform")
                 .map_or(Affine::IDENTITY, transform);
-        if node.attribute("clip-path").is_some() || node.attribute("mask").is_some() {
-            self.art
-                .note("Clipping and masks were left out: everything they hid came in too");
+        // Its clipping path or mask (a mask's shapes, as a clip), on top of those around it.
+        let mut clips = clips.to_vec();
+        for (attr, mask) in [("clip-path", false), ("mask", true)] {
+            let Some(id) = node.attribute(attr).and_then(|v| match paint(v) {
+                Some(Paint::Url(id)) => Some(id),
+                _ => None,
+            }) else {
+                continue;
+            };
+            match self.clip_of(&id, ctm) {
+                Some(clip) => {
+                    clips.push(Rc::new(clip));
+                    if mask {
+                        self.art.note(
+                            "Masks are used as clips by their shapes: their fades are left out",
+                        );
+                    }
+                }
+                None => self.art.note(
+                    "A clipping path or mask Drift can't read is left out: what it hides \
+                     comes in too",
+                ),
+            }
         }
         // Inkscape layers can be anywhere; Drift's own groups name theirs.
         let own = if tag == "g"
@@ -720,7 +814,7 @@ impl<'a, 'input> Reader<'a, 'input> {
                     ctm
                 };
                 for child in node.children().filter(Node::is_element) {
-                    self.node(child, ctm, &style, layer, depth + 1);
+                    self.node(child, ctm, &style, layer, &clips, depth + 1);
                 }
             }
             "use" => {
@@ -739,16 +833,16 @@ impl<'a, 'input> Reader<'a, 'input> {
                 let ctm = ctm * Affine::translate((at("x"), at("y")));
                 if target.has_tag_name("symbol") {
                     for child in target.children().filter(Node::is_element) {
-                        self.node(child, ctm, &style, layer, depth + 1);
+                        self.node(child, ctm, &style, layer, &clips, depth + 1);
                     }
                 } else {
-                    self.node(target, ctm, &style, layer, depth + 1);
+                    self.node(target, ctm, &style, layer, &clips, depth + 1);
                 }
             }
             "image" => self.art.skip("image"),
             "text" => {
                 if style.visible {
-                    self.text(node, ctm, &style, layer);
+                    self.text(node, ctm, &style, layer, &clips);
                 }
             }
             _ => {
@@ -772,6 +866,8 @@ impl<'a, 'input> Reader<'a, 'input> {
                 if subpaths.is_empty() {
                     return;
                 }
+                let (stroke_parts, fill_parts, clipped) = clip_paint(&subpaths, &clips);
+                self.art.clipping.add(clipped);
                 let scale = ctm.determinant().abs().sqrt();
                 let stroke = self
                     .color_of(&style.stroke.clone(), &style, style.stroke_opacity)
@@ -789,18 +885,47 @@ impl<'a, 'input> Reader<'a, 'input> {
                     return;
                 }
                 let layer = self.art.layer(layer.unwrap_or(&self.loose.clone()));
-                self.art.paths.push(Painted {
-                    layer,
-                    subpaths,
-                    stroke,
-                    fill,
-                });
+                if stroke_parts == fill_parts {
+                    if !stroke_parts.is_empty() {
+                        self.art.paths.push(Painted {
+                            layer,
+                            subpaths: stroke_parts,
+                            stroke,
+                            fill,
+                        });
+                    }
+                    return;
+                }
+                // Clipped differently: the outline and the fill apart.
+                if stroke.is_some() && !stroke_parts.is_empty() {
+                    self.art.paths.push(Painted {
+                        layer: layer.clone(),
+                        subpaths: stroke_parts,
+                        stroke,
+                        fill: None,
+                    });
+                }
+                if fill.is_some() && !fill_parts.is_empty() {
+                    self.art.paths.push(Painted {
+                        layer,
+                        subpaths: fill_parts,
+                        stroke: None,
+                        fill,
+                    });
+                }
             }
         }
     }
 
     /// A `<text>` element: a line per run that sets its own position.
-    fn text(&mut self, node: Node<'a, 'input>, ctm: Affine, style: &Style, layer: Option<&str>) {
+    fn text(
+        &mut self,
+        node: Node<'a, 'input>,
+        ctm: Affine,
+        style: &Style,
+        layer: Option<&str>,
+        clips: &[Rc<Clip>],
+    ) {
         let first = |v: Option<&str>| v.and_then(|v| numbers(v).first().copied());
         let mut pos = (
             first(node.attribute("x")).unwrap_or(0.0),
@@ -841,6 +966,9 @@ impl<'a, 'input> Reader<'a, 'input> {
                 continue;
             }
             let at = ctm * Point::new(p.0, p.1);
+            if !clips.iter().all(|c| c.contains(DVec2::new(at.x, at.y))) {
+                continue;
+            }
             let color = self.color_of(&s.fill.clone(), &s, s.fill_opacity);
             self.art.texts.push(Text {
                 layer: layer.clone(),
@@ -1143,5 +1271,54 @@ mod tests {
         assert_eq!(illustrator_id("Walls_x5F_new"), "Walls_new");
         assert_eq!(illustrator_id("Furniture_1_"), "Furniture");
         assert_eq!(illustrator_id("A-101_x2C__Plan"), "A-101, Plan");
+    }
+
+    #[test]
+    fn clipping_paths_and_the_artboard_clip() {
+        // A group clipped to a 20 × 20 square, a line across it, and art off the artboard.
+        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm" viewBox="0 0 100 100">
+  <defs><clipPath id="crop"><rect x="10" y="10" width="20" height="20"/></clipPath></defs>
+  <g clip-path="url(#crop)">
+    <line x1="0" y1="20" x2="50" y2="20" stroke="black"/>
+    <rect x="40" y="40" width="5" height="5" fill="red"/>
+    <rect x="0" y="0" width="100" height="100" fill="blue"/>
+  </g>
+  <line x1="90" y1="50" x2="150" y2="50" stroke="black"/>
+  <line x1="200" y1="50" x2="250" y2="50" stroke="black"/>
+</svg>"##;
+        let art = read(svg, "plan").unwrap();
+        // The line through the clip: just the part inside, 10 to 30 (y flipped: 80).
+        let crossing = shapes_of(&art.paths[0].subpaths[0]);
+        let Shape::Line { a, b } = crossing[0] else {
+            panic!()
+        };
+        assert!(
+            a.distance(v(10.0, 80.0)) < 1e-9 && b.distance(v(30.0, 80.0)) < 1e-9,
+            "{a} {b}"
+        );
+        // The red square is hidden by the clip; the blue background is cut to the clip.
+        assert!(art.paths.iter().all(|p| p.fill != Some(Rgb([255, 0, 0]))));
+        let blue = art
+            .paths
+            .iter()
+            .find(|p| p.fill == Some(Rgb([0, 0, 255])))
+            .expect("the background, cut to the clip");
+        let points: Vec<DVec2> = std::iter::once(blue.subpaths[0].start)
+            .chain(blue.subpaths[0].segs.iter().map(Seg::end))
+            .collect();
+        assert!(
+            points
+                .iter()
+                .all(|p| (10.0 - 1e-9..=30.0 + 1e-9).contains(&p.x))
+        );
+        // The line off the artboard's edge is trimmed to it; the one beyond it is left out.
+        let trimmed = shapes_of(&art.paths[2].subpaths[0]);
+        let Shape::Line { b, .. } = trimmed[0] else {
+            panic!()
+        };
+        assert!((b.x - 100.0).abs() < 1e-9, "{b}");
+        assert_eq!(art.paths.len(), 3);
+        assert_eq!(art.clipping.hidden, 2);
+        assert!(art.notes.iter().any(|n| n.contains("Clipping is applied")));
     }
 }

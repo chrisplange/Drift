@@ -21,7 +21,7 @@ preference. See [Units and length formats](units.md).
 | **Show the grid** | Also Ctrl+' and the status bar. |
 | **Show the origin axes** | The red and green lines through the origin. |
 | **Snap to the grid** | Also Shift+G and the status bar. The arrow keys nudge the selection one grid step. |
-| **Add relations automatically while drawing** | The same as **Auto relations** in the top bar. |
+| **Add relations automatically while drawing** | The same as the **Auto relations** switch in the status bar (Shift+Alt+R). |
 | **Round sizes when scaling with dimensions (Alt)** | With a transform handle and Alt, the width and height step through round sizes. Off: any size. |
 
 ## Dimensions
@@ -49,7 +49,7 @@ zooms). The middle or right mouse button drags the view either way.
 |---|---|
 | **Colour curves by constraint status** | Blue, white or black, and red by how well defined. Off: each curve's own or its layer's colour. Also Shift+C. |
 | **Thin lines (every line one pixel wide)** | For editing dense drawings. It never changes the drawing or its output. Also W. |
-| **Always show end points** | Off: end points show only on hovered or picked curves. Also **End points** in the top bar. |
+| **Always show end points** | Off: end points show only on hovered or picked curves. Also the **End points** switch in the status bar (Shift+Alt+V). |
 | **Show dimensions and notes** | Also Alt+D. |
 | **Show relations** | The relation symbols. Also Alt+R. |
 | **Curvature combs on picked curves** | Combs on pen curves showing how they bend. |

@@ -117,6 +117,8 @@ impl ViewFlag {
             ViewFlag::Dimensions => "Alt+D".into(),
             ViewFlag::Relations => "Alt+R".into(),
             ViewFlag::Hidden => "Alt+H".into(),
+            ViewFlag::AutoRelations => "Shift+Alt+R".into(),
+            ViewFlag::Endpoints => "Shift+Alt+V".into(),
             _ => String::new(),
         }
     }

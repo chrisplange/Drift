@@ -1932,6 +1932,12 @@ zooms to fit; F is Fillet (again for Chamfer).
   `apps/native/assets/make_icon.py` writes the window icon, the Windows .ico and the macOS
   icon source; `icons::logo` draws the same mark on the start screen. Linework variants
   (outline, line with nodes) were drawn too; the user chose the bold one for now.
+- **Alpha 5 notes (planned, in order):** (5) Auto relations and End points switches only in
+  the status bar, with Shift+Alt+R / Shift+Alt+V (done); (3) a drawn crosshair with size
+  (slider, or full screen) and weight; (4) dimension alignment: snapping a dragged label
+  level with other dimensions, and Align / Space evenly for picked ones; (1, 2) panel tabs
+  that move with the pointer as they're dragged (blue only when docking a floating panel),
+  and floating panels stacking vertically. Key maps with presets: later.
 - **In-app updates (built on `in-app-updates`).** A custom updater on GitHub Releases
   (native only; `crates/drift-app/src/update`), chosen over Velopack (it would replace the
   Inno Setup and dmg packaging) and `self_update` (it replaces a bare binary, which suits

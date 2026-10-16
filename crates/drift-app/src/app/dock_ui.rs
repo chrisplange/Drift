@@ -25,7 +25,10 @@ const RAIL: f32 = 42.0;
 const DROP_BAND: f32 = 76.0;
 
 /// Height of the strip that moves a stack of floating panels.
-const GRIP: f32 = 12.0;
+const GRIP: f32 = 22.0;
+/// How far past its dock (or its stack's window) a dragged tab must go before it comes
+/// away: let go nearer and nothing changes.
+const DETACH: f32 = 40.0;
 /// Space between stacked panels (it resizes them).
 const DIVIDER: f32 = 7.0;
 
@@ -487,16 +490,31 @@ impl DriftApp {
             let shown = window.show(ctx, |ui| {
                 if n > 1 {
                     // The strip that moves the whole stack (it senses nothing itself, so the
-                    // window takes the drag).
+                    // window takes the drag): the full width, lit up under the pointer.
                     let (strip, _) = ui.allocate_exact_size(
                         egui::vec2(ui.available_width(), GRIP),
                         egui::Sense::hover(),
                     );
-                    let c = strip.center() + egui::vec2(0.0, 1.0);
-                    let dots = ui.visuals().weak_text_color();
-                    for dx in [-8.0, -3.0, 2.0, 7.0] {
-                        ui.painter()
-                            .circle_filled(c + egui::vec2(dx, 0.0), 1.2, dots);
+                    let hot = ui.rect_contains_pointer(strip);
+                    if hot {
+                        ui.painter().rect_filled(
+                            strip.shrink2(egui::vec2(6.0, 3.0)),
+                            6.0,
+                            ui.visuals().widgets.hovered.bg_fill,
+                        );
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+                    }
+                    let c = strip.center();
+                    let dots = if hot {
+                        ui.visuals().strong_text_color()
+                    } else {
+                        ui.visuals().weak_text_color()
+                    };
+                    for dy in [-2.5, 2.5] {
+                        for dx in [-10.0, -5.0, 0.0, 5.0, 10.0] {
+                            ui.painter()
+                                .circle_filled(c + egui::vec2(dx, dy), 1.3, dots);
+                        }
                     }
                 }
                 let weights: Vec<f32> = stack
@@ -796,6 +814,16 @@ impl DriftApp {
             egui::Id::new("dock_drop"),
         ));
         let target = self.drop_target(panel, window, pos);
+        // A tab (or a stacked panel) hasn't come away until it's well clear of its dock (or
+        // its window): until then nothing is shown, and letting go changes nothing. Moving
+        // within its own stack still works.
+        if !window && !matches!(target, Some(Drop::Stack { .. })) && self.still_attached(panel, pos)
+        {
+            if released {
+                self.dock_view.drag = None;
+            }
+            return;
+        }
         let mark = egui::Stroke::new(3.0, accent);
         match target {
             Some(Drop::Stack { below, rect, .. }) => {
@@ -905,6 +933,20 @@ impl DriftApp {
             }
             None => {}
         }
+    }
+
+    /// Whether a dragged tab is still within reach of where it came from: its dock, or its
+    /// stack's window, and [`DETACH`] around it.
+    fn still_attached(&self, panel: Panel, pos: egui::Pos2) -> bool {
+        let home = match self.layout.place(panel) {
+            Place::Dock(side) => self.dock_view.docks[side.index()],
+            Place::Float => self
+                .layout
+                .stack_of(panel)
+                .and_then(|s| self.dock_view.windows.get(&s[0]).copied()),
+            Place::Hidden => None,
+        };
+        home.is_some_and(|r| r.expand(DETACH).contains(pos))
     }
 
     /// A dragged tab (or a panel pulled from a stack) under the pointer.

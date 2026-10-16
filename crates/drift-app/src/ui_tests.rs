@@ -939,6 +939,35 @@ fn a_tab_slides_along_its_bar() {
 }
 
 #[test]
+fn a_tab_nudged_out_of_its_dock_stays_docked() {
+    let Some(mut h) = harness() else { return };
+    let before = h.state().layout.clone();
+    // 25 px onto the canvas from the dock's edge: not far enough to come away.
+    let from = h.get_by_label("Layers").rect().center();
+    let edge = h.state().canvas_rect.right();
+    let down = from + egui::vec2(0.0, 120.0);
+    let to = egui::pos2(edge - 25.0, down.y);
+    h.hover_at(from);
+    h.run_steps(2);
+    button(&h, from, true);
+    h.run_steps(2);
+    // Straight down out of the tab bar, then left onto the canvas.
+    for p in [
+        from + egui::vec2(0.0, 40.0),
+        down,
+        (down + to.to_vec2()) / 2.0,
+        to,
+    ] {
+        h.hover_at(p);
+        h.run_steps(2);
+    }
+    button(&h, to, false);
+    h.run_steps(8);
+    assert_eq!(h.state().layout.floating, before.floating);
+    assert_eq!(h.state().layout.dock(Side::Right), before.dock(Side::Right));
+}
+
+#[test]
 fn floating_panels_stack_and_come_apart() {
     let Some(mut h) = harness() else { return };
     for p in [Panel::Layers, Panel::Blocks] {

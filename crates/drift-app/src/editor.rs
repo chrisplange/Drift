@@ -320,6 +320,8 @@ pub struct Editor {
     pub slot_mode: crate::tools::SlotMode,
     /// The underlay picked in the Layers tab (calibrate and move act on it).
     pub selected_underlay: Option<drift_core::UnderlayId>,
+    /// What the last SVG or PDF import brought in, to calibrate its scale.
+    pub last_import: Option<crate::underlays::Imported>,
     pub(crate) underlay_cache: crate::underlays::UnderlayCache,
     /// Show every end and centre point, or (Illustrator-like) only those of hovered or picked
     /// curves.
@@ -840,10 +842,13 @@ impl Editor {
         if self.regions_by_layer {
             return self.regions_per_layer(revision);
         }
+        let bounding = self.fill_edges();
         let (ids, curves): (Vec<EntityId>, Vec<Shape>) = self
             .doc
             .iter()
-            .filter(|(_, e)| !e.kind.is_point() && e.style == LineKind::Solid)
+            .filter(|(id, e)| {
+                !e.kind.is_point() && (e.style == LineKind::Solid || bounding.contains(id))
+            })
             .filter_map(|(id, _)| Some((id, self.doc.shape(id)?)))
             .unzip();
         let regions = std::rc::Rc::new(drift_geom::regions::regions(&curves));
@@ -860,8 +865,9 @@ impl Editor {
     ) -> std::rc::Rc<Vec<drift_geom::regions::Region>> {
         let mut by_layer: std::collections::BTreeMap<drift_core::LayerId, Vec<(EntityId, Shape)>> =
             Default::default();
+        let bounding = self.fill_edges();
         for (id, e) in self.doc.iter() {
-            if e.kind.is_point() || e.style != LineKind::Solid {
+            if e.kind.is_point() || (e.style != LineKind::Solid && !bounding.contains(&id)) {
                 continue;
             }
             if let Some(shape) = self.doc.shape(id) {
@@ -888,6 +894,35 @@ impl Editor {
         self.regions = Some((revision, regions.clone()));
         self.region_ids = std::rc::Rc::new(ids);
         regions
+    }
+
+    /// Construction curves that shape fills: an imported fill's edges, which don't print.
+    /// Areas are found with them as with drawn curves. A fill keeps only its outline (its
+    /// holes are whatever lies inside it), so on a layer where a fill is bounded by
+    /// construction curves, all of that layer's construction curves count: its holes' too.
+    pub(crate) fn fill_edges(&self) -> std::collections::BTreeSet<EntityId> {
+        let construction = |id: &EntityId| {
+            self.doc
+                .get(*id)
+                .filter(|e| e.style == LineKind::Construction)
+                .map(|e| e.layer)
+        };
+        let layers: std::collections::BTreeSet<drift_core::LayerId> = self
+            .doc
+            .fills()
+            .flat_map(|(_, f)| f.boundary.iter())
+            .filter_map(construction)
+            .collect();
+        if layers.is_empty() {
+            return Default::default();
+        }
+        self.doc
+            .iter()
+            .filter(|(_, e)| {
+                !e.kind.is_point() && e.style == LineKind::Construction && layers.contains(&e.layer)
+            })
+            .map(|(id, _)| id)
+            .collect()
     }
 
     /// The entity of each curve index in [`regions`](Self::regions)' loops.

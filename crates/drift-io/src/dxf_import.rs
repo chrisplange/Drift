@@ -136,6 +136,8 @@ pub struct DxfImport {
     pub skipped: BTreeMap<String, usize>,
     /// What was read approximately, in sentences for the user.
     pub notes: Vec<String>,
+    /// Edges added only to bound a fill come in as construction (they don't print).
+    pub fill_edges_construction: bool,
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1994,6 +1996,7 @@ pub fn read(text: &str, default_mm_per_unit: f64) -> Result<DxfImport, String> {
         dimensions: reader.dimensions,
         skipped: reader.skipped,
         notes,
+        fill_edges_construction: false,
     })
 }
 
@@ -2267,6 +2270,25 @@ pub fn add_to_document(doc: &mut Document, import: &DxfImport) -> ImportReport {
                     [q(center.x), q(center.y), q(s.x), q(s.y), q(e.x), q(e.y)],
                 )
             }
+            // A Bézier either way round (its middle handles say which way it bends).
+            Shape::Bezier { p } => {
+                let p = if (p[0].x, p[0].y) <= (p[3].x, p[3].y) {
+                    p
+                } else {
+                    [p[3], p[2], p[1], p[0]]
+                };
+                (
+                    3,
+                    [
+                        q(p[0].x),
+                        q(p[0].y),
+                        q(p[1].x),
+                        q(p[1].y),
+                        q(p[3].x),
+                        q(p[3].y),
+                    ],
+                )
+            }
             _ => return None,
         })
     };
@@ -2327,6 +2349,9 @@ pub fn add_to_document(doc: &mut Document, import: &DxfImport) -> ImportReport {
                         let id = add_shape(doc, shape);
                         if let Some(id) = id {
                             let _ = doc.set_entity_layer(id, layer);
+                            if import.fill_edges_construction {
+                                doc.set_style(id, drift_core::LineKind::Construction);
+                            }
                             if let Some(key) = key {
                                 added.insert(key, id);
                             }

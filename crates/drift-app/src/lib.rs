@@ -369,6 +369,8 @@ pub struct DriftApp {
     import_as_underlay: bool,
     /// A multi-page PDF waiting for its page to be chosen.
     pending_pdf: Option<app::underlays_ui::PendingPdf>,
+    /// An SVG or PDF file waiting for the import dialog.
+    pending_import: Option<app::import_ui::PendingImport>,
     /// Memory in use (bytes) as of the last check, when that was, and whether the user has
     /// been warned that it's high.
     memory: (u64, f64, bool),
@@ -507,6 +509,7 @@ impl DriftApp {
             angle_snap: None,
             import_as_underlay: false,
             pending_pdf: None,
+            pending_import: None,
             memory: (0, f64::NEG_INFINITY, false),
             soak: soak::Soak::from_env(),
             #[cfg(not(target_arch = "wasm32"))]

@@ -6260,3 +6260,129 @@ fn library_contact_sheets() {
         }
     }
 }
+
+#[test]
+fn svg_artwork_is_imported_as_curves_on_its_layers_at_a_scale() {
+    let Some(mut h) = harness() else { return };
+    // As Illustrator writes it: a stroked rectangle on "Walls", a filled ring with no
+    // outline and a label on "Furniture"; 72 units to the inch.
+    let svg = r##"<?xml version="1.0" encoding="utf-8"?>
+<!-- Generator: Adobe Illustrator 28.0.0, SVG Export Plug-In -->
+<svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 360">
+<style type="text/css">
+	.st0{fill:none;stroke:#000000;stroke-width:1.5;}
+	.st1{fill:#9AB3D5;}
+</style>
+<g id="Walls"><rect x="72" y="72" class="st0" width="288" height="144"/></g>
+<g id="Furniture">
+	<path class="st1" d="M432,72h144v144H432V72z M468,108v72h72v-72H468z"/>
+	<text transform="matrix(1 0 0 1 80 300)" font-size="18">LIVING</text>
+</g>
+</svg>"##;
+    h.state_mut()
+        .begin_vector_import("plan.svg", svg.as_bytes().to_vec(), 0.0);
+    h.run_steps(3);
+    assert!(h.state().pending_import.is_some(), "the dialog is up");
+    // At 1:50, then calibrated.
+    let pending = h.state_mut().pending_import.as_mut().unwrap();
+    pending.scale = 50.0;
+    pending.calibrate = true;
+    h.run_steps(2);
+    save_png("drift_ui_vector_import.png", &mut h);
+    h.get_by_label("Import").click();
+    h.run_steps(3);
+    let app = h.state_mut();
+    assert!(app.pending_import.is_none());
+    let doc = &app.editor.doc;
+    let layer = |name: &str| {
+        doc.layers()
+            .find(|(_, l)| l.name == name)
+            .map(|(id, _)| id)
+            .unwrap_or_else(|| panic!("no layer {name}"))
+    };
+    let (walls, furniture) = (layer("Walls"), layer("Furniture"));
+    // The rectangle: 4 inches by 2 on paper, 1:50 in the sketch, outlined, on Walls.
+    let on = |l| {
+        doc.iter()
+            .filter(|(_, e)| e.layer == l && !e.kind.is_point())
+            .map(|(id, e)| (id, e.style))
+            .collect::<Vec<_>>()
+    };
+    let wall_lines = on(walls);
+    assert_eq!(wall_lines.len(), 4);
+    assert!(
+        wall_lines
+            .iter()
+            .all(|(_, s)| *s == drift_core::LineKind::Solid)
+    );
+    let bounds = wall_lines.iter().filter_map(|(id, _)| doc.shape(*id)).fold(
+        drift_core::Bounds::EMPTY,
+        |mut b, s| {
+            let sb = s.bounds();
+            b.include(sb.min);
+            b.include(sb.max);
+            b
+        },
+    );
+    let size = bounds.max - bounds.min;
+    assert!((size.x - 101.6 * 50.0).abs() < 1e-6, "{size}");
+    assert!((size.y - 50.8 * 50.0).abs() < 1e-6, "{size}");
+    // The ring: a live fill with its hole, its edges construction (they don't print).
+    let edges = on(furniture);
+    assert_eq!(edges.len(), 8);
+    assert!(
+        edges
+            .iter()
+            .all(|(_, s)| *s == drift_core::LineKind::Construction)
+    );
+    let fills: Vec<drift_core::FillId> = doc.fills().map(|(id, _)| id).collect();
+    assert_eq!(fills.len(), 1);
+    assert_eq!(
+        doc.fills().next().unwrap().1.color,
+        Some(drift_core::Rgb([0x9a, 0xb3, 0xd5]))
+    );
+    let shapes = app.editor.fill_shapes();
+    let ring = &shapes[&fills[0]];
+    assert!(!ring.lost);
+    assert_eq!(ring.region.holes.len(), 1);
+    // The label.
+    let (_, text) = app.editor.doc.texts().next().expect("the label");
+    let text = text.clone();
+    assert_eq!(text.text, "LIVING");
+    assert_eq!(text.layer, furniture);
+    // Artwork comes in free: no relations or dimensions (adding them is up to the user).
+    assert_eq!(app.editor.doc.constraint_count(), 0);
+
+    // Calibrating: the import stays picked and the calibrate tool is on. The rectangle's
+    // bottom edge, said to be 6 m, scales everything about its first corner.
+    assert_eq!(app.tool.kind(), ToolKind::Calibrate);
+    assert!(app.tool.hint().contains("import"), "{}", app.tool.hint());
+    assert_eq!(app.editor.selection.len(), 12);
+    let (a, b) = (bounds.min, DVec2::new(bounds.max.x, bounds.min.y));
+    let k = app.editor.calibrate_import(a, b, 6000.0).unwrap();
+    assert!((k - 6000.0 / (101.6 * 50.0)).abs() < 1e-9);
+    let after = app
+        .editor
+        .doc
+        .iter()
+        .filter(|(_, e)| e.layer == walls && !e.kind.is_point())
+        .filter_map(|(id, _)| app.editor.doc.shape(id))
+        .fold(drift_core::Bounds::EMPTY, |mut bb, s| {
+            let sb = s.bounds();
+            bb.include(sb.min);
+            bb.include(sb.max);
+            bb
+        });
+    assert!(after.min.distance(a) < 1e-6);
+    assert!((after.max.x - after.min.x - 6000.0).abs() < 1e-6);
+    let (_, label) = app.editor.doc.texts().next().unwrap();
+    assert!((label.height - text.height * k).abs() < 1e-9);
+    assert_eq!(app.editor.doc.constraint_count(), 0);
+    // The fill follows its edges.
+    let shapes = app.editor.fill_shapes();
+    assert!(!shapes[&fills[0]].lost);
+    // One undo puts the scale back; another takes the import away.
+    app.undo();
+    app.undo();
+    assert_eq!(app.editor.doc.fills().count(), 0);
+}

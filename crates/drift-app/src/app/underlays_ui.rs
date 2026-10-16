@@ -8,7 +8,7 @@ use crate::*;
 
 pub(crate) const UNDERLAY_FILE: FileType = FileType {
     name: "PDF or DXF drawing",
-    extensions: &["pdf", "dxf"],
+    extensions: &["pdf", "dxf", "svg", "ai"],
 };
 
 /// A multi-page PDF waiting for its page to be chosen.
@@ -20,7 +20,7 @@ pub(crate) struct PendingPdf {
 }
 
 /// Drawing scales for PDF underlays: a label and n in 1 : n.
-const SCALES: &[(&str, f64)] = &[
+pub(crate) const SCALES: &[(&str, f64)] = &[
     ("1 : 1", 1.0),
     ("1 : 5", 5.0),
     ("1 : 10", 10.0),
@@ -57,9 +57,16 @@ impl DriftApp {
         self.files.open(UNDERLAY_FILE);
     }
 
-    /// An opened PDF or DXF file, to become an underlay.
+    /// An opened PDF, DXF or SVG file, to become an underlay.
     pub(crate) fn import_underlay_file(&mut self, name: &str, bytes: Vec<u8>, now: f64) {
         let lower = name.to_ascii_lowercase();
+        if lower.ends_with(".svg") && !bytes.starts_with(b"%PDF") {
+            let stem = name.rsplit_once('.').map_or(name, |(s, _)| s);
+            let result = drift_io::svg_import::read(&String::from_utf8_lossy(&bytes), stem)
+                .and_then(|art| self.editor.import_svg_underlay(name, &art, 1.0));
+            self.underlay_imported(name, result, now);
+            return;
+        }
         if lower.ends_with(".dxf") {
             let unit = self.editor.doc.units().length.mm_per_unit();
             let text = drift_io::dxf::decode(&bytes);
@@ -70,7 +77,7 @@ impl DriftApp {
         match drift_io::pdf_import::page_count(&bytes) {
             Ok(0) => self.set_status(format!("{name} has no pages"), true, now),
             Ok(1) => {
-                let result = self.editor.import_pdf_underlay(name, &bytes, 1);
+                let result = self.editor.import_pdf_underlay(name, &bytes, 1, 1.0);
                 self.underlay_imported(name, result, now);
             }
             Ok(pages) => {
@@ -85,7 +92,7 @@ impl DriftApp {
         }
     }
 
-    fn underlay_imported(
+    pub(crate) fn underlay_imported(
         &mut self,
         name: &str,
         result: Result<crate::underlays::UnderlayReport, String>,
@@ -150,9 +157,12 @@ impl DriftApp {
             let pending = self.pending_pdf.take().expect("pending PDF");
             if import {
                 let now = ctx.input(|i| i.time);
-                let result =
-                    self.editor
-                        .import_pdf_underlay(&pending.name, &pending.bytes, pending.page);
+                let result = self.editor.import_pdf_underlay(
+                    &pending.name,
+                    &pending.bytes,
+                    pending.page,
+                    1.0,
+                );
                 self.underlay_imported(&pending.name, result, now);
             }
         }

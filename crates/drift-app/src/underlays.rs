@@ -62,6 +62,13 @@ fn mix(a: [u8; 3], b: [u8; 3], t: f64) -> [u8; 3] {
     std::array::from_fn(|i| (f64::from(a[i]) * t + f64::from(b[i]) * (1.0 - t)).round() as u8)
 }
 
+/// What an import brought in: its curves and points, and its text.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Imported {
+    pub entities: Vec<EntityId>,
+    pub texts: Vec<drift_core::TextId>,
+}
+
 impl Editor {
     /// Re-index underlays that were added, moved or changed since the last call.
     pub fn update_underlays(&mut self) {
@@ -218,13 +225,44 @@ impl Editor {
         id
     }
 
-    /// Import page `page` of a PDF as an underlay at paper size, its lower-left corner at the
-    /// origin.
+    /// Import an SVG drawing (as read) as an underlay drawn at 1 : `scale`, the lower-left
+    /// corner of its paper at the origin.
+    pub fn import_svg_underlay(
+        &mut self,
+        name: &str,
+        art: &drift_io::vector::Artwork,
+        scale: f64,
+    ) -> Result<UnderlayReport, String> {
+        let prims = drift_io::vector::outlines(art);
+        if prims.is_empty() {
+            return Err(format!("{name} has no drawing to trace over"));
+        }
+        let stem = name.rsplit_once('.').map_or(name, |(s, _)| s);
+        let mut u = Underlay::new(stem.to_owned(), name.to_owned(), prims);
+        u.scale = scale;
+        let curves = u.curve_count();
+        let skipped: Vec<String> = art
+            .skipped
+            .iter()
+            .map(|(what, n)| format!("{n} {what}"))
+            .collect();
+        let id = self.add_underlay(u);
+        Ok(UnderlayReport {
+            id,
+            curves,
+            page: None,
+            skipped: skipped.join(", "),
+        })
+    }
+
+    /// Import page `page` of a PDF as an underlay drawn at 1 : `scale` (1 for paper size), its
+    /// lower-left corner at the origin.
     pub fn import_pdf_underlay(
         &mut self,
         name: &str,
         bytes: &[u8],
         page: u32,
+        scale: f64,
     ) -> Result<UnderlayReport, String> {
         let read = drift_io::pdf_import::read_page(bytes, page)?;
         if read.prims.is_empty() {
@@ -239,7 +277,7 @@ impl Editor {
             stem.to_owned()
         };
         let mut u = Underlay::new(title, format!("{name}, page {page}"), read.prims);
-        u.scale = MM_PER_POINT;
+        u.scale = MM_PER_POINT * scale;
         let curves = u.curve_count();
         let mut skipped = Vec::new();
         if read.skipped_text > 0 {
@@ -355,6 +393,55 @@ impl Editor {
         self.doc.set_underlay(id, u);
         self.commit("Calibrate underlay");
         Ok(())
+    }
+
+    /// Scale what the last import brought in about `a` so the distance from `a` to `b` is
+    /// `distance` (one undo step): its curves, text and, through their outlines, its fills.
+    /// Returns the factor it was scaled by.
+    pub fn calibrate_import(&mut self, a: DVec2, b: DVec2, distance: f64) -> Result<f64, String> {
+        let Some(set) = self.last_import.clone() else {
+            return Err("Nothing imported to calibrate".into());
+        };
+        let measured = a.distance(b);
+        if measured < 1e-9 {
+            return Err("Pick two different points".into());
+        }
+        if distance.is_nan() || distance <= 0.0 {
+            return Err("The distance must be more than zero".into());
+        }
+        let k = distance / measured;
+        let to = |p: DVec2| a + (p - a) * k;
+        let entities: Vec<EntityId> = set
+            .entities
+            .iter()
+            .copied()
+            .filter(|id| self.doc.get(*id).is_some())
+            .collect();
+        let points = self.doc.defining_points(entities.iter().copied());
+        self.doc.begin();
+        for p in &points {
+            if let Ok(at) = self.doc.point(*p) {
+                let _ = self.doc.set_point(*p, to(at));
+            }
+        }
+        for id in &entities {
+            if let Some(drift_core::EntityKind::Circle { radius, .. }) =
+                self.doc.get(*id).map(|e| e.kind)
+            {
+                let _ = self.doc.set_radius(*id, radius * k);
+            }
+        }
+        self.doc.normalize_arcs_using(&points);
+        for id in &set.texts {
+            if let Some(mut t) = self.doc.text(*id).cloned() {
+                t.at = to(t.at);
+                t.height *= k;
+                t.wrap = t.wrap.map(|w| w * k);
+                self.doc.set_text(*id, t);
+            }
+        }
+        self.commit("Calibrate import");
+        Ok(k)
     }
 
     /// Move an underlay so the point `from` lands on `to`.
@@ -599,7 +686,7 @@ mod tests {
         );
         let bytes = drift_io::pdf::write(&[d.clone(), d.clone()], "Plan");
         let mut ed = Editor::default();
-        let report = ed.import_pdf_underlay("plan.pdf", &bytes, 2).unwrap();
+        let report = ed.import_pdf_underlay("plan.pdf", &bytes, 2, 1.0).unwrap();
         assert_eq!(report.page, Some((2, 2)));
         let u = ed.doc.underlay(report.id).unwrap();
         assert_eq!(u.name, "plan p2");
@@ -607,7 +694,7 @@ mod tests {
         let s = u.shapes();
         let Shape::Line { a, b } = s[0] else { panic!() };
         assert!((a.distance(b) - 100.0).abs() < 0.01);
-        assert!(ed.import_pdf_underlay("plan.pdf", &bytes, 3).is_err());
+        assert!(ed.import_pdf_underlay("plan.pdf", &bytes, 3, 1.0).is_err());
 
         let dxf = drift_io::dxf::write(&d, drift_io::dxf::DxfUnits::MM);
         let report = ed.import_dxf_underlay("plan.dxf", &dxf, 1.0).unwrap();

@@ -301,15 +301,18 @@ impl DriftApp {
                 }
                 ui.separator();
                 if ui
-                    .button("Import DXF…")
-                    .on_hover_text("Add a DXF file's curves to the sketch as geometry")
+                    .button("Import…")
+                    .on_hover_text(
+                        "Add a DXF, SVG, PDF or Illustrator drawing to the sketch: its curves, fills, text and \
+                         layers, to edit (or, but for DXF, as an underlay)",
+                    )
                     .clicked()
                 {
-                    self.files.open(app::sheets_ui::DXF_FILE);
+                    self.files.open(app::sheets_ui::IMPORT_FILE);
                 }
                 if ui
                     .button("Import underlay…")
-                    .on_hover_text("A PDF or DXF drawing to trace over (Layers tab)")
+                    .on_hover_text("A PDF, SVG or DXF drawing to trace over (Layers tab)")
                     .clicked()
                 {
                     self.pick_underlay_file();

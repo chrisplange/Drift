@@ -49,10 +49,13 @@ mod dxf_import;
 mod fonts;
 pub mod pdf;
 pub mod pdf_import;
+mod pdf_text;
 mod sheets;
 pub mod svg;
+pub mod svg_import;
 mod texts;
 mod underlays;
+pub mod vector;
 
 /// File extension, without the dot.
 pub const EXTENSION: &str = "drift";

@@ -13,6 +13,7 @@ mod edit;
 mod fill_ui;
 mod groups_ui;
 pub(crate) mod hatch_ui;
+pub(crate) mod import_ui;
 mod keyboard;
 pub(crate) mod note_ui;
 pub(crate) mod palette;

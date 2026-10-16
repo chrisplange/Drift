@@ -899,7 +899,9 @@ pub fn paint_annotation(
         }
         let galley = t.galley(pen.painter(), color);
         let rot = egui::emath::Rot2::from_angle(t.angle);
-        let pos = t.center + rot * (-galley.size() / 2.0);
+        // Centred on what the text covers: aligned (centre or right) lines start left of
+        // the galley's origin, so its size alone would shift them sideways.
+        let pos = t.center + rot * (-galley.rect.center().to_vec2());
         pen.text(pos, galley, t.angle, color);
         if state != AnnotationState::Normal {
             pen.highlight(t.rect, color);

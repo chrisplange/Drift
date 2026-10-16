@@ -1018,6 +1018,92 @@ fn a_tab_dropped_on_another_docks_tabs_goes_there() {
 }
 
 #[test]
+fn note_text_stays_in_its_box_whatever_the_alignment() {
+    use crate::annotations::{AnnotationColors, AnnotationState, DimStyle, Recorded, Recorder};
+    use drift_core::{Annotation, NoteFrame, NoteStyle, TextAlign};
+    let Some(mut h) = harness() else { return };
+    let id = {
+        let doc = &mut h.state_mut().editor.doc;
+        doc.begin();
+        let id = doc
+            .add_annotation(Annotation::Note {
+                text: "SMOOTH FINISH
+ALL OVER"
+                    .into(),
+                at: DVec2::new(10.0, 10.0),
+                leaders: Vec::new(),
+                style: Default::default(),
+            })
+            .unwrap();
+        let _ = doc.commit("Note");
+        id
+    };
+    for align in TextAlign::ALL {
+        {
+            let doc = &mut h.state_mut().editor.doc;
+            doc.begin();
+            doc.set_annotation(
+                id,
+                Annotation::Note {
+                    text: "SMOOTH FINISH
+ALL OVER"
+                        .into(),
+                    at: DVec2::new(10.0, 10.0),
+                    leaders: Vec::new(),
+                    style: NoteStyle {
+                        align,
+                        frame: NoteFrame::Rounded,
+                        ..Default::default()
+                    },
+                },
+            )
+            .unwrap();
+            let _ = doc.commit("Align");
+        }
+        h.run();
+        let app = h.state();
+        let painter =
+            egui::Painter::new(h.ctx.clone(), egui::LayerId::background(), app.canvas_rect);
+        let layout = app
+            .layout_notes(&painter, &screen_map(&h))
+            .into_iter()
+            .find(|l| l.id == id)
+            .unwrap();
+        let rect = layout.text.as_ref().unwrap().rect;
+        let recorder = Recorder::new(&painter);
+        let style = DimStyle::of(&app.editor.doc.draft_style());
+        crate::notes::paint_annotation(
+            &recorder,
+            &layout,
+            AnnotationState::Normal,
+            &AnnotationColors::new(true),
+            &style,
+        );
+        let lines: Vec<(f32, String)> = recorder
+            .take()
+            .into_iter()
+            .filter_map(|r| match r {
+                Recorded::Text { baseline, text, .. } => Some((baseline.x, text)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(lines.len(), 2, "{align:?}");
+        for (x, text) in &lines {
+            assert!(
+                *x >= rect.left() - 0.5 && *x <= rect.right(),
+                "{align:?}: {text:?} starts at {x}, box {rect:?}"
+            );
+        }
+        // The shorter line sits as aligned.
+        let (long, short) = (lines[0].0, lines[1].0);
+        match align {
+            TextAlign::Left => assert!((short - long).abs() < 1.0, "{align:?}"),
+            TextAlign::Center | TextAlign::Right => assert!(short > long + 5.0, "{align:?}"),
+        }
+    }
+}
+
+#[test]
 fn notes_take_leaders_from_their_grips_and_lose_them_with_delete() {
     use drift_core::{Annotation, LeaderShape, NoteFrame};
     let Some(mut h) = harness() else { return };

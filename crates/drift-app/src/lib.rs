@@ -292,6 +292,11 @@ pub struct DriftApp {
     hatch_patterns: fills::PatternLibrary,
     /// An annotation label being dragged, and the grab offset (world units).
     note_drag: Option<(drift_core::AnnotationId, DVec2)>,
+    /// A picked note's leader (its index), a grip of the picked note being dragged, and a note
+    /// waiting for a click to say what a new leader points to.
+    selected_leader: Option<(drift_core::AnnotationId, usize)>,
+    leader_grip: Option<(drift_core::AnnotationId, app::note_ui::LeaderGrip)>,
+    adding_leader: Option<drift_core::AnnotationId>,
     note_edit: Option<app::note_ui::NoteEdit>,
     /// A picked hatch's handle being dragged, and what its origin snapped to.
     hatch_drag: Option<(drift_core::FillId, app::hatch_ui::HatchGrip)>,
@@ -461,6 +466,9 @@ impl DriftApp {
             fill_meshes: Default::default(),
             hatch_patterns: Default::default(),
             note_drag: None,
+            selected_leader: None,
+            leader_grip: None,
+            adding_leader: None,
             hatch_drag: None,
             hatch_snap: None,
             note_edit: None,

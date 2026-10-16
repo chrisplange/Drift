@@ -127,18 +127,27 @@ impl Anchor {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum LeaderEnd {
+    /// A filled arrowhead.
     #[default]
     Arrow,
+    /// An arrowhead of two lines, not filled.
+    OpenArrow,
     Dot,
     None,
 }
 
 impl LeaderEnd {
-    pub const ALL: [LeaderEnd; 3] = [LeaderEnd::Arrow, LeaderEnd::Dot, LeaderEnd::None];
+    pub const ALL: [LeaderEnd; 4] = [
+        LeaderEnd::Arrow,
+        LeaderEnd::OpenArrow,
+        LeaderEnd::Dot,
+        LeaderEnd::None,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
             LeaderEnd::Arrow => "Arrow",
+            LeaderEnd::OpenArrow => "Open arrow",
             LeaderEnd::Dot => "Dot",
             LeaderEnd::None => "None",
         }
@@ -147,6 +156,7 @@ impl LeaderEnd {
     pub fn key(self) -> &'static str {
         match self {
             LeaderEnd::Arrow => "arrow",
+            LeaderEnd::OpenArrow => "open",
             LeaderEnd::Dot => "dot",
             LeaderEnd::None => "none",
         }
@@ -157,10 +167,95 @@ impl LeaderEnd {
     }
 }
 
+/// The path a leader takes from its tip to the text.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum LeaderShape {
+    /// A straight line.
+    #[default]
+    Straight,
+    /// Straight lines through a bend, given from the tip (so it moves with the geometry).
+    Bent(DVec2),
+    /// An arc bowing to one side by this fraction of its length (negative: the other side).
+    Curved(f64),
+}
+
+impl LeaderShape {
+    pub fn label(self) -> &'static str {
+        match self {
+            LeaderShape::Straight => "Straight",
+            LeaderShape::Bent(_) => "Bent",
+            LeaderShape::Curved(_) => "Curved",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Leader {
     pub to: Anchor,
     pub end: LeaderEnd,
+    pub shape: LeaderShape,
+    /// A short horizontal shoulder where it meets the text.
+    pub shoulder: bool,
+}
+
+impl Leader {
+    /// A straight leader to `to`, with an arrow and a shoulder.
+    pub fn to(to: Anchor) -> Self {
+        Self {
+            to,
+            end: LeaderEnd::Arrow,
+            shape: LeaderShape::Straight,
+            shoulder: true,
+        }
+    }
+}
+
+/// A frame round a note's text.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum NoteFrame {
+    #[default]
+    None,
+    Box,
+    Rounded,
+}
+
+impl NoteFrame {
+    pub const ALL: [NoteFrame; 3] = [NoteFrame::None, NoteFrame::Box, NoteFrame::Rounded];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            NoteFrame::None => "None",
+            NoteFrame::Box => "Box",
+            NoteFrame::Rounded => "Rounded",
+        }
+    }
+
+    pub fn key(self) -> &'static str {
+        match self {
+            NoteFrame::None => "none",
+            NoteFrame::Box => "box",
+            NoteFrame::Rounded => "rounded",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|f| f.key() == s)
+    }
+}
+
+/// How a note's text is set.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct NoteStyle {
+    pub align: crate::TextAlign,
+    /// The width (paper mm) the text wraps to; `None` keeps each line whole.
+    pub wrap: Option<f64>,
+    pub frame: NoteFrame,
+    /// Paper behind the text, so it reads over hatches and lines.
+    pub mask: bool,
+    pub bold: bool,
+    pub italic: bool,
+    /// Text height (paper mm); `None` uses the drafting style's.
+    pub height: Option<f64>,
 }
 
 /// Which coordinate an ordinate dimension reports.
@@ -174,10 +269,13 @@ pub enum OrdinateAxis {
 pub enum Annotation {
     /// Text, with an optional leader. With a leader, `at` is the text's offset from the
     /// leader's target (so it follows the geometry); without, it is a world position.
+    /// Text, from any number of leaders. `at` is the text's position, from the first
+    /// leader's tip when there are leaders (so the note follows that geometry).
     Note {
         text: String,
         at: DVec2,
-        leader: Option<Leader>,
+        leaders: Vec<Leader>,
+        style: NoteStyle,
     },
     /// A centre mark on a circle or arc, with centre lines just past its edge.
     CentreMark { curve: EntityId },
@@ -226,8 +324,8 @@ impl Annotation {
     /// Sketch entities the annotation depends on.
     pub fn entities(&self) -> Vec<EntityId> {
         match self {
-            Annotation::Note { leader, .. } => {
-                leader.and_then(|l| l.to.entity()).into_iter().collect()
+            Annotation::Note { leaders, .. } => {
+                leaders.iter().filter_map(|l| l.to.entity()).collect()
             }
             Annotation::CentreMark { curve } | Annotation::HoleCallout { curve, .. } => {
                 vec![*curve]
@@ -241,7 +339,7 @@ impl Annotation {
 
     pub fn type_name(&self) -> &'static str {
         match self {
-            Annotation::Note { leader: None, .. } => "Note",
+            Annotation::Note { leaders, .. } if leaders.is_empty() => "Note",
             Annotation::Note { .. } => "Leader note",
             Annotation::CentreMark { .. } => "Centre mark",
             Annotation::Centreline { .. } => "Centre line",
@@ -260,14 +358,14 @@ impl Annotation {
             }
         };
         match self {
-            Annotation::Note {
-                leader: Some(Leader { to, .. }),
-                ..
-            } => match to {
-                Anchor::Point(e) | Anchor::Curve { curve: e, .. } => swap(e),
-                Anchor::Free(_) => {}
-            },
-            Annotation::Note { .. } => {}
+            Annotation::Note { leaders, .. } => {
+                for l in leaders {
+                    match &mut l.to {
+                        Anchor::Point(e) | Anchor::Curve { curve: e, .. } => swap(e),
+                        Anchor::Free(_) => {}
+                    }
+                }
+            }
             Annotation::CentreMark { curve } | Annotation::HoleCallout { curve, .. } => swap(curve),
             Annotation::Centreline { a, b } => {
                 swap(a);
@@ -565,13 +663,16 @@ mod tests {
             .add_annotation(Annotation::Note {
                 text: "Plate".into(),
                 at: DVec2::new(3.0, 4.0),
-                leader: Some(Leader {
+                leaders: vec![Leader {
                     to: Anchor::Curve {
                         curve: lines[0],
                         t: 0.5,
                     },
                     end: LeaderEnd::Arrow,
-                }),
+                    shape: LeaderShape::Straight,
+                    shoulder: true,
+                }],
+                style: Default::default(),
             })
             .unwrap();
         history.push(doc.commit("Annotate"));
@@ -602,13 +703,16 @@ mod tests {
             .add_annotation(Annotation::Note {
                 text: "Edge".into(),
                 at: DVec2::new(0.0, -3.0),
-                leader: Some(Leader {
+                leaders: vec![Leader {
                     to: Anchor::Curve {
                         curve: lines[0],
                         t: 0.5,
                     },
                     end: LeaderEnd::Dot,
-                }),
+                    shape: LeaderShape::Straight,
+                    shoulder: true,
+                }],
+                style: Default::default(),
             })
             .unwrap();
         doc.delete([circle, lines[0]]);
@@ -618,13 +722,43 @@ mod tests {
             Some(&Annotation::Note {
                 text: "Edge".into(),
                 at: DVec2::new(5.0, -3.0),
-                leader: None,
+                leaders: Vec::new(),
+                style: Default::default(),
             })
         );
         // A fill goes with its boundary: without one of its curves there is no area left.
         let fill = doc.add_fill(Fill::new(lines, DVec2::splat(5.0), FillKind::Solid));
         doc.delete([lines_first(&doc)]);
         assert!(doc.fill(fill).is_none());
+    }
+
+    #[test]
+    fn a_note_loses_only_the_leaders_whose_geometry_goes() {
+        let mut doc = Document::new();
+        let lines = square(&mut doc);
+        let on = |line, t| Leader::to(Anchor::Curve { curve: line, t });
+        // Text 3 above the bottom edge's middle (5, 0); leaders to the bottom and the top.
+        let note = doc
+            .add_annotation(Annotation::Note {
+                text: "Two".into(),
+                at: DVec2::new(0.0, 3.0),
+                leaders: vec![on(lines[0], 0.5), on(lines[2], 0.5)],
+                style: Default::default(),
+            })
+            .unwrap();
+        let text_at = |doc: &Document| match doc.annotation(note) {
+            Some(Annotation::Note { at, leaders, .. }) => doc.note_text_pos(*at, leaders),
+            _ => None,
+        };
+        assert_eq!(text_at(&doc), Some(DVec2::new(5.0, 3.0)));
+        // The first leader's edge goes: the other leader stays, and so does the text.
+        doc.delete([lines[0]]);
+        let Some(Annotation::Note { leaders, .. }) = doc.annotation(note) else {
+            panic!("the note stays");
+        };
+        assert_eq!(leaders.len(), 1);
+        assert_eq!(leaders[0].to.entity(), Some(lines[2]));
+        assert_eq!(text_at(&doc), Some(DVec2::new(5.0, 3.0)));
     }
 
     fn lines_first(doc: &Document) -> EntityId {

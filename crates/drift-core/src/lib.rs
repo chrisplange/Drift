@@ -29,7 +29,8 @@ pub use document::{
 };
 pub use drafting::{
     Anchor, Annotation, AnnotationId, AnnotationRef, ArrowStyle, DimNote, DraftStyle, Fill, FillId,
-    FillKind, Hatch, Leader, LeaderEnd, OrdinateAxis, Shown, Standard, Tolerance,
+    FillKind, Hatch, Leader, LeaderEnd, LeaderShape, NoteFrame, NoteStyle, OrdinateAxis, Shown,
+    Standard, Tolerance,
 };
 pub use fonts::{EmbeddedFont, FontFile, FontSet};
 pub use glam::DVec2;

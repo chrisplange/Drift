@@ -11,7 +11,9 @@ use glam::DVec2;
 
 use crate::blocks::{Block, BlockId, BlockItem, Instance, InstanceId};
 use crate::constraint::Slot;
-use crate::drafting::{Anchor, Annotation, AnnotationId, DimNote, DraftStyle, Fill, FillId};
+use crate::drafting::{
+    Anchor, Annotation, AnnotationId, DimNote, DraftStyle, Fill, FillId, Leader,
+};
 use crate::groups::{Group, GroupId};
 use crate::layers::{Appearance, Layer, LayerId};
 use crate::sheets::{Sheet, SheetId};
@@ -1406,8 +1408,24 @@ impl Document {
         }
     }
 
-    /// Annotations on deleted geometry go; a note whose leader lost its target stays where it
-    /// was, without the leader.
+    /// A note's text position in the world (`at` is from its first leader's tip).
+    pub fn note_text_pos(&self, at: DVec2, leaders: &[Leader]) -> Option<DVec2> {
+        match leaders.first() {
+            Some(l) => Some(self.anchor_pos(&l.to)? + at),
+            None => Some(at),
+        }
+    }
+
+    /// The `at` that puts a note's text at `pos` (world) with these leaders.
+    pub fn note_at(&self, pos: DVec2, leaders: &[Leader]) -> Option<DVec2> {
+        match leaders.first() {
+            Some(l) => Some(pos - self.anchor_pos(&l.to)?),
+            None => Some(pos),
+        }
+    }
+
+    /// Annotations on deleted geometry go; a note keeps its text where it was, losing only the
+    /// leaders whose targets went.
     fn drop_dangling_annotations(&mut self) {
         let alive = |doc: &Self, e: EntityId| doc.entities.contains_key(&e);
         let dangling: Vec<(AnnotationId, Annotation)> = self
@@ -1419,21 +1437,29 @@ impl Document {
         for (id, a) in dangling {
             self.touch_key(Key::Annotation(id));
             match a {
-                Annotation::Note { text, at, leader } => {
-                    let from = leader
-                        .and_then(|l| {
-                            self.last_anchor_pos.get(&id).copied().or(match l.to {
-                                Anchor::Free(p) => Some(p),
-                                _ => None,
-                            })
+                Annotation::Note {
+                    text,
+                    at,
+                    mut leaders,
+                    style,
+                } => {
+                    // Where the text was, before its first leader's target went.
+                    let first = leaders.first().and_then(|l| {
+                        self.last_anchor_pos.get(&id).copied().or(match l.to {
+                            Anchor::Free(p) => Some(p),
+                            _ => None,
                         })
-                        .unwrap_or(DVec2::ZERO);
+                    });
+                    let pos = first.unwrap_or(DVec2::ZERO) + at;
+                    leaders.retain(|l| l.to.entity().is_none_or(|e| alive(self, e)));
+                    let at = self.note_at(pos, &leaders).unwrap_or(pos);
                     self.annotations.insert(
                         id,
                         Annotation::Note {
                             text,
-                            at: from + at,
-                            leader: None,
+                            at,
+                            leaders,
+                            style,
                         },
                     );
                 }
@@ -2455,9 +2481,10 @@ impl Document {
             .annotations
             .iter()
             .filter_map(|(id, a)| match a {
-                Annotation::Note {
-                    leader: Some(l), ..
-                } => self.anchor_pos(&l.to).map(|p| (*id, p)),
+                Annotation::Note { leaders, .. } => leaders
+                    .first()
+                    .and_then(|l| self.anchor_pos(&l.to))
+                    .map(|p| (*id, p)),
                 _ => None,
             })
             .collect();

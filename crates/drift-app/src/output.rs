@@ -476,6 +476,8 @@ fn annotations(ed: &Editor, painter: &egui::Painter, s: &Space, d: &mut Drawing)
                 angle,
                 size,
                 text,
+                bold,
+                italic,
             } => Prim::Text {
                 at: to_page(baseline),
                 height: len(size) * drift_draft::font::cap_ratio(),
@@ -483,7 +485,11 @@ fn annotations(ed: &Editor, painter: &egui::Painter, s: &Space, d: &mut Drawing)
                 angle: -f64::from(angle),
                 align: Align::Left,
                 text,
-                style: Default::default(),
+                style: drift_draft::page::TextStyle {
+                    bold,
+                    italic,
+                    tracking: 0.0,
+                },
                 font: None,
             },
         };

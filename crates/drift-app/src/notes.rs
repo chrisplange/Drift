@@ -4,7 +4,8 @@
 
 use drift_core::{
     Anchor, Annotation, AnnotationId, DVec2, Document, DraftStyle, Emphasis, EntityId, EntityKind,
-    LeaderEnd, LineKind, OrdinateAxis, Shape, SketchItem,
+    Leader, LeaderEnd, LeaderShape, LineKind, NoteFrame, NoteStyle, OrdinateAxis, Shape,
+    SketchItem, TextAlign,
 };
 use eframe::egui::{self, Color32, Pos2, Rect, Stroke, vec2};
 
@@ -24,6 +25,66 @@ pub struct NoteText {
     /// Rotation (screen, radians): ordinate X labels read vertically.
     pub angle: f32,
     pub rect: Rect,
+    /// How it's set: size (logical points), weight and slant, the width it wraps to, and how
+    /// its lines align.
+    pub size: f32,
+    pub bold: bool,
+    pub italic: bool,
+    pub wrap: f32,
+    pub align: egui::Align,
+    /// The height of its first line (where leaders land).
+    pub first_line: f32,
+}
+
+impl NoteText {
+    /// The text laid out in `color`.
+    pub fn galley(&self, painter: &egui::Painter, color: Color32) -> std::sync::Arc<egui::Galley> {
+        galley(
+            painter,
+            &self.text,
+            self.size,
+            self.bold,
+            self.italic,
+            self.wrap,
+            self.align,
+            color,
+        )
+    }
+}
+
+/// Lay out text in the drafting font.
+#[allow(clippy::too_many_arguments)]
+fn galley(
+    painter: &egui::Painter,
+    text: &str,
+    size: f32,
+    bold: bool,
+    italic: bool,
+    wrap: f32,
+    align: egui::Align,
+    color: Color32,
+) -> std::sync::Arc<egui::Galley> {
+    let mut job = egui::text::LayoutJob::single_section(
+        text.to_owned(),
+        egui::TextFormat {
+            font_id: crate::fonts::drafting_font(size, bold),
+            color,
+            italics: italic,
+            ..Default::default()
+        },
+    );
+    job.wrap.max_width = wrap;
+    job.halign = align;
+    painter.layout_job(job)
+}
+
+/// A leader as drawn: from its tip (on the geometry) to the text.
+#[derive(Clone, Debug)]
+pub struct LeaderPath {
+    pub points: Vec<Pos2>,
+    pub end: LeaderEnd,
+    /// A bent leader's bend (its handle).
+    pub bend: Option<Pos2>,
 }
 
 /// A piece of a section or elevation mark, on screen, in drawing order.
@@ -44,9 +105,11 @@ pub enum Mark {
 pub struct NoteLayout {
     pub id: AnnotationId,
     pub text: Option<NoteText>,
-    /// A leader polyline, from its tip (on the geometry) to the text.
-    pub leader: Vec<Pos2>,
-    pub end: LeaderEnd,
+    /// Leaders, in the note's order.
+    pub leaders: Vec<LeaderPath>,
+    /// A note's frame round its text, and whether paper shows behind the text.
+    pub frame: NoteFrame,
+    pub mask: bool,
     /// Centre lines, on screen (for picking; the GPU draws them).
     pub segments: Vec<[Pos2; 2]>,
     /// The pieces of a section or elevation mark.
@@ -78,8 +141,24 @@ impl NoteLayout {
             Mark::Solid(_) | Mark::Text(..) => false,
         };
         self.segments.iter().any(|[a, b]| near(*a, *b))
-            || self.leader.windows(2).any(|w| near(w[0], w[1]))
+            || self.leader_at(p).is_some()
             || self.marks.iter().any(on_mark)
+    }
+
+    /// The leader under `p` (its index), if any.
+    pub fn leader_at(&self, p: Pos2) -> Option<usize> {
+        let near = |a: Pos2, b: Pos2| {
+            let ab = b - a;
+            let t = if ab.length_sq() > 0.0 {
+                ((p - a).dot(ab) / ab.length_sq()).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            (a + ab * t - p).length() <= 4.0
+        };
+        self.leaders
+            .iter()
+            .position(|l| l.points.windows(2).any(|w| near(w[0], w[1])))
     }
 
     /// Where an in-place text editor goes.
@@ -256,10 +335,7 @@ pub fn chamfer_text(doc: &Document, line: EntityId) -> Option<String> {
 /// Where an annotation's label is anchored in the world (what dragging moves).
 pub fn label_world(doc: &Document, a: &Annotation) -> Option<DVec2> {
     match a {
-        Annotation::Note { at, leader, .. } => match leader {
-            Some(l) => Some(doc.anchor_pos(&l.to)? + *at),
-            None => Some(*at),
-        },
+        Annotation::Note { at, leaders, .. } => doc.note_text_pos(*at, leaders),
         Annotation::HoleCallout { curve, at, .. } => Some(centre(doc, *curve)?.0 + *at),
         Annotation::ChamferCallout { line, at } => {
             let (p, q) = line_ends(doc, *line)?;
@@ -288,12 +364,7 @@ pub fn label_world(doc: &Document, a: &Annotation) -> Option<DVec2> {
 pub fn with_label_at(doc: &Document, a: &Annotation, to: DVec2) -> Option<Annotation> {
     let mut a = a.clone();
     match &mut a {
-        Annotation::Note { at, leader, .. } => {
-            *at = match leader {
-                Some(l) => to - doc.anchor_pos(&l.to)?,
-                None => to,
-            };
-        }
+        Annotation::Note { at, leaders, .. } => *at = doc.note_at(to, leaders)?,
         Annotation::HoleCallout { curve, at, .. } => *at = to - centre(doc, *curve)?.0,
         Annotation::ChamferCallout { line, at } => {
             let (p, q) = line_ends(doc, *line)?;
@@ -441,12 +512,18 @@ fn place_text(
     angle: f32,
     font: f32,
 ) -> NoteText {
-    let galley = painter.layout(
-        text.clone(),
-        crate::fonts::drafting_font(font, false),
-        Color32::WHITE,
+    let set = galley(
+        painter,
+        &text,
+        font,
+        false,
+        false,
         f32::INFINITY,
+        egui::Align::Center,
+        Color32::WHITE,
     );
+    let first_line = set.rows.first().map_or(font, |r| r.size.y);
+    let galley = set;
     let rot = egui::emath::Rot2::from_angle(angle);
     let h = galley.size() / 2.0;
     let mut rect = Rect::NOTHING;
@@ -463,6 +540,108 @@ fn place_text(
         center,
         angle,
         rect: rect.expand2(vec2(3.0, 1.0)),
+        size: font,
+        bold: false,
+        italic: false,
+        wrap: f32::INFINITY,
+        align: egui::Align::Center,
+        first_line,
+    }
+}
+
+/// A note's text set in its style, centred at `center`.
+fn place_note_text(
+    painter: &egui::Painter,
+    text: String,
+    center: Pos2,
+    style: &NoteStyle,
+    font: f32,
+) -> NoteText {
+    let size = style
+        .height
+        .map_or(font, |h| (h as f32 * PT_PER_MM).clamp(4.0, 200.0));
+    let wrap = style
+        .wrap
+        .map_or(f32::INFINITY, |w| (w as f32 * PT_PER_MM).max(size * 2.0));
+    let align = match style.align {
+        TextAlign::Left => egui::Align::Min,
+        TextAlign::Center => egui::Align::Center,
+        TextAlign::Right => egui::Align::Max,
+    };
+    let set = galley(
+        painter,
+        &text,
+        size,
+        style.bold,
+        style.italic,
+        wrap,
+        align,
+        Color32::WHITE,
+    );
+    let first_line = set.rows.first().map_or(size, |r| r.size.y);
+    let rect = Rect::from_center_size(center, set.size());
+    NoteText {
+        text,
+        center,
+        angle: 0.0,
+        rect: rect.expand2(vec2(3.0, 1.0)),
+        size,
+        bold: style.bold,
+        italic: style.italic,
+        wrap,
+        align,
+        first_line,
+    }
+}
+
+/// A note's leader on screen: from its tip, through its bend or along its curve, to the
+/// nearer side of the text's first line, with a shoulder if it has one.
+fn note_leader(tip: Pos2, bend: Option<Pos2>, l: &Leader, text: &NoteText) -> Vec<Pos2> {
+    let from = bend.unwrap_or(tip);
+    let left = from.x <= text.center.x;
+    let landing = egui::pos2(
+        if left {
+            text.rect.left()
+        } else {
+            text.rect.right()
+        },
+        text.rect.top() + 1.0 + text.first_line / 2.0,
+    );
+    let shoulder = landing + vec2(if left { -9.0 } else { 9.0 }, 0.0);
+    let into = if l.shoulder { shoulder } else { landing };
+    let mut points = vec![tip];
+    match l.shape {
+        LeaderShape::Straight => {}
+        LeaderShape::Bent(_) => points.extend(bend),
+        LeaderShape::Curved(k) => {
+            // An arc through the tip and the shoulder, bowed by `k` of its length.
+            let chord = into - tip;
+            let n = chord.rot90() * k as f32;
+            let mid = tip + chord * 0.5 + n;
+            for i in 1..16 {
+                let t = i as f32 / 16.0;
+                // A quadratic through the bowed midpoint (control point = 2·mid − ends/2).
+                let c = mid * 2.0 - (tip.to_vec2() + into.to_vec2()) * 0.5;
+                let a = tip.to_vec2() * (1.0 - t) * (1.0 - t)
+                    + c.to_vec2() * 2.0 * t * (1.0 - t)
+                    + into.to_vec2() * t * t;
+                points.push(a.to_pos2());
+            }
+        }
+    }
+    points.push(into);
+    if l.shoulder {
+        points.push(landing);
+    }
+    points
+}
+
+/// A callout's leader, with an arrow.
+fn callout_leader(tip: Pos2, text: &NoteText, end: LeaderEnd) -> LeaderPath {
+    LeaderPath {
+        points: leader_to(tip, text),
+        end,
+        bend: None,
     }
 }
 
@@ -496,8 +675,9 @@ pub fn layout_annotations(
         let mut layout = NoteLayout {
             id,
             text: None,
-            leader: Vec::new(),
-            end: LeaderEnd::Arrow,
+            leaders: Vec::new(),
+            frame: NoteFrame::None,
+            mask: false,
             segments: centre_segments(doc, a)
                 .into_iter()
                 .map(|(p, q)| [s(p), s(q)])
@@ -505,15 +685,33 @@ pub fn layout_annotations(
             marks: Vec::new(),
         };
         match a {
-            Annotation::Note { text, at, leader } => {
-                let target = leader.and_then(|l| doc.anchor_pos(&l.to));
-                let center = s(target.unwrap_or(DVec2::ZERO) + *at);
+            Annotation::Note {
+                text,
+                at,
+                leaders,
+                style,
+            } => {
+                let Some(pos) = doc.note_text_pos(*at, leaders) else {
+                    continue;
+                };
                 let shown = if text.is_empty() { " " } else { text };
-                let t = place_text(painter, shown.to_owned(), center, 0.0, font);
-                if let (Some(l), Some(tip)) = (leader, target) {
-                    layout.leader = leader_to(s(tip), &t);
-                    layout.end = l.end;
+                let t = place_note_text(painter, shown.to_owned(), s(pos), style, font);
+                for l in leaders {
+                    let Some(tip) = doc.anchor_pos(&l.to) else {
+                        continue;
+                    };
+                    let bend = match l.shape {
+                        LeaderShape::Bent(b) => Some(s(tip + b)),
+                        _ => None,
+                    };
+                    layout.leaders.push(LeaderPath {
+                        points: note_leader(s(tip), bend, l, &t),
+                        end: l.end,
+                        bend,
+                    });
                 }
+                layout.frame = style.frame;
+                layout.mask = style.mask;
                 layout.text = Some(t);
             }
             Annotation::CentreMark { .. } | Annotation::Centreline { .. } => {}
@@ -578,7 +776,9 @@ pub fn layout_annotations(
                 };
                 let t = place_text(painter, text, s(c + *at), 0.0, font);
                 let dir = (*at).normalize_or(DVec2::X);
-                layout.leader = leader_to(s(c + dir * r), &t);
+                layout
+                    .leaders
+                    .push(callout_leader(s(c + dir * r), &t, LeaderEnd::Arrow));
                 layout.text = Some(t);
             }
             Annotation::ChamferCallout { line, at } => {
@@ -588,7 +788,9 @@ pub fn layout_annotations(
                 };
                 let mid = (p + q) * 0.5;
                 let t = place_text(painter, text, s(mid + *at), 0.0, font);
-                layout.leader = leader_to(s(mid), &t);
+                layout
+                    .leaders
+                    .push(callout_leader(s(mid), &t, LeaderEnd::Arrow));
                 layout.text = Some(t);
             }
             Annotation::Ordinate {
@@ -628,8 +830,11 @@ pub fn layout_annotations(
                     OrdinateAxis::Y => probe.rect.width() / 2.0,
                 };
                 let t = place_text(painter, text, se + away * (half + 2.0), angle, font);
-                layout.leader = vec![sp + away * ORDINATE_GAP, se];
-                layout.end = LeaderEnd::None;
+                layout.leaders.push(LeaderPath {
+                    points: vec![sp + away * ORDINATE_GAP, se],
+                    end: LeaderEnd::None,
+                    bend: None,
+                });
                 layout.text = Some(t);
             }
         }
@@ -670,31 +875,29 @@ pub fn paint_annotation(
             }
         }
     }
-    if layout.leader.len() >= 2 {
-        pen.line(&layout.leader, stroke);
-        let (tip, next) = (layout.leader[0], layout.leader[1]);
-        let d = (tip - next).normalized();
-        let d = if d.is_finite() { d } else { vec2(1.0, 0.0) };
-        match layout.end {
-            LeaderEnd::Arrow => {
-                let len = style.arrow_len;
-                let base = tip - d * len;
-                let n = d.rot90() * (len / 3.0);
-                pen.polygon(vec![tip, base + n, base - n], color);
-            }
-            LeaderEnd::Dot => {
-                pen.dot(tip, (style.arrow_len / 3.5).max(2.0), color);
-            }
-            LeaderEnd::None => {}
-        }
+    // Paper behind a masked note's text (and frame), under its leaders.
+    if layout.mask
+        && let Some(t) = &layout.text
+    {
+        let r = t.rect.expand(2.0);
+        pen.mask(
+            vec![
+                r.left_top(),
+                r.right_top(),
+                r.right_bottom(),
+                r.left_bottom(),
+            ],
+            colors.text_background,
+        );
+    }
+    for leader in &layout.leaders {
+        paint_leader(pen, leader, stroke, color, style);
     }
     if let Some(t) = &layout.text {
-        let galley = pen.painter().layout(
-            t.text.clone(),
-            crate::fonts::drafting_font(style.text, false),
-            color,
-            f32::INFINITY,
-        );
+        if layout.frame != NoteFrame::None {
+            pen.line(&frame_outline(t.rect.expand(2.0), layout.frame), stroke);
+        }
+        let galley = t.galley(pen.painter(), color);
         let rot = egui::emath::Rot2::from_angle(t.angle);
         let pos = t.center + rot * (-galley.size() / 2.0);
         pen.text(pos, galley, t.angle, color);
@@ -708,6 +911,65 @@ pub fn paint_annotation(
             pen.dot(*a, 2.0, color);
             pen.dot(*b, 2.0, color);
         }
+    }
+}
+
+/// A leader's line and its end mark.
+pub fn paint_leader(
+    pen: &dyn Pen,
+    leader: &LeaderPath,
+    stroke: Stroke,
+    color: Color32,
+    style: &DimStyle,
+) {
+    let points = &leader.points;
+    if points.len() < 2 {
+        return;
+    }
+    pen.line(points, stroke);
+    let (tip, next) = (points[0], points[1]);
+    let d = (tip - next).normalized();
+    let d = if d.is_finite() { d } else { vec2(1.0, 0.0) };
+    let len = style.arrow_len;
+    let base = tip - d * len;
+    let n = d.rot90() * (len / 3.0);
+    match leader.end {
+        LeaderEnd::Arrow => pen.polygon(vec![tip, base + n, base - n], color),
+        LeaderEnd::OpenArrow => {
+            pen.line(&[base + n, tip, base - n], stroke);
+        }
+        LeaderEnd::Dot => pen.dot(tip, (len / 3.5).max(2.0), color),
+        LeaderEnd::None => {}
+    }
+}
+
+/// The outline of a note's frame.
+fn frame_outline(r: Rect, frame: NoteFrame) -> Vec<Pos2> {
+    match frame {
+        NoteFrame::Rounded => {
+            let k = (r.height().min(r.width()) * 0.3).min(6.0);
+            let mut points = Vec::new();
+            for (c, a0) in [
+                (r.right_top() + vec2(-k, k), -90.0_f32),
+                (r.right_bottom() + vec2(-k, -k), 0.0),
+                (r.left_bottom() + vec2(k, -k), 90.0),
+                (r.left_top() + vec2(k, k), 180.0),
+            ] {
+                for i in 0..=6 {
+                    let a = (a0 + 15.0 * i as f32).to_radians();
+                    points.push(c + vec2(a.cos(), a.sin()) * k);
+                }
+            }
+            points.push(points[0]);
+            points
+        }
+        _ => vec![
+            r.left_top(),
+            r.right_top(),
+            r.right_bottom(),
+            r.left_bottom(),
+            r.left_top(),
+        ],
     }
 }
 

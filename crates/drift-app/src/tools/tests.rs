@@ -2485,6 +2485,63 @@ fn groups_pick_together_and_open_for_editing() {
 }
 
 #[test]
+fn a_note_leader_can_point_at_a_line_anywhere_along_it() {
+    let (mut ed, _) = rotated_rectangle_fixture();
+    ed.selection.clear();
+    ed.auto_relations = false;
+    let mut tool = NoteTool::default();
+    // On the bottom edge, away from its ends and middle.
+    let on_edge = ptr(&ed, &tool, v(6.0, 0.3));
+    tool.handle(Input::Hover(on_edge), &mut ed);
+    tool.handle(Input::Click(on_edge, Modifiers::default()), &mut ed);
+    assert!(tool.is_busy(), "a leader started on the line");
+    let text = ptr(&ed, &tool, v(6.0, -20.0));
+    tool.handle(Input::Hover(text), &mut ed);
+    tool.handle(Input::Click(text, Modifiers::default()), &mut ed);
+    let (_, note) = ed.doc.annotations().next().expect("a note");
+    let drift_core::Annotation::Note { leaders, .. } = note else {
+        panic!("a note");
+    };
+    let tip = ed.doc.anchor_pos(&leaders[0].to).unwrap();
+    assert!(matches!(leaders[0].to, drift_core::Anchor::Curve { .. }));
+    assert!((tip - v(6.0, 0.0)).length() < 1e-9, "{tip:?}");
+}
+
+#[test]
+fn the_note_tool_takes_several_leaders() {
+    let (mut ed, _) = rotated_rectangle_fixture();
+    ed.selection.clear();
+    let mut tool = NoteTool::default();
+    // A corner, then Shift+another corner, then the text in open space.
+    let first = ptr(&ed, &tool, v(0.0, 0.0));
+    tool.handle(Input::Hover(first), &mut ed);
+    tool.handle(Input::Click(first, Modifiers::default()), &mut ed);
+    let shift = Modifiers {
+        shift: true,
+        ..Default::default()
+    };
+    let second = ptr(&ed, &tool, v(20.0, 0.0));
+    tool.handle(Input::Hover(second), &mut ed);
+    tool.handle(Input::Click(second, shift), &mut ed);
+    assert!(tool.is_busy());
+    let text = ptr(&ed, &tool, v(10.0, -15.0));
+    tool.handle(Input::Hover(text), &mut ed);
+    tool.handle(Input::Click(text, Modifiers::default()), &mut ed);
+    let (_, note) = ed.doc.annotations().next().expect("a note");
+    let drift_core::Annotation::Note { leaders, at, .. } = note else {
+        panic!("a note");
+    };
+    assert_eq!(leaders.len(), 2);
+    assert!(
+        leaders
+            .iter()
+            .all(|l| matches!(l.to, drift_core::Anchor::Point(_)))
+    );
+    assert_eq!(ed.doc.note_text_pos(*at, leaders), Some(v(10.0, -15.0)));
+    assert!(!tool.is_busy());
+}
+
+#[test]
 fn the_fill_tools_eyedropper_picks_up_a_style() {
     use drift_core::FillKind;
     let (mut ed, _) = rotated_rectangle_fixture();

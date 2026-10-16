@@ -26,6 +26,11 @@ const FAMILY_BOLD: &str = "drawing-bold";
 
 /// The font for annotation and sheet text on screen at `size`: the drawing's own once the
 /// renderer has it, else the interface font.
+/// Whether a font family is a bold one (the drawing's bold face, or the interface's).
+pub fn is_bold(family: &FontFamily) -> bool {
+    *family == FontFamily::Name(FAMILY_BOLD.into()) || *family == crate::theme::bold()
+}
+
 pub fn drafting_font(size: f32, bold: bool) -> FontId {
     let (ready, has_bold) = ON_SCREEN.with(Cell::get);
     let family = match (ready, bold) {

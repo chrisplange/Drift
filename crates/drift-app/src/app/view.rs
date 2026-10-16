@@ -698,6 +698,7 @@ impl DriftApp {
             self.crosshair.paint(&painter, at, rect, color);
         }
         self.paint_notes(&painter, &notes, ui.visuals().dark_mode);
+        self.paint_note_grips(&painter, &notes, ui.visuals().dark_mode);
         self.paint_groups(&painter, &map, ui.visuals().dark_mode);
         self.paint_free_directions(&painter, &map);
         if let Some(status) = &self.status {

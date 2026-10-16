@@ -206,7 +206,9 @@ impl DriftApp {
             return;
         }
         if pressed(Key::Escape) {
-            if self.selected_constraint.take().is_some()
+            if self.adding_leader.take().is_some()
+                || self.selected_leader.take().is_some()
+                || self.selected_constraint.take().is_some()
                 || self.editor.selected_annotation.take().is_some()
             {
                 // First Esc just clears a picked relation, dimension or annotation.
@@ -218,6 +220,11 @@ impl DriftApp {
             self.tool.handle(Input::Finish, &mut self.editor);
         }
         if (pressed(Key::Delete) || pressed(Key::Backspace)) && !self.tool.is_busy() {
+            if let Some((id, k)) = self.selected_leader.take() {
+                // A picked leader goes on its own; its note stays.
+                self.remove_leader(id, k);
+                return;
+            }
             match self.selected_constraint.take() {
                 Some(id) => self.editor.remove_constraint(id),
                 None => self.editor.delete_selection(),

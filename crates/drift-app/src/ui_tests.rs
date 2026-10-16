@@ -896,6 +896,147 @@ fn auto_relations_and_end_points_live_in_the_status_bar_with_keys() {
 }
 
 #[test]
+fn notes_take_leaders_from_their_grips_and_lose_them_with_delete() {
+    use drift_core::{Annotation, LeaderShape, NoteFrame};
+    let Some(mut h) = harness() else { return };
+    h.get_by_label("File").click();
+    h.run();
+    h.get_by_label("Open example").click();
+    h.run();
+    // A note with a leader to the plate's bottom edge.
+    h.get_by_label("Note").click();
+    h.run();
+    click_world(&mut h, DVec2::new(30.0, 0.0));
+    click_world(&mut h, DVec2::new(-30.0, -25.0));
+    h.event(Event::Text("TYP.".into()));
+    h.run();
+    h.key_press(Key::Enter);
+    h.run();
+    h.get_by_label("Select").click();
+    h.run();
+    let note = |h: &Harness<'_, DriftApp>| {
+        let (id, a) = h
+            .state()
+            .editor
+            .doc
+            .annotations()
+            .find(|(_, a)| matches!(a, Annotation::Note { .. }))
+            .map(|(id, a)| (id, a.clone()))
+            .unwrap();
+        let Annotation::Note { leaders, .. } = a else {
+            unreachable!()
+        };
+        (id, leaders)
+    };
+    let (id, leaders) = note(&h);
+    assert_eq!(leaders.len(), 1);
+    // Pick it; drag from the + on its right to further along the bottom edge.
+    h.state_mut().editor.selected_annotation = Some(id);
+    h.run();
+    let painter = egui::Painter::new(
+        h.ctx.clone(),
+        egui::LayerId::background(),
+        h.state().canvas_rect,
+    );
+    let layout = h
+        .state()
+        .layout_notes(&painter, &screen_map(&h))
+        .into_iter()
+        .find(|l| l.id == id)
+        .unwrap();
+    let text = layout.text.as_ref().unwrap().rect;
+    let plus = egui::pos2(text.right() + 14.0, text.center().y);
+    let corner = screen(&h, DVec2::new(90.0, 0.0));
+    h.hover_at(plus);
+    h.run_steps(2);
+    button(&h, plus, true);
+    h.run_steps(2);
+    for k in 1..=8 {
+        h.hover_at(plus + (corner - plus) * (k as f32 / 8.0));
+        h.run_steps(2);
+    }
+    button(&h, corner, false);
+    h.run_steps(4);
+    let (_, leaders) = note(&h);
+    assert_eq!(leaders.len(), 2, "a second leader from the + grip");
+    assert!(
+        matches!(leaders[1].to, drift_core::Anchor::Curve { .. }),
+        "attached to the edge"
+    );
+    // Style it for the picture: a rounded frame, a mask, bold italic, a bent and a curved
+    // leader with an open arrow.
+    {
+        let doc = &mut h.state_mut().editor.doc;
+        let Some(Annotation::Note {
+            text,
+            at,
+            mut leaders,
+            mut style,
+        }) = doc.annotation(id).cloned()
+        else {
+            unreachable!()
+        };
+        style.frame = NoteFrame::Rounded;
+        style.mask = true;
+        style.bold = true;
+        style.italic = true;
+        leaders[0].shape = LeaderShape::Bent(DVec2::new(-12.0, -6.0));
+        leaders[1].shape = LeaderShape::Curved(0.25);
+        leaders[1].end = drift_core::LeaderEnd::OpenArrow;
+        doc.begin();
+        doc.set_annotation(
+            id,
+            Annotation::Note {
+                text,
+                at,
+                leaders,
+                style,
+            },
+        )
+        .unwrap();
+        let _ = doc.commit("Style");
+    }
+    h.run();
+    h.run();
+    save_png("drift_ui_note_leaders.png", &mut h);
+    // Click the second leader's line, then Delete: that leader goes, the text stays.
+    let layout = h
+        .state()
+        .layout_notes(&painter, &screen_map(&h))
+        .into_iter()
+        .find(|l| l.id == id)
+        .unwrap();
+    let path = &layout.leaders[1].points;
+    let on = path[path.len() / 2];
+    let before = layout.text.as_ref().unwrap().rect;
+    h.hover_at(on);
+    h.run();
+    button(&h, on, true);
+    h.run();
+    button(&h, on, false);
+    h.run();
+    assert_eq!(h.state().selected_leader, Some((id, 1)));
+    h.key_press(Key::Delete);
+    h.run();
+    let (_, leaders) = note(&h);
+    assert_eq!(leaders.len(), 1);
+    assert!(
+        h.state().editor.doc.annotation(id).is_some(),
+        "the note stays"
+    );
+    let after = h
+        .state()
+        .layout_notes(&painter, &screen_map(&h))
+        .into_iter()
+        .find(|l| l.id == id)
+        .unwrap()
+        .text
+        .unwrap()
+        .rect;
+    assert!((after.center() - before.center()).length() < 0.5);
+}
+
+#[test]
 fn alt_c_draws_and_makes_construction_geometry() {
     use drift_core::LineKind;
     let Some(mut h) = harness() else { return };
@@ -1569,9 +1710,9 @@ fn drafting_tools_annotate_the_plate() {
     h.run();
     assert!(h.state().note_edit.is_none());
     match annotations(&h).as_slice() {
-        [Annotation::Note { text, leader, .. }] => {
+        [Annotation::Note { text, leaders, .. }] => {
             assert_eq!(text, "DEBURR ALL EDGES");
-            assert!(leader.is_some());
+            assert_eq!(leaders.len(), 1);
         }
         other => panic!("{other:?}"),
     }
@@ -5161,7 +5302,8 @@ fn dimensions_hide_leave_sheets_and_take_text() {
             .add_annotation(drift_core::Annotation::Note {
                 text: "SEE DETAIL".into(),
                 at: DVec2::new(30.0, 20.0),
-                leader: None,
+                leaders: Vec::new(),
+                style: Default::default(),
             })
             .unwrap();
         ed.commit("Note");

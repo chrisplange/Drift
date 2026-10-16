@@ -107,11 +107,16 @@ pub enum Prim {
     },
 }
 
+/// How far italic text leans: the tangent of its slant (about 12°).
+pub const ITALIC_SLANT: f64 = 0.21;
+
 /// How a line of text is set.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct TextStyle {
     /// The bold weight.
     pub bold: bool,
+    /// Slanted (an oblique of the upright face, [`ITALIC_SLANT`]).
+    pub italic: bool,
     /// Extra space after every letter, as a fraction of the font size (0.1 opens small
     /// capitals out nicely).
     pub tracking: f64,
@@ -120,10 +125,12 @@ pub struct TextStyle {
 impl TextStyle {
     pub const REGULAR: TextStyle = TextStyle {
         bold: false,
+        italic: false,
         tracking: 0.0,
     };
     pub const BOLD: TextStyle = TextStyle {
         bold: true,
+        italic: false,
         tracking: 0.0,
     };
 

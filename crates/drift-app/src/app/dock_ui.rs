@@ -1,6 +1,15 @@
 //! The docks at either side of the canvas, their tabs, floating panels, and dragging panels
-//! between them: drag a tab (or a floating panel's header) onto a dock to dock it there, or
-//! a tab onto the canvas to float it. Right-click a tab for the same choices.
+//! between them.
+//!
+//! - Dragging a tab along its tab bar moves it there, the others making room as it goes.
+//! - Dragged out, a tab follows the pointer: onto another dock's tabs to dock it there (a
+//!   bar shows where), onto the top or bottom of a floating panel to stack it there, or onto
+//!   the canvas to float it.
+//! - A floating panel on its own is moved by its header; over a dock, the dock lights up to
+//!   take it. In a stack, a panel's header pulls it out, and the strip along the top moves
+//!   the whole stack.
+//!
+//! Right-click a tab or use a header's menu for the same choices.
 
 use std::collections::HashMap;
 
@@ -15,14 +24,28 @@ const RAIL: f32 = 42.0;
 /// How far into the canvas a drop still docks to that side (where there's no dock yet).
 const DROP_BAND: f32 = 76.0;
 
+/// Height of the strip that moves a stack of floating panels.
+const GRIP: f32 = 12.0;
+/// Space between stacked panels (it resizes them).
+const DIVIDER: f32 = 7.0;
+
 /// Panel interaction that lasts between frames but isn't saved.
 #[derive(Default)]
 pub(crate) struct DockView {
-    /// A panel being dragged: by its tab (`false`) or its floating window (`true`).
+    /// A panel being dragged: by its tab or pulled from a stack (`false`), or as its own
+    /// floating window, which moves with it (`true`).
     drag: Option<(Panel, bool)>,
-    /// Tabs and docks as laid out this frame, for dropping.
-    tabs: Vec<(Side, egui::Rect)>,
+    /// Where on the dragged tab it was grabbed (from its left edge).
+    grab_dx: f32,
+    /// Tabs, tab bars and docks as laid out this frame, for dropping.
+    tabs: Vec<(Side, Panel, egui::Rect)>,
+    bars: [Option<egui::Rect>; 2],
     docks: [Option<egui::Rect>; 2],
+    /// Each floating panel as last drawn, and each floating window (by its top panel).
+    stacked: Vec<(Panel, egui::Rect)>,
+    windows: HashMap<Panel, egui::Rect>,
+    /// Each stacked panel's share of its window's height (1 unless resized).
+    weights: HashMap<Panel, f32>,
     /// The header of each floating panel as last drawn (the part that docks it when dragged).
     headers: HashMap<Panel, egui::Rect>,
     /// Where a panel just floated by dropping should appear.
@@ -83,6 +106,7 @@ impl DriftApp {
     /// the window gets narrow (and open them again when it widens).
     pub(crate) fn begin_docks(&mut self, wide: bool) {
         self.dock_view.tabs.clear();
+        self.dock_view.bars = [None, None];
         self.dock_view.docks = [None, None];
         if self.dock_view.was_wide != Some(wide) {
             if !wide {
@@ -167,10 +191,18 @@ impl DriftApp {
         );
         let dark = ui.visuals().dark_mode;
         let accent = theme::accent(dark);
+        self.dock_view.bars[i] = Some(bar);
         ui.painter().line_segment(
             [bar.left_bottom(), bar.right_bottom()],
             egui::Stroke::new(1.0, theme::hairline(ui)),
         );
+        // A tab of this bar dragged along it: drawn under the pointer (below), its place
+        // left empty.
+        let pointer = ui.input(|inp| inp.pointer.latest_pos());
+        let sliding = self.dock_view.drag.and_then(|(d, window)| {
+            (!window && panels.contains(&d) && pointer.is_some_and(|at| in_bar(bar, at)))
+                .then_some(d)
+        });
         let font = egui::FontId::new(12.5, egui::FontFamily::Proportional);
         let widths: Vec<f32> = panels
             .iter()
@@ -200,8 +232,37 @@ impl DriftApp {
             response.widget_info(|| {
                 egui::WidgetInfo::selected(egui::WidgetType::Button, true, selected, p.title())
             });
+            self.dock_view.tabs.push((side, p, r));
+            if response.drag_started() {
+                self.dock_view.drag = Some((p, false));
+                self.dock_view.grab_dx = response
+                    .interact_pointer_pos()
+                    .map_or(w / 2.0, |at| at.x - r.left());
+            }
+            response.context_menu(|ui| self.panel_menu(ui, p));
+            if response.clicked() {
+                self.layout.active[i] = Some(p);
+            }
+            let r = match (sliding, pointer) {
+                (Some(d), Some(at)) if d == p => {
+                    // Its place stays empty; the tab itself follows the pointer along the bar.
+                    let x = (at.x - self.dock_view.grab_dx)
+                        .clamp(bar.left() + 2.0, (bar.right() - w - 60.0).max(bar.left()));
+                    let moved = egui::Rect::from_min_size(egui::pos2(x, r.top()), r.size());
+                    ui.painter().rect(
+                        moved,
+                        6.0,
+                        ui.visuals().widgets.active.bg_fill,
+                        egui::Stroke::new(1.0, accent),
+                        egui::StrokeKind::Inside,
+                    );
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+                    moved
+                }
+                _ => r,
+            };
             let dragging = self.dock_view.drag.is_some_and(|(d, _)| d == p);
-            if (response.hovered() && !selected) || dragging {
+            if (response.hovered() && !selected) || (dragging && sliding.is_none()) {
                 ui.painter()
                     .rect_filled(r, 6.0, ui.visuals().widgets.hovered.bg_fill);
             }
@@ -249,7 +310,7 @@ impl DriftApp {
                     color,
                 );
             }
-            let response = response.on_hover_ui(|ui| {
+            let _ = response.on_hover_ui(|ui| {
                 ui.label(egui::RichText::new(p.title()).family(theme::bold()));
                 ui.label(egui::RichText::new(p.description()).weak());
                 ui.label(
@@ -260,14 +321,6 @@ impl DriftApp {
                     .weak(),
                 );
             });
-            if response.clicked() {
-                self.layout.active[i] = Some(p);
-            }
-            if response.drag_started() {
-                self.dock_view.drag = Some((p, false));
-            }
-            response.context_menu(|ui| self.panel_menu(ui, p));
-            self.dock_view.tabs.push((side, r));
         }
         // Collapse to a rail, and the dock's menu.
         let more = egui::Rect::from_center_size(
@@ -373,8 +426,11 @@ impl DriftApp {
         });
     }
 
-    /// Floating panels over the canvas (call after the canvas).
+    /// Floating panels over the canvas, each stack in a window of its own (call after the
+    /// canvas).
     pub(crate) fn floating_panels(&mut self, ctx: &egui::Context) {
+        self.dock_view.stacked.clear();
+        self.dock_view.windows.clear();
         if self.dock_view.hide_all {
             return;
         }
@@ -406,56 +462,152 @@ impl DriftApp {
                 color: egui::Color32::from_black_alpha(if dark { 100 } else { 45 }),
             })
             .inner_margin(egui::Margin::ZERO);
-        for (k, p) in self.layout.floating.clone().into_iter().enumerate() {
+        for (k, stack) in self.layout.floating.clone().into_iter().enumerate() {
+            let top = stack[0];
+            let n = stack.len();
             let step = 26.0 * k as f32;
-            let mut window = egui::Window::new(p.title())
-                .id(egui::Id::new(("floating_panel", p.key())))
+            let tall = (300.0 * n as f32).max(440.0).min(canvas.height() - 28.0);
+            // A window per stack, named by its top panel and how many it holds, so a stack
+            // that changes starts at its new size (and at the place it was, see `float_at`).
+            let mut window = egui::Window::new(top.title())
+                .id(egui::Id::new(("floating_panel", top.key(), n)))
                 .title_bar(false)
                 .resizable(true)
                 .movable(true)
                 .frame(frame)
-                .default_size([300.0, 440.0_f32.min(canvas.height() - 28.0)])
+                .default_size([300.0, tall])
                 .min_width(240.0)
-                .min_height(140.0)
+                .min_height(140.0 * n as f32)
                 .pivot(egui::Align2::RIGHT_TOP)
                 .default_pos(canvas.right_top() + egui::vec2(-14.0 - step, 14.0 + step))
                 .constrain_to(canvas);
-            if let Some(at) = self.dock_view.float_at.remove(&p) {
+            if let Some(at) = self.dock_view.float_at.remove(&top) {
                 window = window.pivot(egui::Align2::LEFT_TOP).current_pos(at);
             }
             let shown = window.show(ctx, |ui| {
-                self.float_header(ui, p);
-                egui::Frame::new()
-                    .inner_margin(egui::Margin {
-                        left: 12,
-                        right: 6,
-                        top: 0,
-                        bottom: 8,
-                    })
-                    .show(ui, |ui| self.panel_body(ui, p));
+                if n > 1 {
+                    // The strip that moves the whole stack (it senses nothing itself, so the
+                    // window takes the drag).
+                    let (strip, _) = ui.allocate_exact_size(
+                        egui::vec2(ui.available_width(), GRIP),
+                        egui::Sense::hover(),
+                    );
+                    let c = strip.center() + egui::vec2(0.0, 1.0);
+                    let dots = ui.visuals().weak_text_color();
+                    for dx in [-8.0, -3.0, 2.0, 7.0] {
+                        ui.painter()
+                            .circle_filled(c + egui::vec2(dx, 0.0), 1.2, dots);
+                    }
+                }
+                let weights: Vec<f32> = stack
+                    .iter()
+                    .map(|p| self.dock_view.weights.get(p).copied().unwrap_or(1.0))
+                    .collect();
+                let total: f32 = weights.iter().sum();
+                let room = (ui.available_height() - DIVIDER * (n - 1) as f32).max(60.0 * n as f32);
+                for (j, &p) in stack.iter().enumerate() {
+                    let h = (room * weights[j] / total).max(60.0);
+                    let width = ui.available_width();
+                    let inner = ui.allocate_ui_with_layout(
+                        egui::vec2(width, h),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            ui.set_min_height(h);
+                            ui.set_max_height(h);
+                            self.float_header(ui, p, n > 1);
+                            egui::Frame::new()
+                                .inner_margin(egui::Margin {
+                                    left: 12,
+                                    right: 6,
+                                    top: 0,
+                                    bottom: 8,
+                                })
+                                .show(ui, |ui| self.panel_body(ui, p));
+                        },
+                    );
+                    self.dock_view.stacked.push((p, inner.response.rect));
+                    if j + 1 < n {
+                        self.divider(ui, &stack, j, room);
+                    }
+                }
             });
-            // Dragged by its header, a floating panel can be docked. Dragging inside it (a
-            // slider, a list, empty space) is just using it: no drop zones.
+            let Some(shown) = shown else {
+                continue;
+            };
+            self.dock_view.windows.insert(top, shown.response.rect);
+            // A panel floating alone, dragged by its header, can be docked or stacked.
+            // Dragging inside it (a slider, a list, empty space) is just using it.
             let by_header = ctx.input(|i| i.pointer.press_origin()).is_some_and(|at| {
                 self.dock_view
                     .headers
-                    .get(&p)
+                    .get(&top)
                     .is_some_and(|bar| bar.contains(at))
             });
-            if let Some(shown) = shown
-                && shown.response.dragged()
-                && by_header
-                && self.dock_view.drag.is_none()
-            {
-                self.dock_view.drag = Some((p, true));
+            if n == 1 && shown.response.dragged() && by_header && self.dock_view.drag.is_none() {
+                self.dock_view.drag = Some((top, true));
             }
         }
     }
 
-    /// A floating panel's header: drag it to move (or onto a dock to dock it).
-    fn float_header(&mut self, ui: &mut egui::Ui, p: Panel) {
-        let (bar, _) =
-            ui.allocate_exact_size(egui::vec2(ui.available_width(), 34.0), egui::Sense::hover());
+    /// A floating panel's header as last drawn (for tests).
+    #[cfg(test)]
+    pub(crate) fn header_rect(&self, p: Panel) -> Option<egui::Rect> {
+        self.dock_view.headers.get(&p).copied()
+    }
+
+    /// The bar between two stacked panels: drag it to share the height differently.
+    fn divider(&mut self, ui: &mut egui::Ui, stack: &[Panel], j: usize, room: f32) {
+        let (r, response) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width(), DIVIDER),
+            egui::Sense::drag(),
+        );
+        let hot = response.hovered() || response.dragged();
+        let color = if hot {
+            theme::accent(ui.visuals().dark_mode)
+        } else {
+            theme::hairline(ui)
+        };
+        ui.painter().line_segment(
+            [
+                egui::pos2(r.left() + 10.0, r.center().y),
+                egui::pos2(r.right() - 10.0, r.center().y),
+            ],
+            egui::Stroke::new(if hot { 2.0 } else { 1.0 }, color),
+        );
+        if hot {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+        }
+        let dy = response.drag_delta().y;
+        if dy != 0.0 {
+            let w = &mut self.dock_view.weights;
+            let total: f32 = stack.iter().map(|p| *w.get(p).unwrap_or(&1.0)).sum();
+            let shift = dy / room * total;
+            let (a, b) = (stack[j], stack[j + 1]);
+            let (wa, wb) = (*w.get(&a).unwrap_or(&1.0), *w.get(&b).unwrap_or(&1.0));
+            let min = 0.15 * total / stack.len() as f32;
+            let shift = shift.clamp(min - wa, wb - min);
+            w.insert(a, wa + shift);
+            w.insert(b, wb - shift);
+        }
+    }
+
+    /// A floating panel's header: its icon and name, a menu and a close button. Alone in its
+    /// window, dragging it moves the window (or docks or stacks it); in a stack, dragging it
+    /// pulls the panel out.
+    fn float_header(&mut self, ui: &mut egui::Ui, p: Panel, in_stack: bool) {
+        let sense = if in_stack {
+            egui::Sense::click_and_drag()
+        } else {
+            egui::Sense::hover()
+        };
+        let (bar, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 34.0), sense);
+        if in_stack && response.drag_started() {
+            self.dock_view.drag = Some((p, false));
+            self.dock_view.grab_dx = 30.0;
+        }
+        if in_stack && response.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+        }
         let text = ui.visuals().strong_text_color();
         icons::glyph(
             ui.painter(),
@@ -488,12 +640,51 @@ impl DriftApp {
         // Closing a floating panel puts it back in the dock it came from (the menu beside it
         // can hide it altogether).
         let tip = format!("Back to the {} dock", self.layout.home(p).name());
-        if icon_at(ui, close, ui.id().with("close"), Glyph::Close, &tip).clicked() {
-            self.layout.redock(p);
+        if icon_at(
+            ui,
+            close,
+            ui.id().with(("close", p.key())),
+            Glyph::Close,
+            &tip,
+        )
+        .clicked()
+        {
+            self.redock_floating(p);
         }
         self.dock_view.headers.insert(p, bar);
-        let menu = icon_at(ui, more, ui.id().with("more"), Glyph::More, "Dock or close");
+        let menu = icon_at(
+            ui,
+            more,
+            ui.id().with(("more", p.key())),
+            Glyph::More,
+            "Dock or close",
+        );
         egui::Popup::menu(&menu).show(|ui| self.panel_menu(ui, p));
+    }
+
+    /// Put a floating panel back in its dock; the rest of its stack keeps its place.
+    fn redock_floating(&mut self, p: Panel) {
+        let keep = self.stack_position(p);
+        self.layout.redock(p);
+        self.restore_stack_position(keep);
+    }
+
+    /// Before a panel leaves its stack: the panel that will be on top of what's left, and
+    /// where the window is, so what's left stays there (its window is a new one).
+    fn stack_position(&self, p: Panel) -> Option<(Panel, egui::Pos2)> {
+        let stack = self.layout.stack_of(p)?;
+        if stack.len() < 2 {
+            return None;
+        }
+        let at = self.dock_view.windows.get(&stack[0])?.min;
+        let top = if stack[0] == p { stack[1] } else { stack[0] };
+        Some((top, at))
+    }
+
+    fn restore_stack_position(&mut self, keep: Option<(Panel, egui::Pos2)>) {
+        if let Some((top, at)) = keep {
+            self.dock_view.float_at.insert(top, at);
+        }
     }
 
     /// Where a dragged panel would dock: each side's dock, or a band along that edge of the
@@ -518,8 +709,47 @@ impl DriftApp {
             .collect()
     }
 
-    /// While a panel is dragged: highlight where it would dock, and dock or float it on
-    /// release (call last in the frame).
+    /// Where a dragged panel would go if let go at `pos`: onto the top or bottom of a floating
+    /// panel (to stack there), or into a dock (among its tabs, when over its tab bar).
+    fn drop_target(&self, panel: Panel, window: bool, pos: egui::Pos2) -> Option<Drop> {
+        // A window being moved carries its whole stack: not onto itself.
+        let own: Vec<Panel> = if window {
+            self.layout
+                .stack_of(panel)
+                .map_or(vec![panel], <[Panel]>::to_vec)
+        } else {
+            vec![panel]
+        };
+        if let Some((onto, rect)) = self
+            .dock_view
+            .stacked
+            .iter()
+            .rev()
+            .find(|(p, r)| !own.contains(p) && r.contains(pos))
+        {
+            return Some(Drop::Stack {
+                onto: *onto,
+                below: pos.y > rect.center().y,
+                rect: *rect,
+            });
+        }
+        let (side, zone) = self
+            .drop_zones()
+            .into_iter()
+            .find(|(_, r)| r.contains(pos))?;
+        let bar = self.dock_view.bars[side.index()];
+        let index = bar.filter(|b| in_bar(*b, pos)).map(|_| {
+            self.dock_view
+                .tabs
+                .iter()
+                .filter(|(s, p, r)| *s == side && *p != panel && r.center().x < pos.x)
+                .count()
+        });
+        Some(Drop::Dock { side, index, zone })
+    }
+
+    /// While a panel is dragged: show where it would go, and put it there on release (call
+    /// last in the frame).
     pub(crate) fn dock_drag(&mut self, ctx: &egui::Context) {
         let Some((panel, window)) = self.dock_view.drag else {
             return;
@@ -528,108 +758,147 @@ impl DriftApp {
             self.dock_view.drag = None;
             return;
         }
-        let pointer = ctx.input(|i| i.pointer.latest_pos());
         let released = ctx.input(|i| i.pointer.any_released() || !i.pointer.any_down());
-        let zones = self.drop_zones();
-        let target = pointer.and_then(|pos| zones.iter().find(|(_, r)| r.contains(pos)).copied());
+        let Some(pos) = ctx.input(|i| i.pointer.latest_pos()) else {
+            if released {
+                self.dock_view.drag = None;
+            }
+            return;
+        };
+        // A tab slid along its own tab bar takes its new place as it goes (drawn by the bar).
+        if !window
+            && let Place::Dock(side) = self.layout.place(panel)
+            && let Some(bar) = self.dock_view.bars[side.index()]
+            && in_bar(bar, pos)
+        {
+            let i = side.index();
+            let slot = self
+                .dock_view
+                .tabs
+                .iter()
+                .filter(|(s, p, r)| *s == side && *p != panel && r.center().x < pos.x)
+                .count();
+            if let Some(from) = self.layout.docks[i].iter().position(|p| *p == panel)
+                && slot != from
+            {
+                let index = if slot > from { slot + 1 } else { slot };
+                self.layout.move_to(panel, Place::Dock(side), Some(index));
+            }
+            if released {
+                self.dock_view.drag = None;
+            }
+            return;
+        }
         let dark = ctx.theme() == egui::Theme::Dark;
         let accent = theme::accent(dark);
         let painter = ctx.layer_painter(egui::LayerId::new(
             egui::Order::Foreground,
             egui::Id::new("dock_drop"),
         ));
-        for (side, zone) in &zones {
-            let hot = target.is_some_and(|(s, _)| s == *side);
-            let r = zone.shrink(3.0);
-            if hot {
-                painter.rect(
-                    r,
-                    8.0,
-                    accent.gamma_multiply(0.18),
-                    egui::Stroke::new(1.5, accent),
-                    egui::StrokeKind::Inside,
-                );
-                painter.text(
-                    r.center(),
-                    egui::Align2::CENTER_CENTER,
-                    format!("Dock {}", side.name()),
-                    egui::FontId::new(13.0, theme::bold()),
-                    accent,
-                );
-            } else if !window {
-                // A tab being dragged shows where it could go; a window being moved only
-                // lights a dock up once it is over it.
-                painter.rect(
-                    r,
-                    8.0,
-                    accent.gamma_multiply(0.05),
-                    egui::Stroke::new(1.0, accent.gamma_multiply(0.35)),
-                    egui::StrokeKind::Inside,
+        let target = self.drop_target(panel, window, pos);
+        let mark = egui::Stroke::new(3.0, accent);
+        match target {
+            Some(Drop::Stack { below, rect, .. }) => {
+                // A bar along the edge it would stack against.
+                let y = if below {
+                    rect.bottom() - 1.0
+                } else {
+                    rect.top() + 1.0
+                };
+                painter.line_segment(
+                    [
+                        egui::pos2(rect.left() + 8.0, y),
+                        egui::pos2(rect.right() - 8.0, y),
+                    ],
+                    mark,
                 );
             }
+            Some(Drop::Dock { side, index, zone }) => {
+                if window {
+                    // A floating panel over a dock: the dock lights up to take it.
+                    let r = zone.shrink(3.0);
+                    painter.rect(
+                        r,
+                        8.0,
+                        accent.gamma_multiply(0.18),
+                        egui::Stroke::new(1.5, accent),
+                        egui::StrokeKind::Inside,
+                    );
+                    painter.text(
+                        r.center(),
+                        egui::Align2::CENTER_CENTER,
+                        format!("Dock {}", side.name()),
+                        egui::FontId::new(13.0, theme::bold()),
+                        accent,
+                    );
+                } else if let (Some(k), Some(bar)) = (index, self.dock_view.bars[side.index()]) {
+                    // A tab over another dock's tabs: a bar where it would go.
+                    let tabs: Vec<egui::Rect> = self
+                        .dock_view
+                        .tabs
+                        .iter()
+                        .filter(|(s, p, _)| *s == side && *p != panel)
+                        .map(|(_, _, r)| *r)
+                        .collect();
+                    let x = match (k.checked_sub(1).and_then(|j| tabs.get(j)), tabs.get(k)) {
+                        (Some(before), _) => before.right() + 1.0,
+                        (None, Some(after)) => after.left() - 1.0,
+                        (None, None) => bar.left() + 6.0,
+                    };
+                    painter.line_segment(
+                        [
+                            egui::pos2(x, bar.top() + 5.0),
+                            egui::pos2(x, bar.bottom() - 5.0),
+                        ],
+                        mark,
+                    );
+                } else if self.layout.place(panel) != Place::Dock(side) {
+                    // Over another dock (or the edge where one would be): its outline.
+                    painter.rect_stroke(
+                        zone.shrink(3.0),
+                        8.0,
+                        egui::Stroke::new(1.5, accent),
+                        egui::StrokeKind::Inside,
+                    );
+                }
+            }
+            None => {}
         }
-        if !window && let Some(pos) = pointer {
-            // The tab follows the pointer.
-            let text = ctx.style_of(ctx.theme()).visuals.strong_text_color();
-            let galley = painter.layout_no_wrap(
-                panel.title().to_owned(),
-                egui::FontId::new(12.5, theme::bold()),
-                text,
-            );
-            let r = egui::Rect::from_min_size(
-                pos + egui::vec2(10.0, 8.0),
-                egui::vec2(galley.size().x + 40.0, 28.0),
-            );
-            painter.rect(
-                r,
-                7.0,
-                ctx.style_of(ctx.theme()).visuals.window_fill,
-                egui::Stroke::new(1.0, accent),
-                egui::StrokeKind::Inside,
-            );
-            icons::glyph(
-                &painter,
-                egui::Rect::from_center_size(
-                    egui::pos2(r.left() + 16.0, r.center().y),
-                    egui::Vec2::splat(14.0),
-                ),
-                glyph(panel),
-                text,
-            );
-            painter.galley(
-                egui::pos2(r.left() + 28.0, r.center().y - galley.size().y / 2.0),
-                galley,
-                text,
-            );
-            ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
+        if !window {
+            self.paint_dragged_tab(ctx, &painter, panel, pos);
         }
         if !released {
             return;
         }
         self.dock_view.drag = None;
-        let Some(pos) = pointer else {
-            return;
-        };
         match target {
-            Some((side, _)) => {
-                // Over a tab bar, the drop picks the place among the tabs.
-                let tabs: Vec<egui::Rect> = self
-                    .dock_view
-                    .tabs
-                    .iter()
-                    .filter(|(s, _)| *s == side)
-                    .map(|(_, r)| *r)
-                    .collect();
-                let on_bar = tabs.iter().any(|r| (r.top()..=r.bottom()).contains(&pos.y));
-                let index = on_bar.then(|| tabs.iter().filter(|r| r.center().x < pos.x).count());
+            Some(Drop::Stack { onto, below, .. }) => {
+                // The window it joins stays where it is (it becomes a new window).
+                let joined = self
+                    .layout
+                    .stack_of(onto)
+                    .and_then(|s| self.dock_view.windows.get(&s[0]))
+                    .map(|r| r.min);
+                let keep = self.stack_position(panel);
+                self.layout.stack(panel, onto, below);
+                self.restore_stack_position(keep);
+                if let (Some(at), Some(stack)) = (joined, self.layout.stack_of(onto)) {
+                    self.dock_view.float_at.insert(stack[0], at);
+                }
+            }
+            Some(Drop::Dock { side, index, .. }) => {
                 // Dropped on its own dock away from the tabs: nothing to do.
                 if index.is_none() && self.layout.place(panel) == Place::Dock(side) {
                     return;
                 }
+                let keep = self.stack_position(panel);
                 self.layout.move_to(panel, Place::Dock(side), index);
+                self.restore_stack_position(keep);
             }
             None if !window && self.canvas_rect.contains(pos) => {
+                let keep = self.stack_position(panel);
                 self.layout.move_to(panel, Place::Float, None);
+                self.restore_stack_position(keep);
                 self.dock_view
                     .float_at
                     .insert(panel, pos - egui::vec2(30.0, 14.0));
@@ -637,4 +906,70 @@ impl DriftApp {
             None => {}
         }
     }
+
+    /// A dragged tab (or a panel pulled from a stack) under the pointer.
+    fn paint_dragged_tab(
+        &self,
+        ctx: &egui::Context,
+        painter: &egui::Painter,
+        panel: Panel,
+        pos: egui::Pos2,
+    ) {
+        let visuals = ctx.style_of(ctx.theme()).visuals.clone();
+        let accent = theme::accent(visuals.dark_mode);
+        let text = visuals.strong_text_color();
+        let galley = painter.layout_no_wrap(
+            panel.title().to_owned(),
+            egui::FontId::new(12.5, theme::bold()),
+            text,
+        );
+        let r = egui::Rect::from_min_size(
+            pos - egui::vec2(self.dock_view.grab_dx.min(40.0), 13.0),
+            egui::vec2(galley.size().x + 40.0, 28.0),
+        );
+        painter.rect(
+            r,
+            7.0,
+            visuals.window_fill,
+            egui::Stroke::new(1.0, accent),
+            egui::StrokeKind::Inside,
+        );
+        icons::glyph(
+            painter,
+            egui::Rect::from_center_size(
+                egui::pos2(r.left() + 16.0, r.center().y),
+                egui::Vec2::splat(14.0),
+            ),
+            glyph(panel),
+            text,
+        );
+        painter.galley(
+            egui::pos2(r.left() + 28.0, r.center().y - galley.size().y / 2.0),
+            galley,
+            text,
+        );
+        ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
+    }
+}
+
+/// Where a dragged panel would go.
+#[derive(Clone, Copy, Debug)]
+enum Drop {
+    /// Into the floating stack `onto` is in, above or below it (`rect` is `onto`'s).
+    Stack {
+        onto: Panel,
+        below: bool,
+        rect: egui::Rect,
+    },
+    /// Into a dock: among its tabs at `index`, or (`None`) at the end.
+    Dock {
+        side: Side,
+        index: Option<usize>,
+        zone: egui::Rect,
+    },
+}
+
+/// Whether `at` is on (or just above or below) a tab bar: a dragged tab there slides along it.
+fn in_bar(bar: egui::Rect, at: egui::Pos2) -> bool {
+    bar.expand2(egui::vec2(0.0, TAB_BAR * 0.6)).contains(at)
 }

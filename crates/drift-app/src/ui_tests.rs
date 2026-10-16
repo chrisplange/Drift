@@ -895,6 +895,99 @@ fn auto_relations_and_end_points_live_in_the_status_bar_with_keys() {
     );
 }
 
+/// Press at `from`, move to `to` in steps (a frame each), and let go.
+fn drag_steps(h: &mut Harness<'_, DriftApp>, from: Pos2, to: Pos2, steps: u32, shot: Option<&str>) {
+    h.hover_at(from);
+    h.run_steps(2);
+    button(h, from, true);
+    h.run_steps(2);
+    // (A window being dragged repaints every frame: step rather than wait for it to settle.)
+    for k in 1..=steps {
+        h.hover_at(from + (to - from) * (k as f32 / steps as f32));
+        h.run_steps(2);
+    }
+    if let Some(name) = shot {
+        save_png(name, h);
+    }
+    button(h, to, false);
+    // (A window or tooltip appearing animates for a few frames.)
+    h.run_steps(8);
+}
+
+#[test]
+fn a_tab_slides_along_its_bar() {
+    let Some(mut h) = harness() else { return };
+    let order = |h: &Harness<'_, DriftApp>| h.state().layout.dock(Side::Right).to_vec();
+    assert_eq!(order(&h)[0], Panel::Inspector);
+    // Drag the Inspector tab along the bar to just past the Sheets tab.
+    let from = h.get_by_label("Inspector").rect().center();
+    let sheets = h.get_by_label("Sheets").rect();
+    let to = egui::pos2(sheets.center().x + 6.0, from.y);
+    drag_steps(&mut h, from, to, 8, Some("drift_ui_tab_sliding.png"));
+    assert_eq!(
+        order(&h),
+        [
+            Panel::Parameters,
+            Panel::Layers,
+            Panel::Sheets,
+            Panel::Inspector,
+            Panel::Blocks
+        ]
+    );
+    // Still docked, and in front.
+    assert_eq!(h.state().layout.active[1], Some(Panel::Inspector));
+}
+
+#[test]
+fn floating_panels_stack_and_come_apart() {
+    let Some(mut h) = harness() else { return };
+    for p in [Panel::Layers, Panel::Blocks] {
+        h.state_mut().layout.move_to(p, Place::Float, None);
+    }
+    h.run();
+    h.run();
+    // Drag the Blocks window by its header onto the lower part of the Layers panel.
+    let header = h.state().header_rect(Panel::Blocks).unwrap();
+    let layers = h.state().header_rect(Panel::Layers).unwrap();
+    let from = header.left_center() + egui::vec2(60.0, 0.0);
+    let to = egui::pos2(layers.center().x, layers.top() + 300.0);
+    drag_steps(&mut h, from, to, 10, Some("drift_ui_stacking.png"));
+    assert_eq!(
+        h.state().layout.floating,
+        [vec![Panel::Layers, Panel::Blocks]]
+    );
+    h.run();
+    save_png("drift_ui_stacked.png", &mut h);
+    // Pull Layers out of the stack by its header, onto the canvas: it floats on its own.
+    let header = h.state().header_rect(Panel::Layers).unwrap();
+    let from = header.left_center() + egui::vec2(60.0, 0.0);
+    let to = h.state().canvas_rect.left_center() + egui::vec2(120.0, 0.0);
+    drag_steps(&mut h, from, to, 10, None);
+    assert_eq!(
+        h.state().layout.floating,
+        [vec![Panel::Blocks], vec![Panel::Layers]]
+    );
+}
+
+#[test]
+fn a_tab_dropped_on_another_docks_tabs_goes_there() {
+    let Some(mut h) = harness() else { return };
+    h.state_mut()
+        .layout
+        .move_to(Panel::Sheets, Place::Dock(Side::Left), None);
+    h.run();
+    h.run();
+    // The Layers tab from the right dock onto the left dock's tab bar, just before Sheets.
+    let from = h.get_by_label("Layers").rect().center();
+    let sheets = h.get_by_label("Sheets").rect();
+    let to = egui::pos2(sheets.left() + 4.0, sheets.center().y);
+    drag_steps(&mut h, from, to, 12, Some("drift_ui_tab_to_dock.png"));
+    assert_eq!(
+        h.state().layout.dock(Side::Left),
+        [Panel::Layers, Panel::Sheets]
+    );
+}
+
 #[test]
 fn alt_c_draws_and_makes_construction_geometry() {
     use drift_core::LineKind;

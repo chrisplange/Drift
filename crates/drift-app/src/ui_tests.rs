@@ -3625,6 +3625,23 @@ fn control_bar_overlap_warning_and_corner_angles() {
         h.get_by_role_and_label(Role::Button, "Stroke");
         h.get_by_role_and_label(Role::Button, "Fill");
     }
+    // The tool's hint, in the middle of the status bar, stops short of every switch, however
+    // wide the right-hand group is (with this warning showing, and wider fonts, it used to lie
+    // over the leftmost ones and take their clicks).
+    let hint = h.get_by_label(&h.state().tool.hint()).rect();
+    for name in [
+        "Grid",
+        "Origin axes",
+        "End points",
+        "Auto relations",
+        "Status colours",
+    ] {
+        let r = h.get_by_label(name).rect();
+        assert!(
+            hint.right() <= r.left(),
+            "the hint {hint:?} over {name} {r:?}"
+        );
+    }
     // The setting is one click away, and the warning selects the doubled wall.
     h.get_by_label("Auto relations").click();
     h.run();

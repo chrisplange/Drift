@@ -1947,6 +1947,14 @@ zooms to fit; F is Fillet (again for Chamfer).
   dimensions: **Align dimensions** (on the first one's line) and **Space dimensions
   evenly** (three or more, between the outermost), in the right-click menu and the
   palette; ones not parallel to the first are left alone. `app/dim_align.rs`.
+- **Panel dragging and stacking (done).** A tab dragged along its bar follows the pointer
+  and the others reorder live (no drop zones). Dragged out, it follows the pointer: onto
+  another dock's tabs (a bar marks where), onto the top or bottom of a floating panel (a bar
+  along that edge) to stack there, or onto the canvas to float. Floating windows are
+  stacks (`Layout::floating: Vec<Vec<Panel>>`, `Layout::stack`; saved as `dock_stacks`,
+  with old `dock_float` read as one panel per window): a grip strip moves the stack, a
+  stacked panel's header pulls it out, dividers share the height. The full blue highlight
+  is kept for a floating panel dropped onto a dock.
 - **In-app updates (built on `in-app-updates`).** A custom updater on GitHub Releases
   (native only; `crates/drift-app/src/update`), chosen over Velopack (it would replace the
   Inno Setup and dmg packaging) and `self_update` (it replaces a bare binary, which suits

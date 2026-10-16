@@ -1,5 +1,5 @@
-//! Where the side panels are: docked as tabs at either side of the canvas, floating over it,
-//! or hidden. This is the layout state only (no egui), so it can be tested directly; the
+//! Where the side panels are: docked as tabs at either side of the canvas, floating over it
+//! (alone, or stacked one above another in a window), or hidden. This is the layout state only (no egui), so it can be tested directly; the
 //! panels themselves are drawn in `app::dock_ui`.
 
 use std::collections::HashMap;
@@ -99,7 +99,8 @@ pub struct Layout {
     pub active: [Option<Panel>; 2],
     /// A collapsed dock shows only a rail of icons.
     pub collapsed: [bool; 2],
-    pub floating: Vec<Panel>,
+    /// Floating windows, each a stack of panels from top to bottom.
+    pub floating: Vec<Vec<Panel>>,
     /// Where each hidden panel was, so showing it again puts it back.
     pub last: HashMap<Panel, Place>,
     /// The dock each panel was last in: where a floating panel goes back to when closed.
@@ -126,7 +127,7 @@ impl Layout {
             Place::Dock(Side::Left)
         } else if self.docks[1].contains(&p) {
             Place::Dock(Side::Right)
-        } else if self.floating.contains(&p) {
+        } else if self.floating.iter().any(|s| s.contains(&p)) {
             Place::Float
         } else {
             Place::Hidden
@@ -160,7 +161,39 @@ impl Layout {
                 }
             }
         }
-        self.floating.retain(|q| *q != p);
+        for stack in &mut self.floating {
+            stack.retain(|q| *q != p);
+        }
+        self.floating.retain(|s| !s.is_empty());
+    }
+
+    /// The floating stack a panel is in.
+    pub fn stack_of(&self, p: Panel) -> Option<&[Panel]> {
+        self.floating
+            .iter()
+            .find(|s| s.contains(&p))
+            .map(Vec::as_slice)
+    }
+
+    /// Float `p` in the stack `onto` is in, just above or (`below`) just below it. Nothing
+    /// happens if `onto` isn't floating or is `p` itself.
+    pub fn stack(&mut self, p: Panel, onto: Panel, below: bool) {
+        if p == onto || self.place(onto) != Place::Float {
+            return;
+        }
+        let was = self.place(p);
+        if let Place::Dock(side) = was {
+            if side == Side::Left {
+                self.home.insert(p, side);
+            } else {
+                self.home.remove(&p);
+            }
+        }
+        self.take(p);
+        if let Some(stack) = self.floating.iter_mut().find(|s| s.contains(&onto)) {
+            let at = stack.iter().position(|q| *q == onto).unwrap_or(0) + usize::from(below);
+            stack.insert(at, p);
+        }
     }
 
     /// Move a panel: into a dock (at `index`, or last) in front, floating, or hidden.
@@ -197,7 +230,7 @@ impl Layout {
                 self.active[i] = Some(p);
                 self.collapsed[i] = false;
             }
-            Place::Float => self.floating.push(p),
+            Place::Float => self.floating.push(vec![p]),
             Place::Hidden => {}
         }
     }
@@ -246,11 +279,17 @@ impl Layout {
     /// Preferences as `key=value` pairs for the view settings string.
     pub fn prefs(&self) -> Vec<String> {
         let list = |v: &[Panel]| v.iter().map(|p| p.key()).collect::<Vec<_>>().join(",");
+        let stacks = self
+            .floating
+            .iter()
+            .map(|s| list(s))
+            .collect::<Vec<_>>()
+            .join("|");
         let active = |a: Option<Panel>| a.map_or("", Panel::key);
         let mut out = vec![
             format!("dock_left={}", list(&self.docks[0])),
             format!("dock_right={}", list(&self.docks[1])),
-            format!("dock_float={}", list(&self.floating)),
+            format!("dock_stacks={stacks}"),
             format!("dock_front_left={}", active(self.active[0])),
             format!("dock_front_right={}", active(self.active[1])),
             format!(
@@ -305,7 +344,18 @@ impl Layout {
             match *key {
                 "dock_left" => layout.docks[0] = panels(value),
                 "dock_right" => layout.docks[1] = panels(value),
-                "dock_float" => layout.floating = panels(value),
+                // Stacks of floating panels, '|' between them.
+                "dock_stacks" => {
+                    layout.floating = value
+                        .split('|')
+                        .map(panels)
+                        .filter(|s| !s.is_empty())
+                        .collect();
+                }
+                // Before stacks: each floating panel on its own.
+                "dock_float" if !pairs.iter().any(|(k, _)| *k == "dock_stacks") => {
+                    layout.floating = panels(value).into_iter().map(|p| vec![p]).collect();
+                }
                 "dock_front_left" => layout.active[0] = Panel::parse(value),
                 "dock_front_right" => layout.active[1] = Panel::parse(value),
                 "dock_collapsed" => {
@@ -339,13 +389,14 @@ impl Layout {
         // Each panel in one place only.
         let mut seen = Vec::new();
         let [left, right] = &mut layout.docks;
-        for list in [left, right, &mut layout.floating] {
+        for list in [left, right].into_iter().chain(layout.floating.iter_mut()) {
             list.retain(|p| {
                 let new = !seen.contains(p);
                 seen.push(*p);
                 new
             });
         }
+        layout.floating.retain(|s| !s.is_empty());
         for i in 0..2 {
             if !layout.active[i].is_some_and(|a| layout.docks[i].contains(&a)) {
                 layout.active[i] = layout.docks[i].first().copied();
@@ -430,10 +481,44 @@ mod tests {
     }
 
     #[test]
+    fn floating_panels_stack_and_come_apart() {
+        let mut l = Layout::default();
+        l.move_to(Panel::Layers, Place::Float, None);
+        // A docked tab stacked below a floating panel joins its window.
+        l.stack(Panel::Blocks, Panel::Layers, true);
+        assert_eq!(l.floating, [vec![Panel::Layers, Panel::Blocks]]);
+        assert_eq!(l.place(Panel::Blocks), Place::Float);
+        assert!(!l.dock(Side::Right).contains(&Panel::Blocks));
+        // Another above the first.
+        l.stack(Panel::Sheets, Panel::Layers, false);
+        assert_eq!(
+            l.stack_of(Panel::Blocks),
+            Some([Panel::Sheets, Panel::Layers, Panel::Blocks].as_slice())
+        );
+        // Pulled out to float alone: its own window; the stack keeps the rest.
+        l.move_to(Panel::Layers, Place::Float, None);
+        assert_eq!(
+            l.floating,
+            [vec![Panel::Sheets, Panel::Blocks], vec![Panel::Layers]]
+        );
+        // Docked: out of its stack; an emptied stack is gone.
+        l.move_to(Panel::Layers, Place::Dock(Side::Left), None);
+        assert_eq!(l.floating.len(), 1);
+        // Closing a stacked panel sends it home; it remembers where it came from.
+        l.redock(Panel::Blocks);
+        assert_eq!(l.place(Panel::Blocks), Place::Dock(Side::Right));
+        // Stacking onto a docked panel, or onto itself, does nothing.
+        l.stack(Panel::Sheets, Panel::Inspector, true);
+        l.stack(Panel::Sheets, Panel::Sheets, true);
+        assert_eq!(l.floating, [vec![Panel::Sheets]]);
+    }
+
+    #[test]
     fn layout_survives_a_round_trip() {
         let mut l = Layout::default();
         l.move_to(Panel::Layers, Place::Dock(Side::Left), None);
-        l.move_to(Panel::Blocks, Place::Float, None);
+        l.move_to(Panel::Inspector, Place::Float, None);
+        l.stack(Panel::Blocks, Panel::Inspector, true);
         l.move_to(Panel::Sheets, Place::Hidden, None);
         l.collapsed[0] = true;
         l.active[1] = Some(Panel::Parameters);
@@ -442,6 +527,10 @@ mod tests {
         let mut back = Layout::default();
         back.apply(&pairs);
         assert_eq!(back, l);
+        // Floating panels saved before stacks: each on its own.
+        let mut old = Layout::default();
+        old.apply(&[("dock_right", "inspector"), ("dock_float", "layers,blocks")]);
+        assert_eq!(old.floating, [vec![Panel::Layers], vec![Panel::Blocks]]);
         // Old preferences without dock keys leave the default alone.
         let mut d = Layout::default();
         d.apply(&[("grid", "1")]);

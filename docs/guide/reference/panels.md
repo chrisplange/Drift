@@ -3,8 +3,17 @@
 Drift has five panels. They start docked as tabs on the right of the window.
 
 - Click a tab's icon to bring that panel to the front.
-- Drag a tab onto the canvas to float the panel; drag it (or a floating panel's header) onto
-  either side to dock it there. Blue drop zones show where it will go.
+- Drag a tab along its tab bar to reorder the tabs: the tab follows the pointer and the
+  others make room.
+- Drag a tab out of its bar and it follows the pointer:
+  - onto another dock's tabs to dock it there (a bar shows where it will go);
+  - onto the top or bottom of a floating panel to stack it there, in the same window
+    (a bar along that edge shows which);
+  - onto the canvas to float it on its own.
+- A floating panel on its own moves by its header. Dragged over a dock, the dock lights up
+  to take it; over the top or bottom of another floating panel, it stacks there.
+- In a stack, drag a panel's header to pull it out, the dotted strip along the top to move
+  the whole stack, and the line between two panels to share the height differently.
 - Right-click a tab, or use the **⋯** menu, to dock, float or close it.
 - **»** collapses the dock to a strip of icons. A narrow window collapses both docks.
 - **View → Panels** shows or hides each panel, **Hide all panels** (Ctrl+\) clears them all

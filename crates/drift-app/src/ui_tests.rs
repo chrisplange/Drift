@@ -778,6 +778,64 @@ fn curve_relations_and_driven_dimensions_render() {
 }
 
 #[test]
+fn a_dragged_dimension_snaps_level_with_another() {
+    let Some(mut h) = harness() else { return };
+    h.get_by_label("File").click();
+    h.run();
+    h.get_by_label("Open example").click();
+    h.run();
+    let horizontal = |h: &Harness<'_, DriftApp>| {
+        let app = h.state();
+        let painter =
+            egui::Painter::new(h.ctx.clone(), egui::LayerId::background(), app.canvas_rect);
+        let mut dims: Vec<_> = app
+            .layout_dimensions(&painter, &screen_map(h))
+            .into_iter()
+            .filter(|d| {
+                matches!(
+                    d.constraint,
+                    drift_core::Constraint::HorizontalDistance { .. }
+                )
+            })
+            .collect();
+        dims.sort_by(|a, b| a.handle.y.total_cmp(&b.handle.y));
+        dims
+    };
+    let dims = horizontal(&h);
+    assert!(dims.len() >= 2, "the plate's stacked horizontal dimensions");
+    // Drag the lower one's label up to 3 px short of the one above's line.
+    let (above, below) = (&dims[dims.len() - 2], &dims[dims.len() - 1]);
+    let (id, from) = (below.id.unwrap(), below.handle);
+    let to = egui::pos2(from.x + 10.0, above.handle.y + 3.0);
+    h.hover_at(from);
+    h.run();
+    button(&h, from, true);
+    h.run();
+    for k in 1..=6 {
+        h.hover_at(from + (to - from) * (k as f32 / 6.0));
+        h.run();
+    }
+    assert!(
+        h.state().dim_guide.is_some(),
+        "a guide shows what it snapped to"
+    );
+    save_png("drift_ui_dimension_snap.png", &mut h);
+    button(&h, to, false);
+    h.run();
+    let moved = horizontal(&h)
+        .into_iter()
+        .find(|d| d.id == Some(id))
+        .unwrap();
+    assert!(
+        (moved.handle.y - above.handle.y).abs() < 0.5,
+        "level: {} vs {}",
+        moved.handle.y,
+        above.handle.y
+    );
+    assert!(h.state().dim_guide.is_none());
+}
+
+#[test]
 fn alt_c_draws_and_makes_construction_geometry() {
     use drift_core::LineKind;
     let Some(mut h) = harness() else { return };

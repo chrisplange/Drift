@@ -873,6 +873,29 @@ impl DriftApp {
                 self.set_annotations_shown(&refs, None, Some(!sheets), now);
                 ui.close();
             }
+            let (align, space) = self.can_align_dimensions();
+            if align || space {
+                ui.separator();
+                if ui
+                    .add_enabled(align, egui::Button::new("Align dimensions"))
+                    .on_hover_text("Put the picked parallel dimensions on the first one's line")
+                    .clicked()
+                {
+                    self.align_picked_dimensions(false, now);
+                    ui.close();
+                }
+                if ui
+                    .add_enabled(space, egui::Button::new("Space dimensions evenly"))
+                    .on_hover_text(
+                        "Space three or more stacked parallel dimensions evenly between the                          outermost two",
+                    )
+                    .clicked()
+                {
+                    self.align_picked_dimensions(true, now);
+                    ui.close();
+                }
+                ui.separator();
+            }
             let mut hidden = self.show_hidden_annotations;
             if ui
                 .add(egui::Checkbox::new(

@@ -1932,6 +1932,11 @@ zooms to fit; F is Fillet (again for Chamfer).
   `apps/native/assets/make_icon.py` writes the window icon, the Windows .ico and the macOS
   icon source; `icons::logo` draws the same mark on the start screen. Linework variants
   (outline, line with nodes) were drawn too; the user chose the bold one for now.
+- **Dimension alignment (done).** A dragged label snaps so its line is level with a
+  parallel dimension's within 6 pt, with a dashed guide (Ctrl places freely). Shift+picked
+  dimensions: **Align dimensions** (on the first one's line) and **Space dimensions
+  evenly** (three or more, between the outermost), in the right-click menu and the
+  palette; ones not parallel to the first are left alone. `app/dim_align.rs`.
 - **In-app updates (built on `in-app-updates`).** A custom updater on GitHub Releases
   (native only; `crates/drift-app/src/update`), chosen over Velopack (it would replace the
   Inno Setup and dmg packaging) and `self_update` (it replaces a bare binary, which suits

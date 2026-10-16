@@ -20,6 +20,11 @@ pub(crate) const DXF_FILE: FileType = FileType {
     name: "DXF",
     extensions: &["dxf"],
 };
+/// What File → Import takes: CAD drawings, and artwork from Illustrator and the like.
+pub(crate) const IMPORT_FILE: FileType = FileType {
+    name: "DXF, SVG, PDF or Illustrator",
+    extensions: &["dxf", "svg", "pdf", "ai"],
+};
 
 /// A change to the sheet's views asked for from the panel, made once its own edits are in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -314,45 +319,55 @@ impl DriftApp {
                 self.editor.doc.begin();
                 let report = drift_io::dxf::add_to_document(&mut self.editor.doc, &import);
                 self.editor.commit("Import DXF");
-                let mut came_in = Vec::new();
-                let mut count = |n: usize, one: &str, many: &str| {
-                    if n > 0 {
-                        came_in.push(format!("{n} {}", if n == 1 { one } else { many }));
-                    }
-                };
-                count(report.curves, "curve", "curves");
-                count(report.texts, "line of text", "lines of text");
-                count(report.fills, "hatch or fill", "hatches and fills");
-                count(report.copies, "block copy", "block copies");
-                count(report.blocks, "block", "blocks");
-                count(report.dimensions, "dimension", "dimensions");
-                count(report.layers, "new layer", "new layers");
-                count(report.sheets, "sheet", "sheets");
-                let summary = if came_in.is_empty() {
-                    format!("Nothing to import in {name}")
-                } else {
-                    format!("Imported {} from {name}", came_in.join(", "))
-                };
-                let skipped: Vec<String> = report
-                    .skipped
-                    .iter()
-                    .map(|(kind, n)| format!("{n} × {kind}"))
-                    .collect();
-                // Anything left out or read approximately is worth more than a passing
-                // message.
-                if !skipped.is_empty() || !report.notes.is_empty() {
-                    self.import_report = Some(ImportSummary {
-                        title: name.to_owned(),
-                        summary: summary.clone(),
-                        skipped,
-                        notes: report.notes.clone(),
-                    });
-                }
-                self.set_status(summary, false, now);
-                self.fit_target = Some(self.fit_bounds());
+                self.report_import(name, &report, now);
             }
             Err(e) => self.set_status(format!("Could not import {name}: {e}"), true, now),
         }
+    }
+
+    /// Say what an import brought in; what it left out or changed stays up in a report.
+    pub(crate) fn report_import(
+        &mut self,
+        name: &str,
+        report: &drift_io::dxf::ImportReport,
+        now: f64,
+    ) {
+        let mut came_in = Vec::new();
+        let mut count = |n: usize, one: &str, many: &str| {
+            if n > 0 {
+                came_in.push(format!("{n} {}", if n == 1 { one } else { many }));
+            }
+        };
+        count(report.curves, "curve", "curves");
+        count(report.texts, "line of text", "lines of text");
+        count(report.fills, "hatch or fill", "hatches and fills");
+        count(report.copies, "block copy", "block copies");
+        count(report.blocks, "block", "blocks");
+        count(report.dimensions, "dimension", "dimensions");
+        count(report.layers, "new layer", "new layers");
+        count(report.sheets, "sheet", "sheets");
+        let summary = if came_in.is_empty() {
+            format!("Nothing to import in {name}")
+        } else {
+            format!("Imported {} from {name}", came_in.join(", "))
+        };
+        let skipped: Vec<String> = report
+            .skipped
+            .iter()
+            .map(|(kind, n)| format!("{n} × {kind}"))
+            .collect();
+        // Anything left out or read approximately is worth more than a passing
+        // message.
+        if !skipped.is_empty() || !report.notes.is_empty() {
+            self.import_report = Some(ImportSummary {
+                title: name.to_owned(),
+                summary: summary.clone(),
+                skipped,
+                notes: report.notes.clone(),
+            });
+        }
+        self.set_status(summary, false, now);
+        self.fit_target = Some(self.fit_bounds());
     }
 
     /// The report of the last import, until it is closed.

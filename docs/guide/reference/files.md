@@ -53,13 +53,14 @@ session, so the next start is fresh.
 
 | | Format | Notes |
 |---|---|---|
-| Import | DXF (ASCII) | As geometry: **File → Import DXF…**. See [Underlays and DXF import](../tutorials/11-underlays-and-dxf.md). Binary DXF and DWG aren't read. |
-| Import | PDF, DXF | As an underlay to trace: **File → Import underlay…**. Vector PDFs only. |
+| Import | DXF (ASCII) | As geometry: **File → Import…**. See [Underlays and DXF import](../tutorials/11-underlays-and-dxf.md). Binary DXF and DWG aren't read. |
+| Import | SVG, PDF, Illustrator (`.ai`) | As geometry or an underlay, at a drawing scale (found from its dimensions where it can be) or calibrated: **File → Import…**. See [Part 3](../tutorials/11-underlays-and-dxf.md#part-3-import-svg-pdf-and-illustrator-artwork). Vector PDFs only. |
+| Import | PDF, DXF, SVG, `.ai` | As an underlay to trace: **File → Import underlay…**. |
 | Import | `.pat` | Hatch patterns: **Parameters → Hatch patterns → Import .pat…**. |
 | Import | `.ttf`, `.otf` | Fonts: **Add a font file…** in any font menu. |
 | Import | SVG | A title-block logo: **Sheets → Logo → Choose SVG…**. |
 | Export | PDF | Every sheet, true scale. |
-| Export | SVG | The current sheet, true scale. |
+| Export | SVG | The current sheet, true scale: a named group per layer (Inkscape layers; Illustrator groups, which **Release to Layers** turns into layers) and joined paths. |
 | Export | DXF (R12) | The model at full size, with layers, line types and blocks. |
 
 Exports never replace the `.drift` file: Ctrl+S always saves the sketch. See

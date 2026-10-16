@@ -448,9 +448,13 @@ impl Editor {
             .chain(&region.holes)
             .flat_map(|lp| lp.edges.iter().map(|e| e.shape()))
             .collect();
+        let bounding = self.fill_edges();
         self.doc
             .iter()
-            .filter(|(_, e)| !e.kind.is_point() && e.style == drift_core::LineKind::Solid)
+            .filter(|(id, e)| {
+                !e.kind.is_point()
+                    && (e.style == drift_core::LineKind::Solid || bounding.contains(id))
+            })
             .filter_map(|(id, _)| Some((id, self.doc.shape(id)?)))
             .filter(|(_, shape)| {
                 // The parameter at the curve's end (see `point_at`).

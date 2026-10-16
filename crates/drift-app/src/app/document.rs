@@ -331,11 +331,16 @@ impl DriftApp {
                     contents,
                 } => {
                     let lower = name.to_ascii_lowercase();
-                    // Real PDFs (by content, not name) are only ever underlays; DXF files are
-                    // when asked for.
+                    // From Import underlay: an underlay. Otherwise a PDF (by its content, not
+                    // its name) or an SVG asks how it should come in.
                     let as_underlay = std::mem::take(&mut self.import_as_underlay);
-                    if contents.starts_with(b"%PDF") || (as_underlay && lower.ends_with(".dxf")) {
+                    let pdf = contents.starts_with(b"%PDF");
+                    if as_underlay && (pdf || lower.ends_with(".dxf") || lower.ends_with(".svg")) {
                         self.import_underlay_file(&name, contents, now);
+                        continue;
+                    }
+                    if pdf || lower.ends_with(".svg") || lower.ends_with(".ai") {
+                        self.begin_vector_import(&name, contents, now);
                         continue;
                     }
                     let text = String::from_utf8_lossy(&contents);

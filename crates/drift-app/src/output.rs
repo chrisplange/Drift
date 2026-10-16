@@ -690,10 +690,31 @@ pub fn paint_drawing(
             .iter()
             .map(|v| (v * d.line_type_scale) as f32 * px)
             .collect();
-        let line = |pts: Vec<Pos2>| {
+        // Strokes end and turn round, as in the PDF: a dot at each end (and, for `corners`,
+        // at each corner), so lines that meet look joined.
+        let round = |pts: &[Pos2], corners: bool| {
+            if stroke.width < 1.5 {
+                return;
+            }
+            let r = stroke.width / 2.0;
+            match pts {
+                [] => {}
+                [first, .., last] if !corners => {
+                    p.circle_filled(*first, r, color);
+                    p.circle_filled(*last, r, color);
+                }
+                _ => {
+                    for q in pts {
+                        p.circle_filled(*q, r, color);
+                    }
+                }
+            }
+        };
+        let line = |pts: Vec<Pos2>, corners: bool| {
             if dashes.len() >= 2 && dashes[0] > 1.0 {
                 p.extend(egui::Shape::dashed_line(&pts, stroke, dashes[0], dashes[1]));
             } else {
+                round(&pts, corners);
                 p.add(egui::Shape::line(pts, stroke));
             }
         };
@@ -706,28 +727,30 @@ pub fn paint_drawing(
                 .collect()
         };
         match &it.prim {
-            Prim::Line(a, b) => line(vec![to_screen(*a), to_screen(*b)]),
+            Prim::Line(a, b) => line(vec![to_screen(*a), to_screen(*b)], false),
             Prim::Polyline { points, closed } => {
                 let mut pts: Vec<Pos2> = points.iter().map(|q| to_screen(*q)).collect();
                 if *closed && let Some(first) = pts.first().copied() {
                     pts.push(first);
                 }
-                line(pts);
+                line(pts, true);
             }
-            Prim::Circle { center, radius } => {
-                line(arc_points(*center, *radius, 0.0, std::f64::consts::TAU))
-            }
+            Prim::Circle { center, radius } => line(
+                arc_points(*center, *radius, 0.0, std::f64::consts::TAU),
+                false,
+            ),
             Prim::Arc {
                 center,
                 radius,
                 start,
                 sweep,
-            } => line(arc_points(*center, *radius, *start, *sweep)),
+            } => line(arc_points(*center, *radius, *start, *sweep), false),
             Prim::Ellipse { .. } | Prim::Bezier { .. } => line(
                 drift_draft::page::prim_points(&it.prim)
                     .into_iter()
                     .map(&to_screen)
                     .collect(),
+                false,
             ),
             Prim::Fill {
                 rings,

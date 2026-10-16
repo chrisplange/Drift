@@ -8,6 +8,8 @@ pub enum UnderlayMode {
     #[default]
     Calibrate,
     Move,
+    /// Calibrate what the last import brought in (scaling it, not an underlay).
+    CalibrateImport,
 }
 
 #[derive(Default)]
@@ -33,6 +35,20 @@ impl UnderlayTool {
     }
 
     fn calibrate(&mut self, b: DVec2, distance: f64, ed: &mut Editor) {
+        if self.mode == UnderlayMode::CalibrateImport {
+            if let Some(a) = self.first {
+                ed.notice = Some(match ed.calibrate_import(a, b, distance) {
+                    Ok(k) => format!(
+                        "Calibrated: that distance is now {} (scaled × {})",
+                        ed.doc.units().format_readout(distance),
+                        trim_factor(k)
+                    ),
+                    Err(e) => e,
+                });
+            }
+            self.reset();
+            return;
+        }
         let (Some(id), Some(a)) = (ed.active_underlay(), self.first) else {
             return;
         };
@@ -72,7 +88,7 @@ impl Tool for UnderlayTool {
 
     fn kind(&self) -> ToolKind {
         match self.mode {
-            UnderlayMode::Calibrate => ToolKind::Calibrate,
+            UnderlayMode::Calibrate | UnderlayMode::CalibrateImport => ToolKind::Calibrate,
             UnderlayMode::Move => ToolKind::MoveUnderlay,
         }
     }
@@ -83,10 +99,14 @@ impl Tool for UnderlayTool {
                 "Calibrate: click a point of known distance on the underlay (e.g. a wall end)"
                     .into()
             }
-            (UnderlayMode::Calibrate, Some(_), None) => {
+            (UnderlayMode::CalibrateImport, None, _) => {
+                "Calibrate the import: click a point of known distance on it (e.g. a wall end)"
+                    .into()
+            }
+            (UnderlayMode::Calibrate | UnderlayMode::CalibrateImport, Some(_), None) => {
                 "Click the other end, or type the real distance and press Enter".into()
             }
-            (UnderlayMode::Calibrate, Some(_), Some(_)) => {
+            (UnderlayMode::Calibrate | UnderlayMode::CalibrateImport, Some(_), Some(_)) => {
                 "Type the real distance between the two points and press Enter".into()
             }
             (UnderlayMode::Move, None, _) => "Move underlay: click a point on it".into(),
@@ -101,6 +121,15 @@ impl Tool for UnderlayTool {
             }
             return;
         };
+        if self.mode == UnderlayMode::CalibrateImport {
+            let at = p.pos();
+            match self.first {
+                None => self.first = Some(at),
+                Some(a) if a.distance(at) > 1e-9 => self.second = Some(at),
+                Some(_) => {}
+            }
+            return;
+        }
         let Some(id) = ed.active_underlay() else {
             ed.notice = Some("Pick an underlay in the Layers tab first".into());
             return;
@@ -112,7 +141,7 @@ impl Tool for UnderlayTool {
         let at = p.pos();
         match (self.mode, self.first) {
             (_, None) => self.first = Some(at),
-            (UnderlayMode::Calibrate, Some(a)) => {
+            (UnderlayMode::Calibrate | UnderlayMode::CalibrateImport, Some(a)) => {
                 if a.distance(at) > 1e-9 {
                     self.second = Some(at);
                 }
@@ -150,7 +179,7 @@ impl Tool for UnderlayTool {
         let a = self.first?;
         let b = self.second.unwrap_or_else(|| p.pos());
         Some(match self.mode {
-            UnderlayMode::Calibrate => {
+            UnderlayMode::Calibrate | UnderlayMode::CalibrateImport => {
                 format!("Measured {}", p.units.format_readout(a.distance(b)))
             }
             UnderlayMode::Move => format!("Move {}", p.units.format_readout(a.distance(b))),
@@ -158,7 +187,7 @@ impl Tool for UnderlayTool {
     }
 
     fn fields(&self) -> &'static [&'static str] {
-        if self.mode == UnderlayMode::Calibrate && self.first.is_some() {
+        if self.mode != UnderlayMode::Move && self.first.is_some() {
             &["Distance"]
         } else {
             &[]
@@ -176,4 +205,10 @@ impl Tool for UnderlayTool {
         let b = self.second.unwrap_or_else(|| p.pos());
         self.calibrate(b, distance, ed);
     }
+}
+
+/// A scale factor, without trailing zeros.
+fn trim_factor(k: f64) -> String {
+    let s = format!("{k:.4}");
+    s.trim_end_matches('0').trim_end_matches('.').to_owned()
 }

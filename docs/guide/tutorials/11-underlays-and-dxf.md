@@ -66,7 +66,7 @@ Underlays are kept inside the `.drift` file. They never print or export.
 
 ## Part 2: import a DXF as geometry
 
-1. Choose **File → Import DXF…** and pick the file. Or drop a DXF on the window.
+1. Choose **File → Import…** and pick the file. Or drop a DXF on the window.
 2. The drawing is added to the open sketch, in its own units (read from the file; a file
    that doesn't say is read in your display unit).
 3. A report window lists what came in, anything left out, and anything read with changes.
@@ -93,11 +93,63 @@ read: save them as DXF first.
 
 Drift's DXF export is described in [Sheets and output](10-sheets-and-output.md#5-output).
 
+## Part 3: import SVG, PDF and Illustrator artwork
+
+Drawings made in Illustrator (with or without CADTools), Inkscape, Affinity or Figma, and PDFs
+from any CAD program, come in the same way. Illustrator `.ai` files are read through the PDF
+copy of the artwork Illustrator saves in them, so **Create PDF Compatible File** must have been
+on when the file was saved (it is unless someone turned it off). Files from Illustrator 8 and
+earlier aren't read.
+
+1. Choose **File → Import…** and pick an SVG, PDF or `.ai` file. Or drop one on the window.
+2. In the dialog, choose:
+   - **Editable geometry** or **Underlay to trace**.
+   - The **page** (an **artboard**, for an Illustrator file).
+   - **Drawn at**: the scale the drawing is at on its paper. At 1:50, 1 mm on the paper is
+     50 mm in the sketch. The dialog shows how big that makes it. Drift sets it for you when
+     it can tell: it reads the drawing's dimensions (`28 1/2"`, `3'-6"`, `3600`) and measures
+     the lines they're written along, and, failing those, reads the scales written on it
+     (`SCALE: 1/4" = 1'-0"`). It says which it used, and how many agreed. A sheet with views
+     at several scales gets the one most of its dimensions are at.
+   - **Then calibrate**, if you don't know the scale or want to check it. Once it's in,
+     click two points on it (a wall's ends, say) and type their real distance: the import
+     is scaled to fit, about the first point.
+   - What to do with **edges of shapes that are filled but not outlined**: construction
+     (they shape the fill and don't print, so it looks as it did) or lines (they print).
+3. A report lists what came in and anything left out.
+
+What comes in:
+
+- Paths and shapes, as lines, arcs, circles and Béziers. Curves that are pieces of a circle
+  come back as true arcs and circles. Touching ends share points.
+- Strokes: colour, line weight and dashes (as the nearest Drift line type).
+- Fills, as live solid fills in their colour, holes and all.
+- Layers: Illustrator's and Inkscape's layers, and a PDF's layers, hidden, locked or
+  non-printing as the file has them. Anything outside a layer goes on a layer named after
+  the file.
+- Text, as sketch text, with dimension fractions put back together (`28 1/2"`). PDF text in
+  a font that doesn't say what its characters are (rare) is counted in the report.
+
+Imported artwork has no relations or dimensions: it is free to move and edit, and you add
+constraints where you want them.
+
+What doesn't: images, gradients (an SVG gradient comes in as its first colour),
+transparency, and clipping (what a clip hid comes in too). Illustrator's brushes, width
+profiles and effects come in as the filled shapes they draw, and text converted to outlines
+comes in as shapes. An SVG
+from Illustrator is read at Illustrator's size, 72 units to the inch.
+
+Drift's own SVG export opens well in Illustrator and Inkscape: each layer is a named group
+(Inkscape shows them as layers; in Illustrator, **Release to Layers** makes layers of
+them), and curves that meet are joined into one path.
+
 ## What you learned
 
 - **File → Import underlay…** puts a PDF or DXF behind the sketch to trace; calibrate it
   from two points and a known distance.
-- **File → Import DXF…** brings a DXF in as editable geometry, with a report of what changed.
+- **File → Import…** brings a DXF in as editable geometry, with a report of what changed.
+- An SVG or PDF comes in the same way, as geometry or an underlay, at the scale it was drawn
+  at or calibrated from two points.
 
 ## Next
 

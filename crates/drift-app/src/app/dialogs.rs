@@ -47,6 +47,7 @@ pub(crate) fn keycaps(ui: &mut egui::Ui, keys: &str) {
 impl DriftApp {
     pub(crate) fn dialogs(&mut self, ctx: &egui::Context) {
         self.underlay_dialog(ctx);
+        self.vector_import_dialog(ctx);
         self.start_panel(ctx);
         self.about_window(ctx);
         self.settings_window(ctx);

@@ -227,7 +227,12 @@ impl DriftApp {
         add(Command::OpenExample, "Open example", "File", String::new());
         add(Command::Save, "Save", "File", ctrl("S"));
         add(Command::SaveAs, "Save as…", "File", ctrl_shift("S"));
-        add(Command::ImportDxf, "Import DXF…", "File", String::new());
+        add(
+            Command::ImportDxf,
+            "Import DXF, SVG, PDF or Illustrator…",
+            "File",
+            String::new(),
+        );
         add(
             Command::ImportUnderlay,
             "Import underlay (PDF or DXF)…",
@@ -473,7 +478,7 @@ impl DriftApp {
             Command::OpenExample => self.request(Pending::Example),
             Command::Save => self.save(),
             Command::SaveAs => self.save_as(),
-            Command::ImportDxf => self.files.open(app::sheets_ui::DXF_FILE),
+            Command::ImportDxf => self.files.open(app::sheets_ui::IMPORT_FILE),
             Command::ImportUnderlay => self.pick_underlay_file(),
             Command::ExportPdf => self.export_pdf(&painter),
             Command::ExportSvg => self.export_svg(&painter),

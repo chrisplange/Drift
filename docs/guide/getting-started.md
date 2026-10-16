@@ -124,8 +124,7 @@ The window has five parts:
 2. **The top bar.** On the left, the active tool and its options. With **Select** and
    something picked, it shows the selection's **Layer**, **Stroke** (colour, weight, line
    type), **Fill**, a **Construction** button, an **Actions** menu and **Delete**. On the
-   right are two switches, **Auto relations** and **End points**, and the
-   **Search commands** field.
+   right is the **Search commands** field.
 3. **The canvas** (middle). Geometry, dimensions and relation symbols. The green and red
    lines are the Y and X axes through the origin.
 4. **The panels** (right). **Inspector**, **Parameters**, **Layers**, **Sheets** and

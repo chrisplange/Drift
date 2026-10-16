@@ -453,15 +453,6 @@ impl DriftApp {
                 if self.search_field(ui) {
                     self.open_palette();
                 }
-                ui.toggle_value(&mut self.always_endpoints, "End points")
-                    .on_hover_text(
-                        "Show every end point, or only those of hovered and picked curves",
-                    );
-                ui.toggle_value(&mut self.auto_relations, "Auto relations")
-                    .on_hover_text(
-                        "Add relations as you draw and modify (horizontal, coincident, \
-                         tangent, symmetric...). Off: plain geometry, nothing added for you",
-                    );
                 divider(ui);
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     // Whatever doesn't fit is cut off rather than drawn over the right side.

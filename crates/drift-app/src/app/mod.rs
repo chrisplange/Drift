@@ -3,6 +3,7 @@
 mod blocks_ui;
 pub(crate) mod checker_ui;
 mod context_ui;
+pub(crate) mod crosshair;
 pub(crate) mod dialogs;
 pub(crate) mod dim_align;
 pub(crate) mod dock_ui;

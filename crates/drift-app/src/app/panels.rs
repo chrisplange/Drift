@@ -1365,152 +1365,170 @@ impl DriftApp {
                 },
             );
             // Right-hand cluster first, so the hint takes what is left.
-            let right = ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.spacing_mut().item_spacing.x = 6.0;
-                // Zoom as a percentage of real size on a 96 dpi screen.
-                let zoom = self.camera.scale * 25.4 / 96.0 * 100.0;
-                let button = ui
-                    .add(
-                        egui::Button::new(
-                            egui::RichText::new(format!("{zoom:.0}%"))
-                                .monospace()
-                                .color(ui.visuals().weak_text_color()),
+            let right =
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    // Zoom as a percentage of real size on a 96 dpi screen.
+                    let zoom = self.camera.scale * 25.4 / 96.0 * 100.0;
+                    let button = ui
+                        .add(
+                            egui::Button::new(
+                                egui::RichText::new(format!("{zoom:.0}%"))
+                                    .monospace()
+                                    .color(ui.visuals().weak_text_color()),
+                            )
+                            .frame_when_inactive(false),
                         )
-                        .frame_when_inactive(false),
-                    )
-                    .on_hover_text("Zoom: click for fit, selection and fixed sizes");
-                egui::Popup::menu(&button).show(|ui| self.zoom_menu(ui));
-                if !self.editor.doc.is_empty() {
-                    let analysis = self.editor.analysis();
-                    let dark = ui.visuals().dark_mode;
-                    let (text, color) = if !analysis.converged {
-                        (
-                            format!("{} conflicting", analysis.conflicts.len()),
-                            ui.visuals().error_fg_color,
-                        )
-                    } else if analysis.dof == Some(0) {
-                        ("Fully defined".to_owned(), theme::ok_color(dark))
+                        .on_hover_text("Zoom: click for fit, selection and fixed sizes");
+                    egui::Popup::menu(&button).show(|ui| self.zoom_menu(ui));
+                    if !self.editor.doc.is_empty() {
+                        let analysis = self.editor.analysis();
+                        let dark = ui.visuals().dark_mode;
+                        let (text, color) = if !analysis.converged {
+                            (
+                                format!("{} conflicting", analysis.conflicts.len()),
+                                ui.visuals().error_fg_color,
+                            )
+                        } else if analysis.dof == Some(0) {
+                            ("Fully defined".to_owned(), theme::ok_color(dark))
+                        } else {
+                            (
+                                format!("{} DOF free", analysis.dof.unwrap_or(0)),
+                                theme::under_color(dark),
+                            )
+                        };
+                        theme::pill(ui, &text, color).on_hover_text(
+                            "Degrees of freedom: how much the sketch can still move",
+                        );
+                    }
+                    // Curves drawn on top of others: a warning that selects them when clicked.
+                    // (Not re-counted in the middle of a drag.)
+                    let overlaps = if self.tool.is_busy() {
+                        self.editor
+                            .overlap_cache
+                            .borrow()
+                            .as_ref()
+                            .map(|(_, found)| found.clone())
+                            .unwrap_or_default()
                     } else {
-                        (
-                            format!("{} DOF free", analysis.dof.unwrap_or(0)),
-                            theme::under_color(dark),
-                        )
+                        self.editor.overlapping()
                     };
-                    theme::pill(ui, &text, color)
-                        .on_hover_text("Degrees of freedom: how much the sketch can still move");
-                }
-                // Curves drawn on top of others: a warning that selects them when clicked.
-                // (Not re-counted in the middle of a drag.)
-                let overlaps = if self.tool.is_busy() {
-                    self.editor
-                        .overlap_cache
-                        .borrow()
-                        .as_ref()
-                        .map(|(_, found)| found.clone())
-                        .unwrap_or_default()
-                } else {
-                    self.editor.overlapping()
-                };
-                if !overlaps.is_empty() {
-                    let amber = egui::Color32::from_rgb(0xff, 0x9f, 0x0a);
-                    let pill = theme::pill(ui, &format!("{} overlapping", overlaps.len()), amber);
-                    let click = ui
-                        .interact(pill.rect, ui.id().with("overlaps"), egui::Sense::click())
-                        .on_hover_text(
-                            "Curves drawn on top of other curves (the same line twice, or the \
+                    if !overlaps.is_empty() {
+                        let amber = egui::Color32::from_rgb(0xff, 0x9f, 0x0a);
+                        let pill =
+                            theme::pill(ui, &format!("{} overlapping", overlaps.len()), amber);
+                        let click = ui
+                            .interact(pill.rect, ui.id().with("overlaps"), egui::Sense::click())
+                            .on_hover_text(
+                                "Curves drawn on top of other curves (the same line twice, or the \
                              touching sides of two shapes). Click to select the ones on top; \
                              Delete then removes them and leaves those underneath.",
-                        );
-                    if click.clicked() {
-                        self.select_overlapping(_now);
-                    }
-                }
-                let hidden = self.hidden_annotation_count();
-                if hidden > 0 {
-                    let grey = ui.visuals().weak_text_color();
-                    let text = if self.show_hidden_annotations {
-                        format!("{hidden} hidden, shown")
-                    } else {
-                        format!("{hidden} hidden")
-                    };
-                    let pill = theme::pill(ui, &text, grey);
-                    let click =
-                        ui.interact(pill.rect, ui.id().with("hidden"), egui::Sense::click());
-                    click.widget_info(|| {
-                        egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &text)
-                    });
-                    let click = click.on_hover_text(
-                        "Dimensions and annotations hidden on the canvas. Click (or Alt+H) \
-                             to show them faded, so they can be picked and shown again",
-                    );
-                    if click.clicked() {
-                        self.show_hidden_annotations = !self.show_hidden_annotations;
-                    }
-                }
-                let mut units = self.editor.doc.units();
-                let short = |f: drift_core::LengthFormat| match f {
-                    drift_core::LengthFormat::Architectural => "ft-in",
-                    drift_core::LengthFormat::FractionalInch => "in ½",
-                    f => f.symbol(),
-                };
-                egui::ComboBox::from_id_salt("status_units")
-                    .selected_text(short(units.length))
-                    .width(56.0)
-                    .show_ui(ui, |ui| {
-                        for f in drift_core::LengthFormat::METRIC
-                            .into_iter()
-                            .chain(drift_core::LengthFormat::IMPERIAL)
-                        {
-                            ui.selectable_value(&mut units.length, f, f.label());
+                            );
+                        if click.clicked() {
+                            self.select_overlapping(_now);
                         }
-                    })
-                    .response
-                    .on_hover_text("Display units (more in the Parameters tab)");
-                if units != self.editor.doc.units() {
-                    self.editor.set_units(units);
-                }
-                let minor = grid_info(&self.camera, self.imperial()).minor;
-                let grid = if units.length.is_metric() {
-                    format!("{} mm", format_length(minor))
-                } else {
-                    Units {
-                        decimals: 4,
-                        fraction: 64,
-                        ..units
                     }
-                    .format_length(minor)
-                };
-                let angle_snap = &mut self.angle_snap;
-                for (glyph, value, tip) in [
+                    let hidden = self.hidden_annotation_count();
+                    if hidden > 0 {
+                        let grey = ui.visuals().weak_text_color();
+                        let text = if self.show_hidden_annotations {
+                            format!("{hidden} hidden, shown")
+                        } else {
+                            format!("{hidden} hidden")
+                        };
+                        let pill = theme::pill(ui, &text, grey);
+                        let click =
+                            ui.interact(pill.rect, ui.id().with("hidden"), egui::Sense::click());
+                        click.widget_info(|| {
+                            egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &text)
+                        });
+                        let click = click.on_hover_text(
+                            "Dimensions and annotations hidden on the canvas. Click (or Alt+H) \
+                             to show them faded, so they can be picked and shown again",
+                        );
+                        if click.clicked() {
+                            self.show_hidden_annotations = !self.show_hidden_annotations;
+                        }
+                    }
+                    let mut units = self.editor.doc.units();
+                    let short = |f: drift_core::LengthFormat| match f {
+                        drift_core::LengthFormat::Architectural => "ft-in",
+                        drift_core::LengthFormat::FractionalInch => "in ½",
+                        f => f.symbol(),
+                    };
+                    egui::ComboBox::from_id_salt("status_units")
+                        .selected_text(short(units.length))
+                        .width(56.0)
+                        .show_ui(ui, |ui| {
+                            for f in drift_core::LengthFormat::METRIC
+                                .into_iter()
+                                .chain(drift_core::LengthFormat::IMPERIAL)
+                            {
+                                ui.selectable_value(&mut units.length, f, f.label());
+                            }
+                        })
+                        .response
+                        .on_hover_text("Display units (more in the Parameters tab)");
+                    if units != self.editor.doc.units() {
+                        self.editor.set_units(units);
+                    }
+                    let minor = grid_info(&self.camera, self.imperial()).minor;
+                    let grid = if units.length.is_metric() {
+                        format!("{} mm", format_length(minor))
+                    } else {
+                        Units {
+                            decimals: 4,
+                            fraction: 64,
+                            ..units
+                        }
+                        .format_length(minor)
+                    };
+                    let angle_snap = &mut self.angle_snap;
+                    for (glyph, name, value, tip) in [
                     (
                         Glyph::Thin,
+                        "Thin lines",
                         &mut self.thin_lines,
                         "Thin lines (W)".to_owned(),
                     ),
                     (
                         Glyph::Snap,
+                        "Snap to grid",
                         &mut self.grid_snap,
                         format!("Snap to grid ({grid}) · Shift+G"),
                     ),
                     (
                         Glyph::Status,
+                        "Status colours",
                         &mut self.status_colors,
                         "Constraint status colours (on) or layer and line colours (off) · Shift+C"
                             .to_owned(),
                     ),
                     (
-                        Glyph::Endpoints,
-                        &mut self.always_endpoints,
-                        "Always show end points (off: only on hovered or picked curves)".to_owned(),
+                        Glyph::AutoRelations,
+                        "Auto relations",
+                        &mut self.auto_relations,
+                        "Auto relations: add relations as you draw and modify (horizontal, \
+                         coincident, tangent...). Off: plain geometry · Shift+Alt+R"
+                            .to_owned(),
                     ),
-                    (Glyph::Axes, &mut self.show_axes, "Origin axes".to_owned()),
+                    (
+                        Glyph::Endpoints,
+                        "End points",
+                        &mut self.always_endpoints,
+                        "Always show end points (off: only on hovered or picked curves) · \
+                         Shift+Alt+V"
+                            .to_owned(),
+                    ),
+                    (Glyph::Axes, "Origin axes", &mut self.show_axes, "Origin axes".to_owned()),
                     (
                         Glyph::Grid,
+                        "Grid",
                         &mut self.show_grid,
                         format!("Grid: {grid} spacing · {}", shortcut("'", false)),
                     ),
                 ] {
-                    if icons::button(ui, 22.0, *value, &tip, |p, r, c| {
+                    if icons::button(ui, 22.0, *value, name, |p, r, c| {
                         icons::glyph(p, r, glyph, c)
                     })
                     .on_hover_text(tip)
@@ -1545,7 +1563,7 @@ impl DriftApp {
                         });
                     }
                 }
-            });
+                });
             let _ = right;
         });
         // The hint, in whatever space is left between the readout and the right cluster.

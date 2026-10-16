@@ -1932,6 +1932,16 @@ zooms to fit; F is Fillet (again for Chamfer).
   `apps/native/assets/make_icon.py` writes the window icon, the Windows .ico and the macOS
   icon source; `icons::logo` draws the same mark on the start screen. Linework variants
   (outline, line with nodes) were drawn too; the user chose the bold one for now.
+- **Alpha 5 notes (planned, in order):** (5) Auto relations and End points switches only in
+  the status bar, with Shift+Alt+R / Shift+Alt+V (done); (3) a drawn crosshair with size
+  (slider, or full screen) and weight; (4) dimension alignment: snapping a dragged label
+  level with other dimensions, and Align / Space evenly for picked ones; (1, 2) panel tabs
+  that move with the pointer as they're dragged (blue only when docking a floating panel),
+  and floating panels stacking vertically. Key maps with presets: later.
+- **Crosshair (done).** Drawing and editing tools hide the system cursor over the canvas
+  and draw Drift's own crosshair (`app/crosshair.rs`): arm size 6–200 pt or full screen,
+  weight 0.5–3 pt, in Preferences → Crosshair (prefs `xsize`, `xfull`, `xweight`). The
+  select tool keeps the system arrow.
 - **Dimension alignment (done).** A dragged label snaps so its line is level with a
   parallel dimension's within 6 pt, with a dashed guide (Ctrl places freely). Shift+picked
   dimensions: **Align dimensions** (on the first one's line) and **Space dimensions

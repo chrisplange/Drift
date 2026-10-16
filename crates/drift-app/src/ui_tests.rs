@@ -836,6 +836,66 @@ fn a_dragged_dimension_snaps_level_with_another() {
 }
 
 #[test]
+fn drawing_tools_show_drifts_own_crosshair() {
+    let Some(mut h) = harness() else { return };
+    h.state_mut().crosshair.size = 60.0;
+    h.state_mut().crosshair.weight = 2.0;
+    h.key_press(Key::L);
+    h.run();
+    let at = h.state().canvas_rect.center() + egui::vec2(-150.0, 80.0);
+    h.hover_at(at);
+    h.run();
+    // The system cursor is hidden; Drift draws its own.
+    assert_eq!(
+        h.output().platform_output.cursor_icon,
+        egui::CursorIcon::None
+    );
+    save_png("drift_ui_crosshair.png", &mut h);
+    // The select tool keeps the system's arrow.
+    h.key_press(Key::Escape);
+    h.run();
+    h.hover_at(at + egui::vec2(1.0, 0.0));
+    h.run();
+    assert_ne!(
+        h.output().platform_output.cursor_icon,
+        egui::CursorIcon::None
+    );
+}
+
+#[test]
+fn auto_relations_and_end_points_live_in_the_status_bar_with_keys() {
+    let Some(mut h) = harness() else { return };
+    // One switch each, in the status bar at the bottom (not the top bar).
+    let bottom = h.state().canvas_rect.bottom();
+    for name in ["Auto relations", "End points"] {
+        let r = h.get_by_label(name).rect();
+        assert!(r.top() > bottom, "{name} at {r:?}");
+    }
+    assert!(h.state().auto_relations);
+    let both = EguiModifiers::SHIFT | EguiModifiers::ALT;
+    h.key_press_modifiers(both, Key::R);
+    h.run();
+    assert!(!h.state().auto_relations);
+    assert_eq!(
+        h.state().tool.kind(),
+        ToolKind::Select,
+        "not the rectangle tool"
+    );
+    h.key_press_modifiers(both, Key::R);
+    h.run();
+    assert!(h.state().auto_relations);
+    let shown = h.state().always_endpoints;
+    h.key_press_modifiers(both, Key::V);
+    h.run();
+    assert_eq!(h.state().always_endpoints, !shown);
+    assert_eq!(
+        h.state().tool.kind(),
+        ToolKind::Select,
+        "not the point tool"
+    );
+}
+
+#[test]
 fn alt_c_draws_and_makes_construction_geometry() {
     use drift_core::LineKind;
     let Some(mut h) = harness() else { return };

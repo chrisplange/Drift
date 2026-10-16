@@ -523,8 +523,13 @@ impl DriftApp {
                 self.editor.highlight.extend(curves);
             }
         }
-        if self.tool.kind() != ToolKind::Select && response.hovered() {
-            ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
+        // Drawing and editing tools: Drift's own crosshair in place of the system cursor (whose
+        // size and weight can't be set), drawn last.
+        let crosshair_at = (self.tool.kind() != ToolKind::Select && response.hovered())
+            .then(|| response.hover_pos())
+            .flatten();
+        if crosshair_at.is_some() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::None);
         } else if response.hovered()
             && !self.tool.is_modal()
             && let Some(icon) = self.transform_cursor().or_else(|| self.fillet_cursor())
@@ -687,6 +692,10 @@ impl DriftApp {
                 4.0,
                 3.0,
             ));
+        }
+        if let Some(at) = crosshair_at {
+            let color = ui.visuals().strong_text_color().gamma_multiply(0.9);
+            self.crosshair.paint(&painter, at, rect, color);
         }
         self.paint_notes(&painter, &notes, ui.visuals().dark_mode);
         self.paint_groups(&painter, &map, ui.visuals().dark_mode);

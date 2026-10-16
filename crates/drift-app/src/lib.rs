@@ -333,6 +333,8 @@ pub struct DriftApp {
     library_category: Option<library::Category>,
     /// Curvature combs on picked curves.
     show_combs: bool,
+    /// The drawing crosshair's size and weight.
+    crosshair: app::crosshair::Crosshair,
     /// Alt-scaling steps the picked geometry through round sizes (rather than any size).
     round_scale: bool,
     /// The text being typed into (its edits merge into one undo step).
@@ -482,6 +484,7 @@ impl DriftApp {
             block_search: String::new(),
             library_category: Some(library::Category::Doors),
             show_combs: true,
+            crosshair: Default::default(),
             round_scale: true,
             text_typing: None,
             text_was_focused: false,
@@ -749,6 +752,14 @@ const SHORTCUTS: &[(&str, &[(&str, &str)])] = &[
                 "Zoom at the cursor (two fingers on a trackpad pan)",
             ),
             ("Alt+D / Alt+R", "Show or hide dimensions / relations"),
+            (
+                "Shift+Alt+R",
+                "Automatic relations on or off (also in the status bar)",
+            ),
+            (
+                "Shift+Alt+V",
+                "Show every end point, or only those of hovered and picked curves",
+            ),
             (
                 "Alt+H",
                 "Show hidden dimensions and notes, faded, to pick and show them again",

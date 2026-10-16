@@ -186,6 +186,21 @@ go. Dimensions in a row that would over-define the sketch become driven automati
 
 ![A chain of three dimensions along four walls, with the overall (60) as a reference](../images/chain-dimensions.png)
 
+## Keeping dimensions tidy
+
+Drag a dimension's number to move it. Near another dimension that measures the same way
+(both horizontal, say), it snaps level with that one's line, and a dashed guide shows
+which. Hold Ctrl to place it freely.
+
+To line up several at once, Shift+click them, then right-click and choose:
+
+- **Align dimensions:** the parallel ones go on the first one's line.
+- **Space dimensions evenly:** three or more stacked ones are spaced evenly between the
+  outermost two.
+
+Both are in the command palette too. Dimensions measuring another way are left as they
+are.
+
 ## What you learned
 
 - Relations and dimensions take away degrees of freedom. The status bar counts what's left,

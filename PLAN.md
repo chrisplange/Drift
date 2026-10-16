@@ -1942,6 +1942,11 @@ zooms to fit; F is Fillet (again for Chamfer).
   and draw Drift's own crosshair (`app/crosshair.rs`): arm size 6–200 pt or full screen,
   weight 0.5–3 pt, in Preferences → Crosshair (prefs `xsize`, `xfull`, `xweight`). The
   select tool keeps the system arrow.
+- **Dimension alignment (done).** A dragged label snaps so its line is level with a
+  parallel dimension's within 6 pt, with a dashed guide (Ctrl places freely). Shift+picked
+  dimensions: **Align dimensions** (on the first one's line) and **Space dimensions
+  evenly** (three or more, between the outermost), in the right-click menu and the
+  palette; ones not parallel to the first are left alone. `app/dim_align.rs`.
 - **In-app updates (built on `in-app-updates`).** A custom updater on GitHub Releases
   (native only; `crates/drift-app/src/update`), chosen over Velopack (it would replace the
   Inno Setup and dmg packaging) and `self_update` (it replaces a bare binary, which suits

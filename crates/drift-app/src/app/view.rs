@@ -136,10 +136,24 @@ impl DriftApp {
             ) && let Some(anchor) = annotations::dimension_anchor(&self.editor.doc, &c)
             {
                 let offset = map.to_world(p) - grab - anchor;
+                // Level with another dimension's line when close (Ctrl places freely).
+                let (offset, guide) = if ui.input(|i| i.modifiers.command) {
+                    (offset, None)
+                } else {
+                    crate::app::dim_align::snap_label(
+                        &self.editor.doc,
+                        id,
+                        &c,
+                        offset,
+                        map.camera.scale,
+                    )
+                };
+                self.dim_guide = guide;
                 self.editor.place_dimension(id, offset);
             }
             if !response.dragged_by(PointerButton::Primary) {
                 self.label_drag = None;
+                self.dim_guide = None;
                 self.editor.commit("Move dimension");
             }
             return true;
@@ -668,6 +682,17 @@ impl DriftApp {
         }
         self.paint_annotations(&painter, &map, &dims, &glyphs, ui.visuals().dark_mode);
         self.paint_temp_dims(&painter, &map, &temps, ui.visuals().dark_mode);
+        // A dragged dimension snapped level with another: a guide between them.
+        if let Some([a, b]) = self.dim_guide {
+            let (a, b) = (map.to_screen(a), map.to_screen(b));
+            let along = (b - a).normalized() * 16.0;
+            painter.extend(egui::Shape::dashed_line(
+                &[a - along, b + along],
+                egui::Stroke::new(1.0, colors.snap),
+                4.0,
+                3.0,
+            ));
+        }
         if let Some(at) = crosshair_at {
             let color = ui.visuals().strong_text_color().gamma_multiply(0.9);
             self.crosshair.paint(&painter, at, rect, color);

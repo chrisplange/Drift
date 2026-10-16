@@ -31,6 +31,8 @@ pub(crate) enum Command {
     CheckSketch,
     HideAnnotations,
     AnnotationsOffSheets,
+    AlignDimensions,
+    SpaceDimensions,
     ClearRelations,
     ClearDimensions,
     PickFilter(crate::editor::PickFilter),
@@ -278,6 +280,23 @@ impl DriftApp {
         ] {
             add(Command::PickFilter(f), title, "Edit", String::new());
         }
+        let (align, space) = self.can_align_dimensions();
+        if align {
+            add(
+                Command::AlignDimensions,
+                "Align picked dimensions",
+                "Edit",
+                String::new(),
+            );
+        }
+        if space {
+            add(
+                Command::SpaceDimensions,
+                "Space picked dimensions evenly",
+                "Edit",
+                String::new(),
+            );
+        }
         if !self.picked_annotations().is_empty() {
             add(
                 Command::HideAnnotations,
@@ -476,6 +495,8 @@ impl DriftApp {
             }
             Command::ClearRelations => self.clear_selection_constraints(false, now),
             Command::ClearDimensions => self.clear_selection_constraints(true, now),
+            Command::AlignDimensions => self.align_picked_dimensions(false, now),
+            Command::SpaceDimensions => self.align_picked_dimensions(true, now),
             Command::HideAnnotations => {
                 let refs = self.picked_annotations();
                 self.set_annotations_shown(&refs, Some(false), None, now);

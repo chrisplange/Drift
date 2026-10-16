@@ -3915,3 +3915,349 @@ fn copies_of_blocks_offer_snap_points() {
     // Away from it: nothing.
     assert!(snap(&ed, v(130.0, 30.0)).is_none());
 }
+
+/// Two circles' outer arcs, meeting at notches top and bottom: (0, ±8).
+fn notched_fixture() -> (Editor, EntityId, EntityId) {
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    let top = ed.doc.add_point(v(0.0, 8.0));
+    let bottom = ed.doc.add_point(v(0.0, -8.0));
+    let ca = ed.doc.add_point(v(-6.0, 0.0));
+    let cb = ed.doc.add_point(v(6.0, 0.0));
+    ed.doc.add_arc(ca, top, bottom).unwrap();
+    ed.doc.add_arc(cb, bottom, top).unwrap();
+    ed.commit("Arcs");
+    (ed, top, bottom)
+}
+
+#[test]
+fn two_arcs_meeting_at_a_notch_are_filleted() {
+    let (mut ed, top, _) = notched_fixture();
+    assert!(ed.corner(top).is_err(), "not two lines");
+    let arc = ed.fillet(top, 2.0).unwrap();
+    // Tangent outside both circles: 10 + 2 from each centre.
+    let Some(Shape::Arc { center, radius, .. }) = ed.doc.shape(arc) else {
+        panic!("an arc");
+    };
+    let expect = v(0.0, (144.0f64 - 36.0).sqrt());
+    assert!(center.distance(expect) < 1e-9, "{center}");
+    assert!((radius - 2.0).abs() < 1e-9);
+    assert_eq!(arcs(&ed.doc), 3);
+    // Still one closed outline.
+    assert_eq!(ed.regions().len(), 1);
+    // It is a fillet: re-sized in place, and its corner put back.
+    let f = ed.fillet_at(arc).expect("a fillet");
+    assert!(f.corner.distance(v(0.0, 8.0)) < 1e-9, "{}", f.corner);
+    ed.refillet(arc, 3.0).unwrap();
+    let Some(Shape::Arc { center, radius, .. }) = ed.doc.shape(arc) else {
+        panic!("an arc");
+    };
+    assert!(
+        center.distance(v(0.0, (169.0f64 - 36.0).sqrt())) < 1e-7,
+        "{center}"
+    );
+    assert!((radius - 3.0).abs() < 1e-7);
+    ed.remove_corner_cut(arc).unwrap();
+    assert_eq!(arcs(&ed.doc), 2);
+    assert_eq!(ed.regions().len(), 1);
+    let corner = ed
+        .doc
+        .iter()
+        .find(|(id, e)| {
+            e.kind.is_point()
+                && ed
+                    .doc
+                    .point(*id)
+                    .is_ok_and(|p| p.distance(v(0.0, 8.0)) < 1e-9)
+        })
+        .map(|(id, _)| id)
+        .expect("the corner is back");
+    assert!(ed.fillet_corner(corner).is_ok());
+}
+
+#[test]
+fn a_line_meeting_an_arc_is_filleted_with_the_tool() {
+    let mut ed = Editor::default();
+    ed.auto_relations = true;
+    ed.doc.begin();
+    let c = ed.doc.add_point(v(0.0, 0.0));
+    let s = ed.doc.add_point(v(10.0, 0.0));
+    let corner = ed.doc.add_point(v(0.0, 10.0));
+    let far = ed.doc.add_point(v(-10.0, 20.0));
+    let quarter = ed.doc.add_arc(c, s, corner).unwrap();
+    let line = ed.doc.add_line(corner, far).unwrap();
+    ed.commit("Line and arc");
+    // Click the corner, move out, click: a fillet the size the pointer gives.
+    let mut tool = FilletTool::default();
+    click(&mut ed, &mut tool, v(0.0, 10.0));
+    assert!(tool.is_modal(), "the corner is taken");
+    tool.handle(Input::Finish, &mut ed);
+    let arc = ed
+        .doc
+        .iter()
+        .find(|(id, e)| matches!(e.kind, EntityKind::Arc { .. }) && *id != quarter)
+        .map(|(id, _)| id)
+        .expect("a fillet");
+    let Some(Shape::Arc { center, radius, .. }) = ed.doc.shape(arc) else {
+        panic!("an arc");
+    };
+    // Tangent to both: the line's distance, and outside the quarter circle.
+    let Some(Shape::Line { a, b }) = ed.doc.shape(line) else {
+        panic!("a line");
+    };
+    let to_line = (center - a).perp_dot((b - a).normalize()).abs();
+    assert!((to_line - radius).abs() < 1e-7, "{to_line} vs {radius}");
+    assert!((center.length() - (10.0 + radius)).abs() < 1e-7);
+    assert!(ed.fillet_at(arc).is_some());
+    assert!(ed.analysis().conflicts.is_empty());
+    // One undo step.
+    ed.undo();
+    assert_eq!(arcs(&ed.doc), 1);
+}
+
+#[test]
+fn a_smooth_join_has_nothing_to_round() {
+    // A line running on tangent from an arc's end.
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    let c = ed.doc.add_point(v(0.0, 0.0));
+    let s = ed.doc.add_point(v(10.0, 0.0));
+    let corner = ed.doc.add_point(v(0.0, 10.0));
+    let far = ed.doc.add_point(v(-10.0, 10.0));
+    ed.doc.add_arc(c, s, corner).unwrap();
+    ed.doc.add_line(corner, far).unwrap();
+    ed.commit("Smooth");
+    assert!(ed.fillet(corner, 1.0).is_err());
+}
+
+fn relate_all(ed: &mut Editor, label: &str) -> usize {
+    let option = ed
+        .relation_options()
+        .into_iter()
+        .find(|o| o.label == label)
+        .unwrap_or_else(|| panic!("no {label} option"));
+    // As the menus do: only what isn't there yet.
+    let missing = ed.missing_relations(&option);
+    ed.add_constraints(label, &missing).unwrap();
+    missing.len()
+}
+
+/// Lines at (x0, y0)–(x1, y1).
+fn some_lines(ed: &mut Editor, ends: &[[f64; 4]]) -> Vec<EntityId> {
+    ed.doc.begin();
+    let ids = ends
+        .iter()
+        .map(|[x0, y0, x1, y1]| {
+            let a = ed.doc.add_point(v(*x0, *y0));
+            let b = ed.doc.add_point(v(*x1, *y1));
+            ed.doc.add_line(a, b).unwrap()
+        })
+        .collect();
+    ed.commit("Lines");
+    ids
+}
+
+fn direction(ed: &Editor, line: EntityId) -> DVec2 {
+    let Some(Shape::Line { a, b }) = ed.doc.shape(line) else {
+        panic!("a line");
+    };
+    (b - a).normalize()
+}
+
+#[test]
+fn three_lines_are_made_parallel_or_collinear_at_once() {
+    let mut ed = Editor::default();
+    let lines = some_lines(
+        &mut ed,
+        &[
+            [0.0, 0.0, 10.0, 1.0],
+            [0.0, 5.0, 10.0, 4.0],
+            [0.0, 9.0, 10.0, 11.0],
+        ],
+    );
+    ed.selection = lines.iter().copied().collect();
+    let labels: Vec<_> = ed.relation_options().iter().map(|o| o.label).collect();
+    assert!(labels.contains(&"Parallel") && labels.contains(&"Collinear"));
+    assert!(
+        !labels.contains(&"Perpendicular"),
+        "three lines can't all be"
+    );
+    assert_eq!(relate_all(&mut ed, "Parallel"), 2);
+    let d0 = direction(&ed, lines[0]);
+    assert!(
+        lines
+            .iter()
+            .all(|l| direction(&ed, *l).perp_dot(d0).abs() < 1e-9)
+    );
+    ed.undo();
+
+    // With two already parallel, only the third is tied in, so nothing is said twice.
+    ed.selection = [lines[1], lines[2]].into();
+    relate_all(&mut ed, "Parallel");
+    ed.selection = lines.iter().copied().collect();
+    assert_eq!(relate_all(&mut ed, "Parallel"), 1);
+    assert!(ed.analysis().conflicts.is_empty());
+    // All parallel now: shown as on (the pie lights it, and choosing it takes all three off).
+    let parallel = ed
+        .relation_options()
+        .into_iter()
+        .find(|o| o.label == "Parallel")
+        .unwrap();
+    assert!(ed.has_relations(&parallel));
+    assert_eq!(ed.existing_relations(&parallel).len(), 2);
+
+    ed.undo();
+    ed.undo();
+    assert_eq!(relate_all(&mut ed, "Collinear"), 2);
+    let Some(Shape::Line { a, .. }) = ed.doc.shape(lines[0]) else {
+        panic!()
+    };
+    let d0 = direction(&ed, lines[0]);
+    for l in &lines {
+        let Some(Shape::Line { a: p, b: q }) = ed.doc.shape(*l) else {
+            panic!()
+        };
+        assert!((p - a).perp_dot(d0).abs() < 1e-7 && (q - a).perp_dot(d0).abs() < 1e-7);
+    }
+}
+
+#[test]
+fn several_points_and_curves_are_related_at_once() {
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    let points: Vec<_> = [v(0.0, 0.0), v(5.0, 1.0), v(9.0, -2.0)]
+        .map(|p| ed.doc.add_point(p))
+        .into();
+    let c = ed.doc.add_point(v(5.0, 20.0));
+    let circle = ed.doc.add_circle(c, 4.0).unwrap();
+    ed.commit("Points");
+    // Three points level.
+    ed.selection = points.iter().copied().collect();
+    assert_eq!(relate_all(&mut ed, "Horizontal"), 2);
+    let y = ed.doc.point(points[0]).unwrap().y;
+    assert!(
+        points
+            .iter()
+            .all(|p| (ed.doc.point(*p).unwrap().y - y).abs() < 1e-9)
+    );
+    ed.undo();
+    // All three on the circle.
+    ed.selection = points.iter().copied().chain([circle]).collect();
+    assert_eq!(relate_all(&mut ed, "On curve"), 3);
+    let (centre, r) = (ed.doc.point(c).unwrap(), 4.0);
+    let r_now = drift_solver::radius_of(&ed.doc, circle).unwrap_or(r);
+    assert!(
+        points
+            .iter()
+            .all(|p| (ed.doc.point(*p).unwrap().distance(centre) - r_now).abs() < 1e-7)
+    );
+    // Two lines tangent to the circle at once.
+    ed.undo();
+    let lines = some_lines(
+        &mut ed,
+        &[[-10.0, 10.0, 20.0, 12.0], [-10.0, 30.0, 20.0, 29.0]],
+    );
+    ed.selection = lines.iter().copied().chain([circle]).collect();
+    assert_eq!(relate_all(&mut ed, "Tangent"), 2);
+    assert!(ed.analysis().conflicts.is_empty());
+}
+
+/// Three level lines held equal and parallel, the middle one joined by an arc to the top
+/// one's left end, as drawn: (editor, [bottom, middle, top]).
+fn equal_ladder() -> (Editor, [EntityId; 3]) {
+    let mut ed = Editor::default();
+    let lines = some_lines(
+        &mut ed,
+        &[
+            [0.0, 0.0, 80.0, 0.0],
+            [-20.0, 25.0, 60.0, 25.0],
+            [50.0, 60.0, 130.0, 60.0],
+        ],
+    );
+    let [bottom, middle, top] = [lines[0], lines[1], lines[2]];
+    ed.doc.begin();
+    let ends = |ed: &Editor, l| match ed.doc.get(l).map(|e| e.kind) {
+        Some(EntityKind::Line { a, b }) => (a, b),
+        _ => panic!(),
+    };
+    let (_, middle_end) = ends(&ed, middle);
+    let (top_start, _) = ends(&ed, top);
+    // An arc from the middle line's right end (60, 25) up to the top line's left end
+    // (50, 60), its centre as far from each.
+    let c = ed.doc.add_point(v(10.0, 2075.0 / 70.0));
+    ed.doc.add_arc(c, middle_end, top_start).unwrap();
+    for (a, b) in [(bottom, middle), (middle, top)] {
+        ed.doc.add_constraint(Constraint::Equal { a, b }).unwrap();
+        ed.doc
+            .add_constraint(Constraint::Parallel { a, b })
+            .unwrap();
+    }
+    ed.doc
+        .add_constraint(Constraint::Horizontal { line: bottom })
+        .unwrap();
+    ed.commit("Ladder");
+    (ed, [bottom, middle, top])
+}
+
+fn ends_at(ed: &Editor, line: EntityId) -> (DVec2, DVec2) {
+    let Some(Shape::Line { a, b }) = ed.doc.shape(line) else {
+        panic!("a line");
+    };
+    (a, b)
+}
+
+#[test]
+fn trimming_a_line_held_equal_leaves_the_rest_where_it_is() {
+    let (mut ed, [bottom, middle, top]) = equal_ladder();
+    // Something to cut the middle line at x = 20.
+    ed.doc.begin();
+    let p = ed.doc.add_point(v(20.0, 10.0));
+    let q = ed.doc.add_point(v(20.0, 40.0));
+    ed.doc.add_line(p, q).unwrap();
+    ed.commit("Cutter");
+    let before = (ends_at(&ed, bottom), ends_at(&ed, top));
+    // Trim the middle line's left piece.
+    ed.trim_at(middle, v(0.0, 25.0)).unwrap();
+    // The others haven't moved, and the middle line is cut where it was clicked.
+    assert_eq!((ends_at(&ed, bottom), ends_at(&ed, top)), before);
+    let (a, b) = ends_at(&ed, middle);
+    assert!(
+        a.distance(v(20.0, 25.0)) < 1e-9 && b.distance(v(60.0, 25.0)) < 1e-9,
+        "{a} {b}"
+    );
+    // Its equal lengths came off (it's shorter now); parallel stays, since it still holds.
+    let on_middle = |ed: &Editor, f: fn(&Constraint) -> bool| {
+        ed.doc
+            .constraints_on(middle)
+            .filter(|id| ed.doc.constraint(*id).is_some_and(f))
+            .count()
+    };
+    assert_eq!(on_middle(&ed, |c| matches!(c, Constraint::Equal { .. })), 0);
+    assert_eq!(
+        on_middle(&ed, |c| matches!(c, Constraint::Parallel { .. })),
+        2
+    );
+    assert!(
+        ed.notice.as_deref().is_some_and(|n| n.contains("Equal ×2")),
+        "{:?}",
+        ed.notice
+    );
+    // One undo brings the line and its relations back.
+    ed.undo();
+    assert_eq!(on_middle(&ed, |c| matches!(c, Constraint::Equal { .. })), 2);
+}
+
+#[test]
+fn a_dimension_that_a_reshape_would_break_refuses_it() {
+    let mut ed = Editor::default();
+    let lines = some_lines(&mut ed, &[[0.0, 0.0, 10.0, 0.0], [20.0, -5.0, 20.0, 5.0]]);
+    let (a, b) = match ed.doc.get(lines[0]).map(|e| e.kind) {
+        Some(EntityKind::Line { a, b }) => (a, b),
+        _ => panic!(),
+    };
+    ed.add_dimension(Constraint::Distance { a, b, value: 10.0 }, None)
+        .unwrap();
+    let err = ed.extend_at(lines[0], v(9.0, 0.0)).unwrap_err();
+    assert!(err.to_string().contains("distance"), "{err}");
+    assert_eq!(ends_at(&ed, lines[0]).1, v(10.0, 0.0), "nothing changed");
+}

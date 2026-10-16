@@ -117,6 +117,31 @@ pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
     report
 }
 
+/// The constraints the geometry doesn't meet as it stands (nothing is moved): those with an
+/// equation off by more than `slack`, relative to the size of the coordinates involved (a sine,
+/// for angles).
+pub fn unmet(doc: &Document, slack: f64) -> HashSet<ConstraintId> {
+    let tol = Tolerances {
+        length: slack,
+        angle: slack,
+    };
+    let sys = System::build(doc, &[], &tol);
+    let values: Vec<f64> = sys.groups.iter().map(|g| g.value).collect();
+    let val = |p: usize| values[sys.group_of[p]];
+    let mut grad = Vec::new();
+    let mut out = HashSet::new();
+    for (r, row) in sys.rows.iter().enumerate() {
+        let Some(id) = row.source else {
+            continue;
+        };
+        grad.clear();
+        if row.equation.eval(&val, &mut grad).abs() > row_tolerance(&sys, r, &values, &tol) {
+            out.insert(id);
+        }
+    }
+    out
+}
+
 /// Evaluate constraints and degrees of freedom without changing the document.
 pub fn analyze(doc: &Document) -> SolveReport {
     let options = SolveOptions {

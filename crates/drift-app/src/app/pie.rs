@@ -1,7 +1,8 @@
 //! The relations pie (Q): a ring of relations around the pointer for the current selection.
 //! Each relation has a fixed place, so it becomes a flick: hold Q, move towards one, let go.
 //! A tap of Q leaves the ring open to click instead. A relation already on the selection is
-//! lit, and choosing it takes it off; ones that don't fit the selection are dimmed.
+//! lit, and choosing it takes it off; ones that don't fit the selection are dimmed. While it is
+//! open, each relation's letter (shown on it) chooses it outright: Q then H for horizontal.
 
 use crate::annotations::{self, AnnotationColors, AnnotationState, GlyphKind};
 use crate::editor::ConstraintOption;
@@ -19,6 +20,29 @@ const PLACES: [&[&str]; 8] = [
     &["Coincident", "Collinear", "On curve", "Coradial"],
     &["Midpoint", "Symmetric"],
 ];
+
+/// While the ring is open, a key chooses a relation outright (Q then H: horizontal).
+const KEYS: [(Key, &str); 14] = [
+    (Key::H, "Horizontal"),
+    (Key::V, "Vertical"),
+    (Key::L, "Parallel"),
+    (Key::P, "Perpendicular"),
+    (Key::E, "Equal"),
+    (Key::F, "Fix"),
+    (Key::M, "Midpoint"),
+    (Key::C, "Concentric"),
+    (Key::R, "Coradial"),
+    (Key::T, "Tangent"),
+    (Key::S, "Symmetric"),
+    (Key::I, "Coincident"),
+    (Key::N, "Collinear"),
+    (Key::O, "On curve"),
+];
+
+/// The key that chooses a relation while the ring is open.
+fn key_for(label: &str) -> Option<Key> {
+    KEYS.iter().find(|(_, l)| *l == label).map(|(k, _)| *k)
+}
 
 /// How far from the middle the pointer has to be to choose, and where the labels sit.
 const DEAD_ZONE: f32 = 22.0;
@@ -125,6 +149,21 @@ impl DriftApp {
             )
         });
         let now = ctx.input(|i| i.time);
+        // A relation's key, while the ring is open (Q held or not).
+        let typed = ctx.input(|i| {
+            KEYS.iter()
+                .find(|(k, _)| i.key_pressed(*k))
+                .map(|(_, label)| *label)
+        });
+        if self.pie.is_some()
+            && let Some(label) = typed
+        {
+            match self.pie_slices().iter().position(|s| s.label == label) {
+                Some(place) => self.pie_choose(place, now),
+                None => self.set_status(format!("{label} doesn't fit this selection"), true, now),
+            }
+            return true;
+        }
         let Some(pie) = &mut self.pie else {
             if !pressed || self.tool.is_busy() {
                 return false;
@@ -290,7 +329,17 @@ fn paint(
             egui::FontId::proportional(13.0),
             text_color,
         );
-        let size = egui::vec2(galley.size().x + 42.0, 30.0);
+        let key = key_for(slice.label).map(|k| {
+            painter.layout_no_wrap(
+                k.name().to_owned(),
+                egui::FontId::monospace(11.0),
+                visuals.weak_text_color(),
+            )
+        });
+        let size = egui::vec2(
+            galley.size().x + 42.0 + key.as_ref().map_or(0.0, |k| k.size().x + 8.0),
+            30.0,
+        );
         // Labels to the sides start at the ring rather than straddling it.
         let at = place_pos(center, place);
         let lean = (at.x - center.x) / RADIUS;
@@ -333,6 +382,17 @@ fn paint(
             galley,
             text_color,
         );
+        // Its key, at the end.
+        if let Some(key) = key {
+            painter.galley(
+                egui::pos2(
+                    rect.right() - 14.0 - key.size().x,
+                    rect.center().y - key.size().y / 2.0,
+                ),
+                key,
+                visuals.weak_text_color(),
+            );
+        }
     }
     // What choosing would do, under the ring.
     let note = towards.map(|place| {

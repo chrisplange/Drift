@@ -1539,17 +1539,21 @@ impl Editor {
         if !sel.midpoints.is_empty() {
             return out;
         }
-        if let ([point], [curve], []) | ([point], [], [curve]) = (
+        if let (points, [curve], []) | (points, [], [curve]) = (
             sel.points.as_slice(),
             sel.lines.as_slice(),
             sel.circulars.as_slice(),
-        ) {
+        ) && !points.is_empty()
+        {
             out.push(opt(
                 "On curve",
-                vec![Constraint::PointOnCurve {
-                    point: *point,
-                    curve: *curve,
-                }],
+                points
+                    .iter()
+                    .map(|point| Constraint::PointOnCurve {
+                        point: *point,
+                        curve: *curve,
+                    })
+                    .collect(),
             ));
         }
         match (
@@ -1557,18 +1561,24 @@ impl Editor {
             sel.lines.as_slice(),
             sel.circulars.as_slice(),
         ) {
-            ([a, b], [], []) => {
+            (points, [], []) if points.len() >= 2 => {
                 out.push(opt(
                     "Coincident",
-                    vec![Constraint::Coincident { a: *a, b: *b }],
+                    self.joining(points, Self::coincident_pair, |a, b| {
+                        Constraint::Coincident { a, b }
+                    }),
                 ));
                 out.push(opt(
                     "Horizontal",
-                    vec![Constraint::HorizontalPoints { a: *a, b: *b }],
+                    self.joining(points, Self::horizontal_pair, |a, b| {
+                        Constraint::HorizontalPoints { a, b }
+                    }),
                 ));
                 out.push(opt(
                     "Vertical",
-                    vec![Constraint::VerticalPoints { a: *a, b: *b }],
+                    self.joining(points, Self::vertical_pair, |a, b| {
+                        Constraint::VerticalPoints { a, b }
+                    }),
                 ));
             }
             ([], lines, []) if !lines.is_empty() => {
@@ -1586,15 +1596,28 @@ impl Editor {
                         .map(|l| Constraint::Vertical { line: *l })
                         .collect(),
                 ));
+                if lines.len() >= 2 {
+                    out.push(opt(
+                        "Parallel",
+                        self.joining(lines, Self::parallel_pair, |a, b| Constraint::Parallel {
+                            a,
+                            b,
+                        }),
+                    ));
+                }
                 if let [a, b] = lines {
-                    out.push(opt("Parallel", vec![Constraint::Parallel { a: *a, b: *b }]));
                     out.push(opt(
                         "Perpendicular",
                         vec![Constraint::Perpendicular { a: *a, b: *b }],
                     ));
+                }
+                if lines.len() >= 2 {
                     out.push(opt(
                         "Collinear",
-                        vec![Constraint::Collinear { a: *a, b: *b }],
+                        self.joining(lines, Self::collinear_pair, |a, b| Constraint::Collinear {
+                            a,
+                            b,
+                        }),
                     ));
                 }
                 if lines.len() >= 2 {
@@ -1611,9 +1634,19 @@ impl Editor {
                 if let [a, b] = circulars {
                     let (a, b) = (*a, *b);
                     out.push(opt("Tangent", vec![Constraint::Tangent { a, b }]));
-                    out.push(opt("Concentric", vec![Constraint::Concentric { a, b }]));
-                    out.push(opt("Coradial", vec![Constraint::Coradial { a, b }]));
                 }
+                out.push(opt(
+                    "Concentric",
+                    self.joining(circulars, Self::concentric_pair, |a, b| {
+                        Constraint::Concentric { a, b }
+                    }),
+                ));
+                out.push(opt(
+                    "Coradial",
+                    self.joining(circulars, Self::coradial_pair, |a, b| {
+                        Constraint::Coradial { a, b }
+                    }),
+                ));
                 out.push(opt(
                     "Equal",
                     circulars
@@ -1622,13 +1655,29 @@ impl Editor {
                         .collect(),
                 ));
             }
-            ([], [line], [curve]) => {
+            // Lines tangent to one circle, or circles tangent to one line.
+            ([], lines, [curve]) if !lines.is_empty() => {
                 out.push(opt(
                     "Tangent",
-                    vec![Constraint::Tangent {
-                        a: *line,
-                        b: *curve,
-                    }],
+                    lines
+                        .iter()
+                        .map(|line| Constraint::Tangent {
+                            a: *line,
+                            b: *curve,
+                        })
+                        .collect(),
+                ));
+            }
+            ([], [line], curves) if !curves.is_empty() => {
+                out.push(opt(
+                    "Tangent",
+                    curves
+                        .iter()
+                        .map(|curve| Constraint::Tangent {
+                            a: *line,
+                            b: *curve,
+                        })
+                        .collect(),
                 ));
             }
             ([a, b], [axis], []) => {
@@ -1643,6 +1692,8 @@ impl Editor {
             }
             _ => {}
         }
+        // A relation that already holds across the whole selection isn't offered again.
+        out.retain(|o| !o.constraints.is_empty());
         if !self.selection.is_empty() {
             let fixes = self.fix_constraints();
             if !fixes.is_empty() {
@@ -1650,6 +1701,100 @@ impl Editor {
             }
         }
         out
+    }
+
+    /// Relations of one kind that tie all of `items` together: those of the kind already
+    /// among them (so the option shows as on, and can be taken off), then one to the first for
+    /// each that isn't tied in yet. `related` says which pairs a relation already holds
+    /// together this way, so nothing is said twice.
+    fn joining(
+        &self,
+        items: &[EntityId],
+        related: fn(&Constraint) -> Option<(EntityId, EntityId)>,
+        make: impl Fn(EntityId, EntityId) -> Constraint,
+    ) -> Vec<Constraint> {
+        // Which group each item is in, merged along the relations already there.
+        let mut group: std::collections::HashMap<EntityId, usize> =
+            items.iter().enumerate().map(|(i, id)| (*id, i)).collect();
+        fn merge(group: &mut std::collections::HashMap<EntityId, usize>, a: usize, b: usize) {
+            for g in group.values_mut() {
+                if *g == b {
+                    *g = a;
+                }
+            }
+        }
+        let kind = std::mem::discriminant(&make(items[0], items[1]));
+        let mut out = Vec::new();
+        for (_, c) in self.doc.constraints() {
+            if let Some((a, b)) = related(c)
+                && let (Some(&ga), Some(&gb)) = (group.get(&a), group.get(&b))
+            {
+                if std::mem::discriminant(c) == kind {
+                    out.push(*c);
+                }
+                if ga != gb {
+                    merge(&mut group, ga, gb);
+                }
+            }
+        }
+        let first = items[0];
+        for id in &items[1..] {
+            let (g0, g) = (group[&first], group[id]);
+            if g0 != g {
+                out.push(make(first, *id));
+                merge(&mut group, g0, g);
+            }
+        }
+        out
+    }
+
+    fn coincident_pair(c: &Constraint) -> Option<(EntityId, EntityId)> {
+        match *c {
+            Constraint::Coincident { a, b } => Some((a, b)),
+            _ => None,
+        }
+    }
+
+    fn horizontal_pair(c: &Constraint) -> Option<(EntityId, EntityId)> {
+        match *c {
+            Constraint::HorizontalPoints { a, b } | Constraint::Coincident { a, b } => Some((a, b)),
+            _ => None,
+        }
+    }
+
+    fn vertical_pair(c: &Constraint) -> Option<(EntityId, EntityId)> {
+        match *c {
+            Constraint::VerticalPoints { a, b } | Constraint::Coincident { a, b } => Some((a, b)),
+            _ => None,
+        }
+    }
+
+    fn parallel_pair(c: &Constraint) -> Option<(EntityId, EntityId)> {
+        match *c {
+            Constraint::Parallel { a, b } | Constraint::Collinear { a, b } => Some((a, b)),
+            _ => None,
+        }
+    }
+
+    fn collinear_pair(c: &Constraint) -> Option<(EntityId, EntityId)> {
+        match *c {
+            Constraint::Collinear { a, b } => Some((a, b)),
+            _ => None,
+        }
+    }
+
+    fn concentric_pair(c: &Constraint) -> Option<(EntityId, EntityId)> {
+        match *c {
+            Constraint::Concentric { a, b } | Constraint::Coradial { a, b } => Some((a, b)),
+            _ => None,
+        }
+    }
+
+    fn coradial_pair(c: &Constraint) -> Option<(EntityId, EntityId)> {
+        match *c {
+            Constraint::Coradial { a, b } => Some((a, b)),
+            _ => None,
+        }
     }
 
     /// Dimensions that fit the current selection, at the geometry's current values.
@@ -2833,7 +2978,7 @@ mod tests {
         assert_eq!(labels(&ed), ["Midpoint", "On curve", "Fix"]);
 
         ed.selection = [p, q, line].into();
-        assert_eq!(labels(&ed), ["Symmetric", "Fix"]);
+        assert_eq!(labels(&ed), ["On curve", "Symmetric", "Fix"]);
         apply(&mut ed, "Symmetric");
         // The line is the x axis (it may have moved, but stays horizontal-ish): q mirrors p.
         let (a, b) = match ed.doc.get(line).unwrap().kind {

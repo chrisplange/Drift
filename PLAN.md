@@ -1932,6 +1932,10 @@ zooms to fit; F is Fillet (again for Chamfer).
   `apps/native/assets/make_icon.py` writes the window icon, the Windows .ico and the macOS
   icon source; `icons::logo` draws the same mark on the start screen. Linework variants
   (outline, line with nodes) were drawn too; the user chose the bold one for now.
+- **Crosshair (done).** Drawing and editing tools hide the system cursor over the canvas
+  and draw Drift's own crosshair (`app/crosshair.rs`): arm size 6–200 pt or full screen,
+  weight 0.5–3 pt, in Preferences → Crosshair (prefs `xsize`, `xfull`, `xweight`). The
+  select tool keeps the system arrow.
 - **In-app updates (built on `in-app-updates`).** A custom updater on GitHub Releases
   (native only; `crates/drift-app/src/update`), chosen over Velopack (it would replace the
   Inno Setup and dmg packaging) and `self_update` (it replaces a bare binary, which suits

@@ -37,6 +37,17 @@ preference. See [Units and length formats](units.md).
 | **Find closed areas on each layer separately** | An area is closed only by curves on one layer, so furniture or notes on other layers don't cut it up. An outline must then be all on one layer. |
 | **Pick an area only where it is filled or hatched** | On (the default): clicking inside an empty outline picks nothing, so a box selection can start there. Off: it picks the area, to measure it. |
 
+## Crosshair
+
+While a drawing or editing tool is over the canvas, Drift draws its own crosshair in place
+of the system cursor (whose size and weight can't be set).
+
+| Setting | What it does |
+|---|---|
+| **Size** | How far each arm reaches from the centre, from 6 to 200 pt. |
+| **Full screen** | Lines across the whole canvas, as in AutoCAD (**Size** is then unused). |
+| **Weight** | The lines' thickness, from 0.5 to 3 pt. |
+
 ## Mouse and trackpad
 
 **Scrolling**: **Automatic** (a mouse wheel zooms, two fingers on a trackpad pan, a pinch

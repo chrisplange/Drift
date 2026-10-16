@@ -110,6 +110,7 @@ impl DriftApp {
         prefs.push(format!("wheel={}", self.wheel.mode.key()));
         prefs.push(format!("asnap={}", self.angle_snap.unwrap_or(0.0)));
         prefs.push(format!("gaptol={}", self.gap_tolerance));
+        prefs.extend(self.crosshair.prefs());
         #[cfg(not(target_arch = "wasm32"))]
         {
             prefs.push(format!("upchk={}", u8::from(self.updates.auto_check)));
@@ -129,6 +130,9 @@ impl DriftApp {
                 continue;
             };
             let on = value == "1";
+            if self.crosshair.apply(key, value) {
+                continue;
+            }
             match key {
                 "asnap" => {
                     self.angle_snap = value

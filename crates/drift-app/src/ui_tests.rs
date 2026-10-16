@@ -778,6 +778,33 @@ fn curve_relations_and_driven_dimensions_render() {
 }
 
 #[test]
+fn drawing_tools_show_drifts_own_crosshair() {
+    let Some(mut h) = harness() else { return };
+    h.state_mut().crosshair.size = 60.0;
+    h.state_mut().crosshair.weight = 2.0;
+    h.key_press(Key::L);
+    h.run();
+    let at = h.state().canvas_rect.center() + egui::vec2(-150.0, 80.0);
+    h.hover_at(at);
+    h.run();
+    // The system cursor is hidden; Drift draws its own.
+    assert_eq!(
+        h.output().platform_output.cursor_icon,
+        egui::CursorIcon::None
+    );
+    save_png("drift_ui_crosshair.png", &mut h);
+    // The select tool keeps the system's arrow.
+    h.key_press(Key::Escape);
+    h.run();
+    h.hover_at(at + egui::vec2(1.0, 0.0));
+    h.run();
+    assert_ne!(
+        h.output().platform_output.cursor_icon,
+        egui::CursorIcon::None
+    );
+}
+
+#[test]
 fn alt_c_draws_and_makes_construction_geometry() {
     use drift_core::LineKind;
     let Some(mut h) = harness() else { return };

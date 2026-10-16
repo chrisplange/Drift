@@ -200,6 +200,9 @@ pub(crate) struct LeaderRecord {
     /// Without a shoulder into the text (v24); absent has one.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     no_shoulder: bool,
+    /// The shoulder's length, paper mm (v24); absent is the usual length.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    shoulder: Option<f64>,
 }
 
 fn leader_record(l: &Leader) -> LeaderRecord {
@@ -229,6 +232,7 @@ fn leader_record(l: &Leader) -> LeaderRecord {
             _ => None,
         },
         no_shoulder: !l.shoulder,
+        shoulder: (l.shoulder_len != Leader::SHOULDER).then_some(l.shoulder_len),
     }
 }
 
@@ -262,11 +266,17 @@ fn parse_leader(id: &str, l: &LeaderRecord) -> Result<Leader, LoadError> {
         (None, Some(_)) => return Err(LoadError::NonFinite(id.to_owned())),
         (None, None) => LeaderShape::Straight,
     };
+    let shoulder_len = match l.shoulder {
+        Some(len) if len.is_finite() && len >= 0.0 => len.min(100.0),
+        Some(_) => return Err(missing("shoulder")),
+        None => Leader::SHOULDER,
+    };
     Ok(Leader {
         to,
         end,
         shape,
         shoulder: !l.no_shoulder,
+        shoulder_len,
     })
 }
 

@@ -85,6 +85,12 @@ pub struct LeaderPath {
     pub end: LeaderEnd,
     /// A bent leader's bend (its handle).
     pub bend: Option<Pos2>,
+    /// Where the leader meets its shoulder (the handle that sets the shoulder's length), and
+    /// where the shoulder meets the text.
+    pub shoulder: Option<Pos2>,
+    pub landing: Pos2,
+    /// A curved leader's middle (its handle), and the ends of the chord it bows from.
+    pub curve: Option<(Pos2, [Pos2; 2])>,
 }
 
 /// A piece of a section or elevation mark, on screen, in drawing order.
@@ -596,7 +602,7 @@ fn place_note_text(
 
 /// A note's leader on screen: from its tip, through its bend or along its curve, to the
 /// nearer side of the text's first line, with a shoulder if it has one.
-fn note_leader(tip: Pos2, bend: Option<Pos2>, l: &Leader, text: &NoteText) -> Vec<Pos2> {
+fn note_leader(tip: Pos2, bend: Option<Pos2>, l: &Leader, text: &NoteText) -> LeaderPath {
     let from = bend.unwrap_or(tip);
     let left = from.x <= text.center.x;
     let landing = egui::pos2(
@@ -607,9 +613,11 @@ fn note_leader(tip: Pos2, bend: Option<Pos2>, l: &Leader, text: &NoteText) -> Ve
         },
         text.rect.top() + 1.0 + text.first_line / 2.0,
     );
-    let shoulder = landing + vec2(if left { -9.0 } else { 9.0 }, 0.0);
+    let reach = l.shoulder_len as f32 * PT_PER_MM;
+    let shoulder = landing + vec2(if left { -reach } else { reach }, 0.0);
     let into = if l.shoulder { shoulder } else { landing };
     let mut points = vec![tip];
+    let mut curve = None;
     match l.shape {
         LeaderShape::Straight => {}
         LeaderShape::Bent(_) => points.extend(bend),
@@ -618,6 +626,7 @@ fn note_leader(tip: Pos2, bend: Option<Pos2>, l: &Leader, text: &NoteText) -> Ve
             let chord = into - tip;
             let n = chord.rot90() * k as f32;
             let mid = tip + chord * 0.5 + n;
+            curve = Some((mid, [tip, into]));
             for i in 1..16 {
                 let t = i as f32 / 16.0;
                 // A quadratic through the bowed midpoint (control point = 2·mid − ends/2).
@@ -633,15 +642,37 @@ fn note_leader(tip: Pos2, bend: Option<Pos2>, l: &Leader, text: &NoteText) -> Ve
     if l.shoulder {
         points.push(landing);
     }
-    points
+    LeaderPath {
+        points,
+        end: l.end,
+        bend,
+        shoulder: l.shoulder.then_some(into),
+        landing,
+        curve,
+    }
+}
+
+/// The bow (as [`LeaderShape::Curved`] holds it) that puts a curved leader's middle at `p`,
+/// given the chord it bows from.
+pub fn bow_through(p: Pos2, [a, b]: [Pos2; 2]) -> f64 {
+    let chord = b - a;
+    let len2 = chord.length_sq();
+    if len2 <= 0.0 {
+        return 0.0;
+    }
+    f64::from((p - (a + chord * 0.5)).dot(chord.rot90()) / len2).clamp(-1.0, 1.0)
 }
 
 /// A callout's leader, with an arrow.
 fn callout_leader(tip: Pos2, text: &NoteText, end: LeaderEnd) -> LeaderPath {
+    let points = leader_to(tip, text);
     LeaderPath {
-        points: leader_to(tip, text),
+        landing: *points.last().expect("three points"),
+        points,
         end,
         bend: None,
+        shoulder: None,
+        curve: None,
     }
 }
 
@@ -704,11 +735,7 @@ pub fn layout_annotations(
                         LeaderShape::Bent(b) => Some(s(tip + b)),
                         _ => None,
                     };
-                    layout.leaders.push(LeaderPath {
-                        points: note_leader(s(tip), bend, l, &t),
-                        end: l.end,
-                        bend,
-                    });
+                    layout.leaders.push(note_leader(s(tip), bend, l, &t));
                 }
                 layout.frame = style.frame;
                 layout.mask = style.mask;
@@ -834,6 +861,9 @@ pub fn layout_annotations(
                     points: vec![sp + away * ORDINATE_GAP, se],
                     end: LeaderEnd::None,
                     bend: None,
+                    shoulder: None,
+                    landing: se,
+                    curve: None,
                 });
                 layout.text = Some(t);
             }

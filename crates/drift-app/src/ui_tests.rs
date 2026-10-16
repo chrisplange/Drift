@@ -1018,6 +1018,78 @@ fn a_tab_dropped_on_another_docks_tabs_goes_there() {
 }
 
 #[test]
+fn a_leaders_shoulder_and_curve_are_set_by_dragging() {
+    use drift_core::{Anchor, Annotation, Leader, LeaderShape};
+    let Some(mut h) = harness() else { return };
+    let id = {
+        let doc = &mut h.state_mut().editor.doc;
+        doc.begin();
+        let mut leader = Leader::to(Anchor::Free(DVec2::new(0.0, 0.0)));
+        leader.shape = LeaderShape::Curved(0.2);
+        let id = doc
+            .add_annotation(Annotation::Note {
+                text: "NOTE".into(),
+                at: DVec2::new(40.0, 20.0),
+                leaders: vec![leader],
+                style: Default::default(),
+            })
+            .unwrap();
+        let _ = doc.commit("Note");
+        id
+    };
+    h.state_mut().editor.selected_annotation = Some(id);
+    h.run();
+    let leader_path = |h: &Harness<'_, DriftApp>| {
+        let app = h.state();
+        let painter =
+            egui::Painter::new(h.ctx.clone(), egui::LayerId::background(), app.canvas_rect);
+        app.layout_notes(&painter, &screen_map(h))
+            .into_iter()
+            .find(|l| l.id == id)
+            .unwrap()
+            .leaders[0]
+            .clone()
+    };
+    let leader = |h: &Harness<'_, DriftApp>| match h.state().editor.doc.annotation(id) {
+        Some(Annotation::Note { leaders, .. }) => leaders[0],
+        _ => panic!("a note"),
+    };
+    let drag = |h: &mut Harness<'_, DriftApp>, from: Pos2, to: Pos2| {
+        h.hover_at(from);
+        h.run_steps(2);
+        button(h, from, true);
+        h.run_steps(2);
+        for k in 1..=6 {
+            h.hover_at(from + (to - from) * (k as f32 / 6.0));
+            h.run_steps(2);
+        }
+        button(h, to, false);
+        h.run_steps(4);
+    };
+    // The shoulder's grip, dragged 30 px further out: the shoulder is that much longer.
+    let path = leader_path(&h);
+    let grip = path.shoulder.expect("a shoulder grip");
+    let out = (grip.x - path.landing.x).signum();
+    let before = (grip.x - path.landing.x).abs();
+    drag(&mut h, grip, grip + egui::vec2(30.0 * out, 0.0));
+    let len = leader(&h).shoulder_len * f64::from(crate::annotations::PT_PER_MM);
+    assert!(
+        (len - f64::from(before + 30.0)).abs() < 1.5,
+        "{len} vs {}",
+        before + 30.0
+    );
+    // The curve's grip, dragged across the chord: it bows the other way.
+    let path = leader_path(&h);
+    let (mid, [a, b]) = path.curve.expect("a curve grip");
+    let across = (mid - (a + (b - a) * 0.5)) * -2.0;
+    drag(&mut h, mid, mid + across);
+    let LeaderShape::Curved(bow) = leader(&h).shape else {
+        panic!("still curved");
+    };
+    assert!(bow < -0.1, "bows the other way: {bow}");
+}
+
+#[test]
 fn note_text_stays_in_its_box_whatever_the_alignment() {
     use crate::annotations::{AnnotationColors, AnnotationState, DimStyle, Recorded, Recorder};
     use drift_core::{Annotation, NoteFrame, NoteStyle, TextAlign};
@@ -1153,7 +1225,7 @@ fn notes_take_leaders_from_their_grips_and_lose_them_with_delete() {
         .find(|l| l.id == id)
         .unwrap();
     let text = layout.text.as_ref().unwrap().rect;
-    let plus = egui::pos2(text.right() + 14.0, text.center().y);
+    let plus = egui::pos2(text.right() + 14.0, text.top() - 14.0 * 0.6);
     let corner = screen(&h, DVec2::new(90.0, 0.0));
     h.hover_at(plus);
     h.run_steps(2);

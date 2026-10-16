@@ -2142,6 +2142,7 @@ mod tests {
                 end: LeaderEnd::Dot,
                 shape: drift_core::LeaderShape::Straight,
                 shoulder: true,
+                shoulder_len: drift_core::Leader::SHOULDER,
             }],
             style: Default::default(),
         })
@@ -2155,12 +2156,14 @@ mod tests {
                     end: LeaderEnd::Arrow,
                     shape: drift_core::LeaderShape::Straight,
                     shoulder: true,
+                    shoulder_len: drift_core::Leader::SHOULDER,
                 },
                 Leader {
                     to: Anchor::Free(DVec2::new(40.0, -2.0)),
                     end: LeaderEnd::OpenArrow,
                     shape: drift_core::LeaderShape::Bent(DVec2::new(3.0, 4.5)),
                     shoulder: false,
+                    shoulder_len: drift_core::Leader::SHOULDER,
                 },
                 Leader {
                     to: Anchor::Curve {
@@ -2170,6 +2173,7 @@ mod tests {
                     end: LeaderEnd::None,
                     shape: drift_core::LeaderShape::Curved(-0.3),
                     shoulder: true,
+                    shoulder_len: 6.25,
                 },
             ],
             style: drift_core::NoteStyle {

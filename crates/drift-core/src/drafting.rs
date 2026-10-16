@@ -196,9 +196,14 @@ pub struct Leader {
     pub shape: LeaderShape,
     /// A short horizontal shoulder where it meets the text.
     pub shoulder: bool,
+    /// How long the shoulder is (paper mm).
+    pub shoulder_len: f64,
 }
 
 impl Leader {
+    /// A shoulder's length unless it is changed (paper mm).
+    pub const SHOULDER: f64 = 2.5;
+
     /// A straight leader to `to`, with an arrow and a shoulder.
     pub fn to(to: Anchor) -> Self {
         Self {
@@ -206,6 +211,7 @@ impl Leader {
             end: LeaderEnd::Arrow,
             shape: LeaderShape::Straight,
             shoulder: true,
+            shoulder_len: Self::SHOULDER,
         }
     }
 }
@@ -671,6 +677,7 @@ mod tests {
                     end: LeaderEnd::Arrow,
                     shape: LeaderShape::Straight,
                     shoulder: true,
+                    shoulder_len: Leader::SHOULDER,
                 }],
                 style: Default::default(),
             })
@@ -711,6 +718,7 @@ mod tests {
                     end: LeaderEnd::Dot,
                     shape: LeaderShape::Straight,
                     shoulder: true,
+                    shoulder_len: Leader::SHOULDER,
                 }],
                 style: Default::default(),
             })

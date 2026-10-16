@@ -24,6 +24,10 @@ pub(crate) struct NoteEdit {
 pub(crate) enum LeaderGrip {
     Tip(usize),
     Bend(usize),
+    /// Where a leader meets its shoulder: sets the shoulder's length.
+    Shoulder(usize),
+    /// A curved leader's middle: sets how far it bows.
+    Curve(usize),
     New(egui::Pos2),
 }
 
@@ -187,10 +191,17 @@ impl DriftApp {
             if let Some(bend) = leader.bend {
                 grips.push((bend, LeaderGrip::Bend(k)));
             }
+            if let Some(at) = leader.shoulder {
+                grips.push((at, LeaderGrip::Shoulder(k)));
+            }
+            if let Some((mid, _)) = leader.curve {
+                grips.push((mid, LeaderGrip::Curve(k)));
+            }
         }
         if let Some(t) = &l.text {
+            // Off the text's top corners, clear of where leaders land.
             for x in [t.rect.left() - PLUS_OUT, t.rect.right() + PLUS_OUT] {
-                let at = egui::pos2(x, t.rect.center().y);
+                let at = egui::pos2(x, t.rect.top() - PLUS_OUT * 0.6);
                 grips.push((at, LeaderGrip::New(at)));
             }
         }
@@ -298,10 +309,12 @@ impl DriftApp {
             }
         }
         let grips = self.note_grips(layouts);
+        // The nearest grip within reach (they can sit close together).
         let grip_at = |p: egui::Pos2| {
             grips
                 .iter()
-                .find(|(g, _)| g.distance(p) <= 7.0)
+                .filter(|(g, _)| g.distance(p) <= 7.0)
+                .min_by(|a, b| a.0.distance(p).total_cmp(&b.0.distance(p)))
                 .map(|(_, grip)| *grip)
         };
         if let Some(grip) = pos.and_then(grip_at) {
@@ -349,6 +362,43 @@ impl DriftApp {
                         });
                     }
                 }
+                LeaderGrip::Shoulder(k) => {
+                    // Along the text's line, out from where it meets the text; very short
+                    // turns the shoulder off.
+                    let landing = layouts
+                        .iter()
+                        .find(|l| l.id == id)
+                        .and_then(|l| l.leaders.get(k))
+                        .map(|l| l.landing);
+                    if let Some(landing) = landing {
+                        let reach = (p.x - landing.x).abs();
+                        self.change_leaders(id, |leaders| {
+                            if let Some(l) = leaders.get_mut(k) {
+                                l.shoulder = reach >= 2.0;
+                                if l.shoulder {
+                                    l.shoulder_len =
+                                        f64::from(reach / annotations::PT_PER_MM).min(100.0);
+                                }
+                            }
+                        });
+                    }
+                }
+                LeaderGrip::Curve(k) => {
+                    let chord = layouts
+                        .iter()
+                        .find(|l| l.id == id)
+                        .and_then(|l| l.leaders.get(k))
+                        .and_then(|l| l.curve)
+                        .map(|(_, chord)| chord);
+                    if let Some(chord) = chord {
+                        let bow = notes::bow_through(p, chord);
+                        self.change_leaders(id, |leaders| {
+                            if let Some(l) = leaders.get_mut(k) {
+                                l.shape = LeaderShape::Curved(bow);
+                            }
+                        });
+                    }
+                }
                 // Drawn by `paint_notes` until it's let go.
                 LeaderGrip::New(_) => {}
             }
@@ -364,6 +414,8 @@ impl DriftApp {
                 }
                 LeaderGrip::Tip(_) => "Move leader",
                 LeaderGrip::Bend(_) => "Bend leader",
+                LeaderGrip::Shoulder(_) => "Shoulder length",
+                LeaderGrip::Curve(_) => "Curve leader",
             };
             self.leader_grip = None;
             self.editor.commit(label);
@@ -427,13 +479,27 @@ impl DriftApp {
                         egui::StrokeKind::Inside,
                     );
                 }
-                LeaderGrip::Bend(_) => {
+                LeaderGrip::Bend(_) | LeaderGrip::Curve(_) => {
                     painter.circle(
                         at,
                         3.5,
                         colors.text_background,
                         egui::Stroke::new(1.2, accent),
                     );
+                }
+                LeaderGrip::Shoulder(_) => {
+                    // A small diamond: it slides along the text's line.
+                    let d = 4.0;
+                    painter.add(egui::Shape::convex_polygon(
+                        vec![
+                            at + egui::vec2(0.0, -d),
+                            at + egui::vec2(d, 0.0),
+                            at + egui::vec2(0.0, d),
+                            at + egui::vec2(-d, 0.0),
+                        ],
+                        colors.text_background,
+                        egui::Stroke::new(1.2, accent),
+                    ));
                 }
                 LeaderGrip::New(_) => {
                     painter.circle(
@@ -747,11 +813,6 @@ impl DriftApp {
                             remove = Some(k);
                         }
                     });
-                    if let LeaderShape::Curved(bow) = &mut l.shape {
-                        theme::row(ui, "Curve", |ui| {
-                            ui.add(egui::Slider::new(bow, -0.6..=0.6).show_value(false));
-                        });
-                    }
                 }
                 if let Some(k) = remove {
                     leaders.remove(k);
@@ -781,8 +842,9 @@ impl DriftApp {
                 ui.label(
                     egui::RichText::new(
                         "On the canvas: drag a + beside the text to add one, a leader's square \
-                         end to re-attach it, a bend's circle to move it; click a leader and \
-                         press Delete to remove it.",
+                         end to re-attach it, a bend's or a curve's circle to shape it, the \
+                         diamond to lengthen its shoulder; click a leader and press Delete to \
+                         remove it.",
                     )
                     .small()
                     .weak(),

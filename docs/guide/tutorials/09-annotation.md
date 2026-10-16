@@ -31,7 +31,10 @@ Pick a note with **Select** and it shows grips:
 
 - **+** on either side of the text: drag from one to anything to add a leader there.
 - A square at each leader's end: drag it to attach the leader somewhere else.
-- A circle at a bent leader's bend: drag it to move the bend.
+- A circle at a bent leader's bend, or at a curved leader's middle: drag it to move the
+  bend, or to bow the curve further, less, or the other way.
+- A diamond where a leader meets its shoulder: drag it along the text's line to lengthen
+  or shorten the shoulder (all the way in turns the shoulder off).
 
 Click a leader's line to pick just that leader, and press Delete to remove it. The text stays
 where it is. **Add leader** in the **Inspector** does the same as a **+**: click it, then
@@ -40,9 +43,10 @@ click what the leader points to.
 The **Inspector** lists the note's leaders. For each:
 
 - **End:** **Arrow**, **Open arrow**, **Dot** or **None**.
-- **Shape:** **Straight**, **Bent** (through a bend you can drag), or **Curved** (with a
-  **Curve** slider for how far it bows).
-- **Shoulder:** a short level line into the text, as on Revit and SolidWorks notes.
+- **Shape:** **Straight**, **Bent** (through a bend you can drag), or **Curved** (drag its
+  middle to bow it).
+- **Shoulder:** a short level line into the text, as on Revit and SolidWorks notes; its
+  length is set on the canvas.
 - **×** removes it.
 
 ### The text

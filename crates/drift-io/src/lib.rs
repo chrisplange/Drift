@@ -6,7 +6,7 @@
 //! ```json
 //! {
 //!   "format": "drift",
-//!   "version": 24,
+//!   "version": 25,
 //!   "meta": {"title":"Bracket","units":"mm","generator":"Drift 0.1.0"},
 //!   "display": {"length":"architectural","fraction":16},
 //!   "variables": [
@@ -79,8 +79,8 @@ pub const EXTENSION: &str = "drift";
 /// dimension's `below` and `text`; 22 = adds a block's `fills`; 23 = adds a layer's `snap`
 /// (and layers are listed in draw order); 24 = notes have any number of `leaders` (each with a
 /// `bend` or `bulge` and a shoulder) and a text style (`align`, `wrap`, `frame`, `mask`,
-/// `bold`, `italic`, `height`).
-pub const FORMAT_VERSION: u32 = 24;
+/// `bold`, `italic`, `height`); 25 = adds a sheet's `colours` (greyscale or black & white).
+pub const FORMAT_VERSION: u32 = 25;
 const FORMAT_TAG: &str = "drift";
 
 /// Document-level properties stored alongside the geometry.
@@ -1718,7 +1718,7 @@ mod tests {
         let text = save(&doc, &Metadata::default());
         let expected = r#"{
   "format": "drift",
-  "version": 24,
+  "version": 25,
   "meta": {"units":"mm"},
   "entities": [
     {"type":"point","id":"e1","at":[0.0,0.0]},
@@ -2066,6 +2066,52 @@ mod tests {
     }
 
     #[test]
+    fn sheet_colours_round_trip_and_default_to_colour() {
+        use drift_core::{Sheet, SheetColours};
+        let mut doc = Document::new();
+        for (name, colours) in [
+            ("Colour", SheetColours::Colour),
+            ("Grey", SheetColours::Greyscale),
+            ("Mono", SheetColours::BlackWhite),
+        ] {
+            let mut sheet = Sheet::new(name);
+            sheet.colours = colours;
+            doc.add_sheet(sheet);
+        }
+        let text = save(&doc, &Metadata::default());
+        assert!(text.contains(r#""colours":"greyscale""#), "{text}");
+        assert!(text.contains(r#""colours":"mono""#), "{text}");
+        // Colour, the default, stays out of the file.
+        assert_eq!(text.matches(r#""colours""#).count(), 2, "{text}");
+        let (loaded, _) = load(&text).unwrap();
+        assert_eq!(loaded, doc);
+        let modes: Vec<_> = loaded.sheets().map(|(_, s)| s.colours).collect();
+        assert_eq!(
+            modes,
+            [
+                SheetColours::Colour,
+                SheetColours::Greyscale,
+                SheetColours::BlackWhite
+            ]
+        );
+        // A sheet from before v25 prints in colour.
+        let old = r#"{
+  "format": "drift",
+  "version": 24,
+  "meta": {"units":"mm"},
+  "entities": [],
+  "sheets": [
+    {"id":"s1","name":"Old","paper":"A3","views":[{"scale":1.0,"center":[0.0,0.0]}],"title_block":"modern"}
+  ]
+}"#;
+        let (old, _) = load(old).unwrap();
+        assert_eq!(old.sheets().next().unwrap().1.colours, SheetColours::Colour);
+        // An unknown mode is refused.
+        let bad = text.replace(r#""colours":"mono""#, r#""colours":"sepia""#);
+        assert!(load(&bad).is_err());
+    }
+
+    #[test]
     fn a_note_with_its_one_leader_from_before_v24_loads() {
         let text = r#"{
   "format": "drift",
@@ -2291,6 +2337,7 @@ mod tests {
         detail_view.border = true;
         sheet.views.push(detail_view);
         sheet.title_block = drift_core::TitleBlock::Ansi;
+        sheet.colours = drift_core::SheetColours::BlackWhite;
         sheet.fields.title = "Mounting plate".into();
         sheet.fields.number = "DR-001".into();
         sheet.revisions.push(drift_core::Revision {
@@ -2301,6 +2348,7 @@ mod tests {
         });
         doc.add_sheet(sheet);
         let mut detail = drift_core::Sheet::new("Detail");
+        detail.colours = drift_core::SheetColours::Greyscale;
         detail.views[0].dimensions = false;
         detail.views[0].notes = false;
         doc.add_sheet(detail);
@@ -2421,7 +2469,7 @@ mod tests {
         doc.add_text(drift_core::SketchText::new("A", DVec2::ZERO, 3.0));
 
         let text = save(&doc, &Metadata::default());
-        assert!(text.contains("\"version\": 24"));
+        assert!(text.contains("\"version\": 25"));
         assert!(
             text.contains(r#"{"a":[80.0,20.0,30.0,0.0,90.0]}"#),
             "{text}"

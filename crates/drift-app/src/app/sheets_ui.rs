@@ -2,7 +2,9 @@
 //! and DXF import.
 
 use drift_core::sheets::{ARCHITECTURAL_SCALES, ENGINEERING_SCALES, PREFERRED_SCALES, scale_label};
-use drift_core::{PaperSize, Revision, Sheet, SheetId, SheetView, TitleBlock, ViewFrame};
+use drift_core::{
+    PaperSize, Revision, Sheet, SheetColours, SheetId, SheetView, TitleBlock, ViewFrame,
+};
 use drift_draft::page::Drawing;
 use drift_platform::FileType;
 
@@ -536,6 +538,11 @@ impl DriftApp {
             &[(false, "Landscape"), (true, "Portrait")],
         ) {
             sheet.portrait = portrait;
+        }
+        // How it prints: in colour, in greys, or black lines over grey fills.
+        let colours = SheetColours::ALL.map(|c| (c, c.label()));
+        if let Some(c) = theme::segmented(ui, sheet.colours, &colours) {
+            sheet.colours = c;
         }
         typing |= self.views_section(ui, &mut sheet);
         theme::section(ui, "Title block");

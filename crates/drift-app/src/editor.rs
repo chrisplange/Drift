@@ -478,6 +478,7 @@ impl Editor {
         self.refresh_driven();
         self.adopt_into_open_group();
         self.make_new_curves_construction();
+        self.follow_fills();
         let tx = self.doc.commit(label);
         self.history.push(tx);
         self.sync();

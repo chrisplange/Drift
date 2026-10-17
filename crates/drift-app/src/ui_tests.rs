@@ -1902,6 +1902,79 @@ fn fill_tool_hatches_and_fills_regions() {
 }
 
 #[test]
+fn a_hatch_follows_its_corner_moved_in_and_a_side_split() {
+    let Some(mut h) = harness() else { return };
+    h.get_by_label("File").click();
+    h.run();
+    h.get_by_label("Open example").click();
+    h.run();
+    // A 120 x 60 plate.
+    let mut doc = drift_core::Document::new();
+    let corners = [(0.0, 0.0), (120.0, 0.0), (120.0, 60.0), (0.0, 60.0)]
+        .map(|(x, y)| doc.add_point(DVec2::new(x, y)));
+    let sides: Vec<_> = (0..4)
+        .map(|i| doc.add_line(corners[i], corners[(i + 1) % 4]).unwrap())
+        .collect();
+    h.state_mut()
+        .replace_document(doc, "plate".into(), None, Default::default(), true);
+    h.run();
+    h.run();
+    // Hatch it, clicking right in its bottom-left corner.
+    h.get_by_label("Fill / hatch").click();
+    h.run();
+    click_world(&mut h, DVec2::new(4.0, 4.0));
+    let fill = h
+        .state()
+        .editor
+        .selected_fills
+        .first()
+        .copied()
+        .expect("a hatch");
+    // Move that corner in (as typed in the inspector), past where the hatch was picked.
+    assert!(
+        h.state_mut()
+            .editor
+            .move_point_to(corners[0], DVec2::new(30.0, 20.0))
+    );
+    h.run();
+    // Split the right side.
+    h.get_by_label("Split").scroll_to_me();
+    h.run();
+    h.get_by_label("Split").click();
+    h.run();
+    click_world(&mut h, DVec2::new(120.0, 30.0));
+    let ed = &mut h.state_mut().editor;
+    assert_eq!(
+        ed.doc.fill(fill).unwrap().boundary.len(),
+        5,
+        "the split side's pieces"
+    );
+    let p: Vec<DVec2> = corners.iter().map(|c| ed.doc.point(*c).unwrap()).collect();
+    let area = (0..4)
+        .map(|i| p[i].perp_dot(p[(i + 1) % 4]))
+        .sum::<f64>()
+        .abs()
+        / 2.0;
+    let shape = ed.fill_shapes()[&fill].clone();
+    assert!(!shape.lost, "the hatch kept its area");
+    assert!((shape.region.area - area).abs() < 1e-6);
+    assert!(
+        sides
+            .iter()
+            .all(|s| ed.doc.fill(fill).unwrap().boundary.contains(s))
+    );
+    h.run();
+    save_png("drift_ui_hatch_follows.png", &mut h);
+    // Undo both: the hatch is back on the plate as drawn.
+    h.state_mut().undo();
+    h.state_mut().undo();
+    let ed = &mut h.state_mut().editor;
+    let shape = ed.fill_shapes()[&fill].clone();
+    assert!(!shape.lost);
+    assert!((shape.region.area - 7200.0).abs() < 1e-6);
+}
+
+#[test]
 fn temporary_dimensions_show_and_move_the_picked_wall() {
     let Some(mut h) = harness() else { return };
     // (Past the start screen.)

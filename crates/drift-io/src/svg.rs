@@ -592,6 +592,60 @@ mod tests {
     use drift_core::{Bounds, DVec2, LineType};
     use drift_draft::page::Pen;
 
+    /// A red line, a blue fill, green text and a mask, in a sheet's colours.
+    fn coloured(colours: drift_core::SheetColours) -> Drawing {
+        use drift_core::Rgb;
+        let mut d = Drawing::new(DVec2::new(100.0, 100.0));
+        d.layer(drift_draft::page::LayerInfo {
+            name: "Walls".into(),
+            color: Rgb([255, 0, 0]),
+            width: 0.35,
+            line_type: drift_core::LineType::Continuous,
+        });
+        let pen = |c| Pen::new(0.35).with_color(Rgb(c));
+        d.line("Walls", pen([255, 0, 0]), DVec2::ZERO, DVec2::splat(50.0));
+        d.filled_rect("Walls", pen([0, 0, 255]), DVec2::ZERO, DVec2::splat(20.0));
+        d.text(
+            "Walls",
+            pen([0, 200, 0]),
+            DVec2::splat(30.0),
+            3.5,
+            Align::Left,
+            "Ø6",
+        );
+        d.push(
+            "Walls",
+            pen([0, 0, 255]),
+            Prim::Fill {
+                rings: vec![vec![DVec2::ZERO, DVec2::X, DVec2::ONE]],
+                triangles: vec![[DVec2::ZERO, DVec2::X, DVec2::ONE]],
+                mask: true,
+            },
+        );
+        d.set_colours(colours);
+        d
+    }
+
+    #[test]
+    fn writes_a_sheets_colours() {
+        let colour = write(&coloured(drift_core::SheetColours::Colour));
+        assert!(colour.contains(r##"stroke="#ff0000""##));
+        assert!(colour.contains(r##"fill="#0000ff""##) && colour.contains(r##"fill="#00c800""##));
+        let grey = write(&coloured(drift_core::SheetColours::Greyscale));
+        // Red's grey for the line, blue's for the fill, green's for the text.
+        assert!(grey.contains(r##"stroke="#4c4c4c""##), "{grey}");
+        assert!(grey.contains(r##"fill="#1d1d1d""##), "{grey}");
+        assert!(grey.contains(r##"fill="#757575""##), "{grey}");
+        let mono = write(&coloured(drift_core::SheetColours::BlackWhite));
+        assert!(mono.contains(r##"stroke="#000000""##) && !mono.contains("#4c4c4c"));
+        // Text black, the fill its grey, the mask white.
+        assert!(mono.contains(r##"fill="#000000""##) && mono.contains(r##"fill="#1d1d1d""##));
+        assert!(mono.contains(r##"fill="#ffffff""##), "{mono}");
+        for svg in [&grey, &mono] {
+            assert!(!svg.contains("#ff0000") && !svg.contains("#0000ff"));
+        }
+    }
+
     #[test]
     fn writes_true_scale_svg() {
         let mut d = Drawing::new(DVec2::new(297.0, 210.0));

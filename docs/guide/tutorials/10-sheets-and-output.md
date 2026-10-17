@@ -34,6 +34,7 @@ back.
 In the **Sheets** panel:
 
 - **Paper:** **Name**, **Size** (A4 to A0, ANSI A to E) and **Landscape** or **Portrait**.
+- **Colours:** how the sheet prints (see [Colour, greyscale or black & white](#colour-greyscale-or-black--white)).
 - **Title block:** **Modern**, **ISO 7200**, **ASME Y14.1** or **None**. Then the fields:
   title, number, drawn by, checked, date (**Today** fills it in), company and material.
   The scale, the sheet number ("1 / 2") and the revision fill themselves in.
@@ -91,6 +92,20 @@ From the **Sheets** panel's **Output** section, or **File → Export**:
 
 Exporting never replaces your `.drift` file.
 
+### Colour, greyscale or black & white
+
+Under **Paper**, each sheet has its own colour choice. The sheet preview shows it, and the
+PDF, SVG and print come out the same:
+
+| Choice | On paper |
+|---|---|
+| **Colour** | Layer and item colours, as drawn. |
+| **Greyscale** | Every colour becomes its grey (by how light it is). Light fills stay light and dark ones dark. |
+| **Black & white** | Like a CAD monochrome plot style. Lines, text and hatch lines print black. Solid fills print as their grey, so a dark fill doesn't hide the lines on it. White stays white: the masks behind dimension text, and lettering knocked out of a dark box (the Modern title block's sheet number). |
+
+A new sheet starts in **Colour**. The choice is saved with the sheet. It doesn't change DXF,
+which is the model, not a sheet: DXF keeps the layer and item colours.
+
 What goes on paper:
 
 - Construction geometry, points, hidden layers and layers whose print flag is off are left
@@ -114,6 +129,7 @@ About DXF:
 - **New sheet** lays the drawing out on paper with a title block, at a fitting scale.
 - A sheet holds several views, each with its own scale and frame.
 - PDF prints every sheet; SVG the current one; DXF the model at full size.
+- Each sheet prints in colour, greyscale or black & white, as its preview shows.
 
 ## Next
 

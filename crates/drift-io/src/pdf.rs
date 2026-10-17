@@ -578,6 +578,69 @@ mod tests {
     use drift_core::Bounds;
     use drift_draft::page::Pen;
 
+    /// A red line, a blue fill, green text and a mask, in a sheet's colours.
+    fn coloured(colours: drift_core::SheetColours) -> Drawing {
+        use drift_core::Rgb;
+        let mut d = Drawing::new(DVec2::new(100.0, 100.0));
+        d.layer(drift_draft::page::LayerInfo {
+            name: "Walls".into(),
+            color: Rgb([255, 0, 0]),
+            width: 0.35,
+            line_type: drift_core::LineType::Continuous,
+        });
+        let pen = |c| Pen::new(0.35).with_color(Rgb(c));
+        d.line("Walls", pen([255, 0, 0]), DVec2::ZERO, DVec2::splat(50.0));
+        d.filled_rect("Walls", pen([0, 0, 255]), DVec2::ZERO, DVec2::splat(20.0));
+        d.text(
+            "Walls",
+            pen([0, 200, 0]),
+            DVec2::splat(30.0),
+            3.5,
+            Align::Left,
+            "Ø6",
+        );
+        d.push(
+            "Walls",
+            pen([0, 0, 255]),
+            Prim::Fill {
+                rings: vec![vec![DVec2::ZERO, DVec2::X, DVec2::ONE]],
+                triangles: vec![[DVec2::ZERO, DVec2::X, DVec2::ONE]],
+                mask: true,
+            },
+        );
+        d.set_colours(colours);
+        d
+    }
+
+    #[test]
+    fn writes_a_sheets_colours() {
+        let content = |colours| {
+            let pdf = write(&[coloured(colours)], "Colours");
+            let parsed = lopdf::Document::load_mem(&pdf).expect("a valid PDF");
+            let page = *parsed.get_pages().values().next().expect("a page");
+            String::from_utf8_lossy(&parsed.get_page_content(page)).into_owned()
+        };
+        let colour = content(drift_core::SheetColours::Colour);
+        assert!(
+            colour.contains("1 0 0 RG") && colour.contains("0 0 1 rg"),
+            "{colour}"
+        );
+        // Greyscale: red's grey (76) for the line, blue's (29) for the fill.
+        let grey = content(drift_core::SheetColours::Greyscale);
+        let g = |v: u8| n(f64::from(v) / 255.0);
+        assert!(grey.contains(&format!("{0} {0} {0} RG", g(76))), "{grey}");
+        assert!(grey.contains(&format!("{0} {0} {0} rg", g(29))), "{grey}");
+        assert!(!grey.contains("1 0 0 RG") && !grey.contains("0 0 1 rg"));
+        // Black & white: black lines and text, the fill grey, the mask white.
+        let mono = content(drift_core::SheetColours::BlackWhite);
+        assert!(mono.contains("0 0 0 RG") && !mono.contains(&format!("{0} {0} {0} RG", g(76))));
+        assert!(mono.contains(&format!("{0} {0} {0} rg", g(29))), "{mono}");
+        assert!(
+            mono.contains("0 0 0 rg") && mono.contains("1 1 1 rg"),
+            "{mono}"
+        );
+    }
+
     #[test]
     fn writes_a_valid_true_scale_pdf() {
         let mut d = Drawing::new(DVec2::new(297.0, 210.0));

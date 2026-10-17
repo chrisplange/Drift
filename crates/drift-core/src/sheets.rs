@@ -3,7 +3,7 @@
 
 use glam::DVec2;
 
-use crate::Bounds;
+use crate::{Bounds, Rgb};
 
 /// Stable identifier of a sheet.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -157,6 +157,68 @@ impl TitleBlock {
     }
 }
 
+/// The colours a sheet is printed and exported in.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SheetColours {
+    /// Layer and item colours, as drawn.
+    #[default]
+    Colour,
+    /// Every colour as its luminance grey.
+    Greyscale,
+    /// Monochrome, as a CAD monochrome plot style: lines, text and hatch lines black, solid
+    /// fills their luminance grey (so a dark fill doesn't bury the lines on it). White stays
+    /// white: it is the paper's colour (lettering knocked out of a dark box).
+    BlackWhite,
+}
+
+impl SheetColours {
+    pub const ALL: [SheetColours; 3] = [
+        SheetColours::Colour,
+        SheetColours::Greyscale,
+        SheetColours::BlackWhite,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            SheetColours::Colour => "Colour",
+            SheetColours::Greyscale => "Greyscale",
+            SheetColours::BlackWhite => "Black & white",
+        }
+    }
+
+    pub fn key(self) -> &'static str {
+        match self {
+            SheetColours::Colour => "colour",
+            SheetColours::Greyscale => "greyscale",
+            SheetColours::BlackWhite => "mono",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|c| c.key() == s)
+    }
+
+    /// How `c` prints: as a stroke (lines, text, hatch lines) or as an area (`fill`).
+    pub fn map(self, c: Rgb, fill: bool) -> Rgb {
+        match self {
+            SheetColours::Colour => c,
+            SheetColours::BlackWhite if !fill && c != Rgb([255, 255, 255]) => Rgb([0, 0, 0]),
+            SheetColours::Greyscale | SheetColours::BlackWhite => {
+                let v = luminance(c);
+                Rgb([v, v, v])
+            }
+        }
+    }
+}
+
+/// The grey a colour prints as (Rec. 601 luma, as print drivers use).
+pub fn luminance(c: Rgb) -> u8 {
+    let [r, g, b] = c.0.map(f64::from);
+    (0.299 * r + 0.587 * g + 0.114 * b)
+        .round()
+        .clamp(0.0, 255.0) as u8
+}
+
 /// One row of a revision table.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Revision {
@@ -241,6 +303,8 @@ pub struct Sheet {
     pub title_block: TitleBlock,
     pub fields: TitleFields,
     pub revisions: Vec<Revision>,
+    /// The colours it prints and exports in (and shows in the sheet preview).
+    pub colours: SheetColours,
 }
 
 impl Sheet {
@@ -253,6 +317,7 @@ impl Sheet {
             title_block: TitleBlock::Modern,
             fields: TitleFields::default(),
             revisions: Vec::new(),
+            colours: SheetColours::Colour,
         }
     }
 
@@ -366,6 +431,38 @@ pub fn scale_label(n: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn colour_modes() {
+        let red = Rgb([255, 0, 0]);
+        let navy = Rgb([0, 0, 128]);
+        let white = Rgb([255, 255, 255]);
+        assert_eq!(luminance(red), 76);
+        assert_eq!(luminance(white), 255);
+        assert_eq!(luminance(Rgb([0, 0, 0])), 0);
+        // Colour leaves everything alone.
+        assert_eq!(SheetColours::Colour.map(red, false), red);
+        assert_eq!(SheetColours::Colour.map(navy, true), navy);
+        // Greyscale: lines and fills alike, by luminance.
+        assert_eq!(SheetColours::Greyscale.map(red, false), Rgb([76, 76, 76]));
+        assert_eq!(SheetColours::Greyscale.map(navy, true), Rgb([15, 15, 15]));
+        // Fills keep their contrast: a light fill stays lighter than a dark one.
+        let pale = Rgb([0xd0, 0xe0, 0xff]);
+        assert!(SheetColours::Greyscale.map(pale, true).0[0] > 200);
+        // Black & white: every stroke black, fills grey; white (paper) stays white, so
+        // lettering knocked out of a dark box still reads.
+        for c in [red, navy, Rgb([255, 255, 0])] {
+            assert_eq!(SheetColours::BlackWhite.map(c, false), Rgb([0, 0, 0]));
+        }
+        assert_eq!(SheetColours::BlackWhite.map(white, false), white);
+        assert_eq!(SheetColours::BlackWhite.map(red, true), Rgb([76, 76, 76]));
+        assert_eq!(SheetColours::BlackWhite.map(white, true), white);
+        for c in SheetColours::ALL {
+            assert_eq!(SheetColours::parse(c.key()), Some(c));
+        }
+        assert_eq!(SheetColours::parse("sepia"), None);
+        assert_eq!(Sheet::new("A").colours, SheetColours::Colour);
+    }
 
     #[test]
     fn sizes_scales_and_labels() {

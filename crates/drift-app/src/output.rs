@@ -518,7 +518,7 @@ fn view(
 }
 
 /// A sheet as printed: each view of the sketch at its scale, seen through its frame, under
-/// the views' titles, the border, title block and revision table.
+/// the views' titles, the border, title block and revision table, in the sheet's colours.
 pub fn sheet_drawing(
     ed: &mut Editor,
     patterns: &PatternLibrary,
@@ -568,6 +568,8 @@ pub fn sheet_drawing(
         .filter(|svg| !svg.is_empty())
         .and_then(|svg| drift_draft::logo::parse(svg).ok());
     drift_draft::sheet::draw_frame(sheet, number, logo.as_ref(), &mut d);
+    // In the sheet's colours: what the preview shows is what prints.
+    d.set_colours(sheet.colours);
     d
 }
 

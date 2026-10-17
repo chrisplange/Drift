@@ -12,6 +12,8 @@ pub mod clipboard;
 pub mod curves;
 mod dock;
 pub mod editor;
+#[cfg(test)]
+mod fill_tests;
 pub mod fills;
 pub mod fonts;
 mod icons;

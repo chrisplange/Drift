@@ -12,6 +12,14 @@ targets = [
 [advisories]
 version = 2
 yanked = "warn"
+ignore = [
+    # zbus_names, zvariant and zvariant_derive are unmaintained (merged into zbus 6). eframe
+    # pulls them in on Linux through accesskit's AT-SPI support, and there is no upgrade
+    # until accesskit moves to zbus 6.
+    { id = "RUSTSEC-2026-0370", reason = "zvariant: via eframe/accesskit; no upgrade yet" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names: via eframe/accesskit; no upgrade yet" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive: via eframe/accesskit; no upgrade yet" },
+]
 
 [licenses]
 version = 2

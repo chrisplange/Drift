@@ -3526,6 +3526,15 @@ fn text_is_typed_in_place_and_windows_open() {
     h.run();
     h.run();
     save_png("drift_ui_about.png", &mut h);
+    // About → Licences shows the third-party notices.
+    h.get_by_label("Licences…").click();
+    h.run();
+    h.run();
+    h.run();
+    h.run();
+    assert!(h.state().show_licences);
+    h.get_by_label("Ubuntu Light (Ubuntu-Light.ttf)");
+    save_png("drift_ui_licences.png", &mut h);
 }
 
 #[test]

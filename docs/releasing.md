@@ -37,10 +37,30 @@ tool won't overwrite it. Then replace the secret and release a new version. Copi
 with the old key can't verify releases signed with the new one, so their testers must
 install that version by hand once. After a leak, also delete the old secret straight away.
 
+## Third-party notices
+
+`THIRD-PARTY-NOTICES.txt` lists the licences and copyright notices of the fonts and crates
+built into Drift. Their licences ask for it to go with every copy, so the packaging scripts
+put it in the Windows installer and zip and in the macOS app's `Contents/Resources`, the web
+build serves it next to the app, and **About → Licences…** shows it in every build.
+
+It is made from `Cargo.lock`, so it changes whenever a dependency does. The CI check
+**Third-party notices** fails until it is regenerated:
+
+```powershell
+cargo install cargo-about --locked --features cli
+python scripts/notices.py
+```
+
+Commit the new file with the dependency change. `about.toml` says which platforms and
+licences it covers; a dependency under a licence not listed there (or in `deny.toml`) needs
+a look before it goes in.
+
 ## Each release
 
 1. Set the version in `Cargo.toml` (`[workspace.package] version`), for example
-   `0.1.0-alpha.5`, and merge it to `main`.
+   `0.1.0-alpha.5`, and merge it to `main`. The CI checks must pass, including
+   **Third-party notices** (see above).
 2. Tag and push: `git tag v0.1.0-alpha.5`, then `git push origin v0.1.0-alpha.5`.
 3. The **Package** workflow builds the Windows installer and zip and the macOS disk image.
    It writes `SHA256SUMS.txt` and signs it into `SHA256SUMS.txt.minisig`, with the trusted

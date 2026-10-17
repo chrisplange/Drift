@@ -50,7 +50,7 @@ done
 iconutil -c icns -o "$APP/Contents/Resources/Drift.icns" "$ICONSET"
 
 sed -e "s/@VERSION@/$VERSION/" -e "s/@BUILD@/$BUILD/" installer/macos/Info.plist > "$APP/Contents/Info.plist"
-cp LICENSE-MIT LICENSE-APACHE "$APP/Contents/Resources/"
+cp LICENSE-MIT LICENSE-APACHE THIRD-PARTY-NOTICES.txt "$APP/Contents/Resources/"
 
 codesign --force --deep --options runtime --sign "${CODESIGN_IDENTITY:--}" "$APP"
 codesign --verify --deep --strict "$APP"

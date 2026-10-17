@@ -32,7 +32,7 @@ $zip = Join-Path $dist "Drift-$version-windows-x64.zip"
 $stage = Join-Path $dist 'stage\Drift'
 if (Test-Path (Join-Path $dist 'stage')) { Remove-Item -Recurse -Force (Join-Path $dist 'stage') }
 New-Item -ItemType Directory -Force $stage | Out-Null
-Copy-Item $exe, (Join-Path $root 'LICENSE-MIT'), (Join-Path $root 'LICENSE-APACHE'), (Join-Path $root 'THIRD-PARTY-NOTICES.txt') $stage
+Copy-Item $exe, (Join-Path $root 'LICENSE.md'), (Join-Path $root 'THIRD-PARTY-NOTICES.txt') $stage
 if (Test-Path $zip) { Remove-Item -Force $zip }
 Compress-Archive -Path $stage -DestinationPath $zip
 Remove-Item -Recurse -Force (Join-Path $dist 'stage')

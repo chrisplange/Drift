@@ -28,5 +28,7 @@ CI checks that it matches `Cargo.lock`.
 
 ## Licence
 
-By contributing, you agree that your contributions will be dual licensed under the MIT and
-Apache-2.0 licences, as described in the [README](README.md#licence).
+Drift is released under the [FSL-1.1-ALv2](LICENSE.md), as described in the
+[README](README.md#licence). By contributing, you license your contribution to Christopher
+Lange, Drift's licensor, under the Apache License, Version 2.0, so that it can be released as
+part of Drift under the FSL now and under Apache-2.0 when each version converts.

@@ -1,5 +1,6 @@
 # cargo-deny configuration: https://embarkstudios.github.io/cargo-deny/
-# Keeps every dependency compatible with Drift's MIT OR Apache-2.0 licence.
+# Keeps every dependency under a permissive licence, so Drift (FSL-1.1-ALv2) can ship them.
+
 
 [graph]
 targets = [
@@ -46,6 +47,10 @@ allow = [
 exceptions = [
     { allow = ["CDLA-Permissive-2.0"], crate = "webpki-root-certs" },
 ]
+
+[licenses.private]
+# Drift's own crates aren't published; their licence is Drift's (see LICENSE.md).
+ignore = true
 
 [bans]
 multiple-versions = "allow"

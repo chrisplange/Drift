@@ -237,13 +237,12 @@ cargo test --workspace
 
 ## Licence
 
-Licensed under either of
+Drift is licensed under the [Functional Source License, Version 1.1, ALv2 Future
+License](LICENSE.md) (FSL-1.1-ALv2). You may use, copy, change and share it for any purpose
+except making a product or service that competes with Drift. Two years after each version
+is released, that version is also available under the Apache License, Version 2.0.
 
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
-- MIT license ([LICENSE-MIT](LICENSE-MIT))
+Versions up to and including 0.1.0-alpha.7 were released under MIT OR Apache-2.0, and stay
+available under those terms.
 
-at your option.
-
-Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion
-in the work by you, as defined in the Apache-2.0 license, shall be dual licensed as above,
-without any additional terms or conditions.
+Copyright 2026 Christopher Lange.

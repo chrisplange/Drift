@@ -83,7 +83,8 @@ Chosen: **MIT OR Apache-2.0** (dual licence, the Rust ecosystem convention, and 
 - Trade-off: we cannot copy or port GPL code (SolveSpace). We can still implement the same
   *algorithms* from papers and documentation, which are not copyrightable.
 
-Repo hygiene from day one: `LICENSE-MIT`, `LICENSE-APACHE`, `CONTRIBUTING.md`, a code of conduct,
+Repo hygiene from day one: a licence (`LICENSE.md`, FSL-1.1-ALv2 since alpha 8; MIT OR Apache-2.0
+before), `CONTRIBUTING.md`, a code of conduct,
 issue templates, `cargo-deny` in CI for licence and advisory checks, and DCO or a simple
 "contributions under the project licence" policy.
 

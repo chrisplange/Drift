@@ -38,7 +38,8 @@ pub use groups::{Group, GroupId};
 pub use layers::{Appearance, Layer, LayerId, LineType, LineWeight, Rgb};
 pub use shape::{DofState, Emphasis, LineKind, Shape, SketchItem};
 pub use sheets::{
-    PaperSize, Revision, Sheet, SheetId, SheetView, TitleBlock, TitleFields, ViewFrame,
+    PaperSize, Revision, Sheet, SheetColours, SheetId, SheetView, TitleBlock, TitleFields,
+    ViewFrame,
 };
 pub use texts::{SketchText, TextAlign, TextFont, TextId};
 pub use underlays::{RefPrim, Underlay, UnderlayId};

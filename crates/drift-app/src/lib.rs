@@ -12,6 +12,8 @@ pub mod clipboard;
 pub mod curves;
 mod dock;
 pub mod editor;
+#[cfg(test)]
+mod fill_tests;
 pub mod fills;
 pub mod fonts;
 mod icons;
@@ -238,6 +240,8 @@ pub struct DriftApp {
     /// The start panel over an empty sketch.
     show_start: bool,
     show_about: bool,
+    /// About → Licences: the third-party notices.
+    show_licences: bool,
     show_settings: bool,
     /// What was last copied or cut here (for Edit → Paste).
     clipboard: Option<String>,
@@ -435,6 +439,7 @@ impl DriftApp {
             // Tests drive the bare canvas.
             show_start: !cfg!(test),
             show_about: false,
+            show_licences: false,
             show_settings: false,
             clipboard: None,
             palette: None,

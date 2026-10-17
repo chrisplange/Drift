@@ -241,6 +241,7 @@ impl Editor {
             Issue::ZeroLength { curve } => match self.doc.get(curve).map(|e| e.kind) {
                 Some(kind) => {
                     let [a, b] = ends(&kind).unwrap_or([curve, curve]);
+                    self.release_from_fills(curve);
                     self.doc.delete([curve]);
                     // Whatever else met at its two ends now meets at one.
                     if self.doc.contains(a) && self.doc.contains(b) && a != b {
@@ -277,6 +278,7 @@ impl Editor {
             self.sync();
             return false;
         }
+        self.follow_fills();
         let tx = self.doc.commit("Fix sketch");
         if merge {
             self.history.merge_into_last(tx);

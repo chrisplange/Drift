@@ -50,6 +50,7 @@ impl DriftApp {
         self.vector_import_dialog(ctx);
         self.start_panel(ctx);
         self.about_window(ctx);
+        self.licences_window(ctx);
         self.settings_window(ctx);
         self.relation_pie(ctx);
         self.import_report_window(ctx);

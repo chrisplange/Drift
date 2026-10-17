@@ -12,7 +12,10 @@ fn main() {
             .set("ProductName", "Drift")
             .set("FileDescription", "Drift")
             .set("CompanyName", "Drift")
-            .set("LegalCopyright", "MIT OR Apache-2.0")
+            .set(
+                "LegalCopyright",
+                "Copyright 2026 Christopher Lange. FSL-1.1-ALv2.",
+            )
             .set("OriginalFilename", "drift.exe");
         // Without the Windows SDK's resource compiler the app still builds, just without
         // an icon of its own.

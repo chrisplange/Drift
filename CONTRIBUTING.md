@@ -22,6 +22,10 @@ cargo clippy --target wasm32-unknown-unknown -p drift-web
 cargo test --workspace
 ```
 
+If you add or update a dependency, also regenerate `THIRD-PARTY-NOTICES.txt` with
+`python scripts/notices.py` (it needs `cargo install cargo-about --locked --features cli`).
+CI checks that it matches `Cargo.lock`.
+
 ## Licence
 
 Drift is released under the [FSL-1.1-ALv2](LICENSE.md), as described in the

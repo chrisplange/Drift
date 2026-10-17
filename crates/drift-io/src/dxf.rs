@@ -590,6 +590,71 @@ mod tests {
     use drift_core::Document;
     use drift_draft::page::{LayerInfo, Pen};
 
+    /// A red line, a blue fill, green text and a mask, in a sheet's colours.
+    fn coloured(colours: drift_core::SheetColours) -> Drawing {
+        use drift_core::Rgb;
+        let mut d = Drawing::new(DVec2::new(100.0, 100.0));
+        d.layer(drift_draft::page::LayerInfo {
+            name: "Walls".into(),
+            color: Rgb([255, 0, 0]),
+            width: 0.35,
+            line_type: drift_core::LineType::Continuous,
+        });
+        let pen = |c| Pen::new(0.35).with_color(Rgb(c));
+        d.line("Walls", pen([255, 0, 0]), DVec2::ZERO, DVec2::splat(50.0));
+        d.filled_rect("Walls", pen([0, 0, 255]), DVec2::ZERO, DVec2::splat(20.0));
+        d.text(
+            "Walls",
+            pen([0, 200, 0]),
+            DVec2::splat(30.0),
+            3.5,
+            Align::Left,
+            "Ø6",
+        );
+        d.push(
+            "Walls",
+            pen([0, 0, 255]),
+            Prim::Fill {
+                rings: vec![vec![DVec2::ZERO, DVec2::X, DVec2::ONE]],
+                triangles: vec![[DVec2::ZERO, DVec2::X, DVec2::ONE]],
+                mask: true,
+            },
+        );
+        d.set_colours(colours);
+        d
+    }
+
+    #[test]
+    fn writes_a_sheets_colours() {
+        use drift_core::SheetColours;
+        // Every colour number written (group 62).
+        let colours = |c| -> Vec<u8> {
+            let text = write(&coloured(c), DxfUnits::MM);
+            let lines: Vec<&str> = text.lines().map(str::trim).collect();
+            lines
+                .windows(2)
+                .filter(|w| w[0] == "62")
+                .map(|w| w[1].parse().unwrap())
+                .collect()
+        };
+        // Red (1) layer, blue (5) fill, green (3) text in colour.
+        let colour = colours(SheetColours::Colour);
+        assert!(colour.contains(&1) && colour.contains(&5) && colour.contains(&3));
+        // Black & white: the layer and its lines black (7, by background), the fill a grey
+        // (the ACI greys are 8, 9 and 250 to 255).
+        let mono = colours(SheetColours::BlackWhite);
+        assert!(mono.contains(&7), "{mono:?}");
+        assert!(
+            mono.iter().all(|c| [7, 8, 9].contains(c) || *c >= 250),
+            "{mono:?}"
+        );
+        let grey = colours(SheetColours::Greyscale);
+        assert!(
+            grey.iter().all(|c| [7, 8, 9].contains(c) || *c >= 250),
+            "{grey:?}"
+        );
+    }
+
     #[test]
     fn round_trips_curves_layers_and_line_types() {
         let mut d = Drawing::new(DVec2::new(100.0, 100.0));

@@ -1430,6 +1430,8 @@ impl Editor {
                 Some(EntityKind::Arc { center, .. }) => Some(center),
                 _ => None,
             };
+            // The lines meet again: fills of the corner keep their area.
+            self.release_from_fills(cut);
             self.doc.delete([cut]);
             for point in ends.into_iter().chain(centre) {
                 self.doc.remove_if_orphaned(point);
@@ -2128,6 +2130,8 @@ impl Editor {
                 }
             }
             let m = |p: EntityId| map[&p];
+            // Each curve's mirror image (a line on the axis is its own).
+            let mut images: HashMap<EntityId, EntityId> = HashMap::from([(axis, axis)]);
             for &id in &ids {
                 let Some(entity) = self.doc.get(id).copied() else {
                     continue;
@@ -2136,6 +2140,7 @@ impl Editor {
                     EntityKind::Point(_) => continue,
                     EntityKind::Line { a, b } => {
                         if m(a) == a && m(b) == b {
+                            images.insert(id, id);
                             continue; // lies on the axis
                         }
                         self.doc.add_line(m(a), m(b)).map_err(doc_err)?
@@ -2174,8 +2179,10 @@ impl Editor {
                         .map_err(doc_err)?,
                 };
                 self.doc.copy_look(id, new);
+                images.insert(id, new);
                 created.push(new);
             }
+            self.copy_fills_onto(|e| images.get(&e).copied(), reflect);
             Ok(())
         })();
         self.finish(result, "Mirror")?;
@@ -2274,6 +2281,7 @@ impl Editor {
                         }
                     }
                 }
+                self.copy_fills_onto(|e| map.get(&e).copied(), |p| transform(k, p));
             }
             Ok(())
         })();

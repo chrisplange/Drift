@@ -138,17 +138,66 @@ fn exact_region<'a>(regions: &'a [Region], ids: &[EntityId], fill: &Fill) -> Opt
         .copied()
 }
 
-/// Pick the region a fill belongs to: the one bounded by exactly its curves (nearest its
-/// seed if several), else the one around its seed if it still shares a boundary curve.
-fn find_region<'a>(regions: &'a [Region], ids: &[EntityId], fill: &Fill) -> Option<&'a Region> {
-    exact_region(regions, ids, fill).or_else(|| {
-        region_at(regions, fill.seed).filter(|r| {
-            r.outer
-                .curves()
-                .into_iter()
-                .any(|i| fill.boundary.binary_search(&ids[i]).is_ok())
+/// The sorted, distinct entities of a region's outer boundary.
+fn outline_of(region: &Region, ids: &[EntityId]) -> Vec<EntityId> {
+    let mut c: Vec<EntityId> = region.outer.curves().into_iter().map(|i| ids[i]).collect();
+    c.sort_unstable();
+    c.dedup();
+    c
+}
+
+/// The region a fill's outline became when an edit replaced or split some of its curves (a
+/// fillet or a chamfer cut into a corner, a side split in two): one whose outline still has
+/// every curve of the fill's outline that bounds areas, and more. The one around the seed if
+/// several, else the nearest.
+fn successor_region<'a>(
+    regions: &'a [Region],
+    ids: &[EntityId],
+    fill: &Fill,
+) -> Option<&'a Region> {
+    let kept: Vec<EntityId> = fill
+        .boundary
+        .iter()
+        .copied()
+        .filter(|e| ids.contains(e))
+        .collect();
+    if kept.is_empty() {
+        return None;
+    }
+    let candidates: Vec<&Region> = regions
+        .iter()
+        .filter(|r| {
+            let outline = outline_of(r, ids);
+            kept.iter().all(|e| outline.binary_search(e).is_ok())
         })
-    })
+        .collect();
+    candidates
+        .iter()
+        .find(|r| r.contains(fill.seed))
+        .or_else(|| {
+            candidates.iter().min_by(|a, b| {
+                a.centroid
+                    .distance(fill.seed)
+                    .total_cmp(&b.centroid.distance(fill.seed))
+            })
+        })
+        .copied()
+}
+
+/// Pick the region a fill belongs to: the one bounded by exactly its curves (nearest its
+/// seed if several), else the one its outline became, else the one around its seed if it
+/// still shares a boundary curve.
+fn find_region<'a>(regions: &'a [Region], ids: &[EntityId], fill: &Fill) -> Option<&'a Region> {
+    exact_region(regions, ids, fill)
+        .or_else(|| successor_region(regions, ids, fill))
+        .or_else(|| {
+            region_at(regions, fill.seed).filter(|r| {
+                r.outer
+                    .curves()
+                    .into_iter()
+                    .any(|i| fill.boundary.binary_search(&ids[i]).is_ok())
+            })
+        })
 }
 
 impl Editor {
@@ -201,6 +250,88 @@ impl Editor {
         let out = Rc::new(out);
         self.fill_shapes = Some((revision, out.clone()));
         out
+    }
+
+    /// Keep each fill on its area as an edit changes it, inside the edit's open transaction
+    /// (so undo takes it back with the edit): when the edit replaced or split curves of a
+    /// fill's outline, the area's new outline becomes the fill's, and a seed the edit left
+    /// outside the area (a moved corner, a fillet over it) moves back in.
+    pub(crate) fn follow_fills(&mut self) {
+        if self.doc.fills().next().is_none() {
+            return;
+        }
+        let regions = self.regions();
+        let ids = self.region_ids();
+        let fills: Vec<(FillId, Fill)> = self.doc.fills().map(|(id, f)| (id, f.clone())).collect();
+        for (id, fill) in fills {
+            let (region, outline) = if let Some(r) = exact_region(&regions, &ids, &fill) {
+                (r.clone(), None)
+            } else if let Some(r) = self.uncrossed_region(&fill) {
+                (r, None)
+            } else if let Some(r) = successor_region(&regions, &ids, &fill) {
+                (r.clone(), Some(outline_of(r, &ids)))
+            } else {
+                continue;
+            };
+            let mut followed = fill.clone();
+            if let Some(outline) = outline {
+                followed.boundary = outline;
+            }
+            followed.seed = crate::editor::interior_point(&region, fill.seed);
+            self.doc.set_fill(id, followed);
+        }
+    }
+
+    /// Before curve `id` is deleted while the area it bounds stays closed (a fillet or a
+    /// chamfer taken off a corner, a curve of no length): take it out of fills' outlines so
+    /// they stay, inside the open transaction.
+    pub(crate) fn release_from_fills(&mut self, id: EntityId) {
+        let holding: Vec<(FillId, Fill)> = self
+            .doc
+            .fills()
+            .filter(|(_, f)| f.boundary.contains(&id))
+            .map(|(fid, f)| (fid, f.clone()))
+            .collect();
+        for (fid, mut fill) in holding {
+            fill.boundary.retain(|e| *e != id);
+            if !fill.boundary.is_empty() {
+                self.doc.set_fill(fid, fill);
+            }
+        }
+    }
+
+    /// Copy the fills whose whole outline was copied onto the copies, inside the open
+    /// transaction: `curves` gives each copied curve's copy, `place` moves a point as the
+    /// copy was moved (turned or mirrored), and hatches turn with it.
+    pub(crate) fn copy_fills_onto(
+        &mut self,
+        curves: impl Fn(EntityId) -> Option<EntityId>,
+        place: impl Fn(DVec2) -> DVec2,
+    ) {
+        let fills: Vec<Fill> = self
+            .doc
+            .fills()
+            .filter(|(_, f)| {
+                !f.boundary.is_empty() && f.boundary.iter().all(|e| curves(*e).is_some())
+            })
+            .map(|(_, f)| f.clone())
+            .collect();
+        for mut fill in fills {
+            fill.boundary = fill.boundary.iter().filter_map(|e| curves(*e)).collect();
+            fill.boundary.sort_unstable();
+            fill.boundary.dedup();
+            fill.seed = place(fill.seed);
+            if let FillKind::Hatch(h) = &mut fill.kind {
+                let along = DVec2::from_angle(h.angle.to_radians());
+                let o = place(h.origin);
+                let turned = place(h.origin + along) - o;
+                h.origin = o;
+                h.angle = turned.to_angle().to_degrees().rem_euclid(360.0);
+            }
+            // On the original's layer, just above it.
+            let copy = self.doc.add_fill(fill.clone());
+            self.doc.set_fill(copy, fill);
+        }
     }
 
     /// The fills of every copy of a block (but the one being edited), in the world, as of

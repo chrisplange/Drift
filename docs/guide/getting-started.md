@@ -104,7 +104,7 @@ Drift opens with a start panel over an empty sketch.
 - **Recent** lists the sketches you've opened or saved. **File → Open recent** keeps ten.
 
 The panel also goes as soon as you pick a tool or click the canvas. To see it again, use
-**Edit → Preferences… → Show the start panel**.
+**Edit → Preferences… → General → Show the start panel**.
 
 > Drift restores your last session when it starts, so after the first run you'll usually
 > see your previous sketch instead.

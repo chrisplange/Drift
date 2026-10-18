@@ -50,14 +50,17 @@ impl DriftApp {
         let mut fix: Option<Issue> = None;
         let mut fix_all = false;
         let mut tolerance = self.gap_tolerance;
-        egui::Window::new("Check sketch")
+        theme::dialog(ctx, "Check sketch")
             .id(egui::Id::new("sketch_check"))
             .open(&mut open)
-            .resizable(false)
-            .collapsible(false)
-            .default_pos(ctx.content_rect().right_top() + egui::vec2(-460.0, 90.0))
+            .pivot(egui::Align2::LEFT_TOP)
+            // Over the canvas's top right, clear of the side panels.
+            .default_pos(self.canvas_rect.right_top() + egui::vec2(-446.0, 14.0))
             .show(ctx, |ui| {
                 ui.set_width(400.0);
+                if theme::dialog_title(ui, "Check sketch", true) {
+                    close = true;
+                }
                 theme::row(ui, "Gaps up to", |ui| {
                     let per = units.length.mm_per_unit();
                     let mut shown = tolerance / per;
@@ -86,11 +89,18 @@ impl DriftApp {
                         .iter()
                         .filter(|i| matches!(i, Issue::Gap { .. }))
                         .count();
-                    ui.label(format!(
-                        "{} issue(s): {gaps} gap(s) between ends, {} other.",
-                        issues.len(),
-                        issues.len() - gaps
-                    ));
+                    let plural = |n: usize, one: &str, many: &str| {
+                        format!("{n} {}", if n == 1 { one } else { many })
+                    };
+                    let other = issues.len() - gaps;
+                    let mut found = Vec::new();
+                    if gaps > 0 {
+                        found.push(plural(gaps, "gap between ends", "gaps between ends"));
+                    }
+                    if other > 0 {
+                        found.push(plural(other, "other issue", "other issues"));
+                    }
+                    ui.label(format!("Found {}.", found.join(" and ")));
                     ui.add_space(4.0);
                     egui::ScrollArea::vertical()
                         .max_height(320.0)
@@ -133,8 +143,10 @@ impl DriftApp {
                             }
                         });
                 }
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
+                theme::dialog_buttons(ui, |ui| {
+                    if ui.button("Close").clicked() {
+                        close = true;
+                    }
                     if ui
                         .add_enabled(
                             !issues.is_empty(),
@@ -148,9 +160,6 @@ impl DriftApp {
                         .clicked()
                     {
                         fix_all = true;
-                    }
-                    if ui.button("Close").clicked() {
-                        close = true;
                     }
                 });
             });
@@ -171,12 +180,14 @@ impl DriftApp {
         }
         if fix_all {
             let (fixed, left) = self.editor.fix_issues(&issues);
+            let count = |n: usize| format!("{n} issue{}", if n == 1 { "" } else { "s" });
             let text = if left == 0 {
-                format!("Fixed {fixed} issue(s)")
+                format!("Fixed {}", count(fixed))
             } else {
                 format!(
-                    "Fixed {fixed} issue(s); {left} left (they conflict with the relations or \
-                     dimensions there)"
+                    "Fixed {}; {left} left (they conflict with the relations or dimensions \
+                     there)",
+                    count(fixed)
                 )
             };
             self.set_status(text, left > 0 && fixed == 0, now);

@@ -1,4 +1,4 @@
-//! The Parameters tab (units, variables with sliders, variants, snapshots, pinned
+//! The Parameters tab (variables with sliders, variants, snapshots, pinned
 //! measurements) and the canvas overlays that go with it (free-direction arrows, variant
 //! ghosts).
 
@@ -46,12 +46,12 @@ impl DriftApp {
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                self.units_section(ui);
+                // The drawing's units and drafting standard are in Preferences: this tab is
+                // for what drives the sketch.
                 self.variables_section(ui, now);
                 self.variants_section(ui, now);
                 self.snapshots_section(ui);
                 self.measurements_section(ui);
-                self.drafting_section(ui);
                 self.patterns_section(ui);
             });
     }
@@ -180,7 +180,9 @@ impl DriftApp {
                     .name_text
                     .entry(*id)
                     .or_insert_with(|| var.name.clone());
-                let r = ui.add(egui::TextEdit::singleline(name).desired_width(70.0));
+                let r = ui
+                    .add(egui::TextEdit::singleline(name).desired_width(70.0))
+                    .on_hover_text(format!("A {}", var.kind.label().to_lowercase()));
                 if r.lost_focus() {
                     let text = std::mem::take(name);
                     self.params.name_text.remove(id);
@@ -215,24 +217,27 @@ impl DriftApp {
                 } else if !r.has_focus() {
                     *expr = var.expr.clone();
                 }
-                if ui
-                    .small_button("×")
-                    .on_hover_text("Delete variable")
-                    .clicked()
+                if crate::icons::button(ui, 22.0, false, "Delete variable", |p, r, c| {
+                    crate::icons::glyph(p, r, crate::icons::Glyph::Delete, c)
+                })
+                .on_hover_text("Delete variable")
+                .clicked()
                 {
                     remove = Some(*id);
                 }
             });
+            // A plain value gets a slider to scrub it; an expression shows what it comes to.
             match value {
+                Some(Ok(v)) if self.editor.is_scrubbable(*id) => {
+                    self.slider(ui, *id, var.kind, v);
+                }
                 Some(Ok(v)) => {
                     ui.horizontal(|ui| {
-                        ui.add_space(8.0);
-                        ui.monospace(units.format(var.kind, v));
-                        ui.label(egui::RichText::new(var.kind.label()).weak());
+                        ui.add_space(84.0);
+                        ui.label(
+                            egui::RichText::new(format!("= {}", units.format(var.kind, v))).weak(),
+                        );
                     });
-                    if self.editor.is_scrubbable(*id) {
-                        self.slider(ui, *id, var.kind, v);
-                    }
                 }
                 Some(Err(e)) => {
                     ui.colored_label(ui.visuals().error_fg_color, e.to_string());
@@ -445,7 +450,7 @@ impl DriftApp {
                 ui.label(crate::constraint_label(&self.editor.doc, &c));
                 let value = drift_solver::measure(&self.editor.doc, &c)
                     .map_or("—".into(), |v| units.format(dimension_kind(&c), v));
-                ui.monospace(value);
+                ui.label(value);
                 if ui.small_button("Unpin").clicked() {
                     unpin = Some(id);
                 }

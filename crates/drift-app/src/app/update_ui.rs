@@ -302,6 +302,7 @@ impl DriftApp {
             .collapsible(false)
             .resizable(false)
             .title_bar(false)
+            .frame(theme::dialog_frame(&ctx.style_of(ctx.theme())))
             .show(ctx, |ui| {
                 ui.set_width(340.0);
                 match &self.updates.phase {
@@ -354,43 +355,44 @@ impl DriftApp {
                 if !release.page.is_empty() {
                     ui.hyperlink_to("Release page", &release.page);
                 }
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    let accent = theme::accent(ui.visuals().dark_mode);
-                    let primary = |text: &str| {
-                        egui::Button::new(egui::RichText::new(text).color(egui::Color32::WHITE))
-                            .fill(accent)
-                    };
+                theme::dialog_buttons(ui, |ui| {
+                    let dark = ui.visuals().dark_mode;
                     match &self.updates.phase {
                         Phase::Ready(_) => {
-                            if ui.add(primary("Restart and update")).clicked() {
-                                action = Some(NoticeAction::Install);
-                            }
                             if ui.button("Later").clicked() {
                                 action = Some(NoticeAction::Later);
+                            }
+                            if ui
+                                .add(theme::primary_button("Restart and update", dark))
+                                .clicked()
+                            {
+                                action = Some(NoticeAction::Install);
                             }
                         }
                         Phase::Downloading { .. } => {
-                            if ui.button("Cancel").clicked() {
-                                action = Some(NoticeAction::Cancel);
-                            }
                             if ui.button("Hide").clicked() {
                                 action = Some(NoticeAction::Later);
                             }
+                            if ui.button("Cancel").clicked() {
+                                action = Some(NoticeAction::Cancel);
+                            }
                         }
                         _ => {
-                            if installable {
-                                if ui.add(primary("Update now")).clicked() {
-                                    action = Some(NoticeAction::Update);
-                                }
-                            } else if ui.add(primary("Download page")).clicked() {
-                                action = Some(NoticeAction::Page);
+                            if ui.button("Skip this version").clicked() {
+                                action = Some(NoticeAction::Skip);
                             }
                             if ui.button("Later").clicked() {
                                 action = Some(NoticeAction::Later);
                             }
-                            if ui.button("Skip this version").clicked() {
-                                action = Some(NoticeAction::Skip);
+                            if installable {
+                                if ui.add(theme::primary_button("Update now", dark)).clicked() {
+                                    action = Some(NoticeAction::Update);
+                                }
+                            } else if ui
+                                .add(theme::primary_button("Download page", dark))
+                                .clicked()
+                            {
+                                action = Some(NoticeAction::Page);
                             }
                         }
                     }

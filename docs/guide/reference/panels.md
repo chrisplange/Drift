@@ -46,19 +46,15 @@ While a block is being edited, **Editing block** and **Finish editing** sit at t
 
 ## Parameters
 
-The drawing's settings and its parametric side.
+What drives the sketch. (The drawing's units and drafting style are in **File → Drawing
+settings…**.)
 
-- **Units:** **Metric** or **Imperial**, the **Format**, **Decimals** (or **Round to** a
-  fraction, and **Show 0'**), and **Angles** decimals. See [Units](units.md).
 - **Variables:** name, expression, kind and slider for each; a row to add one. See
   [Parameters](../tutorials/03-parameters.md).
 - **Variants:** apply, **Update**, delete, **Save current**, and **Show other variants as
   ghosts**.
 - **Snapshots:** **Take snapshot** and **Restore** (this session only).
 - **Pinned measurements:** live values, with **Unpin**.
-- **Drafting:** **ISO 129** or **ASME Y14.5**, then scale, text height, **Arrows**,
-  **Arrow size**, **Ext. gap**, **Ext. past**, text placement, **Zeros**, **Dual units**,
-  **Colour** and the drawing's **Font**. See [Annotation](../tutorials/09-annotation.md).
 - **Hatch patterns:** patterns imported into the drawing, and **Import .pat…**.
 
 ## Layers

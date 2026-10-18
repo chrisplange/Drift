@@ -95,9 +95,9 @@ change the suffix to **TAP**, **CBORE** or **CSK**. Click a chamfer's line inste
 ![A section mark (A) across the plate and an elevation mark (1), with the elevation's Inspector](../images/annotate-marks.png)
 
 Pick a mark to edit it in the **Inspector**: its **Label**, **On sheet** (the sheet it's
-drawn on, shown in the lower half of the flag, such as `A-201`), and which way it **Looks**
-(a section has **Flip**, to look the other way, and **Swap ends**; an elevation has an
-angle and →, ↑, ←, ↓ buttons). Drag a mark to move it whole.
+drawn on, shown in the lower half of the flag, such as `A-201`), and which way it looks
+(a section's **Direction** has **Flip**, to look the other way, and **Swap ends**; an
+elevation's **Facing** has an angle and →, ↑, ←, ↓ buttons). Drag a mark to move it whole.
 
 ## 6. Dimension text
 
@@ -141,7 +141,8 @@ That's a view setting; it doesn't change the drawing.
 
 ## The drafting style
 
-The look of dimensions and notes is set for the whole drawing in **Parameters → Drafting**:
+The look of dimensions and notes is set for the whole drawing in **File → Drawing
+settings… → Drafting**:
 
 - **ISO 129** or **ASME Y14.5**. ISO writes text aligned above the dimension line; ASME
   writes it horizontal, in a break in the line.
@@ -155,12 +156,28 @@ The look of dimensions and notes is set for the whole drawing in **Parameters �
 Sizes are paper sizes: text set 3.5 mm high prints 3.5 mm high, whatever the sheet's
 scale.
 
+### One dimension or note in its own style
+
+Pick a dimension (or several, or a callout, mark or note) and open the Inspector's
+**Drafting style** section. Each row shows what it is drawn with. Change one, say
+**Arrows** to **Tick** for a detail, and that setting becomes the object's own: its label
+turns blue and a reset arrow appears beside it. Everything you leave alone keeps following
+the drawing, so a later change to the drawing's style still reaches it.
+
+- The reset arrow puts one setting back to the drawing's; **Reset all** puts them all back.
+- Text height, arrows and arrow size, aligned text, zeros, dual units and colour can be
+  overridden. The standard and the scale belong to the drawing.
+- A note keeps its own text size in its **Style** section, as before.
+- **Drawing style…** at the foot of the section opens the drawing's settings.
+
 ## What you learned
 
 - N places notes (with a leader if you start on geometry); **Callout**, **Centre mark**,
   **Ordinate**, **Section mark** and **Elevation mark** are in the **Annotate** group.
 - Double-click a dimension for before / after text and chips like TYP and EQ.
 - Each annotation can be off the canvas or off the sheets; Alt+H shows hidden ones.
+- The drafting style is the drawing's (**File → Drawing settings…**); a picked dimension or
+  note can override any of it for itself, with a reset arrow to go back.
 
 ## Next
 

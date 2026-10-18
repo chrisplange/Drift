@@ -596,6 +596,69 @@ impl DraftStyle {
     }
 }
 
+/// What one dimension or annotation sets for itself, over the drawing's style. Each `None`
+/// follows the drawing; the standard and the scale are the drawing's alone.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct StyleOverride {
+    pub text_height: Option<f64>,
+    pub arrow: Option<ArrowStyle>,
+    pub arrow_size: Option<f64>,
+    pub extension_gap: Option<f64>,
+    pub extension_overshoot: Option<f64>,
+    pub aligned_text: Option<bool>,
+    pub trailing_zeros: Option<bool>,
+    pub leading_zero: Option<bool>,
+    /// `Some(None)`: no alternate units, whatever the drawing shows.
+    pub alt_units: Option<Option<LengthFormat>>,
+    /// `Some(None)`: the theme's colour, whatever the drawing's is.
+    pub color: Option<Option<crate::Rgb>>,
+}
+
+impl StyleOverride {
+    /// Nothing overridden: it follows the drawing entirely.
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// How many settings are overridden.
+    pub fn count(&self) -> usize {
+        [
+            self.text_height.is_some(),
+            self.arrow.is_some(),
+            self.arrow_size.is_some(),
+            self.extension_gap.is_some(),
+            self.extension_overshoot.is_some(),
+            self.aligned_text.is_some(),
+            self.trailing_zeros.is_some(),
+            self.leading_zero.is_some(),
+            self.alt_units.is_some(),
+            self.color.is_some(),
+        ]
+        .into_iter()
+        .filter(|b| *b)
+        .count()
+    }
+
+    /// The drawing's style with these settings in place of its own.
+    pub fn apply(&self, style: &DraftStyle) -> DraftStyle {
+        DraftStyle {
+            text_height: self.text_height.unwrap_or(style.text_height),
+            arrow: self.arrow.unwrap_or(style.arrow),
+            arrow_size: self.arrow_size.unwrap_or(style.arrow_size),
+            extension_gap: self.extension_gap.unwrap_or(style.extension_gap),
+            extension_overshoot: self
+                .extension_overshoot
+                .unwrap_or(style.extension_overshoot),
+            aligned_text: self.aligned_text.unwrap_or(style.aligned_text),
+            trailing_zeros: self.trailing_zeros.unwrap_or(style.trailing_zeros),
+            leading_zero: self.leading_zero.unwrap_or(style.leading_zero),
+            alt_units: self.alt_units.unwrap_or(style.alt_units),
+            color: self.color.unwrap_or(style.color),
+            ..*style
+        }
+    }
+}
+
 impl DraftStyle {
     /// A length as dimensions show it under this style: the document's units, with trailing
     /// zeros padded to the display precision and the leading zero dropped if the style says

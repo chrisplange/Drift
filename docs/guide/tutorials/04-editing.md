@@ -26,7 +26,7 @@ With the **Select** tool (S, or Esc from any tool):
 
 Clicking inside a fill or hatch picks it. Clicking inside an empty outline picks nothing, so
 a box selection can start there. (To pick a closed area and measure it instead, turn off
-**Edit → Preferences… → Closed areas → Pick an area only where it is filled or hatched**.
+**Edit → Preferences… → Drawing aids → Pick an area only where it is filled or hatched**.
 A picked area shows its area, perimeter and centroid in the **Inspector**.)
 
 ### Pick filter: All, Edges, Points
@@ -135,7 +135,7 @@ While dragging:
 Without Alt, dimensions and relations hold: a dimensioned width stays as it is while a free
 height stretches. With Alt, every driving length entirely inside the selection takes its
 new, scaled value. The width and height then step through round sizes, finer as you zoom
-in; turn that off with **Edit → Preferences… → Round sizes when scaling with dimensions
+in; turn that off with **Edit → Preferences… → Drawing aids → Round sizes when scaling with dimensions
 (Alt)**. Each scale is one undo step.
 
 ## Trim, extend and split

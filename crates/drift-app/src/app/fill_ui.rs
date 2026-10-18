@@ -315,13 +315,13 @@ impl DriftApp {
                 let r = &shape.region;
                 theme::section(ui, "Area");
                 theme::row(ui, "Area", |ui| {
-                    ui.monospace(units.format_area(r.area));
+                    ui.label(units.format_area(r.area));
                 });
                 theme::row(ui, "Perimeter", |ui| {
-                    ui.monospace(units.format_readout(r.perimeter));
+                    ui.label(units.format_readout(r.perimeter));
                 });
                 theme::row(ui, "Centroid", |ui| {
-                    ui.monospace(format!(
+                    ui.label(format!(
                         "{}, {}",
                         units.format_readout(r.centroid.x),
                         units.format_readout(r.centroid.y)
@@ -329,16 +329,7 @@ impl DriftApp {
                 });
             }
             ui.add_space(10.0);
-            if ui
-                .add_sized(
-                    [ui.available_width(), 26.0],
-                    egui::Button::new(
-                        egui::RichText::new("Delete")
-                            .color(egui::Color32::from_rgb(0xff, 0x5d, 0x5d)),
-                    ),
-                )
-                .clicked()
-            {
+            if theme::danger_button(ui, "Delete").clicked() {
                 self.editor.delete_selection();
             }
             return true;

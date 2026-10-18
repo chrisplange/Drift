@@ -243,14 +243,18 @@ impl Units {
         }
     }
 
-    /// A length for readouts (properties, cursor, status bar): fixed decimals with the unit.
+    /// A length for readouts (properties, cursor, status bar): the document's decimals (at
+    /// least one), always shown, with the unit. A value that rounds to zero is "0", never
+    /// "-0".
     pub fn format_readout(&self, mm: f64) -> String {
         match self.length {
             LengthFormat::Architectural => self.feet_inches(mm),
             LengthFormat::FractionalInch => self.fraction_inches(mm, false),
             f => {
-                let d = usize::from(self.decimals.max(1)) + 1;
-                let v = format!("{:.*}", d, mm / f.mm_per_unit() + 0.0);
+                let d = usize::from(self.decimals.max(1));
+                let scale = 10f64.powi(d as i32);
+                let rounded = (mm / f.mm_per_unit() * scale).round() / scale + 0.0;
+                let v = format!("{rounded:.d$}");
                 match f {
                     LengthFormat::Inch => format!("{v}\""),
                     LengthFormat::Foot => format!("{v}'"),
@@ -397,7 +401,8 @@ mod tests {
         let u = Units::default();
         assert_eq!(u.format_length(12.5), "12.5");
         assert_eq!(u.format_length(10.0), "10");
-        assert_eq!(u.format_readout(12.5), "12.5000 mm");
+        assert_eq!(u.format_readout(12.5), "12.500 mm");
+        assert_eq!(u.format_readout(-0.00001), "0.000 mm");
         let inch = Units {
             length: LengthFormat::Inch,
             ..u

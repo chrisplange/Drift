@@ -5,7 +5,7 @@ millimetres internally, so **changing the units never moves anything**: it only 
 values are shown and how bare numbers you type are read.
 
 Change units with the status bar's units menu (it shows **mm**, **in**, **ft-in** and so on),
-in **Parameters → Units**, or in **Edit → Preferences… → Units**. New drawings start in
+or in **File → Drawing settings… → Units**. New drawings start in
 millimetres.
 
 ## Length formats
@@ -71,7 +71,7 @@ titles, such as `1/4" = 1'-0"`.
 ## Drafting units
 
 Dimension text height, arrow size and the like are set in paper millimetres in
-**Parameters → Drafting**, whatever the drawing's units. **Dual units** adds the value in a
+**File → Drawing settings… → Drafting**, whatever the drawing's units. **Dual units** adds the value in a
 second unit, in brackets.
 
 ## DXF

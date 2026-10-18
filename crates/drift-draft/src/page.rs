@@ -4,7 +4,7 @@
 //!
 //! The SVG, PDF and DXF writers in `drift-io` read this, so every output shows the same thing.
 
-use drift_core::{Bounds, DVec2, LineType, Rgb};
+use drift_core::{Bounds, DVec2, LineType, Rgb, SheetColours};
 
 /// How an item is stroked.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -356,6 +356,26 @@ impl Drawing {
         d
     }
 
+    /// Recolour everything for a sheet's colour choice: strokes and text (lines, hatch lines,
+    /// glyphs) as strokes, filled areas as fills, block contents and layers too. Masks are
+    /// paper-white in every writer, so they stay white.
+    pub fn set_colours(&mut self, colours: SheetColours) {
+        if colours == SheetColours::Colour {
+            return;
+        }
+        let items = self
+            .items
+            .iter_mut()
+            .chain(self.blocks.iter_mut().flat_map(|b| b.items.iter_mut()));
+        for item in items {
+            let fill = matches!(item.prim, Prim::Fill { .. });
+            item.pen.color = colours.map(item.pen.color, fill);
+        }
+        for layer in &mut self.layers {
+            layer.color = colours.map(layer.color, false);
+        }
+    }
+
     /// The drawing with every `Insert` replaced by its block's items, transformed.
     pub fn exploded(&self) -> Drawing {
         if !self
@@ -650,6 +670,72 @@ pub fn styled_width(text: &str, height: f64, style: TextStyle) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn colours_recolour_strokes_fills_blocks_and_layers() {
+        let red = Rgb([255, 0, 0]);
+        let blue = Rgb([0, 0, 255]);
+        let mut d = Drawing::new(DVec2::new(100.0, 100.0));
+        d.layer(LayerInfo {
+            name: "Walls".into(),
+            color: red,
+            width: 0.35,
+            line_type: LineType::Continuous,
+        });
+        d.line(
+            "Walls",
+            Pen::new(0.35).with_color(red),
+            DVec2::ZERO,
+            DVec2::ONE,
+        );
+        d.filled_rect(
+            "Walls",
+            Pen::new(0.0).with_color(blue),
+            DVec2::ZERO,
+            DVec2::ONE,
+        );
+        d.text(
+            "Walls",
+            Pen::new(0.25).with_color(blue),
+            DVec2::ZERO,
+            3.5,
+            Align::Left,
+            "A",
+        );
+        d.blocks.push(BlockDef {
+            name: "B".into(),
+            items: vec![Item {
+                layer: "0".into(),
+                pen: Pen::new(0.25).with_color(red),
+                prim: Prim::Circle {
+                    center: DVec2::ZERO,
+                    radius: 1.0,
+                },
+                clip: None,
+            }],
+        });
+        let colours = |d: &Drawing| -> Vec<Rgb> {
+            d.items
+                .iter()
+                .chain(&d.blocks[0].items)
+                .map(|i| i.pen.color)
+                .chain(d.layers.iter().map(|l| l.color))
+                .collect()
+        };
+        let mut same = d.clone();
+        same.set_colours(SheetColours::Colour);
+        assert_eq!(same, d);
+        let mut grey = d.clone();
+        grey.set_colours(SheetColours::Greyscale);
+        let (r, b) = (Rgb([76, 76, 76]), Rgb([29, 29, 29]));
+        assert_eq!(colours(&grey), [r, b, b, r, r]);
+        let mut mono = d.clone();
+        mono.set_colours(SheetColours::BlackWhite);
+        let k = Pen::BLACK;
+        // The fill keeps its grey; the line, the text, the block's circle and the layer
+        // are black.
+        assert_eq!(colours(&mono), [k, b, k, k, k]);
+    }
 
     #[test]
     fn widths_and_bounds() {

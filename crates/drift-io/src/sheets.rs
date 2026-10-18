@@ -1,6 +1,8 @@
 //! File records for sheets (format 8).
 
-use drift_core::{DVec2, PaperSize, Revision, Sheet, SheetId, TitleBlock, TitleFields};
+use drift_core::{
+    DVec2, PaperSize, Revision, Sheet, SheetColours, SheetId, TitleBlock, TitleFields,
+};
 use drift_core::{SheetView, ViewFrame};
 use serde::{Deserialize, Serialize};
 
@@ -100,6 +102,9 @@ pub(crate) struct SheetRecord {
     fields: FieldsRecord,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     revisions: Vec<RevisionRecord>,
+    /// `greyscale` or `mono` (black & white); left out for colour (and before v25).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    colours: Option<String>,
 }
 
 pub(crate) fn sheet_record(id: SheetId, s: &Sheet) -> SheetRecord {
@@ -153,6 +158,7 @@ pub(crate) fn sheet_record(id: SheetId, s: &Sheet) -> SheetRecord {
                 by: r.by.clone(),
             })
             .collect(),
+        colours: (s.colours != SheetColours::Colour).then(|| s.colours.key().into()),
     }
 }
 
@@ -212,6 +218,10 @@ pub(crate) fn parse_sheet(r: SheetRecord) -> Result<(SheetId, Sheet), LoadError>
         }
     };
     let title_block = TitleBlock::parse(&r.title_block).ok_or_else(|| bad("title_block"))?;
+    let colours = match &r.colours {
+        Some(key) => SheetColours::parse(key).ok_or_else(|| bad("colours"))?,
+        None => SheetColours::Colour,
+    };
     let f = r.fields;
     let sheet = Sheet {
         name: r.name,
@@ -238,6 +248,7 @@ pub(crate) fn parse_sheet(r: SheetRecord) -> Result<(SheetId, Sheet), LoadError>
                 by: r.by,
             })
             .collect(),
+        colours,
     };
     Ok((SheetId(parse_prefixed(&r.id, 's')?), sheet))
 }

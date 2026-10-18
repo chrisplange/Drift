@@ -1904,6 +1904,79 @@ fn fill_tool_hatches_and_fills_regions() {
 }
 
 #[test]
+fn a_hatch_follows_its_corner_moved_in_and_a_side_split() {
+    let Some(mut h) = harness() else { return };
+    h.get_by_label("File").click();
+    h.run();
+    h.get_by_label("Open example").click();
+    h.run();
+    // A 120 x 60 plate.
+    let mut doc = drift_core::Document::new();
+    let corners = [(0.0, 0.0), (120.0, 0.0), (120.0, 60.0), (0.0, 60.0)]
+        .map(|(x, y)| doc.add_point(DVec2::new(x, y)));
+    let sides: Vec<_> = (0..4)
+        .map(|i| doc.add_line(corners[i], corners[(i + 1) % 4]).unwrap())
+        .collect();
+    h.state_mut()
+        .replace_document(doc, "plate".into(), None, Default::default(), true);
+    h.run();
+    h.run();
+    // Hatch it, clicking right in its bottom-left corner.
+    h.get_by_label("Fill / hatch").click();
+    h.run();
+    click_world(&mut h, DVec2::new(4.0, 4.0));
+    let fill = h
+        .state()
+        .editor
+        .selected_fills
+        .first()
+        .copied()
+        .expect("a hatch");
+    // Move that corner in (as typed in the inspector), past where the hatch was picked.
+    assert!(
+        h.state_mut()
+            .editor
+            .move_point_to(corners[0], DVec2::new(30.0, 20.0))
+    );
+    h.run();
+    // Split the right side.
+    h.get_by_label("Split").scroll_to_me();
+    h.run();
+    h.get_by_label("Split").click();
+    h.run();
+    click_world(&mut h, DVec2::new(120.0, 30.0));
+    let ed = &mut h.state_mut().editor;
+    assert_eq!(
+        ed.doc.fill(fill).unwrap().boundary.len(),
+        5,
+        "the split side's pieces"
+    );
+    let p: Vec<DVec2> = corners.iter().map(|c| ed.doc.point(*c).unwrap()).collect();
+    let area = (0..4)
+        .map(|i| p[i].perp_dot(p[(i + 1) % 4]))
+        .sum::<f64>()
+        .abs()
+        / 2.0;
+    let shape = ed.fill_shapes()[&fill].clone();
+    assert!(!shape.lost, "the hatch kept its area");
+    assert!((shape.region.area - area).abs() < 1e-6);
+    assert!(
+        sides
+            .iter()
+            .all(|s| ed.doc.fill(fill).unwrap().boundary.contains(s))
+    );
+    h.run();
+    save_png("drift_ui_hatch_follows.png", &mut h);
+    // Undo both: the hatch is back on the plate as drawn.
+    h.state_mut().undo();
+    h.state_mut().undo();
+    let ed = &mut h.state_mut().editor;
+    let shape = ed.fill_shapes()[&fill].clone();
+    assert!(!shape.lost);
+    assert!((shape.region.area - 7200.0).abs() < 1e-6);
+}
+
+#[test]
 fn temporary_dimensions_show_and_move_the_picked_wall() {
     let Some(mut h) = harness() else { return };
     // (Past the start screen.)
@@ -2272,6 +2345,110 @@ fn dragging_a_drawn_circles_edge_resizes_it() {
     h.run();
     let r = drift_solver::radius_of(&h.state().editor.doc, circle).unwrap();
     assert!((r - 35.0).abs() < 1.0, "radius {r}");
+}
+
+#[test]
+fn a_sheet_prints_in_greyscale_or_black_and_white() {
+    use drift_core::{Rgb, SheetColours};
+    use drift_draft::page::Prim;
+    let Some(mut h) = harness() else { return };
+    h.get_by_label("File").click();
+    h.run();
+    h.get_by_label("Open example").click();
+    h.run();
+    // A solid dark blue fill under the plate's outline, on a red layer.
+    h.get_by_label("Fill / hatch").click();
+    h.run();
+    click_world(&mut h, DVec2::new(100.0, 15.0));
+    h.get_by_label("Select").click();
+    h.run();
+    {
+        let doc = &mut h.state_mut().editor.doc;
+        doc.begin();
+        let fills: Vec<_> = doc.fills().map(|(id, _)| id).collect();
+        for id in fills {
+            let mut fill = doc.fill(id).unwrap().clone();
+            fill.kind = drift_core::FillKind::Solid;
+            fill.color = Some(Rgb([0x20, 0x40, 0x90]));
+            fill.opacity = 1.0;
+            doc.set_fill(id, fill);
+        }
+        let (layer, mut red) = doc.layers().next().map(|(id, l)| (id, l.clone())).unwrap();
+        red.color = Some(Rgb([0xe0, 0x20, 0x20]));
+        doc.set_layer(layer, red);
+    }
+    h.state_mut().editor.commit("Colour it");
+    h.state_mut().show_panel(Panel::Sheets);
+    h.run();
+    h.get_by_label("New sheet").click();
+    h.run();
+    h.run();
+    let id = h.state().current_sheet().expect("a sheet");
+    assert_eq!(
+        h.state().editor.doc.sheet(id).unwrap().colours,
+        SheetColours::Colour
+    );
+    let painter = h.ctx.layer_painter(egui::LayerId::background());
+    // What the preview shows, and what the PDF writes.
+    let preview = |h: &Harness<'_, DriftApp>| h.state().preview_cache.as_ref().unwrap().2.clone();
+    let grey = |c: Rgb| c.0[0] == c.0[1] && c.0[1] == c.0[2];
+    let colour = preview(&h);
+    assert!(colour.items.iter().any(|i| !grey(i.pen.color)), "in colour");
+    save_png("drift_ui_sheet_colour.png", &mut h);
+
+    h.get_by_label("Black & white").click();
+    h.run();
+    h.run();
+    assert_eq!(
+        h.state().editor.doc.sheet(id).unwrap().colours,
+        SheetColours::BlackWhite
+    );
+    assert_eq!(h.state().editor.history.undo_label(), Some("Edit sheet"));
+    let mono = preview(&h);
+    assert_eq!(mono.items.len(), colour.items.len());
+    for it in &mono.items {
+        if matches!(it.prim, Prim::Fill { .. }) {
+            assert!(grey(it.pen.color), "{:?}", it.pen.color);
+        } else {
+            // Black, but for the sheet number knocked out of the title block's black box.
+            let white = it.pen.color == Rgb([255, 255, 255]);
+            assert!(it.pen.color == Rgb([0, 0, 0]) || white, "{:?}", it.prim);
+        }
+    }
+    // The blue fill prints as its grey, not black, so the lines on it still show.
+    let blue = Rgb([drift_core::sheets::luminance(Rgb([0x20, 0x40, 0x90])); 3]);
+    assert!(
+        mono.items
+            .iter()
+            .any(|i| matches!(i.prim, Prim::Fill { .. }) && i.pen.color == blue),
+        "the fill's grey"
+    );
+    let pages = h.state_mut().pages(&painter);
+    assert_eq!(pages[0], mono, "what prints is what the preview shows");
+    save_png("drift_ui_sheet_mono.png", &mut h);
+
+    h.get_by_label("Greyscale").click();
+    h.run();
+    h.run();
+    let greys = preview(&h);
+    assert!(greys.items.iter().all(|i| grey(i.pen.color)));
+    // Lines keep their own grey (the red layer isn't black).
+    assert!(
+        greys
+            .items
+            .iter()
+            .any(|i| !matches!(i.prim, Prim::Fill { .. }) && i.pen.color != Rgb([0, 0, 0]))
+    );
+    save_png("drift_ui_sheet_greyscale.png", &mut h);
+    let saved = drift_io::save(&h.state().editor.doc, &Default::default());
+    assert!(saved.contains(r#""colours":"greyscale""#));
+    // Undo goes back to black & white, then colour.
+    h.state_mut().undo();
+    h.state_mut().undo();
+    assert_eq!(
+        h.state().editor.doc.sheet(id).unwrap().colours,
+        SheetColours::Colour
+    );
 }
 
 #[test]
@@ -3351,6 +3528,15 @@ fn text_is_typed_in_place_and_windows_open() {
     h.run();
     h.run();
     save_png("drift_ui_about.png", &mut h);
+    // About → Licences shows the third-party notices.
+    h.get_by_label("Licences…").click();
+    h.run();
+    h.run();
+    h.run();
+    h.run();
+    assert!(h.state().show_licences);
+    h.get_by_label("Ubuntu Light (Ubuntu-Light.ttf)");
+    save_png("drift_ui_licences.png", &mut h);
 }
 
 #[test]

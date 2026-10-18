@@ -19,7 +19,7 @@ Snapshots aren't saved in the file.
 
 ## Versions
 
-The file records a format version. This build writes version 23.
+The file records a format version. This build writes version 25.
 
 - **Older files always open** in newer builds. They're upgraded as they load.
 - **Newer files don't open in older builds.** The older build says the file's version is

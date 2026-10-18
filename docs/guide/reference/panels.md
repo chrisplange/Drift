@@ -96,7 +96,7 @@ geometry itself (in the **Inspector**, or the top bar's **Stroke** menus).
 ## Sheets
 
 Sheets, views, title blocks and output: **New sheet**, **Show sheet** / **Back to model**,
-**Paper**, **Views** (with **Add view** and **Align with**), **Title block**, **Logo**,
+**Paper** (with **Colour**, **Greyscale** or **Black & white**), **Views** (with **Add view** and **Align with**), **Title block**, **Logo**,
 **Revisions**, and **Output** (**PDF…**, **SVG…**, **DXF…**, **Print…**) and
 **Delete sheet**. See [Sheets and output](../tutorials/10-sheets-and-output.md).
 

@@ -35,6 +35,10 @@ fn system_name() -> String {
 /// The version shown to users, e.g. "0.1.0-alpha.1".
 pub(crate) const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// The licences and copyright notices of the fonts and crates built into Drift, made by
+/// scripts/notices.py. They also ship as a file beside the program.
+const NOTICES: &str = include_str!("../../../../THIRD-PARTY-NOTICES.txt");
+
 impl DriftApp {
     /// Whether the start panel should show: nothing drawn, nothing opened, nothing under way.
     fn start_wanted(&self) -> bool {
@@ -350,6 +354,13 @@ impl DriftApp {
                         ui.ctx().copy_text(details.clone());
                         copied = true;
                     }
+                    if ui
+                        .button("Licences…")
+                        .on_hover_text("The fonts and open-source software Drift is built with")
+                        .clicked()
+                    {
+                        self.show_licences = true;
+                    }
                     ui.hyperlink_to("Project page", env!("CARGO_PKG_REPOSITORY"));
                 });
             });
@@ -361,6 +372,49 @@ impl DriftApp {
             self.set_status("Copied the details".into(), false, now);
         }
         self.show_about = open;
+    }
+
+    /// About → Licences: the third-party notices, as shipped in THIRD-PARTY-NOTICES.txt.
+    pub(crate) fn licences_window(&mut self, ctx: &egui::Context) {
+        if !self.show_licences {
+            return;
+        }
+        let mut open = true;
+        let mut close = false;
+        theme::dialog(ctx, "Licences")
+            .open(&mut open)
+            .resizable(true)
+            .default_size([620.0, 480.0])
+            .show(ctx, |ui| {
+                close = theme::dialog_title(ui, "Licences", true);
+                ui.label(
+                    egui::RichText::new(
+                        "The licences and copyright notices of the fonts and crates Drift is \
+                         built with.",
+                    )
+                    .small()
+                    .weak(),
+                );
+                ui.add_space(4.0);
+                // Ten thousand lines: lay out only the ones in view.
+                let font = egui::TextStyle::Monospace.resolve(ui.style());
+                let row_height = ui.fonts_mut(|f| f.row_height(&font));
+                let lines: Vec<&str> = NOTICES.lines().collect();
+                ui.spacing_mut().item_spacing.y = 0.0;
+                egui::ScrollArea::both().auto_shrink(false).show_rows(
+                    ui,
+                    row_height,
+                    lines.len(),
+                    |ui, rows| {
+                        for line in &lines[rows] {
+                            ui.add(
+                                egui::Label::new(egui::RichText::new(*line).monospace()).extend(),
+                            );
+                        }
+                    },
+                );
+            });
+        self.show_licences = open && !close;
     }
 
     /// Edit → Preferences: the settings from the View menu, status bar and Parameters panel

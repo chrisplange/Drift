@@ -76,14 +76,18 @@ study and benchmark against.
 
 ### 2.1 Licence
 
-Chosen: **MIT OR Apache-2.0** (dual licence, the Rust ecosystem convention, and the most flexible option).
+Chosen at first: **MIT OR Apache-2.0** (dual licence, the Rust ecosystem convention). From alpha 8,
+Drift is **FSL-1.1-ALv2** (copyright Christopher Lange): source-available, free for any use but a
+competing product, each version becoming Apache-2.0 two years after release. Alphas 1–7 stay MIT
+OR Apache-2.0. The notes below are from the original choice.
 - It is compatible with every dependency above, and others can embed `drift-solver` or `drift-geom` in
   their own projects. A good standalone Rust 2D constraint solver would be valuable to the wider
   ecosystem.
 - Trade-off: we cannot copy or port GPL code (SolveSpace). We can still implement the same
   *algorithms* from papers and documentation, which are not copyrightable.
 
-Repo hygiene from day one: `LICENSE-MIT`, `LICENSE-APACHE`, `CONTRIBUTING.md`, a code of conduct,
+Repo hygiene from day one: a licence (`LICENSE.md`, FSL-1.1-ALv2 since alpha 8; MIT OR Apache-2.0
+before), `CONTRIBUTING.md`, a code of conduct,
 issue templates, `cargo-deny` in CI for licence and advisory checks, and DCO or a simple
 "contributions under the project licence" policy.
 
@@ -2068,7 +2072,7 @@ contributors can parallelise M6–M9 once the M2–M4 core is stable.
 
 All major decisions are settled:
 - **Name:** Drift.
-- **Licence:** MIT OR Apache-2.0 (see §2.1).
+- **Licence:** FSL-1.1-ALv2 from alpha 8; MIT OR Apache-2.0 before (see §2.1).
 - **Distribution:** open source, cross-platform, with a first-class browser build.
 - **Primary use cases:** technical drawings and design exploration.
 - **File format:** JSON-based `.drift` files (see §3.5).

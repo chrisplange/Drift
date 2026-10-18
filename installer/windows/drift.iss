@@ -47,8 +47,8 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Files]
 Source: "..\..\target\release\drift.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\..\LICENSE-MIT"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\..\LICENSE-APACHE"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\..\LICENSE.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\..\THIRD-PARTY-NOTICES.txt"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\Drift"; Filename: "{app}\drift.exe"

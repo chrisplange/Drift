@@ -21,9 +21,12 @@ Coordinates and lengths are millimetres with y up; angles are degrees counter-cl
 Ids: entities e12 (points and curves), constraints c3, layers l1, fills f2, texts t4.
 
 Work the way Drift is meant to be used, not by computing exact coordinates:
-1. Sketch approximate geometry with add_geometry (rough coordinates are fine; shapes that share \
-a coordinate or a point id are joined).
-2. State intent with add_relations (horizontal, perpendicular, parallel, equal, coincident, \
+1. To build or change geometry, write a Drift script and call run_script: rooms, walls, openings, \
+grids, arrays, relations and dimensions by name, in one call that is one undo step (its description \
+has the language). Use the single tools for looking, and for small fixes to existing ids: sketch \
+approximate geometry with add_geometry (rough coordinates are fine; shapes that share a coordinate \
+or a point id are joined).
+2. State intent with relations and dimensions, in the script or with add_relations (horizontal, perpendicular, parallel, equal, coincident, \
 symmetric, ...) and add_dimensions (lengths, distances, radii, angles; values may be numbers in \
 mm or text with units and variables such as \"3.6 m\", \"W/2\", \"12'6\\\"\"). The solver moves the \
 geometry to satisfy them.
@@ -314,9 +317,10 @@ mirror {axis line, keep_original (default true)}; linear_array {by, count}; circ
         },
         ToolSpec {
             name: "set_construction",
-            description: "Make curves construction geometry (reference lines that don't print or bound areas), or normal again.",
+            description: "Make curves construction geometry (reference lines that don't print or bound areas), or normal again. `style` centre_line gives dash-dot lines that print but don't bound areas (grids, axes).",
             schema: object(
-                json!({ "ids": ids("Curves"), "construction": { "type": "boolean" } }),
+                json!({ "ids": ids("Curves"), "construction": { "type": "boolean" },
+                        "style": { "type": "string", "enum": ["solid", "construction", "centre_line"], "description": "Instead of `construction`" } }),
                 &["ids"],
             ),
             read_only: false,
@@ -417,6 +421,12 @@ mirror {axis line, keep_original (default true)}; linear_array {by, count}; circ
                 }),
                 &["path"],
             ),
+            read_only: false,
+        },
+        ToolSpec {
+            name: "run_script",
+            description: super::script::DESCRIPTION,
+            schema: super::script::schema(),
             read_only: false,
         },
         ToolSpec {

@@ -121,6 +121,7 @@ away from your open drawings altogether, start it with `--no-link`. If it's star
 | `import_file` | SVG, PDF, Illustrator or DXF, as geometry or as an underlay to trace, at a scale such as `"1:50"`. |
 | `render`, `analyze` | Checking: a picture of the drawing, and its degrees of freedom, conflicts, open ends and closed areas. |
 | `export` | PDF or SVG of the sheets, DXF of model space, or a PNG. |
+| `run_script` | A [Drift script](script.md): rooms, walls, doors, grids, arrays, relations and dimensions written by name, in one call. |
 | `undo`, `redo`, `batch` | Every change the assistant makes is one undo step, and all or nothing: a call that fails changes nothing. `batch` makes several calls one step. |
 | `drift_link` | Which drawing the tools work on: the one open in Drift, or the server's own. |
 
@@ -132,6 +133,22 @@ what it lists.
 
 Coordinates are millimetres with y up, whatever the drawing's display units. Angles are in
 degrees, counter-clockwise.
+
+## Drift scripts
+
+Rather than many separate tool calls, the assistant usually writes a short
+[Drift script](script.md) and runs it with `run_script`:
+
+```
+let W = 3.6 m
+room bed W x 1.25*W at 0,0 walls 200 fixed
+door d1 900 in bed.south centred
+```
+
+The whole script is one undo step, and all or nothing. The geometry has names (`bed.south`,
+`d1.start`) instead of ids, so the assistant makes fewer mistakes. If a line is wrong, the
+error says which line, how Drift read it, and how to fix it, and nothing changes. You can
+write scripts yourself too: ask the assistant to run one, or to show you the script it used.
 
 ## Example prompts
 

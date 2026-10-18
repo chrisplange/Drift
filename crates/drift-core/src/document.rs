@@ -2996,6 +2996,8 @@ pub fn arc_shape(center: DVec2, start: DVec2, end: DVec2) -> Shape {
 pub struct History {
     undo: Vec<Transaction>,
     redo: Vec<Transaction>,
+    /// Steps recorded so far (never decreases, unlike the undo stack, which forgets old ones).
+    recorded: u64,
 }
 
 impl History {
@@ -3007,6 +3009,7 @@ impl History {
     pub fn push(&mut self, tx: Transaction) {
         if !tx.is_empty() {
             self.undo.push(tx);
+            self.recorded += 1;
             self.redo.clear();
             if self.undo.len() > Self::MAX_STEPS {
                 let extra = self.undo.len() - Self::MAX_STEPS;
@@ -3030,7 +3033,10 @@ impl History {
                     }
                 }
             }
-            None => self.undo.push(tx),
+            None => {
+                self.undo.push(tx);
+                self.recorded += 1;
+            }
         }
     }
 
@@ -3071,6 +3077,47 @@ impl History {
     pub fn clear(&mut self) {
         self.undo.clear();
         self.redo.clear();
+    }
+
+    /// How many steps have been recorded: the difference between two readings is how many
+    /// steps were added between them.
+    pub fn recorded(&self) -> u64 {
+        self.recorded
+    }
+
+    /// How many steps can be undone.
+    pub fn undo_depth(&self) -> usize {
+        self.undo.len()
+    }
+
+    /// How many steps can be redone.
+    pub fn redo_depth(&self) -> usize {
+        self.redo.len()
+    }
+
+    /// Fold the last `n` undo steps into one labelled `label`, so several edits undo
+    /// together.
+    pub fn squash_last(&mut self, n: usize, label: &str) {
+        let n = n.min(self.undo.len());
+        if n == 0 {
+            return;
+        }
+        let mut steps = self.undo.split_off(self.undo.len() - n);
+        let mut first = steps.remove(0);
+        first.label = label.to_owned();
+        self.undo.push(first);
+        for tx in steps {
+            self.merge_into_last(tx);
+        }
+    }
+
+    /// Undo the last `n` steps and forget them (they can't be redone).
+    pub fn discard_last(&mut self, n: usize, doc: &mut Document) {
+        for _ in 0..n {
+            if let Some(tx) = self.undo.pop() {
+                doc.apply(&tx, false);
+            }
+        }
     }
 }
 

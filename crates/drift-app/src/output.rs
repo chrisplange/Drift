@@ -601,6 +601,60 @@ pub fn model_drawing(
     d
 }
 
+/// A window onto the sketch as a page of `size` mm: world point `center` at the page's
+/// centre, at 1 : `scale`, with annotations sized for that scale (for pictures of the
+/// drawing, such as the assistant's renders).
+pub fn view_drawing(
+    ed: &mut Editor,
+    patterns: &PatternLibrary,
+    painter: &egui::Painter,
+    center: DVec2,
+    scale: f64,
+    size: DVec2,
+    dimensions: bool,
+) -> Drawing {
+    let mut d = Drawing::new(size);
+    d.font = ed.drawing_font();
+    drift_draft::font::set_drawing_font(d.font.clone());
+    let space = Space {
+        world: center,
+        page: size / 2.0,
+        k: 1.0 / scale,
+        n: scale,
+        clip: None,
+        inserts: false,
+        dimensions,
+        notes: true,
+    };
+    view(ed, patterns, painter, &space, &mut d);
+    d
+}
+
+/// Every sheet of the document as a page; with no sheets, one A3 sheet titled `title` with
+/// the drawing fitted on it (as the app prints).
+pub fn sheet_pages(
+    ed: &mut Editor,
+    patterns: &mut PatternLibrary,
+    painter: &egui::Painter,
+    title: &str,
+) -> Vec<Drawing> {
+    let mut sheets: Vec<Sheet> = ed.doc.sheets().map(|(_, s)| s.clone()).collect();
+    if sheets.is_empty() {
+        let mut sheet = Sheet::new("Sheet 1");
+        sheet.fields.title = title.to_owned();
+        let imperial = !ed.doc.units().length.is_metric();
+        fit_sheet(ed.bounds(), &mut sheet, imperial);
+        sheets.push(sheet);
+    }
+    patterns.update(ed.doc.custom_patterns());
+    let count = sheets.len();
+    sheets
+        .iter()
+        .enumerate()
+        .map(|(i, s)| sheet_drawing(ed, patterns, painter, s, (i + 1, count)))
+        .collect()
+}
+
 /// Centre view `index` of a sheet on `b` (the sketch with its dimension labels, in world
 /// mm) at the largest preferred scale that fits. A view that fills the sheet is fitted in the
 /// drawing area clear of the title block; one with a frame, in its frame.

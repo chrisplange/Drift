@@ -1202,7 +1202,8 @@ impl DriftApp {
         }
     }
 
-    /// Put a model view on a sheet: its middle `at` a paper point, or where there is room.
+    /// Put a model view on a sheet: its middle `at` a paper point, or, at the scale it has,
+    /// on free paper clear of the views there (failing that, where `place_frame` puts it).
     /// Returns its index on the sheet.
     pub(crate) fn place_view(
         &mut self,
@@ -1213,7 +1214,10 @@ impl DriftApp {
         let mut sheet = self.editor.doc.sheet(id)?.clone();
         let size = self.editor.doc.view(view)?.paper_size();
         let placed = self.editor.doc.placed_views(&sheet);
-        let at = at.unwrap_or_else(|| crate::output::place_frame(&sheet, &placed, size));
+        let model = self.fit_bounds();
+        let at = at
+            .or_else(|| crate::app::sheet_editor::free_spot_on_sheet(&sheet, &placed, model, size))
+            .unwrap_or_else(|| crate::output::place_frame(&sheet, &placed, size));
         let mut port = Viewport::new(view, at);
         port.title = true;
         sheet.viewports.push(port);

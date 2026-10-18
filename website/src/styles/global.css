@@ -1,33 +1,40 @@
 /* Drift website styles.
  *
- * Colours: every colour the site uses is one of the tokens below. They follow Drift's own
- * theme (crates/drift-app/src/theme.rs); when the app's palette changes, update them here.
+ * Colours: every colour the site uses is one of the tokens below. The site runs a little
+ * richer than the app: deeper darks, warm ivory text, Drift's blue with a glow, and a
+ * lipstick red (the red of the lips in the scroll story) as the second accent. The drawing
+ * colours still follow the app's theme (crates/drift-app/src/theme.rs).
  */
 :root {
   color-scheme: dark;
 
-  /* Surfaces, from the app's dark theme */
-  --bg: #18191c; /* field */
-  --surface: #1b1d21; /* canvas */
-  --panel: #232428; /* panels */
-  --raised: #2a2c31; /* faint fill */
-  --line: #34363c; /* separators */
-  --line-strong: #46494f;
+  /* Surfaces: an inky near-black with a cool cast */
+  --bg: #0b0c10;
+  --surface: #111318; /* the canvas in the scroll story */
+  --panel: #161921;
+  --raised: #1e222b;
+  --line: #262a34;
+  --line-strong: #363b48;
 
-  /* Text */
-  --text: #e8e8ea;
-  --text-weak: #989aa1;
+  /* Text: warm ivory */
+  --text: #f6f3ec;
+  --text-weak: #9d9fa8;
 
-  /* Accent (theme::accent) and the definition colours (theme::under_color, ok_color) */
-  --accent: #0a84ff;
-  --accent-hover: #3d9bff;
+  /* Accents: Drift's blue, brighter, with a glow; lipstick red for flirtation */
+  --accent: #2f8bff;
+  --accent-hover: #5aa4ff;
+  --accent-2: #5ac8fa; /* the cool end of the blue gradient */
+  --kiss: #ff453a;
+  --glow: 0 10px 40px -10px color-mix(in srgb, var(--accent) 70%, transparent);
+
+  /* The definition colours (theme::under_color, ok_color) */
   --under: #5fa8f5;
   --ok: #30d158;
 
   /* Drawing colours for the sketch illustrations */
-  --ink: #e8e8ea; /* fully defined geometry */
-  --grid: #26282d;
-  --grid-major: #2e3036;
+  --ink: #f2f0ea; /* fully defined geometry */
+  --grid: #191c23;
+  --grid-major: #21252e;
   --axis-x: #8a3a3a;
   --axis-y: #3a7a4a;
 
@@ -35,13 +42,17 @@
   --figure-ink: var(--ink);
   --figure-hair: var(--figure-ink);
   --figure-eyes: var(--figure-ink);
-  --figure-lips: #ff453a;
+  --figure-lips: var(--kiss);
 
-  --radius: 10px;
-  --radius-sm: 6px;
+  --radius: 18px;
+  --radius-sm: 12px;
   --max: 1160px;
-  --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
-  --mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace;
+
+  /* Type: an editorial serif for headlines, a crisp grotesk for everything else, and a mono
+     for small technical labels. All three are self-hosted (see layouts/Base.astro). */
+  --display: "Instrument Serif", "Iowan Old Style", Georgia, serif;
+  --font: "Geist Variable", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: "Geist Mono Variable", ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace;
 }
 
 *,
@@ -57,12 +68,29 @@ html {
 
 body {
   margin: 0;
-  background: var(--bg);
+  background:
+    radial-gradient(60rem 40rem at 85% -10%, color-mix(in srgb, var(--accent) 16%, transparent), transparent 70%),
+    radial-gradient(40rem 30rem at -10% 30rem, color-mix(in srgb, var(--kiss) 8%, transparent), transparent 70%),
+    var(--bg);
+  background-repeat: no-repeat;
   color: var(--text);
   font-family: var(--font);
   font-size: 17px;
-  line-height: 1.6;
+  line-height: 1.65;
+  letter-spacing: -0.005em;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+p,
+li {
+  text-wrap: pretty;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--kiss) 55%, transparent);
+  color: #fff;
 }
 
 img,
@@ -85,27 +113,39 @@ a:hover {
 }
 
 h1,
-h2,
-h3 {
-  line-height: 1.15;
+h2 {
+  font-family: var(--display);
+  font-weight: 400;
+  line-height: 1.02;
   letter-spacing: -0.02em;
-  font-weight: 700;
+  text-wrap: balance;
 }
 
 h1 {
-  font-size: clamp(2.2rem, 5vw, 3.6rem);
-  margin: 0 0 0.4em;
+  font-size: clamp(3rem, 6.6vw, 5.4rem);
+  margin: 0 0 0.3em;
 }
 
 h2 {
-  font-size: clamp(1.6rem, 3vw, 2.3rem);
-  margin: 0 0 0.5em;
+  font-size: clamp(2.3rem, 4.4vw, 3.6rem);
+  margin: 0 0 0.35em;
+}
+
+/* An italic word or phrase in a headline: the serif's italic, in lipstick red. */
+h1 em,
+h2 em {
+  font-style: italic;
+  letter-spacing: -0.01em;
+  color: var(--kiss);
 }
 
 h3 {
-  font-size: 1.15rem;
+  font-family: var(--font);
+  font-size: 1.1rem;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.015em;
   margin: 0 0 0.4em;
-  letter-spacing: -0.01em;
 }
 
 code,
@@ -133,17 +173,31 @@ pre {
 }
 
 .eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
   font-family: var(--mono);
-  font-size: 0.78rem;
-  letter-spacing: 0.08em;
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--text-weak);
 }
 
+.eyebrow::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--kiss);
+  box-shadow: 0 0 12px var(--kiss);
+}
+
 .lede {
-  font-size: 1.2rem;
+  font-size: clamp(1.1rem, 1.6vw, 1.28rem);
+  line-height: 1.55;
   color: var(--text-weak);
-  max-width: 38em;
+  max-width: 36em;
 }
 
 .section {
@@ -155,37 +209,44 @@ pre {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 18px;
-  border-radius: var(--radius-sm);
+  padding: 12px 22px;
+  border-radius: 999px;
   border: 1px solid var(--line-strong);
   background: var(--raised);
   color: var(--text);
   font: inherit;
   font-size: 0.95rem;
-  font-weight: 600;
+  font-weight: 500;
+  letter-spacing: -0.01em;
   line-height: 1.3;
   cursor: pointer;
   transition:
-    background 0.15s,
-    border-color 0.15s;
+    background 0.2s,
+    border-color 0.2s,
+    box-shadow 0.2s,
+    transform 0.2s;
 }
 
 .btn:hover {
   background: var(--line);
+  border-color: color-mix(in srgb, var(--text) 30%, transparent);
   color: var(--text);
   text-decoration: none;
+  transform: translateY(-1px);
 }
 
 .btn-primary {
-  background: var(--accent);
-  border-color: var(--accent);
+  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent-2) 70%, var(--accent)));
+  border-color: transparent;
   color: #fff;
+  box-shadow: var(--glow), inset 0 1px 0 rgb(255 255 255 / 0.25);
 }
 
 .btn-primary:hover {
-  background: var(--accent-hover);
-  border-color: var(--accent-hover);
+  background: linear-gradient(135deg, var(--accent-hover), var(--accent-2));
+  border-color: transparent;
   color: #fff;
+  box-shadow: 0 14px 48px -10px color-mix(in srgb, var(--accent) 85%, transparent), inset 0 1px 0 rgb(255 255 255 / 0.3);
 }
 
 .btn small {
@@ -214,7 +275,7 @@ pre {
 }
 
 .card {
-  background: var(--panel);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--panel) 92%, white), var(--panel));
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 24px;
@@ -226,12 +287,12 @@ pre {
 }
 
 .prose h1 {
-  font-size: clamp(2rem, 4vw, 2.6rem);
+  font-size: clamp(2.6rem, 5vw, 3.6rem);
 }
 
 .prose h2 {
-  font-size: 1.5rem;
-  margin-top: 2em;
+  font-size: clamp(1.8rem, 3vw, 2.3rem);
+  margin-top: 1.6em;
 }
 
 .prose h3 {

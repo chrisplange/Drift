@@ -2,9 +2,10 @@
 // The front page's scroll story, about precision and freedom. A section through a
 // mechanical plate draws itself and is pinned down by relations and dimensions until it's
 // fully defined. Then the dimensions and grid fall away, the plate's six strokes flow into
-// the lines of an ink drawing of a woman in a wide-brimmed hat, which fills in: a white hat,
-// black hair, blue eyes and red lips. The section's hatch follows its region the whole way,
-// from the cut faces to the underside of the brim, where it settles into dots.
+// the lines of an ink drawing of a woman in a wide-brimmed hat, which fills in. The section's
+// hatch follows its region the whole way, to the underside of the brim, where it settles into
+// dots. Last, her lines swirl into an italic serif ampersand, which fills in ivory with a
+// lipstick-red echo: precision & freedom.
 //
 // Everything is drawn by the script below from one progress value: timings live in PHASES,
 // the plate in PLATE and the drawing in src/lib/woman.ts. Its colours are the --figure-* tokens in
@@ -22,10 +23,6 @@ const steps = [
   {
     title: "Then let go",
     text: "The same lines become pen curves, drawn the way you'd draw in Illustrator or Affinity. Precise when you need it, free when you don't.",
-  },
-  {
-    title: "Fills follow the shape",
-    text: "Fills and hatches stay live as the geometry changes: the section's hatch follows its region all the way to the brim of a hat, and turns to dots.",
   },
 ];
 ---
@@ -56,7 +53,7 @@ const steps = [
           <svg
             viewBox="0 0 1000 680"
             role="img"
-            aria-label="A dimensioned section through a mechanical plate that turns into an ink drawing of a woman in a wide-brimmed hat"
+            aria-label="A dimensioned section through a mechanical plate that turns into an ink drawing of a woman in a wide-brimmed hat, then into an italic ampersand"
           >
             <defs>
               <pattern id="ss-grid-minor" width="20" height="20" patternUnits="userSpaceOnUse">
@@ -98,6 +95,10 @@ const steps = [
                   <rect id="ss-hatch-dots" class="dots" x="-200" y="-200" width="1400" height="1080" clip-path="url(#ss-hatch-region)" opacity="0"></rect>
                 </g>
               </g>
+              <g id="ss-amp" opacity="0">
+                <path id="ss-amp-kiss" class="amp-kiss"></path>
+                <path id="ss-amp-fill" class="amp"></path>
+              </g>
               <g id="ss-scene"></g>
             </g>
             <g id="ss-measure" visibility="hidden"></g>
@@ -120,24 +121,30 @@ const steps = [
     WOMAN_PARTS,
     WOMAN_PATHS,
   } from "../lib/woman";
+  import { AMPERSAND, AMPERSAND_SIZE } from "../lib/ampersand";
 
   // ---------- Timing: every animation is a window [from, to] of the scroll progress p ----------
   const PHASES = {
-    grid: [0.0, 0.04],
-    plate: [0.03, 0.2], // the profile strokes, one after another
-    centre: [0.17, 0.21],
-    hatch: [0.19, 0.26],
-    relations: [0.25, 0.32],
-    dims: [0.31, 0.44],
-    defined: [0.43, 0.46],
-    letGo: [0.5, 0.56], // dimensions, relations and grid fade out
-    morph: [0.54, 0.8], // strokes peel off the plate, staggered
-    hatchMorph: [0.58, 0.78], // the hatch's region moves from the cut faces to the brim
-    fill: [0.76, 0.84], // flat colour fills the outlines
-    outline: [0.8, 0.88], // and the outlines fade
-    settle: [0.8, 0.9], // the hatch under the brim settles into dots
+    grid: [0.0, 0.031],
+    plate: [0.023, 0.156], // the profile strokes, one after another
+    centre: [0.133, 0.164],
+    hatch: [0.148, 0.203],
+    relations: [0.195, 0.25],
+    dims: [0.242, 0.343],
+    defined: [0.335, 0.359],
+    letGo: [0.39, 0.437], // dimensions, relations and grid fade out
+    morph: [0.421, 0.624], // strokes peel off the plate, staggered
+    hatchMorph: [0.452, 0.608], // the hatch's region moves from the cut faces to the brim
+    fill: [0.593, 0.655], // flat colour fills the outlines
+    outline: [0.624, 0.686], // and the outlines fade
+    settle: [0.624, 0.702], // the hatch under the brim settles into dots
+    release: [0.72, 0.78], // the woman's fill and the brim's dots fade, her lines lift off
+    toAmp: [0.73, 0.88], // her lines swirl into the outline of an italic ampersand
+    ampFill: [0.86, 0.93], // the ampersand fills in
+    ampOutline: [0.9, 0.96], // and its outline fades
+    kiss: [0.92, 0.99], // a lipstick-red echo slides out from behind it
   } as const;
-  const STEP_STARTS = [0, 0.4, 0.53, 0.76];
+  const STEP_STARTS = [0, 0.31, 0.41];
   // Reduced motion shows one still frame: the finished picture.
   const STILL = 1;
 
@@ -171,6 +178,12 @@ const steps = [
   const toView = ([x, y]: [number, number]): [number, number] => [
     FIGURE_PLACE.to[0] + (x - FIGURE_PLACE.from[0]) * FIGURE_PLACE.scale,
     FIGURE_PLACE.to[1] + (y - FIGURE_PLACE.from[1]) * FIGURE_PLACE.scale,
+  ];
+  // Where the ampersand sits: its scale, centred in the stage.
+  const AMP_PLACE = { scale: 0.74, to: [500, 340] as const };
+  const ampView = ([x, y]: [number, number]): [number, number] => [
+    AMP_PLACE.to[0] + (x - AMPERSAND_SIZE[0] / 2) * AMP_PLACE.scale,
+    AMP_PLACE.to[1] + (y - AMPERSAND_SIZE[1] / 2) * AMP_PLACE.scale,
   ];
   // The camera eases in a touch as she appears.
   const CAMERA = { cx: 500, cy: 342, zoom: 1.03 };
@@ -285,6 +298,8 @@ const steps = [
     const regionB = $<SVGPolygonElement>("#ss-region-b");
     const reveal = $<SVGRectElement>("#ss-reveal-rect");
     const fill = $<SVGGElement>("#ss-fill");
+    const amp = $<SVGGElement>("#ss-amp");
+    const ampKiss = $<SVGPathElement>("#ss-amp-kiss");
     const dof = $<HTMLElement>("#ss-dof");
     const steps = [...root.querySelectorAll<HTMLElement>("[data-step]")];
     const bar = $<HTMLElement>(".progress span");
@@ -306,6 +321,15 @@ const steps = [
     const sample = sampler($<SVGGElement>("#ss-measure"));
     const plateS = PLATE.map((d) => sample(d));
     const figureS = WOMAN_LINES.map((d) => sample(d).map(toView));
+    // The ampersand's one contour, in as many stretches as she has lines.
+    const ampOutline = sample(AMPERSAND, N * figureS.length).map(ampView);
+    const ampS = figureS.map((_, j) => ampOutline.slice(j * N, (j + 1) * N));
+    const ampPlace = `translate(${AMP_PLACE.to[0] - (AMPERSAND_SIZE[0] / 2) * AMP_PLACE.scale} ${AMP_PLACE.to[1] - (AMPERSAND_SIZE[1] / 2) * AMP_PLACE.scale}) scale(${AMP_PLACE.scale})`;
+    for (const el of [ampKiss, $<SVGPathElement>("#ss-amp-fill")]) {
+      el.setAttribute("d", AMPERSAND);
+      el.setAttribute("transform", ampPlace);
+    }
+    ampKiss.setAttribute("data-place", ampPlace);
     const sectionA = sample(SECTION_A),
       sectionB = sample(SECTION_B),
       brim = sample(WOMAN_BRIM).map(toView);
@@ -379,9 +403,36 @@ const steps = [
         s += `</g>`;
       }
 
-      // Colour fills the brushwork under the outlines.
-      const fillT = String(ease(ph(p, PHASES.fill)));
-      fill.setAttribute("opacity", fillT);
+      // Her lines lift off again and swirl into the ampersand's outline.
+      const release = ease(ph(p, PHASES.release));
+      const A = ph(p, PHASES.toAmp);
+      if (A > 0) {
+        const n = figureS.length;
+        const shown = ease(ph(p, [PHASES.toAmp[0], PHASES.toAmp[0] + 0.03])) * (1 - ease(ph(p, PHASES.ampOutline)));
+        s += `<g opacity="${shown.toFixed(3)}">`;
+        figureS.forEach((from, j) => {
+          const t = ease(clamp((A - (j / n) * 0.35) / 0.65));
+          const swirl = Math.sin(Math.PI * t) * 30;
+          const line = ampS[j].map(([bx, by], i) => {
+            const [ax, ay] = from[i];
+            return [
+              lerp(ax, bx, t) + swirl * Math.sin(i * 0.06 + j * 1.3),
+              lerp(ay, by, t) + swirl * Math.cos(i * 0.05 + j * 0.7),
+            ] as Pt;
+          });
+          s += `<polyline class="geo fig" points="${pts(line)}"/>`;
+        });
+        s += `</g>`;
+      }
+
+      // Colour fills the brushwork under the outlines, until she lets go.
+      fill.setAttribute("opacity", String(ease(ph(p, PHASES.fill)) * (1 - release)));
+      hatchShape.setAttribute("opacity", String(1 - release));
+      // The ampersand fills in, and its red echo slides out from behind.
+      amp.setAttribute("opacity", ease(ph(p, PHASES.ampFill)).toFixed(3));
+      const kiss = ease(ph(p, PHASES.kiss));
+      ampKiss.setAttribute("opacity", kiss.toFixed(3));
+      ampKiss.setAttribute("transform", `translate(${(10 * kiss).toFixed(2)} ${(7 * kiss).toFixed(2)}) ${ampKiss.getAttribute("data-place") ?? ""}`);
 
       // The hatch: revealed across the cut faces, carried to the brim, then turned to dots.
       reveal.setAttribute("width", String(1400 * ease(ph(p, PHASES.hatch))));
@@ -513,7 +564,7 @@ const steps = [
 <style>
   .sketch-scroll {
     position: relative;
-    height: 560vh;
+    height: 720vh;
     border-top: 1px solid var(--line);
     background: var(--surface);
   }
@@ -575,12 +626,18 @@ const steps = [
   }
   .num {
     font-family: var(--mono);
-    font-size: 0.8rem;
+    font-size: 0.72rem;
+    letter-spacing: 0.08em;
     color: var(--accent);
-    padding-top: 3px;
+    padding-top: 12px;
   }
   .steps h3 {
-    margin: 0 0 2px;
+    font-family: var(--display);
+    font-size: 1.9rem;
+    font-weight: 400;
+    letter-spacing: -0.015em;
+    line-height: 1.1;
+    margin: 0 0 6px;
   }
   .steps p {
     margin: 0;
@@ -702,6 +759,12 @@ const steps = [
   svg :global(.art .lips) {
     fill: var(--figure-lips);
   }
+  svg :global(.amp) {
+    fill: var(--figure-ink);
+  }
+  svg :global(.amp-kiss) {
+    fill: var(--kiss);
+  }
   svg :global(.hatch) {
     fill: url(#ss-hatch);
   }
@@ -771,7 +834,7 @@ const steps = [
   /* Narrow screens: the drawing on top, the current step under it. */
   @media (max-width: 900px) {
     .sketch-scroll {
-      height: 620vh;
+      height: 800vh;
     }
     .layout {
       grid-template-columns: minmax(0, 1fr);

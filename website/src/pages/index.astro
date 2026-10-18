@@ -50,11 +50,10 @@ const features = [
         <a class="pill" href="/releases/">
           {latest ? `${latest.version} is out` : "Now in alpha"}
         </a>
-        <h1>Sketch with intent.<br /><span>Change your mind freely.</span></h1>
+        <h1>Sketch with <em>intent</em>.<br /><span>Change your mind <em>freely</em>.</span></h1>
         <p class="lede">
-          Drift is a parametric 2D sketcher for architects and designers. Draw freely, then hold
-          the drawing together with dimensions and relations. Change one number and everything
-          that depends on it follows.
+          Start messy. End perfect. Drift handles everything in between, and never asks you to
+          commit too early.
         </p>
         <div class="cta">
           <a class="btn btn-primary" href="/download/">Download free</a>
@@ -80,7 +79,7 @@ const features = [
   <section class="section features" id="features">
     <div class="wrap">
       <p class="eyebrow">What's in it</p>
-      <h2>The precision of CAD, the pace of a sketch</h2>
+      <h2>The precision of CAD, <em>the pace of a sketch</em></h2>
       <p class="lede">
         Drift borrows constraint sketching from mechanical CAD and makes it quick enough for
         early design: plans, sections, details, joinery, signage and fabrication drawings.
@@ -109,10 +108,10 @@ const features = [
   <section class="section designers">
     <div class="wrap two">
       <div>
-        <p class="eyebrow">Made for designers</p>
-        <h2>Keys you already know</h2>
+        <p class="eyebrow">Feels familiar</p>
+        <h2>Keys you <em>already know</em></h2>
         <p>
-          Drift is built by an architect, for people who already draw in Revit, AutoCAD,
+          Drift is made for people who already draw in Revit, AutoCAD,
           SolidWorks, Illustrator or Affinity. Units can be millimetres or feet-and-inches with
           fractions, typed any way you like: <code>1'-6 1/2"</code>, <code>450mm</code>,
           <code>=width/2</code>.
@@ -136,7 +135,7 @@ const features = [
     <div class="wrap try-inner card">
       <div>
         <p class="eyebrow">No install</p>
-        <h2>Try Drift in your browser</h2>
+        <h2>Try Drift <em>in your browser</em></h2>
         <p class="lede">
           The full app runs in the browser with WebGPU, or WebGL2 on older browsers. Your work
           is kept in the browser between visits, and you can download it as a .drift file.
@@ -149,7 +148,7 @@ const features = [
   <section class="section get" id="download">
     <div class="wrap">
       <p class="eyebrow">Download</p>
-      <h2>Free for Windows and macOS</h2>
+      <h2><em>Free</em> for Windows and macOS</h2>
       <p class="lede">
         Drift is free to use, including for client work. <a href="/licence/">About the licence</a>.
       </p>
@@ -196,12 +195,19 @@ const features = [
     margin-top: 16px;
   }
   .hero-shot {
+    position: relative;
     border-radius: var(--radius);
     border: 1px solid var(--line-strong);
     overflow: hidden;
     box-shadow:
-      0 30px 80px -20px rgb(0 0 0 / 0.6),
-      0 0 0 1px rgb(255 255 255 / 0.03);
+      0 40px 120px -30px color-mix(in srgb, var(--accent) 45%, transparent),
+      0 30px 80px -20px rgb(0 0 0 / 0.7),
+      0 0 0 1px rgb(255 255 255 / 0.04);
+    transform: perspective(1600px) rotateY(-6deg) rotateX(2deg);
+    transition: transform 0.8s cubic-bezier(0.2, 0.7, 0.2, 1);
+  }
+  .hero-shot:hover {
+    transform: perspective(1600px) rotateY(0deg) rotateX(0deg);
   }
   .hero-shot img {
     display: block;
@@ -220,6 +226,13 @@ const features = [
     border: 1px solid var(--line);
     margin-bottom: 16px;
     background: var(--surface);
+    transition:
+      border-color 0.3s,
+      box-shadow 0.3s;
+  }
+  .feature:hover .shot {
+    border-color: color-mix(in srgb, var(--accent) 60%, var(--line));
+    box-shadow: var(--glow);
   }
   .feature img {
     display: block;
@@ -238,7 +251,7 @@ const features = [
   }
 
   .designers {
-    background: var(--surface);
+    background: color-mix(in srgb, var(--surface) 80%, transparent);
     border-top: 1px solid var(--line);
     border-bottom: 1px solid var(--line);
   }
@@ -276,11 +289,8 @@ const features = [
     gap: 32px;
     padding: 40px;
     background:
-      radial-gradient(
-        ellipse at 100% 0%,
-        color-mix(in srgb, var(--accent) 18%, transparent),
-        transparent 60%
-      ),
+      radial-gradient(ellipse at 100% 0%, color-mix(in srgb, var(--accent) 30%, transparent), transparent 60%),
+      radial-gradient(ellipse at 0% 100%, color-mix(in srgb, var(--kiss) 14%, transparent), transparent 55%),
       var(--panel);
   }
   .try-inner .lede {
@@ -296,6 +306,9 @@ const features = [
   }
 
   @media (max-width: 960px) {
+    .hero-shot {
+      transform: none;
+    }
     .hero-inner,
     .two {
       grid-template-columns: minmax(0, 1fr);

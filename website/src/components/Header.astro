@@ -48,10 +48,10 @@ const path = Astro.url.pathname;
     position: sticky;
     top: 0;
     z-index: 50;
-    background: color-mix(in srgb, var(--bg) 82%, transparent);
-    backdrop-filter: saturate(1.4) blur(12px);
-    -webkit-backdrop-filter: saturate(1.4) blur(12px);
-    border-bottom: 1px solid var(--line);
+    background: color-mix(in srgb, var(--bg) 70%, transparent);
+    backdrop-filter: saturate(1.6) blur(16px);
+    -webkit-backdrop-filter: saturate(1.6) blur(16px);
+    border-bottom: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
   }
   .bar {
     display: flex;
@@ -64,8 +64,9 @@ const path = Astro.url.pathname;
     align-items: center;
     gap: 10px;
     color: var(--text);
-    font-weight: 700;
-    font-size: 1.1rem;
+    font-family: var(--display);
+    font-weight: 400;
+    font-size: 1.6rem;
     letter-spacing: -0.01em;
     margin-right: auto;
   }

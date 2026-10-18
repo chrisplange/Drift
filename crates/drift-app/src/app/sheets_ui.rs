@@ -199,6 +199,13 @@ fn next_revision(rev: Option<&str>) -> String {
     }
 }
 
+/// What the output dialog makes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Output {
+    Pdf,
+    Print,
+}
+
 impl DriftApp {
     /// The file name without its extension, for exports.
     fn file_stem(&self) -> String {
@@ -319,12 +326,33 @@ impl DriftApp {
             .collect()
     }
 
+    /// The sheets chosen for the PDF and print, as a PDF. Each keeps its number in the whole
+    /// set ("2 / 5"), so a reissued sheet matches the set it belongs to.
     pub(crate) fn pdf_bytes(&mut self, painter: &egui::Painter) -> Vec<u8> {
-        let pages = self.pages(painter);
+        let chosen: Vec<bool> = self
+            .editor
+            .doc
+            .sheets()
+            .map(|(id, _)| !self.pdf_left_out.contains(&id))
+            .collect();
+        let mut pages = self.pages(painter);
+        if chosen.contains(&true) && chosen.len() == pages.len() {
+            let mut keep = chosen.into_iter();
+            pages.retain(|_| keep.next().unwrap_or(true));
+        }
         drift_io::pdf::write(&pages, &self.file_stem())
     }
 
+    /// Export a PDF: with several sheets, first a dialog to choose which.
     pub(crate) fn export_pdf(&mut self, painter: &egui::Painter) {
+        if self.editor.doc.sheets().nth(1).is_some() {
+            self.output_dialog = Some(Output::Pdf);
+        } else {
+            self.write_pdf(painter);
+        }
+    }
+
+    fn write_pdf(&mut self, painter: &egui::Painter) {
         let bytes = self.pdf_bytes(painter);
         let name = format!("{}.pdf", self.file_stem());
         self.files.export(&name, PDF_FILE, bytes);
@@ -359,8 +387,118 @@ impl DriftApp {
         self.files.export(&name, DXF_FILE, text.into_bytes());
     }
 
-    /// Open the sheets as a PDF in the system viewer (a browser tab on the web) to print.
+    /// Print: with several sheets, first a dialog to choose which.
     pub(crate) fn print(&mut self, painter: &egui::Painter) {
+        if self.editor.doc.sheets().nth(1).is_some() {
+            self.output_dialog = Some(Output::Print);
+        } else {
+            self.open_to_print(painter);
+        }
+    }
+
+    /// Choose the sheets for a PDF or print, then make it.
+    pub(crate) fn output_window(&mut self, ctx: &egui::Context) {
+        let Some(kind) = self.output_dialog else {
+            return;
+        };
+        let title = match kind {
+            Output::Pdf => "Export PDF",
+            Output::Print => "Print",
+        };
+        let sheets: Vec<(SheetId, String)> = self
+            .editor
+            .doc
+            .sheets()
+            .map(|(id, s)| (id, crate::app::sheet_editor::sheet_label(s)))
+            .collect();
+        let current = self.current_sheet();
+        let dark = ctx.global_style().visuals.dark_mode;
+        let (mut close, mut go) = (false, false);
+        theme::dialog(ctx, title)
+            .id(egui::Id::new("output_sheets"))
+            .show(ctx, |ui| {
+                ui.set_width(340.0);
+                if theme::dialog_title(ui, title, true) {
+                    close = true;
+                }
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("Sheets").strong());
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if let Some(c) = current
+                            && ui.link("This sheet").clicked()
+                        {
+                            self.pdf_left_out = sheets
+                                .iter()
+                                .map(|(id, _)| *id)
+                                .filter(|id| *id != c)
+                                .collect();
+                        }
+                        if ui.link("All").clicked() {
+                            self.pdf_left_out.clear();
+                        }
+                    });
+                });
+                egui::ScrollArea::vertical()
+                    .max_height(280.0)
+                    .show(ui, |ui| {
+                        for (id, label) in &sheets {
+                            let mut on = !self.pdf_left_out.contains(id);
+                            if ui.checkbox(&mut on, label).changed() {
+                                if on {
+                                    self.pdf_left_out.remove(id);
+                                } else {
+                                    self.pdf_left_out.insert(*id);
+                                }
+                            }
+                        }
+                    });
+                let chosen = sheets
+                    .iter()
+                    .filter(|(id, _)| !self.pdf_left_out.contains(id))
+                    .count();
+                ui.add_space(4.0);
+                ui.label(
+                    egui::RichText::new(format!(
+                        "{chosen} of {} sheets. Each keeps its number in the set.",
+                        sheets.len()
+                    ))
+                    .small()
+                    .weak(),
+                );
+                theme::dialog_buttons(ui, |ui| {
+                    let label = match kind {
+                        Output::Pdf => "Export…",
+                        Output::Print => "Print…",
+                    };
+                    if ui
+                        .add_enabled(chosen > 0, theme::primary_button(label, dark))
+                        .clicked()
+                    {
+                        go = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        close = true;
+                    }
+                });
+            });
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            close = true;
+        }
+        if go {
+            self.output_dialog = None;
+            let painter = ctx.layer_painter(egui::LayerId::background());
+            match kind {
+                Output::Pdf => self.write_pdf(&painter),
+                Output::Print => self.open_to_print(&painter),
+            }
+        } else if close {
+            self.output_dialog = None;
+        }
+    }
+
+    /// Open the chosen sheets as a PDF in the system viewer (a browser tab on the web) to
+    /// print.
+    fn open_to_print(&mut self, painter: &egui::Painter) {
         let bytes = self.pdf_bytes(painter);
         let name = format!("{}.pdf", self.file_stem());
         self.files.open_externally(&name, &bytes);
@@ -529,12 +667,51 @@ impl DriftApp {
                 .weak(),
             );
         }
-        for (id, label) in &sheets {
+        // Rows drag to reorder (a bar shows where one would go); right-click for more.
+        use crate::app::sheet_editor::{SheetMenu, drop_index, gap_at, sheet_menu};
+        let mut spots = Vec::new();
+        let (mut dragging, mut dropped, mut chose) = (None, None, None);
+        for (k, (id, label)) in sheets.iter().enumerate() {
             let shown = self.sheet_preview && current == Some(*id);
-            if theme::list_row(ui, shown, label).clicked() {
+            let row = theme::list_row(ui, shown, label).interact(egui::Sense::drag());
+            spots.push((*id, row.rect.top(), row.rect.bottom()));
+            if row.dragged() {
+                dragging = Some(*id);
+            }
+            if row.drag_stopped() {
+                dropped = Some(*id);
+            }
+            if row.clicked() {
                 self.show_sheet(Some(*id));
                 self.show_panel(crate::dock::Panel::Inspector);
             }
+            row.on_hover_text("Drag to reorder; right-click for more")
+                .context_menu(|ui| {
+                    if let Some(m) = sheet_menu(ui, k, sheets.len()) {
+                        chose = Some((*id, m));
+                    }
+                });
+        }
+        if let (Some(id), Some(p)) = (dragging.or(dropped), ui.ctx().pointer_interact_pos()) {
+            let to = drop_index(&spots, id, p.y);
+            if dragging.is_some() {
+                let y = gap_at(&spots, id, to);
+                let r = ui.min_rect();
+                ui.painter().hline(
+                    r.x_range(),
+                    y,
+                    egui::Stroke::new(2.0, theme::accent(ui.visuals().dark_mode)),
+                );
+            }
+            if dropped.is_some() {
+                chose = Some((id, SheetMenu::Move(to)));
+            }
+        }
+        match chose {
+            Some((id, SheetMenu::Duplicate(views))) => self.duplicate_sheet(id, views),
+            Some((id, SheetMenu::Move(to))) => self.move_sheet(id, to),
+            Some((id, SheetMenu::Delete)) => self.delete_sheet(id),
+            None => {}
         }
         ui.add_space(4.0);
         ui.horizontal(|ui| {
@@ -723,7 +900,7 @@ impl DriftApp {
         ui.horizontal_wrapped(|ui| {
             if ui
                 .button("PDF…")
-                .on_hover_text("Every sheet, at true scale")
+                .on_hover_text("The sheets you choose, at true scale")
                 .clicked()
             {
                 self.export_pdf(&painter);

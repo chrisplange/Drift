@@ -36,6 +36,17 @@ sheet. The rail holds what you can do on paper: **Select**, **Add view** and **B
 model**. Esc, or the **Model** tab, returns to the model; picking a drawing tool (from a
 menu or the command palette) takes you back to the model with it.
 
+Sheets are in the order of their tabs, which is the order they print in. To change it,
+drag a tab (or a row of the **Sheets** list) to where it should go. Right-click a tab or
+row for more:
+
+- **Duplicate with views:** a copy right after it, numbered on (A-101 makes A-102, or the
+  next number free), with its paper, title block and fields, and copies of its views. The
+  copies are views of their own, so you can change them without changing the first. The
+  revisions stay with the original.
+- **Duplicate empty:** the same, without the views.
+- **Move earlier** / **Move later**, and **Delete sheet**.
+
 ## 2. Set up the paper and title block
 
 Click bare paper on the sheet (or its title block) and the **Inspector** shows the sheet:
@@ -176,10 +187,10 @@ From the **Sheets** panel's **Output** section, or **File → Export**:
 
 | Output | What you get |
 |---|---|
-| **PDF…** | Every sheet, one page each, at true scale and true line weights. Without any sheets, the drawing fitted to A3. Text stays selectable. |
+| **PDF…** | The sheets you choose, one page each, at true scale and true line weights. With several sheets, a dialog lists them: tick the ones to export (**All**, or **This sheet**). Each keeps its number in the set (a reissued A-102 still reads 2 / 5). Without any sheets, the drawing fitted to A3. Text stays selectable. |
 | **SVG…** | The current sheet, at true scale, in millimetres. |
 | **DXF…** | The model at full size (not the sheets), with its layers and line types, in the drawing's units. |
-| **Print…** (Ctrl+P) | Writes the PDF and opens it in your system's PDF viewer (a new tab in the browser), to print from there. |
+| **Print…** (Ctrl+P) | Asks which sheets as **PDF…** does, writes the PDF and opens it in your system's PDF viewer (a new tab in the browser), to print from there. |
 
 Exporting never replaces your `.drift` file.
 

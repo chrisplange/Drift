@@ -7238,6 +7238,162 @@ fn a_view_leaves_out_the_layers_it_hides() {
 }
 
 #[test]
+fn sheets_reorder_duplicate_and_choose_for_pdf() {
+    let Some(mut h) = harness() else { return };
+    h.get_by_label("File").click();
+    h.run();
+    h.get_by_label("Open example").click();
+    h.run();
+    for _ in 0..2 {
+        h.get_by_label("Add a sheet").click();
+        h.run();
+        h.run();
+    }
+    let order = |h: &Harness<'_, DriftApp>| -> Vec<String> {
+        h.state()
+            .editor
+            .doc
+            .sheets()
+            .map(|(_, s)| crate::app::sheet_editor::sheet_label(s))
+            .collect()
+    };
+    assert_eq!(order(&h), ["A-101  Sheet 1", "A-102  Sheet 2"]);
+
+    // Duplicating A-101 puts the copy right after it, numbered on past the numbers taken,
+    // with copies of its views and none of its revisions.
+    let first = h.state().editor.doc.sheets().next().unwrap().0;
+    {
+        let doc = &mut h.state_mut().editor.doc;
+        let mut s = doc.sheet(first).unwrap().clone();
+        s.revisions.push(drift_core::Revision {
+            rev: "A".into(),
+            date: String::new(),
+            description: "Issued".into(),
+            by: String::new(),
+        });
+        doc.begin();
+        doc.set_sheet(first, s);
+        doc.commit("Revise");
+    }
+    h.state_mut().duplicate_sheet(first, true);
+    h.run();
+    assert_eq!(
+        order(&h),
+        ["A-101  Sheet 1", "A-103  Sheet 1 copy", "A-102  Sheet 2"]
+    );
+    assert_eq!(
+        h.state().editor.history.undo_label(),
+        Some("Duplicate sheet")
+    );
+    let copy = h.state().current_sheet().unwrap();
+    let doc = &h.state().editor.doc;
+    let (a, b) = (doc.sheet(first).unwrap(), doc.sheet(copy).unwrap());
+    assert!(b.revisions.is_empty());
+    assert_ne!(
+        a.viewports[0].view, b.viewports[0].view,
+        "a view of its own"
+    );
+    assert_eq!(doc.view(b.viewports[0].view).unwrap().name, "View 1 copy");
+    // Empty: the paper and title block alone.
+    h.state_mut().duplicate_sheet(first, false);
+    h.run();
+    let empty = h.state().current_sheet().unwrap();
+    assert!(
+        h.state()
+            .editor
+            .doc
+            .sheet(empty)
+            .unwrap()
+            .viewports
+            .is_empty()
+    );
+    assert_eq!(order(&h)[1], "A-104  Sheet 1 copy");
+    h.state_mut().undo();
+    h.run();
+    assert_eq!(order(&h).len(), 3);
+
+    // Drag A-102's tab in front of A-101: the sheets reorder, and the one shown stays shown.
+    let canvas = h.state().canvas_rect;
+    let tab = |h: &Harness<'_, DriftApp>, label: &str| {
+        h.get_all_by_label(label)
+            .map(|n| n.rect())
+            .find(|r| r.bottom() <= canvas.top() + 1.0 && r.left() < canvas.right())
+            .expect("a canvas tab")
+    };
+    let at = tab(&h, "A-102  Sheet 2").center();
+    h.hover_at(at);
+    h.run();
+    button(&h, at, true);
+    h.run();
+    button(&h, at, false);
+    h.run();
+    h.run();
+    let from = tab(&h, "A-102  Sheet 2").center();
+    let target = tab(&h, "A-101  Sheet 1");
+    let to = egui::pos2(target.left() + 10.0, from.y);
+    drag_steps(&mut h, from, to, 8, Some("drift_ui_sheet_tab_drag.png"));
+    assert_eq!(
+        order(&h),
+        ["A-102  Sheet 2", "A-101  Sheet 1", "A-103  Sheet 1 copy"]
+    );
+    assert_eq!(h.state().editor.history.undo_label(), Some("Move sheet"));
+    let shown = h.state().current_sheet().unwrap();
+    assert_eq!(
+        crate::app::sheet_editor::sheet_label(h.state().editor.doc.sheet(shown).unwrap()),
+        "A-102  Sheet 2"
+    );
+    h.state_mut().undo();
+    h.run();
+    assert_eq!(order(&h)[0], "A-101  Sheet 1");
+
+    // In the Sheets list, rows drag too: A-101 to the end.
+    h.state_mut().show_panel(Panel::Sheets);
+    h.run();
+    let row = |h: &Harness<'_, DriftApp>, label: &str| {
+        h.get_all_by_label(label)
+            .map(|n| n.rect())
+            .find(|r| r.left() > canvas.right())
+            .expect("a row in the Sheets list")
+    };
+    let from = row(&h, "A-101  Sheet 1").center();
+    let to = egui::pos2(from.x, row(&h, "A-102  Sheet 2").bottom() - 2.0);
+    drag_steps(&mut h, from, to, 8, Some("drift_ui_sheet_row_drag.png"));
+    assert_eq!(
+        order(&h),
+        ["A-103  Sheet 1 copy", "A-102  Sheet 2", "A-101  Sheet 1"]
+    );
+
+    // PDF… with several sheets asks which: all, or just the one shown.
+    let painter = h.ctx.layer_painter(egui::LayerId::background());
+    let pages = |h: &mut Harness<'_, DriftApp>| {
+        let pdf = h.state_mut().pdf_bytes(&painter);
+        String::from_utf8_lossy(&pdf)
+            .matches("/Type /Page ")
+            .count()
+    };
+    assert_eq!(pages(&mut h), 3);
+    h.get_by_label("PDF…").click();
+    h.run();
+    h.run();
+    assert_eq!(
+        h.state().output_dialog,
+        Some(crate::app::sheets_ui::Output::Pdf)
+    );
+    h.get_by_label("This sheet").click();
+    h.run();
+    h.run();
+    assert_eq!(h.state().pdf_left_out.len(), 2);
+    save_png("drift_ui_pdf_sheets.png", &mut h);
+    assert_eq!(pages(&mut h), 1);
+    h.get_by_label("All").click();
+    h.run();
+    assert_eq!(pages(&mut h), 3);
+    h.get_by_label("Cancel").click();
+    h.run();
+    assert_eq!(h.state().output_dialog, None);
+}
+
+#[test]
 fn a_section_mark_makes_its_view_and_reads_its_number() {
     use egui::accesskit::Role;
     let Some(mut h) = harness() else { return };

@@ -1,0 +1,28 @@
+# Response headers for Cloudflare Pages (https://developers.cloudflare.com/pages/configuration/headers/).
+#
+# The web app at /app/ is single-threaded WebAssembly (no SharedArrayBuffer), so it doesn't
+# need cross-origin isolation (COOP/COEP). If a threaded build is added later, put these
+# under /app/*:
+#   Cross-Origin-Opener-Policy: same-origin
+#   Cross-Origin-Embedder-Policy: require-corp
+# Cloudflare already serves .wasm as application/wasm, which streaming compilation needs.
+
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), interest-cohort=()
+  X-Frame-Options: SAMEORIGIN
+
+# Astro's and Trunk's built files have content hashes in their names, so they never change.
+/_astro/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/app/*.wasm
+  Cache-Control: public, max-age=31536000, immutable
+
+/app/*.js
+  Cache-Control: public, max-age=31536000, immutable
+
+# The app's page must always be fresh, so it loads the newest hashed files.
+/app/
+  Cache-Control: no-cache

@@ -95,11 +95,13 @@ geometry itself (in the **Inspector**, or the top bar's **Stroke** menus).
 
 ## Sheets
 
-- **Sheets:** the drawing's sheets, by number and name (click one to show it), **New
-  sheet**, and **Add view** for the sheet shown.
+- **Sheets:** the drawing's sheets, by number and name, in print order (click one to show
+  it, drag one to reorder, right-click to duplicate, move or delete it), **New sheet**, and
+  **Add view** for the sheet shown.
 - **Views:** every view in the drawing and the sheets it's on. Drag one onto the sheet, or
   use **Place on sheet**, **Zoom to view** or **Delete view**.
-- **Output:** **PDF…**, **SVG…**, **DXF…** and **Print…**.
+- **Output:** **PDF…**, **SVG…**, **DXF…** and **Print…**. With several sheets, **PDF…** and
+  **Print…** ask which sheets to include.
 
 A sheet's own settings (number, name, paper, title block, revisions, **Delete sheet**) and
 a placed view's (title, scale, frame, what it shows, alignment, **Remove from sheet**) are

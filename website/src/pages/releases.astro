@@ -1,0 +1,112 @@
+---
+import Base from "../layouts/Base.astro";
+import { formatDate, getReleases } from "../lib/releases";
+import { site } from "../site.config.mjs";
+
+const releases = await getReleases();
+---
+
+<Base title="Release notes" description="What changed in each version of Drift.">
+  <div class="wrap page">
+    <header>
+      <p class="eyebrow">Release notes</p>
+      <h1>What's <em>new</em> in Drift</h1>
+      <p class="lede">
+        Every version, newest first. The same notes appear in Drift when it offers an update.
+      </p>
+    </header>
+
+    {
+      releases.length === 0 ? (
+        <p>
+          The notes couldn't be loaded when this page was built. They're all on{" "}
+          <a href={`${site.repoUrl}/releases`}>GitHub</a>.
+        </p>
+      ) : (
+        releases.map((r, i) => (
+          <section class="release" id={r.tag}>
+            <div class="meta">
+              <h2>
+                <a href={`#${r.tag}`}>{r.version}</a>
+              </h2>
+              <time datetime={r.published}>{formatDate(r.published)}</time>
+              <div class="tags">
+                {i === 0 && <span class="tag latest">Latest</span>}
+                {r.prerelease && <span class="tag">Pre-release</span>}
+              </div>
+              <a class="gh" href={r.url}>
+                Downloads on GitHub
+              </a>
+            </div>
+            <div class="prose notes" set:html={r.html} />
+          </section>
+        ))
+      )
+    }
+  </div>
+</Base>
+
+<style>
+  .page {
+    padding-top: 56px;
+  }
+  header {
+    margin-bottom: 40px;
+  }
+  .release {
+    display: grid;
+    grid-template-columns: 200px minmax(0, 1fr);
+    gap: 40px;
+    padding: 40px 0;
+    border-top: 1px solid var(--line);
+  }
+  .meta {
+    position: sticky;
+    top: 84px;
+    align-self: start;
+    font-size: 0.9rem;
+  }
+  .meta h2 {
+    font-size: 1.9rem;
+    margin: 0 0 4px;
+  }
+  .meta h2 a {
+    color: var(--text);
+  }
+  time {
+    color: var(--text-weak);
+    display: block;
+  }
+  .tags {
+    display: flex;
+    gap: 6px;
+    margin: 10px 0;
+  }
+  .tag {
+    font-size: 0.72rem;
+    padding: 1px 8px;
+    border-radius: 999px;
+    border: 1px solid var(--line-strong);
+    color: var(--text-weak);
+  }
+  .tag.latest {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .notes :global(h2) {
+    font-size: 1.7rem;
+    margin-top: 1.4em;
+  }
+  .notes :global(h2:first-child) {
+    margin-top: 0;
+  }
+  @media (max-width: 760px) {
+    .release {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 16px;
+    }
+    .meta {
+      position: static;
+    }
+  }
+</style>

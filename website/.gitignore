@@ -1,0 +1,5 @@
+node_modules/
+dist/
+.astro/
+# The web app, copied in by the deploy (see README.md)
+public/app/

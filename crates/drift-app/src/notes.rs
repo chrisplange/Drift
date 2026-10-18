@@ -395,6 +395,28 @@ pub fn with_label_at(doc: &Document, a: &Annotation, to: DVec2) -> Option<Annota
     Some(a)
 }
 
+/// What a section or elevation mark's flag reads, over and under its rule: the linked view's
+/// number and sheet number (`–` and `–` while the view is on no sheet), or else the mark's
+/// own label and sheet. Worked out as it is drawn, so renumbering a sheet or moving a view
+/// follows. `None` for other annotations.
+pub fn mark_reference(doc: &Document, a: &Annotation) -> Option<(String, String)> {
+    let (label, sheet, view) = match a {
+        Annotation::Section {
+            label, sheet, view, ..
+        }
+        | Annotation::Elevation {
+            label, sheet, view, ..
+        } => (label, sheet, *view),
+        _ => return None,
+    };
+    Some(match view {
+        Some(v) => doc
+            .view_reference(v)
+            .unwrap_or_else(|| ("–".to_owned(), "–".to_owned())),
+        None => (label.clone(), sheet.clone()),
+    })
+}
+
 /// The next unused label for a new section (`A`, `B` … then `A1` …) or elevation (`1`,
 /// `2` …).
 pub fn next_mark_label(doc: &Document, section: bool) -> String {
@@ -716,6 +738,7 @@ pub fn layout_annotations(
                 .collect(),
             marks: Vec::new(),
         };
+        let (label, sheet) = mark_reference(doc, a).unwrap_or_default();
         match a {
             Annotation::Note {
                 text,
@@ -743,13 +766,7 @@ pub fn layout_annotations(
                 layout.text = Some(t);
             }
             Annotation::CentreMark { .. } | Annotation::Centreline { .. } => {}
-            Annotation::Section {
-                a,
-                b,
-                label,
-                sheet,
-                flip,
-            } => {
+            Annotation::Section { a, b, flip, .. } => {
                 let (sa, sb) = (s(*a), s(*b));
                 let along = (sb - sa).normalized();
                 let along = if along.is_finite() {
@@ -779,22 +796,25 @@ pub fn layout_annotations(
                         painter,
                         end + out * r,
                         look,
-                        label,
-                        sheet,
+                        &label,
+                        &sheet,
                         font,
                         &mut layout.marks,
                     );
                 }
             }
-            Annotation::Elevation {
-                at,
-                angle,
-                label,
-                sheet,
-            } => {
+            Annotation::Elevation { at, angle, .. } => {
                 let d = DVec2::from_angle(angle.to_radians());
                 let look = vec2(d.x as f32, -d.y as f32);
-                flag(painter, s(*at), look, label, sheet, font, &mut layout.marks);
+                flag(
+                    painter,
+                    s(*at),
+                    look,
+                    &label,
+                    &sheet,
+                    font,
+                    &mut layout.marks,
+                );
             }
             Annotation::HoleCallout { curve, at, suffix } => {
                 let (Some((c, r)), Some(text)) =
@@ -1126,6 +1146,7 @@ mod tests {
                 label: label.into(),
                 sheet: String::new(),
                 flip: false,
+                view: None,
             })
             .unwrap();
         }
@@ -1134,6 +1155,7 @@ mod tests {
             angle: 0.0,
             label: "1".into(),
             sheet: String::new(),
+            view: None,
         })
         .unwrap();
         // Gaps are filled; sections and elevations are numbered apart.

@@ -4532,6 +4532,7 @@ fn section_and_elevation_marks() {
                 label,
                 sheet,
                 flip,
+                view: None,
             },
         ] => {
             assert!(
@@ -7234,4 +7235,167 @@ fn a_view_leaves_out_the_layers_it_hides() {
     h.run();
     assert!(placed(&h, sheet)[0].hidden_layers.is_empty());
     assert!(on_layer(&preview(&h)) > 0);
+}
+
+#[test]
+fn a_section_mark_makes_its_view_and_reads_its_number() {
+    use egui::accesskit::Role;
+    let Some(mut h) = harness() else { return };
+    h.get_by_label("File").click();
+    h.run();
+    h.get_by_label("Open example").click();
+    h.run();
+    // A section across the plate.
+    h.get_by_label("Section mark").click();
+    h.run();
+    click_world(&mut h, DVec2::new(-10.0, 40.0));
+    click_world(&mut h, DVec2::new(130.0, 40.0));
+    let mark = h.state().editor.selected_annotation.expect("the new mark");
+    h.get_by_label("Select").click();
+    h.run();
+    let reads = |h: &Harness<'_, DriftApp>| {
+        let doc = &h.state().editor.doc;
+        crate::notes::mark_reference(doc, doc.annotation(mark).unwrap()).unwrap()
+    };
+    let link = |h: &Harness<'_, DriftApp>| h.state().editor.doc.annotation(mark).unwrap().view();
+    assert_eq!(reads(&h), ("A".to_owned(), String::new()), "its own label");
+    h.state_mut().fit_target = Some(h.state().fit_bounds());
+    h.run();
+    h.run();
+    save_png("drift_ui_mark_view_before.png", &mut h);
+
+    // Right-click it: Make view. The view is named after it, crops what it looks at, and is
+    // picked in the Views list, on no sheet yet: the flag reads – / –.
+    let on = screen(&h, DVec2::new(-5.0, 40.0));
+    h.hover_at(on);
+    h.run();
+    for pressed in [true, false] {
+        h.event(Event::PointerButton {
+            pos: on,
+            button: PointerButton::Secondary,
+            pressed,
+            modifiers: EguiModifiers::NONE,
+        });
+        h.run();
+    }
+    h.get_by_label("Make view").click();
+    h.run();
+    h.run();
+    let view = link(&h).expect("linked to its new view");
+    {
+        let doc = &h.state().editor.doc;
+        let v = doc.view(view).unwrap();
+        assert_eq!(v.name, "Section A");
+        let crop = v.crop();
+        assert!(
+            (crop.min.x + 10.0).abs() < 1.0 && (crop.max.x - 130.0).abs() < 1.0,
+            "along the cut: {crop:?}"
+        );
+        assert!(
+            (crop.min.y - 40.0).abs() < 1.0 && crop.max.y > 60.0,
+            "{crop:?}"
+        );
+        assert!(drift_core::sheets::standard_scales(false).contains(&v.scale));
+        assert!(doc.sheets_showing(view).is_empty());
+    }
+    assert_eq!(h.state().picked_view, Some(view));
+    assert!(h.query_by_label("Zoom to view").is_some());
+    assert_eq!(reads(&h), ("–".to_owned(), "–".to_owned()));
+    // One undo step.
+    h.state_mut().undo();
+    assert!(h.state().editor.doc.view(view).is_none());
+    assert_eq!(link(&h), None);
+    h.state_mut().redo();
+    assert_eq!(link(&h), Some(view));
+
+    // Placed on a sheet (after the sheet's own view), the flag reads its number there.
+    h.state_mut().show_panel(Panel::Sheets);
+    h.run();
+    h.get_by_label("New sheet").click();
+    h.run();
+    h.run();
+    let sheet = h.state().current_sheet().expect("a sheet");
+    h.state_mut().picked_view = Some(view);
+    h.state_mut().show_panel(Panel::Sheets);
+    h.run();
+    h.get_by_label("Place on sheet").scroll_to_me();
+    h.run();
+    h.get_by_label("Place on sheet").click();
+    h.run();
+    assert_eq!(reads(&h), ("2".to_owned(), "A-101".to_owned()));
+    // The view's Inspector on the sheet lists the mark.
+    h.state_mut().sheet_pick = crate::app::sheet_editor::SheetPick::View;
+    h.state_mut().show_panel(Panel::Inspector);
+    h.run();
+    h.run();
+    assert!(h.query_by_label("Section A mark").is_some());
+
+    // Renumbering the sheet renumbers the flag.
+    let mut renumbered = h.state().editor.doc.sheet(sheet).unwrap().clone();
+    renumbered.fields.number = "A-501".into();
+    h.state_mut().editor.doc.begin();
+    h.state_mut().editor.doc.set_sheet(sheet, renumbered);
+    h.state_mut().editor.commit("Renumber");
+    assert_eq!(reads(&h), ("2".to_owned(), "A-501".to_owned()));
+
+    // Referenced by: clicking the mark picks it in the model; its Inspector says what the
+    // flag reads.
+    h.get_by_label("Section A mark").click();
+    h.run();
+    h.run();
+    assert!(!h.state().sheet_preview);
+    assert_eq!(h.state().editor.selected_annotation, Some(mark));
+    assert!(h.query_by_label("2 / A-501").is_some());
+    h.state_mut().fit_target = Some(h.state().fit_bounds());
+    h.run();
+    h.run();
+    save_png("drift_ui_mark_view_after.png", &mut h);
+
+    // Unlinked in its Inspector, it reads its own label again; linked back the same way.
+    h.get_all_by_role(Role::ComboBox)
+        .find(|c| c.value().as_deref() == Some("Section A"))
+        .expect("the View menu")
+        .click();
+    h.run();
+    h.get_all_by_label("None").last().expect("None").click();
+    h.run();
+    h.run();
+    assert_eq!(link(&h), None);
+    assert_eq!(reads(&h), ("A".to_owned(), String::new()));
+    h.get_all_by_role(Role::ComboBox)
+        .find(|c| c.value().as_deref() == Some("None"))
+        .expect("the View menu")
+        .click();
+    h.run();
+    h.get_all_by_label("Section A")
+        .last()
+        .expect("the view")
+        .click();
+    h.run();
+    h.run();
+    assert_eq!(link(&h), Some(view));
+
+    // Saved and loaded, it still points at its view.
+    let saved = drift_io::save(&h.state().editor.doc, &Default::default());
+    assert!(saved.contains(&format!(r#""view":"{view}""#)), "{saved}");
+    let (loaded, _) = drift_io::load(&saved).unwrap();
+    assert_eq!(
+        loaded.annotation(mark),
+        h.state().editor.doc.annotation(mark)
+    );
+    assert_eq!(loaded.view(view), h.state().editor.doc.view(view));
+
+    // Deleting the view unlinks the mark in the same step; undo links it again.
+    let before = h.state().editor.history.undo_label().map(str::to_owned);
+    h.state_mut().delete_view(view);
+    assert!(h.state().editor.doc.view(view).is_none());
+    assert_eq!(link(&h), None);
+    assert_eq!(reads(&h), ("A".to_owned(), String::new()));
+    h.state_mut().undo();
+    assert_eq!(link(&h), Some(view));
+    assert_eq!(reads(&h), ("2".to_owned(), "A-501".to_owned()));
+    assert_eq!(
+        h.state().editor.history.undo_label().map(str::to_owned),
+        before
+    );
 }

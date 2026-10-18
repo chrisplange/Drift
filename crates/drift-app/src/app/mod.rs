@@ -15,6 +15,7 @@ mod groups_ui;
 pub(crate) mod hatch_ui;
 pub(crate) mod import_ui;
 mod keyboard;
+pub(crate) mod mark_views;
 pub(crate) mod note_ui;
 pub(crate) mod palette;
 pub(crate) mod panels;

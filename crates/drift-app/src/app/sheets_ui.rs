@@ -1363,6 +1363,7 @@ impl DriftApp {
                 .on_hover_text("Notes and callouts, in this view");
         });
         self.update_view(view_id, view, typing);
+        self.referenced_by(ui, view_id);
         let placed = self.editor.doc.sheets_showing(view_id);
         ui.horizontal_wrapped(|ui| {
             if let Some(sheet) = current {
@@ -1557,6 +1558,7 @@ impl DriftApp {
                     }
                 });
             });
+            self.referenced_by(ui, original.id);
             if fit {
                 crate::output::fit_view(bounds, &mut view, imperial);
             }

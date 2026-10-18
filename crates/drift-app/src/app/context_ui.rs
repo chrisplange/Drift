@@ -853,6 +853,29 @@ impl DriftApp {
                 self.set_annotations_shown(&refs, None, Some(!sheets), now);
                 ui.close();
             }
+            // A section or elevation mark: a view of what it looks at.
+            if let [drift_core::AnnotationRef::Annotation(id)] = refs[..]
+                && self.editor.doc.annotation(id).is_some_and(|a| {
+                    matches!(
+                        a,
+                        drift_core::Annotation::Section { .. }
+                            | drift_core::Annotation::Elevation { .. }
+                    )
+                })
+            {
+                ui.separator();
+                if ui
+                    .button("Make view")
+                    .on_hover_text(
+                        "A model view of what the mark looks at, linked to the mark: its flag \
+                         reads the view's number and sheet once it is placed",
+                    )
+                    .clicked()
+                {
+                    self.make_view_from_mark(id);
+                    ui.close();
+                }
+            }
             let (align, space) = self.can_align_dimensions();
             if align || space {
                 ui.separator();

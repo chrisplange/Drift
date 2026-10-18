@@ -2941,7 +2941,7 @@ impl Document {
         }
     }
 
-    /// Delete a view, and take it off every sheet it is on.
+    /// Delete a view, take it off every sheet it is on, and unlink the marks that point at it.
     pub fn remove_view(&mut self, id: ViewId) {
         if !self.views.contains_key(&id) {
             return;
@@ -2954,6 +2954,34 @@ impl Document {
             sheet.viewports.retain(|p| p.view != id);
             self.set_sheet(s, sheet);
         }
+        for mark in self.marks_of_view(id) {
+            self.touch_key(Key::Annotation(mark));
+            if let Some(a) = self.annotations.get_mut(&mark) {
+                a.set_view(None);
+            }
+        }
+    }
+
+    /// The section and elevation marks that point at a view.
+    pub fn marks_of_view(&self, id: ViewId) -> Vec<AnnotationId> {
+        self.annotations
+            .iter()
+            .filter(|(_, a)| a.view() == Some(id))
+            .map(|(aid, _)| *aid)
+            .collect()
+    }
+
+    /// How a mark linked to a view refers to it: the view's number (its place among the
+    /// viewports of the first sheet showing it, from 1) and that sheet's number. `None` while
+    /// the view is on no sheet.
+    pub fn view_reference(&self, id: ViewId) -> Option<(String, String)> {
+        let sheet = &self.sheets[self.sheets_showing(id).first()?];
+        let n = sheet.viewports.iter().position(|p| p.view == id)? + 1;
+        let number = match sheet.fields.number.trim() {
+            "" => "–".to_owned(),
+            s => s.to_owned(),
+        };
+        Some((n.to_string(), number))
     }
 
     /// The sheets a view is placed on, in order.

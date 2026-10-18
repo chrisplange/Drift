@@ -2912,6 +2912,26 @@ impl Document {
         }
     }
 
+    /// Move a sheet to position `to` among the sheets, the others closing up. Sheets are in
+    /// the order of their ids, so the sheets move between ids rather than the ids moving:
+    /// the result says where each sheet went (its old id → its new one).
+    pub fn move_sheet(&mut self, id: SheetId, to: usize) -> BTreeMap<SheetId, SheetId> {
+        let ids: Vec<SheetId> = self.sheets.keys().copied().collect();
+        let Some(from) = ids.iter().position(|s| *s == id) else {
+            return BTreeMap::new();
+        };
+        let mut order = ids.clone();
+        let moved = order.remove(from);
+        order.insert(to.min(order.len()), moved);
+        let before = self.sheets.clone();
+        let mut went = BTreeMap::new();
+        for (old, new) in order.into_iter().zip(ids) {
+            went.insert(old, new);
+            self.set_sheet(new, before[&old].clone());
+        }
+        went
+    }
+
     pub fn views(&self) -> impl Iterator<Item = (ViewId, &View)> {
         self.views.iter().map(|(id, v)| (*id, v))
     }
@@ -3629,5 +3649,36 @@ mod tests {
             doc.add_circle(line_like, 1.0),
             Err(DocumentError::Missing(line_like))
         );
+    }
+}
+
+#[cfg(test)]
+mod sheet_order_tests {
+    use super::*;
+
+    #[test]
+    fn sheets_move_between_ids_in_one_undoable_step() {
+        let mut doc = Document::new();
+        doc.begin();
+        let ids: Vec<SheetId> = ["A", "B", "C"]
+            .map(|n| doc.add_sheet(Sheet::new(n)))
+            .to_vec();
+        doc.commit("Setup");
+        let names =
+            |doc: &Document| -> Vec<String> { doc.sheets().map(|(_, s)| s.name.clone()).collect() };
+        doc.begin();
+        let went = doc.move_sheet(ids[2], 0);
+        let mut history = History::default();
+        history.push(doc.commit("Move sheet"));
+        assert_eq!(names(&doc), ["C", "A", "B"]);
+        assert_eq!(went[&ids[2]], ids[0], "C is now first");
+        assert_eq!(went[&ids[0]], ids[1]);
+        assert_eq!(doc.sheet(went[&ids[1]]).unwrap().name, "B");
+        assert!(history.undo(&mut doc));
+        assert_eq!(names(&doc), ["A", "B", "C"]);
+        // Past the end goes last; an unknown sheet moves nothing.
+        doc.move_sheet(ids[0], 9);
+        assert_eq!(names(&doc), ["B", "C", "A"]);
+        assert!(doc.move_sheet(SheetId(999), 0).is_empty());
     }
 }

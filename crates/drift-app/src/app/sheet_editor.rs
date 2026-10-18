@@ -45,7 +45,7 @@ pub(crate) fn next_sheet_number(last: Option<&str>) -> String {
 
 /// Where a placed view's drawing is on the paper: `model` (the sketch's extent) seen through
 /// the view, cut at its frame.
-fn drawing_extent(view: &PlacedView, model: Bounds) -> Bounds {
+pub(crate) fn drawing_extent(view: &PlacedView, model: Bounds) -> Bounds {
     let f = view.frame.bounds();
     if model.is_empty() {
         return f;
@@ -105,6 +105,18 @@ fn free_spot(area: Bounds, size: DVec2, taken: &[Bounds], gap: f64) -> Option<DV
         y -= step;
     }
     None
+}
+
+/// The middle of a free spot on `sheet` for a frame of `size` (paper mm), clear of the views
+/// already there (`placed`, whose drawings show `model`), if there is one.
+pub(crate) fn free_spot_on_sheet(
+    sheet: &Sheet,
+    placed: &[PlacedView],
+    model: Bounds,
+    size: DVec2,
+) -> Option<DVec2> {
+    let area = drift_draft::sheet::view_area(sheet);
+    free_spot(area, size, &occupied(sheet, placed, model), 6.0)
 }
 
 /// The scale and the place on `sheet` for a view whose crop is `crop` (world mm): the

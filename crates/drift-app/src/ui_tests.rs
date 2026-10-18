@@ -7105,6 +7105,47 @@ fn sheets_are_tabs_with_their_own_tools_and_inspector() {
 }
 
 #[test]
+fn place_on_sheet_finds_free_paper() {
+    use crate::app::sheet_editor::drawing_extent;
+    let Some(mut h) = harness() else { return };
+    h.get_by_label("File").click();
+    h.run();
+    h.get_by_label("Open example").click();
+    h.run();
+    h.get_by_label("Add a sheet").click();
+    h.run();
+    h.run();
+    let sheet = h.state().current_sheet().expect("a sheet");
+    // A view drawn for the sheet, then placed again from the Views list: the second copy
+    // goes on free paper at the view's scale, clear of what is drawn there already.
+    add_view_by_region(&mut h, DVec2::new(55.0, 25.0), DVec2::new(100.0, 58.0));
+    let id = placed(&h, sheet)[1].id;
+    let scale = h.state().editor.doc.view(id).unwrap().scale;
+    h.state_mut().picked_view = Some(id);
+    h.state_mut().show_panel(Panel::Sheets);
+    h.run();
+    h.get_by_label("Place again").scroll_to_me();
+    h.run();
+    h.get_by_label("Place again").click();
+    h.run();
+    let on = placed(&h, sheet);
+    assert_eq!(on.len(), 3);
+    let new = &on[2];
+    assert_eq!(new.id, id);
+    assert_eq!(new.scale, scale, "at the scale the view has");
+    let model = h.state().fit_bounds();
+    let frame = new.frame.bounds();
+    for v in &on[..2] {
+        let drawn = drawing_extent(v, model);
+        assert!(
+            !frame.intersects(&drawn),
+            "{frame:?} is clear of the drawing at {drawn:?}"
+        );
+    }
+    assert!(!frame.intersects(&on[1].frame.bounds()));
+}
+
+#[test]
 fn a_view_leaves_out_the_layers_it_hides() {
     use crate::app::sheet_editor::SheetPick;
     let Some(mut h) = harness() else { return };

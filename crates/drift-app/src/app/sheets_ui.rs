@@ -1705,6 +1705,35 @@ impl DriftApp {
                         ui.end_row();
                     });
             });
+            // The layers drawn in this view; one hidden in the model is off everywhere.
+            let layers: Vec<(drift_core::LayerId, String, bool)> = self
+                .editor
+                .doc
+                .layers()
+                .map(|(id, l)| (id, l.name.clone(), l.visible && l.printable))
+                .collect();
+            theme::row(ui, "Layers", |ui| {
+                ui.vertical(|ui| {
+                    for (id, name, drawn) in layers {
+                        let mut on = drawn && !view.hidden_layers.contains(&id);
+                        let r = ui.add_enabled(drawn, egui::Checkbox::new(&mut on, name));
+                        let r = if drawn {
+                            r.on_hover_text("Draw this layer in this view")
+                        } else {
+                            r.on_disabled_hover_text(
+                                "Hidden or not printed in the model (Layers panel)",
+                            )
+                        };
+                        if r.changed() {
+                            if on {
+                                view.hidden_layers.remove(&id);
+                            } else {
+                                view.hidden_layers.insert(id);
+                            }
+                        }
+                    }
+                });
+            });
             if fit {
                 crate::output::fit_view(bounds, &mut view, imperial);
             }

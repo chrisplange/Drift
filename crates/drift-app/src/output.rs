@@ -3,8 +3,11 @@
 //! are exact (true arcs, clipped hatch lines); dimensions and notes are drawn by the same code
 //! as on screen, through a [`Recorder`](crate::annotations::Recorder).
 
+use std::collections::BTreeSet;
+
 use drift_core::{
-    Bounds, DVec2, FillKind, LineKind, LineType, PlacedView, Rgb, Shape, Sheet, View, Viewport,
+    Bounds, DVec2, EntityId, FillKind, LayerId, LineKind, LineType, PlacedView, Rgb, Shape, Sheet,
+    View, Viewport,
 };
 use drift_draft::Placement;
 use drift_draft::page::{Align, CAP_HEIGHT, Drawing, Item, LayerInfo, Pen, Prim};
@@ -25,9 +28,12 @@ const HAIRLINE: f64 = 0.13;
 /// Most hatch segments per fill in an export.
 const HATCH_LIMIT: usize = 400_000;
 
+/// No layers left out.
+static ALL_LAYERS: BTreeSet<LayerId> = BTreeSet::new();
+
 /// How world coordinates map onto the page.
 #[derive(Clone, Copy, Debug)]
-struct Space {
+struct Space<'a> {
     world: DVec2,
     page: DVec2,
     /// Page units per world mm (1 / scale on a sheet; 1 in model space).
@@ -41,11 +47,28 @@ struct Space {
     /// Whether dimensions, and notes and callouts, are drawn (a sheet can leave them out).
     dimensions: bool,
     notes: bool,
+    /// Layers the view leaves out.
+    hidden: &'a BTreeSet<LayerId>,
 }
 
-impl Space {
+impl Space<'_> {
     fn at(&self, w: DVec2) -> DVec2 {
         self.page + (w - self.world) * self.k
+    }
+
+    /// Whether `layer` is drawn: shown and printable, and not left out of the view.
+    fn draws(&self, id: LayerId, layer: &drift_core::Layer) -> bool {
+        layer.visible && layer.printable && !self.hidden.contains(&id)
+    }
+
+    /// Whether a dimension or annotation on `entities` is left out with them: it is when every
+    /// one is on a layer the view leaves out (one on nothing stays).
+    fn leaves_out(&self, doc: &drift_core::Document, entities: &[EntityId]) -> bool {
+        !self.hidden.is_empty()
+            && !entities.is_empty()
+            && entities
+                .iter()
+                .all(|e| doc.get(*e).is_some_and(|x| self.hidden.contains(&x.layer)))
     }
 }
 
@@ -67,7 +90,7 @@ fn on_paper(c: Rgb, opacity: f64) -> Rgb {
 }
 
 /// The sketch's curves, as printed: no points or construction lines, nothing on hidden or
-/// non-printing layers.
+/// non-printing layers, or on layers the view leaves out.
 fn geometry(ed: &Editor, s: &Space, d: &mut Drawing) {
     let doc = &ed.doc;
     for (_, layer) in doc.layers() {
@@ -87,7 +110,7 @@ fn geometry(ed: &Editor, s: &Space, d: &mut Drawing) {
             continue;
         }
         let layer = doc.layer_of(id);
-        if !layer.visible || !layer.printable {
+        if !s.draws(e.layer, layer) {
             continue;
         }
         let Some(shape) = doc.shape(id) else { continue };
@@ -102,7 +125,7 @@ fn geometry(ed: &Editor, s: &Space, d: &mut Drawing) {
         let Some(layer) = doc.layer(t.layer) else {
             continue;
         };
-        if !layer.visible || !layer.printable {
+        if !s.draws(t.layer, layer) {
             continue;
         }
         ed.ensure_font(&t.font);
@@ -140,7 +163,7 @@ fn geometry(ed: &Editor, s: &Space, d: &mut Drawing) {
         let Some(layer) = doc.layer(copy.layer) else {
             continue;
         };
-        if !layer.visible || !layer.printable {
+        if !s.draws(copy.layer, layer) {
             continue;
         }
         let Some(block) = doc.block(copy.block) else {
@@ -274,7 +297,7 @@ fn fills(ed: &mut Editor, patterns: &PatternLibrary, s: &Space, d: &mut Drawing)
         .chain(copies.iter().map(|c| (&c.fill, &c.region)));
     for (fill, region) in fills {
         let layer = ed.doc.layer(fill.layer).cloned();
-        if layer.as_ref().is_some_and(|l| !l.visible || !l.printable) {
+        if layer.as_ref().is_some_and(|l| !s.draws(fill.layer, l)) {
             continue;
         }
         let layer_name = layer.as_ref().map_or("0".to_owned(), |l| l.name.clone());
@@ -350,6 +373,9 @@ fn centre_lines(ed: &Editor, s: &Space, d: &mut Drawing) {
             .sheets
     };
     for (_, a) in ed.doc.annotations().filter(|(id, _)| on_sheets(*id)) {
+        if s.leaves_out(&ed.doc, &a.entities()) {
+            continue;
+        }
         for (p, q) in notes::centre_segments(&ed.doc, a) {
             d.items.push(item(
                 ANNOTATION_LAYER,
@@ -394,6 +420,7 @@ fn annotations(ed: &Editor, painter: &egui::Painter, s: &Space, d: &mut Drawing)
         if !c.is_dimension()
             || !s.dimensions
             || !doc.shown(drift_core::AnnotationRef::Dimension(id)).sheets
+            || s.leaves_out(doc, &c.entities().collect::<Vec<_>>())
         {
             continue;
         }
@@ -423,6 +450,9 @@ fn annotations(ed: &Editor, painter: &egui::Painter, s: &Space, d: &mut Drawing)
             || !doc
                 .shown(drift_core::AnnotationRef::Annotation(layout.id))
                 .sheets
+            || doc
+                .annotation(layout.id)
+                .is_some_and(|a| s.leaves_out(doc, &a.entities()))
         {
             continue;
         }
@@ -565,6 +595,7 @@ pub fn sheet_drawing(
             inserts: false,
             dimensions: v.dimensions,
             notes: v.notes,
+            hidden: &v.hidden_layers,
         };
         view(ed, patterns, painter, &space, &mut d);
     }
@@ -599,6 +630,7 @@ pub fn model_drawing(
         inserts: true,
         dimensions: true,
         notes: true,
+        hidden: &ALL_LAYERS,
     };
     view(ed, patterns, painter, &space, &mut d);
     let b = d.bounds();
@@ -632,6 +664,7 @@ pub fn view_drawing(
         inserts: false,
         dimensions,
         notes: true,
+        hidden: &ALL_LAYERS,
     };
     view(ed, patterns, painter, &space, &mut d);
     d

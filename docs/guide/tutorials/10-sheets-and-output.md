@@ -151,6 +151,10 @@ Pick a view by clicking it on the sheet. The **Inspector** shows the views on th
 - **Fill drawing area:** frames the view to the sheet's whole drawing area, after a change
   of paper size, say.
 - **Show:** **Dimensions**, **Notes**, **Title** and **Border**.
+- **Layers:** untick a layer to leave it out of this view, wherever the view is placed:
+  a setting-out layer in the plan but not in the details, say. Dimensions and notes on
+  nothing but that layer's geometry go with it. A layer hidden or set not to print in the
+  **Layers** panel is greyed out here: it's off in every view.
 
 If the views on a sheet have different scales, the title block's scale reads **As shown**.
 
@@ -198,7 +202,7 @@ which is the model, not a sheet: DXF keeps the layer and item colours.
 What goes on paper:
 
 - Construction geometry, points, hidden layers and layers whose print flag is off are left
-  out.
+  out, and so are the layers a view leaves out (its **Layers**).
 - Views' crops and names on the canvas are left out. Only the sheet's frames (with
   **Border**) and titles print.
 - Dimensions and notes are left out where a view's **Show** says so, or where they're set

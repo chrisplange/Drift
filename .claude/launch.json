@@ -4,7 +4,11 @@
     {
       "name": "drift-web",
       "runtimeExecutable": "trunk",
-      "runtimeArgs": ["serve", "--config", "apps/web/Trunk.toml"],
+      "runtimeArgs": [
+        "serve",
+        "--config",
+        "apps/web/Trunk.toml"
+      ],
       "port": 8080
     },
     {
@@ -23,6 +27,34 @@
         "../../target/dist-release"
       ],
       "port": 8081
+    },
+    {
+      "name": "website",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "--prefix",
+        "website",
+        "run",
+        "dev",
+        "--",
+        "--port",
+        "4321"
+      ],
+      "port": 4321
+    },
+    {
+      "name": "website-preview",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "--prefix",
+        "website",
+        "run",
+        "preview",
+        "--",
+        "--port",
+        "4322"
+      ],
+      "port": 4322
     }
   ]
 }

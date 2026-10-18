@@ -1,0 +1,181 @@
+---
+// The main download button picks the visitor's platform; the others are listed beside it.
+// Links come from the newest release at build time, and the script below re-checks GitHub
+// in the browser in case a release came out since.
+import { findAsset, formatSize, getReleases, type Platform } from "../lib/releases";
+import { site } from "../site.config.mjs";
+
+interface Props {
+  compact?: boolean;
+}
+const { compact = false } = Astro.props;
+
+const releases = await getReleases();
+const latest = releases[0];
+const fallback = `${site.repoUrl}/releases`;
+
+const options: { platform: Platform; os: string; label: string; short: string; detail: string }[] = [
+  {
+    platform: "windows-installer",
+    os: "windows",
+    label: "Download for Windows",
+    short: "Windows",
+    detail: "Installer, 64-bit",
+  },
+  {
+    platform: "macos",
+    os: "macos",
+    label: "Download for macOS",
+    short: "macOS",
+    detail: "Apple silicon and Intel",
+  },
+  {
+    platform: "windows-zip",
+    os: "windows-zip",
+    label: "Windows zip",
+    short: "Windows zip",
+    detail: "No installer, 64-bit",
+  },
+];
+const links = options.map((o) => {
+  const asset = findAsset(latest, o.platform);
+  return { ...o, href: asset?.url ?? fallback, size: asset ? formatSize(asset.size) : "" };
+});
+---
+
+<div class:list={["downloads", { compact }]} data-repo={site.repo}>
+  <div class="primary" data-primary>
+    {
+      links.slice(0, 2).map((l) => (
+        <a class="btn btn-primary big" href={l.href} data-platform={l.platform} data-os={l.os}>
+          <span class="label">{l.label}</span>
+          <small>
+            <span data-version>{latest?.version ?? "latest"}</span>
+            {l.size && <span data-size> · {l.size}</span>}
+          </small>
+        </a>
+      ))
+    }
+    <a class="btn big" href="/app/" data-os="other">
+      <span class="label">Open Drift in your browser</span>
+      <small>Nothing to install</small>
+    </a>
+  </div>
+
+  <ul class="others">
+    {
+      links.map((l) => (
+        <li>
+          <a href={l.href} data-platform={l.platform}>
+            {l.short}
+          </a>
+          <span class="detail">{l.detail}</span>
+        </li>
+      ))
+    }
+    <li><a href="/app/">Browser</a> <span class="detail">Chrome, Edge, Firefox, Safari</span></li>
+    <li><a href={`${site.repoUrl}#running`}>Linux</a> <span class="detail">Build from source</span></li>
+  </ul>
+</div>
+
+<script>
+  type Platform = "windows-installer" | "windows-zip" | "macos";
+  const suffix: Record<Platform, string> = {
+    "windows-installer": "-windows-x64-setup.exe",
+    "windows-zip": "-windows-x64.zip",
+    macos: "-macos-universal.dmg",
+  };
+
+  function detectOs(): "windows" | "macos" | "other" {
+    const nav = navigator as Navigator & { userAgentData?: { platform?: string } };
+    const p = (nav.userAgentData?.platform || navigator.platform || navigator.userAgent).toLowerCase();
+    // iPads report a Mac too; touch points tell them apart.
+    if (p.includes("mac") && navigator.maxTouchPoints < 2) return "macos";
+    if (p.includes("win")) return "windows";
+    return "other";
+  }
+
+  // With scripts off, every primary button shows; with them on, only the visitor's.
+  function showPrimary(root: HTMLElement) {
+    const os = detectOs();
+    root.querySelectorAll<HTMLElement>("[data-primary] > a").forEach((a) => {
+      a.hidden = a.dataset.os !== os;
+    });
+  }
+
+  let latest: Promise<any | undefined> | undefined;
+  function fetchLatest(repo: string) {
+    latest ??= fetch(`https://api.github.com/repos/${repo}/releases?per_page=5`, {
+      headers: { Accept: "application/vnd.github+json" },
+    })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((list: any[]) => list.find((r) => !r.draft))
+      .catch(() => undefined);
+    return latest;
+  }
+
+  async function refresh(root: HTMLElement) {
+    const release = await fetchLatest(root.dataset.repo!);
+    if (!release) return;
+    const version = String(release.tag_name).replace(/^v/, "");
+    root.querySelectorAll<HTMLAnchorElement>("a[data-platform]").forEach((a) => {
+      const end = suffix[a.dataset.platform as Platform];
+      const asset = release.assets?.find((x: any) => x.name.endsWith(end));
+      if (!asset) return;
+      a.href = asset.browser_download_url;
+      const v = a.querySelector("[data-version]");
+      if (v) v.textContent = version;
+      const s = a.querySelector("[data-size]");
+      if (s) s.textContent = ` · ${Math.round(asset.size / (1024 * 1024))} MB`;
+    });
+  }
+
+  document.querySelectorAll<HTMLElement>(".downloads").forEach((root) => {
+    showPrimary(root);
+    refresh(root);
+  });
+</script>
+
+<style>
+  .primary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .big {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    padding: 14px 24px;
+    font-size: 1.05rem;
+  }
+  .big[hidden] {
+    display: none;
+  }
+  .others {
+    list-style: none;
+    padding: 0;
+    margin: 28px 0 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+    gap: 12px 24px;
+    font-size: 0.92rem;
+  }
+  .others a {
+    font-weight: 600;
+  }
+  .detail {
+    display: block;
+    color: var(--text-weak);
+    font-size: 0.85rem;
+  }
+  .compact .others {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 18px;
+    margin-top: 16px;
+  }
+  .compact .detail {
+    display: none;
+  }
+</style>

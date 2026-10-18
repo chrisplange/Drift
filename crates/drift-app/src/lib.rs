@@ -328,6 +328,10 @@ pub struct DriftApp {
     add_view_on: Option<drift_core::SheetId>,
     /// A message to show in the next frame (from code that doesn't know the time).
     status_next: Option<String>,
+    /// Sheets left out of the PDF and print (chosen in the output dialog, for this session).
+    pdf_left_out: std::collections::BTreeSet<drift_core::SheetId>,
+    /// The output dialog choosing the sheets for a PDF or print, while open.
+    output_dialog: Option<app::sheets_ui::Output>,
     /// The model view picked in the Views list or on the canvas (its crop shows grips).
     picked_view: Option<drift_core::ViewId>,
     /// A view placed on sheets that Delete was pressed for, waiting for a yes.
@@ -517,6 +521,8 @@ impl DriftApp {
             sheet_pick: Default::default(),
             add_view_on: None,
             status_next: None,
+            pdf_left_out: Default::default(),
+            output_dialog: None,
             picked_view: None,
             confirm_delete_view: None,
             show_view_crops: true,

@@ -57,6 +57,80 @@ pub(crate) fn drawing_extent(view: &PlacedView, model: Bounds) -> Bounds {
     }
 }
 
+/// What a sheet's right-click menu asked for.
+pub(crate) enum SheetMenu {
+    /// Duplicate it, with copies of its views or empty.
+    Duplicate(bool),
+    /// Move it to this position.
+    Move(usize),
+    Delete,
+}
+
+/// The right-click menu of a sheet (a canvas tab or a row in the Sheets list), at position
+/// `at` of `count` sheets.
+pub(crate) fn sheet_menu(ui: &mut egui::Ui, at: usize, count: usize) -> Option<SheetMenu> {
+    let mut chose = None;
+    if ui
+        .button("Duplicate with views")
+        .on_hover_text("A copy after it, with copies of its views")
+        .clicked()
+    {
+        chose = Some(SheetMenu::Duplicate(true));
+    }
+    if ui
+        .button("Duplicate empty")
+        .on_hover_text("A copy after it with its paper and title block, but no views")
+        .clicked()
+    {
+        chose = Some(SheetMenu::Duplicate(false));
+    }
+    ui.separator();
+    if ui
+        .add_enabled(at > 0, egui::Button::new("Move earlier"))
+        .clicked()
+    {
+        chose = Some(SheetMenu::Move(at - 1));
+    }
+    if ui
+        .add_enabled(at + 1 < count, egui::Button::new("Move later"))
+        .clicked()
+    {
+        chose = Some(SheetMenu::Move(at + 1));
+    }
+    ui.separator();
+    if ui.button("Delete sheet").clicked() {
+        chose = Some(SheetMenu::Delete);
+    }
+    if chose.is_some() {
+        ui.close();
+    }
+    chose
+}
+
+/// The position a dragged sheet would take, dropped at `pointer` along a row of sheets
+/// (`spots`: each one's start and end along it): after every other sheet whose middle it is
+/// past.
+pub(crate) fn drop_index(spots: &[(SheetId, f32, f32)], dragged: SheetId, pointer: f32) -> usize {
+    spots
+        .iter()
+        .filter(|(s, a, b)| *s != dragged && (a + b) / 2.0 < pointer)
+        .count()
+}
+
+/// Where along the row to mark position `to` for a dragged sheet: just after the other sheet
+/// before it, or just before the first.
+pub(crate) fn gap_at(spots: &[(SheetId, f32, f32)], dragged: SheetId, to: usize) -> f32 {
+    let others: Vec<(f32, f32)> = spots
+        .iter()
+        .filter(|(s, _, _)| *s != dragged)
+        .map(|(_, a, b)| (*a, *b))
+        .collect();
+    match to.checked_sub(1).and_then(|k| others.get(k)) {
+        Some((_, end)) => end + 1.0,
+        None => others.first().map_or(0.0, |(start, _)| start - 1.0),
+    }
+}
+
 /// Whether a paper point is on a placed view's drawing, rather than on the empty paper round
 /// it.
 pub(crate) fn on_drawing(view: &PlacedView, model: Bounds, at: DVec2) -> bool {
@@ -195,6 +269,13 @@ impl DriftApp {
         let mut x = bar.left() + 8.0;
         let mut choose = None;
         let mut delete = None;
+        let mut duplicate = None;
+        let mut moved = None;
+        // Sheet tabs (their middles across), and a tab being dragged to a new place.
+        let mut spots: Vec<(SheetId, f32, f32)> = Vec::new();
+        let mut dragging = None;
+        let mut dropped = None;
+        let count = tabs.len() - 1;
         for (k, (id, label)) in tabs.iter().enumerate() {
             let active = match id {
                 None => !on_sheet,
@@ -219,7 +300,21 @@ impl DriftApp {
                 egui::vec2(w, height - 4.0),
             );
             x += w + 2.0;
-            let response = ui.interact(r, ui.id().with(("canvas_tab", k)), egui::Sense::click());
+            let sense = if id.is_some() {
+                egui::Sense::click_and_drag()
+            } else {
+                egui::Sense::click()
+            };
+            let response = ui.interact(r, ui.id().with(("canvas_tab", k)), sense);
+            if let Some(sheet) = *id {
+                spots.push((sheet, r.left(), r.right()));
+                if response.dragged() {
+                    dragging = Some(sheet);
+                }
+                if response.drag_stopped() {
+                    dropped = Some(sheet);
+                }
+            }
             response.widget_info(|| {
                 egui::WidgetInfo::selected(egui::WidgetType::Button, true, active, label)
             });
@@ -275,12 +370,18 @@ impl DriftApp {
                 choose = Some(*id);
             }
             if let Some(sheet) = *id {
-                response.context_menu(|ui| {
-                    if ui.button("Delete sheet").clicked() {
-                        delete = Some(sheet);
-                        ui.close();
-                    }
-                });
+                let at = k - 1;
+                response
+                    .on_hover_text("Drag to reorder; right-click for more")
+                    .context_menu(|ui| {
+                        if let Some(d) = sheet_menu(ui, at, count) {
+                            match d {
+                                SheetMenu::Duplicate(views) => duplicate = Some((sheet, views)),
+                                SheetMenu::Move(to) => moved = Some((sheet, to)),
+                                SheetMenu::Delete => delete = Some(sheet),
+                            }
+                        }
+                    });
             } else {
                 let _ = response.on_hover_text("The drawing at full size");
             }
@@ -304,12 +405,94 @@ impl DriftApp {
         if plus.on_hover_text("New sheet").clicked() {
             self.new_sheet();
         }
+        // Where a dragged tab would go: a bar in the gap.
+        let pointer = ui.ctx().pointer_interact_pos();
+        if let (Some(sheet), Some(p)) = (dragging.or(dropped), pointer) {
+            let to = drop_index(&spots, sheet, p.x);
+            if dragging.is_some() {
+                let x = gap_at(&spots, sheet, to);
+                ui.painter().vline(
+                    x,
+                    bar.top() + 6.0..=bar.bottom() - 2.0,
+                    egui::Stroke::new(2.0, theme::accent(dark)),
+                );
+            }
+            if dropped.is_some() {
+                moved = Some((sheet, to));
+            }
+        }
         if let Some(id) = choose {
             self.show_sheet(id);
         }
         if let Some(id) = delete {
             self.delete_sheet(id);
         }
+        if let Some((id, views)) = duplicate {
+            self.duplicate_sheet(id, views);
+        }
+        if let Some((id, to)) = moved {
+            self.move_sheet(id, to);
+        }
+    }
+
+    /// Move a sheet to position `to` among the sheets, as one undo step.
+    pub(crate) fn move_sheet(&mut self, id: SheetId, to: usize) {
+        let from = self.editor.doc.sheets().position(|(s, _)| s == id);
+        if from.is_none_or(|from| from == to) {
+            return;
+        }
+        self.editor.doc.begin();
+        let went = self.editor.doc.move_sheet(id, to);
+        self.editor.commit("Move sheet");
+        self.follow_sheets(&went);
+    }
+
+    /// Keep what refers to sheets on the same sheets after they moved between ids.
+    fn follow_sheets(&mut self, went: &std::collections::BTreeMap<SheetId, SheetId>) {
+        let follow = |s: SheetId| went.get(&s).copied().unwrap_or(s);
+        self.active_sheet = self.active_sheet.map(follow);
+        self.add_view_on = self.add_view_on.map(follow);
+        self.pdf_left_out = self.pdf_left_out.iter().map(|s| follow(*s)).collect();
+    }
+
+    /// A copy of a sheet, right after it and numbered after it: its paper, title block and
+    /// fields, without its revisions. With `views`, it gets copies of the views (each its own
+    /// view, to change apart from the first); without, it starts empty.
+    pub(crate) fn duplicate_sheet(&mut self, id: SheetId, views: bool) {
+        let doc = &self.editor.doc;
+        let Some(mut sheet) = doc.sheet(id).cloned() else {
+            return;
+        };
+        let at = doc.sheets().position(|(s, _)| s == id).unwrap_or(0);
+        let taken: Vec<String> = doc.sheets().map(|(_, s)| s.fields.number.clone()).collect();
+        let mut number = next_sheet_number(Some(&sheet.fields.number));
+        for _ in 0..1000 {
+            if !taken.contains(&number) {
+                break;
+            }
+            number = next_sheet_number(Some(&number));
+        }
+        sheet.fields.number = number;
+        sheet.name = format!("{} copy", sheet.name.trim());
+        sheet.revisions.clear();
+        self.editor.doc.begin();
+        if views {
+            for port in &mut sheet.viewports {
+                if let Some(mut v) = self.editor.doc.view(port.view).cloned() {
+                    v.name = format!("{} copy", v.title());
+                    port.view = self.editor.doc.add_view(v);
+                }
+            }
+        } else {
+            sheet.viewports.clear();
+        }
+        let new = self.editor.doc.add_sheet(sheet);
+        let went = self.editor.doc.move_sheet(new, at + 1);
+        self.editor.commit("Duplicate sheet");
+        self.follow_sheets(&went);
+        self.show_sheet(Some(went.get(&new).copied().unwrap_or(new)));
+        self.sheet_view = 0;
+        self.sheet_pick = SheetPick::Paper;
     }
 
     /// Delete a sheet; the canvas goes back to the model if none are left.

@@ -590,6 +590,7 @@ impl DriftApp {
                 toggle_item(ui, &mut self.params.show_free, "Free directions", "");
                 toggle_item(ui, &mut self.params.show_ghosts, "Variant ghosts", "");
                 toggle_item(ui, &mut self.show_combs, "Curvature combs", "");
+                toggle_item(ui, &mut self.show_view_crops, "View crops", "");
                 ui.separator();
                 toggle_item(ui, &mut self.auto_relations, "Automatic relations", "");
                 ui.separator();

@@ -46,6 +46,7 @@ become dimensions when **Auto relations** is on.
 | **Centre mark** | — | Click a circle or arc for a centre mark; then another circle, arc or point for a centre line between them. Two lines give a centre line midway. |
 | **Section mark** | — | Two clicks for the cutting line, with a lettered flag at each end. X / Y keep it to an axis. |
 | **Elevation mark** | — | Click where it goes, then towards what it looks at. X / Y keep it to an axis; Alt allows any angle. |
+| **View** | — | Drag a rectangle, or click two corners: a view of the model with that crop, at the last view's scale, to place on sheets. It's picked, with its grips, to name and reframe. See [Sheets and output](../tutorials/10-sheets-and-output.md#3-draw-a-view-on-the-canvas). |
 | **Fill / hatch** | H | Click inside a closed area to fill or hatch it with the style in the top bar. Alt+click a fill to pick up its style. See [Fills and hatches](../tutorials/06-fills-and-hatches.md). |
 
 ## Modify

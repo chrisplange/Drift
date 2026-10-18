@@ -1,9 +1,9 @@
-//! File records for sheets (format 8).
+//! File records for sheets (format 8) and views (format 26).
 
 use drift_core::{
-    DVec2, PaperSize, Revision, Sheet, SheetColours, SheetId, TitleBlock, TitleFields,
+    Bounds, DVec2, PaperSize, Revision, Sheet, SheetColours, SheetId, TitleBlock, TitleFields,
 };
-use drift_core::{SheetView, ViewFrame};
+use drift_core::{View, ViewFrame, ViewId, Viewport};
 use serde::{Deserialize, Serialize};
 
 use crate::{LoadError, parse_prefixed};
@@ -51,10 +51,86 @@ pub(crate) struct RevisionRecord {
     by: String,
 }
 
-/// A view of the sketch on a sheet.
+/// A view of the model: a named crop at a scale.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ViewRecord {
+pub(crate) struct ViewRecord {
+    pub(crate) id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    name: String,
+    scale: f64,
+    center: [f64; 2],
+    /// The crop's width and height (world mm).
+    size: [f64; 2],
+    /// Written only when hidden in the view.
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    dimensions: bool,
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    notes: bool,
+    /// The crop shown on the canvas; written only when hidden.
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    crop: bool,
+}
+
+pub(crate) fn view_record(id: ViewId, v: &View) -> ViewRecord {
+    ViewRecord {
+        id: id.to_string(),
+        name: v.name.clone(),
+        scale: v.scale,
+        center: v.center.to_array(),
+        size: v.size.to_array(),
+        dimensions: v.dimensions,
+        notes: v.notes,
+        crop: v.crop_visible,
+    }
+}
+
+pub(crate) fn parse_view(r: ViewRecord) -> Result<(ViewId, View), LoadError> {
+    let bad = |field| LoadError::MissingField {
+        id: r.id.clone(),
+        field,
+    };
+    if !(r.scale.is_finite() && r.scale > 0.0) {
+        return Err(bad("scale"));
+    }
+    let (center, size) = (DVec2::from_array(r.center), DVec2::from_array(r.size));
+    if !center.is_finite() || !size.is_finite() {
+        return Err(LoadError::NonFinite(r.id.clone()));
+    }
+    if size.min_element() <= 0.0 {
+        return Err(bad("size"));
+    }
+    let id = ViewId(parse_prefixed(&r.id, 'w')?);
+    let view = View {
+        name: r.name,
+        scale: r.scale,
+        center,
+        size,
+        dimensions: r.dimensions,
+        notes: r.notes,
+        crop_visible: r.crop,
+    };
+    Ok((id, view))
+}
+
+/// A view placed on a sheet.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ViewportRecord {
+    view: String,
+    /// Its middle on the paper (mm).
+    at: [f64; 2],
+    #[serde(default, skip_serializing_if = "is_false")]
+    title: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    border: bool,
+}
+
+/// A view of the sketch on a sheet, as written from v18 to v25 (read only: each becomes a
+/// model view and a viewport).
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OldViewRecord {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     name: String,
     scale: f64,
@@ -95,8 +171,12 @@ pub(crate) struct SheetRecord {
     dimensions: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     notes: Option<bool>,
+    /// From v18 to v25, the sheet's own views.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    views: Option<Vec<ViewRecord>>,
+    views: Option<Vec<OldViewRecord>>,
+    /// The views placed on it (v26).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    viewports: Vec<ViewportRecord>,
     title_block: String,
     #[serde(default)]
     fields: FieldsRecord,
@@ -122,22 +202,17 @@ pub(crate) fn sheet_record(id: SheetId, s: &Sheet) -> SheetRecord {
         center: None,
         dimensions: None,
         notes: None,
-        views: Some(
-            s.views
-                .iter()
-                .map(|v| ViewRecord {
-                    name: v.name.clone(),
-                    scale: v.scale,
-                    center: v.center.to_array(),
-                    at: v.frame.map(|f| f.at.to_array()),
-                    size: v.frame.map(|f| f.size.to_array()),
-                    dimensions: v.dimensions,
-                    notes: v.notes,
-                    title: v.title,
-                    border: v.border,
-                })
-                .collect(),
-        ),
+        views: None,
+        viewports: s
+            .viewports
+            .iter()
+            .map(|p| ViewportRecord {
+                view: p.view.to_string(),
+                at: p.at.to_array(),
+                title: p.title,
+                border: p.border,
+            })
+            .collect(),
         title_block: s.title_block.key().into(),
         fields: FieldsRecord {
             title: f.title.clone(),
@@ -162,7 +237,56 @@ pub(crate) fn sheet_record(id: SheetId, s: &Sheet) -> SheetRecord {
     }
 }
 
-pub(crate) fn parse_sheet(r: SheetRecord) -> Result<(SheetId, Sheet), LoadError> {
+/// A view a sheet held itself before v26, to be made a model view when the file is read.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct OldView {
+    pub name: String,
+    pub scale: f64,
+    pub center: DVec2,
+    /// `None` filled the sheet's drawing area.
+    pub frame: Option<ViewFrame>,
+    pub dimensions: bool,
+    pub notes: bool,
+    pub title: bool,
+    pub border: bool,
+}
+
+impl OldView {
+    /// The model view and the viewport it becomes on `sheet`: the same crop of the model at
+    /// the same place on the paper, so the sheet prints as it did. A view that filled the
+    /// drawing area is cropped to it.
+    pub(crate) fn upgrade(&self, sheet: &Sheet, name: String) -> (View, Viewport) {
+        let frame = self.frame.unwrap_or_else(|| {
+            let area = drift_draft::sheet::drawing_area(sheet);
+            ViewFrame {
+                at: area.center(),
+                size: area.size(),
+            }
+        });
+        let half = frame.size * self.scale * 0.5;
+        let mut view = View::new(
+            name,
+            Bounds {
+                min: self.center - half,
+                max: self.center + half,
+            },
+            self.scale,
+        );
+        view.dimensions = self.dimensions;
+        view.notes = self.notes;
+        let port = Viewport {
+            // Set when the view is added to the document.
+            view: ViewId(0),
+            at: frame.at,
+            title: self.title,
+            border: self.border,
+        };
+        (view, port)
+    }
+}
+
+/// A sheet, and (from a file before v26) the views it held itself, to be made model views.
+pub(crate) fn parse_sheet(r: SheetRecord) -> Result<(SheetId, Sheet, Vec<OldView>), LoadError> {
     let bad = |field| LoadError::MissingField {
         id: r.id.clone(),
         field,
@@ -173,7 +297,7 @@ pub(crate) fn parse_sheet(r: SheetRecord) -> Result<(SheetId, Sheet), LoadError>
         }
         (key, _) => PaperSize::parse(key).ok_or_else(|| bad("paper"))?,
     };
-    let view = |scale: f64, center: [f64; 2]| -> Result<SheetView, LoadError> {
+    let view = |scale: f64, center: [f64; 2]| -> Result<OldView, LoadError> {
         if !(scale.is_finite() && scale > 0.0) {
             return Err(bad("scale"));
         }
@@ -181,9 +305,34 @@ pub(crate) fn parse_sheet(r: SheetRecord) -> Result<(SheetId, Sheet), LoadError>
         if !center.is_finite() {
             return Err(LoadError::NonFinite(r.id.clone()));
         }
-        Ok(SheetView::new(scale, center))
+        Ok(OldView {
+            name: String::new(),
+            scale,
+            center,
+            frame: None,
+            dimensions: true,
+            notes: true,
+            title: false,
+            border: false,
+        })
     };
-    let views = match &r.views {
+    let viewports = r
+        .viewports
+        .iter()
+        .map(|p| {
+            let at = DVec2::from_array(p.at);
+            if !at.is_finite() {
+                return Err(LoadError::NonFinite(r.id.clone()));
+            }
+            Ok(Viewport {
+                view: ViewId(parse_prefixed(&p.view, 'w')?),
+                at,
+                title: p.title,
+                border: p.border,
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let old_views = match &r.views {
         Some(records) => records
             .iter()
             .map(|v| {
@@ -206,6 +355,8 @@ pub(crate) fn parse_sheet(r: SheetRecord) -> Result<(SheetId, Sheet), LoadError>
                 Ok(out)
             })
             .collect::<Result<Vec<_>, _>>()?,
+        // v26 on: its views are the model's.
+        None if r.scale.is_none() && r.center.is_none() => Vec::new(),
         // Before v18: the sheet's one view, filling it.
         None => {
             let mut out = view(
@@ -227,7 +378,7 @@ pub(crate) fn parse_sheet(r: SheetRecord) -> Result<(SheetId, Sheet), LoadError>
         name: r.name,
         paper,
         portrait: r.portrait,
-        views,
+        viewports,
         title_block,
         fields: TitleFields {
             title: f.title,
@@ -250,5 +401,5 @@ pub(crate) fn parse_sheet(r: SheetRecord) -> Result<(SheetId, Sheet), LoadError>
             .collect(),
         colours,
     };
-    Ok((SheetId(parse_prefixed(&r.id, 's')?), sheet))
+    Ok((SheetId(parse_prefixed(&r.id, 's')?), sheet, old_views))
 }

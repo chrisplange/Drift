@@ -100,9 +100,12 @@ geometry itself (in the **Inspector**, or the top bar's **Stroke** menus).
 ## Sheets
 
 Sheets, views, title blocks and output: **New sheet**, **Show sheet** / **Back to model**,
-**Paper** (with **Colour**, **Greyscale** or **Black & white**), **Views** (with **Add view** and **Align with**), **Title block**, **Logo**,
-**Revisions**, and **Output** (**PDF…**, **SVG…**, **DXF…**, **Print…**) and
-**Delete sheet**. See [Sheets and output](../tutorials/10-sheets-and-output.md).
+**Views** (every view in the drawing and the sheets it's on: drag one onto the sheet, or
+**Place on sheet**, **Zoom to view**, **Delete view**), **Paper** (with **Colour**,
+**Greyscale** or **Black & white**), **On this sheet** (with **Add view**, **Remove from
+sheet** and **Align with**), **Title block**, **Logo**, **Revisions**, and **Output**
+(**PDF…**, **SVG…**, **DXF…**, **Print…**) and **Delete sheet**. See
+[Sheets and output](../tutorials/10-sheets-and-output.md).
 
 ## Blocks
 

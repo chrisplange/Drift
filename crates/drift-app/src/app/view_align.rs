@@ -2,7 +2,7 @@
 //! middle to other frames' and to the drawing area's), drawings at the same scale lining
 //! up (so the floors of side-by-side elevations meet), and align commands.
 
-use drift_core::{DVec2, Sheet, SheetView, ViewFrame};
+use drift_core::{DVec2, PlacedView, Sheet};
 
 use super::sheets_ui::{ViewGrip, dragged_view};
 
@@ -49,37 +49,37 @@ impl AlignTo {
 }
 
 /// Where a view's drawing sits on the paper: the paper point of the model's origin.
-fn offset(sheet: &Sheet, v: &SheetView) -> DVec2 {
-    drift_draft::sheet::view_frame(sheet, v).center() - v.center / v.scale
+fn offset(v: &PlacedView) -> DVec2 {
+    v.frame.at - v.center / v.scale
 }
 
-fn same_scale(a: &SheetView, b: &SheetView) -> bool {
+pub(crate) fn same_scale(a: &PlacedView, b: &PlacedView) -> bool {
     (a.scale - b.scale).abs() <= 1e-9 * a.scale.max(1.0)
 }
 
-/// Snap a drag of view `index` (as it `was`) by `paper` mm: whichever of its frame's edges
-/// and middle (or, panning, its drawing) comes within `tol` of another view's, or of the
-/// drawing area's, goes to it. Returns the drag snapped, and the lines it snapped to.
+/// Snap a drag of view `index` of `views` (on `sheet`; as it `was`) by `paper` mm: whichever
+/// of its frame's edges and middle (or, panning, its drawing) comes within `tol` of another
+/// view's, or of the drawing area's, goes to it. Returns the drag snapped, and the lines it
+/// snapped to.
 pub(crate) fn snap_drag(
     sheet: &Sheet,
+    views: &[PlacedView],
     index: usize,
-    was: &SheetView,
+    was: &PlacedView,
     grip: ViewGrip,
     paper: DVec2,
     tol: f64,
 ) -> (DVec2, Vec<AlignGuide>) {
     let moved = dragged_view(was, grip, paper);
-    let frame = drift_draft::sheet::view_frame(sheet, &moved);
-    let mine = offset(sheet, &moved);
+    let frame = moved.frame.bounds();
+    let mine = offset(&moved);
     let area = drift_draft::sheet::drawing_area(sheet);
-    let others: Vec<&SheetView> = sheet
-        .views
+    let others: Vec<&PlacedView> = views
         .iter()
         .enumerate()
         .filter(|(i, _)| *i != index)
         .map(|(_, v)| v)
         .collect();
-    let framed = was.frame.is_some();
     let mut paper = paper;
     let mut guides = Vec::new();
     for k in 0..2 {
@@ -88,11 +88,11 @@ pub(crate) fn snap_drag(
         let mut lines: Vec<f64> = Vec::new();
         let mut drawing = false;
         match grip {
-            ViewGrip::Move if framed => {
+            ViewGrip::Move => {
                 lines.extend(side(frame));
                 drawing = true;
             }
-            ViewGrip::Move | ViewGrip::Pan => drawing = true,
+            ViewGrip::Pan => drawing = true,
             ViewGrip::Resize(dx, dy) => {
                 let d = if k == 0 { dx } else { dy };
                 match d {
@@ -114,21 +114,19 @@ pub(crate) fn snap_drag(
         };
         let mut targets: Vec<f64> = side(area).to_vec();
         for o in &others {
-            if o.frame.is_some() {
-                targets.extend(side(drift_draft::sheet::view_frame(sheet, o)));
-            }
+            targets.extend(side(o.frame.bounds()));
         }
         // Drawings first: where a frame and a drawing would line up alike, the drawing's
         // guide is the one shown.
         if drawing {
             for o in others.iter().filter(|o| same_scale(o, &moved)) {
-                let theirs = offset(sheet, o);
+                let theirs = offset(o);
                 consider(
                     theirs[k] - mine[k],
                     AlignGuide {
                         vertical: k == 0,
                         // Through the other view's middle: the model is the same there.
-                        at: drift_draft::sheet::view_frame(sheet, o).center()[k],
+                        at: o.frame.at[k],
                         drawings: true,
                     },
                 );
@@ -154,19 +152,19 @@ pub(crate) fn snap_drag(
     (paper, guides)
 }
 
-/// Align view `index` with view `other`. Frames move (and their drawings with them); a view
-/// that fills the sheet slides its drawing instead when lining drawings up. False if it
-/// can't (frames for a view that fills the sheet; drawings at different scales).
-pub(crate) fn align_view(sheet: &mut Sheet, index: usize, other: usize, how: AlignTo) -> bool {
-    if index == other || index >= sheet.views.len() || other >= sheet.views.len() {
+/// Align view `index` of `views` with view `other`: its frame moves, and its drawing with it.
+/// False if it can't (drawings at different scales).
+pub(crate) fn align_view(
+    views: &mut [PlacedView],
+    index: usize,
+    other: usize,
+    how: AlignTo,
+) -> bool {
+    if index == other || index >= views.len() || other >= views.len() {
         return false;
     }
-    let target = sheet.views[other].clone();
-    let view = sheet.views[index].clone();
-    let (theirs, mine) = (
-        drift_draft::sheet::view_frame(sheet, &target),
-        drift_draft::sheet::view_frame(sheet, &view),
-    );
+    let (target, view) = (&views[other], &views[index]);
+    let (theirs, mine) = (target.frame.bounds(), view.frame.bounds());
     let shift = match how {
         AlignTo::Left => DVec2::new(theirs.min.x - mine.min.x, 0.0),
         AlignTo::Centre => DVec2::new(theirs.center().x - mine.center().x, 0.0),
@@ -175,10 +173,10 @@ pub(crate) fn align_view(sheet: &mut Sheet, index: usize, other: usize, how: Ali
         AlignTo::Middle => DVec2::new(0.0, theirs.center().y - mine.center().y),
         AlignTo::Bottom => DVec2::new(0.0, theirs.min.y - mine.min.y),
         AlignTo::DrawingsAcross | AlignTo::DrawingsDown => {
-            if !same_scale(&view, &target) {
+            if !same_scale(view, target) {
                 return false;
             }
-            let d = offset(sheet, &target) - offset(sheet, &view);
+            let d = offset(target) - offset(view);
             if how == AlignTo::DrawingsAcross {
                 DVec2::new(0.0, d.y)
             } else {
@@ -186,19 +184,7 @@ pub(crate) fn align_view(sheet: &mut Sheet, index: usize, other: usize, how: Ali
             }
         }
     };
-    let drawings = matches!(how, AlignTo::DrawingsAcross | AlignTo::DrawingsDown);
-    let v = &mut sheet.views[index];
-    match v.frame {
-        Some(f) => {
-            v.frame = Some(ViewFrame {
-                at: f.at + shift,
-                ..f
-            });
-        }
-        // A view that fills the sheet has no frame to move: its drawing slides.
-        None if drawings => v.center -= shift * v.scale,
-        None => return false,
-    }
+    views[index].frame.at += shift;
     true
 }
 
@@ -210,38 +196,42 @@ mod tests {
         DVec2::new(x, y)
     }
 
-    /// Two framed views at 1 : 24 (two elevations), side by side and not quite level.
-    fn two_elevations() -> Sheet {
-        let mut sheet = Sheet::new("A-201");
-        let mut a = SheetView::new(24.0, v(0.0, 1000.0));
-        a.frame = Some(ViewFrame {
-            at: v(150.0, 200.0),
-            size: v(200.0, 120.0),
-        });
-        let mut b = SheetView::new(24.0, v(5000.0, 1000.0));
-        b.frame = Some(ViewFrame {
-            at: v(420.0, 203.0),
-            size: v(150.0, 100.0),
-        });
-        sheet.views = vec![a, b];
-        sheet
+    fn placed(scale: f64, center: DVec2, at: DVec2, size: DVec2) -> PlacedView {
+        PlacedView {
+            id: drift_core::ViewId(1),
+            name: String::new(),
+            scale,
+            center,
+            frame: drift_core::ViewFrame { at, size },
+            dimensions: true,
+            notes: true,
+            title: false,
+            border: false,
+        }
+    }
+
+    /// Two views at 1 : 24 (two elevations), side by side and not quite level.
+    fn two_elevations() -> (Sheet, Vec<PlacedView>) {
+        let a = placed(24.0, v(0.0, 1000.0), v(150.0, 200.0), v(200.0, 120.0));
+        let b = placed(24.0, v(5000.0, 1000.0), v(420.0, 203.0), v(150.0, 100.0));
+        (Sheet::new("A-201"), vec![a, b])
     }
 
     #[test]
     fn dragging_snaps_to_edges_and_lines_drawings_up() {
-        let sheet = two_elevations();
-        let was = sheet.views[1].clone();
+        let (sheet, views) = two_elevations();
+        let was = views[1].clone();
+        let snap = |views: &[PlacedView], was: &PlacedView, grip, d| {
+            snap_drag(&sheet, views, 1, was, grip, d, 1.0)
+        };
         // Moving view 2 down by 2.5: its drawing is then 0.5 off the first's: it snaps level.
-        let (snapped, guides) = snap_drag(&sheet, 1, &was, ViewGrip::Move, v(0.0, -2.5), 1.0);
+        let (snapped, guides) = snap(&views, &was, ViewGrip::Move, v(0.0, -2.5));
         assert!((snapped.y + 3.0).abs() < 1e-9, "{snapped:?}");
         assert!(guides.iter().any(|g| g.drawings && !g.vertical));
-        let mut moved = sheet.clone();
-        moved.views[1] = dragged_view(&was, ViewGrip::Move, snapped);
-        assert!(
-            (offset(&moved, &moved.views[1]).y - offset(&moved, &moved.views[0]).y).abs() < 1e-9
-        );
+        let moved = dragged_view(&was, ViewGrip::Move, snapped);
+        assert!((offset(&moved).y - offset(&views[0]).y).abs() < 1e-9);
         // Its left edge near the first's right edge: it goes to it.
-        let (snapped, guides) = snap_drag(&sheet, 1, &was, ViewGrip::Move, v(-94.6, 40.0), 1.0);
+        let (snapped, guides) = snap(&views, &was, ViewGrip::Move, v(-94.6, 40.0));
         let left = 420.0 - 75.0 + snapped.x;
         assert!((left - 250.0).abs() < 1e-9, "{snapped:?}");
         assert!(
@@ -250,54 +240,38 @@ mod tests {
                 .any(|g| g.vertical && (g.at - 250.0).abs() < 1e-9)
         );
         // Far from anything: as dragged.
-        let (snapped, guides) = snap_drag(&sheet, 1, &was, ViewGrip::Move, v(13.3, 31.7), 1.0);
+        let (snapped, guides) = snap(&views, &was, ViewGrip::Move, v(13.3, 31.7));
         assert_eq!((snapped, guides.len()), (v(13.3, 31.7), 0));
         // Resizing: the edge being dragged snaps; the others don't move.
-        let (snapped, _) = snap_drag(&sheet, 1, &was, ViewGrip::Resize(0, 1), v(0.0, 6.5), 1.0);
+        let (snapped, _) = snap(&views, &was, ViewGrip::Resize(0, 1), v(0.0, 6.5));
         let top = 203.0 + 50.0 + snapped.y;
         assert!((top - 260.0).abs() < 1e-9, "the first view's top: {top}");
         // At another scale, drawings don't line up (frames still do).
-        let mut other = sheet.clone();
-        other.views[1].scale = 48.0;
-        let (snapped, guides) = snap_drag(
-            &other,
-            1,
-            &other.views[1].clone(),
-            ViewGrip::Move,
-            v(0.0, -2.5),
-            1.0,
-        );
+        let mut other = views.clone();
+        other[1].scale = 48.0;
+        let was = other[1].clone();
+        let (snapped, guides) = snap(&other, &was, ViewGrip::Move, v(0.0, -2.5));
         assert!(!guides.iter().any(|g| g.drawings));
         assert_eq!(snapped.y, -3.0, "the frames' middles still level");
     }
 
     #[test]
     fn align_commands_move_frames_and_line_drawings_up() {
-        let mut sheet = two_elevations();
-        assert!(align_view(&mut sheet, 1, 0, AlignTo::Top));
-        let top = |s: &Sheet, i: usize| drift_draft::sheet::view_frame(s, &s.views[i]).max.y;
-        assert!((top(&sheet, 1) - top(&sheet, 0)).abs() < 1e-9);
-        assert!(align_view(&mut sheet, 1, 0, AlignTo::DrawingsAcross));
-        assert!(
-            (offset(&sheet, &sheet.views[1]).y - offset(&sheet, &sheet.views[0]).y).abs() < 1e-9
-        );
+        let (_, mut views) = two_elevations();
+        assert!(align_view(&mut views, 1, 0, AlignTo::Top));
+        let top = |vs: &[PlacedView], i: usize| vs[i].frame.bounds().max.y;
+        assert!((top(&views, 1) - top(&views, 0)).abs() < 1e-9);
+        assert!(align_view(&mut views, 1, 0, AlignTo::DrawingsAcross));
+        assert!((offset(&views[1]).y - offset(&views[0]).y).abs() < 1e-9);
         // Its x is untouched.
-        assert_eq!(sheet.views[1].frame.unwrap().at.x, 420.0);
-        assert!(align_view(&mut sheet, 1, 0, AlignTo::Left));
-        assert_eq!(sheet.views[1].frame.unwrap().at.x, 50.0 + 75.0);
-        // Drawings at different scales can't line up; a view filling the sheet has no frame
-        // to align, but slides its drawing to line up.
-        sheet.views[1].scale = 48.0;
-        assert!(!align_view(&mut sheet, 1, 0, AlignTo::DrawingsDown));
-        let mut whole = two_elevations();
-        whole.views[1].frame = None;
-        assert!(!align_view(&mut whole, 1, 0, AlignTo::Left));
-        assert!(align_view(&mut whole, 1, 0, AlignTo::DrawingsAcross));
+        assert_eq!(views[1].frame.at.x, 420.0);
+        assert!(align_view(&mut views, 1, 0, AlignTo::Left));
+        assert_eq!(views[1].frame.at.x, 50.0 + 75.0);
+        // Drawings at different scales can't line up.
+        views[1].scale = 48.0;
+        assert!(!align_view(&mut views, 1, 0, AlignTo::DrawingsDown));
         assert!(
-            (offset(&whole, &whole.views[1]).y - offset(&whole, &whole.views[0]).y).abs() < 1e-9
-        );
-        assert!(
-            !align_view(&mut whole, 0, 0, AlignTo::Left),
+            !align_view(&mut views, 0, 0, AlignTo::Left),
             "not with itself"
         );
     }

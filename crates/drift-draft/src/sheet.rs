@@ -1,7 +1,7 @@
 //! Sheet furniture: the border, the title block (Drift's modern strip, ISO 7200 or
 //! ASME Y14.1 style) and the revision table, drawn into a [`Drawing`] in paper millimetres.
 
-use drift_core::SheetView;
+use drift_core::PlacedView;
 use drift_core::sheets::scale_label;
 use drift_core::{Bounds, DVec2, Rgb, Sheet, TitleBlock};
 
@@ -75,10 +75,12 @@ pub fn view_area(sheet: &Sheet) -> Bounds {
     area
 }
 
-/// Where a view is on the paper: its own frame, or the whole drawing area.
-pub fn view_frame(sheet: &Sheet, view: &SheetView) -> Bounds {
-    view.frame
-        .map_or_else(|| drawing_area(sheet), |f| f.bounds())
+/// Whether a frame fills the sheet's drawing area (as a sheet's one view did before views
+/// were cropped in the model): its title then goes inside the area's corner.
+pub fn fills_drawing_area(sheet: &Sheet, frame: Bounds) -> bool {
+    let area = drawing_area(sheet);
+    (frame.min - area.min).abs().max_element() < 1e-6
+        && (frame.max - area.max).abs().max_element() < 1e-6
 }
 
 /// How far under a view its title reaches (paper mm), for laying views out.
@@ -87,28 +89,25 @@ pub const VIEW_TITLE_DEPTH: f64 = 11.0;
 /// The views' outlines and titles: a title is the view's name in bold over a rule, with its
 /// scale beneath, at the frame's lower left. Views are numbered in order when a sheet has
 /// more than one.
-pub fn draw_views(sheet: &Sheet, d: &mut Drawing) {
-    let several = sheet.views.len() > 1;
-    for (i, view) in sheet.views.iter().enumerate() {
-        let frame = view_frame(sheet, view);
-        if view.border && view.frame.is_some() {
+pub fn draw_views(sheet: &Sheet, views: &[PlacedView], d: &mut Drawing) {
+    let several = views.len() > 1;
+    for (i, view) in views.iter().enumerate() {
+        let frame = view.frame.bounds();
+        let fills = fills_drawing_area(sheet, frame);
+        if view.border && !fills {
             d.rect(FRAME_LAYER, Pen::new(THIN_PEN), frame.min, frame.max);
         }
         if !view.title {
             continue;
         }
         // Inside the drawing area's corner for a view that fills it.
-        let (x, top) = if view.frame.is_some() {
-            (frame.min.x, frame.min.y - 2.0)
-        } else {
+        let (x, top) = if fills {
             (frame.min.x + 6.0, frame.min.y + 6.0 + VIEW_TITLE_DEPTH)
+        } else {
+            (frame.min.x, frame.min.y - 2.0)
         };
         let ink = Pen::new(TEXT_PEN).with_color(INK);
-        let name = if view.name.trim().is_empty() {
-            "View".to_owned()
-        } else {
-            view.name.trim().to_owned()
-        };
+        let name = view.title().to_owned();
         let mut left = x;
         if several {
             // The view's number, in a ring.
@@ -197,16 +196,17 @@ fn cell(d: &mut Drawing, min: DVec2, max: DVec2, label: &str, value: &str, value
     );
 }
 
-/// Draw the border, title block and revision table. `sheet_no` is (this sheet, of how many);
-/// `logo` goes in the title block.
+/// Draw the border, title block and revision table. `scale` is what the title block's scale
+/// reads; `sheet_no` is (this sheet, of how many); `logo` goes in the title block.
 pub fn draw_frame(
     sheet: &Sheet,
+    scale: &str,
     sheet_no: (usize, usize),
     logo: Option<&crate::logo::Logo>,
     d: &mut Drawing,
 ) {
     if sheet.title_block == TitleBlock::Modern {
-        draw_modern(sheet, sheet_no, logo, d);
+        draw_modern(sheet, scale, sheet_no, logo, d);
         return;
     }
     let b = border(sheet);
@@ -241,7 +241,6 @@ pub fn draw_frame(
     );
 
     let f = &sheet.fields;
-    let scale = sheet.scale_text();
     let sheet_text = format!("{} / {}", sheet_no.0, sheet_no.1);
     let rev = sheet.revision().unwrap_or("-").to_owned();
     if let Some(tb) = title_block_bounds(sheet) {
@@ -307,13 +306,13 @@ pub fn draw_frame(
                 ("SIZE", ansi_letter(sheet), 0.12),
                 ("DWG NO", f.number.clone(), 0.43),
                 ("REV", rev, 0.12),
-                ("SCALE", scale, 0.16),
+                ("SCALE", scale.to_owned(), 0.16),
                 ("SHEET", sheet_text, 0.17),
             ],
             _ => vec![
                 ("Drawing number", f.number.clone(), 0.47),
                 ("Rev", rev, 0.13),
-                ("Scale", scale, 0.2),
+                ("Scale", scale.to_owned(), 0.2),
                 ("Sheet", sheet_text, 0.2),
             ],
         };
@@ -423,6 +422,7 @@ fn field_sized(
 
 fn draw_modern(
     sheet: &Sheet,
+    scale: &str,
     sheet_no: (usize, usize),
     logo: Option<&crate::logo::Logo>,
     d: &mut Drawing,
@@ -522,7 +522,7 @@ fn draw_modern(
         nx + pad + half,
         bottom,
         "Scale",
-        &sheet.scale_text(),
+        scale,
         half - pad,
         false,
     );
@@ -780,7 +780,6 @@ mod tests {
     fn frame_fits_the_paper_and_fills_the_block() {
         let mut sheet = Sheet::new("Plate");
         sheet.title_block = TitleBlock::Iso;
-        sheet.views[0].scale = 2.0;
         sheet.fields.number = "DR-001".into();
         sheet.fields.author = "CP".into();
         sheet.revisions.push(Revision {
@@ -790,7 +789,7 @@ mod tests {
             by: "CP".into(),
         });
         let mut d = Drawing::new(sheet.size());
-        draw_frame(&sheet, (1, 2), None, &mut d);
+        draw_frame(&sheet, "1:2", (1, 2), None, &mut d);
         let b = d.bounds();
         assert!(b.min.x >= -1e-9 && b.min.y >= -1e-9);
         assert!(b.max.x <= 420.0 + 1e-9 && b.max.y <= 297.0 + 1e-9);
@@ -831,7 +830,7 @@ mod tests {
                 by: "CL".into(),
             });
             let mut d = Drawing::new(sheet.size());
-            draw_frame(&sheet, (3, 12), None, &mut d);
+            draw_frame(&sheet, "1:1", (3, 12), None, &mut d);
             let b = border(&sheet);
             // The view sits above the strip; the strip spans the frame.
             let area = drawing_area(&sheet);

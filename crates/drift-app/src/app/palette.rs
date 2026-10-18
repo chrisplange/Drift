@@ -72,11 +72,12 @@ pub(crate) enum ViewFlag {
     Free,
     Ghosts,
     Combs,
+    Crops,
     AutoRelations,
 }
 
 impl ViewFlag {
-    const ALL: [ViewFlag; 13] = [
+    const ALL: [ViewFlag; 14] = [
         ViewFlag::Grid,
         ViewFlag::Axes,
         ViewFlag::Snap,
@@ -89,6 +90,7 @@ impl ViewFlag {
         ViewFlag::Free,
         ViewFlag::Ghosts,
         ViewFlag::Combs,
+        ViewFlag::Crops,
         ViewFlag::AutoRelations,
     ];
 
@@ -106,6 +108,7 @@ impl ViewFlag {
             ViewFlag::Free => "Free directions",
             ViewFlag::Ghosts => "Variant ghosts",
             ViewFlag::Combs => "Curvature combs",
+            ViewFlag::Crops => "View crops",
             ViewFlag::AutoRelations => "Automatic relations",
         }
     }
@@ -203,6 +206,7 @@ impl DriftApp {
             ViewFlag::Free => &mut self.params.show_free,
             ViewFlag::Ghosts => &mut self.params.show_ghosts,
             ViewFlag::Combs => &mut self.show_combs,
+            ViewFlag::Crops => &mut self.show_view_crops,
             ViewFlag::AutoRelations => &mut self.auto_relations,
         }
     }

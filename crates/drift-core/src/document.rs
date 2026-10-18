@@ -16,7 +16,7 @@ use crate::drafting::{
 };
 use crate::groups::{Group, GroupId};
 use crate::layers::{Appearance, Layer, LayerId};
-use crate::sheets::{Sheet, SheetId};
+use crate::sheets::{PlacedView, Sheet, SheetId, View, ViewId};
 use crate::texts::{SketchText, TextId};
 use crate::underlays::{Underlay, UnderlayId};
 use crate::units::{Kind, Units};
@@ -331,6 +331,7 @@ enum Key {
     Logo,
     Fonts,
     Sheet(SheetId),
+    View(ViewId),
     Group(GroupId),
     Block(BlockId),
     Instance(InstanceId),
@@ -360,6 +361,7 @@ enum Record {
     Logo(String),
     Fonts(crate::fonts::FontSet),
     Sheet(Sheet),
+    View(View),
     Group(Group),
     Block(Block),
     Instance(Instance),
@@ -416,6 +418,8 @@ pub struct Document {
     /// Fonts kept in the drawing, and the one its annotations are set in.
     fonts: crate::fonts::FontSet,
     sheets: BTreeMap<SheetId, Sheet>,
+    /// Views of the model, placed on sheets by their viewports.
+    views: BTreeMap<ViewId, View>,
     groups: BTreeMap<GroupId, Group>,
     blocks: BTreeMap<BlockId, Block>,
     instances: BTreeMap<InstanceId, Instance>,
@@ -458,6 +462,7 @@ impl PartialEq for Document {
             && self.logo == other.logo
             && self.fonts == other.fonts
             && self.sheets == other.sheets
+            && self.views == other.views
             && self.groups == other.groups
             && self.blocks == other.blocks
             && self.instances == other.instances
@@ -489,6 +494,7 @@ impl Default for Document {
             logo: String::new(),
             fonts: Default::default(),
             sheets: BTreeMap::new(),
+            views: BTreeMap::new(),
             groups: BTreeMap::new(),
             blocks: BTreeMap::new(),
             instances: BTreeMap::new(),
@@ -771,6 +777,7 @@ impl Document {
             Key::Logo => Some(Record::Logo(self.logo.clone())),
             Key::Fonts => Some(Record::Fonts(self.fonts.clone())),
             Key::Sheet(id) => self.sheets.get(&id).cloned().map(Record::Sheet),
+            Key::View(id) => self.views.get(&id).cloned().map(Record::View),
             Key::Group(id) => self.groups.get(&id).cloned().map(Record::Group),
             Key::Block(id) => self.blocks.get(&id).cloned().map(Record::Block),
             Key::Instance(id) => self.instances.get(&id).copied().map(Record::Instance),
@@ -906,6 +913,12 @@ impl Document {
             }
             (Key::Sheet(id), _) => {
                 self.sheets.remove(&id);
+            }
+            (Key::View(id), Some(Record::View(v))) => {
+                self.views.insert(id, v);
+            }
+            (Key::View(id), _) => {
+                self.views.remove(&id);
             }
             (Key::Group(id), Some(Record::Group(g))) => {
                 self.groups.insert(id, g);
@@ -2007,6 +2020,7 @@ impl Document {
         keys.push(Key::Logo);
         keys.push(Key::Fonts);
         keys.extend(self.sheets.keys().map(|id| Key::Sheet(*id)));
+        keys.extend(self.views.keys().map(|id| Key::View(*id)));
         keys.extend(self.groups.keys().map(|id| Key::Group(*id)));
         keys.extend(self.blocks.keys().map(|id| Key::Block(*id)));
         keys.extend(self.instances.keys().map(|id| Key::Instance(*id)));
@@ -2835,6 +2849,97 @@ impl Document {
         }
     }
 
+    pub fn views(&self) -> impl Iterator<Item = (ViewId, &View)> {
+        self.views.iter().map(|(id, v)| (*id, v))
+    }
+
+    pub fn view(&self, id: ViewId) -> Option<&View> {
+        self.views.get(&id)
+    }
+
+    pub fn add_view(&mut self, view: View) -> ViewId {
+        let id = ViewId(self.next_drafting());
+        self.touch_key(Key::View(id));
+        self.views.insert(id, view);
+        id
+    }
+
+    /// Insert a view with a known id (loading a file).
+    pub fn insert_view(&mut self, id: ViewId, view: View) {
+        self.next_drafting_id = self.next_drafting_id.max(id.0 + 1);
+        self.touch_key(Key::View(id));
+        self.views.insert(id, view);
+    }
+
+    pub fn set_view(&mut self, id: ViewId, view: View) {
+        if self.views.get(&id).is_some_and(|v| *v != view) {
+            self.touch_key(Key::View(id));
+            self.views.insert(id, view);
+        }
+    }
+
+    /// Delete a view, and take it off every sheet it is on.
+    pub fn remove_view(&mut self, id: ViewId) {
+        if !self.views.contains_key(&id) {
+            return;
+        }
+        self.touch_key(Key::View(id));
+        self.views.remove(&id);
+        let showing: Vec<SheetId> = self.sheets_showing(id);
+        for s in showing {
+            let mut sheet = self.sheets[&s].clone();
+            sheet.viewports.retain(|p| p.view != id);
+            self.set_sheet(s, sheet);
+        }
+    }
+
+    /// The sheets a view is placed on, in order.
+    pub fn sheets_showing(&self, id: ViewId) -> Vec<SheetId> {
+        self.sheets
+            .iter()
+            .filter(|(_, s)| s.viewports.iter().any(|p| p.view == id))
+            .map(|(sid, _)| *sid)
+            .collect()
+    }
+
+    /// A sheet's viewports with their views, in drawing order (one whose view is missing is
+    /// left out).
+    pub fn placed_views(&self, sheet: &Sheet) -> Vec<PlacedView> {
+        sheet
+            .viewports
+            .iter()
+            .filter_map(|p| Some(PlacedView::new(p.view, self.views.get(&p.view)?, p)))
+            .collect()
+    }
+
+    /// A sheet's title block scale: its views' scale if they share one, else `As shown`.
+    pub fn sheet_scale_text(&self, sheet: &Sheet) -> String {
+        crate::sheets::scale_text(
+            sheet
+                .viewports
+                .iter()
+                .filter_map(|p| self.views.get(&p.view).map(|v| v.scale)),
+        )
+    }
+
+    /// Write back viewport `index` of sheet `id` (and its view, which every sheet showing
+    /// it follows).
+    pub fn set_placed_view(&mut self, id: SheetId, index: usize, placed: &PlacedView) {
+        let Some(mut sheet) = self.sheets.get(&id).cloned() else {
+            return;
+        };
+        let Some(port) = sheet.viewports.get_mut(index) else {
+            return;
+        };
+        let Some(mut view) = self.views.get(&port.view).cloned() else {
+            return;
+        };
+        let view_id = port.view;
+        placed.apply(&mut view, port);
+        self.set_view(view_id, view);
+        self.set_sheet(id, sheet);
+    }
+
     pub fn texts(&self) -> impl Iterator<Item = (TextId, &SketchText)> {
         self.texts.iter().map(|(id, t)| (*id, t))
     }
@@ -3087,6 +3192,59 @@ mod tests {
         let p = [v(0.0, 0.0), v(1.0, 0.0), v(1.0, 1.0), v(0.0, 1.0)].map(|at| doc.add_point(at));
         let l = [0, 1, 2, 3].map(|i| doc.add_line(p[i], p[(i + 1) % 4]).unwrap());
         (p, l)
+    }
+
+    #[test]
+    fn views_are_shared_by_sheets_and_follow_their_crop() {
+        use crate::sheets::{View, Viewport};
+        let mut doc = Document::new();
+        let mut history = History::default();
+        let crop = crate::Bounds {
+            min: v(0.0, 0.0),
+            max: v(1000.0, 500.0),
+        };
+        doc.begin();
+        let plan = doc.add_view(View::new("Plan", crop, 50.0));
+        let mut a = Sheet::new("A-101");
+        a.viewports.push(Viewport::new(plan, v(200.0, 150.0)));
+        let a = doc.add_sheet(a);
+        let mut b = Sheet::new("A-102");
+        b.viewports.push(Viewport::new(plan, v(100.0, 100.0)));
+        let b = doc.add_sheet(b);
+        history.push(doc.commit("Set up"));
+        assert_eq!(doc.sheets_showing(plan), [a, b]);
+        let placed = doc.placed_views(doc.sheet(a).unwrap());
+        assert_eq!(placed[0].frame.size, v(20.0, 10.0), "the crop at 1:50");
+        assert_eq!(doc.sheet_scale_text(doc.sheet(a).unwrap()), "1:50");
+
+        // Cropping it on one sheet reframes the view: the other sheet follows.
+        let mut wider = placed[0].clone();
+        wider.frame.size = v(30.0, 10.0);
+        wider.frame.at = v(205.0, 150.0);
+        doc.begin();
+        doc.set_placed_view(a, 0, &wider);
+        history.push(doc.commit("Crop"));
+        assert_eq!(doc.view(plan).unwrap().size, v(1500.0, 500.0));
+        let on_b = doc.placed_views(doc.sheet(b).unwrap());
+        assert_eq!(on_b[0].frame.size, v(30.0, 10.0));
+        assert_eq!(
+            on_b[0].frame.at,
+            v(100.0, 100.0),
+            "only its own sheet's place moved"
+        );
+
+        // Deleting the view takes it off both sheets; undo brings it all back.
+        let before = doc.clone();
+        doc.begin();
+        doc.remove_view(plan);
+        history.push(doc.commit("Delete view"));
+        assert!(doc.view(plan).is_none());
+        assert!(doc.sheets().all(|(_, s)| s.viewports.is_empty()));
+        assert_eq!(doc.sheet_scale_text(doc.sheet(a).unwrap()), "-");
+        assert!(history.undo(&mut doc));
+        assert_eq!(doc, before);
+        assert!(history.undo(&mut doc));
+        assert_eq!(doc.view(plan).unwrap().size, v(1000.0, 500.0));
     }
 
     #[test]

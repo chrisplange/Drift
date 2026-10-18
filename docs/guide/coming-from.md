@@ -13,7 +13,8 @@ Everywhere: the command palette (Ctrl+K) finds any command by name, and ? lists 
 | Tab to cycle and pick chains | Tab highlights the chain of connected curves under the pointer; click picks it. |
 | Thin lines (TL) | W, or the status bar. |
 | Families | Blocks, with a library of US doors, windows, cabinets, fixtures and furniture, named "Family – Type". [Blocks](tutorials/07-blocks.md). No parametric blocks yet: each size is its own block. |
-| Sheets, views, view titles, scales | Sheets hold several views, each with its own scale and crop, a title and a number. Architectural and engineering scales are there. [Sheets and output](tutorials/10-sheets-and-output.md). |
+| Sheets, views, view titles, scales | Views are drawn on the canvas with the **View** tool (a named crop at a scale) and dragged onto sheets from the **Views** list. Reframe a view's crop and every sheet it's on follows. Unlike Revit, a view can go on several sheets. Each placed view has a title and a number. Architectural and engineering scales are there. [Sheets and output](tutorials/10-sheets-and-output.md). |
+| Crop region, Crop Region Visible | A view's crop shows on the canvas with its name, with grips to reframe it. **View → View crops** shows or hides them all, a view's **Crop** switch just that one. Crops are rectangles, not rotated, and never print. No separate annotation crop yet: dimensions and notes are cut at the crop. |
 | Hide in view / hide on sheet | Each dimension and note can be off the canvas and / or off sheets. Not per view yet. |
 | Drafting vs model patterns | The same distinction for hatches. |
 | Dimension text: below, prefix / suffix, replace with text (EQ) | **Under line**, **Prefix** / **Suffix**, **Show instead**, and chips for TYP, EQ, VIF and others. |

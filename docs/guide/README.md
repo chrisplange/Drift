@@ -39,8 +39,8 @@ rest stand alone.
 7. [Blocks](tutorials/07-blocks.md): furniture and symbols drawn once, placed many times.
 8. [Construction geometry](tutorials/08-construction-geometry.md).
 9. [Annotation](tutorials/09-annotation.md): notes, callouts, marks and dimension text.
-10. [Sheets and output](tutorials/10-sheets-and-output.md): sheets, views, scales, title
-    blocks, PDF, SVG, DXF and printing.
+10. [Sheets and output](tutorials/10-sheets-and-output.md): views drawn on the canvas,
+    sheets, scales, title blocks, PDF, SVG, DXF and printing.
 11. [Underlays and DXF import](tutorials/11-underlays-and-dxf.md).
 12. [Checking a sketch](tutorials/12-sketch-checker.md): gaps, short ends and curves of no
     length.

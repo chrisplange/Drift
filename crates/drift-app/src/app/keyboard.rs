@@ -88,13 +88,13 @@ impl DriftApp {
             if ctx.input(|i| i.key_pressed(Key::F) && i.modifiers.shift_only()) {
                 self.preview.zoom = 0.0;
             }
-            // Delete removes the picked view (a sheet keeps at least one).
+            // Delete takes the picked view off the sheet (it stays in the model).
             if ctx.input(|i| {
                 i.modifiers.is_none()
                     && (i.key_pressed(Key::Delete) || i.key_pressed(Key::Backspace))
             }) && let Some(id) = self.current_sheet()
             {
-                self.remove_view(id);
+                self.remove_viewport(id);
             }
             return;
         }
@@ -210,8 +210,9 @@ impl DriftApp {
                 || self.selected_leader.take().is_some()
                 || self.selected_constraint.take().is_some()
                 || self.editor.selected_annotation.take().is_some()
+                || self.picked_view.take().is_some()
             {
-                // First Esc just clears a picked relation, dimension or annotation.
+                // First Esc just clears a picked relation, dimension, annotation or view.
             } else if !self.tool.cancel(&mut self.editor) {
                 self.set_tool(ToolKind::Select);
             }
@@ -223,6 +224,19 @@ impl DriftApp {
             if let Some((id, k)) = self.selected_leader.take() {
                 // A picked leader goes on its own; its note stays.
                 self.remove_leader(id, k);
+                return;
+            }
+            if self.editor.selection.is_empty()
+                && self.selected_constraint.is_none()
+                && let Some(view) = self.picked_view
+            {
+                // A picked crop: its view goes. One on sheets asks first, in the Sheets tab.
+                if self.editor.doc.sheets_showing(view).is_empty() {
+                    self.delete_view(view);
+                } else {
+                    self.confirm_delete_view = Some(view);
+                    self.show_panel(crate::dock::Panel::Sheets);
+                }
                 return;
             }
             match self.selected_constraint.take() {

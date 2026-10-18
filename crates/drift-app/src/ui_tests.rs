@@ -79,6 +79,26 @@ fn lines(h: &Harness<'_, DriftApp>) -> usize {
     count(h, |k| matches!(k, EntityKind::Line { .. }))
 }
 
+/// The views on a sheet, with their model views.
+fn placed(h: &Harness<'_, DriftApp>, id: drift_core::SheetId) -> Vec<drift_core::PlacedView> {
+    let doc = &h.state().editor.doc;
+    doc.placed_views(doc.sheet(id).expect("the sheet"))
+}
+
+/// Change a sheet's view `index` in one undo step (`label`).
+fn set_placed(
+    h: &mut Harness<'_, DriftApp>,
+    id: drift_core::SheetId,
+    index: usize,
+    view: &drift_core::PlacedView,
+    label: &str,
+) {
+    let ed = &mut h.state_mut().editor;
+    ed.doc.begin();
+    ed.doc.set_placed_view(id, index, view);
+    ed.commit(label);
+}
+
 fn save_png(name: &str, h: &mut Harness<'_, DriftApp>) {
     let image = h.render().expect("render");
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/tmp");
@@ -2468,10 +2488,13 @@ fn sheets_preview_and_export() {
     h.run();
     h.run();
     let id = h.state().current_sheet().expect("a sheet");
-    let sheet = h.state().editor.doc.sheet(id).cloned().unwrap();
+    let views = placed(&h, id);
     assert!(h.state().sheet_preview);
-    // The 120 × 80 plate with its dimensions fits A3 at 1:1, above the title block.
-    assert_eq!(sheet.views[0].scale, 1.0);
+    // The 120 × 80 plate with its dimensions fits A3 at 1:1, above the title block, in a
+    // new view of the model.
+    assert_eq!(views[0].scale, 1.0);
+    assert_eq!(views[0].name, "View 1");
+    assert_eq!(h.state().editor.doc.views().count(), 1);
     save_png("drift_ui_sheet.png", &mut h);
 
     let painter = h.ctx.layer_painter(egui::LayerId::background());
@@ -2519,22 +2542,20 @@ fn sheets_preview_and_export() {
         "the bore and four bolt holes (the bolt circle is construction)"
     );
 
-    // A sheet can leave the dimensions out (a presentation copy); the model keeps them.
-    let mut plain = sheet.clone();
-    plain.views[0].dimensions = false;
-    h.state_mut().editor.doc.begin();
-    h.state_mut().editor.doc.set_sheet(id, plain);
-    h.state_mut().editor.commit("Hide dimensions");
+    // A view can leave the dimensions out (a presentation copy); the model keeps them.
+    let mut plain = views[0].clone();
+    plain.dimensions = false;
+    set_placed(&mut h, id, 0, &plain, "Hide dimensions");
     let pdf = h.state_mut().pdf_bytes(&painter);
     let text = String::from_utf8_lossy(&pdf);
     assert!(!text.contains("(120) Tj") && text.contains("(1:1) Tj"));
     let saved = drift_io::save(&h.state().editor.doc, &Default::default());
     assert!(saved.contains(r#""dimensions":false"#) && !saved.contains(r#""notes""#));
     let (loaded, _) = drift_io::load(&saved).unwrap();
-    let back = loaded.sheets().next().unwrap().1;
-    assert!(!back.views[0].dimensions && back.views[0].notes);
+    let back = loaded.placed_views(loaded.sheets().next().unwrap().1);
+    assert!(!back[0].dimensions && back[0].notes);
     h.state_mut().undo();
-    assert!(h.state().editor.doc.sheet(id).unwrap().views[0].dimensions);
+    assert!(placed(&h, id)[0].dimensions);
     h.run();
 
     // Dragging on the sheet moves the drawing within it, as one undo step.
@@ -2550,16 +2571,13 @@ fn sheets_preview_and_export() {
     }
     button(&h, from + egui::vec2(40.0, 0.0), false);
     h.run();
-    let moved = h.state().editor.doc.sheet(id).unwrap().views[0].center;
+    let moved = placed(&h, id)[0].center;
     assert!(
-        moved.x < sheet.views[0].center.x - 1.0,
+        moved.x < views[0].center.x - 1.0,
         "dragging right moves the drawing right"
     );
     h.state_mut().undo();
-    assert_eq!(
-        h.state().editor.doc.sheet(id).unwrap().views[0].center,
-        sheet.views[0].center
-    );
+    assert_eq!(placed(&h, id)[0].center, views[0].center);
     // Esc returns to the model.
     h.key_press(Key::Escape);
     h.run();
@@ -3697,7 +3715,7 @@ fn modern_sheet_layout() {
             by: "CL".into(),
         });
     }
-    h.state_mut().update_sheet(id, sheet, false);
+    h.state_mut().update_sheet(id, sheet, None, false);
     h.state_mut().sheet_preview = true;
     h.state_mut().preview.zoom = 0.0;
     h.state_mut().dock_view.hide_all = true;
@@ -3725,8 +3743,16 @@ fn modern_sheet_layout() {
     narrow.paper = drift_core::PaperSize::A4;
     narrow.portrait = true;
     let bounds = h.state().fit_bounds();
-    crate::output::fit_sheet(bounds, &mut narrow, false);
-    h.state_mut().update_sheet(id, narrow, false);
+    // Its view filling the new drawing area, the drawing fitted in it.
+    let mut view = placed(&h, id)[0].clone();
+    let area = drift_draft::sheet::drawing_area(&narrow);
+    view.frame = drift_core::ViewFrame {
+        at: area.center(),
+        size: area.size(),
+    };
+    crate::output::fit_view(bounds, &mut view, false);
+    h.state_mut()
+        .update_sheet(id, narrow, Some((0, view)), false);
     h.run();
     std::fs::write(
         dir.join("drift_sheet_modern_a4.pdf"),
@@ -4245,9 +4271,9 @@ fn a_sheet_holds_several_views() {
     h.run();
     let id = h.state().current_sheet().expect("a sheet");
     let sheet = |h: &Harness<'_, DriftApp>| h.state().editor.doc.sheet(id).cloned().unwrap();
-    assert_eq!(sheet(&h).views.len(), 1);
+    assert_eq!(placed(&h, id).len(), 1);
     assert!(
-        sheet(&h).views[0].frame.is_none(),
+        drift_draft::sheet::fills_drawing_area(&sheet(&h), placed(&h, id)[0].frame.bounds()),
         "the first view fills the sheet"
     );
 
@@ -4256,13 +4282,14 @@ fn a_sheet_holds_several_views() {
     h.run();
     h.run();
     let s = sheet(&h);
-    assert_eq!(s.views.len(), 2);
-    let added = s.views[1].clone();
-    let frame = added.frame.expect("framed");
+    let views = placed(&h, id);
+    assert_eq!(views.len(), 2);
+    let added = views[1].clone();
     assert!(added.title && added.name == "View 2");
     assert_eq!(h.state().sheet_view, 1);
+    assert_eq!(h.state().picked_view, Some(added.id));
     let area = drift_draft::sheet::view_area(&s);
-    let b = frame.bounds();
+    let b = added.frame.bounds();
     assert!(
         b.min.x >= area.min.x && b.max.x <= area.max.x,
         "on the sheet"
@@ -4270,18 +4297,19 @@ fn a_sheet_holds_several_views() {
     assert!(b.min.y >= area.min.y && b.max.y <= area.max.y);
 
     // A detail at another scale: the title block says so.
-    let mut detail = s.clone();
-    detail.views[1].scale = 0.5;
-    detail.views[1].name = "Detail A".into();
-    detail.views[1].frame = Some(ViewFrame {
+    let mut detail = added.clone();
+    detail.scale = 0.5;
+    detail.name = "Detail A".into();
+    detail.frame = ViewFrame {
         at: DVec2::new(330.0, 200.0),
         size: DVec2::new(100.0, 80.0),
-    });
-    detail.views[1].center = DVec2::new(84.0, 40.0);
-    detail.views[1].border = true;
-    h.state_mut().editor.doc.begin();
-    h.state_mut().editor.doc.set_sheet(id, detail.clone());
-    h.state_mut().editor.commit("Detail");
+    };
+    detail.center = DVec2::new(84.0, 40.0);
+    detail.border = true;
+    set_placed(&mut h, id, 1, &detail, "Detail");
+    // Its crop in the model: the frame at 2:1.
+    let crop = h.state().editor.doc.view(detail.id).unwrap().crop();
+    assert_eq!(crop.size(), DVec2::new(50.0, 40.0));
     h.run();
     h.run();
     save_png("drift_ui_sheet_views.png", &mut h);
@@ -4304,6 +4332,7 @@ fn a_sheet_holds_several_views() {
     // with Alt, of the drawing inside it. Its handles crop it.
     let rect = h.state().canvas_rect;
     let s = sheet(&h);
+    let views = placed(&h, id);
     let app = h.state();
     let zoom = f64::from(app.preview.zoom);
     let to_screen = |p: DVec2| {
@@ -4312,22 +4341,22 @@ fn a_sheet_holds_several_views() {
     };
     let inside = to_screen(DVec2::new(330.0, 200.0));
     assert_eq!(
-        app.view_grip_at(rect, &s, inside, false),
+        app.view_grip_at(rect, &s, &views, inside, false),
         Some((1, ViewGrip::Move))
     );
     assert_eq!(
-        app.view_grip_at(rect, &s, inside, true),
+        app.view_grip_at(rect, &s, &views, inside, true),
         Some((1, ViewGrip::Pan))
     );
     let corner = to_screen(DVec2::new(380.0, 240.0));
     assert_eq!(
-        app.view_grip_at(rect, &s, corner, false),
+        app.view_grip_at(rect, &s, &views, corner, false),
         Some((1, ViewGrip::Resize(1, 1)))
     );
     // Outside it: the view that fills the sheet, which only pans.
     let elsewhere = to_screen(DVec2::new(100.0, 150.0));
     assert_eq!(
-        app.view_grip_at(rect, &s, elsewhere, false),
+        app.view_grip_at(rect, &s, &views, elsewhere, false),
         Some((0, ViewGrip::Pan))
     );
 
@@ -4347,45 +4376,49 @@ fn a_sheet_holds_several_views() {
     h.run();
     h.event(Event::ModifiersChanged(EguiModifiers::NONE));
     h.run();
-    let moved = sheet(&h).views[1].clone();
-    let at = moved.frame.unwrap().at;
+    let moved = placed(&h, id)[1].clone();
+    let at = moved.frame.at;
     assert!(
         (at.x - 300.0).abs() < 0.5 && (at.y - 200.0).abs() < 0.5,
         "{at:?}"
     );
-    assert_eq!(
-        moved.center, detail.views[1].center,
-        "the drawing moved with it"
-    );
+    assert_eq!(moved.center, detail.center, "the drawing moved with it");
     h.state_mut().undo();
-    assert_eq!(sheet(&h).views[1].frame, detail.views[1].frame);
+    assert_eq!(placed(&h, id)[1].frame, detail.frame);
 
     // Cropping: the upper right corner pulled in by (20, 10) mm. The frame shrinks about
     // its other corner, and the drawing stays where it was on the paper.
-    let was = &detail.views[1];
+    let was = &detail;
     let cropped = dragged_view(was, ViewGrip::Resize(1, 1), DVec2::new(-20.0, -10.0));
-    let f = cropped.frame.unwrap();
+    let f = cropped.frame;
     assert_eq!(f.size, DVec2::new(80.0, 70.0));
-    assert_eq!(f.bounds().min, was.frame.unwrap().bounds().min);
-    let on_paper = |v: &drift_core::SheetView, world: DVec2| {
-        v.frame.unwrap().at + (world - v.center) / v.scale
-    };
+    assert_eq!(f.bounds().min, was.frame.bounds().min);
+    let on_paper =
+        |v: &drift_core::PlacedView, world: DVec2| v.frame.at + (world - v.center) / v.scale;
     let probe = DVec2::new(90.0, 45.0);
     assert!(on_paper(&cropped, probe).distance(on_paper(was, probe)) < 1e-9);
     // Never inside out.
     let tiny = dragged_view(was, ViewGrip::Resize(1, 1), DVec2::new(-500.0, -500.0));
-    assert_eq!(tiny.frame.unwrap().size, DVec2::splat(10.0));
+    assert_eq!(tiny.frame.size, DVec2::splat(10.0));
 
-    // Delete removes the picked view; the last one stays.
+    // Delete takes the picked view off the sheet, down to none; the views stay in the model.
     assert_eq!(h.state().sheet_view, 1);
     h.key_press(Key::Delete);
     h.run();
-    assert_eq!(sheet(&h).views.len(), 1);
+    assert_eq!(placed(&h, id).len(), 1);
     h.key_press(Key::Delete);
     h.run();
-    assert_eq!(sheet(&h).views.len(), 1);
+    assert!(placed(&h, id).is_empty(), "a sheet can be empty");
+    assert_eq!(h.state().editor.doc.views().count(), 2);
+    h.run();
+    assert_eq!(
+        h.state().editor.doc.sheet_scale_text(&sheet(&h)),
+        "-",
+        "no scale"
+    );
     h.state_mut().undo();
-    assert_eq!(sheet(&h).views.len(), 2);
+    h.state_mut().undo();
+    assert_eq!(placed(&h, id).len(), 2);
 }
 
 #[test]
@@ -4402,19 +4435,24 @@ fn sheets_from_before_views_open_as_they_were() {
 }"#;
     let (doc, _) = drift_io::load(text).unwrap();
     let sheet = doc.sheets().next().unwrap().1;
-    assert_eq!(sheet.views.len(), 1);
-    let v = &sheet.views[0];
+    let views = doc.placed_views(sheet);
+    assert_eq!(views.len(), 1);
+    let v = &views[0];
     assert_eq!((v.scale, v.center), (2.5, DVec2::new(60.0, 40.0)));
-    assert!(v.frame.is_none() && !v.dimensions && v.notes && !v.title);
-    assert_eq!(sheet.scale_text(), "1:2.5");
-    // Saved again, it is written as a view.
+    assert!(!v.dimensions && v.notes && !v.title);
+    // It fills the drawing area, as it did, and is named after its sheet.
+    assert_eq!(v.frame.bounds(), drift_draft::sheet::drawing_area(sheet));
+    assert_eq!(v.name, "Plate");
+    assert_eq!(doc.sheet_scale_text(sheet), "1:2.5");
+    // Saved again, it is written as a model view, placed on the sheet.
     let saved = drift_io::save(&doc, &Default::default());
     assert!(
-        saved.contains(r#""views":[{"scale":2.5,"center":[60.0,40.0],"dimensions":false}]"#),
+        saved.contains(r#""name":"Plate","scale":2.5,"center":[60.0,40.0],"size":"#),
         "{saved}"
     );
+    assert!(saved.contains(r#""viewports":[{"view":"w"#), "{saved}");
     let (again, _) = drift_io::load(&saved).unwrap();
-    assert_eq!(again.sheets().next().unwrap().1, sheet);
+    assert_eq!(again, doc);
 }
 
 #[test]
@@ -4585,7 +4623,7 @@ fn a_logo_goes_in_the_title_block() {
     let border = drift_draft::sheet::border(&page);
     let parsed = drift_draft::logo::parse(logo).unwrap();
     let mut d = drift_draft::page::Drawing::new(page.size());
-    drift_draft::sheet::draw_frame(&page, (1, 1), Some(&parsed), &mut d);
+    drift_draft::sheet::draw_frame(&page, "1:1", (1, 1), Some(&parsed), &mut d);
     let orange = d
         .items
         .iter()
@@ -4868,9 +4906,10 @@ fn a_dxf_from_a_live_project_comes_in_whole() {
     // The layout is a sheet with one view at 1:2; its title text isn't in the model.
     assert!(!words.contains(&"PLAN".to_owned()));
     let sheet = doc.sheets().next().expect("a sheet").1.clone();
-    assert_eq!(sheet.views.len(), 1);
-    assert_eq!(sheet.views[0].scale, 2.0);
-    assert_eq!(sheet.views[0].center, DVec2::new(30.0, 20.0));
+    let views = doc.placed_views(&sheet);
+    assert_eq!(views.len(), 1);
+    assert_eq!(views[0].scale, 2.0);
+    assert_eq!(views[0].center, DVec2::new(30.0, 20.0));
     // The hatch is a live fill: the app finds its area among the sketch's regions, with
     // the column as a hole, and it follows the walls.
     let fills: Vec<drift_core::FillId> = doc.fills().map(|(id, _)| id).collect();
@@ -5873,9 +5912,7 @@ fn top_bar_switches_for_dimensions_selection_and_sheet_scales() {
     let mut units = h.state().editor.doc.units();
     units.length = drift_core::LengthFormat::Architectural;
     h.state_mut().editor.set_units(units);
-    let mut sheet = drift_core::Sheet::new("A-101");
-    sheet.views[0].scale = 48.0;
-    assert_eq!(sheet.scale_text(), "1/4\" = 1'-0\"");
+    assert_eq!(drift_core::sheets::scale_text([48.0]), "1/4\" = 1'-0\"");
 }
 
 #[test]
@@ -6150,47 +6187,49 @@ fn views_line_up_on_the_sheet() {
     h.run();
     let id = h.state().current_sheet().expect("a sheet");
     // Two framed elevations at the same scale, side by side and not level.
-    let mut s = h.state().editor.doc.sheet(id).cloned().unwrap();
-    let mut a = s.views[0].clone();
-    a.frame = Some(ViewFrame {
+    let mut a = placed(&h, id)[0].clone();
+    a.frame = ViewFrame {
         at: DVec2::new(130.0, 160.0),
         size: DVec2::new(160.0, 120.0),
-    });
-    let mut b = a.clone();
-    b.name = "North".into();
-    b.center += DVec2::new(10.0, -7.0);
-    b.frame = Some(ViewFrame {
-        at: DVec2::new(320.0, 150.0),
-        size: DVec2::new(140.0, 100.0),
-    });
-    s.views = vec![a, b];
-    h.state_mut().editor.doc.begin();
-    h.state_mut().editor.doc.set_sheet(id, s);
-    h.state_mut().editor.commit("Views");
+    };
+    {
+        let ed = &mut h.state_mut().editor;
+        ed.doc.begin();
+        ed.doc.set_placed_view(id, 0, &a);
+        let mut north = ed.doc.view(a.id).unwrap().clone();
+        north.name = "North".into();
+        north.center += DVec2::new(10.0, -7.0);
+        north.size = DVec2::new(140.0, 100.0) * north.scale;
+        let north = ed.doc.add_view(north);
+        let mut s = ed.doc.sheet(id).unwrap().clone();
+        s.viewports
+            .push(drift_core::Viewport::new(north, DVec2::new(320.0, 150.0)));
+        ed.doc.set_sheet(id, s);
+        ed.commit("Views");
+    }
     h.state_mut().sheet_view = 1;
     h.state_mut().sheet_preview = true;
     h.run();
     h.run();
     let offset = |h: &Harness<'_, DriftApp>, i: usize| {
-        let s = h.state().editor.doc.sheet(id).unwrap();
-        drift_draft::sheet::view_frame(s, &s.views[i]).center()
-            - s.views[i].center / s.views[i].scale
+        let v = &placed(h, id)[i];
+        v.frame.at - v.center / v.scale
     };
     assert!(
         (offset(&h, 0).y - offset(&h, 1).y).abs() > 0.1,
         "not level yet"
     );
     // "Drawings level": the second's drawing moves to the first's height.
+    // (The Sheets tab is long: brought into sight first.)
+    h.get_by_label("Drawings level").scroll_to_me();
+    h.run();
     h.get_by_label("Drawings level").click();
     h.run();
     assert!((offset(&h, 0).y - offset(&h, 1).y).abs() < 1e-9);
     // Top: the frames' tops level; one undo step each.
     h.get_by_label("Top").click();
     h.run();
-    let top = |h: &Harness<'_, DriftApp>, i: usize| {
-        let s = h.state().editor.doc.sheet(id).unwrap();
-        drift_draft::sheet::view_frame(s, &s.views[i]).max.y
-    };
+    let top = |h: &Harness<'_, DriftApp>, i: usize| placed(h, id)[i].frame.bounds().max.y;
     assert!((top(&h, 0) - top(&h, 1)).abs() < 1e-9);
     h.state_mut().undo();
     assert!(
@@ -6200,9 +6239,8 @@ fn views_line_up_on_the_sheet() {
 
     // Dragging the second view a little off level snaps it back, with a guide.
     let mid = {
+        let f = placed(&h, id)[1].frame.bounds();
         let app = h.state();
-        let s = app.editor.doc.sheet(id).unwrap();
-        let f = drift_draft::sheet::view_frame(s, &s.views[1]);
         let r = app.canvas_rect;
         let d = (f.center() - app.preview.center) * f64::from(app.preview.zoom);
         r.center() + egui::vec2(d.x as f32, -d.y as f32)
@@ -6621,4 +6659,223 @@ fn the_import_dialog_says_what_wont_come_across_before_importing() {
     h.run_steps(3);
     assert!(h.state().pending_import.is_none());
     assert_eq!(h.state().editor.doc.underlays().count(), 1);
+}
+
+/// Press at one world point, move there in steps and let go, one frame per event.
+fn drag_world(h: &mut Harness<'_, DriftApp>, from: DVec2, to: DVec2) {
+    let (a, b) = (screen(h, from), screen(h, to));
+    h.hover_at(a);
+    h.run();
+    button(h, a, true);
+    h.run();
+    for k in 1..=5 {
+        h.hover_at(a + (b - a) * (k as f32 / 5.0));
+        h.run();
+    }
+    button(h, b, false);
+    h.run();
+}
+
+#[test]
+fn views_are_drawn_on_the_canvas_and_placed_on_sheets() {
+    use crate::app::views_ui::CropGrip;
+    use drift_core::sheets::scale_label;
+    let Some(mut h) = harness() else { return };
+    h.get_by_label("File").click();
+    h.run();
+    h.get_by_label("Open example").click();
+    h.run();
+    let near = |a: DVec2, b: DVec2| a.distance(b) < 0.01;
+
+    // The View tool: drag a crop round the plate's left half (Alt: free of snaps).
+    h.state_mut().set_tool(ToolKind::View);
+    h.run();
+    h.event(Event::ModifiersChanged(EguiModifiers::ALT));
+    drag_world(&mut h, DVec2::new(-20.0, -15.0), DVec2::new(70.0, 95.0));
+    h.event(Event::ModifiersChanged(EguiModifiers::NONE));
+    h.run();
+    let views: Vec<(drift_core::ViewId, drift_core::View)> = h
+        .state()
+        .editor
+        .doc
+        .views()
+        .map(|(id, v)| (id, v.clone()))
+        .collect();
+    assert_eq!(views.len(), 1);
+    let (id, view) = views[0].clone();
+    assert_eq!(view.name, "View 1");
+    assert!(near(view.crop().min, DVec2::new(-20.0, -15.0)), "{view:?}");
+    assert!(near(view.crop().max, DVec2::new(70.0, 95.0)), "{view:?}");
+    assert_eq!(view.scale, h.state().editor.doc.draft_style().scale);
+    // Drawn: picked, back with the select tool, its name and scale on the bar.
+    assert_eq!(h.state().picked_view, Some(id));
+    assert_eq!(h.state().tool.kind(), ToolKind::Select);
+    h.run();
+    assert!(h.query_by_label("Sheets…").is_some(), "the view's bar");
+    save_png("drift_ui_view_crop.png", &mut h);
+    // One undo step.
+    h.state_mut().undo();
+    assert_eq!(h.state().editor.doc.views().count(), 0);
+    h.state_mut().redo();
+    assert_eq!(h.state().editor.doc.view(id), Some(&view));
+    h.state_mut().picked_view = Some(id);
+    h.run();
+
+    // Its grips reframe it: the right edge out by 30.
+    let crop_grip = |h: &Harness<'_, DriftApp>, at: DVec2| {
+        let app = h.state();
+        let map = ScreenMap {
+            rect: app.canvas_rect,
+            camera: app.camera,
+        };
+        let painter = h.ctx.layer_painter(egui::LayerId::background());
+        app.crop_grip_at(&painter, &map, map.to_screen(at))
+    };
+    assert_eq!(
+        crop_grip(&h, DVec2::new(70.0, 40.0)),
+        Some((id, CropGrip::Resize(1, 0)))
+    );
+    drag_world(&mut h, DVec2::new(70.0, 40.0), DVec2::new(100.0, 40.0));
+    let crop = h.state().editor.doc.view(id).unwrap().crop();
+    assert!((crop.max.x - 100.0).abs() < 0.01 && (crop.min.x + 20.0).abs() < 0.01);
+    assert_eq!(h.state().editor.history.undo_label(), Some("Reframe view"));
+
+    // A click elsewhere lets it go; a click on its edge picks it again.
+    click_world(&mut h, DVec2::new(108.0, 90.0));
+    assert_eq!(h.state().picked_view, None);
+    assert_eq!(
+        crop_grip(&h, DVec2::new(-20.0, 40.0)),
+        Some((id, CropGrip::Move))
+    );
+    click_world(&mut h, DVec2::new(-20.0, 40.0));
+    assert_eq!(h.state().picked_view, Some(id));
+    h.key_press(Key::Escape);
+    h.run();
+    assert_eq!(h.state().picked_view, None);
+
+    // Hidden, its crop is neither drawn nor picked: on its own (Crop off), or all of them
+    // (View → View crops).
+    let mut hidden = h.state().editor.doc.view(id).unwrap().clone();
+    hidden.crop_visible = false;
+    h.state_mut().update_view(id, hidden, false);
+    assert_eq!(crop_grip(&h, DVec2::new(-20.0, 40.0)), None);
+    h.state_mut().undo();
+    assert!(crop_grip(&h, DVec2::new(-20.0, 40.0)).is_some());
+    h.state_mut().show_view_crops = false;
+    assert_eq!(crop_grip(&h, DVec2::new(-20.0, 40.0)), None);
+    assert!(h.state().view_prefs().contains("crops=0"));
+    h.state_mut().show_view_crops = true;
+
+    // On a sheet: a new sheet brings a view of its own; Place on sheet adds this one, at its
+    // scale, so its frame is its crop on the paper.
+    h.state_mut().show_panel(Panel::Sheets);
+    h.run();
+    h.get_by_label("New sheet").click();
+    h.run();
+    h.run();
+    let sheet = h.state().current_sheet().expect("a sheet");
+    assert_eq!(placed(&h, sheet).len(), 1);
+    h.state_mut().picked_view = Some(id);
+    h.run();
+    h.get_by_label("Place on sheet").scroll_to_me();
+    h.run();
+    h.get_by_label("Place on sheet").click();
+    h.run();
+    let on = placed(&h, sheet);
+    assert_eq!(on.len(), 2);
+    assert_eq!(on[1].id, id);
+    assert!(on[1].title);
+    let crop = h.state().editor.doc.view(id).unwrap().crop();
+    assert!(near(on[1].frame.size, crop.size() / on[1].scale));
+    // And on a second sheet: one view on two sheets.
+    h.state_mut().add_sheet();
+    let other = h.state().current_sheet().unwrap();
+    assert_ne!(other, sheet);
+    h.state_mut().place_view(other, id, None);
+    assert_eq!(h.state().editor.doc.sheets_showing(id), [sheet, other]);
+    h.run();
+    let row = format!("View 1\n{} · on Sheet 1, Sheet 2", scale_label(view.scale));
+    assert!(
+        h.query_by_label(&row).is_some(),
+        "the Views list says where"
+    );
+
+    // Reframed on the canvas, it changes on both sheets.
+    h.state_mut().sheet_preview = false;
+    h.state_mut().picked_view = Some(id);
+    h.run();
+    let top = DVec2::new(40.0, 95.0);
+    assert_eq!(crop_grip(&h, top), Some((id, CropGrip::Resize(0, 1))));
+    drag_world(&mut h, top, top + DVec2::new(0.0, 25.0));
+    for s in [sheet, other] {
+        let v = placed(&h, s).into_iter().find(|v| v.id == id).unwrap();
+        assert!(
+            (v.frame.size.y - 135.0 / v.scale).abs() < 0.01,
+            "taller on both sheets: {v:?}"
+        );
+    }
+
+    // Dragged from the Views list onto the sheet, a view goes where it is let go.
+    h.state_mut().active_sheet = Some(other);
+    h.state_mut().sheet_preview = true;
+    h.state_mut().preview.zoom = 0.0;
+    h.run();
+    h.run();
+    let two = h
+        .state()
+        .editor
+        .doc
+        .views()
+        .find(|(_, v)| v.name == "View 2")
+        .map(|(id, _)| id)
+        .unwrap();
+    assert!(!h.state().editor.doc.sheets_showing(two).contains(&other));
+    let rows = h.get_by_label_contains("View 2\n");
+    rows.scroll_to_me();
+    h.run();
+    let from = h.get_by_label_contains("View 2\n").rect().center();
+    let rect = h.state().canvas_rect;
+    let to = rect.center() + egui::vec2(-120.0, 60.0);
+    h.hover_at(from);
+    h.run();
+    button(&h, from, true);
+    h.run();
+    for k in 1..=8 {
+        h.hover_at(from + (to - from) * (k as f32 / 8.0));
+        h.run();
+    }
+    save_png("drift_ui_view_drop.png", &mut h);
+    button(&h, to, false);
+    h.run();
+    h.run();
+    let on = placed(&h, other);
+    let dropped = on
+        .iter()
+        .find(|v| v.id == two)
+        .expect("dropped on the sheet");
+    let app = h.state();
+    let at = app.preview.center
+        + DVec2::new(
+            f64::from(to.x - rect.center().x),
+            -f64::from(to.y - rect.center().y),
+        ) / f64::from(app.preview.zoom);
+    assert!(dropped.frame.at.distance(at) < 0.5, "{dropped:?} at {at:?}");
+    save_png("drift_ui_view_dropped.png", &mut h);
+
+    // Deleting a view on sheets asks first, then takes it off them all; undo brings it back.
+    h.state_mut().picked_view = Some(id);
+    h.run();
+    h.get_by_label("Delete view").scroll_to_me();
+    h.run();
+    h.get_by_label("Delete view").click();
+    h.run();
+    assert!(h.state().editor.doc.view(id).is_some(), "not yet");
+    assert_eq!(h.state().confirm_delete_view, Some(id));
+    h.get_by_label("Delete it").click();
+    h.run();
+    assert!(h.state().editor.doc.view(id).is_none());
+    assert!(h.state().editor.doc.sheets_showing(id).is_empty());
+    assert_eq!(placed(&h, sheet).len(), 1);
+    h.state_mut().undo();
+    assert_eq!(h.state().editor.doc.sheets_showing(id), [sheet, other]);
 }

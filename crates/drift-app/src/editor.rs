@@ -295,6 +295,8 @@ pub struct Editor {
     pub hovered_annotation: Option<drift_core::AnnotationId>,
     /// A note just placed by a tool, whose text the UI should let the user type.
     pub pending_note_edit: Option<drift_core::AnnotationId>,
+    /// A view just drawn with the View tool, for the UI to pick.
+    pub new_view: Option<drift_core::ViewId>,
     /// The group being edited (its members pick one by one).
     pub open_group: Option<drift_core::GroupId>,
     /// Picked and hovered copies of blocks.

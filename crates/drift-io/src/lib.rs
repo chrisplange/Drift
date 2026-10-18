@@ -6,7 +6,7 @@
 //! ```json
 //! {
 //!   "format": "drift",
-//!   "version": 25,
+//!   "version": 26,
 //!   "meta": {"title":"Bracket","units":"mm","generator":"Drift 0.1.0"},
 //!   "display": {"length":"architectural","fraction":16},
 //!   "variables": [
@@ -79,8 +79,10 @@ pub const EXTENSION: &str = "drift";
 /// dimension's `below` and `text`; 22 = adds a block's `fills`; 23 = adds a layer's `snap`
 /// (and layers are listed in draw order); 24 = notes have any number of `leaders` (each with a
 /// `bend` or `bulge` and a shoulder) and a text style (`align`, `wrap`, `frame`, `mask`,
-/// `bold`, `italic`, `height`); 25 = adds a sheet's `colours` (greyscale or black & white).
-pub const FORMAT_VERSION: u32 = 25;
+/// `bold`, `italic`, `height`); 25 = adds a sheet's `colours` (greyscale or black & white);
+/// 26 = views are the model's (`views`: a named crop at a scale), placed on sheets by their
+/// `viewports` (a sheet's own `views` become model views when read).
+pub const FORMAT_VERSION: u32 = 26;
 const FORMAT_TAG: &str = "drift";
 
 /// Document-level properties stored alongside the geometry.
@@ -116,10 +118,15 @@ pub enum LoadError {
     UnsupportedVersion(u32),
     UnsupportedUnits(String),
     BadId(String),
-    MissingField { id: String, field: &'static str },
+    MissingField {
+        id: String,
+        field: &'static str,
+    },
     UnknownConstraint(String),
     DuplicateId(String),
     NonFinite(String),
+    /// A sheet places a view the file doesn't have.
+    UnknownView(String),
     Document(DocumentError),
 }
 
@@ -139,6 +146,9 @@ impl std::fmt::Display for LoadError {
             LoadError::UnknownConstraint(kind) => write!(f, "unknown constraint type \"{kind}\""),
             LoadError::DuplicateId(id) => write!(f, "duplicate entity id \"{id}\""),
             LoadError::NonFinite(id) => write!(f, "entity {id} has a non-finite value"),
+            LoadError::UnknownView(id) => {
+                write!(f, "a sheet places view \"{id}\", which is missing")
+            }
             LoadError::Document(e) => write!(f, "invalid geometry: {e}"),
         }
     }
@@ -803,6 +813,8 @@ struct FileRecord {
     #[serde(default)]
     fonts: Option<fonts::FontsRecord>,
     #[serde(default)]
+    views: Vec<sheets::ViewRecord>,
+    #[serde(default)]
     sheets: Vec<sheets::SheetRecord>,
     #[serde(default)]
     groups: Vec<GroupRecord>,
@@ -1079,6 +1091,10 @@ pub fn save(doc: &Document, meta: &Metadata) -> String {
             serde_json::to_string(&drafting::shown_record(r, s)).expect("shown serializes")
         })
         .collect();
+    let views: Vec<String> = doc
+        .views()
+        .map(|(id, v)| serde_json::to_string(&sheets::view_record(id, v)).expect("view serializes"))
+        .collect();
     let sheets: Vec<String> = doc
         .sheets()
         .map(|(id, s)| {
@@ -1124,6 +1140,7 @@ pub fn save(doc: &Document, meta: &Metadata) -> String {
         ("fills", &fills),
         ("annotations", &annotations),
         ("shown", &shown),
+        ("views", &views),
         ("sheets", &sheets),
         ("groups", &groups),
         ("blocks", &block_lines),
@@ -1549,11 +1566,43 @@ pub fn load_with_notes(text: &str) -> Result<(Document, Metadata, Vec<String>), 
         )
         .map_err(LoadError::Document)?;
     }
+    for r in file.views {
+        let id_text = r.id.clone();
+        let (id, view) = sheets::parse_view(r)?;
+        if doc.view(id).is_some() {
+            return Err(LoadError::DuplicateId(id_text));
+        }
+        doc.insert_view(id, view);
+    }
+    let mut old_views = Vec::new();
     for r in file.sheets {
         let id_text = r.id.clone();
-        let (id, sheet) = sheets::parse_sheet(r)?;
+        let (id, sheet, old) = sheets::parse_sheet(r)?;
         if doc.sheet(id).is_some() {
             return Err(LoadError::DuplicateId(id_text));
+        }
+        if let Some(p) = sheet.viewports.iter().find(|p| doc.view(p.view).is_none()) {
+            return Err(LoadError::UnknownView(p.view.to_string()));
+        }
+        doc.insert_sheet(id, sheet);
+        old_views.push((id, old));
+    }
+    // Before v26 a sheet held its views itself: each becomes a model view of its own (never
+    // merged, so every sheet prints as it did), named after its title or its sheet.
+    for (id, old) in old_views {
+        let Some(mut sheet) = doc.sheet(id).filter(|_| !old.is_empty()).cloned() else {
+            continue;
+        };
+        let several = old.len() > 1;
+        for (i, v) in old.iter().enumerate() {
+            let name = match v.name.trim() {
+                "" if several => format!("{} view {}", sheet.name, i + 1),
+                "" => sheet.name.clone(),
+                n => n.to_owned(),
+            };
+            let (view, mut port) = v.upgrade(&sheet, name);
+            port.view = doc.add_view(view);
+            sheet.viewports.push(port);
         }
         doc.insert_sheet(id, sheet);
     }
@@ -1647,8 +1696,8 @@ pub fn migrate(value: serde_json::Value) -> Result<serde_json::Value, LoadError>
         // v1 → v2: constraints were introduced; a v1 file simply has none.
         value["constraints"] = serde_json::Value::Array(Vec::new());
     }
-    // v2 → v24 only added optional fields, sections and constraint types: nothing to convert
-    // (a sheet's single view from before v18 is read as it was written).
+    // v2 → v25 only added optional fields, sections and constraint types: nothing to convert
+    // here (a sheet's own views, from before v26, are made model views as the file is read).
     value["version"] = FORMAT_VERSION.into();
     Ok(value)
 }
@@ -1718,7 +1767,7 @@ mod tests {
         let text = save(&doc, &Metadata::default());
         let expected = r#"{
   "format": "drift",
-  "version": 25,
+  "version": 26,
   "meta": {"units":"mm"},
   "entities": [
     {"type":"point","id":"e1","at":[0.0,0.0]},
@@ -2066,6 +2115,101 @@ mod tests {
     }
 
     #[test]
+    fn a_sheets_own_views_become_model_views() {
+        use drift_core::{Bounds, ViewFrame};
+        // v25: a sheet with a view filling its drawing area and a framed, titled detail; a
+        // second sheet whose one view has no name.
+        let v25 = r#"{
+  "format": "drift",
+  "version": 25,
+  "meta": {"units":"mm"},
+  "entities": [],
+  "sheets": [
+    {"id":"s1","name":"A-101","paper":"A3","views":[
+      {"scale":50.0,"center":[1000.0,2000.0],"notes":false},
+      {"name":"Detail A","scale":5.0,"center":[10.0,20.0],"at":[300.0,200.0],"size":[80.0,60.0],"title":true,"border":true}
+    ],"title_block":"iso"},
+    {"id":"s2","name":"A-102","paper":"A4","portrait":true,"views":[{"scale":2.0,"center":[0.0,0.0]}],"title_block":"modern"}
+  ]
+}"#;
+        let (doc, _) = load(v25).unwrap();
+        assert_eq!(doc.views().count(), 3, "one model view per sheet view");
+        let sheets: Vec<_> = doc.sheets().map(|(_, s)| s.clone()).collect();
+        let plan = doc.placed_views(&sheets[0]);
+        assert_eq!(plan.len(), 2);
+        // The view that filled the sheet is cropped to the drawing area, centred where it was.
+        let area = drift_draft::sheet::drawing_area(&sheets[0]);
+        assert_eq!(plan[0].name, "A-101 view 1");
+        assert_eq!(
+            plan[0].frame,
+            ViewFrame {
+                at: area.center(),
+                size: area.size()
+            }
+        );
+        assert_eq!(
+            (plan[0].scale, plan[0].center),
+            (50.0, DVec2::new(1000.0, 2000.0))
+        );
+        assert!(plan[0].dimensions && !plan[0].notes);
+        let crop = doc.view(plan[0].id).unwrap().crop();
+        assert!((crop.size() - area.size() * 50.0).abs().max_element() < 1e-9);
+        // The framed detail keeps its place, size and labels.
+        assert_eq!(plan[1].name, "Detail A");
+        assert_eq!(
+            plan[1].frame,
+            ViewFrame {
+                at: DVec2::new(300.0, 200.0),
+                size: DVec2::new(80.0, 60.0)
+            }
+        );
+        assert!(plan[1].title && plan[1].border);
+        assert_eq!(
+            doc.view(plan[1].id).unwrap().crop(),
+            Bounds {
+                min: DVec2::new(-190.0, -130.0),
+                max: DVec2::new(210.0, 170.0)
+            }
+        );
+        // An unnamed view alone on its sheet is named after the sheet.
+        let other = doc.placed_views(&sheets[1]);
+        assert_eq!(other.len(), 1);
+        assert_eq!(other[0].name, "A-102");
+        // Saved, it is written the new way and reads back the same.
+        let text = save(&doc, &Metadata::default());
+        assert!(!text.contains(r#""at":[300.0,200.0],"size""#), "{text}");
+        let (again, _) = load(&text).unwrap();
+        assert_eq!(again, doc);
+
+        // Before v18 a sheet had one view, in its own fields.
+        let v17 = r#"{"format":"drift","version":17,"meta":{"units":"mm"},"entities":[],
+            "sheets":[{"id":"s1","name":"Old","paper":"A3","scale":10.0,"center":[5.0,5.0],
+            "dimensions":false,"title_block":"none"}]}"#;
+        let (old, _) = load(v17).unwrap();
+        let sheet = old.sheets().next().unwrap().1.clone();
+        let views = old.placed_views(&sheet);
+        assert_eq!(views.len(), 1);
+        assert_eq!(
+            (views[0].scale, views[0].center),
+            (10.0, DVec2::new(5.0, 5.0))
+        );
+        assert!(!views[0].dimensions && views[0].notes);
+        assert_eq!(
+            views[0].frame.bounds(),
+            drift_draft::sheet::drawing_area(&sheet)
+        );
+
+        // A sheet placing a view the file doesn't have is refused.
+        let dangling = r#"{"format":"drift","version":26,"meta":{"units":"mm"},"entities":[],
+            "sheets":[{"id":"s1","name":"S","paper":"A3","viewports":[{"view":"w9","at":[0.0,0.0]}],
+            "title_block":"none"}]}"#;
+        assert!(matches!(load(dangling), Err(LoadError::UnknownView(_))));
+        let flat = r#"{"format":"drift","version":26,"meta":{"units":"mm"},"entities":[],
+            "views":[{"id":"w1","scale":1.0,"center":[0.0,0.0],"size":[0.0,10.0]}]}"#;
+        assert!(load(flat).is_err(), "a crop with no width");
+    }
+
+    #[test]
     fn sheet_colours_round_trip_and_default_to_colour() {
         use drift_core::{Sheet, SheetColours};
         let mut doc = Document::new();
@@ -2325,17 +2469,26 @@ mod tests {
         let mut sheet = drift_core::Sheet::new("Plate");
         sheet.paper = drift_core::PaperSize::Custom(500.0, 350.0);
         sheet.portrait = true;
-        sheet.views[0].scale = 2.5;
-        sheet.views[0].center = DVec2::new(60.0, 40.0);
-        let mut detail_view = drift_core::SheetView::new(0.5, DVec2::new(12.0, 8.0));
-        detail_view.name = "Detail A".into();
-        detail_view.frame = Some(drift_core::ViewFrame {
-            at: DVec2::new(400.0, 250.0),
-            size: DVec2::new(120.0, 90.0),
-        });
-        detail_view.title = true;
-        detail_view.border = true;
-        sheet.views.push(detail_view);
+        let crop = |min: [f64; 2], max: [f64; 2]| drift_core::Bounds {
+            min: DVec2::from_array(min),
+            max: DVec2::from_array(max),
+        };
+        let plan = doc.add_view(drift_core::View::new(
+            "Plan",
+            crop([-200.0, -300.0], [320.0, 380.0]),
+            2.5,
+        ));
+        let mut detail_view =
+            drift_core::View::new("Detail A", crop([-18.0, -14.5], [42.0, 30.5]), 0.5);
+        detail_view.crop_visible = false;
+        let detail_id = doc.add_view(detail_view);
+        sheet
+            .viewports
+            .push(drift_core::Viewport::new(plan, DVec2::new(180.0, 250.0)));
+        let mut port = drift_core::Viewport::new(detail_id, DVec2::new(400.0, 250.0));
+        port.title = true;
+        port.border = true;
+        sheet.viewports.push(port);
         sheet.title_block = drift_core::TitleBlock::Ansi;
         sheet.colours = drift_core::SheetColours::BlackWhite;
         sheet.fields.title = "Mounting plate".into();
@@ -2349,9 +2502,25 @@ mod tests {
         doc.add_sheet(sheet);
         let mut detail = drift_core::Sheet::new("Detail");
         detail.colours = drift_core::SheetColours::Greyscale;
-        detail.views[0].dimensions = false;
-        detail.views[0].notes = false;
+        let mut bare = drift_core::View::new("Bare", crop([0.0, 0.0], [100.0, 50.0]), 1.0);
+        bare.dimensions = false;
+        bare.notes = false;
+        let bare = doc.add_view(bare);
+        detail
+            .viewports
+            .push(drift_core::Viewport::new(bare, DVec2::new(100.0, 100.0)));
+        // A view can be on several sheets.
+        detail.viewports.push(drift_core::Viewport::new(
+            detail_id,
+            DVec2::new(300.0, 150.0),
+        ));
         doc.add_sheet(detail);
+        // And on none.
+        doc.add_view(drift_core::View::new(
+            "Key plan",
+            crop([0.0, 0.0], [10.0, 10.0]),
+            200.0,
+        ));
         let chair = doc.add_block(drift_core::Block {
             name: "Chair".into(),
             fills: vec![drift_core::Fill::new(
@@ -2469,7 +2638,10 @@ mod tests {
         doc.add_text(drift_core::SketchText::new("A", DVec2::ZERO, 3.0));
 
         let text = save(&doc, &Metadata::default());
-        assert!(text.contains("\"version\": 25"));
+        assert!(text.contains("\"version\": 26"));
+        // Views are the model's; sheets place them.
+        assert!(text.contains(r#""views": ["#) && text.contains(r#""crop":false"#));
+        assert!(text.contains(r#""viewports":[{"view":"w"#), "{text}");
         assert!(
             text.contains(r#"{"a":[80.0,20.0,30.0,0.0,90.0]}"#),
             "{text}"
@@ -2487,6 +2659,7 @@ mod tests {
             "annotations",
             "\"tol\"",
             "sheets",
+            "views",
             "groups",
             "blocks",
             "instances",

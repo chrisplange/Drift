@@ -37,6 +37,7 @@ mod tests;
 mod text;
 mod three_point_arc;
 mod underlay;
+pub(crate) mod view;
 
 pub use self::{
     annotate::{CalloutTool, CentreMarkTool, ElevationTool, NoteTool, OrdinateTool, SectionTool},
@@ -50,6 +51,7 @@ pub use self::{
     slot::{SlotMode, SlotTool},
     text::TextTool,
     underlay::{UnderlayMode, UnderlayTool},
+    view::ViewTool,
 };
 pub use self::{
     arc::ArcTool, circle::CircleTool, dimension::DimensionTool, ellipse::EllipseTool,
@@ -182,6 +184,8 @@ pub enum ToolKind {
     Section,
     /// An elevation's flag.
     Elevation,
+    /// A view of the model: its crop.
+    View,
     Fill,
     Trim,
     Extend,
@@ -197,7 +201,7 @@ pub enum ToolKind {
 }
 
 impl ToolKind {
-    pub const ALL: [ToolKind; 30] = [
+    pub const ALL: [ToolKind; 31] = [
         ToolKind::Select,
         ToolKind::Line,
         ToolKind::Pen,
@@ -220,6 +224,7 @@ impl ToolKind {
         ToolKind::CentreMark,
         ToolKind::Section,
         ToolKind::Elevation,
+        ToolKind::View,
         ToolKind::Fill,
         ToolKind::Trim,
         ToolKind::Extend,
@@ -262,6 +267,7 @@ impl ToolKind {
                 ToolKind::CentreMark,
                 ToolKind::Section,
                 ToolKind::Elevation,
+                ToolKind::View,
                 ToolKind::Fill,
             ],
         ),
@@ -328,6 +334,7 @@ impl ToolKind {
             ToolKind::CentreMark => "Centre mark",
             ToolKind::Section => "Section mark",
             ToolKind::Elevation => "Elevation mark",
+            ToolKind::View => "View",
             ToolKind::Trim => "Trim",
             ToolKind::Extend => "Extend",
             ToolKind::Split => "Split",
@@ -370,6 +377,7 @@ impl ToolKind {
             ToolKind::CentreMark => "Centre marks on circles; centre lines between features",
             ToolKind::Section => "A section's cutting line, with a lettered flag at each end",
             ToolKind::Elevation => "A numbered flag pointing the way an elevation looks",
+            ToolKind::View => "Drag a crop of the model: a named view at a scale, for sheets",
             ToolKind::Trim => "Remove a piece up to the curves that cut it; drag to trim several",
             ToolKind::Extend => "Lengthen a line or arc to the next curve",
             ToolKind::Split => "Cut a curve in two at a point (a circle or ellipse into halves)",
@@ -419,6 +427,7 @@ impl ToolKind {
             ToolKind::Split
             | ToolKind::Section
             | ToolKind::Elevation
+            | ToolKind::View
             | ToolKind::Ordinate
             | ToolKind::Callout
             | ToolKind::CentreMark
@@ -453,6 +462,7 @@ impl ToolKind {
             ToolKind::CentreMark => Box::<CentreMarkTool>::default(),
             ToolKind::Section => Box::<SectionTool>::default(),
             ToolKind::Elevation => Box::<ElevationTool>::default(),
+            ToolKind::View => Box::<ViewTool>::default(),
             ToolKind::Trim => Box::<TrimTool>::default(),
             ToolKind::Extend => Box::<ExtendTool>::default(),
             ToolKind::Split => Box::<SplitTool>::default(),

@@ -31,7 +31,7 @@ const features: { img?: string; visual?: "ai"; title: string; text: string }[] =
   {
     img: "view-crops",
     title: "Views on the canvas",
-    text: "Crop named views of the model right on the canvas, Revit-style, and place them on sheets. Each view picks its own layers, and section and elevation marks link to the views they cut.",
+    text: "Crop named views of the model right on the canvas, Revit-style, and place them on sheets. Each view picks its layers and its own dimensions and notes; section and elevation marks link to the views they cut.",
   },
   {
     img: "fills",
@@ -56,36 +56,36 @@ const features: { img?: string; visual?: "ai"; title: string; text: string }[] =
   {
     visual: "ai",
     title: "Draw with AI",
-    text: "drift-mcp lets Claude and other MCP assistants sketch, constrain, dimension, render and analyse Drift drawings, as real geometry you can keep editing.",
+    text: "drift-mcp lets Claude and other MCP assistants sketch, constrain, dimension, render and analyse Drift drawings: live, in the drawing you have open, or from a short Drift script.",
   },
 ];
 
-// What the next release brings: the front page's "What's new" section.
-const news = [
+// What the next release (site.nextRelease) brings: the front page's "What's new" section.
+const news: { title: string; text: string; href?: string }[] = [
   {
-    title: "Views on the canvas",
-    text: "Named crops of the model, drawn on the canvas and placed on sheets. Each view chooses its layers; section and elevation marks link to their views and number themselves.",
-  },
-  {
-    title: "Draw with AI",
-    text: "drift-mcp, an MCP server, lets Claude and other assistants sketch, constrain, dimension, render and analyse Drift drawings.",
+    title: "Assistants in your open drawing",
+    text: "Turn on the live link and Claude and other MCP assistants work on the drawing open in Drift. Watch each change as it happens, undo it, or keep drawing yourself.",
     href: `${site.repoUrl}/blob/main/docs/ai.md`,
   },
   {
-    title: "A fresh new look",
-    text: "A quieter, more consistent interface: a new theme, panels, menus, dialogs and canvas overlays.",
+    title: "Drift script",
+    text: "Describe a drawing by intent: rooms, walls, doors, windows, grids and hatches, by name. Drift builds it in one step you can undo.",
   },
   {
-    title: "Sheets that flow",
-    text: "Canvas tabs for every sheet, Add view, sheet numbers, reordering and duplicating, and a choice of which sheets go into a PDF.",
+    title: "Notes for some views only",
+    text: "Dimensions and notes can appear in just the views they belong to, like a note meant only for a detail, as in Revit.",
   },
   {
-    title: "Colour, greyscale or black & white",
-    text: "Each sheet prints the way you choose, and the preview shows it.",
+    title: "Project title blocks",
+    text: "Set the project's name, number, client and address once, and every sheet's title block shows them, with an architectural layout and a status for each sheet.",
   },
   {
-    title: "Fills that hold on",
-    text: "Fills and hatches stay on their outlines through fillets, splits, drags and every other edit.",
+    title: "Steadier fillets",
+    text: "Sketches with filleted corners keep their shape while you drag them.",
+  },
+  {
+    title: "Crops at a keystroke",
+    text: "Shift+Alt+B shows or hides view crops, and crops snap while you drag them.",
   },
 ];
 ---
@@ -163,9 +163,7 @@ const news = [
       <h2>What's <em>new</em> in {next.name}</h2>
       <p class="lede">
         {
-          nextIsOut
-            ? "The first beta of Drift. Here's what's in it."
-            : "The first beta of Drift is on its way. Here's what it brings."
+          nextIsOut ? `${next.name} is here. Here's what's new.` : `${next.name} is on its way. Here's what it brings.`
         }
       </p>
       <ul class="news-list">
@@ -178,10 +176,6 @@ const news = [
           ))
         }
       </ul>
-      <p class="news-also">
-        Also: no more flash when Drift starts maximised, licence notices for the fonts and
-        libraries it's built with, and <a href="/licence/">a new licence</a> from this release on.
-      </p>
       <p class="news-links">
         {nextIsOut && <a class="btn btn-primary" href="/download/">Get {next.name}</a>}
         <a href="/releases/">All release notes →</a>
@@ -407,11 +401,6 @@ const news = [
   }
   .news-list p {
     margin: 0;
-    color: var(--text-weak);
-    font-size: 0.95rem;
-  }
-  .news-also {
-    margin: 20px 0 0;
     color: var(--text-weak);
     font-size: 0.95rem;
   }

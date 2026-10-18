@@ -46,7 +46,7 @@ fn mark_fields(ui: &mut egui::Ui, label: &mut String, sheet: &mut String, exampl
     theme::row(ui, "On sheet", |ui| {
         ui.add(
             egui::TextEdit::singleline(sheet)
-                .hint_text("A-201, 02…")
+                .hint_text("e.g. A-201")
                 .desired_width(ui.available_width() - 8.0),
         )
         .on_hover_text("The sheet the view is drawn on: written in the lower half of the flag");
@@ -424,15 +424,16 @@ impl DriftApp {
     }
 
     pub(crate) fn paint_notes(&self, painter: &egui::Painter, layouts: &[NoteLayout], dark: bool) {
-        let draft = self.editor.doc.draft_style();
-        let colors = AnnotationColors::drafting(dark, draft.color);
-        let faded = colors.faded();
-        let style = annotations::DimStyle::of(&draft);
         for l in layouts {
             if self.note_edit.as_ref().is_some_and(|e| e.id == l.id) {
                 continue;
             }
             let r = drift_core::AnnotationRef::Annotation(l.id);
+            // Each in its own style: the drawing's, with its own settings in place.
+            let draft = self.editor.doc.draft_style_for(r);
+            let colors = AnnotationColors::drafting(dark, draft.color);
+            let faded = colors.faded();
+            let style = annotations::DimStyle::of(&draft);
             let state = if self.annotation_picked(r) || self.note_drag.is_some_and(|d| d.0 == l.id)
             {
                 AnnotationState::Selected
@@ -690,7 +691,16 @@ impl DriftApp {
             self.editor.selected_annotation = None;
             return false;
         };
-        crate::app::panels::title(ui, Some(ToolKind::Note), a.type_name(), "");
+        // The icon of the tool that makes it.
+        let tool = match a {
+            Annotation::Note { .. } => ToolKind::Note,
+            Annotation::CentreMark { .. } | Annotation::Centreline { .. } => ToolKind::CentreMark,
+            Annotation::HoleCallout { .. } | Annotation::ChamferCallout { .. } => ToolKind::Callout,
+            Annotation::Ordinate { .. } => ToolKind::Ordinate,
+            Annotation::Section { .. } => ToolKind::Section,
+            Annotation::Elevation { .. } => ToolKind::Elevation,
+        };
+        crate::app::panels::title(ui, Some(tool), a.type_name(), "");
         let mut edited = a.clone();
         match &mut edited {
             Annotation::Note {
@@ -908,7 +918,7 @@ impl DriftApp {
             } => {
                 theme::section(ui, "Mark");
                 mark_fields(ui, label, sheet, "A");
-                theme::row(ui, "Looks", |ui| {
+                theme::row(ui, "Direction", |ui| {
                     if ui
                         .button("Flip")
                         .on_hover_text("Look the other way across the cutting line")
@@ -934,7 +944,7 @@ impl DriftApp {
             } => {
                 theme::section(ui, "Mark");
                 mark_fields(ui, label, sheet, "1");
-                theme::row(ui, "Looks", |ui| {
+                theme::row(ui, "Facing", |ui| {
                     ui.add(
                         egui::DragValue::new(angle)
                             .speed(1.0)
@@ -956,16 +966,9 @@ impl DriftApp {
             self.editor.commit("Edit note");
         }
         self.visibility_section(ui);
+        self.style_section(ui);
         ui.add_space(10.0);
-        if ui
-            .add_sized(
-                [ui.available_width(), 26.0],
-                egui::Button::new(
-                    egui::RichText::new("Delete").color(egui::Color32::from_rgb(0xff, 0x5d, 0x5d)),
-                ),
-            )
-            .clicked()
-        {
+        if theme::danger_button(ui, "Delete").clicked() {
             self.editor.delete_selection();
         }
         true

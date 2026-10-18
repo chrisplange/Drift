@@ -19,7 +19,7 @@ Snapshots aren't saved in the file.
 
 ## Versions
 
-The file records a format version. This build writes version 26, in which views belong to
+The file records a format version. This build writes version 27, in which views belong to
 the drawing and sheets place them. A file from before that opens with each of its sheets'
 views made a view of its own.
 

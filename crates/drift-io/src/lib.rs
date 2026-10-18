@@ -6,7 +6,7 @@
 //! ```json
 //! {
 //!   "format": "drift",
-//!   "version": 26,
+//!   "version": 27,
 //!   "meta": {"title":"Bracket","units":"mm","generator":"Drift 0.1.0"},
 //!   "display": {"length":"architectural","fraction":16},
 //!   "variables": [
@@ -80,9 +80,10 @@ pub const EXTENSION: &str = "drift";
 /// (and layers are listed in draw order); 24 = notes have any number of `leaders` (each with a
 /// `bend` or `bulge` and a shoulder) and a text style (`align`, `wrap`, `frame`, `mask`,
 /// `bold`, `italic`, `height`); 25 = adds a sheet's `colours` (greyscale or black & white);
-/// 26 = views are the model's (`views`: a named crop at a scale), placed on sheets by their
+/// 26 = adds `styles` (a dimension's or annotation's own settings over the drafting style);
+/// 27 = views are the model's (`views`: a named crop at a scale), placed on sheets by their
 /// `viewports` (a sheet's own `views` become model views when read).
-pub const FORMAT_VERSION: u32 = 26;
+pub const FORMAT_VERSION: u32 = 27;
 const FORMAT_TAG: &str = "drift";
 
 /// Document-level properties stored alongside the geometry.
@@ -803,6 +804,9 @@ struct FileRecord {
     /// Dimensions and annotations not shown everywhere.
     #[serde(default)]
     shown: Vec<drafting::ShownRecord>,
+    /// Dimensions and annotations with settings of their own over the drafting style.
+    #[serde(default)]
+    styles: Vec<drafting::StyleRecord>,
     /// Imported hatch patterns, as `.pat` text.
     #[serde(default)]
     patterns: Option<String>,
@@ -1091,6 +1095,12 @@ pub fn save(doc: &Document, meta: &Metadata) -> String {
             serde_json::to_string(&drafting::shown_record(r, s)).expect("shown serializes")
         })
         .collect();
+    let styles: Vec<String> = doc
+        .style_overrides()
+        .map(|(r, s)| {
+            serde_json::to_string(&drafting::override_record(r, &s)).expect("style serializes")
+        })
+        .collect();
     let views: Vec<String> = doc
         .views()
         .map(|(id, v)| serde_json::to_string(&sheets::view_record(id, v)).expect("view serializes"))
@@ -1140,6 +1150,7 @@ pub fn save(doc: &Document, meta: &Metadata) -> String {
         ("fills", &fills),
         ("annotations", &annotations),
         ("shown", &shown),
+        ("styles", &styles),
         ("views", &views),
         ("sheets", &sheets),
         ("groups", &groups),
@@ -1502,6 +1513,10 @@ pub fn load_with_notes(text: &str) -> Result<(Document, Metadata, Vec<String>), 
         let (of, shown) = drafting::parse_shown(r)?;
         doc.set_shown(of, shown);
     }
+    for r in file.styles {
+        let (of, style) = drafting::parse_override(r)?;
+        doc.set_style_override(of, style);
+    }
     if let Some(p) = file.patterns {
         doc.set_custom_patterns(p);
     }
@@ -1587,7 +1602,7 @@ pub fn load_with_notes(text: &str) -> Result<(Document, Metadata, Vec<String>), 
         doc.insert_sheet(id, sheet);
         old_views.push((id, old));
     }
-    // Before v26 a sheet held its views itself: each becomes a model view of its own (never
+    // Before v27 a sheet held its views itself: each becomes a model view of its own (never
     // merged, so every sheet prints as it did), named after its title or its sheet.
     for (id, old) in old_views {
         let Some(mut sheet) = doc.sheet(id).filter(|_| !old.is_empty()).cloned() else {
@@ -1696,8 +1711,8 @@ pub fn migrate(value: serde_json::Value) -> Result<serde_json::Value, LoadError>
         // v1 → v2: constraints were introduced; a v1 file simply has none.
         value["constraints"] = serde_json::Value::Array(Vec::new());
     }
-    // v2 → v25 only added optional fields, sections and constraint types: nothing to convert
-    // here (a sheet's own views, from before v26, are made model views as the file is read).
+    // v2 → v26 only added optional fields, sections and constraint types: nothing to convert
+    // here (a sheet's own views, from before v27, are made model views as the file is read).
     value["version"] = FORMAT_VERSION.into();
     Ok(value)
 }
@@ -1767,7 +1782,7 @@ mod tests {
         let text = save(&doc, &Metadata::default());
         let expected = r#"{
   "format": "drift",
-  "version": 26,
+  "version": 27,
   "meta": {"units":"mm"},
   "entities": [
     {"type":"point","id":"e1","at":[0.0,0.0]},
@@ -2462,6 +2477,19 @@ mod tests {
         style.scale = 50.0;
         style.color = Some(drift_core::Rgb([0x20, 0xa0, 0xff]));
         doc.set_draft_style(style);
+        // One dimension with settings of its own: bigger text, open arrows, no dual units
+        // (though the drawing has them) and its own colour.
+        doc.set_style_override(
+            drift_core::AnnotationRef::Dimension(dims[2]),
+            drift_core::StyleOverride {
+                text_height: Some(5.0),
+                arrow: Some(ArrowStyle::Open),
+                leading_zero: Some(false),
+                alt_units: Some(None),
+                color: Some(Some(drift_core::Rgb([0xc0, 0x30, 0x30]))),
+                ..Default::default()
+            },
+        );
         doc.set_custom_patterns("*MINE, Mine\n0, 0,0, 0,2\n".into());
         doc.set_logo(
             r##"<svg viewBox="0 0 4 2"><rect width="4" height="2" fill="#f60"/></svg>"##.into(),
@@ -2638,7 +2666,8 @@ mod tests {
         doc.add_text(drift_core::SketchText::new("A", DVec2::ZERO, 3.0));
 
         let text = save(&doc, &Metadata::default());
-        assert!(text.contains("\"version\": 26"));
+        assert!(text.contains("\"version\": 27"));
+        assert!(text.contains(r#""styles": ["#) && text.contains(r#""alt_units":"none""#));
         // Views are the model's; sheets place them.
         assert!(text.contains(r#""views": ["#) && text.contains(r#""crop":false"#));
         assert!(text.contains(r#""viewports":[{"view":"w"#), "{text}");

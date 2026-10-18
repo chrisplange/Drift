@@ -409,15 +409,15 @@ impl DriftApp {
         let mut open = true;
         let mut close = false;
         let mut check = false;
-        egui::Window::new(format!("Import: {}", report.title))
+        let title = format!("Imported {}", report.title);
+        theme::dialog(ctx, &title)
             .id(egui::Id::new("import_report"))
             .open(&mut open)
-            .resizable(false)
-            .collapsible(false)
-            .pivot(egui::Align2::CENTER_CENTER)
-            .default_pos(ctx.content_rect().center())
             .show(ctx, |ui| {
                 ui.set_width(420.0);
+                if theme::dialog_title(ui, &title, true) {
+                    close = true;
+                }
                 ui.label(&report.summary);
                 if !report.skipped.is_empty() {
                     theme::section(ui, "Left out");
@@ -439,8 +439,7 @@ impl DriftApp {
                         });
                     }
                 }
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
+                theme::dialog_buttons(ui, |ui| {
                     if ui.button("Close").clicked() {
                         close = true;
                     }
@@ -504,13 +503,7 @@ impl DriftApp {
             );
         }
         for (id, name) in &sheets {
-            if ui
-                .add_sized(
-                    [ui.available_width(), 24.0],
-                    egui::Button::selectable(current == Some(*id), name),
-                )
-                .clicked()
-            {
+            if theme::list_row(ui, current == Some(*id), name).clicked() {
                 self.active_sheet = Some(*id);
             }
         }
@@ -693,16 +686,7 @@ impl DriftApp {
         theme::section(ui, "Output");
         self.output_buttons(ui);
         ui.add_space(10.0);
-        if ui
-            .add_sized(
-                [ui.available_width(), 26.0],
-                egui::Button::new(
-                    egui::RichText::new("Delete sheet")
-                        .color(egui::Color32::from_rgb(0xff, 0x5d, 0x5d)),
-                ),
-            )
-            .clicked()
-        {
+        if theme::danger_button(ui, "Delete sheet").clicked() {
             self.editor.doc.begin();
             self.editor.doc.remove_sheet(id);
             self.editor.commit("Delete sheet");
@@ -847,8 +831,7 @@ impl DriftApp {
         self.paint_drop_ghost(ui, &response, rect, &views);
         // What this is, and how to leave.
         let info = format!(
-            "{} · {} {} · {}  —  drag a view to move it (Alt: the drawing inside it) · Esc \
-             returns to the model",
+            "{} · {} {} · {}",
             sheet.name,
             sheet.paper.label(),
             if sheet.portrait {
@@ -1525,17 +1508,23 @@ impl DriftApp {
                     )
                     .clicked();
             });
+            // Four switches in two even columns.
             theme::row(ui, "Show", |ui| {
-                ui.checkbox(&mut view.dimensions, "Dimensions")
-                    .on_hover_text("Dimensions and ordinates, in this view");
-                ui.checkbox(&mut view.notes, "Notes")
-                    .on_hover_text("Notes and callouts, in this view");
-            });
-            theme::row(ui, "", |ui| {
-                ui.checkbox(&mut view.title, "Title")
-                    .on_hover_text("Its title and scale, written under it");
-                ui.checkbox(&mut view.border, "Border")
-                    .on_hover_text("Print the frame's outline");
+                egui::Grid::new("view_show")
+                    .num_columns(2)
+                    .spacing([16.0, 4.0])
+                    .show(ui, |ui| {
+                        ui.checkbox(&mut view.dimensions, "Dimensions")
+                            .on_hover_text("Dimensions and ordinates, in this view");
+                        ui.checkbox(&mut view.notes, "Notes")
+                            .on_hover_text("Notes and callouts, in this view");
+                        ui.end_row();
+                        ui.checkbox(&mut view.title, "Title")
+                            .on_hover_text("Its title and scale, written under it");
+                        ui.checkbox(&mut view.border, "Border")
+                            .on_hover_text("Print the frame's outline");
+                        ui.end_row();
+                    });
             });
             if fit {
                 crate::output::fit_view(bounds, &mut view, imperial);

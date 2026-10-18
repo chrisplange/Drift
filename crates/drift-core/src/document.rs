@@ -326,6 +326,7 @@ enum Key {
     Annotation(AnnotationId),
     DimNote(ConstraintId),
     Shown(crate::AnnotationRef),
+    Style(crate::AnnotationRef),
     Draft,
     Patterns,
     Logo,
@@ -356,6 +357,7 @@ enum Record {
     Annotation(Annotation),
     DimNote(DimNote),
     Shown(crate::Shown),
+    Style(crate::StyleOverride),
     Draft(DraftStyle),
     Patterns(String),
     Logo(String),
@@ -410,6 +412,8 @@ pub struct Document {
     dim_notes: BTreeMap<ConstraintId, DimNote>,
     /// Dimensions and annotations not shown everywhere (the rest are).
     shown: BTreeMap<crate::AnnotationRef, crate::Shown>,
+    /// Dimensions and annotations with settings of their own over the drawing's style.
+    styles: BTreeMap<crate::AnnotationRef, crate::StyleOverride>,
     draft: DraftStyle,
     /// Hatch patterns imported from `.pat` files, as `.pat` text, so they travel with the file.
     patterns: String,
@@ -457,6 +461,7 @@ impl PartialEq for Document {
             && self.annotations == other.annotations
             && self.dim_notes == other.dim_notes
             && self.shown == other.shown
+            && self.styles == other.styles
             && self.draft == other.draft
             && self.patterns == other.patterns
             && self.logo == other.logo
@@ -489,6 +494,7 @@ impl Default for Document {
             annotations: BTreeMap::new(),
             dim_notes: BTreeMap::new(),
             shown: BTreeMap::new(),
+            styles: BTreeMap::new(),
             draft: DraftStyle::default(),
             patterns: String::new(),
             logo: String::new(),
@@ -772,6 +778,7 @@ impl Document {
             Key::Annotation(id) => self.annotations.get(&id).cloned().map(Record::Annotation),
             Key::DimNote(id) => self.dim_notes.get(&id).cloned().map(Record::DimNote),
             Key::Shown(r) => self.shown.get(&r).copied().map(Record::Shown),
+            Key::Style(r) => self.styles.get(&r).copied().map(Record::Style),
             Key::Draft => Some(Record::Draft(self.draft)),
             Key::Patterns => Some(Record::Patterns(self.patterns.clone())),
             Key::Logo => Some(Record::Logo(self.logo.clone())),
@@ -887,6 +894,12 @@ impl Document {
             }
             (Key::Shown(r), _) => {
                 self.shown.remove(&r);
+            }
+            (Key::Style(r), Some(Record::Style(s))) => {
+                self.styles.insert(r, s);
+            }
+            (Key::Style(r), _) => {
+                self.styles.remove(&r);
             }
             (Key::Draft, Some(Record::Draft(d))) => self.draft = d,
             (Key::Draft, _) => {}
@@ -2015,6 +2028,7 @@ impl Document {
         keys.extend(self.annotations.keys().map(|id| Key::Annotation(*id)));
         keys.extend(self.dim_notes.keys().map(|id| Key::DimNote(*id)));
         keys.extend(self.shown.keys().map(|r| Key::Shown(*r)));
+        keys.extend(self.styles.keys().map(|r| Key::Style(*r)));
         keys.push(Key::Draft);
         keys.push(Key::Patterns);
         keys.push(Key::Logo);
@@ -2548,6 +2562,43 @@ impl Document {
             self.shown.remove(&r);
         } else {
             self.shown.insert(r, shown);
+        }
+    }
+
+    /// What a dimension or annotation sets for itself over the drawing's style.
+    pub fn style_override(&self, r: crate::AnnotationRef) -> crate::StyleOverride {
+        self.styles.get(&r).copied().unwrap_or_default()
+    }
+
+    /// The dimensions and annotations with settings of their own, that still exist.
+    pub fn style_overrides(
+        &self,
+    ) -> impl Iterator<Item = (crate::AnnotationRef, crate::StyleOverride)> + '_ {
+        self.styles
+            .iter()
+            .filter(|(r, _)| self.annotation_ref_exists(**r))
+            .map(|(r, s)| (*r, *s))
+    }
+
+    /// Set what a dimension or annotation overrides (nothing overridden is not kept).
+    pub fn set_style_override(&mut self, r: crate::AnnotationRef, style: crate::StyleOverride) {
+        if self.style_override(r) == style || !self.annotation_ref_exists(r) {
+            return;
+        }
+        self.touch_key(Key::Style(r));
+        if style.is_empty() {
+            self.styles.remove(&r);
+        } else {
+            self.styles.insert(r, style);
+        }
+    }
+
+    /// The style a dimension or annotation is drawn with: the drawing's, with its own
+    /// settings in place.
+    pub fn draft_style_for(&self, r: crate::AnnotationRef) -> DraftStyle {
+        match self.styles.get(&r) {
+            Some(o) => o.apply(&self.draft),
+            None => self.draft,
         }
     }
 
@@ -3101,6 +3152,8 @@ pub fn arc_shape(center: DVec2, start: DVec2, end: DVec2) -> Shape {
 pub struct History {
     undo: Vec<Transaction>,
     redo: Vec<Transaction>,
+    /// Steps recorded so far (never decreases, unlike the undo stack, which forgets old ones).
+    recorded: u64,
 }
 
 impl History {
@@ -3112,6 +3165,7 @@ impl History {
     pub fn push(&mut self, tx: Transaction) {
         if !tx.is_empty() {
             self.undo.push(tx);
+            self.recorded += 1;
             self.redo.clear();
             if self.undo.len() > Self::MAX_STEPS {
                 let extra = self.undo.len() - Self::MAX_STEPS;
@@ -3135,7 +3189,10 @@ impl History {
                     }
                 }
             }
-            None => self.undo.push(tx),
+            None => {
+                self.undo.push(tx);
+                self.recorded += 1;
+            }
         }
     }
 
@@ -3176,6 +3233,47 @@ impl History {
     pub fn clear(&mut self) {
         self.undo.clear();
         self.redo.clear();
+    }
+
+    /// How many steps have been recorded: the difference between two readings is how many
+    /// steps were added between them.
+    pub fn recorded(&self) -> u64 {
+        self.recorded
+    }
+
+    /// How many steps can be undone.
+    pub fn undo_depth(&self) -> usize {
+        self.undo.len()
+    }
+
+    /// How many steps can be redone.
+    pub fn redo_depth(&self) -> usize {
+        self.redo.len()
+    }
+
+    /// Fold the last `n` undo steps into one labelled `label`, so several edits undo
+    /// together.
+    pub fn squash_last(&mut self, n: usize, label: &str) {
+        let n = n.min(self.undo.len());
+        if n == 0 {
+            return;
+        }
+        let mut steps = self.undo.split_off(self.undo.len() - n);
+        let mut first = steps.remove(0);
+        first.label = label.to_owned();
+        self.undo.push(first);
+        for tx in steps {
+            self.merge_into_last(tx);
+        }
+    }
+
+    /// Undo the last `n` steps and forget them (they can't be redone).
+    pub fn discard_last(&mut self, n: usize, doc: &mut Document) {
+        for _ in 0..n {
+            if let Some(tx) = self.undo.pop() {
+                doc.apply(&tx, false);
+            }
+        }
     }
 }
 
@@ -3264,6 +3362,48 @@ mod tests {
         assert!(history.redo(&mut doc));
         assert_eq!(doc, drawn);
         assert_eq!(history.undo_label(), Some("Rectangle"));
+    }
+
+    #[test]
+    fn a_dimension_sets_its_own_style_over_the_drawings() {
+        use crate::{AnnotationRef, ArrowStyle, StyleOverride};
+        let mut doc = Document::new();
+        let mut history = History::default();
+        let (p, _) = square(&mut doc);
+        let dim = doc
+            .add_constraint(Constraint::Distance {
+                a: p[0],
+                b: p[1],
+                value: 1.0,
+            })
+            .unwrap();
+        let r = AnnotationRef::Dimension(dim);
+        assert_eq!(doc.draft_style_for(r), doc.draft_style());
+        doc.begin();
+        doc.set_style_override(
+            r,
+            StyleOverride {
+                text_height: Some(5.0),
+                arrow: Some(ArrowStyle::Tick),
+                ..Default::default()
+            },
+        );
+        history.push(doc.commit("Annotation style"));
+        let own = doc.draft_style_for(r);
+        assert_eq!((own.text_height, own.arrow), (5.0, ArrowStyle::Tick));
+        // Everything else, and what the drawing changes later, still comes from the drawing.
+        let mut drawing = doc.draft_style();
+        drawing.extension_gap = 2.5;
+        drawing.text_height = 7.0;
+        doc.set_draft_style(drawing);
+        let own = doc.draft_style_for(r);
+        assert_eq!((own.extension_gap, own.text_height), (2.5, 5.0));
+        assert_eq!(doc.style_overrides().count(), 1);
+        // Undone, it follows the drawing again; nothing overridden is not kept.
+        assert!(history.undo(&mut doc));
+        assert_eq!(doc.draft_style_for(r).text_height, 7.0);
+        doc.set_style_override(r, StyleOverride::default());
+        assert_eq!(doc.style_overrides().count(), 0);
     }
 
     #[test]

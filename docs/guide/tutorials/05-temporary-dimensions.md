@@ -65,7 +65,7 @@ that instead. The choice is kept as long as the same curve stays picked.
 
 ## Turning them off
 
-**Edit → Preferences… → Dimensions → Show temporary dimensions on the picked geometry.**
+**Edit → Preferences… → Drawing aids → Show temporary dimensions on the picked geometry.**
 
 Temporary dimensions don't yet appear for points, for two picked curves, or between a wall
 and the walls that cross it.

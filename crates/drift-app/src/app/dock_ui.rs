@@ -441,30 +441,9 @@ impl DriftApp {
         if !canvas.is_positive() {
             return;
         }
-        let dark = ctx.theme() == egui::Theme::Dark;
-        let fill = if dark {
-            egui::Color32::from_rgba_unmultiplied(0x26, 0x28, 0x2d, 244)
-        } else {
-            egui::Color32::from_rgba_unmultiplied(0xfb, 0xfb, 0xfc, 248)
-        };
-        let frame = egui::Frame::new()
-            .fill(fill)
-            .corner_radius(12.0)
-            .stroke(egui::Stroke::new(
-                1.0,
-                if dark {
-                    egui::Color32::from_white_alpha(18)
-                } else {
-                    egui::Color32::from_black_alpha(22)
-                },
-            ))
-            .shadow(egui::epaint::Shadow {
-                offset: [0, 8],
-                blur: 26,
-                spread: 0,
-                color: egui::Color32::from_black_alpha(if dark { 100 } else { 45 }),
-            })
-            .inner_margin(egui::Margin::ZERO);
+        // Opaque, like the dialogs: nothing underneath shows through.
+        let frame =
+            egui::Frame::window(&ctx.style_of(ctx.theme())).inner_margin(egui::Margin::ZERO);
         for (k, stack) in self.layout.floating.clone().into_iter().enumerate() {
             let top = stack[0];
             let n = stack.len();

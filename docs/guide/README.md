@@ -53,6 +53,7 @@ rest stand alone.
 - [Units and length formats](reference/units.md)
 - [Files and compatibility](reference/files.md)
 - [Keyboard shortcuts](reference/keyboard-shortcuts.md)
+- [Drawing with AI assistants](../ai.md): connect Claude to Drift through its MCP server.
 
 ## Conventions
 

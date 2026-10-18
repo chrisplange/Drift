@@ -561,7 +561,7 @@ impl Tool for SelectTool {
             Some(SelectDrag::Scale { .. }) => "Scaling: dimensions hold · Shift: keep the \
                  shape · Ctrl: about the middle · Alt: scale the dimensions too · Esc to cancel"
                 .into(),
-            None => "Click to select · Shift to add · Ctrl to toggle · drag to move or box-select"
+            None => "Click to select · Shift adds · Ctrl toggles · drag to move or box-select · Tab: chain"
                 .into(),
         }
     }

@@ -403,8 +403,10 @@ fn annotations(ed: &Editor, painter: &egui::Painter, s: &Space, d: &mut Drawing)
             annotations::paint_dimension(&recorder, &layout, AnnotationState::Normal, &colors);
         }
     }
-    let style = annotations::DimStyle::of(&doc.draft_style());
     for layout in notes::layout_annotations(painter, doc, &map) {
+        let style = annotations::DimStyle::of(
+            &doc.draft_style_for(drift_core::AnnotationRef::Annotation(layout.id)),
+        );
         // Ordinates are dimensions; centre marks are linework, and always drawn.
         let shown = match doc.annotation(layout.id) {
             Some(drift_core::Annotation::Ordinate { .. }) => s.dimensions,
@@ -604,6 +606,65 @@ pub fn model_drawing(
         d.size = b.max - b.min;
     }
     d
+}
+
+/// A window onto the sketch as a page of `size` mm: world point `center` at the page's
+/// centre, at 1 : `scale`, with annotations sized for that scale (for pictures of the
+/// drawing, such as the assistant's renders).
+pub fn view_drawing(
+    ed: &mut Editor,
+    patterns: &PatternLibrary,
+    painter: &egui::Painter,
+    center: DVec2,
+    scale: f64,
+    size: DVec2,
+    dimensions: bool,
+) -> Drawing {
+    let mut d = Drawing::new(size);
+    d.font = ed.drawing_font();
+    drift_draft::font::set_drawing_font(d.font.clone());
+    let space = Space {
+        world: center,
+        page: size / 2.0,
+        k: 1.0 / scale,
+        n: scale,
+        clip: None,
+        inserts: false,
+        dimensions,
+        notes: true,
+    };
+    view(ed, patterns, painter, &space, &mut d);
+    d
+}
+
+/// Every sheet of the document as a page; with no sheets, one A3 sheet titled `title` with
+/// the drawing fitted on it (as the app prints).
+pub fn sheet_pages(
+    ed: &mut Editor,
+    patterns: &mut PatternLibrary,
+    painter: &egui::Painter,
+    title: &str,
+) -> Vec<Drawing> {
+    let doc = &ed.doc;
+    let mut sheets: Vec<(Sheet, Vec<PlacedView>)> = doc
+        .sheets()
+        .map(|(_, s)| (s.clone(), doc.placed_views(s)))
+        .collect();
+    if sheets.is_empty() {
+        let mut sheet = Sheet::new("Sheet 1");
+        sheet.fields.title = title.to_owned();
+        let imperial = !doc.units().length.is_metric();
+        let (view, port) = sheet_view(ed.bounds(), &sheet, imperial);
+        let placed = PlacedView::new(port.view, &view, &port);
+        sheets.push((sheet, vec![placed]));
+    }
+    patterns.update(ed.doc.custom_patterns());
+    let count = sheets.len();
+    sheets
+        .iter()
+        .enumerate()
+        .map(|(i, (s, views))| sheet_drawing(ed, patterns, painter, s, views, (i + 1, count)))
+        .collect()
 }
 
 /// Centre a view on `b` (the sketch with its dimension labels, in world mm) at the largest

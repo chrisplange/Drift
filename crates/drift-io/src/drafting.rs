@@ -4,8 +4,8 @@
 use drift_core::{
     Anchor, Annotation, AnnotationId, AnnotationRef, ArrowStyle, DVec2, DimNote, Document,
     DocumentError, DraftStyle, EntityId, Fill, FillId, FillKind, Hatch, LayerId, Leader, LeaderEnd,
-    LeaderShape, LineWeight, NoteFrame, NoteStyle, OrdinateAxis, Rgb, Shown, Standard, TextAlign,
-    Tolerance,
+    LeaderShape, LineWeight, NoteFrame, NoteStyle, OrdinateAxis, Rgb, Shown, Standard,
+    StyleOverride, TextAlign, Tolerance,
 };
 use serde::{Deserialize, Serialize};
 
@@ -701,6 +701,110 @@ pub(crate) fn parse_shown(r: ShownRecord) -> Result<(AnnotationRef, Shown), Load
         Shown {
             canvas: r.canvas,
             sheets: r.sheets,
+        },
+    ))
+}
+
+/// What a dimension (`c…`) or annotation (`n…`) sets for itself over the drawing's style:
+/// only the settings it overrides. `alt_units` and `color` take `"none"` for "none, whatever
+/// the drawing has".
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct StyleRecord {
+    of: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    text_height: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    arrow: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    arrow_size: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    extension_gap: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    extension_overshoot: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    aligned_text: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    trailing_zeros: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    leading_zero: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    alt_units: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    color: Option<String>,
+}
+
+pub(crate) fn override_record(r: AnnotationRef, s: &StyleOverride) -> StyleRecord {
+    StyleRecord {
+        of: match r {
+            AnnotationRef::Dimension(id) => id.to_string(),
+            AnnotationRef::Annotation(id) => id.to_string(),
+        },
+        text_height: s.text_height,
+        arrow: s.arrow.map(|a| a.key().to_owned()),
+        arrow_size: s.arrow_size,
+        extension_gap: s.extension_gap,
+        extension_overshoot: s.extension_overshoot,
+        aligned_text: s.aligned_text,
+        trailing_zeros: s.trailing_zeros,
+        leading_zero: s.leading_zero,
+        alt_units: s.alt_units.map(|u| match u {
+            None => "none".to_owned(),
+            Some(u) => LENGTH_FORMATS
+                .iter()
+                .find(|(f, _)| *f == u)
+                .map_or_else(|| "none".to_owned(), |(_, n)| (*n).to_owned()),
+        }),
+        color: s
+            .color
+            .map(|c| c.map_or_else(|| "none".to_owned(), Rgb::hex)),
+    }
+}
+
+pub(crate) fn parse_override(r: StyleRecord) -> Result<(AnnotationRef, StyleOverride), LoadError> {
+    let of = if r.of.starts_with('c') {
+        AnnotationRef::Dimension(drift_core::ConstraintId(parse_prefixed(&r.of, 'c')?))
+    } else {
+        AnnotationRef::Annotation(AnnotationId(parse_prefixed(&r.of, 'n')?))
+    };
+    let bad = |field| LoadError::MissingField {
+        id: r.of.clone(),
+        field,
+    };
+    let size = |v: Option<f64>, field, min: f64| match v {
+        Some(v) if !(v.is_finite() && v >= min) => Err(bad(field)),
+        v => Ok(v),
+    };
+    Ok((
+        of,
+        StyleOverride {
+            text_height: size(r.text_height, "text_height", f64::MIN_POSITIVE)?,
+            arrow: match &r.arrow {
+                Some(a) => Some(ArrowStyle::parse(a).ok_or_else(|| bad("arrow"))?),
+                None => None,
+            },
+            arrow_size: size(r.arrow_size, "arrow_size", f64::MIN_POSITIVE)?,
+            extension_gap: size(r.extension_gap, "extension_gap", 0.0)?,
+            extension_overshoot: size(r.extension_overshoot, "extension_overshoot", 0.0)?,
+            aligned_text: r.aligned_text,
+            trailing_zeros: r.trailing_zeros,
+            leading_zero: r.leading_zero,
+            alt_units: match r.alt_units.as_deref() {
+                None => None,
+                Some("none") => Some(None),
+                Some(u) => Some(Some(
+                    LENGTH_FORMATS
+                        .iter()
+                        .find(|(_, n)| *n == u)
+                        .map(|(f, _)| *f)
+                        .ok_or_else(|| bad("alt_units"))?,
+                )),
+            },
+            color: match r.color.as_deref() {
+                None => None,
+                Some("none") => Some(None),
+                Some(c) => Some(Some(Rgb::parse(c).ok_or_else(|| bad("color"))?)),
+            },
         },
     ))
 }

@@ -53,6 +53,7 @@ pub(crate) enum Command {
     SheetPreview,
     Shortcuts,
     Preferences,
+    DrawingSettings,
     About,
     Theme(egui::ThemePreference),
 }
@@ -379,6 +380,12 @@ impl DriftApp {
         );
         add(Command::Shortcuts, "Keyboard shortcuts", "Help", "?".into());
         add(Command::Preferences, "Preferences…", "Edit", ctrl(","));
+        add(
+            Command::DrawingSettings,
+            "Drawing settings…",
+            "File",
+            String::new(),
+        );
         add(Command::About, "About Drift", "Help", String::new());
         for (pref, label) in [
             (egui::ThemePreference::Dark, "Dark appearance"),
@@ -553,6 +560,7 @@ impl DriftApp {
             }
             Command::Shortcuts => self.show_shortcuts = true,
             Command::Preferences => self.show_settings = true,
+            Command::DrawingSettings => self.show_drawing_settings = true,
             Command::About => self.show_about = true,
             Command::Theme(pref) => ctx.set_theme(pref),
         }
@@ -719,7 +727,7 @@ impl DriftApp {
                             if !e.keys.is_empty() {
                                 let g = painter.layout_no_wrap(
                                     e.keys.clone(),
-                                    egui::FontId::monospace(11.5),
+                                    egui::FontId::proportional(theme::size::CAPTION),
                                     weak,
                                 );
                                 right -= g.size().x;

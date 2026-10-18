@@ -12,6 +12,8 @@ use crate::dock::{Panel, Place, Side};
 use crate::overlay::ScreenMap;
 use crate::tools::{Overlay, ToolKind};
 
+/// A visual audit of every surface, in both themes.
+mod audit;
 /// Screenshots for the user guide.
 mod docs;
 /// The update notice and Preferences → Updates.
@@ -6878,4 +6880,60 @@ fn views_are_drawn_on_the_canvas_and_placed_on_sheets() {
     assert_eq!(placed(&h, sheet).len(), 1);
     h.state_mut().undo();
     assert_eq!(h.state().editor.doc.sheets_showing(id), [sheet, other]);
+}
+
+#[test]
+fn a_picked_dimension_sets_its_own_style_and_resets_it() {
+    use drift_core::{AnnotationRef, ArrowStyle, Constraint as C};
+    let Some(mut h) = harness() else { return };
+    let dim = {
+        let ed = &mut h.state_mut().editor;
+        ed.doc.begin();
+        let a = ed.doc.add_point(DVec2::new(-20.0, 0.0));
+        let b = ed.doc.add_point(DVec2::new(20.0, 0.0));
+        ed.doc.add_line(a, b).unwrap();
+        ed.commit("Line");
+        ed.add_dimension(
+            C::HorizontalDistance { a, b, value: 40.0 },
+            Some(DVec2::new(0.0, -10.0)),
+        )
+        .unwrap()
+    };
+    h.state_mut().selected_constraint = Some(dim);
+    h.run();
+    h.run();
+    let r = AnnotationRef::Dimension(dim);
+    // Arrows follow the drawing until a different one is picked here.
+    assert!(h.state().editor.doc.style_override(r).is_empty());
+    let arrows = h
+        .get_all_by_role(egui::accesskit::Role::ComboBox)
+        .find(|c| c.value().as_deref() == Some("Closed arrow"))
+        .expect("the Arrows menu");
+    arrows.click();
+    h.run();
+    h.get_by_label("Tick").click();
+    h.run();
+    h.run();
+    assert_eq!(
+        h.state().editor.doc.style_override(r).arrow,
+        Some(ArrowStyle::Tick)
+    );
+    assert_eq!(
+        h.state().editor.doc.draft_style_for(r).arrow,
+        ArrowStyle::Tick
+    );
+    save_png("drift_ui_dimension_own_style.png", &mut h);
+    // The reset arrow beside it puts the drawing's back.
+    h.get_by_label("Reset").click();
+    h.run();
+    assert!(h.state().editor.doc.style_override(r).is_empty());
+    // And the drawing's style is one click away (below the fold: scrolled to first).
+    h.get_by_label("Drawing style…").scroll_to_me();
+    h.run();
+    h.run();
+    h.get_by_label("Drawing style…").click();
+    h.run();
+    h.run();
+    assert!(h.state().show_drawing_settings);
+    save_png("drift_ui_drawing_settings.png", &mut h);
 }

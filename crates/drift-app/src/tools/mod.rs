@@ -392,6 +392,24 @@ impl ToolKind {
         }
     }
 
+    /// For a tool in a cycle (C: circle, ellipse, partial ellipse), how its key steps
+    /// through the cycle.
+    pub fn cycle_hint(self) -> Option<String> {
+        let key = self.shortcut()?;
+        let cycle: Vec<&str> = Self::SECTIONS
+            .iter()
+            .flat_map(|(_, group)| group.iter())
+            .filter(|k| k.shortcut() == Some(key))
+            .map(|k| k.label())
+            .collect();
+        (cycle.len() > 1).then(|| {
+            format!(
+                "{key} again switches through: {}",
+                cycle.join(", ").to_lowercase()
+            )
+        })
+    }
+
     /// The shortcut as shown to the user: the key, or "Shift+T" for the text tool.
     pub fn shortcut_label(self) -> Option<String> {
         match self {

@@ -126,30 +126,32 @@ impl DriftApp {
             return;
         };
         let mut choice = None;
-        let modal = egui::Modal::new(egui::Id::new("pdf_page")).show(ctx, |ui| {
-            ui.set_width(320.0);
-            ui.heading("Which page?");
-            ui.add_space(6.0);
-            ui.label(format!(
-                "{} has {} pages. Pick the one to trace over.",
-                pending.name, pending.pages
-            ));
-            ui.add_space(6.0);
-            ui.horizontal(|ui| {
-                ui.label("Page");
-                ui.add(egui::DragValue::new(&mut pending.page).range(1..=pending.pages));
-                ui.label(format!("of {}", pending.pages));
+        let frame = theme::dialog_frame(&ctx.style_of(ctx.theme()));
+        let modal = egui::Modal::new(egui::Id::new("pdf_page"))
+            .frame(frame)
+            .show(ctx, |ui| {
+                ui.set_width(340.0);
+                theme::dialog_title(ui, "Which page?", false);
+                ui.label(format!(
+                    "{} has {} pages. Pick the one to trace over.",
+                    pending.name, pending.pages
+                ));
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    ui.label("Page");
+                    ui.add(egui::DragValue::new(&mut pending.page).range(1..=pending.pages));
+                    ui.label(format!("of {}", pending.pages));
+                });
+                theme::dialog_buttons(ui, |ui| {
+                    if ui.button("Cancel").clicked() {
+                        choice = Some(false);
+                    }
+                    let dark = ui.visuals().dark_mode;
+                    if ui.add(theme::primary_button("Import", dark)).clicked() {
+                        choice = Some(true);
+                    }
+                });
             });
-            ui.add_space(10.0);
-            ui.horizontal(|ui| {
-                if ui.button("Import").clicked() {
-                    choice = Some(true);
-                }
-                if ui.button("Cancel").clicked() {
-                    choice = Some(false);
-                }
-            });
-        });
         if modal.should_close() && choice.is_none() {
             choice = Some(false);
         }

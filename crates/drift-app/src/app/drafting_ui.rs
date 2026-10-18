@@ -1,7 +1,10 @@
-//! Drafting settings (the Parameters tab's Drafting section) and the inspector for a picked
-//! dimension's prefix, suffix and tolerance.
+//! Drafting settings (the Drafting section of File → Drawing settings), the inspector for a
+//! picked dimension's prefix, suffix and tolerance, and the Style section where picked
+//! dimensions and annotations set their own style over the drawing's.
 
-use drift_core::{ArrowStyle, DraftStyle, LengthFormat, Standard, Tolerance};
+use drift_core::{
+    AnnotationRef, ArrowStyle, DraftStyle, LengthFormat, Standard, StyleOverride, Tolerance,
+};
 
 use crate::*;
 
@@ -18,7 +21,7 @@ fn mm_field(ui: &mut egui::Ui, value: &mut f64, range: std::ops::RangeInclusive<
 }
 
 impl DriftApp {
-    /// The Parameters tab's Drafting section: the dimension standard and its settings.
+    /// Preferences' Drafting section: the drawing's dimension standard and its settings.
     pub(crate) fn drafting_section(&mut self, ui: &mut egui::Ui) {
         theme::section(ui, "Drafting");
         let mut style = self.editor.doc.draft_style();
@@ -48,7 +51,7 @@ impl DriftApp {
             )
             .on_hover_text("The drawing scale: drafting hatch patterns are sized by it");
         });
-        theme::row(ui, "Text", |ui| {
+        theme::row(ui, "Text height", |ui| {
             mm_field(ui, &mut style.text_height, 1.0..=20.0);
         });
         self.drawing_font_row(ui);
@@ -279,6 +282,7 @@ impl DriftApp {
             self.editor.commit("Dimension text");
         }
         self.visibility_section(ui);
+        self.style_section(ui);
         ui.add_space(8.0);
         ui.label(
             egui::RichText::new("Double-click the dimension on the canvas to change its value.")
@@ -339,4 +343,245 @@ pub(crate) fn dimension_chips(ui: &mut egui::Ui, note: &mut drift_core::DimNote)
             }
         }
     });
+}
+
+/// One change to the picked dimensions' and annotations' own settings.
+type StyleEdit = Box<dyn Fn(&mut StyleOverride)>;
+
+/// A setting's row in the Drafting style section: the label (in the accent when the picked ones set it
+/// themselves), the control, and a reset arrow when overridden. Returns whether reset was
+/// clicked.
+fn style_row(
+    ui: &mut egui::Ui,
+    label: &str,
+    overridden: bool,
+    add: impl FnOnce(&mut egui::Ui),
+) -> bool {
+    let mut reset = false;
+    ui.horizontal(|ui| {
+        let dark = ui.visuals().dark_mode;
+        ui.allocate_ui_with_layout(
+            egui::vec2(theme::LABEL_WIDTH, 20.0),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                ui.set_min_width(theme::LABEL_WIDTH);
+                let color = if overridden {
+                    theme::accent(dark)
+                } else {
+                    ui.visuals().weak_text_color()
+                };
+                ui.label(egui::RichText::new(label).color(color));
+            },
+        );
+        add(ui);
+        if overridden {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                reset = icons::button(ui, 22.0, false, "Reset", |p, r, c| {
+                    icons::glyph(p, r, icons::Glyph::Reset, c)
+                })
+                .on_hover_text("Back to the drawing's setting")
+                .clicked();
+            });
+        }
+    });
+    reset
+}
+
+impl DriftApp {
+    /// The Drafting style section for the picked dimensions and annotations: each setting shows what
+    /// they are drawn with (the drawing's style unless they set it themselves). Changing one
+    /// makes it theirs, marked in the accent with a reset arrow beside it.
+    pub(crate) fn style_section(&mut self, ui: &mut egui::Ui) {
+        let refs = self.picked_annotations();
+        let Some(&first) = refs.first() else {
+            return;
+        };
+        let doc = &self.editor.doc;
+        let drawing = doc.draft_style();
+        let shown = doc.draft_style_for(first);
+        let own: Vec<StyleOverride> = refs.iter().map(|r| doc.style_override(*r)).collect();
+        let set = |f: fn(&StyleOverride) -> bool| own.iter().any(f);
+        let overridden = own.iter().map(StyleOverride::count).max().unwrap_or(0);
+        // What the picked ones are: dimensions (and ordinates) show numbers; notes have their
+        // own text height in their Text section.
+        let numbers = refs.iter().all(|r| match r {
+            AnnotationRef::Dimension(_) => true,
+            AnnotationRef::Annotation(id) => {
+                matches!(
+                    doc.annotation(*id),
+                    Some(drift_core::Annotation::Ordinate { .. })
+                )
+            }
+        });
+        let notes = refs.iter().any(|r| match r {
+            AnnotationRef::Annotation(id) => {
+                matches!(
+                    doc.annotation(*id),
+                    Some(drift_core::Annotation::Note { .. })
+                )
+            }
+            AnnotationRef::Dimension(_) => false,
+        });
+        let standard = match drawing.standard {
+            Standard::Iso => "ISO 129",
+            Standard::Asme => "ASME Y14.5",
+        };
+        let mut edit: Option<StyleEdit> = None;
+        let mut open_settings = false;
+        theme::section(ui, "Drafting style");
+        ui.horizontal(|ui| {
+            let text = if overridden == 0 {
+                format!("The drawing's style ({standard})")
+            } else {
+                format!(
+                    "The drawing's style ({standard}), {overridden} setting{} changed here",
+                    if overridden == 1 { "" } else { "s" }
+                )
+            };
+            ui.label(egui::RichText::new(text).small().weak());
+        });
+        ui.add_space(2.0);
+        if !notes {
+            let mut v = shown.text_height;
+            if style_row(ui, "Text height", set(|o| o.text_height.is_some()), |ui| {
+                if mm_field(ui, &mut v, 1.0..=20.0) {
+                    edit = Some(Box::new(move |o| o.text_height = Some(v)));
+                }
+            }) {
+                edit = Some(Box::new(|o| o.text_height = None));
+            }
+        }
+        let mut arrow = shown.arrow;
+        if style_row(ui, "Arrows", set(|o| o.arrow.is_some()), |ui| {
+            egui::ComboBox::from_id_salt("own_arrow")
+                .selected_text(arrow.label())
+                .width(110.0)
+                .show_ui(ui, |ui| {
+                    for a in ArrowStyle::ALL {
+                        if ui.selectable_value(&mut arrow, a, a.label()).clicked() {
+                            edit = Some(Box::new(move |o| o.arrow = Some(a)));
+                        }
+                    }
+                });
+        }) {
+            edit = Some(Box::new(|o| o.arrow = None));
+        }
+        let mut v = shown.arrow_size;
+        if style_row(ui, "Arrow size", set(|o| o.arrow_size.is_some()), |ui| {
+            if mm_field(ui, &mut v, 0.5..=20.0) {
+                edit = Some(Box::new(move |o| o.arrow_size = Some(v)));
+            }
+        }) {
+            edit = Some(Box::new(|o| o.arrow_size = None));
+        }
+        if numbers {
+            let mut aligned = shown.aligned_text;
+            if style_row(ui, "Text", set(|o| o.aligned_text.is_some()), |ui| {
+                if ui
+                    .checkbox(&mut aligned, "Aligned")
+                    .on_hover_text("Above the dimension line and parallel to it (ISO)")
+                    .changed()
+                {
+                    edit = Some(Box::new(move |o| o.aligned_text = Some(aligned)));
+                }
+            }) {
+                edit = Some(Box::new(|o| o.aligned_text = None));
+            }
+            let (mut trailing, mut leading) = (shown.trailing_zeros, shown.leading_zero);
+            let zeros = set(|o| o.trailing_zeros.is_some() || o.leading_zero.is_some());
+            if style_row(ui, "Zeros", zeros, |ui| {
+                if ui.checkbox(&mut trailing, "Trailing").changed() {
+                    edit = Some(Box::new(move |o| o.trailing_zeros = Some(trailing)));
+                }
+                if ui.checkbox(&mut leading, "Leading").changed() {
+                    edit = Some(Box::new(move |o| o.leading_zero = Some(leading)));
+                }
+            }) {
+                edit = Some(Box::new(|o| {
+                    o.trailing_zeros = None;
+                    o.leading_zero = None;
+                }));
+            }
+            let mut alt = shown.alt_units;
+            if style_row(ui, "Dual units", set(|o| o.alt_units.is_some()), |ui| {
+                egui::ComboBox::from_id_salt("own_alt_units")
+                    .selected_text(alt.map_or("None", LengthFormat::label))
+                    .width(110.0)
+                    .show_ui(ui, |ui| {
+                        let options = std::iter::once(None).chain(
+                            LengthFormat::METRIC
+                                .into_iter()
+                                .chain(LengthFormat::IMPERIAL)
+                                .map(Some),
+                        );
+                        for f in options {
+                            let label = f.map_or("None", LengthFormat::label);
+                            if ui.selectable_value(&mut alt, f, label).clicked() {
+                                edit = Some(Box::new(move |o| o.alt_units = Some(f)));
+                            }
+                        }
+                    });
+            }) {
+                edit = Some(Box::new(|o| o.alt_units = None));
+            }
+        }
+        // Colour: the drawing's, or one of its own.
+        let own_color = own[0].color.flatten();
+        let dark = ui.visuals().dark_mode;
+        if style_row(ui, "Colour", set(|o| o.color.is_some()), |ui| {
+            let custom = own_color.is_some();
+            egui::ComboBox::from_id_salt("own_colour")
+                .selected_text(if custom { "Custom" } else { "Drawing's" })
+                .width(90.0)
+                .show_ui(ui, |ui| {
+                    if ui.selectable_label(!custom, "Drawing's").clicked() && custom {
+                        edit = Some(Box::new(|o| o.color = None));
+                    }
+                    if ui.selectable_label(custom, "Custom").clicked() && !custom {
+                        let red = drift_core::Rgb([0xd0, 0x40, 0x40]);
+                        edit = Some(Box::new(move |o| o.color = Some(Some(red))));
+                    }
+                });
+            if let Some(c) = own_color {
+                let c = crate::layers_ui::to_color32(Some(c), dark);
+                let mut rgb = [c.r(), c.g(), c.b()];
+                if egui::color_picker::color_edit_button_srgb(ui, &mut rgb).changed() {
+                    let c = drift_core::Rgb(rgb);
+                    edit = Some(Box::new(move |o| o.color = Some(Some(c))));
+                }
+            }
+        }) {
+            edit = Some(Box::new(|o| o.color = None));
+        }
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            if overridden > 0
+                && ui
+                    .button("Reset all")
+                    .on_hover_text("Back to the drawing's style for everything")
+                    .clicked()
+            {
+                edit = Some(Box::new(|o| *o = StyleOverride::default()));
+            }
+            if ui
+                .button("Drawing style…")
+                .on_hover_text("Change the style for the whole drawing (File → Drawing settings)")
+                .clicked()
+            {
+                open_settings = true;
+            }
+        });
+        if let Some(edit) = edit {
+            self.editor.doc.begin();
+            for r in &refs {
+                let mut o = self.editor.doc.style_override(*r);
+                edit(&mut o);
+                self.editor.doc.set_style_override(*r, o);
+            }
+            self.editor.commit("Annotation style");
+        }
+        if open_settings {
+            self.show_drawing_settings = true;
+        }
+    }
 }

@@ -5,38 +5,6 @@ use crate::icons::{self, Glyph};
 use crate::tools::SlotMode;
 use crate::*;
 
-/// A compact text button for the context bar.
-fn bar_button(ui: &mut egui::Ui, label: &str, keys: &str, tip: &str) -> bool {
-    let mut text = egui::text::LayoutJob::default();
-    text.append(
-        label,
-        0.0,
-        egui::TextFormat {
-            font_id: egui::FontId::proportional(12.5),
-            color: ui.visuals().text_color(),
-            ..Default::default()
-        },
-    );
-    if !keys.is_empty() {
-        text.append(
-            keys,
-            6.0,
-            egui::TextFormat {
-                font_id: egui::FontId::monospace(10.5),
-                color: ui.visuals().weak_text_color(),
-                ..Default::default()
-            },
-        );
-    }
-    ui.add(
-        egui::Button::new(text)
-            .frame_when_inactive(false)
-            .min_size(egui::vec2(0.0, 24.0)),
-    )
-    .on_hover_text(tip)
-    .clicked()
-}
-
 /// A thin vertical divider.
 fn divider(ui: &mut egui::Ui) {
     ui.add_space(2.0);
@@ -71,6 +39,20 @@ pub(super) fn choice<T: Copy + PartialEq>(
     ui.allocate_ui(egui::vec2(width + 4.0, 24.0), |ui| {
         out = theme::segmented(ui, current, options);
     });
+    out
+}
+
+/// [`choice`], with a tooltip on the whole control (for the key that switches it).
+fn keyed_choice<T: Copy + PartialEq>(
+    ui: &mut egui::Ui,
+    current: T,
+    options: &[(T, &str)],
+    tip: &str,
+) -> Option<T> {
+    let mut out = None;
+    ui.scope(|ui| out = choice(ui, current, options))
+        .response
+        .on_hover_text(tip);
     out
 }
 
@@ -376,6 +358,7 @@ impl DriftApp {
             }
             // Its weight and line type, beside it: the curves' own, or the layer's.
             let look = entity.appearance;
+            caption(ui, "Weight");
             let weight = stroke_menu(
                 ui,
                 "bar_weight",
@@ -390,6 +373,7 @@ impl DriftApp {
             if let Some(w) = weight {
                 self.editor.update_selection_appearance(|a| a.weight = w);
             }
+            caption(ui, "Type");
             let kind = stroke_menu(
                 ui,
                 "bar_line_type",
@@ -517,7 +501,7 @@ impl DriftApp {
             egui::pos2(r.right() - 8.0, r.center().y),
             egui::Align2::RIGHT_CENTER,
             app::panels::shortcut("K", false),
-            egui::FontId::monospace(10.5),
+            egui::FontId::proportional(theme::size::CAPTION),
             weak.gamma_multiply(0.8),
         );
         response
@@ -530,20 +514,20 @@ impl DriftApp {
         let units = self.editor.doc.units();
         // What a drawing tool draws: geometry, or construction guides.
         if kind.draws_curves() {
-            if let Some(c) = choice(
+            if let Some(c) = keyed_choice(
                 ui,
                 self.editor.draw_construction,
                 &[(false, "Geometry"), (true, "Construction")],
+                "Draw geometry, or construction guides that don't print (Alt+C)",
             ) {
                 self.editor.draw_construction = c;
             }
-            caption(ui, "Alt+C");
             divider(ui);
         }
         match kind {
             ToolKind::Select => self.selection_actions(ui, now),
             ToolKind::Circle | ToolKind::Ellipse | ToolKind::EllipseArc => {
-                if let Some(k) = choice(
+                if let Some(k) = keyed_choice(
                     ui,
                     kind,
                     &[
@@ -551,13 +535,13 @@ impl DriftApp {
                         (ToolKind::Ellipse, "Ellipse"),
                         (ToolKind::EllipseArc, "Partial ellipse"),
                     ],
+                    "C again switches to the next",
                 ) {
                     self.switch_tool(k);
                 }
-                caption(ui, "C cycles");
             }
             ToolKind::Arc | ToolKind::ThreePointArc | ToolKind::TangentArc => {
-                if let Some(k) = choice(
+                if let Some(k) = keyed_choice(
                     ui,
                     kind,
                     &[
@@ -565,10 +549,10 @@ impl DriftApp {
                         (ToolKind::ThreePointArc, "3-point"),
                         (ToolKind::TangentArc, "Tangent"),
                     ],
+                    "A again switches to the next",
                 ) {
                     self.switch_tool(k);
                 }
-                caption(ui, "A cycles");
             }
             ToolKind::Polygon => {
                 caption(ui, "Sides");
@@ -583,17 +567,17 @@ impl DriftApp {
                 {
                     self.editor.polygon_sides = sides;
                 }
-                if let Some(c) = choice(
+                if let Some(c) = keyed_choice(
                     ui,
                     self.editor.polygon_circumscribed,
                     &[(false, "Inscribed"), (true, "Circumscribed")],
+                    "X switches while drawing",
                 ) {
                     self.editor.polygon_circumscribed = c;
                 }
-                caption(ui, "X switches");
             }
             ToolKind::Slot => {
-                if let Some(m) = choice(
+                if let Some(m) = keyed_choice(
                     ui,
                     self.editor.slot_mode,
                     &[
@@ -601,21 +585,21 @@ impl DriftApp {
                         (SlotMode::Centre, "Centre"),
                         (SlotMode::Arc, "Arc"),
                     ],
+                    "U again switches to the next",
                 ) {
                     self.editor.slot_mode = m;
                     self.tool.cancel(&mut self.editor);
                 }
-                caption(ui, "U cycles");
             }
             ToolKind::Fillet | ToolKind::Chamfer => {
-                if let Some(k) = choice(
+                if let Some(k) = keyed_choice(
                     ui,
                     kind,
                     &[(ToolKind::Fillet, "Fillet"), (ToolKind::Chamfer, "Chamfer")],
+                    "F again switches",
                 ) {
                     self.switch_tool(k);
                 }
-                caption(ui, "Type the size · F switches");
             }
             ToolKind::Text => {
                 caption(ui, "Height");
@@ -642,10 +626,6 @@ impl DriftApp {
             ToolKind::Fill => self.fill_tool_bar(ui),
             ToolKind::Pen => {
                 ui.checkbox(&mut self.show_combs, "Curvature combs");
-                caption(
-                    ui,
-                    "Click for corners, drag for smooth points · Enter finishes",
-                );
             }
             ToolKind::Dimension | ToolKind::Ordinate | ToolKind::Note | ToolKind::Callout => {
                 if kind == ToolKind::Dimension {
@@ -667,17 +647,16 @@ impl DriftApp {
                     );
                     divider(ui);
                 }
-                ui.checkbox(&mut self.show_dimensions, "Show dimensions")
-                    .on_hover_text("Alt+D");
-                ui.checkbox(&mut self.show_relations, "Show relations")
-                    .on_hover_text("Alt+R");
+                // Dimensioning goes better with the dimensions and relations in view.
+                if matches!(kind, ToolKind::Dimension | ToolKind::Ordinate) {
+                    ui.checkbox(&mut self.show_dimensions, "Show dimensions")
+                        .on_hover_text("Alt+D");
+                    ui.checkbox(&mut self.show_relations, "Show relations")
+                        .on_hover_text("Alt+R");
+                }
             }
-            _ => {
-                ui.add(
-                    egui::Label::new(egui::RichText::new(kind.description()).size(12.0).weak())
-                        .truncate(),
-                );
-            }
+            // Tools without options: the bar names the tool, the status bar says what to do.
+            _ => {}
         }
     }
 
@@ -729,14 +708,16 @@ impl DriftApp {
             return;
         }
         if n == 0 {
-            caption(
-                ui,
-                "Click or drag to select · Tab highlights a chain · double-click a group to enter it",
-            );
             return;
         }
         let grouped = ed.selection.iter().any(|id| ed.doc.group_of(*id).is_some());
         let curves = !ed.selection.is_empty();
+        // Construction shows as on when everything picked is construction.
+        let construction = ed.selection.iter().all(|id| {
+            ed.doc
+                .get(*id)
+                .is_none_or(|e| e.kind.is_point() || e.style == drift_core::LineKind::Construction)
+        });
         caption(ui, &format!("{n} selected"));
         divider(ui);
         self.selection_look(ui);
@@ -744,12 +725,16 @@ impl DriftApp {
         // Construction is a property of the curves; the things to do with them are in a menu
         // (and on the right-click menu and their keys), so the bar stays about what is picked.
         if curves
-            && bar_button(
-                ui,
-                "Construction",
-                "Alt+C",
-                "Toggle construction geometry (guides that don't print)",
-            )
+            && ui
+                .add(
+                    egui::Button::selectable(
+                        construction,
+                        egui::RichText::new("Construction").size(12.5),
+                    )
+                    .min_size(egui::vec2(0.0, 24.0)),
+                )
+                .on_hover_text("Construction geometry: guides that don't print (Alt+C)")
+                .clicked()
         {
             self.editor.toggle_construction();
         }
@@ -801,15 +786,11 @@ impl DriftApp {
         .response
         .on_hover_text("Duplicate, move, rotate, mirror, group, make a block");
         divider(ui);
-        let red = ui.visuals().error_fg_color;
-        if ui
-            .add(
-                egui::Button::new(egui::RichText::new("Delete").size(12.5).color(red))
-                    .frame_when_inactive(false)
-                    .min_size(egui::vec2(0.0, 24.0)),
-            )
-            .on_hover_text("Delete the selection (Del)")
-            .clicked()
+        if icons::button(ui, 24.0, false, "Delete", |p, r, c| {
+            icons::glyph(p, r, Glyph::Delete, c)
+        })
+        .on_hover_text("Delete the selection (Del)")
+        .clicked()
         {
             self.editor.delete_selection();
         }
@@ -884,7 +865,7 @@ impl DriftApp {
                 if ui
                     .add_enabled(space, egui::Button::new("Space dimensions evenly"))
                     .on_hover_text(
-                        "Space three or more stacked parallel dimensions evenly between the                          outermost two",
+                        "Space three or more stacked parallel dimensions evenly between the outermost two",
                     )
                     .clicked()
                 {
@@ -893,15 +874,15 @@ impl DriftApp {
                 }
                 ui.separator();
             }
-            let mut hidden = self.show_hidden_annotations;
-            if ui
-                .add(egui::Checkbox::new(
-                    &mut hidden,
-                    "Show hidden annotations (Alt+H)",
-                ))
-                .changed()
+            if theme::menu_check(
+                ui,
+                self.show_hidden_annotations,
+                "Show hidden annotations",
+                "Alt+H",
+            )
+            .clicked()
             {
-                self.show_hidden_annotations = hidden;
+                self.show_hidden_annotations = !self.show_hidden_annotations;
             }
             ui.separator();
         }
@@ -921,13 +902,12 @@ impl DriftApp {
                 ui.close();
             }
             ui.separator();
-            let mut grid = self.show_grid;
-            if ui.checkbox(&mut grid, "Grid").changed() {
-                self.show_grid = grid;
+            let grid_keys = app::panels::shortcut("'", false);
+            if theme::menu_check(ui, self.show_grid, "Grid", &grid_keys).clicked() {
+                self.show_grid = !self.show_grid;
             }
-            let mut snap = self.grid_snap;
-            if ui.checkbox(&mut snap, "Snap to grid").changed() {
-                self.grid_snap = snap;
+            if theme::menu_check(ui, self.grid_snap, "Snap to grid", "Shift+G").clicked() {
+                self.grid_snap = !self.grid_snap;
             }
             ui.separator();
             if item(ui, "Command palette…", &app::panels::shortcut("K", false)) {

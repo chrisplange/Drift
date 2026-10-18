@@ -33,7 +33,7 @@ fn paint_block(
         let d = (p - c) * scale;
         rect.center() + egui::vec2(d.x as f32, -d.y as f32)
     };
-    let stroke = egui::Stroke::new(1.0, color);
+    let stroke = egui::Stroke::new(1.25, color);
     for item in &block.items {
         match item.shape {
             Shape::Line { a, b } => {
@@ -85,8 +85,13 @@ fn paint_block(
 }
 
 /// A library type as a tile: its thumbnail over its type name. `added`: the drawing has it.
-fn library_tile(ui: &mut egui::Ui, entry: &crate::library::Entry, added: bool) -> egui::Response {
-    let size = egui::vec2(62.0, 76.0);
+fn library_tile(
+    ui: &mut egui::Ui,
+    entry: &crate::library::Entry,
+    added: bool,
+    width: f32,
+) -> egui::Response {
+    let size = egui::vec2(width, width + 14.0);
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
     let name = entry.block.name.clone();
     response.widget_info(|| {
@@ -100,11 +105,11 @@ fn library_tile(ui: &mut egui::Ui, entry: &crate::library::Entry, added: bool) -
     } else {
         visuals.extreme_bg_color
     };
-    ui.painter().rect_filled(thumb, 6.0, fill);
+    ui.painter().rect_filled(thumb, theme::radius::MENU, fill);
     if added {
         ui.painter().rect_stroke(
             thumb,
-            6.0,
+            theme::radius::MENU,
             egui::Stroke::new(1.5, theme::accent(dark).gamma_multiply(0.7)),
             egui::StrokeKind::Inside,
         );
@@ -361,7 +366,7 @@ impl DriftApp {
         ui.horizontal(|ui| {
             ui.label(
                 egui::RichText::new(if search.is_empty() {
-                    format!("{} types, in inches", entries.len())
+                    format!("{} blocks · imperial sizes", entries.len())
                 } else {
                     format!("{} found in all categories", entries.len())
                 })
@@ -395,9 +400,13 @@ impl DriftApp {
             );
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
+                // As many tiles across as fit at about 62 points, stretched to fill the row.
+                let room = ui.available_width();
+                let across = ((room + 6.0) / 68.0).floor().max(1.0);
+                let width = ((room - 6.0 * (across - 1.0)) / across).floor();
                 for e in family {
                     let added = self.editor.doc.block_named(&e.block.name).is_some();
-                    let tile = library_tile(ui, e, added).on_hover_text(format!(
+                    let tile = library_tile(ui, e, added, width).on_hover_text(format!(
                         "{}\n{}",
                         e.block.name,
                         if added {
@@ -555,15 +564,7 @@ impl DriftApp {
             }
         });
         ui.add_space(10.0);
-        if ui
-            .add_sized(
-                [ui.available_width(), 26.0],
-                egui::Button::new(
-                    egui::RichText::new("Delete").color(egui::Color32::from_rgb(0xff, 0x5d, 0x5d)),
-                ),
-            )
-            .clicked()
-        {
+        if theme::danger_button(ui, "Delete").clicked() {
             self.editor.delete_selection();
         }
         true

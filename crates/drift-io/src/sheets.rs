@@ -1,4 +1,4 @@
-//! File records for sheets (format 8) and views (format 26).
+//! File records for sheets (format 8) and views (format 27).
 
 use drift_core::{
     Bounds, DVec2, PaperSize, Revision, Sheet, SheetColours, SheetId, TitleBlock, TitleFields,
@@ -174,7 +174,7 @@ pub(crate) struct SheetRecord {
     /// From v18 to v25, the sheet's own views.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     views: Option<Vec<OldViewRecord>>,
-    /// The views placed on it (v26).
+    /// The views placed on it (v27).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     viewports: Vec<ViewportRecord>,
     title_block: String,
@@ -237,7 +237,7 @@ pub(crate) fn sheet_record(id: SheetId, s: &Sheet) -> SheetRecord {
     }
 }
 
-/// A view a sheet held itself before v26, to be made a model view when the file is read.
+/// A view a sheet held itself before v27, to be made a model view when the file is read.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct OldView {
     pub name: String,
@@ -285,7 +285,7 @@ impl OldView {
     }
 }
 
-/// A sheet, and (from a file before v26) the views it held itself, to be made model views.
+/// A sheet, and (from a file before v27) the views it held itself, to be made model views.
 pub(crate) fn parse_sheet(r: SheetRecord) -> Result<(SheetId, Sheet, Vec<OldView>), LoadError> {
     let bad = |field| LoadError::MissingField {
         id: r.id.clone(),
@@ -355,7 +355,7 @@ pub(crate) fn parse_sheet(r: SheetRecord) -> Result<(SheetId, Sheet, Vec<OldView
                 Ok(out)
             })
             .collect::<Result<Vec<_>, _>>()?,
-        // v26 on: its views are the model's.
+        // v27 on: its views are the model's.
         None if r.scale.is_none() && r.center.is_none() => Vec::new(),
         // Before v18: the sheet's one view, filling it.
         None => {

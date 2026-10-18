@@ -179,6 +179,9 @@ fn preferences_have_an_updates_section() {
     h.state_mut().show_settings = true;
     h.run();
     h.run();
+    h.get_by_label("Updates").click();
+    h.run();
+    h.run();
     assert!(
         h.query_by_label("Check for updates when Drift starts")
             .is_some()

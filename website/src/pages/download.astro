@@ -1,7 +1,7 @@
 ---
 import Base from "../layouts/Base.astro";
 import DownloadButtons from "../components/DownloadButtons.astro";
-import { formatDate, getReleases } from "../lib/releases";
+import { formatDate, friendlyVersion, getReleases, stage } from "../lib/releases";
 import { site } from "../site.config.mjs";
 
 const releases = await getReleases();
@@ -17,7 +17,8 @@ const latest = releases[0];
       {
         latest && (
           <>
-            The newest version is <strong>{latest.version}</strong>, released{" "}
+            The newest version is <strong>{friendlyVersion(latest.version)}</strong> ({latest.version}),
+            released{" "}
             {formatDate(latest.published)}.
           </>
         )
@@ -29,14 +30,18 @@ const latest = releases[0];
     </div>
 
     <div class="notes">
-      <section>
-        <h2>Drift is alpha software</h2>
-        <p>
-          It works, and testers use it for real drawings, but expect rough edges and save often.
-          A file saved by a newer Drift won't open in an older one, so if you share drawings,
-          everyone should use the same version. Drift tells you when an update is ready.
-        </p>
-      </section>
+      {
+        stage(latest?.version) && (
+          <section>
+            <h2>Drift is {stage(latest?.version)} software</h2>
+            <p>
+              It works, and testers use it for real drawings, but expect rough edges and save often.
+              A file saved by a newer Drift won't open in an older one, so if you share drawings,
+              everyone should use the same version. Drift tells you when an update is ready.
+            </p>
+          </section>
+        )
+      }
       <section>
         <h2>The first time you open it</h2>
         <p>Drift isn't code-signed yet, so your computer asks before opening it the first time.</p>

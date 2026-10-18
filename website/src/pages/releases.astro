@@ -1,6 +1,6 @@
 ---
 import Base from "../layouts/Base.astro";
-import { formatDate, getReleases } from "../lib/releases";
+import { formatDate, friendlyVersion, getReleases } from "../lib/releases";
 import { site } from "../site.config.mjs";
 
 const releases = await getReleases();
@@ -27,8 +27,9 @@ const releases = await getReleases();
           <section class="release" id={r.tag}>
             <div class="meta">
               <h2>
-                <a href={`#${r.tag}`}>{r.version}</a>
+                <a href={`#${r.tag}`}>{friendlyVersion(r.version)}</a>
               </h2>
+              <span class="version">{r.version}</span>
               <time datetime={r.published}>{formatDate(r.published)}</time>
               <div class="tags">
                 {i === 0 && <span class="tag latest">Latest</span>}
@@ -73,9 +74,14 @@ const releases = await getReleases();
   .meta h2 a {
     color: var(--text);
   }
-  time {
+  time,
+  .version {
     color: var(--text-weak);
     display: block;
+  }
+  .version {
+    font-family: var(--mono);
+    font-size: 0.78rem;
   }
   .tags {
     display: flex;

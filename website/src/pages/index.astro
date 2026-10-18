@@ -4,12 +4,15 @@ import Base from "../layouts/Base.astro";
 import DownloadButtons from "../components/DownloadButtons.astro";
 import SketchScroll from "../components/SketchScroll.astro";
 import { screen } from "../lib/screens";
-import { getReleases } from "../lib/releases";
+import { friendlyVersion, getReleases } from "../lib/releases";
 import { site } from "../site.config.mjs";
 
-const latest = (await getReleases())[0];
+const releases = await getReleases();
+const latest = releases[0];
+const next = site.nextRelease;
+const nextIsOut = releases.some((r) => r.version === next.version);
 
-const features = [
+const features: { img?: string; visual?: "ai"; title: string; text: string }[] = [
   {
     img: "dims-fully-defined",
     title: "Dimensions that drive the drawing",
@@ -26,9 +29,14 @@ const features = [
     text: "Name a value, width = 1200, and drive dimensions with expressions. Drag a slider to watch the sketch re-solve, and keep named variants to compare options side by side.",
   },
   {
+    img: "view-crops",
+    title: "Views on the canvas",
+    text: "Crop named views of the model right on the canvas, Revit-style, and place them on sheets. Each view picks its own layers, and section and elevation marks link to the views they cut.",
+  },
+  {
     img: "fills",
     title: "Poché, hatches and fills",
-    text: "Click inside a closed area to hatch it: concrete, earth, insulation, brick, or any AutoCAD or Revit .pat file. Fills follow the geometry when it changes.",
+    text: "Click inside a closed area to hatch it: concrete, earth, insulation, brick, or any AutoCAD or Revit .pat file. Fills stay on their outlines through every edit.",
   },
   {
     img: "blocks",
@@ -40,6 +48,45 @@ const features = [
     title: "Sheets, title blocks and output",
     text: "Lay views out on A4 to A0 or ANSI sheets with a title block and revisions. Export true-scale vector PDF, SVG or DXF, and trace over PDF and DXF underlays.",
   },
+  {
+    img: "sheet-views",
+    title: "Colour, greyscale or black & white",
+    text: "Choose per sheet how it prints: in colour, in greys, or as a crisp monochrome plot. The sheet preview shows exactly what comes out.",
+  },
+  {
+    visual: "ai",
+    title: "Draw with AI",
+    text: "drift-mcp lets Claude and other MCP assistants sketch, constrain, dimension, render and analyse Drift drawings, as real geometry you can keep editing.",
+  },
+];
+
+// What the next release brings: the front page's "What's new" section.
+const news = [
+  {
+    title: "Views on the canvas",
+    text: "Named crops of the model, drawn on the canvas and placed on sheets. Each view chooses its layers; section and elevation marks link to their views and number themselves.",
+  },
+  {
+    title: "Draw with AI",
+    text: "drift-mcp, an MCP server, lets Claude and other assistants sketch, constrain, dimension, render and analyse Drift drawings.",
+    href: `${site.repoUrl}/blob/main/docs/ai.md`,
+  },
+  {
+    title: "A fresh new look",
+    text: "A quieter, more consistent interface: a new theme, panels, menus, dialogs and canvas overlays.",
+  },
+  {
+    title: "Sheets that flow",
+    text: "Canvas tabs for every sheet, Add view, sheet numbers, reordering and duplicating, and a choice of which sheets go into a PDF.",
+  },
+  {
+    title: "Colour, greyscale or black & white",
+    text: "Each sheet prints the way you choose, and the preview shows it.",
+  },
+  {
+    title: "Fills that hold on",
+    text: "Fills and hatches stay on their outlines through fillets, splits, drags and every other edit.",
+  },
 ];
 ---
 
@@ -48,7 +95,7 @@ const features = [
     <div class="wrap hero-inner">
       <div class="hero-text">
         <a class="pill" href="/releases/">
-          {latest ? `${latest.version} is out` : "Now in alpha"}
+          {latest ? `${friendlyVersion(latest.version)} is out` : "Release notes"}
         </a>
         <h1>Sketch with <em>intent</em>.<br /><span>Change your mind <em>freely</em>.</span></h1>
         <p class="lede">
@@ -89,12 +136,17 @@ const features = [
           features.map((f) => (
             <article class="feature">
               <div class="shot">
-                <Image
-                  src={screen(f.img)}
-                  alt=""
-                  widths={[480, 720]}
-                  sizes="(max-width: 760px) 100vw, 360px"
-                />
+                {f.img ? (
+                  <Image src={screen(f.img)} alt="" widths={[480, 720]} sizes="(max-width: 760px) 100vw, 360px" />
+                ) : (
+                  <div class="ai" aria-hidden="true">
+                    <p class="ask">Draw a 1200 × 600 table top with 40 mm corners, fully dimensioned.</p>
+                    <p class="reply">
+                      <span>4 lines · 4 arcs · 6 dimensions</span>
+                      <b>Fully defined</b>
+                    </p>
+                  </div>
+                )}
               </div>
               <h3>{f.title}</h3>
               <p>{f.text}</p>
@@ -102,6 +154,38 @@ const features = [
           ))
         }
       </div>
+    </div>
+  </section>
+
+  <section class="section news" id="whats-new">
+    <div class="wrap">
+      <p class="eyebrow">{nextIsOut ? `${next.name} is out` : `Coming in ${next.name}`}</p>
+      <h2>What's <em>new</em> in {next.name}</h2>
+      <p class="lede">
+        {
+          nextIsOut
+            ? "The first beta of Drift. Here's what changed since Alpha 7."
+            : "The first beta of Drift is on its way. Here's what it brings since Alpha 7."
+        }
+      </p>
+      <ul class="news-list">
+        {
+          news.map((n) => (
+            <li>
+              <h3>{n.href ? <a href={n.href}>{n.title}</a> : n.title}</h3>
+              <p>{n.text}</p>
+            </li>
+          ))
+        }
+      </ul>
+      <p class="news-also">
+        Also: no more flash when Drift starts maximised, licence notices for the fonts and
+        libraries it's built with, and <a href="/licence/">a new licence</a> from this release on.
+      </p>
+      <p class="news-links">
+        {nextIsOut && <a class="btn btn-primary" href="/download/">Get {next.name}</a>}
+        <a href="/releases/">All release notes →</a>
+      </p>
     </div>
   </section>
 
@@ -244,6 +328,86 @@ const features = [
   .feature:hover img {
     transform: scale(1.04);
   }
+  .ai {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 12px;
+    padding: 22px;
+    background:
+      radial-gradient(ellipse at 100% 0%, color-mix(in srgb, var(--accent) 22%, transparent), transparent 60%),
+      var(--surface);
+    font-size: 0.85rem;
+  }
+  .ai p {
+    margin: 0;
+    color: var(--text);
+  }
+  .ai .ask {
+    align-self: flex-end;
+    max-width: 85%;
+    padding: 10px 14px;
+    border-radius: 16px 16px 4px 16px;
+    background: var(--raised);
+    border: 1px solid var(--line-strong);
+  }
+  .ai .reply {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    color: var(--text-weak);
+  }
+  .ai .reply span {
+    color: var(--text-weak);
+  }
+  .ai .reply b {
+    font-family: var(--font);
+    font-weight: 600;
+    padding: 2px 10px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--ok) 16%, transparent);
+    color: var(--ok);
+  }
+  .news-list {
+    list-style: none;
+    margin: 40px 0 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+  .news-list li {
+    background: var(--panel);
+    padding: 24px;
+  }
+  .news-list h3 a {
+    color: var(--text);
+  }
+  .news-list p {
+    margin: 0;
+    color: var(--text-weak);
+    font-size: 0.95rem;
+  }
+  .news-also {
+    margin: 20px 0 0;
+    color: var(--text-weak);
+    font-size: 0.95rem;
+  }
+  .news-links {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 24px;
+    margin-top: 28px;
+  }
   .feature p {
     color: var(--text-weak);
     font-size: 0.95rem;
@@ -314,7 +478,8 @@ const features = [
       grid-template-columns: minmax(0, 1fr);
       gap: 40px;
     }
-    .grid {
+    .grid,
+    .news-list {
       grid-template-columns: repeat(2, 1fr);
     }
   }
@@ -322,7 +487,8 @@ const features = [
     .hero {
       padding-top: 40px;
     }
-    .grid {
+    .grid,
+    .news-list {
       grid-template-columns: minmax(0, 1fr);
     }
     .facts li {

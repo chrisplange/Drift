@@ -2,7 +2,7 @@
 // The main download button picks the visitor's platform; the others are listed beside it.
 // Links come from the newest release at build time, and the script below re-checks GitHub
 // in the browser in case a release came out since.
-import { findAsset, formatSize, getReleases, type Platform } from "../lib/releases";
+import { findAsset, formatSize, friendlyVersion, getReleases, type Platform } from "../lib/releases";
 import { site } from "../site.config.mjs";
 
 interface Props {
@@ -50,7 +50,7 @@ const links = options.map((o) => {
         <a class="btn btn-primary big" href={l.href} data-platform={l.platform} data-os={l.os}>
           <span class="label">{l.label}</span>
           <small>
-            <span data-version>{latest?.version ?? "latest"}</span>
+            <span data-version>{latest ? friendlyVersion(latest.version) : "latest"}</span>
             {l.size && <span data-size> · {l.size}</span>}
           </small>
         </a>
@@ -117,7 +117,11 @@ const links = options.map((o) => {
   async function refresh(root: HTMLElement) {
     const release = await fetchLatest(root.dataset.repo!);
     if (!release) return;
-    const version = String(release.tag_name).replace(/^v/, "");
+    // As friendlyVersion in lib/releases.ts: "0.1.0-beta.1.1" reads "Beta 1.1".
+    const raw = String(release.tag_name).replace(/^v/, "");
+    const m = raw.match(/-(alpha|beta|rc)\.?(.*)$/i);
+    const name = m ? (m[1].toLowerCase() === "rc" ? "Release candidate" : m[1][0].toUpperCase() + m[1].slice(1)) : "";
+    const version = m ? (m[2] ? `${name} ${m[2]}` : name) : raw;
     root.querySelectorAll<HTMLAnchorElement>("a[data-platform]").forEach((a) => {
       const end = suffix[a.dataset.platform as Platform];
       const asset = release.assets?.find((x: any) => x.name.endsWith(end));

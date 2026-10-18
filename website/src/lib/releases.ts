@@ -77,6 +77,20 @@ export function findAsset(release: Release | undefined, platform: Platform): Ass
   return release?.assets.find((a) => a.name.endsWith(assetSuffix[platform]));
 }
 
+/** A version as people say it: "0.1.0-beta.1.1" is "Beta 1.1", "0.1.0-alpha.7" is "Alpha 7". */
+export function friendlyVersion(version: string): string {
+  const m = version.match(/-(alpha|beta|rc)\.?(.*)$/i);
+  if (!m) return version;
+  const stage = m[1].toLowerCase() === "rc" ? "Release candidate" : m[1][0].toUpperCase() + m[1].slice(1);
+  return m[2] ? `${stage} ${m[2]}` : stage;
+}
+
+/** The release stage a version belongs to, for "Drift is … software". */
+export function stage(version: string | undefined): string {
+  const m = version?.match(/-(alpha|beta|rc)/i);
+  return m ? (m[1].toLowerCase() === "rc" ? "release-candidate" : m[1].toLowerCase()) : "";
+}
+
 export function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
 }

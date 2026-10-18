@@ -99,6 +99,24 @@ drawn on, shown in the lower half of the flag, such as `A-201`), and which way i
 (a section's **Direction** has **Flip**, to look the other way, and **Swap ends**; an
 elevation's **Facing** has an angle and →, ↑, ←, ↓ buttons). Drag a mark to move it whole.
 
+### Marks linked to views
+
+A mark can point at a view of the model, the way a Revit section points at its section
+view. Its flag then reads the view's number over the number of the sheet it's on, such as
+`2 / A-501`, and keeps up by itself: renumber the sheet or move the view and the flag
+follows.
+
+- **Right-click a mark → Make view** makes a view of what it looks at, named after the
+  mark (**Section A**, **Elevation 1**) and linked to it. A section's view runs along its
+  cutting line, as deep as the drawing goes the way it looks; an elevation's takes in what
+  is in front of it. It gets the largest standard scale at which it fits 180 × 120 mm of
+  paper. The view is picked in the **Views** list of the Sheets panel, ready to place on a
+  sheet (see [Sheets and output](10-sheets-and-output.md)). One undo takes it all back.
+- In the mark's **Inspector**, **View** links it to any view, or to **None**. While it's
+  linked, **Reads** shows what the flag says, in place of **On sheet**.
+- Until the view is placed on a sheet the flag reads `– / –`. Delete the view and the mark
+  goes back to its own label and sheet.
+
 ## 6. Dimension text
 
 Double-click a dimension's value. Under the value field are:

@@ -85,6 +85,8 @@ pub(super) struct Runner<'s> {
     pub calls: Vec<Value>,
     pub did: Vec<Value>,
     pub skipped: Vec<Value>,
+    /// Things that ran but look like mistakes (a door a few millimetres wide).
+    pub warnings: Vec<Value>,
     rooms: Vec<String>,
     image: Option<Vec<u8>>,
     /// Each statement's source, by line, for errors that involve earlier lines.
@@ -440,6 +442,7 @@ impl<'s> Runner<'s> {
             calls: Vec::new(),
             did: Vec::new(),
             skipped: Vec::new(),
+            warnings: Vec::new(),
             rooms: Vec::new(),
             image: None,
             sources: HashMap::new(),
@@ -498,15 +501,24 @@ impl<'s> Runner<'s> {
         if ok(&e.text) {
             return e.text.clone();
         }
-        match super::lex::with_mm(&e.text) {
+        match super::lex::with_unit(&e.text, self.unit().symbol()) {
             Some(t) if ok(&t) => t,
             _ => e.text.clone(),
         }
     }
 
+    /// The drawing's unit of length: bare numbers are in it, as when typed into Drift.
+    fn unit(&self) -> drift_core::LengthFormat {
+        self.doc().units().length
+    }
+
     fn eval(&self, e: &Expr, kind: VKind) -> R<f64> {
         if let Some(x) = e.plain() {
-            return Ok(x);
+            return Ok(if kind == VKind::Length {
+                x * self.unit().mm_per_unit()
+            } else {
+                x
+            });
         }
         self.s
             .editor
@@ -538,7 +550,14 @@ impl<'s> Runner<'s> {
 
     /// A value for a dimension: a number in mm, or the text as typed (so it stays linked).
     fn val(&self, e: &Expr) -> Value {
+        self.val_as(e, VKind::Length)
+    }
+
+    /// A value for a tool: a bare number in mm (lengths, from the drawing's unit) or degrees,
+    /// or else the text as typed.
+    fn val_as(&self, e: &Expr, kind: VKind) -> Value {
         match e.plain() {
+            Some(x) if kind == VKind::Length => json!(x * self.unit().mm_per_unit()),
             Some(x) => json!(x),
             None => json!(self.text_of(e)),
         }
@@ -890,13 +909,26 @@ impl<'s> Runner<'s> {
         let ln = st.line;
         match &st.stmt {
             Stmt::Let { name, value, kind } => {
-                let existing = self.doc().variable_named(name).is_some();
+                let existing = self
+                    .doc()
+                    .variable_named(name)
+                    .and_then(|id| self.doc().variable(id))
+                    .map(|v| v.kind);
                 let kind = match kind {
                     Some(k) => Some(*k),
-                    None if existing => None,
+                    None if existing.is_some() => None,
                     None => Some(self.infer_kind(value)),
                 };
-                let mut item = json!({ "name": name, "value": self.val(value) });
+                let as_kind = match kind.or(match existing {
+                    Some(VKind::Angle) => Some(VarKind::Angle),
+                    Some(VKind::Number) => Some(VarKind::Number),
+                    _ => None,
+                }) {
+                    Some(VarKind::Angle) => VKind::Angle,
+                    Some(VarKind::Number) => VKind::Number,
+                    _ => VKind::Length,
+                };
+                let mut item = json!({ "name": name, "value": self.val_as(value, as_kind) });
                 if let Some(k) = kind {
                     item["kind"] = json!(match k {
                         VarKind::Length => "length",
@@ -1724,6 +1756,21 @@ impl<'s> Runner<'s> {
         let length = p0.distance(p1);
         let u = (p1 - p0).normalize_or_zero();
         let w = self.len(width)?;
+        // Smaller than any real door or window: most likely a unit slip.
+        if w < 300.0 {
+            let units = self.s.editor.doc.units();
+            let mut warning = format!("{name} is only {} wide", units.format_length(w));
+            if width.plain().is_some() {
+                warning.push_str(&format!(
+                    "; a plain number is in the drawing's unit ({}), so for inches write {}\" and for feet {}'",
+                    self.unit().symbol(),
+                    width.text,
+                    width.text
+                ));
+            }
+            self.warnings
+                .push(json!({ "line": ln, "warning": warning }));
+        }
         let t1 = match along {
             Along::Centred => (length - w) / 2.0,
             Along::Offset(by, from) => {
@@ -2147,7 +2194,12 @@ impl<'s> Runner<'s> {
         if reference {
             d["driven"] = json!(true);
         } else if let Some(v) = value {
-            d["value"] = self.val(v);
+            let k = if kind == DimKind::Angle {
+                VKind::Angle
+            } else {
+                VKind::Length
+            };
+            d["value"] = self.val_as(v, k);
         }
         self.dims(vec![d])?;
         Ok(())

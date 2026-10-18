@@ -26,7 +26,9 @@ use super::{Session, ToolOutput};
 pub const DESCRIPTION: &str = "\
 Run a Drift script: geometry, relations and dimensions written by name, as one undo step (all or nothing). \
 Prefer it to separate calls for building or changing a drawing. One statement per line; `#` comments; `\\` continues a line.
-Values: 3600 (mm), 3.6 m, 360 cm, 12'6\", 6 1/2\", 30°, or expressions of variables (W/2 + 100). Dimensions keep the text, so they follow variables. \
+Values: 3.6 m, 360 cm, 3600 mm, 12'6\", 6 1/2\", 30°, or expressions of variables (W/2 + 100). A plain number is in the drawing's \
+unit, as when typed into Drift: mm in a metric drawing, inches in a feet-and-inches one (see drawing_info), also when added to a length; \
+write units when in doubt. Dimensions keep the text, so they follow variables. \
 Positions are rough (`0,0` or `(W, 0)`) or a named point (`bed.ne`); the solver makes them exact.
   let W = 3.6 m                               variable (add `number` or `angle` for other kinds)
   layer Walls color #333333 weight 0.5 line center   |   on Walls   |   any statement ending `on Walls`
@@ -52,7 +54,7 @@ Parts: line .start .end; rect/room .south .east .north .west (.bottom .right .to
 room with walls also .outer.<side or corner>, .walls; wall .left .right .start .end (.axis when centred); door .start .end (jambs); \
 grid .A .3; circle .center; arc .center .start .end; array [1] … [n] (then .center); polyline [k] .start .end. \
 After an opening, a face is in pieces: bed.south[2]. y is up: north is +y.
-The result lists every name's id, each line's reading, skipped relations, room areas and the sketch's degrees of freedom. \
+The result lists every name's id, each line's reading, skipped relations, warnings (such as a door only millimetres wide), room areas and the sketch's degrees of freedom. \
 Errors give the line, what it was read as, and change nothing.";
 
 /// The tool's arguments.
@@ -115,6 +117,9 @@ pub(super) fn call(s: &mut Session, a: &Value) -> ToolOutput {
             });
             if !r.skipped.is_empty() {
                 v["skipped"] = json!(r.skipped);
+            }
+            if !r.warnings.is_empty() {
+                v["warnings"] = json!(r.warnings);
             }
             if explain {
                 v["calls"] = json!(r.calls);

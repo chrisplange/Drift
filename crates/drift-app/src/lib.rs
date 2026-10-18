@@ -820,6 +820,10 @@ const SHORTCUTS: &[(&str, &[(&str, &str)])] = &[
                 "Alt+H",
                 "Show hidden dimensions and notes, faded, to pick and show them again",
             ),
+            (
+                "Shift+Alt+B",
+                "Show or hide views' crops and names on the canvas",
+            ),
             ("Shift+G", "Snap to grid"),
             (
                 "Shift+C",

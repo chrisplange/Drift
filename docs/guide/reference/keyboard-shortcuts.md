@@ -102,6 +102,7 @@ In a move or rotate (G, R): click or Enter places, Esc or right-click cancels.
 | Ctrl+' | Show or hide the grid |
 | Shift+C | Constraint status colours, or curves' own and their layers' colours |
 | W | Thin lines: every line one pixel wide |
+| Shift+Alt+B | Show or hide views' crops and names (**View → View crops**) |
 
 In the sheet preview: Shift+F fits the sheet, Delete takes the picked view off the sheet
 (it stays in the drawing), Esc returns to the model.

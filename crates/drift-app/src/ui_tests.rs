@@ -6818,10 +6818,18 @@ fn views_are_drawn_on_the_canvas_and_placed_on_sheets() {
     assert_eq!(crop_grip(&h, DVec2::new(-20.0, 40.0)), None);
     h.state_mut().undo();
     assert!(crop_grip(&h, DVec2::new(-20.0, 40.0)).is_some());
-    h.state_mut().show_view_crops = false;
+    // (Shift+Alt+B, or View → View crops.)
+    let shift_alt = EguiModifiers::SHIFT | EguiModifiers::ALT;
+    h.key_press_modifiers(shift_alt, Key::B);
+    h.run();
+    assert!(!h.state().show_view_crops);
     assert_eq!(crop_grip(&h, DVec2::new(-20.0, 40.0)), None);
     assert!(h.state().view_prefs().contains("crops=0"));
-    h.state_mut().show_view_crops = true;
+    save_png("drift_ui_view_crops_hidden.png", &mut h);
+    h.key_press_modifiers(shift_alt, Key::B);
+    h.run();
+    assert!(h.state().show_view_crops);
+    assert!(crop_grip(&h, DVec2::new(-20.0, 40.0)).is_some());
 
     // On a sheet: a new sheet brings a view of its own; Place on sheet adds this one, at its
     // scale, so its frame is its crop on the paper.

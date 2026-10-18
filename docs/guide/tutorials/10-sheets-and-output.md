@@ -109,7 +109,7 @@ With the select tool:
 
 Crops and their names are for working on the canvas. They never print or export.
 
-- **View → View crops** shows or hides every crop.
+- **View → View crops** (Shift+Alt+B) shows or hides every crop.
 - A view's own **Crop** switch (in the top bar, or the **Views** list) hides just that one,
   like Revit's **Crop Region Visible**. A hidden crop can't be picked on the canvas, but you
   can still pick its view in the list. Its crop then shows faintly while picked.

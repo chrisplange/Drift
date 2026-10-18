@@ -206,6 +206,7 @@ mod tests {
             frame: drift_core::ViewFrame { at, size },
             dimensions: true,
             notes: true,
+            construction: false,
             hidden_layers: Default::default(),
             title: false,
             border: false,

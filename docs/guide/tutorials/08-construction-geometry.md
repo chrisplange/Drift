@@ -12,7 +12,7 @@ Time: about 5 minutes.
 Construction geometry is a guide. It's drawn thin and dashed, it can carry relations and
 dimensions like anything else, and you can snap to it. But it:
 
-- never prints or exports,
+- doesn't print or export, unless you turn it on for a view on a sheet (see below),
 - doesn't close areas, so fills and hatches ignore it,
 - has no line weight.
 
@@ -54,11 +54,22 @@ The **Inspector**'s **Appearance** section has the same choice for picked curves
 third option: **Geometry**, **Construction** or **Centre line**. A centre line prints (as a
 chain line) but, like construction, doesn't close areas.
 
+## Show it on a sheet
+
+Sometimes the guides belong on paper: a setting-out drawing, a grid, a bolt circle you want
+the fabricator to see. Each view has a **Construction** switch under **Show**, off to start
+with (see [Sheets and output](10-sheets-and-output.md)). Turn it on and that view's
+construction geometry prints as thin, light grey dashes, in a curve's own colour if it has
+one. The sheet's **Colours** setting applies: greyscale keeps it grey and black & white
+makes it black, still thin and dashed. Points, and the edges an import drew around its
+fills, stay off the sheet.
+
 ## What you learned
 
 - Alt+C switches a drawing tool between drawing geometry and construction.
 - With the **Select** tool, Alt+C turns picked curves into construction and back.
-- Construction geometry guides and constrains, but never prints and never closes an area.
+- Construction geometry guides and constrains, and never closes an area. It prints only in
+  views whose **Show** has **Construction** ticked.
 
 ## Next
 

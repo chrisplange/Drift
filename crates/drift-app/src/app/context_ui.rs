@@ -735,7 +735,9 @@ impl DriftApp {
                     )
                     .min_size(egui::vec2(0.0, 24.0)),
                 )
-                .on_hover_text("Construction geometry: guides that don't print (Alt+C)")
+                .on_hover_text(
+                    "Construction geometry: guides, off sheets unless a view shows them (Alt+C)",
+                )
                 .clicked()
         {
             self.editor.toggle_construction();

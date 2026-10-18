@@ -25,6 +25,8 @@ const ANNOTATION_LAYER: &str = "ANNOTATIONS";
 /// Pen widths (mm) for thin drafting lines and for unweighted geometry.
 const THIN: f64 = 0.18;
 const HAIRLINE: f64 = 0.13;
+/// Construction geometry on paper, as on the canvas: a light grey.
+const CONSTRUCTION_GREY: Rgb = Rgb([0x8e, 0x9a, 0xb0]);
 /// Most hatch segments per fill in an export.
 const HATCH_LIMIT: usize = 400_000;
 
@@ -47,6 +49,8 @@ struct Space<'a> {
     /// Whether dimensions, and notes and callouts, are drawn (a sheet can leave them out).
     dimensions: bool,
     notes: bool,
+    /// Whether construction geometry is drawn (a view on a sheet can show it).
+    construction: bool,
     /// Layers the view leaves out.
     hidden: &'a BTreeSet<LayerId>,
     /// The view drawn (dimensions and annotations drawn in other views only are left out);
@@ -97,8 +101,9 @@ fn on_paper(c: Rgb, opacity: f64) -> Rgb {
         .map(|v| (255.0 - (255.0 - f64::from(v)) * a).round() as u8))
 }
 
-/// The sketch's curves, as printed: no points or construction lines, nothing on hidden or
-/// non-printing layers, or on layers the view leaves out.
+/// The sketch's curves, as printed: no points, no construction curves unless the view shows
+/// them (and never an import's fill edges), nothing on hidden or non-printing layers, or on
+/// layers the view leaves out.
 fn geometry(ed: &Editor, s: &Space, d: &mut Drawing) {
     let doc = &ed.doc;
     for (_, layer) in doc.layers() {
@@ -113,8 +118,15 @@ fn geometry(ed: &Editor, s: &Space, d: &mut Drawing) {
     let ranks = doc.layer_ranks();
     let mut entities: Vec<_> = doc.iter().collect();
     entities.sort_by_key(|(_, e)| ranks.get(&e.layer).copied().unwrap_or(0));
+    let fill_edges = if s.construction {
+        ed.fill_edges()
+    } else {
+        Default::default()
+    };
     for (id, e) in entities {
-        if e.kind.is_point() || e.style == LineKind::Construction {
+        if e.kind.is_point()
+            || (e.style == LineKind::Construction && (!s.construction || fill_edges.contains(&id)))
+        {
             continue;
         }
         let layer = doc.layer_of(id);
@@ -218,7 +230,7 @@ fn geometry(ed: &Editor, s: &Space, d: &mut Drawing) {
             ));
         } else {
             for it in doc.instance_items(id) {
-                if it.style == LineKind::Construction {
+                if it.style == LineKind::Construction && !s.construction {
                     continue;
                 }
                 if let Some(prim) = shape_prim(s, &it.shape) {
@@ -231,8 +243,14 @@ fn geometry(ed: &Editor, s: &Space, d: &mut Drawing) {
 }
 
 /// How a curve prints: its own or its layer's colour, weight and line type (centre-style
-/// curves as thin centre lines).
+/// curves as thin centre lines; construction curves as hairline dashes, in their own colour or
+/// a light grey).
 fn pen_for(style: LineKind, look: drift_core::Appearance, layer: &drift_core::Layer) -> Pen {
+    if style == LineKind::Construction {
+        return Pen::new(HAIRLINE)
+            .with_color(look.color.unwrap_or(CONSTRUCTION_GREY))
+            .with_type(LineType::Dashed);
+    }
     let color = look.color.or(layer.color).unwrap_or(Pen::BLACK);
     let weight = look.weight.unwrap_or(layer.weight).mm();
     let (line_type, width) = if style == LineKind::Center {
@@ -610,6 +628,7 @@ pub fn sheet_drawing(
             inserts: false,
             dimensions: v.dimensions,
             notes: v.notes,
+            construction: v.construction,
             hidden: &v.hidden_layers,
             view: Some(v.id),
         };
@@ -653,6 +672,7 @@ pub fn model_drawing(
         inserts: true,
         dimensions: true,
         notes: true,
+        construction: false,
         hidden: &ALL_LAYERS,
         view: None,
     };
@@ -688,6 +708,7 @@ pub fn view_drawing(
         inserts: false,
         dimensions,
         notes: true,
+        construction: false,
         hidden: &ALL_LAYERS,
         view: None,
     };
@@ -989,5 +1010,180 @@ pub fn paint_drawing(
             }
             Prim::Insert { .. } => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use drift_core::{Appearance, Document, Fill, Layer, SheetColours, View, Viewport};
+
+    use super::*;
+
+    /// A painter for laying out text, on a context that never draws.
+    fn painter() -> egui::Painter {
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx);
+        // A first frame loads the fonts; its font atlas is never uploaded.
+        ctx.run_ui(egui::RawInput::default(), |_| {})
+            .textures_delta
+            .clear();
+        egui::Painter::new(
+            ctx,
+            egui::LayerId::background(),
+            egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(1000.0, 1000.0)),
+        )
+    }
+
+    fn line(doc: &mut Document, a: [f64; 2], b: [f64; 2], layer: LayerId) -> EntityId {
+        let (a, b) = (
+            doc.add_point(DVec2::from_array(a)),
+            doc.add_point(DVec2::from_array(b)),
+        );
+        let l = doc.add_line(a, b).unwrap();
+        for e in [a, b, l] {
+            doc.set_entity_layer(e, layer).unwrap();
+        }
+        l
+    }
+
+    /// On `Guides`: a drawn line, a centre line, a construction line and circle, and a red
+    /// construction line. On `Import`: a square of construction curves an import filled.
+    fn sheet(construction: bool, colours: SheetColours) -> Drawing {
+        let mut doc = Document::new();
+        let guides = doc.add_layer(Layer::new("Guides"));
+        let import = doc.add_layer(Layer::new("Import"));
+        line(&mut doc, [0.0, 0.0], [100.0, 0.0], guides);
+        let centre = line(&mut doc, [50.0, -10.0], [50.0, 60.0], guides);
+        doc.set_style(centre, LineKind::Center);
+        let diagonal = line(&mut doc, [0.0, 0.0], [100.0, 50.0], guides);
+        doc.set_style(diagonal, LineKind::Construction);
+        let middle = doc.add_point(DVec2::new(50.0, 25.0));
+        doc.set_entity_layer(middle, guides).unwrap();
+        let circle = doc.add_circle(middle, 20.0).unwrap();
+        doc.set_entity_layer(circle, guides).unwrap();
+        doc.set_style(circle, LineKind::Construction);
+        let red = line(&mut doc, [0.0, 50.0], [100.0, 50.0], guides);
+        doc.set_style(red, LineKind::Construction);
+        let look = Appearance {
+            color: Some(Rgb([200, 0, 0])),
+            ..Default::default()
+        };
+        doc.set_appearance(red, look).unwrap();
+        let c = [[110.0, 0.0], [130.0, 0.0], [130.0, 20.0], [110.0, 20.0]];
+        let mut edges = Vec::new();
+        for i in 0..4 {
+            let (a, b) = (c[i], c[(i + 1) % 4]);
+            let edge = line(&mut doc, a, b, import);
+            doc.set_style(edge, LineKind::Construction);
+            edges.push(edge);
+        }
+        let mut fill = Fill::new(edges, DVec2::new(120.0, 10.0), FillKind::Solid);
+        fill.layer = import;
+        doc.add_fill(fill);
+        let mut view = View::new(
+            "Plan",
+            Bounds {
+                min: DVec2::new(-20.0, -20.0),
+                max: DVec2::new(150.0, 80.0),
+            },
+            1.0,
+        );
+        view.construction = construction;
+        let id = doc.add_view(view);
+        let mut sheet = Sheet::new("A-101");
+        sheet.colours = colours;
+        sheet
+            .viewports
+            .push(Viewport::new(id, DVec2::new(200.0, 150.0)));
+        doc.add_sheet(sheet.clone());
+        let views = doc.placed_views(&sheet);
+        let mut ed = Editor::new(doc);
+        sheet_drawing(
+            &mut ed,
+            &PatternLibrary::default(),
+            &painter(),
+            &sheet,
+            &views,
+            (1, 1),
+        )
+    }
+
+    fn on<'a>(d: &'a Drawing, layer: &'a str) -> impl Iterator<Item = &'a Item> {
+        d.items.iter().filter(move |i| i.layer == layer)
+    }
+
+    /// Hairline dashes: how construction curves print.
+    fn dashed(d: &Drawing, layer: &str) -> Vec<Item> {
+        on(d, layer)
+            .filter(|i| i.pen.line_type == LineType::Dashed && i.pen.width == HAIRLINE)
+            .cloned()
+            .collect()
+    }
+
+    #[test]
+    fn construction_stays_off_sheets_unless_the_view_shows_it() {
+        let d = sheet(false, SheetColours::Colour);
+        assert!(dashed(&d, "Guides").is_empty());
+        // The drawn line and the centre line print as before.
+        assert_eq!(on(&d, "Guides").count(), 2);
+        assert!(on(&d, "Guides").any(|i| i.pen.line_type == LineType::Center));
+        assert!(
+            on(&d, "Import").all(|i| matches!(i.prim, Prim::Fill { .. })),
+            "an import's fill, without its edges"
+        );
+    }
+
+    #[test]
+    fn a_view_can_show_construction_as_light_dashes() {
+        let d = sheet(true, SheetColours::Colour);
+        let guides = dashed(&d, "Guides");
+        assert_eq!(guides.len(), 3, "the diagonal, the circle and the red line");
+        assert!(guides.iter().any(|i| matches!(i.prim, Prim::Circle { .. })));
+        let grey = guides
+            .iter()
+            .filter(|i| i.pen.color == CONSTRUCTION_GREY)
+            .count();
+        assert_eq!(grey, 2);
+        assert!(
+            guides.iter().any(|i| i.pen.color == Rgb([200, 0, 0])),
+            "a curve's own colour is kept"
+        );
+        // Clipped to the view's frame like the rest of it.
+        assert!(guides.iter().all(|i| i.clip.is_some()));
+        // The drawn and centre lines are unchanged; points and an import's fill edges stay
+        // out.
+        assert_eq!(on(&d, "Guides").count(), 5);
+        assert!(on(&d, "Import").all(|i| matches!(i.prim, Prim::Fill { .. })));
+        assert!(
+            !d.items
+                .iter()
+                .any(|i| matches!(i.prim, Prim::Line(a, b) if a == b))
+        );
+    }
+
+    #[test]
+    fn construction_follows_the_sheets_colours() {
+        let mono = sheet(true, SheetColours::BlackWhite);
+        let guides = dashed(&mono, "Guides");
+        assert_eq!(guides.len(), 3);
+        assert!(guides.iter().all(|i| i.pen.color == Pen::BLACK));
+        let grey = sheet(true, SheetColours::Greyscale);
+        let v = drift_core::sheets::luminance(CONSTRUCTION_GREY);
+        assert!(
+            dashed(&grey, "Guides")
+                .iter()
+                .any(|i| i.pen.color == Rgb([v, v, v]))
+        );
+    }
+
+    #[test]
+    fn the_preview_prints_and_exports_as_shown() {
+        // PDF, SVG and print are made from the sheet's drawing: the construction is in each.
+        let d = sheet(true, SheetColours::Colour);
+        let svg = drift_io::svg::write(&d);
+        let dashes = svg.matches("stroke-dasharray").count();
+        assert!(dashes >= 3, "{svg}");
+        let off = drift_io::svg::write(&sheet(false, SheetColours::Colour));
+        assert!(off.matches("stroke-dasharray").count() < dashes);
     }
 }

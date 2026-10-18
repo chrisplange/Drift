@@ -99,7 +99,9 @@ geometry itself (in the **Inspector**, or the top bar's **Stroke** menus).
   it, drag one to reorder, right-click to duplicate, move or delete it), **New sheet**, and
   **Add view** for the sheet shown.
 - **Views:** every view in the drawing and the sheets it's on. Drag one onto the sheet, or
-  use **Place on sheet**, **Zoom to view** or **Delete view**.
+  use **Place on sheet**, **Zoom to view** or **Delete view**. The picked view's **Show**
+  switches (**Dimensions**, **Notes**, **Construction**, **Crop**) apply wherever it's
+  placed.
 - **Output:** **PDF…**, **SVG…**, **DXF…** and **Print…**. With several sheets, **PDF…** and
   **Print…** ask which sheets to include.
 

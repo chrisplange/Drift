@@ -7256,6 +7256,74 @@ fn a_view_leaves_out_the_layers_it_hides() {
 }
 
 #[test]
+fn a_view_can_show_construction_geometry() {
+    use crate::app::sheet_editor::SheetPick;
+    let Some(mut h) = harness() else { return };
+    h.get_by_label("File").click();
+    h.run();
+    h.get_by_label("Open example").click();
+    h.run();
+    h.get_by_label("Add a sheet").click();
+    h.run();
+    h.run();
+    let sheet = h.state().current_sheet().expect("a sheet");
+    let view = placed(&h, sheet)[0].id;
+    h.state_mut().picked_view = Some(view);
+    h.state_mut().sheet_pick = SheetPick::View;
+    h.run();
+    let preview = |h: &Harness<'_, DriftApp>| h.state().preview_cache.as_ref().unwrap().2.clone();
+    // The example's construction curves print as hairline dashes.
+    let guides = |d: &drift_draft::page::Drawing| {
+        d.items
+            .iter()
+            .filter(|i| i.pen.line_type == drift_core::LineType::Dashed && i.pen.width == 0.13)
+            .count()
+    };
+    let before = preview(&h);
+    assert_eq!(guides(&before), 0, "off by default");
+    assert!(!placed(&h, sheet)[0].construction);
+
+    // On in the view's Inspector: on the sheet, as one step.
+    h.get_by_label("Construction").scroll_to_me();
+    h.get_by_label("Construction").click();
+    h.run();
+    h.run();
+    assert!(placed(&h, sheet)[0].construction);
+    assert_eq!(h.state().editor.history.undo_label(), Some("Edit sheet"));
+    let after = preview(&h);
+    assert!(guides(&after) > 0);
+    assert_eq!(
+        after.items.len(),
+        before.items.len() + guides(&after),
+        "nothing else changes"
+    );
+    let painter = h.ctx.layer_painter(egui::LayerId::background());
+    assert_eq!(h.state_mut().pages(&painter)[0], after, "and prints so");
+    save_png("drift_ui_view_construction.png", &mut h);
+    // Saved with the view, and read back.
+    let saved = drift_io::save(&h.state().editor.doc, &Default::default());
+    assert!(saved.contains(r#""construction":true"#), "{saved}");
+    let (read, _) = drift_io::load(&saved).unwrap();
+    assert!(read.view(view).unwrap().construction);
+    // Undo takes it off the sheet again.
+    h.state_mut().undo();
+    h.run();
+    h.run();
+    assert!(!placed(&h, sheet)[0].construction);
+    assert_eq!(guides(&preview(&h)), 0);
+    // The switch is the view's: in the Views list's Inspector too.
+    h.state_mut().show_panel(Panel::Sheets);
+    h.run();
+    h.get_by_label("Construction").scroll_to_me();
+    h.get_by_label("Construction").click();
+    h.run();
+    h.run();
+    assert!(h.state().editor.doc.view(view).unwrap().construction);
+    assert!(guides(&preview(&h)) > 0);
+    save_png("drift_ui_model_view_construction.png", &mut h);
+}
+
+#[test]
 fn sheets_reorder_duplicate_and_choose_for_pdf() {
     let Some(mut h) = harness() else { return };
     h.get_by_label("File").click();

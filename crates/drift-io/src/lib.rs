@@ -6,7 +6,7 @@
 //! ```json
 //! {
 //!   "format": "drift",
-//!   "version": 31,
+//!   "version": 32,
 //!   "meta": {"title":"Bracket","units":"mm","generator":"Drift 0.1.0"},
 //!   "display": {"length":"architectural","fraction":16},
 //!   "variables": [
@@ -86,8 +86,9 @@ pub const EXTENSION: &str = "drift";
 /// `hidden_layers`; 29 = adds a section or elevation mark's `view` (the view it points at);
 /// 30 = adds the `project` the sheets share (name, number, client, address, company and
 /// field set) and a sheet's `status`; 31 = a `shown` entry's `views` (a dimension or
-/// annotation drawn in those views only).
-pub const FORMAT_VERSION: u32 = 31;
+/// annotation drawn in those views only); 32 = adds a view's `construction` (construction
+/// geometry shown on sheets).
+pub const FORMAT_VERSION: u32 = 32;
 const FORMAT_TAG: &str = "drift";
 
 /// Document-level properties stored alongside the geometry.
@@ -1866,7 +1867,7 @@ mod tests {
         let text = save(&doc, &Metadata::default());
         let expected = r#"{
   "format": "drift",
-  "version": 31,
+  "version": 32,
   "meta": {"units":"mm"},
   "entities": [
     {"type":"point","id":"e1","at":[0.0,0.0]},
@@ -2421,6 +2422,42 @@ mod tests {
     }
 
     #[test]
+    fn a_views_construction_switch_round_trips() {
+        let mut doc = Document::new();
+        let crop = drift_core::Bounds {
+            min: DVec2::ZERO,
+            max: DVec2::new(100.0, 50.0),
+        };
+        let plain = doc.add_view(drift_core::View::new("Plan", crop, 50.0));
+        let mut guides = drift_core::View::new("Setting out", crop, 50.0);
+        guides.construction = true;
+        let guides = doc.add_view(guides);
+        let text = save(&doc, &Metadata::default());
+        // Written only when shown.
+        assert_eq!(text.matches(r#""construction":true"#).count(), 1, "{text}");
+        assert!(!text.contains(r#""construction":false"#));
+        let (loaded, _) = load(&text).unwrap();
+        assert_eq!(loaded, doc);
+        assert!(!loaded.view(plain).unwrap().construction);
+        assert!(loaded.view(guides).unwrap().construction);
+    }
+
+    #[test]
+    fn a_view_from_before_v32_hides_construction() {
+        let text = r#"{
+  "format": "drift",
+  "version": 31,
+  "meta": {"units":"mm"},
+  "entities": [],
+  "views": [
+    {"id":"w1","name":"Plan","scale":50.0,"center":[0.0,0.0],"size":[100.0,100.0]}
+  ]
+}"#;
+        let (doc, _) = load(text).unwrap();
+        assert!(!doc.view(drift_core::ViewId(1)).unwrap().construction);
+    }
+
+    #[test]
     fn a_note_with_its_one_leader_from_before_v24_loads() {
         let text = r#"{
   "format": "drift",
@@ -2833,7 +2870,7 @@ mod tests {
         doc.add_text(drift_core::SketchText::new("A", DVec2::ZERO, 3.0));
 
         let text = save(&doc, &Metadata::default());
-        assert!(text.contains("\"version\": 31"));
+        assert!(text.contains("\"version\": 32"));
         // A mark points at its view.
         assert!(text.contains(r#""flip":true,"view":"w"#), "{text}");
         assert!(text.contains(r#""styles": ["#) && text.contains(r#""alt_units":"none""#));

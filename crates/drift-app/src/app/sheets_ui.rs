@@ -76,6 +76,9 @@ pub(crate) struct ViewDrag {
 /// The smallest a view's frame can be made (paper mm), and how near a handle counts (points).
 const MIN_FRAME: f64 = 10.0;
 const HANDLE_REACH: f32 = 8.0;
+/// What a view's Construction switch does.
+const CONSTRUCTION_TIP: &str = "Construction geometry, as thin dashed lines, in this view on \
+                                sheets (points and an import's fill edges stay out)";
 
 /// The eight handles of a frame: which way each resizes (see [`ViewGrip::Resize`]).
 const HANDLES: [(i8, i8); 8] = [
@@ -1657,13 +1660,23 @@ impl DriftApp {
         theme::row(ui, "Scale", |ui| {
             self.scale_menu(ui, "model_view_scale", &mut view.scale);
         });
+        // Four switches in two even columns.
         theme::row(ui, "Show", |ui| {
-            ui.checkbox(&mut view.crop_visible, "Crop")
-                .on_hover_text("Its crop and name on the canvas (they never print)");
-            ui.checkbox(&mut view.dimensions, "Dimensions")
-                .on_hover_text("Dimensions and ordinates, in this view");
-            ui.checkbox(&mut view.notes, "Notes")
-                .on_hover_text("Notes and callouts, in this view");
+            egui::Grid::new("model_view_show")
+                .num_columns(2)
+                .spacing([16.0, 4.0])
+                .show(ui, |ui| {
+                    ui.checkbox(&mut view.dimensions, "Dimensions")
+                        .on_hover_text("Dimensions and ordinates, in this view");
+                    ui.checkbox(&mut view.notes, "Notes")
+                        .on_hover_text("Notes and callouts, in this view");
+                    ui.end_row();
+                    ui.checkbox(&mut view.construction, "Construction")
+                        .on_hover_text(CONSTRUCTION_TIP);
+                    ui.checkbox(&mut view.crop_visible, "Crop")
+                        .on_hover_text("Its crop and name on the canvas (they never print)");
+                    ui.end_row();
+                });
         });
         self.update_view(view_id, view, typing);
         self.referenced_by(ui, view_id);
@@ -1814,7 +1827,7 @@ impl DriftApp {
                     )
                     .clicked();
             });
-            // Four switches in two even columns.
+            // What the view shows, then how it is framed, in two even columns.
             theme::row(ui, "Show", |ui| {
                 egui::Grid::new("view_show")
                     .num_columns(2)
@@ -1824,6 +1837,9 @@ impl DriftApp {
                             .on_hover_text("Dimensions and ordinates, in this view");
                         ui.checkbox(&mut view.notes, "Notes")
                             .on_hover_text("Notes and callouts, in this view");
+                        ui.end_row();
+                        ui.checkbox(&mut view.construction, "Construction")
+                            .on_hover_text(CONSTRUCTION_TIP);
                         ui.end_row();
                         ui.checkbox(&mut view.title, "Title")
                             .on_hover_text("Its title and scale, written under it");

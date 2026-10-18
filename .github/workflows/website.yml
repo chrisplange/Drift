@@ -24,7 +24,8 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   HAS_CLOUDFLARE: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
-  # The Cloudflare Pages project; its address is https://<project>.pages.dev.
+  # The Cloudflare Pages project. Cloudflare picks its *.pages.dev address (adding a suffix if
+  # the name is taken); put the real address in the SITE_URL repository variable.
   PROJECT: ${{ vars.CLOUDFLARE_PROJECT || 'drift-website' }}
 
 jobs:
@@ -68,6 +69,8 @@ jobs:
         env:
           # Read the releases without hitting the anonymous rate limit.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # The site's public address, for canonical links and share tags (see website/README.md).
+          SITE_URL: ${{ vars.SITE_URL }}
 
       # Deploys only from main (or a release), and only once the Cloudflare secrets exist.
       - name: Create the Cloudflare Pages project (first run only)

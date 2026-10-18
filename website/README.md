@@ -15,7 +15,8 @@ builds and deploys it on every merge to `main`, and whenever a release is publis
 | Web app (`/app/`) | `apps/web`, built by Trunk in the workflow |
 | Logo | `website/scripts/make_logo.py`, from the same drawing as the app icon |
 | Colours | The tokens at the top of `src/styles/global.css`, which follow `crates/drift-app/src/theme.rs` |
-| Domain, repo | `src/site.config.mjs` |
+| The site's address | The `SITE_URL` repository variable, read at build time (see below) |
+| Repo, tagline, next release | `src/site.config.mjs` |
 
 The front page's scroll animation is `src/components/SketchScroll.astro`. Its timings are in
 `PHASES` and the plate's strokes in `PLATE`. The drawing it turns into is `src/lib/woman.ts`, free-to-use
@@ -65,13 +66,17 @@ else is automated.
    - `CLOUDFLARE_API_TOKEN`: the token
    - `CLOUDFLARE_ACCOUNT_ID`: the account ID
 5. **Deploy.** Merge to `main`, or open **Actions → Website → Run workflow**. The first run
-   creates the Pages project, called `drift-website`. The site is then live at
-   **https://drift-website.pages.dev**. If that name is taken, Cloudflare adds a suffix:
-   the run's log and the Pages dashboard show the real address. To choose another name, add
-   a repository *variable* (not a secret) `CLOUDFLARE_PROJECT`.
-6. **Point the old address at the new site.** Once the site is up, add a repository variable
-   `SITE_URL` set to its address, for example `https://drift-website.pages.dev`. On the next
-   CI run, GitHub Pages (chrisplange.github.io/Drift/) redirects to the new `/app/`.
+   creates a Pages project called `drift-website` (to choose another name, add a repository
+   *variable*, not a secret, called `CLOUDFLARE_PROJECT`). Cloudflare gives it a
+   `*.pages.dev` address. `drift-website.pages.dev` itself already belongs to another
+   product, so expect a suffix, such as `drift-website-abc.pages.dev`. The run's log and
+   **Workers & Pages → your project** show the real address.
+6. **Tell the site its address.** In **Settings → Secrets and variables → Actions →
+   Variables**, add a repository variable `SITE_URL` set to that address, for example
+   `https://drift-website-abc.pages.dev`, and run the Website workflow again. Pages use it for
+   their canonical links and link previews; until it's set, those tags are left out. It also
+   makes GitHub Pages (chrisplange.github.io/Drift/) redirect to the new site's `/app/` from
+   the next CI run.
 
 Until the secrets exist, the workflow still builds the site on every run, but it doesn't
 deploy it.
@@ -83,5 +88,5 @@ deploy it.
    works.
 2. In **Workers & Pages → drift-website → Custom domains → Set up a custom domain**, enter
    it. For a domain on Cloudflare, the DNS record is added for you.
-3. Change `url` in `src/site.config.mjs` to the new address, and update the `SITE_URL`
-   repository variable.
+3. Change the `SITE_URL` repository variable to the domain, for example
+   `https://example.com`, and run the Website workflow again. No code changes are needed.

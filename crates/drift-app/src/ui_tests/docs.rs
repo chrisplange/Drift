@@ -748,23 +748,36 @@ fn sheets() {
     h.run();
     shot("sheet.png", &mut h);
 
-    // A second, framed view: a detail at 2:1.
-    h.get_by_label("Add view").click();
+    // A detail drawn as a view on the canvas, round the bore: its crop and name, picked
+    // with its grips.
+    let sheet = h.state().current_sheet().expect("a sheet");
+    h.state_mut().sheet_preview = false;
+    h.state_mut().set_tool(ToolKind::View);
     h.run();
+    h.event(Event::ModifiersChanged(EguiModifiers::ALT));
+    drag_world(&mut h, DVec2::new(59.0, 20.0), DVec2::new(109.0, 60.0));
+    h.event(Event::ModifiersChanged(EguiModifiers::NONE));
     h.run();
-    let id = h.state().current_sheet().expect("a sheet");
-    let mut s = h.state().editor.doc.sheet(id).cloned().unwrap();
-    s.views[1].scale = 0.5;
-    s.views[1].name = "Detail A".into();
-    s.views[1].frame = Some(drift_core::ViewFrame {
-        at: DVec2::new(330.0, 200.0),
-        size: DVec2::new(100.0, 80.0),
-    });
-    s.views[1].center = DVec2::new(84.0, 40.0);
-    s.views[1].border = true;
+    let id = h.state().picked_view.expect("the new view");
+    let mut view = h.state().editor.doc.view(id).unwrap().clone();
+    view.name = "Detail A".into();
+    view.scale = 0.5;
+    h.state_mut().update_view(id, view, false);
+    shot("view-crops.png", &mut h);
+
+    // On the sheet at 2:1, framed and titled.
+    let index = h
+        .state_mut()
+        .place_view(sheet, id, Some(DVec2::new(330.0, 200.0)))
+        .unwrap();
+    let doc = &h.state().editor.doc;
+    let mut v = doc.placed_views(doc.sheet(sheet).unwrap())[index].clone();
+    v.border = true;
     h.state_mut().editor.doc.begin();
-    h.state_mut().editor.doc.set_sheet(id, s);
+    h.state_mut().editor.doc.set_placed_view(sheet, index, &v);
     h.state_mut().editor.commit("Detail");
+    h.state_mut().sheet_preview = true;
+    h.state_mut().preview.zoom = 0.0;
     shot("sheet-views.png", &mut h);
 }
 

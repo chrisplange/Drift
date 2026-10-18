@@ -305,6 +305,15 @@ pub fn tool(painter: &egui::Painter, rect: Rect, kind: ToolKind, color: Color32)
             p.poly(&[(5.4, 12.0), (10.0, 3.5), (14.6, 12.0)], false);
             p.line((5.4, 12.0), (14.6, 12.0));
         }
+        ToolKind::View => {
+            // A dashed crop with its name tab, round a little plan.
+            p.dashed((3.0, 6.0), (17.0, 6.0));
+            p.dashed((17.0, 6.0), (17.0, 17.0));
+            p.dashed((17.0, 17.0), (3.0, 17.0));
+            p.dashed((3.0, 17.0), (3.0, 6.0));
+            p.line((3.0, 3.0), (10.0, 3.0));
+            p.poly(&[(7.0, 9.5), (13.0, 9.5), (13.0, 13.5), (7.0, 13.5)], true);
+        }
         ToolKind::Fill => {
             // An outline with three hatch lines (four read as a solid block at 16 px).
             p.poly(&[(3.5, 4.5), (16.5, 4.5), (16.5, 15.5), (3.5, 15.5)], true);

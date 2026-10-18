@@ -323,6 +323,14 @@ pub struct DriftApp {
     /// The view picked on the current sheet, and a change to its views to make.
     sheet_view: usize,
     pending_view: Option<app::sheets_ui::ViewAction>,
+    /// The model view picked in the Views list or on the canvas (its crop shows grips).
+    picked_view: Option<drift_core::ViewId>,
+    /// A view placed on sheets that Delete was pressed for, waiting for a yes.
+    confirm_delete_view: Option<drift_core::ViewId>,
+    /// Show views' crops and names on the canvas (View → View crops).
+    show_view_crops: bool,
+    /// A drag on a view's crop on the canvas.
+    crop_drag: Option<app::views_ui::CropDrag>,
     /// The report of the last import, until it is closed.
     import_report: Option<app::sheets_ui::ImportSummary>,
     /// Dimensions and annotations hidden on the canvas are drawn (faded) and can be picked.
@@ -502,6 +510,10 @@ impl DriftApp {
             align_with: None,
             sheet_view: 0,
             pending_view: None,
+            picked_view: None,
+            confirm_delete_view: None,
+            show_view_crops: true,
+            crop_drag: None,
             import_report: None,
             sketch_check: None,
             show_hidden_annotations: false,

@@ -13,8 +13,7 @@ use std::f64::consts::TAU;
 
 use drift_core::{
     DVec2, Document, EntityId, Fill, FillKind, Hatch, Layer, LayerId, LineType, LineWeight,
-    PaperSize, Rgb, Shape, Sheet, SheetView, SketchText, TextAlign, TextFont, TitleBlock,
-    ViewFrame,
+    PaperSize, Rgb, Shape, Sheet, SketchText, TextAlign, TextFont, TitleBlock, View, Viewport,
 };
 
 use crate::dxf::{aci_rgb, bulge_arc, parse_line_type, unit_scale};
@@ -2488,21 +2487,26 @@ pub fn add_to_document(doc: &mut Document, import: &DxfImport) -> ImportReport {
                 })
                 .unwrap_or(PaperSize::Custom(long, short));
         }
-        let views: Vec<SheetView> = layout
+        // Each viewport becomes a view of the model, named after its layout.
+        let several = layout.views.len() > 1;
+        for (i, v) in layout
             .views
             .iter()
             .filter(|v| v.scale.is_finite() && v.scale > 0.0)
-            .map(|v| {
-                let mut view = SheetView::new(v.scale, v.center);
-                view.frame = Some(ViewFrame {
-                    at: v.at,
-                    size: v.size,
-                });
-                view
-            })
-            .collect();
-        if !views.is_empty() {
-            sheet.views = views;
+            .enumerate()
+        {
+            let name = if several {
+                format!("{} {}", layout.name, i + 1)
+            } else {
+                layout.name.clone()
+            };
+            let half = v.size * v.scale * 0.5;
+            let crop = drift_core::Bounds {
+                min: v.center - half,
+                max: v.center + half,
+            };
+            let id = doc.add_view(View::new(name, crop, v.scale));
+            sheet.viewports.push(Viewport::new(id, v.at));
         }
         doc.add_sheet(sheet);
         report.sheets += 1;
@@ -3587,9 +3591,11 @@ mod tests {
             .unwrap();
         assert_eq!((sheet.paper, sheet.portrait), (PaperSize::A3, false));
         assert_eq!(sheet.title_block, TitleBlock::None);
-        assert_eq!(sheet.views.len(), 1);
-        assert_eq!(sheet.views[0].scale, 50.0);
-        assert_eq!(sheet.views[0].frame.unwrap().size, DVec2::new(300.0, 200.0));
+        let views = doc.placed_views(&sheet);
+        assert_eq!(views.len(), 1);
+        assert_eq!(views[0].scale, 50.0);
+        assert_eq!(views[0].frame.size, DVec2::new(300.0, 200.0));
+        assert_eq!(views[0].name, "Ground floor");
         let fence = doc
             .layers()
             .map(|(_, l)| l.clone())

@@ -103,8 +103,11 @@ In a move or rotate (G, R): click or Enter places, Esc or right-click cancels.
 | Shift+C | Constraint status colours, or curves' own and their layers' colours |
 | W | Thin lines: every line one pixel wide |
 
-In the sheet preview: Shift+F fits the sheet, Delete removes the picked view, Esc returns to
-the model.
+In the sheet preview: Shift+F fits the sheet, Delete takes the picked view off the sheet
+(it stays in the drawing), Esc returns to the model.
+
+On the canvas, with a view's crop picked: Delete deletes the view (asking first if it's on a
+sheet), Esc lets it go.
 
 ## Panels and files
 

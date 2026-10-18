@@ -256,40 +256,163 @@ impl ViewFrame {
     }
 }
 
-/// A view of the sketch on a sheet: a window onto the model at a scale.
+/// Stable identifier of a view (`w1`: `v` is taken by variables).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ViewId(pub u32);
+
+impl std::fmt::Display for ViewId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "w{}", self.0)
+    }
+}
+
+/// A view of the model: a named crop rectangle in model space, at a scale. It is drawn on
+/// the canvas and placed on sheets (several, if need be); reframing it changes every sheet
+/// it is on.
 #[derive(Clone, Debug, PartialEq)]
-pub struct SheetView {
-    /// Its title (`Plan`, `Detail A`), written under it; may be empty.
+pub struct View {
+    /// Its title (`Plan`, `Detail A`), written under it on a sheet; may be empty.
     pub name: String,
     /// The drawing scale, 1 : `scale`.
     pub scale: f64,
-    /// The world point at the middle of the view.
+    /// The world point at the middle of the crop.
     pub center: DVec2,
-    /// Where it sits on the paper. `None` fills the sheet's drawing area (and follows the
-    /// paper size): what a sheet's one view does until it is given a frame.
-    pub frame: Option<ViewFrame>,
+    /// The crop's width and height in world mm.
+    pub size: DVec2,
     /// Show dimensions (ordinates included) in this view.
     pub dimensions: bool,
     /// Show notes and callouts in this view.
     pub notes: bool,
+    /// Show the crop and its name on the canvas (Revit's "Crop Region Visible"). Crops never
+    /// print.
+    pub crop_visible: bool,
+}
+
+impl View {
+    pub fn new(name: impl Into<String>, crop: Bounds, scale: f64) -> Self {
+        Self {
+            name: name.into(),
+            scale,
+            center: crop.center(),
+            size: crop.size(),
+            dimensions: true,
+            notes: true,
+            crop_visible: true,
+        }
+    }
+
+    /// The crop in world mm.
+    pub fn crop(&self) -> Bounds {
+        Bounds {
+            min: self.center - self.size * 0.5,
+            max: self.center + self.size * 0.5,
+        }
+    }
+
+    /// Its name, or `View` if it has none.
+    pub fn title(&self) -> &str {
+        match self.name.trim() {
+            "" => "View",
+            n => n,
+        }
+    }
+
+    /// Its size on paper (mm): the crop at the scale.
+    pub fn paper_size(&self) -> DVec2 {
+        self.size / self.scale
+    }
+}
+
+/// A view placed on a sheet (a viewport): which view, where its middle is on the paper, and
+/// how it is labelled there. Its size on the paper is the view's crop at the view's scale.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Viewport {
+    pub view: ViewId,
+    /// The middle of its frame on the paper (mm).
+    pub at: DVec2,
     /// Write the title and scale under the view.
     pub title: bool,
     /// Draw the frame's outline.
     pub border: bool,
 }
 
-impl SheetView {
-    pub fn new(scale: f64, center: DVec2) -> Self {
+impl Viewport {
+    pub fn new(view: ViewId, at: DVec2) -> Self {
         Self {
-            name: String::new(),
-            scale,
-            center,
-            frame: None,
-            dimensions: true,
-            notes: true,
+            view,
+            at,
             title: false,
             border: false,
         }
+    }
+}
+
+/// A viewport with its view: everything needed to draw it, move it and crop it on a sheet.
+/// Made by [`Document::placed_views`](crate::Document::placed_views), and written back with
+/// [`Document::set_placed_view`](crate::Document::set_placed_view).
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlacedView {
+    pub id: ViewId,
+    pub name: String,
+    pub scale: f64,
+    /// The world point at the middle of the frame.
+    pub center: DVec2,
+    /// Where it sits on the paper.
+    pub frame: ViewFrame,
+    pub dimensions: bool,
+    pub notes: bool,
+    pub title: bool,
+    pub border: bool,
+}
+
+impl PlacedView {
+    pub fn new(id: ViewId, view: &View, port: &Viewport) -> Self {
+        Self {
+            id,
+            name: view.name.clone(),
+            scale: view.scale,
+            center: view.center,
+            frame: ViewFrame {
+                at: port.at,
+                size: view.paper_size(),
+            },
+            dimensions: view.dimensions,
+            notes: view.notes,
+            title: port.title,
+            border: port.border,
+        }
+    }
+
+    /// `view` and `port` changed to match this.
+    pub fn apply(&self, view: &mut View, port: &mut Viewport) {
+        view.name.clone_from(&self.name);
+        view.scale = self.scale;
+        view.center = self.center;
+        view.size = self.frame.size * self.scale;
+        view.dimensions = self.dimensions;
+        view.notes = self.notes;
+        port.at = self.frame.at;
+        port.title = self.title;
+        port.border = self.border;
+    }
+
+    /// Its name, or `View` if it has none.
+    pub fn title(&self) -> &str {
+        match self.name.trim() {
+            "" => "View",
+            n => n,
+        }
+    }
+}
+
+/// The scale for a title block: the views' scale if they share one, else `As shown` (`-`
+/// with none).
+pub fn scale_text(scales: impl IntoIterator<Item = f64>) -> String {
+    let mut scales = scales.into_iter();
+    match scales.next() {
+        None => "-".into(),
+        Some(first) if scales.all(|s| s == first) => scale_label(first),
+        Some(_) => "As shown".into(),
     }
 }
 
@@ -298,8 +421,8 @@ pub struct Sheet {
     pub name: String,
     pub paper: PaperSize,
     pub portrait: bool,
-    /// The views of the sketch on the sheet, in drawing order.
-    pub views: Vec<SheetView>,
+    /// The views placed on the sheet, in drawing order.
+    pub viewports: Vec<Viewport>,
     pub title_block: TitleBlock,
     pub fields: TitleFields,
     pub revisions: Vec<Revision>,
@@ -313,22 +436,11 @@ impl Sheet {
             name: name.into(),
             paper: PaperSize::A3,
             portrait: false,
-            views: vec![SheetView::new(1.0, DVec2::ZERO)],
+            viewports: Vec::new(),
             title_block: TitleBlock::Modern,
             fields: TitleFields::default(),
             revisions: Vec::new(),
             colours: SheetColours::Colour,
-        }
-    }
-
-    /// The scale for the title block: the views' scale if they share one, else `As shown`.
-    pub fn scale_text(&self) -> String {
-        match self.views.split_first() {
-            None => "-".into(),
-            Some((first, rest)) if rest.iter().all(|v| v.scale == first.scale) => {
-                scale_label(first.scale)
-            }
-            Some(_) => "As shown".into(),
         }
     }
 

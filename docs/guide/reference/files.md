@@ -10,7 +10,7 @@ order. So:
 - Dimension expressions are kept as you typed them (`width / 2`), alongside their values.
 - Solved positions are stored, so a file opens without re-solving.
 
-Everything the drawing needs travels inside the file: layers, sheets, blocks, fills,
+Everything the drawing needs travels inside the file: layers, views, sheets, blocks, fills,
 imported hatch patterns, underlays, title-block logos, and the fonts the drawing uses
 (where the font's licence allows embedding, and under 12 MB). A font that can't be kept is
 used from the computer it's on, and Drift says so.
@@ -19,7 +19,9 @@ Snapshots aren't saved in the file.
 
 ## Versions
 
-The file records a format version. This build writes version 25.
+The file records a format version. This build writes version 27, in which views belong to
+the drawing and sheets place them. A file from before that opens with each of its sheets'
+views made a view of its own.
 
 - **Older files always open** in newer builds. They're upgraded as they load.
 - **Newer files don't open in older builds.** The older build says the file's version is

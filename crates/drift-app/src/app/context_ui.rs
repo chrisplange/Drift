@@ -701,6 +701,12 @@ impl DriftApp {
             self.selection_look(ui);
             return;
         }
+        if n == 0
+            && let Some(id) = self.picked_view.filter(|id| ed.doc.view(*id).is_some())
+        {
+            self.view_actions(ui, id);
+            return;
+        }
         if n == 0 {
             return;
         }

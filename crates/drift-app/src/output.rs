@@ -3,7 +3,9 @@
 //! are exact (true arcs, clipped hatch lines); dimensions and notes are drawn by the same code
 //! as on screen, through a [`Recorder`](crate::annotations::Recorder).
 
-use drift_core::{Bounds, DVec2, FillKind, LineKind, LineType, Rgb, Shape, Sheet};
+use drift_core::{
+    Bounds, DVec2, FillKind, LineKind, LineType, PlacedView, Rgb, Shape, Sheet, View, Viewport,
+};
 use drift_draft::Placement;
 use drift_draft::page::{Align, CAP_HEIGHT, Drawing, Item, LayerInfo, Pen, Prim};
 use drift_render::Camera;
@@ -519,22 +521,24 @@ fn view(
     annotations(ed, painter, s, d);
 }
 
-/// A sheet as printed: each view of the sketch at its scale, seen through its frame, under
-/// the views' titles, the border, title block and revision table, in the sheet's colours.
+/// A sheet as printed, with its `views` (from `Document::placed_views`): each view of the
+/// sketch at its scale, seen through its frame, under the views' titles, the border, title
+/// block and revision table, in the sheet's colours.
 pub fn sheet_drawing(
     ed: &mut Editor,
     patterns: &PatternLibrary,
     painter: &egui::Painter,
     sheet: &Sheet,
+    views: &[PlacedView],
     number: (usize, usize),
 ) -> Drawing {
     let mut d = Drawing::new(sheet.size());
     // The drawing's own font, for everything measured and written from here on.
     d.font = ed.drawing_font();
     drift_draft::font::set_drawing_font(d.font.clone());
-    for v in &sheet.views {
-        let frame = drift_draft::sheet::view_frame(sheet, v);
-        if v.frame.is_some() {
+    for v in views {
+        let frame = v.frame.bounds();
+        if !drift_draft::sheet::fills_drawing_area(sheet, frame) {
             // A framed view is a piece of paper of its own: it covers what is under it.
             let c = [
                 frame.min,
@@ -564,12 +568,13 @@ pub fn sheet_drawing(
         };
         view(ed, patterns, painter, &space, &mut d);
     }
-    drift_draft::sheet::draw_views(sheet, &mut d);
+    drift_draft::sheet::draw_views(sheet, views, &mut d);
     // (An unreadable logo was refused when it was chosen; one from a file is skipped.)
     let logo = Some(ed.doc.logo())
         .filter(|svg| !svg.is_empty())
         .and_then(|svg| drift_draft::logo::parse(svg).ok());
-    drift_draft::sheet::draw_frame(sheet, number, logo.as_ref(), &mut d);
+    let scale = drift_core::sheets::scale_text(views.iter().map(|v| v.scale));
+    drift_draft::sheet::draw_frame(sheet, &scale, number, logo.as_ref(), &mut d);
     // In the sheet's colours: what the preview shows is what prints.
     d.set_colours(sheet.colours);
     d
@@ -640,69 +645,90 @@ pub fn sheet_pages(
     painter: &egui::Painter,
     title: &str,
 ) -> Vec<Drawing> {
-    let mut sheets: Vec<Sheet> = ed.doc.sheets().map(|(_, s)| s.clone()).collect();
+    let doc = &ed.doc;
+    let mut sheets: Vec<(Sheet, Vec<PlacedView>)> = doc
+        .sheets()
+        .map(|(_, s)| (s.clone(), doc.placed_views(s)))
+        .collect();
     if sheets.is_empty() {
         let mut sheet = Sheet::new("Sheet 1");
         sheet.fields.title = title.to_owned();
-        let imperial = !ed.doc.units().length.is_metric();
-        fit_sheet(ed.bounds(), &mut sheet, imperial);
-        sheets.push(sheet);
+        let imperial = !doc.units().length.is_metric();
+        let (view, port) = sheet_view(ed.bounds(), &sheet, imperial);
+        let placed = PlacedView::new(port.view, &view, &port);
+        sheets.push((sheet, vec![placed]));
     }
     patterns.update(ed.doc.custom_patterns());
     let count = sheets.len();
     sheets
         .iter()
         .enumerate()
-        .map(|(i, s)| sheet_drawing(ed, patterns, painter, s, (i + 1, count)))
+        .map(|(i, (s, views))| sheet_drawing(ed, patterns, painter, s, views, (i + 1, count)))
         .collect()
 }
 
-/// Centre view `index` of a sheet on `b` (the sketch with its dimension labels, in world
-/// mm) at the largest preferred scale that fits. A view that fills the sheet is fitted in the
-/// drawing area clear of the title block; one with a frame, in its frame.
-pub fn fit_view(b: Bounds, sheet: &mut Sheet, index: usize, imperial: bool) {
-    if b.is_empty() || index >= sheet.views.len() {
+/// Centre a view on `b` (the sketch with its dimension labels, in world mm) at the largest
+/// preferred scale that fits its frame, which stays as it is on the paper.
+pub fn fit_view(b: Bounds, view: &mut PlacedView, imperial: bool) {
+    if b.is_empty() {
         return;
     }
     // A good margin of air around the drawing.
     let extent = b.size() * 1.1;
-    let (scale, center) = match sheet.views[index].frame {
-        Some(frame) => (
-            drift_core::sheets::fit_scale(extent, frame.size * 0.9, imperial),
-            b.center(),
-        ),
-        None => {
-            // Centred in the space clear of the title block.
-            let area = drift_draft::sheet::drawing_area(sheet);
-            let clear = drift_draft::sheet::view_area(sheet);
-            let scale = drift_core::sheets::fit_scale(extent, clear.size() * 0.9, imperial);
-            (scale, b.center() - (clear.center() - area.center()) * scale)
-        }
+    view.scale = drift_core::sheets::fit_scale(extent, view.frame.size * 0.9, imperial);
+    view.center = b.center();
+}
+
+/// A sheet's first view of `b` (world mm): filling the drawing area clear of the title block,
+/// at the largest preferred scale that fits, centred on it.
+pub fn sheet_view(b: Bounds, sheet: &Sheet, imperial: bool) -> (View, Viewport) {
+    let clear = drift_draft::sheet::view_area(sheet);
+    let extent = if b.is_empty() {
+        clear.size()
+    } else {
+        b.size() * 1.1
     };
-    sheet.views[index].scale = scale;
-    sheet.views[index].center = center;
+    let scale = drift_core::sheets::fit_scale(extent, clear.size() * 0.9, imperial);
+    let center = if b.is_empty() {
+        DVec2::ZERO
+    } else {
+        b.center()
+    };
+    let half = clear.size() * scale * 0.5;
+    let crop = Bounds {
+        min: center - half,
+        max: center + half,
+    };
+    (
+        View::new("", crop, scale),
+        Viewport::new(drift_core::ViewId(0), clear.center()),
+    )
 }
 
-/// Fit a sheet's first view (see [`fit_view`]).
-pub fn fit_sheet(b: Bounds, sheet: &mut Sheet, imperial: bool) {
-    fit_view(b, sheet, 0, imperial);
-}
-
-/// A new view of `b` (world mm) at 1 : `scale`, in a frame just big enough for it, placed
-/// where there is room on the sheet: beside the views already there if it fits, else in the
-/// middle.
-pub fn framed_view(b: Bounds, sheet: &Sheet, scale: f64) -> drift_core::SheetView {
-    let mut v = drift_core::SheetView::new(scale, b.center());
+/// The crop of a new view of `b` (world mm) at 1 : `scale`: `b` with a margin, no bigger
+/// than will fit on `sheet`.
+pub fn view_crop(b: Bounds, sheet: &Sheet, scale: f64) -> Bounds {
     let area = drift_draft::sheet::view_area(sheet);
     let size = (b.size() / scale + DVec2::splat(10.0))
         .max(DVec2::splat(20.0))
-        .min(area.size());
-    // To the right of the frames already placed, top-aligned with the area.
-    let taken = sheet
-        .views
+        .min(area.size())
+        * scale;
+    Bounds {
+        min: b.center() - size * 0.5,
+        max: b.center() + size * 0.5,
+    }
+}
+
+/// Where on `sheet` a frame of `size` (paper mm) goes, among the views already there
+/// (`placed`): to the right of them, top-aligned with the drawing area, if it fits, else in
+/// the middle.
+pub fn place_frame(sheet: &Sheet, placed: &[PlacedView], size: DVec2) -> DVec2 {
+    let area = drift_draft::sheet::view_area(sheet);
+    let size = size.min(area.size());
+    // To the right of the frames already placed (a frame filling the area leaves no room).
+    let taken = placed
         .iter()
-        .filter_map(|v| v.frame)
-        .map(|f| f.bounds().max.x)
+        .map(|v| v.frame.bounds().max.x)
         .fold(area.min.x, f64::max);
     let gap = 12.0;
     let at = if taken + gap + size.x <= area.max.x {
@@ -710,10 +736,7 @@ pub fn framed_view(b: Bounds, sheet: &Sheet, scale: f64) -> drift_core::SheetVie
     } else {
         area.center()
     };
-    let at = at.max(area.min + size * 0.5).min(area.max - size * 0.5);
-    v.frame = Some(drift_core::ViewFrame { at, size });
-    v.title = true;
-    v
+    at.max(area.min + size * 0.5).min(area.max - size * 0.5)
 }
 
 // ---------------------------------------------------------------------------------------------

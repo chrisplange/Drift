@@ -382,7 +382,8 @@ impl DriftApp {
             || self.hatch_input(ui, &response, &map, hatch.as_ref(), snap)
             || self.note_input(ui, &response, &map, &notes, &dims, &glyphs, pos)
             || self.temp_dim_input(ui, &response, &map, &temps, pos)
-            || self.annotation_input(ui, &response, &map, &dims, &glyphs, pos);
+            || self.annotation_input(ui, &response, &map, &dims, &glyphs, pos)
+            || self.view_crop_input(ui, &response, &map, pos);
         if consumed {
             self.pointer = pos.map(|pos| self.make_pointer(&map, pos, snap));
         } else if response.drag_started_by(PointerButton::Primary)
@@ -495,6 +496,11 @@ impl DriftApp {
         }
         if let Some(id) = self.editor.pending_note_edit.take() {
             self.open_note_edit(id, true);
+        }
+        // A view just drawn: picked, with the select tool, to name and reframe.
+        if let Some(id) = self.editor.new_view.take() {
+            self.set_tool(ToolKind::Select);
+            self.pick_view_alone(id);
         }
         // Remember points the pointer snapped to, for inference lines.
         if let Some(snap) = self.pointer.and_then(|p| p.snap)
@@ -684,6 +690,7 @@ impl DriftApp {
         }
         self.paint_annotations(&painter, &map, &dims, &glyphs, ui.visuals().dark_mode);
         self.paint_temp_dims(&painter, &map, &temps, ui.visuals().dark_mode);
+        self.paint_view_crops(&painter, &map, ui.visuals().dark_mode);
         // A dragged dimension snapped level with another: a guide between them.
         if let Some([a, b]) = self.dim_guide {
             let (a, b) = (map.to_screen(a), map.to_screen(b));

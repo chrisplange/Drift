@@ -29,4 +29,5 @@ pub(crate) mod underlays_ui;
 pub(crate) mod update_ui;
 pub(crate) mod view;
 pub(crate) mod view_align;
+pub(crate) mod views_ui;
 pub(crate) mod visibility_ui;

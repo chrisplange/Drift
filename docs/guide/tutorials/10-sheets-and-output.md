@@ -1,17 +1,22 @@
 # Sheets and output
 
-**What you'll make:** an A3 sheet of the example plate with a title block, a second view
-showing a 2:1 detail, and a PDF of it.
+**What you'll make:** an A3 sheet of the example plate with a title block, a 2:1 detail of
+the bore drawn as a view on the canvas and placed on the sheet, and a PDF of it.
 
 ![An A3 sheet of the plate with the modern title block, and the Sheets panel](../images/sheet.png)
 
-Time: about 15 minutes.
+Time: about 20 minutes.
 
 ## The idea
 
-You draw in **model space**, at full size. A **sheet** is a piece of paper with a title
-block. It holds one or more **views**, each a window onto the model at its own scale. What
-you see in the sheet preview is exactly what prints.
+You draw in **model space**, at full size. A **view** is a named crop of the model at a
+scale, like a Revit view with its crop region. You draw it on the canvas, where its crop
+and name show. A **sheet** is a piece of paper with a title block. You place views on it,
+and move them around the paper.
+
+The sheet shows the view, not a copy of it. Reframe a view's crop, on the canvas or on a
+sheet, and every sheet it's on follows. One view can go on several sheets (Revit allows
+only one). What you see in the sheet preview is exactly what prints.
 
 ## 1. Make a sheet
 
@@ -20,9 +25,10 @@ you see in the sheet preview is exactly what prints.
 2. Open the **Sheets** panel (the page icon among the panel tabs).
 3. Click **New sheet**.
 
-Drift makes an A3 landscape sheet with the **Modern** title block and one view that fills
-the drawing area. It picks the largest standard scale at which the drawing, dimensions
-included, clears the title block, and switches the canvas to the sheet.
+Drift makes an A3 landscape sheet with the **Modern** title block. It also makes a view of
+the whole drawing, **View 1**, and places it to fill the drawing area. It picks the
+largest standard scale at which the drawing, dimensions included, clears the title block,
+and switches the canvas to the sheet.
 
 The canvas is now the sheet editor. Scroll to zoom, drag with the middle or right button to
 pan, and press Shift+F to fit the sheet. Esc, **Back to model**, or **View → Sheet**
@@ -42,44 +48,110 @@ In the **Sheets** panel:
 - **Revisions:** **Add revision** adds a row with the next letter, today's date and the
   author. The latest revision shows in the title block.
 
-## 3. Views and scales
+## 3. Draw a view on the canvas
 
-Pick a view by clicking it on the sheet, or in the **Views** list. For the picked view:
+1. Press Esc to go back to the model.
+2. Pick the **View** tool (under **Annotate** in the toolbar).
+3. Drag a rectangle round the bore, or click two opposite corners.
 
-- **Title:** its name. Tick **Title** under **Show** to print the name, with the scale
-  beneath it, under the view.
-- **Scale:** choose from the menu, or click **Fit** for the largest scale that fits.
-  Metric scales run from 10:1 to 1:10000. Architectural scales (3" = 1'-0" down to
-  1/32" = 1'-0") and engineering scales (1" = 10' to 1" = 200') are offered too, with your
-  drawing's units first.
-- **Frame:** **Fills sheet** (the whole drawing area) or **Framed** (a rectangle of its
-  own on the paper).
-- **Show:** **Dimensions**, **Notes**, **Title** and **Border**, for this view only.
+The new view is called **View 2**, at the scale of the last view made. Its crop shows as a
+dashed rectangle with its name and scale above it. It's picked, with grips, and you're back
+on the select tool. The top bar shows the view:
 
-If the views on a sheet have different scales, the title block's scale reads **As shown**.
+4. Type `Detail A` for its name, and choose **2:1** from the scale menu.
 
-## 4. Add a detail view
+![The Detail A view's crop round the bore, picked with its grips](../images/view-crops.png)
 
-1. Click **Add view**. Drift adds a framed view beside the others: of what's picked in the
-   model, or of the whole drawing if nothing is.
-2. Give it the title `Detail A` and the scale **2:1**.
-3. On the sheet:
-   - **Drag the view** to move it on the paper.
-   - **Drag its handles** to crop it. The drawing stays where it is on the paper.
-   - **Alt-drag** inside it to slide the drawing within the frame.
+With the select tool:
+
+- **Click a crop's edge or name** to pick its view. Geometry under the pointer comes first,
+  so a crop never gets in the way of picking a line.
+- **Drag a picked crop's grips** to reframe it, or **drag its edge or name** to move it.
+- **Esc**, or a click anywhere else, lets it go. **Delete** deletes the view. If it's on a
+  sheet, Drift asks first, in the Sheets panel.
+
+### Showing and hiding crops
+
+Crops and their names are for working on the canvas. They never print or export.
+
+- **View → View crops** shows or hides every crop.
+- A view's own **Crop** switch (in the top bar, or the **Views** list) hides just that one,
+  like Revit's **Crop Region Visible**. A hidden crop can't be picked on the canvas, but you
+  can still pick its view in the list. Its crop then shows faintly while picked.
+
+## 4. The Views list
+
+The **Views** section of the Sheets panel lists every view in the drawing, with its scale
+and the sheets it's on (or **not placed**).
+
+- **Click** a view to pick it. Its crop shows on the canvas with its grips.
+- **Double-click** it, or click **Zoom to view**, to see its crop in the model.
+- For the picked view: **Name**, **Scale**, and **Show**: **Crop**, **Dimensions** and
+  **Notes**. Dimensions and notes are shown or hidden in this view wherever it's placed.
+- **Delete view** deletes it. If it's on sheets, Drift asks first, and deleting takes it
+  off them all. Undo brings it back.
+
+## 5. Put the view on the sheet
+
+1. Click **Show sheet**.
+2. Drag **Detail A** from the **Views** list onto the sheet, and let go where it should go.
+   You can also click **Place on sheet**: Drift puts it beside the views already there.
+
+The view goes on the sheet with its title under it. Its frame is its crop at its scale: a
+50 × 40 crop at 2:1 is 100 × 80 mm on the paper.
 
 ![A sheet with the main view and a framed 2:1 detail of the bore](../images/sheet-views.png)
+
+On the sheet:
+
+- **Drag a view** to move it on the paper.
+- **Drag its handles** to crop it. The drawing stays where it is on the paper, and the
+  view's crop in the model changes with it.
+- **Alt-drag** inside it to slide the drawing within the frame. This moves the crop over
+  the model.
+
+Cropping or sliding a view changes it on every sheet it's on, and on the canvas.
 
 Views snap as you drag them: their edges and middles line up with other frames and the
 drawing area, and drawings at the same scale line up level or in line with each other.
 Dashed guides show what lined up. Hold Ctrl to place freely.
 
+### The views on a sheet
+
+Under **On this sheet**, pick a view by clicking it on the sheet or in the list. For the
+picked view:
+
+- **Title:** its name. Tick **Title** under **Show** to print the name, with the scale
+  beneath it, under the view.
+- **Scale:** choose from the menu. The crop stays as it is in the model, so the frame
+  grows or shrinks on every sheet the view is on. Metric scales run from 10:1 to 1:10000.
+  Architectural scales (3" = 1'-0" down to 1/32" = 1'-0") and engineering scales
+  (1" = 10' to 1" = 200') are offered too, with your drawing's units first.
+- **Fit:** the largest scale at which the whole drawing fits the frame, centred. The frame
+  stays as it is on the paper, and the crop changes to suit.
+- **Fill drawing area:** frames the view to the sheet's whole drawing area, after a change
+  of paper size, say.
+- **Show:** **Dimensions**, **Notes**, **Title** and **Border**.
+
+If the views on a sheet have different scales, the title block's scale reads **As shown**.
+
 **Align with** lines the picked view up with another one: **Left**, **Centre**, **Right**,
 **Top**, **Middle**, **Bottom**, **Drawings level** or **Drawings in line**.
 
-Delete removes the picked view. A sheet always keeps at least one.
+**Add view** makes a new view and places it in a frame of its own beside the others. The
+view is of what's picked in the model, or of the whole drawing if nothing is.
 
-## 5. Output
+**Remove from sheet** (or Delete, on the sheet) takes the picked view off the sheet. The view
+stays in the drawing, in the **Views** list, to place again. A sheet can be empty.
+
+### Drawings from before views
+
+In drawings made before views came in, each view a sheet held becomes a view of its own.
+It's named after its title, or its sheet. Every sheet prints as it did. A view that filled a
+sheet keeps its crop if you change the paper size. Click **Fill drawing area** to frame it
+to the new paper.
+
+## 6. Output
 
 From the **Sheets** panel's **Output** section, or **File → Export**:
 
@@ -110,6 +182,8 @@ What goes on paper:
 
 - Construction geometry, points, hidden layers and layers whose print flag is off are left
   out.
+- Views' crops and names on the canvas are left out. Only the sheet's frames (with
+  **Border**) and titles print.
 - Dimensions and notes are left out where a view's **Show** says so, or where they're set
   off sheets (see [Annotation](09-annotation.md)).
 - Drafting hatch patterns are sized for the sheet's scale.
@@ -122,12 +196,18 @@ About DXF:
 - Blocks go out as blocks (BLOCK and INSERT). Dimensions and notes go out as plain lines and
   text on a layer called **ANNOTATIONS**, so they no longer measure. Fills go out as solid
   triangles.
-- To bring DXF in, see [Underlays and DXF import](11-underlays-and-dxf.md).
+- To bring DXF in, see [Underlays and DXF import](11-underlays-and-dxf.md). A DXF's
+  layouts come in as sheets, and each of their viewports as a view.
 
 ## What you learned
 
+- A view is a named crop of the model at a scale. Draw it with the **View** tool, and
+  reframe it with its grips.
+- **View → View crops** and each view's **Crop** switch show or hide crops. Crops never
+  print.
+- Views go on sheets from the **Views** list. Reframing a view changes every sheet it's on,
+  and one view can be on several sheets.
 - **New sheet** lays the drawing out on paper with a title block, at a fitting scale.
-- A sheet holds several views, each with its own scale and frame.
 - PDF prints every sheet; SVG the current one; DXF the model at full size.
 - Each sheet prints in colour, greyscale or black & white, as its preview shows.
 

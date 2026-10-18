@@ -2,18 +2,15 @@
 
 Drift comes with an MCP server, `drift-mcp`. With it, Claude (in Claude Desktop or Claude
 Code) and other assistants that speak the Model Context Protocol can create and edit Drift
-drawings. The assistant works on a `.drift` file. You open that file in Drift to see it and
-carry on by hand.
+drawings. Turn on Drift's AI link and the assistant works on the drawing open in your
+window: you watch each change as it is made, and can step in at any point. Without it, the
+assistant works on `.drift` files of its own.
 
 The server works the way Drift does. The assistant sketches rough geometry, then states what
 it means: walls parallel, this side 3600, the door centred. Drift's solver then makes the
 drawing exact. It stays parametric, so a dimension you change later still drives it. The
 assistant also checks its own work. It can render the drawing to a picture and analyse it
 for degrees of freedom, conflicts, open ends and room areas, then fix what's wrong.
-
-> **Phase 1.** The server edits drawing files on its own. It is not connected to a running
-> Drift window yet, so to see the assistant's work, save the drawing and open it in Drift.
-> A live link and an assistant panel inside Drift come later.
 
 ## Building the server
 
@@ -80,6 +77,36 @@ Add `--scope project` to share it with everyone working on the project. That wri
 
 `claude mcp list` shows whether it connected.
 
+## Working live in Drift
+
+1. In Drift, open **Edit → Preferences → General** and tick **Let AI assistants edit the
+   open drawing**. The status bar shows **AI link on**.
+2. Ask the assistant to work on your drawing. When it connects, the status bar shows
+   **Assistant connected**.
+
+What happens then:
+
+- Each change appears in the window as it is made. What the assistant just drew is
+  selected, so you can see it.
+- Every change is one undo step, listed as "Assistant: add dimensions" and so on, mixed in
+  with your own. Undo one and carry on drawing.
+- You can keep working while it works. A call that arrives while you're in the middle of
+  an edit (dragging, say) waits until you finish.
+- The assistant never replaces a drawing with unsaved changes. To start or open another
+  drawing it must ask you to save first. It saves only when asked, with Drift's own save.
+- Click **Assistant connected** to disconnect it, or untick the preference to turn the
+  link off.
+
+With several Drift windows open, the assistant works on the one you used last. If that
+window closes while the assistant is working, its next call fails. It then reconnects or
+goes back to files, rather than carrying on somewhere else. The assistant can check which
+drawing it is on with the `drift_link` tool, and switch between the window and its own
+files.
+
+The link is for Drift on Windows, macOS and Linux, not the web version. To keep the server
+away from your open drawings altogether, start it with `--no-link`. If it's started with
+`--open <file>`, it begins on that file instead of the window.
+
 ## What the assistant can do
 
 | Tools | For |
@@ -95,6 +122,7 @@ Add `--scope project` to share it with everyone working on the project. That wri
 | `render`, `analyze` | Checking: a picture of the drawing, and its degrees of freedom, conflicts, open ends and closed areas. |
 | `export` | PDF or SVG of the sheets, DXF of model space, or a PNG. |
 | `undo`, `redo`, `batch` | Every change the assistant makes is one undo step, and all or nothing: a call that fails changes nothing. `batch` makes several calls one step. |
+| `drift_link` | Which drawing the tools work on: the one open in Drift, or the server's own. |
 
 The renders mark up the drawing for the assistant. Curves are coloured by how well they are
 defined: black when fully defined, blue when they can still move, red when constraints
@@ -125,8 +153,11 @@ than giving coordinates. Ask it to render and analyse before it finishes.
 
 ## Safety
 
-- With `--root`, the server can't read or write files outside that folder. Without it, it
-  can use any file your account can.
+- With `--root`, the server can't read or write files outside that folder, even when it
+  works through the live link. Without it, it can use any file your account can.
+- The live link is off until you turn it on. Drift then listens only on your own computer
+  (localhost). It writes a random key to a file in your user data folder, and a program
+  must show that key to connect, so only programs running as you can edit your drawing.
 - The server only edits the drawing it has open, and every change can be undone. Nothing is
   written to disk until the assistant saves or exports, and it only writes the files it is
   asked to.

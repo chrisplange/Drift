@@ -17,6 +17,8 @@ mod edit;
 mod files;
 mod geometry;
 mod inspect;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod link;
 mod raster;
 mod render;
 mod schema;
@@ -52,6 +54,68 @@ pub struct Session {
     patterns: PatternLibrary,
     /// A CPU-only egui context, for laying out dimension and note text.
     ctx: Option<eframe::egui::Context>,
+    /// Working on the drawing open in Drift (the live link), rather than on its own.
+    live: Option<Live>,
+}
+
+/// A drawing open in Drift, lent to the tools for one call through the live link.
+pub struct LiveDoc<'a> {
+    pub editor: &'a mut Editor,
+    pub path: Option<PathBuf>,
+    pub meta: drift_io::Metadata,
+    /// It has changes that aren't saved (the assistant mustn't replace it then).
+    pub dirty: bool,
+    /// The app's own context, whose fonts lay out annotations as on screen.
+    pub ctx: eframe::egui::Context,
+}
+
+/// What Drift must do after a live call: the tools replaced or saved its drawing.
+#[derive(Clone, Debug)]
+pub enum LiveChange {
+    /// A new or opened drawing is now in the editor.
+    Replaced {
+        path: Option<PathBuf>,
+        meta: drift_io::Metadata,
+    },
+    /// The drawing was written to `path`.
+    Saved {
+        path: PathBuf,
+        meta: drift_io::Metadata,
+    },
+}
+
+struct Live {
+    dirty: bool,
+    change: Option<LiveChange>,
+}
+
+/// Run tool `name` on the drawing open in Drift, as one undo step in its own history.
+/// Files are kept inside `root` when it is given. Returns the result and anything Drift
+/// must do about its file (a new, opened or saved drawing).
+pub fn call_live(
+    doc: LiveDoc<'_>,
+    name: &str,
+    args: &Value,
+    root: Option<PathBuf>,
+) -> (ToolOutput, Option<LiveChange>) {
+    let mut s = Session {
+        editor: std::mem::take(doc.editor),
+        path: doc.path,
+        meta: doc.meta,
+        root: None,
+        patterns: PatternLibrary::default(),
+        ctx: Some(doc.ctx),
+        live: Some(Live {
+            dirty: doc.dirty,
+            change: None,
+        }),
+    };
+    if let Some(root) = root {
+        s = s.with_root(root);
+    }
+    let out = s.call(name, args);
+    *doc.editor = s.editor;
+    (out, s.live.and_then(|l| l.change))
 }
 
 impl Default for Session {
@@ -70,7 +134,25 @@ impl Session {
             root: None,
             patterns: PatternLibrary::default(),
             ctx: None,
+            live: None,
         }
+    }
+
+    /// Put a new or opened drawing in place of the current one.
+    fn replace(&mut self, doc: drift_core::Document) {
+        let mut editor = Editor::new(doc);
+        if self.live.is_some() {
+            // Drift's own preferences carry over to its next drawing.
+            editor.keep_prefs_from(&self.editor);
+        } else {
+            editor.regions_need_fill = false;
+        }
+        self.editor = editor;
+    }
+
+    /// Nothing has been done here yet: an empty drawing that came from no file.
+    pub fn is_untouched(&self) -> bool {
+        self.path.is_none() && self.editor.doc.is_empty() && self.editor.history.recorded() == 0
     }
 
     /// Only let tools read and write files inside `root`.

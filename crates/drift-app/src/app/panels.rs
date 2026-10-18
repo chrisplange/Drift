@@ -1451,6 +1451,8 @@ impl DriftApp {
                         )
                         .on_hover_text("Zoom: click for fit, selection and fixed sizes");
                     egui::Popup::menu(&button).show(|ui| self.zoom_menu(ui));
+                    #[cfg(not(target_arch = "wasm32"))]
+                    self.link_pill(ui);
                     if !self.editor.doc.is_empty() {
                         let analysis = self.editor.analysis();
                         let dark = ui.visuals().dark_mode;

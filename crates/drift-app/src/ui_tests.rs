@@ -18,6 +18,9 @@ mod audit;
 mod audit_sheets;
 /// Screenshots for the user guide.
 mod docs;
+/// The live link: assistants editing the open drawing.
+#[cfg(not(target_arch = "wasm32"))]
+mod link;
 /// The update notice and Preferences → Updates.
 #[cfg(not(target_arch = "wasm32"))]
 mod updates;

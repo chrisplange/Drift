@@ -55,7 +55,28 @@ fn extension(p: &Path) -> String {
         .unwrap_or_default()
 }
 
+/// In Drift, a drawing with unsaved changes is never replaced: that's the user's call.
+fn may_replace(s: &Session) -> Result<(), String> {
+    match &s.live {
+        Some(live) if live.dirty => Err(
+            "the drawing open in Drift has unsaved changes: ask the user to save it (or to \
+             start the new drawing themselves) first"
+                .into(),
+        ),
+        _ => Ok(()),
+    }
+}
+
+/// Tell Drift its drawing was replaced (when working on it live).
+fn replaced(s: &mut Session) {
+    let (path, meta) = (s.path.clone(), s.meta.clone());
+    if let Some(live) = &mut s.live {
+        live.change = Some(super::LiveChange::Replaced { path, meta });
+    }
+}
+
 pub(super) fn new_drawing(s: &mut Session, a: &Value) -> Res {
+    may_replace(s)?;
     let mut doc = Document::new();
     if let Some(u) = args::opt_str(a, "units")? {
         let length = match u {
@@ -87,19 +108,22 @@ pub(super) fn new_drawing(s: &mut Session, a: &Value) -> Res {
         style.scale = scale;
         doc.set_draft_style(style);
     }
-    s.editor = super::new_editor(doc);
+    s.replace(doc);
     s.path = None;
     s.meta = drift_io::Metadata::default();
+    replaced(s);
     Ok(json!({ "created": true, "sketch": s.status() }))
 }
 
 pub(super) fn open(s: &mut Session, a: &Value) -> Res {
+    may_replace(s)?;
     let path = resolve(s, args::str_(a, "path")?, true)?;
     let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", shown(&path)))?;
     let (doc, meta, notes) = drift_io::load_with_notes(&text).map_err(|e| e.to_string())?;
-    s.editor = super::new_editor(doc);
+    s.replace(doc);
     s.meta = meta;
     s.path = Some(path.clone());
+    replaced(s);
     let mut v = super::inspect::info(s)?;
     if !notes.is_empty() {
         v["notes"] = json!(notes);
@@ -117,15 +141,24 @@ pub(super) fn save(s: &mut Session, a: &Value) -> Res {
             }
             path
         }
+        // Only ever overwrite a drawing file, never the PDF or DXF it was opened from.
         None => s
             .path
             .clone()
-            .ok_or("the drawing has no file yet: give a `path`")?,
+            .filter(|p| extension(p) == "drift")
+            .ok_or("the drawing has no .drift file yet: give a `path`")?,
     };
-    s.meta.generator = Some(format!("Drift {} (drift-mcp)", env!("CARGO_PKG_VERSION")));
+    s.meta.generator = Some(format!("Drift {}", env!("CARGO_PKG_VERSION")));
     let text = drift_io::save(&s.editor.doc, &s.meta);
     std::fs::write(&path, text).map_err(|e| format!("{}: {e}", shown(&path)))?;
     s.path = Some(path.clone());
+    let meta = s.meta.clone();
+    if let Some(live) = &mut s.live {
+        live.change = Some(super::LiveChange::Saved {
+            path: path.clone(),
+            meta,
+        });
+    }
     Ok(json!({ "saved": shown(&path) }))
 }
 

@@ -15,6 +15,8 @@ mod groups_ui;
 pub(crate) mod hatch_ui;
 pub(crate) mod import_ui;
 mod keyboard;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod link_ui;
 pub(crate) mod mark_views;
 pub(crate) mod note_ui;
 pub(crate) mod palette;

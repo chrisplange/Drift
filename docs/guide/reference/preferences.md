@@ -11,7 +11,7 @@ The window has a page for each group, listed down its left side:
 
 | Page | Holds |
 |---|---|
-| **General** | [Appearance](#appearance), [Window](#window) and [Memory](#memory). |
+| **General** | [Appearance](#appearance), [Window](#window), [AI assistants](#ai-assistants) and [Memory](#memory). |
 | **Drawing aids** | [Grid and snapping](#grid-and-snapping), [Dimensions](#dimensions) and [Closed areas](#closed-areas). |
 | **Display** | [Display](#display) and [Crosshair](#crosshair). |
 | **Mouse and trackpad** | [Scrolling](#mouse-and-trackpad). |
@@ -76,6 +76,13 @@ zooms). The middle or right mouse button drags the view either way.
 
 - **Reset panel layout** puts every panel back in the right dock.
 - **Show the start panel** brings the start panel back over an empty, unsaved sketch.
+
+## AI assistants
+
+**Let AI assistants edit the open drawing** turns on the live link (desktop only). Claude,
+or another assistant connected through `drift-mcp`, then works on the drawing in this
+window, and you see each change as it is made. It is off until you turn it on. See
+[Drawing with AI assistants](../../ai.md).
 
 ## Memory
 

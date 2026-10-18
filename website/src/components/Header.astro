@@ -112,6 +112,10 @@ const path = Astro.url.pathname;
       order: 3;
       width: 100%;
       overflow-x: auto;
+      scrollbar-width: none;
+    }
+    nav::-webkit-scrollbar {
+      display: none;
     }
     nav a {
       padding: 6px 8px;

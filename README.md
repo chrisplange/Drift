@@ -2,7 +2,13 @@
 
 **Parametric 2D sketching that is precise, fast and runs everywhere.**
 
-Drift is an open-source 2D CAD sketcher with SolidWorks-style geometric and dimensional
+**[Website](https://drift-website-c9y.pages.dev)** ·
+**[Download](https://drift-website-c9y.pages.dev/download/)** ·
+**[Try it in your browser](https://drift-website-c9y.pages.dev/app/)** ·
+**[User guide](https://drift-website-c9y.pages.dev/guide/)** ·
+**[Release notes](https://drift-website-c9y.pages.dev/releases/)**
+
+Drift is a source-available 2D CAD sketcher with SolidWorks-style geometric and dimensional
 constraints, built for technical drawings and design exploration. It is written in Rust, renders
 on the GPU with [wgpu](https://wgpu.rs), and runs natively on Windows, macOS and Linux and in the
 browser (WebGPU, with a WebGL2 fallback).

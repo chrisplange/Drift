@@ -20,7 +20,10 @@ A sketch in Drift is held in shape by two kinds of constraint:
 Each point or curve can move in a number of ways, its **degrees of freedom** (DOF). Each
 constraint takes some away. When none are left, the sketch is **fully defined**. Drift
 solves the constraints continuously: drag something and everything connected follows,
-keeping every constraint true.
+keeping every constraint true. Arcs you aren't dragging by an end keep their size where
+they can, so dragging a fillet's centre carries its lines and any concentric round along. A
+drag that would turn an arc inside out, or put a tangent curve on the other side of its
+line, stops short instead.
 
 You don't have to fully define a sketch. Under-defined geometry is fine for exploring; it
 just means some things can still move.

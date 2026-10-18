@@ -21,6 +21,8 @@ mod curve_ops;
 mod dimension;
 mod ellipse;
 mod fill;
+#[cfg(test)]
+mod fillet_drag_tests;
 mod line;
 mod offset_mirror;
 mod pen;

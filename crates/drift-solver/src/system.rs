@@ -49,6 +49,10 @@ pub struct System {
     /// Constraints entirely implied by others during substitution.
     pub redundant: Vec<ConstraintId>,
     pub entities: Vec<(EntityId, EntityShape)>,
+    /// Arcs that should keep a size where they can: centre x, y and start x, y, and the
+    /// radius ([`crate::SolveOptions::radii`], for arcs neither of whose ends is dragged). Not
+    /// equations, only a preference in the minimum-change step (see `newton`).
+    pub keep_radius: Vec<([usize; 4], f64)>,
 }
 
 struct UnionFind {
@@ -86,7 +90,7 @@ const DRAGGED_MOBILITY: f64 = 1e-6;
 
 impl System {
     pub fn build(doc: &Document, dragged: &[Param], tol: &Tolerances) -> Self {
-        Self::build_in(doc, dragged, tol, None)
+        Self::build_in(doc, dragged, tol, None, &HashMap::new())
     }
 
     /// Build the system for the entities in `scope` only (everything if `None`). The scope
@@ -96,6 +100,7 @@ impl System {
         dragged: &[Param],
         tol: &Tolerances,
         scope: Option<&std::collections::HashSet<EntityId>>,
+        radii: &HashMap<EntityId, f64>,
     ) -> Self {
         let keep = |id: EntityId| scope.is_none_or(|s| s.contains(&id));
         // ---- Parameters ----
@@ -615,8 +620,17 @@ impl System {
         }
 
         // Arcs keep their end on the circle through their start.
-        for (_, entity) in doc.iter().filter(|(id, _)| keep(*id)) {
+        let mut keep_radius = Vec::new();
+        for (id, entity) in doc.iter().filter(|(id, _)| keep(*id)) {
             if let EntityKind::Arc { center, start, end } = entity.kind {
+                // Dragging an end reshapes the arc; dragging its centre carries it along.
+                if let Some(&r) = radii.get(&id)
+                    && [start, end]
+                        .iter()
+                        .all(|p| !Param::point(*p).iter().any(|q| dragged.contains(q)))
+                {
+                    keep_radius.push(([x(center), y(center), x(start), y(start)], r));
+                }
                 rows.push(Row {
                     equation: Equation::EqualLength {
                         a: Length::Points([x(center), y(center), x(end), y(end)]),
@@ -689,6 +703,7 @@ impl System {
             conflicts,
             redundant,
             entities,
+            keep_radius,
         }
     }
 

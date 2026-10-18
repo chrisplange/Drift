@@ -70,6 +70,10 @@ pub struct SolveOptions {
     /// Solve only these entities (closed under shared points and constraints; see
     /// [`connected`]): a drag in a big sketch then costs what the dragged part costs.
     pub scope: Option<std::rc::Rc<HashSet<EntityId>>>,
+    /// Arcs and the radii they should keep where they can (typically their sizes before a
+    /// drag moved some points): a move that could go either way follows a round with its
+    /// lines rather than shrinking it. Ignored for arcs with a dragged end.
+    pub radii: HashMap<EntityId, f64>,
 }
 
 /// How completely an entity's position is determined by constraints.
@@ -103,6 +107,9 @@ pub struct SolveReport {
 
 const MAX_ITERATIONS: usize = 100;
 
+/// How strongly arcs keep their radius in a minimum-change step, relative to moving a point.
+const KEEP_RADIUS: f64 = 100.0;
+
 /// Solve the document's constraints in place. Changes go through the document's normal edit
 /// methods, so they are recorded by an open transaction.
 pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
@@ -111,6 +118,7 @@ pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
         &options.dragged,
         &options.tolerances,
         options.scope.as_deref(),
+        &options.radii,
     );
     let report = run(&mut sys, options, true);
     write_back(doc, &sys);
@@ -265,6 +273,100 @@ pub fn degenerate_entities(doc: &Document) -> Vec<EntityId> {
         })
         .map(|(id, _)| id)
         .collect()
+}
+
+/// Which way round the curved pieces of a sketch sit: how far each arc sweeps, and on which
+/// side each tangency touches. A solve can meet every constraint by turning an arc inside out
+/// (its centre carried past its ends, so it runs the long way round) or by moving a tangent
+/// curve over to the line's other side; comparing [`Orientation::of`] before and after shows
+/// it ([`Orientation::turned`]), so a drag can take smaller steps or refuse.
+#[derive(Clone, Debug, Default)]
+pub struct Orientation {
+    /// Arcs and their counter-clockwise sweeps (radians).
+    arcs: Vec<(EntityId, f64)>,
+    /// Tangent pairs and their side: which side of the line a curve's centre is on (±1), or
+    /// for two curves whether they touch from outside (+1) or one inside the other (−1).
+    sides: Vec<((EntityId, EntityId), f64)>,
+}
+
+/// A sweep that changes by more than this in one solve has jumped, not turned.
+const SWEEP_JUMP: f64 = std::f64::consts::FRAC_PI_2;
+
+impl Orientation {
+    /// The orientation of the arcs and tangencies among `scope` (everything if `None`).
+    pub fn of(doc: &Document, scope: Option<&HashSet<EntityId>>) -> Self {
+        let keep = |id: EntityId| scope.is_none_or(|s| s.contains(&id));
+        let arcs = match scope {
+            Some(ids) => ids
+                .iter()
+                .filter_map(|&id| Some((id, arc_sweep(doc, id)?)))
+                .collect(),
+            None => doc
+                .iter()
+                .filter_map(|(id, _)| Some((id, arc_sweep(doc, id)?)))
+                .collect(),
+        };
+        let sides = doc
+            .constraints()
+            .filter_map(|(id, c)| match *c {
+                Constraint::Tangent { a, b } if keep(a) && keep(b) && !doc.is_driven(id) => {
+                    Some(((a, b), tangent_side(doc, a, b)?))
+                }
+                _ => None,
+            })
+            .collect();
+        Self { arcs, sides }
+    }
+
+    /// True if `doc` has an arc turned inside out, or a tangency moved to the other side,
+    /// since this orientation was taken. Entities added since don't count.
+    pub fn turned(&self, doc: &Document) -> bool {
+        let arc = self.arcs.iter().any(|&(id, before)| {
+            arc_sweep(doc, id).is_some_and(|now| (now - before).abs() > SWEEP_JUMP)
+        });
+        arc || self
+            .sides
+            .iter()
+            .any(|&((a, b), before)| tangent_side(doc, a, b).is_some_and(|now| now != before))
+    }
+}
+
+/// An arc's counter-clockwise sweep from start to end, in (0, 2π].
+fn arc_sweep(doc: &Document, arc: EntityId) -> Option<f64> {
+    let EntityKind::Arc { center, start, end } = doc.get(arc)?.kind else {
+        return None;
+    };
+    let c = doc.point(center).ok()?;
+    let (s, e) = (doc.point(start).ok()? - c, doc.point(end).ok()? - c);
+    let turn = s.perp_dot(e).atan2(s.dot(e));
+    Some(if turn <= 0.0 {
+        turn + std::f64::consts::TAU
+    } else {
+        turn
+    })
+}
+
+/// The side a tangency touches on (see [`Orientation`]); `None` where it is undecided (a
+/// centre on the line, or circles equally near both kinds of contact).
+fn tangent_side(doc: &Document, a: EntityId, b: EntityId) -> Option<f64> {
+    let center = |id: EntityId| match doc.get(id)?.kind {
+        EntityKind::Circle { center, .. } | EntityKind::Arc { center, .. } => {
+            doc.point(center).ok()
+        }
+        _ => None,
+    };
+    let sign = |v: f64| (v != 0.0).then(|| v.signum());
+    match doc.get(a)?.kind {
+        EntityKind::Line { a: la, b: lb } => {
+            let (pa, pb) = (doc.point(la).ok()?, doc.point(lb).ok()?);
+            sign((pb - pa).perp_dot(center(b)? - pa))
+        }
+        _ => {
+            let d = center(a)?.distance(center(b)?);
+            let (r1, r2) = (radius_of(doc, a)?, radius_of(doc, b)?);
+            sign((d - (r1 - r2).abs()).abs() - (d - (r1 + r2)).abs())
+        }
+    }
 }
 
 /// Radius of a circle or arc.
@@ -506,6 +608,35 @@ fn newton(
         // μ·M⁻¹ picks the smallest weighted change among the solutions (and keeps
         // under-constrained systems solvable); λ adds Levenberg–Marquardt damping.
         let mu = 1e-10 * max_diag;
+        // Part of that change: arcs keep the sizes they are asked to where they can. Where a
+        // move could go either way (a concentric round's lines follow it, or the round
+        // shrinks), being off that size costs as much as moving a point KEEP_RADIUS times as
+        // far. A round that only its points pin down would otherwise give way a little every
+        // step of a drag, until it collapses. (A soft pull: μ is tiny, so it only chooses
+        // among the solutions.)
+        for (k, r0) in &sys.keep_radius {
+            let [cx, cy, sx, sy] = k.map(|p| values[sys.group_of[p]]);
+            let r = (sx - cx).hypot(sy - cy);
+            if r <= 0.0 {
+                continue;
+            }
+            let (ux, uy) = ((sx - cx) / r, (sy - cy) / r);
+            let mut grad: Vec<(usize, f64)> = Vec::with_capacity(4);
+            for (p, g) in k.iter().zip([-ux, -uy, ux, uy]) {
+                if let Some(&c) = col_of.get(&sys.group_of[*p]) {
+                    match grad.iter_mut().find(|(cc, _)| *cc == c) {
+                        Some(entry) => entry.1 += g,
+                        None => grad.push((c, g)),
+                    }
+                }
+            }
+            for (i, &(c1, g1)) in grad.iter().enumerate() {
+                rhs[c1] -= mu * KEEP_RADIUS * g1 * (r - r0);
+                for &(c2, g2) in &grad[..=i] {
+                    normal.add(c1, c2, mu * KEEP_RADIUS * g1 * g2);
+                }
+            }
+        }
 
         let mut solved = None;
         for _ in 0..30 {

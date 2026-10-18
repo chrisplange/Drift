@@ -620,6 +620,29 @@ pub fn list_row(ui: &mut egui::Ui, selected: bool, label: &str) -> egui::Respons
     response
 }
 
+/// A menu item that is on or off: a check in a column at its left (blank when off), its
+/// label and its shortcut, the whole row highlighting on hover like any menu item.
+pub fn menu_check(ui: &mut egui::Ui, on: bool, label: &str, keys: &str) -> egui::Response {
+    let check = egui::Atom::custom(egui::Id::new("menu_check"), vec2(14.0, 14.0));
+    let response = ui.add(egui::Button::new((check, label)).shortcut_text(keys));
+    response
+        .widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, on, label));
+    if on {
+        let x = response.rect.left() + ui.spacing().button_padding.x + 7.0;
+        let c = egui::pos2(x, response.rect.center().y);
+        let color = ui.style().interact(&response).text_color();
+        ui.painter().add(egui::Shape::line(
+            vec![
+                c + vec2(-4.0, 0.0),
+                c + vec2(-1.2, 3.0),
+                c + vec2(4.0, -3.5),
+            ],
+            Stroke::new(1.6, color),
+        ));
+    }
+    response
+}
+
 /// The frame every dialog shares (windows and modal prompts alike).
 pub fn dialog_frame(style: &egui::Style) -> egui::Frame {
     egui::Frame::window(style).inner_margin(Margin::same(16))

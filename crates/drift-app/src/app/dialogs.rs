@@ -214,12 +214,14 @@ impl DriftApp {
                             theme::section(ui, section);
                             for (keys, action) in rows {
                                 ui.horizontal(|ui| {
+                                    // Keys in a column just wide enough for the longer
+                                    // ones ("Ctrl+Shift+Z"); the description beside them.
                                     ui.allocate_ui_with_layout(
-                                        egui::vec2(230.0, 22.0),
+                                        egui::vec2(150.0, 22.0),
                                         egui::Layout::left_to_right(egui::Align::Center)
                                             .with_main_wrap(true),
                                         |ui| {
-                                            ui.set_min_width(230.0);
+                                            ui.set_min_width(150.0);
                                             keycaps(ui, keys);
                                         },
                                     );

@@ -255,10 +255,7 @@ fn status_divider(ui: &mut egui::Ui) {
 
 /// A checkbox-style menu item with a shortcut hint.
 fn toggle_item(ui: &mut egui::Ui, value: &mut bool, label: &str, keys: &str) {
-    if ui
-        .add(egui::Button::selectable(*value, label).shortcut_text(keys))
-        .clicked()
-    {
+    if theme::menu_check(ui, *value, label, keys).clicked() {
         *value = !*value;
     }
 }
@@ -574,8 +571,7 @@ impl DriftApp {
                 }
                 ui.menu_button("Panels", |ui| self.panels_menu(ui));
                 ui.separator();
-                if ui
-                    .add(egui::Button::selectable(self.sheet_preview, "Sheet"))
+                if theme::menu_check(ui, self.sheet_preview, "Sheet", "")
                     .on_hover_text("Show the drawing on its sheet, as it prints")
                     .clicked()
                 {
@@ -831,8 +827,7 @@ impl DriftApp {
             } else {
                 String::new()
             };
-            if ui
-                .add(egui::Button::selectable(shown, p.title()).shortcut_text(keys))
+            if theme::menu_check(ui, shown, p.title(), &keys)
                 .on_hover_text(p.description())
                 .clicked()
             {
@@ -845,12 +840,13 @@ impl DriftApp {
             }
         }
         ui.separator();
-        if ui
-            .add(
-                egui::Button::selectable(self.dock_view.hide_all, "Hide all panels")
-                    .shortcut_text(shortcut("\\", false)),
-            )
-            .clicked()
+        if theme::menu_check(
+            ui,
+            self.dock_view.hide_all,
+            "Hide all panels",
+            &shortcut("\\", false),
+        )
+        .clicked()
         {
             self.dock_view.hide_all = !self.dock_view.hide_all;
             ui.close();

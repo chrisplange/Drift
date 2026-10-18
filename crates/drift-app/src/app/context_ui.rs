@@ -859,7 +859,7 @@ impl DriftApp {
                 if ui
                     .add_enabled(space, egui::Button::new("Space dimensions evenly"))
                     .on_hover_text(
-                        "Space three or more stacked parallel dimensions evenly between the                          outermost two",
+                        "Space three or more stacked parallel dimensions evenly between the outermost two",
                     )
                     .clicked()
                 {
@@ -868,15 +868,15 @@ impl DriftApp {
                 }
                 ui.separator();
             }
-            let mut hidden = self.show_hidden_annotations;
-            if ui
-                .add(egui::Checkbox::new(
-                    &mut hidden,
-                    "Show hidden annotations (Alt+H)",
-                ))
-                .changed()
+            if theme::menu_check(
+                ui,
+                self.show_hidden_annotations,
+                "Show hidden annotations",
+                "Alt+H",
+            )
+            .clicked()
             {
-                self.show_hidden_annotations = hidden;
+                self.show_hidden_annotations = !self.show_hidden_annotations;
             }
             ui.separator();
         }
@@ -896,13 +896,12 @@ impl DriftApp {
                 ui.close();
             }
             ui.separator();
-            let mut grid = self.show_grid;
-            if ui.checkbox(&mut grid, "Grid").changed() {
-                self.show_grid = grid;
+            let grid_keys = app::panels::shortcut("'", false);
+            if theme::menu_check(ui, self.show_grid, "Grid", &grid_keys).clicked() {
+                self.show_grid = !self.show_grid;
             }
-            let mut snap = self.grid_snap;
-            if ui.checkbox(&mut snap, "Snap to grid").changed() {
-                self.grid_snap = snap;
+            if theme::menu_check(ui, self.grid_snap, "Snap to grid", "Shift+G").clicked() {
+                self.grid_snap = !self.grid_snap;
             }
             ui.separator();
             if item(ui, "Command palette…", &app::panels::shortcut("K", false)) {

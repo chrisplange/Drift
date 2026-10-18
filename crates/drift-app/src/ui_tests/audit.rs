@@ -267,6 +267,10 @@ fn dialogs(dark: bool) {
     let mut h = themed(dark);
     h.state_mut().show_settings = true;
     shot(dark, "40-preferences", &mut h);
+    h.get_by_label("Drawing aids").click();
+    shot(dark, "40-preferences-drawing", &mut h);
+    h.get_by_label("General").click();
+    h.run();
     h.state_mut().show_settings = false;
     h.state_mut().show_about = true;
     shot(dark, "41-about", &mut h);

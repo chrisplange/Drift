@@ -7,7 +7,7 @@ title block and out as PDF, SVG or DXF.
 
 It runs on Windows, macOS and Linux, and in the browser.
 
-This guide is for **0.1.0-alpha.7**. It is written for architects, designers and engineers
+This guide is for **0.1.0-beta.1**. It is written for architects, designers and engineers
 who already know a CAD or drawing program (Revit, AutoCAD, SolidWorks, Illustrator,
 Affinity) but have never used Drift.
 

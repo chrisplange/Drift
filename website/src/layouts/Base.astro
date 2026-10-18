@@ -16,7 +16,7 @@ interface Props {
   description?: string;
 }
 
-const { title, description = `${site.name}: ${site.tagline.toLowerCase()}. Free for Windows, macOS and the browser.` } =
+const { title, description = `${site.name}: ${site.tagline.toLowerCase()}. Now in beta for Windows, macOS and the browser.` } =
   Astro.props;
 const fullTitle = title ? `${title} · ${site.name}` : `${site.name}: ${site.tagline}`;
 // Absolute links need the site's address (SITE_URL); without one they're left out.

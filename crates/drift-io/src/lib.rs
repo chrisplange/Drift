@@ -6,7 +6,7 @@
 //! ```json
 //! {
 //!   "format": "drift",
-//!   "version": 28,
+//!   "version": 29,
 //!   "meta": {"title":"Bracket","units":"mm","generator":"Drift 0.1.0"},
 //!   "display": {"length":"architectural","fraction":16},
 //!   "variables": [
@@ -83,8 +83,8 @@ pub const EXTENSION: &str = "drift";
 /// 26 = adds `styles` (a dimension's or annotation's own settings over the drafting style);
 /// 27 = views are the model's (`views`: a named crop at a scale), placed on sheets by their
 /// `viewports` (a sheet's own `views` become model views when read); 28 = adds a view's
-/// `hidden_layers`.
-pub const FORMAT_VERSION: u32 = 28;
+/// `hidden_layers`; 29 = adds a section or elevation mark's `view` (the view it points at).
+pub const FORMAT_VERSION: u32 = 29;
 const FORMAT_TAG: &str = "drift";
 
 /// Document-level properties stored alongside the geometry.
@@ -1624,6 +1624,19 @@ pub fn load_with_notes(text: &str) -> Result<(Document, Metadata, Vec<String>), 
         }
         doc.insert_sheet(id, sheet);
     }
+    // A mark pointing at a view that isn't there points at nothing.
+    let dead: Vec<_> = doc
+        .annotations()
+        .filter(|(_, a)| a.view().is_some_and(|v| doc.view(v).is_none()))
+        .map(|(id, a)| {
+            let mut a = a.clone();
+            a.set_view(None);
+            (id, a)
+        })
+        .collect();
+    for (id, a) in dead {
+        doc.set_annotation(id, a).map_err(LoadError::Document)?;
+    }
     if let Some(d) = file.drafting {
         doc.set_draft_style(drafting::parse_draft(d)?);
     }
@@ -1785,7 +1798,7 @@ mod tests {
         let text = save(&doc, &Metadata::default());
         let expected = r#"{
   "format": "drift",
-  "version": 28,
+  "version": 29,
   "meta": {"units":"mm"},
   "entities": [
     {"type":"point","id":"e1","at":[0.0,0.0]},
@@ -2274,6 +2287,26 @@ mod tests {
     }
 
     #[test]
+    fn a_mark_linked_to_a_missing_view_loads_unlinked() {
+        let text = r#"{
+  "format": "drift",
+  "version": 29,
+  "meta": {"units":"mm"},
+  "entities": [],
+  "annotations": [
+    {"type":"section","id":"n1","a":[0.0,0.0],"b":[10.0,0.0],"label":"A","view":"w9"},
+    {"type":"elevation","id":"n2","at":[0.0,0.0],"angle":0.0,"label":"1","view":"w3"}
+  ],
+  "views": [
+    {"id":"w3","name":"East","scale":50.0,"center":[0.0,0.0],"size":[100.0,100.0]}
+  ]
+}"#;
+        let (doc, _) = load(text).unwrap();
+        let views: Vec<_> = doc.annotations().map(|(_, a)| a.view()).collect();
+        assert_eq!(views, [None, Some(drift_core::ViewId(3))]);
+    }
+
+    #[test]
     fn a_note_with_its_one_leader_from_before_v24_loads() {
         let text = r#"{
   "format": "drift",
@@ -2552,6 +2585,23 @@ mod tests {
             crop([0.0, 0.0], [10.0, 10.0]),
             200.0,
         ));
+        doc.add_annotation(drift_core::Annotation::Section {
+            a: DVec2::new(-50.0, 0.0),
+            b: DVec2::new(50.0, 0.0),
+            label: "A".into(),
+            sheet: String::new(),
+            flip: true,
+            view: Some(detail_id),
+        })
+        .unwrap();
+        doc.add_annotation(drift_core::Annotation::Elevation {
+            at: DVec2::new(0.0, -60.0),
+            angle: 90.0,
+            label: "1".into(),
+            sheet: "A-201".into(),
+            view: None,
+        })
+        .unwrap();
         let chair = doc.add_block(drift_core::Block {
             name: "Chair".into(),
             fills: vec![drift_core::Fill::new(
@@ -2669,7 +2719,9 @@ mod tests {
         doc.add_text(drift_core::SketchText::new("A", DVec2::ZERO, 3.0));
 
         let text = save(&doc, &Metadata::default());
-        assert!(text.contains("\"version\": 28"));
+        assert!(text.contains("\"version\": 29"));
+        // A mark points at its view.
+        assert!(text.contains(r#""flip":true,"view":"w"#), "{text}");
         assert!(text.contains(r#""styles": ["#) && text.contains(r#""alt_units":"none""#));
         // Views are the model's; sheets place them.
         assert!(text.contains(r#""views": ["#) && text.contains(r#""crop":false"#));

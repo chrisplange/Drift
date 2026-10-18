@@ -534,6 +534,7 @@ impl Tool for SectionTool {
                         label: notes::next_mark_label(&ed.doc, true),
                         sheet: String::new(),
                         flip: false,
+                        view: None,
                     };
                     add_annotation(ed, mark, "Section mark");
                     self.lock = None;
@@ -643,6 +644,7 @@ impl Tool for ElevationTool {
                         angle,
                         label: notes::next_mark_label(&ed.doc, false),
                         sheet: String::new(),
+                        view: None,
                     };
                     add_annotation(ed, mark, "Elevation mark");
                 }

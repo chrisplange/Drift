@@ -101,8 +101,11 @@ and the sheets it's on (or **not placed**).
 - **Double-click** it, or click **Zoom to view**, to see its crop in the model.
 - For the picked view: **Name**, **Scale**, and **Show**: **Crop**, **Dimensions** and
   **Notes**. Dimensions and notes are shown or hidden in this view wherever it's placed.
+- **Referenced by** lists the section and elevation marks that point at the view. Click
+  one to pick it in the model.
 - **Delete view** deletes it. If it's on sheets, Drift asks first, and deleting takes it
-  off them all. Undo brings it back.
+  off them all. Marks that pointed at it are unlinked in the same step. Undo brings it all
+  back.
 
 ## 5. Put the view on the sheet
 
@@ -151,12 +154,18 @@ Pick a view by clicking it on the sheet. The **Inspector** shows the views on th
 - **Fill drawing area:** frames the view to the sheet's whole drawing area, after a change
   of paper size, say.
 - **Show:** **Dimensions**, **Notes**, **Title** and **Border**.
+- **Referenced by:** the marks that point at the view.
 - **Layers:** untick a layer to leave it out of this view, wherever the view is placed:
   a setting-out layer in the plan but not in the details, say. Dimensions and notes on
   nothing but that layer's geometry go with it. A layer hidden or set not to print in the
   **Layers** panel is greyed out here: it's off in every view.
 
 If the views on a sheet have different scales, the title block's scale reads **As shown**.
+
+A view's number on a sheet is its place in **Views on this sheet**, from 1. A section or
+elevation mark linked to the view reads that number over the sheet's number (`2 / A-101`),
+on the canvas and in print. When a view is on several sheets, marks read the first one.
+See [Annotation](09-annotation.md) for **Make view**.
 
 **Align with** lines the picked view up with another one: **Left**, **Centre**, **Right**,
 **Top**, **Middle**, **Bottom**, **Drawings level** or **Drawings in line**.

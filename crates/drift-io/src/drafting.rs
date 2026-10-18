@@ -346,6 +346,9 @@ pub(crate) enum AnnotationRecord {
         sheet: String,
         #[serde(default, skip_serializing_if = "is_false")]
         flip: bool,
+        /// The view the mark points at (`w3`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        view: Option<String>,
     },
     Elevation {
         id: String,
@@ -354,6 +357,8 @@ pub(crate) enum AnnotationRecord {
         label: String,
         #[serde(default, skip_serializing_if = "String::is_empty")]
         sheet: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        view: Option<String>,
     },
 }
 
@@ -421,6 +426,7 @@ pub(crate) fn annotation_record(id: AnnotationId, a: &Annotation) -> AnnotationR
             label,
             sheet,
             flip,
+            view,
         } => AnnotationRecord::Section {
             id,
             a: a.to_array(),
@@ -428,18 +434,21 @@ pub(crate) fn annotation_record(id: AnnotationId, a: &Annotation) -> AnnotationR
             label: label.clone(),
             sheet: sheet.clone(),
             flip: *flip,
+            view: view.map(|v| v.to_string()),
         },
         Annotation::Elevation {
             at,
             angle,
             label,
             sheet,
+            view,
         } => AnnotationRecord::Elevation {
             id,
             at: at.to_array(),
             angle: *angle,
             label: label.clone(),
             sheet: sheet.clone(),
+            view: view.map(|v| v.to_string()),
         },
     }
 }
@@ -568,8 +577,10 @@ pub(crate) fn parse_annotation(
             label,
             sheet,
             flip,
+            view,
         } => {
             let (a, b) = (finite(&id, a)?, finite(&id, b)?);
+            let view = parse_view_link(view.as_deref())?;
             (
                 id,
                 Annotation::Section {
@@ -578,6 +589,7 @@ pub(crate) fn parse_annotation(
                     label,
                     sheet,
                     flip,
+                    view,
                 },
             )
         }
@@ -587,7 +599,9 @@ pub(crate) fn parse_annotation(
             angle,
             label,
             sheet,
+            view,
         } => {
+            let view = parse_view_link(view.as_deref())?;
             let at = finite(&id, at)?;
             if !angle.is_finite() {
                 return Err(LoadError::NonFinite(id));
@@ -599,11 +613,18 @@ pub(crate) fn parse_annotation(
                     angle,
                     label,
                     sheet,
+                    view,
                 },
             )
         }
     };
     Ok((AnnotationId(parse_prefixed(&id, 'n')?), a))
+}
+
+/// A mark's link to a view (`w3`); whether the view exists is checked once views are read.
+fn parse_view_link(view: Option<&str>) -> Result<Option<drift_core::ViewId>, LoadError> {
+    view.map(|v| parse_prefixed(v, 'w').map(drift_core::ViewId))
+        .transpose()
 }
 
 /// A dimension's tolerance.

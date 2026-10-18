@@ -662,6 +662,11 @@ impl DriftApp {
     /// The tool palette: icon buttons in groups (draw, annotate, modify), with tooltips that
     /// name the tool, its shortcut and what it does.
     pub(crate) fn toolbar(&mut self, ui: &mut egui::Ui, wide: bool) {
+        // On a sheet, the rail holds what can be done on paper.
+        if self.sheet_preview {
+            self.sheet_rail(ui, wide);
+            return;
+        }
         // A key shared by a cycle of tools (C: circle, ellipse, partial ellipse) is shown on
         // the first of them only; the tooltips say it switches on.
         let mut keys_shown = std::collections::HashSet::new();
@@ -864,6 +869,11 @@ impl DriftApp {
     }
 
     pub(crate) fn inspector(&mut self, ui: &mut egui::Ui) {
+        // On a sheet, the Inspector shows what is picked there.
+        if self.sheet_preview {
+            self.sheet_inspector(ui);
+            return;
+        }
         self.block_edit_banner(ui);
         if self.fill_tool_inspector(ui)
             || self.annotation_inspector(ui)
@@ -1642,7 +1652,9 @@ impl DriftApp {
         });
         // The hint, in whatever space is left between the readout and the right cluster (as
         // wide as it actually is, so the hint never lies over its controls).
-        let hint = if self.sheet_preview {
+        let hint = if self.add_view_on.is_some() && !self.tool.is_busy() {
+            "Drag a rectangle round what the new view shows · Esc cancels".to_owned()
+        } else if self.sheet_preview {
             "Drag a view to move it · Alt-drag the drawing inside it · its handles crop it · Esc \
              returns to the model"
                 .to_owned()

@@ -20,6 +20,7 @@ pub(crate) mod palette;
 pub(crate) mod panels;
 pub(crate) mod patterns;
 pub(crate) mod pie;
+pub(crate) mod sheet_editor;
 pub(crate) mod sheets_ui;
 pub(crate) mod start_ui;
 pub(crate) mod temp_dims_ui;

@@ -496,6 +496,16 @@ pub const ENGINEERING_SCALES: [(f64, &str); 8] = [
 
 /// The scales a drawing in feet and inches fits to: full and half size, then the
 /// architectural and engineering scales.
+/// The standard scales, the largest drawing first: metric, or (for imperial drawings) full
+/// and half size, then the architectural and engineering scales.
+pub fn standard_scales(imperial: bool) -> Vec<f64> {
+    if imperial {
+        imperial_scales().collect()
+    } else {
+        PREFERRED_SCALES.to_vec()
+    }
+}
+
 fn imperial_scales() -> impl Iterator<Item = f64> {
     [1.0, 2.0]
         .into_iter()

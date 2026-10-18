@@ -80,8 +80,24 @@ impl DriftApp {
         if ctx.text_edit_focused() || self.text_was_focused {
             return;
         }
+        // Add view from a sheet: Esc (before the crop is started) goes back to the sheet.
+        if let Some(sheet) = self.add_view_on
+            && !self.tool.is_busy()
+            && ctx.input(|i| i.key_pressed(Key::Escape))
+        {
+            self.set_tool(ToolKind::Select);
+            self.show_sheet(Some(sheet));
+            return;
+        }
         // The sheet preview takes no drawing keys: Esc (or F) returns to the model.
         if self.sheet_preview {
+            // V adds a view, by its region in the model.
+            if ctx.input(|i| i.modifiers.is_none() && i.key_pressed(Key::V))
+                && let Some(id) = self.current_sheet()
+            {
+                self.start_add_view(id);
+                return;
+            }
             if ctx.input(|i| i.key_pressed(Key::Escape)) {
                 self.sheet_preview = false;
             }

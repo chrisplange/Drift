@@ -506,6 +506,14 @@ impl DriftApp {
     }
 
     pub(crate) fn set_tool(&mut self, kind: ToolKind) {
+        // Another tool gives up a view being drawn for a sheet.
+        if kind != ToolKind::View {
+            self.add_view_on = None;
+        }
+        if self.sheet_preview && kind != ToolKind::Select {
+            self.show_sheet(None);
+            self.status_next = Some("Back in the model to draw".to_owned());
+        }
         if self.tool.kind() != kind {
             self.abort_operation();
             self.typing = None;

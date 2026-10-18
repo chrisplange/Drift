@@ -498,7 +498,10 @@ impl DriftApp {
             self.open_note_edit(id, true);
         }
         // A view just drawn: picked, with the select tool, to name and reframe.
-        if let Some(id) = self.editor.new_view.take() {
+        // (Asked for from a sheet: it goes on that sheet.)
+        if let Some(id) = self.editor.new_view.take()
+            && !self.view_drawn(id)
+        {
             self.set_tool(ToolKind::Select);
             self.pick_view_alone(id);
         }
@@ -741,6 +744,7 @@ impl DriftApp {
         let notes = self.layout_notes(&annotation_painter, &map);
         self.note_editor(&ctx, &notes);
         self.text_editor(ui, &map, &painter);
+        self.paint_add_view_prompt(&painter, &map);
         if let (Some(p), Some(pos)) = (self.pointer, pos) {
             // The HUD: what was snapped to, the measurement, and the values being typed.
             // (What can be typed is in the status bar's prompt.)

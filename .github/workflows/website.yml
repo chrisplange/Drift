@@ -1,0 +1,91 @@
+name: Website
+
+# Builds the website (website/, with the user guide from docs/guide and the web app at /app/)
+# and deploys it to Cloudflare Pages. It runs on every merge to main, and when a release is
+# published so the download links and release notes catch up. Pull requests that touch the
+# site only build it. See website/README.md for the one-time Cloudflare setup.
+
+on:
+  push:
+    branches: [main]
+  release:
+    types: [published]
+  pull_request:
+    paths:
+      - "website/**"
+      - "docs/guide/**"
+      - ".github/workflows/website.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  HAS_CLOUDFLARE: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
+  # The Cloudflare Pages project; its address is https://<project>.pages.dev.
+  PROJECT: ${{ vars.CLOUDFLARE_PROJECT || 'drift-website' }}
+
+jobs:
+  build:
+    name: Build and deploy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      deployments: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # A release event points at its tag; the site is always built from main.
+          ref: ${{ github.event_name == 'release' && 'main' || '' }}
+
+      # The web app, served at /app/.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: trunk
+      - name: Build the web app
+        working-directory: apps/web
+        run: >
+          trunk build --release --cargo-profile web-release
+          --public-url /app/ --dist ../../website/public/app
+
+      # The site.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+      - run: npm ci
+        working-directory: website
+      - name: Build the site
+        working-directory: website
+        run: npm run build
+        env:
+          # Read the releases without hitting the anonymous rate limit.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Deploys only from main (or a release), and only once the Cloudflare secrets exist.
+      - name: Create the Cloudflare Pages project (first run only)
+        if: >
+          env.HAS_CLOUDFLARE == 'true' &&
+          (github.event_name == 'release' || github.ref == 'refs/heads/main')
+        continue-on-error: true # it fails harmlessly once the project exists
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages project create ${{ env.PROJECT }} --production-branch=main
+      - name: Deploy to Cloudflare Pages
+        if: >
+          env.HAS_CLOUDFLARE == 'true' &&
+          (github.event_name == 'release' || github.ref == 'refs/heads/main')
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy website/dist --project-name=${{ env.PROJECT }} --branch=main

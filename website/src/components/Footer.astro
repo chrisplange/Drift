@@ -1,0 +1,98 @@
+---
+import { site } from "../site.config.mjs";
+const year = new Date().getFullYear();
+---
+
+<footer class="site-footer">
+  <div class="wrap cols">
+    <div class="about">
+      <a class="brand" href="/"><img src="/logo.svg" alt="" width="24" height="24" /> {site.name}</a>
+      <p>{site.tagline}. Made in the open on GitHub.</p>
+    </div>
+    <nav aria-label="Footer">
+      <h3>Drift</h3>
+      <a href="/download/">Download</a>
+      <a href="/app/">Try in browser</a>
+      <a href="/releases/">Release notes</a>
+    </nav>
+    <nav aria-label="Learn">
+      <h3>Learn</h3>
+      <a href="/guide/">User guide</a>
+      <a href="/guide/getting-started/">Getting started</a>
+      <a href="/guide/reference/keyboard-shortcuts/">Keyboard shortcuts</a>
+    </nav>
+    <nav aria-label="Project">
+      <h3>Project</h3>
+      <a href={site.repoUrl}>Source code</a>
+      <a href={`${site.repoUrl}/issues`}>Report a problem</a>
+      <a href="/licence/">Licence</a>
+    </nav>
+  </div>
+  <div class="wrap legal">
+    <span>© {year} Christopher Lange</span>
+    <span>Drift is source-available under FSL-1.1-ALv2.</span>
+  </div>
+</footer>
+
+<style>
+  .site-footer {
+    border-top: 1px solid var(--line);
+    background: var(--surface);
+    margin-top: 64px;
+    padding: 48px 0 28px;
+    font-size: 0.92rem;
+  }
+  .cols {
+    display: grid;
+    grid-template-columns: 2fr repeat(3, 1fr);
+    gap: 32px;
+  }
+  .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text);
+    font-weight: 700;
+  }
+  .about p {
+    color: var(--text-weak);
+    margin: 10px 0 0;
+    max-width: 22em;
+  }
+  nav {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  nav h3 {
+    font-size: 0.78rem;
+    font-family: var(--mono);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-weak);
+    font-weight: 500;
+    margin: 0 0 4px;
+  }
+  nav a {
+    color: var(--text);
+  }
+  .legal {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 8px;
+    color: var(--text-weak);
+    margin-top: 40px;
+    padding-top: 20px;
+    border-top: 1px solid var(--line);
+    font-size: 0.85rem;
+  }
+  @media (max-width: 760px) {
+    .cols {
+      grid-template-columns: 1fr 1fr;
+    }
+    .about {
+      grid-column: 1 / -1;
+    }
+  }
+</style>

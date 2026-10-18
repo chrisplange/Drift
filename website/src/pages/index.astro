@@ -1,0 +1,328 @@
+---
+import { Image } from "astro:assets";
+import Base from "../layouts/Base.astro";
+import DownloadButtons from "../components/DownloadButtons.astro";
+import SketchScroll from "../components/SketchScroll.astro";
+import { screen } from "../lib/screens";
+import { getReleases } from "../lib/releases";
+import { site } from "../site.config.mjs";
+
+const latest = (await getReleases())[0];
+
+const features = [
+  {
+    img: "dims-fully-defined",
+    title: "Dimensions that drive the drawing",
+    text: "Smart dimensions read what you click: lengths, angles, radii, distances. Type a new value and the geometry follows. Blue means still free; white means fully defined.",
+  },
+  {
+    img: "relations-pie",
+    title: "Relations at a flick",
+    text: "Hold Q and flick towards horizontal, tangent, equal or symmetric. Drift adds the obvious ones as you draw, and refuses ones that would over-define the sketch, with a reason.",
+  },
+  {
+    img: "parameters",
+    title: "Parameters and variants",
+    text: "Name a value, width = 1200, and drive dimensions with expressions. Drag a slider to watch the sketch re-solve, and keep named variants to compare options side by side.",
+  },
+  {
+    img: "fills",
+    title: "Poché, hatches and fills",
+    text: "Click inside a closed area to hatch it: concrete, earth, insulation, brick, or any AutoCAD or Revit .pat file. Fills follow the geometry when it changes.",
+  },
+  {
+    img: "blocks",
+    title: "Blocks and a furniture library",
+    text: "Doors, windows, fixtures and furniture to drop in, or make blocks of your own. Edit one and every copy updates. DXF blocks come across both ways.",
+  },
+  {
+    img: "sheet",
+    title: "Sheets, title blocks and output",
+    text: "Lay views out on A4 to A0 or ANSI sheets with a title block and revisions. Export true-scale vector PDF, SVG or DXF, and trace over PDF and DXF underlays.",
+  },
+];
+---
+
+<Base>
+  <section class="hero">
+    <div class="wrap hero-inner">
+      <div class="hero-text">
+        <a class="pill" href="/releases/">
+          {latest ? `${latest.version} is out` : "Now in alpha"}
+        </a>
+        <h1>Sketch with intent.<br /><span>Change your mind freely.</span></h1>
+        <p class="lede">
+          Drift is a parametric 2D sketcher for architects and designers. Draw freely, then hold
+          the drawing together with dimensions and relations. Change one number and everything
+          that depends on it follows.
+        </p>
+        <div class="cta">
+          <a class="btn btn-primary" href="/download/">Download free</a>
+          <a class="btn" href="/app/">Try it in your browser</a>
+        </div>
+        <p class="platforms">Windows · macOS · Browser · Free to use</p>
+      </div>
+      <div class="hero-shot">
+        <Image
+          src={screen("window")}
+          alt="Drift's window: a dimensioned mounting plate, the tool bar on the left and the Inspector on the right"
+          widths={[640, 960, 1280]}
+          sizes="(max-width: 900px) 100vw, 640px"
+          loading="eager"
+          fetchpriority="high"
+        />
+      </div>
+    </div>
+  </section>
+
+  <SketchScroll />
+
+  <section class="section features" id="features">
+    <div class="wrap">
+      <p class="eyebrow">What's in it</p>
+      <h2>The precision of CAD, the pace of a sketch</h2>
+      <p class="lede">
+        Drift borrows constraint sketching from mechanical CAD and makes it quick enough for
+        early design: plans, sections, details, joinery, signage and fabrication drawings.
+      </p>
+      <div class="grid">
+        {
+          features.map((f) => (
+            <article class="feature">
+              <div class="shot">
+                <Image
+                  src={screen(f.img)}
+                  alt=""
+                  widths={[480, 720]}
+                  sizes="(max-width: 760px) 100vw, 360px"
+                />
+              </div>
+              <h3>{f.title}</h3>
+              <p>{f.text}</p>
+            </article>
+          ))
+        }
+      </div>
+    </div>
+  </section>
+
+  <section class="section designers">
+    <div class="wrap two">
+      <div>
+        <p class="eyebrow">Made for designers</p>
+        <h2>Keys you already know</h2>
+        <p>
+          Drift is built by an architect, for people who already draw in Revit, AutoCAD,
+          SolidWorks, Illustrator or Affinity. Units can be millimetres or feet-and-inches with
+          fractions, typed any way you like: <code>1'-6 1/2"</code>, <code>450mm</code>,
+          <code>=width/2</code>.
+        </p>
+        <p>
+          The pen draws like Illustrator's. G moves and R rotates, Blender-style, with X and Y to
+          lock an axis. Ctrl/⌘+K finds every command.
+        </p>
+        <a href="/guide/coming-from/">Coming from another program →</a>
+      </div>
+      <ul class="facts">
+        <li><strong>Fast</strong><span>Sketches of thousands of entities solve in milliseconds, on the GPU-drawn canvas.</span></li>
+        <li><strong>Exact</strong><span>Lines, arcs and text stay crisp at any zoom, and files keep every number exactly.</span></li>
+        <li><strong>Plays well with others</strong><span>DXF in and out, plus SVG, PDF and Illustrator import, as geometry or as an underlay to trace.</span></li>
+        <li><strong>Yours</strong><span>Plain-text .drift files that diff in git. No account, nothing in the cloud.</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="section try">
+    <div class="wrap try-inner card">
+      <div>
+        <p class="eyebrow">No install</p>
+        <h2>Try Drift in your browser</h2>
+        <p class="lede">
+          The full app runs in the browser with WebGPU, or WebGL2 on older browsers. Your work
+          is kept in the browser between visits, and you can download it as a .drift file.
+        </p>
+      </div>
+      <a class="btn btn-primary" href="/app/">Open Drift</a>
+    </div>
+  </section>
+
+  <section class="section get" id="download">
+    <div class="wrap">
+      <p class="eyebrow">Download</p>
+      <h2>Free for Windows and macOS</h2>
+      <p class="lede">
+        Drift is free to use, including for client work. <a href="/licence/">About the licence</a>.
+      </p>
+      <DownloadButtons compact />
+      <p class="links">
+        <a href="/guide/">Read the user guide</a>
+        <a href="/releases/">What's new</a>
+        <a href={site.repoUrl}>Source on GitHub</a>
+      </p>
+    </div>
+  </section>
+</Base>
+
+<style>
+  .hero {
+    padding: 72px 0 40px;
+    overflow: hidden;
+  }
+  .hero-inner {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+    gap: 48px;
+    align-items: center;
+  }
+  .hero h1 {
+    margin-top: 18px;
+  }
+  .hero h1 span {
+    color: var(--text-weak);
+  }
+  .pill:hover {
+    text-decoration: none;
+    color: var(--text);
+  }
+  .cta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 28px;
+  }
+  .platforms {
+    color: var(--text-weak);
+    font-size: 0.85rem;
+    margin-top: 16px;
+  }
+  .hero-shot {
+    border-radius: var(--radius);
+    border: 1px solid var(--line-strong);
+    overflow: hidden;
+    box-shadow:
+      0 30px 80px -20px rgb(0 0 0 / 0.6),
+      0 0 0 1px rgb(255 255 255 / 0.03);
+  }
+  .hero-shot img {
+    display: block;
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 28px;
+    margin-top: 48px;
+  }
+  .feature .shot {
+    aspect-ratio: 16 / 10;
+    overflow: hidden;
+    border-radius: var(--radius);
+    border: 1px solid var(--line);
+    margin-bottom: 16px;
+    background: var(--surface);
+  }
+  .feature img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transition: transform 0.6s cubic-bezier(0.2, 0.7, 0.2, 1);
+  }
+  .feature:hover img {
+    transform: scale(1.04);
+  }
+  .feature p {
+    color: var(--text-weak);
+    font-size: 0.95rem;
+    margin: 0;
+  }
+
+  .designers {
+    background: var(--surface);
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+  }
+  .two {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 64px;
+    align-items: start;
+  }
+  .two p {
+    color: var(--text-weak);
+  }
+  .facts {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 2px;
+  }
+  .facts li {
+    padding: 18px 0;
+    border-bottom: 1px solid var(--line);
+    display: grid;
+    grid-template-columns: 170px 1fr;
+    gap: 16px;
+  }
+  .facts span {
+    color: var(--text-weak);
+  }
+
+  .try-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 32px;
+    padding: 40px;
+    background:
+      radial-gradient(
+        ellipse at 100% 0%,
+        color-mix(in srgb, var(--accent) 18%, transparent),
+        transparent 60%
+      ),
+      var(--panel);
+  }
+  .try-inner .lede {
+    margin-bottom: 0;
+  }
+
+  .get .links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 24px;
+    margin-top: 40px;
+    font-size: 0.95rem;
+  }
+
+  @media (max-width: 960px) {
+    .hero-inner,
+    .two {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 40px;
+    }
+    .grid {
+      grid-template-columns: repeat(2, 1fr);
+    }
+  }
+  @media (max-width: 640px) {
+    .hero {
+      padding-top: 40px;
+    }
+    .grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .facts li {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 4px;
+    }
+    .try-inner {
+      flex-direction: column;
+      align-items: flex-start;
+      padding: 24px;
+    }
+    .section {
+      padding: 64px 0;
+    }
+  }
+</style>

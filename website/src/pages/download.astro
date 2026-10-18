@@ -1,0 +1,95 @@
+---
+import Base from "../layouts/Base.astro";
+import DownloadButtons from "../components/DownloadButtons.astro";
+import { formatDate, getReleases } from "../lib/releases";
+import { site } from "../site.config.mjs";
+
+const releases = await getReleases();
+const latest = releases[0];
+---
+
+<Base title="Download" description="Download Drift for Windows or macOS, or try it in your browser.">
+  <div class="wrap page">
+    <p class="eyebrow">Download</p>
+    <h1>Get Drift</h1>
+    <p class="lede">
+      Free for Windows and macOS, or open it in your browser with nothing to install.{" "}
+      {
+        latest && (
+          <>
+            The newest version is <strong>{latest.version}</strong>, released{" "}
+            {formatDate(latest.published)}.
+          </>
+        )
+      }
+    </p>
+
+    <div class="card dl">
+      <DownloadButtons />
+    </div>
+
+    <div class="notes">
+      <section>
+        <h2>Drift is alpha software</h2>
+        <p>
+          It works, and testers use it for real drawings, but expect rough edges and save often.
+          A file saved by a newer Drift won't open in an older one, so if you share drawings,
+          everyone should use the same version. Drift tells you when an update is ready.
+        </p>
+      </section>
+      <section>
+        <h2>The first time you open it</h2>
+        <p>Drift isn't code-signed yet, so your computer asks before opening it the first time.</p>
+        <ul>
+          <li>
+            <strong>Windows:</strong> if SmartScreen says "Windows protected your PC", choose
+            <em>More info</em>, then <em>Run anyway</em>.
+          </li>
+          <li>
+            <strong>macOS:</strong> open the disk image and drag Drift to Applications. The first
+            time, Control-click Drift and choose <em>Open</em>, or allow it in
+            <em>System Settings → Privacy &amp; Security</em>.
+          </li>
+        </ul>
+        <p>Updates installed from inside Drift don't ask again.</p>
+      </section>
+      <section>
+        <h2>Checking a download</h2>
+        <p>
+          Each release lists SHA-256 checksums in <code>SHA256SUMS.txt</code>, signed with Drift's
+          release key. Older versions and checksums are on the{" "}
+          <a href={`${site.repoUrl}/releases`}>GitHub releases page</a>.
+        </p>
+      </section>
+    </div>
+  </div>
+</Base>
+
+<style>
+  .page {
+    padding-top: 56px;
+  }
+  .dl {
+    margin: 32px 0 56px;
+    padding: 32px;
+  }
+  .notes {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 32px;
+    color: var(--text-weak);
+    font-size: 0.95rem;
+  }
+  .notes h2 {
+    font-size: 1.1rem;
+    color: var(--text);
+  }
+  .notes strong {
+    color: var(--text);
+  }
+  @media (max-width: 600px) {
+    .dl {
+      padding: 20px;
+    }
+  }
+</style>

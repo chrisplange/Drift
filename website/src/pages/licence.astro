@@ -1,0 +1,80 @@
+---
+import Base from "../layouts/Base.astro";
+import { site } from "../site.config.mjs";
+---
+
+<Base
+  title="Licence"
+  description="Drift's licence in plain words: free to use for your own work, source available, Apache 2.0 after two years."
+>
+  <div class="wrap page prose">
+    <p class="eyebrow">Licence</p>
+    <h1>Drift's licence in plain words</h1>
+    <p class="lede">
+      Drift is free to use, including for paid client work. The source code is public. The
+      one thing you can't do is use it to build a product that competes with Drift.
+    </p>
+
+    <h2>What you can do</h2>
+    <ul>
+      <li>Use Drift for anything: your own projects, your firm's drawings, client work, teaching.</li>
+      <li>Read, change and build the source code, and share your changes.</li>
+      <li>Install it on as many computers as you like. There's no fee and no account.</li>
+    </ul>
+
+    <h2>What you can't do</h2>
+    <p>
+      Offer Drift, or something made from its code, as a commercial product or service that
+      stands in for Drift or does much the same job. For example, you can't sell a CAD
+      sketcher built from Drift's code, or host Drift as a paid online service.
+    </p>
+
+    <h2>Two years later, it's Apache 2.0</h2>
+    <p>
+      Two years after each version is released, that version also becomes available under
+      the Apache License 2.0, a standard open-source licence with no such limit. So every
+      version ends up fully open source.
+    </p>
+
+    <h2>Which licence applies to which version</h2>
+    <table>
+      <thead>
+        <tr><th>Versions</th><th>Licence</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>0.1.0-alpha.8 and later</td>
+          <td>
+            <a href={`${site.repoUrl}/blob/main/LICENSE.md`}>Functional Source License 1.1, ALv2 Future License</a>
+            (FSL-1.1-ALv2)
+          </td>
+        </tr>
+        <tr>
+          <td>Up to and including 0.1.0-alpha.7</td>
+          <td>MIT or Apache-2.0, your choice. These versions stay available under those terms.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>Other people's code</h2>
+    <p>
+      Drift is built with open-source libraries and fonts. Their licences and copyright
+      notices are listed in <a href={`${site.repoUrl}/blob/main/THIRD-PARTY-NOTICES.txt`}>THIRD-PARTY-NOTICES.txt</a>,
+      and in Drift under <strong>About → Licences…</strong>
+    </p>
+
+    <blockquote>
+      <p>
+        This page is a summary to help you understand the licence. It isn't legal advice, and
+        if it ever differs from <a href={`${site.repoUrl}/blob/main/LICENSE.md`}>the licence text</a>, the
+        licence text is what counts.
+      </p>
+    </blockquote>
+  </div>
+</Base>
+
+<style>
+  .page {
+    padding-top: 56px;
+  }
+</style>

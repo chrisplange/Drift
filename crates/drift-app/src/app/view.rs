@@ -676,7 +676,9 @@ impl DriftApp {
         }
         self.paint_ghosts(&painter, &map);
         self.paint_check_markers(&painter, &map);
-        self.paint_transform_box(&painter, &map, &colors, ui.visuals().dark_mode);
+        if self.pie.is_none() {
+            self.paint_transform_box(&painter, &map, &colors, ui.visuals().dark_mode);
+        }
         if let Some(region) = self.editor.region() {
             overlay::region_fill(&painter, &map, &region, colors.window.gamma_multiply(0.22));
         }
@@ -733,37 +735,42 @@ impl DriftApp {
         self.note_editor(&ctx, &notes);
         self.text_editor(ui, &map, &painter);
         if let (Some(p), Some(pos)) = (self.pointer, pos) {
-            let mut label = Vec::new();
+            // The HUD: what was snapped to, the measurement, and the values being typed.
+            // (What can be typed is in the status bar's prompt.)
+            let mut info = overlay::CursorInfo::default();
             if let Some(snap) = p.snap {
                 overlay::snap_marker(&painter, &map, &snap, colors.snap);
-                label.push(snap.kind.label().to_owned());
+                info.snap = Some(snap.kind.label().to_owned());
             }
             if let Some(m) = self.tool.measurement(&p) {
-                label.push(m);
+                info.notes.push(m);
             }
             if let Some(t) = &self.typing {
                 let results = t.evaluate(&self.editor);
                 let units = self.editor.doc.units();
                 for (i, field) in t.fields.iter().enumerate() {
-                    let marker = if i == t.active { ">" } else { " " };
-                    let note = match &results[i] {
+                    let (note, error) = match &results[i] {
                         // Show what an expression comes to.
                         Ok(Some((v, _)))
                             if t.values[i]
                                 .chars()
                                 .any(|c| c.is_ascii_alphabetic() || "*/+^('\"".contains(c)) =>
                         {
-                            format!("  = {}", units.format(field_kind(field), *v))
+                            (format!("= {}", units.format(field_kind(field), *v)), false)
                         }
-                        Err(e) if !t.values[i].trim().is_empty() => format!("  ({e})"),
-                        _ => String::new(),
+                        Err(e) if !t.values[i].trim().is_empty() => (e.to_string(), true),
+                        _ => (String::new(), false),
                     };
-                    label.push(format!("{marker} {field}: {}{note}", t.values[i]));
+                    info.fields.push(overlay::HudField {
+                        name: field.to_string(),
+                        value: t.values[i].clone(),
+                        note,
+                        active: i == t.active,
+                        error,
+                    });
                 }
-            } else if !self.tool.fields().is_empty() && self.tool.kind() != ToolKind::Select {
-                label.push(format!("Type {}", self.tool.fields().join(" / ")));
             }
-            overlay::cursor_label(&painter, pos, &label, &colors);
+            overlay::cursor_hud(&painter, pos, &info, &colors);
         }
     }
 
@@ -850,8 +857,22 @@ impl DriftApp {
         {
             annotations::paint_dimension(painter, &dim, AnnotationState::Preview, &colors);
         }
+        // Relation badges are quiet at rest, and at full strength on the picked geometry or
+        // under the pointer, so they don't crowd the drawing.
+        let quiet = AnnotationColors {
+            normal: colors.normal.gamma_multiply(0.6),
+            glyph_background: colors.glyph_background.gamma_multiply(0.55),
+            ..colors
+        };
+        let selection = &self.editor.selection;
         for glyph in glyphs {
-            annotations::paint_glyph(painter, glyph.rect, glyph.kind, state(glyph.id), &colors);
+            let touches = self
+                .editor
+                .doc
+                .constraint(glyph.id)
+                .is_some_and(|c| c.entities().any(|e| selection.contains(&e)));
+            let look = if touches { &colors } else { &quiet };
+            annotations::paint_glyph(painter, glyph.rect, glyph.kind, state(glyph.id), look);
         }
         // Picked and hovered line midpoints.
         let ed = &self.editor;

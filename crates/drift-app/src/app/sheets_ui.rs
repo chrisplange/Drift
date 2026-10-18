@@ -790,8 +790,7 @@ impl DriftApp {
         self.paint_view_frames(&painter, rect, &sheet, ui.visuals().dark_mode);
         // What this is, and how to leave.
         let info = format!(
-            "{} · {} {} · {}  —  drag a view to move it (Alt: the drawing inside it) · Esc \
-             returns to the model",
+            "{} · {} {} · {}",
             sheet.name,
             sheet.paper.label(),
             if sheet.portrait {

@@ -31,6 +31,10 @@ pub struct OverlayColors {
     pub crossing: Color32,
     pub label_bg: Color32,
     pub label_fg: Color32,
+    /// The HUD's outline and its fields.
+    pub label_border: Color32,
+    pub field_bg: Color32,
+    pub dark: bool,
 }
 
 impl OverlayColors {
@@ -40,16 +44,22 @@ impl OverlayColors {
                 snap: Color32::from_rgb(0xff, 0x9f, 0x1c),
                 window: Color32::from_rgb(0x2f, 0x9b, 0xff),
                 crossing: Color32::from_rgb(0x4c, 0xc3, 0x6b),
-                label_bg: Color32::from_rgba_unmultiplied(0x10, 0x12, 0x15, 0xe0),
+                label_bg: Color32::from_rgba_unmultiplied(0x2a, 0x2d, 0x32, 0xf4),
                 label_fg: Color32::from_rgb(0xe6, 0xe8, 0xeb),
+                label_border: Color32::from_rgb(0x3b, 0x3f, 0x46),
+                field_bg: Color32::from_rgb(0x16, 0x18, 0x1b),
+                dark,
             }
         } else {
             Self {
                 snap: Color32::from_rgb(0xe0, 0x6c, 0x00),
                 window: Color32::from_rgb(0x0b, 0x6b, 0xde),
                 crossing: Color32::from_rgb(0x1f, 0x9a, 0x45),
-                label_bg: Color32::from_rgba_unmultiplied(0xff, 0xff, 0xff, 0xe8),
+                label_bg: Color32::from_rgba_unmultiplied(0xff, 0xff, 0xff, 0xf4),
                 label_fg: Color32::from_rgb(0x1d, 0x21, 0x26),
+                label_border: Color32::from_rgb(0xd9, 0xdb, 0xdf),
+                field_bg: Color32::from_rgb(0xf3, 0xf4, 0xf6),
+                dark,
             }
         }
     }
@@ -245,16 +255,159 @@ pub fn region_fill(
 
 /// A small text label with a background, offset from the cursor.
 pub fn cursor_label(painter: &egui::Painter, at: Pos2, lines: &[String], colors: &OverlayColors) {
-    if lines.is_empty() {
+    let info = CursorInfo {
+        notes: lines.to_vec(),
+        ..Default::default()
+    };
+    cursor_hud(painter, at, &info, colors);
+}
+
+/// A value being typed beside the cursor: its name, the text so far, and a note (what an
+/// expression comes to, or why it can't be used).
+pub struct HudField {
+    pub name: String,
+    pub value: String,
+    pub note: String,
+    pub active: bool,
+    pub error: bool,
+}
+
+/// What the cursor HUD shows: what the pointer snapped to, the tool's measurement, and the
+/// values being typed (as AutoCAD's dynamic input).
+#[derive(Default)]
+pub struct CursorInfo {
+    pub snap: Option<String>,
+    pub notes: Vec<String>,
+    pub fields: Vec<HudField>,
+}
+
+/// The cursor HUD: a small card beside the pointer in the theme's colours, flipped to the
+/// pointer's other side near the canvas's edges.
+pub fn cursor_hud(painter: &egui::Painter, at: Pos2, info: &CursorInfo, colors: &OverlayColors) {
+    if info.snap.is_none() && info.notes.is_empty() && info.fields.is_empty() {
         return;
     }
-    let text = lines.join("\n");
-    let font = FontId::proportional(12.0);
-    let galley = painter.layout_no_wrap(text, font, colors.label_fg);
-    let pos = at + vec2(16.0, 16.0);
-    let bg = Rect::from_min_size(pos, galley.size()).expand2(vec2(6.0, 4.0));
-    painter.rect_filled(bg, crate::theme::radius::CONTROL, colors.label_bg);
-    painter.galley(pos, galley, colors.label_fg);
+    let size = crate::theme::size::LABEL;
+    let fg = colors.label_fg;
+    let weak = fg.gamma_multiply(0.62);
+    let accent = crate::theme::accent(colors.dark);
+    let error = Color32::from_rgb(0xe5, 0x48, 0x4d);
+    let pad = vec2(8.0, 6.0);
+    let line_h = 18.0;
+    let field_h = 20.0;
+    // Lay out every line first, to size the card.
+    let snap = info.snap.as_ref().map(|s| {
+        painter.layout_no_wrap(
+            s.clone(),
+            FontId::new(size, crate::theme::bold()),
+            colors.snap,
+        )
+    });
+    let notes: Vec<_> = info
+        .notes
+        .iter()
+        .map(|n| painter.layout_no_wrap(n.clone(), FontId::proportional(size), fg))
+        .collect();
+    let fields: Vec<_> = info
+        .fields
+        .iter()
+        .map(|f| {
+            let name = painter.layout_no_wrap(f.name.clone(), FontId::proportional(size), weak);
+            let value = painter.layout_no_wrap(f.value.clone(), FontId::proportional(size), fg);
+            let note = painter.layout_no_wrap(
+                f.note.clone(),
+                FontId::proportional(crate::theme::size::CAPTION),
+                if f.error { error } else { weak },
+            );
+            (name, value, note)
+        })
+        .collect();
+    let name_w = fields
+        .iter()
+        .map(|(n, _, _)| n.size().x)
+        .fold(0.0_f32, f32::max);
+    let box_w = fields
+        .iter()
+        .map(|(_, v, _)| v.size().x + 16.0)
+        .fold(64.0_f32, f32::max);
+    let fields_w = fields
+        .iter()
+        .map(|(_, _, n)| {
+            name_w
+                + 8.0
+                + box_w
+                + if n.size().x > 0.0 {
+                    8.0 + n.size().x
+                } else {
+                    0.0
+                }
+        })
+        .fold(0.0_f32, f32::max);
+    let width = snap
+        .iter()
+        .chain(notes.iter())
+        .map(|g| g.size().x)
+        .fold(fields_w, f32::max);
+    let height = snap.as_ref().map_or(0.0, |_| line_h)
+        + notes.len() as f32 * line_h
+        + fields.len() as f32 * (field_h + 4.0);
+    let card = vec2(width, height) + pad * 2.0;
+    // Below and right of the pointer, unless that runs off the canvas.
+    let clip = painter.clip_rect();
+    let mut min = at + vec2(18.0, 18.0);
+    if min.x + card.x > clip.right() - 4.0 {
+        min.x = at.x - 18.0 - card.x;
+    }
+    if min.y + card.y > clip.bottom() - 4.0 {
+        min.y = at.y - 18.0 - card.y;
+    }
+    let r = Rect::from_min_size(min, card);
+    painter.rect_filled(r, crate::theme::radius::MENU, colors.label_bg);
+    painter.rect_stroke(
+        r,
+        crate::theme::radius::MENU,
+        Stroke::new(1.0, colors.label_border),
+        StrokeKind::Inside,
+    );
+    let mut y = r.top() + pad.y;
+    let x = r.left() + pad.x;
+    let mid = |g: &std::sync::Arc<egui::Galley>, y: f32, h: f32| y + (h - g.size().y) / 2.0;
+    if let Some(g) = snap {
+        painter.galley(egui::pos2(x, mid(&g, y, line_h)), g, colors.snap);
+        y += line_h;
+    }
+    for g in notes {
+        painter.galley(egui::pos2(x, mid(&g, y, line_h)), g, fg);
+        y += line_h;
+    }
+    for ((name, value, note), f) in fields.into_iter().zip(&info.fields) {
+        painter.galley(egui::pos2(x, mid(&name, y, field_h)), name, weak);
+        let b = Rect::from_min_size(egui::pos2(x + name_w + 8.0, y), vec2(box_w, field_h));
+        painter.rect_filled(b, crate::theme::radius::CONTROL, colors.field_bg);
+        let edge = if f.active {
+            Stroke::new(1.5, accent)
+        } else {
+            Stroke::new(1.0, colors.label_border)
+        };
+        painter.rect_stroke(b, crate::theme::radius::CONTROL, edge, StrokeKind::Inside);
+        let vx = b.left() + 8.0;
+        let caret_x = vx + value.size().x + 1.0;
+        painter.galley(egui::pos2(vx, mid(&value, y, field_h)), value, fg);
+        if f.active {
+            painter.line_segment(
+                [
+                    egui::pos2(caret_x, b.top() + 4.0),
+                    egui::pos2(caret_x, b.bottom() - 4.0),
+                ],
+                Stroke::new(1.0, fg),
+            );
+        }
+        if note.size().x > 0.0 {
+            let c = if f.error { error } else { weak };
+            painter.galley(egui::pos2(b.right() + 8.0, mid(&note, y, field_h)), note, c);
+        }
+        y += field_h + 4.0;
+    }
 }
 
 /// A transient message at the bottom of the canvas (macOS-style toast), fading out as

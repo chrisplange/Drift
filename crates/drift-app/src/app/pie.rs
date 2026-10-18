@@ -368,15 +368,14 @@ fn paint(
             egui::pos2(rect.left() + 19.0, rect.center().y),
             egui::Vec2::splat(18.0),
         );
-        if available {
-            annotations::paint_glyph(
-                painter,
-                icon,
-                glyph(slice.label),
-                AnnotationState::Normal,
-                &glyph_colors,
-            );
-        }
+        let faded = glyph_colors.faded();
+        annotations::paint_glyph(
+            painter,
+            icon,
+            glyph(slice.label),
+            AnnotationState::Normal,
+            if available { &glyph_colors } else { &faded },
+        );
         painter.galley(
             egui::pos2(rect.left() + 34.0, rect.center().y - galley.size().y / 2.0),
             galley,

@@ -290,14 +290,14 @@ pub fn tool(painter: &egui::Painter, rect: Rect, kind: ToolKind, color: Color32)
             p.dashed((10.0, 1.5), (10.0, 18.5));
         }
         ToolKind::Section => {
-            // A cutting line with a flag at each end, both looking up.
-            p.dashed((6.0, 13.0), (14.0, 13.0));
-            p.circle(3.8, 13.0, 2.6);
-            p.circle(16.2, 13.0, 2.6);
-            p.arrow_head((3.8, 6.5), vec2(0.0, -1.0));
-            p.arrow_head((16.2, 6.5), vec2(0.0, -1.0));
-            p.line((3.8, 10.4), (3.8, 7.5));
-            p.line((16.2, 10.4), (16.2, 7.5));
+            // A cutting line, heavy at its ends, with an arrow at each end looking up.
+            p.dashed((6.5, 14.0), (13.5, 14.0));
+            p.line((2.5, 14.0), (6.0, 14.0));
+            p.line((14.0, 14.0), (17.5, 14.0));
+            p.line((3.5, 14.0), (3.5, 7.0));
+            p.line((16.5, 14.0), (16.5, 7.0));
+            p.arrow_head((3.5, 4.0), vec2(0.0, -1.0));
+            p.arrow_head((16.5, 4.0), vec2(0.0, -1.0));
         }
         ToolKind::Elevation => {
             // A flag: a ring with a pointer.
@@ -306,9 +306,10 @@ pub fn tool(painter: &egui::Painter, rect: Rect, kind: ToolKind, color: Color32)
             p.line((5.4, 12.0), (14.6, 12.0));
         }
         ToolKind::Fill => {
+            // An outline with three hatch lines (four read as a solid block at 16 px).
             p.poly(&[(3.5, 4.5), (16.5, 4.5), (16.5, 15.5), (3.5, 15.5)], true);
-            for k in 0..4 {
-                let x = 3.5 + 3.4 * k as f32;
+            for k in 0..3 {
+                let x = 3.5 + 4.6 * k as f32;
                 let (x0, y0, x1, y1) = (
                     x,
                     15.5,

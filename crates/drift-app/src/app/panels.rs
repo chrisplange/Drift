@@ -1641,7 +1641,13 @@ impl DriftApp {
         });
         // The hint, in whatever space is left between the readout and the right cluster (as
         // wide as it actually is, so the hint never lies over its controls).
-        let hint = self.tool.hint();
+        let hint = if self.sheet_preview {
+            "Drag a view to move it · Alt-drag the drawing inside it · its handles crop it · Esc \
+             returns to the model"
+                .to_owned()
+        } else {
+            self.tool.hint()
+        };
         let rect = ui.min_rect();
         let left = rect.left() + 256.0;
         let right = cluster_left.inner - 12.0;

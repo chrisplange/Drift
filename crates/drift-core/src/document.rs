@@ -326,6 +326,7 @@ enum Key {
     Annotation(AnnotationId),
     DimNote(ConstraintId),
     Shown(crate::AnnotationRef),
+    OnlyIn(crate::AnnotationRef),
     Style(crate::AnnotationRef),
     Draft,
     Patterns,
@@ -358,6 +359,7 @@ enum Record {
     Annotation(Annotation),
     DimNote(DimNote),
     Shown(crate::Shown),
+    OnlyIn(BTreeSet<ViewId>),
     Style(crate::StyleOverride),
     Draft(DraftStyle),
     Patterns(String),
@@ -414,6 +416,8 @@ pub struct Document {
     dim_notes: BTreeMap<ConstraintId, DimNote>,
     /// Dimensions and annotations not shown everywhere (the rest are).
     shown: BTreeMap<crate::AnnotationRef, crate::Shown>,
+    /// Dimensions and annotations drawn in some views only (the rest are in every view).
+    only_in: BTreeMap<crate::AnnotationRef, BTreeSet<ViewId>>,
     /// Dimensions and annotations with settings of their own over the drawing's style.
     styles: BTreeMap<crate::AnnotationRef, crate::StyleOverride>,
     draft: DraftStyle,
@@ -465,6 +469,7 @@ impl PartialEq for Document {
             && self.annotations == other.annotations
             && self.dim_notes == other.dim_notes
             && self.shown == other.shown
+            && self.only_in == other.only_in
             && self.styles == other.styles
             && self.draft == other.draft
             && self.patterns == other.patterns
@@ -498,6 +503,7 @@ impl Default for Document {
             annotations: BTreeMap::new(),
             dim_notes: BTreeMap::new(),
             shown: BTreeMap::new(),
+            only_in: BTreeMap::new(),
             styles: BTreeMap::new(),
             draft: DraftStyle::default(),
             patterns: String::new(),
@@ -783,6 +789,7 @@ impl Document {
             Key::Annotation(id) => self.annotations.get(&id).cloned().map(Record::Annotation),
             Key::DimNote(id) => self.dim_notes.get(&id).cloned().map(Record::DimNote),
             Key::Shown(r) => self.shown.get(&r).copied().map(Record::Shown),
+            Key::OnlyIn(r) => self.only_in.get(&r).cloned().map(Record::OnlyIn),
             Key::Style(r) => self.styles.get(&r).copied().map(Record::Style),
             Key::Draft => Some(Record::Draft(self.draft)),
             Key::Patterns => Some(Record::Patterns(self.patterns.clone())),
@@ -900,6 +907,12 @@ impl Document {
             }
             (Key::Shown(r), _) => {
                 self.shown.remove(&r);
+            }
+            (Key::OnlyIn(r), Some(Record::OnlyIn(v))) => {
+                self.only_in.insert(r, v);
+            }
+            (Key::OnlyIn(r), _) => {
+                self.only_in.remove(&r);
             }
             (Key::Style(r), Some(Record::Style(s))) => {
                 self.styles.insert(r, s);
@@ -2048,6 +2061,7 @@ impl Document {
         keys.extend(self.annotations.keys().map(|id| Key::Annotation(*id)));
         keys.extend(self.dim_notes.keys().map(|id| Key::DimNote(*id)));
         keys.extend(self.shown.keys().map(|r| Key::Shown(*r)));
+        keys.extend(self.only_in.keys().map(|r| Key::OnlyIn(*r)));
         keys.extend(self.styles.keys().map(|r| Key::Style(*r)));
         keys.push(Key::Draft);
         keys.push(Key::Patterns);
@@ -2586,6 +2600,40 @@ impl Document {
         }
     }
 
+    /// The views a dimension or annotation is drawn in, if only some (`None`: every view).
+    pub fn only_in(&self, r: crate::AnnotationRef) -> Option<&BTreeSet<ViewId>> {
+        self.only_in.get(&r)
+    }
+
+    /// The dimensions and annotations drawn in some views only, that still exist.
+    pub fn only_in_settings(
+        &self,
+    ) -> impl Iterator<Item = (crate::AnnotationRef, &BTreeSet<ViewId>)> + '_ {
+        self.only_in
+            .iter()
+            .filter(|(r, _)| self.annotation_ref_exists(**r))
+            .map(|(r, v)| (*r, v))
+    }
+
+    /// Whether a dimension or annotation is drawn in a view.
+    pub fn in_view(&self, r: crate::AnnotationRef, view: ViewId) -> bool {
+        self.only_in.get(&r).is_none_or(|v| v.contains(&view))
+    }
+
+    /// Draw a dimension or annotation in these views only (empty: in every view).
+    pub fn set_only_in(&mut self, r: crate::AnnotationRef, views: BTreeSet<ViewId>) {
+        let now = self.only_in.get(&r).cloned().unwrap_or_default();
+        if now == views || !self.annotation_ref_exists(r) {
+            return;
+        }
+        self.touch_key(Key::OnlyIn(r));
+        if views.is_empty() {
+            self.only_in.remove(&r);
+        } else {
+            self.only_in.insert(r, views);
+        }
+    }
+
     /// What a dimension or annotation sets for itself over the drawing's style.
     pub fn style_override(&self, r: crate::AnnotationRef) -> crate::StyleOverride {
         self.styles.get(&r).copied().unwrap_or_default()
@@ -2987,6 +3035,28 @@ impl Document {
             self.touch_key(Key::Annotation(mark));
             if let Some(a) = self.annotations.get_mut(&mark) {
                 a.set_view(None);
+            }
+        }
+        // What was drawn in it alone stays off sheets, rather than showing in every view.
+        let only: Vec<crate::AnnotationRef> = self
+            .only_in
+            .iter()
+            .filter(|(_, v)| v.contains(&id))
+            .map(|(r, _)| *r)
+            .collect();
+        for r in only {
+            let mut views = self.only_in[&r].clone();
+            views.remove(&id);
+            if views.is_empty() {
+                let mut shown = self.shown(r);
+                shown.sheets = false;
+                self.set_shown(r, shown);
+            }
+            self.touch_key(Key::OnlyIn(r));
+            if views.is_empty() {
+                self.only_in.remove(&r);
+            } else {
+                self.only_in.insert(r, views);
             }
         }
     }

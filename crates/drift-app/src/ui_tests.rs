@@ -7759,3 +7759,123 @@ fn view_crops_snap_like_anything_placed() {
     h.run();
     assert!(!near(crop(&h).max, b), "free of snaps: {:?}", crop(&h));
 }
+
+#[test]
+fn an_annotation_can_be_drawn_in_some_views_only() {
+    let Some(mut h) = harness() else { return };
+    h.get_by_label("File").click();
+    h.run();
+    h.get_by_label("Open example").click();
+    h.run();
+    h.get_by_label("Add a sheet").click();
+    h.run();
+    h.run();
+    let sheet = h.state().current_sheet().unwrap();
+    // A second view of the whole drawing beside the first, at half the size.
+    let (first, second) = {
+        let app = h.state_mut();
+        let b = app.fit_bounds();
+        let first = app
+            .editor
+            .doc
+            .placed_views(app.editor.doc.sheet(sheet).unwrap())[0]
+            .id;
+        app.editor.doc.begin();
+        let crop = drift_core::Bounds {
+            min: b.min - DVec2::splat(5.0),
+            max: b.max + DVec2::splat(5.0),
+        };
+        let v = drift_core::View::new("Detail", crop, 2.0);
+        let second = app.editor.doc.add_view(v);
+        app.editor.commit("View");
+        (first, second)
+    };
+    h.state_mut()
+        .place_view(sheet, second, Some(DVec2::new(330.0, 220.0)));
+    h.run();
+    assert_eq!(placed(&h, sheet).len(), 2);
+    // The overall width, dimensioned once in the model: drawn in both views.
+    let width = h
+        .state()
+        .editor
+        .doc
+        .constraints()
+        .find(|(_, c)| c.is_dimension() && c.value() == Some(120.0))
+        .map(|(id, _)| id)
+        .expect("the 120 dimension");
+    let count_120 = |h: &Harness<'_, DriftApp>| {
+        h.state()
+            .preview_cache
+            .as_ref()
+            .unwrap()
+            .2
+            .items
+            .iter()
+            .filter(
+                |i| matches!(&i.prim, drift_draft::page::Prim::Text { text, .. } if text == "120"),
+            )
+            .count()
+    };
+    assert_eq!(count_120(&h), 2);
+
+    // Picked in the model, its Inspector says where it's drawn: All views, or only Detail.
+    h.state_mut().show_sheet(None);
+    h.state_mut().selected_constraint = Some(width);
+    h.state_mut().show_panel(Panel::Inspector);
+    h.run();
+    // (The menu sits beside its row's label.)
+    let row = h.get_by_label("In views").rect();
+    let at = egui::pos2(row.left() + 160.0, row.center().y);
+    h.hover_at(at);
+    h.run();
+    button(&h, at, true);
+    h.run();
+    button(&h, at, false);
+    h.run();
+    h.run();
+    assert!(h.query_by_label("All views").is_some(), "the menu is open");
+    let name = h.state().editor.doc.view(first).unwrap().title().to_owned();
+    h.get_by_label(&name).click();
+    h.run();
+    h.run();
+    let only = h
+        .state()
+        .editor
+        .doc
+        .only_in(drift_core::AnnotationRef::Dimension(width))
+        .cloned();
+    assert_eq!(only, Some([second].into()));
+    assert_eq!(h.state().editor.history.undo_label(), Some("Views it's in"));
+    save_png("drift_ui_annotation_views.png", &mut h);
+    h.key_press(Key::Escape);
+    h.run();
+    h.state_mut().show_sheet(Some(sheet));
+    h.run();
+    h.run();
+    assert_eq!(count_120(&h), 1, "in the detail alone");
+    save_png("drift_ui_annotation_views_sheet.png", &mut h);
+
+    // Saved and read back; deleting the detail leaves it off sheets rather than everywhere.
+    let saved = drift_io::save(&h.state().editor.doc, &Default::default());
+    assert!(
+        saved.contains(&format!(r#""views":["{second}"]"#)),
+        "{saved}"
+    );
+    let (read, _) = drift_io::load(&saved).unwrap();
+    assert_eq!(
+        read.only_in(drift_core::AnnotationRef::Dimension(width)),
+        only.as_ref()
+    );
+    {
+        let ed = &mut h.state_mut().editor;
+        ed.doc.begin();
+        ed.doc.remove_view(second);
+        ed.commit("Delete view");
+    }
+    let r = drift_core::AnnotationRef::Dimension(width);
+    assert_eq!(h.state().editor.doc.only_in(r), None);
+    assert!(!h.state().editor.doc.shown(r).sheets);
+    h.state_mut().undo();
+    assert_eq!(h.state().editor.doc.only_in(r).cloned(), only);
+    assert!(h.state().editor.doc.shown(r).sheets);
+}

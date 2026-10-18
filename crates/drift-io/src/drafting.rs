@@ -689,6 +689,9 @@ pub(crate) struct ShownRecord {
     canvas: bool,
     #[serde(default = "yes", skip_serializing_if = "is_yes")]
     sheets: bool,
+    /// The views it is drawn in, if only some (v31).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    views: Vec<String>,
 }
 
 fn yes() -> bool {
@@ -700,7 +703,11 @@ fn is_yes(b: &bool) -> bool {
     *b
 }
 
-pub(crate) fn shown_record(r: AnnotationRef, s: Shown) -> ShownRecord {
+pub(crate) fn shown_record(
+    r: AnnotationRef,
+    s: Shown,
+    views: Option<&std::collections::BTreeSet<drift_core::ViewId>>,
+) -> ShownRecord {
     ShownRecord {
         of: match r {
             AnnotationRef::Dimension(id) => id.to_string(),
@@ -708,10 +715,24 @@ pub(crate) fn shown_record(r: AnnotationRef, s: Shown) -> ShownRecord {
         },
         canvas: s.canvas,
         sheets: s.sheets,
+        views: views
+            .into_iter()
+            .flatten()
+            .map(ToString::to_string)
+            .collect(),
     }
 }
 
-pub(crate) fn parse_shown(r: ShownRecord) -> Result<(AnnotationRef, Shown), LoadError> {
+/// Where a dimension or annotation is shown, and the views it is drawn in (empty: every
+/// view).
+pub(crate) type ParsedShown = (AnnotationRef, Shown, Vec<drift_core::ViewId>);
+
+pub(crate) fn parse_shown(r: ShownRecord) -> Result<ParsedShown, LoadError> {
+    let views = r
+        .views
+        .iter()
+        .map(|v| parse_prefixed(v, 'w').map(drift_core::ViewId))
+        .collect::<Result<Vec<_>, _>>()?;
     let of = if r.of.starts_with('c') {
         AnnotationRef::Dimension(drift_core::ConstraintId(parse_prefixed(&r.of, 'c')?))
     } else {
@@ -723,6 +744,7 @@ pub(crate) fn parse_shown(r: ShownRecord) -> Result<(AnnotationRef, Shown), Load
             canvas: r.canvas,
             sheets: r.sheets,
         },
+        views,
     ))
 }
 

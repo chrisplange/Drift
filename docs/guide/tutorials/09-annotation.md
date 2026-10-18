@@ -147,6 +147,12 @@ Every dimension and annotation has two switches, in the **Inspector**'s **Show**
 - **On sheets, in print and export.** Turned off, it stays on the canvas (marked with a
   struck-through sheet badge) but is left out of sheets, PDF, SVG, DXF and printing.
 
+Once the drawing has views (see [Sheets and output](10-sheets-and-output.md)), **In views**
+says which of them it's drawn in on sheets: **All views** (the default, which includes views
+you make later), or only the ones you tick. A note meant for the detail alone, say, then
+stays out of the plan. It's always on the canvas. If you delete the only view it was in, it's
+left off sheets rather than appearing everywhere.
+
 Shift+click picks several dimensions and notes to change at once. The right-click menu has
 **Hide on canvas** and **Leave off sheets** too.
 

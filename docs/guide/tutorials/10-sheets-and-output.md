@@ -236,8 +236,9 @@ What goes on paper:
   out, and so are the layers a view leaves out (its **Layers**).
 - Views' crops and names on the canvas are left out. Only the sheet's frames (with
   **Border**) and titles print.
-- Dimensions and notes are left out where a view's **Show** says so, or where they're set
-  off sheets (see [Annotation](09-annotation.md)).
+- Dimensions and notes are left out where a view's **Show** says so, where they're set off
+  sheets, or of views they aren't in (their **In views**; see
+  [Annotation](09-annotation.md)).
 - Drafting hatch patterns are sized for the sheet's scale.
 
 About DXF:

@@ -7681,3 +7681,81 @@ fn every_sheet_shares_the_project() {
     assert_eq!(read.project(), h.state().editor.doc.project());
 }
 
+#[test]
+fn view_crops_snap_like_anything_placed() {
+    use crate::app::views_ui::CropGrip;
+    let Some(mut h) = harness() else { return };
+    // Four loose points, and no grid, so only the points pull.
+    let [a, b, c, d] = [
+        DVec2::new(0.0, 0.0),
+        DVec2::new(20.0, 12.0),
+        DVec2::new(32.0, 18.0),
+        DVec2::new(-30.0, -20.0),
+    ];
+    {
+        let ed = &mut h.state_mut().editor;
+        ed.doc.begin();
+        for p in [a, b, c, d] {
+            ed.doc.add_point(p);
+        }
+        ed.commit("Setup");
+    }
+    h.state_mut().grid_snap = false;
+    h.run();
+    // A couple of pixels off each point, in world units.
+    let off = |h: &Harness<'_, DriftApp>| DVec2::new(2.0, -1.5) / h.state().camera.scale;
+    let crop = |h: &Harness<'_, DriftApp>| h.state().editor.doc.views().next().unwrap().1.crop();
+    let near = |p: DVec2, q: DVec2| p.distance(q) < 1e-9;
+
+    // The View tool's corners land on the points.
+    h.state_mut().set_tool(ToolKind::View);
+    h.run();
+    let o = off(&h);
+    drag_world(&mut h, a + o, b - o);
+    let id = h.state().editor.doc.views().next().unwrap().0;
+    assert!(
+        near(crop(&h).min, a) && near(crop(&h).max, b),
+        "{:?}",
+        crop(&h)
+    );
+
+    // A dragged corner grip lands on a point.
+    h.state_mut().picked_view = Some(id);
+    h.run();
+    let painter = h.ctx.layer_painter(egui::LayerId::background());
+    let map = screen_map(&h);
+    assert_eq!(
+        h.state().crop_grip_at(&painter, &map, map.to_screen(b)),
+        Some((id, CropGrip::Resize(1, 1)))
+    );
+    let (from, to) = (screen(&h, b), screen(&h, c + o));
+    drag_steps(&mut h, from, to, 6, Some("drift_ui_crop_snap.png"));
+    assert!(near(crop(&h).max, c), "{:?}", crop(&h));
+    assert!(near(crop(&h).min, a));
+
+    // Moved by its edge, the corner nearest a point lands on it, keeping its size.
+    let size = crop(&h).size();
+    // (Along its edge, clear of the grip at the edge's middle.)
+    let grab = DVec2::new(a.x, a.y + (c.y - a.y) * 0.25);
+    let map = screen_map(&h);
+    assert_eq!(
+        h.state().crop_grip_at(&painter, &map, map.to_screen(grab)),
+        Some((id, CropGrip::Move))
+    );
+    drag_world(&mut h, grab, grab + (d - a) + o);
+    assert!(near(crop(&h).min, d), "{:?}", crop(&h));
+    assert!(crop(&h).size().distance(size) < 1e-9);
+    assert_eq!(
+        h.state().editor.history.undo_label(),
+        Some("Move view crop")
+    );
+
+    // With Alt held it goes where it's let go.
+    h.event(Event::ModifiersChanged(EguiModifiers::ALT));
+    h.run();
+    let corner = crop(&h).max;
+    drag_world(&mut h, corner, b + o);
+    h.event(Event::ModifiersChanged(EguiModifiers::NONE));
+    h.run();
+    assert!(!near(crop(&h).max, b), "free of snaps: {:?}", crop(&h));
+}

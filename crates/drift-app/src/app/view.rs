@@ -383,7 +383,7 @@ impl DriftApp {
             || self.note_input(ui, &response, &map, &notes, &dims, &glyphs, pos)
             || self.temp_dim_input(ui, &response, &map, &temps, pos)
             || self.annotation_input(ui, &response, &map, &dims, &glyphs, pos)
-            || self.view_crop_input(ui, &response, &map, pos);
+            || self.view_crop_input(ui, &response, &map, pos, snap);
         if consumed {
             self.pointer = pos.map(|pos| self.make_pointer(&map, pos, snap));
         } else if response.drag_started_by(PointerButton::Primary)

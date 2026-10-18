@@ -1910,6 +1910,18 @@ impl Document {
                 x.layer = LayerId::DEFAULT;
             }
         }
+        let views: Vec<ViewId> = self
+            .views
+            .iter()
+            .filter(|(_, v)| v.hidden_layers.contains(&id))
+            .map(|(vid, _)| *vid)
+            .collect();
+        for v in views {
+            self.touch_key(Key::View(v));
+            if let Some(x) = self.views.get_mut(&v) {
+                x.hidden_layers.remove(&id);
+            }
+        }
         if self.current_layer == id {
             self.set_current_layer(LayerId::DEFAULT)?;
         }

@@ -1,9 +1,11 @@
 //! Sheets: a paper size and a drawing scale, a view of the sketch, a title block and a
 //! revision table.
 
+use std::collections::BTreeSet;
+
 use glam::DVec2;
 
-use crate::{Bounds, Rgb};
+use crate::{Bounds, LayerId, Rgb};
 
 /// Stable identifier of a sheet.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -286,6 +288,9 @@ pub struct View {
     /// Show the crop and its name on the canvas (Revit's "Crop Region Visible"). Crops never
     /// print.
     pub crop_visible: bool,
+    /// Layers left out of this view on sheets and in exports (Revit's visibility/graphics),
+    /// whatever their visibility in the model.
+    pub hidden_layers: BTreeSet<LayerId>,
 }
 
 impl View {
@@ -298,6 +303,7 @@ impl View {
             dimensions: true,
             notes: true,
             crop_visible: true,
+            hidden_layers: BTreeSet::new(),
         }
     }
 
@@ -361,6 +367,8 @@ pub struct PlacedView {
     pub frame: ViewFrame,
     pub dimensions: bool,
     pub notes: bool,
+    /// Layers this view leaves out.
+    pub hidden_layers: BTreeSet<LayerId>,
     pub title: bool,
     pub border: bool,
 }
@@ -378,6 +386,7 @@ impl PlacedView {
             },
             dimensions: view.dimensions,
             notes: view.notes,
+            hidden_layers: view.hidden_layers.clone(),
             title: port.title,
             border: port.border,
         }
@@ -391,6 +400,7 @@ impl PlacedView {
         view.size = self.frame.size * self.scale;
         view.dimensions = self.dimensions;
         view.notes = self.notes;
+        view.hidden_layers.clone_from(&self.hidden_layers);
         port.at = self.frame.at;
         port.title = self.title;
         port.border = self.border;

@@ -7103,3 +7103,94 @@ fn sheets_are_tabs_with_their_own_tools_and_inspector() {
     assert!(!h.state().sheet_preview);
     save_png("drift_ui_sheet_tabs.png", &mut h);
 }
+
+#[test]
+fn a_view_leaves_out_the_layers_it_hides() {
+    use crate::app::sheet_editor::SheetPick;
+    let Some(mut h) = harness() else { return };
+    h.get_by_label("File").click();
+    h.run();
+    h.get_by_label("Open example").click();
+    h.run();
+    // A dimensioned line on a layer of its own.
+    let layer = {
+        let ed = &mut h.state_mut().editor;
+        ed.doc.begin();
+        let layer = ed.doc.add_layer(drift_core::Layer::new("Setting out"));
+        let a = ed.doc.add_point(DVec2::new(20.0, 10.0));
+        let b = ed.doc.add_point(DVec2::new(57.0, 10.0));
+        let l = ed.doc.add_line(a, b).unwrap();
+        for e in [a, b, l] {
+            ed.doc.set_entity_layer(e, layer).unwrap();
+        }
+        ed.commit("Setup");
+        ed.add_dimension(
+            drift_core::Constraint::HorizontalDistance { a, b, value: 37.0 },
+            Some(DVec2::new(38.0, 4.0)),
+        )
+        .unwrap();
+        layer
+    };
+    h.get_by_label("Add a sheet").click();
+    h.run();
+    h.run();
+    let sheet = h.state().current_sheet().expect("a sheet");
+    let view = placed(&h, sheet)[0].id;
+    h.state_mut().picked_view = Some(view);
+    h.state_mut().sheet_pick = SheetPick::View;
+    h.run();
+    let preview = |h: &Harness<'_, DriftApp>| h.state().preview_cache.as_ref().unwrap().2.clone();
+    let on_layer = |d: &drift_draft::page::Drawing| {
+        d.items.iter().filter(|i| i.layer == "Setting out").count()
+    };
+    let dimension = |d: &drift_draft::page::Drawing| {
+        d.items.iter().any(|i| {
+            matches!(&i.prim, drift_draft::page::Prim::Text { text, .. } if text.contains("37"))
+        })
+    };
+    let before = preview(&h);
+    assert!(on_layer(&before) > 0 && dimension(&before));
+    save_png("drift_ui_view_layers_on.png", &mut h);
+
+    // Off in the view's Inspector: gone from the sheet, dimension and all, as one step.
+    h.get_by_label("Setting out").scroll_to_me();
+    h.get_by_label("Setting out").click();
+    h.run();
+    h.run();
+    assert!(placed(&h, sheet)[0].hidden_layers.contains(&layer));
+    assert_eq!(h.state().editor.history.undo_label(), Some("Edit sheet"));
+    let after = preview(&h);
+    assert_eq!(on_layer(&after), 0);
+    assert!(!dimension(&after), "its dimension goes with it");
+    assert!(
+        after.items.len() > before.items.len() / 2,
+        "the rest still draws"
+    );
+    let painter = h.ctx.layer_painter(egui::LayerId::background());
+    assert_eq!(h.state_mut().pages(&painter)[0], after, "and prints so");
+    save_png("drift_ui_view_layers.png", &mut h);
+    // Saved with the view, and read back.
+    let saved = drift_io::save(&h.state().editor.doc, &Default::default());
+    assert!(
+        saved.contains(&format!(r#""hidden_layers":["{layer}"]"#)),
+        "{saved}"
+    );
+    let (read, _) = drift_io::load(&saved).unwrap();
+    assert!(read.view(view).unwrap().hidden_layers.contains(&layer));
+    // Deleting the layer forgets it.
+    {
+        let ed = &mut h.state_mut().editor;
+        ed.doc.begin();
+        ed.doc.remove_layer(layer).unwrap();
+        ed.commit("Delete layer");
+    }
+    assert!(placed(&h, sheet)[0].hidden_layers.is_empty());
+    h.state_mut().undo();
+    assert!(placed(&h, sheet)[0].hidden_layers.contains(&layer));
+    // Undo brings it back on the sheet.
+    h.state_mut().undo();
+    h.run();
+    h.run();
+    assert!(placed(&h, sheet)[0].hidden_layers.is_empty());
+    assert!(on_layer(&preview(&h)) > 0);
+}

@@ -3,7 +3,7 @@
 use drift_core::{
     Bounds, DVec2, PaperSize, Revision, Sheet, SheetColours, SheetId, TitleBlock, TitleFields,
 };
-use drift_core::{View, ViewFrame, ViewId, Viewport};
+use drift_core::{LayerId, View, ViewFrame, ViewId, Viewport};
 use serde::{Deserialize, Serialize};
 
 use crate::{LoadError, parse_prefixed};
@@ -70,6 +70,9 @@ pub(crate) struct ViewRecord {
     /// The crop shown on the canvas; written only when hidden.
     #[serde(default = "yes", skip_serializing_if = "is_true")]
     crop: bool,
+    /// Layers left out of the view (format 28).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    hidden_layers: Vec<String>,
 }
 
 pub(crate) fn view_record(id: ViewId, v: &View) -> ViewRecord {
@@ -82,6 +85,7 @@ pub(crate) fn view_record(id: ViewId, v: &View) -> ViewRecord {
         dimensions: v.dimensions,
         notes: v.notes,
         crop: v.crop_visible,
+        hidden_layers: v.hidden_layers.iter().map(LayerId::to_string).collect(),
     }
 }
 
@@ -101,6 +105,11 @@ pub(crate) fn parse_view(r: ViewRecord) -> Result<(ViewId, View), LoadError> {
         return Err(bad("size"));
     }
     let id = ViewId(parse_prefixed(&r.id, 'w')?);
+    let hidden_layers = r
+        .hidden_layers
+        .iter()
+        .map(|l| crate::parse_layer_id(l))
+        .collect::<Result<_, _>>()?;
     let view = View {
         name: r.name,
         scale: r.scale,
@@ -109,6 +118,7 @@ pub(crate) fn parse_view(r: ViewRecord) -> Result<(ViewId, View), LoadError> {
         dimensions: r.dimensions,
         notes: r.notes,
         crop_visible: r.crop,
+        hidden_layers,
     };
     Ok((id, view))
 }

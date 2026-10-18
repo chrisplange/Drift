@@ -6,7 +6,7 @@
 //! ```json
 //! {
 //!   "format": "drift",
-//!   "version": 27,
+//!   "version": 28,
 //!   "meta": {"title":"Bracket","units":"mm","generator":"Drift 0.1.0"},
 //!   "display": {"length":"architectural","fraction":16},
 //!   "variables": [
@@ -82,8 +82,9 @@ pub const EXTENSION: &str = "drift";
 /// `bold`, `italic`, `height`); 25 = adds a sheet's `colours` (greyscale or black & white);
 /// 26 = adds `styles` (a dimension's or annotation's own settings over the drafting style);
 /// 27 = views are the model's (`views`: a named crop at a scale), placed on sheets by their
-/// `viewports` (a sheet's own `views` become model views when read).
-pub const FORMAT_VERSION: u32 = 27;
+/// `viewports` (a sheet's own `views` become model views when read); 28 = adds a view's
+/// `hidden_layers`.
+pub const FORMAT_VERSION: u32 = 28;
 const FORMAT_TAG: &str = "drift";
 
 /// Document-level properties stored alongside the geometry.
@@ -455,7 +456,7 @@ fn is_true(b: &bool) -> bool {
     *b
 }
 
-fn parse_layer_id(s: &str) -> Result<LayerId, LoadError> {
+pub(crate) fn parse_layer_id(s: &str) -> Result<LayerId, LoadError> {
     s.strip_prefix('l')
         .and_then(|n| n.parse::<u32>().ok())
         .map(LayerId)
@@ -1583,10 +1584,12 @@ pub fn load_with_notes(text: &str) -> Result<(Document, Metadata, Vec<String>), 
     }
     for r in file.views {
         let id_text = r.id.clone();
-        let (id, view) = sheets::parse_view(r)?;
+        let (id, mut view) = sheets::parse_view(r)?;
         if doc.view(id).is_some() {
             return Err(LoadError::DuplicateId(id_text));
         }
+        // A layer that's gone hides nothing.
+        view.hidden_layers.retain(|l| doc.layer(*l).is_some());
         doc.insert_view(id, view);
     }
     let mut old_views = Vec::new();
@@ -1782,7 +1785,7 @@ mod tests {
         let text = save(&doc, &Metadata::default());
         let expected = r#"{
   "format": "drift",
-  "version": 27,
+  "version": 28,
   "meta": {"units":"mm"},
   "entities": [
     {"type":"point","id":"e1","at":[0.0,0.0]},
@@ -2666,7 +2669,7 @@ mod tests {
         doc.add_text(drift_core::SketchText::new("A", DVec2::ZERO, 3.0));
 
         let text = save(&doc, &Metadata::default());
-        assert!(text.contains("\"version\": 27"));
+        assert!(text.contains("\"version\": 28"));
         assert!(text.contains(r#""styles": ["#) && text.contains(r#""alt_units":"none""#));
         // Views are the model's; sheets place them.
         assert!(text.contains(r#""views": ["#) && text.contains(r#""crop":false"#));

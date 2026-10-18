@@ -420,3 +420,57 @@ fn a_walled_room_can_be_fully_defined() {
     let out = s.call("render", &json!({ "width": 900 }));
     save_png("agent_render_walls.png", out.image.as_deref());
 }
+
+#[test]
+fn a_batch_after_other_changes_is_its_own_undo_step() {
+    // Tools that record several steps inside a batch once made it count them twice: undoing
+    // the batch took the change before it too, and a failing batch undid it.
+    let mut s = Session::new();
+    rough_room(&mut s);
+    let made = ok(
+        &mut s,
+        "batch",
+        json!({ "calls": [
+            { "tool": "add_geometry", "args": { "items": [{ "type": "line", "from": [0, 5000], "to": [3000, 5000] }] } },
+            { "tool": "add_dimensions", "args": { "dimensions": [{ "type": "length", "line": "e11", "value": "3 m" }] } }
+        ]}),
+    );
+    assert_eq!(made["sketch"]["undo_steps"], 2, "{made}");
+    let before = s.editor.doc.clone();
+    err(
+        &mut s,
+        "batch",
+        json!({ "calls": [
+            { "tool": "add_dimensions", "args": { "dimensions": [{ "type": "length", "line": "e5", "value": "3.6 m" }] } },
+            { "tool": "delete", "args": { "ids": ["e999"] } }
+        ]}),
+    );
+    assert_eq!(
+        s.editor.doc, before,
+        "a failed batch leaves the earlier steps alone"
+    );
+    ok(&mut s, "undo", json!({}));
+    assert_eq!(s.editor.history.undo_depth(), 1, "the room is still there");
+    assert!(!s.editor.doc.is_empty());
+}
+
+#[test]
+fn split_returns_both_pieces() {
+    let mut s = Session::new();
+    ok(
+        &mut s,
+        "add_geometry",
+        json!({ "items": [{ "type": "line", "from": [0, 0], "to": [1000, 0] }] }),
+    );
+    let v = ok(
+        &mut s,
+        "trim_extend_split",
+        json!({ "id": "e3", "at": [400, 0], "mode": "split" }),
+    );
+    // The second piece is the new line (not the point at the cut).
+    let rest = v["pieces"][1].as_str().expect("two pieces").to_owned();
+    let lines = ok(&mut s, "list_entities", json!({ "ids": [rest] }));
+    assert_eq!(lines["entities"][0]["kind"], "line", "{v} {lines}");
+    assert_eq!(lines["entities"][0]["from"], json!([400.0, 0.0]), "{lines}");
+    assert!(v["point"].is_string(), "{v}");
+}

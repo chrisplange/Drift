@@ -3303,7 +3303,8 @@ pub fn arc_shape(center: DVec2, start: DVec2, end: DVec2) -> Shape {
 pub struct History {
     undo: Vec<Transaction>,
     redo: Vec<Transaction>,
-    /// Steps recorded so far (never decreases, unlike the undo stack, which forgets old ones).
+    /// Steps recorded so far and still steps of their own: unlike the undo stack, which
+    /// forgets old ones, this only goes down when steps are squashed together or discarded.
     recorded: u64,
 }
 
@@ -3387,7 +3388,8 @@ impl History {
     }
 
     /// How many steps have been recorded: the difference between two readings is how many
-    /// steps were added between them.
+    /// steps were added between them (steps squashed into one count as one, so nested
+    /// squashes count right).
     pub fn recorded(&self) -> u64 {
         self.recorded
     }
@@ -3416,6 +3418,7 @@ impl History {
         for tx in steps {
             self.merge_into_last(tx);
         }
+        self.recorded -= (n - 1) as u64;
     }
 
     /// Undo the last `n` steps and forget them (they can't be redone).
@@ -3423,6 +3426,7 @@ impl History {
         for _ in 0..n {
             if let Some(tx) = self.undo.pop() {
                 doc.apply(&tx, false);
+                self.recorded = self.recorded.saturating_sub(1);
             }
         }
     }

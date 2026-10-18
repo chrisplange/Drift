@@ -22,6 +22,7 @@ pub mod link;
 mod raster;
 mod render;
 mod schema;
+mod script;
 
 use std::path::PathBuf;
 
@@ -166,6 +167,9 @@ impl Session {
         let mut image = None;
         let empty = json!({});
         let args = if args.is_null() { &empty } else { args };
+        if name == "run_script" {
+            return script::call(self, args);
+        }
         match self.dispatch(name, args, &mut image) {
             Ok(json) => ToolOutput {
                 json,
@@ -225,6 +229,7 @@ impl Session {
             "add_text" => self.step(&step("text"), |s| edit::add_text(s, a)),
             "import_file" => self.step(&step("import"), |s| files::import(s, a)),
             "batch" => self.step(&step("batch"), |s| s.batch(a, image)),
+            "run_script" => Err("`run_script` can't be used inside a batch".into()),
             _ => Err(format!("unknown tool `{name}`")),
         }
     }
@@ -266,25 +271,29 @@ impl Session {
                 .get("tool")
                 .and_then(Value::as_str)
                 .ok_or(format!("calls[{i}] needs a `tool`"))?;
-            if matches!(
-                tool,
-                "batch" | "undo" | "redo" | "new_drawing" | "open_drawing"
-            ) {
-                return Err(format!("calls[{i}]: `{tool}` can't be used inside a batch"));
-            }
             let empty = json!({});
             let args = call.get("args").unwrap_or(&empty);
-            match self.dispatch(tool, args, image) {
-                Ok(mut v) => {
-                    if let Some(o) = v.as_object_mut() {
-                        o.remove("sketch");
-                    }
-                    results.push(json!({ "tool": tool, "result": v }));
-                }
+            match self.run_call(tool, args, image) {
+                Ok(v) => results.push(json!({ "tool": tool, "result": v })),
                 Err(e) => return Err(format!("calls[{i}] ({tool}): {e}")),
             }
         }
         Ok(json!({ "results": results }))
+    }
+
+    /// One call within a batch or a script (which can't nest, or start another drawing).
+    fn run_call(&mut self, tool: &str, args: &Value, image: &mut Option<Vec<u8>>) -> Res {
+        if matches!(
+            tool,
+            "batch" | "run_script" | "undo" | "redo" | "new_drawing" | "open_drawing"
+        ) {
+            return Err(format!("`{tool}` can't be used inside a batch or a script"));
+        }
+        let mut v = self.dispatch(tool, args, image)?;
+        if let Some(o) = v.as_object_mut() {
+            o.remove("sketch");
+        }
+        Ok(v)
     }
 
     fn undo_redo(&mut self, a: &Value, undo: bool) -> Res {

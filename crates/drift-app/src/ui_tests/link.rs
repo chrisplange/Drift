@@ -143,3 +143,84 @@ fn an_assistant_saves_and_opens_through_the_window() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn an_assistant_runs_a_script_in_the_open_window() {
+    let Some(mut h) = harness() else { return };
+    let dir = link_dir("script");
+    {
+        let app = h.state_mut();
+        app.link.dir = Some(dir.clone());
+        app.ai_link = true;
+    }
+    h.run();
+    let d = dir.clone();
+    let script = r#"let W = 3.6 m
+let T = 200
+grid cols A..C spacing W + T, 2400 + T length 7.5 m at -100,-1.4 m fixed
+room bed W x 1.25*W at 0,0 walls T fixed
+room bath 2400 x 3 m right of bed walls T
+door d1 900 in bed.south centred
+window w1 1200 in bed.north offset 600 from bed.nw
+door d2 800 in bath.north offset 300 from bath.ne
+label bed "Bedroom" height 250
+label bath "Bath" height 250
+hatch bed.walls ANSI31
+hatch bath.walls ANSI31"#;
+    let assistant = std::thread::spawn(move || {
+        let mut c = LinkClient::connect(&d).expect("connect");
+        c.call("run_script", &json!({ "script": script }), None)
+            .expect("call")
+    });
+    let out = serve_until_done(&mut h, assistant);
+    assert!(!out.is_error, "{}", out.json);
+    assert_eq!(out.json["sketch"]["fully_defined"], true, "{}", out.json);
+    {
+        let app = h.state_mut();
+        assert_eq!(
+            app.editor.history.undo_label(),
+            Some("Assistant: script"),
+            "the whole script is one step in the window's history"
+        );
+        assert_eq!(app.editor.history.undo_depth(), 1);
+        let over = app.editor.overlapping();
+        let desc: Vec<String> = over
+            .iter()
+            .map(|id| {
+                format!(
+                    "{id} {:?} {:?}",
+                    app.editor.doc.get(*id).map(|e| e.style),
+                    app.editor.doc.shape(*id)
+                )
+            })
+            .collect();
+        assert!(over.is_empty(), "no curve lies on another: {desc:?}");
+        app.editor.selection.clear();
+        app.fit_target = Some(app.fit_bounds());
+    }
+    h.run();
+    save_png("drift_live_script.png", &mut h);
+    // Change the width from outside: the door stays centred, the bath moves along.
+    let d = dir.clone();
+    let assistant = std::thread::spawn(move || {
+        let mut c = LinkClient::connect(&d).expect("connect");
+        c.call("run_script", &json!({ "script": "let W = 4.4 m" }), None)
+            .expect("call")
+    });
+    let out = serve_until_done(&mut h, assistant);
+    assert_eq!(out.json["sketch"]["fully_defined"], true, "{}", out.json);
+    {
+        let app = h.state_mut();
+        app.editor.selection.clear();
+        app.fit_target = Some(app.fit_bounds());
+    }
+    h.run();
+    save_png("drift_live_script_wider.png", &mut h);
+    // One undo takes the change back.
+    assert!(h.state_mut().editor.undo());
+    assert_eq!(
+        h.state().editor.history.undo_label(),
+        Some("Assistant: script")
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

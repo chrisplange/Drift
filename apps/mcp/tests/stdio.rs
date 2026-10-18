@@ -158,6 +158,7 @@ fn lists_its_tools() {
         "analyze",
         "import_file",
         "batch",
+        "run_script",
     ] {
         assert!(names.contains(&want), "{want} missing from {names:?}");
     }
@@ -271,6 +272,57 @@ fn imports_an_svg_at_a_scale() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+#[test]
+fn runs_a_script_and_reports_errors_by_line() {
+    let dir = temp_dir("script");
+    let mut server = Server::start(&dir);
+    let tools = server.request("tools/list", json!({}));
+    let tool = tools["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "run_script")
+        .expect("run_script is listed");
+    assert_eq!(tool["inputSchema"]["required"], json!(["script"]));
+    assert_eq!(tool["annotations"]["readOnlyHint"], false);
+
+    let script = "let W = 3.6 m\nroom bed W x 1.25*W at 0,0 walls 200 fixed\ndoor d1 900 in bed.south centred";
+    let (v, image) = server.call("run_script", json!({ "script": script, "render": true }));
+    assert_eq!(v["sketch"]["fully_defined"], true, "{v}");
+    assert_eq!(v["sketch"]["undo_steps"], 1);
+    assert!(v["names"]["bed.south[1]"].is_string(), "{v}");
+    let png = unbase64(&image.expect("a render"));
+    assert_eq!(&png[1..4], b"PNG");
+
+    let (a, _) = server.call("analyze", json!({}));
+    assert_eq!(a["fully_defined"], true, "{a}");
+
+    // A mistake on line 3: an error with the line, and nothing changed.
+    let r = server.request(
+        "tools/call",
+        json!({ "name": "run_script", "arguments": { "script": "let D = 3 m\nroom bed D x D at 6 m,0\ndim bed.sout = D" } }),
+    );
+    assert_eq!(r["isError"], true, "{r}");
+    let text = r["content"][0]["text"].as_str().unwrap();
+    let e: Value = serde_json::from_str(text).unwrap();
+    assert_eq!(e["line"], 3, "{e}");
+    assert!(
+        e["error"]
+            .as_str()
+            .unwrap()
+            .contains("did you mean `south`?"),
+        "{e}"
+    );
+    let (info, _) = server.call("drawing_info", json!({}));
+    assert!(
+        !info.to_string().contains("\"D\""),
+        "nothing from lines 1 and 2 was kept: {info}"
+    );
+    let (u, _) = server.call("undo", json!({}));
+    assert_eq!(u["undone"], json!(["Assistant: script"]));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A stand-in for a Drift window with its AI link on: it answers calls from its own
 /// drawing until `stop` is set.
 fn fake_drift(
@@ -338,6 +390,31 @@ fn works_on_the_drawing_open_in_drift() {
     assert_eq!(
         circles["count"], 0,
         "now on the server's own, empty drawing"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn runs_a_script_on_the_drawing_open_in_drift() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let dir = temp_dir("live-script");
+    let links = dir.join("links");
+    std::fs::create_dir_all(&links).unwrap();
+    let stop = std::sync::Arc::new(AtomicBool::new(false));
+    let window = fake_drift(links.clone(), stop.clone());
+    let mut server = Server::start_linked(&dir, &links);
+    let script = "room bed 3600 x 4500 at 0,0 walls 200 fixed\ndoor d1 900 in bed.south centred";
+    let (v, _) = server.call("run_script", json!({ "script": script }));
+    assert_eq!(v["sketch"]["fully_defined"], true, "{v}");
+    assert_eq!(
+        v["sketch"]["undo_steps"], 1,
+        "one step in the window's history"
+    );
+    stop.store(true, Ordering::Relaxed);
+    assert_eq!(
+        window.join().unwrap(),
+        1,
+        "the script went to the window as one call"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -197,8 +197,16 @@ pub(super) fn trim(s: &mut Session, a: &Value) -> Res {
         "trim" => ed.trim_at(id, at).map_err(|e| e.to_string())?,
         "extend" => ed.extend_at(id, at).map_err(|e| e.to_string())?,
         "split" => {
-            let other = ed.split_at(id, at).map_err(|e| e.to_string())?;
-            return Ok(json!({ "pieces": [args::id(id), args::id(other)] }));
+            // `split_at` gives the point at the cut; the new piece is the other curve there.
+            let point = ed.split_at(id, at).map_err(|e| e.to_string())?;
+            let rest = ed
+                .doc
+                .users_of(point)
+                .find(|u| *u != id)
+                .ok_or("the split made no second piece")?;
+            return Ok(
+                json!({ "pieces": [args::id(id), args::id(rest)], "point": args::id(point) }),
+            );
         }
         other => return Err(format!("unknown mode `{other}` (trim, extend or split)")),
     }
@@ -272,10 +280,17 @@ pub(super) fn delete(s: &mut Session, a: &Value) -> Res {
 pub(super) fn set_construction(s: &mut Session, a: &Value) -> Res {
     let ids = targets(s, a)?;
     let on = args::opt_bool(a, "construction")?.unwrap_or(true);
-    let style = if on {
-        LineKind::Construction
-    } else {
-        LineKind::Solid
+    let style = match args::opt_str(a, "style")? {
+        Some("solid") => LineKind::Solid,
+        Some("construction") => LineKind::Construction,
+        Some("centre_line" | "center_line") => LineKind::Center,
+        Some(other) => {
+            return Err(format!(
+                "unknown style `{other}` (solid, construction or centre_line)"
+            ));
+        }
+        None if on => LineKind::Construction,
+        None => LineKind::Solid,
     };
     let ed = &mut s.editor;
     ed.doc.begin();

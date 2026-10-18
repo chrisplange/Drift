@@ -777,7 +777,14 @@ impl DriftApp {
     ) {
         let colors = AnnotationColors::new(dark);
         let dim_colors = AnnotationColors::drafting(dark, self.editor.doc.draft_style().color);
-        let faded = dim_colors.faded();
+        // A dimension with a colour of its own is drawn in it.
+        let colors_of = |id: ConstraintId| {
+            let r = drift_core::AnnotationRef::Dimension(id);
+            match self.editor.doc.style_override(r).color {
+                Some(c) => AnnotationColors::drafting(dark, c),
+                None => dim_colors,
+            }
+        };
         let conflicts = &self.editor.analysis().conflicts;
         let state = |id: ConstraintId| {
             if self.annotation_picked(drift_core::AnnotationRef::Dimension(id))
@@ -801,7 +808,9 @@ impl DriftApp {
                     .editor
                     .doc
                     .shown(drift_core::AnnotationRef::Dimension(id));
-                let look = if shown.canvas { &dim_colors } else { &faded };
+                let own = colors_of(id);
+                let faded = own.faded();
+                let look = if shown.canvas { &own } else { &faded };
                 annotations::paint_dimension(painter, dim, state(id), look);
                 if !shown.sheets {
                     Self::paint_off_sheets_badge(painter, dim.text_rect.right_top(), look.normal);
@@ -816,7 +825,7 @@ impl DriftApp {
                         && let Some(m) = self.editor.doc.ref_point(e)
                     {
                         let color = match state(id) {
-                            AnnotationState::Normal => dim_colors.normal,
+                            AnnotationState::Normal => own.normal,
                             AnnotationState::Hovered => colors.hovered,
                             AnnotationState::Selected => colors.selected,
                             AnnotationState::Conflict => colors.conflict,

@@ -130,14 +130,19 @@ pub(crate) fn color_choice(
 ) -> Option<Option<Rgb>> {
     let mut out = None;
     ui.horizontal(|ui| {
-        let mut auto = value.is_none();
-        if ui.checkbox(&mut auto, auto_label).changed() {
-            out = Some(if auto {
-                None
-            } else {
-                Some(Rgb([0xd0, 0x40, 0x40]))
+        let auto = value.is_none();
+        let id = ui.id().with(("colour", auto_label));
+        egui::ComboBox::from_id_salt(id)
+            .selected_text(if auto { auto_label } else { "Custom" })
+            .width(90.0)
+            .show_ui(ui, |ui| {
+                if ui.selectable_label(auto, auto_label).clicked() && !auto {
+                    out = Some(None);
+                }
+                if ui.selectable_label(!auto, "Custom").clicked() && auto {
+                    out = Some(Some(Rgb([0xd0, 0x40, 0x40])));
+                }
             });
-        }
         if !auto {
             let c = to_color32(value, dark);
             let mut rgb = [c.r(), c.g(), c.b()];
@@ -340,7 +345,7 @@ impl DriftApp {
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
                     if ui
-                        .button("+ New layer")
+                        .button("New layer")
                         .on_hover_text("A new layer, made current; type its name")
                         .clicked()
                     {
@@ -386,9 +391,11 @@ impl DriftApp {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 5.0;
             // The active (current) layer's dot; a faint ring on the others.
-            let (dot, _) = ui.allocate_exact_size(egui::vec2(10.0, 22.0), egui::Sense::hover());
+            let (dot, dot_response) =
+                ui.allocate_exact_size(egui::vec2(10.0, 22.0), egui::Sense::hover());
             if is_current {
                 ui.painter().circle_filled(dot.center(), 4.0, accent);
+                dot_response.on_hover_text("The current layer: what you draw goes on it");
             } else {
                 ui.painter().circle_stroke(
                     dot.center(),
@@ -679,60 +686,66 @@ impl DriftApp {
                 .is_some_and(|e| e.layer == first.layer)
         });
         ui.add_space(10.0);
-        egui::Grid::new("appearance").num_columns(2).show(ui, |ui| {
-            ui.label("Layer");
-            let text = if uniform_layer {
-                self.editor
+        let label = |ui: &mut egui::Ui, text: &str| {
+            ui.label(egui::RichText::new(text).color(ui.visuals().weak_text_color()));
+        };
+        egui::Grid::new("appearance")
+            .num_columns(2)
+            .min_col_width(crate::theme::LABEL_WIDTH)
+            .show(ui, |ui| {
+                label(ui, "Layer");
+                let text = if uniform_layer {
+                    self.editor
+                        .doc
+                        .layer(first.layer)
+                        .map_or("?".into(), |l| l.name.clone())
+                } else {
+                    "(mixed)".into()
+                };
+                let layers: Vec<(LayerId, String)> = self
+                    .editor
                     .doc
-                    .layer(first.layer)
-                    .map_or("?".into(), |l| l.name.clone())
-            } else {
-                "(mixed)".into()
-            };
-            let layers: Vec<(LayerId, String)> = self
-                .editor
-                .doc
-                .layers()
-                .map(|(id, l)| (id, l.name.clone()))
-                .collect();
-            let mut target = None;
-            egui::ComboBox::from_id_salt("selection_layer")
-                .selected_text(text)
-                .width(110.0)
-                .show_ui(ui, |ui| {
-                    for (id, name) in layers {
-                        if ui
-                            .selectable_label(uniform_layer && id == first.layer, name)
-                            .clicked()
-                        {
-                            target = Some(id);
+                    .layers()
+                    .map(|(id, l)| (id, l.name.clone()))
+                    .collect();
+                let mut target = None;
+                egui::ComboBox::from_id_salt("selection_layer")
+                    .selected_text(text)
+                    .width(110.0)
+                    .show_ui(ui, |ui| {
+                        for (id, name) in layers {
+                            if ui
+                                .selectable_label(uniform_layer && id == first.layer, name)
+                                .clicked()
+                            {
+                                target = Some(id);
+                            }
                         }
-                    }
-                });
-            if let Some(id) = target {
-                self.editor.move_selection_to_layer(id);
-            }
-            ui.end_row();
+                    });
+                if let Some(id) = target {
+                    self.editor.move_selection_to_layer(id);
+                }
+                ui.end_row();
 
-            let a = first.appearance;
-            ui.label("Colour");
-            if let Some(c) = color_choice(ui, a.color, "By layer", dark) {
-                self.editor.update_selection_appearance(|x| x.color = c);
-            }
-            ui.end_row();
-            ui.label("Weight");
-            let mut w = a.weight;
-            if weight_combo(ui, "selection_weight", &mut w, true) {
-                self.editor.update_selection_appearance(|x| x.weight = w);
-            }
-            ui.end_row();
-            ui.label("Line type");
-            let mut t = a.line_type;
-            if line_type_combo(ui, "selection_type", &mut t, true) {
-                self.editor.update_selection_appearance(|x| x.line_type = t);
-            }
-            ui.end_row();
-        });
+                let a = first.appearance;
+                label(ui, "Colour");
+                if let Some(c) = color_choice(ui, a.color, "By layer", dark) {
+                    self.editor.update_selection_appearance(|x| x.color = c);
+                }
+                ui.end_row();
+                label(ui, "Weight");
+                let mut w = a.weight;
+                if weight_combo(ui, "selection_weight", &mut w, true) {
+                    self.editor.update_selection_appearance(|x| x.weight = w);
+                }
+                ui.end_row();
+                label(ui, "Line type");
+                let mut t = a.line_type;
+                if line_type_combo(ui, "selection_type", &mut t, true) {
+                    self.editor.update_selection_appearance(|x| x.line_type = t);
+                }
+                ui.end_row();
+            });
     }
 }
 

@@ -39,6 +39,10 @@ pub enum Glyph {
     ChevronsRight,
     Close,
     Search,
+    /// Delete: a bin.
+    Delete,
+    /// Back to the inherited value: an anticlockwise arrow.
+    Reset,
 }
 
 /// Maps a 20 × 20 design grid into `rect`.
@@ -478,12 +482,17 @@ pub fn glyph(painter: &egui::Painter, rect: Rect, glyph: Glyph, color: Color32) 
             }
         }
         Glyph::Snap => {
-            // A magnet.
-            p.arc(10.0, 9.0, 5.5, 0.0, PI);
-            p.line((4.5, 9.0), (4.5, 4.0));
-            p.line((15.5, 9.0), (15.5, 4.0));
-            p.line((2.8, 4.0), (6.2, 4.0));
-            p.line((13.8, 4.0), (17.2, 4.0));
+            // A horseshoe magnet, drawn in outline with banded poles.
+            p.arc(10.0, 10.0, 6.5, 0.0, PI);
+            p.arc(10.0, 10.0, 2.5, 0.0, PI);
+            p.line((3.5, 10.0), (3.5, 3.5));
+            p.line((16.5, 10.0), (16.5, 3.5));
+            p.line((7.5, 10.0), (7.5, 3.5));
+            p.line((12.5, 10.0), (12.5, 3.5));
+            p.line((3.5, 3.5), (7.5, 3.5));
+            p.line((12.5, 3.5), (16.5, 3.5));
+            p.line((3.5, 6.5), (7.5, 6.5));
+            p.line((12.5, 6.5), (16.5, 6.5));
         }
         Glyph::Angle => {
             p.line((3.5, 16.0), (17.0, 16.0));
@@ -614,11 +623,20 @@ pub fn glyph(painter: &egui::Painter, rect: Rect, glyph: Glyph, color: Color32) 
             p.circle(8.5, 8.5, 5.0);
             p.line((12.2, 12.2), (16.5, 16.5));
         }
+        Glyph::Reset => {
+            p.arc(10.0, 10.5, 5.5, -2.4, 4.3);
+            p.poly(&[(3.2, 4.2), (4.6, 7.2), (7.8, 6.6)], false);
+        }
+        Glyph::Delete => {
+            p.line((3.5, 5.5), (16.5, 5.5));
+            p.poly(&[(7.5, 5.5), (7.5, 3.5), (12.5, 3.5), (12.5, 5.5)], false);
+            p.poly(&[(5.0, 5.5), (6.0, 16.5), (14.0, 16.5), (15.0, 5.5)], false);
+            p.line((8.5, 8.5), (8.5, 13.5));
+            p.line((11.5, 8.5), (11.5, 13.5));
+        }
     }
 }
 
-/// A square icon button: an accent-filled tile when `selected`, a soft hover otherwise.
-/// `label` names it for accessibility (screen readers and UI tests).
 /// A full-width toolbar row: icon, name and (dimmed, at the right) shortcut key.
 pub fn tool_row(
     ui: &mut egui::Ui,
@@ -634,8 +652,10 @@ pub fn tool_row(
     });
     let dark = ui.visuals().dark_mode;
     let accent = crate::theme::accent(dark);
+    let n = crate::theme::neutrals(dark);
+    // The current tool: a faint accent tint, its icon in the accent.
     let (bg, fg, weak) = if selected {
-        (Some(accent), Color32::WHITE, Color32::from_white_alpha(170))
+        (Some(crate::theme::accent_soft(dark)), n.text, n.secondary)
     } else if response.is_pointer_button_down_on() {
         (
             Some(ui.visuals().widgets.active.bg_fill),
@@ -649,27 +669,27 @@ pub fn tool_row(
             ui.visuals().weak_text_color(),
         )
     } else {
-        (
-            None,
-            ui.visuals().text_color(),
-            ui.visuals().weak_text_color(),
-        )
+        (None, ui.visuals().text_color(), n.tertiary)
     };
     let painter = ui.painter();
     if let Some(bg) = bg {
-        painter.rect_filled(rect, 6.0, bg);
+        painter.rect_filled(rect, crate::theme::radius::CONTROL, bg);
     }
     let icon = Rect::from_center_size(
         egui::pos2(rect.left() + 17.0, rect.center().y),
         Vec2::splat(18.0),
     );
-    draw(painter, icon, fg);
+    draw(painter, icon, if selected { accent } else { fg });
     // Text is centred on its ink (cap height), not its line box, so capitals and the key
     // letter sit on the row's middle.
     let centred = |g: &std::sync::Arc<egui::Galley>| rect.center().y - g.mesh_bounds.center().y;
     let mut right = rect.right() - 9.0;
     if let Some(key) = key {
-        let g = painter.layout_no_wrap(key.to_owned(), egui::FontId::monospace(10.5), weak);
+        let g = painter.layout_no_wrap(
+            key.to_owned(),
+            egui::FontId::proportional(crate::theme::size::CAPTION),
+            weak,
+        );
         right -= g.size().x;
         let y = centred(&g);
         painter.galley(egui::pos2(right, y), g, weak);
@@ -677,11 +697,10 @@ pub fn tool_row(
     }
     let left = rect.left() + 34.0;
     let mut job = egui::text::LayoutJob::single_section(
-        label.to_uppercase(),
+        label.to_owned(),
         egui::TextFormat {
-            font_id: egui::FontId::proportional(10.5),
+            font_id: egui::FontId::proportional(crate::theme::size::BODY),
             color: fg,
-            extra_letter_spacing: 0.8,
             ..Default::default()
         },
     );
@@ -700,14 +719,22 @@ pub fn button(
     label: &str,
     draw: impl FnOnce(&egui::Painter, Rect, Color32),
 ) -> egui::Response {
+    // A square icon button: a neutral tile with an accent icon when `selected`, a soft hover
+    // otherwise. `label` names it for accessibility (screen readers and UI tests).
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), egui::Sense::click());
     response.widget_info(|| {
         egui::WidgetInfo::selected(egui::WidgetType::Button, true, selected, label)
     });
     let dark = ui.visuals().dark_mode;
     let accent = crate::theme::accent(dark);
+    // On: a neutral raised tile with the icon in the accent (never a solid accent block).
     let (bg, fg) = if selected {
-        (Some(accent), Color32::WHITE)
+        let fill = if response.hovered() {
+            ui.visuals().widgets.hovered.bg_fill
+        } else {
+            ui.visuals().widgets.inactive.bg_fill
+        };
+        (Some(fill), accent)
     } else if response.is_pointer_button_down_on() {
         (
             Some(ui.visuals().widgets.active.bg_fill),
@@ -722,7 +749,8 @@ pub fn button(
         (None, ui.visuals().text_color())
     };
     if let Some(bg) = bg {
-        ui.painter().rect_filled(rect, 7.0, bg);
+        ui.painter()
+            .rect_filled(rect, crate::theme::radius::CONTROL, bg);
     }
     let inner = rect.shrink(size * 0.2);
     draw(ui.painter(), inner, fg);

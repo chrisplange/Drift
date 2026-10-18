@@ -33,6 +33,7 @@ pub enum AnnotationState {
     Preview,
 }
 
+#[derive(Clone, Copy)]
 pub struct AnnotationColors {
     pub normal: Color32,
     pub hovered: Color32,
@@ -428,11 +429,20 @@ fn dimension_text_styled(c: &Constraint, units: &Units, style: &DraftStyle) -> S
     }
 }
 
+/// The style a dimension is drawn with: the drawing's, with the dimension's own settings in
+/// place (a dimension not made yet has none).
+pub fn dimension_style(doc: &Document, id: Option<ConstraintId>) -> DraftStyle {
+    id.map_or_else(
+        || doc.draft_style(),
+        |id| doc.draft_style_for(drift_core::AnnotationRef::Dimension(id)),
+    )
+}
+
 /// The full label of a dimension: value (measured, in parentheses, if driven; marked Σ if
 /// linked to an expression), prefix, suffix, tolerance and alternate units.
 pub fn dimension_label(doc: &Document, id: Option<ConstraintId>, c: &Constraint) -> DimText {
     let units = doc.units();
-    let style = doc.draft_style();
+    let style = dimension_style(doc, id);
     let driven = id.is_some_and(|id| doc.is_driven(id));
     let shown = if driven {
         drift_solver::measure(doc, c)
@@ -887,7 +897,7 @@ pub fn layout_dimension(
     placement: Option<DVec2>,
     map: &ScreenMap,
 ) -> Option<DimLayout> {
-    let style = DimStyle::of(&doc.draft_style());
+    let style = DimStyle::of(&dimension_style(doc, id));
     let anchor = dimension_anchor(doc, c)?;
     let offset = placement.unwrap_or_else(|| default_offset(doc, c, map.camera.scale));
     let label = map.to_screen(anchor + offset);

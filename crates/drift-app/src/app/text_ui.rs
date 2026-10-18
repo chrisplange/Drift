@@ -695,10 +695,11 @@ impl DriftApp {
                 let now = ui.input(|i| i.time);
                 self.set_status(format!("Converted the text into {n} curves"), false, now);
             }
-            if ui.button("Delete").clicked() {
-                self.editor.remove_text(id);
-            }
         });
+        ui.add_space(16.0);
+        if theme::danger_button(ui, "Delete").clicked() {
+            self.editor.remove_text(id);
+        }
         true
     }
 }

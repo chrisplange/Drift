@@ -401,8 +401,10 @@ fn annotations(ed: &Editor, painter: &egui::Painter, s: &Space, d: &mut Drawing)
             annotations::paint_dimension(&recorder, &layout, AnnotationState::Normal, &colors);
         }
     }
-    let style = annotations::DimStyle::of(&doc.draft_style());
     for layout in notes::layout_annotations(painter, doc, &map) {
+        let style = annotations::DimStyle::of(
+            &doc.draft_style_for(drift_core::AnnotationRef::Annotation(layout.id)),
+        );
         // Ordinates are dimensions; centre marks are linework, and always drawn.
         let shown = match doc.annotation(layout.id) {
             Some(drift_core::Annotation::Ordinate { .. }) => s.dimensions,

@@ -1,18 +1,15 @@
 # Preferences
 
-Open **Edit → Preferences…** (Ctrl+,). Most of these are also in the **View** menu, the
-status bar or the **Parameters** panel; this window gathers them in one place. Preferences
-are remembered between sessions and carry over when you open another drawing.
+Open **Edit → Preferences…** (Ctrl+,). Most of these are also in the **View** menu or the
+status bar; this window gathers them in one place. Preferences are remembered between
+sessions and carry over when you open another drawing.
+
+What is saved with a drawing (its units and drafting style) is in **File → Drawing
+settings…** instead; see [Drawing settings](#drawing-settings) below.
 
 ## Appearance
 
 The light or dark theme, or follow the system. (Also **View → Appearance**.)
-
-## Units
-
-The open drawing's units: **Metric** or **Imperial**, the **Format**, **Decimals** or the
-fraction to **Round to**, and **Angles** decimals. These are saved in the drawing, not as a
-preference. See [Units and length formats](units.md).
 
 ## Grid and snapping
 
@@ -74,6 +71,18 @@ zooms). The middle or right mouse button drags the view either way.
 
 Shows how much memory Drift is using. Drift warns at 3 GB and closes itself at 8 GB, so a
 fault can't exhaust the computer; the sketch is restored next time.
+
+## Drawing settings
+
+**File → Drawing settings…** (also in the command palette) holds what is saved in the open
+drawing rather than as a preference:
+
+- **Units:** **Metric** or **Imperial**, the **Format**, **Decimals** or the fraction to
+  **Round to**, and **Angles** decimals. See [Units and length formats](units.md).
+- **Drafting:** **ISO 129** or **ASME Y14.5**, then scale, text height, **Arrows**,
+  **Arrow size**, **Ext. gap**, **Ext. past**, text placement, **Zeros**, **Dual units**,
+  **Colour** and the drawing's **Font**. A picked dimension or annotation can override
+  these for itself; see [The drafting style](../tutorials/09-annotation.md#the-drafting-style).
 
 ## Elsewhere
 

@@ -249,11 +249,11 @@ pub fn cursor_label(painter: &egui::Painter, at: Pos2, lines: &[String], colors:
         return;
     }
     let text = lines.join("\n");
-    let font = FontId::monospace(11.0);
+    let font = FontId::proportional(12.0);
     let galley = painter.layout_no_wrap(text, font, colors.label_fg);
     let pos = at + vec2(16.0, 16.0);
-    let bg = Rect::from_min_size(pos, galley.size()).expand(3.0);
-    painter.rect_filled(bg, 3.0, colors.label_bg);
+    let bg = Rect::from_min_size(pos, galley.size()).expand2(vec2(6.0, 4.0));
+    painter.rect_filled(bg, crate::theme::radius::CONTROL, colors.label_bg);
     painter.galley(pos, galley, colors.label_fg);
 }
 

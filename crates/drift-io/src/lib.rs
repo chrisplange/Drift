@@ -6,7 +6,7 @@
 //! ```json
 //! {
 //!   "format": "drift",
-//!   "version": 24,
+//!   "version": 25,
 //!   "meta": {"title":"Bracket","units":"mm","generator":"Drift 0.1.0"},
 //!   "display": {"length":"architectural","fraction":16},
 //!   "variables": [
@@ -79,8 +79,9 @@ pub const EXTENSION: &str = "drift";
 /// dimension's `below` and `text`; 22 = adds a block's `fills`; 23 = adds a layer's `snap`
 /// (and layers are listed in draw order); 24 = notes have any number of `leaders` (each with a
 /// `bend` or `bulge` and a shoulder) and a text style (`align`, `wrap`, `frame`, `mask`,
-/// `bold`, `italic`, `height`).
-pub const FORMAT_VERSION: u32 = 24;
+/// `bold`, `italic`, `height`); 25 = adds `styles` (a dimension's or annotation's own
+/// settings over the drafting style).
+pub const FORMAT_VERSION: u32 = 25;
 const FORMAT_TAG: &str = "drift";
 
 /// Document-level properties stored alongside the geometry.
@@ -793,6 +794,9 @@ struct FileRecord {
     /// Dimensions and annotations not shown everywhere.
     #[serde(default)]
     shown: Vec<drafting::ShownRecord>,
+    /// Dimensions and annotations with settings of their own over the drafting style.
+    #[serde(default)]
+    styles: Vec<drafting::StyleRecord>,
     /// Imported hatch patterns, as `.pat` text.
     #[serde(default)]
     patterns: Option<String>,
@@ -1079,6 +1083,12 @@ pub fn save(doc: &Document, meta: &Metadata) -> String {
             serde_json::to_string(&drafting::shown_record(r, s)).expect("shown serializes")
         })
         .collect();
+    let styles: Vec<String> = doc
+        .style_overrides()
+        .map(|(r, s)| {
+            serde_json::to_string(&drafting::override_record(r, &s)).expect("style serializes")
+        })
+        .collect();
     let sheets: Vec<String> = doc
         .sheets()
         .map(|(id, s)| {
@@ -1124,6 +1134,7 @@ pub fn save(doc: &Document, meta: &Metadata) -> String {
         ("fills", &fills),
         ("annotations", &annotations),
         ("shown", &shown),
+        ("styles", &styles),
         ("sheets", &sheets),
         ("groups", &groups),
         ("blocks", &block_lines),
@@ -1485,6 +1496,10 @@ pub fn load_with_notes(text: &str) -> Result<(Document, Metadata, Vec<String>), 
         let (of, shown) = drafting::parse_shown(r)?;
         doc.set_shown(of, shown);
     }
+    for r in file.styles {
+        let (of, style) = drafting::parse_override(r)?;
+        doc.set_style_override(of, style);
+    }
     if let Some(p) = file.patterns {
         doc.set_custom_patterns(p);
     }
@@ -1647,7 +1662,7 @@ pub fn migrate(value: serde_json::Value) -> Result<serde_json::Value, LoadError>
         // v1 → v2: constraints were introduced; a v1 file simply has none.
         value["constraints"] = serde_json::Value::Array(Vec::new());
     }
-    // v2 → v24 only added optional fields, sections and constraint types: nothing to convert
+    // v2 → v25 only added optional fields, sections and constraint types: nothing to convert
     // (a sheet's single view from before v18 is read as it was written).
     value["version"] = FORMAT_VERSION.into();
     Ok(value)
@@ -1718,7 +1733,7 @@ mod tests {
         let text = save(&doc, &Metadata::default());
         let expected = r#"{
   "format": "drift",
-  "version": 24,
+  "version": 25,
   "meta": {"units":"mm"},
   "entities": [
     {"type":"point","id":"e1","at":[0.0,0.0]},
@@ -2272,6 +2287,19 @@ mod tests {
         style.scale = 50.0;
         style.color = Some(drift_core::Rgb([0x20, 0xa0, 0xff]));
         doc.set_draft_style(style);
+        // One dimension with settings of its own: bigger text, open arrows, no dual units
+        // (though the drawing has them) and its own colour.
+        doc.set_style_override(
+            drift_core::AnnotationRef::Dimension(dims[2]),
+            drift_core::StyleOverride {
+                text_height: Some(5.0),
+                arrow: Some(ArrowStyle::Open),
+                leading_zero: Some(false),
+                alt_units: Some(None),
+                color: Some(Some(drift_core::Rgb([0xc0, 0x30, 0x30]))),
+                ..Default::default()
+            },
+        );
         doc.set_custom_patterns("*MINE, Mine\n0, 0,0, 0,2\n".into());
         doc.set_logo(
             r##"<svg viewBox="0 0 4 2"><rect width="4" height="2" fill="#f60"/></svg>"##.into(),
@@ -2421,7 +2449,8 @@ mod tests {
         doc.add_text(drift_core::SketchText::new("A", DVec2::ZERO, 3.0));
 
         let text = save(&doc, &Metadata::default());
-        assert!(text.contains("\"version\": 24"));
+        assert!(text.contains("\"version\": 25"));
+        assert!(text.contains(r#""styles": ["#) && text.contains(r#""alt_units":"none""#));
         assert!(
             text.contains(r#"{"a":[80.0,20.0,30.0,0.0,90.0]}"#),
             "{text}"

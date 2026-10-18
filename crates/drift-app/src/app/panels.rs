@@ -44,6 +44,18 @@ pub(crate) fn title(ui: &mut egui::Ui, icon: Option<ToolKind>, name: &str, detai
     ui.add_space(2.0);
 }
 
+/// "1 line", "4 lines": a count with the kind's name, lower case and plural past one.
+fn plural(n: usize, name: &str) -> String {
+    let name = name.to_lowercase();
+    if n == 1 {
+        format!("1 {name}")
+    } else if name.ends_with('s') {
+        format!("{n} {name}es")
+    } else {
+        format!("{n} {name}s")
+    }
+}
+
 /// The tool that draws an entity kind (for its icon).
 fn kind_icon(kind: &drift_core::EntityKind) -> ToolKind {
     use drift_core::EntityKind as K;
@@ -85,7 +97,6 @@ fn value_field(
         .add(
             egui::TextEdit::singleline(&mut text)
                 .id(key.with("field"))
-                .font(egui::TextStyle::Monospace)
                 .desired_width(width),
         )
         .on_hover_text(tip);
@@ -126,7 +137,7 @@ fn size_rows(ui: &mut egui::Ui, ed: &Editor, id: drift_core::EntityId) -> Option
             .unwrap_or_else(|| units.format_length(measured));
         theme::row(ui, label, |ui| {
             if driven {
-                ui.monospace(format!("({shown})"))
+                ui.label(format!("({shown})"))
                     .on_hover_text("A reference dimension: it follows the geometry");
                 return;
             }
@@ -140,8 +151,12 @@ fn size_rows(ui: &mut egui::Ui, ed: &Editor, id: drift_core::EntityId) -> Option
                 *out.borrow_mut() = Some(SizeEdit::Dimension(wanted, text));
             }
             if existing.is_some() {
-                ui.label(egui::RichText::new("dim").small().weak())
-                    .on_hover_text("Set by a dimension");
+                // A small dimension glyph: the value comes from a dimension.
+                let (r, response) =
+                    ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
+                let color = theme::neutrals(ui.visuals().dark_mode).tertiary;
+                icons::tool(ui.painter(), r, ToolKind::Dimension, color);
+                response.on_hover_text("Set by a dimension");
             }
         });
     };
@@ -228,6 +243,16 @@ fn stat(ui: &mut egui::Ui, value: usize, caption: &str, width: f32) {
     );
 }
 
+/// A hairline between groups of status-bar controls.
+fn status_divider(ui: &mut egui::Ui) {
+    let (r, _) = ui.allocate_exact_size(egui::vec2(9.0, 16.0), egui::Sense::hover());
+    ui.painter().vline(
+        r.center().x,
+        r.y_range(),
+        egui::Stroke::new(1.0, theme::hairline(ui)),
+    );
+}
+
 /// A checkbox-style menu item with a shortcut hint.
 fn toggle_item(ui: &mut egui::Ui, value: &mut bool, label: &str, keys: &str) {
     if ui
@@ -298,6 +323,14 @@ impl DriftApp {
                     .clicked()
                 {
                     self.save_as();
+                }
+                ui.separator();
+                if ui
+                    .button("Drawing settings…")
+                    .on_hover_text("Units and drafting style, saved with this drawing")
+                    .clicked()
+                {
+                    self.show_drawing_settings = true;
                 }
                 ui.separator();
                 if ui
@@ -595,7 +628,8 @@ impl DriftApp {
                 ui.separator();
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new("Appearance").weak());
-                    egui::widgets::global_theme_preference_buttons(ui);
+                    ui.set_max_width(ui.min_rect().width() + 170.0);
+                    theme::appearance(ui);
                 });
             });
             ui.menu_button("Help", |ui| {
@@ -631,11 +665,14 @@ impl DriftApp {
     /// The tool palette: icon buttons in groups (draw, annotate, modify), with tooltips that
     /// name the tool, its shortcut and what it does.
     pub(crate) fn toolbar(&mut self, ui: &mut egui::Ui, wide: bool) {
-        egui::ScrollArea::vertical()
+        // A key shared by a cycle of tools (C: circle, ellipse, partial ellipse) is shown on
+        // the first of them only; the tooltips say it switches on.
+        let mut keys_shown = std::collections::HashSet::new();
+        let output = egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 if wide {
-                    ui.spacing_mut().item_spacing.y = 1.0;
+                    ui.spacing_mut().item_spacing.y = 0.0;
                 }
                 ui.add_space(4.0);
                 for (i, (title, group)) in ToolKind::SECTIONS.iter().enumerate() {
@@ -656,7 +693,9 @@ impl DriftApp {
                             icons::tool(p, r, kind, c)
                         };
                         let response = if wide {
-                            let key = kind.shortcut_label();
+                            let key = kind
+                                .shortcut_label()
+                                .filter(|k| keys_shown.insert(k.clone()));
                             icons::tool_row(ui, selected, kind.label(), key.as_deref(), draw)
                         } else {
                             icons::button(ui, 38.0, selected, kind.label(), draw)
@@ -665,10 +704,13 @@ impl DriftApp {
                             ui.horizontal(|ui| {
                                 ui.label(egui::RichText::new(kind.label()).family(theme::bold()));
                                 if let Some(c) = kind.shortcut_label() {
-                                    ui.label(egui::RichText::new(c.to_string()).monospace().weak());
+                                    ui.label(egui::RichText::new(c.to_string()).small().weak());
                                 }
                             });
                             ui.label(egui::RichText::new(kind.description()).weak());
+                            if let Some(again) = kind.cycle_hint() {
+                                ui.label(egui::RichText::new(again).small().weak());
+                            }
                         });
                         if response.clicked() {
                             self.switch_tool(kind);
@@ -677,6 +719,7 @@ impl DriftApp {
                 }
                 ui.add_space(6.0);
             });
+        theme::fade_bottom(ui, &output);
     }
 
     /// Select the curves that lie on top of others (the later-made of each pair).
@@ -838,7 +881,7 @@ impl DriftApp {
             let units = self.editor.doc.units();
             theme::section(ui, "Region");
             let mono = |ui: &mut egui::Ui, text: String| {
-                ui.monospace(text);
+                ui.label(text);
             };
             theme::row(ui, "Area", |ui| mono(ui, units.format_area(region.area)));
             theme::row(ui, "Perimeter", |ui| {
@@ -858,19 +901,22 @@ impl DriftApp {
             self.region_fill_buttons(ui);
         }
         self.group_inspector(ui);
-        self.centre_mark_button(ui);
         let ed = &self.editor;
         let selection: Vec<_> = ed.selection.iter().copied().collect();
         for line in &ed.selected_midpoints {
             if let Some(drift_core::Shape::Line { a, b }) = ed.index.shape(*line) {
                 let m = (*a + *b) * 0.5;
                 let units = ed.doc.units();
+                let of = ed.doc.get(*line).map_or(String::new(), |e| {
+                    let layer = ed.doc.layer(e.layer).map_or("", |l| l.name.as_str());
+                    format!("A line on layer {layer}")
+                });
                 theme::section(ui, "Midpoint");
                 theme::row(ui, "Of", |ui| {
-                    ui.label(format!("{line}"));
+                    ui.label(of);
                 });
                 theme::row(ui, "At", |ui| {
-                    ui.monospace(format!(
+                    ui.label(format!(
                         "{}, {}",
                         units.format_readout(m.x),
                         units.format_readout(m.y)
@@ -922,12 +968,12 @@ impl DriftApp {
                 let layer = ed
                     .doc
                     .layer(entity.layer)
-                    .map_or(String::new(), |l| format!("on layer {}", l.name));
+                    .map_or(String::new(), |l| format!("On layer {}", l.name));
                 title(
                     ui,
                     Some(kind_icon(&entity.kind)),
                     entity.kind.type_name(),
-                    &format!("{id} · {layer}"),
+                    &layer,
                 );
                 theme::section(ui, "Geometry");
                 size_edit = size_rows(ui, ed, *id);
@@ -940,10 +986,8 @@ impl DriftApp {
                         *counts.entry(e.kind.type_name()).or_insert(0) += 1;
                     }
                 }
-                let summary: Vec<String> = counts
-                    .iter()
-                    .map(|(name, n)| format!("{n} {name}"))
-                    .collect();
+                let summary: Vec<String> =
+                    counts.iter().map(|(name, n)| plural(*n, name)).collect();
                 title(
                     ui,
                     Some(ToolKind::Select),
@@ -1026,6 +1070,7 @@ impl DriftApp {
             }
             None => {}
         }
+        self.centre_mark_button(ui);
         self.constraint_buttons(ui);
         self.pattern_panel(ui, now);
         self.constraint_list(ui);
@@ -1365,24 +1410,34 @@ impl DriftApp {
                 egui::Layout::left_to_right(egui::Align::Center),
                 |ui| {
                     ui.set_min_width(250.0);
-                    ui.label(
-                        egui::RichText::new(format!("X {x:>13}   Y {y:>13}"))
-                            .monospace()
-                            .color(ui.visuals().weak_text_color()),
-                    );
+                    // Each value right-aligned in its own cell, so the digits don't jump.
+                    for (axis, value) in [("X", x), ("Y", y)] {
+                        ui.label(egui::RichText::new(axis).weak());
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(96.0, 20.0),
+                            egui::Layout::right_to_left(egui::Align::Center),
+                            |ui| {
+                                ui.set_min_width(96.0);
+                                let shown = if value.is_empty() { "–" } else { &value };
+                                ui.label(egui::RichText::new(shown).weak());
+                            },
+                        );
+                        ui.add_space(10.0);
+                    }
                 },
             );
             // Right-hand cluster first, so the hint takes what is left.
             let right =
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
+                    // One control height across the bar.
+                    ui.spacing_mut().interact_size.y = 22.0;
                     // Zoom as a percentage of real size on a 96 dpi screen.
                     let zoom = self.camera.scale * 25.4 / 96.0 * 100.0;
                     let button = ui
                         .add(
                             egui::Button::new(
                                 egui::RichText::new(format!("{zoom:.0}%"))
-                                    .monospace()
                                     .color(ui.visuals().weak_text_color()),
                             )
                             .frame_when_inactive(false),
@@ -1476,10 +1531,11 @@ impl DriftApp {
                             }
                         })
                         .response
-                        .on_hover_text("Display units (more in the Parameters tab)");
+                        .on_hover_text("Display units (more in File → Drawing settings)");
                     if units != self.editor.doc.units() {
                         self.editor.set_units(units);
                     }
+                    status_divider(ui);
                     let minor = grid_info(&self.camera, self.imperial()).minor;
                     let grid = if units.length.is_metric() {
                         format!("{} mm", format_length(minor))
@@ -1491,86 +1547,97 @@ impl DriftApp {
                         }
                         .format_length(minor)
                     };
-                    let angle_snap = &mut self.angle_snap;
-                    for (glyph, name, value, tip) in [
-                    (
-                        Glyph::Thin,
-                        "Thin lines",
-                        &mut self.thin_lines,
-                        "Thin lines (W)".to_owned(),
-                    ),
-                    (
-                        Glyph::Snap,
-                        "Snap to grid",
-                        &mut self.grid_snap,
-                        format!("Snap to grid ({grid}) · Shift+G"),
-                    ),
-                    (
+                    // Two groups, laid out from the right: what the drawing shows, then (at
+                    // the left) what snaps and what is added as you draw.
+                    let toggle = |ui: &mut egui::Ui,
+                                  glyph: Glyph,
+                                  name: &str,
+                                  value: &mut bool,
+                                  tip: &str| {
+                        if icons::button(ui, 22.0, *value, name, |p, r, c| {
+                            icons::glyph(p, r, glyph, c)
+                        })
+                        .on_hover_text(tip)
+                        .clicked()
+                        {
+                            *value = !*value;
+                        }
+                    };
+                    toggle(
+                        ui,
                         Glyph::Status,
                         "Status colours",
                         &mut self.status_colors,
-                        "Constraint status colours (on) or layer and line colours (off) · Shift+C"
-                            .to_owned(),
-                    ),
-                    (
-                        Glyph::AutoRelations,
-                        "Auto relations",
-                        &mut self.auto_relations,
-                        "Auto relations: add relations as you draw and modify (horizontal, \
-                         coincident, tangent...). Off: plain geometry · Shift+Alt+R"
-                            .to_owned(),
-                    ),
-                    (
+                        "Constraint status colours (on) or layer and line colours (off) · Shift+C",
+                    );
+                    toggle(
+                        ui,
+                        Glyph::Thin,
+                        "Thin lines",
+                        &mut self.thin_lines,
+                        "Thin lines (W)",
+                    );
+                    toggle(
+                        ui,
                         Glyph::Endpoints,
                         "End points",
                         &mut self.always_endpoints,
-                        "Always show end points (off: only on hovered or picked curves) · \
-                         Shift+Alt+V"
-                            .to_owned(),
-                    ),
-                    (Glyph::Axes, "Origin axes", &mut self.show_axes, "Origin axes".to_owned()),
-                    (
+                        "Always show end points (off: only on hovered or picked curves) · Shift+Alt+V",
+                    );
+                    toggle(
+                        ui,
+                        Glyph::Axes,
+                        "Origin axes",
+                        &mut self.show_axes,
+                        "Origin axes",
+                    );
+                    toggle(
+                        ui,
                         Glyph::Grid,
                         "Grid",
                         &mut self.show_grid,
-                        format!("Grid: {grid} spacing · {}", shortcut("'", false)),
-                    ),
-                ] {
-                    if icons::button(ui, 22.0, *value, name, |p, r, c| {
-                        icons::glyph(p, r, glyph, c)
-                    })
-                    .on_hover_text(tip)
-                    .clicked()
-                    {
-                        *value = !*value;
-                    }
+                        &format!("Grid: {grid} spacing · {}", shortcut("'", false)),
+                    );
+                    status_divider(ui);
+                    toggle(
+                        ui,
+                        Glyph::AutoRelations,
+                        "Auto relations",
+                        &mut self.auto_relations,
+                        "Auto relations: add relations as you draw and modify (horizontal, coincident, tangent...). Off: plain geometry · Shift+Alt+R",
+                    );
                     // Angle snapping sits with grid snapping: a click opens its steps.
-                    if glyph == Glyph::Snap {
-                        let tip = match *angle_snap {
-                            Some(step) => format!(
-                                "Angle snap: lines are drawn every {step}° (Alt places freely)"
-                            ),
-                            None => "Angle snap: draw lines at every 1°, 5°, 15° or 45°".to_owned(),
-                        };
-                        let on = angle_snap.is_some();
-                        let button = icons::button(ui, 22.0, on, "Angle snap", |p, r, c| {
-                            icons::glyph(p, r, Glyph::Angle, c)
-                        })
-                        .on_hover_text(tip);
-                        egui::Popup::menu(&button).show(|ui| {
-                            ui.set_min_width(130.0);
-                            if ui.radio(angle_snap.is_none(), "Off").clicked() {
-                                *angle_snap = None;
+                    let angle_snap = &mut self.angle_snap;
+                    let tip = match *angle_snap {
+                        Some(step) => {
+                            format!("Angle snap: lines are drawn every {step}° (Alt places freely)")
+                        }
+                        None => "Angle snap: draw lines at every 1°, 5°, 15° or 45°".to_owned(),
+                    };
+                    let on = angle_snap.is_some();
+                    let button = icons::button(ui, 22.0, on, "Angle snap", |p, r, c| {
+                        icons::glyph(p, r, Glyph::Angle, c)
+                    })
+                    .on_hover_text(tip);
+                    egui::Popup::menu(&button).show(|ui| {
+                        ui.set_min_width(130.0);
+                        if ui.radio(angle_snap.is_none(), "Off").clicked() {
+                            *angle_snap = None;
+                        }
+                        for step in crate::ANGLE_STEPS {
+                            let picked = *angle_snap == Some(step);
+                            if ui.radio(picked, format!("Every {step}°")).clicked() {
+                                *angle_snap = Some(step);
                             }
-                            for step in crate::ANGLE_STEPS {
-                                let picked = *angle_snap == Some(step);
-                                if ui.radio(picked, format!("Every {step}°")).clicked() {
-                                    *angle_snap = Some(step);
-                                }
-                            }
-                        });
-                    }
-                }
+                        }
+                    });
+                    toggle(
+                        ui,
+                        Glyph::Snap,
+                        "Snap to grid",
+                        &mut self.grid_snap,
+                        &format!("Snap to grid ({grid}) · Shift+G"),
+                    );
                     // Where the cluster's leftmost control starts.
                     ui.min_rect().left()
                 });
@@ -1580,7 +1647,7 @@ impl DriftApp {
         // wide as it actually is, so the hint never lies over its controls).
         let hint = self.tool.hint();
         let rect = ui.min_rect();
-        let left = rect.left() + 262.0;
+        let left = rect.left() + 256.0;
         let right = cluster_left.inner - 12.0;
         if right - left > 40.0 {
             let area = egui::Rect::from_min_max(
@@ -1588,9 +1655,18 @@ impl DriftApp {
                 egui::pos2(right, rect.bottom()),
             );
             ui.scope_builder(egui::UiBuilder::new().max_rect(area), |ui| {
-                ui.centered_and_justified(|ui| {
-                    ui.add(egui::Label::new(egui::RichText::new(&hint).weak().small()).truncate())
-                        .on_hover_text(&hint);
+                // The prompt, left-aligned after the readout (as AutoCAD's command line).
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    status_divider(ui);
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(&hint)
+                                .size(theme::size::LABEL)
+                                .color(ui.visuals().weak_text_color()),
+                        )
+                        .truncate(),
+                    )
+                    .on_hover_text(&hint);
                 });
             });
         }

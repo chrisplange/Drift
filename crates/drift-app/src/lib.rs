@@ -239,6 +239,8 @@ pub struct DriftApp {
     show_start: bool,
     show_about: bool,
     show_settings: bool,
+    /// File → Drawing settings: the units and drafting style saved with the drawing.
+    show_drawing_settings: bool,
     /// What was last copied or cut here (for Edit → Paste).
     clipboard: Option<String>,
     /// The command palette, while open.
@@ -436,6 +438,7 @@ impl DriftApp {
             show_start: !cfg!(test),
             show_about: false,
             show_settings: false,
+            show_drawing_settings: false,
             clipboard: None,
             palette: None,
             recent_commands: Vec::new(),
@@ -812,7 +815,7 @@ const SHORTCUTS: &[(&str, &[(&str, &str)])] = &[
 fn property_rows(ui: &mut egui::Ui, shape: &Shape, units: Units) {
     let row = |ui: &mut egui::Ui, name: &str, value: String| {
         theme::row(ui, name, |ui| {
-            ui.monospace(value);
+            ui.label(value);
         });
     };
     let len = |v: f64| units.format_readout(v);

@@ -50,14 +50,16 @@ impl DriftApp {
         let mut fix: Option<Issue> = None;
         let mut fix_all = false;
         let mut tolerance = self.gap_tolerance;
-        egui::Window::new("Check sketch")
+        theme::dialog(ctx, "Check sketch")
             .id(egui::Id::new("sketch_check"))
             .open(&mut open)
-            .resizable(false)
-            .collapsible(false)
+            .pivot(egui::Align2::LEFT_TOP)
             .default_pos(ctx.content_rect().right_top() + egui::vec2(-460.0, 90.0))
             .show(ctx, |ui| {
                 ui.set_width(400.0);
+                if theme::dialog_title(ui, "Check sketch", true) {
+                    close = true;
+                }
                 theme::row(ui, "Gaps up to", |ui| {
                     let per = units.length.mm_per_unit();
                     let mut shown = tolerance / per;
@@ -133,8 +135,10 @@ impl DriftApp {
                             }
                         });
                 }
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
+                theme::dialog_buttons(ui, |ui| {
+                    if ui.button("Close").clicked() {
+                        close = true;
+                    }
                     if ui
                         .add_enabled(
                             !issues.is_empty(),
@@ -148,9 +152,6 @@ impl DriftApp {
                         .clicked()
                     {
                         fix_all = true;
-                    }
-                    if ui.button("Close").clicked() {
-                        close = true;
                     }
                 });
             });

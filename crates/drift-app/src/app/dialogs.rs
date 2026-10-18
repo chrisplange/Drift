@@ -14,19 +14,19 @@ pub(crate) fn keycaps(ui: &mut egui::Ui, keys: &str) {
             ui.label(egui::RichText::new(piece).weak());
             continue;
         }
-        let text = egui::RichText::new(piece).monospace().size(11.5);
+        let text = egui::RichText::new(piece).size(theme::size::CAPTION + 0.5);
         let galley = egui::WidgetText::from(text).into_galley(
             ui,
             Some(egui::TextWrapMode::Extend),
             f32::INFINITY,
-            egui::TextStyle::Monospace,
+            egui::TextStyle::Body,
         );
         let size = galley.size() + egui::vec2(12.0, 6.0);
         let (r, _) = ui.allocate_exact_size(size, egui::Sense::hover());
         let v = ui.visuals();
         ui.painter().rect(
             r,
-            5.0,
+            theme::radius::CONTROL,
             v.faint_bg_color,
             egui::Stroke::new(1.0, theme::hairline(ui)),
             egui::StrokeKind::Inside,
@@ -51,6 +51,7 @@ impl DriftApp {
         self.start_panel(ctx);
         self.about_window(ctx);
         self.settings_window(ctx);
+        self.drawing_settings_window(ctx);
         self.relation_pie(ctx);
         self.import_report_window(ctx);
         self.sketch_check_window(ctx);
@@ -58,25 +59,29 @@ impl DriftApp {
         self.update_notice(ctx);
         if let Some((constraint, placement)) = self.editor.pending_driven {
             let mut choice = None;
-            let modal = egui::Modal::new(egui::Id::new("driven")).show(ctx, |ui| {
-                ui.set_width(340.0);
-                ui.heading("Make this dimension driven?");
-                ui.add_space(6.0);
-                ui.label(format!(
-                    "This {} would over-define the sketch. Add it as a driven (reference) \
+            let modal = egui::Modal::new(egui::Id::new("driven"))
+                .frame(theme::dialog_frame(&ctx.style_of(ctx.theme())))
+                .show(ctx, |ui| {
+                    ui.set_width(360.0);
+                    theme::dialog_title(ui, "Make this dimension driven?", false);
+                    ui.label(format!(
+                        "This {} would over-define the sketch. Add it as a driven (reference) \
                      dimension that shows the measurement without constraining it?",
-                    constraint.type_name().to_lowercase()
-                ));
-                ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    if ui.button("Add as driven").clicked() {
-                        choice = Some(true);
-                    }
-                    if ui.button("Cancel").clicked() {
-                        choice = Some(false);
-                    }
+                        constraint.type_name().to_lowercase()
+                    ));
+                    theme::dialog_buttons(ui, |ui| {
+                        if ui.button("Cancel").clicked() {
+                            choice = Some(false);
+                        }
+                        let dark = ui.visuals().dark_mode;
+                        if ui
+                            .add(theme::primary_button("Add as driven", dark))
+                            .clicked()
+                        {
+                            choice = Some(true);
+                        }
+                    });
                 });
-            });
             if modal.should_close() && choice.is_none() {
                 choice = Some(false);
             }
@@ -96,10 +101,11 @@ impl DriftApp {
                 Cancel,
             }
             let mut choice = None;
-            let modal = egui::Modal::new(egui::Id::new("discard")).show(ctx, |ui| {
-                ui.set_width(360.0);
-                ui.heading(format!("Save changes to {}?", self.file.name));
-                ui.add_space(6.0);
+            let modal = egui::Modal::new(egui::Id::new("discard"))
+                .frame(theme::dialog_frame(&ctx.style_of(ctx.theme())))
+                .show(ctx, |ui| {
+                ui.set_width(380.0);
+                theme::dialog_title(ui, &format!("Save changes to {}?", self.file.name), false);
                 ui.label(match action {
                     Pending::Quit => "Your changes will be lost if you close without saving.",
                     #[cfg(not(target_arch = "wasm32"))]
@@ -108,20 +114,16 @@ impl DriftApp {
                     }
                     _ => "Your changes will be lost if you don't save them.",
                 });
-                ui.add_space(12.0);
-                ui.horizontal(|ui| {
-                    let accent = theme::accent(ui.visuals().dark_mode);
-                    let save =
-                        egui::Button::new(egui::RichText::new("Save").color(egui::Color32::WHITE))
-                            .fill(accent);
-                    if ui.add(save).clicked() {
-                        choice = Some(Choice::Save);
+                theme::dialog_buttons(ui, |ui| {
+                    if ui.button("Cancel").clicked() {
+                        choice = Some(Choice::Cancel);
                     }
                     if ui.button("Don't save").clicked() {
                         choice = Some(Choice::Discard);
                     }
-                    if ui.button("Cancel").clicked() {
-                        choice = Some(Choice::Cancel);
+                    let dark = ui.visuals().dark_mode;
+                    if ui.add(theme::primary_button("Save", dark)).clicked() {
+                        choice = Some(Choice::Save);
                     }
                 });
             });
@@ -151,31 +153,31 @@ impl DriftApp {
         }
 
         let mut open = self.benchmark.is_some();
-        egui::Window::new("Solver benchmark")
+        let mut close = false;
+        theme::dialog(ctx, "Solver benchmark")
             .open(&mut open)
-            .resizable(false)
-            .collapsible(false)
             .show(ctx, |ui| {
+                close = theme::dialog_title(ui, "Solver benchmark", true);
                 ui.label(format!("Running on {}", self.backend));
                 for line in self.benchmark.iter().flatten() {
                     ui.monospace(line);
                 }
             });
-        if !open {
+        if !open || close {
             self.benchmark = None;
         }
 
         let mut open = self.show_shortcuts;
         let mut close = false;
         let filter = &mut self.shortcut_filter;
-        egui::Window::new("Keyboard shortcuts")
+        theme::dialog(ctx, "Keyboard shortcuts")
             .open(&mut open)
             .resizable(true)
-            .collapsible(false)
             .default_size([660.0, 560.0])
-            .pivot(egui::Align2::CENTER_CENTER)
-            .default_pos(ctx.content_rect().center())
             .show(ctx, |ui| {
+                if theme::dialog_title(ui, "Keyboard shortcuts", true) {
+                    close = true;
+                }
                 let field = ui.add(
                     egui::TextEdit::singleline(filter)
                         .hint_text("Filter, e.g. \"dimension\" or \"Ctrl\"")

@@ -46,8 +46,7 @@ impl DriftApp {
             .pivot(egui::Align2::CENTER_CENTER)
             .fixed_pos(canvas.center())
             .show(ctx, |ui| {
-                egui::Frame::popup(&style)
-                    .corner_radius(14.0)
+                theme::dialog_frame(&style)
                     .inner_margin(egui::Margin::same(20))
                     .show(ui, |ui| {
                         ui.set_width(400.0);
@@ -61,7 +60,7 @@ impl DriftApp {
                                 ui.label(
                                     egui::RichText::new("Drift")
                                         .family(theme::bold())
-                                        .size(22.0),
+                                        .size(theme::size::DISPLAY),
                                 );
                                 ui.label(
                                     egui::RichText::new(format!(
@@ -72,26 +71,15 @@ impl DriftApp {
                                 );
                             });
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                                if ui
-                                    .add(
-                                        egui::Button::new(egui::RichText::new("×").size(16.0))
-                                            .frame(false),
-                                    )
-                                    .on_hover_text("Close")
-                                    .clicked()
-                                {
+                                if theme::close_button(ui).clicked() {
                                     close = true;
                                 }
                             });
                         });
                         ui.add_space(12.0);
                         ui.horizontal(|ui| {
-                            let accent = theme::accent(ui.visuals().dark_mode);
-                            let new = egui::Button::new(
-                                egui::RichText::new("New sketch").color(egui::Color32::WHITE),
-                            )
-                            .fill(accent)
-                            .min_size(egui::vec2(0.0, 28.0));
+                            let new = theme::primary_button("New sketch", ui.visuals().dark_mode)
+                                .min_size(egui::vec2(0.0, 28.0));
                             if ui
                                 .add(new)
                                 .on_hover_text("Start drawing: pick a tool, or press L for a line")
@@ -225,14 +213,12 @@ impl DriftApp {
             self.memory.0 / (1024 * 1024)
         );
         let mut copied = false;
-        egui::Window::new("About Drift")
+        let mut close = false;
+        theme::dialog(ctx, "About Drift")
             .open(&mut open)
-            .resizable(false)
-            .collapsible(false)
-            .pivot(egui::Align2::CENTER_CENTER)
-            .default_pos(ctx.content_rect().center())
             .show(ctx, |ui| {
                 ui.set_width(340.0);
+                close = theme::dialog_title(ui, "About Drift", true);
                 ui.horizontal(|ui| {
                     let (logo, _) =
                         ui.allocate_exact_size(egui::vec2(56.0, 56.0), egui::Sense::hover());
@@ -242,7 +228,7 @@ impl DriftApp {
                         ui.label(
                             egui::RichText::new("Drift")
                                 .family(theme::bold())
-                                .size(22.0),
+                                .size(theme::size::DISPLAY),
                         );
                         ui.label(format!("Version {VERSION}"));
                         ui.label(egui::RichText::new("Parametric 2D sketching").weak());
@@ -265,8 +251,7 @@ impl DriftApp {
                         });
                     }
                 }
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
+                theme::dialog_buttons(ui, |ui| {
                     if ui
                         .button("Copy details")
                         .on_hover_text("For a bug report")
@@ -278,6 +263,9 @@ impl DriftApp {
                     ui.hyperlink_to("Project page", env!("CARGO_PKG_REPOSITORY"));
                 });
             });
+        if close {
+            open = false;
+        }
         if copied {
             let now = ctx.input(|i| i.time);
             self.set_status("Copied the details".into(), false, now);
@@ -292,14 +280,12 @@ impl DriftApp {
             return;
         }
         let mut open = true;
-        egui::Window::new("Preferences")
+        let mut close = false;
+        theme::dialog(ctx, "Preferences")
             .open(&mut open)
-            .resizable(false)
-            .collapsible(false)
-            .pivot(egui::Align2::CENTER_CENTER)
-            .default_pos(ctx.content_rect().center())
             .show(ctx, |ui| {
                 ui.set_width(360.0);
+                close = theme::dialog_title(ui, "Preferences", true);
                 let room = (ctx.content_rect().height() - 140.0).max(200.0);
                 egui::ScrollArea::vertical()
                     .max_height(room)
@@ -308,7 +294,44 @@ impl DriftApp {
                         ui.push_id("preferences", |ui| self.settings(ui));
                     });
             });
-        self.show_settings = open;
+        self.show_settings = open && !close;
+    }
+
+    /// File → Drawing settings: what is saved with this drawing (its units and drafting
+    /// style), apart from Preferences, which are the app's.
+    pub(crate) fn drawing_settings_window(&mut self, ctx: &egui::Context) {
+        if !self.show_drawing_settings {
+            return;
+        }
+        let mut open = true;
+        let mut close = false;
+        theme::dialog(ctx, "Drawing settings")
+            .open(&mut open)
+            .show(ctx, |ui| {
+                ui.set_width(360.0);
+                close = theme::dialog_title(ui, "Drawing settings", true);
+                ui.label(
+                    egui::RichText::new(format!(
+                        "Saved with {}. A picked dimension or note can set its own style in \
+                         the Inspector.",
+                        self.file.name
+                    ))
+                    .small()
+                    .weak(),
+                );
+                let room = (ctx.content_rect().height() - 160.0).max(200.0);
+                egui::ScrollArea::vertical()
+                    .max_height(room)
+                    .min_scrolled_height(room.min(560.0))
+                    .show(ui, |ui| {
+                        ui.push_id("drawing_settings", |ui| {
+                            ui.set_max_width(ui.available_width() - 10.0);
+                            self.units_section(ui);
+                            self.drafting_section(ui);
+                        });
+                    });
+            });
+        self.show_drawing_settings = open && !close;
     }
 
     fn settings(&mut self, ui: &mut egui::Ui) {
@@ -316,9 +339,8 @@ impl DriftApp {
         ui.set_max_width(ui.available_width() - 10.0);
         theme::section(ui, "Appearance");
         ui.horizontal(|ui| {
-            egui::widgets::global_theme_preference_buttons(ui);
+            theme::appearance(ui);
         });
-        self.units_section(ui);
         theme::section(ui, "Grid and snapping");
         ui.checkbox(&mut self.show_grid, "Show the grid");
         ui.checkbox(&mut self.show_axes, "Show the origin axes");

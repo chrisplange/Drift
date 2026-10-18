@@ -152,6 +152,10 @@ pub fn copy_into(
             drift_core::AnnotationRef::Dimension(copy),
             src.shown(drift_core::AnnotationRef::Dimension(id)),
         );
+        dst.set_style_override(
+            drift_core::AnnotationRef::Dimension(copy),
+            src.style_override(drift_core::AnnotationRef::Dimension(id)),
+        );
         if src.is_driven(id) {
             let _ = dst.set_driven(copy, true);
         }

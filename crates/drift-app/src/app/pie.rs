@@ -332,7 +332,7 @@ fn paint(
         let key = key_for(slice.label).map(|k| {
             painter.layout_no_wrap(
                 k.name().to_owned(),
-                egui::FontId::monospace(11.0),
+                egui::FontId::proportional(theme::size::CAPTION),
                 visuals.weak_text_color(),
             )
         });

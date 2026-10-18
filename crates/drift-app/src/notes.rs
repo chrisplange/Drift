@@ -698,11 +698,12 @@ pub fn layout_annotations(
     doc: &Document,
     map: &ScreenMap,
 ) -> Vec<NoteLayout> {
-    let style: DraftStyle = doc.draft_style();
-    let font = DimStyle::of(&style).text;
     let s = |p: DVec2| map.to_screen(p);
     let mut out = Vec::new();
     for (id, a) in doc.annotations() {
+        // The drawing's style, with the annotation's own settings in place.
+        let style: DraftStyle = doc.draft_style_for(drift_core::AnnotationRef::Annotation(id));
+        let font = DimStyle::of(&style).text;
         let mut layout = NoteLayout {
             id,
             text: None,

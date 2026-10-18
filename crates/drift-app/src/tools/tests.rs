@@ -1202,7 +1202,7 @@ fn fillet_and_chamfer_size_with_the_pointer_in_steps() {
             if (radius - 3.0).abs() < 1e-9),
         "{shown:?}"
     );
-    assert_eq!(tool.measurement(&p).as_deref(), Some("R 3.0000 mm"));
+    assert_eq!(tool.measurement(&p).as_deref(), Some("R 3.000 mm"));
     // Alt sizes freely; far out, the size stops where the shorter line runs out.
     let mut free = ptr(&ed, &tool, v(0.92, 0.92));
     free.alt = true;
@@ -1230,7 +1230,7 @@ fn fillet_and_chamfer_size_with_the_pointer_in_steps() {
     tool.handle(Input::Drag(p), &mut ed);
     tool.handle(Input::DragEnd(p, Modifiers::default()), &mut ed);
     assert!((radius(&ed).unwrap() - 5.0).abs() < 1e-9);
-    assert_eq!(tool.measurement(&p).as_deref(), Some("R 5.0000 mm"));
+    assert_eq!(tool.measurement(&p).as_deref(), Some("R 5.000 mm"));
     // A radius typed while sizing goes on that corner.
     let mut ed = corner_fixture();
     click(&mut ed, &mut tool, v(0.0, 0.0));
@@ -1304,7 +1304,7 @@ fn a_fillet_is_resized_in_place() {
         assert_eq!(ed.hovered, Some(arc), "the fillet lights up");
         click(&mut ed, &mut tool, middle);
         assert!(tool.is_modal());
-        assert_eq!(tool.measurement(&p).as_deref(), Some("R 4.0000 mm"));
+        assert_eq!(tool.measurement(&p).as_deref(), Some("R 4.000 mm"));
         // Out to where a radius-5 arc would pass, and click.
         let p = ptr(&ed, &tool, v(1.5, 1.5));
         tool.handle(Input::Hover(p), &mut ed);

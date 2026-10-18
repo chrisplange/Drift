@@ -375,6 +375,8 @@ pub struct DriftApp {
     pending_pdf: Option<app::underlays_ui::PendingPdf>,
     /// An SVG or PDF file waiting for the import dialog.
     pending_import: Option<app::import_ui::PendingImport>,
+    /// Maximise the window once its first frame is drawn (see [`DriftApp::maximize_when_shown`]).
+    maximize: bool,
     /// Memory in use (bytes) as of the last check, when that was, and whether the user has
     /// been warned that it's high.
     memory: (u64, f64, bool),
@@ -392,6 +394,14 @@ pub fn start_memory_guard() {
 }
 
 impl DriftApp {
+    /// Maximise the window once its first frame is drawn. A window created maximised is
+    /// shown by Windows straight away, before anything is drawn in it (and then hidden again
+    /// until the first frame is ready): a flash. So a window last left maximised is created
+    /// at that size but not maximised, and maximised here.
+    pub fn maximize_when_shown(&mut self) {
+        self.maximize = true;
+    }
+
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let render_state = cc
             .wgpu_render_state
@@ -515,6 +525,7 @@ impl DriftApp {
             import_as_underlay: false,
             pending_pdf: None,
             pending_import: None,
+            maximize: false,
             memory: (0, f64::NEG_INFINITY, false),
             soak: soak::Soak::from_env(),
             #[cfg(not(target_arch = "wasm32"))]
@@ -870,6 +881,9 @@ impl eframe::App for DriftApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        if std::mem::take(&mut self.maximize) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
+        }
         let now = ctx.input(|i| i.time);
         let before = self.ui_signature();
         self.handle_file_events(now);

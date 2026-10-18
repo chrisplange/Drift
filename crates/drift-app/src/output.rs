@@ -605,7 +605,14 @@ pub fn sheet_drawing(
         .filter(|svg| !svg.is_empty())
         .and_then(|svg| drift_draft::logo::parse(svg).ok());
     let scale = drift_core::sheets::scale_text(views.iter().map(|v| v.scale));
-    drift_draft::sheet::draw_frame(sheet, &scale, number, logo.as_ref(), &mut d);
+    drift_draft::sheet::draw_frame(
+        sheet,
+        ed.doc.project(),
+        &scale,
+        number,
+        logo.as_ref(),
+        &mut d,
+    );
     // In the sheet's colours: what the preview shows is what prints.
     d.set_colours(sheet.colours);
     d
@@ -685,7 +692,9 @@ pub fn sheet_pages(
         .collect();
     if sheets.is_empty() {
         let mut sheet = Sheet::new("Sheet 1");
-        sheet.fields.title = title.to_owned();
+        if doc.project().name.trim().is_empty() {
+            sheet.fields.title = title.to_owned();
+        }
         let imperial = !doc.units().length.is_metric();
         let (view, port) = sheet_view(ed.bounds(), &sheet, imperial);
         let placed = PlacedView::new(port.view, &view, &port);

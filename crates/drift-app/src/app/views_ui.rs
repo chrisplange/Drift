@@ -4,7 +4,7 @@
 //! switch hides it alone.
 
 use drift_core::sheets::scale_label;
-use drift_core::{DVec2, View, ViewId};
+use drift_core::{Bounds, DVec2, View, ViewId};
 
 use crate::overlay::ScreenMap;
 use crate::*;
@@ -25,13 +25,37 @@ pub(crate) enum CropGrip {
     Resize(i8, i8),
 }
 
-/// A drag on a crop in progress: the view as it was, and the world point it started at.
+/// A drag on a crop in progress: the view as it was, the world point it started at, and
+/// what the dragged edge or corner snapped to.
 #[derive(Clone, Debug)]
 pub(crate) struct CropDrag {
     view: ViewId,
     grip: CropGrip,
     was: View,
     from: DVec2,
+    snap: Option<drift_geom::Snap>,
+}
+
+/// The points of `crop` a drag by `grip` carries: the dragged corner, or the middle of the
+/// dragged edge (only its own axis counts); for a move, the corners.
+fn dragged_points(crop: Bounds, grip: CropGrip) -> Vec<DVec2> {
+    let pick = |d: i8, lo: f64, hi: f64| match d {
+        -1 => lo,
+        1 => hi,
+        _ => (lo + hi) * 0.5,
+    };
+    match grip {
+        CropGrip::Move => vec![
+            crop.min,
+            DVec2::new(crop.max.x, crop.min.y),
+            crop.max,
+            DVec2::new(crop.min.x, crop.max.y),
+        ],
+        CropGrip::Resize(dx, dy) => vec![DVec2::new(
+            pick(dx, crop.min.x, crop.max.x),
+            pick(dy, crop.min.y, crop.max.y),
+        )],
+    }
 }
 
 /// `was` after a drag of `d` (world mm) by `grip`.
@@ -140,10 +164,17 @@ impl DriftApp {
         response: &egui::Response,
         map: &ScreenMap,
         pos: Option<egui::Pos2>,
+        snap: bool,
     ) -> bool {
         if let Some(drag) = self.crop_drag.clone() {
+            // The crop has the pointer: nothing under it is hovered meanwhile.
+            self.editor.hovered = None;
             if let Some(p) = response.interact_pointer_pos() {
-                let moved = dragged_crop(&drag.was, drag.grip, map.to_world(p) - drag.from);
+                let (d, found) = self.snap_crop_drag(&drag, map.to_world(p) - drag.from, snap);
+                if let Some(c) = &mut self.crop_drag {
+                    c.snap = found;
+                }
+                let moved = dragged_crop(&drag.was, drag.grip, d);
                 self.editor.doc.set_view(drag.view, moved);
             }
             if !response.dragged_by(PointerButton::Primary) {
@@ -175,6 +206,7 @@ impl DriftApp {
                 grip,
                 was,
                 from: map.to_world(from),
+                snap: None,
             });
             self.editor.doc.begin();
             return true;
@@ -203,6 +235,38 @@ impl DriftApp {
             });
         }
         false
+    }
+
+    /// A crop dragged by `d` (world mm), snapped: the dragged edge or corner (for a move,
+    /// whichever corner is nearest a snap) onto points, curves and the grid, as anything
+    /// placed does. Returns the drag to make, and the snap it found. Alt drags freely.
+    fn snap_crop_drag(
+        &self,
+        drag: &CropDrag,
+        d: DVec2,
+        snap: bool,
+    ) -> (DVec2, Option<drift_geom::Snap>) {
+        if !snap {
+            return (d, None);
+        }
+        let options = drift_geom::SnapOptions {
+            tolerance: PICK_RADIUS / self.camera.scale,
+            grid: self
+                .grid_snap
+                .then(|| drift_render::grid_info(&self.camera, self.imperial()).minor),
+        };
+        let best = dragged_points(drag.was.crop(), drag.grip)
+            .into_iter()
+            .filter_map(|p| {
+                let at = p + d;
+                let s = self.editor.snap(at, options, |_| false)?;
+                Some(((s.at - at).length(), s, s.at - at))
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0));
+        match best {
+            Some((_, s, nudge)) => (d + nudge, Some(s)),
+            None => (d, None),
+        }
     }
 
     /// The crops and names of the views on the canvas, and the picked one's grips.
@@ -277,6 +341,11 @@ impl DriftApp {
                     );
                 }
             }
+        }
+        // What a dragged crop snapped to, over its grips.
+        if let Some(s) = self.crop_drag.as_ref().and_then(|d| d.snap.as_ref()) {
+            let colour = crate::overlay::OverlayColors::new(dark).snap;
+            crate::overlay::snap_marker(painter, map, s, colour);
         }
     }
 

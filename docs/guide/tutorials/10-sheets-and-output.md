@@ -51,12 +51,34 @@ row for more:
 
 Click bare paper on the sheet (or its title block) and the **Inspector** shows the sheet:
 
-- **Sheet:** its **Number** (A-101) and **Name**. Its tab and the Sheets list show both.
+- **Sheet:** its **Number** (A-101), **Name** and **Status** (what it's issued for: type
+  one, or pick **For review**, **For permit**, **For construction** and so on from the menu
+  beside it). Its tab and the Sheets list show the number and name.
 - **Paper:** **Size** (A4 to A0, ANSI A to E) and **Landscape** or **Portrait**.
 - **Colours:** how the sheet prints (see [Colour, greyscale or black & white](#colour-greyscale-or-black--white)).
 - **Title block:** **Modern**, **ISO 7200**, **ASME Y14.1** or **None**. Then the fields:
-  title, drawn by, checked, date (**Today** fills it in), company and material.
-  The scale, the sheet number ("1 / 2") and the revision fill themselves in.
+  title, drawn by, checked, company, material and date (**Today** fills it in). The scale,
+  the sheet number ("1 / 2") and the revision fill themselves in.
+- **Project settings…:** what every sheet shares (see below).
+
+### The project
+
+**File → Drawing settings → Project** holds what every sheet's title block shares: the
+project's **Name** (the title on every sheet), **Number**, **Client**, **Address** and
+**Company**. Your first sheet names the project after the file; change it once here and
+every sheet follows.
+
+A sheet's own **Title** or **Company**, typed in its Inspector, wins over the project's.
+Left empty, the field shows the project's in grey ("· from project").
+
+**Title block fields** says what else the title blocks carry:
+
+- **Mechanical:** each sheet's material.
+- **Architectural:** the client, the project number and each sheet's status, and on paper
+  A3 and larger the address too. Material is left out.
+
+A drawing from an earlier version of Drift, with the same title (or company) on every
+sheet, opens with it as the project's.
 - **Logo:** **Choose SVG…** puts a logo in the title block. It's kept in the drawing.
 - **Revisions:** **Add revision** adds a row with the next letter, today's date and the
   author. The latest revision shows in the title block.

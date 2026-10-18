@@ -3,7 +3,7 @@
 
 use drift_core::PlacedView;
 use drift_core::sheets::scale_label;
-use drift_core::{Bounds, DVec2, Rgb, Sheet, TitleBlock};
+use drift_core::{Bounds, DVec2, FieldSet, Project, Rgb, Sheet, TitleBlock};
 
 use crate::page::{Align, Drawing, Pen, Prim, TextStyle, styled_width};
 
@@ -196,17 +196,20 @@ fn cell(d: &mut Drawing, min: DVec2, max: DVec2, label: &str, value: &str, value
     );
 }
 
-/// Draw the border, title block and revision table. `scale` is what the title block's scale
-/// reads; `sheet_no` is (this sheet, of how many); `logo` goes in the title block.
+/// Draw the border, title block and revision table. `project` fills in what the sheet
+/// leaves to it, and says which fields the title block carries; `scale` is what the title
+/// block's scale reads; `sheet_no` is (this sheet, of how many); `logo` goes in the title
+/// block.
 pub fn draw_frame(
     sheet: &Sheet,
+    project: &Project,
     scale: &str,
     sheet_no: (usize, usize),
     logo: Option<&crate::logo::Logo>,
     d: &mut Drawing,
 ) {
     if sheet.title_block == TitleBlock::Modern {
-        draw_modern(sheet, scale, sheet_no, logo, d);
+        draw_modern(sheet, project, scale, sheet_no, logo, d);
         return;
     }
     let b = border(sheet);
@@ -240,7 +243,8 @@ pub fn draw_frame(
         DVec2::new(size.x, mid.y),
     );
 
-    let f = &sheet.fields;
+    let f = &sheet.fields_with(project);
+    let arch = project.fields == FieldSet::Architectural;
     let sheet_text = format!("{} / {}", sheet_no.0, sheet_no.1);
     let rev = sheet.revision().unwrap_or("-").to_owned();
     if let Some(tb) = title_block_bounds(sheet) {
@@ -250,11 +254,17 @@ pub fn draw_frame(
         let left_w = 60.0_f64.min((x1 - x0) / 3.0);
         let xl = x0 + left_w;
         let row = (y1 - y0) / 4.0;
-        let labels = match sheet.title_block {
-            TitleBlock::Ansi => ["CONTRACTOR", "DRAWN", "CHECKED", "MATERIAL"],
-            _ => ["Company", "Drawn by", "Checked by", "Material"],
+        let labels = match (sheet.title_block, arch) {
+            (TitleBlock::Ansi, false) => ["CONTRACTOR", "DRAWN", "CHECKED", "MATERIAL"],
+            (TitleBlock::Ansi, true) => ["CLIENT", "DRAWN", "CHECKED", "STATUS"],
+            (_, false) => ["Company", "Drawn by", "Checked by", "Material"],
+            (_, true) => ["Client", "Drawn by", "Checked by", "Status"],
         };
-        let values = [&f.company, &f.author, &f.checked, &f.material];
+        let values = if arch {
+            [&project.client, &f.author, &f.checked, &f.status]
+        } else {
+            [&f.company, &f.author, &f.checked, &f.material]
+        };
         // The logo, at the right of the company's cell.
         if let Some(logo) = logo {
             let room = DVec2::new(left_w * 0.45, row - 2.0);
@@ -302,6 +312,20 @@ pub fn draw_frame(
         );
         let w = x1 - xl;
         let cols: Vec<(&str, String, f64)> = match sheet.title_block {
+            TitleBlock::Ansi if arch => vec![
+                ("PROJECT NO", project.number.clone(), 0.2),
+                ("DWG NO", f.number.clone(), 0.35),
+                ("REV", rev, 0.12),
+                ("SCALE", scale.to_owned(), 0.16),
+                ("SHEET", sheet_text, 0.17),
+            ],
+            _ if arch => vec![
+                ("Project no.", project.number.clone(), 0.2),
+                ("Drawing number", f.number.clone(), 0.27),
+                ("Rev", rev, 0.13),
+                ("Scale", scale.to_owned(), 0.2),
+                ("Sheet", sheet_text, 0.2),
+            ],
             TitleBlock::Ansi => vec![
                 ("SIZE", ansi_letter(sheet), 0.12),
                 ("DWG NO", f.number.clone(), 0.43),
@@ -422,6 +446,7 @@ fn field_sized(
 
 fn draw_modern(
     sheet: &Sheet,
+    project: &Project,
     scale: &str,
     sheet_no: (usize, usize),
     logo: Option<&crate::logo::Logo>,
@@ -431,7 +456,8 @@ fn draw_modern(
     let (x0, y0, x1) = (b.min.x, b.min.y, b.max.x);
     let y1 = y0 + STRIP;
     let width = x1 - x0;
-    let f = &sheet.fields;
+    let f = &sheet.fields_with(project);
+    let arch = project.fields == FieldSet::Architectural;
     let ink = |w: f64| Pen::new(w).with_color(INK);
     let faint = Pen::new(THIN_PEN).with_color(FAINT);
 
@@ -544,17 +570,40 @@ fn draw_modern(
             false,
         );
         field(d, mx + pad, bottom, "Date", &f.date, room, false);
+        let (name, value) = if arch {
+            ("Status", &f.status)
+        } else {
+            ("Material", &f.material)
+        };
+        field(d, mx + pad + cell_w, bottom, name, value, room, false);
+        rule(d, mx);
+        hero_end = mx;
+    }
+    // Who it's for and where, on paper wide enough.
+    if arch && width >= 300.0 {
+        let px = hero_end - 2.0 * cell_w;
+        let room = cell_w - pad - 4.0;
+        field(d, px + pad, top, "Client", &project.client, room, false);
         field(
             d,
-            mx + pad + cell_w,
-            bottom,
-            "Material",
-            &f.material,
+            px + pad + cell_w,
+            top,
+            "Project no.",
+            &project.number,
             room,
             false,
         );
-        rule(d, mx);
-        hero_end = mx;
+        field(
+            d,
+            px + pad,
+            bottom,
+            "Address",
+            &project.address,
+            2.0 * cell_w - pad - 4.0,
+            false,
+        );
+        rule(d, px);
+        hero_end = px;
     }
 
     // The logo leads the strip, with the title beside it.
@@ -789,7 +838,7 @@ mod tests {
             by: "CP".into(),
         });
         let mut d = Drawing::new(sheet.size());
-        draw_frame(&sheet, "1:2", (1, 2), None, &mut d);
+        draw_frame(&sheet, &Project::default(), "1:2", (1, 2), None, &mut d);
         let b = d.bounds();
         assert!(b.min.x >= -1e-9 && b.min.y >= -1e-9);
         assert!(b.max.x <= 420.0 + 1e-9 && b.max.y <= 297.0 + 1e-9);
@@ -830,7 +879,7 @@ mod tests {
                 by: "CL".into(),
             });
             let mut d = Drawing::new(sheet.size());
-            draw_frame(&sheet, "1:1", (3, 12), None, &mut d);
+            draw_frame(&sheet, &Project::default(), "1:1", (3, 12), None, &mut d);
             let b = border(&sheet);
             // The view sits above the strip; the strip spans the frame.
             let area = drawing_area(&sheet);

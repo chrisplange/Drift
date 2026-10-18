@@ -87,6 +87,9 @@ fault can't exhaust the computer; the sketch is restored next time.
 **File → Drawing settings…** (also in the command palette) holds what is saved in the open
 drawing rather than as a preference:
 
+- **Project:** the **Name**, **Number**, **Client**, **Address** and **Company** every
+  sheet's title block shares, and the **Title block fields** (**Mechanical** or
+  **Architectural**). See [The project](../tutorials/10-sheets-and-output.md#the-project).
 - **Units:** **Metric** or **Imperial**, the **Format**, **Decimals** or the fraction to
   **Round to**, and **Angles** decimals. See [Units and length formats](units.md).
 - **Drafting:** **ISO 129** or **ASME Y14.5**, then scale, text height, **Arrows**,

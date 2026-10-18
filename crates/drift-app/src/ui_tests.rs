@@ -4670,7 +4670,14 @@ fn a_logo_goes_in_the_title_block() {
     let border = drift_draft::sheet::border(&page);
     let parsed = drift_draft::logo::parse(logo).unwrap();
     let mut d = drift_draft::page::Drawing::new(page.size());
-    drift_draft::sheet::draw_frame(&page, "1:1", (1, 1), Some(&parsed), &mut d);
+    drift_draft::sheet::draw_frame(
+        &page,
+        &Default::default(),
+        "1:1",
+        (1, 1),
+        Some(&parsed),
+        &mut d,
+    );
     let orange = d
         .items
         .iter()
@@ -7554,4 +7561,201 @@ fn a_section_mark_makes_its_view_and_reads_its_number() {
         h.state().editor.history.undo_label().map(str::to_owned),
         before
     );
+}
+
+#[test]
+fn every_sheet_shares_the_project() {
+    use drift_core::{FieldSet, TitleBlock};
+    let Some(mut h) = harness() else { return };
+    h.get_by_label("File").click();
+    h.run();
+    h.get_by_label("Open example").click();
+    h.run();
+    for _ in 0..2 {
+        h.get_by_label("Add a sheet").click();
+        h.run();
+        h.run();
+    }
+    // The first sheet named the project after the file; the sheets leave their titles to it.
+    let project = |h: &Harness<'_, DriftApp>| h.state().editor.doc.project().clone();
+    let stem = h.state().file_stem();
+    assert_eq!(project(&h).name, stem);
+    let ids: Vec<_> = h.state().editor.doc.sheets().map(|(id, _)| id).collect();
+    for id in &ids {
+        assert!(
+            h.state()
+                .editor
+                .doc
+                .sheet(*id)
+                .unwrap()
+                .fields
+                .title
+                .is_empty()
+        );
+    }
+    let texts = |h: &Harness<'_, DriftApp>| -> Vec<String> {
+        h.state()
+            .preview_cache
+            .as_ref()
+            .unwrap()
+            .2
+            .items
+            .iter()
+            .filter_map(|i| match &i.prim {
+                drift_draft::page::Prim::Text { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .collect()
+    };
+    assert!(texts(&h).contains(&"MATERIAL".to_owned()));
+    save_png("drift_ui_project_before.png", &mut h);
+
+    // Drawing settings → Project: the architectural fields, as one undo step.
+    h.state_mut().show_drawing_settings = true;
+    h.run();
+    h.get_by_label("Architectural").click();
+    h.run();
+    assert_eq!(project(&h).fields, FieldSet::Architectural);
+    assert_eq!(h.state().editor.history.undo_label(), Some("Edit project"));
+    {
+        let ed = &mut h.state_mut().editor;
+        let mut p = ed.doc.project().clone();
+        p.name = "Riverside house".into();
+        p.number = "2026-014".into();
+        p.client = "Harbour Trust".into();
+        p.address = "4 Quay Lane, Bristol".into();
+        p.company = "Plange Studio".into();
+        ed.doc.begin();
+        ed.doc.set_project(p);
+        let mut s = ed.doc.sheet(ids[1]).unwrap().clone();
+        s.fields.status = "For permit".into();
+        ed.doc.set_sheet(ids[1], s);
+        ed.commit("Project");
+    }
+    h.run();
+    h.run();
+    save_png("drift_ui_project_settings.png", &mut h);
+    h.state_mut().show_drawing_settings = false;
+    h.run();
+    h.run();
+    let shown = texts(&h);
+    for want in [
+        "Riverside house",
+        "Harbour Trust",
+        "2026-014",
+        "4 Quay Lane, Bristol",
+        "For permit",
+        "PLANGE STUDIO",
+        "STATUS",
+    ] {
+        assert!(shown.iter().any(|t| t == want), "{want} in {shown:?}");
+    }
+    assert!(!shown.contains(&"MATERIAL".to_owned()));
+    save_png("drift_ui_project_after.png", &mut h);
+
+    // A sheet's own title wins; the others keep the project's.
+    {
+        let ed = &mut h.state_mut().editor;
+        let mut s = ed.doc.sheet(ids[1]).unwrap().clone();
+        s.fields.title = "Ground floor plan".into();
+        s.title_block = TitleBlock::Iso;
+        ed.doc.begin();
+        ed.doc.set_sheet(ids[1], s);
+        ed.commit("Own title");
+    }
+    h.run();
+    h.run();
+    let iso = texts(&h);
+    assert!(iso.iter().any(|t| t == "Ground floor plan"), "{iso:?}");
+    assert!(iso.iter().any(|t| t == "Project no."), "{iso:?}");
+    let painter = h.ctx.layer_painter(egui::LayerId::background());
+    let pdf = h.state_mut().pdf_bytes(&painter);
+    let pdf = String::from_utf8_lossy(&pdf);
+    assert!(
+        pdf.contains("(Riverside house) Tj"),
+        "the other sheet's title"
+    );
+    // Saved and read back.
+    let saved = drift_io::save(&h.state().editor.doc, &Default::default());
+    let (read, _) = drift_io::load(&saved).unwrap();
+    assert_eq!(read.project(), h.state().editor.doc.project());
+}
+
+#[test]
+fn view_crops_snap_like_anything_placed() {
+    use crate::app::views_ui::CropGrip;
+    let Some(mut h) = harness() else { return };
+    // Four loose points, and no grid, so only the points pull.
+    let [a, b, c, d] = [
+        DVec2::new(0.0, 0.0),
+        DVec2::new(20.0, 12.0),
+        DVec2::new(32.0, 18.0),
+        DVec2::new(-30.0, -20.0),
+    ];
+    {
+        let ed = &mut h.state_mut().editor;
+        ed.doc.begin();
+        for p in [a, b, c, d] {
+            ed.doc.add_point(p);
+        }
+        ed.commit("Setup");
+    }
+    h.state_mut().grid_snap = false;
+    h.run();
+    // A couple of pixels off each point, in world units.
+    let off = |h: &Harness<'_, DriftApp>| DVec2::new(2.0, -1.5) / h.state().camera.scale;
+    let crop = |h: &Harness<'_, DriftApp>| h.state().editor.doc.views().next().unwrap().1.crop();
+    let near = |p: DVec2, q: DVec2| p.distance(q) < 1e-9;
+
+    // The View tool's corners land on the points.
+    h.state_mut().set_tool(ToolKind::View);
+    h.run();
+    let o = off(&h);
+    drag_world(&mut h, a + o, b - o);
+    let id = h.state().editor.doc.views().next().unwrap().0;
+    assert!(
+        near(crop(&h).min, a) && near(crop(&h).max, b),
+        "{:?}",
+        crop(&h)
+    );
+
+    // A dragged corner grip lands on a point.
+    h.state_mut().picked_view = Some(id);
+    h.run();
+    let painter = h.ctx.layer_painter(egui::LayerId::background());
+    let map = screen_map(&h);
+    assert_eq!(
+        h.state().crop_grip_at(&painter, &map, map.to_screen(b)),
+        Some((id, CropGrip::Resize(1, 1)))
+    );
+    let (from, to) = (screen(&h, b), screen(&h, c + o));
+    drag_steps(&mut h, from, to, 6, Some("drift_ui_crop_snap.png"));
+    assert!(near(crop(&h).max, c), "{:?}", crop(&h));
+    assert!(near(crop(&h).min, a));
+
+    // Moved by its edge, the corner nearest a point lands on it, keeping its size.
+    let size = crop(&h).size();
+    // (Along its edge, clear of the grip at the edge's middle.)
+    let grab = DVec2::new(a.x, a.y + (c.y - a.y) * 0.25);
+    let map = screen_map(&h);
+    assert_eq!(
+        h.state().crop_grip_at(&painter, &map, map.to_screen(grab)),
+        Some((id, CropGrip::Move))
+    );
+    drag_world(&mut h, grab, grab + (d - a) + o);
+    assert!(near(crop(&h).min, d), "{:?}", crop(&h));
+    assert!(crop(&h).size().distance(size) < 1e-9);
+    assert_eq!(
+        h.state().editor.history.undo_label(),
+        Some("Move view crop")
+    );
+
+    // With Alt held it goes where it's let go.
+    h.event(Event::ModifiersChanged(EguiModifiers::ALT));
+    h.run();
+    let corner = crop(&h).max;
+    drag_world(&mut h, corner, b + o);
+    h.event(Event::ModifiersChanged(EguiModifiers::NONE));
+    h.run();
+    assert!(!near(crop(&h).max, b), "free of snaps: {:?}", crop(&h));
 }

@@ -12,6 +12,16 @@ use drift_core::{
 use drift_geom::{PointRole, SceneIndex, Snap};
 use drift_solver::{Definition, Param, SolveOptions, SolveReport};
 
+/// Where some geometry is, to put it back after a drag step that went wrong
+/// ([`Editor::drag`]).
+#[derive(Default)]
+struct Geometry {
+    points: Vec<(EntityId, DVec2)>,
+    circles: Vec<(EntityId, f64)>,
+    /// Arcs' radii.
+    radii: std::collections::HashMap<EntityId, f64>,
+}
+
 /// Why an edit was refused.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EditError {
@@ -532,21 +542,97 @@ impl Editor {
     /// Move entities by `delta` inside an open transaction, keeping constraints satisfied.
     /// `dragged` are the parameters that should follow the pointer exactly. Returns false (and
     /// leaves the geometry where it was) if the move is impossible.
+    ///
+    /// A move that would turn an arc inside out or put a tangent curve on the other side of
+    /// its line (a solve can meet every relation that way) is taken in smaller steps, which
+    /// follow the shape round; if even small steps turn it, the move is refused.
     pub fn drag(&mut self, ids: &[EntityId], delta: DVec2, dragged: &[Param]) -> bool {
         // Anchors carry their curve handles.
         let ids = &self.with_handles(ids);
         // Only what's connected to the dragged geometry is solved.
         let scope = self.drag_scope(ids);
-        self.doc.translate(ids.iter().copied(), delta);
-        let report = self.solve_in(dragged, scope.clone());
-        let ok = !self.new_conflicts(&report);
+        let before = self.geometry_of(&scope);
+        let ok = self.drag_in_steps(ids, delta, dragged, &scope, &before, 0);
         if !ok {
-            self.doc.translate(ids.iter().copied(), -delta);
-            self.solve_in(dragged, scope.clone());
+            self.restore_geometry(&before);
         }
         // Only the connected part can have moved.
         self.index.update_moved(&self.doc, scope.iter().copied());
         ok
+    }
+
+    /// One step of [`drag`](Self::drag) from `before` (the scope's geometry now), split in
+    /// halves (up to `MAX_SPLITS` deep) where it turns the shape. False, with the geometry
+    /// part way, if it can't go.
+    fn drag_in_steps(
+        &mut self,
+        ids: &[EntityId],
+        delta: DVec2,
+        dragged: &[Param],
+        scope: &std::rc::Rc<std::collections::HashSet<EntityId>>,
+        before: &Geometry,
+        depth: u32,
+    ) -> bool {
+        const MAX_SPLITS: u32 = 6;
+        let orientation = drift_solver::Orientation::of(&self.doc, Some(scope));
+        self.doc.translate(ids.iter().copied(), delta);
+        let report = drift_solver::solve(
+            &mut self.doc,
+            &SolveOptions {
+                dragged: dragged.to_vec(),
+                scope: Some(scope.clone()),
+                // Rounds keep their size where the move leaves it open (moving a centre on
+                // its own would otherwise shrink or swell its arc as a first guess).
+                radii: before.radii.clone(),
+                ..Default::default()
+            },
+        );
+        let conflicts = self.new_conflicts(&report);
+        if !conflicts && !orientation.turned(&self.doc) {
+            return true;
+        }
+        self.restore_geometry(before);
+        // (Only a turn is worth smaller steps: a conflict is the same at any size.)
+        if conflicts
+            || depth >= MAX_SPLITS
+            || !self.drag_in_steps(ids, delta / 2.0, dragged, scope, before, depth + 1)
+        {
+            return false;
+        }
+        let halfway = self.geometry_of(scope);
+        self.drag_in_steps(ids, delta / 2.0, dragged, scope, &halfway, depth + 1)
+    }
+
+    /// Where the points of `scope` are and the sizes of its circles and arcs, for
+    /// [`restore_geometry`](Self::restore_geometry) and to keep rounds their size.
+    fn geometry_of(&self, scope: &std::collections::HashSet<EntityId>) -> Geometry {
+        let mut out = Geometry::default();
+        for &id in scope {
+            match self.doc.get(id).map(|e| e.kind) {
+                Some(EntityKind::Point(p)) => out.points.push((id, p)),
+                Some(EntityKind::Circle { radius, .. }) => out.circles.push((id, radius)),
+                Some(EntityKind::Arc { .. }) => {
+                    if let Some(r) = drift_solver::radius_of(&self.doc, id) {
+                        out.radii.insert(id, r);
+                    }
+                }
+                _ => {}
+            }
+        }
+        out
+    }
+
+    fn restore_geometry(&mut self, geometry: &Geometry) {
+        for &(id, p) in &geometry.points {
+            if self.doc.point(id).ok() != Some(p) {
+                let _ = self.doc.set_point(id, p);
+            }
+        }
+        for &(id, r) in &geometry.circles {
+            if drift_solver::radius_of(&self.doc, id) != Some(r) {
+                let _ = self.doc.set_radius(id, r);
+            }
+        }
     }
 
     /// Resize a circle inside an open transaction, keeping constraints satisfied (the radius

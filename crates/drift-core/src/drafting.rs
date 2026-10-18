@@ -6,6 +6,7 @@ use glam::DVec2;
 
 use crate::document::EntityId;
 use crate::layers::{LayerId, LineWeight, Rgb};
+use crate::sheets::ViewId;
 use crate::units::{LengthFormat, Units};
 
 /// Stable identifier of a fill or hatch.
@@ -308,21 +309,25 @@ pub enum Annotation {
     },
     /// A section mark: the cutting line from `a` to `b`, with a flag at each end carrying
     /// its letter and, if given, the sheet the section is drawn on. The flags point the way
-    /// the section looks: to the left of a → b, or the right if `flip`.
+    /// the section looks: to the left of a → b, or the right if `flip`. Linked to a `view`,
+    /// the flags read that view's number and sheet instead.
     Section {
         a: DVec2,
         b: DVec2,
         label: String,
         sheet: String,
         flip: bool,
+        view: Option<ViewId>,
     },
     /// An elevation mark at `at`: a flag pointing the way the elevation looks (`angle`,
-    /// degrees counter-clockwise from +x), with its number and, if given, its sheet.
+    /// degrees counter-clockwise from +x), with its number and, if given, its sheet. Linked
+    /// to a `view`, the flag reads that view's number and sheet instead.
     Elevation {
         at: DVec2,
         angle: f64,
         label: String,
         sheet: String,
+        view: Option<ViewId>,
     },
 }
 
@@ -340,6 +345,22 @@ impl Annotation {
             Annotation::ChamferCallout { line, .. } => vec![*line],
             Annotation::Ordinate { origin, point, .. } => vec![*origin, *point],
             Annotation::Section { .. } | Annotation::Elevation { .. } => Vec::new(),
+        }
+    }
+
+    /// The view a section or elevation mark points at.
+    pub fn view(&self) -> Option<ViewId> {
+        match self {
+            Annotation::Section { view, .. } | Annotation::Elevation { view, .. } => *view,
+            _ => None,
+        }
+    }
+
+    /// Point a section or elevation mark at `to` (or at nothing); other annotations are left
+    /// as they are.
+    pub fn set_view(&mut self, to: Option<ViewId>) {
+        if let Annotation::Section { view, .. } | Annotation::Elevation { view, .. } = self {
+            *view = to;
         }
     }
 

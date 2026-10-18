@@ -35,7 +35,15 @@ pub(crate) enum LeaderGrip {
 const PLUS_OUT: f32 = 14.0;
 
 /// A mark's label and the sheet it refers to.
-fn mark_fields(ui: &mut egui::Ui, label: &mut String, sheet: &mut String, example: &str) {
+/// A section or elevation mark's label, and the view it points at or the sheet it names.
+fn mark_fields(
+    ui: &mut egui::Ui,
+    doc: &drift_core::Document,
+    label: &mut String,
+    sheet: &mut String,
+    view: &mut Option<drift_core::ViewId>,
+    example: &str,
+) {
     theme::row(ui, "Label", |ui| {
         ui.add(
             egui::TextEdit::singleline(label)
@@ -43,14 +51,49 @@ fn mark_fields(ui: &mut egui::Ui, label: &mut String, sheet: &mut String, exampl
                 .desired_width(60.0),
         );
     });
-    theme::row(ui, "On sheet", |ui| {
-        ui.add(
-            egui::TextEdit::singleline(sheet)
-                .hint_text("e.g. A-201")
-                .desired_width(ui.available_width() - 8.0),
-        )
-        .on_hover_text("The sheet the view is drawn on: written in the lower half of the flag");
+    theme::row(ui, "View", |ui| {
+        let title = |v: drift_core::ViewId| doc.view(v).map_or("None", |v| v.title());
+        egui::ComboBox::from_id_salt("mark_view")
+            .selected_text(view.map_or("None", title))
+            .width(ui.available_width() - 8.0)
+            .show_ui(ui, |ui| {
+                ui.selectable_value(view, None, "None");
+                for (id, v) in doc.views() {
+                    ui.selectable_value(view, Some(id), v.title());
+                }
+            })
+            .response
+            .on_hover_text(
+                "The view the mark points at: its flag reads the view's number and sheet",
+            );
     });
+    match *view {
+        Some(v) => {
+            let (number, on) = doc
+                .view_reference(v)
+                .unwrap_or_else(|| ("–".to_owned(), "–".to_owned()));
+            theme::row(ui, "Reads", |ui| {
+                let r = ui.label(format!("{number} / {on}"));
+                if number == "–" {
+                    r.on_hover_text("The view isn't on a sheet yet");
+                } else {
+                    r.on_hover_text("The view's number on its sheet, and the sheet's number");
+                }
+            });
+        }
+        None => {
+            theme::row(ui, "On sheet", |ui| {
+                ui.add(
+                    egui::TextEdit::singleline(sheet)
+                        .hint_text("e.g. A-201")
+                        .desired_width(ui.available_width() - 8.0),
+                )
+                .on_hover_text(
+                    "The sheet the view is drawn on: written in the lower half of the flag",
+                );
+            });
+        }
+    }
 }
 
 impl DriftApp {
@@ -915,9 +958,10 @@ impl DriftApp {
                 label,
                 sheet,
                 flip,
+                view,
             } => {
                 theme::section(ui, "Mark");
-                mark_fields(ui, label, sheet, "A");
+                mark_fields(ui, &self.editor.doc, label, sheet, view, "A");
                 theme::row(ui, "Direction", |ui| {
                     if ui
                         .button("Flip")
@@ -940,10 +984,11 @@ impl DriftApp {
                 angle,
                 label,
                 sheet,
+                view,
                 ..
             } => {
                 theme::section(ui, "Mark");
-                mark_fields(ui, label, sheet, "1");
+                mark_fields(ui, &self.editor.doc, label, sheet, view, "1");
                 theme::row(ui, "Facing", |ui| {
                     ui.add(
                         egui::DragValue::new(angle)

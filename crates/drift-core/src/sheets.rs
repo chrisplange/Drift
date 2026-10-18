@@ -230,7 +230,8 @@ pub struct Revision {
     pub by: String,
 }
 
-/// The title block's fields. Scale, sheet number and revision are filled in automatically.
+/// A sheet's own title block fields. Scale, sheet number and revision are filled in
+/// automatically; a title or company left empty is the project's (see [`Project`]).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct TitleFields {
     pub title: String,
@@ -240,7 +241,65 @@ pub struct TitleFields {
     pub date: String,
     pub company: String,
     pub material: String,
+    /// What the sheet is issued for (`For permit`, `For construction`).
+    pub status: String,
 }
+
+/// Which fields the title blocks carry.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FieldSet {
+    /// Parts and assemblies: material.
+    #[default]
+    Mechanical,
+    /// Buildings: client, address, project number and status.
+    Architectural,
+}
+
+impl FieldSet {
+    pub const ALL: [FieldSet; 2] = [FieldSet::Mechanical, FieldSet::Architectural];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            FieldSet::Mechanical => "Mechanical",
+            FieldSet::Architectural => "Architectural",
+        }
+    }
+
+    pub fn key(self) -> &'static str {
+        match self {
+            FieldSet::Mechanical => "mechanical",
+            FieldSet::Architectural => "architectural",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|f| f.key() == s)
+    }
+}
+
+/// What every sheet of the drawing shares: the project it is for (Revit's Project
+/// Information). A sheet's own title or company, where set, wins over the project's.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Project {
+    /// The project's name: the title on every sheet.
+    pub name: String,
+    pub number: String,
+    pub client: String,
+    pub address: String,
+    pub company: String,
+    pub fields: FieldSet,
+}
+
+/// Common sheet statuses, offered when setting one.
+pub const STATUSES: [&str; 7] = [
+    "Preliminary",
+    "For review",
+    "For approval",
+    "For permit",
+    "For tender",
+    "For construction",
+    "As built",
+];
 
 /// Where a view sits on the paper: its middle and its size, in paper millimetres.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -452,6 +511,18 @@ impl Sheet {
             revisions: Vec::new(),
             colours: SheetColours::Colour,
         }
+    }
+
+    /// Its title block fields with the project's filled in where its own are empty.
+    pub fn fields_with(&self, project: &Project) -> TitleFields {
+        let mut f = self.fields.clone();
+        if f.title.trim().is_empty() {
+            f.title.clone_from(&project.name);
+        }
+        if f.company.trim().is_empty() {
+            f.company.clone_from(&project.company);
+        }
+        f
     }
 
     /// Paper width and height in mm, oriented.

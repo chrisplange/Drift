@@ -6,7 +6,7 @@
 //! ```json
 //! {
 //!   "format": "drift",
-//!   "version": 29,
+//!   "version": 30,
 //!   "meta": {"title":"Bracket","units":"mm","generator":"Drift 0.1.0"},
 //!   "display": {"length":"architectural","fraction":16},
 //!   "variables": [
@@ -83,8 +83,10 @@ pub const EXTENSION: &str = "drift";
 /// 26 = adds `styles` (a dimension's or annotation's own settings over the drafting style);
 /// 27 = views are the model's (`views`: a named crop at a scale), placed on sheets by their
 /// `viewports` (a sheet's own `views` become model views when read); 28 = adds a view's
-/// `hidden_layers`; 29 = adds a section or elevation mark's `view` (the view it points at).
-pub const FORMAT_VERSION: u32 = 29;
+/// `hidden_layers`; 29 = adds a section or elevation mark's `view` (the view it points at);
+/// 30 = adds the `project` the sheets share (name, number, client, address, company and
+/// field set) and a sheet's `status`.
+pub const FORMAT_VERSION: u32 = 30;
 const FORMAT_TAG: &str = "drift";
 
 /// Document-level properties stored alongside the geometry.
@@ -814,6 +816,9 @@ struct FileRecord {
     /// The title blocks' logo, as SVG text.
     #[serde(default)]
     logo: Option<String>,
+    /// The project the sheets share.
+    #[serde(default)]
+    project: Option<sheets::ProjectRecord>,
     /// The fonts the drawing carries, and the one its annotations are set in.
     #[serde(default)]
     fonts: Option<fonts::FontsRecord>,
@@ -975,6 +980,10 @@ pub fn save(doc: &Document, meta: &Metadata) -> String {
     if !doc.logo().is_empty() {
         let l = serde_json::to_string(doc.logo()).expect("logo serializes");
         out.push_str(&format!("  \"logo\": {l},\n"));
+    }
+    if let Some(p) = sheets::project_record(doc.project()) {
+        let p = serde_json::to_string(&p).expect("project serializes");
+        out.push_str(&format!("  \"project\": {p},\n"));
     }
     if let Some(record) = fonts::fonts_record(doc.fonts(), &doc.fonts_in_use()) {
         let f = serde_json::to_string(&record).expect("fonts serialize");
@@ -1640,6 +1649,10 @@ pub fn load_with_notes(text: &str) -> Result<(Document, Metadata, Vec<String>), 
     if let Some(d) = file.drafting {
         doc.set_draft_style(drafting::parse_draft(d)?);
     }
+    match file.project {
+        Some(p) => doc.set_project(sheets::parse_project(p)?),
+        None => lift_project(&mut doc),
+    }
     if let Some(current) = &file.current_layer {
         doc.set_current_layer(parse_layer_id(current)?)
             .map_err(LoadError::Document)?;
@@ -1707,6 +1720,36 @@ pub fn load_with_notes(text: &str) -> Result<(Document, Metadata, Vec<String>), 
         );
     }
     Ok((doc, file.meta, notes_out))
+}
+
+/// A file without a project (from before v30): a title or company every sheet shares
+/// becomes the project's, and the sheets' own are cleared, so they print as before and a new
+/// sheet gets them too.
+fn lift_project(doc: &mut Document) {
+    let sheets: Vec<(drift_core::SheetId, drift_core::Sheet)> =
+        doc.sheets().map(|(id, s)| (id, s.clone())).collect();
+    let shared = |get: fn(&drift_core::Sheet) -> &String| -> Option<String> {
+        let first = get(&sheets.first()?.1).trim().to_owned();
+        (!first.is_empty() && sheets.iter().all(|(_, s)| get(s).trim() == first)).then_some(first)
+    };
+    let title = shared(|s| &s.fields.title);
+    let company = shared(|s| &s.fields.company);
+    if title.is_none() && company.is_none() {
+        return;
+    }
+    let mut project = doc.project().clone();
+    for (id, mut sheet) in sheets {
+        if let Some(t) = &title {
+            project.name.clone_from(t);
+            sheet.fields.title.clear();
+        }
+        if let Some(c) = &company {
+            project.company.clone_from(c);
+            sheet.fields.company.clear();
+        }
+        doc.set_sheet(id, sheet);
+    }
+    doc.set_project(project);
 }
 
 /// Upgrade a parsed file of any supported version to the current [`FORMAT_VERSION`].
@@ -1798,7 +1841,7 @@ mod tests {
         let text = save(&doc, &Metadata::default());
         let expected = r#"{
   "format": "drift",
-  "version": 29,
+  "version": 30,
   "meta": {"units":"mm"},
   "entities": [
     {"type":"point","id":"e1","at":[0.0,0.0]},
@@ -2287,6 +2330,52 @@ mod tests {
     }
 
     #[test]
+    fn the_project_is_saved_and_older_sheets_share_theirs() {
+        use drift_core::{FieldSet, Project, Sheet};
+        let mut doc = Document::new();
+        doc.set_project(Project {
+            name: "Riverside house".into(),
+            number: "2026-014".into(),
+            client: "Harbour Trust".into(),
+            address: "4 Quay Lane".into(),
+            company: "Plange Studio".into(),
+            fields: FieldSet::Architectural,
+        });
+        let mut sheet = Sheet::new("Ground floor");
+        sheet.fields.status = "For permit".into();
+        doc.add_sheet(sheet);
+        let text = save(&doc, &Metadata::default());
+        assert!(text.contains(r#""fields":"architectural""#), "{text}");
+        assert!(text.contains(r#""status":"For permit""#), "{text}");
+        let (loaded, _) = load(&text).unwrap();
+        assert_eq!(loaded, doc);
+        // No project: nothing written.
+        let plain = save(&Document::new(), &Metadata::default());
+        assert!(!plain.contains(r#""project""#));
+        // Before v30, a title and company every sheet shares become the project's.
+        let old = r#"{
+  "format": "drift",
+  "version": 29,
+  "meta": {"units":"mm"},
+  "entities": [],
+  "sheets": [
+    {"id":"s1","name":"One","paper":"A3","title_block":"modern","fields":{"title":"Plate","company":"Acme","number":"A-101"}},
+    {"id":"s2","name":"Two","paper":"A3","title_block":"modern","fields":{"title":"Plate","company":"Other"}}
+  ]
+}"#;
+        let (old, _) = load(old).unwrap();
+        assert_eq!(old.project().name, "Plate");
+        assert_eq!(old.project().company, "", "the companies differ");
+        let sheets: Vec<_> = old.sheets().map(|(_, s)| s.fields.clone()).collect();
+        assert!(sheets.iter().all(|f| f.title.is_empty()));
+        assert_eq!(sheets[0].company, "Acme");
+        assert_eq!(sheets[0].number, "A-101");
+        // An unknown field set is refused.
+        let bad = text.replace(r#""fields":"architectural""#, r#""fields":"nautical""#);
+        assert!(load(&bad).is_err());
+    }
+
+    #[test]
     fn a_mark_linked_to_a_missing_view_loads_unlinked() {
         let text = r#"{
   "format": "drift",
@@ -2719,7 +2808,7 @@ mod tests {
         doc.add_text(drift_core::SketchText::new("A", DVec2::ZERO, 3.0));
 
         let text = save(&doc, &Metadata::default());
-        assert!(text.contains("\"version\": 29"));
+        assert!(text.contains("\"version\": 30"));
         // A mark points at its view.
         assert!(text.contains(r#""flip":true,"view":"w"#), "{text}");
         assert!(text.contains(r#""styles": ["#) && text.contains(r#""alt_units":"none""#));

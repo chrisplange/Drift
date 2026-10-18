@@ -208,7 +208,7 @@ pub(crate) enum Output {
 
 impl DriftApp {
     /// The file name without its extension, for exports.
-    fn file_stem(&self) -> String {
+    pub(crate) fn file_stem(&self) -> String {
         let name = &self.file.name;
         name.rsplit_once('.')
             .map_or(name.as_str(), |(s, _)| s)
@@ -232,7 +232,10 @@ impl DriftApp {
             .last()
             .map(|(_, s)| s.fields.number.clone());
         sheet.fields.number = crate::app::sheet_editor::next_sheet_number(last.as_deref());
-        sheet.fields.title = self.file_stem();
+        // The title is the project's; with no project name yet, the file's.
+        if self.editor.doc.project().name.trim().is_empty() {
+            sheet.fields.title = self.file_stem();
+        }
         sheet.fields.date = today();
         sheet
     }
@@ -251,6 +254,12 @@ impl DriftApp {
             crate::output::sheet_view(self.fit_bounds(), &sheet, self.imperial());
         view.name = self.next_view_name();
         self.editor.doc.begin();
+        // The first sheet names the project after the file: every sheet's title.
+        if !sheet.fields.title.is_empty() {
+            let mut project = self.editor.doc.project().clone();
+            project.name = std::mem::take(&mut sheet.fields.title);
+            self.editor.doc.set_project(project);
+        }
         port.view = self.editor.doc.add_view(view);
         sheet.viewports.push(port);
         let id = self.editor.doc.add_sheet(sheet);
@@ -743,6 +752,73 @@ impl DriftApp {
         self.output_buttons(ui);
     }
 
+    /// Drawing settings → Project: what every sheet's title block shares. Typing merges into
+    /// one undo step.
+    pub(crate) fn project_section(&mut self, ui: &mut egui::Ui) {
+        theme::section(ui, "Project");
+        ui.label(
+            egui::RichText::new(
+                "Shared by every sheet's title block. A sheet's own title or company, set in \
+                 its Inspector, wins.",
+            )
+            .small()
+            .weak(),
+        );
+        ui.add_space(2.0);
+        let before = self.editor.doc.project().clone();
+        let mut p = before.clone();
+        let mut typing = false;
+        for (label, value, hint) in [
+            ("Name", &mut p.name, "Riverside house"),
+            ("Number", &mut p.number, "2026-014"),
+            ("Client", &mut p.client, ""),
+            ("Address", &mut p.address, ""),
+            ("Company", &mut p.company, "Your practice"),
+        ] {
+            theme::row(ui, label, |ui| {
+                typing |= ui
+                    .add(
+                        egui::TextEdit::singleline(value)
+                            .hint_text(hint)
+                            .desired_width(ui.available_width() - 8.0),
+                    )
+                    .changed();
+            });
+        }
+        ui.add_space(4.0);
+        ui.label("Title block fields");
+        let sets = drift_core::FieldSet::ALL.map(|f| (f, f.label()));
+        if let Some(f) = theme::segmented(ui, p.fields, &sets) {
+            p.fields = f;
+        }
+        ui.label(
+            egui::RichText::new(match p.fields {
+                drift_core::FieldSet::Mechanical => "For parts: each sheet's material.",
+                drift_core::FieldSet::Architectural => {
+                    "For buildings: client, address, project number, and each sheet's status."
+                }
+            })
+            .small()
+            .weak(),
+        );
+        if p != before {
+            let label = if typing {
+                "Edit project text"
+            } else {
+                "Edit project"
+            };
+            self.editor.doc.begin();
+            self.editor.doc.set_project(p);
+            let tx = self.editor.doc.commit(label);
+            if typing && self.editor.history.undo_label() == Some(label) {
+                self.editor.history.merge_into_last(tx);
+            } else {
+                self.editor.history.push(tx);
+            }
+            self.editor.sync();
+        }
+    }
+
     /// The Inspector's settings for a sheet itself: its number and name, paper, title block
     /// and revisions. Returns true if text was typed (edits then merge into one undo step).
     pub(crate) fn paper_settings(&mut self, ui: &mut egui::Ui, sheet: &mut Sheet) -> bool {
@@ -764,6 +840,30 @@ impl DriftApp {
                         .desired_width(ui.available_width() - 8.0),
                 )
                 .changed();
+        });
+        theme::row(ui, "Status", |ui| {
+            // A field of its own, with the common statuses in a menu beside it.
+            let room = ui.available_width() - 8.0;
+            typing |= ui
+                .add(
+                    egui::TextEdit::singleline(&mut sheet.fields.status)
+                        .hint_text("For permit")
+                        .desired_width(room - 44.0),
+                )
+                .on_hover_text("What the sheet is issued for")
+                .changed();
+            egui::ComboBox::from_id_salt("sheet_status")
+                .selected_text("")
+                .width(20.0)
+                .show_ui(ui, |ui| {
+                    for s in drift_core::sheets::STATUSES {
+                        if ui.selectable_label(sheet.fields.status == s, s).clicked() {
+                            sheet.fields.status = s.to_owned();
+                        }
+                    }
+                })
+                .response
+                .on_hover_text("Common statuses");
         });
         theme::section(ui, "Paper");
         theme::row(ui, "Size", |ui| {
@@ -815,14 +915,28 @@ impl DriftApp {
                 self.editor.commit("Remove logo");
             }
         });
+        // The project's title and company show as hints: typing one here is this sheet's own.
+        let project = self.editor.doc.project().clone();
+        let or = |own: &'static str, shared: &str| -> String {
+            if shared.trim().is_empty() {
+                own.to_owned()
+            } else {
+                format!("{}  · from project", shared.trim())
+            }
+        };
+        let (title_hint, company_hint) =
+            (or("Drawing title", &project.name), or("", &project.company));
         let f = &mut sheet.fields;
-        for (label, value, hint) in [
-            ("Title", &mut f.title, "Drawing title"),
+        let mut rows = vec![
+            ("Title", &mut f.title, title_hint.as_str()),
             ("Drawn by", &mut f.author, ""),
             ("Checked", &mut f.checked, ""),
-            ("Company", &mut f.company, ""),
-            ("Material", &mut f.material, ""),
-        ] {
+            ("Company", &mut f.company, company_hint.as_str()),
+        ];
+        if project.fields == drift_core::FieldSet::Mechanical {
+            rows.push(("Material", &mut f.material, ""));
+        }
+        for (label, value, hint) in rows {
             theme::row(ui, label, |ui| {
                 typing |= ui
                     .add(
@@ -839,6 +953,18 @@ impl DriftApp {
                 .changed();
             if ui.small_button("Today").clicked() {
                 f.date = today();
+            }
+        });
+        theme::row(ui, "Project", |ui| {
+            if ui
+                .button("Project settings…")
+                .on_hover_text(
+                    "The project's name, number, client, address and company, shared by every \
+                     sheet (File → Drawing settings)",
+                )
+                .clicked()
+            {
+                self.show_drawing_settings = true;
             }
         });
         theme::section(ui, "Revisions");

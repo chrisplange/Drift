@@ -3,7 +3,7 @@
 use drift_core::{
     Bounds, DVec2, PaperSize, Revision, Sheet, SheetColours, SheetId, TitleBlock, TitleFields,
 };
-use drift_core::{LayerId, View, ViewFrame, ViewId, Viewport};
+use drift_core::{FieldSet, LayerId, Project, View, ViewFrame, ViewId, Viewport};
 use serde::{Deserialize, Serialize};
 
 use crate::{LoadError, parse_prefixed};
@@ -37,6 +37,57 @@ pub(crate) struct FieldsRecord {
     company: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     material: String,
+    /// What the sheet is issued for (v30).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    status: String,
+}
+
+/// The project the sheets share (v30).
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ProjectRecord {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    name: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    number: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    client: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    address: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    company: String,
+    /// `architectural`; left out for mechanical.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    fields: Option<String>,
+}
+
+pub(crate) fn project_record(p: &Project) -> Option<ProjectRecord> {
+    (*p != Project::default()).then(|| ProjectRecord {
+        name: p.name.clone(),
+        number: p.number.clone(),
+        client: p.client.clone(),
+        address: p.address.clone(),
+        company: p.company.clone(),
+        fields: (p.fields != FieldSet::Mechanical).then(|| p.fields.key().into()),
+    })
+}
+
+pub(crate) fn parse_project(r: ProjectRecord) -> Result<Project, LoadError> {
+    let fields = match r.fields.as_deref() {
+        None => FieldSet::Mechanical,
+        Some(k) => FieldSet::parse(k).ok_or_else(|| LoadError::MissingField {
+            id: "project".into(),
+            field: "fields",
+        })?,
+    };
+    Ok(Project {
+        name: r.name,
+        number: r.number,
+        client: r.client,
+        address: r.address,
+        company: r.company,
+        fields,
+    })
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -232,6 +283,7 @@ pub(crate) fn sheet_record(id: SheetId, s: &Sheet) -> SheetRecord {
             date: f.date.clone(),
             company: f.company.clone(),
             material: f.material.clone(),
+            status: f.status.clone(),
         },
         revisions: s
             .revisions
@@ -398,6 +450,7 @@ pub(crate) fn parse_sheet(r: SheetRecord) -> Result<(SheetId, Sheet, Vec<OldView
             date: f.date,
             company: f.company,
             material: f.material,
+            status: f.status,
         },
         revisions: r
             .revisions

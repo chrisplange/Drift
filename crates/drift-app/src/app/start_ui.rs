@@ -506,6 +506,7 @@ impl DriftApp {
                     .show(ui, |ui| {
                         ui.push_id("drawing_settings", |ui| {
                             ui.set_max_width(ui.available_width() - 10.0);
+                            self.project_section(ui);
                             self.units_section(ui);
                             self.drafting_section(ui);
                         });

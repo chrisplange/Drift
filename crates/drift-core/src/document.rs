@@ -330,6 +330,7 @@ enum Key {
     Draft,
     Patterns,
     Logo,
+    Project,
     Fonts,
     Sheet(SheetId),
     View(ViewId),
@@ -361,6 +362,7 @@ enum Record {
     Draft(DraftStyle),
     Patterns(String),
     Logo(String),
+    Project(crate::Project),
     Fonts(crate::fonts::FontSet),
     Sheet(Sheet),
     View(View),
@@ -419,6 +421,8 @@ pub struct Document {
     patterns: String,
     /// The title blocks' logo, as SVG text ("" for none), so it travels with the file.
     logo: String,
+    /// The project every sheet's title block shares.
+    project: crate::Project,
     /// Fonts kept in the drawing, and the one its annotations are set in.
     fonts: crate::fonts::FontSet,
     sheets: BTreeMap<SheetId, Sheet>,
@@ -498,6 +502,7 @@ impl Default for Document {
             draft: DraftStyle::default(),
             patterns: String::new(),
             logo: String::new(),
+            project: crate::Project::default(),
             fonts: Default::default(),
             sheets: BTreeMap::new(),
             views: BTreeMap::new(),
@@ -782,6 +787,7 @@ impl Document {
             Key::Draft => Some(Record::Draft(self.draft)),
             Key::Patterns => Some(Record::Patterns(self.patterns.clone())),
             Key::Logo => Some(Record::Logo(self.logo.clone())),
+            Key::Project => Some(Record::Project(self.project.clone())),
             Key::Fonts => Some(Record::Fonts(self.fonts.clone())),
             Key::Sheet(id) => self.sheets.get(&id).cloned().map(Record::Sheet),
             Key::View(id) => self.views.get(&id).cloned().map(Record::View),
@@ -907,6 +913,8 @@ impl Document {
             (Key::Patterns, _) => {}
             (Key::Logo, Some(Record::Logo(l))) => self.logo = l,
             (Key::Logo, _) => {}
+            (Key::Project, Some(Record::Project(p))) => self.project = p,
+            (Key::Project, _) => {}
             (Key::Fonts, Some(Record::Fonts(f))) => self.fonts = f,
             (Key::Fonts, _) => {}
             (Key::Text(id), Some(Record::Text(t))) => {
@@ -2044,6 +2052,7 @@ impl Document {
         keys.push(Key::Draft);
         keys.push(Key::Patterns);
         keys.push(Key::Logo);
+        keys.push(Key::Project);
         keys.push(Key::Fonts);
         keys.extend(self.sheets.keys().map(|id| Key::Sheet(*id)));
         keys.extend(self.views.keys().map(|id| Key::View(*id)));
@@ -3146,6 +3155,18 @@ impl Document {
         if self.logo != svg {
             self.touch_key(Key::Logo);
             self.logo = svg;
+        }
+    }
+
+    /// The project the sheets are for: their shared title block fields.
+    pub fn project(&self) -> &crate::Project {
+        &self.project
+    }
+
+    pub fn set_project(&mut self, project: crate::Project) {
+        if self.project != project {
+            self.touch_key(Key::Project);
+            self.project = project;
         }
     }
 

@@ -11,7 +11,7 @@ This guide is for **0.1.0-beta.1.1**. It is written for architects, designers an
 who already know a CAD or drawing program (Revit, AutoCAD, SolidWorks, Illustrator,
 Affinity) but have never used Drift.
 
-> **Alpha software.** Save often. A file saved by a newer Drift won't open in an older one,
+> **Beta software.** Save often. A file saved by a newer Drift won't open in an older one,
 > so everyone testing together should use the same build.
 
 ## How the guide is organised

@@ -5,7 +5,7 @@ every session: navigating, finding commands and saving.
 
 ## Install Drift
 
-Drift is an alpha, so the builds aren't signed yet. Your computer will warn you the first
+Drift is in beta, and its builds aren't signed yet. Your computer will warn you the first
 time you open one.
 
 ### Windows
@@ -57,7 +57,7 @@ In the browser:
 
 ### Updating
 
-From 0.1.0-alpha.5 on, Drift updates itself. When it starts it asks GitHub whether there is
+Drift updates itself. When it starts it asks GitHub whether there is
 a newer release. If there is, a notice at the bottom right shows what's new, with three
 choices:
 

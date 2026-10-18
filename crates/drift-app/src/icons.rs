@@ -43,6 +43,8 @@ pub enum Glyph {
     Delete,
     /// Back to the inherited value: an anticlockwise arrow.
     Reset,
+    /// Add a view to a sheet: a frame with a plus at its corner.
+    AddView,
 }
 
 /// Maps a 20 × 20 design grid into `rect`.
@@ -632,6 +634,12 @@ pub fn glyph(painter: &egui::Painter, rect: Rect, glyph: Glyph, color: Color32) 
         Glyph::Search => {
             p.circle(8.5, 8.5, 5.0);
             p.line((12.2, 12.2), (16.5, 16.5));
+        }
+        Glyph::AddView => {
+            p.poly(&[(3.0, 5.0), (13.0, 5.0), (13.0, 13.0), (3.0, 13.0)], true);
+            p.line((6.0, 10.0), (10.0, 8.0));
+            p.line((16.0, 12.5), (16.0, 18.5));
+            p.line((13.0, 15.5), (19.0, 15.5));
         }
         Glyph::Reset => {
             p.arc(10.0, 10.5, 5.5, -2.4, 4.3);

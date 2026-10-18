@@ -14,6 +14,8 @@ use crate::tools::{Overlay, ToolKind};
 
 /// A visual audit of every surface, in both themes.
 mod audit;
+/// The sheets and views workflow, step by step.
+mod audit_sheets;
 /// Screenshots for the user guide.
 mod docs;
 /// The update notice and Preferences → Updates.
@@ -308,6 +310,32 @@ fn constrain_a_line_from_the_properties_panel() {
 }
 
 // ---- M3: typed input, Smart Dimension, on-canvas annotations ----
+
+/// Add view on the sheet shown: the canvas goes to the model with the View tool, where the
+/// view's crop is dragged out from `a` to `b` (world points); the view then goes on the
+/// sheet, which is shown again.
+fn add_view_by_region(h: &mut Harness<'_, DriftApp>, a: DVec2, b: DVec2) {
+    h.get_all_by_label("Add view")
+        .next()
+        .expect("Add view")
+        .click();
+    h.run();
+    h.run();
+    assert!(!h.state().sheet_preview, "the model, to drag the crop on");
+    assert_eq!(h.state().tool.kind(), ToolKind::View);
+    let (pa, pb) = (screen(h, a), screen(h, b));
+    h.hover_at(pa);
+    h.run();
+    button(h, pa, true);
+    h.run();
+    for k in 1..=5 {
+        h.hover_at(pa + (pb - pa) * (k as f32 / 5.0));
+        h.run();
+    }
+    button(h, pb, false);
+    h.run();
+    h.run();
+}
 
 fn type_text(h: &mut Harness<'_, DriftApp>, text: &str) {
     h.event(Event::Text(text.into()));
@@ -2560,18 +2588,29 @@ fn sheets_preview_and_export() {
     assert!(placed(&h, id)[0].dimensions);
     h.run();
 
-    // Dragging on the sheet moves the drawing within it, as one undo step.
+    // A plain drag on the view that fills the sheet leaves it be (a drag moves a view, and
+    // this one has nowhere to move).
     let rect = h.state().canvas_rect;
     let from = rect.center();
-    h.hover_at(from);
-    h.run();
-    button(&h, from, true);
-    h.run();
-    for k in 1..=4 {
-        h.hover_at(from + egui::vec2(10.0 * k as f32, 0.0));
+    let drag = |h: &mut Harness<'_, DriftApp>| {
+        h.hover_at(from);
         h.run();
-    }
-    button(&h, from + egui::vec2(40.0, 0.0), false);
+        button(h, from, true);
+        h.run();
+        for k in 1..=4 {
+            h.hover_at(from + egui::vec2(10.0 * k as f32, 0.0));
+            h.run();
+        }
+        button(h, from + egui::vec2(40.0, 0.0), false);
+        h.run();
+    };
+    drag(&mut h);
+    assert_eq!(placed(&h, id)[0].center, views[0].center);
+    // Alt-drag slides the drawing within it, as one undo step.
+    h.event(Event::ModifiersChanged(EguiModifiers::ALT));
+    h.run();
+    drag(&mut h);
+    h.event(Event::ModifiersChanged(EguiModifiers::NONE));
     h.run();
     let moved = placed(&h, id)[0].center;
     assert!(
@@ -4279,10 +4318,11 @@ fn a_sheet_holds_several_views() {
         "the first view fills the sheet"
     );
 
-    // Add view: a second one, in its own frame beside nothing yet, titled, and picked.
-    h.get_by_label("Add view").click();
-    h.run();
-    h.run();
+    // Add view: its crop is dragged out in the model (round the bore) with the View tool; it
+    // goes on the sheet in a frame of its own where there is room, titled, and picked.
+    add_view_by_region(&mut h, DVec2::new(55.0, 25.0), DVec2::new(100.0, 58.0));
+    assert!(h.state().sheet_preview, "back on the sheet");
+    assert_eq!(h.state().tool.kind(), ToolKind::Select);
     let s = sheet(&h);
     let views = placed(&h, id);
     assert_eq!(views.len(), 2);
@@ -4355,10 +4395,14 @@ fn a_sheet_holds_several_views() {
         app.view_grip_at(rect, &s, &views, corner, false),
         Some((1, ViewGrip::Resize(1, 1)))
     );
-    // Outside it: the view that fills the sheet, which only pans.
+    // Outside it: the view that fills the sheet, which stays put; Alt-drag pans it.
     let elsewhere = to_screen(DVec2::new(100.0, 150.0));
     assert_eq!(
         app.view_grip_at(rect, &s, &views, elsewhere, false),
+        Some((0, ViewGrip::Fixed))
+    );
+    assert_eq!(
+        app.view_grip_at(rect, &s, &views, elsewhere, true),
         Some((0, ViewGrip::Pan))
     );
 
@@ -6211,6 +6255,9 @@ fn views_line_up_on_the_sheet() {
     }
     h.state_mut().sheet_view = 1;
     h.state_mut().sheet_preview = true;
+    // The picked view's settings are in the Inspector.
+    h.state_mut().sheet_pick = crate::app::sheet_editor::SheetPick::View;
+    h.state_mut().show_panel(Panel::Inspector);
     h.run();
     h.run();
     let offset = |h: &Harness<'_, DriftApp>, i: usize| {
@@ -6778,6 +6825,8 @@ fn views_are_drawn_on_the_canvas_and_placed_on_sheets() {
     let sheet = h.state().current_sheet().expect("a sheet");
     assert_eq!(placed(&h, sheet).len(), 1);
     h.state_mut().picked_view = Some(id);
+    // (New sheet shows the sheet in the Inspector; the Views list is in the Sheets panel.)
+    h.state_mut().show_panel(Panel::Sheets);
     h.run();
     h.get_by_label("Place on sheet").scroll_to_me();
     h.run();
@@ -6796,7 +6845,11 @@ fn views_are_drawn_on_the_canvas_and_placed_on_sheets() {
     h.state_mut().place_view(other, id, None);
     assert_eq!(h.state().editor.doc.sheets_showing(id), [sheet, other]);
     h.run();
-    let row = format!("View 1\n{} · on Sheet 1, Sheet 2", scale_label(view.scale));
+    // (Sheets by number and name.)
+    let row = format!(
+        "View 1\n{} · on A-101  Sheet 1, A-102  Sheet 2",
+        scale_label(view.scale)
+    );
     assert!(
         h.query_by_label(&row).is_some(),
         "the Views list says where"
@@ -6936,4 +6989,158 @@ fn a_picked_dimension_sets_its_own_style_and_resets_it() {
     h.run();
     assert!(h.state().show_drawing_settings);
     save_png("drift_ui_drawing_settings.png", &mut h);
+}
+
+#[test]
+fn sheets_are_tabs_with_their_own_tools_and_inspector() {
+    use crate::app::sheet_editor::SheetPick;
+    let Some(mut h) = harness() else { return };
+    h.get_by_label("File").click();
+    h.run();
+    h.get_by_label("Open example").click();
+    h.run();
+    // The tabs over the canvas: the model, and + for a sheet.
+    assert!(h.query_by_label("Model").is_some());
+    h.get_by_label("Add a sheet").click();
+    h.run();
+    h.run();
+    let first = h.state().current_sheet().expect("a sheet");
+    let doc_sheet =
+        |h: &Harness<'_, DriftApp>, id| h.state().editor.doc.sheet(id).cloned().unwrap();
+    assert_eq!(doc_sheet(&h, first).fields.number, "A-101");
+    assert!(h.state().sheet_preview);
+    assert_eq!(
+        h.state().sheet_pick,
+        SheetPick::Paper,
+        "the sheet itself, in the Inspector"
+    );
+    assert!(h.query_by_label("Number").is_some());
+    // The next one counts on.
+    h.get_by_label("Add a sheet").click();
+    h.run();
+    h.run();
+    let second = h.state().current_sheet().unwrap();
+    assert_ne!(second, first);
+    assert_eq!(doc_sheet(&h, second).fields.number, "A-102");
+    // Its tab, and the first's.
+    h.get_by_label("A-101  Sheet 1").click();
+    h.run();
+    assert_eq!(h.state().current_sheet(), Some(first));
+
+    // On a sheet the rail holds sheet tools; a drawing tool (from a menu or the palette)
+    // takes you back to the model with it.
+    assert!(
+        h.query_by_label("Line").is_none(),
+        "no drawing tools on a sheet"
+    );
+    assert!(h.query_by_label("Add view").is_some());
+    h.state_mut().set_tool(ToolKind::Line);
+    h.run();
+    assert!(!h.state().sheet_preview);
+    assert_eq!(h.state().tool.kind(), ToolKind::Line);
+    h.key_press(Key::Escape);
+    h.run();
+    h.get_by_label("A-101  Sheet 1").click();
+    h.run();
+    h.run();
+    assert!(h.state().sheet_preview);
+
+    // A plain drag on the view that fills the sheet leaves it be.
+    let before = placed(&h, first)[0].center;
+    let mid = h.state().canvas_rect.center();
+    h.hover_at(mid);
+    h.run();
+    button(&h, mid, true);
+    h.run();
+    for k in 1..=4 {
+        h.hover_at(mid + egui::vec2(15.0 * k as f32, 0.0));
+        h.run();
+    }
+    button(&h, mid + egui::vec2(60.0, 0.0), false);
+    h.run();
+    assert_eq!(placed(&h, first)[0].center, before);
+
+    // A view drawn for this sheet: it lands on free paper, picked, and stays inside the
+    // border when dragged far out.
+    add_view_by_region(&mut h, DVec2::new(55.0, 25.0), DVec2::new(100.0, 58.0));
+    assert_eq!(h.state().sheet_pick, SheetPick::View);
+    let s = doc_sheet(&h, first);
+    let area = drift_draft::sheet::drawing_area(&s);
+    let frame = placed(&h, first)[1].frame;
+    let to_screen = |h: &Harness<'_, DriftApp>, p: DVec2| {
+        let app = h.state();
+        let d = (p - app.preview.center) * f64::from(app.preview.zoom);
+        app.canvas_rect.center() + egui::vec2(d.x as f32, -d.y as f32)
+    };
+    let from = to_screen(&h, frame.at);
+    h.hover_at(from);
+    h.run();
+    button(&h, from, true);
+    h.run();
+    for k in 1..=5 {
+        h.hover_at(from + egui::vec2(-150.0 * k as f32, 0.0));
+        h.run();
+    }
+    button(&h, from + egui::vec2(-750.0, 0.0), false);
+    h.run();
+    let moved = placed(&h, first)[1].frame.bounds();
+    assert!(
+        moved.min.x >= area.min.x - 1e-9,
+        "kept inside the border: {moved:?}"
+    );
+    // A click on bare paper picks the sheet.
+    let paper = to_screen(&h, area.max - DVec2::splat(5.0));
+    h.hover_at(paper);
+    h.run();
+    button(&h, paper, true);
+    h.run();
+    button(&h, paper, false);
+    h.run();
+    assert_eq!(h.state().sheet_pick, SheetPick::Paper);
+    // The Model tab goes back.
+    h.get_by_label("Model").click();
+    h.run();
+    assert!(!h.state().sheet_preview);
+    save_png("drift_ui_sheet_tabs.png", &mut h);
+}
+
+#[test]
+fn place_on_sheet_finds_free_paper() {
+    use crate::app::sheet_editor::drawing_extent;
+    let Some(mut h) = harness() else { return };
+    h.get_by_label("File").click();
+    h.run();
+    h.get_by_label("Open example").click();
+    h.run();
+    h.get_by_label("Add a sheet").click();
+    h.run();
+    h.run();
+    let sheet = h.state().current_sheet().expect("a sheet");
+    // A view drawn for the sheet, then placed again from the Views list: the second copy
+    // goes on free paper at the view's scale, clear of what is drawn there already.
+    add_view_by_region(&mut h, DVec2::new(55.0, 25.0), DVec2::new(100.0, 58.0));
+    let id = placed(&h, sheet)[1].id;
+    let scale = h.state().editor.doc.view(id).unwrap().scale;
+    h.state_mut().picked_view = Some(id);
+    h.state_mut().show_panel(Panel::Sheets);
+    h.run();
+    h.get_by_label("Place again").scroll_to_me();
+    h.run();
+    h.get_by_label("Place again").click();
+    h.run();
+    let on = placed(&h, sheet);
+    assert_eq!(on.len(), 3);
+    let new = &on[2];
+    assert_eq!(new.id, id);
+    assert_eq!(new.scale, scale, "at the scale the view has");
+    let model = h.state().fit_bounds();
+    let frame = new.frame.bounds();
+    for v in &on[..2] {
+        let drawn = drawing_extent(v, model);
+        assert!(
+            !frame.intersects(&drawn),
+            "{frame:?} is clear of the drawing at {drawn:?}"
+        );
+    }
+    assert!(!frame.intersects(&on[1].frame.bounds()));
 }

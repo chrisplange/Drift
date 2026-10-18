@@ -525,6 +525,8 @@ impl DriftApp {
             divider(ui);
         }
         match kind {
+            // On a sheet the model's selection isn't what is being worked on.
+            ToolKind::Select if self.sheet_preview => {}
             ToolKind::Select => self.selection_actions(ui, now),
             ToolKind::Circle | ToolKind::Ellipse | ToolKind::EllipseArc => {
                 if let Some(k) = keyed_choice(

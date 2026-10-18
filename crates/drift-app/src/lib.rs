@@ -322,7 +322,12 @@ pub struct DriftApp {
     align_with: Option<usize>,
     /// The view picked on the current sheet, and a change to its views to make.
     sheet_view: usize,
-    pending_view: Option<app::sheets_ui::ViewAction>,
+    /// What is picked on the sheet shown: a view, or the sheet itself.
+    sheet_pick: app::sheet_editor::SheetPick,
+    /// Add view from a sheet in progress: the sheet the view drawn next goes on.
+    add_view_on: Option<drift_core::SheetId>,
+    /// A message to show in the next frame (from code that doesn't know the time).
+    status_next: Option<String>,
     /// The model view picked in the Views list or on the canvas (its crop shows grips).
     picked_view: Option<drift_core::ViewId>,
     /// A view placed on sheets that Delete was pressed for, waiting for a yes.
@@ -509,7 +514,9 @@ impl DriftApp {
             view_guides: Vec::new(),
             align_with: None,
             sheet_view: 0,
-            pending_view: None,
+            sheet_pick: Default::default(),
+            add_view_on: None,
+            status_next: None,
             picked_view: None,
             confirm_delete_view: None,
             show_view_crops: true,
@@ -907,6 +914,9 @@ impl eframe::App for DriftApp {
         if let Some(notice) = self.editor.notice.take() {
             self.set_status(notice, true, now);
         }
+        if let Some(text) = self.status_next.take() {
+            self.set_status(text, false, now);
+        }
         self.check_memory(now);
         #[cfg(not(target_arch = "wasm32"))]
         self.updates_tick(&ctx, now);
@@ -954,6 +964,9 @@ impl eframe::App for DriftApp {
         self.dock(ui, dock::Side::Left);
         self.dock(ui, dock::Side::Right);
         egui::CentralPanel::no_frame().show(ui, |ui| {
+            // The model and each sheet, as tabs over the canvas, right on top of it.
+            ui.spacing_mut().item_spacing.y = 0.0;
+            self.canvas_tabs(ui);
             if self.sheet_preview {
                 self.sheet_canvas(ui);
             } else {

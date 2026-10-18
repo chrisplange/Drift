@@ -101,6 +101,7 @@ pub(crate) fn snap_drag(
                     _ => {}
                 }
             }
+            ViewGrip::Fixed => {}
         }
         // What it can go to: other frames and the drawing area; other drawings at its scale.
         let mut best: Option<(f64, AlignGuide)> = None;

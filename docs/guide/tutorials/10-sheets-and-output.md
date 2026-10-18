@@ -22,27 +22,29 @@ only one). What you see in the sheet preview is exactly what prints.
 
 1. Open the example (**File → Open example**). Hatch the plate if you like (see
    [Fills and hatches](06-fills-and-hatches.md)).
-2. Open the **Sheets** panel (the page icon among the panel tabs).
-3. Click **New sheet**.
+2. Click **+** in the tabs over the canvas (or **New sheet** in the **Sheets** panel).
 
-Drift makes an A3 landscape sheet with the **Modern** title block. It also makes a view of
-the whole drawing, **View 1**, and places it to fill the drawing area. It picks the
-largest standard scale at which the drawing, dimensions included, clears the title block,
-and switches the canvas to the sheet.
+Drift makes sheet **A-101**, A3 landscape, with the **Modern** title block. It also makes a
+view of the whole drawing, **View 1**, and places it to fill the drawing area, at the
+largest standard scale at which the drawing, dimensions included, clears the title block.
+The sheet is shown, with its settings in the **Inspector**. The next sheet you make is
+**A-102**, and so on.
 
-The canvas is now the sheet editor. Scroll to zoom, drag with the middle or right button to
-pan, and press Shift+F to fit the sheet. Esc, **Back to model**, or **View → Sheet**
-returns to the model. **Show sheet** in the panel, or **View → Sheet**, brings the sheet
-back.
+The tabs over the canvas are the model and each sheet: click one to show it. On a sheet,
+scroll to zoom, drag with the middle or right button to pan, and press Shift+F to fit the
+sheet. The rail holds what you can do on paper: **Select**, **Add view** and **Back to
+model**. Esc, or the **Model** tab, returns to the model; picking a drawing tool (from a
+menu or the command palette) takes you back to the model with it.
 
 ## 2. Set up the paper and title block
 
-In the **Sheets** panel:
+Click bare paper on the sheet (or its title block) and the **Inspector** shows the sheet:
 
-- **Paper:** **Name**, **Size** (A4 to A0, ANSI A to E) and **Landscape** or **Portrait**.
+- **Sheet:** its **Number** (A-101) and **Name**. Its tab and the Sheets list show both.
+- **Paper:** **Size** (A4 to A0, ANSI A to E) and **Landscape** or **Portrait**.
 - **Colours:** how the sheet prints (see [Colour, greyscale or black & white](#colour-greyscale-or-black--white)).
 - **Title block:** **Modern**, **ISO 7200**, **ASME Y14.1** or **None**. Then the fields:
-  title, number, drawn by, checked, date (**Today** fills it in), company and material.
+  title, drawn by, checked, date (**Today** fills it in), company and material.
   The scale, the sheet number ("1 / 2") and the revision fill themselves in.
 - **Logo:** **Choose SVG…** puts a logo in the title block. It's kept in the drawing.
 - **Revisions:** **Add revision** adds a row with the next letter, today's date and the
@@ -50,7 +52,7 @@ In the **Sheets** panel:
 
 ## 3. Draw a view on the canvas
 
-1. Press Esc to go back to the model.
+1. Click the **Model** tab (or press Esc) to go back to the model.
 2. Pick the **View** tool (under **Annotate** in the toolbar).
 3. Drag a rectangle round the bore, or click two opposite corners.
 
@@ -93,9 +95,13 @@ and the sheets it's on (or **not placed**).
 
 ## 5. Put the view on the sheet
 
-1. Click **Show sheet**.
+1. Click the sheet's tab, **A-101**.
 2. Drag **Detail A** from the **Views** list onto the sheet, and let go where it should go.
    You can also click **Place on sheet**: Drift puts it beside the views already there.
+
+**Add view** in the rail (or V on a sheet) does both steps from the sheet: the canvas
+shows the model with the **View** tool, you drag the crop, and the new view goes on the
+sheet on free paper, at the largest standard scale that fits there, picked. Esc gives up.
 
 The view goes on the sheet with its title under it. Its frame is its crop at its scale: a
 50 × 40 crop at 2:1 is 100 × 80 mm on the paper.
@@ -104,7 +110,9 @@ The view goes on the sheet with its title under it. Its frame is its crop at its
 
 On the sheet:
 
-- **Drag a view** to move it on the paper.
+- **Drag a view** to move it on the paper. It stays inside the border (hold Ctrl to take it
+  past). A view that fills the drawing area has nowhere to go, so a plain drag on it does
+  nothing.
 - **Drag its handles** to crop it. The drawing stays where it is on the paper, and the
   view's crop in the model changes with it.
 - **Alt-drag** inside it to slide the drawing within the frame. This moves the crop over
@@ -118,8 +126,8 @@ Dashed guides show what lined up. Hold Ctrl to place freely.
 
 ### The views on a sheet
 
-Under **On this sheet**, pick a view by clicking it on the sheet or in the list. For the
-picked view:
+Pick a view by clicking it on the sheet. The **Inspector** shows the views on the sheet
+(**Views on this sheet**), and for the picked one:
 
 - **Title:** its name. Tick **Title** under **Show** to print the name, with the scale
   beneath it, under the view.
@@ -138,10 +146,8 @@ If the views on a sheet have different scales, the title block's scale reads **A
 **Align with** lines the picked view up with another one: **Left**, **Centre**, **Right**,
 **Top**, **Middle**, **Bottom**, **Drawings level** or **Drawings in line**.
 
-**Add view** makes a new view and places it in a frame of its own beside the others. The
-view is of what's picked in the model, or of the whole drawing if nothing is.
-
-**Remove from sheet** (or Delete, on the sheet) takes the picked view off the sheet. The view
+**Remove from sheet** (in the Inspector, or Delete on the sheet) takes the picked view off
+the sheet. The view
 stays in the drawing, in the **Views** list, to place again. A sheet can be empty.
 
 ### Drawings from before views

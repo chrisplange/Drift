@@ -34,3 +34,7 @@ accepted = [
     "Unlicense",
     "Zlib",
 ]
+
+# acadrust only (DWG import): MPL-2.0 is allowed for it alone, as in deny.toml.
+[acadrust]
+accepted = ["MPL-2.0"]

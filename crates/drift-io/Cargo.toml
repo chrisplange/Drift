@@ -1,6 +1,6 @@
 [package]
 name = "drift-io"
-description = "Drift file formats: the native .drift JSON format, DXF, SVG, PDF"
+description = "Drift file formats: the native .drift JSON format, DXF, SVG, PDF, and DWG import"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -17,9 +17,19 @@ lopdf = { version = "0.45", default-features = false }
 miniz_oxide = "0.9.1"
 kurbo = "0.13"
 roxmltree = "0.21.1"
+# DWG import (the `dwg` feature): acadrust reads DWG R12-R2018. MPL-2.0, so changes to its
+# own files must be published; see deny.toml.
+acadrust = { version = "0.6.5", default-features = false, optional = true }
+
+[features]
+dwg = ["dep:acadrust"]
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 lopdf = { version = "0.45", default-features = false, features = ["wasm_js"] }
 
 [lints]
 workspace = true
+
+[[example]]
+name = "dwg_compare"
+required-features = ["dwg"]

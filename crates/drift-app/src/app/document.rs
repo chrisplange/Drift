@@ -323,7 +323,8 @@ impl DriftApp {
                     // its name) or an SVG asks how it should come in.
                     let as_underlay = std::mem::take(&mut self.import_as_underlay);
                     let pdf = contents.starts_with(b"%PDF");
-                    if as_underlay && (pdf || lower.ends_with(".dxf") || lower.ends_with(".svg")) {
+                    let cad = lower.ends_with(".dxf") || lower.ends_with(".dwg");
+                    if as_underlay && (pdf || cad || lower.ends_with(".svg")) {
                         self.import_underlay_file(&name, contents, now);
                         continue;
                     }
@@ -332,8 +333,12 @@ impl DriftApp {
                         continue;
                     }
                     let text = String::from_utf8_lossy(&contents);
-                    if name.to_ascii_lowercase().ends_with(".dxf") {
+                    if lower.ends_with(".dxf") {
                         self.import_dxf(&name, &drift_io::dxf::decode(&contents), now);
+                        continue;
+                    }
+                    if lower.ends_with(".dwg") {
+                        self.import_dwg(&name, &contents, now);
                         continue;
                     }
                     if lower.ends_with(".ttf") || lower.ends_with(".otf") {

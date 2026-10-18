@@ -1,4 +1,4 @@
-//! Underlays in the UI: importing PDF and DXF files as underlays (choosing a PDF page), and
+//! Underlays in the UI: importing PDF, DWG and DXF files as underlays (choosing a PDF page), and
 //! the Underlays section of the Layers tab.
 
 use drift_core::{UnderlayId, underlays::MM_PER_POINT};
@@ -7,8 +7,8 @@ use crate::icons::Glyph;
 use crate::*;
 
 pub(crate) const UNDERLAY_FILE: FileType = FileType {
-    name: "PDF or DXF drawing",
-    extensions: &["pdf", "dxf", "svg", "ai"],
+    name: "PDF, DWG or DXF drawing",
+    extensions: &["pdf", "dwg", "dxf", "svg", "ai"],
 };
 
 /// A multi-page PDF waiting for its page to be chosen.
@@ -57,13 +57,19 @@ impl DriftApp {
         self.files.open(UNDERLAY_FILE);
     }
 
-    /// An opened PDF, DXF or SVG file, to become an underlay.
+    /// An opened PDF, DWG, DXF or SVG file, to become an underlay.
     pub(crate) fn import_underlay_file(&mut self, name: &str, bytes: Vec<u8>, now: f64) {
         let lower = name.to_ascii_lowercase();
         if lower.ends_with(".svg") && !bytes.starts_with(b"%PDF") {
             let stem = name.rsplit_once('.').map_or(name, |(s, _)| s);
             let result = drift_io::svg_import::read(&String::from_utf8_lossy(&bytes), stem)
                 .and_then(|art| self.editor.import_svg_underlay(name, &art, 1.0));
+            self.underlay_imported(name, result, now);
+            return;
+        }
+        if lower.ends_with(".dwg") {
+            let unit = self.editor.doc.units().length.mm_per_unit();
+            let result = self.editor.import_dwg_underlay(name, &bytes, unit);
             self.underlay_imported(name, result, now);
             return;
         }

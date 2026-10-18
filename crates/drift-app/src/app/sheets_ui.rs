@@ -25,8 +25,8 @@ pub(crate) const DXF_FILE: FileType = FileType {
 };
 /// What File → Import takes: CAD drawings, and artwork from Illustrator and the like.
 pub(crate) const IMPORT_FILE: FileType = FileType {
-    name: "DXF, SVG, PDF or Illustrator",
-    extensions: &["dxf", "svg", "pdf", "ai"],
+    name: "DWG, DXF, SVG, PDF or Illustrator",
+    extensions: &["dwg", "dxf", "svg", "pdf", "ai"],
 };
 
 /// What an import brought in and what it couldn't, shown until closed.
@@ -518,12 +518,33 @@ impl DriftApp {
     /// until it is closed.
     pub(crate) fn import_dxf(&mut self, name: &str, text: &str, now: f64) {
         let unit = self.editor.doc.units().length.mm_per_unit();
-        match drift_io::dxf::read(text, unit) {
+        self.import_cad(name, drift_io::dxf::read(text, unit), "Import DXF", now);
+    }
+
+    /// Add a DWG file to the document, as [`Self::import_dxf`] does a DXF file.
+    pub(crate) fn import_dwg(&mut self, name: &str, bytes: &[u8], now: f64) {
+        let unit = self.editor.doc.units().length.mm_per_unit();
+        self.import_cad(
+            name,
+            crate::underlays::read_dwg(bytes, unit),
+            "Import DWG",
+            now,
+        );
+    }
+
+    fn import_cad(
+        &mut self,
+        name: &str,
+        read: Result<drift_io::dxf::DxfImport, String>,
+        label: &str,
+        now: f64,
+    ) {
+        match read {
             Ok(import) => {
                 self.abort_operation();
                 self.editor.doc.begin();
                 let report = drift_io::dxf::add_to_document(&mut self.editor.doc, &import);
-                self.editor.commit("Import DXF");
+                self.editor.commit(label);
                 self.report_import(name, &report, now);
             }
             Err(e) => self.set_status(format!("Could not import {name}: {e}"), true, now),

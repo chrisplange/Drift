@@ -3,6 +3,7 @@
 //! The same [`DriftApp`] runs natively and in the browser via eframe. Editing logic lives in
 //! [`editor`] and [`tools`], which don't depend on egui.
 
+pub mod agent;
 mod annotations;
 mod app;
 pub mod blocks;

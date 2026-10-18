@@ -21,6 +21,10 @@ glam.workspace = true
 log.workspace = true
 lyon_tessellation.workspace = true
 web-time = "1"
+# The assistant tools (`agent`): JSON arguments and results, and renders of the drawing as PNG
+# pictures, made on the CPU.
+serde_json = "1.0"
+tiny-skia = { version = "0.12", default-features = false, features = ["std", "simd", "png-format"] }
 
 # The updater (native only): GitHub's releases API over HTTPS, checked with the operating
 # system's certificates, and the download verified against a minisign signature.
@@ -29,7 +33,6 @@ minisign-verify = "0.3"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 semver = "1"
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
 sha2 = "0.11"
 ureq = { version = "3.4", default-features = false, features = ["rustls-no-provider", "platform-verifier"] }
 

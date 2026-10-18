@@ -16,6 +16,9 @@ browser (WebGPU, with a WebGL2 fallback).
 **New to Drift?** Read the [user guide](docs/guide/README.md): installing, a tour of the
 window, step-by-step tutorials, and reference pages for tools, panels, units and keys.
 
+**Drawing with AI.** `drift-mcp` lets Claude and other MCP assistants sketch, constrain,
+dimension, render and analyse Drift drawings: see [Drawing with AI assistants](docs/ai.md).
+
 ## What works today
 
 - **Drawing tools:** polyline (L), rectangle (R), circle (C), arcs (A: centre-point; press A

@@ -333,7 +333,7 @@ impl Editor {
     }
 
     /// The bounds of some curves as they are now.
-    fn bounds_of(&self, ids: &[EntityId]) -> Option<Bounds> {
+    pub(crate) fn bounds_of(&self, ids: &[EntityId]) -> Option<Bounds> {
         let mut bounds = Bounds::EMPTY;
         for id in ids {
             if let Some(shape) = self.doc.shape(*id) {

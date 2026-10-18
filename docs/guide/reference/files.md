@@ -25,7 +25,7 @@ views made a view of its own.
 
 - **Older files always open** in newer builds. They're upgraded as they load.
 - **Newer files don't open in older builds.** The older build says the file's version is
-  newer than it supports. During the alpha the format changes often, so everyone sharing
+  newer than it supports. During the beta the format changes often, so everyone sharing
   files should use the same build.
 
 Check your build in **Help → About Drift**.

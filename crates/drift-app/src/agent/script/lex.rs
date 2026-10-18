@@ -171,10 +171,10 @@ fn tokens(text: &str) -> Result<Vec<Token>, (usize, String)> {
     Ok(out)
 }
 
-/// `text` with " mm" after each bare number that is added to or taken from something
+/// `text` with `unit` after each bare number that is added to or taken from something
 /// (`W/2 + 100` gives `W/2 + 100 mm`), or `None` if it has no such number. Drift's
 /// expressions won't add a plain number to a length.
-pub(super) fn with_mm(text: &str) -> Option<String> {
+pub(super) fn with_unit(text: &str, unit: &str) -> Option<String> {
     let toks = tokens(text).ok()?;
     let sym = |t: Option<&Token>, set: &str| {
         t.is_some_and(|t| matches!(t.tok, Tok::Sym(c) if set.contains(c)))
@@ -197,7 +197,7 @@ pub(super) fn with_mm(text: &str) -> Option<String> {
     }
     let mut out = text.to_owned();
     for end in ends.into_iter().rev() {
-        out.insert_str(end, " mm");
+        out.insert_str(end, &format!(" {unit}"));
     }
     Some(out)
 }

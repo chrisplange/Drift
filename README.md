@@ -245,7 +245,4 @@ License](LICENSE.md) (FSL-1.1-ALv2). You may use, copy, change and share it for 
 except making a product or service that competes with Drift. Two years after each version
 is released, that version is also available under the Apache License, Version 2.0.
 
-Versions up to and including 0.1.0-alpha.7 were released under MIT OR Apache-2.0, and stay
-available under those terms.
-
 Copyright 2026 Christopher Lange.

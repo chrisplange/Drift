@@ -7,6 +7,16 @@ sessions and carry over when you open another drawing.
 What is saved with a drawing (its units and drafting style) is in **File → Drawing
 settings…** instead; see [Drawing settings](#drawing-settings) below.
 
+The window has a page for each group, listed down its left side:
+
+| Page | Holds |
+|---|---|
+| **General** | [Appearance](#appearance), [Window](#window) and [Memory](#memory). |
+| **Drawing aids** | [Grid and snapping](#grid-and-snapping), [Dimensions](#dimensions) and [Closed areas](#closed-areas). |
+| **Display** | [Display](#display) and [Crosshair](#crosshair). |
+| **Mouse and trackpad** | [Scrolling](#mouse-and-trackpad). |
+| **Updates** | Checking for and installing updates (desktop only). |
+
 ## Appearance
 
 The light or dark theme, or follow the system. (Also **View → Appearance**.)

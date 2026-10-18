@@ -15,7 +15,7 @@ follows. If its boundary breaks (a curve deleted, or a gap opened), the fill kee
 shape and the **Inspector** offers **Re-pick boundary**.
 
 Construction geometry doesn't close areas. Neither, if you turn on **Edit → Preferences… →
-Closed areas → Find closed areas on each layer separately**, do curves on other layers.
+Drawing aids → Find closed areas on each layer separately**, do curves on other layers.
 
 ## 1. Choose the style first
 

@@ -95,9 +95,9 @@ change the suffix to **TAP**, **CBORE** or **CSK**. Click a chamfer's line inste
 ![A section mark (A) across the plate and an elevation mark (1), with the elevation's Inspector](../images/annotate-marks.png)
 
 Pick a mark to edit it in the **Inspector**: its **Label**, **On sheet** (the sheet it's
-drawn on, shown in the lower half of the flag, such as `A-201`), and which way it **Looks**
-(a section has **Flip**, to look the other way, and **Swap ends**; an elevation has an
-angle and →, ↑, ←, ↓ buttons). Drag a mark to move it whole.
+drawn on, shown in the lower half of the flag, such as `A-201`), and which way it looks
+(a section's **Direction** has **Flip**, to look the other way, and **Swap ends**; an
+elevation's **Facing** has an angle and →, ↑, ←, ↓ buttons). Drag a mark to move it whole.
 
 ## 6. Dimension text
 

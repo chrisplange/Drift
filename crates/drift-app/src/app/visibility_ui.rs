@@ -3,7 +3,9 @@
 //!
 //! Hiding is display only: a hidden dimension still holds its geometry.
 
-use drift_core::{AnnotationRef, Shown};
+use std::collections::BTreeSet;
+
+use drift_core::{AnnotationRef, Shown, ViewId};
 
 use crate::notes::NoteLayout;
 use crate::*;
@@ -156,6 +158,92 @@ impl DriftApp {
         if set_canvas.is_some() || set_sheets.is_some() {
             self.set_annotations_shown(&refs, set_canvas, set_sheets, now);
         }
+        self.views_row(ui, &refs);
+    }
+
+    /// The views the picked dimensions and annotations are drawn in on sheets: every view,
+    /// or some (a note for the detail alone).
+    fn views_row(&mut self, ui: &mut egui::Ui, refs: &[AnnotationRef]) {
+        let doc = &self.editor.doc;
+        let views: Vec<(ViewId, String)> = doc
+            .views()
+            .map(|(id, v)| (id, v.title().to_owned()))
+            .collect();
+        if views.is_empty() {
+            return;
+        }
+        // How many of the picked are in each view.
+        let count = |v: ViewId| refs.iter().filter(|r| doc.in_view(**r, v)).count();
+        let all = refs.iter().all(|r| doc.only_in(*r).is_none());
+        let summary = if all {
+            "All views".to_owned()
+        } else {
+            let names: Vec<&str> = views
+                .iter()
+                .filter(|(id, _)| count(*id) == refs.len())
+                .map(|(_, n)| n.as_str())
+                .collect();
+            match names.len() {
+                0 => "Some views".to_owned(),
+                1..=2 => format!("Only {}", names.join(", ")),
+                n => format!("{n} views"),
+            }
+        };
+        let mut change = None;
+        theme::row(ui, "In views", |ui| {
+            egui::ComboBox::from_id_salt("annotation_views")
+                .selected_text(summary)
+                .width(ui.available_width() - 8.0)
+                .show_ui(ui, |ui| {
+                    if ui.selectable_label(all, "All views").clicked() {
+                        change = Some(None);
+                    }
+                    ui.separator();
+                    for (id, name) in &views {
+                        let n = count(*id);
+                        let mut on = n == refs.len();
+                        let mixed = n > 0 && !on;
+                        if ui
+                            .add(egui::Checkbox::new(&mut on, name.as_str()).indeterminate(mixed))
+                            .changed()
+                        {
+                            change = Some(Some((*id, on)));
+                        }
+                    }
+                })
+                .response
+                .on_hover_text(
+                    "The views it is drawn in on sheets: every view, or only some (a note for                      the detail alone). It is always on the canvas",
+                );
+        });
+        let Some(change) = change else { return };
+        let every: BTreeSet<ViewId> = views.iter().map(|(id, _)| *id).collect();
+        self.editor.doc.begin();
+        for r in refs {
+            let set = match change {
+                None => BTreeSet::new(),
+                Some((view, on)) => {
+                    let mut set = self
+                        .editor
+                        .doc
+                        .only_in(*r)
+                        .cloned()
+                        .unwrap_or_else(|| every.clone());
+                    if on {
+                        set.insert(view);
+                    } else {
+                        set.remove(&view);
+                    }
+                    // In none: keep it in that one (Off sheets leaves it out everywhere).
+                    if set.is_empty() {
+                        continue;
+                    }
+                    if set == every { BTreeSet::new() } else { set }
+                }
+            };
+            self.editor.doc.set_only_in(*r, set);
+        }
+        self.editor.commit("Views it's in");
     }
 
     /// How many dimensions and annotations are hidden on the canvas.

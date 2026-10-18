@@ -49,6 +49,9 @@ struct Space<'a> {
     notes: bool,
     /// Layers the view leaves out.
     hidden: &'a BTreeSet<LayerId>,
+    /// The view drawn (dimensions and annotations drawn in other views only are left out);
+    /// `None` draws them all.
+    view: Option<drift_core::ViewId>,
 }
 
 impl Space<'_> {
@@ -59,6 +62,11 @@ impl Space<'_> {
     /// Whether `layer` is drawn: shown and printable, and not left out of the view.
     fn draws(&self, id: LayerId, layer: &drift_core::Layer) -> bool {
         layer.visible && layer.printable && !self.hidden.contains(&id)
+    }
+
+    /// Whether a dimension or annotation is drawn in this view.
+    fn has(&self, doc: &drift_core::Document, r: drift_core::AnnotationRef) -> bool {
+        self.view.is_none_or(|v| doc.in_view(r, v))
     }
 
     /// Whether a dimension or annotation on `entities` is left out with them: it is when every
@@ -372,7 +380,12 @@ fn centre_lines(ed: &Editor, s: &Space, d: &mut Drawing) {
             .shown(drift_core::AnnotationRef::Annotation(id))
             .sheets
     };
-    for (_, a) in ed.doc.annotations().filter(|(id, _)| on_sheets(*id)) {
+    let in_view = |id| s.has(&ed.doc, drift_core::AnnotationRef::Annotation(id));
+    for (_, a) in ed
+        .doc
+        .annotations()
+        .filter(|(id, _)| on_sheets(*id) && in_view(*id))
+    {
         if s.leaves_out(&ed.doc, &a.entities()) {
             continue;
         }
@@ -420,6 +433,7 @@ fn annotations(ed: &Editor, painter: &egui::Painter, s: &Space, d: &mut Drawing)
         if !c.is_dimension()
             || !s.dimensions
             || !doc.shown(drift_core::AnnotationRef::Dimension(id)).sheets
+            || !s.has(doc, drift_core::AnnotationRef::Dimension(id))
             || s.leaves_out(doc, &c.entities().collect::<Vec<_>>())
         {
             continue;
@@ -450,6 +464,7 @@ fn annotations(ed: &Editor, painter: &egui::Painter, s: &Space, d: &mut Drawing)
             || !doc
                 .shown(drift_core::AnnotationRef::Annotation(layout.id))
                 .sheets
+            || !s.has(doc, drift_core::AnnotationRef::Annotation(layout.id))
             || doc
                 .annotation(layout.id)
                 .is_some_and(|a| s.leaves_out(doc, &a.entities()))
@@ -596,6 +611,7 @@ pub fn sheet_drawing(
             dimensions: v.dimensions,
             notes: v.notes,
             hidden: &v.hidden_layers,
+            view: Some(v.id),
         };
         view(ed, patterns, painter, &space, &mut d);
     }
@@ -638,6 +654,7 @@ pub fn model_drawing(
         dimensions: true,
         notes: true,
         hidden: &ALL_LAYERS,
+        view: None,
     };
     view(ed, patterns, painter, &space, &mut d);
     let b = d.bounds();
@@ -672,6 +689,7 @@ pub fn view_drawing(
         dimensions,
         notes: true,
         hidden: &ALL_LAYERS,
+        view: None,
     };
     view(ed, patterns, painter, &space, &mut d);
     d

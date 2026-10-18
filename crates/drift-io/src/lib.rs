@@ -6,7 +6,7 @@
 //! ```json
 //! {
 //!   "format": "drift",
-//!   "version": 30,
+//!   "version": 31,
 //!   "meta": {"title":"Bracket","units":"mm","generator":"Drift 0.1.0"},
 //!   "display": {"length":"architectural","fraction":16},
 //!   "variables": [
@@ -85,8 +85,9 @@ pub const EXTENSION: &str = "drift";
 /// `viewports` (a sheet's own `views` become model views when read); 28 = adds a view's
 /// `hidden_layers`; 29 = adds a section or elevation mark's `view` (the view it points at);
 /// 30 = adds the `project` the sheets share (name, number, client, address, company and
-/// field set) and a sheet's `status`.
-pub const FORMAT_VERSION: u32 = 30;
+/// field set) and a sheet's `status`; 31 = a `shown` entry's `views` (a dimension or
+/// annotation drawn in those views only).
+pub const FORMAT_VERSION: u32 = 31;
 const FORMAT_TAG: &str = "drift";
 
 /// Document-level properties stored alongside the geometry.
@@ -1099,10 +1100,16 @@ pub fn save(doc: &Document, meta: &Metadata) -> String {
                 .expect("annotation serializes")
         })
         .collect();
-    let shown: Vec<String> = doc
+    let shown_refs: std::collections::BTreeSet<drift_core::AnnotationRef> = doc
         .shown_settings()
-        .map(|(r, s)| {
-            serde_json::to_string(&drafting::shown_record(r, s)).expect("shown serializes")
+        .map(|(r, _)| r)
+        .chain(doc.only_in_settings().map(|(r, _)| r))
+        .collect();
+    let shown: Vec<String> = shown_refs
+        .into_iter()
+        .map(|r| {
+            let record = drafting::shown_record(r, doc.shown(r), doc.only_in(r));
+            serde_json::to_string(&record).expect("shown serializes")
         })
         .collect();
     let styles: Vec<String> = doc
@@ -1519,9 +1526,14 @@ pub fn load_with_notes(text: &str) -> Result<(Document, Metadata, Vec<String>), 
         }
     }
     drafting::insert_all(&mut doc, file.fills, file.annotations)?;
+    // (What is drawn in some views only waits for the views.)
+    let mut only_in = Vec::new();
     for r in file.shown {
-        let (of, shown) = drafting::parse_shown(r)?;
+        let (of, shown, views) = drafting::parse_shown(r)?;
         doc.set_shown(of, shown);
+        if !views.is_empty() {
+            only_in.push((of, views));
+        }
     }
     for r in file.styles {
         let (of, style) = drafting::parse_override(r)?;
@@ -1600,6 +1612,19 @@ pub fn load_with_notes(text: &str) -> Result<(Document, Metadata, Vec<String>), 
         // A layer that's gone hides nothing.
         view.hidden_layers.retain(|l| doc.layer(*l).is_some());
         doc.insert_view(id, view);
+    }
+    // Drawn in some views only: those that are there. With none left, it stays off sheets.
+    for (of, views) in only_in {
+        let views: std::collections::BTreeSet<_> = views
+            .into_iter()
+            .filter(|v| doc.view(*v).is_some())
+            .collect();
+        if views.is_empty() {
+            let mut shown = doc.shown(of);
+            shown.sheets = false;
+            doc.set_shown(of, shown);
+        }
+        doc.set_only_in(of, views);
     }
     let mut old_views = Vec::new();
     for r in file.sheets {
@@ -1841,7 +1866,7 @@ mod tests {
         let text = save(&doc, &Metadata::default());
         let expected = r#"{
   "format": "drift",
-  "version": 30,
+  "version": 31,
   "meta": {"units":"mm"},
   "entities": [
     {"type":"point","id":"e1","at":[0.0,0.0]},
@@ -2808,7 +2833,7 @@ mod tests {
         doc.add_text(drift_core::SketchText::new("A", DVec2::ZERO, 3.0));
 
         let text = save(&doc, &Metadata::default());
-        assert!(text.contains("\"version\": 30"));
+        assert!(text.contains("\"version\": 31"));
         // A mark points at its view.
         assert!(text.contains(r#""flip":true,"view":"w"#), "{text}");
         assert!(text.contains(r#""styles": ["#) && text.contains(r#""alt_units":"none""#));

@@ -405,6 +405,10 @@ pub struct DriftApp {
     /// Checking for, downloading and installing a newer Drift.
     #[cfg(not(target_arch = "wasm32"))]
     updates: app::update_ui::Updates,
+    /// AI assistants may edit the open drawing through the live link (a preference).
+    ai_link: bool,
+    #[cfg(not(target_arch = "wasm32"))]
+    link: app::link_ui::Link,
 }
 
 /// Start the memory guard: past a hard limit the app ends itself rather than exhaust the
@@ -559,6 +563,9 @@ impl DriftApp {
             soak: soak::Soak::from_env(),
             #[cfg(not(target_arch = "wasm32"))]
             updates: Default::default(),
+            ai_link: false,
+            #[cfg(not(target_arch = "wasm32"))]
+            link: Default::default(),
         };
         if let Some(mb) = drift_platform::memory::take_stop_note() {
             app.editor.notice = Some(format!(
@@ -930,6 +937,8 @@ impl eframe::App for DriftApp {
         self.check_memory(now);
         #[cfg(not(target_arch = "wasm32"))]
         self.updates_tick(&ctx, now);
+        #[cfg(not(target_arch = "wasm32"))]
+        self.link_tick(&ctx, now);
         // A sketch dropped on the window opens.
         let dropped = ctx.input(|i| i.raw.dropped_files.first().map(|f| f.path().to_owned()));
         if let Some(path) = dropped

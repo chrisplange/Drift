@@ -17,9 +17,19 @@ struct Server {
 impl Server {
     /// Start the server (only allowed to use files in `root`) and initialise the session.
     fn start(root: &PathBuf) -> Self {
+        // Drift windows are looked for only in the test's own (empty) link folder, never
+        // in the user's.
+        let links = root.join("links");
+        std::fs::create_dir_all(&links).expect("link folder");
+        Self::start_linked(root, &links)
+    }
+
+    /// Start the server, looking for Drift windows' link files in `links`.
+    fn start_linked(root: &PathBuf, links: &PathBuf) -> Self {
         let mut child = Command::new(env!("CARGO_BIN_EXE_drift-mcp"))
             .arg("--root")
             .arg(root)
+            .env("DRIFT_LINK_DIR", links)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -258,5 +268,76 @@ fn imports_an_svg_at_a_scale() {
         json!({ "name": "import_file", "arguments": { "path": "../../elsewhere.svg" } }),
     );
     assert_eq!(r["isError"], true);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A stand-in for a Drift window with its AI link on: it answers calls from its own
+/// drawing until `stop` is set.
+fn fake_drift(
+    links: PathBuf,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> std::thread::JoinHandle<usize> {
+    use drift_app::agent::link::LinkServer;
+    use std::sync::atomic::Ordering;
+    let (ready, started) = std::sync::mpsc::channel();
+    let handle = std::thread::spawn(move || {
+        let server = LinkServer::start(&links, "plan.drift", || {}).expect("link");
+        let mut drawing = drift_app::agent::Session::new();
+        let mut calls = 0;
+        ready.send(()).unwrap();
+        while !stop.load(Ordering::Relaxed) {
+            match server.poll() {
+                Some(job) => {
+                    calls += 1;
+                    let out = drawing.call(&job.tool, &job.args);
+                    job.reply(out);
+                }
+                None => std::thread::sleep(std::time::Duration::from_millis(5)),
+            }
+        }
+        calls
+    });
+    started.recv().expect("the window started");
+    handle
+}
+
+#[test]
+fn works_on_the_drawing_open_in_drift() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let dir = temp_dir("live");
+    let links = dir.join("links");
+    std::fs::create_dir_all(&links).unwrap();
+    let stop = std::sync::Arc::new(AtomicBool::new(false));
+    let window = fake_drift(links.clone(), stop.clone());
+    let mut server = Server::start_linked(&dir, &links);
+    let (info, _) = server.call("drawing_info", json!({}));
+    assert_eq!(info["drift_window"], "plan.drift", "{info}");
+    let (status, _) = server.call("drift_link", json!({ "action": "status" }));
+    assert_eq!(status["drift_window"], "plan.drift");
+    let (made, _) = server.call(
+        "add_geometry",
+        json!({ "items": [{ "type": "circle", "center": [0, 0], "radius": 300 }] }),
+    );
+    assert_eq!(made["created"][0]["type"], "circle");
+    // The window closes: calls are refused (not quietly moved to another drawing) until
+    // the assistant says what to do.
+    stop.store(true, Ordering::Relaxed);
+    let calls = window.join().unwrap();
+    assert_eq!(calls, 2, "both calls went to the window");
+    let r = server.request(
+        "tools/call",
+        json!({ "name": "list_entities", "arguments": {} }),
+    );
+    assert_eq!(r["isError"], true);
+    assert!(
+        r["content"][0]["text"].as_str().unwrap().contains("lost"),
+        "{r}"
+    );
+    server.call("drift_link", json!({ "action": "disconnect" }));
+    let (circles, _) = server.call("list_entities", json!({ "kind": "circle" }));
+    assert_eq!(
+        circles["count"], 0,
+        "now on the server's own, empty drawing"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -57,25 +57,9 @@ impl DriftApp {
         self.tool = ToolKind::Select.create();
         let revision = doc.revision();
         // Preferences kept on the editor carry over to the next drawing.
-        let was = &self.editor;
-        let kept = (
-            was.regions_by_layer,
-            was.regions_need_fill,
-            was.pick_filter,
-            was.dim_mode,
-            was.dim_overall,
-            was.draw_construction,
-        );
-        self.editor = Editor::new(doc);
-        let ed = &mut self.editor;
-        (
-            ed.regions_by_layer,
-            ed.regions_need_fill,
-            ed.pick_filter,
-            ed.dim_mode,
-            ed.dim_overall,
-            ed.draw_construction,
-        ) = kept;
+        let mut editor = Editor::new(doc);
+        editor.keep_prefs_from(&self.editor);
+        self.editor = editor;
         self.fit_target = Some(self.fit_bounds());
         self.file = FileState {
             name,
@@ -103,6 +87,7 @@ impl DriftApp {
             ("rlayer", self.editor.regions_by_layer),
             ("rfill", self.editor.regions_need_fill),
             ("tdims", self.show_temp_dims),
+            ("ai", self.ai_link),
         ];
         let mut prefs: Vec<String> = flags
             .iter()
@@ -170,6 +155,7 @@ impl DriftApp {
                 "rlayer" => self.editor.regions_by_layer = on,
                 "rfill" => self.editor.regions_need_fill = on,
                 "tdims" => self.show_temp_dims = on,
+                "ai" => self.ai_link = on,
                 #[cfg(not(target_arch = "wasm32"))]
                 "upchk" => self.updates.auto_check = on,
                 #[cfg(not(target_arch = "wasm32"))]

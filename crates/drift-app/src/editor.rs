@@ -377,6 +377,17 @@ impl Editor {
         editor
     }
 
+    /// Take the preferences kept on an editor (how areas are found and picked, how the
+    /// dimension tool goes on) from the one this replaces, for a newly opened drawing.
+    pub fn keep_prefs_from(&mut self, was: &Editor) {
+        self.regions_by_layer = was.regions_by_layer;
+        self.regions_need_fill = was.regions_need_fill;
+        self.pick_filter = was.pick_filter;
+        self.dim_mode = was.dim_mode;
+        self.dim_overall = was.dim_overall;
+        self.draw_construction = was.draw_construction;
+    }
+
     /// Refresh caches after document changes. Cheap when nothing changed.
     pub fn sync(&mut self) {
         self.index.update(&self.doc);

@@ -301,15 +301,28 @@ const news = [
   .grid {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
-    gap: 28px;
+    gap: 20px;
     margin-top: 48px;
+  }
+  /* Each feature is a card, so its text never sits on the drawing behind the page. */
+  .feature {
+    padding: 10px 10px 22px;
+    border-radius: calc(var(--radius) + 6px);
+    border: 1px solid var(--line);
+    background: color-mix(in srgb, var(--panel) 96%, transparent);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+  }
+  .feature h3,
+  .feature p {
+    padding: 0 10px;
   }
   .feature .shot {
     aspect-ratio: 16 / 10;
     overflow: hidden;
     border-radius: var(--radius);
     border: 1px solid var(--line);
-    margin-bottom: 16px;
+    margin-bottom: 18px;
     background: var(--surface);
     transition:
       border-color 0.3s,
@@ -416,7 +429,7 @@ const news = [
   }
 
   .designers {
-    background: color-mix(in srgb, var(--surface) 80%, transparent);
+    background: color-mix(in srgb, var(--surface) 96%, transparent);
     border-top: 1px solid var(--line);
     border-bottom: 1px solid var(--line);
   }

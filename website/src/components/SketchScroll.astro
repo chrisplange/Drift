@@ -1,116 +1,77 @@
 ---
-// The front page's scroll story, about precision and freedom. A section through a
-// mechanical plate draws itself and is pinned down by relations and dimensions until it's
-// fully defined. Then the dimensions and grid fall away, the plate's six strokes flow into
-// the lines of an ink drawing of a woman in a wide-brimmed hat, which fills in. The section's
-// hatch follows its region the whole way, to the underside of the brim, where it settles into
-// dots. Last, her lines swirl into an italic serif ampersand, which fills in ivory with a
-// lipstick-red echo: precision & freedom.
+// The front page's living backdrop: a drawing fixed behind the page that plays out as the
+// whole page scrolls, about precision and freedom. A section through a mechanical plate
+// draws itself and is pinned down by relations and dimensions until it's fully defined.
+// Then the plate's strokes flow into an ink drawing of a woman in a wide-brimmed hat, the
+// section's hatch following its region to the underside of the brim, where it settles into
+// dots. Her lines swirl into an italic serif ampersand with a lipstick-red echo; the
+// ampersand unfolds into the street elevation of a Philadelphia rowhouse, dimensioned in
+// feet and inches and hatched in brick; and then the whole drawing fades away.
 //
-// Everything is drawn by the script below from one progress value: timings live in PHASES,
-// the plate in PLATE and the drawing in src/lib/woman.ts. Its colours are the --figure-* tokens in
-// global.css.
-
-const steps = [
-  {
-    title: "Draw it exactly",
-    text: "A section through a mounting plate: counterbore, chamfers and hatched cut faces. Relations keep it square; dimensions set every size.",
-  },
-  {
-    title: "Fully defined",
-    text: "When the last dimension lands, the sketch turns from blue to white: nothing left to move. Change a number and the drawing follows.",
-  },
-  {
-    title: "Then let go",
-    text: "The same lines become pen curves, drawn the way you'd draw in Illustrator or Affinity. Precise when you need it, free when you don't.",
-  },
-];
+// Everything is drawn by the script below from one progress value, the page's scroll
+// position: timings live in PHASES, the plate in PLATE, the woman in src/lib/woman.ts, the
+// ampersand in src/lib/ampersand.ts and the rowhouse in HOUSE. Its colours are the
+// --figure-* tokens in global.css.
 ---
 
-<section class="sketch-scroll" aria-label="Drift's precision and freedom, drawn as you scroll">
-  <div class="sticky">
-    <div class="wrap layout">
-      <div class="copy">
-        <p class="eyebrow">Precision and freedom</p>
-        <ol class="steps">
-          {
-            steps.map((s, i) => (
-              <li data-step={i}>
-                <span class="num">{String(i + 1).padStart(2, "0")}</span>
-                <div>
-                  <h3>{s.title}</h3>
-                  <p>{s.text}</p>
-                </div>
-              </li>
-            ))
-          }
-        </ol>
-        <div class="progress" aria-hidden="true"><span></span></div>
-      </div>
-
-      <figure class="stage">
-        <div class="canvas">
-          <svg
-            viewBox="0 0 1000 680"
-            role="img"
-            aria-label="A dimensioned section through a mechanical plate that turns into an ink drawing of a woman in a wide-brimmed hat, then into an italic ampersand"
-          >
-            <defs>
-              <pattern id="ss-grid-minor" width="20" height="20" patternUnits="userSpaceOnUse">
-                <path d="M20 0H0V20" class="grid-minor"></path>
-              </pattern>
-              <pattern id="ss-grid" width="100" height="100" patternUnits="userSpaceOnUse">
-                <rect width="100" height="100" fill="url(#ss-grid-minor)"></rect>
-                <path d="M100 0H0V100" class="grid-major"></path>
-              </pattern>
-              <!-- The section hatch, which ends up under the brim of the hat. -->
-              <pattern id="ss-hatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-                <rect id="ss-hatch-bar" class="hatch-bar" width="1" height="8"></rect>
-              </pattern>
-              <!-- The dots the hatch settles into under the brim. -->
-              <pattern id="ss-dots" width="9" height="9" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-                <circle class="dot" cx="4.5" cy="4.5" r="1.7"></circle>
-              </pattern>
-              <clipPath id="ss-hatch-region">
-                <polygon id="ss-region-a"></polygon>
-                <polygon id="ss-region-b"></polygon>
-              </clipPath>
-              <clipPath id="ss-hair-clip">
-                <polygon id="ss-hair-region"></polygon>
-              </clipPath>
-              <clipPath id="ss-brim-clip">
-                <path id="ss-brim-clip-path"></path>
-              </clipPath>
-              <clipPath id="ss-hatch-reveal">
-                <rect id="ss-reveal-rect" x="-200" y="-200" width="0" height="1080"></rect>
-              </clipPath>
-            </defs>
-            <rect class="bg" width="1000" height="680"></rect>
-            <rect id="ss-grid-layer" width="1000" height="680" fill="url(#ss-grid)" opacity="0"></rect>
-            <g id="ss-camera">
-              <g id="ss-fill" class="art" opacity="0"></g>
-              <g id="ss-hatch-shape">
-                <g clip-path="url(#ss-hatch-reveal)">
-                  <rect id="ss-hatch-lines" class="hatch" x="-200" y="-200" width="1400" height="1080" clip-path="url(#ss-hatch-region)"></rect>
-                  <rect id="ss-hatch-dots" class="dots" x="-200" y="-200" width="1400" height="1080" clip-path="url(#ss-hatch-region)" opacity="0"></rect>
-                </g>
-              </g>
-              <g id="ss-amp" opacity="0">
-                <path id="ss-amp-kiss" class="amp-kiss"></path>
-                <path id="ss-amp-fill" class="amp"></path>
-              </g>
-              <g id="ss-scene"></g>
-            </g>
-            <g id="ss-measure" visibility="hidden"></g>
-          </svg>
-        </div>
-        <figcaption class="status">
-          <span class="dof" id="ss-dof"><i></i><b>Empty sketch</b></span>
-        </figcaption>
-      </figure>
-    </div>
-  </div>
-</section>
+<div class="sketch-bg" aria-hidden="true">
+  <svg viewBox="0 0 1000 680" preserveAspectRatio="xMidYMid meet">
+    <defs>
+      <pattern id="ss-grid-minor" width="20" height="20" patternUnits="userSpaceOnUse">
+        <path d="M20 0H0V20" class="grid-minor"></path>
+      </pattern>
+      <pattern id="ss-grid" width="100" height="100" patternUnits="userSpaceOnUse">
+        <rect width="100" height="100" fill="url(#ss-grid-minor)"></rect>
+        <path d="M100 0H0V100" class="grid-major"></path>
+      </pattern>
+      <!-- The section hatch, which ends up under the brim of the hat. -->
+      <pattern id="ss-hatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+        <rect id="ss-hatch-bar" class="hatch-bar" width="1" height="8"></rect>
+      </pattern>
+      <!-- The dots the hatch settles into under the brim. -->
+      <pattern id="ss-dots" width="9" height="9" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+        <circle class="dot" cx="4.5" cy="4.5" r="1.7"></circle>
+      </pattern>
+      <!-- Running-bond brick, for the rowhouse's front. -->
+      <pattern id="ss-brick" width="19" height="16" patternUnits="userSpaceOnUse">
+        <path class="brick-line" d="M0 0.5H19M0 8.5H19M0.5 0.5V8.5M10 8.5V16"></path>
+      </pattern>
+      <clipPath id="ss-hatch-region">
+        <polygon id="ss-region-a"></polygon>
+        <polygon id="ss-region-b"></polygon>
+      </clipPath>
+      <clipPath id="ss-hair-clip">
+        <polygon id="ss-hair-region"></polygon>
+      </clipPath>
+      <clipPath id="ss-brim-clip">
+        <path id="ss-brim-clip-path"></path>
+      </clipPath>
+      <clipPath id="ss-hatch-reveal">
+        <rect id="ss-reveal-rect" x="-200" y="-200" width="0" height="1080"></rect>
+      </clipPath>
+      <clipPath id="ss-house-clip">
+        <path id="ss-house-clip-path" clip-rule="evenodd"></path>
+      </clipPath>
+    </defs>
+    <rect id="ss-grid-layer" x="-3000" y="-3000" width="7000" height="6680" fill="url(#ss-grid)" opacity="0"></rect>
+    <g id="ss-camera">
+      <g id="ss-fill" class="art" opacity="0"></g>
+      <g id="ss-hatch-shape">
+        <g clip-path="url(#ss-hatch-reveal)">
+          <rect id="ss-hatch-lines" class="hatch" x="-200" y="-200" width="1400" height="1080" clip-path="url(#ss-hatch-region)"></rect>
+          <rect id="ss-hatch-dots" class="dots" x="-200" y="-200" width="1400" height="1080" clip-path="url(#ss-hatch-region)" opacity="0"></rect>
+        </g>
+      </g>
+      <g id="ss-amp" opacity="0">
+        <path id="ss-amp-kiss" class="amp-kiss"></path>
+        <path id="ss-amp-fill" class="amp"></path>
+      </g>
+      <rect id="ss-brick-layer" class="brick" x="0" y="0" width="1000" height="680" clip-path="url(#ss-house-clip)" opacity="0"></rect>
+      <g id="ss-scene"></g>
+    </g>
+    <g id="ss-measure" visibility="hidden"></g>
+  </svg>
+</div>
 
 <script>
   import {
@@ -123,38 +84,45 @@ const steps = [
   } from "../lib/woman";
   import { AMPERSAND, AMPERSAND_SIZE } from "../lib/ampersand";
 
-  // ---------- Timing: every animation is a window [from, to] of the scroll progress p ----------
+  // ---------- Timing: windows [from, to] of the page's scroll progress p ----------
   const PHASES = {
-    grid: [0.0, 0.031],
-    plate: [0.023, 0.156], // the profile strokes, one after another
-    centre: [0.133, 0.164],
-    hatch: [0.148, 0.203],
-    relations: [0.195, 0.25],
-    dims: [0.242, 0.343],
-    defined: [0.335, 0.359],
-    letGo: [0.39, 0.437], // dimensions, relations and grid fade out
-    morph: [0.421, 0.624], // strokes peel off the plate, staggered
-    hatchMorph: [0.452, 0.608], // the hatch's region moves from the cut faces to the brim
-    fill: [0.593, 0.655], // flat colour fills the outlines
-    outline: [0.624, 0.686], // and the outlines fade
-    settle: [0.624, 0.702], // the hatch under the brim settles into dots
-    release: [0.72, 0.78], // the woman's fill and the brim's dots fade, her lines lift off
-    toAmp: [0.73, 0.88], // her lines swirl into the outline of an italic ampersand
-    ampFill: [0.86, 0.93], // the ampersand fills in
-    ampOutline: [0.9, 0.96], // and its outline fades
-    kiss: [0.92, 0.99], // a lipstick-red echo slides out from behind it
+    grid: [0.0, 0.02],
+    plate: [0.02, 0.1], // the profile strokes, one after another
+    centre: [0.08, 0.1],
+    hatch: [0.09, 0.13],
+    relations: [0.12, 0.16],
+    dims: [0.15, 0.22],
+    defined: [0.215, 0.23],
+    letGo: [0.25, 0.28], // dimensions, relations and grid fade out
+    morph: [0.27, 0.4], // strokes peel off the plate and become the woman's lines
+    hatchMorph: [0.29, 0.39], // the hatch's region moves from the cut faces to the brim
+    fill: [0.38, 0.42], // she fills in
+    outline: [0.4, 0.44], // and her outlines fade
+    settle: [0.4, 0.45], // the hatch under the brim settles into dots
+    release: [0.48, 0.51], // her fill and the dots fade, her lines lift off
+    toAmp: [0.49, 0.58], // her lines swirl into an italic ampersand
+    ampFill: [0.56, 0.6], // the ampersand fills in
+    ampOutline: [0.58, 0.62], // and its outline fades
+    kiss: [0.59, 0.63], // a lipstick-red echo slides out from behind it
+    ampRelease: [0.66, 0.69], // the ampersand empties back to its outline
+    toHouse: [0.67, 0.77], // which unfolds into a rowhouse elevation
+    houseDetail: [0.75, 0.81], // muntins, lintels, dentils, steps
+    houseDims: [0.79, 0.86], // dimensions in feet and inches
+    brick: [0.81, 0.86], // and a brick hatch on the front
+    fadeOut: [0.9, 0.97], // then the whole drawing fades away
   } as const;
-  const STEP_STARTS = [0, 0.31, 0.41];
-  // Reduced motion shows one still frame: the finished picture.
-  const STILL = 1;
+  // How strongly the backdrop shows behind the page: less on phones, where text covers more
+  // of it.
+  const strength = () => (window.innerWidth < 760 ? 0.3 : 0.4);
 
   const clamp = (v: number, a = 0, b = 1) => Math.min(b, Math.max(a, v));
   const ease = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
   const ph = (p: number, [a, b]: readonly [number, number]) => clamp((p - a) / (b - a));
   const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+  type Pt = [number, number];
 
   // ---------- The plate: a section through a counterbored mounting plate (viewBox px) ----------
-  // Profile strokes, in drawing order. The drawing's lines peel off them in turn.
+  // Profile strokes, in drawing order. The woman's lines peel off them in turn.
   const PLATE = [
     "M232 300H445",
     "M445 300V336H470V400",
@@ -168,28 +136,89 @@ const steps = [
   const SECTION_A = "M232 300H445V336H470V400H220V312Z";
   const SECTION_B = "M555 300H768L780 312V400H530V336H555Z";
 
-  // ---------- The drawing (src/lib/woman.ts), placed in the viewBox ----------
+  // ---------- The woman (src/lib/woman.ts), placed in the viewBox ----------
   // Scale, and the point of the drawing that lands at `to` (the centre of its bounds).
   const FIGURE_PLACE = {
     scale: 0.92,
     from: [(WOMAN_BOUNDS[0] + WOMAN_BOUNDS[2]) / 2, (WOMAN_BOUNDS[1] + WOMAN_BOUNDS[3]) / 2] as const,
     to: [500, 342] as const,
   };
-  const toView = ([x, y]: [number, number]): [number, number] => [
+  const toView = ([x, y]: Pt): Pt => [
     FIGURE_PLACE.to[0] + (x - FIGURE_PLACE.from[0]) * FIGURE_PLACE.scale,
     FIGURE_PLACE.to[1] + (y - FIGURE_PLACE.from[1]) * FIGURE_PLACE.scale,
   ];
-  // Where the ampersand sits: its scale, centred in the stage.
+  // Where the ampersand sits: its scale, centred.
   const AMP_PLACE = { scale: 0.74, to: [500, 340] as const };
-  const ampView = ([x, y]: [number, number]): [number, number] => [
+  const ampView = ([x, y]: Pt): Pt => [
     AMP_PLACE.to[0] + (x - AMPERSAND_SIZE[0] / 2) * AMP_PLACE.scale,
     AMP_PLACE.to[1] + (y - AMPERSAND_SIZE[1] / 2) * AMP_PLACE.scale,
   ];
   // The camera eases in a touch as she appears.
   const CAMERA = { cx: 500, cy: 342, zoom: 1.03 };
 
+  // ---------- The rowhouse: a Philadelphia street elevation, drawn in feet ----------
+  // A three-storey Federal brick front, 16 ft wide: a marble stoop and base, a door with a
+  // transom and surround, 6-over-6 windows with stone lintels and sills, a dentilled cornice
+  // and a dormer in the roof. HOUSE_PLACE puts the ground line in the viewBox.
+  const HOUSE_PLACE = { scale: 13.5, ground: [500, 600] as const, width: 16 };
+  const hx = (x: number) => HOUSE_PLACE.ground[0] + (x - HOUSE_PLACE.width / 2) * HOUSE_PLACE.scale;
+  const hy = (y: number) => HOUSE_PLACE.ground[1] - y * HOUSE_PLACE.scale;
+  const hp = (x: number, y: number): Pt => [hx(x), hy(y)];
+  const rect = (x0: number, y0: number, x1: number, y1: number) =>
+    `M${hx(x0)} ${hy(y0)}H${hx(x1)}V${hy(y1)}H${hx(x0)}Z`;
+  const line = (x0: number, y0: number, x1: number, y1: number) => `M${hx(x0)} ${hy(y0)}L${hx(x1)} ${hy(y1)}`;
+  // The windows: [centre, top of sill, head], ground floor first.
+  const WINDOWS: [number, number, number][] = [
+    [11.75, 4, 10],
+    [4.25, 13.5, 19.5],
+    [11.75, 13.5, 19.5],
+    [4.25, 23, 28],
+    [11.75, 23, 28],
+  ];
+  // Its main lines, which the ampersand's outline unfolds into.
+  const HOUSE = [
+    line(-5, 0, 21, 0), // the ground
+    rect(0, 0, 16, 32), // the front
+    rect(-0.5, 32, 16.5, 33.6), // the cornice
+    `M${hx(-0.2)} ${hy(33.6)}L${hx(1.6)} ${hy(40)}H${hx(14.4)}L${hx(16.2)} ${hy(33.6)}`, // the roof
+    `M${hx(6.2)} ${hy(34.4)}V${hy(37.4)}L${hx(8)} ${hy(39.4)}L${hx(9.8)} ${hy(37.4)}V${hy(34.4)}Z`, // the dormer
+    rect(2.75, 3, 5.75, 11.8), // the door and transom
+    rect(2.25, 3, 6.25, 12.2), // the door surround
+    rect(1.6, 0, 6.9, 3), // the stoop
+    ...WINDOWS.map(([c, s, h]) => rect(c - 1.5, s, c + 1.5, h)),
+    rect(10.25, 0.6, 13.25, 2.0), // the basement window
+  ];
+  // The details, drawn in once the main lines are there.
+  const HOUSE_DETAIL = [
+    line(0, 2.5, 16, 2.5), // the marble water table
+    [0.75, 1.5, 2.25].map((y) => line(1.6, y, 6.9, y)).join(""), // the stoop's steps
+    line(2.75, 10.5, 5.75, 10.5) + line(3.75, 10.5, 3.75, 11.8) + line(4.75, 10.5, 4.75, 11.8), // the transom
+    rect(2.0, 12.2, 6.5, 12.8), // the door's cornice
+    rect(3.05, 3.6, 4.15, 9.9) + rect(4.35, 3.6, 5.45, 9.9), // the door's panels
+    WINDOWS.map(([c, s, h]) => {
+      const m = (s + h) / 2;
+      return (
+        rect(c - 1.85, h, c + 1.85, h + 0.8) + // lintel
+        rect(c - 1.8, s - 0.35, c + 1.8, s) + // sill
+        line(c - 1.5, m, c + 1.5, m) + // meeting rail
+        line(c - 0.5, s, c - 0.5, h) +
+        line(c + 0.5, s, c + 0.5, h) + // 6-over-6 muntins
+        line(c - 1.5, (s + m) / 2, c + 1.5, (s + m) / 2) +
+        line(c - 1.5, (m + h) / 2, c + 1.5, (m + h) / 2)
+      );
+    }).join(""),
+    [11.0, 11.75, 12.5].map((x) => line(x, 0.6, x, 2.0)).join(""), // the basement window's bars
+    Array.from({ length: 23 }, (_, i) => rect(i * 0.7, 32.1, i * 0.7 + 0.35, 32.6)).join(""), // dentils
+    rect(7, 35, 9, 37.2) + line(8, 35, 8, 37.2), // the dormer's window
+    line(-5, 30.5, 0, 30.5) + line(-5, 31.7, 0, 31.7) + line(16, 33.4, 21, 33.4) + line(16, 34.6, 21, 34.6), // neighbours' cornices
+  ];
+  // The brick: the front between the water table and the cornice, less its openings.
+  const HOUSE_BRICK =
+    rect(0, 2.5, 16, 32) +
+    WINDOWS.map(([c, s, h]) => rect(c - 1.85, s - 0.35, c + 1.85, h + 0.8)).join("") +
+    rect(2.0, 3, 6.5, 12.8);
+
   // ---------- Sampling paths into points, so any stroke can turn into any other ----------
-  type Pt = [number, number];
   const N = 200;
   function sampler(host: SVGGElement) {
     const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
@@ -204,6 +233,25 @@ const steps = [
     };
   }
   const pts = (ps: Pt[]) => ps.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
+
+  /** Lines moving from one set of points to another, staggered and swirling. */
+  function swirlLines(from: Pt[][], to: Pt[][], t: number, amount: number, spread: number) {
+    const n = to.length;
+    return to
+      .map((target, j) => {
+        const tj = ease(clamp((t - (j / n) * spread) / (1 - spread)));
+        const swirl = Math.sin(Math.PI * tj) * amount;
+        const line = target.map(([bx, by], i) => {
+          const [ax, ay] = from[j][i];
+          return [
+            lerp(ax, bx, tj) + swirl * Math.sin(i * 0.05 + j * 1.7),
+            lerp(ay, by, tj) + swirl * Math.cos(i * 0.04 + j * 0.9),
+          ] as Pt;
+        });
+        return `<polyline class="geo fig" points="${pts(line)}"/>`;
+      })
+      .join("");
+  }
 
   // ---------- Colours: read from the site's tokens ----------
   type RGB = [number, number, number];
@@ -282,6 +330,12 @@ const steps = [
     return `<g class="badge" transform="translate(${x} ${y}) scale(${sc.toFixed(3)})" opacity="${clamp(t * 2)}"><rect x="${-r}" y="${-r}" width="${2 * r}" height="${2 * r}" rx="${3.5 * k}"/><text y="${0.5 * k}">${glyph}</text></g>`;
   }
 
+  /** Staggered windows of `[a, b]`, one per item. */
+  const stagger = ([a, b]: readonly [number, number], n: number, i: number, len = 0.035): [number, number] => {
+    const step = (b - a - len) / Math.max(1, n - 1);
+    return [a + step * i, a + step * i + len];
+  };
+
   // ---------- The frame ----------
   function setup(root: HTMLElement) {
     const $ = <T extends Element>(sel: string) => root.querySelector<T>(sel)!;
@@ -300,9 +354,7 @@ const steps = [
     const fill = $<SVGGElement>("#ss-fill");
     const amp = $<SVGGElement>("#ss-amp");
     const ampKiss = $<SVGPathElement>("#ss-amp-kiss");
-    const dof = $<HTMLElement>("#ss-dof");
-    const steps = [...root.querySelectorAll<HTMLElement>("[data-step]")];
-    const bar = $<HTMLElement>(".progress span");
+    const brick = $<SVGRectElement>("#ss-brick-layer");
 
     const { scale, from, to } = FIGURE_PLACE;
     const place = `translate(${to[0] - from[0] * scale} ${to[1] - from[1] * scale}) scale(${scale})`;
@@ -316,37 +368,40 @@ const steps = [
     const brimClip = $<SVGPathElement>("#ss-brim-clip-path");
     brimClip.setAttribute("d", WOMAN_BRIM);
     brimClip.setAttribute("transform", place);
+    $<SVGPathElement>("#ss-house-clip-path").setAttribute("d", HOUSE_BRICK);
 
     // Sample everything once.
     const sample = sampler($<SVGGElement>("#ss-measure"));
     const plateS = PLATE.map((d) => sample(d));
     const figureS = WOMAN_LINES.map((d) => sample(d).map(toView));
-    // The ampersand's one contour, in as many stretches as she has lines.
+    const fromPlate = figureS.map((_, j) => plateS[j % plateS.length]);
+    // The ampersand's one contour, in as many stretches as she has lines, and again in as
+    // many as the rowhouse has.
     const ampOutline = sample(AMPERSAND, N * figureS.length).map(ampView);
     const ampS = figureS.map((_, j) => ampOutline.slice(j * N, (j + 1) * N));
+    const ampForHouse = sample(AMPERSAND, N * HOUSE.length).map(ampView);
+    const ampHouseS = HOUSE.map((_, j) => ampForHouse.slice(j * N, (j + 1) * N));
+    const houseS = HOUSE.map((d) => sample(d));
     const ampPlace = `translate(${AMP_PLACE.to[0] - (AMPERSAND_SIZE[0] / 2) * AMP_PLACE.scale} ${AMP_PLACE.to[1] - (AMPERSAND_SIZE[1] / 2) * AMP_PLACE.scale}) scale(${AMP_PLACE.scale})`;
     for (const el of [ampKiss, $<SVGPathElement>("#ss-amp-fill")]) {
       el.setAttribute("d", AMPERSAND);
       el.setAttribute("transform", ampPlace);
     }
-    ampKiss.setAttribute("data-place", ampPlace);
     const sectionA = sample(SECTION_A),
       sectionB = sample(SECTION_B),
       brim = sample(WOMAN_BRIM).map(toView);
 
     const css = getComputedStyle(document.documentElement);
     const tok = (n: string) => hex(css.getPropertyValue(n) || "#888");
-    const C = {
-      under: tok("--under"),
-      ink: tok("--ink"),
-    };
+    const C = { under: tok("--under"), ink: tok("--ink") };
 
     let k = 1; // viewBox units per screen pixel
     const measure = () => {
-      const w = svg.getBoundingClientRect().width || 1000;
-      k = Math.max(1, 1000 / w);
+      const r = svg.getBoundingClientRect();
+      const s = Math.min((r.width || 1000) / 1000, (r.height || 680) / 680);
+      k = 1 / s;
       svg.style.setProperty("--k", String(k));
-      svg.style.setProperty("--tk", String(clamp(1000 / w / 1.55, 1, 2.6)));
+      svg.style.setProperty("--tk", String(clamp(1 / (s * 1.55), 1, 2.6)));
     };
 
     function render(p: number) {
@@ -355,6 +410,7 @@ const steps = [
       svg.style.setProperty("--c-geo", geo);
       const letGo = ease(ph(p, PHASES.letGo));
       grid.setAttribute("opacity", String(ph(p, PHASES.grid) * (1 - letGo)));
+      root.style.opacity = String(strength() * (1 - ease(ph(p, PHASES.fadeOut))));
 
       const M = ph(p, PHASES.morph);
       const z = lerp(1, CAMERA.zoom, ease(M));
@@ -381,58 +437,40 @@ const steps = [
       const centreT = ph(p, PHASES.centre);
       s += `<path class="geo centre" d="${CENTRE}" ${draw(centreT)} style="opacity:${centreT > 0 ? 1 - letGo : 0}"/>`;
 
-      // The morph: the drawing's lines peel off the plate's strokes, staggered and swirling,
-      // then fade once the drawing has filled in.
+      // The plate's strokes become the woman's lines, which fade once she has filled in.
       const outline = 1 - ease(ph(p, PHASES.outline));
       if (M > 0 && outline > 0) {
-        const n = figureS.length;
-        s += `<g opacity="${outline.toFixed(3)}">`;
-        figureS.forEach((to, j) => {
-          const from = plateS[j % plateS.length];
-          const t = ease(clamp((M - (j / n) * 0.4) / 0.6));
-          const swirl = Math.sin(Math.PI * t) * 26;
-          const line = to.map(([bx, by], i) => {
-            const [ax, ay] = from[i];
-            return [
-              lerp(ax, bx, t) + swirl * Math.sin(i * 0.05 + j * 1.7),
-              lerp(ay, by, t) + swirl * Math.cos(i * 0.04 + j * 0.9),
-            ] as Pt;
-          });
-          s += `<polyline class="geo fig" points="${pts(line)}"/>`;
-        });
-        s += `</g>`;
+        s += `<g opacity="${outline.toFixed(3)}">${swirlLines(fromPlate, figureS, M, 26, 0.4)}</g>`;
       }
 
       // Her lines lift off again and swirl into the ampersand's outline.
       const release = ease(ph(p, PHASES.release));
       const A = ph(p, PHASES.toAmp);
-      if (A > 0) {
-        const n = figureS.length;
-        const shown = ease(ph(p, [PHASES.toAmp[0], PHASES.toAmp[0] + 0.03])) * (1 - ease(ph(p, PHASES.ampOutline)));
-        s += `<g opacity="${shown.toFixed(3)}">`;
-        figureS.forEach((from, j) => {
-          const t = ease(clamp((A - (j / n) * 0.35) / 0.65));
-          const swirl = Math.sin(Math.PI * t) * 30;
-          const line = ampS[j].map(([bx, by], i) => {
-            const [ax, ay] = from[i];
-            return [
-              lerp(ax, bx, t) + swirl * Math.sin(i * 0.06 + j * 1.3),
-              lerp(ay, by, t) + swirl * Math.cos(i * 0.05 + j * 0.7),
-            ] as Pt;
-          });
-          s += `<polyline class="geo fig" points="${pts(line)}"/>`;
-        });
-        s += `</g>`;
+      const ampLines = ease(ph(p, [PHASES.toAmp[0], PHASES.toAmp[0] + 0.02])) * (1 - ease(ph(p, PHASES.ampOutline)));
+      if (A > 0 && ampLines > 0) {
+        s += `<g opacity="${ampLines.toFixed(3)}">${swirlLines(figureS, ampS, A, 30, 0.35)}</g>`;
       }
 
-      // Colour fills the brushwork under the outlines, until she lets go.
+      // The ampersand's outline unfolds into the rowhouse.
+      const Hs = ph(p, PHASES.toHouse);
+      if (Hs > 0) {
+        const shown = ease(ph(p, [PHASES.toHouse[0], PHASES.toHouse[0] + 0.02]));
+        s += `<g opacity="${shown.toFixed(3)}">${swirlLines(ampHouseS, houseS, Hs, 34, 0.3)}</g>`;
+      }
+      HOUSE_DETAIL.forEach((d, i) => {
+        const t = ph(p, stagger(PHASES.houseDetail, HOUSE_DETAIL.length, i, 0.02));
+        if (t > 0) s += `<path class="geo thin" d="${d}" ${draw(t)}/>`;
+      });
+      brick.setAttribute("opacity", ease(ph(p, PHASES.brick)).toFixed(3));
+
+      // Her fill, until she lets go; the ampersand's fill and its red echo, until it empties.
+      const ampGone = 1 - ease(ph(p, PHASES.ampRelease));
       fill.setAttribute("opacity", String(ease(ph(p, PHASES.fill)) * (1 - release)));
       hatchShape.setAttribute("opacity", String(1 - release));
-      // The ampersand fills in, and its red echo slides out from behind.
-      amp.setAttribute("opacity", ease(ph(p, PHASES.ampFill)).toFixed(3));
+      amp.setAttribute("opacity", (ease(ph(p, PHASES.ampFill)) * ampGone).toFixed(3));
       const kiss = ease(ph(p, PHASES.kiss));
       ampKiss.setAttribute("opacity", kiss.toFixed(3));
-      ampKiss.setAttribute("transform", `translate(${(10 * kiss).toFixed(2)} ${(7 * kiss).toFixed(2)}) ${ampKiss.getAttribute("data-place") ?? ""}`);
+      ampKiss.setAttribute("transform", `translate(${(10 * kiss).toFixed(2)} ${(7 * kiss).toFixed(2)}) ${ampPlace}`);
 
       // The hatch: revealed across the cut faces, carried to the brim, then turned to dots.
       reveal.setAttribute("width", String(1400 * ease(ph(p, PHASES.hatch))));
@@ -450,7 +488,7 @@ const steps = [
       hatchDots.setAttribute("opacity", settle.toFixed(3));
       svg.style.setProperty("--c-hatch", geo);
 
-      // Relations and dimensions, which fall away when the drawing lets go.
+      // The plate's relations and dimensions, which fall away when the drawing lets go.
       const rel: [number, number, string][] = [
         [338, 286, "—"],
         [662, 286, "—"],
@@ -459,29 +497,43 @@ const steps = [
         [500, 250, "="],
         [500, 368, "◎"],
       ];
-      const [ra, rb] = PHASES.relations;
-      const relAt = (i: number) => ra + ((rb - ra - 0.025) * i) / (rel.length - 1);
       s += `<g opacity="${1 - letGo}">`;
       rel.forEach(([x, y, g], i) => {
-        s += badge(x, y, g, ph(p, [relAt(i), relAt(i) + 0.025]), k);
+        s += badge(x, y, g, ph(p, stagger(PHASES.relations, rel.length, i, 0.015)), k);
       });
-      const dims: Array<(t: number) => string> = [
+      const plateDims: Array<(t: number) => string> = [
         (t) => dim([780, 400], [220, 400], 54, "140", t, k),
         (t) => dim([780, 400], [780, 300], -44, "25", t, k),
         (t) => dim([445, 300], [555, 300], 70, "Ø28", t, k),
         (t) => dim([530, 400], [470, 400], 24, "Ø15", t, k),
         (t) => leader([224, 306], [196, 252], "3 × 45°", t, k),
       ];
-      const [da, db] = PHASES.dims;
-      const step = (db - da - 0.03) / dims.length;
-      dims.forEach((f, i) => {
-        s += f(ph(p, [da + step * i, da + step * i + 0.035]));
+      plateDims.forEach((f, i) => {
+        s += f(ph(p, stagger(PHASES.dims, plateDims.length, i, 0.02)));
       });
-      const labelT = ph(p, [db - 0.02, db]);
+      const labelT = ph(p, [PHASES.dims[1] - 0.015, PHASES.dims[1]]);
       if (labelT > 0) {
         s += `<g opacity="${labelT}"><text class="label" x="500" y="532">SECTION A–A</text><text class="label small" x="500" y="552">SCALE 2 : 1</text></g>`;
       }
       s += `</g>`;
+
+      // The rowhouse's dimensions, in feet and inches, and its title.
+      const houseDims: Array<(t: number) => string> = [
+        (t) => dim(hp(16, 0), hp(0, 0), 30, `16'-0"`, t, k),
+        (t) => dim(hp(16, 32), hp(16, 0), 44, `32'-0"`, t, k),
+        (t) => dim(hp(0, 0), hp(0, 3), 40, `3'-0"`, t, k),
+        (t) => dim(hp(0, 3), hp(0, 12.75), 40, `9'-9"`, t, k),
+        (t) => dim(hp(0, 12.75), hp(0, 22.25), 40, `9'-6"`, t, k),
+        (t) => dim(hp(0, 22.25), hp(0, 32), 40, `9'-9"`, t, k),
+        (t) => dim(hp(10.25, 28.8), hp(13.25, 28.8), 12, `3'-0"`, t, k),
+      ];
+      houseDims.forEach((f, i) => {
+        s += f(ph(p, stagger(PHASES.houseDims, houseDims.length, i, 0.02)));
+      });
+      const titleT = ph(p, [PHASES.houseDims[1] - 0.015, PHASES.houseDims[1]]);
+      if (titleT > 0) {
+        s += `<g opacity="${titleT}"><text class="label" x="500" y="${hy(0) + 62}">FRONT ELEVATION</text><text class="label small" x="500" y="${hy(0) + 80}">PHILADELPHIA ROWHOUSE · 1/4" = 1'-0"</text></g>`;
+      }
 
       // The pen, at the tip of the stroke being drawn.
       if (tip) {
@@ -490,32 +542,13 @@ const steps = [
         s += `<circle class="pen-dot" cx="${x}" cy="${y}" r="${2.6 * k}"/><path class="pen-cross" d="M${x - r * 2} ${y}H${x - r}M${x + r} ${y}H${x + r * 2}M${x} ${y - r * 2}V${y - r}M${x} ${y + r}V${y + r * 2}"/>`;
       }
       scene.innerHTML = s;
-
-      // The definition pill.
-      const drawn = ph(p, [pa, PHASES.centre[1]]);
-      const relDone = rel.filter((_, i) => p >= relAt(i) + 0.0125).length;
-      const dimDone = dims.slice(0, 4).filter((_, i) => p >= da + step * i + 0.03).length;
-      const free = Math.max(0, Math.round(drawn * 18) - relDone - dimDone * 3);
-      const ok = p >= PHASES.defined[1] - 0.005;
-      const pen = M > 0.15;
-      dof.className = `dof${drawn === 0 ? " empty" : pen ? " pen" : ok ? " ok" : ""}`;
-      dof.querySelector("b")!.textContent =
-        drawn === 0 ? "Empty sketch" : pen ? "Freehand" : ok ? "Fully defined" : `Under-defined · ${free} free`;
-
-      // Captions and progress.
-      let active = 0;
-      STEP_STARTS.forEach((st, i) => {
-        if (p >= st) active = i;
-      });
-      steps.forEach((el, i) => el.classList.toggle("active", i === active));
-      bar.style.transform = `scaleY(${p})`;
     }
 
     return { render, measure };
   }
 
   function init() {
-    const root = document.querySelector<HTMLElement>(".sketch-scroll");
+    const root = document.querySelector<HTMLElement>(".sketch-bg");
     if (!root) return;
     const { render, measure } = setup(root);
     const reduce = matchMedia("(prefers-reduced-motion: reduce)");
@@ -523,10 +556,10 @@ const steps = [
       shown = -1,
       raf = 0;
 
+    // Progress through the whole page.
     const progress = () => {
-      const r = root.getBoundingClientRect();
-      const span = r.height - window.innerHeight;
-      return span > 0 ? clamp(-r.top / span) : 0;
+      const span = document.documentElement.scrollHeight - window.innerHeight;
+      return span > 0 ? clamp(window.scrollY / span) : 0;
     };
     const tick = () => {
       raf = 0;
@@ -542,15 +575,12 @@ const steps = [
       if (!raf) raf = requestAnimationFrame(tick);
     };
     const apply = () => {
-      root.classList.toggle("still", reduce.matches);
+      // With reduced motion, the backdrop stays out of the way entirely.
+      root.hidden = reduce.matches;
+      if (reduce.matches) return;
       measure();
-      if (reduce.matches) {
-        target = shown = STILL;
-        render(STILL);
-      } else {
-        shown = -1;
-        onScroll();
-      }
+      shown = -1;
+      onScroll();
     };
     window.addEventListener("scroll", onScroll, { passive: true });
     window.addEventListener("resize", apply);
@@ -562,165 +592,28 @@ const steps = [
 </script>
 
 <style>
-  .sketch-scroll {
-    position: relative;
-    height: 720vh;
-    border-top: 1px solid var(--line);
-    background: var(--surface);
+  /* Fixed behind the page's content (main is its stacking context; see global.css). */
+  .sketch-bg {
+    position: fixed;
+    inset: 60px 0 0 0; /* clear of the sticky site header */
+    z-index: -1;
+    pointer-events: none;
+    opacity: 0;
   }
-  .sticky {
-    position: sticky;
-    top: 0;
-    height: 100vh;
-    height: 100svh;
-    display: flex;
-    align-items: center;
-    overflow: hidden;
+  .sketch-bg[hidden] {
+    display: none;
   }
-  .layout {
-    display: grid;
-    grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.6fr);
-    gap: 48px;
-    align-items: center;
-    width: 100%;
-    padding-top: 60px; /* clear the sticky site header */
-  }
-  .copy {
-    position: relative;
-    padding-left: 22px;
-  }
-  .progress {
-    position: absolute;
-    left: 0;
-    top: 34px;
-    bottom: 0;
-    width: 2px;
-    background: var(--line);
-    border-radius: 2px;
-    overflow: hidden;
-  }
-  .progress span {
+  svg {
     display: block;
+    width: 100%;
     height: 100%;
-    background: var(--accent);
-    transform-origin: top;
-    transform: scaleY(0);
-  }
-  .steps {
-    list-style: none;
-    margin: 12px 0 0;
-    padding: 0;
-    display: grid;
-    gap: 6px;
-  }
-  .steps li {
-    display: grid;
-    grid-template-columns: 30px 1fr;
-    gap: 8px;
-    padding: 10px 0;
-    opacity: 0.32;
-    transition: opacity 0.4s;
-  }
-  .steps li.active {
-    opacity: 1;
-  }
-  .num {
-    font-family: var(--mono);
-    font-size: 0.72rem;
-    letter-spacing: 0.08em;
-    color: var(--accent);
-    padding-top: 12px;
-  }
-  .steps h3 {
-    font-family: var(--display);
-    font-size: 1.9rem;
-    font-weight: 400;
-    letter-spacing: -0.015em;
-    line-height: 1.1;
-    margin: 0 0 6px;
-  }
-  .steps p {
-    margin: 0;
-    color: var(--text-weak);
-    font-size: 0.93rem;
-    max-height: 0;
-    overflow: hidden;
-    transition: max-height 0.5s ease;
-  }
-  .steps li.active p {
-    max-height: 9em;
-  }
-
-  .stage {
-    margin: 0;
-    border-radius: var(--radius);
-    border: 1px solid var(--line-strong);
-    overflow: hidden;
-    background: var(--panel);
-    box-shadow: 0 30px 80px -30px rgb(0 0 0 / 0.7);
-  }
-  .canvas svg {
-    display: block;
-    width: 100%;
-    height: auto;
-    max-height: calc(100svh - 160px);
     --k: 1;
     --tk: 1;
     --c-geo: var(--under);
     --c-hatch: var(--under);
   }
-  .status {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 12px;
-    padding: 7px 12px;
-    border-top: 1px solid var(--line);
-    font-family: var(--mono);
-    font-size: 0.75rem;
-    color: var(--text-weak);
-    min-height: 36px;
-  }
-  .dof {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 2px 10px;
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--under) 16%, transparent);
-    color: var(--under);
-    font-family: var(--font);
-    white-space: nowrap;
-    transition:
-      background 0.3s,
-      color 0.3s;
-  }
-  .dof i {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: currentColor;
-  }
-  .dof b {
-    font-weight: 600;
-  }
-  .dof.ok {
-    background: color-mix(in srgb, var(--ok) 16%, transparent);
-    color: var(--ok);
-  }
-  .dof.pen {
-    background: color-mix(in srgb, var(--accent) 18%, transparent);
-    color: var(--text);
-  }
-  .dof.empty {
-    background: var(--raised);
-    color: var(--text-weak);
-  }
 
   /* SVG styles: --c-geo and --c-hatch are set per frame; widths scale with --k. */
-  svg :global(.bg) {
-    fill: var(--surface);
-  }
   svg :global(.grid-minor) {
     fill: none;
     stroke: var(--grid);
@@ -740,6 +633,9 @@ const steps = [
   }
   svg :global(.geo.fig) {
     stroke-width: calc(1.5px * var(--k));
+  }
+  svg :global(.geo.thin) {
+    stroke-width: calc(1px * var(--k));
   }
   svg :global(.geo.centre) {
     stroke-width: calc(0.8px * var(--k));
@@ -776,6 +672,15 @@ const steps = [
   }
   svg :global(.dot) {
     fill: var(--figure-ink);
+  }
+  svg :global(.brick) {
+    fill: url(#ss-brick);
+  }
+  svg :global(.brick-line) {
+    fill: none;
+    stroke: var(--c-geo);
+    stroke-width: calc(0.7px * var(--k));
+    opacity: 0.55;
   }
   svg :global(.ext),
   svg :global(.dimline) {
@@ -829,70 +734,5 @@ const steps = [
   svg :global(.pen-cross) {
     stroke: var(--text);
     stroke-width: calc(1px * var(--k));
-  }
-
-  /* Narrow screens: the drawing on top, the current step under it. */
-  @media (max-width: 900px) {
-    .sketch-scroll {
-      height: 800vh;
-    }
-    .layout {
-      grid-template-columns: minmax(0, 1fr);
-      gap: 16px;
-      padding-top: 96px;
-    }
-    .stage {
-      order: -1;
-    }
-    .copy {
-      padding-left: 0;
-      min-height: 11em;
-    }
-    .copy .eyebrow,
-    .progress {
-      display: none;
-    }
-    .steps {
-      margin: 0;
-      display: block;
-      position: relative;
-    }
-    .steps li {
-      position: absolute;
-      inset: 0 0 auto 0;
-      opacity: 0;
-      transform: translateY(8px);
-      transition:
-        opacity 0.35s,
-        transform 0.35s;
-    }
-    .steps li.active {
-      opacity: 1;
-      transform: none;
-    }
-    .steps p {
-      max-height: none;
-    }
-  }
-
-  /* Reduced motion: a still picture and the steps as a plain list. */
-  .sketch-scroll.still {
-    height: auto;
-  }
-  .sketch-scroll.still .sticky {
-    position: static;
-    height: auto;
-    padding: 64px 0;
-  }
-  .sketch-scroll.still .steps li {
-    opacity: 1;
-    position: static;
-    transform: none;
-  }
-  .sketch-scroll.still .steps p {
-    max-height: none;
-  }
-  .sketch-scroll.still .progress {
-    display: none;
   }
 </style>

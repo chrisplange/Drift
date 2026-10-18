@@ -93,6 +93,27 @@ li {
   color: #fff;
 }
 
+/* The page's content is its own stacking context, so the front page's drawn backdrop
+   (z-index: -1 inside it) sits behind the content but above the page background. */
+main {
+  position: relative;
+  z-index: 0;
+}
+
+.site-footer {
+  position: relative;
+  z-index: 1;
+}
+
+/* Text over the front page's backdrop gets a halo in the page colour, which knocks the
+   drawing's lines back where they cross letters. */
+main :is(h1, h2, h3, p, li, .eyebrow):not(:is(.card, .feature, .news-list, .btn) *) {
+  text-shadow:
+    0 0 3px var(--bg),
+    0 0 8px var(--bg),
+    0 0 16px var(--bg);
+}
+
 img,
 svg {
   max-width: 100%;

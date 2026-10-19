@@ -3,7 +3,8 @@
 The website for Drift: a front page, downloads, the user guide, release notes, the licence in
 plain words, and the web app at `/app/`. It's a static site built with [Astro](https://astro.build)
 and hosted on Cloudflare Pages. The **Website** workflow (`.github/workflows/website.yml`)
-builds and deploys it on every merge to `main`, and whenever a release is published.
+builds and deploys it on every merge to `main`, and the release steps in `docs/releasing.md`
+run it once a release is published.
 
 ## Where things come from
 
@@ -11,12 +12,12 @@ builds and deploys it on every merge to `main`, and whenever a release is publis
 |---|---|
 | User guide (`/guide/`) | `docs/guide/*.md`, read in place. Links between pages are rewritten (`src/lib/remark-guide-links.mjs`), so the same Markdown works on GitHub. The sidebar follows the order of the links in `docs/guide/README.md`. |
 | Screenshots | `docs/guide/images/` |
-| Release notes, download links | The GitHub releases API, when the site is built. The download buttons check again in the visitor's browser. |
+| Release notes, download links | The GitHub releases API for the public releases repository (`chrisplange/drift-releases`), when the site is built. The download buttons check again in the visitor's browser. |
 | Web app (`/app/`) | `apps/web`, built by Trunk in the workflow |
 | Logo | `website/scripts/make_logo.py`, from the same drawing as the app icon |
 | Colours | The tokens at the top of `src/styles/global.css`, which follow `crates/drift-app/src/theme.rs` |
 | The site's address | The `SITE_URL` repository variable, read at build time (see below) |
-| Repo, tagline, next release | `src/site.config.mjs` |
+| Releases repo, source repo, tagline, next release | `src/site.config.mjs` |
 
 The front page's scroll animation is `src/components/SketchScroll.astro`. Its timings are in
 `PHASES` and the plate's strokes in `PLATE`. The drawing it turns into is `src/lib/woman.ts`, free-to-use

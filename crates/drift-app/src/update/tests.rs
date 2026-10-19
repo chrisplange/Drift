@@ -64,7 +64,7 @@ fn api_release(tag: &str, draft: bool, prerelease: bool, assets: &[&str]) -> ser
         "tag_name": tag,
         "name": format!("Drift {}", tag.trim_start_matches('v')),
         "body": "## What's new\n- Things",
-        "html_url": format!("https://github.com/chrisplange/Drift/releases/tag/{tag}"),
+        "html_url": format!("https://github.com/chrisplange/drift-releases/releases/tag/{tag}"),
         "draft": draft,
         "prerelease": prerelease,
         "assets": assets,

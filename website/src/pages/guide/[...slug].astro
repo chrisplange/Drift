@@ -21,7 +21,7 @@ const here = flat.findIndex((i) => i.id === entry.id);
 const prev = here > 0 ? flat[here - 1] : undefined;
 const next = here >= 0 && here < flat.length - 1 ? flat[here + 1] : undefined;
 const toc = headings.filter((h) => h.depth === 2);
-const source = `${site.repoUrl}/blob/main/docs/guide/${entry.id === "index" ? "README" : entry.id}.md`;
+const source = `${site.sourceUrl}/blob/main/docs/guide/${entry.id === "index" ? "README" : entry.id}.md`;
 ---
 
 <Base title={entry.id === "index" ? "User guide" : title}>

@@ -1187,3 +1187,53 @@ fn carried_line_keeps_its_length_step_after_step() {
     let length = run.end[2].distance(run.end[3]);
     assert!((length - 10.0).abs() < 1e-9, "B is {length} long");
 }
+
+/// #104: a move that can't land (B's end on A's midpoint can only move on a circle round the
+/// fixed P0) gives the same compromise at any size: a preference that only the dragged could
+/// meet doesn't inch them along, and the solve goes on until nothing moves.
+#[test]
+fn an_unlandable_move_gives_the_same_compromise_at_any_size() {
+    let p = DVec2::new;
+    let sketch = Sketch {
+        points: vec![
+            p(0.0, 0.0),
+            p(2.5881904510252074, 9.659258262890683),
+            p(-3.10582854123025, 11.59110991546882),
+            p(-6.211657082460498, 23.18221983093764),
+            p(1.2940952255126037, 4.8296291314453415),
+            p(11.294095225512603, 4.8296291314453415),
+            p(2.4485969553838896, 28.18221983093764),
+        ],
+        // A from P0, B standing on A's midpoint, an arc from P0, C from its start as long as A.
+        curves: vec![
+            Curve::Line(0, 1),
+            Curve::Arc(2, 3, 0),
+            Curve::Line(4, 5),
+            Curve::Line(3, 6),
+        ],
+        rels: vec![Rel::Midpoint(4, 0), Rel::Equal(0, 3), Rel::Fix(0)],
+    };
+    let offset = p(0.0, -5.261171146507463);
+    let t = Similarity {
+        scale: 0.25,
+        turn: 0.0,
+        shift: p(0.0, -71.07389948054578),
+    };
+    let mut plain = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+    let mut moved = Built::new(&sketch, t).unwrap();
+    let (ia, ib) = (
+        vec![plain.curves[2], plain.curves[3]],
+        vec![moved.curves[2], moved.curves[3]],
+    );
+    let a = drag(&mut plain, &ia, offset, 3).unwrap();
+    let b = drag(&mut moved, &ib, t.vector(offset), 3).unwrap();
+    assert!(a.committed && b.committed);
+    for i in 0..sketch.points.len() {
+        let want = t.point(a.end[i]);
+        assert!(
+            b.end[i].distance(want) < 1e-9,
+            "point {i}: {} vs {want}",
+            b.end[i]
+        );
+    }
+}

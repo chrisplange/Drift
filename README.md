@@ -13,7 +13,7 @@ constraints, built for technical drawings and design exploration. It is written 
 on the GPU with [wgpu](https://wgpu.rs), and runs natively on Windows, macOS and Linux and in the
 browser (WebGPU, with a WebGL2 fallback).
 
-> **Status: beta (0.1.0-beta.1.3).** Drawing, modifying, constraints, parameters, drafting,
+> **Status: beta (0.1.0-beta.1.4).** Drawing, modifying, constraints, parameters, drafting,
 > fills and hatches, blocks, underlays, sheets and PDF / SVG / DXF output all work, and four
 > rounds of alpha tester feedback are in. Expect rough edges, and save often. Files saved by
 > a newer build don't open in an older one. See [PLAN.md](PLAN.md) for what was built in each

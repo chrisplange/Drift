@@ -25,8 +25,8 @@ pub(super) struct Spin {
     pub(super) applied: Option<f64>,
     /// Copies of blocks turning too (as they were when the rotate began).
     pub(super) instances: Vec<(drift_core::InstanceId, drift_core::Instance)>,
-    /// The picked sketch text turning too, with its anchor and angle as they were.
-    pub(super) text: Option<(drift_core::TextId, DVec2, f64)>,
+    /// The picked sketch text and annotations turning too, as they were.
+    pub(super) riders: crate::picks::Riders,
     /// Begun by dragging a turn handle: letting go places it.
     pub(super) by_handle: bool,
 }
@@ -55,9 +55,7 @@ impl Spin {
                 ed.rotate_geometry(&self.ids, &self.points, self.pivot, angle);
             }
             ed.rotate_instances(&self.instances, self.pivot, angle);
-            if let Some(text) = self.text {
-                ed.turn_text(text, self.pivot, angle);
-            }
+            ed.place_riders(&self.riders, &turn(self.pivot, angle));
         }
         ed.region_motion = Some(crate::editor::RegionMotion::Turn {
             pivot: self.pivot,
@@ -88,6 +86,12 @@ impl Spin {
         }
         self.angle = deg;
     }
+}
+
+/// Turning by `degrees` about `pivot`.
+fn turn(pivot: DVec2, degrees: f64) -> impl Fn(DVec2) -> DVec2 {
+    let rotor = DVec2::from_angle(degrees.to_radians());
+    move |p| pivot + rotor.rotate(p - pivot)
 }
 
 /// Where a rotate turns about: a picked region's or hatch's centroid, a single curve's centre
@@ -126,14 +130,12 @@ impl SelectTool {
         }
         // A picked fill or hatch turns with the curves around it.
         let instances = ed.picked_instances();
-        let text = ed
-            .selected_text
-            .and_then(|id| ed.doc.text(id).map(|t| (id, t.at, t.angle)));
+        let riders = ed.riders();
         let ids: Vec<EntityId> = if ed.selection.is_empty() {
             match ed.selected_fill_curves() {
                 Some((ids, _)) if ed.refuse_locked(&ids) => return false,
                 Some((ids, _)) => ids,
-                None if !instances.is_empty() || text.is_some() => Vec::new(),
+                None if !instances.is_empty() || !riders.is_empty() => Vec::new(),
                 None => return false,
             }
         } else {
@@ -143,8 +145,9 @@ impl SelectTool {
             // Only copies of blocks: one turns about its insertion point, several about
             // their middle.
             match instances.as_slice() {
-                // Only a text: it turns about its anchor.
-                [] => text.map(|t| t.1),
+                // Only text and annotations: a lone text turns about its anchor, more about
+                // their middle.
+                [] => riders.centre(),
                 [(_, i)] => Some(i.at),
                 _ => {
                     let mut b = Bounds::EMPTY;
@@ -176,7 +179,7 @@ impl SelectTool {
             picking_reference: false,
             applied: Some(0.0),
             instances,
-            text,
+            riders,
             by_handle: false,
         });
         true
@@ -212,7 +215,7 @@ impl SelectTool {
             picking_reference: false,
             applied: Some(0.0),
             instances: Vec::new(),
-            text: None,
+            riders: Default::default(),
             by_handle: true,
         });
         true
@@ -229,9 +232,6 @@ impl SelectTool {
         }
         ed.doc.begin();
         ed.rotate_instances(&spin.instances, spin.pivot, angle);
-        if let Some(text) = spin.text {
-            ed.turn_text(text, spin.pivot, angle);
-        }
         let (ok, removed) = if spin.ids.is_empty() {
             (true, Vec::new())
         } else {
@@ -248,6 +248,7 @@ impl SelectTool {
             ed.notice = Some("Can't rotate it that way: its constraints don't allow it".into());
             return;
         }
+        ed.place_riders(&spin.riders, &turn(spin.pivot, angle));
         if crate::editor::is_quarter_turn(angle) {
             ed.restore_after_rotation(&removed, angle);
         } else if !removed.is_empty() {

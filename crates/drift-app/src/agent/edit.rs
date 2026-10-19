@@ -72,6 +72,7 @@ fn copy(s: &mut Session, ids: &[EntityId]) -> Vec<EntityId> {
         instances: Vec::new(),
         texts: Vec::new(),
         fills: Default::default(),
+        annotations: Vec::new(),
     };
     let ed = &mut s.editor;
     let source = ed.doc.clone();

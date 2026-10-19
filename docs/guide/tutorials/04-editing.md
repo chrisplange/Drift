@@ -29,12 +29,44 @@ a box selection can start there. (To pick a closed area and measure it instead, 
 **Edit → Preferences… → Drawing aids → Pick an area only where it is filled or hatched**.
 A picked area shows its area, perimeter and centroid in the **Inspector**.)
 
-### Pick filter: All, Edges, Points
+### Pick filter: All, Edges, Points, Annotations, Text
 
-With nothing picked, the top bar shows **All**, **Edges** and **Points**. **Edges** picks
-only curves and **Points** only points, for clicks, boxes and hover. A points-only box takes
-every point inside it. Fills, text, blocks and areas are picked only with **All**.
-Dimensions and notes are picked as usual whatever the filter.
+With nothing picked, the top bar shows **All**, **Edges**, **Points**, **Annotations** and
+**Text**. Each filter lets clicks, boxes and hover pick only that kind of thing:
+
+| Filter | Picks |
+|---|---|
+| **All** | Everything: geometry, fills, areas, blocks, text, dimensions and annotations. |
+| **Edges** | Only curves (and the relation symbols on them). |
+| **Points** | Only points. A points-only box takes every point inside it. |
+| **Annotations** | Only dimensions, notes, callouts, centre marks, ordinates, and section and elevation marks. |
+| **Text** | Only sketch text. |
+
+Fills, blocks and areas are picked only with **All**. The filters are in the command palette
+too (Ctrl+K, "Select annotations only").
+
+### Text and annotations in a selection
+
+A box picks text, dimensions and annotations as well as geometry, as in AutoCAD:
+
+- A window (dragged left to right) takes a dimension when all of it is inside the box: its
+  number, its dimension line and its extension lines. A note, callout or mark is taken when
+  its text, leaders and lines are all inside, and a text when its whole outline is.
+- A crossing box (dragged right to left) takes anything it touches.
+
+![A window round a room picks its sides, its dimension, the note and the text](../images/select-mixed.png)
+
+Shift+click adds a dimension, note or text to what is picked; Shift+drag adds a whole box.
+With a mix picked, the **Inspector** sums it up ("4 lines · 1 dimension · 1 note · 1 text")
+and shows where the annotations appear. What you do then acts on all of it:
+
+- **Delete** removes all of it, as one undo step.
+- **Move** (G, dragging, the arrow keys) and **Rotate** (R) take the text and annotations
+  along. A note keeps its leader's tip on the geometry it points at; its text moves. Callouts,
+  centre marks and ordinates follow their geometry, and dimensions always do.
+- **Mirror**, **Shift+D** and **Ctrl+C / Ctrl+V** copy them with the geometry. Mirrored text
+  still reads forwards, and a mirrored section mark looks the other way. A copied section or
+  elevation mark is a new mark, not linked to the original's view.
 
 ### Chains with Tab
 

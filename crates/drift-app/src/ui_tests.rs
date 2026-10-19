@@ -3229,7 +3229,8 @@ fn view_and_tool_hotkeys() {
 fn text_tool_places_and_types_live() {
     let Some(mut h) = harness() else { return };
     let v = DVec2::new;
-    h.get_by_label("Text").click();
+    // The toolbar's Text (the select tool's filter has a Text too).
+    h.get_all_by_label("Text").last().unwrap().click();
     h.run();
     assert_eq!(h.state().tool.kind(), ToolKind::Text);
     click_world(&mut h, v(-40.0, 0.0));
@@ -5401,7 +5402,7 @@ fn text_is_typed_straight_onto_the_canvas() {
     // Too small on screen to aim a caret at: a field under the text takes the typing.
     h.state_mut().camera.scale = 0.2;
     h.run();
-    h.state_mut().editor.selected_text = Some(id);
+    h.state_mut().editor.selected_texts = [id].into();
     h.state_mut().editor.editing_text = Some(id);
     h.run();
     h.run();
@@ -5575,7 +5576,7 @@ fn g_moves_a_picked_text() {
     h.key_press(Key::Enter);
     h.run();
     h.run();
-    assert_eq!(h.state().editor.selected_text, Some(id));
+    assert_eq!(h.state().editor.sole_text(), Some(id));
     let from = h.state().editor.doc.text(id).unwrap().at;
     // G: the select tool takes over and the text follows the pointer; a click places it.
     let start = screen(&h, DVec2::new(-30.0, 10.0));
@@ -5600,7 +5601,7 @@ fn g_moves_a_picked_text() {
     assert!(!h.state().tool.is_modal());
     let placed = h.state().editor.doc.text(id).unwrap().at;
     assert!((placed - from - DVec2::new(40.0, -25.0)).length() < 1.0);
-    assert_eq!(h.state().editor.selected_text, Some(id), "still picked");
+    assert_eq!(h.state().editor.sole_text(), Some(id), "still picked");
     // One undo step; and Esc during a move puts it back.
     h.state_mut().undo();
     assert_eq!(h.state().editor.doc.text(id).unwrap().at, from);
@@ -5640,7 +5641,7 @@ fn r_turns_a_picked_text_about_its_anchor() {
         6.0,
     ));
     ed.commit("Text");
-    ed.selected_text = Some(id);
+    ed.selected_texts = [id].into();
     h.run();
     // R with the select tool: the text turns about its anchor as the pointer goes round.
     h.hover_at(screen(&h, DVec2::new(40.0, 5.0)));
@@ -8019,6 +8020,117 @@ fn lines_snap_tangent_to_a_circle_and_square_onto_a_line() {
     h.run();
     let snap = h.state().pointer.and_then(|p| p.snap).expect("a snap");
     assert_eq!(snap.kind, SnapKind::OnCurve);
+}
+
+#[test]
+fn boxes_pick_annotations_and_text_with_the_filter() {
+    use crate::editor::PickFilter;
+    use drift_core::{Annotation, AnnotationRef, Constraint};
+    let Some(mut h) = harness() else { return };
+    let v = DVec2::new;
+    // A 60 × 40 rectangle with its width dimensioned, a note and a line of text beside it.
+    let (lines, width, note, text) = {
+        let ed = &mut h.state_mut().editor;
+        ed.doc.begin();
+        let c =
+            [v(0.0, 0.0), v(60.0, 0.0), v(60.0, 40.0), v(0.0, 40.0)].map(|p| ed.doc.add_point(p));
+        let lines: Vec<_> = (0..4)
+            .map(|i| ed.doc.add_line(c[i], c[(i + 1) % 4]).unwrap())
+            .collect();
+        let width = ed
+            .doc
+            .add_constraint(Constraint::Distance {
+                a: c[0],
+                b: c[1],
+                value: 60.0,
+            })
+            .unwrap();
+        let note = ed
+            .doc
+            .add_annotation(Annotation::Note {
+                text: "STAIR".into(),
+                at: v(110.0, 20.0),
+                leaders: Vec::new(),
+                style: Default::default(),
+            })
+            .unwrap();
+        let text = ed
+            .doc
+            .add_text(drift_core::SketchText::new("HALL", v(100.0, -20.0), 5.0));
+        ed.commit("Setup");
+        let mut fit = drift_core::Bounds::from_point(v(-40.0, -60.0));
+        fit.include(v(170.0, 80.0));
+        h.state_mut().fit_target = Some(fit);
+        (lines, width, note, text)
+    };
+    h.run();
+    let everything = |h: &mut Harness<'_, DriftApp>| {
+        drag_world(h, v(-38.0, -58.0), v(168.0, 78.0));
+        h.run();
+    };
+    let picked = |h: &Harness<'_, DriftApp>| h.state().picked_annotations();
+
+    // Annotations only (the select tool's options bar): a window takes the dimension and the
+    // note, not the geometry or the text.
+    h.get_by_label("Annotations").click();
+    h.run();
+    assert_eq!(h.state().editor.pick_filter, PickFilter::Annotations);
+    everything(&mut h);
+    let refs = picked(&h);
+    assert!(refs.contains(&AnnotationRef::Dimension(width)), "{refs:?}");
+    assert!(refs.contains(&AnnotationRef::Annotation(note)), "{refs:?}");
+    assert!(h.state().editor.selection.is_empty());
+    assert!(h.state().editor.selected_texts.is_empty());
+    // Delete takes both, as one undo step.
+    h.key_press(Key::Delete);
+    h.run();
+    assert!(h.state().editor.doc.constraint(width).is_none());
+    assert!(h.state().editor.doc.annotation(note).is_none());
+    assert_eq!(h.state().editor.doc.texts().count(), 1);
+    assert_eq!(lines.len(), 4);
+    assert!(lines.iter().all(|l| h.state().editor.doc.get(*l).is_some()));
+    h.state_mut().undo();
+    h.run();
+    assert!(h.state().editor.doc.annotation(note).is_some());
+
+    // A narrow box across the note's text: a crossing box (dragged right to left) takes it,
+    // a window the same size doesn't (the text isn't all inside it).
+    let at = v(110.0, 20.0);
+    drag_world(&mut h, at + v(-0.3, -12.0), at + v(0.3, 12.0));
+    h.run();
+    assert!(picked(&h).is_empty(), "window: {:?}", picked(&h));
+    drag_world(&mut h, at + v(0.3, 12.0), at + v(-0.3, -12.0));
+    h.run();
+    assert_eq!(picked(&h), vec![AnnotationRef::Annotation(note)]);
+
+    // All: the same window takes everything, and the Inspector says what.
+    h.get_by_label("All").click();
+    h.run();
+    everything(&mut h);
+    let ed = &h.state().editor;
+    assert!(lines.iter().all(|l| ed.selection.contains(l)));
+    assert_eq!(ed.selected_texts, [text].into());
+    assert_eq!(picked(&h).len(), 2);
+    assert!(
+        h.query_by_label_contains("1 dimension").is_some(),
+        "the Inspector sums up a mixed pick"
+    );
+    save_png("drift_ui_box_annotations.png", &mut h);
+
+    // Text only: the window takes just the text. (With something picked the bar shows the
+    // filter only while one is on: Esc first. The toolbar's Text tool comes after it.)
+    h.key_press(Key::Escape);
+    h.run();
+    h.key_press(Key::Escape);
+    h.run();
+    h.get_all_by_label("Text").next().unwrap().click();
+    h.run();
+    assert_eq!(h.state().editor.pick_filter, PickFilter::Text);
+    everything(&mut h);
+    let ed = &h.state().editor;
+    assert!(ed.selection.is_empty());
+    assert_eq!(ed.selected_texts, [text].into());
+    assert!(picked(&h).is_empty());
 }
 
 #[test]

@@ -63,7 +63,7 @@ impl Editor {
         if self.selection.len() != 1
             || !self.selected_instances.is_empty()
             || !self.selected_fills.is_empty()
-            || self.selected_text.is_some()
+            || self.picks_annotations()
             || self.selected_region.is_some()
             || !self.selected_midpoints.is_empty()
         {

@@ -362,7 +362,8 @@ fn split(curves: &[Shape]) -> Vec<(Edge, usize)> {
             Shape::Point(_) => {}
         }
     }
-    edges.retain(|(e, _)| e.length() > 0.0);
+    // Pieces shorter than the tolerance have both ends at one vertex: nothing to trace.
+    edges.retain(|(e, _)| e.length() > tolerance(e.start().abs().max_element()));
     edges
 }
 
@@ -833,5 +834,60 @@ mod tests {
         let found = regions(&curves);
         assert_eq!(found.len(), 1);
         assert!((found[0].area - 100.0).abs() < 1e-9);
+    }
+
+    /// The lower half of a circle, its diameter, and a curve ending on the arc's interior
+    /// (#100).
+    fn half_disc_with_lock(lock: Shape) -> Vec<Shape> {
+        vec![
+            Shape::Arc {
+                center: v(0.0, 0.0),
+                radius: 100.0,
+                start: PI,
+                sweep: PI,
+            },
+            line(v(-100.0, 0.0), v(100.0, 0.0)),
+            lock,
+        ]
+    }
+
+    #[test]
+    fn a_bezier_ending_on_an_arc_is_a_junction() {
+        // (60, -80) lies exactly on the circle, so the Bézier and the arc enclose a lock
+        // shape, and the half disc beside it stays whole (#100).
+        let regs = regions(&half_disc_with_lock(Shape::Bezier {
+            p: [
+                v(100.0, 0.0),
+                v(160.0, -20.0),
+                v(150.0, -70.0),
+                v(60.0, -80.0),
+            ],
+        }));
+        let lock = region_at(&regs, v(120.0, -40.0)).expect("lock");
+        assert!((lock.area - 2715.9).abs() < 1.0, "{}", lock.area);
+        let disc = region_at(&regs, v(0.0, -50.0)).expect("half disc");
+        assert!((disc.area - PI * 5000.0).abs() < 1e-6, "{}", disc.area);
+        assert_eq!(regs.len(), 2);
+        // Control: a polyline through the control points was already found. Its area is
+        // the 5000 polygon less the circular segment the arc cuts off (636.5).
+        let mut curves = half_disc_with_lock(line(v(100.0, 0.0), v(160.0, -20.0)));
+        curves.push(line(v(160.0, -20.0), v(150.0, -70.0)));
+        curves.push(line(v(150.0, -70.0), v(60.0, -80.0)));
+        let regs = regions(&curves);
+        let lock = region_at(&regs, v(120.0, -40.0)).expect("polyline lock");
+        assert!((lock.area - 4363.52).abs() < 0.01, "{}", lock.area);
+        assert!(region_at(&regs, v(0.0, -50.0)).is_some());
+        // Control: a Bézier ending on a line's interior.
+        let mut curves = rect(0.0, 0.0, 200.0, 100.0);
+        curves.push(Shape::Bezier {
+            p: [v(0.0, 0.0), v(60.0, 80.0), v(120.0, 80.0), v(150.0, 0.0)],
+        });
+        let regs = regions(&curves);
+        assert_eq!(
+            regs.len(),
+            2,
+            "{:?}",
+            regs.iter().map(|r| r.area).collect::<Vec<_>>()
+        );
     }
 }

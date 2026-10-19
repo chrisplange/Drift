@@ -611,9 +611,36 @@ impl Editor {
                 })
                 .collect();
         }
-        let ok = self.drag_in_steps(ids, delta, dragged, &scope, &before, 0);
+        let mut turned = Vec::new();
+        let mut ok = self.drag_in_steps(ids, delta, dragged, &scope, &before, 0, &mut turned);
         if !ok {
             self.restore_geometry(&before);
+        }
+        // A move of curves that would turn an arc inside out (or flip a tangency) even in
+        // small steps carries that curve along rather than stopping: an arc squeezed by a
+        // moved end is pushed once it can't shrink any further.
+        let mut ids = ids.clone();
+        let mut dragged = dragged.to_vec();
+        while !ok && curves && !turned.is_empty() {
+            let carried: Vec<EntityId> = std::mem::take(&mut turned)
+                .into_iter()
+                .filter(|id| !ids.contains(id))
+                .collect();
+            if carried.is_empty() {
+                break;
+            }
+            for p in self.doc.defining_points(carried.iter().copied()) {
+                for q in Param::point(p) {
+                    if !dragged.contains(&q) {
+                        dragged.push(q);
+                    }
+                }
+            }
+            ids.extend(carried);
+            ok = self.drag_in_steps(&ids, delta, &dragged, &scope, &before, 0, &mut turned);
+            if !ok {
+                self.restore_geometry(&before);
+            }
         }
         // Only the connected part can have moved.
         self.index.update_moved(&self.doc, scope.iter().copied());
@@ -622,7 +649,8 @@ impl Editor {
 
     /// One step of [`drag`](Self::drag) from `before` (the scope's geometry now), split in
     /// halves (up to `MAX_SPLITS` deep) where it turns the shape. False, with the geometry
-    /// part way, if it can't go.
+    /// part way, if it can't go; then `turned` holds the curves even the smallest step turned.
+    #[allow(clippy::too_many_arguments)]
     fn drag_in_steps(
         &mut self,
         ids: &[EntityId],
@@ -631,6 +659,7 @@ impl Editor {
         scope: &std::rc::Rc<std::collections::HashSet<EntityId>>,
         before: &Geometry,
         depth: u32,
+        turned: &mut Vec<EntityId>,
     ) -> bool {
         const MAX_SPLITS: u32 = 6;
         let orientation = drift_solver::Orientation::of(&self.doc, Some(scope));
@@ -662,18 +691,30 @@ impl Editor {
         if !conflicts && !orientation.turned(&self.doc) {
             return true;
         }
+        if !conflicts && depth >= MAX_SPLITS {
+            // Even the smallest step turns these.
+            *turned = orientation.turned_curves(&self.doc);
+        }
         self.restore_geometry(before);
         // (Only a turn is worth smaller steps: a conflict is the same at any size.)
         if conflicts
             || depth >= MAX_SPLITS
-            || !self.drag_in_steps(ids, delta / 2.0, dragged, scope, before, depth + 1)
+            || !self.drag_in_steps(ids, delta / 2.0, dragged, scope, before, depth + 1, turned)
         {
             return false;
         }
         let mut halfway = self.geometry_of(scope);
         // The lengths to keep are still those from before the move.
         halfway.lengths = before.lengths.clone();
-        self.drag_in_steps(ids, delta / 2.0, dragged, scope, &halfway, depth + 1)
+        self.drag_in_steps(
+            ids,
+            delta / 2.0,
+            dragged,
+            scope,
+            &halfway,
+            depth + 1,
+            turned,
+        )
     }
 
     /// Where the points of `scope` are and the sizes of its circles and arcs, for

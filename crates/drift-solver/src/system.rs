@@ -217,6 +217,19 @@ impl System {
         };
         // Collinear relations are built after all merges are known (see below).
         let mut collinear = Vec::new();
+        // Points joined by coincident relations, by the root of their x parameter: curves
+        // whose ends are joined that way share that end as much as curves sharing a point.
+        let joined_ends: Vec<usize> = {
+            let mut joined = UnionFind::new(params.len());
+            for (cid, c) in doc.constraints().filter(|(_, c)| c.entities().all(keep)) {
+                if let Constraint::Coincident { a, b } = *c
+                    && !doc.is_driven(cid)
+                {
+                    joined.union(x(a), x(b));
+                }
+            }
+            (0..params.len()).map(|i| joined.find(i)).collect()
+        };
 
         let center = |id: EntityId| match doc.get(id).map(|e| e.kind) {
             Some(EntityKind::Circle { center, .. } | EntityKind::Arc { center, .. }) => center,
@@ -477,7 +490,11 @@ impl System {
                             _ => Vec::new(),
                         }
                     };
-                    let shared = ends(a).into_iter().find(|p| ends(b).contains(p));
+                    let shared = ends(a).into_iter().find(|&p| {
+                        ends(b)
+                            .into_iter()
+                            .any(|q| joined_ends[x(p)] == joined_ends[x(q)])
+                    });
                     let kind_a = doc.get(a).map(|e| e.kind);
                     let at_shared = shared.map(|t| match kind_a {
                         Some(EntityKind::Line { .. }) => Equation::SymmetricPerpendicular {

@@ -61,6 +61,8 @@ pub struct DxfHatch {
     /// Degrees.
     pub angle: f64,
     pub color: Option<Rgb>,
+    /// A solid fill's opacity (0–1); `None` is Drift's default.
+    pub opacity: Option<f64>,
     /// Points inside it, as the file gives them.
     pub seeds: Vec<DVec2>,
 }
@@ -1476,6 +1478,7 @@ impl<'a> Reader<'a> {
                     scale: raw.f(41).filter(|s| *s > 0.0).unwrap_or(1.0),
                     angle: raw.f(52).unwrap_or(0.0),
                     color,
+                    opacity: None,
                     seeds,
                 });
             }
@@ -2401,6 +2404,9 @@ pub fn add_to_document(doc: &mut Document, import: &DxfImport) -> ImportReport {
         };
         let mut fill = Fill::new(boundary, seed, kind);
         fill.color = h.color;
+        if let Some(opacity) = h.opacity {
+            fill.opacity = opacity.clamp(0.0, 1.0);
+        }
         let id = doc.add_fill(fill.clone());
         if let Some(mut placed) = doc.fill(id).cloned() {
             placed.layer = layer;

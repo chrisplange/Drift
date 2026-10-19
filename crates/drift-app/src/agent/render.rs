@@ -152,10 +152,25 @@ pub(super) fn render(s: &mut Session, a: &Value, image: &mut Option<Vec<u8>>) ->
         show_dims,
     );
     let mut canvas = Canvas::new(w, h, page).ok_or("the picture is too big")?;
-    raster::draw(&mut canvas, &drawing);
-
     // World millimetres onto the page.
     let to_page = |p: DVec2| page / 2.0 + (p - center) / scale;
+    // Underlays' pictures, over filled areas and under the curves (as on the canvas).
+    let doc = &s.editor.doc;
+    raster::draw_over(&mut canvas, &drawing, |canvas| {
+        for (_, u) in doc.underlays().filter(|(_, u)| u.visible) {
+            for image in u.images.iter() {
+                let at = u.to_world(image.at);
+                canvas.image(
+                    image,
+                    to_page(at),
+                    (u.to_world(image.at + image.across) - at) / scale,
+                    (u.to_world(image.at + image.down) - at) / scale,
+                    u.opacity,
+                );
+            }
+        }
+    });
+
     let px = 1.0 / PX_PER_MM; // a pixel, in page mm
     let ed = &s.editor;
     let doc = &ed.doc;

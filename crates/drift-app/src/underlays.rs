@@ -62,11 +62,36 @@ fn mix(a: [u8; 3], b: [u8; 3], t: f64) -> [u8; 3] {
     std::array::from_fn(|i| (f64::from(a[i]) * t + f64::from(b[i]) * (1.0 - t)).round() as u8)
 }
 
-/// What an import brought in: its curves and points, and its text.
+/// What an import brought in: its curves and points, its text, and the underlay its
+/// pictures came in on.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Imported {
     pub entities: Vec<EntityId>,
     pub texts: Vec<drift_core::TextId>,
+    pub underlays: Vec<UnderlayId>,
+}
+
+/// An underlay of the pictures imported artwork has (in paper mm), drawn at 1 : `scale`
+/// with the paper's lower-left corner at `at`: they stay where they are on the page, under
+/// the drawing that came in with them. `None` when there are none.
+pub fn picture_underlay(
+    name: &str,
+    images: &[drift_core::UnderlayImage],
+    scale: f64,
+    at: DVec2,
+) -> Option<Underlay> {
+    if images.is_empty() {
+        return None;
+    }
+    let stem = name.rsplit_once('.').map_or(name, |(s, _)| s);
+    let mut u = Underlay::new(format!("{stem} pictures"), name, Vec::new());
+    u.images = std::sync::Arc::new(images.to_vec());
+    u.scale = scale;
+    u.at = at;
+    // Pictures show as they are (an underlay's curves are faded).
+    u.opacity = 1.0;
+    u.snap = false;
+    Some(u)
 }
 
 impl Editor {
@@ -99,6 +124,23 @@ impl Editor {
     }
 
     /// The visible underlays' curves within `view`, faded towards the background.
+    /// The visible underlays' pictures, for the canvas.
+    pub fn underlay_images(&self) -> Vec<drift_render::CanvasImage> {
+        let mut out = Vec::new();
+        for (_, u) in self.doc.underlays().filter(|(_, u)| u.visible) {
+            for image in u.images.iter() {
+                out.push(drift_render::CanvasImage {
+                    pixels: image.rgba.clone(),
+                    width: image.width,
+                    height: image.height,
+                    corners: image.corners().map(|p| u.to_world(p)),
+                    opacity: u.opacity as f32,
+                });
+            }
+        }
+        out
+    }
+
     pub fn underlay_items(&self, view: Bounds, dark: bool) -> Vec<SketchItem> {
         let mut items = Vec::new();
         for (id, u) in self.doc.underlays() {
@@ -265,9 +307,9 @@ impl Editor {
         scale: f64,
     ) -> Result<UnderlayReport, String> {
         let read = drift_io::pdf_import::read_page(bytes, page)?;
-        if read.prims.is_empty() {
+        if read.prims.is_empty() && read.images.is_empty() {
             return Err(format!(
-                "page {page} of {name} has no vector drawing (it may be a scanned image)"
+                "page {page} of {name} has nothing Drift can show (no drawing or pictures)"
             ));
         }
         let stem = name.rsplit_once('.').map_or(name, |(s, _)| s);
@@ -277,14 +319,22 @@ impl Editor {
             stem.to_owned()
         };
         let mut u = Underlay::new(title, format!("{name}, page {page}"), read.prims);
+        u.images = std::sync::Arc::new(read.images);
         u.scale = MM_PER_POINT * scale;
+        // A scan, with no drawing over it, shows as it is.
+        if u.prims.is_empty() {
+            u.opacity = 1.0;
+        }
         let curves = u.curve_count();
         let mut skipped = Vec::new();
         if read.skipped_text > 0 {
             skipped.push(format!("{} text run(s)", read.skipped_text));
         }
         if read.skipped_images > 0 {
-            skipped.push(format!("{} image(s)", read.skipped_images));
+            skipped.push(format!(
+                "{} image(s) Drift can't read (JPEG 2000, JBIG2 or fax)",
+                read.skipped_images
+            ));
         }
         let id = self.add_underlay(u);
         Ok(UnderlayReport {
@@ -461,6 +511,14 @@ impl Editor {
                 self.doc.set_text(*id, t);
             }
         }
+        // Its pictures, with it.
+        for id in &set.underlays {
+            if let Some(mut u) = self.doc.underlay(*id).cloned() {
+                u.at = to(u.at);
+                u.scale *= k;
+                self.doc.set_underlay(*id, u);
+            }
+        }
         self.commit("Calibrate import");
         Ok(k)
     }
@@ -522,7 +580,18 @@ impl Editor {
                 created.push(e);
             }
         }
-        self.doc.remove_underlay(id);
+        // Its pictures stay, as an underlay of their own.
+        if u.images.is_empty() {
+            self.doc.remove_underlay(id);
+        } else {
+            self.doc.set_underlay(
+                id,
+                Underlay {
+                    prims: std::sync::Arc::new(Vec::new()),
+                    ..u
+                },
+            );
+        }
         if !self.commit("Convert underlay") {
             return 0;
         }
@@ -735,5 +804,49 @@ mod tests {
         let report = ed.import_dxf_underlay("plan.dxf", &dxf, 1.0).unwrap();
         assert_eq!(report.curves, 1);
         assert_eq!(ed.doc.underlays().count(), 2);
+    }
+
+    #[test]
+    fn pictures_follow_their_import_and_outlast_converted_curves() {
+        let picture = drift_core::UnderlayImage {
+            width: 1,
+            height: 1,
+            rgba: std::sync::Arc::new(vec![10, 20, 30, 255]),
+            at: v(0.0, 10.0),
+            across: v(20.0, 0.0),
+            down: v(0.0, -10.0),
+        };
+        // As an import at 1:50 places them: paper mm, the paper's corner where it goes.
+        let u = picture_underlay(
+            "plan.pdf",
+            std::slice::from_ref(&picture),
+            50.0,
+            v(100.0, 0.0),
+        )
+        .expect("pictures");
+        assert_eq!((u.name.as_str(), u.opacity), ("plan pictures", 1.0));
+        let mut ed = Editor::default();
+        ed.doc.begin();
+        let id = ed.doc.add_underlay(u);
+        ed.commit("Import");
+        let b = ed.doc.underlay(id).unwrap().bounds();
+        assert!(b.min.distance(v(100.0, 0.0)) < 1e-9 && b.max.distance(v(1100.0, 500.0)) < 1e-9);
+        // Calibrating the import (twice as big, about its corner) takes them along.
+        ed.last_import = Some(Imported {
+            underlays: vec![id],
+            ..Default::default()
+        });
+        ed.calibrate_import(v(100.0, 0.0), v(1100.0, 0.0), 2000.0)
+            .unwrap();
+        let b = ed.doc.underlay(id).unwrap().bounds();
+        assert!(b.min.distance(v(100.0, 0.0)) < 1e-9 && b.max.distance(v(2100.0, 1000.0)) < 1e-9);
+        // Converting an underlay's curves leaves its pictures, as an underlay.
+        let mut both = plan();
+        both.images = std::sync::Arc::new(vec![picture]);
+        let id = ed.add_underlay(both);
+        assert_eq!(ed.convert_underlay(id), 5);
+        let left = ed.doc.underlay(id).expect("the pictures stay");
+        assert!(left.prims.is_empty() && left.images.len() == 1);
+        assert!(picture_underlay("plan.pdf", &[], 1.0, DVec2::ZERO).is_none());
     }
 }

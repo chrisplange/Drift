@@ -13,6 +13,8 @@ const ENTRY_POINTS: &[(&str, naga::ShaderStage)] = &[
     ("fs_segment", naga::ShaderStage::Fragment),
     ("vs_arc", naga::ShaderStage::Vertex),
     ("fs_arc", naga::ShaderStage::Fragment),
+    ("vs_image", naga::ShaderStage::Vertex),
+    ("fs_image", naga::ShaderStage::Fragment),
 ];
 
 fn parse_and_validate() -> (naga::Module, naga::valid::ModuleInfo) {

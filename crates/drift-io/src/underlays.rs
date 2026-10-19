@@ -1,10 +1,11 @@
 //! File records for underlays (format 12): placement and look, and the curves themselves in
 //! a compact form (`{"l": [x1, y1, x2, y2]}`, `{"p": [x, y, x, y, …]}`, `{"c": [x, y, r]}`,
-//! `{"a": [x, y, r, start°, sweep°]}`).
+//! `{"a": [x, y, r, start°, sweep°]}`). Their pictures (format 33) are PNGs in base64, each
+//! with its top-left corner and the vectors along its top and down its left side.
 
 use std::sync::Arc;
 
-use drift_core::{DVec2, RefPrim, Rgb, Underlay, UnderlayId};
+use drift_core::{DVec2, RefPrim, Rgb, Underlay, UnderlayId, UnderlayImage};
 use serde::{Deserialize, Serialize};
 
 use crate::{LoadError, parse_prefixed};
@@ -59,6 +60,96 @@ pub(crate) struct UnderlayRecord {
     #[serde(default, skip_serializing_if = "is_false")]
     locked: bool,
     prims: Vec<PrimRecord>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    images: Vec<ImageRecord>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ImageRecord {
+    at: [f64; 2],
+    across: [f64; 2],
+    down: [f64; 2],
+    png: String,
+}
+
+/// A picture as a PNG.
+fn encode_png(image: &UnderlayImage) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut encoder = png::Encoder::new(&mut out, image.width, image.height);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    encoder.set_compression(png::Compression::Balanced);
+    let written = encoder
+        .write_header()
+        .and_then(|mut w| w.write_image_data(&image.rgba));
+    written.expect("a picture's pixels fill it");
+    out
+}
+
+/// A PNG's pixels as RGBA, with its size.
+fn decode_png(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
+    let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+    decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
+    let mut reader = decoder.read_info().ok()?;
+    let mut buf = vec![0; reader.output_buffer_size()?];
+    let info = reader.next_frame(&mut buf).ok()?;
+    buf.truncate(info.buffer_size());
+    let (w, h) = (info.width, info.height);
+    let rgba = match info.color_type {
+        png::ColorType::Rgba => buf,
+        png::ColorType::Rgb => buf
+            .chunks(3)
+            .flat_map(|c| [c[0], c[1], c[2], 255])
+            .collect(),
+        png::ColorType::GrayscaleAlpha => buf
+            .chunks(2)
+            .flat_map(|c| [c[0], c[0], c[0], c[1]])
+            .collect(),
+        png::ColorType::Grayscale => buf.iter().flat_map(|g| [*g, *g, *g, 255]).collect(),
+        png::ColorType::Indexed => return None,
+    };
+    (rgba.len() == (w as usize) * (h as usize) * 4).then_some((w, h, rgba))
+}
+
+const BASE64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+fn base64(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b = [
+            chunk[0],
+            chunk.get(1).copied().unwrap_or(0),
+            chunk.get(2).copied().unwrap_or(0),
+        ];
+        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
+        for i in 0..4 {
+            if i <= chunk.len() {
+                out.push(char::from(BASE64[(n >> (18 - 6 * i)) as usize & 63]));
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
+fn unbase64(text: &str) -> Option<Vec<u8>> {
+    let mut out = Vec::with_capacity(text.len() / 4 * 3);
+    let (mut acc, mut bits) = (0u32, 0);
+    for c in text
+        .bytes()
+        .filter(|c| !c.is_ascii_whitespace() && *c != b'=')
+    {
+        let v = BASE64.iter().position(|b| *b == c)? as u32;
+        acc = (acc << 6) | v;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((acc >> bits) as u8);
+        }
+    }
+    Some(out)
 }
 
 pub(crate) fn underlay_record(id: UnderlayId, u: &Underlay) -> UnderlayRecord {
@@ -98,6 +189,16 @@ pub(crate) fn underlay_record(id: UnderlayId, u: &Underlay) -> UnderlayRecord {
         snap: u.snap,
         locked: u.locked,
         prims,
+        images: u
+            .images
+            .iter()
+            .map(|i| ImageRecord {
+                at: i.at.to_array(),
+                across: i.across.to_array(),
+                down: i.down.to_array(),
+                png: base64(&encode_png(i)),
+            })
+            .collect(),
     }
 }
 
@@ -138,12 +239,27 @@ pub(crate) fn parse_underlay(r: UnderlayRecord) -> Result<(UnderlayId, Underlay)
             },
         });
     }
+    let mut images = Vec::with_capacity(r.images.len());
+    for i in &r.images {
+        let (width, height, rgba) = unbase64(&i.png)
+            .and_then(|png| decode_png(&png))
+            .ok_or_else(|| bad("images"))?;
+        images.push(UnderlayImage {
+            width,
+            height,
+            rgba: Arc::new(rgba),
+            at: DVec2::from_array(i.at),
+            across: DVec2::from_array(i.across),
+            down: DVec2::from_array(i.down),
+        });
+    }
     Ok((
         id,
         Underlay {
             name: r.name,
             source: r.source,
             prims: Arc::new(prims),
+            images: Arc::new(images),
             at: DVec2::from_array(r.at),
             scale: r.scale,
             angle: r.angle,

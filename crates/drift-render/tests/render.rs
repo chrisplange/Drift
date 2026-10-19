@@ -4,7 +4,9 @@
 //! available (e.g. a headless CI machine without a software rasteriser) the test is skipped.
 
 use drift_core::{DVec2, Shape, SketchItem, demo};
-use drift_render::{Camera, CanvasRenderer, FillMesh, Frame, Palette, Viewport, build_frame};
+use drift_render::{
+    Camera, CanvasImage, CanvasRenderer, FillMesh, Frame, Palette, Viewport, build_frame,
+};
 
 const WIDTH: u32 = 960;
 const HEIGHT: u32 = 640;
@@ -263,4 +265,90 @@ fn renders_fills_under_curves() {
     let on_edge =
         (y.saturating_sub(1)..=y + 1).any(|y| close(pixel(&pixels, x, y), palette.solid, 40));
     assert!(on_edge);
+}
+
+#[test]
+fn renders_pictures_over_fills_and_under_curves() {
+    let Some(gpu) = gpu() else {
+        eprintln!("no GPU adapter available; skipping render test");
+        return;
+    };
+    // A red fill; over it a picture, blue on its left half and see-through on its right;
+    // and over both, a line across the middle.
+    let corners = [
+        DVec2::new(0.0, 0.0),
+        DVec2::new(100.0, 0.0),
+        DVec2::new(100.0, 60.0),
+        DVec2::new(0.0, 60.0),
+    ];
+    let items = vec![SketchItem::new(Shape::Line {
+        a: DVec2::new(0.0, 30.0),
+        b: DVec2::new(100.0, 30.0),
+    })];
+    let mut camera = Camera::default();
+    camera.fit(
+        drift_core::Bounds {
+            min: corners[0],
+            max: corners[2],
+        },
+        viewport().size_px,
+        40.0,
+    );
+    let palette = Palette::dark();
+    let mut frame = build_frame(&items, &camera, viewport(), &palette);
+    let red = [0xff, 0x20, 0x20, 0xff];
+    frame.push_fills(
+        &[FillMesh {
+            vertices: corners.to_vec(),
+            indices: vec![0, 1, 2, 0, 2, 3],
+            color: red,
+        }],
+        &camera,
+        viewport(),
+    );
+    frame.push_images(
+        &[
+            CanvasImage {
+                pixels: std::sync::Arc::new(vec![0x20, 0x40, 0xff, 0xff, 0, 0, 0, 0]),
+                width: 2,
+                height: 1,
+                corners: [corners[3], corners[2], corners[1], corners[0]],
+                opacity: 1.0,
+            },
+            // An odd-sized one beside it (its mipmaps sized as the GPU allows).
+            CanvasImage {
+                pixels: std::sync::Arc::new(vec![128; 3001 * 1999 * 4]),
+                width: 3001,
+                height: 1999,
+                corners: [
+                    DVec2::new(102.0, 6.0),
+                    DVec2::new(108.0, 6.0),
+                    DVec2::new(108.0, 0.0),
+                    DVec2::new(102.0, 0.0),
+                ],
+                opacity: 1.0,
+            },
+        ],
+        &camera,
+        viewport(),
+    );
+    let pixels = render(&gpu, &frame);
+    save_png("drift_picture.png", &pixels);
+    let (x, y) = to_pixel(&camera, DVec2::new(20.0, 45.0));
+    assert!(
+        close(pixel(&pixels, x, y), [0x20, 0x40, 0xff, 0xff], 8),
+        "the picture's left half covers the fill: {:?}",
+        pixel(&pixels, x, y)
+    );
+    let (x, y) = to_pixel(&camera, DVec2::new(80.0, 45.0));
+    assert!(
+        close(pixel(&pixels, x, y), red, 8),
+        "its see-through half shows the fill: {:?}",
+        pixel(&pixels, x, y)
+    );
+    // The line draws over the picture.
+    let (x, y) = to_pixel(&camera, DVec2::new(20.0, 30.0));
+    let on_line =
+        (y.saturating_sub(1)..=y + 1).any(|y| close(pixel(&pixels, x, y), palette.solid, 40));
+    assert!(on_line);
 }

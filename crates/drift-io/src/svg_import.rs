@@ -682,7 +682,7 @@ impl<'a, 'input> Reader<'a, 'input> {
         }
         if opacity < 1.0 {
             self.art
-                .note("Transparency is left out: see-through colours come in solid");
+                .note("Transparency of lines and text is left out: they come in solid");
         }
         match paint {
             Paint::None => None,
@@ -876,11 +876,13 @@ impl<'a, 'input> Reader<'a, 'input> {
                         width: style.stroke_width * scale,
                         dashes: style.dashes.iter().map(|d| d * scale).collect(),
                     });
-                let fill = if tag == "line" {
+                // A fill keeps its opacity.
+                let fill = if tag == "line" || style.fill_opacity <= 0.0 {
                     None
                 } else {
-                    self.color_of(&style.fill.clone(), &style, style.fill_opacity)
+                    self.color_of(&style.fill.clone(), &style, 1.0)
                 };
+                let fill_opacity = style.fill_opacity.min(1.0);
                 if stroke.is_none() && fill.is_none() {
                     return;
                 }
@@ -892,6 +894,7 @@ impl<'a, 'input> Reader<'a, 'input> {
                             subpaths: stroke_parts,
                             stroke,
                             fill,
+                            fill_opacity,
                         });
                     }
                     return;
@@ -903,6 +906,7 @@ impl<'a, 'input> Reader<'a, 'input> {
                         subpaths: stroke_parts,
                         stroke,
                         fill: None,
+                        fill_opacity: 1.0,
                     });
                 }
                 if fill.is_some() && !fill_parts.is_empty() {
@@ -911,6 +915,7 @@ impl<'a, 'input> Reader<'a, 'input> {
                         subpaths: fill_parts,
                         stroke: None,
                         fill,
+                        fill_opacity,
                     });
                 }
             }

@@ -72,6 +72,8 @@ pub struct Painted {
     pub subpaths: Vec<Subpath>,
     pub stroke: Option<Stroke>,
     pub fill: Option<Rgb>,
+    /// How opaque the fill is, 0–1.
+    pub fill_opacity: f64,
 }
 
 /// A line of text: its anchor on the baseline (at the start, middle or end, per `align`),
@@ -113,6 +115,8 @@ pub struct Artwork {
     pub size: DVec2,
     pub paths: Vec<Painted>,
     pub texts: Vec<Text>,
+    /// Pictures (from a PDF page), in paper mm: they come in as an underlay.
+    pub images: Vec<drift_core::UnderlayImage>,
     pub layers: Vec<String>,
     pub layer_flags: BTreeMap<String, LayerFlags>,
     /// What clipping (by clip paths, masks and the page) did.
@@ -262,6 +266,7 @@ pub fn to_import(art: &Artwork, options: &ImportOptions) -> DxfImport {
                     scale: 1.0,
                     angle: 0.0,
                     color: Some(color),
+                    opacity: Some(p.fill_opacity),
                     seeds: Vec::new(),
                 });
             }
@@ -962,6 +967,7 @@ mod tests {
                 dashes: vec![2.0, 1.0],
             }),
             fill: Some(Rgb([0, 0, 255])),
+            fill_opacity: 1.0,
         });
         let import = to_import(
             &art,
@@ -1054,6 +1060,7 @@ mod tests {
                     dashes: Vec::new(),
                 }),
                 fill: None,
+                fill_opacity: 1.0,
             });
             art.texts.push(Text {
                 layer: layer.clone(),

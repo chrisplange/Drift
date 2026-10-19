@@ -5,6 +5,7 @@
 //! world coordinates, which keeps rendering exact at any zoom and any distance from the origin.
 
 use std::f64::consts::TAU;
+use std::sync::Arc;
 
 use bytemuck::{Pod, Zeroable};
 use drift_core::{DVec2, DofState, Emphasis, LineKind, LineType, Shape, SketchItem};
@@ -51,6 +52,36 @@ pub struct ArcInstance {
 pub struct FillVertex {
     pub pos: [f32; 2],
     pub color: [u8; 4],
+}
+
+/// A picture to draw: RGBA pixels (sRGB, not premultiplied, rows from the top) on the
+/// parallelogram with these world corners: top-left, top-right, bottom-right, bottom-left.
+#[derive(Clone, Debug)]
+pub struct CanvasImage {
+    pub pixels: Arc<Vec<u8>>,
+    pub width: u32,
+    pub height: u32,
+    pub corners: [DVec2; 4],
+    pub opacity: f32,
+}
+
+/// A vertex of a picture: where it is (physical pixels relative to the canvas centre), where
+/// in the picture (0–1 across and down), and how opaque.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct ImageVertex {
+    pub pos: [f32; 2],
+    pub uv: [f32; 2],
+    pub alpha: f32,
+}
+
+/// A picture as this frame draws it: its pixels, and triangles over the part that shows.
+#[derive(Clone, Debug)]
+pub struct FrameImage {
+    pub pixels: Arc<Vec<u8>>,
+    pub width: u32,
+    pub height: u32,
+    pub vertices: Vec<ImageVertex>,
 }
 
 /// A triangulated area in world coordinates, with an sRGB colour and alpha.
@@ -105,6 +136,8 @@ pub struct Frame {
     pub globals: Globals,
     /// Filled triangles, drawn under all curves.
     pub fills: Vec<FillVertex>,
+    /// Pictures (underlays'), drawn over the fills and under all curves.
+    pub images: Vec<FrameImage>,
     /// Curves drawn under all the others (hatch lines, underlays): arcs and lines are drawn
     /// in separate passes, so order within one list can't keep them below.
     pub under_segments: Vec<SegmentInstance>,
@@ -161,6 +194,52 @@ impl Frame {
         let under = build_frame(items, camera, viewport, palette);
         self.under_segments.extend(under.segments);
         self.under_arcs.extend(under.arcs);
+    }
+
+    /// Add pictures (drawn over the fills and under the curves, in the order given), each
+    /// cut to the canvas as fills are, so far-off corners never reach the GPU.
+    pub fn push_images(&mut self, images: &[CanvasImage], camera: &Camera, viewport: Viewport) {
+        let ppp = viewport.pixels_per_point;
+        let half = viewport.size_px * 0.5 + DVec2::splat(CULL_MARGIN_PX);
+        for image in images {
+            if image.width == 0 || image.height == 0 || image.opacity <= 0.0 {
+                continue;
+            }
+            let px = image.corners.map(|p| camera.world_to_view(p) * ppp);
+            // Where in the picture a point is: solve p = p0 + u·across + v·down.
+            let (p0, across, down) = (px[0], px[1] - px[0], px[3] - px[0]);
+            let det = across.perp_dot(down);
+            if det.abs() < 1e-9 || !det.is_finite() {
+                continue;
+            }
+            let uv = |p: DVec2| {
+                let q = p - p0;
+                [
+                    (q.perp_dot(down) / det) as f32,
+                    (across.perp_dot(q) / det) as f32,
+                ]
+            };
+            let poly = clip_polygon(&px, half);
+            if poly.len() < 3 {
+                continue;
+            }
+            let mut vertices = Vec::with_capacity((poly.len() - 2) * 3);
+            for k in 1..poly.len() - 1 {
+                for p in [poly[0], poly[k], poly[k + 1]] {
+                    vertices.push(ImageVertex {
+                        pos: to_f32(p),
+                        uv: uv(p),
+                        alpha: image.opacity.clamp(0.0, 1.0),
+                    });
+                }
+            }
+            self.images.push(FrameImage {
+                pixels: image.pixels.clone(),
+                width: image.width,
+                height: image.height,
+                vertices,
+            });
+        }
     }
 
     /// Add filled areas (drawn under the curves, in the order given). World coordinates are

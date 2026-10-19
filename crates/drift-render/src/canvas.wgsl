@@ -18,6 +18,10 @@ struct Globals {
 
 @group(0) @binding(0) var<uniform> g: Globals;
 
+// A picture's texture (premultiplied sRGB) and how it is sampled.
+@group(1) @binding(0) var image_texture: texture_2d<f32>;
+@group(1) @binding(1) var image_sampler: sampler;
+
 const TAU: f32 = 6.283185307179586;
 
 fn to_clip(p: vec2<f32>) -> vec4<f32> {
@@ -147,6 +151,43 @@ fn vs_fill(in: FillIn) -> FillOut {
 @fragment
 fn fs_fill(in: FillOut) -> @location(0) vec4<f32> {
     return shade(in.color, 1.0);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Pictures (textured triangles)
+
+struct ImageIn {
+    @location(0) pos: vec2<f32>,
+    @location(1) uv: vec2<f32>,
+    @location(2) alpha: f32,
+};
+
+struct ImageOut {
+    @builtin(position) position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+    @location(1) alpha: f32,
+};
+
+@vertex
+fn vs_image(in: ImageIn) -> ImageOut {
+    var out: ImageOut;
+    out.position = to_clip(in.pos);
+    out.uv = in.uv;
+    out.alpha = in.alpha;
+    return out;
+}
+
+@fragment
+fn fs_image(in: ImageOut) -> @location(0) vec4<f32> {
+    // Texels are premultiplied (so filtering doesn't bleed see-through colours): undo that
+    // to linearise, then premultiply again with the picture's own opacity.
+    let c = textureSample(image_texture, image_sampler, in.uv);
+    var rgb = c.rgb / max(c.a, 1e-6);
+    if (g.viewport.z > 0.5) {
+        rgb = srgb_to_linear(rgb);
+    }
+    let a = c.a * in.alpha;
+    return vec4<f32>(rgb * a, a);
 }
 
 // ---------------------------------------------------------------------------------------------

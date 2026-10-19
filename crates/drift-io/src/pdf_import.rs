@@ -1,17 +1,19 @@
 //! Reading the vector drawing of a PDF page: the stroked and filled paths through nested form
 //! XObjects, with their colours, widths, dashes and optional-content layers. As an underlay
 //! they're outlines to trace over ([`read_page`]); as artwork, curves to edit
-//! ([`read_artwork`]). Text and images are skipped.
+//! ([`read_artwork`]). Raster images come with them as pictures, placed where the page has
+//! them.
 //! Coordinates are PDF points with the origin at the page's lower-left corner, upright as
 //! the page is shown.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
 
-use drift_core::{DVec2, RefPrim, Rgb};
+use drift_core::{DVec2, RefPrim, Rgb, UnderlayImage};
 use lopdf::{Dictionary, Document, Object};
 
-use crate::clip::{Clip, ClipCount, clip_paint};
+use crate::clip::{Clip, ClipCount, clip_paint, uncovered};
+use crate::icc::CmykProfile;
 use crate::pdf_text::Font;
 use crate::vector::{Artwork, LayerFlags, Painted, Seg, Stroke, Subpath, Text};
 
@@ -25,7 +27,9 @@ pub struct PdfPage {
     /// The page size in points, as shown (after its rotation).
     pub size: DVec2,
     pub prims: Vec<RefPrim>,
-    /// Text runs and images that were skipped.
+    /// Its pictures (scans, photos, markup), in points.
+    pub images: Vec<UnderlayImage>,
+    /// Text runs, and images that couldn't be read, that were skipped.
     pub skipped_text: usize,
     pub skipped_images: usize,
 }
@@ -94,10 +98,17 @@ struct PageDrawing {
     size: DVec2,
     paths: Vec<PdfPath>,
     texts: Vec<PdfText>,
+    /// Strokes (and text runs) that opaque fills painted later hide, and how many there were.
+    covered: Vec<PdfPath>,
+    covered_count: usize,
     /// How each layer starts out (hidden, locked, not printed), by name.
     layers: BTreeMap<String, LayerFlags>,
     skipped_text: usize,
-    skipped_images: usize,
+    /// Its pictures; how many images couldn't be read, by why; and how many pictures are
+    /// clipped in the file (they come in whole).
+    pictures: Vec<UnderlayImage>,
+    unread: BTreeMap<&'static str, usize>,
+    clipped_pictures: usize,
     skipped_shadings: usize,
     clipping: ClipCount,
     /// What the drawing has that is left out: see-through colours, blend modes, soft masks.
@@ -121,16 +132,55 @@ struct PdfText {
     layer: Option<String>,
 }
 
+/// The layer what opaque fills hide comes in on (hidden).
+const COVERED: &str = "Covered by fills";
+
 /// Illustrator's stand-in page for a file saved without its PDF copy.
 const NO_PDF_CONTENT: &str = "without PDF Content";
 
 /// A painted path, in points on the upright page.
+#[derive(Clone)]
 struct PdfPath {
     subpaths: Vec<Subpath>,
     stroke: Option<Stroke>,
     fill: Option<Rgb>,
+    /// How opaque the fill is, 0–1 (the graphics state's `ca`).
+    fill_opacity: f64,
     /// The optional-content group (layer) it is drawn in.
     layer: Option<String>,
+    /// Its box (of its points and handles), corner to corner.
+    bounds: (DVec2, DVec2),
+}
+
+impl PdfPath {
+    fn new(
+        subpaths: Vec<Subpath>,
+        stroke: Option<Stroke>,
+        fill: Option<Rgb>,
+        fill_opacity: f64,
+        layer: Option<String>,
+    ) -> Self {
+        let bounds = subpaths
+            .iter()
+            .flat_map(|s| {
+                std::iter::once(s.start).chain(s.segs.iter().flat_map(|g| match *g {
+                    Seg::Line(p) => [p, p, p],
+                    Seg::Cubic(a, b, p) => [a, b, p],
+                }))
+            })
+            .fold(
+                (DVec2::splat(f64::INFINITY), DVec2::splat(f64::NEG_INFINITY)),
+                |(lo, hi), p| (lo.min(p), hi.max(p)),
+            );
+        Self {
+            subpaths,
+            stroke,
+            fill,
+            fill_opacity,
+            layer,
+            bounds,
+        }
+    }
 }
 
 /// Read the curves of page `number` (1-based), as outlines to trace over.
@@ -162,8 +212,9 @@ pub fn read_page(bytes: &[u8], number: u32) -> Result<PdfPage, String> {
         pages: page.pages,
         size: page.size,
         prims,
+        images: page.pictures,
         skipped_text: page.skipped_text + page.texts.len(),
-        skipped_images: page.skipped_images,
+        skipped_images: page.unread.values().sum(),
     })
 }
 
@@ -213,6 +264,25 @@ pub fn read_artwork(bytes: &[u8], number: u32, name: &str) -> Result<Artwork, St
             if hidden == 1 { "s" } else { "" }
         ));
     }
+    // What opaque fills hide, kept on a hidden layer of its own.
+    if page.covered_count > 0 {
+        art.layer(COVERED);
+        art.layer_flags.insert(
+            COVERED.into(),
+            LayerFlags {
+                visible: false,
+                ..Default::default()
+            },
+        );
+        let n = page.covered_count;
+        art.note(format!(
+            "{n} line{} or text{} hidden under opaque fills in the file {} on the hidden \
+             layer \u{201c}{COVERED}\u{201d}",
+            if n == 1 { "" } else { "s" },
+            if n == 1 { "" } else { "s" },
+            if n == 1 { "is" } else { "are" },
+        ));
+    }
     for t in &page.texts {
         let layer = art.layer(t.layer.as_deref().unwrap_or(name));
         art.texts.push(Text {
@@ -225,7 +295,7 @@ pub fn read_artwork(bytes: &[u8], number: u32, name: &str) -> Result<Artwork, St
             align: drift_core::TextAlign::Left,
         });
     }
-    for path in page.paths {
+    for path in page.paths.into_iter().chain(page.covered) {
         let layer = art.layer(path.layer.as_deref().unwrap_or(name));
         let scaled = |p: DVec2| p * mm;
         art.paths.push(Painted {
@@ -252,6 +322,7 @@ pub fn read_artwork(bytes: &[u8], number: u32, name: &str) -> Result<Artwork, St
                 dashes: s.dashes.iter().map(|d| d * mm).collect(),
             }),
             fill: path.fill,
+            fill_opacity: path.fill_opacity,
         });
     }
     if page.skipped_text > 0 {
@@ -260,8 +331,39 @@ pub fn read_artwork(bytes: &[u8], number: u32, name: &str) -> Result<Artwork, St
             page.skipped_text,
         );
     }
-    if page.skipped_images > 0 {
-        art.skipped.insert("image".into(), page.skipped_images);
+    for (why, n) in &page.unread {
+        art.skipped.insert((*why).into(), *n);
+    }
+    if !page.pictures.is_empty() {
+        let n = page.pictures.len();
+        art.note(format!(
+            "{n} picture{} (scans, photos or markup) come{} in on an underlay, under the \
+             drawing's lines",
+            if n == 1 { "" } else { "s" },
+            if n == 1 { "s" } else { "" }
+        ));
+        if page.clipped_pictures > 0 {
+            art.note(format!(
+                "{} picture{} cropped in the file, and come{} in whole",
+                page.clipped_pictures,
+                if page.clipped_pictures == 1 {
+                    " is"
+                } else {
+                    "s are"
+                },
+                if page.clipped_pictures == 1 { "s" } else { "" }
+            ));
+        }
+        art.images = page
+            .pictures
+            .into_iter()
+            .map(|i| UnderlayImage {
+                at: i.at * mm,
+                across: i.across * mm,
+                down: i.down * mm,
+                ..i
+            })
+            .collect();
     }
     if page.skipped_shadings > 0 {
         art.skipped
@@ -270,7 +372,7 @@ pub fn read_artwork(bytes: &[u8], number: u32, name: &str) -> Result<Artwork, St
     art.clipping = page.clipping;
     art.note_clipping();
     if page.transparency {
-        art.note("Transparency is left out: see-through colours come in solid");
+        art.note("Transparency of lines and text is left out: they come in solid");
     }
     if page.blending {
         art.note("Blend modes (multiply, screen and the like) are left out");
@@ -349,12 +451,18 @@ fn read_drawing(bytes: &[u8], number: u32) -> Result<PageDrawing, String> {
 
     let mut reader = Reader {
         doc: &doc,
+        cmyk: output_intent(&doc),
+        profiles: HashMap::new(),
         paths: Vec::new(),
         texts: Vec::new(),
+        covered: Vec::new(),
+        covered_count: 0,
         fonts: HashMap::new(),
         segments: 0,
         skipped_text: 0,
-        skipped_images: 0,
+        pictures: Vec::new(),
+        unread: BTreeMap::new(),
+        clipped_pictures: 0,
         skipped_shadings: 0,
         clipping: ClipCount::default(),
         transparency: false,
@@ -378,6 +486,12 @@ fn read_drawing(bytes: &[u8], number: u32) -> Result<PageDrawing, String> {
         dashes: Vec::new(),
         stroke: Rgb([0, 0, 0]),
         fill: Rgb([0, 0, 0]),
+        stroke_space: Space::Gray,
+        fill_space: Space::Gray,
+        stroke_alpha: 1.0,
+        fill_alpha: 1.0,
+        normal_blend: true,
+        soft_mask: false,
         text: TextState::default(),
         // Nothing shows beyond the page (an artboard, for Illustrator).
         clips: vec![Rc::new(Clip::rect(DVec2::ZERO, size))],
@@ -389,9 +503,13 @@ fn read_drawing(bytes: &[u8], number: u32) -> Result<PageDrawing, String> {
         size,
         paths: reader.paths,
         texts: merge_runs(reader.texts),
+        covered: reader.covered,
+        covered_count: reader.covered_count,
         layers: layer_states(&doc),
         skipped_text: reader.skipped_text,
-        skipped_images: reader.skipped_images,
+        pictures: reader.pictures,
+        unread: reader.unread,
+        clipped_pictures: reader.clipped_pictures,
         skipped_shadings: reader.skipped_shadings,
         clipping: reader.clipping,
         transparency: reader.transparency,
@@ -410,6 +528,16 @@ struct State {
     dashes: Vec<f64>,
     stroke: Rgb,
     fill: Rgb,
+    /// The colour spaces `SC`/`sc` colours are in.
+    stroke_space: Space,
+    fill_space: Space,
+    /// Constant opacity (`CA`, `ca`), 0–1.
+    stroke_alpha: f64,
+    fill_alpha: f64,
+    /// Painting replaces what is beneath (no blend mode, no soft mask), so an opaque fill
+    /// hides it.
+    normal_blend: bool,
+    soft_mask: bool,
     text: TextState,
     /// The clipping paths painting is seen through, outermost first.
     clips: Vec<Rc<Clip>>,
@@ -452,19 +580,137 @@ impl State {
     }
 }
 
-/// A colour from operands: one (grey), three (RGB) or four (CMYK) numbers.
-fn color_from(ops: &[Object]) -> Option<Rgb> {
-    let v: Vec<f64> = ops.iter().filter_map(num).collect();
-    let byte = |x: f64| (x.clamp(0.0, 1.0) * 255.0).round() as u8;
-    Some(match v.as_slice() {
-        [g] => Rgb([byte(*g); 3]),
-        [r, g, b] => Rgb([byte(*r), byte(*g), byte(*b)]),
-        [c, m, y, k] => Rgb([
-            byte((1.0 - c) * (1.0 - k)),
-            byte((1.0 - m) * (1.0 - k)),
-            byte((1.0 - y) * (1.0 - k)),
-        ]),
-        _ => return None,
+/// A colour space, as far as Drift follows it to a colour on screen.
+#[derive(Clone, Debug)]
+pub(crate) enum Space {
+    Gray,
+    Rgb,
+    /// Through its ICC profile, or else as U.S. Web Coated (SWOP) shows it.
+    Cmyk(Option<Rc<CmykProfile>>),
+    /// CIE Lab (taken as D50).
+    Lab,
+    /// Colours by number from a table in another space.
+    Indexed {
+        base: Rc<Space>,
+        high: usize,
+        table: Rc<Vec<u8>>,
+    },
+    /// Tints of named inks (a spot colour; `DeviceN`), shown in another space.
+    Tint {
+        inputs: usize,
+        alternate: Rc<Space>,
+        function: TintFunction,
+    },
+    /// Patterns (gradients and tiles), which aren't read: what is painted keeps the colour
+    /// before.
+    Pattern,
+}
+
+/// How tints map into a separation's alternate space.
+#[derive(Clone, Debug)]
+pub(crate) enum TintFunction {
+    /// Type 2: `C0 + t^N (C1 − C0)`.
+    Exponential { c0: Vec<f64>, c1: Vec<f64>, n: f64 },
+    /// Others (sampled, PostScript): shown as grey, darker with more ink.
+    Unknown,
+}
+
+impl Space {
+    pub(crate) fn components(&self) -> usize {
+        match self {
+            Space::Gray | Space::Indexed { .. } | Space::Pattern => 1,
+            Space::Rgb | Space::Lab => 3,
+            Space::Cmyk(_) => 4,
+            Space::Tint { inputs, .. } => *inputs,
+        }
+    }
+
+    /// The colour `cs`/`CS` starts out with: black, or full ink.
+    fn initial(&self) -> Option<Rgb> {
+        match self {
+            Space::Cmyk(_) => self.color(&[0.0, 0.0, 0.0, 1.0]),
+            Space::Tint { inputs, .. } => self.color(&vec![1.0; *inputs]),
+            Space::Pattern => None,
+            _ => self.color(&vec![0.0; self.components()]),
+        }
+    }
+
+    /// The colour of operands in this space (`None` for a pattern, or too few numbers).
+    /// How an image's samples map to colour values when it doesn't say (`Decode`).
+    pub(crate) fn default_decode(&self, bits: usize) -> Vec<(f64, f64)> {
+        match self {
+            Space::Indexed { .. } => vec![(0.0, f64::from((1u32 << bits) - 1))],
+            Space::Lab => vec![(0.0, 100.0), (-100.0, 100.0), (-100.0, 100.0)],
+            _ => vec![(0.0, 1.0); self.components()],
+        }
+    }
+
+    pub(crate) fn color(&self, v: &[f64]) -> Option<Rgb> {
+        let byte = |x: f64| (x.clamp(0.0, 1.0) * 255.0).round() as u8;
+        if v.len() < self.components() {
+            return None;
+        }
+        Some(match self {
+            Space::Gray => Rgb([byte(v[0]); 3]),
+            Space::Rgb => Rgb([byte(v[0]), byte(v[1]), byte(v[2])]),
+            Space::Cmyk(profile) => {
+                let c = [v[0], v[1], v[2], v[3]];
+                match profile {
+                    Some(p) => p.to_rgb(c),
+                    None => crate::icc::cmyk_to_rgb(c),
+                }
+            }
+            Space::Lab => crate::icc::xyz_d50_to_srgb(crate::icc::lab_to_xyz([v[0], v[1], v[2]])),
+            Space::Indexed { base, high, table } => {
+                let n = base.components();
+                let i = (v[0].round().max(0.0) as usize).min(*high);
+                let entry = table.get(i * n..i * n + n)?;
+                let values: Vec<f64> = entry.iter().map(|b| f64::from(*b) / 255.0).collect();
+                // (A Lab table's entries span its ranges; taken as the usual ones.)
+                let values = if matches!(**base, Space::Lab) {
+                    vec![
+                        values[0] * 100.0,
+                        values[1] * 255.0 - 128.0,
+                        values[2] * 255.0 - 128.0,
+                    ]
+                } else {
+                    values
+                };
+                base.color(&values)?
+            }
+            Space::Tint {
+                inputs,
+                alternate,
+                function,
+            } => match function {
+                TintFunction::Exponential { c0, c1, n } if *inputs == 1 => {
+                    let t = v[0].clamp(0.0, 1.0).powf(*n);
+                    let out: Vec<f64> = c0.iter().zip(c1).map(|(a, b)| a + t * (b - a)).collect();
+                    alternate.color(&out)?
+                }
+                _ => {
+                    let ink = v[..*inputs].iter().sum::<f64>().clamp(0.0, 1.0);
+                    Rgb([byte(1.0 - ink); 3])
+                }
+            },
+            Space::Pattern => return None,
+        })
+    }
+}
+
+/// The CMYK profile of the file's output intent (what a PDF/X file is printed with), which
+/// plain CMYK colours are shown through.
+fn output_intent(doc: &Document) -> Option<Rc<CmykProfile>> {
+    let intents = doc.catalog().ok()?.get_deref(b"OutputIntents", doc).ok()?;
+    intents.as_array().ok()?.iter().find_map(|i| {
+        let intent = doc.dereference(i).ok()?.1.as_dict().ok()?;
+        let stream = intent
+            .get_deref(b"DestOutputProfile", doc)
+            .ok()?
+            .as_stream()
+            .ok()?;
+        let data = stream.decompressed_content().ok()?;
+        CmykProfile::parse(&data).map(Rc::new)
     })
 }
 
@@ -488,13 +734,21 @@ fn text_string(o: &Object) -> Option<String> {
 
 struct Reader<'a> {
     doc: &'a Document,
+    /// What plain CMYK is shown through: the output intent's profile, if any.
+    cmyk: Option<Rc<CmykProfile>>,
+    /// ICC profiles read so far, by where their streams are.
+    profiles: HashMap<usize, Option<Rc<CmykProfile>>>,
     paths: Vec<PdfPath>,
     texts: Vec<PdfText>,
+    covered: Vec<PdfPath>,
+    covered_count: usize,
     /// Fonts read so far, by where their dictionaries are.
     fonts: HashMap<usize, Rc<Font>>,
     segments: usize,
     skipped_text: usize,
-    skipped_images: usize,
+    pictures: Vec<UnderlayImage>,
+    unread: BTreeMap<&'static str, usize>,
+    clipped_pictures: usize,
     skipped_shadings: usize,
     clipping: ClipCount,
     transparency: bool,
@@ -533,6 +787,237 @@ impl<'a> Reader<'a> {
         let font = Rc::new(Font::read(self.doc, dict));
         self.fonts.insert(key, font.clone());
         Some(font)
+    }
+
+    /// An image painted with the graphics state `gs`: its pixels, placed where it fills the
+    /// unit square of its user space (its first row at the top).
+    fn picture(&mut self, stream: &lopdf::Stream, resources: &[&'a Dictionary], gs: &State) {
+        let space = match stream.dict.get(b"ColorSpace") {
+            Ok(cs) => self.space(resources, cs, 0),
+            Err(_) => Space::Gray,
+        };
+        let m = gs.ctm;
+        let at = m.apply(DVec2::new(0.0, 1.0));
+        let across = m.apply(DVec2::new(1.0, 1.0)) - at;
+        let down = m.apply(DVec2::ZERO) - at;
+        // Off the page (or clipped away by the page's edge): nothing to show.
+        let corners = [at, at + across, at + down, at + across + down];
+        let (lo, hi) = corners.iter().fold(
+            (DVec2::splat(f64::INFINITY), DVec2::splat(f64::NEG_INFINITY)),
+            |(lo, hi), p| (lo.min(*p), hi.max(*p)),
+        );
+        if let Some(page) = gs.clips.first() {
+            let (plo, phi) = page.bounds();
+            if hi.x < plo.x || lo.x > phi.x || hi.y < plo.y || lo.y > phi.y {
+                return;
+            }
+        }
+        if across.perp_dot(down).abs() < 1e-9 {
+            return;
+        }
+        match crate::pdf_image::decode(self.doc, stream, &space, gs.fill, gs.fill_alpha) {
+            Ok(px) => {
+                if gs.clips.len() > 1 {
+                    self.clipped_pictures += 1;
+                }
+                self.pictures.push(UnderlayImage {
+                    width: px.width,
+                    height: px.height,
+                    rgba: std::sync::Arc::new(px.rgba),
+                    at,
+                    across,
+                    down,
+                });
+            }
+            Err(why) => *self.unread.entry(why).or_insert(0) += 1,
+        }
+    }
+
+    /// Strokes and text painted before an opaque fill over `region`, under it: put on the
+    /// covered layer, strokes cut where the fill's edge crosses them. A stroke along the
+    /// fill's edge still shows (half of it does).
+    fn cover(&mut self, region: &[Subpath]) {
+        let Some(cover) = Clip::from_subpaths(region) else {
+            return;
+        };
+        let (lo, hi) = cover.bounds();
+        let overlaps =
+            |(a, b): (DVec2, DVec2)| a.x <= hi.x && b.x >= lo.x && a.y <= hi.y && b.y >= lo.y;
+        let mut i = 0;
+        while i < self.paths.len() {
+            let path = &self.paths[i];
+            let Some(stroke) = path.stroke.clone().filter(|_| overlaps(path.bounds)) else {
+                i += 1;
+                continue;
+            };
+            let margin = (stroke.width / 2.0).max(0.01);
+            let (mut shown, mut covered) = (Vec::new(), Vec::new());
+            for s in &path.subpaths {
+                let (a, b) = uncovered(s, &cover, margin);
+                shown.extend(a);
+                covered.extend(b);
+            }
+            if covered.is_empty() {
+                i += 1;
+                continue;
+            }
+            self.covered_count += 1;
+            self.covered.push(PdfPath::new(
+                covered,
+                Some(stroke.clone()),
+                None,
+                1.0,
+                Some(COVERED.into()),
+            ));
+            // A filled path keeps its fill as it was (fills keep their order); its outline
+            // is what still shows.
+            let mut replace = Vec::new();
+            if path.fill.is_some() {
+                replace.push(PdfPath::new(
+                    path.subpaths.clone(),
+                    None,
+                    path.fill,
+                    path.fill_opacity,
+                    path.layer.clone(),
+                ));
+            }
+            if !shown.is_empty() {
+                replace.push(PdfPath::new(
+                    shown,
+                    Some(stroke),
+                    None,
+                    1.0,
+                    path.layer.clone(),
+                ));
+            }
+            let n = replace.len();
+            self.paths.splice(i..=i, replace);
+            i += n;
+        }
+        for t in &mut self.texts {
+            let hidden = [t.start, t.end].iter().all(|p| cover.covers(*p, 0.01));
+            if hidden && t.layer.as_deref() != Some(COVERED) {
+                t.layer = Some(COVERED.into());
+                self.covered_count += 1;
+            }
+        }
+    }
+
+    /// The colour space an operand of `cs`/`CS` names (or, nested, is).
+    fn space(&mut self, resources: &[&'a Dictionary], o: &Object, depth: usize) -> Space {
+        let doc = self.doc;
+        let o = doc.dereference(o).map_or(o, |(_, o)| o);
+        if depth > 4 {
+            return Space::Gray;
+        }
+        let family = match o {
+            Object::Name(n) => n.as_slice(),
+            Object::Array(a) => a.first().and_then(|n| n.as_name().ok()).unwrap_or_default(),
+            _ => return Space::Gray,
+        };
+        let arg = |i: usize| match o {
+            Object::Array(a) => a
+                .get(i)
+                .and_then(|x| doc.dereference(x).ok().map(|(_, x)| x)),
+            _ => None,
+        };
+        match family {
+            b"DeviceGray" | b"G" | b"CalGray" => Space::Gray,
+            b"DeviceRGB" | b"RGB" | b"CalRGB" => Space::Rgb,
+            b"DeviceCMYK" | b"CMYK" => Space::Cmyk(self.cmyk.clone()),
+            b"Lab" => Space::Lab,
+            b"Pattern" => Space::Pattern,
+            b"ICCBased" => {
+                let Some(stream) = arg(1).and_then(|s| s.as_stream().ok()) else {
+                    return Space::Gray;
+                };
+                let n = stream.dict.get(b"N").ok().and_then(num).unwrap_or(0.0) as usize;
+                match n {
+                    1 => Space::Gray,
+                    3 => Space::Rgb,
+                    4 => {
+                        let key = std::ptr::from_ref(stream) as usize;
+                        let profile = self
+                            .profiles
+                            .entry(key)
+                            .or_insert_with(|| {
+                                let data = stream.decompressed_content().ok()?;
+                                CmykProfile::parse(&data).map(Rc::new)
+                            })
+                            .clone();
+                        Space::Cmyk(profile.or_else(|| self.cmyk.clone()))
+                    }
+                    _ => match stream.dict.get(b"Alternate") {
+                        Ok(alt) => self.space(resources, alt, depth + 1),
+                        Err(_) => Space::Gray,
+                    },
+                }
+            }
+            b"Indexed" | b"I" => {
+                let base = match arg(1) {
+                    Some(b) => self.space(resources, b, depth + 1),
+                    None => return Space::Gray,
+                };
+                let high = arg(2).and_then(num).unwrap_or(0.0).clamp(0.0, 255.0) as usize;
+                let table = match arg(3) {
+                    Some(Object::String(bytes, _)) => bytes.clone(),
+                    Some(Object::Stream(st)) => st
+                        .decompressed_content()
+                        .unwrap_or_else(|_| st.content.clone()),
+                    _ => return Space::Gray,
+                };
+                Space::Indexed {
+                    base: Rc::new(base),
+                    high,
+                    table: Rc::new(table),
+                }
+            }
+            b"Separation" | b"DeviceN" => {
+                let inputs = if family == b"Separation" {
+                    1
+                } else {
+                    arg(1)
+                        .and_then(|a| a.as_array().ok())
+                        .map_or(1, |a| a.len().max(1))
+                };
+                let alternate = match arg(2) {
+                    Some(a) => self.space(resources, a, depth + 1),
+                    None => Space::Gray,
+                };
+                let function = arg(3)
+                    .and_then(|f| match f {
+                        Object::Dictionary(d) => Some(d),
+                        Object::Stream(s) => Some(&s.dict),
+                        _ => None,
+                    })
+                    .filter(|d| d.get(b"FunctionType").ok().and_then(num) == Some(2.0))
+                    .map_or(TintFunction::Unknown, |d| {
+                        let list = |k: &[u8], default: f64| -> Vec<f64> {
+                            d.get(k)
+                                .ok()
+                                .and_then(|a| a.as_array().ok())
+                                .map(|a| a.iter().filter_map(num).collect())
+                                .unwrap_or_else(|| vec![default])
+                        };
+                        TintFunction::Exponential {
+                            c0: list(b"C0", 0.0),
+                            c1: list(b"C1", 1.0),
+                            n: d.get(b"N").ok().and_then(num).unwrap_or(1.0),
+                        }
+                    });
+                Space::Tint {
+                    inputs,
+                    alternate: Rc::new(alternate),
+                    function,
+                }
+            }
+            name => match self.resource(resources, b"ColorSpace", name) {
+                Some(found) if !matches!(found, Object::Name(n) if n == name) => {
+                    self.space(resources, found, depth + 1)
+                }
+                _ => Space::Gray,
+            },
+        }
     }
 
     /// Show strings (with `TJ`'s spacing between them), moving the text matrix past them,
@@ -586,8 +1071,11 @@ impl<'a> Reader<'a> {
             self.skipped_text += 1;
             return;
         }
-        if t.mode == 3 || text.trim().is_empty() {
+        if t.mode == 3 || text.trim().is_empty() || gs.fill_alpha <= 0.0 {
             return;
+        }
+        if gs.fill_alpha < 1.0 {
+            self.transparency = true;
         }
         // Text that a clip hides (or that's off the page).
         if !gs.clips.iter().all(|c| c.contains(start)) {
@@ -674,18 +1162,45 @@ impl<'a> Reader<'a> {
                         .map(|a| a.iter().filter_map(num).collect())
                         .unwrap_or_default();
                 }
-                "RG" | "G" | "K" | "SC" | "SCN" => {
-                    if let Some(c) = color_from(o) {
-                        gs.stroke = c;
+                "G" | "RG" | "K" | "g" | "rg" | "k" => {
+                    let space = match op.operator.to_ascii_lowercase().as_str() {
+                        "g" => Space::Gray,
+                        "rg" => Space::Rgb,
+                        _ => Space::Cmyk(self.cmyk.clone()),
+                    };
+                    let v: Vec<f64> = o.iter().filter_map(num).collect();
+                    if let Some(c) = space.color(&v) {
+                        if op.operator.starts_with(|c: char| c.is_ascii_uppercase()) {
+                            (gs.stroke, gs.stroke_space) = (c, space);
+                        } else {
+                            (gs.fill, gs.fill_space) = (c, space);
+                        }
                     }
                 }
-                "rg" | "g" | "k" | "sc" | "scn" => {
-                    if let Some(c) = color_from(o) {
+                "SC" | "SCN" | "sc" | "scn" => {
+                    let v: Vec<f64> = o.iter().filter_map(num).collect();
+                    if op.operator.starts_with('S') {
+                        if let Some(c) = gs.stroke_space.color(&v) {
+                            gs.stroke = c;
+                        }
+                    } else if let Some(c) = gs.fill_space.color(&v) {
                         gs.fill = c;
                     }
                 }
-                "CS" => gs.stroke = Rgb([0, 0, 0]),
-                "cs" => gs.fill = Rgb([0, 0, 0]),
+                "CS" | "cs" => {
+                    let Some(name) = o.first() else {
+                        continue;
+                    };
+                    let space = self.space(resources, name, 0);
+                    let initial = space.initial();
+                    if op.operator == "CS" {
+                        gs.stroke_space = space;
+                        gs.stroke = initial.unwrap_or(gs.stroke);
+                    } else {
+                        gs.fill_space = space;
+                        gs.fill = initial.unwrap_or(gs.fill);
+                    }
+                }
                 "gs" => {
                     let ext = o
                         .first()
@@ -694,25 +1209,22 @@ impl<'a> Reader<'a> {
                         .and_then(|e| e.as_dict().ok());
                     if let Some(ext) = ext {
                         let alpha = |k: &[u8]| ext.get(k).ok().and_then(num);
-                        if alpha(b"CA").is_some_and(|a| a < 1.0)
-                            || alpha(b"ca").is_some_and(|a| a < 1.0)
-                        {
-                            self.transparency = true;
+                        if let Some(a) = alpha(b"CA") {
+                            gs.stroke_alpha = a.clamp(0.0, 1.0);
                         }
-                        if ext
-                            .get(b"BM")
-                            .ok()
-                            .and_then(|b| b.as_name().ok())
-                            .is_some_and(|b| b != b"Normal" && b != b"Compatible")
-                        {
-                            self.blending = true;
+                        if let Some(a) = alpha(b"ca") {
+                            gs.fill_alpha = a.clamp(0.0, 1.0);
                         }
-                        if ext
-                            .get(b"SMask")
-                            .ok()
-                            .is_some_and(|m| m.as_name().ok() != Some(b"None".as_slice()))
-                        {
-                            self.soft_masks = true;
+                        if let Ok(bm) = ext.get(b"BM") {
+                            gs.normal_blend = bm
+                                .as_name()
+                                .ok()
+                                .is_none_or(|b| b == b"Normal" || b == b"Compatible");
+                            self.blending |= !gs.normal_blend;
+                        }
+                        if let Ok(mask) = ext.get(b"SMask") {
+                            gs.soft_mask = mask.as_name().ok() != Some(b"None".as_slice());
+                            self.soft_masks |= gs.soft_mask;
                         }
                         if let Some(w) = ext.get(b"LW").ok().and_then(num) {
                             gs.width = w.max(0.0);
@@ -826,8 +1338,14 @@ impl<'a> Reader<'a> {
                     // A path ending in W clips what is painted after it (it is painted
                     // through the clips before it first, if at all).
                     let clips_after = std::mem::take(&mut clip_next);
-                    let strokes = matches!(operator, "S" | "s" | "B" | "B*" | "b" | "b*");
-                    let fills = matches!(operator, "f" | "F" | "f*" | "B" | "B*" | "b" | "b*");
+                    // (What is painted wholly see-through isn't painted at all.)
+                    let strokes = matches!(operator, "S" | "s" | "B" | "B*" | "b" | "b*")
+                        && gs.stroke_alpha > 0.0;
+                    let fills = matches!(operator, "f" | "F" | "f*" | "B" | "B*" | "b" | "b*")
+                        && gs.fill_alpha > 0.0;
+                    if strokes && gs.stroke_alpha < 1.0 {
+                        self.transparency = true;
+                    }
                     if !paths.is_empty() && (strokes || fills) {
                         self.segments += paths.iter().map(|s| s.segs.len()).sum::<usize>();
                         let (stroke_parts, fill_parts, clipped) = clip_paint(&paths, &gs.clips);
@@ -839,33 +1357,45 @@ impl<'a> Reader<'a> {
                             dashes: gs.dashes.iter().map(|d| d * scale).collect(),
                         });
                         let fill = fills.then_some(gs.fill);
+                        // An opaque fill hides what was painted before it, under it.
+                        if fills
+                            && gs.fill_alpha >= 1.0
+                            && gs.normal_blend
+                            && !gs.soft_mask
+                            && !fill_parts.is_empty()
+                        {
+                            self.cover(&fill_parts);
+                        }
                         let layer = layers.iter().rev().find_map(Clone::clone);
                         if stroke_parts == fill_parts {
                             if !stroke_parts.is_empty() {
-                                self.paths.push(PdfPath {
-                                    subpaths: stroke_parts,
+                                self.paths.push(PdfPath::new(
+                                    stroke_parts,
                                     stroke,
                                     fill,
+                                    gs.fill_alpha,
                                     layer,
-                                });
+                                ));
                             }
                         } else {
                             // Clipped differently: the outline and the fill apart.
                             if stroke.is_some() && !stroke_parts.is_empty() {
-                                self.paths.push(PdfPath {
-                                    subpaths: stroke_parts,
+                                self.paths.push(PdfPath::new(
+                                    stroke_parts,
                                     stroke,
-                                    fill: None,
-                                    layer: layer.clone(),
-                                });
+                                    None,
+                                    1.0,
+                                    layer.clone(),
+                                ));
                             }
                             if fill.is_some() && !fill_parts.is_empty() {
-                                self.paths.push(PdfPath {
-                                    subpaths: fill_parts,
-                                    stroke: None,
+                                self.paths.push(PdfPath::new(
+                                    fill_parts,
+                                    None,
                                     fill,
+                                    gs.fill_alpha,
                                     layer,
-                                });
+                                ));
                             }
                         }
                     }
@@ -931,7 +1461,13 @@ impl<'a> Reader<'a> {
                     let layer = layers.iter().rev().find_map(Clone::clone);
                     self.show(&gs, &mut tm, &parts, layer);
                 }
-                "BI" => self.skipped_images += 1,
+                "BI" => match o.first() {
+                    Some(Object::Stream(inline)) => {
+                        let inline = crate::pdf_image::expand_inline(inline);
+                        self.picture(&inline, resources, &gs);
+                    }
+                    _ => *self.unread.entry(crate::pdf_image::UNREADABLE).or_insert(0) += 1,
+                },
                 "sh" => self.skipped_shadings += 1,
                 "Do" => {
                     let Some(name) = o.first().and_then(|n| n.as_name().ok()) else {
@@ -945,7 +1481,7 @@ impl<'a> Reader<'a> {
                     };
                     let subtype = stream.dict.get(b"Subtype").and_then(Object::as_name).ok();
                     if subtype == Some(b"Image".as_slice()) {
-                        self.skipped_images += 1;
+                        self.picture(stream, resources, &gs);
                         continue;
                     }
                     if subtype != Some(b"Form".as_slice()) || depth >= MAX_DEPTH {
@@ -1445,5 +1981,397 @@ mod tests {
         assert!((ends[1].1.x - 612.0).abs() < 1e-6, "{:?}", ends[1]);
         assert_eq!(art.clipping.trimmed, 2);
         assert_eq!(art.clipping.hidden, 1);
+    }
+
+    /// A one-page PDF (612 × 792 points) drawing `content` with `resources`.
+    fn one_page(content: &[u8], resources: lopdf::Dictionary) -> Vec<u8> {
+        one_page_with(content, resources, |_, _| {})
+    }
+
+    /// The same, letting `extra` add objects (it gets the document and the resources).
+    fn one_page_with(
+        content: &[u8],
+        mut resources: lopdf::Dictionary,
+        extra: impl FnOnce(&mut Document, &mut lopdf::Dictionary),
+    ) -> Vec<u8> {
+        use lopdf::{Stream, dictionary};
+        let mut doc = Document::with_version("1.6");
+        let pages = doc.new_object_id();
+        extra(&mut doc, &mut resources);
+        let contents = doc.add_object(Stream::new(dictionary! {}, content.to_vec()));
+        let page = doc.add_object(dictionary! {
+            "Type" => "Page", "Parent" => pages,
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            "Contents" => contents,
+            "Resources" => resources,
+        });
+        doc.objects.insert(
+            pages,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages", "Kids" => vec![page.into()], "Count" => 1,
+            }),
+        );
+        let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages });
+        doc.trailer.set("Root", catalog);
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).unwrap();
+        bytes
+    }
+
+    /// The fill colours of a page's paths, in the order they are painted.
+    fn fills(bytes: &[u8]) -> Vec<Rgb> {
+        let art = read_artwork(bytes, 1, "plan").unwrap();
+        art.paths.iter().filter_map(|p| p.fill).collect()
+    }
+
+    #[test]
+    fn cmyk_fills_come_in_as_they_look() {
+        use lopdf::{Stream, dictionary};
+        // A light grey in plain CMYK: as SWOP shows it, a neutral grey (the naive formula
+        // made it a pale cyan, #E8EEED); paper white stays white, and black is near black.
+        let plain = one_page(
+            b"0.089 0.065 0.069 0 k 0 0 10 10 re f \
+              0 0 0 0 k 20 0 10 10 re f 0 0 0 1 k 40 0 10 10 re f",
+            dictionary! {},
+        );
+        let [grey, white, black] = fills(&plain)[..] else {
+            panic!("{:?}", fills(&plain));
+        };
+        let Rgb([r, g, b]) = grey;
+        assert!(r.abs_diff(g) <= 2 && g.abs_diff(b) <= 2, "{grey:?}");
+        assert!((222..236).contains(&r), "{grey:?}");
+        assert_eq!(white, Rgb([255, 255, 255]));
+        assert!(black.0.iter().all(|c| *c < 60), "{black:?}");
+
+        // An ICC-based CMYK space is shown through its profile (here a toy one in which
+        // one ink is a mid grey); `cs` starts it at full black ink (here grey too, the
+        // profile's black being all four), and `scn` sets its colour.
+        let icc = one_page_with(
+            b"/CS0 cs 0 0 10 10 re f 1 0 0 0 scn 20 0 10 10 re f",
+            dictionary! {},
+            |doc, res| {
+                let profile = doc.add_object(Stream::new(
+                    dictionary! { "N" => 4 },
+                    crate::icc::tests::tiny_profile(),
+                ));
+                res.set(
+                    "ColorSpace",
+                    dictionary! { "CS0" => vec![Object::Name(b"ICCBased".to_vec()), profile.into()] },
+                );
+            },
+        );
+        let [initial, one_ink] = fills(&icc)[..] else {
+            panic!("{:?}", fills(&icc));
+        };
+        let profile = crate::icc::CmykProfile::parse(&crate::icc::tests::tiny_profile()).unwrap();
+        assert_eq!(initial, profile.to_rgb([0.0, 0.0, 0.0, 1.0]));
+        assert_eq!(one_ink, profile.to_rgb([1.0, 0.0, 0.0, 0.0]));
+        assert_eq!(one_ink, Rgb([one_ink.0[0]; 3]), "neutral");
+
+        // A spot colour (a separation with an exponential tint into RGB), an indexed colour,
+        // and a pattern (not read: the colour before stays).
+        let spot = one_page(
+            b"/Spot cs 0.5 scn 0 0 10 10 re f /Idx cs 1 scn 20 0 10 10 re f \
+              /Pattern cs /P0 scn 40 0 10 10 re f",
+            dictionary! {
+                "ColorSpace" => dictionary! {
+                    "Spot" => vec![
+                        Object::Name(b"Separation".to_vec()),
+                        Object::Name(b"Brick".to_vec()),
+                        Object::Name(b"DeviceRGB".to_vec()),
+                        Object::Dictionary(dictionary! {
+                            "FunctionType" => 2,
+                            "Domain" => vec![0.into(), 1.into()],
+                            "C0" => vec![1.into(), 1.into(), 1.into()],
+                            "C1" => vec![0.8.into(), 0.2.into(), 0.0.into()],
+                            "N" => 1,
+                        }),
+                    ],
+                    "Idx" => vec![
+                        Object::Name(b"Indexed".to_vec()),
+                        Object::Name(b"DeviceRGB".to_vec()),
+                        1.into(),
+                        Object::String(vec![0, 0, 0, 0, 128, 255], lopdf::StringFormat::Hexadecimal),
+                    ],
+                },
+            },
+        );
+        let [half_spot, indexed, pattern] = fills(&spot)[..] else {
+            panic!("{:?}", fills(&spot));
+        };
+        assert_eq!(half_spot, Rgb([230, 153, 128]));
+        assert_eq!(indexed, Rgb([0, 128, 255]));
+        assert_eq!(pattern, indexed);
+    }
+
+    #[test]
+    fn imported_fills_keep_the_files_opacity() {
+        use lopdf::dictionary;
+        // An opaque fill (no graphics state says otherwise), a half see-through one, and a
+        // see-through stroke.
+        let bytes = one_page(
+            b"1 0 0 rg 0 0 10 10 re f /Half gs 0 0 1 rg 20 0 10 10 re f \
+              /Faint gs 0 0 m 50 50 l S",
+            dictionary! {
+                "ExtGState" => dictionary! {
+                    "Half" => dictionary! { "Type" => "ExtGState", "ca" => 0.5 },
+                    "Faint" => dictionary! { "Type" => "ExtGState", "CA" => 0.25 },
+                },
+            },
+        );
+        let art = read_artwork(&bytes, 1, "plan").unwrap();
+        let opacities: Vec<f64> = art
+            .paths
+            .iter()
+            .filter(|p| p.fill.is_some())
+            .map(|p| p.fill_opacity)
+            .collect();
+        assert_eq!(opacities, [1.0, 0.5]);
+        // Only the stroke's transparency is lost, and said so.
+        assert!(
+            art.notes.iter().any(|n| n.contains("lines and text")),
+            "{:?}",
+            art.notes
+        );
+        // Into a sketch: the fills keep it (not Drift's default for new fills).
+        let import = crate::vector::to_import(&art, &Default::default());
+        let mut doc = drift_core::Document::new();
+        doc.begin();
+        crate::dxf::add_to_document(&mut doc, &import);
+        doc.commit("Import");
+        let mut got: Vec<(Option<Rgb>, f64)> =
+            doc.fills().map(|(_, f)| (f.color, f.opacity)).collect();
+        got.sort_by(|a, b| a.1.total_cmp(&b.1));
+        assert_eq!(
+            got,
+            [(Some(Rgb([0, 0, 255])), 0.5), (Some(Rgb([255, 0, 0])), 1.0)]
+        );
+    }
+
+    #[test]
+    fn images_come_in_as_pictures_where_the_page_has_them() {
+        use lopdf::{Stream, dictionary};
+        let zlib = |b: &[u8]| miniz_oxide::deflate::compress_to_vec_zlib(b, 6);
+        // An RGB image over the page's lower-left quarter; a 1-bit grey one (compressed)
+        // with a soft mask; an indexed one; a stencil painted half see-through in red; an
+        // inline one; and a JPEG 2000 one, which can't be read.
+        let bytes = one_page_with(
+            b"q 306 0 0 396 0 0 cm /Rgb Do Q \
+              q 80 0 0 10 400 700 cm /Bits Do Q \
+              q 20 0 0 10 400 600 cm /Idx Do Q \
+              q 1 0 0 rg /Half gs 10 0 0 10 400 500 cm /Stencil Do Q \
+              q 5 0 0 5 400 400 cm BI /W 1 /H 1 /CS /RGB /BPC 8 ID \x10\x20\x30 EI Q \
+              q 10 0 0 10 400 300 cm /Jpx Do Q \
+              1 w 10 10 m 100 10 l S",
+            dictionary! {
+                "ExtGState" => dictionary! {
+                    "Half" => dictionary! { "Type" => "ExtGState", "ca" => 0.5 },
+                },
+            },
+            |doc, res| {
+                let image = |doc: &mut Document, dict: lopdf::Dictionary, data: Vec<u8>| {
+                    let mut d = dictionary! { "Type" => "XObject", "Subtype" => "Image" };
+                    d.extend(&dict);
+                    doc.add_object(Stream::new(d, data))
+                };
+                let rgb = image(
+                    doc,
+                    dictionary! { "Width" => 2, "Height" => 2, "ColorSpace" => "DeviceRGB",
+                    "BitsPerComponent" => 8 },
+                    vec![255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255],
+                );
+                let mask = image(
+                    doc,
+                    dictionary! { "Width" => 2, "Height" => 1, "ColorSpace" => "DeviceGray",
+                    "BitsPerComponent" => 8 },
+                    vec![0, 255],
+                );
+                let bits = image(
+                    doc,
+                    dictionary! { "Width" => 8, "Height" => 1, "ColorSpace" => "DeviceGray",
+                    "BitsPerComponent" => 1, "Filter" => "FlateDecode", "SMask" => mask },
+                    zlib(&[0b1111_0000]),
+                );
+                let idx = image(
+                    doc,
+                    dictionary! { "Width" => 2, "Height" => 1, "BitsPerComponent" => 8,
+                    "ColorSpace" => vec![
+                        Object::Name(b"Indexed".to_vec()),
+                        Object::Name(b"DeviceRGB".to_vec()),
+                        1.into(),
+                        Object::String(vec![10, 20, 30, 200, 210, 220],
+                            lopdf::StringFormat::Hexadecimal),
+                    ] },
+                    vec![1, 0],
+                );
+                let stencil = image(
+                    doc,
+                    dictionary! { "Width" => 2, "Height" => 1, "ImageMask" => true,
+                    "BitsPerComponent" => 1 },
+                    vec![0b0100_0000],
+                );
+                let jpx = image(
+                    doc,
+                    dictionary! { "Width" => 2, "Height" => 2, "ColorSpace" => "DeviceRGB",
+                    "BitsPerComponent" => 8, "Filter" => "JPXDecode" },
+                    vec![0; 16],
+                );
+                res.set(
+                    "XObject",
+                    dictionary! { "Rgb" => rgb, "Bits" => bits, "Idx" => idx,
+                    "Stencil" => stencil, "Jpx" => jpx },
+                );
+            },
+        );
+        let art = read_artwork(&bytes, 1, "plan").unwrap();
+        let mm = MM_PER_POINT;
+        assert_eq!(art.paths.len(), 1);
+        assert_eq!(art.images.len(), 5, "{:?}", art.skipped);
+        // Placed by its transform: its top-left corner, its top edge and its left edge.
+        let rgb = &art.images[0];
+        assert_eq!((rgb.width, rgb.height), (2, 2));
+        assert!(rgb.at.distance(DVec2::new(0.0, 396.0) * mm) < 1e-9);
+        assert!(rgb.across.distance(DVec2::new(306.0, 0.0) * mm) < 1e-9);
+        assert!(rgb.down.distance(DVec2::new(0.0, -396.0) * mm) < 1e-9);
+        assert_eq!(
+            *rgb.rgba,
+            [
+                255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255
+            ]
+        );
+        // Four white pixels then four black, the left half masked out.
+        let px = |i: &drift_core::UnderlayImage, k: usize| i.rgba[k * 4..k * 4 + 4].to_vec();
+        let bits = &art.images[1];
+        assert_eq!((bits.width, bits.height), (8, 1));
+        assert_eq!(px(bits, 0), [255, 255, 255, 0]);
+        assert_eq!(px(bits, 3), [255, 255, 255, 0]);
+        assert_eq!(px(bits, 4), [0, 0, 0, 255]);
+        assert_eq!(px(bits, 7), [0, 0, 0, 255]);
+        // Colours by number.
+        assert_eq!(px(&art.images[2], 0), [200, 210, 220, 255]);
+        assert_eq!(px(&art.images[2], 1), [10, 20, 30, 255]);
+        // A stencil: painted (in the fill colour, half see-through) where its samples are 0.
+        assert_eq!(px(&art.images[3], 0), [255, 0, 0, 128]);
+        assert_eq!(px(&art.images[3], 1)[3], 0);
+        // Inline.
+        assert_eq!(px(&art.images[4], 0), [16, 32, 48, 255]);
+        // What can't be read is said so; what can comes in as an underlay.
+        assert_eq!(art.skipped.get(crate::pdf_image::UNREADABLE), Some(&1));
+        assert!(
+            art.notes.iter().any(|n| n.contains("5 pictures")),
+            "{:?}",
+            art.notes
+        );
+        let page = read_page(&bytes, 1).unwrap();
+        assert_eq!((page.images.len(), page.skipped_images), (5, 1));
+        assert!(page.images[0].across.distance(DVec2::new(306.0, 0.0)) < 1e-9);
+    }
+
+    #[test]
+    fn jpeg_images_are_read() {
+        use lopdf::{Stream, dictionary};
+        // A 16 × 8 JPEG, red on its left half and blue on its right (made with Windows'
+        // own encoder).
+        let jpeg = include_bytes!("testdata/red_blue.jpg").to_vec();
+        let bytes = one_page_with(
+            b"q 160 0 0 80 100 100 cm /Im0 Do Q",
+            dictionary! {},
+            |doc, res| {
+                let image = doc.add_object(Stream::new(
+                    dictionary! {
+                        "Type" => "XObject", "Subtype" => "Image", "Width" => 16, "Height" => 8,
+                        "ColorSpace" => "DeviceRGB", "BitsPerComponent" => 8,
+                        "Filter" => "DCTDecode",
+                    },
+                    jpeg,
+                ));
+                res.set("XObject", dictionary! { "Im0" => image });
+            },
+        );
+        let page = read_page(&bytes, 1).unwrap();
+        assert_eq!(page.skipped_images, 0);
+        let image = &page.images[0];
+        assert_eq!((image.width, image.height), (16, 8));
+        let px = |x: usize, y: usize| {
+            let at = (y * 16 + x) * 4;
+            Rgb([image.rgba[at], image.rgba[at + 1], image.rgba[at + 2]])
+        };
+        let near = |a: Rgb, b: [u8; 3]| a.0.iter().zip(b).all(|(x, y)| x.abs_diff(y) <= 24);
+        assert!(near(px(2, 4), [255, 0, 0]), "{:?}", px(2, 4));
+        assert!(near(px(13, 4), [0, 0, 255]), "{:?}", px(13, 4));
+        assert_eq!(image.rgba[3], 255);
+    }
+
+    #[test]
+    fn opaque_fills_hide_what_was_drawn_before_them() {
+        use lopdf::dictionary;
+        // A line across where a white square is painted next, another along its bottom
+        // edge, a note under it; then the square, a line drawn after it over it, and a
+        // see-through square over the first line's far end.
+        let bytes = one_page(
+            b"1 w 0 50 m 100 50 l S 30 30 m 70 30 l S \
+              BT /F1 10 Tf 40 45 Td (H) Tj ET \
+              1 1 1 rg 30 30 40 40 re f \
+              0 60 m 100 60 l S \
+              /Half gs 0 0 1 rg 85 40 10 20 re f",
+            dictionary! {
+                "Font" => dictionary! {
+                    "F1" => dictionary! {
+                        "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica",
+                        "Encoding" => "WinAnsiEncoding",
+                    },
+                },
+                "ExtGState" => dictionary! {
+                    "Half" => dictionary! { "Type" => "ExtGState", "ca" => 0.5 },
+                },
+            },
+        );
+        let art = read_artwork(&bytes, 1, "plan").unwrap();
+        let mm = drift_core::underlays::MM_PER_POINT;
+        let spans = |layer: &str, y: f64| -> Vec<(f64, f64)> {
+            let mut v: Vec<(f64, f64)> = art
+                .paths
+                .iter()
+                .filter(|p| p.layer == layer && p.stroke.is_some())
+                .flat_map(|p| &p.subpaths)
+                .filter(|s| (s.start.y / mm - y).abs() < 1e-6)
+                .map(|s| {
+                    let (a, b) = (s.start.x / mm, s.segs.last().unwrap().end().x / mm);
+                    (
+                        (a.min(b) * 1e6).round() / 1e6,
+                        (a.max(b) * 1e6).round() / 1e6,
+                    )
+                })
+                .collect();
+            v.sort_by(|a, b| a.0.total_cmp(&b.0));
+            v
+        };
+        // The line under the square shows on either side of it; its middle is on the
+        // hidden layer.
+        assert_eq!(spans("plan", 50.0), [(0.0, 30.0), (70.0, 100.0)]);
+        assert_eq!(spans(COVERED, 50.0), [(30.0, 70.0)]);
+        // Along the square's edge, and drawn after it: untouched.
+        assert_eq!(spans("plan", 30.0), [(30.0, 70.0)]);
+        assert_eq!(spans("plan", 60.0), [(0.0, 100.0)]);
+        // The see-through square hides nothing.
+        assert!(spans(COVERED, 50.0).iter().all(|s| s.1 <= 70.0));
+        // The note under the square goes with what it hides.
+        let note = art.texts.iter().find(|t| t.text == "H").expect("the note");
+        assert_eq!(note.layer, COVERED);
+        // That layer starts hidden, and the import says so.
+        assert!(!art.layer_flags[COVERED].visible);
+        assert!(
+            art.notes.iter().any(|n| n.contains(COVERED)),
+            "{:?}",
+            art.notes
+        );
+        // An underlay traces only what shows.
+        let page = read_page(&bytes, 1).unwrap();
+        let lines_at_50 = page
+            .prims
+            .iter()
+            .filter(|p| matches!(p, RefPrim::Line(a, b) if (a.y - 50.0).abs() < 1e-6 && (b.y - 50.0).abs() < 1e-6))
+            .count();
+        assert_eq!(lines_at_50, 2);
     }
 }

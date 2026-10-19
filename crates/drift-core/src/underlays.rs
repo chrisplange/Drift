@@ -1,6 +1,7 @@
 //! Underlays: reference drawings (a PDF page or a DXF file) shown under the sketch to trace
 //! over. Their curves can be snapped to but not edited; they're placed with a position, a
-//! scale and a rotation, which calibration sets from two known points.
+//! scale and a rotation, which calibration sets from two known points. A PDF page's
+//! pictures (scans, photos, markup flattened into it) come with it, as images.
 
 use std::sync::Arc;
 
@@ -39,6 +40,46 @@ pub enum RefPrim {
     },
 }
 
+/// A picture on an underlay, placed in the underlay's own coordinates by its top-left
+/// corner and the vectors along its top edge (`across`) and down its left edge (`down`).
+#[derive(Clone, Debug)]
+pub struct UnderlayImage {
+    pub width: u32,
+    pub height: u32,
+    /// Pixels as RGBA, a byte a channel (not premultiplied), rows from the top. Shared, so
+    /// undo records and copies don't duplicate them.
+    pub rgba: Arc<Vec<u8>>,
+    pub at: DVec2,
+    pub across: DVec2,
+    pub down: DVec2,
+}
+
+impl PartialEq for UnderlayImage {
+    fn eq(&self, other: &Self) -> bool {
+        (self.width, self.height, self.at, self.across, self.down)
+            == (
+                other.width,
+                other.height,
+                other.at,
+                other.across,
+                other.down,
+            )
+            && (Arc::ptr_eq(&self.rgba, &other.rgba) || self.rgba == other.rgba)
+    }
+}
+
+impl UnderlayImage {
+    /// Its corners in underlay coordinates: top-left, top-right, bottom-right, bottom-left.
+    pub fn corners(&self) -> [DVec2; 4] {
+        [
+            self.at,
+            self.at + self.across,
+            self.at + self.across + self.down,
+            self.at + self.down,
+        ]
+    }
+}
+
 /// A reference drawing placed in the sketch.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Underlay {
@@ -47,6 +88,8 @@ pub struct Underlay {
     pub source: String,
     /// Shared, so undo records and copies don't duplicate large drawings.
     pub prims: Arc<Vec<RefPrim>>,
+    /// Its pictures, drawn beneath its curves.
+    pub images: Arc<Vec<UnderlayImage>>,
     /// Where the underlay's origin lands in the sketch.
     pub at: DVec2,
     /// Sketch units (mm) per underlay unit.
@@ -73,6 +116,7 @@ impl Underlay {
             name: name.into(),
             source: source.into(),
             prims: Arc::new(prims),
+            images: Arc::new(Vec::new()),
             at: DVec2::ZERO,
             scale: 1.0,
             angle: 0.0,
@@ -135,9 +179,12 @@ impl Underlay {
         out
     }
 
-    /// Bounds of its curves in its own coordinates.
+    /// Bounds of its curves and images in its own coordinates.
     pub fn local_bounds(&self) -> Bounds {
         let mut b = Bounds::EMPTY;
+        for image in self.images.iter() {
+            image.corners().into_iter().for_each(|p| b.include(p));
+        }
         for prim in self.prims.iter() {
             match prim {
                 RefPrim::Line(p, q) => {

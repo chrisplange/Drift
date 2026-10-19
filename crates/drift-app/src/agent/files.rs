@@ -221,6 +221,7 @@ pub(super) fn import(s: &mut Session, a: &Value) -> Res {
             "skipped": report.skipped,
         }));
     }
+    let mut pictures = None;
     let import = match ext.as_str() {
         "svg" | "pdf" | "ai" => {
             let art = if ext == "svg" {
@@ -232,6 +233,7 @@ pub(super) fn import(s: &mut Session, a: &Value) -> Res {
                 scale,
                 construction_edges: true,
             };
+            pictures = crate::underlays::picture_underlay(&name, &art.images, scale, offset);
             drift_io::vector::to_import(&art, &options)
         }
         // A DXF says its units (bare ones are read in the drawing's); `scale` multiplies.
@@ -247,6 +249,7 @@ pub(super) fn import(s: &mut Session, a: &Value) -> Res {
     let before: std::collections::BTreeSet<_> = ed.doc.iter().map(|(id, _)| id).collect();
     ed.doc.begin();
     let report = drift_io::dxf::add_to_document(&mut ed.doc, &import);
+    let pictures = pictures.map(|u| ed.doc.add_underlay(u));
     let made: Vec<_> = ed
         .doc
         .iter()
@@ -294,6 +297,7 @@ pub(super) fn import(s: &mut Session, a: &Value) -> Res {
         "bounds": b.map(|b| json!([args::num(b.min.x), args::num(b.min.y), args::num(b.max.x), args::num(b.max.y)])),
         "skipped": report.skipped.iter().map(|(what, n)| format!("{n} {what}")).collect::<Vec<_>>(),
         "notes": notes,
+        "pictures": pictures.map(|id| id.to_string()),
     }))
 }
 

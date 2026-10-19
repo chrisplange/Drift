@@ -442,8 +442,13 @@ impl DriftApp {
             self.editor.doc.texts().map(|(id, _)| id).collect();
         self.editor.doc.begin();
         let report = drift_io::dxf::add_to_document(&mut self.editor.doc, &import);
+        // Its pictures come in as an underlay beneath it, in the same step.
+        let pictures =
+            crate::underlays::picture_underlay(&name, &art.images, pending.scale, DVec2::ZERO)
+                .map(|u| self.editor.doc.add_underlay(u));
         self.editor.commit(label);
         let imported = crate::underlays::Imported {
+            underlays: pictures.into_iter().collect(),
             entities: self
                 .editor
                 .doc

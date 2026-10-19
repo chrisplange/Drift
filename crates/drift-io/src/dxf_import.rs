@@ -1545,7 +1545,9 @@ impl<'a> Reader<'a> {
                         layer: layer.clone(),
                         at: place.t,
                         angle: turned.rem_euclid(360.0),
-                        scale: place.b.length(),
+                        // The block's contents are already in millimetres, so the file's
+                        // unit is taken back out of the copy's own scale.
+                        scale: place.b.length() / self.scale,
                         mirror: sx < 0.0,
                     });
                     self.used.insert(key);
@@ -3326,6 +3328,81 @@ mod tests {
         assert_eq!(aci_rgb(170), Some(Rgb([0, 0, 255])));
         assert_eq!(aci_rgb(7), None);
         assert!((10..=255).all(|i| aci_rgb(i).is_some()));
+    }
+
+    #[test]
+    fn copies_in_an_inch_drawing_are_scaled_by_the_unit_once() {
+        // A drawing in inches: a 10" square block placed at twice its size, and once at
+        // its own size. The block's contents come in millimetres, so the copies' scales
+        // stay the file's (#83: they came in 25.4 times too large).
+        let file = dxf(&[
+            (0, "SECTION"),
+            (2, "HEADER"),
+            (9, "$INSUNITS"),
+            (70, "1"),
+            (0, "ENDSEC"),
+            (0, "SECTION"),
+            (2, "BLOCKS"),
+            (0, "BLOCK"),
+            (2, "TAG"),
+            (10, "0"),
+            (20, "0"),
+            (0, "LWPOLYLINE"),
+            (8, "0"),
+            (90, "4"),
+            (70, "1"),
+            (10, "0"),
+            (20, "0"),
+            (10, "10"),
+            (20, "0"),
+            (10, "10"),
+            (20, "10"),
+            (10, "0"),
+            (20, "10"),
+            (0, "ENDBLK"),
+            (0, "ENDSEC"),
+            (0, "SECTION"),
+            (2, "ENTITIES"),
+            (0, "INSERT"),
+            (8, "0"),
+            (2, "TAG"),
+            (10, "100"),
+            (20, "0"),
+            (41, "2"),
+            (42, "2"),
+            (50, "90"),
+            (0, "INSERT"),
+            (8, "0"),
+            (2, "TAG"),
+            (10, "0"),
+            (20, "0"),
+            (0, "ENDSEC"),
+            (0, "EOF"),
+        ]);
+        let back = read(&file, 1.0).unwrap();
+        let tag = back.blocks.iter().find(|b| b.name == "TAG").unwrap();
+        assert!(tag.entities.iter().any(|e| e.shape
+            == Shape::Line {
+                a: DVec2::ZERO,
+                b: DVec2::new(254.0, 0.0)
+            }));
+        assert_eq!(back.inserts.len(), 2);
+        let (big, own) = (&back.inserts[0], &back.inserts[1]);
+        assert!(close(big.at, DVec2::new(2540.0, 0.0)));
+        assert!((big.scale - 2.0).abs() < 1e-9, "{}", big.scale);
+        assert!((big.angle - 90.0).abs() < 1e-9);
+        assert!((own.scale - 1.0).abs() < 1e-9, "{}", own.scale);
+
+        // Placed in a drawing, the bigger copy is 20" (508 mm) square.
+        let mut doc = Document::new();
+        add_to_document(&mut doc, &back);
+        let copy = doc
+            .instances()
+            .find(|(_, i)| (i.scale - 2.0).abs() < 1e-9)
+            .map(|(_, i)| *i)
+            .unwrap();
+        let far = copy.apply(DVec2::new(254.0, 254.0));
+        assert!(close(far, DVec2::new(2540.0 - 508.0, 508.0)), "{far}");
     }
 
     #[test]

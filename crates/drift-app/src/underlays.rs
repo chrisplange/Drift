@@ -578,6 +578,7 @@ mod tests {
             SnapOptions {
                 tolerance: 0.5,
                 grid: None,
+                from: None,
             },
             |_| false,
         );
@@ -618,6 +619,7 @@ mod tests {
             SnapOptions {
                 tolerance: 0.5,
                 grid: None,
+                from: None,
             },
             |_| false,
         );

@@ -543,6 +543,11 @@ pub trait Tool {
     /// Adjust the pointer after snapping (e.g. lock a line horizontal).
     fn refine_pointer(&self, _pointer: &mut Pointer) {}
 
+    /// Where the segment being drawn starts, for perpendicular and tangent snaps.
+    fn snap_from(&self) -> Option<DVec2> {
+        None
+    }
+
     /// A modal key was pressed with the pointer at `pointer` (if over the canvas). Returns
     /// false if the tool doesn't use the key, so it can do something else.
     fn key(&mut self, _key: ToolKey, _pointer: Option<&Pointer>, _ed: &mut Editor) -> bool {
@@ -628,6 +633,18 @@ fn auto_relation(ed: &mut Editor, relation: Option<GuideKind>, line: EntityId) {
     let constraint = match relation {
         Some(GuideKind::Horizontal) => Constraint::Horizontal { line },
         Some(GuideKind::Vertical) => Constraint::Vertical { line },
+        Some(GuideKind::Perpendicular(curve)) => match ed.doc.get(curve).map(|e| e.kind) {
+            Some(EntityKind::Line { .. }) => Constraint::Perpendicular { a: line, b: curve },
+            // Square to a circle or arc: along its radius, so the line runs through the centre.
+            Some(EntityKind::Circle { center, .. } | EntityKind::Arc { center, .. }) => {
+                Constraint::PointOnCurve {
+                    point: center,
+                    curve: line,
+                }
+            }
+            _ => return,
+        },
+        Some(GuideKind::Tangent(curve)) => Constraint::Tangent { a: line, b: curve },
         _ => return,
     };
     let _ = ed.doc.add_constraint(constraint);

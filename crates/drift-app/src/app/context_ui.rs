@@ -936,6 +936,11 @@ impl DriftApp {
             if theme::menu_check(ui, self.grid_snap, "Snap to grid", "Shift+G").clicked() {
                 self.grid_snap = !self.grid_snap;
             }
+            if theme::menu_check(ui, self.perp_tangent_snap, "Perpendicular & tangent", "")
+                .clicked()
+            {
+                self.perp_tangent_snap = !self.perp_tangent_snap;
+            }
             ui.separator();
             if item(ui, "Command palette…", &app::panels::shortcut("K", false)) {
                 self.open_palette();

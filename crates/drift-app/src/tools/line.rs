@@ -9,6 +9,9 @@ pub struct LineTool {
     pub(super) typed: [Option<f64>; 2],
     /// Axis the current segment is locked to; cleared when the segment is placed.
     pub(super) lock: Option<Axis>,
+    /// Guides from the curves ending at the last point: square to a line, along an arc's
+    /// tangent (the relation and the guide's direction).
+    pub(super) guides: Vec<(GuideKind, DVec2)>,
 }
 
 impl LineTool {
@@ -45,7 +48,7 @@ impl LineTool {
         ed: &mut Editor,
     ) {
         let Some(last) = self.last else {
-            self.last = Some(anchor);
+            self.set_last(anchor, ed);
             self.chain_start = None;
             return;
         };
@@ -77,20 +80,34 @@ impl LineTool {
             // Closed the loop.
             self.last = None;
             self.chain_start = None;
+            self.guides.clear();
         } else {
-            self.last = Some(Anchor {
-                pos: ed.doc.point(b).unwrap_or(anchor.pos),
-                existing: Some(b),
-                midpoint_of: None,
-                on_curve: None,
-            });
+            let pos = ed.doc.point(b).unwrap_or(anchor.pos);
+            self.set_last(Anchor::existing(pos, b), ed);
         }
+    }
+
+    /// Draw on from `anchor`, with guides from the lines and arcs that end there.
+    fn set_last(&mut self, anchor: Anchor, ed: &Editor) {
+        self.last = Some(anchor);
+        self.guides = anchor
+            .existing
+            .map(|point| super::tangent_arc::tangents_at(&ed.doc, point))
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|(curve, dir)| match ed.doc.get(curve)?.kind {
+                EntityKind::Line { .. } => Some((GuideKind::Perpendicular(curve), dir.perp())),
+                EntityKind::Arc { .. } => Some((GuideKind::Tangent(curve), dir)),
+                _ => None,
+            })
+            .collect();
     }
 
     pub(super) fn finish(&mut self) {
         self.last = None;
         self.chain_start = None;
         self.lock = None;
+        self.guides.clear();
     }
 
     /// Lock (or, pressed again, unlock) the segment in progress to an axis. False before the
@@ -150,8 +167,15 @@ impl Tool for LineTool {
 
     fn refine_pointer(&self, p: &mut Pointer) {
         if let Some(last) = self.last {
+            if self.lock.is_none() && follow_guides(last.pos, &self.guides, p) {
+                return;
+            }
             steer(last.pos, self.lock, p);
         }
+    }
+
+    fn snap_from(&self) -> Option<DVec2> {
+        self.last.map(|last| last.pos)
     }
 
     fn fields(&self) -> &'static [&'static str] {
@@ -184,12 +208,7 @@ impl Tool for LineTool {
 
     fn continue_from(&mut self, point: EntityId, ed: &mut Editor) {
         if let Ok(pos) = ed.doc.point(point) {
-            self.last = Some(Anchor {
-                pos,
-                existing: Some(point),
-                midpoint_of: None,
-                on_curve: None,
-            });
+            self.set_last(Anchor::existing(pos, point), ed);
             self.chain_start = None;
         }
     }
@@ -238,6 +257,40 @@ impl Tool for LineTool {
             p.units.format_readout(d.length())
         ))
     }
+}
+
+/// Put the pointer on a perpendicular or tangent guide through `from` when it is near one (and
+/// no exact snap decides where it goes). Square to a horizontal or vertical line is left to
+/// the horizontal / vertical guides, whose relations hold the same. True if a guide applied.
+pub(super) fn follow_guides(from: DVec2, guides: &[(GuideKind, DVec2)], p: &mut Pointer) -> bool {
+    if !p.perp_tangent || p.exact_snap().is_some() {
+        return false;
+    }
+    let target = p.snap.map_or(p.raw, |grid| grid.at);
+    let d = target - from;
+    let tol = p.tolerance;
+    let mut best: Option<(f64, DVec2, GuideKind)> = None;
+    for &(kind, dir) in guides {
+        let along = d.dot(dir);
+        let off = (d - dir * along).length();
+        let level = dir.x.abs() <= 1e-12 || dir.y.abs() <= 1e-12;
+        if along.abs() <= tol || off > tol || (level && matches!(kind, GuideKind::Perpendicular(_)))
+        {
+            continue;
+        }
+        if best.is_none_or(|(o, ..)| off < o) {
+            best = Some((off, from + dir * along, kind));
+        }
+    }
+    let Some((_, at, kind)) = best else {
+        return false;
+    };
+    p.guide = Some(Guide {
+        at,
+        kind,
+        from: [Some(from), None],
+    });
+    true
 }
 
 /// Steer the pointer for a segment from `from`: along a locked axis (X / Y), else in the

@@ -15,4 +15,4 @@ pub use primitives::{
     nearest_on_bezier, nearest_on_ellipse, nearest_point, shape_intersects_rect, shape_within_rect,
 };
 pub use reference::RefIndex;
-pub use snap::{Snap, SnapKind, SnapOptions};
+pub use snap::{Snap, SnapKind, SnapOptions, perpendicular_feet, tangent_points};

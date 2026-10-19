@@ -260,6 +260,7 @@ impl DriftApp {
             grid: self
                 .grid_snap
                 .then(|| drift_render::grid_info(&self.camera, self.imperial()).minor),
+            from: None,
         };
         let mut p = Pointer::new(raw, tolerance);
         p.relations = true;

@@ -812,6 +812,7 @@ mod tests {
         let options = drift_geom::SnapOptions {
             tolerance: 1.0,
             grid: None,
+            from: None,
         };
         let near = |ed: &Editor, p: DVec2| ed.snap(p, options, |_| false).map(|s| s.at);
         assert_eq!(near(&ed, v(10.2, 0.1)), Some(v(10.0, 0.0)));

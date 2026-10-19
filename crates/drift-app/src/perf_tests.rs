@@ -211,6 +211,7 @@ fn perf_editor_pipeline() {
     let options = SnapOptions {
         tolerance: 1.0,
         grid: Some(1.0),
+        from: None,
     };
     report(
         "snap (per pointer move)",

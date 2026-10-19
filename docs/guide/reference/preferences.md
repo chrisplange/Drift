@@ -111,5 +111,7 @@ Some settings live outside this window:
 - **Gaps up to**, the sketch checker's tolerance, is in the **Check sketch** window and
   remembered.
 - **Angle snap** (off, 1°, 5°, 15° or 45°) is in the status bar.
+- **Perpendicular & tangent** snaps and guides, for lines, are in the status bar and the
+  canvas's right-click menu.
 - **View → Free directions**, **Variant ghosts**, **Hidden annotations** (Alt+H) and
   **View crops** are in the **View** menu.

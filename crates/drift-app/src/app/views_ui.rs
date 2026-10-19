@@ -254,6 +254,7 @@ impl DriftApp {
             grid: self
                 .grid_snap
                 .then(|| drift_render::grid_info(&self.camera, self.imperial()).minor),
+            from: None,
         };
         let best = dragged_points(drag.was.crop(), drag.grip)
             .into_iter()

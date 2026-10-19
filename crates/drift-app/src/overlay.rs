@@ -66,7 +66,8 @@ impl OverlayColors {
 }
 
 /// Draw the glyph for a snap target: square for points, circle for centres, triangle for
-/// midpoints, diamond for quadrants, cross for on-curve, plus for grid.
+/// midpoints, diamond for quadrants, cross for on-curve, plus for grid, ⊥ for perpendicular and
+/// a circle on a line for tangent.
 pub fn snap_marker(painter: &egui::Painter, map: &ScreenMap, snap: &Snap, color: Color32) {
     let c = map.to_screen(snap.at);
     let s = 5.0;
@@ -114,6 +115,22 @@ pub fn snap_marker(painter: &egui::Painter, map: &ScreenMap, snap: &Snap, color:
         SnapKind::Grid => {
             painter.line_segment([c - vec2(s, 0.0), c + vec2(s, 0.0)], stroke);
             painter.line_segment([c - vec2(0.0, s), c + vec2(0.0, s)], stroke);
+        }
+        SnapKind::Perpendicular => {
+            // ⊥, standing on the snap point, with the square-corner mark.
+            painter.line_segment([c - vec2(s + 1.0, 0.0), c + vec2(s + 1.0, 0.0)], stroke);
+            painter.line_segment([c, c - vec2(0.0, 2.0 * s)], stroke);
+            let corner = vec![
+                c + vec2(0.0, -0.5 * s - 1.0),
+                c + vec2(0.5 * s + 1.0, -0.5 * s - 1.0),
+                c + vec2(0.5 * s + 1.0, 0.0),
+            ];
+            painter.add(egui::Shape::line(corner, stroke));
+        }
+        SnapKind::Tangent => {
+            // A circle touching a line at the snap point.
+            painter.circle_stroke(c + vec2(0.0, s), s, stroke);
+            painter.line_segment([c - vec2(s + 3.0, 0.0), c + vec2(s + 3.0, 0.0)], stroke);
         }
     }
 }

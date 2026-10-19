@@ -7958,3 +7958,65 @@ fn an_annotation_can_be_drawn_in_some_views_only() {
     assert_eq!(h.state().editor.doc.only_in(r).cloned(), only);
     assert!(h.state().editor.doc.shown(r).sheets);
 }
+
+#[test]
+fn lines_snap_tangent_to_a_circle_and_square_onto_a_line() {
+    use drift_core::Constraint;
+    use drift_geom::SnapKind;
+    let Some(mut h) = harness() else { return };
+    h.state_mut().auto_relations = true;
+    // A circle about the origin, radius 20, and a line below it.
+    h.key_press(Key::C);
+    h.run();
+    click_world(&mut h, DVec2::new(0.0, 0.0));
+    click_world(&mut h, DVec2::new(20.0, 0.0));
+    h.key_press(Key::L);
+    h.run();
+    click_world(&mut h, DVec2::new(-40.0, -40.0));
+    click_world(&mut h, DVec2::new(40.0, -40.0));
+    h.key_press(Key::Escape);
+    h.run();
+    h.key_press(Key::L);
+    h.run();
+
+    // From (40, 30) the line touches the circle 50 away: at the angle of (40, 30) less
+    // acos(20 / 50).
+    let from = DVec2::new(40.0, 30.0);
+    click_world(&mut h, from);
+    let toward = from.y.atan2(from.x);
+    let touch = DVec2::from_angle(toward + (20.0f64 / 50.0).acos()) * 20.0;
+    h.hover_at(screen(&h, touch));
+    h.run();
+    let snap = h.state().pointer.and_then(|p| p.snap).expect("a snap");
+    assert_eq!(snap.kind, SnapKind::Tangent);
+    save_png("drift_ui_tangent_snap.png", &mut h);
+    click_world(&mut h, touch);
+    let tangent = |h: &Harness<'_, DriftApp>| {
+        h.state()
+            .editor
+            .doc
+            .constraints()
+            .filter(|(_, c)| matches!(c, Constraint::Tangent { .. }))
+            .count()
+    };
+    assert_eq!(tangent(&h), 1, "kept tangent");
+
+    // On from the touching point, square down onto the line.
+    let foot = DVec2::new(touch.x, -40.0);
+    h.hover_at(screen(&h, foot + DVec2::new(0.4, 0.4)));
+    h.run();
+    let snap = h.state().pointer.and_then(|p| p.snap).expect("a snap");
+    assert_eq!(snap.kind, SnapKind::Perpendicular);
+    // Straight below the solved touching point, on the line.
+    assert!((snap.at - foot).length() < 0.01);
+    save_png("drift_ui_perpendicular_snap.png", &mut h);
+
+    // Turned off in the status bar: only on the curve.
+    h.get_by_label("Perpendicular & tangent").click();
+    h.run();
+    assert!(!h.state().perp_tangent_snap);
+    h.hover_at(screen(&h, foot + DVec2::new(0.4, 0.4)));
+    h.run();
+    let snap = h.state().pointer.and_then(|p| p.snap).expect("a snap");
+    assert_eq!(snap.kind, SnapKind::OnCurve);
+}

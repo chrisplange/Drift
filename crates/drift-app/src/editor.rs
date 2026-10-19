@@ -62,6 +62,13 @@ pub enum GuideKind {
     Horizontal,
     /// Made exactly vertical from the previous point; the new line gets a Vertical relation.
     Vertical,
+    /// Square to this line (a guide from its end), or onto it (a perpendicular snap); onto a
+    /// circle or arc, along its radius. The new line gets a Perpendicular relation (through
+    /// the centre for a circle or arc).
+    Perpendicular(EntityId),
+    /// Tangent to this circle or arc (a guide from its end, or a tangent snap); the new line
+    /// gets a Tangent relation.
+    Tangent(EntityId),
 }
 
 /// An inference: the adjusted position and the points the dotted guide lines run from.
@@ -98,6 +105,8 @@ pub struct Pointer {
     pub round_scale: bool,
     /// Lines being drawn turn in steps of this many degrees, if angle snapping is on.
     pub angle_step: Option<f64>,
+    /// Perpendicular and tangent guides from the end a line is drawn on from.
+    pub perp_tangent: bool,
 }
 
 impl Pointer {
@@ -114,6 +123,7 @@ impl Pointer {
             command: false,
             round_scale: true,
             angle_step: None,
+            perp_tangent: false,
         }
     }
 
@@ -127,9 +137,11 @@ impl Pointer {
     /// The curve the pointer snapped onto (anywhere along it, or at a quadrant), if a new point
     /// there should get an On curve relation.
     pub fn on_curve(&self) -> Option<EntityId> {
-        use drift_geom::SnapKind::{OnCurve, Quadrant};
+        use drift_geom::SnapKind::{OnCurve, Perpendicular, Quadrant, Tangent};
         self.exact_snap()
-            .filter(|s| matches!(s.kind, OnCurve | Quadrant) && self.relations)
+            .filter(|s| {
+                matches!(s.kind, OnCurve | Quadrant | Perpendicular | Tangent) && self.relations
+            })
             .and_then(|s| s.entity)
     }
 
@@ -151,9 +163,18 @@ impl Pointer {
         }
     }
 
-    /// The automatic relation implied by the guide, if any (not when an exact snap decides
-    /// the position).
+    /// The automatic relation implied by a perpendicular or tangent snap, else by the guide
+    /// (not when another exact snap decides the position).
     pub fn auto_relation(&self) -> Option<GuideKind> {
+        if let Some(snap) = self.exact_snap() {
+            return match (snap.kind, snap.entity) {
+                (drift_geom::SnapKind::Perpendicular, Some(curve)) => {
+                    Some(GuideKind::Perpendicular(curve))
+                }
+                (drift_geom::SnapKind::Tangent, Some(curve)) => Some(GuideKind::Tangent(curve)),
+                _ => None,
+            };
+        }
         self.guide
             .map(|g| g.kind)
             .filter(|k| *k != GuideKind::Aligned)
@@ -196,6 +217,14 @@ impl Anchor {
             existing: None,
             midpoint_of: None,
             on_curve: None,
+        }
+    }
+
+    /// An existing point, at `pos`.
+    pub fn existing(pos: DVec2, point: EntityId) -> Self {
+        Self {
+            existing: Some(point),
+            ..Self::at(pos)
         }
     }
 

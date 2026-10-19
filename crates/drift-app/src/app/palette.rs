@@ -64,6 +64,7 @@ pub(crate) enum ViewFlag {
     Grid,
     Axes,
     Snap,
+    PerpTangent,
     Thin,
     Status,
     Endpoints,
@@ -78,10 +79,11 @@ pub(crate) enum ViewFlag {
 }
 
 impl ViewFlag {
-    const ALL: [ViewFlag; 14] = [
+    const ALL: [ViewFlag; 15] = [
         ViewFlag::Grid,
         ViewFlag::Axes,
         ViewFlag::Snap,
+        ViewFlag::PerpTangent,
         ViewFlag::Thin,
         ViewFlag::Status,
         ViewFlag::Endpoints,
@@ -100,6 +102,7 @@ impl ViewFlag {
             ViewFlag::Grid => "Grid",
             ViewFlag::Axes => "Origin axes",
             ViewFlag::Snap => "Snap to grid",
+            ViewFlag::PerpTangent => "Perpendicular and tangent snaps",
             ViewFlag::Thin => "Thin lines",
             ViewFlag::Status => "Constraint status colours",
             ViewFlag::Endpoints => "Always show end points",
@@ -199,6 +202,7 @@ impl DriftApp {
             ViewFlag::Grid => &mut self.show_grid,
             ViewFlag::Axes => &mut self.show_axes,
             ViewFlag::Snap => &mut self.grid_snap,
+            ViewFlag::PerpTangent => &mut self.perp_tangent_snap,
             ViewFlag::Thin => &mut self.thin_lines,
             ViewFlag::Status => &mut self.status_colors,
             ViewFlag::Endpoints => &mut self.always_endpoints,

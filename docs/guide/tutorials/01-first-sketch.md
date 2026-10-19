@@ -96,6 +96,29 @@ below it. These guides add no relation.
 
 Lines drawn nearly horizontal or vertical snap straight and get the relation.
 
+### Perpendicular and tangent
+
+While you draw a line, two more snaps look back at where the segment starts:
+
+- **Perpendicular** (marked ⊥): near the point on a line where a line from your start would
+  meet it square, the pointer snaps there. On a circle or arc it snaps to the points along
+  the radius through your start.
+- **Tangent** (marked with a small circle on a line): near a point where a line from your
+  start would just touch a circle or arc, the pointer snaps there.
+
+Drawing on from the end of a line or an arc, a dashed guide shows when the new segment is
+square to the line, or carries on along the arc's tangent. Move close to it and the point
+goes exactly on it. (Square to a horizontal or vertical line is simply vertical or
+horizontal.)
+
+With **Auto relations** on, the line keeps what you snapped to: a **Perpendicular** or
+**Tangent** relation, with its end kept on the curve. A line square onto a circle runs
+through its centre. Edit the drawing and it stays square or tangent.
+
+Real points (end points, centres) win over these snaps, and they win over midpoints,
+quadrants and points along a curve. Turn them off with **Perpendicular & tangent** in the
+status bar, next to the grid snap.
+
 **Angle snap**, in the status bar next to the grid snap, makes lines turn in steps: every
 1°, 5°, 15° or 45°.
 

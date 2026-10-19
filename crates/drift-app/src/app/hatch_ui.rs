@@ -156,6 +156,7 @@ impl DriftApp {
                     grid: self
                         .grid_snap
                         .then(|| drift_render::grid_info(&self.camera, self.imperial()).minor),
+                    from: None,
                 };
                 let found = snap
                     .then(|| self.editor.snap(raw, options, |_| false))

@@ -662,8 +662,8 @@ impl DriftApp {
         }
     }
 
-    /// Pick only edges, only points, or anything; what is picked now keeps only what the
-    /// filter allows.
+    /// Pick only edges, points, annotations or text, or anything; what is picked now keeps
+    /// only what the filter allows.
     pub(crate) fn set_pick_filter(&mut self, filter: crate::editor::PickFilter) {
         let ed = &mut self.editor;
         ed.pick_filter = filter;
@@ -672,9 +672,34 @@ impl DriftApp {
             ed.selection.retain(|id| filter.allows(doc, *id));
             ed.selected_fills.clear();
             ed.selected_instances.clear();
-            ed.selected_text = None;
             ed.selected_region = None;
             ed.selected_midpoints.clear();
+        }
+        if !filter.texts() {
+            ed.selected_texts.clear();
+        }
+        if !filter.annotations() {
+            ed.selected_annotation = None;
+            ed.annotation_picks.clear();
+            self.selected_leader = None;
+            // A picked relation stays with the geometry filters.
+            if !filter.geometry()
+                || self
+                    .selected_constraint
+                    .and_then(|id| self.editor.doc.constraint(id))
+                    .is_some_and(|c| c.is_dimension())
+            {
+                self.selected_constraint = None;
+            }
+        } else if !filter.geometry() {
+            // Annotations only: a picked relation goes, a picked dimension stays.
+            if self
+                .selected_constraint
+                .and_then(|id| self.editor.doc.constraint(id))
+                .is_some_and(|c| !c.is_dimension())
+            {
+                self.selected_constraint = None;
+            }
         }
     }
 
@@ -720,7 +745,9 @@ impl DriftApp {
                 .get(*id)
                 .is_none_or(|e| e.kind.is_point() || e.style == drift_core::LineKind::Construction)
         });
-        caption(ui, &format!("{n} selected"));
+        // (Text and annotations picked with the geometry count too.)
+        let all = n + ed.selected_texts.len() + self.picked_annotations().len();
+        caption(ui, &format!("{all} selected"));
         divider(ui);
         self.selection_look(ui);
         divider(ui);

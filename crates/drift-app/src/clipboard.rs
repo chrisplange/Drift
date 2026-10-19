@@ -7,8 +7,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use drift_core::{
-    BlockId, Bounds, Constraint, ConstraintId, DVec2, Document, EntityId, EntityKind, FillId,
-    InstanceId, LayerId, TextId,
+    AnnotationId, AnnotationRef, BlockId, Bounds, Constraint, ConstraintId, DVec2, Document,
+    EntityId, EntityKind, FillId, InstanceId, LayerId, TextId,
 };
 
 use crate::editor::Editor;
@@ -21,6 +21,9 @@ pub struct Picked {
     pub texts: Vec<TextId>,
     /// Fills to copy even if their boundary isn't (they still need it copied to follow).
     pub fills: BTreeSet<FillId>,
+    /// Notes, marks and callouts (a callout only with its geometry; a note's leader to
+    /// geometry left behind keeps its tip where it is).
+    pub annotations: Vec<AnnotationId>,
 }
 
 /// What a copy made.
@@ -32,6 +35,7 @@ pub struct Copied {
     pub texts: Vec<TextId>,
     /// Copies of the fills named in [`Picked::fills`].
     pub fills: BTreeSet<FillId>,
+    pub annotations: Vec<AnnotationId>,
 }
 
 /// The layer in `dst` named like `layer` of `src` (made, with the same look, if missing).
@@ -217,6 +221,28 @@ pub fn copy_into(
         dst.set_text(copy, t);
         out.texts.push(copy);
     }
+    for &id in &picked.annotations {
+        let Some(a) = src.annotation(id) else {
+            continue;
+        };
+        let Some(on) = a.with_entities(&|e| map.get(&e).copied(), &|anchor| src.anchor_pos(anchor))
+        else {
+            continue;
+        };
+        let mut copy = on.mapped(&|p| p + offset);
+        // A copy of a section or elevation mark is a mark of its own, not the view's.
+        copy.set_view(None);
+        let Ok(made) = dst.add_annotation(copy) else {
+            continue;
+        };
+        let (from, to) = (
+            AnnotationRef::Annotation(id),
+            AnnotationRef::Annotation(made),
+        );
+        dst.set_shown(to, src.shown(from));
+        dst.set_style_override(to, src.style_override(from));
+        out.annotations.push(made);
+    }
     out
 }
 
@@ -232,6 +258,7 @@ fn everything(doc: &Document) -> Picked {
         instances: doc.instances().map(|(id, _)| id).collect(),
         texts: doc.texts().map(|(id, _)| id).collect(),
         fills: doc.fills().map(|(id, _)| id).collect(),
+        annotations: doc.annotations().map(|(id, _)| id).collect(),
     }
 }
 
@@ -248,6 +275,11 @@ fn extent(doc: &Document) -> Bounds {
     for (_, t) in doc.texts() {
         b.include(t.at);
     }
+    for (_, a) in doc.annotations() {
+        if let Some(p) = crate::notes::label_world(doc, a) {
+            b.include(p);
+        }
+    }
     b
 }
 
@@ -263,15 +295,20 @@ impl Editor {
         Picked {
             curves: self.selection.iter().copied().collect(),
             instances: self.selected_instances.iter().copied().collect(),
-            texts: self.selected_text.into_iter().collect(),
+            texts: self.selected_texts.iter().copied().collect(),
             fills: self.selected_fills.iter().copied().collect(),
+            annotations: self.picked_notes(),
         }
     }
 
     /// The selection as clipboard text (`None` with nothing to copy).
     pub fn copy_selection(&self) -> Option<String> {
         let picked = self.picked();
-        if picked.curves.is_empty() && picked.instances.is_empty() && picked.texts.is_empty() {
+        if picked.curves.is_empty()
+            && picked.instances.is_empty()
+            && picked.texts.is_empty()
+            && picked.annotations.is_empty()
+        {
             return None;
         }
         let mut fragment = Document::new();
@@ -317,10 +354,18 @@ impl Editor {
             .collect();
         self.selected_instances = made.instances.iter().copied().collect();
         self.selected_fills = made.fills;
-        self.selected_text = made.texts.first().copied();
+        self.selected_texts = made.texts.iter().copied().collect();
         self.selected_region = None;
         self.selected_annotation = None;
-        Ok(self.selection.len() + self.selected_instances.len() + made.texts.len())
+        self.annotation_picks = made
+            .annotations
+            .iter()
+            .map(|id| drift_core::AnnotationRef::Annotation(*id))
+            .collect();
+        Ok(self.selection.len()
+            + self.selected_instances.len()
+            + made.texts.len()
+            + made.annotations.len())
     }
 }
 
@@ -364,7 +409,7 @@ mod tests {
             .unwrap();
         ed.commit("Rectangle");
         ed.add_text(SketchText::new("Hall", v(2.0, 2.0), 3.0));
-        ed.selected_text = None;
+        ed.selected_texts.clear();
         ed
     }
 
@@ -408,7 +453,7 @@ mod tests {
     fn paste_into_another_sketch_brings_layers_and_text() {
         let mut from = sketch();
         from.select_all();
-        from.selected_text = from.doc.texts().next().map(|(id, _)| id);
+        from.selected_texts = from.doc.texts().map(|(id, _)| id).collect();
         let text = from.copy_selection().unwrap();
         let mut to = Editor::default();
         let n = to.paste(&text, None).unwrap();

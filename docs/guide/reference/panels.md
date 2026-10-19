@@ -35,6 +35,7 @@ What's picked, and what you can do with it. Its contents depend on the selection
 | A note, callout or mark | Its text or label, leader, sheet and direction, and **Show**. |
 | A fill or hatch | Its **Style**, **Layer**, draw order and **Area**. See [Fills and hatches](../tutorials/06-fills-and-hatches.md). |
 | A text | Its words, **Height**, **Angle**, **Font**, **Align**, **Spacing** and **Wrap**, and **Convert to curves**. |
+| Several things, with text or annotations among them | How many of each ("4 lines · 1 dimension · 1 note · 1 text"), and **Show** for the dimensions and annotations. Delete, Move, Rotate, Mirror and Copy act on all of it. |
 | A block copy | **Block**, **Placement**, **Layer**, **Edit block**, **Explode** and **Select all copies**. |
 | A group | Its **Name**, **Members**, **Edit group** and **Ungroup**. |
 | A closed area (with area picking on) | **Area**, **Perimeter**, **Centroid** and **Holes**, and **Fill** / **Hatch** buttons. |

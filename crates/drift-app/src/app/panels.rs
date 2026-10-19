@@ -410,7 +410,7 @@ impl DriftApp {
                 let now = ui.input(|i| i.time);
                 let can_copy = !self.editor.selection.is_empty()
                     || !self.editor.selected_instances.is_empty()
-                    || self.editor.selected_text.is_some();
+                    || self.editor.picks_annotations();
                 if ui
                     .add_enabled(
                         can_copy,
@@ -769,9 +769,19 @@ impl DriftApp {
                 bounds.include(i.at);
             }
         }
-        if let Some(o) = ed.selected_text.and_then(|t| ed.text_outline(t)) {
+        for o in ed.selected_texts.iter().filter_map(|t| ed.text_outline(*t)) {
             bounds.include(o.bounds.min);
             bounds.include(o.bounds.max);
+        }
+        for (_, a, label) in ed.riders().notes {
+            // A section mark's far end too.
+            let far = match a {
+                drift_core::Annotation::Section { b, .. } => Some(b),
+                _ => None,
+            };
+            for p in label.into_iter().chain(far) {
+                bounds.include(p);
+            }
         }
         if bounds.is_empty() {
             return false;
@@ -797,7 +807,7 @@ impl DriftApp {
         }
         let picked = !self.editor.selection.is_empty()
             || !self.editor.selected_instances.is_empty()
-            || self.editor.selected_text.is_some();
+            || self.editor.picks_annotations();
         if ui
             .add_enabled(
                 picked,
@@ -868,6 +878,68 @@ impl DriftApp {
         }
     }
 
+    /// Several things picked, text or annotations among them: what they are, and where the
+    /// annotations show. Returns true if it showed.
+    pub(crate) fn mixed_inspector(&mut self, ui: &mut egui::Ui) -> bool {
+        let ed = &self.editor;
+        let annotations = self.picked_annotations();
+        let n = ed.selection.len()
+            + ed.selected_instances.len()
+            + ed.selected_fills.len()
+            + ed.selected_texts.len()
+            + annotations.len();
+        if n < 2 || (ed.selected_texts.is_empty() && annotations.is_empty()) {
+            return false;
+        }
+        let mut counts: Vec<(&str, usize)> = Vec::new();
+        let mut count = |name: &'static str| match counts.iter_mut().find(|c| c.0 == name) {
+            Some(c) => c.1 += 1,
+            None => counts.push((name, 1)),
+        };
+        for id in &ed.selection {
+            if let Some(e) = ed.doc.get(*id) {
+                count(e.kind.type_name());
+            }
+        }
+        for _ in &ed.selected_instances {
+            count("Block");
+        }
+        for _ in &ed.selected_fills {
+            count("Fill");
+        }
+        for r in &annotations {
+            match r {
+                drift_core::AnnotationRef::Dimension(_) => count("Dimension"),
+                drift_core::AnnotationRef::Annotation(id) => {
+                    if let Some(a) = ed.doc.annotation(*id) {
+                        count(a.type_name());
+                    }
+                }
+            }
+        }
+        for _ in &ed.selected_texts {
+            count("Text");
+        }
+        let summary: Vec<String> = counts.iter().map(|(name, n)| plural(*n, name)).collect();
+        title(
+            ui,
+            Some(ToolKind::Select),
+            &format!("{n} selected"),
+            &summary.join(" · "),
+        );
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new(
+                "Delete, Move (G), Rotate (R), Mirror and Copy act on all of it. Dimensions \
+                 follow their geometry.",
+            )
+            .small()
+            .weak(),
+        );
+        self.visibility_section(ui);
+        true
+    }
+
     pub(crate) fn inspector(&mut self, ui: &mut egui::Ui) {
         // On a sheet, the Inspector shows what is picked there.
         if self.sheet_preview {
@@ -876,6 +948,7 @@ impl DriftApp {
         }
         self.block_edit_banner(ui);
         if self.fill_tool_inspector(ui)
+            || self.mixed_inspector(ui)
             || self.annotation_inspector(ui)
             || self.text_inspector(ui)
             || self.instance_inspector(ui)

@@ -331,6 +331,12 @@ pub struct Editor {
     /// The Fill tool's next click picks up a fill's style instead of filling.
     pub fill_eyedropper: bool,
     pub selected_annotation: Option<drift_core::AnnotationId>,
+    /// Dimensions and annotations picked besides the primary ones (the app's picked
+    /// dimension and `selected_annotation`): added with Shift, or by a box.
+    pub annotation_picks: Vec<drift_core::AnnotationRef>,
+    /// A box selection just made, for the app to pick the dimensions and annotations in it
+    /// (they are laid out on screen).
+    pub box_pick: Option<crate::picks::BoxPick>,
     pub hovered_annotation: Option<drift_core::AnnotationId>,
     /// A note just placed by a tool, whose text the UI should let the user type.
     pub pending_note_edit: Option<drift_core::AnnotationId>,
@@ -373,8 +379,8 @@ pub struct Editor {
     /// while the sketch's structure stays the same: (dragged ids, entity and constraint
     /// counts, the connected set).
     drag_scope: std::cell::RefCell<Option<DragScope>>,
-    /// The sketch text picked and under the pointer.
-    pub selected_text: Option<drift_core::TextId>,
+    /// The sketch texts picked, and the one under the pointer.
+    pub selected_texts: BTreeSet<drift_core::TextId>,
     pub hovered_text: Option<drift_core::TextId>,
     pub(crate) text_cache: std::cell::RefCell<crate::texts::TextCache>,
     /// The drawing's font as loaded, by its family and file.
@@ -2100,24 +2106,39 @@ impl Editor {
     }
 
     pub fn delete_selection(&mut self) {
+        self.delete_selection_with(&[]);
+    }
+
+    /// Delete the selection and the picked text, annotations and dimensions, with
+    /// `constraints` (the app's picked dimension or relation), as one undo step.
+    pub fn delete_selection_with(&mut self, constraints: &[ConstraintId]) {
+        let notes = self.picked_notes();
+        let mut dims = self.picked_dimensions();
+        dims.extend(constraints);
         if self.selection.is_empty()
             && self.selected_fills.is_empty()
-            && self.selected_annotation.is_none()
+            && notes.is_empty()
+            && dims.is_empty()
             && self.selected_instances.is_empty()
-            && self.selected_text.is_none()
+            && self.selected_texts.is_empty()
         {
             return;
         }
         self.doc.begin();
-        if let Some(id) = self.selected_text.take() {
+        for id in std::mem::take(&mut self.selected_texts) {
             self.doc.remove_text(id);
         }
         for id in std::mem::take(&mut self.selected_instances) {
             self.doc.remove_instance(id);
         }
-        if let Some(id) = self.selected_annotation.take() {
+        for id in notes {
             self.doc.remove_annotation(id);
         }
+        for id in dims {
+            self.doc.remove_constraint(id);
+        }
+        self.selected_annotation = None;
+        self.annotation_picks.clear();
         for id in std::mem::take(&mut self.selected_fills) {
             self.doc.remove_fill(id);
         }
@@ -2127,16 +2148,21 @@ impl Editor {
 
     /// Copy the selection in place (Blender's Shift+D): the curves with their points, the
     /// relations and dimensions among them, fills and hatches of copied areas, and picked
-    /// block copies. The copies become the
-    /// selection. Returns how many things were copied.
+    /// block copies, text and annotations. The copies become the selection. Returns how many
+    /// things were copied.
     pub fn duplicate_selection(&mut self) -> usize {
         let picked = crate::clipboard::Picked {
             curves: self.selection.iter().copied().collect(),
             instances: self.selected_instances.iter().copied().collect(),
-            texts: Vec::new(),
+            texts: self.selected_texts.iter().copied().collect(),
             fills: self.selected_fills.iter().copied().collect(),
+            annotations: self.picked_notes(),
         };
-        if picked.curves.is_empty() && picked.instances.is_empty() {
+        if picked.curves.is_empty()
+            && picked.instances.is_empty()
+            && picked.texts.is_empty()
+            && picked.annotations.is_empty()
+        {
             return 0;
         }
         let source = self.doc.clone();
@@ -2148,11 +2174,18 @@ impl Editor {
             .iter()
             .filter_map(|id| made.entities.get(id).copied())
             .collect();
-        let n = self.selection.len() + made.instances.len();
+        let n =
+            self.selection.len() + made.instances.len() + made.texts.len() + made.annotations.len();
         self.selected_instances = made.instances.into_iter().collect();
         self.selected_fills = made.fills;
+        self.selected_texts = made.texts.into_iter().collect();
         self.selected_region = None;
         self.selected_annotation = None;
+        self.annotation_picks = made
+            .annotations
+            .into_iter()
+            .map(drift_core::AnnotationRef::Annotation)
+            .collect();
         n
     }
 
@@ -2346,23 +2379,18 @@ impl Editor {
         self.move_point_to(b, to)
     }
 
-    /// Move the selection (curves, block copies, the picked text) by `delta` as one undo
-    /// step. `None` with nothing picked; `Some(false)` if relations hold it in place.
+    /// Move the selection (curves, block copies, the picked text and annotations) by `delta`
+    /// as one undo step. `None` with nothing picked; `Some(false)` if relations hold it in
+    /// place.
     pub fn nudge(&mut self, delta: DVec2) -> Option<bool> {
         let ids: Vec<EntityId> = self.selection.iter().copied().collect();
         let instances = self.picked_instances();
-        let text = self.selected_text;
-        if ids.is_empty() && instances.is_empty() && text.is_none() {
+        let riders = self.riders();
+        if ids.is_empty() && instances.is_empty() && riders.is_empty() {
             return None;
         }
         self.doc.begin();
         self.move_instances(&instances, delta);
-        if let Some(id) = text
-            && let Some(mut t) = self.doc.text(id).cloned()
-        {
-            t.at += delta;
-            self.doc.set_text(id, t);
-        }
         if !ids.is_empty() {
             let dragged: Vec<Param> = self
                 .doc
@@ -2377,6 +2405,7 @@ impl Editor {
                 return Some(false);
             }
         }
+        self.place_riders(&riders, &|p| p + delta);
         if let Some(seed) = &mut self.selected_region {
             *seed += delta;
         }
@@ -3505,23 +3534,36 @@ pub(crate) fn interior_point(region: &drift_geom::regions::Region, near: DVec2) 
 /// What the select tool picks.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PickFilter {
-    /// Anything: points, curves, areas, fills, text and blocks.
+    /// Anything: points, curves, areas, fills, text, blocks and annotations.
     #[default]
     All,
     /// Only curves (lines, arcs, circles…).
     Edges,
     /// Only points (ends, centres, standalone points).
     Points,
+    /// Only annotations: dimensions, notes, callouts, centre marks, section and elevation
+    /// marks, ordinates.
+    Annotations,
+    /// Only sketch text.
+    Text,
 }
 
 impl PickFilter {
-    pub const ALL: [PickFilter; 3] = [PickFilter::All, PickFilter::Edges, PickFilter::Points];
+    pub const ALL: [PickFilter; 5] = [
+        PickFilter::All,
+        PickFilter::Edges,
+        PickFilter::Points,
+        PickFilter::Annotations,
+        PickFilter::Text,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
             PickFilter::All => "All",
             PickFilter::Edges => "Edges",
             PickFilter::Points => "Points",
+            PickFilter::Annotations => "Annotations",
+            PickFilter::Text => "Text",
         }
     }
 
@@ -3532,12 +3574,31 @@ impl PickFilter {
             PickFilter::All => true,
             PickFilter::Edges => !is_point,
             PickFilter::Points => is_point,
+            PickFilter::Annotations | PickFilter::Text => false,
         }
     }
 
-    /// Whether areas, fills, text and blocks may be picked (only with no filter).
+    /// Whether areas, fills and blocks may be picked (only with no filter).
     pub fn anything(self) -> bool {
         self == PickFilter::All
+    }
+
+    /// Whether geometry (and the relations on it) may be picked.
+    pub fn geometry(self) -> bool {
+        matches!(
+            self,
+            PickFilter::All | PickFilter::Edges | PickFilter::Points
+        )
+    }
+
+    /// Whether dimensions and annotations may be picked.
+    pub fn annotations(self) -> bool {
+        matches!(self, PickFilter::All | PickFilter::Annotations)
+    }
+
+    /// Whether sketch text may be picked.
+    pub fn texts(self) -> bool {
+        matches!(self, PickFilter::All | PickFilter::Text)
     }
 }
 

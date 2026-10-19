@@ -79,6 +79,8 @@ pub(super) enum SelectDrag {
         point: Option<EntityId>,
         /// Copies of blocks moving too (as they were when the drag began).
         instances: Vec<(drift_core::InstanceId, drift_core::Instance)>,
+        /// Picked text and annotations moving too.
+        riders: crate::picks::Riders,
     },
     /// Dragging a sketch text by its body.
     Text {
@@ -130,8 +132,8 @@ pub(super) struct Grab {
     pub(super) applied: DVec2,
     /// Copies of blocks moving too (as they were when the move began).
     pub(super) instances: Vec<(drift_core::InstanceId, drift_core::Instance)>,
-    /// The picked sketch text moving too, and where its anchor was.
-    pub(super) text: Option<(drift_core::TextId, DVec2)>,
+    /// The picked sketch text and annotations moving too, as they were.
+    pub(super) riders: crate::picks::Riders,
     /// A picked area or hatch moving: it lets go of curves that aren't moving with it
     /// (with automatic relations off; see [`Editor::detach_for_move`]).
     pub(super) detach: bool,
@@ -166,9 +168,7 @@ impl Grab {
         }
         if self.ids.is_empty() || ed.drag(&self.ids, step, &self.dragged()) {
             ed.move_instances(&self.instances, offset);
-            if let Some((id, from)) = self.text {
-                ed.place_text(id, from + offset);
-            }
+            ed.place_riders(&self.riders, &|p| p + offset);
             self.applied = offset;
             ed.region_motion = Some(crate::editor::RegionMotion::Move(offset));
         }
@@ -201,9 +201,7 @@ impl SelectTool {
             None
         };
         let instances = ed.picked_instances();
-        let text = ed
-            .selected_text
-            .and_then(|id| ed.doc.text(id).map(|t| (id, t.at)));
+        let riders = ed.riders();
         let (ids, base) = match (&region, fill) {
             (Some(r), _) => (ed.region_curves(r), r.centroid),
             (None, Some((ids, centre))) => (ids, centre),
@@ -211,9 +209,9 @@ impl SelectTool {
             (None, None) if ed.selection.is_empty() && !instances.is_empty() => {
                 (Vec::new(), instances[0].1.at)
             }
-            // Only a text: its anchor is the base.
-            (None, None) if ed.selection.is_empty() && text.is_some() => {
-                (Vec::new(), text.map_or(p.raw, |t| t.1))
+            // Only text and annotations: the first text's anchor (or note's label) is the base.
+            (None, None) if ed.selection.is_empty() && !riders.is_empty() => {
+                (Vec::new(), riders.base().unwrap_or(p.raw))
             }
             (None, None) => {
                 let ids: Vec<EntityId> = ed.selection.iter().copied().collect();
@@ -221,7 +219,7 @@ impl SelectTool {
                 (ids, base)
             }
         };
-        if ids.is_empty() && instances.is_empty() && text.is_none() {
+        if ids.is_empty() && instances.is_empty() && riders.is_empty() {
             ed.notice = Some("Select something to move first".into());
             return true;
         }
@@ -245,7 +243,7 @@ impl SelectTool {
             typed: [None; 2],
             applied: DVec2::ZERO,
             instances,
-            text,
+            riders,
             detach: area,
         });
         true
@@ -302,6 +300,7 @@ impl SelectTool {
             applied: DVec2::ZERO,
             point: None,
             instances: Vec::new(),
+            riders: Default::default(),
         });
         true
     }
@@ -323,9 +322,6 @@ impl SelectTool {
         }
         ed.doc.begin();
         ed.move_instances(&grab.instances, offset);
-        if let Some((id, from)) = grab.text {
-            ed.place_text(id, from + offset);
-        }
         // Applied again from the original geometry: let go of the neighbours again too
         // (the outline's points are new ones then).
         let dragged = if grab.detach {
@@ -346,6 +342,8 @@ impl SelectTool {
                 ed.drag(&grab.ids, offset / f64::from(STEPS), &dragged);
             }
         }
+        // After the geometry, so notes land where they're taken whatever their leaders did.
+        ed.place_riders(&grab.riders, &|p| p + offset);
         ed.commit("Move");
     }
 
@@ -677,6 +675,10 @@ impl Tool for SelectTool {
                 }
                 if !mods.shift && !mods.command {
                     ed.selected_midpoints.clear();
+                    // (A click on a dimension or annotation is the app's: this one is off
+                    // them.)
+                    ed.selected_annotation = None;
+                    ed.annotation_picks.clear();
                 }
                 let hit = {
                     let hidden = ed.hidden_handles();
@@ -684,13 +686,19 @@ impl Tool for SelectTool {
                         .pick(p.raw, p.tolerance, |id| ed.pickable(id, &hidden))
                 };
                 let anything = ed.pick_filter.anything();
-                // Sketch text (anywhere in its box).
+                // Sketch text (anywhere in its box): Shift adds it, Ctrl adds or takes it away.
                 if hit.is_none()
-                    && anything
+                    && ed.pick_filter.texts()
                     && let Some(t) = ed.text_at(p.raw, p.tolerance)
                 {
-                    ed.selected_text = Some(t);
-                    if !mods.shift && !mods.command {
+                    if mods.command {
+                        if !ed.selected_texts.remove(&t) {
+                            ed.selected_texts.insert(t);
+                        }
+                    } else if mods.shift {
+                        ed.selected_texts.insert(t);
+                    } else {
+                        ed.selected_texts = [t].into();
                         ed.selection.clear();
                         ed.selected_instances.clear();
                         ed.selected_fills.clear();
@@ -698,7 +706,9 @@ impl Tool for SelectTool {
                     }
                     return;
                 }
-                ed.selected_text = None;
+                if !mods.shift && !mods.command {
+                    ed.selected_texts.clear();
+                }
                 // A copy of a block (on its curves, or inside it).
                 let copy = if hit.is_none() && anything {
                     ed.instance_at(p.raw, p.tolerance)
@@ -815,7 +825,7 @@ impl Tool for SelectTool {
                     .is_none()
                     && let Some(t) = ed.text_at(p.raw, p.tolerance)
                 {
-                    ed.selected_text = Some(t);
+                    ed.selected_texts = [t].into();
                     ed.editing_text = Some(t);
                     ed.text_caret_at = Some(p.raw);
                     return;
@@ -855,6 +865,9 @@ impl Tool for SelectTool {
                             if !mods.shift && !mods.command {
                                 ed.selection.clear();
                                 ed.selected_instances.clear();
+                                ed.selected_texts.clear();
+                                ed.selected_annotation = None;
+                                ed.annotation_picks.clear();
                             }
                             let set = ed.pick_set(id);
                             ed.selection.extend(set);
@@ -881,6 +894,7 @@ impl Tool for SelectTool {
                         let base = ed.move_base(&ids, p.raw, point.is_none());
                         let points = ed.doc.defining_points(ids.iter().copied());
                         let instances = ed.picked_instances();
+                        let riders = ed.riders();
                         ed.doc.begin();
                         self.drag = Some(SelectDrag::Move {
                             ids,
@@ -890,20 +904,48 @@ impl Tool for SelectTool {
                             applied: DVec2::ZERO,
                             point,
                             instances,
+                            riders,
                         });
                     }
-                    // Sketch text: drag it by its body.
-                    None if ed.pick_filter.anything()
-                        && ed.text_at(p.raw, p.tolerance).is_some() =>
-                    {
+                    // Sketch text: drag it by its body (and the rest of what is picked with
+                    // it).
+                    None if ed.pick_filter.texts() && ed.text_at(p.raw, p.tolerance).is_some() => {
                         let id = ed.text_at(p.raw, p.tolerance).expect("checked");
-                        ed.selected_text = Some(id);
+                        if !ed.selected_texts.contains(&id) {
+                            if !mods.shift && !mods.command {
+                                ed.selection.clear();
+                                ed.selected_instances.clear();
+                                ed.selected_fills.clear();
+                                ed.selected_texts.clear();
+                                ed.selected_annotation = None;
+                                ed.annotation_picks.clear();
+                            }
+                            ed.selected_texts.insert(id);
+                        }
                         let from = ed.doc.text(id).map_or(p.raw, |t| t.at);
+                        let alone = ed.selection.is_empty()
+                            && ed.selected_instances.is_empty()
+                            && ed.selected_texts.len() == 1
+                            && ed.picked_notes().is_empty();
                         ed.doc.begin();
-                        self.drag = Some(SelectDrag::Text {
-                            id,
-                            start: p.raw,
-                            from,
+                        self.drag = Some(if alone {
+                            SelectDrag::Text {
+                                id,
+                                start: p.raw,
+                                from,
+                            }
+                        } else {
+                            let ids: Vec<EntityId> = ed.selection.iter().copied().collect();
+                            SelectDrag::Move {
+                                points: ed.doc.defining_points(ids.iter().copied()),
+                                ids,
+                                start: p.raw,
+                                base: from,
+                                applied: DVec2::ZERO,
+                                point: None,
+                                instances: ed.picked_instances(),
+                                riders: ed.riders(),
+                            }
                         });
                     }
                     // A copy of a block: drag it (and the rest of the selection) by its
@@ -924,6 +966,7 @@ impl Tool for SelectTool {
                         let points = ed.doc.defining_points(ids.iter().copied());
                         let base = ed.doc.instance(c).map_or(p.raw, |i| i.at);
                         let instances = ed.picked_instances();
+                        let riders = ed.riders();
                         ed.doc.begin();
                         self.drag = Some(SelectDrag::Move {
                             ids,
@@ -933,6 +976,7 @@ impl Tool for SelectTool {
                             applied: DVec2::ZERO,
                             point: None,
                             instances,
+                            riders,
                         });
                     }
                     None if ed.pick_filter.anything() && self.start_region_drag(&p, ed) => {}
@@ -956,6 +1000,7 @@ impl Tool for SelectTool {
                                     applied: DVec2::ZERO,
                                     point: None,
                                     instances: Vec::new(),
+                                    riders: Default::default(),
                                 });
                             }
                             None => {
@@ -1048,6 +1093,7 @@ impl Tool for SelectTool {
                     base,
                     applied,
                     instances,
+                    riders,
                     ..
                 }) => {
                     let offset = crate::modify::move_offset(*start, *base, &p);
@@ -1058,6 +1104,7 @@ impl Tool for SelectTool {
                             points.iter().copied().flat_map(Param::point).collect();
                         if ids.is_empty() || ed.drag(ids, step, &dragged) {
                             ed.move_instances(instances, offset);
+                            ed.place_riders(riders, &|q| q + offset);
                             *applied = offset;
                             ed.region_motion = Some(crate::editor::RegionMotion::Move(offset));
                         }
@@ -1071,36 +1118,54 @@ impl Tool for SelectTool {
                     let mut rect = Bounds::from_point(start);
                     rect.include(p.raw);
                     let crossing = p.raw.x < start.x;
+                    let filter = ed.pick_filter;
                     // Points only: every point in the box (a box otherwise takes curves, and only
                     // standalone points).
-                    let found: Vec<EntityId> =
-                        if ed.pick_filter == crate::editor::PickFilter::Points {
-                            ed.index
-                                .query(rect)
-                                .filter(|id| {
-                                    matches!(ed.index.shape(*id), Some(Shape::Point(q))
+                    let found: Vec<EntityId> = if !filter.geometry() {
+                        Vec::new()
+                    } else if filter == crate::editor::PickFilter::Points {
+                        ed.index
+                            .query(rect)
+                            .filter(|id| {
+                                matches!(ed.index.shape(*id), Some(Shape::Point(q))
                                         if q.x >= rect.min.x && q.x <= rect.max.x
                                             && q.y >= rect.min.y && q.y <= rect.max.y)
-                                        && ed.pickable(*id, &hidden)
-                                })
-                                .collect()
-                        } else {
-                            ed.index
-                                .select_in_rect(&rect, crossing)
-                                .into_iter()
-                                .filter(|id| ed.pickable(*id, &hidden))
-                                .collect()
-                        };
-                    if !mods.shift && !mods.command {
+                                    && ed.pickable(*id, &hidden)
+                            })
+                            .collect()
+                    } else {
+                        ed.index
+                            .select_in_rect(&rect, crossing)
+                            .into_iter()
+                            .filter(|id| ed.pickable(*id, &hidden))
+                            .collect()
+                    };
+                    let add = mods.shift || mods.command;
+                    if !add {
                         ed.selection.clear();
                         ed.selected_instances.clear();
+                        ed.selected_texts.clear();
+                        ed.selected_fills.clear();
+                        ed.selected_region = None;
+                        ed.selected_annotation = None;
+                        ed.annotation_picks.clear();
                     }
                     ed.selection.extend(found);
                     ed.expand_groups();
-                    if ed.pick_filter.anything() {
+                    if filter.anything() {
                         let copies = ed.instances_in(&rect, crossing);
                         ed.selected_instances.extend(copies);
                     }
+                    if filter.texts() {
+                        let texts = ed.texts_in(&rect, crossing);
+                        ed.selected_texts.extend(texts);
+                    }
+                    // Dimensions and annotations are laid out on screen: the app picks them.
+                    ed.box_pick = Some(crate::picks::BoxPick {
+                        rect,
+                        crossing,
+                        add,
+                    });
                 }
                 Some(SelectDrag::Move {
                     point: None,
@@ -1215,9 +1280,11 @@ impl Tool for SelectTool {
                 || ed.selected_region.is_some()
                 || !ed.selected_fills.is_empty()
                 || !ed.selected_instances.is_empty()
-                || ed.selected_text.is_some() =>
+                || ed.picks_annotations() =>
             {
-                ed.selected_text = None;
+                ed.selected_texts.clear();
+                ed.selected_annotation = None;
+                ed.annotation_picks.clear();
                 ed.selected_instances.clear();
                 ed.selection.clear();
                 ed.selected_midpoints.clear();

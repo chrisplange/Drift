@@ -64,6 +64,11 @@ pub struct SolveOptions {
     /// Parameters that should stay where they are if at all possible (e.g. the point under the
     /// mouse while dragging).
     pub dragged: Vec<Param>,
+    /// Parameters a drag carries along with it (the points of a curve a move pushes rather
+    /// than reshapes): they stay where they are asked to like [`dragged`](Self::dragged), but
+    /// no one dragged them, so a line or arc they end keeps its length or radius preference
+    /// like any other (dragging an end reshapes its curve; being carried doesn't).
+    pub carried: Vec<Param>,
     /// Also run the degrees-of-freedom analysis.
     pub analyze: bool,
     pub tolerances: Tolerances,
@@ -140,9 +145,15 @@ const SETTLE_PATIENCE: usize = 10;
 /// Solve the document's constraints in place. Changes go through the document's normal edit
 /// methods, so they are recorded by an open transaction.
 pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
+    let held: Vec<Param> = options
+        .dragged
+        .iter()
+        .chain(&options.carried)
+        .copied()
+        .collect();
     let mut sys = System::build_in(
         doc,
-        &options.dragged,
+        &held,
         &options.tolerances,
         options.scope.as_deref(),
         &options.radii,
@@ -159,12 +170,18 @@ pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
     // A point merged with a dragged one (coincident with it) is dragged too: a preference
     // on a line or arc it ends would only pull against the drag, and slowly, the dragged
     // being heavy, so the solve would end part way along, wherever its tolerance let it.
-    // (Both coordinates: a point level with a dragged one still moves freely across.)
+    // (Both coordinates: a point level with a dragged one still moves freely across. And
+    // only what the user drags: a carried point's curves keep their preferences.)
+    let dragged_groups: HashSet<usize> = options
+        .dragged
+        .iter()
+        .filter_map(|q| sys.param_index.get(q).map(|&i| sys.group_of[i]))
+        .collect();
     let dragged_group = |p: EntityId| {
         Param::point(p).iter().all(|q| {
             sys.param_index
                 .get(q)
-                .is_some_and(|&i| sys.groups[sys.group_of[i]].mobility == system::DRAGGED_MOBILITY)
+                .is_some_and(|&i| dragged_groups.contains(&sys.group_of[i]))
         })
     };
     for &arc in options.radii.keys() {
@@ -573,7 +590,7 @@ struct Component {
 
 /// Split free groups into independent components connected by equations. Rows with no free
 /// unknowns form their own (constant) components.
-fn components(sys: &System) -> (Vec<Component>, Vec<usize>) {
+fn components(sys: &System, tol: &Tolerances) -> (Vec<Component>, Vec<usize>) {
     let n = sys.groups.len();
     let mut parent: Vec<usize> = (0..n).collect();
     fn find(parent: &mut [usize], mut i: usize) -> usize {
@@ -606,8 +623,27 @@ fn components(sys: &System) -> (Vec<Component>, Vec<usize>) {
         }
         row_groups.push(free);
     }
-    // A line kept to its length joins its ends, so a free end can follow the other.
-    for (k, _) in &sys.keep_length {
+    // A preference joins its parameters too (a line kept to its length joins its ends, so a
+    // free end can follow the other), and one that is off makes a component of them where
+    // no equation does: with the other end pinned (the landing pass of a drag, say) the
+    // free end has no equation left, and would otherwise not be solved for at all. (Only
+    // one that is off: a rigid move of a big sketch has thousands that aren't.)
+    let value = |p: usize| sys.groups[sys.group_of[p]].value;
+    let scale = |k: &[usize; 4]| k.iter().map(|p| value(*p).abs()).fold(1.0, f64::max);
+    let radii = sys.keep_radius.iter().map(|(k, r0)| {
+        let [cx, cy, sx, sy] = k.map(value);
+        (k, (sx - cx).hypot(sy - cy) - r0)
+    });
+    let directions = sys.keep_direction.iter().map(|(k, u)| {
+        let [ax, ay, bx, by] = k.map(value);
+        (k, (bx - ax) * u.y - (by - ay) * u.x)
+    });
+    let lengths = sys.keep_length.iter().map(|(k, l0)| {
+        let [ax, ay, bx, by] = k.map(value);
+        (k, (bx - ax).hypot(by - ay) - l0)
+    });
+    let mut soft_roots: Vec<usize> = Vec::new();
+    for (k, off) in radii.chain(directions).chain(lengths) {
         let free: Vec<usize> = k
             .iter()
             .map(|p| sys.group_of[*p])
@@ -619,8 +655,21 @@ fn components(sys: &System) -> (Vec<Component>, Vec<usize>) {
                 parent[a.max(b)] = a.min(b);
             }
         }
+        if let Some(&g) = free.first()
+            && off.abs() > tol.length * scale(k)
+        {
+            soft_roots.push(g);
+        }
     }
     let mut by_root: HashMap<usize, Component> = HashMap::new();
+    for g in soft_roots {
+        by_root
+            .entry(find(&mut parent, g))
+            .or_insert_with(|| Component {
+                unknowns: Vec::new(),
+                rows: Vec::new(),
+            });
+    }
     for (r, free) in row_groups.iter().enumerate() {
         if let Some(&g) = free.first() {
             let root = find(&mut parent, g);
@@ -954,8 +1003,9 @@ fn newton(
                 let cols: Vec<usize> = cols.iter().flatten().copied().collect();
                 cols.iter().map(|&c| normal.diagonal(c)).sum::<f64>() / cols.len() as f64
             })
-            .fold(0.0, f64::max)
-            .max(1e-300);
+            .fold(0.0, f64::max);
+        // (Without equations, preferences alone: their gradients are unit vectors.)
+        let max_diag = if max_diag > 0.0 { max_diag } else { 1.0 };
         // μ·M⁻¹ picks the smallest weighted change among the solutions (and keeps
         // under-constrained systems solvable); λ adds Levenberg–Marquardt damping.
         let mu = 1e-10 * max_diag;
@@ -1117,7 +1167,7 @@ fn run(sys: &mut System, options: &SolveOptions, iterate: bool) -> SolveReport {
         redundant: sys.redundant.clone(),
         ..Default::default()
     };
-    let (comps, constant_rows) = components(sys);
+    let (comps, constant_rows) = components(sys, tol);
     let mut values: Vec<f64> = sys.groups.iter().map(|g| g.value).collect();
     let mut failed_rows: Vec<usize> = Vec::new();
 
@@ -1334,7 +1384,7 @@ const FREEDOM_LIMIT: usize = 400;
 pub fn free_directions(doc: &Document) -> HashMap<EntityId, Freedom> {
     let options = SolveOptions::default();
     let sys = System::build(doc, &[], &options.tolerances);
-    let (comps, _) = components(&sys);
+    let (comps, _) = components(&sys, &options.tolerances);
     let values: Vec<f64> = sys.groups.iter().map(|g| g.value).collect();
     // Null-space basis vectors, as group → component, indexed by the groups they touch.
     let mut basis: Vec<HashMap<usize, f64>> = Vec::new();

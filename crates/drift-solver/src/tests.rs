@@ -358,7 +358,7 @@ fn measure_reports_angles_modulo_180() {
 /// Dense (reference) and sparse rank analyses of every component of `doc` must agree.
 fn assert_rank_analyses_agree(doc: &Document) -> Result<(), TestCaseError> {
     let sys = System::build(doc, &[], &Tolerances::default());
-    let (comps, _) = components(&sys);
+    let (comps, _) = components(&sys, &Tolerances::default());
     let values: Vec<f64> = sys.groups.iter().map(|g| g.value).collect();
     for comp in &comps {
         let n = comp.unknowns.len();

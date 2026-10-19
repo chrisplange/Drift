@@ -725,16 +725,13 @@ impl System {
             }
         }
 
-        // Arcs keep their end on the circle through their start.
+        // Arcs keep their end on the circle through their start. (Which arcs keep their
+        // radius, `solve` decides: dragging an end reshapes the arc, dragging its centre
+        // carries it along.)
         let mut keep_radius = Vec::new();
         for (id, entity) in doc.iter().filter(|(id, _)| keep(*id)) {
             if let EntityKind::Arc { center, start, end } = entity.kind {
-                // Dragging an end reshapes the arc; dragging its centre carries it along.
-                if let Some(&r) = radii.get(&id)
-                    && [start, end]
-                        .iter()
-                        .all(|p| !Param::point(*p).iter().any(|q| dragged.contains(q)))
-                {
+                if let Some(&r) = radii.get(&id) {
                     keep_radius.push(([x(center), y(center), x(start), y(start)], r));
                 }
                 rows.push(Row {

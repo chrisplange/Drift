@@ -1134,6 +1134,40 @@ fn move_pushes_a_squeezed_arc_along() {
     }
 }
 
+/// #102: a line hanging from an arc that a move carries along (#95: the arc can't shrink any
+/// further, so it is pushed) is carried too, at its length, like one hanging from the
+/// selection: the arc's points are carried, not dragged.
+#[test]
+fn a_line_hanging_from_a_carried_arc_follows_it() {
+    let p = DVec2::new;
+    let sketch = Sketch {
+        points: vec![
+            p(0.0, 0.0),
+            p(-8.0, 0.0),
+            p(-2.3431457505076194, 5.656854249492381),
+            p(2.0, 0.0),
+            p(8.0, 0.0),
+            p(2.3431457505076203, 5.656854249492381),
+        ],
+        // R1 ending at the origin, L from R1's centre, R2 ending at the origin too.
+        curves: vec![Curve::Arc(1, 0, 2), Curve::Line(1, 3), Curve::Arc(4, 5, 0)],
+        rels: vec![],
+    };
+    let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+    let ids = vec![built.curves[2]];
+    let offset = p(-14.355787012675158, 0.0);
+    let run = drag(&mut built, &ids, offset, 1).unwrap();
+    assert!(run.committed && run.refused == 0);
+    // R2's end took R1's start with it, R1 was carried, and L went along with its centre.
+    assert!(
+        run.end[1].distance(run.start[1] + offset) < 1e-9,
+        "centre at {}",
+        run.end[1]
+    );
+    let length = run.end[1].distance(run.end[3]);
+    assert!((length - 10.0).abs() < 1e-9, "L is {length} long");
+}
+
 /// #94: a line hanging from the midpoint of a moved line is carried along at its length,
 /// step after step: the solve settles the preference that keeps it rather than stopping as
 /// soon as the relations hold, with the length a little off each time.

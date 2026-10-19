@@ -80,7 +80,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn far_off_is_beyond_a_thousand_km_or_not_finite() {
+    fn far_off_is_beyond_far_mm_or_not_finite() {
         let b = |a: DVec2, c: DVec2| {
             let mut b = Bounds::from_point(a);
             b.include(c);

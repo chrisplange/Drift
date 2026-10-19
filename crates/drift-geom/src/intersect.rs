@@ -337,6 +337,22 @@ impl Para {
         (self.at(t + h) - self.at(t - h)) / (2.0 * h)
     }
 
+    /// A parameter within `tol` (in length units) of an open curve's end, moved onto that
+    /// end; whether it moved.
+    fn snap_end(&self, t: f64, tol: f64) -> (f64, bool) {
+        if self.closed || t == self.lo || t == self.hi {
+            return (t, false);
+        }
+        let p = self.at(t);
+        if p.distance(self.at(self.lo)) <= tol {
+            (self.lo, true)
+        } else if p.distance(self.at(self.hi)) <= tol {
+            (self.hi, true)
+        } else {
+            (t, false)
+        }
+    }
+
     /// Keep a parameter on the curve: wrapped round a closed one, clamped to an open one.
     fn fit(&self, t: f64) -> f64 {
         if self.closed {
@@ -454,7 +470,16 @@ fn intersect_numeric(a: &Shape, a_ext: bool, b: &Shape, b_ext: bool) -> Vec<Hit>
             else {
                 continue;
             };
-            let at = ca.at(t);
+            // Hits within tolerance of an end land on the end exactly (its parameter and
+            // its point), as the exact path's do: a curve ending on another is a junction
+            // there, not a hair short of one.
+            let (t, snapped_a) = ca.snap_end(t, tol);
+            let (v, snapped_b) = cb.snap_end(v, tol);
+            let at = if snapped_a || !snapped_b {
+                ca.at(t)
+            } else {
+                cb.at(v)
+            };
             if hits.iter().any(|h| h.at.distance(at) <= same) {
                 continue;
             }
@@ -688,6 +713,46 @@ mod tests {
         let h = intersect(&bar, &line(v(10.0, 0.0), v(10.0, 5.0)));
         assert_eq!((h.len(), h[0].t), (1, [1.0, 0.0]));
         assert_eq!(h[0].at, v(10.0, 0.0));
+    }
+
+    #[test]
+    fn numeric_hits_at_an_end_snap_onto_it() {
+        // A Bézier from an arc's end back onto its interior, at (60, -80) exactly on the
+        // circle (#100): both hits land on the Bézier's ends exactly, not a hair short.
+        let arc = Shape::Arc {
+            center: v(0.0, 0.0),
+            radius: 100.0,
+            start: PI,
+            sweep: PI,
+        };
+        let bez = Shape::Bezier {
+            p: [
+                v(100.0, 0.0),
+                v(160.0, -20.0),
+                v(150.0, -70.0),
+                v(60.0, -80.0),
+            ],
+        };
+        let mut h = intersect(&arc, &bez);
+        h.sort_by(|a, b| a.t[1].total_cmp(&b.t[1]));
+        assert_eq!(h.len(), 2, "{h:?}");
+        assert_eq!((h[0].t[1], h[0].at), (0.0, v(100.0, 0.0)));
+        assert_eq!(h[0].t[0], PI);
+        assert_eq!((h[1].t[1], h[1].at), (1.0, v(60.0, -80.0)));
+        assert!((h[1].t[0] - (PI + (-80.0f64).atan2(60.0) + TAU) % TAU).abs() < 1e-9);
+        // The other way round, the same.
+        let h = intersect(&bez, &arc);
+        assert!(
+            h.iter().any(|h| h.t[0] == 1.0 && h.at == v(60.0, -80.0)),
+            "{h:?}"
+        );
+        // A hit well inside both curves isn't moved.
+        let h = intersect(&bez, &line(v(0.0, 0.0), v(200.0, -60.0)));
+        assert!(!h.is_empty());
+        assert!(
+            h.iter().all(|h| h.t.iter().all(|t| *t > 0.1 && *t < 0.9)),
+            "{h:?}"
+        );
     }
 
     #[test]

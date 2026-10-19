@@ -1052,13 +1052,11 @@ property!(
         => free_moves_go(&plan, &pick, offset, steps));
 
 property!(
-    #[ignore = "#90 (PR #92), and with that a small per-step creep: #94"]
     move_keeps_untouched_lengths, move_keeps_untouched_lengths_heavy,
     (plan in plan(false), pick in curves_only(), offset in offset(20.0), steps in 1u32..=20)
         => no_unforced_stretch(&plan, &pick, offset, steps));
 
 property!(
-    #[ignore = "#94: the result depends on where the sketch is"]
     drag_is_invariant_under_similarity, drag_is_invariant_under_similarity_heavy,
     (plan in plan(true), pick in pick(), offset in offset(20.0), steps in 1u32..=20,
         t in similarity())
@@ -1133,5 +1131,109 @@ fn move_pushes_a_squeezed_arc_along() {
         for i in [0, 1] {
             assert!(run.end[i].distance(run.start[i] + offset) < 1e-9);
         }
+    }
+}
+
+/// #102: a line hanging from an arc that a move carries along (#95: the arc can't shrink any
+/// further, so it is pushed) is carried too, at its length, like one hanging from the
+/// selection: the arc's points are carried, not dragged.
+#[test]
+fn a_line_hanging_from_a_carried_arc_follows_it() {
+    let p = DVec2::new;
+    let sketch = Sketch {
+        points: vec![
+            p(0.0, 0.0),
+            p(-8.0, 0.0),
+            p(-2.3431457505076194, 5.656854249492381),
+            p(2.0, 0.0),
+            p(8.0, 0.0),
+            p(2.3431457505076203, 5.656854249492381),
+        ],
+        // R1 ending at the origin, L from R1's centre, R2 ending at the origin too.
+        curves: vec![Curve::Arc(1, 0, 2), Curve::Line(1, 3), Curve::Arc(4, 5, 0)],
+        rels: vec![],
+    };
+    let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+    let ids = vec![built.curves[2]];
+    let offset = p(-14.355787012675158, 0.0);
+    let run = drag(&mut built, &ids, offset, 1).unwrap();
+    assert!(run.committed && run.refused == 0);
+    // R2's end took R1's start with it, R1 was carried, and L went along with its centre.
+    assert!(
+        run.end[1].distance(run.start[1] + offset) < 1e-9,
+        "centre at {}",
+        run.end[1]
+    );
+    let length = run.end[1].distance(run.end[3]);
+    assert!((length - 10.0).abs() < 1e-9, "L is {length} long");
+}
+
+/// #94: a line hanging from the midpoint of a moved line is carried along at its length,
+/// step after step: the solve settles the preference that keeps it rather than stopping as
+/// soon as the relations hold, with the length a little off each time.
+#[test]
+fn carried_line_keeps_its_length_step_after_step() {
+    let p = DVec2::new;
+    let sketch = Sketch {
+        points: vec![p(0.0, 0.0), p(20.0, 0.0), p(10.0, 0.0), p(10.0, 10.0)],
+        // A, and B standing on A's midpoint.
+        curves: vec![Curve::Line(0, 1), Curve::Line(2, 3)],
+        rels: vec![Rel::Midpoint(2, 0)],
+    };
+    let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+    let ids = vec![built.curves[0]];
+    let run = drag(&mut built, &ids, p(0.0, 20.0), 20).unwrap();
+    assert!(run.committed && run.refused == 0);
+    let length = run.end[2].distance(run.end[3]);
+    assert!((length - 10.0).abs() < 1e-9, "B is {length} long");
+}
+
+/// #104: a move that can't land (B's end on A's midpoint can only move on a circle round the
+/// fixed P0) gives the same compromise at any size: a preference that only the dragged could
+/// meet doesn't inch them along, and the solve goes on until nothing moves.
+#[test]
+fn an_unlandable_move_gives_the_same_compromise_at_any_size() {
+    let p = DVec2::new;
+    let sketch = Sketch {
+        points: vec![
+            p(0.0, 0.0),
+            p(2.5881904510252074, 9.659258262890683),
+            p(-3.10582854123025, 11.59110991546882),
+            p(-6.211657082460498, 23.18221983093764),
+            p(1.2940952255126037, 4.8296291314453415),
+            p(11.294095225512603, 4.8296291314453415),
+            p(2.4485969553838896, 28.18221983093764),
+        ],
+        // A from P0, B standing on A's midpoint, an arc from P0, C from its start as long as A.
+        curves: vec![
+            Curve::Line(0, 1),
+            Curve::Arc(2, 3, 0),
+            Curve::Line(4, 5),
+            Curve::Line(3, 6),
+        ],
+        rels: vec![Rel::Midpoint(4, 0), Rel::Equal(0, 3), Rel::Fix(0)],
+    };
+    let offset = p(0.0, -5.261171146507463);
+    let t = Similarity {
+        scale: 0.25,
+        turn: 0.0,
+        shift: p(0.0, -71.07389948054578),
+    };
+    let mut plain = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+    let mut moved = Built::new(&sketch, t).unwrap();
+    let (ia, ib) = (
+        vec![plain.curves[2], plain.curves[3]],
+        vec![moved.curves[2], moved.curves[3]],
+    );
+    let a = drag(&mut plain, &ia, offset, 3).unwrap();
+    let b = drag(&mut moved, &ib, t.vector(offset), 3).unwrap();
+    assert!(a.committed && b.committed);
+    for i in 0..sketch.points.len() {
+        let want = t.point(a.end[i]);
+        assert!(
+            b.end[i].distance(want) < 1e-9,
+            "point {i}: {} vs {want}",
+            b.end[i]
+        );
     }
 }

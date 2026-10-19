@@ -20,7 +20,7 @@ use std::collections::{HashMap, HashSet};
 use drift_core::{Constraint, ConstraintId, DVec2, Document, EntityId, EntityKind};
 
 use crate::linalg::{Matrix, rref};
-use crate::sparse::{Skyline, qr_rank};
+use crate::sparse::{Dd, Skyline, qr_rank};
 use crate::system::{EntityShape, System};
 
 /// A solver unknown: a point coordinate or a circle radius.
@@ -64,6 +64,11 @@ pub struct SolveOptions {
     /// Parameters that should stay where they are if at all possible (e.g. the point under the
     /// mouse while dragging).
     pub dragged: Vec<Param>,
+    /// Parameters a drag carries along with it (the points of a curve a move pushes rather
+    /// than reshapes): they stay where they are asked to like [`dragged`](Self::dragged), but
+    /// no one dragged them, so a line or arc they end keeps its length or radius preference
+    /// like any other (dragging an end reshapes its curve; being carried doesn't).
+    pub carried: Vec<Param>,
     /// Also run the degrees-of-freedom analysis.
     pub analyze: bool,
     pub tolerances: Tolerances,
@@ -126,23 +131,29 @@ const KEEP_RADIUS: f64 = 100.0;
 /// costs this many times as much as moving the focus.
 const UNFOCUSED_MOBILITY: f64 = 1e-3;
 
-/// A full step that leaves more than this share of the squared error (half the error) lets go
-/// of [`SolveOptions::lengths`] (see `newton`).
-const LENGTH_STALL: f64 = 0.25;
-
 /// Iterations after which a drag's solve still short of its relations lets go of all its soft
-/// preferences (radii, directions and lengths to keep) and finishes on the relations alone. A
-/// preference the relations rule out pulls against them, which holds the solve a little
-/// short, at an error far above the tolerances (and with damped steps the stall test above
-/// never sees a full one).
+/// preferences (radii, directions and lengths to keep) and finishes on the relations alone:
+/// a safety net for a solve the preferences' steps keep unsettling (see `newton`).
 const SOFT_PATIENCE: usize = 20;
+
+/// Iterations a solve goes on for after its rows hold, for its soft preferences to settle
+/// (see `newton`). Enough for a preference on freely moving geometry, which closes most of
+/// what is left of it every step; one that can only crawl, on heavy geometry, is left where
+/// it got to.
+const SETTLE_PATIENCE: usize = 10;
 
 /// Solve the document's constraints in place. Changes go through the document's normal edit
 /// methods, so they are recorded by an open transaction.
 pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
+    let held: Vec<Param> = options
+        .dragged
+        .iter()
+        .chain(&options.carried)
+        .copied()
+        .collect();
     let mut sys = System::build_in(
         doc,
-        &options.dragged,
+        &held,
         &options.tolerances,
         options.scope.as_deref(),
         &options.radii,
@@ -156,11 +167,41 @@ pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
             }
         }
     }
+    // A point merged with a dragged one (coincident with it) is dragged too: a preference
+    // on a line or arc it ends would only pull against the drag, and slowly, the dragged
+    // being heavy, so the solve would end part way along, wherever its tolerance let it.
+    // (Both coordinates: a point level with a dragged one still moves freely across. And
+    // only what the user drags: a carried point's curves keep their preferences.)
+    let dragged_groups: HashSet<usize> = options
+        .dragged
+        .iter()
+        .filter_map(|q| sys.param_index.get(q).map(|&i| sys.group_of[i]))
+        .collect();
+    let dragged_group = |p: EntityId| {
+        Param::point(p).iter().all(|q| {
+            sys.param_index
+                .get(q)
+                .is_some_and(|&i| dragged_groups.contains(&sys.group_of[i]))
+        })
+    };
+    for &arc in options.radii.keys() {
+        if let Some(EntityKind::Arc { center, start, end }) = doc.get(arc).map(|e| e.kind)
+            && (dragged_group(start) || dragged_group(end))
+        {
+            let key = [
+                Param::X(center),
+                Param::Y(center),
+                Param::X(start),
+                Param::Y(start),
+            ]
+            .map(|p| sys.param_index.get(&p).copied());
+            sys.keep_radius.retain(|(k, _)| k.map(Some) != key);
+        }
+    }
     for (&line, &length) in &options.lengths {
         if let Some(EntityKind::Line { a, b }) = doc.get(line).map(|e| e.kind)
-            && ![a, b]
-                .iter()
-                .any(|p| Param::point(*p).iter().any(|q| options.dragged.contains(q)))
+            && !dragged_group(a)
+            && !dragged_group(b)
         {
             let ends = [Param::X(a), Param::Y(a), Param::X(b), Param::Y(b)]
                 .map(|p| sys.param_index.get(&p).copied());
@@ -221,7 +262,10 @@ fn land_dragged(
         sys.groups[g].fixed = false;
     }
     if landed.converged {
-        landed
+        SolveReport {
+            iterations: landed.iterations.max(report.iterations),
+            ..landed
+        }
     } else {
         for (group, v) in sys.groups.iter_mut().zip(solved) {
             group.value = v;
@@ -549,7 +593,7 @@ struct Component {
 
 /// Split free groups into independent components connected by equations. Rows with no free
 /// unknowns form their own (constant) components.
-fn components(sys: &System) -> (Vec<Component>, Vec<usize>) {
+fn components(sys: &System, tol: &Tolerances) -> (Vec<Component>, Vec<usize>) {
     let n = sys.groups.len();
     let mut parent: Vec<usize> = (0..n).collect();
     fn find(parent: &mut [usize], mut i: usize) -> usize {
@@ -582,8 +626,27 @@ fn components(sys: &System) -> (Vec<Component>, Vec<usize>) {
         }
         row_groups.push(free);
     }
-    // A line kept to its length joins its ends, so a free end can follow the other.
-    for (k, _) in &sys.keep_length {
+    // A preference joins its parameters too (a line kept to its length joins its ends, so a
+    // free end can follow the other), and one that is off makes a component of them where
+    // no equation does: with the other end pinned (the landing pass of a drag, say) the
+    // free end has no equation left, and would otherwise not be solved for at all. (Only
+    // one that is off: a rigid move of a big sketch has thousands that aren't.)
+    let value = |p: usize| sys.groups[sys.group_of[p]].value;
+    let scale = |k: &[usize; 4]| k.iter().map(|p| value(*p).abs()).fold(1.0, f64::max);
+    let radii = sys.keep_radius.iter().map(|(k, r0)| {
+        let [cx, cy, sx, sy] = k.map(value);
+        (k, (sx - cx).hypot(sy - cy) - r0)
+    });
+    let directions = sys.keep_direction.iter().map(|(k, u)| {
+        let [ax, ay, bx, by] = k.map(value);
+        (k, (bx - ax) * u.y - (by - ay) * u.x)
+    });
+    let lengths = sys.keep_length.iter().map(|(k, l0)| {
+        let [ax, ay, bx, by] = k.map(value);
+        (k, (bx - ax).hypot(by - ay) - l0)
+    });
+    let mut soft_roots: Vec<usize> = Vec::new();
+    for (k, off) in radii.chain(directions).chain(lengths) {
         let free: Vec<usize> = k
             .iter()
             .map(|p| sys.group_of[*p])
@@ -595,8 +658,21 @@ fn components(sys: &System) -> (Vec<Component>, Vec<usize>) {
                 parent[a.max(b)] = a.min(b);
             }
         }
+        if let Some(&g) = free.first()
+            && off.abs() > tol.length * scale(k)
+        {
+            soft_roots.push(g);
+        }
     }
     let mut by_root: HashMap<usize, Component> = HashMap::new();
+    for g in soft_roots {
+        by_root
+            .entry(find(&mut parent, g))
+            .or_insert_with(|| Component {
+                unknowns: Vec::new(),
+                rows: Vec::new(),
+            });
+    }
     for (r, free) in row_groups.iter().enumerate() {
         if let Some(&g) = free.first() {
             let root = find(&mut parent, g);
@@ -666,8 +742,50 @@ fn evaluate(
     (residuals, jacobian)
 }
 
-fn norm2(v: &[f64]) -> f64 {
-    v.iter().map(|x| x * x).sum::<f64>()
+/// A row whose gradient is this small next to the largest is left unscaled by
+/// [`scaled_rows`]: it is round-off (an angle between lines whose directions substitution
+/// has pinned, say), and scaled up to a unit gradient its residual, round-off too, would
+/// be an equation of its own.
+const NEGLIGIBLE_ROW: f64 = 1e-9;
+
+/// Per row, the factor that scales its gradient to unit length (one, for a row with next
+/// to no gradient: it has nothing to say about the step).
+fn row_scales(jac: &[Vec<(usize, f64)>]) -> Vec<f64> {
+    let norms: Vec<f64> = jac
+        .iter()
+        .map(|row| row.iter().map(|(_, g)| g * g).sum::<f64>().sqrt())
+        .collect();
+    let largest = norms.iter().copied().fold(0.0, f64::max);
+    norms
+        .into_iter()
+        .map(|norm| {
+            if norm > NEGLIGIBLE_ROW * largest {
+                1.0 / norm
+            } else {
+                1.0
+            }
+        })
+        .collect()
+}
+
+/// The Jacobian rows and residuals scaled by [`row_scales`].
+fn scaled_rows(
+    jac: &[Vec<(usize, f64)>],
+    res: &[f64],
+    scales: &[f64],
+) -> (Vec<Vec<(usize, f64)>>, Vec<f64>) {
+    let rows = jac
+        .iter()
+        .zip(scales)
+        .map(|(row, scale)| row.iter().map(|&(c, g)| (c, g * scale)).collect())
+        .collect();
+    let residuals = res.iter().zip(scales).map(|(f, scale)| f * scale).collect();
+    (rows, residuals)
+}
+
+/// Squared length of the residuals scaled by [`row_scales`].
+fn scaled_norm2(res: &[f64], scales: &[f64]) -> f64 {
+    res.iter().zip(scales).map(|(f, s)| (f * s).powi(2)).sum()
 }
 
 struct ComponentOutcome {
@@ -676,11 +794,17 @@ struct ComponentOutcome {
 }
 
 /// Damped weighted minimum-norm Gauss–Newton on one component.
+///
+/// `dragging` is a drag's solve (the landing pass too, where the dragged parameters are
+/// pinned): only there do the soft preferences give way to the relations after
+/// [`SOFT_PATIENCE`] iterations; a new relation's solve can take its time over them, which
+/// are what keep the rest of the sketch in shape there.
 fn newton(
     sys: &System,
     comp: &Component,
     values: &mut [f64],
     tol: &Tolerances,
+    dragging: bool,
 ) -> ComponentOutcome {
     let n = comp.unknowns.len();
     let m = comp.rows.len();
@@ -742,64 +866,86 @@ fn newton(
     }
     let mut normal = Skyline::new(n, &neighbors);
     let _ = m;
+    // The columns of each point (x, then y) and of each radius, for the scale of the
+    // regularisation: the largest diagonal of JᵀJ averaged over a point's two columns. (One
+    // column's diagonal alone would turn with the sketch: a row's gradient at a point is a
+    // vector, and the diagonals are its components squared. The regularisation would then
+    // differ for the same sketch turned, and with it, slightly, the result; #94.)
+    let mut scales: HashMap<(EntityId, bool), [Option<usize>; 2]> = HashMap::new();
+    let mut radii_cols: Vec<usize> = Vec::new();
+    for (c, g) in comp.unknowns.iter().enumerate() {
+        for &i in &sys.groups[*g].members {
+            match sys.params[i] {
+                Param::X(id) => scales.entry((id, false)).or_default()[0] = Some(c),
+                Param::Y(id) => scales.entry((id, false)).or_default()[1] = Some(c),
+                Param::MidX(id) => scales.entry((id, true)).or_default()[0] = Some(c),
+                Param::MidY(id) => scales.entry((id, true)).or_default()[1] = Some(c),
+                Param::Radius(_) => radii_cols.push(c),
+            }
+        }
+    }
+    let scales: Vec<[Option<usize>; 2]> = scales
+        .into_values()
+        .chain(radii_cols.into_iter().map(|c| [Some(c), None]))
+        .collect();
 
     let mut lambda = 0.0f64;
-    // Lines keep their lengths until that holds the solve back (see below); the dragged
-    // parameters are then put back where they were asked to be.
-    let mut keep_lengths = !sys.keep_length.is_empty();
-    let mut keep_soft = true;
-    // (Only in a drag: a new relation's solve can take its time over the preferences, which
-    // are what keep the rest of the sketch in shape there.)
-    let dragging = mobility.contains(&system::DRAGGED_MOBILITY);
+    let mut keep_soft = keep_soft_preferences(sys);
     let start = values.to_vec();
+    // Whether the soft preferences have settled: the rows holding isn't the end while a
+    // preference is still closing (each step takes most, not all, of what is left of it
+    // within the relations' null space), or the result would depend on how many steps the
+    // relations happened to take, so on the tolerance and with it on where the sketch is,
+    // and what a preference keeps would creep a little every step of a drag (#94). So once
+    // the rows hold, keep stepping until a step moves nothing (at the tolerance). A
+    // preference the relations rule out has no step left in the null space, so it stops at
+    // once; without preferences there is nothing to settle.
+    let mut settled = !keep_soft;
+    let mut settling = 0;
+    // How far the last step moved anything. A drag's solve isn't over while a step still
+    // moves something, even with the rows holding: where the drag can't land, the dragged
+    // give way and converge only linearly, and the rows hold long before that has settled;
+    // the solve would stop wherever the tolerance let it, so at a point that depended on
+    // the sketch's size and place (#104).
+    let mut last_moved = f64::INFINITY;
+    // Levenberg–Marquardt damping, raised by `nu` on a refused step and lowered by how well
+    // the step did what its linearisation promised (Nielsen).
+    let mut nu = 2.0f64;
+    // Whether a preference's step has moved anything yet (only then can the preferences be
+    // what keeps the solve from its relations).
+    let mut soft_stepped = false;
     for iteration in 0..MAX_ITERATIONS {
-        if converged(&res, values) {
-            return ComponentOutcome {
-                converged: true,
-                iterations: iteration,
-            };
+        let rows_hold = converged(&res, values);
+        let at_rest = !dragging || last_moved <= still_at(values, tol);
+        if rows_hold {
+            if (settled && at_rest) || settling >= SETTLE_PATIENCE {
+                return ComponentOutcome {
+                    converged: true,
+                    iterations: iteration,
+                };
+            }
+            settling += 1;
         }
-        if dragging && keep_soft && iteration >= SOFT_PATIENCE {
+        if dragging && keep_soft && soft_stepped && !rows_hold && iteration >= SOFT_PATIENCE {
             // Still short of the relations: start again without the preferences (the steps
             // taken with them may have wandered off where the relations alone can't recover).
             keep_soft = false;
-            keep_lengths = false;
+            settled = true;
             for g in &comp.unknowns {
                 values[*g] = start[*g];
             }
             (res, jac) = evaluate(sys, &comp.rows, values, &col_of);
             lambda = 0.0;
         }
-        // N = JᵀJ and the right-hand side −JᵀF.
-        normal.clear();
-        let mut rhs = vec![0.0; n];
-        for (row, f) in jac.iter().zip(&res) {
-            for (k, &(c1, g1)) in row.iter().enumerate() {
-                rhs[c1] -= g1 * f;
-                for &(c2, g2) in &row[..=k] {
-                    normal.add(c1, c2, g1 * g2);
-                }
-            }
-        }
-        let max_diag = (0..n)
-            .map(|c| normal.diagonal(c))
-            .fold(0.0, f64::max)
-            .max(1e-300);
-        // μ·M⁻¹ picks the smallest weighted change among the solutions (and keeps
-        // under-constrained systems solvable); λ adds Levenberg–Marquardt damping.
-        let mu = 1e-10 * max_diag;
-        // Part of that change: arcs keep the sizes they are asked to where they can. Where a
-        // move could go either way (a concentric round's lines follow it, or the round
-        // shrinks), being off that size costs as much as moving a point KEEP_RADIUS times as
-        // far. A round that only its points pin down would otherwise give way a little every
-        // step of a drag, until it collapses. (A soft pull: μ is tiny, so it only chooses
-        // among the solutions.)
-        // Lines kept to their direction the same way: being off it costs as much as moving
-        // one end sideways by that much, KEEP_RADIUS times over.
-        let (keep_radius, keep_direction) = if keep_soft {
-            (&sys.keep_radius[..], &sys.keep_direction[..])
+        // And lines kept to their length, like arcs to their radius.
+        let (keep_radius, keep_direction, keep_length) = if keep_soft {
+            (
+                &sys.keep_radius[..],
+                &sys.keep_direction[..],
+                &sys.keep_length[..],
+            )
         } else {
-            (&[][..], &[][..])
+            (&[][..], &[][..], &[][..])
         };
         let radii = keep_radius.iter().filter_map(|(k, r0)| {
             let [cx, cy, sx, sy] = k.map(|p| values[sys.group_of[p]]);
@@ -814,12 +960,6 @@ fn newton(
             let off = (bx - ax) * u.y - (by - ay) * u.x;
             (k, [-u.y, u.x, u.y, -u.x], off)
         });
-        // And lines kept to their length, like arcs to their radius, until that stalls.
-        let keep_length = if keep_lengths {
-            &sys.keep_length[..]
-        } else {
-            &[]
-        };
         let lengths = keep_length.iter().filter_map(|(k, l0)| {
             let [ax, ay, bx, by] = k.map(|p| values[sys.group_of[p]]);
             let l = (bx - ax).hypot(by - ay);
@@ -828,7 +968,69 @@ fn newton(
                 (k, [-ux, -uy, ux, uy], l - l0)
             })
         });
-        for (k, gradient, off) in radii.chain(directions).chain(lengths) {
+        let soft_terms: Vec<(&[usize; 4], [f64; 4], f64)> =
+            radii.chain(directions).chain(lengths).collect();
+        // What the preferences have left to do, at the tolerance: nothing where the rows
+        // hold and none is off (a move that carries everything along as it is), and then
+        // there is nothing to settle and no step to build.
+        let (lo, hi) = values
+            .iter()
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), v| {
+                (lo.min(*v), hi.max(*v))
+            });
+        let still = tol.length * hi.abs().max(lo.abs()).max(1.0);
+        if soft_terms.iter().all(|(_, _, off)| off.abs() <= still) {
+            settled = true;
+            if rows_hold && at_rest {
+                return ComponentOutcome {
+                    converged: true,
+                    iterations: iteration,
+                };
+            }
+        }
+        // N = JᵀJ and the right-hand side −JᵀF, with every row scaled to a unit gradient: an
+        // angle's residual is a sine and its gradient goes as one over the lines' lengths,
+        // a distance's residual is a length and its gradient a unit vector, so unscaled the
+        // rows would be weighted against each other by the size of the sketch wherever the
+        // step isn't exact (its regularisation isn't negligible for heavy unknowns, every
+        // unknown of a dragged part among them), and the same drag would come out
+        // differently on the same sketch at another size (#94). Scaled, every row counts as
+        // the distance it is off by.
+        let row_scale = row_scales(&jac);
+        let (scaled_jac, scaled_res) = scaled_rows(&jac, &res, &row_scale);
+        normal.clear();
+        let mut rhs = vec![Dd::default(); n];
+        // The preferences' own right-hand side, solved for apart (see below).
+        let mut soft_rhs = vec![Dd::default(); n];
+        for (row, f) in scaled_jac.iter().zip(&scaled_res) {
+            for (k, &(c1, g1)) in row.iter().enumerate() {
+                rhs[c1] = rhs[c1].add_product(-g1, *f);
+                for &(c2, g2) in &row[..=k] {
+                    normal.add_product(c1, c2, g1, g2);
+                }
+            }
+        }
+        let max_diag = scales
+            .iter()
+            .map(|cols| {
+                let cols: Vec<usize> = cols.iter().flatten().copied().collect();
+                cols.iter().map(|&c| normal.diagonal(c)).sum::<f64>() / cols.len() as f64
+            })
+            .fold(0.0, f64::max);
+        // (Without equations, preferences alone: their gradients are unit vectors.)
+        let max_diag = if max_diag > 0.0 { max_diag } else { 1.0 };
+        // μ·M⁻¹ picks the smallest weighted change among the solutions (and keeps
+        // under-constrained systems solvable); λ adds Levenberg–Marquardt damping.
+        let mu = 1e-10 * max_diag;
+        // Part of that change: arcs keep the sizes they are asked to where they can. Where a
+        // move could go either way (a concentric round's lines follow it, or the round
+        // shrinks), being off that size costs as much as moving a point KEEP_RADIUS times as
+        // far. A round that only its points pin down would otherwise give way a little every
+        // step of a drag, until it collapses. (A soft pull: μ is tiny, so it only chooses
+        // among the solutions.)
+        // Lines kept to their direction the same way: being off it costs as much as moving
+        // one end sideways by that much, KEEP_RADIUS times over.
+        for &(k, gradient, off) in &soft_terms {
             let mut grad: Vec<(usize, f64)> = Vec::with_capacity(4);
             for (p, g) in k.iter().zip(gradient) {
                 if let Some(&c) = col_of.get(&sys.group_of[*p]) {
@@ -839,19 +1041,59 @@ fn newton(
                 }
             }
             for (i, &(c1, g1)) in grad.iter().enumerate() {
-                rhs[c1] -= mu * KEEP_RADIUS * g1 * off;
+                soft_rhs[c1] = soft_rhs[c1].add_product(-mu * KEEP_RADIUS * g1, off);
                 for &(c2, g2) in &grad[..=i] {
-                    normal.add(c1, c2, mu * KEEP_RADIUS * g1 * g2);
+                    normal.add_product(c1, c2, mu * KEEP_RADIUS * g1, g2);
                 }
             }
         }
+        let soft = soft_rhs.iter().any(|r| r.hi != 0.0);
 
+        // The relations' step, and the preferences' apart from it. The preferences choose
+        // among the solutions, so their step is kept to the relations' null space: solved
+        // for on its own, the part of it that the relations feel (what a preference they
+        // rule out pulls against them, a first-order change to the rows of its weight
+        // times its offset) is taken out again. Left in, it would hold the rows off by that
+        // much: not within the tolerance for a far-off preference, so the solve never ends
+        // on its own, or within it for a sketch far from the origin, where the tolerance
+        // is looser, so the same drag would come out differently there (#94).
         let mut solved = None;
         for _ in 0..30 {
             let shift: Vec<f64> = mobility.iter().map(|m| (mu + lambda) / m).collect();
-            let mut step = rhs.clone();
-            if normal.solve(&shift, &mut step) {
-                solved = Some(step);
+            if let Some(factor) = normal.factor(&shift) {
+                let step = factor.solve_refined(&rhs);
+                let soft_step = soft.then(|| {
+                    let mut soft_step = factor.solve_refined(&soft_rhs);
+                    // Not the dragged: they are where the user put them. A preference only
+                    // the dragged could meet (through the relations) would otherwise inch
+                    // them along, heavy as they are, for thousands of iterations, and the
+                    // solve would stop part way, wherever its patience ran out (#104).
+                    for (s, m) in soft_step.iter_mut().zip(&mobility) {
+                        if *m <= system::DRAGGED_MOBILITY {
+                            *s = 0.0;
+                        }
+                    }
+                    // Twice: the matrix regularises the heavy unknowns (the dragged, at
+                    // 1e-4 of the rows) as well as the null space, so one pass leaves that
+                    // much of what the relations feel; a second takes it to 1e-8.
+                    for _ in 0..2 {
+                        let mut felt = vec![Dd::default(); n];
+                        for row in &scaled_jac {
+                            let change = row.iter().fold(Dd::default(), |sum, &(c, g)| {
+                                sum.add_product(g, soft_step[c])
+                            });
+                            for &(c, g) in row {
+                                felt[c] = felt[c].add_product(g, change.hi).add(g * change.lo);
+                            }
+                        }
+                        let felt = factor.solve_refined(&felt);
+                        for (s, f) in soft_step.iter_mut().zip(&felt) {
+                            *s -= f;
+                        }
+                    }
+                    soft_step
+                });
+                solved = Some((step, soft_step));
                 break;
             }
             lambda = if lambda == 0.0 {
@@ -864,51 +1106,86 @@ fn newton(
         // further than the drawing is across. (Not the spread of this component's own
         // unknowns: a lone unknown, such as the free end of a dimension from a fixed point,
         // has none, and would crawl a millimetre at a time.)
-        let Some(mut delta) = solved else { break };
-        let (lo, hi) = values
-            .iter()
-            .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), v| {
-                (lo.min(*v), hi.max(*v))
-            });
+        let Some((mut delta, soft_delta)) = solved else {
+            break;
+        };
         let max_step = (hi - lo).max(1.0);
-        let biggest = delta.iter().fold(0.0f64, |acc, d| acc.max(d.abs()));
-        if biggest > max_step {
-            let k = max_step / biggest;
-            delta.iter_mut().for_each(|d| *d *= k);
-        }
+        let limit = |delta: &mut Vec<f64>| {
+            let biggest = delta.iter().fold(0.0f64, |acc, d| acc.max(d.abs()));
+            if biggest > max_step {
+                let k = max_step / biggest;
+                delta.iter_mut().for_each(|d| *d *= k);
+            }
+            biggest.min(max_step)
+        };
+        let rows_moved = limit(&mut delta);
 
         let mut trial = values.to_vec();
         for (c, g) in comp.unknowns.iter().enumerate() {
             trial[*g] += delta[c];
         }
         let (trial_res, trial_jac) = evaluate(sys, &comp.rows, &trial, &col_of);
-        if norm2(&trial_res) < norm2(&res) || converged(&trial_res, &trial) {
-            // A length the relations rule out (the line has to stretch) holds the solve a
-            // little short of them: a full step then barely gains. Finish without it.
-            let stalled =
-                keep_lengths && lambda == 0.0 && norm2(&trial_res) > LENGTH_STALL * norm2(&res);
+        // (Judged in the step's own scaling of the rows.)
+        let before = scaled_norm2(&res, &row_scale);
+        let after = scaled_norm2(&trial_res, &row_scale);
+        if after < before || converged(&trial_res, &trial) {
+            // How much of the drop the linearisation promised the step delivered.
+            let promised = before
+                - scaled_jac
+                    .iter()
+                    .zip(&scaled_res)
+                    .map(|(row, f)| {
+                        (f + row.iter().map(|&(c, g)| g * delta[c]).sum::<f64>()).powi(2)
+                    })
+                    .sum::<f64>();
+            let gain = if promised > 0.0 {
+                (before - after) / promised
+            } else {
+                1.0
+            };
+            last_moved = rows_moved;
             values.copy_from_slice(&trial);
             res = trial_res;
             jac = trial_jac;
-            if stalled {
-                keep_lengths = false;
-                for (c, g) in comp.unknowns.iter().enumerate() {
-                    if mobility[c] < UNFOCUSED_MOBILITY {
-                        values[*g] = start[*g];
+            // Then the preferences' step, which the relations don't feel to first order:
+            // what it leaves them off by (second order) the next step mends. Judged with
+            // the relations' step it would be refused whenever that is more than the rows
+            // are off by, and a damped step taken instead, over and over. It may not cost
+            // the rows what this step gained, though (far from the relations a big
+            // preference step can throw them right off): where it would, it is halved.
+            if let Some(mut soft_delta) = soft_delta {
+                // (Settled once nothing moves at all: a relations' step that still moves
+                // something changes what the preferences have left to do.)
+                let mut moved = limit(&mut soft_delta);
+                soft_stepped |= moved > still;
+                for _ in 0..4 {
+                    let mut trial = values.to_vec();
+                    for (c, g) in comp.unknowns.iter().enumerate() {
+                        trial[*g] += soft_delta[c];
                     }
+                    let (trial_res, trial_jac) = evaluate(sys, &comp.rows, &trial, &col_of);
+                    let gained = scaled_norm2(&trial_res, &row_scale) < before
+                        || converged(&trial_res, &trial);
+                    if gained {
+                        values.copy_from_slice(&trial);
+                        res = trial_res;
+                        jac = trial_jac;
+                        break;
+                    }
+                    soft_delta.iter_mut().for_each(|d| *d *= 0.5);
+                    moved *= 0.5;
                 }
-                (res, jac) = evaluate(sys, &comp.rows, values, &col_of);
+                settled = moved.max(rows_moved) <= still;
+                last_moved = last_moved.max(moved);
             }
-            lambda *= 0.1;
+            lambda *= (1.0 - (2.0 * gain - 1.0).powi(3)).max(1.0 / 3.0);
+            nu = 2.0;
             if lambda < 1e-12 * max_diag {
                 lambda = 0.0;
             }
         } else {
-            lambda = if lambda == 0.0 {
-                1e-6 * max_diag
-            } else {
-                lambda * 10.0
-            };
+            lambda = lambda.max(1e-6 * max_diag) * nu;
+            nu *= 2.0;
             if lambda > 1e12 * max_diag {
                 break;
             }
@@ -920,6 +1197,22 @@ fn newton(
     }
 }
 
+/// A move below this, at the scale of the coordinates, is no move at all (the length
+/// tolerance, as `row_tolerance` takes it).
+fn still_at(values: &[f64], tol: &Tolerances) -> f64 {
+    let (lo, hi) = values
+        .iter()
+        .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), v| {
+            (lo.min(*v), hi.max(*v))
+        });
+    tol.length * hi.abs().max(lo.abs()).max(1.0)
+}
+
+/// Whether any soft preference is in play: radii, directions or lengths to keep.
+fn keep_soft_preferences(sys: &System) -> bool {
+    !sys.keep_radius.is_empty() || !sys.keep_direction.is_empty() || !sys.keep_length.is_empty()
+}
+
 fn run(sys: &mut System, options: &SolveOptions, iterate: bool) -> SolveReport {
     let tol = &options.tolerances;
     let mut report = SolveReport {
@@ -927,7 +1220,7 @@ fn run(sys: &mut System, options: &SolveOptions, iterate: bool) -> SolveReport {
         redundant: sys.redundant.clone(),
         ..Default::default()
     };
-    let (comps, constant_rows) = components(sys);
+    let (comps, constant_rows) = components(sys, tol);
     let mut values: Vec<f64> = sys.groups.iter().map(|g| g.value).collect();
     let mut failed_rows: Vec<usize> = Vec::new();
 
@@ -944,7 +1237,7 @@ fn run(sys: &mut System, options: &SolveOptions, iterate: bool) -> SolveReport {
     }
     for comp in &comps {
         if iterate {
-            let outcome = newton(sys, comp, &mut values, tol);
+            let outcome = newton(sys, comp, &mut values, tol, !options.dragged.is_empty());
             report.iterations = report.iterations.max(outcome.iterations);
             if !outcome.converged {
                 failed_rows.extend(&comp.rows);
@@ -1144,7 +1437,7 @@ const FREEDOM_LIMIT: usize = 400;
 pub fn free_directions(doc: &Document) -> HashMap<EntityId, Freedom> {
     let options = SolveOptions::default();
     let sys = System::build(doc, &[], &options.tolerances);
-    let (comps, _) = components(&sys);
+    let (comps, _) = components(&sys, &options.tolerances);
     let values: Vec<f64> = sys.groups.iter().map(|g| g.value).collect();
     // Null-space basis vectors, as group → component, indexed by the groups they touch.
     let mut basis: Vec<HashMap<usize, f64>> = Vec::new();

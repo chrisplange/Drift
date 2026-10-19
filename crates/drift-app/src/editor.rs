@@ -612,15 +612,17 @@ impl Editor {
                 .collect();
         }
         let mut turned = Vec::new();
-        let mut ok = self.drag_in_steps(ids, delta, dragged, &scope, &before, 0, &mut turned);
+        let mut ok = self.drag_in_steps(ids, delta, dragged, &[], &scope, &before, 0, &mut turned);
         if !ok {
             self.restore_geometry(&before);
         }
         // A move of curves that would turn an arc inside out (or flip a tangency) even in
         // small steps carries that curve along rather than stopping: an arc squeezed by a
-        // moved end is pushed once it can't shrink any further.
+        // moved end is pushed once it can't shrink any further. (Carried, not dragged: a
+        // line hanging from the pushed arc still keeps its length, as one hanging from the
+        // selection does.)
         let mut ids = ids.clone();
-        let mut dragged = dragged.to_vec();
+        let mut carried_points = Vec::new();
         while !ok && curves && !turned.is_empty() {
             let carried: Vec<EntityId> = std::mem::take(&mut turned)
                 .into_iter()
@@ -631,13 +633,22 @@ impl Editor {
             }
             for p in self.doc.defining_points(carried.iter().copied()) {
                 for q in Param::point(p) {
-                    if !dragged.contains(&q) {
-                        dragged.push(q);
+                    if !dragged.contains(&q) && !carried_points.contains(&q) {
+                        carried_points.push(q);
                     }
                 }
             }
             ids.extend(carried);
-            ok = self.drag_in_steps(&ids, delta, &dragged, &scope, &before, 0, &mut turned);
+            ok = self.drag_in_steps(
+                &ids,
+                delta,
+                dragged,
+                &carried_points,
+                &scope,
+                &before,
+                0,
+                &mut turned,
+            );
             if !ok {
                 self.restore_geometry(&before);
             }
@@ -656,6 +667,7 @@ impl Editor {
         ids: &[EntityId],
         delta: DVec2,
         dragged: &[Param],
+        carried: &[Param],
         scope: &std::rc::Rc<std::collections::HashSet<EntityId>>,
         before: &Geometry,
         depth: u32,
@@ -668,7 +680,7 @@ impl Editor {
         // circles, which can take a moved point off its target (the end of an arc that isn't
         // moved with it): put those back, and the solve reshapes the arc instead.
         for &(id, p) in &before.points {
-            if dragged.contains(&Param::X(id))
+            if (dragged.contains(&Param::X(id)) || carried.contains(&Param::X(id)))
                 && self.doc.point(id).is_ok_and(|now| now != p + delta)
             {
                 let _ = self.doc.set_point(id, p + delta);
@@ -678,6 +690,7 @@ impl Editor {
             &mut self.doc,
             &SolveOptions {
                 dragged: dragged.to_vec(),
+                carried: carried.to_vec(),
                 scope: Some(scope.clone()),
                 // Rounds keep their size where the move leaves it open (moving a centre on
                 // its own would otherwise shrink or swell its arc as a first guess).
@@ -699,7 +712,16 @@ impl Editor {
         // (Only a turn is worth smaller steps: a conflict is the same at any size.)
         if conflicts
             || depth >= MAX_SPLITS
-            || !self.drag_in_steps(ids, delta / 2.0, dragged, scope, before, depth + 1, turned)
+            || !self.drag_in_steps(
+                ids,
+                delta / 2.0,
+                dragged,
+                carried,
+                scope,
+                before,
+                depth + 1,
+                turned,
+            )
         {
             return false;
         }
@@ -710,6 +732,7 @@ impl Editor {
             ids,
             delta / 2.0,
             dragged,
+            carried,
             scope,
             &halfway,
             depth + 1,

@@ -6,7 +6,7 @@
 //! exact. Fixed values pin a group. The remaining constraints become [`Equation`]s, and
 //! unknowns are split into independent components that are solved separately.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use drift_core::{Constraint, ConstraintId, DVec2, Document, EntityId, EntityKind};
 
@@ -94,6 +94,100 @@ impl UnionFind {
 
 /// Inverse weight for dragged parameters: they barely move, so the rest of the sketch adapts.
 pub(crate) const DRAGGED_MOBILITY: f64 = 1e-6;
+
+/// How a tangency touches at a curve's end (see [`touching_end`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Touching {
+    /// The arc's end is on the line.
+    OnLine,
+    /// A curve's end (the line's, or an arc's) is on this circle or arc.
+    OnCircle(EntityId),
+}
+
+/// How far, relative to the size of the coordinates, a curve's end may be from the other
+/// curve of a tangency and still count as its touching point. Exact constructions (a line
+/// through an arc's end, an arc ending on another's circle) are exact to round-off, and a
+/// solve that says the tangency is there holds it to the solve tolerance; a tangency that
+/// merely passes near an end (within √(2·r·this) of it along the curve) is left alone.
+const TOUCHING_END: f64 = 1e-9;
+
+/// The touching point of a tangency between `a` and `b` where it is at an end of one curve
+/// lying on the other (#97): an arc's end on the line, the line's end on the circle, or an
+/// arc's end on the other circle — held there by a point-on-curve relation (`on_curve`), or
+/// just there. Two rows then say so (the end on the other curve, unless a relation already
+/// does, and the tangency there), as for a shared end: the general "distance = radius" form
+/// has a double root there (the end's own row has the same gradient, or the line pivots about
+/// its end), so Gauss–Newton only converges to about √(tolerance·r), and a drag lands off or
+/// stalls.
+fn touching_end(
+    doc: &Document,
+    a: EntityId,
+    b: EntityId,
+    on_curve: &HashSet<(EntityId, EntityId)>,
+) -> Option<(EntityId, Touching)> {
+    let kind = |id: EntityId| doc.get(id).map(|e| e.kind);
+    let at = |id: EntityId| doc.point(id).ok();
+    let ends = |id: EntityId| match kind(id) {
+        Some(EntityKind::Line { a, b }) => vec![a, b],
+        Some(EntityKind::Arc { start, end, .. }) => vec![start, end],
+        _ => Vec::new(),
+    };
+    let touching = |curve: EntityId| match kind(curve) {
+        Some(EntityKind::Line { .. }) => Touching::OnLine,
+        _ => Touching::OnCircle(curve),
+    };
+    // Held on the other curve by a relation.
+    let held = |curve: EntityId, other: EntityId| {
+        ends(curve)
+            .into_iter()
+            .find(|&e| on_curve.contains(&(e, other)))
+            .map(|e| (e, touching(other)))
+    };
+    if let Some(found) = held(a, b).or_else(|| held(b, a)) {
+        return Some(found);
+    }
+    // Or lying on it.
+    let near = |d: f64, points: &[DVec2]| {
+        let scale = points
+            .iter()
+            .flat_map(|p| [p.x.abs(), p.y.abs()])
+            .fold(1.0, f64::max);
+        d.abs() <= TOUCHING_END * scale
+    };
+    let on = |e: EntityId, curve: EntityId| {
+        let p = at(e)?;
+        let off = match kind(curve)? {
+            EntityKind::Line { a: la, b: lb } => {
+                let (pa, pb) = (at(la)?, at(lb)?);
+                near((pb - pa).try_normalize()?.perp_dot(p - pa), &[pa, pb, p])
+            }
+            EntityKind::Arc { .. } | EntityKind::Circle { .. } => {
+                let c = center_of(doc, curve)?;
+                near(p.distance(c) - crate::radius_of(doc, curve)?, &[p, c])
+            }
+            _ => return None,
+        };
+        off.then(|| (e, touching(curve)))
+    };
+    // A line's end on the line itself is no touching point (only an arc's end is).
+    let lying = |curve: EntityId, other: EntityId| {
+        (!matches!(kind(other), Some(EntityKind::Line { .. }))
+            || matches!(kind(curve), Some(EntityKind::Arc { .. })))
+        .then(|| ends(curve).into_iter().find_map(|e| on(e, other)))
+        .flatten()
+    };
+    lying(b, a).or_else(|| lying(a, b))
+}
+
+/// The centre point of a circle or arc.
+fn center_of(doc: &Document, curve: EntityId) -> Option<DVec2> {
+    match doc.get(curve)?.kind {
+        EntityKind::Circle { center, .. } | EntityKind::Arc { center, .. } => {
+            doc.point(center).ok()
+        }
+        _ => None,
+    }
+}
 
 impl System {
     pub fn build(doc: &Document, dragged: &[Param], tol: &Tolerances) -> Self {
@@ -235,6 +329,15 @@ impl System {
             Some(EntityKind::Circle { center, .. } | EntityKind::Arc { center, .. }) => center,
             _ => unreachable!("validated constraint refers to a circle or arc"),
         };
+        // Points held on curves, for tangencies touching at an end held that way.
+        let on_curve: HashSet<(EntityId, EntityId)> = doc
+            .constraints()
+            .filter(|(cid, c)| c.entities().all(keep) && !doc.is_driven(*cid))
+            .filter_map(|(_, c)| match *c {
+                Constraint::PointOnCurve { point, curve } => Some((point, curve)),
+                _ => None,
+            })
+            .collect();
         for (cid, constraint) in doc.constraints().filter(|(_, c)| c.entities().all(keep)) {
             if doc.is_driven(cid) {
                 // Driven (reference) dimensions only report; they don't constrain.
@@ -496,13 +599,17 @@ impl System {
                             .any(|q| joined_ends[x(p)] == joined_ends[x(q)])
                     });
                     let kind_a = doc.get(a).map(|e| e.kind);
-                    let at_shared = shared.map(|t| match kind_a {
-                        Some(EntityKind::Line { .. }) => Equation::SymmetricPerpendicular {
-                            a: point(t),
-                            b: point(cb),
-                            axis: line(a),
-                        },
-                        _ => {
+                    let is_line = matches!(kind_a, Some(EntityKind::Line { .. }));
+                    // Tangent at `t`, an end of one curve lying on the other: the radius there
+                    // is square to the line, or both centres are in line with it.
+                    let at_end = |t: EntityId| {
+                        if is_line {
+                            Equation::SymmetricPerpendicular {
+                                a: point(t),
+                                b: point(cb),
+                                axis: line(a),
+                            }
+                        } else {
                             let (t, ca) = (point(t), point(center(a)));
                             Equation::PointLine {
                                 point: point(cb),
@@ -511,52 +618,80 @@ impl System {
                                 value: 0.0,
                             }
                         }
-                    });
-                    let equation = match kind_a {
-                        _ if at_shared.is_some() => at_shared.expect("checked"),
-                        Some(EntityKind::Line { .. }) => {
-                            let ll = line(a);
-                            let c = point(cb);
-                            let cross = (values[ll[2]] - values[ll[0]])
-                                * (values[c[1]] - values[ll[1]])
-                                - (values[ll[3]] - values[ll[1]]) * (values[c[0]] - values[ll[0]]);
-                            Equation::TangentLine {
-                                center: c,
-                                line: ll,
-                                sign: if cross >= 0.0 { 1.0 } else { -1.0 },
-                                radius: radius(b),
-                            }
-                        }
-                        _ => {
-                            // Two circles: outside (|c₁c₂| = r₁ + r₂) or inside
-                            // (|c₁c₂| = |r₁ − r₂|), whichever the geometry is closer to.
-                            let ca = center(a);
-                            let r1 = crate::radius_of(doc, a).unwrap_or(0.0);
-                            let r2 = crate::radius_of(doc, b).unwrap_or(0.0);
-                            let dist = doc
-                                .point(ca)
-                                .ok()
-                                .zip(doc.point(cb).ok())
-                                .map_or(0.0, |(p, q)| p.distance(q));
-                            let between = Length::Points([x(ca), y(ca), x(cb), y(cb)]);
-                            let outside =
-                                (dist - (r1 + r2)).abs() <= (dist - (r1 - r2).abs()).abs();
-                            let (k1, k2) = if outside {
-                                (-1.0, -1.0)
-                            } else if r1 >= r2 {
-                                (-1.0, 1.0)
-                            } else {
-                                (1.0, -1.0)
-                            };
-                            Equation::LengthSum {
-                                terms: [(between, 1.0), (radius(a), k1), (radius(b), k2)],
-                            }
-                        }
                     };
-                    rows.push(Row {
-                        equation,
-                        source: Some(cid),
-                    });
+                    let mut equations = Vec::new();
+                    if let Some(t) = shared {
+                        equations.push(at_end(t));
+                    } else if let Some((t, on)) = touching_end(doc, a, b, &on_curve) {
+                        // The touching point is at an end of one curve that the other
+                        // doesn't share: the same double root (#97). Keep the end on the
+                        // other curve (unless a relation already does) and say the tangency
+                        // is there.
+                        let other = match on {
+                            Touching::OnLine => a,
+                            Touching::OnCircle(curve) => curve,
+                        };
+                        if !on_curve.contains(&(t, other)) {
+                            equations.push(match on {
+                                Touching::OnLine => Equation::PointLine {
+                                    point: point(t),
+                                    line: line(a),
+                                    sign: 1.0,
+                                    value: 0.0,
+                                },
+                                Touching::OnCircle(curve) => {
+                                    let c = point(center(curve));
+                                    let t = point(t);
+                                    Equation::EqualLength {
+                                        a: Length::Points([c[0], c[1], t[0], t[1]]),
+                                        b: radius(curve),
+                                    }
+                                }
+                            });
+                        }
+                        equations.push(at_end(t));
+                    } else if is_line {
+                        let ll = line(a);
+                        let c = point(cb);
+                        let cross = (values[ll[2]] - values[ll[0]])
+                            * (values[c[1]] - values[ll[1]])
+                            - (values[ll[3]] - values[ll[1]]) * (values[c[0]] - values[ll[0]]);
+                        equations.push(Equation::TangentLine {
+                            center: c,
+                            line: ll,
+                            sign: if cross >= 0.0 { 1.0 } else { -1.0 },
+                            radius: radius(b),
+                        });
+                    } else {
+                        // Two circles: outside (|c₁c₂| = r₁ + r₂) or inside
+                        // (|c₁c₂| = |r₁ − r₂|), whichever the geometry is closer to.
+                        let ca = center(a);
+                        let r1 = crate::radius_of(doc, a).unwrap_or(0.0);
+                        let r2 = crate::radius_of(doc, b).unwrap_or(0.0);
+                        let dist = doc
+                            .point(ca)
+                            .ok()
+                            .zip(doc.point(cb).ok())
+                            .map_or(0.0, |(p, q)| p.distance(q));
+                        let between = Length::Points([x(ca), y(ca), x(cb), y(cb)]);
+                        let outside = (dist - (r1 + r2)).abs() <= (dist - (r1 - r2).abs()).abs();
+                        let (k1, k2) = if outside {
+                            (-1.0, -1.0)
+                        } else if r1 >= r2 {
+                            (-1.0, 1.0)
+                        } else {
+                            (1.0, -1.0)
+                        };
+                        equations.push(Equation::LengthSum {
+                            terms: [(between, 1.0), (radius(a), k1), (radius(b), k2)],
+                        });
+                    }
+                    for equation in equations {
+                        rows.push(Row {
+                            equation,
+                            source: Some(cid),
+                        });
+                    }
                 }
                 Constraint::Midpoint { point: m, line: l } => {
                     let [ax, ay, bx, by] = line(l);

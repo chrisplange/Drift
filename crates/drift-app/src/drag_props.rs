@@ -1237,3 +1237,49 @@ fn an_unlandable_move_gives_the_same_compromise_at_any_size() {
         );
     }
 }
+
+/// #97: a move that leaves a tangent line behind. The line hangs from the moved arc's end and
+/// lies along the moved line A (ending where A ends, at its own point), so it stays tangent
+/// only by keeping its direction while its far end stays put: the move squeezes it to nothing
+/// and then through, which turns the tangency and the solve fails on the collapsed line. The
+/// move carries it along instead of refusing.
+#[test]
+fn move_that_squeezes_a_tangent_line_carries_it_along() {
+    let p = DVec2::new;
+    let d = |deg: f64| DVec2::from_angle(deg.to_radians());
+    let p0 = p(0.0, 0.0);
+    let p1 = d(105.0) * 10.0;
+    let mid = (p0 + p1) / 2.0;
+    let centre = d(15.0) * 12.0;
+    let sketch = Sketch {
+        points: vec![
+            p0,
+            p1,
+            mid,
+            mid + d(15.0) * 10.0,
+            centre,
+            centre + d(240.0) * 12.0,
+            p1,
+        ],
+        // A, B standing on A's midpoint, the arc from A's start, C from there along A.
+        curves: vec![
+            Curve::Line(0, 1),
+            Curve::Line(2, 3),
+            Curve::Arc(4, 0, 5),
+            Curve::Line(0, 6),
+        ],
+        rels: vec![Rel::Midpoint(2, 0), Rel::Tangent(3, 2)],
+    };
+    let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+    let ids = vec![built.curves[0], built.curves[1], built.curves[2]];
+    let offset = p(-6.58, 14.15);
+    let run = drag(&mut built, &ids, offset, 17).unwrap();
+    assert!(
+        run.committed && run.refused == 0,
+        "refused {} of 17 steps",
+        run.refused
+    );
+    for i in [0, 1, 2, 3, 4, 5] {
+        assert!(run.end[i].distance(run.start[i] + offset) < 1e-9);
+    }
+}

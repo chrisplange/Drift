@@ -74,6 +74,13 @@ pub struct SolveOptions {
     /// drag moved some points): a move that could go either way follows a round with its
     /// lines rather than shrinking it. Ignored for arcs with a dragged end.
     pub radii: HashMap<EntityId, f64>,
+    /// Parameters that should take up the change (e.g. the geometry a new relation names):
+    /// when set, everything else moves only as far as it has to, so meeting a relation
+    /// reshapes what it relates rather than spreading the change thinly over the sketch.
+    pub focus: Vec<Param>,
+    /// Lines and the directions (unit vectors) they should keep where they can, as
+    /// [`radii`](Self::radii) does for arcs.
+    pub directions: HashMap<EntityId, DVec2>,
 }
 
 /// How completely an entity's position is determined by constraints.
@@ -110,6 +117,10 @@ const MAX_ITERATIONS: usize = 100;
 /// How strongly arcs keep their radius in a minimum-change step, relative to moving a point.
 const KEEP_RADIUS: f64 = 100.0;
 
+/// Inverse weight for parameters outside [`SolveOptions::focus`] when it is set: moving them
+/// costs this many times as much as moving the focus.
+const UNFOCUSED_MOBILITY: f64 = 1e-3;
+
 /// Solve the document's constraints in place. Changes go through the document's normal edit
 /// methods, so they are recorded by an open transaction.
 pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
@@ -120,6 +131,27 @@ pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
         options.scope.as_deref(),
         &options.radii,
     );
+    for (&line, &u) in &options.directions {
+        if let Some(EntityKind::Line { a, b }) = doc.get(line).map(|e| e.kind) {
+            let ends = [Param::X(a), Param::Y(a), Param::X(b), Param::Y(b)]
+                .map(|p| sys.param_index.get(&p).copied());
+            if let [Some(ax), Some(ay), Some(bx), Some(by)] = ends {
+                sys.keep_direction.push(([ax, ay, bx, by], u));
+            }
+        }
+    }
+    if !options.focus.is_empty() {
+        let focus: HashSet<usize> = options
+            .focus
+            .iter()
+            .filter_map(|p| sys.param_index.get(p).map(|&i| sys.group_of[i]))
+            .collect();
+        for (g, group) in sys.groups.iter_mut().enumerate() {
+            if !focus.contains(&g) {
+                group.mobility = group.mobility.min(UNFOCUSED_MOBILITY);
+            }
+        }
+    }
     let report = run(&mut sys, options, true);
     write_back(doc, &sys);
     report
@@ -582,6 +614,25 @@ fn newton(
             }
         }
     }
+    // The soft preferences (see below) couple their parameters too.
+    let soft = sys
+        .keep_radius
+        .iter()
+        .map(|(k, _)| k)
+        .chain(sys.keep_direction.iter().map(|(k, _)| k));
+    for k in soft {
+        let cols: Vec<usize> = k
+            .iter()
+            .filter_map(|p| col_of.get(&sys.group_of[*p]).copied())
+            .collect();
+        for &c1 in &cols {
+            for &c2 in &cols {
+                if c1 != c2 {
+                    neighbors[c1].push(c2);
+                }
+            }
+        }
+    }
     for ns in &mut neighbors {
         ns.sort_unstable();
         ns.dedup();
@@ -621,15 +672,24 @@ fn newton(
         // far. A round that only its points pin down would otherwise give way a little every
         // step of a drag, until it collapses. (A soft pull: μ is tiny, so it only chooses
         // among the solutions.)
-        for (k, r0) in &sys.keep_radius {
+        // Lines kept to their direction the same way: being off it costs as much as moving
+        // one end sideways by that much, KEEP_RADIUS times over.
+        let radii = sys.keep_radius.iter().filter_map(|(k, r0)| {
             let [cx, cy, sx, sy] = k.map(|p| values[sys.group_of[p]]);
             let r = (sx - cx).hypot(sy - cy);
-            if r <= 0.0 {
-                continue;
-            }
-            let (ux, uy) = ((sx - cx) / r, (sy - cy) / r);
+            (r > 0.0).then(|| {
+                let (ux, uy) = ((sx - cx) / r, (sy - cy) / r);
+                (k, [-ux, -uy, ux, uy], r - r0)
+            })
+        });
+        let directions = sys.keep_direction.iter().map(|(k, u)| {
+            let [ax, ay, bx, by] = k.map(|p| values[sys.group_of[p]]);
+            let off = (bx - ax) * u.y - (by - ay) * u.x;
+            (k, [-u.y, u.x, u.y, -u.x], off)
+        });
+        for (k, gradient, off) in radii.chain(directions) {
             let mut grad: Vec<(usize, f64)> = Vec::with_capacity(4);
-            for (p, g) in k.iter().zip([-ux, -uy, ux, uy]) {
+            for (p, g) in k.iter().zip(gradient) {
                 if let Some(&c) = col_of.get(&sys.group_of[*p]) {
                     match grad.iter_mut().find(|(cc, _)| *cc == c) {
                         Some(entry) => entry.1 += g,
@@ -638,7 +698,7 @@ fn newton(
                 }
             }
             for (i, &(c1, g1)) in grad.iter().enumerate() {
-                rhs[c1] -= mu * KEEP_RADIUS * g1 * (r - r0);
+                rhs[c1] -= mu * KEEP_RADIUS * g1 * off;
                 for &(c2, g2) in &grad[..=i] {
                     normal.add(c1, c2, mu * KEEP_RADIUS * g1 * g2);
                 }

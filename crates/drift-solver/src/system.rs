@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 
-use drift_core::{Constraint, ConstraintId, Document, EntityId, EntityKind};
+use drift_core::{Constraint, ConstraintId, DVec2, Document, EntityId, EntityKind};
 
 use crate::equations::{Equation, Length};
 use crate::{Param, Tolerances};
@@ -53,6 +53,9 @@ pub struct System {
     /// radius ([`crate::SolveOptions::radii`], for arcs neither of whose ends is dragged). Not
     /// equations, only a preference in the minimum-change step (see `newton`).
     pub keep_radius: Vec<([usize; 4], f64)>,
+    /// Lines that should keep a direction where they can: their ends' x, y and the unit
+    /// direction ([`crate::SolveOptions::directions`]). A preference, like `keep_radius`.
+    pub keep_direction: Vec<([usize; 4], DVec2)>,
 }
 
 struct UnionFind {
@@ -786,6 +789,7 @@ impl System {
             redundant,
             entities,
             keep_radius,
+            keep_direction: Vec::new(),
         }
     }
 

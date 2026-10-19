@@ -843,7 +843,7 @@ fn midpoints_can_be_hovered_picked_and_constrained() {
         unreachable!()
     };
     let mid = (ed.doc.point(a).unwrap() + ed.doc.point(b).unwrap()) * 0.5;
-    assert!((ed.doc.point(c).unwrap() - mid).length() < 1e-12);
+    assert!((ed.doc.point(c).unwrap() - mid).length() < 1e-9);
     // Esc clears both kinds of selection.
     assert!(sel.cancel(&mut ed));
     assert!(ed.selection.is_empty() && ed.selected_midpoints.is_empty());

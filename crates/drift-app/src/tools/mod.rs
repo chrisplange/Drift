@@ -30,6 +30,8 @@ mod place_block;
 mod point;
 mod polygon;
 mod rectangle;
+#[cfg(test)]
+mod relation_motion_tests;
 mod rotate;
 mod select;
 mod slot;

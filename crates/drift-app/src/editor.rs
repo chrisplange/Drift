@@ -1,7 +1,7 @@
 //! Editing state independent of the UI toolkit: document, history, selection, picking and
 //! constraint solving.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use drift_core::params::{self, Evaluation};
 use drift_core::{
@@ -825,10 +825,42 @@ impl Editor {
         before: &SolveReport,
         degenerate_before: &[EntityId],
     ) -> Result<(), EditError> {
+        // The geometry the new constraints name takes up the change. The rest of the sketch
+        // moves only where it has to, and its lines keep their directions and its arcs their
+        // sizes where they can: a relation reshapes what it relates instead of spreading the
+        // change thinly over everything.
+        let named: HashSet<EntityId> = ids
+            .iter()
+            .filter_map(|id| self.doc.constraint(*id))
+            .flat_map(|c| c.entities())
+            .collect();
+        let mut directions = HashMap::new();
+        let mut radii = HashMap::new();
+        for (id, e) in self.doc.iter().filter(|(id, _)| !named.contains(id)) {
+            match e.kind {
+                EntityKind::Line { a, b } => {
+                    if let (Ok(pa), Ok(pb)) = (self.doc.point(a), self.doc.point(b))
+                        && let Some(u) = (pb - pa).try_normalize()
+                    {
+                        directions.insert(id, u);
+                    }
+                }
+                EntityKind::Arc { .. } => {
+                    if let Some(r) = drift_solver::radius_of(&self.doc, id) {
+                        radii.insert(id, r);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let focus = self.params_of(named);
         let report = drift_solver::solve(
             &mut self.doc,
             &SolveOptions {
                 analyze: true,
+                focus,
+                directions,
+                radii,
                 ..Default::default()
             },
         );
@@ -852,6 +884,25 @@ impl Editor {
         }
         self.commit(label);
         Ok(())
+    }
+
+    /// The solver parameters of entities: their defining points' coordinates and, for
+    /// circles, the radius.
+    fn params_of(&self, ids: HashSet<EntityId>) -> Vec<Param> {
+        let mut params: Vec<Param> = self
+            .doc
+            .defining_points(ids.iter().copied())
+            .into_iter()
+            .flat_map(Param::point)
+            .collect();
+        params.extend(ids.into_iter().filter_map(|id| {
+            matches!(
+                self.doc.get(id).map(|e| e.kind),
+                Some(EntityKind::Circle { .. })
+            )
+            .then_some(Param::Radius(id))
+        }));
+        params
     }
 
     /// Whether constraints are all relations of shape (no dimension and no fix). A relation

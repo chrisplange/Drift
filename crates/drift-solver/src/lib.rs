@@ -262,7 +262,10 @@ fn land_dragged(
         sys.groups[g].fixed = false;
     }
     if landed.converged {
-        landed
+        SolveReport {
+            iterations: landed.iterations.max(report.iterations),
+            ..landed
+        }
     } else {
         for (group, v) in sys.groups.iter_mut().zip(solved) {
             group.value = v;
@@ -899,13 +902,23 @@ fn newton(
     // once; without preferences there is nothing to settle.
     let mut settled = !keep_soft;
     let mut settling = 0;
+    // How far the last step moved anything. A drag's solve isn't over while a step still
+    // moves something, even with the rows holding: where the drag can't land, the dragged
+    // give way and converge only linearly, and the rows hold long before that has settled;
+    // the solve would stop wherever the tolerance let it, so at a point that depended on
+    // the sketch's size and place (#104).
+    let mut last_moved = f64::INFINITY;
+    // Levenberg–Marquardt damping, raised by `nu` on a refused step and lowered by how well
+    // the step did what its linearisation promised (Nielsen).
+    let mut nu = 2.0f64;
     // Whether a preference's step has moved anything yet (only then can the preferences be
     // what keeps the solve from its relations).
     let mut soft_stepped = false;
     for iteration in 0..MAX_ITERATIONS {
         let rows_hold = converged(&res, values);
+        let at_rest = !dragging || last_moved <= still_at(values, tol);
         if rows_hold {
-            if settled || settling >= SETTLE_PATIENCE {
+            if (settled && at_rest) || settling >= SETTLE_PATIENCE {
                 return ComponentOutcome {
                     converged: true,
                     iterations: iteration,
@@ -968,7 +981,7 @@ fn newton(
         let still = tol.length * hi.abs().max(lo.abs()).max(1.0);
         if soft_terms.iter().all(|(_, _, off)| off.abs() <= still) {
             settled = true;
-            if rows_hold {
+            if rows_hold && at_rest {
                 return ComponentOutcome {
                     converged: true,
                     iterations: iteration,
@@ -1051,18 +1064,32 @@ fn newton(
                 let step = factor.solve_refined(&rhs);
                 let soft_step = soft.then(|| {
                     let mut soft_step = factor.solve_refined(&soft_rhs);
-                    let mut felt = vec![Dd::default(); n];
-                    for row in &scaled_jac {
-                        let change = row.iter().fold(Dd::default(), |sum, &(c, g)| {
-                            sum.add_product(g, soft_step[c])
-                        });
-                        for &(c, g) in row {
-                            felt[c] = felt[c].add_product(g, change.hi).add(g * change.lo);
+                    // Not the dragged: they are where the user put them. A preference only
+                    // the dragged could meet (through the relations) would otherwise inch
+                    // them along, heavy as they are, for thousands of iterations, and the
+                    // solve would stop part way, wherever its patience ran out (#104).
+                    for (s, m) in soft_step.iter_mut().zip(&mobility) {
+                        if *m <= system::DRAGGED_MOBILITY {
+                            *s = 0.0;
                         }
                     }
-                    let felt = factor.solve_refined(&felt);
-                    for (s, f) in soft_step.iter_mut().zip(&felt) {
-                        *s -= f;
+                    // Twice: the matrix regularises the heavy unknowns (the dragged, at
+                    // 1e-4 of the rows) as well as the null space, so one pass leaves that
+                    // much of what the relations feel; a second takes it to 1e-8.
+                    for _ in 0..2 {
+                        let mut felt = vec![Dd::default(); n];
+                        for row in &scaled_jac {
+                            let change = row.iter().fold(Dd::default(), |sum, &(c, g)| {
+                                sum.add_product(g, soft_step[c])
+                            });
+                            for &(c, g) in row {
+                                felt[c] = felt[c].add_product(g, change.hi).add(g * change.lo);
+                            }
+                        }
+                        let felt = factor.solve_refined(&felt);
+                        for (s, f) in soft_step.iter_mut().zip(&felt) {
+                            *s -= f;
+                        }
                     }
                     soft_step
                 });
@@ -1100,7 +1127,23 @@ fn newton(
         let (trial_res, trial_jac) = evaluate(sys, &comp.rows, &trial, &col_of);
         // (Judged in the step's own scaling of the rows.)
         let before = scaled_norm2(&res, &row_scale);
-        if scaled_norm2(&trial_res, &row_scale) < before || converged(&trial_res, &trial) {
+        let after = scaled_norm2(&trial_res, &row_scale);
+        if after < before || converged(&trial_res, &trial) {
+            // How much of the drop the linearisation promised the step delivered.
+            let promised = before
+                - scaled_jac
+                    .iter()
+                    .zip(&scaled_res)
+                    .map(|(row, f)| {
+                        (f + row.iter().map(|&(c, g)| g * delta[c]).sum::<f64>()).powi(2)
+                    })
+                    .sum::<f64>();
+            let gain = if promised > 0.0 {
+                (before - after) / promised
+            } else {
+                1.0
+            };
+            last_moved = rows_moved;
             values.copy_from_slice(&trial);
             res = trial_res;
             jac = trial_jac;
@@ -1133,17 +1176,16 @@ fn newton(
                     moved *= 0.5;
                 }
                 settled = moved.max(rows_moved) <= still;
+                last_moved = last_moved.max(moved);
             }
-            lambda *= 0.1;
+            lambda *= (1.0 - (2.0 * gain - 1.0).powi(3)).max(1.0 / 3.0);
+            nu = 2.0;
             if lambda < 1e-12 * max_diag {
                 lambda = 0.0;
             }
         } else {
-            lambda = if lambda == 0.0 {
-                1e-6 * max_diag
-            } else {
-                lambda * 10.0
-            };
+            lambda = lambda.max(1e-6 * max_diag) * nu;
+            nu *= 2.0;
             if lambda > 1e12 * max_diag {
                 break;
             }
@@ -1153,6 +1195,17 @@ fn newton(
         converged: converged(&res, values),
         iterations: MAX_ITERATIONS,
     }
+}
+
+/// A move below this, at the scale of the coordinates, is no move at all (the length
+/// tolerance, as `row_tolerance` takes it).
+fn still_at(values: &[f64], tol: &Tolerances) -> f64 {
+    let (lo, hi) = values
+        .iter()
+        .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), v| {
+            (lo.min(*v), hi.max(*v))
+        });
+    tol.length * hi.abs().max(lo.abs()).max(1.0)
 }
 
 /// Whether any soft preference is in play: radii, directions or lengths to keep.

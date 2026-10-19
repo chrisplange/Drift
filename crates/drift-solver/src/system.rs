@@ -93,7 +93,7 @@ impl UnionFind {
 }
 
 /// Inverse weight for dragged parameters: they barely move, so the rest of the sketch adapts.
-const DRAGGED_MOBILITY: f64 = 1e-6;
+pub(crate) const DRAGGED_MOBILITY: f64 = 1e-6;
 
 impl System {
     pub fn build(doc: &Document, dragged: &[Param], tol: &Tolerances) -> Self {
@@ -753,9 +753,17 @@ impl System {
             .filter_map(|p| param_index.get(p).copied())
             .collect();
         for group in &mut groups {
-            // Start from a weighted mean of the members: dragged members dominate, so merging
-            // e.g. a dragged point with a coincident one moves the other point.
-            let weight = |i: &usize| if dragged.contains(i) { 1e6 } else { 1.0 };
+            // Start from the dragged members where there are any (so merging e.g. a dragged
+            // point with a coincident one moves the other point, and the drag lands where it
+            // was asked to), else from the mean of the members.
+            let has_dragged = group.members.iter().any(|i| dragged.contains(i));
+            let weight = |i: &usize| {
+                if !has_dragged || dragged.contains(i) {
+                    1.0
+                } else {
+                    0.0
+                }
+            };
             let total: f64 = group.members.iter().map(weight).sum();
             group.value = group
                 .members

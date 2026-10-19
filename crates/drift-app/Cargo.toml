@@ -47,6 +47,7 @@ workspace = true
 [dev-dependencies]
 egui_kittest = { version = "0.36.2", features = ["eframe", "wgpu", "snapshot"] }
 pollster = "1.0"
+proptest = "1"
 
 # Signs test releases so the updater's verification can be checked (and makes the release
 # signing key: `cargo run -p drift-app --example update_key`).

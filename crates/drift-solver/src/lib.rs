@@ -174,9 +174,53 @@ pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
             }
         }
     }
-    let report = run(&mut sys, options, true);
+    // Where the dragged parameters were asked to be.
+    let targets: Vec<(usize, f64)> = sys
+        .groups
+        .iter()
+        .enumerate()
+        .filter(|(_, g)| !g.fixed && g.mobility == system::DRAGGED_MOBILITY)
+        .map(|(i, g)| (i, g.value))
+        .collect();
+    let mut report = run(&mut sys, options, true);
+    if report.converged {
+        report = land_dragged(&mut sys, options, &targets, report);
+    }
     write_back(doc, &sys);
     report
+}
+
+/// After a drag's solve: the dragged parameters are only heavy, not pinned, so where other
+/// geometry has to follow them they give a little (and, steps being measured from where the
+/// solve is rather than from the targets, nothing pulls them back). Pin them where they were
+/// asked to be and solve again; keep that if the relations still hold, so a move lands
+/// exactly wherever it can.
+fn land_dragged(
+    sys: &mut System,
+    options: &SolveOptions,
+    targets: &[(usize, f64)],
+    report: SolveReport,
+) -> SolveReport {
+    if targets.iter().all(|&(g, v)| sys.groups[g].value == v) {
+        return report;
+    }
+    let solved: Vec<f64> = sys.groups.iter().map(|g| g.value).collect();
+    for &(g, v) in targets {
+        sys.groups[g].value = v;
+        sys.groups[g].fixed = true;
+    }
+    let landed = run(sys, options, true);
+    for &(g, _) in targets {
+        sys.groups[g].fixed = false;
+    }
+    if landed.converged {
+        landed
+    } else {
+        for (group, v) in sys.groups.iter_mut().zip(solved) {
+            group.value = v;
+        }
+        report
+    }
 }
 
 /// The constraints the geometry doesn't meet as it stands (nothing is moved): those with an

@@ -56,6 +56,10 @@ pub struct System {
     /// Lines that should keep a direction where they can: their ends' x, y and the unit
     /// direction ([`crate::SolveOptions::directions`]). A preference, like `keep_radius`.
     pub keep_direction: Vec<([usize; 4], DVec2)>,
+    /// Lines that should keep a length where they can: their ends' x, y and the length
+    /// ([`crate::SolveOptions::lengths`]). A preference, like `keep_radius`, but one a solve
+    /// gives up where the relations rule it out (see `newton`).
+    pub keep_length: Vec<([usize; 4], f64)>,
 }
 
 struct UnionFind {
@@ -790,6 +794,7 @@ impl System {
             entities,
             keep_radius,
             keep_direction: Vec::new(),
+            keep_length: Vec::new(),
         }
     }
 

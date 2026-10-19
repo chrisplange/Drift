@@ -20,6 +20,8 @@ struct Geometry {
     circles: Vec<(EntityId, f64)>,
     /// Arcs' radii.
     radii: std::collections::HashMap<EntityId, f64>,
+    /// Lines' lengths to keep where they can (when a move of curves carries them along).
+    lengths: std::collections::HashMap<EntityId, f64>,
 }
 
 /// Why an edit was refused.
@@ -585,12 +587,30 @@ impl Editor {
     /// A move that would turn an arc inside out or put a tangent curve on the other side of
     /// its line (a solve can meet every relation that way) is taken in smaller steps, which
     /// follow the shape round; if even small steps turn it, the move is refused.
+    ///
+    /// Moving whole curves carries the lines hanging from them along where it can, at their
+    /// length, rather than stretching them; dragging a point reshapes what it ends.
     pub fn drag(&mut self, ids: &[EntityId], delta: DVec2, dragged: &[Param]) -> bool {
+        let curves = ids
+            .iter()
+            .all(|id| self.doc.get(*id).is_some_and(|e| !e.kind.is_point()));
         // Anchors carry their curve handles.
         let ids = &self.with_handles(ids);
         // Only what's connected to the dragged geometry is solved.
         let scope = self.drag_scope(ids);
-        let before = self.geometry_of(&scope);
+        let mut before = self.geometry_of(&scope);
+        if curves {
+            before.lengths = scope
+                .iter()
+                .filter_map(|&id| match self.doc.get(id)?.kind {
+                    EntityKind::Line { a, b } => Some((
+                        id,
+                        self.doc.point(a).ok()?.distance(self.doc.point(b).ok()?),
+                    )),
+                    _ => None,
+                })
+                .collect();
+        }
         let ok = self.drag_in_steps(ids, delta, dragged, &scope, &before, 0);
         if !ok {
             self.restore_geometry(&before);
@@ -623,6 +643,8 @@ impl Editor {
                 // Rounds keep their size where the move leaves it open (moving a centre on
                 // its own would otherwise shrink or swell its arc as a first guess).
                 radii: before.radii.clone(),
+                // Lines carried along by a move of curves keep their length the same way.
+                lengths: before.lengths.clone(),
                 ..Default::default()
             },
         );
@@ -638,7 +660,9 @@ impl Editor {
         {
             return false;
         }
-        let halfway = self.geometry_of(scope);
+        let mut halfway = self.geometry_of(scope);
+        // The lengths to keep are still those from before the move.
+        halfway.lengths = before.lengths.clone();
         self.drag_in_steps(ids, delta / 2.0, dragged, scope, &halfway, depth + 1)
     }
 

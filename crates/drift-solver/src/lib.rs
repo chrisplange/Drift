@@ -81,6 +81,11 @@ pub struct SolveOptions {
     /// Lines and the directions (unit vectors) they should keep where they can, as
     /// [`radii`](Self::radii) does for arcs.
     pub directions: HashMap<EntityId, DVec2>,
+    /// Lines and the lengths they should keep where they can, as [`radii`](Self::radii) does
+    /// for arcs: moving what a line hangs from then carries it along rather than stretching
+    /// it. Where the relations change a length anyway, the preference is let go. Ignored for
+    /// lines with a dragged end: dragging an end reshapes its line.
+    pub lengths: HashMap<EntityId, f64>,
 }
 
 /// How completely an entity's position is determined by constraints.
@@ -121,6 +126,10 @@ const KEEP_RADIUS: f64 = 100.0;
 /// costs this many times as much as moving the focus.
 const UNFOCUSED_MOBILITY: f64 = 1e-3;
 
+/// A full step that leaves more than this share of the squared error (half the error) lets go
+/// of [`SolveOptions::lengths`] (see `newton`).
+const LENGTH_STALL: f64 = 0.25;
+
 /// Solve the document's constraints in place. Changes go through the document's normal edit
 /// methods, so they are recorded by an open transaction.
 pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
@@ -137,6 +146,19 @@ pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
                 .map(|p| sys.param_index.get(&p).copied());
             if let [Some(ax), Some(ay), Some(bx), Some(by)] = ends {
                 sys.keep_direction.push(([ax, ay, bx, by], u));
+            }
+        }
+    }
+    for (&line, &length) in &options.lengths {
+        if let Some(EntityKind::Line { a, b }) = doc.get(line).map(|e| e.kind)
+            && ![a, b]
+                .iter()
+                .any(|p| Param::point(*p).iter().any(|q| options.dragged.contains(q)))
+        {
+            let ends = [Param::X(a), Param::Y(a), Param::X(b), Param::Y(b)]
+                .map(|p| sys.param_index.get(&p).copied());
+            if let [Some(ax), Some(ay), Some(bx), Some(by)] = ends {
+                sys.keep_length.push(([ax, ay, bx, by], length));
             }
         }
     }
@@ -494,6 +516,20 @@ fn components(sys: &System) -> (Vec<Component>, Vec<usize>) {
         }
         row_groups.push(free);
     }
+    // A line kept to its length joins its ends, so a free end can follow the other.
+    for (k, _) in &sys.keep_length {
+        let free: Vec<usize> = k
+            .iter()
+            .map(|p| sys.group_of[*p])
+            .filter(|g| !sys.groups[*g].fixed)
+            .collect();
+        for w in free.windows(2) {
+            let (a, b) = (find(&mut parent, w[0]), find(&mut parent, w[1]));
+            if a != b {
+                parent[a.max(b)] = a.min(b);
+            }
+        }
+    }
     let mut by_root: HashMap<usize, Component> = HashMap::new();
     for (r, free) in row_groups.iter().enumerate() {
         if let Some(&g) = free.first() {
@@ -619,7 +655,8 @@ fn newton(
         .keep_radius
         .iter()
         .map(|(k, _)| k)
-        .chain(sys.keep_direction.iter().map(|(k, _)| k));
+        .chain(sys.keep_direction.iter().map(|(k, _)| k))
+        .chain(sys.keep_length.iter().map(|(k, _)| k));
     for k in soft {
         let cols: Vec<usize> = k
             .iter()
@@ -641,6 +678,10 @@ fn newton(
     let _ = m;
 
     let mut lambda = 0.0f64;
+    // Lines keep their lengths until that holds the solve back (see below); the dragged
+    // parameters are then put back where they were asked to be.
+    let mut keep_lengths = !sys.keep_length.is_empty();
+    let start = values.to_vec();
     for iteration in 0..MAX_ITERATIONS {
         if converged(&res, values) {
             return ComponentOutcome {
@@ -687,7 +728,21 @@ fn newton(
             let off = (bx - ax) * u.y - (by - ay) * u.x;
             (k, [-u.y, u.x, u.y, -u.x], off)
         });
-        for (k, gradient, off) in radii.chain(directions) {
+        // And lines kept to their length, like arcs to their radius, until that stalls.
+        let keep_length = if keep_lengths {
+            &sys.keep_length[..]
+        } else {
+            &[]
+        };
+        let lengths = keep_length.iter().filter_map(|(k, l0)| {
+            let [ax, ay, bx, by] = k.map(|p| values[sys.group_of[p]]);
+            let l = (bx - ax).hypot(by - ay);
+            (l > 0.0).then(|| {
+                let (ux, uy) = ((bx - ax) / l, (by - ay) / l);
+                (k, [-ux, -uy, ux, uy], l - l0)
+            })
+        });
+        for (k, gradient, off) in radii.chain(directions).chain(lengths) {
             let mut grad: Vec<(usize, f64)> = Vec::with_capacity(4);
             for (p, g) in k.iter().zip(gradient) {
                 if let Some(&c) = col_of.get(&sys.group_of[*p]) {
@@ -742,9 +797,22 @@ fn newton(
         }
         let (trial_res, trial_jac) = evaluate(sys, &comp.rows, &trial, &col_of);
         if norm2(&trial_res) < norm2(&res) || converged(&trial_res, &trial) {
+            // A length the relations rule out (the line has to stretch) holds the solve a
+            // little short of them: a full step then barely gains. Finish without it.
+            let stalled =
+                keep_lengths && lambda == 0.0 && norm2(&trial_res) > LENGTH_STALL * norm2(&res);
             values.copy_from_slice(&trial);
             res = trial_res;
             jac = trial_jac;
+            if stalled {
+                keep_lengths = false;
+                for (c, g) in comp.unknowns.iter().enumerate() {
+                    if mobility[c] < UNFOCUSED_MOBILITY {
+                        values[*g] = start[*g];
+                    }
+                }
+                (res, jac) = evaluate(sys, &comp.rows, values, &col_of);
+            }
             lambda *= 0.1;
             if lambda < 1e-12 * max_diag {
                 lambda = 0.0;

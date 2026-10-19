@@ -130,6 +130,13 @@ const UNFOCUSED_MOBILITY: f64 = 1e-3;
 /// of [`SolveOptions::lengths`] (see `newton`).
 const LENGTH_STALL: f64 = 0.25;
 
+/// Iterations after which a drag's solve still short of its relations lets go of all its soft
+/// preferences (radii, directions and lengths to keep) and finishes on the relations alone. A
+/// preference the relations rule out pulls against them, which holds the solve a little
+/// short, at an error far above the tolerances (and with damped steps the stall test above
+/// never sees a full one).
+const SOFT_PATIENCE: usize = 20;
+
 /// Solve the document's constraints in place. Changes go through the document's normal edit
 /// methods, so they are recorded by an open transaction.
 pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
@@ -420,13 +427,28 @@ impl Orientation {
     /// True if `doc` has an arc turned inside out, or a tangency moved to the other side,
     /// since this orientation was taken. Entities added since don't count.
     pub fn turned(&self, doc: &Document) -> bool {
-        let arc = self.arcs.iter().any(|&(id, before)| {
-            arc_sweep(doc, id).is_some_and(|now| (now - before).abs() > SWEEP_JUMP)
-        });
-        arc || self
-            .sides
+        !self.turned_curves(doc).is_empty()
+    }
+
+    /// The curves [`turned`](Self::turned) would blame: arcs turned inside out, and both
+    /// curves of a tangency that moved to the other side.
+    pub fn turned_curves(&self, doc: &Document) -> Vec<EntityId> {
+        let mut out: Vec<EntityId> = self
+            .arcs
             .iter()
-            .any(|&((a, b), before)| tangent_side(doc, a, b).is_some_and(|now| now != before))
+            .filter(|&&(id, before)| {
+                arc_sweep(doc, id).is_some_and(|now| (now - before).abs() > SWEEP_JUMP)
+            })
+            .map(|&(id, _)| id)
+            .collect();
+        for &((a, b), before) in &self.sides {
+            if tangent_side(doc, a, b).is_some_and(|now| now != before) {
+                out.extend([a, b]);
+            }
+        }
+        out.sort();
+        out.dedup();
+        out
     }
 }
 
@@ -725,6 +747,10 @@ fn newton(
     // Lines keep their lengths until that holds the solve back (see below); the dragged
     // parameters are then put back where they were asked to be.
     let mut keep_lengths = !sys.keep_length.is_empty();
+    let mut keep_soft = true;
+    // (Only in a drag: a new relation's solve can take its time over the preferences, which
+    // are what keep the rest of the sketch in shape there.)
+    let dragging = mobility.contains(&system::DRAGGED_MOBILITY);
     let start = values.to_vec();
     for iteration in 0..MAX_ITERATIONS {
         if converged(&res, values) {
@@ -732,6 +758,17 @@ fn newton(
                 converged: true,
                 iterations: iteration,
             };
+        }
+        if dragging && keep_soft && iteration >= SOFT_PATIENCE {
+            // Still short of the relations: start again without the preferences (the steps
+            // taken with them may have wandered off where the relations alone can't recover).
+            keep_soft = false;
+            keep_lengths = false;
+            for g in &comp.unknowns {
+                values[*g] = start[*g];
+            }
+            (res, jac) = evaluate(sys, &comp.rows, values, &col_of);
+            lambda = 0.0;
         }
         // N = JᵀJ and the right-hand side −JᵀF.
         normal.clear();
@@ -759,7 +796,12 @@ fn newton(
         // among the solutions.)
         // Lines kept to their direction the same way: being off it costs as much as moving
         // one end sideways by that much, KEEP_RADIUS times over.
-        let radii = sys.keep_radius.iter().filter_map(|(k, r0)| {
+        let (keep_radius, keep_direction) = if keep_soft {
+            (&sys.keep_radius[..], &sys.keep_direction[..])
+        } else {
+            (&[][..], &[][..])
+        };
+        let radii = keep_radius.iter().filter_map(|(k, r0)| {
             let [cx, cy, sx, sy] = k.map(|p| values[sys.group_of[p]]);
             let r = (sx - cx).hypot(sy - cy);
             (r > 0.0).then(|| {
@@ -767,7 +809,7 @@ fn newton(
                 (k, [-ux, -uy, ux, uy], r - r0)
             })
         });
-        let directions = sys.keep_direction.iter().map(|(k, u)| {
+        let directions = keep_direction.iter().map(|(k, u)| {
             let [ax, ay, bx, by] = k.map(|p| values[sys.group_of[p]]);
             let off = (bx - ax) * u.y - (by - ay) * u.x;
             (k, [-u.y, u.x, u.y, -u.x], off)

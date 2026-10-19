@@ -14,6 +14,45 @@
 
 use std::collections::VecDeque;
 
+/// A number held to about 32 digits as the sum of two doubles, for the normal matrix and
+/// its right-hand sides. The minimum-norm step regularises the relations' null space with a
+/// weight of 1e-10 of their own, so a solve amplifies round-off in those directions 1e10
+/// times: the step would land where the relations don't care to a part in 1e-6, which is
+/// where the rounding of the moment happened to put it (the same sketch shifted across the
+/// plane rounds differently; #94). Accumulated exactly, the right-hand sides and matrix let
+/// one step of iterative refinement take that out ([`Factor::solve_refined`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Dd {
+    pub hi: f64,
+    pub lo: f64,
+}
+
+/// `a + b` as a sum and its rounding error (Knuth's TwoSum).
+fn two_sum(a: f64, b: f64) -> (f64, f64) {
+    let s = a + b;
+    let v = s - a;
+    (s, (a - (s - v)) + (b - v))
+}
+
+impl Dd {
+    /// Add a double exactly.
+    pub fn add(self, b: f64) -> Self {
+        let (hi, e) = two_sum(self.hi, b);
+        let (hi, lo) = two_sum(hi, self.lo + e);
+        Self { hi, lo }
+    }
+
+    /// Add the product `a·b` exactly.
+    pub fn add_product(self, a: f64, b: f64) -> Self {
+        let p = a * b;
+        self.add(p).add(a.mul_add(b, -p))
+    }
+
+    pub fn sub(self, other: Self) -> Self {
+        self.add(-other.hi).add(-other.lo)
+    }
+}
+
 /// Lower-triangular envelope storage of a symmetric matrix, in a bandwidth-reducing order.
 #[derive(Clone, Debug)]
 pub struct Skyline {
@@ -25,6 +64,8 @@ pub struct Skyline {
     /// For permuted row i: offset of `(i, first[i])` in `values`.
     offset: Vec<usize>,
     values: Vec<f64>,
+    /// The part of each value below double precision (see [`Dd`]).
+    low: Vec<f64>,
 }
 
 impl Skyline {
@@ -58,11 +99,13 @@ impl Skyline {
             first,
             offset,
             values: vec![0.0; len],
+            low: vec![0.0; len],
         }
     }
 
     pub fn clear(&mut self) {
         self.values.iter_mut().for_each(|v| *v = 0.0);
+        self.low.iter_mut().for_each(|v| *v = 0.0);
     }
 
     #[inline]
@@ -73,11 +116,57 @@ impl Skyline {
 
     /// Add `v` to `A[i][j]` (original indices). Only one of `(i, j)` / `(j, i)` needs adding
     /// for off-diagonal entries; the matrix is symmetric.
+    #[cfg(test)]
     pub fn add(&mut self, i: usize, j: usize, v: f64) {
+        let k = self.slot(i, j);
+        let sum = Dd {
+            hi: self.values[k],
+            lo: self.low[k],
+        }
+        .add(v);
+        (self.values[k], self.low[k]) = (sum.hi, sum.lo);
+    }
+
+    /// Add the product `a·b` to `A[i][j]` (original indices), exactly.
+    pub fn add_product(&mut self, i: usize, j: usize, a: f64, b: f64) {
+        let k = self.slot(i, j);
+        let sum = Dd {
+            hi: self.values[k],
+            lo: self.low[k],
+        }
+        .add_product(a, b);
+        (self.values[k], self.low[k]) = (sum.hi, sum.lo);
+    }
+
+    fn slot(&self, i: usize, j: usize) -> usize {
         let (a, b) = (self.to_new[i], self.to_new[j]);
         let (r, c) = if a >= b { (a, b) } else { (b, a) };
-        let k = self.index(r, c);
-        self.values[k] += v;
+        self.index(r, c)
+    }
+
+    /// `(A + diag(shift)) x`, to double-double precision (original ordering).
+    fn multiply(&self, shift: &[f64], x: &[f64]) -> Vec<Dd> {
+        let n = self.n;
+        let mut xp = vec![0.0; n];
+        for (old, &new) in self.to_new.iter().enumerate() {
+            xp[new] = x[old];
+        }
+        let mut y = vec![Dd::default(); n];
+        for i in 0..n {
+            for j in self.first[i]..=i {
+                let k = self.index(i, j);
+                let (hi, lo) = (self.values[k], self.low[k]);
+                y[i] = y[i].add_product(hi, xp[j]).add(lo * xp[j]);
+                if j != i {
+                    y[j] = y[j].add_product(hi, xp[i]).add(lo * xp[i]);
+                }
+            }
+        }
+        let mut out = vec![Dd::default(); n];
+        for (old, &new) in self.to_new.iter().enumerate() {
+            out[old] = y[new].add_product(shift[old], x[old]);
+        }
+        out
     }
 
     pub fn diagonal(&self, i: usize) -> f64 {
@@ -87,7 +176,21 @@ impl Skyline {
 
     /// Factor a copy of `A + diag(shift)` and solve `(A + diag(shift)) x = b` in place
     /// (original ordering). Returns false if the matrix is not numerically positive definite.
+    #[cfg(test)]
     pub fn solve(&self, shift: &[f64], b: &mut [f64]) -> bool {
+        match self.factor(shift) {
+            Some(f) => {
+                f.solve(b);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// The Cholesky factor of `A + diag(shift)` (original ordering for `shift`), for any
+    /// number of solves against it; `None` if the matrix is not numerically positive
+    /// definite.
+    pub fn factor(&self, shift: &[f64]) -> Option<Factor<'_>> {
         let n = self.n;
         let mut l = self.values.clone();
         for (old, s) in shift.iter().enumerate() {
@@ -107,7 +210,7 @@ impl Skyline {
                 }
                 if i == j {
                     if s.is_nan() || s <= 0.0 || s.is_infinite() {
-                        return false;
+                        return None;
                     }
                     l[self.index(i, i)] = s.sqrt();
                 } else {
@@ -115,33 +218,74 @@ impl Skyline {
                 }
             }
         }
+        Some(Factor {
+            matrix: self,
+            shift: shift.to_vec(),
+            l,
+        })
+    }
+}
+
+/// A Cholesky factor `L Lᵀ` of a [`Skyline`] matrix (plus a diagonal shift), from
+/// [`Skyline::factor`].
+pub struct Factor<'a> {
+    matrix: &'a Skyline,
+    shift: Vec<f64>,
+    l: Vec<f64>,
+}
+
+impl Factor<'_> {
+    /// Solve `(A + diag(shift)) x = b` for a right-hand side held to double-double
+    /// precision, with one step of iterative refinement: the residual of the first solution
+    /// is taken against the matrix's exact values, so the refinement corrects the round-off
+    /// the solve amplified (see [`Dd`]).
+    pub fn solve_refined(&self, b: &[Dd]) -> Vec<f64> {
+        let mut x: Vec<f64> = b.iter().map(|v| v.hi).collect();
+        self.solve(&mut x);
+        let product = self.matrix.multiply(&self.shift, &x);
+        let mut correction: Vec<f64> = b
+            .iter()
+            .zip(&product)
+            .map(|(b, ax)| b.sub(*ax).hi)
+            .collect();
+        self.solve(&mut correction);
+        for (x, c) in x.iter_mut().zip(&correction) {
+            *x += c;
+        }
+        x
+    }
+
+    /// Solve `L Lᵀ x = b` in place (original ordering).
+    pub fn solve(&self, b: &mut [f64]) {
+        let m = self.matrix;
+        let l = &self.l;
+        let n = m.n;
         // Permute b into the new order, solve L Lᵀ x = b, permute back.
         let mut x = vec![0.0; n];
-        for (old, &new) in self.to_new.iter().enumerate() {
+        for (old, &new) in m.to_new.iter().enumerate() {
             x[new] = b[old];
         }
         for i in 0..n {
-            let fi = self.first[i];
-            let oi = self.offset[i] - fi;
+            let fi = m.first[i];
+            let oi = m.offset[i] - fi;
             let mut s = x[i];
             for k in fi..i {
                 s -= l[oi + k] * x[k];
             }
-            x[i] = s / l[self.index(i, i)];
+            x[i] = s / l[m.index(i, i)];
         }
         for i in (0..n).rev() {
-            x[i] /= l[self.index(i, i)];
+            x[i] /= l[m.index(i, i)];
             let xi = x[i];
-            let fi = self.first[i];
-            let oi = self.offset[i] - fi;
+            let fi = m.first[i];
+            let oi = m.offset[i] - fi;
             for k in fi..i {
                 x[k] -= l[oi + k] * xi;
             }
         }
-        for (old, &new) in self.to_new.iter().enumerate() {
+        for (old, &new) in m.to_new.iter().enumerate() {
             b[old] = x[new];
         }
-        true
     }
 }
 

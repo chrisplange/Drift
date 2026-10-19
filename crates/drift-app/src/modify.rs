@@ -986,9 +986,10 @@ impl Editor {
         let at_end = click.distance(p1) < click.distance(p0);
         let end_point = if at_end { last } else { first };
         let tol = self.tol_for(&shape);
-        let sweep = match shape {
-            Shape::Arc { sweep, .. } => sweep,
-            _ => 1.0,
+        // The extended arc is its full circle, whose hits are angles from +x.
+        let (start, sweep) = match shape {
+            Shape::Arc { start, sweep, .. } => (start, sweep),
+            _ => (0.0, 1.0),
         };
         let mut best: Option<(f64, DVec2, EntityId)> = None;
         for (other, _) in self.doc.iter() {
@@ -1000,13 +1001,17 @@ impl Editor {
             };
             for hit in intersect_extended(&shape, &other_shape) {
                 // How far beyond the chosen end the hit is (in parameter units).
+                let t = match shape {
+                    Shape::Line { .. } => hit.t[0],
+                    _ => (hit.t[0] - start).rem_euclid(TAU),
+                };
                 let beyond = match (shape, at_end) {
-                    (Shape::Line { .. }, true) => hit.t[0] - 1.0,
-                    (Shape::Line { .. }, false) => -hit.t[0],
-                    (_, true) => hit.t[0] - sweep,
+                    (Shape::Line { .. }, true) => t - 1.0,
+                    (Shape::Line { .. }, false) => -t,
+                    (_, true) => t - sweep,
                     (_, false) => {
-                        if hit.t[0] > sweep {
-                            TAU - hit.t[0]
+                        if t > sweep {
+                            TAU - t
                         } else {
                             -1.0
                         }
@@ -2019,6 +2024,17 @@ impl Editor {
         self.doc.begin();
         let mut created = Vec::new();
         let result = (|| -> Result<(), EditError> {
+            // A whole circle's offset is one circle on the same centre, with no ends.
+            if let [piece] = pieces.as_slice()
+                && let Shape::Circle { radius, .. } = piece.shape
+                && let Some(EntityKind::Circle { center, .. }) =
+                    self.doc.get(chain[piece.source].0).map(|x| x.kind)
+            {
+                let new = self.doc.add_circle(center, radius).map_err(doc_err)?;
+                self.doc.copy_look(chain[piece.source].0, new);
+                created.push(new);
+                return Ok(());
+            }
             // Points at each piece's start and end in travel order; pieces that meet share
             // one.
             let n = pieces.len();
@@ -2063,9 +2079,6 @@ impl Editor {
                             value: distance,
                         });
                         line
-                    }
-                    (Shape::Circle { radius, .. }, Some(EntityKind::Circle { center, .. })) => {
-                        self.doc.add_circle(center, radius).map_err(doc_err)?
                     }
                     (Shape::Arc { .. }, Some(EntityKind::Arc { center, .. })) => {
                         // Stored counter-clockwise: start/end follow the original's.
@@ -2653,6 +2666,31 @@ mod tests {
     }
 
     #[test]
+    fn extend_arc_stops_at_the_nearest_crossing() {
+        // An arc from 20° round to 340°, with a circle over its gap: extending either end
+        // stops where the circle is first met, not at its far side (#73).
+        let (mut ed, _) = with_lines(&[]);
+        ed.doc.begin();
+        let c = ed.doc.add_point(v(0.0, 0.0));
+        let s = ed
+            .doc
+            .add_point(DVec2::from_angle(20f64.to_radians()) * 10.0);
+        let e = ed
+            .doc
+            .add_point(DVec2::from_angle(340f64.to_radians()) * 10.0);
+        let arc = ed.doc.add_arc(c, s, e).unwrap();
+        let small = ed.doc.add_point(v(12.0, 0.0));
+        ed.doc.add_circle(small, 4.0).unwrap();
+        ed.commit("Arcs");
+        // The circles cross at x = 9.5, y = ±sqrt(100 - 9.5²).
+        let y = (100.0f64 - 9.5 * 9.5).sqrt();
+        ed.extend_at(arc, ed.doc.point(s).unwrap()).unwrap();
+        assert!(close(ed.doc.point(s).unwrap(), v(9.5, y)));
+        ed.extend_at(arc, ed.doc.point(e).unwrap()).unwrap();
+        assert!(close(ed.doc.point(e).unwrap(), v(9.5, -y)));
+    }
+
+    #[test]
     fn split_keeps_the_pieces_collinear() {
         let (mut ed, ids) = with_lines(&[(v(0.0, 0.0), v(30.0, 0.0))]);
         let m = ed.split_at(ids[0], v(12.0, 0.4)).unwrap();
@@ -2811,9 +2849,12 @@ mod tests {
         let c = ed.doc.add_point(v(0.0, 0.0));
         let circle = ed.doc.add_circle(c, 5.0).unwrap();
         ed.commit("Circle");
+        let before = ed.doc.iter().count();
         let out = ed.offset(circle, 2.0, v(10.0, 0.0)).unwrap();
         assert!(matches!(ed.doc.get(out[0]).map(|e| e.kind),
             Some(EntityKind::Circle { center, radius }) if center == c && (radius - 7.0).abs() < 1e-12));
+        // Just the circle: no stray end points on it (#74).
+        assert_eq!(ed.doc.iter().count(), before + 1);
         let inner = ed.offset(circle, 2.0, v(1.0, 0.0)).unwrap();
         assert!(matches!(ed.doc.get(inner[0]).map(|e| e.kind),
             Some(EntityKind::Circle { radius, .. }) if (radius - 3.0).abs() < 1e-12));

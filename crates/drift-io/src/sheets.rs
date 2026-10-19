@@ -118,6 +118,9 @@ pub(crate) struct ViewRecord {
     dimensions: bool,
     #[serde(default = "yes", skip_serializing_if = "is_true")]
     notes: bool,
+    /// Construction geometry shown in the view; written only when shown (format 32).
+    #[serde(default, skip_serializing_if = "is_false")]
+    construction: bool,
     /// The crop shown on the canvas; written only when hidden.
     #[serde(default = "yes", skip_serializing_if = "is_true")]
     crop: bool,
@@ -135,6 +138,7 @@ pub(crate) fn view_record(id: ViewId, v: &View) -> ViewRecord {
         size: v.size.to_array(),
         dimensions: v.dimensions,
         notes: v.notes,
+        construction: v.construction,
         crop: v.crop_visible,
         hidden_layers: v.hidden_layers.iter().map(LayerId::to_string).collect(),
     }
@@ -168,6 +172,7 @@ pub(crate) fn parse_view(r: ViewRecord) -> Result<(ViewId, View), LoadError> {
         size,
         dimensions: r.dimensions,
         notes: r.notes,
+        construction: r.construction,
         crop_visible: r.crop,
         hidden_layers,
     };

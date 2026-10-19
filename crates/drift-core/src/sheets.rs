@@ -344,6 +344,9 @@ pub struct View {
     pub dimensions: bool,
     /// Show notes and callouts in this view.
     pub notes: bool,
+    /// Show construction geometry in this view on sheets: thin, light dashed guides (off by
+    /// default; points and an import's fill edges stay out).
+    pub construction: bool,
     /// Show the crop and its name on the canvas (Revit's "Crop Region Visible"). Crops never
     /// print.
     pub crop_visible: bool,
@@ -361,6 +364,7 @@ impl View {
             size: crop.size(),
             dimensions: true,
             notes: true,
+            construction: false,
             crop_visible: true,
             hidden_layers: BTreeSet::new(),
         }
@@ -426,6 +430,7 @@ pub struct PlacedView {
     pub frame: ViewFrame,
     pub dimensions: bool,
     pub notes: bool,
+    pub construction: bool,
     /// Layers this view leaves out.
     pub hidden_layers: BTreeSet<LayerId>,
     pub title: bool,
@@ -445,6 +450,7 @@ impl PlacedView {
             },
             dimensions: view.dimensions,
             notes: view.notes,
+            construction: view.construction,
             hidden_layers: view.hidden_layers.clone(),
             title: port.title,
             border: port.border,
@@ -459,6 +465,7 @@ impl PlacedView {
         view.size = self.frame.size * self.scale;
         view.dimensions = self.dimensions;
         view.notes = self.notes;
+        view.construction = self.construction;
         view.hidden_layers.clone_from(&self.hidden_layers);
         port.at = self.frame.at;
         port.title = self.title;

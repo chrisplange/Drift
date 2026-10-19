@@ -121,8 +121,9 @@ and the sheets it's on (or **not placed**).
 
 - **Click** a view to pick it. Its crop shows on the canvas with its grips.
 - **Double-click** it, or click **Zoom to view**, to see its crop in the model.
-- For the picked view: **Name**, **Scale**, and **Show**: **Crop**, **Dimensions** and
-  **Notes**. Dimensions and notes are shown or hidden in this view wherever it's placed.
+- For the picked view: **Name**, **Scale**, and **Show**: **Dimensions**, **Notes**,
+  **Construction** and **Crop**. Dimensions, notes and construction geometry are shown or
+  hidden in this view wherever it's placed.
 - **Referenced by** lists the section and elevation marks that point at the view. Click
   one to pick it in the model.
 - **Delete view** deletes it. If it's on sheets, Drift asks first, and deleting takes it
@@ -175,7 +176,10 @@ Pick a view by clicking it on the sheet. The **Inspector** shows the views on th
   stays as it is on the paper, and the crop changes to suit.
 - **Fill drawing area:** frames the view to the sheet's whole drawing area, after a change
   of paper size, say.
-- **Show:** **Dimensions**, **Notes**, **Title** and **Border**.
+- **Show:** **Dimensions**, **Notes**, **Construction**, **Title** and **Border**.
+  **Construction** puts the view's construction geometry on the sheet as thin, light grey
+  dashed lines (off to start with). It prints and exports to PDF and SVG as the preview
+  shows it, in the sheet's **Colours**. Points and an import's fill edges stay out.
 - **Referenced by:** the marks that point at the view.
 - **Layers:** untick a layer to leave it out of this view, wherever the view is placed:
   a setting-out layer in the plan but not in the details, say. Dimensions and notes on
@@ -232,8 +236,10 @@ which is the model, not a sheet: DXF keeps the layer and item colours.
 
 What goes on paper:
 
-- Construction geometry, points, hidden layers and layers whose print flag is off are left
-  out, and so are the layers a view leaves out (its **Layers**).
+- Points, hidden layers and layers whose print flag is off are left out, and so are the
+  layers a view leaves out (its **Layers**).
+- Construction geometry is left out, except in views whose **Show** has **Construction**
+  ticked. DXF never has it: DXF is the model, not a sheet.
 - Views' crops and names on the canvas are left out. Only the sheet's frames (with
   **Border**) and titles print.
 - Dimensions and notes are left out where a view's **Show** says so, where they're set off

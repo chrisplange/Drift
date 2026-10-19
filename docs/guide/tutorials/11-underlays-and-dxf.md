@@ -16,7 +16,7 @@ Time: about 10 minutes.
 
 ### 1. Import the PDF
 
-1. Choose **File → Import underlay…** (or **Import PDF or DXF…** in the **Layers** panel)
+1. Choose **File → Import underlay…** (or **Import underlay…** in the **Layers** panel)
    and pick a PDF. You can also drop a PDF on Drift's window.
 2. For a PDF of several pages, choose the page.
 

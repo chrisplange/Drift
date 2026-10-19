@@ -1,8 +1,9 @@
 //! Where the side panels are: docked as tabs at either side of the canvas, floating over it
-//! (alone, or stacked one above another in a window), or hidden. This is the layout state only (no egui), so it can be tested directly; the
-//! panels themselves are drawn in `app::dock_ui`.
+//! (alone, or stacked one above another in a window), or hidden. This is the layout state
+//! only (no egui), so it can be tested directly; the panels themselves are drawn in
+//! `app::dock_ui`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// A panel that can be docked, floated or hidden.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -105,6 +106,11 @@ pub struct Layout {
     pub last: HashMap<Panel, Place>,
     /// The dock each panel was last in: where a floating panel goes back to when closed.
     pub home: HashMap<Panel, Side>,
+    /// Each stacked floating panel's share of its window's height, once a divider has been
+    /// dragged (until then a stack shares its height by what the panels hold).
+    pub weights: HashMap<Panel, f32>,
+    /// Stacked floating panels folded to just their header.
+    pub folded: HashSet<Panel>,
 }
 
 impl Default for Layout {
@@ -117,6 +123,8 @@ impl Default for Layout {
             floating: Vec::new(),
             last: HashMap::new(),
             home: HashMap::new(),
+            weights: HashMap::new(),
+            folded: HashSet::new(),
         }
     }
 }
@@ -150,8 +158,9 @@ impl Layout {
         }
     }
 
-    /// Take a panel out of wherever it is, fixing up its dock's front tab.
+    /// Take a panel out of wherever it is, fixing up its dock's front tab (and unfolding it).
     fn take(&mut self, p: Panel) {
+        self.folded.remove(&p);
         for i in 0..2 {
             if let Some(at) = self.docks[i].iter().position(|q| *q == p) {
                 self.docks[i].remove(at);
@@ -322,7 +331,51 @@ impl Layout {
             .collect();
         home.sort_unstable();
         out.push(format!("dock_home_left={}", home.join(",")));
+        let mut weights: Vec<String> = self
+            .weights
+            .iter()
+            .map(|(p, w)| format!("{}:{w}", p.key()))
+            .collect();
+        weights.sort();
+        out.push(format!("dock_weights={}", weights.join(",")));
+        let mut folded: Vec<&str> = self.folded.iter().map(|p| p.key()).collect();
+        folded.sort_unstable();
+        out.push(format!("dock_folded={}", folded.join(",")));
         out
+    }
+
+    /// Fold a stacked panel to its header, or open it again. The last open panel of a stack
+    /// stays open, and a panel on its own doesn't fold.
+    pub fn toggle_fold(&mut self, p: Panel) {
+        if self.folded.remove(&p) {
+            return;
+        }
+        let Some(stack) = self.stack_of(p) else {
+            return;
+        };
+        let open = stack.iter().filter(|q| !self.folded.contains(q)).count();
+        if open > 1 {
+            self.folded.insert(p);
+        }
+    }
+
+    /// The shares of a stack's height its panels were given by dragging its dividers, if any
+    /// were (a panel that joined since gets an average share).
+    pub fn stack_weights(&self, stack: &[Panel]) -> Option<Vec<f32>> {
+        let known: Vec<f32> = stack
+            .iter()
+            .filter_map(|p| self.weights.get(p).copied())
+            .collect();
+        if known.is_empty() {
+            return None;
+        }
+        let mean = known.iter().sum::<f32>() / known.len() as f32;
+        Some(
+            stack
+                .iter()
+                .map(|p| self.weights.get(p).copied().unwrap_or(mean))
+                .collect(),
+        )
     }
 
     /// Read the layout back from `(key, value)` pairs (see [`Layout::prefs`]). Without any
@@ -338,6 +391,8 @@ impl Layout {
             floating: Vec::new(),
             last: HashMap::new(),
             home: HashMap::new(),
+            weights: HashMap::new(),
+            folded: HashSet::new(),
         };
         let panels = |v: &str| -> Vec<Panel> { v.split(',').filter_map(Panel::parse).collect() };
         for (key, value) in pairs {
@@ -362,6 +417,18 @@ impl Layout {
                     let b = value.as_bytes();
                     layout.collapsed = [b.first() == Some(&b'1'), b.get(1) == Some(&b'1')];
                 }
+                "dock_weights" => {
+                    for entry in value.split(',') {
+                        if let Some((p, w)) = entry.split_once(':')
+                            && let (Some(p), Ok(w)) = (Panel::parse(p), w.parse::<f32>())
+                            && w.is_finite()
+                            && w > 0.0
+                        {
+                            layout.weights.insert(p, w);
+                        }
+                    }
+                }
+                "dock_folded" => layout.folded = panels(value).into_iter().collect(),
                 "dock_home_left" => {
                     for p in panels(value) {
                         layout.home.insert(p, Side::Left);
@@ -407,6 +474,18 @@ impl Layout {
             layout.home.insert(p, Side::Left);
         }
         layout.home.retain(|_, side| *side == Side::Left);
+        // Only stacked panels fold, and never all of a stack.
+        let mut folded = HashSet::new();
+        for stack in layout.floating.iter().filter(|s| s.len() > 1) {
+            let mut open = stack.len();
+            for p in stack {
+                if open > 1 && layout.folded.contains(p) {
+                    folded.insert(*p);
+                    open -= 1;
+                }
+            }
+        }
+        layout.folded = folded;
         *self = layout;
     }
 }
@@ -522,6 +601,13 @@ mod tests {
         l.move_to(Panel::Sheets, Place::Hidden, None);
         l.collapsed[0] = true;
         l.active[1] = Some(Panel::Parameters);
+        l.weights.insert(Panel::Inspector, 1.25);
+        l.weights.insert(Panel::Blocks, 0.75);
+        l.toggle_fold(Panel::Blocks);
+        assert!(l.folded.contains(&Panel::Blocks));
+        // The other one can't fold too: one stays open.
+        l.toggle_fold(Panel::Inspector);
+        assert!(!l.folded.contains(&Panel::Inspector));
         let prefs = l.prefs();
         let pairs: Vec<(&str, &str)> = prefs.iter().filter_map(|s| s.split_once('=')).collect();
         let mut back = Layout::default();

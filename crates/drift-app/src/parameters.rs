@@ -43,7 +43,7 @@ fn slider_range(kind: Kind, v: f64) -> (f64, f64) {
 
 impl DriftApp {
     pub(crate) fn parameters_panel(&mut self, ui: &mut egui::Ui, now: f64) {
-        egui::ScrollArea::vertical()
+        let output = egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 // The drawing's units and drafting standard are in Preferences: this tab is
@@ -54,6 +54,7 @@ impl DriftApp {
                 self.measurements_section(ui);
                 self.patterns_section(ui);
             });
+        self.panel_scrolled(ui, crate::dock::Panel::Parameters, &output);
     }
 
     fn patterns_section(&mut self, ui: &mut egui::Ui) {

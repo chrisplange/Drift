@@ -222,7 +222,7 @@ impl DriftApp {
             self.remember(path);
             self.request(Pending::Recent(0));
         } else {
-            // A PDF or DXF is brought into the open sketch, which stays.
+            // A drawing in another format is brought into the open sketch, which stays.
             self.files.open_path(&path);
         }
     }

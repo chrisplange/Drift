@@ -245,7 +245,7 @@ impl DriftApp {
         );
         add(
             Command::ImportUnderlay,
-            "Import underlay (PDF or DXF)…",
+            "Import underlay…",
             "File",
             String::new(),
         );

@@ -39,7 +39,9 @@ pub enum Glyph {
     More,
     ChevronsLeft,
     ChevronsRight,
-    Close,
+    /// Dock a floating panel: a window with a bar along that side, an arrow into it.
+    DockLeft,
+    DockRight,
     Search,
     /// Delete: a bin.
     Delete,
@@ -635,9 +637,27 @@ pub fn glyph(painter: &egui::Painter, rect: Rect, glyph: Glyph, color: Color32) 
                 );
             }
         }
-        Glyph::Close => {
-            p.line((5.5, 5.5), (14.5, 14.5));
-            p.line((14.5, 5.5), (5.5, 14.5));
+        Glyph::DockLeft | Glyph::DockRight => {
+            // Drawn for the right; mirrored for the left.
+            let m = |x: f32| {
+                if glyph == Glyph::DockLeft {
+                    20.0 - x
+                } else {
+                    x
+                }
+            };
+            p.poly(
+                &[
+                    (m(2.5), 4.0),
+                    (m(17.5), 4.0),
+                    (m(17.5), 16.0),
+                    (m(2.5), 16.0),
+                ],
+                true,
+            );
+            p.line((m(12.5), 4.0), (m(12.5), 16.0));
+            p.line((m(5.0), 10.0), (m(8.5), 10.0));
+            p.arrow_head((m(10.5), 10.0), vec2(m(1.0) - m(0.0), 0.0));
         }
         Glyph::Search => {
             p.circle(8.5, 8.5, 5.0);

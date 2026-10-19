@@ -566,8 +566,13 @@ pub fn row(
 }
 
 /// A fade over the bottom of a scrolled list when there is more below it, so a cut-off
-/// row reads as "scroll for more" rather than a clipped edge.
-pub fn fade_bottom(ui: &egui::Ui, output: &egui::scroll_area::ScrollAreaOutput<()>) {
+/// row reads as "scroll for more" rather than a clipped edge. `solid` is the colour behind
+/// the list.
+pub fn fade_bottom(
+    ui: &egui::Ui,
+    output: &egui::scroll_area::ScrollAreaOutput<()>,
+    solid: Color32,
+) {
     let view = output.inner_rect;
     let below = output.content_size.y - (output.state.offset.y + view.height());
     if below < 1.0 {
@@ -575,7 +580,6 @@ pub fn fade_bottom(ui: &egui::Ui, output: &egui::scroll_area::ScrollAreaOutput<(
     }
     let height = 28.0_f32.min(below + 4.0);
     let rect = egui::Rect::from_min_max(egui::pos2(view.left(), view.bottom() - height), view.max);
-    let solid = ui.visuals().panel_fill;
     let mut mesh = egui::Mesh::default();
     mesh.colored_vertex(rect.left_top(), Color32::TRANSPARENT);
     mesh.colored_vertex(rect.right_top(), Color32::TRANSPARENT);

@@ -144,9 +144,10 @@ impl DriftApp {
 
     /// The Blocks tab.
     pub(crate) fn blocks_panel(&mut self, ui: &mut egui::Ui) {
-        egui::ScrollArea::vertical()
+        let output = egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| self.blocks_contents(ui));
+        self.panel_scrolled(ui, crate::dock::Panel::Blocks, &output);
     }
 
     fn blocks_contents(&mut self, ui: &mut egui::Ui) {

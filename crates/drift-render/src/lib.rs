@@ -12,7 +12,7 @@ mod renderer;
 pub use camera::Camera;
 pub use frame::{
     ArcInstance, FillMesh, FillVertex, Frame, Globals, GridInfo, SegmentInstance, Viewport,
-    build_frame, grid_info,
+    build_frame, clip_polygon, grid_info,
 };
 pub use palette::Palette;
 pub use renderer::CanvasRenderer;

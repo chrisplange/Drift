@@ -45,6 +45,53 @@ impl Canvas {
         )
     }
 
+    /// A picture (RGBA, rows from the top) with its top-left corner at `at` and its top and
+    /// left edges along `across` and `down` (page mm).
+    pub fn image(
+        &mut self,
+        image: &drift_core::UnderlayImage,
+        at: DVec2,
+        across: DVec2,
+        down: DVec2,
+        opacity: f64,
+    ) {
+        let premultiplied: Vec<u8> = image
+            .rgba
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .flat_map(|c| {
+                let a = u16::from(c[3]);
+                let m = |v: u8| ((u16::from(v) * a + 127) / 255) as u8;
+                [m(c[0]), m(c[1]), m(c[2]), c[3]]
+            })
+            .collect();
+        let Some(size) = tiny_skia::IntSize::from_wh(image.width, image.height) else {
+            return;
+        };
+        let Some(picture) = Pixmap::from_vec(premultiplied, size) else {
+            return;
+        };
+        let o = self.px(at);
+        let (a, d) = (self.px(at + across), self.px(at + down));
+        let (w, h) = (image.width as f32, image.height as f32);
+        let t = Transform::from_row(
+            (a.0 - o.0) / w,
+            (a.1 - o.1) / w,
+            (d.0 - o.0) / h,
+            (d.1 - o.1) / h,
+            o.0,
+            o.1,
+        );
+        let paint = tiny_skia::PixmapPaint {
+            opacity: opacity.clamp(0.0, 1.0) as f32,
+            quality: tiny_skia::FilterQuality::Bilinear,
+            ..Default::default()
+        };
+        self.pixmap
+            .draw_pixmap(0, 0, picture.as_ref(), &paint, t, None);
+    }
+
     fn path(&self, pts: &[DVec2], closed: bool) -> Option<tiny_skia::Path> {
         let mut b = PathBuilder::new();
         let (x, y) = self.px(*pts.first()?);
@@ -202,7 +249,9 @@ fn pen_px(canvas: &Canvas, pen: &Pen, line_type_scale: f64) -> (f32, Option<Vec<
 }
 
 /// Draw everything on a page.
-pub(super) fn draw(canvas: &mut Canvas, d: &Drawing) {
+/// Draw a page, with `between` drawn over its filled areas and under everything else (as the
+/// canvas draws underlays).
+pub(super) fn draw_over(canvas: &mut Canvas, d: &Drawing, between: impl FnOnce(&mut Canvas)) {
     let d = d.exploded();
     let lts = if d.line_type_scale > 0.0 {
         d.line_type_scale
@@ -210,7 +259,17 @@ pub(super) fn draw(canvas: &mut Canvas, d: &Drawing) {
         1.0
     };
     for it in &d.items {
+        if let Prim::Fill {
+            rings, mask: false, ..
+        } = &it.prim
+        {
+            canvas.fill(rings, it.pen.color, 1.0, FillRule::EvenOdd);
+        }
+    }
+    between(canvas);
+    for it in &d.items {
         match &it.prim {
+            Prim::Fill { mask: false, .. } => {}
             Prim::Fill { rings, mask, .. } => {
                 let c = if *mask {
                     Rgb([255, 255, 255])

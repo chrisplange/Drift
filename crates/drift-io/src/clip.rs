@@ -5,6 +5,9 @@
 //! Béziers). Fills are cut to a clip that is convex (the usual rectangle among them) as
 //! outlines. A fill that crosses a clip of any other shape comes in whole, and is counted, so
 //! the import can say so.
+//!
+//! An opaque fill hides what was painted before it; [`uncovered`] splits a stroke into what
+//! still shows and what the fill covers.
 
 use drift_core::DVec2;
 
@@ -134,6 +137,30 @@ impl Clip {
         odd
     }
 
+    /// How far a point is from the region's outline.
+    fn distance_to_edge(&self, p: DVec2) -> f64 {
+        self.edges()
+            .map(|(a, b)| {
+                let d = b - a;
+                let t = ((p - a).dot(d) / d.length_squared().max(1e-24)).clamp(0.0, 1.0);
+                p.distance(a + d * t)
+            })
+            .fold(f64::INFINITY, f64::min)
+    }
+
+    /// Whether a point is inside, further than `margin` from the outline.
+    pub fn covers(&self, p: DVec2, margin: f64) -> bool {
+        self.contains(p) && self.distance_to_edge(p) > margin
+    }
+
+    /// Its bounding box, corner to corner.
+    pub fn bounds(&self) -> (DVec2, DVec2) {
+        self.rings.iter().flatten().fold(
+            (DVec2::splat(f64::INFINITY), DVec2::splat(f64::NEG_INFINITY)),
+            |(lo, hi), p| (lo.min(*p), hi.max(*p)),
+        )
+    }
+
     fn edges(&self) -> impl Iterator<Item = (DVec2, DVec2)> + '_ {
         self.rings
             .iter()
@@ -246,8 +273,29 @@ fn is_convex(ring: &[DVec2]) -> bool {
 /// A stroked subpath's parts inside a clip: whole if it doesn't cross the clip's edges,
 /// otherwise the runs between crossings that are inside.
 fn stroke_inside(s: &Subpath, clip: &Clip) -> (Vec<Subpath>, bool) {
-    let mut runs: Vec<Subpath> = Vec::new();
-    let mut open: Option<Subpath> = None;
+    let (inside, outside, cut) = split(s, clip, |p| clip.contains(p));
+    (inside, cut || !outside.is_empty())
+}
+
+/// A stroked subpath's parts that still show once an opaque fill over `cover` is painted,
+/// and those it covers. A piece within `margin` of the fill's outline (half the stroke's
+/// width, say: it shows along the edge) still shows.
+pub fn uncovered(s: &Subpath, cover: &Clip, margin: f64) -> (Vec<Subpath>, Vec<Subpath>) {
+    let (covered, shown, _) = split(s, cover, |p| cover.covers(p, margin));
+    (shown, covered)
+}
+
+/// A subpath split where it crosses a region's edges into the runs where `keep` holds and
+/// the runs where it doesn't (each run tested at its middle), and whether it was split. Not
+/// split, it is wholly in one or the other.
+fn split(
+    s: &Subpath,
+    clip: &Clip,
+    keep: impl Fn(DVec2) -> bool,
+) -> (Vec<Subpath>, Vec<Subpath>, bool) {
+    // Runs of each kind (kept, then not), and the one each is building.
+    let mut runs: [Vec<Subpath>; 2] = [Vec::new(), Vec::new()];
+    let mut open: [Option<Subpath>; 2] = [None, None];
     let mut cut = false;
     let mut from = s.start;
     let mut segs: Vec<Seg> = s.segs.clone();
@@ -267,19 +315,16 @@ fn stroke_inside(s: &Subpath, clip: &Clip) -> (Vec<Subpath>, bool) {
             if t1 - t0 < 1e-12 {
                 continue;
             }
-            let inside = clip.contains(point(from, seg, (t0 + t1) / 2.0));
-            if !inside {
-                cut = true;
-                if let Some(run) = open.take() {
-                    runs.push(run);
-                }
-                continue;
+            let kind = usize::from(!keep(point(from, seg, (t0 + t1) / 2.0)));
+            // The other kind's run ends here.
+            if let Some(run) = open[1 - kind].take() {
+                runs[1 - kind].push(run);
             }
             let (start, part) = piece(from, seg, t0, t1);
-            match &mut open {
+            match &mut open[kind] {
                 Some(run) => run.segs.push(part),
                 None => {
-                    open = Some(Subpath {
+                    open[kind] = Some(Subpath {
                         start,
                         segs: vec![part],
                         closed: false,
@@ -289,30 +334,39 @@ fn stroke_inside(s: &Subpath, clip: &Clip) -> (Vec<Subpath>, bool) {
         }
         from = seg.end();
     }
-    if let Some(run) = open.take() {
-        runs.push(run);
+    for kind in 0..2 {
+        if let Some(run) = open[kind].take() {
+            runs[kind].push(run);
+        }
     }
-    if !cut {
-        return (vec![s.clone()], false);
+    let [kept, other] = runs;
+    if other.is_empty() && !cut {
+        return (vec![s.clone()], Vec::new(), false);
+    }
+    if kept.is_empty() && !cut {
+        return (Vec::new(), vec![s.clone()], false);
     }
     // A closed subpath cut open: its last run carries on into its first.
-    if s.closed
-        && runs.len() > 1
-        && let (Some(last), Some(first)) = (runs.last(), runs.first())
-        && last
-            .segs
-            .last()
-            .map_or(last.start, Seg::end)
-            .distance(first.start)
-            < 1e-9
-    {
-        let last = runs.pop().expect("runs");
-        let first = runs.remove(0);
-        let mut joined = last;
-        joined.segs.extend(first.segs);
-        runs.insert(0, joined);
-    }
-    (runs, true)
+    let rejoin = |mut runs: Vec<Subpath>| {
+        if s.closed
+            && runs.len() > 1
+            && let (Some(last), Some(first)) = (runs.last(), runs.first())
+            && last
+                .segs
+                .last()
+                .map_or(last.start, Seg::end)
+                .distance(first.start)
+                < 1e-9
+        {
+            let last = runs.pop().expect("runs");
+            let first = runs.remove(0);
+            let mut joined = last;
+            joined.segs.extend(first.segs);
+            runs.insert(0, joined);
+        }
+        runs
+    };
+    (rejoin(kept), rejoin(other), true)
 }
 
 /// A filled subpath cut to a convex clip, as an outline of points (Sutherland–Hodgman).

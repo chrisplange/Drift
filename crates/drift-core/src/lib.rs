@@ -42,5 +42,5 @@ pub use sheets::{
     TitleFields, View, ViewFrame, ViewId, Viewport,
 };
 pub use texts::{SketchText, TextAlign, TextFont, TextId};
-pub use underlays::{RefPrim, Underlay, UnderlayId};
+pub use underlays::{RefPrim, Underlay, UnderlayId, UnderlayImage};
 pub use units::{Kind, LengthFormat, Quantity, Units};

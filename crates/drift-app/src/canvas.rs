@@ -1,7 +1,9 @@
 //! Bridges the egui UI and [`drift_render::CanvasRenderer`] through an egui-wgpu paint callback.
 
 use drift_core::{DVec2, SketchItem};
-use drift_render::{Camera, CanvasRenderer, FillMesh, Frame, Palette, Viewport, build_frame};
+use drift_render::{
+    Camera, CanvasImage, CanvasRenderer, FillMesh, Frame, Palette, Viewport, build_frame,
+};
 use eframe::egui;
 use eframe::egui_wgpu::{self, wgpu};
 
@@ -9,11 +11,13 @@ use eframe::egui_wgpu::{self, wgpu};
 /// resources so it can be reached from the render thread.
 /// How the canvas is drawn this frame.
 /// What the canvas draws: curves under everything (hatch lines, underlays), the sketch's
-/// curves on top, and filled areas (beneath both).
+/// curves on top, filled areas (beneath both), and underlays' pictures (over the fills,
+/// under the curves).
 pub struct CanvasContent<'a> {
     pub under: &'a [SketchItem],
     pub items: &'a [SketchItem],
     pub fills: &'a [FillMesh],
+    pub images: &'a [CanvasImage],
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -54,6 +58,7 @@ impl CanvasPainter {
             under,
             items,
             fills,
+            images,
         } = content;
         let palette = if options.dark_mode {
             Palette::dark()
@@ -73,6 +78,7 @@ impl CanvasPainter {
         let mut frame = build_frame(items, camera, viewport, &palette);
         frame.push_under(under, camera, viewport, &palette);
         frame.push_fills(fills, camera, viewport);
+        frame.push_images(images, camera, viewport);
         egui_wgpu::Callback::new_paint_callback(rect, CanvasCallback { frame })
     }
 }

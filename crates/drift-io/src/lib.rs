@@ -6,7 +6,7 @@
 //! ```json
 //! {
 //!   "format": "drift",
-//!   "version": 32,
+//!   "version": 33,
 //!   "meta": {"title":"Bracket","units":"mm","generator":"Drift 0.1.0"},
 //!   "display": {"length":"architectural","fraction":16},
 //!   "variables": [
@@ -50,7 +50,9 @@ pub mod dwg_import;
 pub mod dxf;
 mod dxf_import;
 mod fonts;
+mod icc;
 pub mod pdf;
+mod pdf_image;
 pub mod pdf_import;
 mod pdf_text;
 mod sheets;
@@ -89,8 +91,8 @@ pub const EXTENSION: &str = "drift";
 /// 30 = adds the `project` the sheets share (name, number, client, address, company and
 /// field set) and a sheet's `status`; 31 = a `shown` entry's `views` (a dimension or
 /// annotation drawn in those views only); 32 = adds a view's `construction` (construction
-/// geometry shown on sheets).
-pub const FORMAT_VERSION: u32 = 32;
+/// geometry shown on sheets); 33 = adds an underlay's `images` (pictures from a PDF page).
+pub const FORMAT_VERSION: u32 = 33;
 const FORMAT_TAG: &str = "drift";
 
 /// Document-level properties stored alongside the geometry.
@@ -1869,7 +1871,7 @@ mod tests {
         let text = save(&doc, &Metadata::default());
         let expected = r#"{
   "format": "drift",
-  "version": 32,
+  "version": 33,
   "meta": {"units":"mm"},
   "entities": [
     {"type":"point","id":"e1","at":[0.0,0.0]},
@@ -2863,7 +2865,17 @@ mod tests {
         plan.snap = false;
         plan.locked = true;
         doc.add_underlay(plan);
-        doc.add_underlay(drift_core::Underlay::new("Survey", "", Vec::new()));
+        // A survey with a picture only (two pixels, one half see-through).
+        let mut survey = drift_core::Underlay::new("Survey", "", Vec::new());
+        survey.images = std::sync::Arc::new(vec![drift_core::UnderlayImage {
+            width: 2,
+            height: 1,
+            rgba: std::sync::Arc::new(vec![255, 0, 0, 255, 0, 0, 255, 128]),
+            at: DVec2::new(0.0, 10.0),
+            across: DVec2::new(20.0, 0.0),
+            down: DVec2::new(0.0, -10.0),
+        }]);
+        doc.add_underlay(survey);
         let mut sign = drift_core::SketchText::new("EXIT → 2", DVec2::new(5.0, -40.0), 12.5);
         sign.angle = 15.0;
         sign.font = drift_core::TextFont::Mono;
@@ -2872,7 +2884,7 @@ mod tests {
         doc.add_text(drift_core::SketchText::new("A", DVec2::ZERO, 3.0));
 
         let text = save(&doc, &Metadata::default());
-        assert!(text.contains("\"version\": 32"));
+        assert!(text.contains("\"version\": 33"));
         // A mark points at its view.
         assert!(text.contains(r#""flip":true,"view":"w"#), "{text}");
         assert!(text.contains(r#""styles": ["#) && text.contains(r#""alt_units":"none""#));
@@ -2885,6 +2897,12 @@ mod tests {
         );
         assert!(text.contains(r#""below":"TO FACE OF STUD""#) && text.contains(r#""text":"EQ""#));
         assert!(text.contains(r#""shown": ["#) && text.contains(r#""canvas":false"#));
+        assert!(
+            text.contains(
+                r#""images":[{"at":[0.0,10.0],"across":[20.0,0.0],"down":[0.0,-10.0],"png":"iVBOR"#
+            ),
+            "{text}"
+        );
         let (loaded, _) = load(&text).unwrap();
         assert_eq!(loaded, doc);
         assert_eq!(save(&loaded, &Metadata::default()), text);

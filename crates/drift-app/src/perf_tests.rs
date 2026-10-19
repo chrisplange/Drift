@@ -568,6 +568,7 @@ pub(crate) fn sheet_import(cells: usize, fill_every: usize) -> drift_io::dxf::Dx
                 scale: 1.0,
                 angle: 0.0,
                 color: None,
+                opacity: None,
                 seeds: Vec::new(),
             });
         }

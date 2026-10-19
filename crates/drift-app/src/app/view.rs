@@ -634,6 +634,7 @@ impl DriftApp {
         );
         // Geometry (GPU): underlays and hatch lines under everything else.
         let mut under = self.editor.underlay_items(view, ui.visuals().dark_mode);
+        let images = self.editor.underlay_images();
         under.extend(fills.lines);
         let mut items = Vec::new();
         if self.show_dimensions {
@@ -689,6 +690,7 @@ impl DriftApp {
                 under: &under,
                 items: &items,
                 fills: &fills.meshes,
+                images: &images,
             },
             &self.camera,
             crate::canvas::CanvasOptions {

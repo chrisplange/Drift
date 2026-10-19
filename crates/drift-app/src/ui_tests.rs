@@ -4809,6 +4809,89 @@ fn angle_snap_is_on_the_status_bar() {
     assert_eq!(h.state().angle_snap, None);
 }
 
+/// Geometry an import puts far off is listed in its report, with a way to pick it; an edit
+/// that puts geometry far off (a slipped exponent) is warned about in the status bar.
+#[test]
+fn far_off_geometry_is_reported() {
+    let Some(mut h) = harness() else { return };
+    let line = |x: &'static str| {
+        [
+            (0, "LINE"),
+            (8, "0"),
+            (10, x),
+            (20, "0"),
+            (11, "100"),
+            (21, "50"),
+        ]
+    };
+    let mut pairs = vec![(0, "SECTION"), (2, "ENTITIES")];
+    pairs.extend(line("0"));
+    pairs.extend(line("5e12"));
+    pairs.extend([(0, "ENDSEC"), (0, "EOF")]);
+    let text: String = pairs
+        .iter()
+        .map(|(c, v)| {
+            format!(
+                "{c:>3}
+{v}
+"
+            )
+        })
+        .collect();
+    h.state_mut().import_dxf("stray.dxf", &text, 0.0);
+    h.run_steps(3);
+    let report = h.state().import_report.clone().expect("a report");
+    assert_eq!(report.far.len(), 1);
+    let stray = report.far[0];
+    // The import says so in its report, not also in the status bar.
+    let status = h.state().status.as_ref().map(|s| s.text.clone());
+    assert!(
+        status
+            .as_ref()
+            .is_some_and(|t| t.starts_with("Imported 2 curves")),
+        "{status:?}"
+    );
+    h.get_by_label("Select them").click();
+    h.run_steps(2);
+    assert!(h.state().import_report.is_none());
+    assert_eq!(
+        h.state()
+            .editor
+            .selection
+            .iter()
+            .copied()
+            .collect::<Vec<_>>(),
+        vec![stray]
+    );
+
+    // An edit: a circle typed 1e12 across.
+    let ed = &mut h.state_mut().editor;
+    ed.doc.begin();
+    let c = ed.doc.add_point(DVec2::ZERO);
+    ed.doc.add_circle(c, 1e12).unwrap();
+    assert!(ed.commit("Circle"));
+    h.run();
+    let status = h.state().status.as_ref().expect("a warning");
+    assert!(status.error);
+    assert!(
+        status
+            .text
+            .contains("100,000 km from the origin now: 1 curve."),
+        "{}",
+        status.text
+    );
+    // Ordinary edits don't warn.
+    h.state_mut().status = None;
+    let ed = &mut h.state_mut().editor;
+    ed.doc.begin();
+    let c = ed.doc.add_point(DVec2::new(10.0, 10.0));
+    ed.doc.add_circle(c, 5.0).unwrap();
+    assert!(ed.commit("Circle"));
+    h.run();
+    assert!(h.state().editor.far_off.is_empty());
+    assert!(h.state().status.is_none());
+}
+
 #[test]
 fn a_dxf_from_a_live_project_comes_in_whole() {
     let Some(mut h) = harness() else { return };

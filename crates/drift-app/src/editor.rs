@@ -270,6 +270,9 @@ pub struct Editor {
     analyzed: Option<u64>,
     /// A message for the UI explaining a refused edit.
     pub notice: Option<String>,
+    /// Geometry the last commit put far off (see [`drift_core::FAR_MM`]), for the UI to
+    /// warn about: an import lists it in its report, anything else says so in the status bar.
+    pub far_off: Vec<EntityId>,
     /// Entities to emphasise because a related constraint is hovered or selected.
     pub highlight: BTreeSet<EntityId>,
     /// A dimension just created by a tool, whose value the UI should let the user type.
@@ -538,6 +541,7 @@ impl Editor {
         self.make_new_curves_construction();
         self.follow_fills();
         let tx = self.doc.commit(label);
+        self.far_off = self.far_off_of(tx.entities());
         self.history.push(tx);
         self.sync();
         true

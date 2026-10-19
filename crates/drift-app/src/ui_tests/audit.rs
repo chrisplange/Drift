@@ -299,6 +299,7 @@ fn dialogs(dark: bool) {
             "1 dimension was read as lines and text.".into(),
             "Objects drawn on layouts came in on their own sheets.".into(),
         ],
+        far: Vec::new(),
     });
     shot(dark, "44-import-report", &mut h);
     h.state_mut().import_report = None;

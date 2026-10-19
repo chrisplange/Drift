@@ -281,11 +281,19 @@ pub(super) fn import(s: &mut Session, a: &Value) -> Res {
         .filter(|id| ed.doc.get(**id).is_some_and(|e| !e.kind.is_point()))
         .count();
     let b = ed.bounds_of(&made);
+    let far = std::mem::take(&mut ed.far_off);
+    let mut notes = report.notes.clone();
+    if !far.is_empty() {
+        notes.push(format!(
+            "more than 100,000 km from the origin (likely stray objects): {}",
+            crate::checker::far_off_count(&ed.doc, &far)
+        ));
+    }
     Ok(json!({
         "curves": curves,
         "bounds": b.map(|b| json!([args::num(b.min.x), args::num(b.min.y), args::num(b.max.x), args::num(b.max.y)])),
         "skipped": report.skipped.iter().map(|(what, n)| format!("{n} {what}")).collect::<Vec<_>>(),
-        "notes": report.notes,
+        "notes": notes,
     }))
 }
 

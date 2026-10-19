@@ -395,6 +395,16 @@ impl Transaction {
     pub fn is_empty(&self) -> bool {
         self.changes.is_empty()
     }
+
+    /// The entities it added or changed (not those it removed).
+    pub fn entities(&self) -> impl Iterator<Item = EntityId> + '_ {
+        self.changes
+            .iter()
+            .filter_map(|(key, _, after)| match (key, after) {
+                (Key::Entity(id), Some(_)) => Some(*id),
+                _ => None,
+            })
+    }
 }
 
 #[derive(Clone, Debug)]

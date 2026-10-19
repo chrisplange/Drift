@@ -2132,12 +2132,29 @@ pub fn add_to_document(doc: &mut Document, import: &DxfImport) -> ImportReport {
         dimensions: import.dimensions,
         ..Default::default()
     };
-    let mut extent = drift_core::Bounds::EMPTY;
+    // The drawing's size, for the tolerance ends are joined within. A stray object far off
+    // (as files from other programs often have) isn't part of it: counted in, it would join
+    // every end of the real drawing to its neighbours. (Unless everything is far off.)
     let hatch_shapes = import.hatches.iter().flat_map(|h| h.loops.iter().flatten());
-    for shape in import.entities.iter().map(|e| &e.shape).chain(hatch_shapes) {
-        let b = shape.bounds();
-        extent.include(b.min);
-        extent.include(b.max);
+    let shapes: Vec<&Shape> = import
+        .entities
+        .iter()
+        .map(|e| &e.shape)
+        .chain(hatch_shapes)
+        .collect();
+    let extent_of = |skip_far: bool| {
+        let mut extent = drift_core::Bounds::EMPTY;
+        for b in shapes.iter().map(|s| s.bounds()) {
+            if !(skip_far && b.is_far_off()) {
+                extent.include(b.min);
+                extent.include(b.max);
+            }
+        }
+        extent
+    };
+    let mut extent = extent_of(true);
+    if extent.is_empty() {
+        extent = extent_of(false);
     }
     let tol = if extent.is_empty() {
         1e-9

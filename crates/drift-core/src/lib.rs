@@ -21,7 +21,7 @@ pub mod underlays;
 pub mod units;
 
 pub use blocks::{Block, BlockId, BlockItem, Instance, InstanceId};
-pub use bounds::Bounds;
+pub use bounds::{Bounds, FAR_MM};
 pub use constraint::{Constraint, ConstraintId, Slot};
 pub use document::{
     Document, DocumentError, Entity, EntityId, EntityKind, History, MeasurementId, Transaction,

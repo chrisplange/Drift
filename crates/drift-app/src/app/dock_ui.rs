@@ -56,6 +56,8 @@ pub(crate) struct DockView {
     /// Each floating panel as last drawn, and each floating window (by its top panel).
     stacked: Vec<(Panel, egui::Rect)>,
     windows: HashMap<Panel, egui::Rect>,
+    /// The floating windows as drawn the frame before (`windows` fills as they are drawn).
+    last_windows: HashMap<Panel, egui::Rect>,
     /// How tall each panel's contents were when last drawn (nothing cut off).
     content: HashMap<Panel, f32>,
     /// The header of each floating panel as last drawn (the part that docks it when dragged).
@@ -475,7 +477,7 @@ impl DriftApp {
     /// canvas).
     pub(crate) fn floating_panels(&mut self, ctx: &egui::Context) {
         self.dock_view.stacked.clear();
-        self.dock_view.windows.clear();
+        self.dock_view.last_windows = std::mem::take(&mut self.dock_view.windows);
         if self.dock_view.hide_all {
             return;
         }
@@ -495,10 +497,13 @@ impl DriftApp {
             let step = 26.0 * k as f32;
             let tall = (300.0 * n as f32).max(440.0).min(most - 28.0);
             let least = MIN_PANEL * n as f32 + DIVIDER * (n - 1) as f32;
+            // Every panel folded: a window just the headers, as wide as it was.
+            let shut = stack.iter().all(|p| self.layout.folded.contains(p));
+            let headers = (HEADER * n as f32 + DIVIDER * (n - 1) as f32).min(most);
             // A window per stack, named by its top panel and how many it holds, so a stack
             // that changes starts at its new size (and at the place it was, see `float_at`).
             let mut window = egui::Window::new(top.title())
-                .id(egui::Id::new(("floating_panel", top.key(), n)))
+                .id(egui::Id::new(("floating_panel", top.key(), n, shut)))
                 .title_bar(false)
                 .resizable(true)
                 .movable(true)
@@ -507,11 +512,23 @@ impl DriftApp {
                 .min_width(240.0)
                 .min_height(least.min(most))
                 .max_height(most)
-                .pivot(egui::Align2::RIGHT_TOP)
-                .default_pos(canvas.right_top() + egui::vec2(-14.0 - step, 14.0 + step))
+                // Placed by its top left (see `float_at`), at first in the canvas's top right.
+                .default_pos(canvas.right_top() + egui::vec2(-314.0 - step, 14.0 + step))
                 .constrain_to(canvas);
+            // As wide as it was last frame (a window new to this stack: the default width).
+            let width = self
+                .dock_view
+                .last_windows
+                .get(&top)
+                .map_or(300.0, |r| r.width());
+            if shut {
+                window = window
+                    .resizable(false)
+                    .min_height(headers)
+                    .fixed_size([width, headers]);
+            }
             if let Some(at) = self.dock_view.float_at.remove(&top) {
-                window = window.pivot(egui::Align2::LEFT_TOP).current_pos(at);
+                window = window.current_pos(at);
             }
             let alt = ctx.input(|i| i.modifiers.alt);
             let shown = window.show(ctx, |ui| {
@@ -523,7 +540,7 @@ impl DriftApp {
                 let room = (ui.available_height() - DIVIDER * (n - 1) as f32).max(0.0);
                 let folded: Vec<bool> = stack
                     .iter()
-                    .map(|p| n > 1 && self.layout.folded.contains(p))
+                    .map(|p| self.layout.folded.contains(p))
                     .collect();
                 let heights = self.stack_heights(&stack, &folded, room);
                 let width = ui.available_width();
@@ -783,8 +800,7 @@ impl DriftApp {
     /// out of its stack (see [`Header`]).
     fn float_header(&mut self, ui: &mut egui::Ui, p: Panel, role: Header, folded: bool) {
         let sense = match role {
-            Header::Alone => egui::Sense::hover(),
-            Header::Top => egui::Sense::click(),
+            Header::Alone | Header::Top => egui::Sense::click(),
             Header::Pulls => egui::Sense::click_and_drag(),
         };
         let (bar, response) =
@@ -806,7 +822,7 @@ impl DriftApp {
         if on_bar && response.hovered() {
             response.clone().on_hover_text(match role {
                 Header::Alone => {
-                    "Drag to move it; onto a dock to dock it, or onto another \
+                    "Click to fold · drag to move it; onto a dock to dock it, or onto another \
                                   panel to stack them"
                 }
                 Header::Top => {
@@ -816,7 +832,14 @@ impl DriftApp {
                 Header::Pulls => "Click to fold · drag to pull it out of the stack",
             });
         }
-        if role != Header::Alone && response.clicked() {
+        if response.clicked() {
+            // Folding the last open panel, or opening one of a folded stack, changes its
+            // window's size (a new one): keep it where it is.
+            if let Some(top) = self.layout.stack_of(p).map(|s| s[0])
+                && let Some(r) = self.dock_view.last_windows.get(&top)
+            {
+                self.dock_view.float_at.insert(top, r.left_top());
+            }
             self.layout.toggle_fold(p);
         }
         let text = ui.visuals().strong_text_color();
@@ -842,7 +865,7 @@ impl DriftApp {
             egui::FontId::new(13.0, theme::bold()),
             text,
         );
-        if role != Header::Alone {
+        {
             // Down when open, right when folded.
             let c = egui::pos2(title.right() + 10.0, bar.center().y);
             let color = if on_bar {

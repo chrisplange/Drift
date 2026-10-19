@@ -344,17 +344,10 @@ impl Layout {
         out
     }
 
-    /// Fold a stacked panel to its header, or open it again. The last open panel of a stack
-    /// stays open, and a panel on its own doesn't fold.
+    /// Fold a floating panel to its header, or open it again. With every panel of a stack
+    /// folded (or one floating alone), its window is just the headers.
     pub fn toggle_fold(&mut self, p: Panel) {
-        if self.folded.remove(&p) {
-            return;
-        }
-        let Some(stack) = self.stack_of(p) else {
-            return;
-        };
-        let open = stack.iter().filter(|q| !self.folded.contains(q)).count();
-        if open > 1 {
+        if !self.folded.remove(&p) && self.stack_of(p).is_some() {
             self.folded.insert(p);
         }
     }
@@ -605,7 +598,9 @@ mod tests {
         l.weights.insert(Panel::Blocks, 0.75);
         l.toggle_fold(Panel::Blocks);
         assert!(l.folded.contains(&Panel::Blocks));
-        // The other one can't fold too: one stays open.
+        // The other one folds too (the window shrinks to the headers), and opens again.
+        l.toggle_fold(Panel::Inspector);
+        assert!(l.folded.contains(&Panel::Inspector));
         l.toggle_fold(Panel::Inspector);
         assert!(!l.folded.contains(&Panel::Inspector));
         let prefs = l.prefs();

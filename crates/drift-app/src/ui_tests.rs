@@ -1164,20 +1164,129 @@ fn stacked_panels_fold_to_their_headers() {
         (after.height() - window.height()).abs() < 1.0,
         "{window:?} → {after:?}"
     );
-    // The top one folds too; then the last open one can't.
+    // The top one folds too, and then the last open one: the window shrinks to the three
+    // headers, where it was.
     click(&mut h, Panel::Layers);
     click(&mut h, Panel::Inspector);
-    assert_eq!(
-        h.state().layout.folded,
-        [Panel::Layers, Panel::Parameters].into_iter().collect()
+    assert_eq!(h.state().layout.folded, stack.into_iter().collect());
+    let (_, shut) = h.state().floating_rects(Panel::Layers).unwrap();
+    save_png("drift_ui_stack_all_folded.png", &mut h);
+    assert!(
+        (shut.height() - (3.0 * 34.0 + 2.0 * 7.0)).abs() < 12.0,
+        "{shut:?}"
     );
-    // And opens again.
+    assert!(
+        (shut.left_top() - window.left_top()).length() < 1.0,
+        "{window:?} → {shut:?}"
+    );
+    // One opens again, and the window has its size back.
     click(&mut h, Panel::Parameters);
     assert!(!h.state().layout.folded.contains(&Panel::Parameters));
+    let (_, again) = h.state().floating_rects(Panel::Layers).unwrap();
+    assert!(
+        (again.height() - window.height()).abs() < 1.0,
+        "{window:?} → {again:?}"
+    );
     assert_eq!(
         h.state().layout.floating,
         [stack.to_vec()],
         "clicks don't move panels"
+    );
+}
+
+#[test]
+fn a_panel_floating_alone_folds_its_window_to_the_header() {
+    let Some(mut h) = harness() else { return };
+    h.state_mut()
+        .layout
+        .move_to(Panel::Layers, Place::Float, None);
+    h.run_steps(6);
+    let window = |h: &Harness<'_, DriftApp>| h.state().floating_rects(Panel::Layers).unwrap().1;
+    let open = window(&h);
+    let click = |h: &mut Harness<'_, DriftApp>| {
+        let at =
+            h.state().header_rect(Panel::Layers).unwrap().left_center() + egui::vec2(40.0, 0.0);
+        h.hover_at(at);
+        h.run_steps(2);
+        button(h, at, true);
+        h.run_steps(2);
+        button(h, at, false);
+        h.run_steps(6);
+    };
+    // A click on its header folds it: the window shrinks to the header, in place.
+    click(&mut h);
+    assert!(h.state().layout.folded.contains(&Panel::Layers));
+    let shut = window(&h);
+    save_png("drift_ui_float_folded.png", &mut h);
+    assert!(shut.height() < 50.0, "{shut:?}");
+    assert!(
+        (shut.left_top() - open.left_top()).length() < 1.0,
+        "{open:?} → {shut:?}"
+    );
+    assert!((shut.width() - open.width()).abs() < 1.0);
+    // Another opens it again at the size it had.
+    click(&mut h);
+    assert!(!h.state().layout.folded.contains(&Panel::Layers));
+    let again = window(&h);
+    assert!(
+        (again.height() - open.height()).abs() < 1.0,
+        "{open:?} → {again:?}"
+    );
+    assert!((again.left_top() - open.left_top()).length() < 1.0);
+}
+
+#[test]
+fn a_folded_stack_opens_again_where_it_was() {
+    let Some(mut h) = harness() else { return };
+    h.state_mut()
+        .layout
+        .move_to(Panel::Layers, Place::Float, None);
+    h.state_mut()
+        .layout
+        .stack(Panel::Inspector, Panel::Layers, true);
+    h.run_steps(6);
+    let window = |h: &Harness<'_, DriftApp>| h.state().floating_rects(Panel::Layers).unwrap().1;
+    // Move the window by its top header, away from where it starts.
+    let header = h.state().header_rect(Panel::Layers).unwrap();
+    let from = header.left_center() + egui::vec2(40.0, 0.0);
+    drag_steps(&mut h, from, from + egui::vec2(-300.0, 60.0), 10, None);
+    h.run_steps(6);
+    let open = window(&h);
+    let click = |h: &mut Harness<'_, DriftApp>, p| {
+        let at = h.state().header_rect(p).unwrap().left_center() + egui::vec2(40.0, 0.0);
+        h.hover_at(at);
+        h.run_steps(2);
+        button(h, at, true);
+        h.run_steps(2);
+        button(h, at, false);
+        h.run_steps(6);
+    };
+    click(&mut h, Panel::Inspector);
+    click(&mut h, Panel::Layers);
+    let shut = window(&h);
+    assert!(
+        (shut.left_top() - open.left_top()).length() < 1.0,
+        "{open:?} → {shut:?}"
+    );
+    click(&mut h, Panel::Layers);
+    let again = window(&h);
+    assert!(
+        (again.left_top() - open.left_top()).length() < 1.0,
+        "{open:?} → {again:?}"
+    );
+    // Moved while folded, it opens where it was moved to (kept inside the canvas, so moved
+    // across: lower down, the open window would be nudged up to fit).
+    click(&mut h, Panel::Layers);
+    let header = h.state().header_rect(Panel::Layers).unwrap();
+    let from = header.left_center() + egui::vec2(40.0, 0.0);
+    drag_steps(&mut h, from, from + egui::vec2(200.0, 0.0), 10, None);
+    h.run_steps(6);
+    let moved = window(&h);
+    click(&mut h, Panel::Layers);
+    let again = window(&h);
+    assert!(
+        (again.left_top() - moved.left_top()).length() < 1.0,
+        "{moved:?} → {again:?}"
     );
 }
 
@@ -3057,9 +3166,11 @@ fn panels_float_dock_and_switch_layers() {
     }
     save_png("drift_ui_panel_dragging.png", &mut h);
     button(&h, canvas, false);
-    h.run();
-    h.run();
+    // (The new window appears under the pointer, where it was dropped, and stays there.)
+    h.run_steps(8);
     assert_eq!(h.state().layout.place(Panel::Layers), Place::Float);
+    let window = h.state().floating_rects(Panel::Layers).unwrap().1;
+    assert!(window.contains(canvas), "{window:?} under {canvas:?}");
     // The right dock shows the next tab.
     assert_eq!(h.state().layout.active[1], Some(Panel::Sheets));
     save_png("drift_ui_layers_floating.png", &mut h);

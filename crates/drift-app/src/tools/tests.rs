@@ -299,6 +299,105 @@ fn cancelling_a_grab_restores_the_geometry() {
 }
 
 /// The single arc in the document: (centre, start, end) positions.
+/// Line A from (0, 0) to (100, 0), slightly tilted, and line B standing on it from A's
+/// midpoint, 50 long, with B ⟂ A; nothing fixed. A is selected: (editor, A's ends, B's ends).
+fn tee_fixture() -> (Editor, [EntityId; 2], [EntityId; 2]) {
+    let u = DVec2::from_angle(0.3);
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    let a0 = ed.doc.add_point(v(0.0, 0.0));
+    let a1 = ed.doc.add_point(u * 100.0);
+    let a = ed.doc.add_line(a0, a1).unwrap();
+    let b0 = ed.doc.add_point(u * 50.0);
+    let b1 = ed.doc.add_point(u * 50.0 + u.perp() * 50.0);
+    let b = ed.doc.add_line(b0, b1).unwrap();
+    ed.doc
+        .add_constraint(Constraint::Midpoint { point: b0, line: a })
+        .unwrap();
+    ed.doc
+        .add_constraint(Constraint::Perpendicular { a, b })
+        .unwrap();
+    ed.commit("Setup");
+    ed.selection = [a].into();
+    (ed, [a0, a1], [b0, b1])
+}
+
+#[test]
+fn moving_a_line_carries_the_line_on_it_without_stretching_it() {
+    // #90: B hangs from A's midpoint. Moving A drags B's foot along; B mustn't stretch to
+    // keep its far end still, but follow at its length (it may turn).
+    let (mut ed, a, b) = tee_fixture();
+    let mut tool = SelectTool::default();
+    let start = ends(&ed, a)[0].lerp(ends(&ed, a)[1], 0.25);
+    grab(&mut ed, &mut tool, start);
+    for i in 1..=20 {
+        let t = f64::from(i) / 20.0;
+        hover(&mut ed, &mut tool, start + v(150.0, 100.0) * t);
+        let [b0, b1] = ends(&ed, b);
+        assert!(((b1 - b0).length() - 50.0).abs() < 1e-3, "live: {b0} {b1}");
+    }
+    click(&mut ed, &mut tool, start + v(150.0, 100.0));
+    let [a0, a1] = ends(&ed, a);
+    let [b0, b1] = ends(&ed, b);
+    assert!(((a1 - a0).length() - 100.0).abs() < 1e-6, "A moved rigidly");
+    assert!(
+        ((b1 - b0).length() - 50.0).abs() < 1e-3,
+        "B keeps its length: {}",
+        (b1 - b0).length()
+    );
+    // The relations still hold.
+    assert!(
+        (b0 - (a0 + a1) / 2.0).length() < 1e-6,
+        "B's foot at A's midpoint"
+    );
+    assert!(
+        (a1 - a0).normalize().dot((b1 - b0).normalize()).abs() < 1e-6,
+        "B ⟂ A"
+    );
+}
+
+#[test]
+fn a_carried_line_still_stretches_where_its_relations_say() {
+    // Keeping the length is only a preference: with its far end fixed, B has to stretch.
+    let (mut ed, a, b) = tee_fixture();
+    let far = ends(&ed, b)[1];
+    ed.doc.begin();
+    ed.doc
+        .add_constraint(Constraint::Fix {
+            point: b[1],
+            at: far,
+        })
+        .unwrap();
+    ed.commit("Fix");
+    let mut tool = SelectTool::default();
+    let start = ends(&ed, a)[0];
+    grab(&mut ed, &mut tool, start);
+    let shift = (far - ends(&ed, b)[0]).normalize() * -20.0;
+    hover(&mut ed, &mut tool, start + shift);
+    click(&mut ed, &mut tool, start + shift);
+    let [b0, b1] = ends(&ed, b);
+    assert!((b1 - far).length() < 1e-9, "B's far end stays fixed");
+    assert!(((b1 - b0).length() - 70.0).abs() < 1e-6, "{b0} {b1}");
+    // A lands exactly where it was moved.
+    assert!((ends(&ed, a)[0] - (start + shift)).length() < 1e-6);
+}
+
+#[test]
+fn dragging_an_end_still_stretches_its_line() {
+    // Keeping lengths is for lines carried along by a move: grabbing an end reshapes its line.
+    let (mut ed, _, b) = tee_fixture();
+    let [_, far] = b;
+    ed.selection = [far].into();
+    let at = ends(&ed, b)[1];
+    let out = (at - ends(&ed, b)[0]).normalize() * 30.0;
+    let mut tool = SelectTool::default();
+    grab(&mut ed, &mut tool, at);
+    hover(&mut ed, &mut tool, at + out);
+    click(&mut ed, &mut tool, at + out);
+    let [b0, b1] = ends(&ed, b);
+    assert!(((b1 - b0).length() - 80.0).abs() < 1e-3, "{b0} {b1}");
+}
+
 fn the_arc(ed: &Editor) -> (EntityId, [DVec2; 3]) {
     let arcs: Vec<_> = ed
         .doc

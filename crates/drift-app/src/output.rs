@@ -953,16 +953,7 @@ pub fn paint_drawing(
                     *at,
                     angle.to_degrees(),
                 );
-                let rings = drift_draft::outline::contour_rings(&contours);
-                let mut mesh = egui::Mesh::default();
-                for t in drift_draft::logo::triangulate(&rings, false) {
-                    let base = mesh.vertices.len() as u32;
-                    for q in t {
-                        mesh.colored_vertex(to_screen(q), color);
-                    }
-                    mesh.add_triangle(base, base + 1, base + 2);
-                }
-                p.add(egui::Shape::mesh(mesh));
+                fill_outlines(p, &contours, &to_screen, color);
             }
             Prim::Text {
                 at,
@@ -979,6 +970,40 @@ pub fn paint_drawing(
                     .map_or(CAP_HEIGHT, |f| f.face(style.bold).cap_ratio());
                 let size = (*height / cap) as f32 * px;
                 if size < 1.5 {
+                    continue;
+                }
+                // Past a size egui's font atlas can't hold a glyph of, the text's outlines,
+                // filled (as the PDF has them).
+                if size > MAX_GLYPH_PX {
+                    let builtin;
+                    let face = match &d.font {
+                        Some(f) => f.face(style.bold),
+                        None => {
+                            let data = drift_draft::outline::builtin_font(false);
+                            let Some(f) = drift_draft::font::Face::new(data, 0) else {
+                                continue;
+                            };
+                            builtin = f;
+                            &builtin
+                        }
+                    };
+                    let width = face.width(text, *height, style.tracking);
+                    let shift = match align {
+                        Align::Left => 0.0,
+                        Align::Center => width / 2.0,
+                        Align::Right => width,
+                    };
+                    let start = *at - DVec2::from_angle(*angle) * shift;
+                    let contours = drift_draft::outline::contours_in(
+                        &face.data,
+                        face.index,
+                        text,
+                        *height,
+                        start,
+                        angle.to_degrees(),
+                        style.tracking,
+                    );
+                    fill_outlines(p, &contours, &to_screen, color);
                     continue;
                 }
                 let family = crate::fonts::drafting_font(size, style.bold).family;
@@ -1011,6 +1036,29 @@ pub fn paint_drawing(
             Prim::Insert { .. } => {}
         }
     }
+}
+
+/// The largest font size (in screen points) text is laid out at with egui: a glyph much
+/// bigger doesn't fit egui's font atlas (and panics it).
+const MAX_GLYPH_PX: f32 = 128.0;
+
+/// Glyph contours in page mm, filled.
+fn fill_outlines(
+    p: &egui::Painter,
+    contours: &[Vec<drift_core::Shape>],
+    to_screen: impl Fn(DVec2) -> Pos2,
+    color: Color32,
+) {
+    let rings = drift_draft::outline::contour_rings(contours);
+    let mut mesh = egui::Mesh::default();
+    for t in drift_draft::logo::triangulate(&rings, false) {
+        let base = mesh.vertices.len() as u32;
+        for q in t {
+            mesh.colored_vertex(to_screen(q), color);
+        }
+        mesh.add_triangle(base, base + 1, base + 2);
+    }
+    p.add(egui::Shape::mesh(mesh));
 }
 
 #[cfg(test)]
@@ -1174,6 +1222,54 @@ mod tests {
                 .iter()
                 .any(|i| i.pen.color == Rgb([v, v, v]))
         );
+    }
+
+    /// Sheet text zoomed far in (issue #81): past what egui's font atlas holds, it is drawn
+    /// as filled outlines, where the laid-out text would have been.
+    #[test]
+    fn text_zoomed_to_the_maximum_is_outlined() {
+        let mut d = Drawing::new(DVec2::new(420.0, 297.0));
+        let at = DVec2::new(100.0, 50.0);
+        d.text("T", Pen::new(0.25), at, 5.0, Align::Center, "HELLO");
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx);
+        // The preview's largest zoom: 200 points per mm, so 5 mm capitals are ~1400 px.
+        for zoom in [1.0_f32, 200.0] {
+            let to_screen = |p: DVec2| {
+                let v = (p - at) * f64::from(zoom);
+                Pos2::new(500.0 + v.x as f32, 500.0 - v.y as f32)
+            };
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                paint_drawing(ui.painter(), &d, to_screen, zoom);
+            });
+            out.textures_delta.clear();
+            let mut text = 0;
+            let mut points = Vec::new();
+            for s in &out.shapes {
+                match &s.shape {
+                    egui::Shape::Text(t) => {
+                        text += 1;
+                        for r in &t.galley.rows {
+                            for g in &r.row.glyphs {
+                                assert!(g.font_height <= MAX_GLYPH_PX * 2.0, "{zoom}");
+                            }
+                        }
+                    }
+                    egui::Shape::Mesh(m) => points.extend(m.vertices.iter().map(|v| v.pos)),
+                    _ => {}
+                }
+            }
+            if zoom > 100.0 {
+                assert_eq!(text, 0);
+                assert!(!points.is_empty());
+                // Centred on `at`, standing on its baseline.
+                let r = egui::Rect::from_points(&points);
+                assert!((r.center().x - 500.0).abs() < 0.02 * r.width(), "{r:?}");
+                assert!((r.bottom() - 500.0).abs() < 0.05 * r.height(), "{r:?}");
+            } else {
+                assert_eq!(text, 1);
+            }
+        }
     }
 
     #[test]

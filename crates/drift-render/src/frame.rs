@@ -164,24 +164,42 @@ impl Frame {
     }
 
     /// Add filled areas (drawn under the curves, in the order given). World coordinates are
-    /// made camera-relative in `f64` like everything else.
+    /// made camera-relative in `f64` like everything else, and each triangle is clipped to the
+    /// canvas there: one far off screen (or out at 1e150) would otherwise reach the GPU with
+    /// vertices beyond `f32`, which can hang it.
     pub fn push_fills(&mut self, meshes: &[FillMesh], camera: &Camera, viewport: Viewport) {
         let ppp = viewport.pixels_per_point;
+        let half = viewport.size_px * 0.5 + DVec2::splat(CULL_MARGIN_PX);
         for mesh in meshes {
-            let px: Vec<[f32; 2]> = mesh
+            let px: Vec<DVec2> = mesh
                 .vertices
                 .iter()
-                .map(|p| {
-                    let v = camera.world_to_view(*p) * ppp;
-                    [v.x as f32, v.y as f32]
-                })
+                .map(|p| camera.world_to_view(*p) * ppp)
                 .collect();
-            for &i in &mesh.indices {
-                if let Some(&pos) = px.get(i as usize) {
-                    self.fills.push(FillVertex {
-                        pos,
-                        color: mesh.color,
-                    });
+            for t in mesh.indices.as_chunks::<3>().0 {
+                let Some(tri) = t
+                    .iter()
+                    .map(|&i| px.get(i as usize).copied())
+                    .collect::<Option<Vec<DVec2>>>()
+                else {
+                    continue;
+                };
+                let inside = tri
+                    .iter()
+                    .all(|p| p.x.abs() <= half.x && p.y.abs() <= half.y);
+                let poly = if inside {
+                    tri
+                } else {
+                    clip_polygon(&tri, half)
+                };
+                // A fan over the (convex) clipped polygon.
+                for k in 1..poly.len().saturating_sub(1) {
+                    for p in [poly[0], poly[k], poly[k + 1]] {
+                        self.fills.push(FillVertex {
+                            pos: to_f32(p),
+                            color: mesh.color,
+                        });
+                    }
                 }
             }
         }
@@ -591,6 +609,38 @@ impl Builder<'_> {
     }
 }
 
+/// Sutherland–Hodgman clip of a polygon against the box `[-half, half]`. Empty when nothing
+/// of it is inside, or a corner isn't finite. A convex polygon stays convex; a concave one
+/// may gain zero-width bridges along the box's edges, which fill nothing.
+pub fn clip_polygon(poly: &[DVec2], half: DVec2) -> Vec<DVec2> {
+    if poly.iter().any(|p| !p.is_finite()) {
+        return Vec::new();
+    }
+    let mut out = poly.to_vec();
+    // Each edge of the box as (axis, sign): keep `sign * p[axis] <= half[axis]`.
+    for (axis, sign) in [(0, 1.0), (0, -1.0), (1, 1.0), (1, -1.0)] {
+        let input = std::mem::take(&mut out);
+        let Some(&last) = input.last() else {
+            break;
+        };
+        let d = |p: DVec2| sign * p[axis] - half[axis];
+        let mut prev = last;
+        for &p in &input {
+            let (dp, dq) = (d(prev), d(p));
+            if dq <= 0.0 {
+                if dp > 0.0 {
+                    out.push(prev + (p - prev) * (dp / (dp - dq)));
+                }
+                out.push(p);
+            } else if dp <= 0.0 {
+                out.push(prev + (p - prev) * (dp / (dp - dq)));
+            }
+            prev = p;
+        }
+    }
+    out
+}
+
 /// Liang–Barsky clip of segment `a`→`b` against the box `[-half, half]`.
 /// Returns the parameter range that remains visible.
 fn clip_segment(a: DVec2, b: DVec2, half: DVec2) -> Option<(f64, f64)> {
@@ -680,6 +730,56 @@ mod tests {
             scale: 1.0,
         };
         assert_eq!(grid_info(&camera, true).minor, 12.7); // 1/2"
+    }
+
+    /// A fill far bigger than `f32` reaches the GPU cut to the canvas, with finite corners
+    /// (issue #82: a 1e150 fill hung the GPU).
+    #[test]
+    fn huge_fill_is_clipped_to_the_canvas() {
+        let camera = Camera {
+            center: DVec2::new(1e150 * 0.5, 0.0),
+            scale: 1.0,
+        };
+        let mesh = FillMesh {
+            vertices: vec![
+                DVec2::ZERO,
+                DVec2::new(1e150, 0.0),
+                DVec2::new(1e150, 1e150),
+                DVec2::new(0.0, 1e150),
+            ],
+            indices: vec![0, 1, 2, 0, 2, 3],
+            color: [255; 4],
+        };
+        let mut frame = Frame::default();
+        frame.push_fills(&[mesh], &camera, viewport());
+        assert!(!frame.fills.is_empty());
+        assert_eq!(frame.fills.len() % 3, 0);
+        for v in &frame.fills {
+            assert!(
+                v.pos[0].abs() <= 410.0 && v.pos[1].abs() <= 310.0,
+                "{:?}",
+                v.pos
+            );
+        }
+        // Wholly off screen, or not finite: nothing.
+        let mut frame = Frame::default();
+        let far = FillMesh {
+            vertices: vec![
+                DVec2::splat(1e300),
+                DVec2::new(f64::INFINITY, 0.0),
+                DVec2::ZERO,
+            ],
+            indices: vec![0, 1, 2],
+            color: [255; 4],
+        };
+        frame.push_fills(&[far], &camera, viewport());
+        assert!(frame.fills.is_empty());
+    }
+
+    #[test]
+    fn clip_triangle_inside_is_kept() {
+        let tri = [DVec2::ZERO, DVec2::new(1.0, 0.0), DVec2::new(0.0, 1.0)];
+        assert_eq!(clip_polygon(&tri, DVec2::splat(10.0)), tri.to_vec());
     }
 
     #[test]

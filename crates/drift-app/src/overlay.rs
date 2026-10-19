@@ -234,16 +234,24 @@ pub fn region_fill(
 
     // Flatten arcs finely enough on screen (about 2 px of sagitta at most).
     let max_angle = 0.15;
+    // Each ring is cut to the canvas (and a little round it) in f64 before it is made f32:
+    // a region far off screen, or out at 1e150, would otherwise reach the GPU with infinite
+    // vertices.
+    let half = DVec2::new(f64::from(map.rect.width()), f64::from(map.rect.height())) * 0.5
+        + DVec2::splat(8.0);
+    let centre = map.rect.center();
     let mut builder = Path::builder();
     for lp in std::iter::once(&region.outer).chain(&region.holes) {
-        let poly = lp.polygon(max_angle);
+        let poly: Vec<DVec2> = lp
+            .polygon(max_angle)
+            .into_iter()
+            .map(|p| map.camera.world_to_view(p))
+            .collect();
+        let poly = drift_render::clip_polygon(&poly, half);
         let Some(first) = poly.first() else {
             continue;
         };
-        let to = |p: DVec2| {
-            let s = map.to_screen(p);
-            point(s.x, s.y)
-        };
+        let to = |v: DVec2| point(centre.x + v.x as f32, centre.y + v.y as f32);
         builder.begin(to(*first));
         for p in &poly[1..] {
             builder.line_to(to(*p));

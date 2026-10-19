@@ -1,0 +1,16 @@
+name: Feature
+description: Something Drift should do, or do differently.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: want
+    attributes:
+      label: What you'd like
+      description: What you want to do, and how you'd expect it to work. Comparisons with other tools (Revit, AutoCAD, SolidWorks, Illustrator…) are welcome.
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why
+      description: The drawing or job it's for, and what you do today instead.

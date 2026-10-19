@@ -1,0 +1,50 @@
+name: Bug
+description: Something in Drift doesn't work as it should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Issues here are **public**: please don't attach client drawings or anything confidential. Describe the problem, and offer the file privately if it's needed.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What went wrong, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to make it happen
+      description: The steps, as exactly as you can. A screenshot or short recording helps a lot.
+      placeholder: |
+        1. Draw a rectangle and hatch it.
+        2. Copy it and move the copy over the first.
+        3. Move it again: Drift quits.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Drift version
+      description: Help › About, e.g. 0.1.0-beta.1.2.
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Where
+      options:
+        - Windows
+        - macOS
+        - Linux
+        - In the browser
+    validations:
+      required: true
+  - type: textarea
+    id: crash
+    attributes:
+      label: Crash log
+      description: If Drift quit, paste the end of its crash log (in Drift's data folder, crash.log).
+      render: text

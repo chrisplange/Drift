@@ -703,9 +703,10 @@ impl DriftApp {
     // ----- The Sheets tab --------------------------------------------------------------------
 
     pub(crate) fn sheets_panel(&mut self, ui: &mut egui::Ui) {
-        egui::ScrollArea::vertical()
+        let output = egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| self.sheets_contents(ui));
+        self.panel_scrolled(ui, crate::dock::Panel::Sheets, &output);
     }
 
     fn sheets_contents(&mut self, ui: &mut egui::Ui) {

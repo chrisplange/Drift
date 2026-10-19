@@ -6,8 +6,8 @@
 //!   bar shows where), onto the top or bottom of a floating panel to stack it there, or onto
 //!   the canvas to float it.
 //! - A floating panel on its own is moved by its header; over a dock, the dock lights up to
-//!   take it. In a stack, a panel's header pulls it out, and the strip along the top moves
-//!   the whole stack.
+//!   take it. In a stack, the top header moves the whole stack (with Alt it pulls the top
+//!   panel out) and the other headers pull their panel out.
 //!
 //! Right-click a tab or use a header's menu for the same choices.
 
@@ -24,8 +24,17 @@ const RAIL: f32 = 42.0;
 /// How far into the canvas a drop still docks to that side (where there's no dock yet).
 const DROP_BAND: f32 = 76.0;
 
-/// Height of the strip that moves a stack of floating panels.
-const GRIP: f32 = 22.0;
+/// Height of a floating panel's header.
+const HEADER: f32 = 34.0;
+/// The least height a stacked panel is given (room allowing): its header and a little more.
+const MIN_PANEL: f32 = HEADER + 64.0;
+/// Space around a panel's contents, docked or floating.
+const BODY_MARGIN: egui::Margin = egui::Margin {
+    left: 14,
+    right: 8,
+    top: 2,
+    bottom: 0,
+};
 /// How far past its dock (or its stack's window) a dragged tab must go before it comes
 /// away: let go nearer and nothing changes.
 const DETACH: f32 = 40.0;
@@ -47,8 +56,8 @@ pub(crate) struct DockView {
     /// Each floating panel as last drawn, and each floating window (by its top panel).
     stacked: Vec<(Panel, egui::Rect)>,
     windows: HashMap<Panel, egui::Rect>,
-    /// Each stacked panel's share of its window's height (1 unless resized).
-    weights: HashMap<Panel, f32>,
+    /// How tall each panel's contents were when last drawn (nothing cut off).
+    content: HashMap<Panel, f32>,
     /// The header of each floating panel as last drawn (the part that docks it when dragged).
     headers: HashMap<Panel, egui::Rect>,
     /// Where a panel just floated by dropping should appear.
@@ -154,12 +163,7 @@ impl DriftApp {
                         .unwrap_or(panels[0]);
                     self.tab_bar(ui, side, &panels, front);
                     egui::Frame::new()
-                        .inner_margin(egui::Margin {
-                            left: 14,
-                            right: 8,
-                            top: 2,
-                            bottom: 0,
-                        })
+                        .inner_margin(BODY_MARGIN)
                         .show(ui, |ui| self.panel_body(ui, front));
                 })
                 .response
@@ -172,10 +176,11 @@ impl DriftApp {
         let now = ui.input(|i| i.time);
         match p {
             Panel::Inspector => {
-                egui::ScrollArea::vertical()
+                let output = egui::ScrollArea::vertical()
                     .id_salt("inspector_scroll")
                     .auto_shrink([false, false])
                     .show(ui, |ui| self.inspector(ui));
+                self.panel_scrolled(ui, p, &output);
             }
             Panel::Parameters => self.parameters_panel(ui, now),
             Panel::Layers => self.layers_panel(ui, now),
@@ -370,17 +375,24 @@ impl DriftApp {
     fn panel_menu(&mut self, ui: &mut egui::Ui, p: Panel) {
         ui.label(egui::RichText::new(p.title()).small().weak());
         let place = self.layout.place(p);
+        // In a stack, floating is coming out of it into a window of its own.
+        let stacked = self.layout.stack_of(p).is_some_and(|s| s.len() > 1);
+        let float = if stacked {
+            "Float on its own"
+        } else {
+            "Float over the canvas"
+        };
         for (target, label) in [
             (Place::Dock(Side::Left), "Dock left"),
             (Place::Dock(Side::Right), "Dock right"),
-            (Place::Float, "Float over the canvas"),
+            (Place::Float, float),
         ] {
-            if ui
-                .add(egui::Button::selectable(place == target, label))
-                .clicked()
-            {
-                if place != target {
+            let here = place == target && !stacked;
+            if ui.add(egui::Button::selectable(here, label)).clicked() {
+                if !here {
+                    let keep = self.stack_position(p);
                     self.layout.move_to(p, target, None);
+                    self.restore_stack_position(keep);
                 }
                 ui.close();
             }
@@ -397,9 +409,15 @@ impl DriftApp {
         }
     }
 
-    /// A collapsed dock: an icon per panel; clicking one opens the dock on it.
+    /// A collapsed dock: an icon per panel, the one in front marked; clicking one opens the
+    /// dock on it.
     fn rail(&mut self, ui: &mut egui::Ui, side: Side, panels: &[Panel]) {
         let i = side.index();
+        let front = self.layout.active[i]
+            .filter(|p| panels.contains(p))
+            .unwrap_or(panels[0]);
+        let accent = theme::accent(ui.visuals().dark_mode);
+        let edge = ui.max_rect();
         ui.vertical_centered(|ui| {
             ui.spacing_mut().item_spacing.y = 4.0;
             let away = match side {
@@ -417,9 +435,33 @@ impl DriftApp {
             ui.add_space(2.0);
             for &p in panels {
                 let response = icons::button(ui, 32.0, false, p.title(), |painter, r, c| {
+                    let c = if p == front {
+                        c
+                    } else {
+                        c.gamma_multiply(0.55)
+                    };
                     icons::glyph(painter, r, glyph(p), c)
-                })
-                .on_hover_text(p.title());
+                });
+                if p == front {
+                    // A bar on the canvas side, like the front tab's underline.
+                    let r = response.rect;
+                    let x = match side {
+                        Side::Left => edge.right() + 2.0,
+                        Side::Right => edge.left() - 2.0,
+                    };
+                    ui.painter().line_segment(
+                        [
+                            egui::pos2(x, r.top() + 7.0),
+                            egui::pos2(x, r.bottom() - 7.0),
+                        ],
+                        egui::Stroke::new(2.0, accent),
+                    );
+                }
+                let response = response.on_hover_text(if p == front {
+                    format!("{} (in front)", p.title())
+                } else {
+                    p.title().to_owned()
+                });
                 if response.clicked() {
                     self.layout.active[i] = Some(p);
                     self.layout.collapsed[i] = false;
@@ -444,11 +486,15 @@ impl DriftApp {
         // Opaque, like the dialogs: nothing underneath shows through.
         let frame =
             egui::Frame::window(&ctx.style_of(ctx.theme())).inner_margin(egui::Margin::ZERO);
+        // Never taller than the canvas: egui lets a window taller than the area it is kept in
+        // slide up past its top, where the header would be cut off under the bar above.
+        let most = canvas.height().floor();
         for (k, stack) in self.layout.floating.clone().into_iter().enumerate() {
             let top = stack[0];
             let n = stack.len();
             let step = 26.0 * k as f32;
-            let tall = (300.0 * n as f32).max(440.0).min(canvas.height() - 28.0);
+            let tall = (300.0 * n as f32).max(440.0).min(most - 28.0);
+            let least = MIN_PANEL * n as f32 + DIVIDER * (n - 1) as f32;
             // A window per stack, named by its top panel and how many it holds, so a stack
             // that changes starts at its new size (and at the place it was, see `float_at`).
             let mut window = egui::Window::new(top.title())
@@ -459,72 +505,57 @@ impl DriftApp {
                 .frame(frame)
                 .default_size([300.0, tall])
                 .min_width(240.0)
-                .min_height(140.0 * n as f32)
+                .min_height(least.min(most))
+                .max_height(most)
                 .pivot(egui::Align2::RIGHT_TOP)
                 .default_pos(canvas.right_top() + egui::vec2(-14.0 - step, 14.0 + step))
                 .constrain_to(canvas);
             if let Some(at) = self.dock_view.float_at.remove(&top) {
                 window = window.pivot(egui::Align2::LEFT_TOP).current_pos(at);
             }
+            let alt = ctx.input(|i| i.modifiers.alt);
             let shown = window.show(ctx, |ui| {
-                if n > 1 {
-                    // The strip that moves the whole stack (it senses nothing itself, so the
-                    // window takes the drag): the full width, lit up under the pointer.
-                    let (strip, _) = ui.allocate_exact_size(
-                        egui::vec2(ui.available_width(), GRIP),
-                        egui::Sense::hover(),
-                    );
-                    let hot = ui.rect_contains_pointer(strip);
-                    if hot {
-                        ui.painter().rect_filled(
-                            strip.shrink2(egui::vec2(6.0, 3.0)),
-                            6.0,
-                            ui.visuals().widgets.hovered.bg_fill,
-                        );
-                        ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
-                    }
-                    let c = strip.center();
-                    let dots = if hot {
-                        ui.visuals().strong_text_color()
-                    } else {
-                        ui.visuals().weak_text_color()
-                    };
-                    for dy in [-2.5, 2.5] {
-                        for dx in [-10.0, -5.0, 0.0, 5.0, 10.0] {
-                            ui.painter()
-                                .circle_filled(c + egui::vec2(dx, dy), 1.3, dots);
-                        }
-                    }
-                }
-                let weights: Vec<f32> = stack
+                // Each panel gets a fixed share of the window and scrolls within it, so what
+                // it holds never makes the window taller.
+                // (Nothing between them but the dividers.)
+                let spacing = ui.spacing().item_spacing;
+                ui.spacing_mut().item_spacing.y = 0.0;
+                let room = (ui.available_height() - DIVIDER * (n - 1) as f32).max(0.0);
+                let folded: Vec<bool> = stack
                     .iter()
-                    .map(|p| self.dock_view.weights.get(p).copied().unwrap_or(1.0))
+                    .map(|p| n > 1 && self.layout.folded.contains(p))
                     .collect();
-                let total: f32 = weights.iter().sum();
-                let room = (ui.available_height() - DIVIDER * (n - 1) as f32).max(60.0 * n as f32);
+                let heights = self.stack_heights(&stack, &folded, room);
+                let width = ui.available_width();
                 for (j, &p) in stack.iter().enumerate() {
-                    let h = (room * weights[j] / total).max(60.0);
-                    let width = ui.available_width();
-                    let inner = ui.allocate_ui_with_layout(
-                        egui::vec2(width, h),
-                        egui::Layout::top_down(egui::Align::Min),
-                        |ui| {
-                            ui.set_min_height(h);
-                            ui.set_max_height(h);
-                            self.float_header(ui, p, n > 1);
-                            egui::Frame::new()
-                                .inner_margin(egui::Margin {
-                                    left: 12,
-                                    right: 6,
-                                    top: 0,
-                                    bottom: 8,
-                                })
-                                .show(ui, |ui| self.panel_body(ui, p));
-                        },
+                    let (rect, _) =
+                        ui.allocate_exact_size(egui::vec2(width, heights[j]), egui::Sense::hover());
+                    let mut child = ui.new_child(
+                        egui::UiBuilder::new()
+                            .max_rect(rect)
+                            .layout(egui::Layout::top_down(egui::Align::Min)),
                     );
-                    self.dock_view.stacked.push((p, inner.response.rect));
+                    child.set_clip_rect(rect.intersect(ui.clip_rect()));
+                    child.spacing_mut().item_spacing = spacing;
+                    // The top header moves the window (Alt pulls the top panel out); the
+                    // others pull their panel out of the stack.
+                    let role = match (n, j) {
+                        (1, _) => Header::Alone,
+                        (_, 0) if !alt => Header::Top,
+                        _ => Header::Pulls,
+                    };
+                    self.float_header(&mut child, p, role, folded[j]);
+                    if !folded[j] {
+                        egui::Frame::new()
+                            .inner_margin(egui::Margin {
+                                bottom: 8,
+                                ..BODY_MARGIN
+                            })
+                            .show(&mut child, |ui| self.panel_body(ui, p));
+                    }
+                    self.dock_view.stacked.push((p, rect));
                     if j + 1 < n {
-                        self.divider(ui, &stack, j, room);
+                        self.divider(ui, &stack, j, &heights, &folded);
                     }
                 }
             });
@@ -552,12 +583,159 @@ impl DriftApp {
         self.dock_view.headers.get(&p).copied()
     }
 
-    /// The bar between two stacked panels: drag it to share the height differently.
-    fn divider(&mut self, ui: &mut egui::Ui, stack: &[Panel], j: usize, room: f32) {
+    /// A floating panel (header and contents) as last drawn, and the window it is in (for
+    /// tests).
+    #[cfg(test)]
+    pub(crate) fn floating_rects(&self, p: Panel) -> Option<(egui::Rect, egui::Rect)> {
+        let panel = self.dock_view.stacked.iter().find(|(q, _)| *q == p)?.1;
+        let top = self.layout.stack_of(p)?[0];
+        Some((panel, *self.dock_view.windows.get(&top)?))
+    }
+
+    /// After a panel's scrolled contents: fade the bottom when there is more below, and note
+    /// how tall the contents are (nothing cut off), for sharing a stack's height by them.
+    pub(crate) fn panel_scrolled(
+        &mut self,
+        ui: &egui::Ui,
+        p: Panel,
+        output: &egui::scroll_area::ScrollAreaOutput<()>,
+    ) {
+        let behind = if self.layout.place(p) == Place::Float {
+            ui.visuals().window_fill
+        } else {
+            ui.visuals().panel_fill
+        };
+        theme::fade_bottom(ui, output, behind);
+        self.dock_view.content.insert(p, output.content_size.y);
+    }
+
+    /// How a stack's panels share `room`: a folded one just its header, and the open ones
+    /// the rest (see [`Self::share_heights`]).
+    fn stack_heights(&self, stack: &[Panel], folded: &[bool], room: f32) -> Vec<f32> {
+        let open: Vec<Panel> = stack
+            .iter()
+            .zip(folded)
+            .filter(|(_, f)| !**f)
+            .map(|(p, _)| *p)
+            .collect();
+        let shut = (stack.len() - open.len()) as f32;
+        let mut shares = self
+            .share_heights(&open, (room - HEADER * shut).max(0.0))
+            .into_iter();
+        folded
+            .iter()
+            .map(|f| {
+                if *f {
+                    HEADER
+                } else {
+                    shares.next().unwrap_or(0.0)
+                }
+            })
+            .collect()
+    }
+
+    /// How open stacked panels share `room`: as the stack's dividers were last dragged, or
+    /// else by what they hold. A panel that needs less than an even share gets just that, and
+    /// the others share the rest; what is left when everything fits goes to the Inspector (or
+    /// the bottom panel). Each gets at least its header and a little more, room allowing.
+    fn share_heights(&self, stack: &[Panel], room: f32) -> Vec<f32> {
+        let n = stack.len();
+        if n == 0 {
+            return Vec::new();
+        }
+        let n = stack.len();
+        let least = MIN_PANEL.min(room / n as f32);
+        let mut heights = if let Some(weights) = self.layout.stack_weights(stack) {
+            let total: f32 = weights.iter().sum();
+            weights.iter().map(|w| room * w / total).collect()
+        } else {
+            // What each would take to show everything (unknown until drawn once).
+            let wants: Vec<f32> = stack
+                .iter()
+                .map(|p| {
+                    // (With the margins, and a little to spare.)
+                    self.dock_view.content.get(p).map_or(f32::INFINITY, |h| {
+                        HEADER + h + f32::from(BODY_MARGIN.top) + 8.0 + 8.0
+                    })
+                })
+                .collect();
+            let mut heights = vec![0.0; n];
+            let mut open: Vec<usize> = (0..n).collect();
+            let mut left = room;
+            loop {
+                if open.is_empty() {
+                    let gets = stack
+                        .iter()
+                        .position(|p| *p == Panel::Inspector)
+                        .unwrap_or(n - 1);
+                    heights[gets] += left;
+                    break;
+                }
+                let share = left / open.len() as f32;
+                let (fits, rest): (Vec<usize>, Vec<usize>) =
+                    open.iter().partition(|&&i| wants[i].max(least) <= share);
+                if fits.is_empty() {
+                    for &i in &rest {
+                        heights[i] = share;
+                    }
+                    break;
+                }
+                for i in fits {
+                    heights[i] = wants[i].max(least);
+                    left -= heights[i];
+                }
+                open = rest;
+            }
+            heights
+        };
+        // At least the least each (taken from the tallest), whole pixels, and exactly `room`
+        // in all.
+        for i in 0..n {
+            let short = least - heights[i];
+            if short > 0.0
+                && let Some(tallest) = (0..n).max_by(|a, b| heights[*a].total_cmp(&heights[*b]))
+            {
+                heights[tallest] -= short;
+                heights[i] = least;
+            }
+        }
+        for h in heights.iter_mut().take(n - 1) {
+            *h = h.floor();
+        }
+        heights[n - 1] = room - heights[..n - 1].iter().sum::<f32>();
+        heights
+    }
+
+    /// The bar between two stacked panels: drag it to share the height differently;
+    /// double-click it to share by what they hold again. Beside a folded panel it is just a
+    /// line.
+    fn divider(
+        &mut self,
+        ui: &mut egui::Ui,
+        stack: &[Panel],
+        j: usize,
+        heights: &[f32],
+        folded: &[bool],
+    ) {
+        let fixed = folded[j] || folded[j + 1];
         let (r, response) = ui.allocate_exact_size(
             egui::vec2(ui.available_width(), DIVIDER),
-            egui::Sense::drag(),
+            if fixed {
+                egui::Sense::hover()
+            } else {
+                egui::Sense::click_and_drag()
+            },
         );
+        if fixed {
+            ui.painter().line_segment(
+                [
+                    egui::pos2(r.left() + 10.0, r.center().y),
+                    egui::pos2(r.right() - 10.0, r.center().y),
+                ],
+                egui::Stroke::new(1.0, theme::hairline(ui)),
+            );
+            return;
+        }
         let hot = response.hovered() || response.dragged();
         let color = if hot {
             theme::accent(ui.visuals().dark_mode)
@@ -574,78 +752,137 @@ impl DriftApp {
         if hot {
             ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
         }
+        let response = response.on_hover_text("Drag to resize · double-click to fit");
+        if response.double_clicked() {
+            for p in stack {
+                self.layout.weights.remove(p);
+            }
+            return;
+        }
         let dy = response.drag_delta().y;
         if dy != 0.0 {
-            let w = &mut self.dock_view.weights;
-            let total: f32 = stack.iter().map(|p| *w.get(p).unwrap_or(&1.0)).sum();
-            let shift = dy / room * total;
-            let (a, b) = (stack[j], stack[j + 1]);
-            let (wa, wb) = (*w.get(&a).unwrap_or(&1.0), *w.get(&b).unwrap_or(&1.0));
-            let min = 0.15 * total / stack.len() as f32;
-            let shift = shift.clamp(min - wa, wb - min);
-            w.insert(a, wa + shift);
-            w.insert(b, wb - shift);
+            // From here on the stack keeps the shares it is dragged to (the open panels';
+            // a folded one keeps what it had).
+            let open: Vec<usize> = (0..stack.len()).filter(|i| !folded[*i]).collect();
+            let room: f32 = open.iter().map(|i| heights[*i]).sum();
+            let least = MIN_PANEL.min(room / open.len() as f32);
+            let mut h = heights.to_vec();
+            let dy = dy.clamp(least - h[j], h[j + 1] - least);
+            h[j] += dy;
+            h[j + 1] -= dy;
+            for i in open.iter().copied() {
+                self.layout
+                    .weights
+                    .insert(stack[i], h[i] / room * open.len() as f32);
+            }
         }
     }
 
-    /// A floating panel's header: its icon and name, a menu and a close button. Alone in its
-    /// window, dragging it moves the window (or docks or stacks it); in a stack, dragging it
-    /// pulls the panel out.
-    fn float_header(&mut self, ui: &mut egui::Ui, p: Panel, in_stack: bool) {
-        let sense = if in_stack {
-            egui::Sense::click_and_drag()
-        } else {
-            egui::Sense::hover()
+    /// A floating panel's header: its icon and name (in a stack, a chevron: click to fold),
+    /// a menu and a button that docks it. Dragging it moves its window, or pulls the panel
+    /// out of its stack (see [`Header`]).
+    fn float_header(&mut self, ui: &mut egui::Ui, p: Panel, role: Header, folded: bool) {
+        let sense = match role {
+            Header::Alone => egui::Sense::hover(),
+            Header::Top => egui::Sense::click(),
+            Header::Pulls => egui::Sense::click_and_drag(),
         };
-        let (bar, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 34.0), sense);
-        if in_stack && response.drag_started() {
+        let (bar, response) =
+            ui.allocate_exact_size(egui::vec2(ui.available_width(), HEADER), sense);
+        if role == Header::Pulls && response.drag_started() {
             self.dock_view.drag = Some((p, false));
             self.dock_view.grab_dx = 30.0;
         }
-        if in_stack && response.hovered() {
-            ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+        let dock = egui::Rect::from_center_size(
+            egui::pos2(bar.right() - 20.0, bar.center().y),
+            egui::Vec2::splat(24.0),
+        );
+        let more = dock.translate(egui::vec2(-26.0, 0.0));
+        // Over the header itself (not its buttons): what dragging it does.
+        let on_bar = ui
+            .ctx()
+            .pointer_hover_pos()
+            .is_some_and(|at| bar.contains(at) && at.x < more.left() - 2.0);
+        if on_bar && response.hovered() {
+            response.clone().on_hover_text(match role {
+                Header::Alone => {
+                    "Drag to move it; onto a dock to dock it, or onto another \
+                                  panel to stack them"
+                }
+                Header::Top => {
+                    "Click to fold · drag to move the stack · Alt-drag to pull this \
+                                panel out"
+                }
+                Header::Pulls => "Click to fold · drag to pull it out of the stack",
+            });
+        }
+        if role != Header::Alone && response.clicked() {
+            self.layout.toggle_fold(p);
         }
         let text = ui.visuals().strong_text_color();
         icons::glyph(
             ui.painter(),
             egui::Rect::from_center_size(
-                egui::pos2(bar.left() + 20.0, bar.center().y),
+                egui::pos2(
+                    bar.left() + f32::from(BODY_MARGIN.left) + 7.5,
+                    bar.center().y,
+                ),
                 egui::Vec2::splat(15.0),
             ),
             glyph(p),
             text,
         );
-        ui.painter().text(
-            egui::pos2(bar.left() + 34.0, bar.center().y),
+        let title = ui.painter().text(
+            egui::pos2(
+                bar.left() + f32::from(BODY_MARGIN.left) + 22.0,
+                bar.center().y,
+            ),
             egui::Align2::LEFT_CENTER,
             p.title(),
             egui::FontId::new(13.0, theme::bold()),
             text,
         );
-        ui.painter().line_segment(
-            [
-                bar.left_bottom() + egui::vec2(10.0, 0.0),
-                bar.right_bottom() - egui::vec2(10.0, 0.0),
-            ],
-            egui::Stroke::new(1.0, theme::hairline(ui)),
-        );
-        let close = egui::Rect::from_center_size(
-            egui::pos2(bar.right() - 20.0, bar.center().y),
-            egui::Vec2::splat(24.0),
-        );
-        let more = close.translate(egui::vec2(-26.0, 0.0));
-        // Closing a floating panel puts it back in the dock it came from (the menu beside it
-        // can hide it altogether).
-        let tip = format!("Back to the {} dock", self.layout.home(p).name());
-        if icon_at(
-            ui,
-            close,
-            ui.id().with(("close", p.key())),
-            Glyph::Close,
-            &tip,
-        )
-        .clicked()
-        {
+        if role != Header::Alone {
+            // Down when open, right when folded.
+            let c = egui::pos2(title.right() + 10.0, bar.center().y);
+            let color = if on_bar {
+                ui.visuals().strong_text_color()
+            } else {
+                ui.visuals().weak_text_color()
+            };
+            let pts = if folded {
+                vec![
+                    c + egui::vec2(-1.8, -3.5),
+                    c + egui::vec2(1.8, 0.0),
+                    c + egui::vec2(-1.8, 3.5),
+                ]
+            } else {
+                vec![
+                    c + egui::vec2(-3.5, -1.8),
+                    c + egui::vec2(0.0, 1.8),
+                    c + egui::vec2(3.5, -1.8),
+                ]
+            };
+            ui.painter()
+                .add(egui::Shape::line(pts, egui::Stroke::new(1.4, color)));
+        }
+        if !folded {
+            ui.painter().line_segment(
+                [
+                    bar.left_bottom() + egui::vec2(10.0, 0.0),
+                    bar.right_bottom() - egui::vec2(10.0, 0.0),
+                ],
+                egui::Stroke::new(1.0, theme::hairline(ui)),
+            );
+        }
+        // Back to the dock it came from (closing it is in the menu beside).
+        let home = self.layout.home(p);
+        let g = match home {
+            Side::Left => Glyph::DockLeft,
+            Side::Right => Glyph::DockRight,
+        };
+        let tip = format!("Dock {}", home.name());
+        if icon_at(ui, dock, ui.id().with(("dock", p.key())), g, &tip).clicked() {
             self.redock_floating(p);
         }
         self.dock_view.headers.insert(p, bar);
@@ -654,7 +891,7 @@ impl DriftApp {
             more,
             ui.id().with(("more", p.key())),
             Glyph::More,
-            "Dock or close",
+            "Dock, float or close",
         );
         egui::Popup::menu(&menu).show(|ui| self.panel_menu(ui, p));
     }
@@ -971,6 +1208,17 @@ impl DriftApp {
         );
         ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
     }
+}
+
+/// What dragging a floating panel's header does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Header {
+    /// Alone in its window: moves the window (which can then dock or stack).
+    Alone,
+    /// Top of a stack: moves the whole stack.
+    Top,
+    /// In a stack (or the top one with Alt): pulls the panel out.
+    Pulls,
 }
 
 /// Where a dragged panel would go.

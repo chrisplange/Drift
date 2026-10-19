@@ -40,6 +40,40 @@ enum LayerAction {
     ShowAll,
 }
 
+/// The layers and how many curves each holds, worked out again only when the drawing
+/// changes (an imported DWG can have a hundred thousand entities).
+#[derive(Default)]
+pub(crate) struct LayerCounts {
+    /// The document revision, entity count and layer count these were taken at.
+    key: Option<(u64, usize, usize)>,
+    /// The layers, bottom up.
+    pub layers: Vec<(LayerId, Layer)>,
+    /// Curves on each layer.
+    pub curves: std::collections::HashMap<LayerId, usize>,
+    /// Curves in all.
+    pub total: usize,
+}
+
+impl LayerCounts {
+    /// Bring the counts up to date with `doc`.
+    pub fn update(&mut self, doc: &drift_core::Document) {
+        let key = (doc.revision(), doc.len(), doc.layers().count());
+        if self.key == Some(key) {
+            return;
+        }
+        self.key = Some(key);
+        self.layers = doc.layers().map(|(id, l)| (id, l.clone())).collect();
+        self.curves.clear();
+        self.total = 0;
+        for (_, e) in doc.iter() {
+            if !e.kind.is_point() {
+                *self.curves.entry(e.layer).or_default() += 1;
+                self.total += 1;
+            }
+        }
+    }
+}
+
 /// A small icon toggle: full colour when on, faint (and struck through for `strike`) when off.
 /// True when it was clicked.
 pub(crate) fn icon_toggle(
@@ -377,15 +411,12 @@ impl DriftApp {
     /// than one with ten.
     pub(crate) fn layers_panel(&mut self, ui: &mut egui::Ui, now: f64) {
         self.end_stale_isolate();
+        self.layer_counts.update(&self.editor.doc);
+        let counts = std::mem::take(&mut self.layer_counts.curves);
+        let layers = std::mem::take(&mut self.layer_counts.layers);
         let current = self.editor.doc.current_layer();
         let has_selection = !self.editor.selection.is_empty();
-        // Curves per layer, and the layers the selection is on.
-        let mut counts = std::collections::HashMap::<LayerId, usize>::new();
-        for (_, e) in self.editor.doc.iter() {
-            if !e.kind.is_point() {
-                *counts.entry(e.layer).or_default() += 1;
-            }
-        }
+        // The layers the selection is on.
         let picked: std::collections::BTreeSet<LayerId> = self
             .editor
             .selection
@@ -398,8 +429,8 @@ impl DriftApp {
         let mut total = 0;
         let mut any_hidden = false;
         let mut list: Vec<LayerId> = Vec::new();
-        let layers: Vec<(LayerId, &Layer)> = self.editor.doc.layers().collect();
-        for &(id, layer) in layers.iter().rev() {
+        for (id, layer) in layers.iter().rev() {
+            let id = *id;
             total += 1;
             any_hidden |= !layer.visible;
             if needle.is_empty() || layer.name.to_lowercase().contains(&needle) {
@@ -441,7 +472,7 @@ impl DriftApp {
             ui.separator();
         }
         let mut rows: Vec<(LayerId, egui::Rect)> = Vec::new();
-        egui::ScrollArea::vertical()
+        let output = egui::ScrollArea::vertical()
             .id_salt("layers_scroll")
             .auto_shrink([false, false])
             .show_viewport(ui, |ui, viewport| {
@@ -531,18 +562,13 @@ impl DriftApp {
                             self.layer_list.filter.clear();
                             self.layer_list.reveal = Some(id);
                         }
-                        if has_selection
-                            && ui
-                                .button("Move selection here")
-                                .on_hover_text("Move the selection to the current layer")
-                                .clicked()
-                        {
-                            self.editor.move_selection_to_layer(current);
-                        }
                     });
                     self.underlays_section(ui);
                 });
             });
+        self.panel_scrolled(ui, crate::dock::Panel::Layers, &output);
+        self.layer_counts.curves = counts;
+        self.layer_counts.layers = layers;
         self.layer_list
             .opened
             .retain(|id, _| self.expanded_layers.contains(id));
@@ -716,7 +742,10 @@ impl DriftApp {
                     ui.close();
                 }
                 if ui
-                    .add_enabled(info.has_selection, egui::Button::new("Move selection here"))
+                    .add_enabled(
+                        info.has_selection,
+                        egui::Button::new("Move selection to this layer"),
+                    )
                     .clicked()
                 {
                     self.editor.move_selection_to_layer(id);
@@ -877,9 +906,17 @@ impl DriftApp {
                     .on_hover_text("Curves on this layer");
                 if info.picked.contains(&id) {
                     ui.add_space(5.0);
-                    let (dot, _) =
-                        ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
-                    ui.painter().circle_filled(dot.center(), 3.0, accent);
+                    let (mark, response) =
+                        ui.allocate_exact_size(egui::vec2(9.0, 9.0), egui::Sense::hover());
+                    let r = mark.shrink(0.5);
+                    ui.painter().rect(
+                        r,
+                        1.5,
+                        accent.gamma_multiply(0.25),
+                        egui::Stroke::new(1.2, accent),
+                        egui::StrokeKind::Inside,
+                    );
+                    response.on_hover_text("Some of the selection is on this layer");
                 }
                 ui.add_space(6.0);
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
@@ -1096,7 +1133,10 @@ impl DriftApp {
                 self.editor.select_layer(id);
             }
             if ui
-                .add_enabled(has_selection, egui::Button::new("Move here").small())
+                .add_enabled(
+                    has_selection,
+                    egui::Button::new("Move selection here").small(),
+                )
                 .on_hover_text("Move the selected geometry onto this layer")
                 .clicked()
             {

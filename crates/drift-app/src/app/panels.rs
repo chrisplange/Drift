@@ -333,8 +333,8 @@ impl DriftApp {
                 if ui
                     .button("Import…")
                     .on_hover_text(
-                        "Add a DXF, SVG, PDF or Illustrator drawing to the sketch: its curves, fills, text and \
-                         layers, to edit (or, but for DXF, as an underlay)",
+                        "Add a DWG, DXF, SVG, PDF or Illustrator drawing to the sketch: its curves, \
+                         fills, text and layers, to edit",
                     )
                     .clicked()
                 {
@@ -342,7 +342,9 @@ impl DriftApp {
                 }
                 if ui
                     .button("Import underlay…")
-                    .on_hover_text("A PDF, SVG or DXF drawing to trace over (Layers tab)")
+                    .on_hover_text(
+                        "A DWG, DXF, SVG, PDF or Illustrator drawing to trace over (Layers panel)",
+                    )
                     .clicked()
                 {
                     self.pick_underlay_file();
@@ -721,7 +723,7 @@ impl DriftApp {
                 }
                 ui.add_space(6.0);
             });
-        theme::fade_bottom(ui, &output);
+        theme::fade_bottom(ui, &output, ui.visuals().panel_fill);
     }
 
     /// Select the curves that lie on top of others (the later-made of each pair).
@@ -1009,28 +1011,28 @@ impl DriftApp {
             [] if !ed.selected_midpoints.is_empty() => {}
             [] if ed.selected_region.is_some() => {}
             [] => {
-                ui.add_space(22.0);
-                ui.vertical_centered(|ui| {
+                // A line saying so, a hint, and the sketch's totals.
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
                     let (r, _) =
-                        ui.allocate_exact_size(egui::vec2(40.0, 40.0), egui::Sense::hover());
+                        ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover());
                     icons::tool(
                         ui.painter(),
-                        r.shrink(6.0),
+                        r,
                         ToolKind::Select,
-                        ui.visuals().weak_text_color().gamma_multiply(0.7),
+                        ui.visuals().weak_text_color(),
                     );
-                    ui.add_space(4.0);
-                    ui.label(egui::RichText::new("Nothing selected").size(14.0).weak());
-                    ui.add_space(2.0);
-                    let hint = if self.editor.regions_need_fill {
-                        "Click geometry, or a fill or hatch, to inspect it."
-                    } else {
-                        "Click geometry to inspect it, or inside a closed area to measure it."
-                    };
-                    ui.label(egui::RichText::new(hint).small().weak());
+                    ui.label(egui::RichText::new("Nothing selected").weak());
                 });
+                let hint = if self.editor.regions_need_fill {
+                    "Click geometry, or a fill or hatch, to inspect it."
+                } else {
+                    "Click geometry to inspect it, or inside a closed area to measure it."
+                };
+                ui.label(egui::RichText::new(hint).small().weak());
                 theme::section(ui, "Sketch");
-                let curves = ed.doc.iter().filter(|(_, e)| !e.kind.is_point()).count();
+                self.layer_counts.update(&self.editor.doc);
+                let curves = self.layer_counts.total;
                 let relations = ed.doc.constraint_count();
                 let layers = ed.doc.layers().count();
                 ui.horizontal(|ui| {

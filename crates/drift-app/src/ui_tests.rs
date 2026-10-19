@@ -1040,14 +1040,144 @@ fn floating_panels_stack_and_come_apart() {
     );
     h.run();
     save_png("drift_ui_stacked.png", &mut h);
-    // Pull Layers out of the stack by its header, onto the canvas: it floats on its own.
-    let header = h.state().header_rect(Panel::Layers).unwrap();
+    // Pull Blocks out of the stack by its header, onto the canvas: it floats on its own.
+    let header = h.state().header_rect(Panel::Blocks).unwrap();
     let from = header.left_center() + egui::vec2(60.0, 0.0);
     let to = h.state().canvas_rect.left_center() + egui::vec2(120.0, 0.0);
     drag_steps(&mut h, from, to, 10, None);
     assert_eq!(
         h.state().layout.floating,
-        [vec![Panel::Blocks], vec![Panel::Layers]]
+        [vec![Panel::Layers], vec![Panel::Blocks]]
+    );
+}
+
+#[test]
+fn a_floating_stack_stays_inside_a_short_canvas() {
+    let Some(mut h) = harness() else { return };
+    let stack = [Panel::Layers, Panel::Inspector, Panel::Parameters];
+    h.state_mut().layout.move_to(stack[0], Place::Float, None);
+    for w in stack.windows(2) {
+        h.state_mut().layout.stack(w[1], w[0], true);
+    }
+    h.run_steps(4);
+    // The window shrinks to a canvas shorter than the stack wants (and than it was).
+    h.set_size(egui::vec2(1280.0, 380.0));
+    h.run_steps(6);
+    save_png("drift_ui_floating_short.png", &mut h);
+    let canvas = h.state().canvas_rect;
+    let (_, window) = h.state().floating_rects(Panel::Layers).unwrap();
+    let header = h.state().header_rect(Panel::Layers).unwrap();
+    assert!(
+        window.top() >= canvas.top() - 0.5 && header.top() >= canvas.top() - 0.5,
+        "window {window:?} or header {header:?} above the canvas {canvas:?}"
+    );
+    assert!(
+        window.height() <= canvas.height() + 0.5,
+        "{window:?} in {canvas:?}"
+    );
+    // And back to a tall window: still all there.
+    h.set_size(egui::vec2(1280.0, 800.0));
+    h.run_steps(6);
+    let canvas = h.state().canvas_rect;
+    let (_, window) = h.state().floating_rects(Panel::Layers).unwrap();
+    assert!(window.top() >= canvas.top() - 0.5 && window.bottom() <= canvas.bottom() + 0.5);
+}
+
+#[test]
+fn a_floating_stack_shares_its_height_by_content_and_keeps_dragged_sizes() {
+    let Some(mut h) = harness() else { return };
+    h.state_mut()
+        .layout
+        .move_to(Panel::Layers, Place::Float, None);
+    h.state_mut()
+        .layout
+        .stack(Panel::Inspector, Panel::Layers, true);
+    h.run_steps(6);
+    save_png("drift_ui_stack_fit.png", &mut h);
+    let (layers, _) = h.state().floating_rects(Panel::Layers).unwrap();
+    let (inspector, _) = h.state().floating_rects(Panel::Inspector).unwrap();
+    // The Layers panel takes what it needs (up to an even share), the Inspector the rest.
+    assert!(
+        layers.height() <= inspector.height() + 1.0,
+        "layers {layers:?}, inspector {inspector:?}"
+    );
+    // Dragging the divider down gives Layers more, and the shares are saved.
+    let from = egui::pos2(layers.center().x, layers.bottom() + 3.5);
+    drag_steps(&mut h, from, from + egui::vec2(0.0, 60.0), 6, None);
+    let (dragged, _) = h.state().floating_rects(Panel::Layers).unwrap();
+    assert!(
+        (dragged.height() - layers.height() - 60.0).abs() < 2.0,
+        "{layers:?} → {dragged:?}"
+    );
+    let prefs = h.state().layout.prefs();
+    assert!(
+        prefs
+            .iter()
+            .any(|p| p.starts_with("dock_weights=inspector:")),
+        "{prefs:?}"
+    );
+    // The top header moves the whole stack.
+    let header = h.state().header_rect(Panel::Layers).unwrap();
+    let from = header.left_center() + egui::vec2(80.0, 0.0);
+    drag_steps(&mut h, from, from + egui::vec2(-200.0, 40.0), 8, None);
+    assert_eq!(
+        h.state().layout.floating,
+        [vec![Panel::Layers, Panel::Inspector]]
+    );
+    let moved = h.state().header_rect(Panel::Layers).unwrap();
+    assert!(
+        (moved.left() - (header.left() - 200.0)).abs() < 2.0,
+        "{header:?} → {moved:?}"
+    );
+}
+
+#[test]
+fn stacked_panels_fold_to_their_headers() {
+    let Some(mut h) = harness() else { return };
+    let stack = [Panel::Layers, Panel::Inspector, Panel::Parameters];
+    h.state_mut().layout.move_to(stack[0], Place::Float, None);
+    for w in stack.windows(2) {
+        h.state_mut().layout.stack(w[1], w[0], true);
+    }
+    h.run_steps(6);
+    let height = |h: &Harness<'_, DriftApp>, p| h.state().floating_rects(p).unwrap().0.height();
+    let (_, window) = h.state().floating_rects(Panel::Layers).unwrap();
+    let inspector = height(&h, Panel::Inspector);
+    // Click the Parameters header (away from its buttons): it folds to just the header, and
+    // the window keeps its size, the others sharing the room.
+    let click = |h: &mut Harness<'_, DriftApp>, p| {
+        let at = h.state().header_rect(p).unwrap().left_center() + egui::vec2(40.0, 0.0);
+        h.hover_at(at);
+        h.run_steps(2);
+        button(h, at, true);
+        h.run_steps(2);
+        button(h, at, false);
+        h.run_steps(6);
+    };
+    click(&mut h, Panel::Parameters);
+    save_png("drift_ui_stack_folded.png", &mut h);
+    assert!(h.state().layout.folded.contains(&Panel::Parameters));
+    assert!((height(&h, Panel::Parameters) - 34.0).abs() < 0.5);
+    assert!(height(&h, Panel::Inspector) > inspector + 50.0);
+    let (_, after) = h.state().floating_rects(Panel::Layers).unwrap();
+    assert!(
+        (after.height() - window.height()).abs() < 1.0,
+        "{window:?} → {after:?}"
+    );
+    // The top one folds too; then the last open one can't.
+    click(&mut h, Panel::Layers);
+    click(&mut h, Panel::Inspector);
+    assert_eq!(
+        h.state().layout.folded,
+        [Panel::Layers, Panel::Parameters].into_iter().collect()
+    );
+    // And opens again.
+    click(&mut h, Panel::Parameters);
+    assert!(!h.state().layout.folded.contains(&Panel::Parameters));
+    assert_eq!(
+        h.state().layout.floating,
+        [stack.to_vec()],
+        "clicks don't move panels"
     );
 }
 

@@ -60,6 +60,8 @@ impl DriftApp {
         let mut editor = Editor::new(doc);
         editor.keep_prefs_from(&self.editor);
         self.editor = editor;
+        // An isolate belongs to the drawing it was made in (and its undo history).
+        self.layer_list.isolated = None;
         self.fit_target = Some(self.fit_bounds());
         self.file = FileState {
             name,
@@ -222,7 +224,7 @@ impl DriftApp {
             self.remember(path);
             self.request(Pending::Recent(0));
         } else {
-            // A PDF or DXF is brought into the open sketch, which stays.
+            // A drawing in another format is brought into the open sketch, which stays.
             self.files.open_path(&path);
         }
     }

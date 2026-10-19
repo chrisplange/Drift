@@ -8,8 +8,81 @@ use crate::DriftApp;
 use crate::editor::Editor;
 use crate::icons::{self, Glyph};
 
+/// The filter field shows once a drawing has more layers than this.
+const FILTER_FROM: usize = 8;
+
+/// The Layers panel's own state: the name filter, the isolated layer, and the row heights
+/// the list is laid out with (only the rows in view are drawn).
+#[derive(Default)]
+pub(crate) struct LayerList {
+    /// Rows show when their name contains this (any case).
+    pub filter: String,
+    /// The layer shown on its own, and how every layer was before.
+    pub isolated: Option<Isolated>,
+    /// The height of a closed row, with the space after it, as last drawn.
+    row: f32,
+    /// The same for opened rows, which are taller.
+    opened: std::collections::HashMap<LayerId, f32>,
+    /// A row to scroll into view.
+    reveal: Option<LayerId>,
+}
+
+/// A layer shown on its own; ending the isolate puts `before` back.
+pub(crate) struct Isolated {
+    pub layer: LayerId,
+    pub before: Vec<(LayerId, bool)>,
+}
+
+/// What a row asks of the panel, done once the list is drawn.
+enum LayerAction {
+    Isolate(LayerId),
+    EndIsolate,
+    ShowAll,
+}
+
+/// The layers and how many curves each holds, worked out again only when the drawing
+/// changes (an imported DWG can have a hundred thousand entities).
+#[derive(Default)]
+pub(crate) struct LayerCounts {
+    /// The document revision, entity count and layer count these were taken at.
+    key: Option<(u64, usize, usize)>,
+    /// The layers, bottom up.
+    pub layers: Vec<(LayerId, Layer)>,
+    /// Curves on each layer.
+    pub curves: std::collections::HashMap<LayerId, usize>,
+    /// Curves in all.
+    pub total: usize,
+}
+
+impl LayerCounts {
+    /// Bring the counts up to date with `doc`.
+    pub fn update(&mut self, doc: &drift_core::Document) {
+        let key = (doc.revision(), doc.len(), doc.layers().count());
+        if self.key == Some(key) {
+            return;
+        }
+        self.key = Some(key);
+        self.layers = doc.layers().map(|(id, l)| (id, l.clone())).collect();
+        self.curves.clear();
+        self.total = 0;
+        for (_, e) in doc.iter() {
+            if !e.kind.is_point() {
+                *self.curves.entry(e.layer).or_default() += 1;
+                self.total += 1;
+            }
+        }
+    }
+}
+
 /// A small icon toggle: full colour when on, faint (and struck through for `strike`) when off.
-pub(crate) fn icon_toggle(ui: &mut egui::Ui, on: &mut bool, glyph: Glyph, strike: bool, tip: &str) {
+/// True when it was clicked.
+pub(crate) fn icon_toggle(
+    ui: &mut egui::Ui,
+    on: &mut bool,
+    glyph: Glyph,
+    strike: bool,
+    tip: &str,
+) -> bool {
     let r = icons::button(ui, 24.0, false, tip, |painter, rect, color| {
         let color = if *on {
             color
@@ -24,9 +97,46 @@ pub(crate) fn icon_toggle(ui: &mut egui::Ui, on: &mut bool, glyph: Glyph, strike
             );
         }
     });
-    if r.on_hover_text(tip).clicked() {
+    let clicked = r.on_hover_text(tip).clicked();
+    if clicked {
         *on = !*on;
     }
+    clicked
+}
+
+/// `text` shortened in the middle with an ellipsis to fit `width` (CAD layer names share
+/// their beginnings and differ at the end, A-WALL-FULL / A-WALL-FULL-PATT).
+fn elide_middle(ui: &egui::Ui, text: &str, font: &egui::FontId, width: f32) -> String {
+    let fits = |s: &str| {
+        ui.painter()
+            .layout_no_wrap(s.to_owned(), font.clone(), egui::Color32::WHITE)
+            .size()
+            .x
+            <= width
+    };
+    if fits(text) {
+        return text.to_owned();
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let cut = |keep: usize| {
+        let head = keep.div_ceil(2);
+        let tail = keep - head;
+        let mut s: String = chars[..head].iter().collect();
+        s.push('…');
+        s.extend(&chars[chars.len() - tail..]);
+        s
+    };
+    // The most characters that still fit.
+    let (mut lo, mut hi) = (0, chars.len());
+    while lo < hi {
+        let mid = (lo + hi).div_ceil(2);
+        if fits(&cut(mid)) {
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    cut(lo)
 }
 
 impl Editor {
@@ -45,6 +155,60 @@ impl Editor {
         self.doc.begin();
         self.doc.set_layer(id, layer);
         self.commit("Change layer");
+    }
+
+    /// Show or hide layers (the rest stay as they are), one undo step; nothing when none
+    /// change.
+    pub fn set_layers_visible(&mut self, visible: &[(LayerId, bool)], label: &str) {
+        let changed: Vec<(LayerId, Layer)> = visible
+            .iter()
+            .filter_map(|&(id, on)| {
+                let layer = self.doc.layer(id)?;
+                (layer.visible != on).then(|| {
+                    (
+                        id,
+                        Layer {
+                            visible: on,
+                            ..layer.clone()
+                        },
+                    )
+                })
+            })
+            .collect();
+        if changed.is_empty() {
+            return;
+        }
+        self.doc.begin();
+        for (id, layer) in changed {
+            self.doc.set_layer(id, layer);
+        }
+        self.commit(label);
+    }
+
+    /// Show `id` alone, made current, hiding every other layer: one undo step. Returns how
+    /// each layer was, to put back with [`Editor::set_layers_visible`].
+    pub fn isolate_layer(&mut self, id: LayerId) -> Vec<(LayerId, bool)> {
+        let before: Vec<(LayerId, bool)> = self
+            .doc
+            .layers()
+            .map(|(l, layer)| (l, layer.visible))
+            .collect();
+        self.doc.begin();
+        for (l, _) in &before {
+            if let Some(layer) = self.doc.layer(*l) {
+                let visible = *l == id;
+                if layer.visible != visible {
+                    let layer = Layer {
+                        visible,
+                        ..layer.clone()
+                    };
+                    self.doc.set_layer(*l, layer);
+                }
+            }
+        }
+        let _ = self.doc.set_current_layer(id);
+        self.commit("Isolate layer");
+        before
     }
 
     /// Delete a layer; its geometry moves to layer "0".
@@ -198,196 +362,453 @@ fn line_type_combo(
     changed
 }
 
+fn pos_of(list: &[LayerId], id: LayerId) -> Option<usize> {
+    list.iter().position(|l| *l == id)
+}
+
+/// The bar above the list while a layer is isolated; true when "End isolate" is clicked.
+fn isolate_bar(ui: &mut egui::Ui, name: &str) -> bool {
+    let accent = crate::theme::accent(ui.visuals().dark_mode);
+    let mut end = false;
+    egui::Frame::new()
+        .fill(accent.gamma_multiply(0.12))
+        .stroke(egui::Stroke::new(1.0, accent.gamma_multiply(0.5)))
+        .corner_radius(7.0)
+        .inner_margin(egui::Margin::symmetric(6, 3))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    end = ui
+                        .button("End isolate")
+                        .on_hover_text("Show the other layers again, as they were")
+                        .clicked();
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        ui.add(egui::Label::new(format!("Isolating {name}")).truncate())
+                            .on_hover_text(format!("Only {name} is shown"));
+                    });
+                });
+            });
+        });
+    ui.add_space(4.0);
+    end
+}
+
+/// What every layer row needs to know, worked out once a frame.
+struct RowInfo<'a> {
+    current: LayerId,
+    has_selection: bool,
+    counts: &'a std::collections::HashMap<LayerId, usize>,
+    picked: &'a std::collections::BTreeSet<LayerId>,
+    isolated: Option<LayerId>,
+    any_hidden: bool,
+}
+
 impl DriftApp {
-    /// The Layers panel: a compact row per layer (colour, name, curve count, visibility,
-    /// locking; the current one highlighted) that opens to show its colours and line
-    /// settings; then underlays.
+    /// The Layers panel: a filter once there are many layers, the isolate bar, then a
+    /// compact row per layer (colour, name, curve count, visibility, locking; the current
+    /// one highlighted) that opens to show its colours and line settings; then underlays.
+    /// Only the rows in view are drawn, so a drawing with a thousand layers costs no more
+    /// than one with ten.
     pub(crate) fn layers_panel(&mut self, ui: &mut egui::Ui, now: f64) {
-        let dark = ui.visuals().dark_mode;
-        let accent = crate::theme::accent(dark);
-        let layers: Vec<(LayerId, Layer)> = self
-            .editor
-            .doc
-            .layers()
-            .map(|(id, l)| (id, l.clone()))
-            .collect();
+        self.end_stale_isolate();
+        self.layer_counts.update(&self.editor.doc);
+        let counts = std::mem::take(&mut self.layer_counts.curves);
+        let layers = std::mem::take(&mut self.layer_counts.layers);
         let current = self.editor.doc.current_layer();
         let has_selection = !self.editor.selection.is_empty();
-        // Curves per layer, and the layers the selection is on.
-        let mut counts = std::collections::HashMap::<LayerId, usize>::new();
-        for (_, e) in self.editor.doc.iter() {
-            if !e.kind.is_point() {
-                *counts.entry(e.layer).or_default() += 1;
-            }
-        }
+        // The layers the selection is on.
         let picked: std::collections::BTreeSet<LayerId> = self
             .editor
             .selection
             .iter()
             .filter_map(|id| self.editor.doc.get(*id).map(|e| e.layer))
             .collect();
+        // The rows, top down as the layers stack (the top one draws over the rest), that
+        // match the filter.
+        let needle = self.layer_list.filter.trim().to_lowercase();
+        let mut total = 0;
+        let mut any_hidden = false;
+        let mut list: Vec<LayerId> = Vec::new();
+        for (id, layer) in layers.iter().rev() {
+            let id = *id;
+            total += 1;
+            any_hidden |= !layer.visible;
+            if needle.is_empty() || layer.name.to_lowercase().contains(&needle) {
+                list.push(id);
+            }
+        }
+        let info = RowInfo {
+            current,
+            has_selection,
+            counts: &counts,
+            picked: &picked,
+            isolated: self.layer_list.isolated.as_ref().map(|i| i.layer),
+            any_hidden,
+        };
         let mut status = None;
-        // The list reads top down as the layers stack: the top one draws over the rest.
-        let layers: Vec<(LayerId, Layer)> = layers.into_iter().rev().collect();
+        let mut action = None;
+        crate::theme::section(ui, &format!("Layers · {total}"));
+        if total > FILTER_FROM || !self.layer_list.filter.is_empty() {
+            self.layer_filter(ui, list.len(), total);
+        }
+        if let Some(iso) = &self.layer_list.isolated {
+            let name = self
+                .editor
+                .doc
+                .layer(iso.layer)
+                .map_or(String::new(), |l| l.name.clone());
+            if isolate_bar(ui, &name) {
+                action = Some(LayerAction::EndIsolate);
+            }
+        }
+        // The current layer stays in sight when the filter leaves it out.
+        if !list.contains(&current) {
+            ui.label(
+                egui::RichText::new("Current layer (not matching the filter)")
+                    .small()
+                    .weak(),
+            );
+            self.layer_list_row(ui, current, &info, false, &mut status, &mut action);
+            ui.separator();
+        }
         let mut rows: Vec<(LayerId, egui::Rect)> = Vec::new();
-        egui::ScrollArea::vertical()
+        let output = egui::ScrollArea::vertical()
             .id_salt("layers_scroll")
             .auto_shrink([false, false])
-            .show(ui, |ui| {
-                crate::theme::section(ui, &format!("Layers · {}", layers.len()));
-                for (id, layer) in layers {
-                    let mut edited = layer.clone();
-                    let is_current = id == current;
-                    let open = self.expanded_layers.contains(&id);
-                    // The whole row: a click makes the layer current, a drag moves it in
-                    // the order (its own buttons and fields take their clicks first).
-                    let row = ui.scope_builder(
-                        egui::UiBuilder::new()
-                            .id_salt(("layer_row", id))
-                            .sense(egui::Sense::click_and_drag()),
-                        |ui| {
-                            egui::Frame::new()
-                                .fill(if is_current {
-                                    accent.gamma_multiply(0.16)
-                                } else if open {
-                                    ui.visuals().faint_bg_color
-                                } else {
-                                    egui::Color32::TRANSPARENT
-                                })
-                                .corner_radius(7.0)
-                                .inner_margin(egui::Margin::symmetric(4, 2))
-                                .show(ui, |ui| {
-                                    self.layer_row(
-                                        ui,
-                                        id,
-                                        &layer,
-                                        &mut edited,
-                                        is_current,
-                                        open,
-                                        &counts,
-                                        &picked,
-                                    );
-                                    if open {
-                                        self.layer_details(
-                                            ui,
-                                            id,
-                                            &mut edited,
-                                            has_selection,
-                                            &mut status,
-                                        );
-                                    }
-                                });
-                        },
-                    );
-                    let row = row.response;
-                    rows.push((id, row.rect));
-                    if row.clicked() && !is_current {
-                        self.editor.set_current_layer(id);
-                    }
-                    if row.drag_started() {
-                        self.layer_drag = Some(id);
-                    }
-                    if self.layer_drag.is_none() && row.hovered() && !is_current {
-                        ui.painter().rect_stroke(
-                            row.rect,
-                            7.0,
-                            egui::Stroke::new(1.0, ui.visuals().widgets.hovered.bg_stroke.color),
-                            egui::StrokeKind::Inside,
-                        );
-                    }
-                    row.on_hover_text("Click to make current · drag to reorder (top draws on top)")
-                        .context_menu(|ui| {
-                            if ui.button("Make current").clicked() {
-                                self.editor.set_current_layer(id);
-                                ui.close();
-                            }
-                            if ui
-                                .add_enabled(id != LayerId::DEFAULT, egui::Button::new("Rename"))
-                                .clicked()
-                            {
-                                self.renaming_layer = Some(id);
-                                ui.close();
-                            }
-                            if ui.button("Select all on this layer").clicked() {
-                                self.editor.select_layer(id);
-                                ui.close();
-                            }
-                            if ui
-                                .add_enabled(
-                                    has_selection,
-                                    egui::Button::new("Move selection here"),
-                                )
-                                .clicked()
-                            {
-                                self.editor.move_selection_to_layer(id);
-                                ui.close();
-                            }
-                            ui.separator();
-                            if ui
-                                .add_enabled(
-                                    id != LayerId::DEFAULT,
-                                    egui::Button::new("Delete layer"),
-                                )
-                                .clicked()
-                            {
-                                if let Err(e) = self.editor.remove_layer(id) {
-                                    status = Some(e);
-                                }
-                                ui.close();
-                            }
-                        });
-                    if edited != layer && self.editor.doc.layer(id).is_some() {
-                        self.editor.update_layer(id, edited);
-                    }
-                    ui.add_space(1.0);
+            .show_viewport(ui, |ui, viewport| {
+                // Each row's top, from the heights the rows had when last drawn.
+                let closed = if self.layer_list.row > 0.0 {
+                    self.layer_list.row
+                } else {
+                    29.0
+                };
+                let heights: Vec<f32> = list
+                    .iter()
+                    .map(|id| {
+                        if self.expanded_layers.contains(id) {
+                            let opened = self.layer_list.opened.get(id).copied();
+                            opened.unwrap_or(closed + 140.0)
+                        } else {
+                            closed
+                        }
+                    })
+                    .collect();
+                let mut tops = Vec::with_capacity(list.len() + 1);
+                let mut y = 0.0;
+                for h in &heights {
+                    tops.push(y);
+                    y += h;
                 }
-                self.drag_layer(ui, &rows);
-                ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    if ui
-                        .button("New layer")
-                        .on_hover_text("A new layer, made current; type its name")
-                        .clicked()
-                    {
-                        let n = self.editor.doc.layers().count();
-                        let name = format!("Layer {n}");
-                        let id = self.editor.add_layer(&name);
-                        self.editor.set_current_layer(id);
-                        self.renaming_layer = Some(id);
-                        self.layer_names.insert(id, name);
+                tops.push(y);
+                if let Some(i) = self.layer_list.reveal.take().and_then(|r| pos_of(&list, r)) {
+                    let top = ui.max_rect().top();
+                    let rect = egui::Rect::from_x_y_ranges(
+                        ui.max_rect().x_range(),
+                        top + tops[i]..=top + tops[i + 1],
+                    );
+                    ui.scroll_to_rect(rect, None);
+                }
+                // The rows in view, and one more each way.
+                let first = tops
+                    .partition_point(|t| *t <= viewport.min.y)
+                    .saturating_sub(2);
+                let last = tops
+                    .partition_point(|t| *t < viewport.max.y)
+                    .min(list.len());
+                let first = first.min(last);
+                ui.add_space(tops[first]);
+                for (i, &id) in list.iter().enumerate().take(last).skip(first) {
+                    let top = ui.cursor().top();
+                    let rect = self.layer_list_row(ui, id, &info, true, &mut status, &mut action);
+                    ui.add_space(1.0);
+                    rows.push((id, rect));
+                    let drawn = ui.cursor().top() - top;
+                    let open = self.expanded_layers.contains(&id);
+                    let guess = heights[i];
+                    if open {
+                        self.layer_list.opened.insert(id, drawn);
+                    } else {
+                        self.layer_list.row = drawn;
                     }
-                    if has_selection
-                        && ui
-                            .button("Move selection here")
-                            .on_hover_text("Move the selection to the current layer")
+                    if (drawn - guess).abs() > 0.5 {
+                        // Laid out with a wrong height: again, with the right one.
+                        ui.ctx().request_repaint();
+                    }
+                }
+                ui.add_space(tops[list.len()] - tops[last]);
+                if list.is_empty() {
+                    ui.label(egui::RichText::new("No layer matches the filter").weak());
+                }
+                // Room to scroll above and below, for a row dragged to the list's ends.
+                let room = (viewport.min.y > 0.0, viewport.max.y < tops[list.len()]);
+                self.drag_layer(ui, &rows, room);
+                // Below the rows, ids that don't depend on how many rows are drawn.
+                let footer = egui::UiBuilder::new().id(egui::Id::new("layers_footer"));
+                ui.scope_builder(footer, |ui| {
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        if ui
+                            .button("New layer")
+                            .on_hover_text("A new layer, made current; type its name")
                             .clicked()
-                    {
-                        self.editor.move_selection_to_layer(current);
-                    }
+                        {
+                            let n = self.editor.doc.layers().count();
+                            let name = format!("Layer {n}");
+                            let id = self.editor.add_layer(&name);
+                            self.editor.set_current_layer(id);
+                            self.renaming_layer = Some(id);
+                            self.layer_names.insert(id, name);
+                            // The new layer would hide behind a filter it doesn't match.
+                            self.layer_list.filter.clear();
+                            self.layer_list.reveal = Some(id);
+                        }
+                    });
+                    self.underlays_section(ui);
                 });
-                self.underlays_section(ui);
             });
+        self.panel_scrolled(ui, crate::dock::Panel::Layers, &output);
+        self.layer_counts.curves = counts;
+        self.layer_counts.layers = layers;
+        self.layer_list
+            .opened
+            .retain(|id, _| self.expanded_layers.contains(id));
+        match action {
+            Some(LayerAction::Isolate(id)) => {
+                let before = self.editor.isolate_layer(id);
+                // Isolating another layer keeps the first isolate's "before".
+                let before = match self.layer_list.isolated.take() {
+                    Some(iso) => iso.before,
+                    None => before,
+                };
+                self.layer_list.isolated = Some(Isolated { layer: id, before });
+            }
+            Some(LayerAction::EndIsolate) => {
+                if let Some(iso) = self.layer_list.isolated.take() {
+                    self.editor.set_layers_visible(&iso.before, "End isolate");
+                }
+            }
+            Some(LayerAction::ShowAll) => {
+                self.layer_list.isolated = None;
+                let all: Vec<(LayerId, bool)> =
+                    self.editor.doc.layers().map(|(id, _)| (id, true)).collect();
+                self.editor.set_layers_visible(&all, "Show all layers");
+            }
+            None => {}
+        }
         if let Some(text) = status {
             self.set_status(text, true, now);
         }
     }
 
+    /// Forget an isolate that is over: its layer deleted, or undone back to how the layers
+    /// were before it.
+    fn end_stale_isolate(&mut self) {
+        let Some(iso) = &self.layer_list.isolated else {
+            return;
+        };
+        let doc = &self.editor.doc;
+        let gone = doc.layer(iso.layer).is_none();
+        let undone = iso
+            .before
+            .iter()
+            .all(|(id, on)| doc.layer(*id).is_none_or(|l| l.visible == *on));
+        if gone || undone {
+            self.layer_list.isolated = None;
+        }
+    }
+
+    /// The filter field: names containing the text (any case), how many match, and a
+    /// button (or Escape) to clear it.
+    fn layer_filter(&mut self, ui: &mut egui::Ui, matched: usize, total: usize) {
+        ui.horizontal(|ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let filter = &mut self.layer_list.filter;
+                if !filter.is_empty() {
+                    ui.label(
+                        egui::RichText::new(format!("{matched} of {total}"))
+                            .small()
+                            .weak(),
+                    )
+                    .on_hover_text("Layers matching the filter");
+                    if ui
+                        .small_button("×")
+                        .on_hover_text("Clear the filter")
+                        .clicked()
+                    {
+                        filter.clear();
+                    }
+                }
+                let r = ui.add(
+                    egui::TextEdit::singleline(filter)
+                        .id_salt("layer_filter")
+                        .hint_text("Filter layers")
+                        .desired_width(ui.available_width()),
+                );
+                if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                    filter.clear();
+                }
+            });
+        });
+        ui.add_space(2.0);
+    }
+
+    /// A layer's row in its frame, with what a click, a drag and the context menu do.
+    /// Returns its rect.
+    fn layer_list_row(
+        &mut self,
+        ui: &mut egui::Ui,
+        id: LayerId,
+        info: &RowInfo,
+        draggable: bool,
+        status: &mut Option<String>,
+        action: &mut Option<LayerAction>,
+    ) -> egui::Rect {
+        let Some(layer) = self.editor.doc.layer(id).cloned() else {
+            return egui::Rect::NOTHING;
+        };
+        let accent = crate::theme::accent(ui.visuals().dark_mode);
+        let mut edited = layer.clone();
+        let is_current = id == info.current;
+        let open = self.expanded_layers.contains(&id);
+        // The whole row: a click makes the layer current, a drag moves it in the order (its
+        // own buttons and fields take their clicks first).
+        let sense = if draggable {
+            egui::Sense::click_and_drag()
+        } else {
+            egui::Sense::click()
+        };
+        let row = ui.scope_builder(
+            // An id of its own: which rows are drawn changes as the list scrolls.
+            egui::UiBuilder::new()
+                .id(egui::Id::new(("layer_row", id, draggable)))
+                .sense(sense),
+            |ui| {
+                egui::Frame::new()
+                    .fill(if is_current {
+                        accent.gamma_multiply(0.16)
+                    } else if open {
+                        ui.visuals().faint_bg_color
+                    } else {
+                        egui::Color32::TRANSPARENT
+                    })
+                    .corner_radius(7.0)
+                    .inner_margin(egui::Margin::symmetric(4, 2))
+                    .show(ui, |ui| {
+                        if let Some(a) = self.layer_row(ui, id, &layer, &mut edited, info) {
+                            *action = Some(a);
+                        }
+                        if open {
+                            self.layer_details(ui, id, &mut edited, info.has_selection, status);
+                        }
+                    });
+            },
+        );
+        let row = row.response;
+        if row.clicked() && !is_current {
+            self.editor.set_current_layer(id);
+        }
+        if row.drag_started() {
+            self.layer_drag = Some(id);
+        }
+        if self.layer_drag.is_none() && row.hovered() && !is_current {
+            ui.painter().rect_stroke(
+                row.rect,
+                7.0,
+                egui::Stroke::new(1.0, ui.visuals().widgets.hovered.bg_stroke.color),
+                egui::StrokeKind::Inside,
+            );
+        }
+        let rect = row.rect;
+        let tip = if draggable {
+            "Click to make current · drag to reorder (top draws on top)"
+        } else {
+            "Click to make current"
+        };
+        row.on_hover_text(format!("{}\n{tip}", layer.name))
+            .context_menu(|ui| {
+                if ui.button("Make current").clicked() {
+                    self.editor.set_current_layer(id);
+                    ui.close();
+                }
+                if ui
+                    .add_enabled(id != LayerId::DEFAULT, egui::Button::new("Rename"))
+                    .clicked()
+                {
+                    self.renaming_layer = Some(id);
+                    ui.close();
+                }
+                if ui.button("Select all on this layer").clicked() {
+                    self.editor.select_layer(id);
+                    ui.close();
+                }
+                if ui
+                    .add_enabled(
+                        info.has_selection,
+                        egui::Button::new("Move selection to this layer"),
+                    )
+                    .clicked()
+                {
+                    self.editor.move_selection_to_layer(id);
+                    ui.close();
+                }
+                ui.separator();
+                if info.isolated == Some(id) {
+                    if ui
+                        .button("End isolate")
+                        .on_hover_text("Show the other layers again, as they were")
+                        .clicked()
+                    {
+                        *action = Some(LayerAction::EndIsolate);
+                        ui.close();
+                    }
+                } else if ui
+                    .button("Isolate")
+                    .on_hover_text("Show this layer alone (Alt-click its eye)")
+                    .clicked()
+                {
+                    *action = Some(LayerAction::Isolate(id));
+                    ui.close();
+                }
+                if ui
+                    .add_enabled(info.any_hidden, egui::Button::new("Show all layers"))
+                    .clicked()
+                {
+                    *action = Some(LayerAction::ShowAll);
+                    ui.close();
+                }
+                ui.separator();
+                if ui
+                    .add_enabled(id != LayerId::DEFAULT, egui::Button::new("Delete layer"))
+                    .clicked()
+                {
+                    if let Err(e) = self.editor.remove_layer(id) {
+                        *status = Some(e);
+                    }
+                    ui.close();
+                }
+            });
+        if edited != layer && self.editor.doc.layer(id).is_some() {
+            self.editor.update_layer(id, edited);
+        }
+        rect
+    }
+
     /// A layer's row: disclosure chevron, colour swatch, name (click: make current;
     /// double-click: rename), the selection marker, curve count, visibility and lock.
-    #[allow(clippy::too_many_arguments)]
+    /// Alt-click on the eye isolates the layer (or ends the isolate).
     fn layer_row(
         &mut self,
         ui: &mut egui::Ui,
         id: LayerId,
         layer: &Layer,
         edited: &mut Layer,
-        is_current: bool,
-        open: bool,
-        counts: &std::collections::HashMap<LayerId, usize>,
-        picked: &std::collections::BTreeSet<LayerId>,
-    ) {
+        info: &RowInfo,
+    ) -> Option<LayerAction> {
         let dark = ui.visuals().dark_mode;
         let accent = crate::theme::accent(dark);
+        let is_current = id == info.current;
+        let open = self.expanded_layers.contains(&id);
+        let mut action = None;
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 5.0;
             // The active (current) layer's dot; a faint ring on the others.
@@ -460,7 +881,18 @@ impl DriftApp {
                     "Locked geometry can be snapped to but not edited",
                 );
                 edited.locked = locked;
-                icon_toggle(ui, &mut edited.visible, Glyph::Eye, true, "Show or hide");
+                let visible = edited.visible;
+                let tip = "Show or hide · Alt-click: show this layer alone";
+                if icon_toggle(ui, &mut edited.visible, Glyph::Eye, true, tip)
+                    && ui.input(|i| i.modifiers.alt)
+                {
+                    edited.visible = visible;
+                    action = Some(if info.isolated == Some(id) {
+                        LayerAction::EndIsolate
+                    } else {
+                        LayerAction::Isolate(id)
+                    });
+                }
                 icon_toggle(
                     ui,
                     &mut edited.snappable,
@@ -469,14 +901,22 @@ impl DriftApp {
                     "Snap to this layer's geometry (off: it can still be picked and edited)",
                 );
                 ui.add_space(4.0);
-                let n = counts.get(&id).copied().unwrap_or(0);
+                let n = info.counts.get(&id).copied().unwrap_or(0);
                 ui.label(egui::RichText::new(n.to_string()).small().weak())
                     .on_hover_text("Curves on this layer");
-                if picked.contains(&id) {
+                if info.picked.contains(&id) {
                     ui.add_space(5.0);
-                    let (dot, _) =
-                        ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
-                    ui.painter().circle_filled(dot.center(), 3.0, accent);
+                    let (mark, response) =
+                        ui.allocate_exact_size(egui::vec2(9.0, 9.0), egui::Sense::hover());
+                    let r = mark.shrink(0.5);
+                    ui.painter().rect(
+                        r,
+                        1.5,
+                        accent.gamma_multiply(0.25),
+                        egui::Stroke::new(1.2, accent),
+                        egui::StrokeKind::Inside,
+                    );
+                    response.on_hover_text("Some of the selection is on this layer");
                 }
                 ui.add_space(6.0);
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
@@ -484,10 +924,18 @@ impl DriftApp {
                 });
             });
         });
+        action
     }
 
-    /// A layer row being dragged: a line where it would go, and on release, the move.
-    fn drag_layer(&mut self, ui: &mut egui::Ui, rows: &[(LayerId, egui::Rect)]) {
+    /// A layer row being dragged: a line where it would go, and on release, the move. Only
+    /// the rows in view are in `rows` (top down, perhaps filtered); dragging near the top or
+    /// bottom of the list scrolls it.
+    fn drag_layer(
+        &mut self,
+        ui: &mut egui::Ui,
+        rows: &[(LayerId, egui::Rect)],
+        (up, down_room): (bool, bool),
+    ) {
         let Some(dragged) = self.layer_drag else {
             return;
         };
@@ -503,6 +951,21 @@ impl DriftApp {
             .position(|(_, r)| pointer.y < r.center().y)
             .unwrap_or(rows.len());
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+        let view = ui.clip_rect();
+        if down {
+            let edge = 24.0;
+            let step = if up && pointer.y < view.top() + edge {
+                8.0
+            } else if down_room && pointer.y > view.bottom() - edge {
+                -8.0
+            } else {
+                0.0
+            };
+            if step != 0.0 {
+                ui.scroll_with_delta(egui::vec2(0.0, step));
+                ui.ctx().request_repaint();
+            }
+        }
         if let (Some(first), Some(last)) = (rows.first(), rows.last()) {
             let y = rows
                 .get(slot)
@@ -520,13 +983,36 @@ impl DriftApp {
             return;
         }
         self.layer_drag = None;
-        let Some(from) = rows.iter().position(|(id, _)| *id == dragged) else {
+        // The dragged layer goes just above the row after the gap, or just below the row
+        // before it, in the whole list (top down) without the dragged layer.
+        let mut order: Vec<LayerId> = self
+            .editor
+            .doc
+            .layers()
+            .map(|(id, _)| id)
+            .filter(|id| *id != dragged)
+            .collect();
+        order.reverse();
+        let pos = |order: &[LayerId], id: LayerId| order.iter().position(|l| *l == id);
+        let after = rows[slot..].iter().map(|r| r.0).find(|id| *id != dragged);
+        let before = rows[..slot]
+            .iter()
+            .rev()
+            .map(|r| r.0)
+            .find(|id| *id != dragged);
+        let at = match (after, before) {
+            (Some(a), _) => pos(&order, a),
+            (None, Some(b)) => pos(&order, b).map(|i| i + 1),
+            (None, None) => None,
+        };
+        let Some(at) = at else {
             return;
         };
-        // Where it lands in the list, then in the draw order (the list is top down).
-        let at = if from < slot { slot - 1 } else { slot };
-        if at != from {
-            self.editor.reorder_layer(dragged, rows.len() - 1 - at);
+        order.insert(at, dragged);
+        let index = order.len() - 1 - at;
+        let now = self.editor.doc.layers().position(|(id, _)| id == dragged);
+        if now != Some(index) {
+            self.editor.reorder_layer(dragged, index);
         }
     }
 
@@ -558,10 +1044,14 @@ impl DriftApp {
             }
             return;
         }
-        let name = egui::RichText::new(&layer.name);
-        let name = if is_current {
-            name.family(crate::theme::bold())
-        } else if layer.visible {
+        // Long names lose their middle, not their distinguishing end; the tooltip has it all.
+        let mut font = egui::TextStyle::Body.resolve(ui.style());
+        if is_current {
+            font.family = crate::theme::bold();
+        }
+        let shown = elide_middle(ui, &layer.name, &font, ui.available_width());
+        let name = egui::RichText::new(shown).font(font);
+        let name = if is_current || layer.visible {
             name
         } else {
             name.weak()
@@ -572,11 +1062,15 @@ impl DriftApp {
                     .sense(egui::Sense::click())
                     .truncate(),
             )
-            .on_hover_text(if is_current {
-                "The current layer: new geometry goes here. Double-click to rename"
-            } else {
-                "Click to make this the current layer; double-click to rename"
-            });
+            .on_hover_text(format!(
+                "{}\n{}",
+                layer.name,
+                if is_current {
+                    "The current layer: new geometry goes here. Double-click to rename"
+                } else {
+                    "Click to make this the current layer; double-click to rename"
+                }
+            ));
         if r.clicked() && !is_current {
             self.editor.set_current_layer(id);
         }
@@ -639,7 +1133,10 @@ impl DriftApp {
                 self.editor.select_layer(id);
             }
             if ui
-                .add_enabled(has_selection, egui::Button::new("Move here").small())
+                .add_enabled(
+                    has_selection,
+                    egui::Button::new("Move selection here").small(),
+                )
                 .on_hover_text("Move the selected geometry onto this layer")
                 .clicked()
             {

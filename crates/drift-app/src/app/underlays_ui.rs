@@ -1,5 +1,5 @@
-//! Underlays in the UI: importing PDF, DWG and DXF files as underlays (choosing a PDF page), and
-//! the Underlays section of the Layers tab.
+//! Underlays in the UI: importing DWG, DXF, SVG, PDF and Illustrator files as underlays
+//! (choosing a PDF page), and the Underlays section of the Layers panel.
 
 use drift_core::{UnderlayId, underlays::MM_PER_POINT};
 
@@ -7,7 +7,7 @@ use crate::icons::Glyph;
 use crate::*;
 
 pub(crate) const UNDERLAY_FILE: FileType = FileType {
-    name: "PDF, DWG or DXF drawing",
+    name: "DWG, DXF, SVG, PDF or Illustrator drawing",
     extensions: &["pdf", "dwg", "dxf", "svg", "ai"],
 };
 
@@ -57,7 +57,7 @@ impl DriftApp {
         self.files.open(UNDERLAY_FILE);
     }
 
-    /// An opened PDF, DWG, DXF or SVG file, to become an underlay.
+    /// An opened DWG, DXF, SVG, PDF or Illustrator file, to become an underlay.
     pub(crate) fn import_underlay_file(&mut self, name: &str, bytes: Vec<u8>, now: f64) {
         let lower = name.to_ascii_lowercase();
         if lower.ends_with(".svg") && !bytes.starts_with(b"%PDF") {
@@ -112,7 +112,7 @@ impl DriftApp {
                     .filter(|(_, n)| *n > 1)
                     .map_or(String::new(), |(p, n)| format!(" (page {p} of {n})"));
                 let mut msg = format!(
-                    "Underlay from {name}{page}: {} curves. Calibrate it in the Layers tab",
+                    "Underlay from {name}{page}: {} curves. Calibrate it in the Layers panel",
                     report.curves
                 );
                 if !report.skipped.is_empty() {
@@ -189,8 +189,8 @@ impl DriftApp {
         if underlays.is_empty() {
             ui.label(
                 egui::RichText::new(
-                    "A PDF or DXF drawing to trace over: snap to it, calibrate its scale, and \
-                     draw on top.",
+                    "A DWG, DXF, SVG, PDF or Illustrator drawing to trace over: snap to it, \
+                     calibrate its scale, and draw on top.",
                 )
                 .weak(),
             );
@@ -281,8 +281,8 @@ impl DriftApp {
         }
         ui.add_space(6.0);
         if ui
-            .button("Import PDF or DXF…")
-            .on_hover_text("Place a drawing under the sketch to trace over")
+            .button("Import underlay…")
+            .on_hover_text("Place a DWG, DXF, SVG, PDF or Illustrator drawing under the sketch")
             .clicked()
         {
             self.pick_underlay_file();

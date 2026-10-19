@@ -292,10 +292,14 @@ pub struct DriftApp {
     layer_names: std::collections::HashMap<drift_core::LayerId, String>,
     /// Layers showing their colours and line settings in the Layers panel.
     expanded_layers: std::collections::HashSet<drift_core::LayerId>,
+    /// The Layers panel's layers and curve counts, kept until the drawing changes.
+    layer_counts: crate::layers_ui::LayerCounts,
     /// A layer row being dragged to a new place in the order.
     layer_drag: Option<drift_core::LayerId>,
     /// The layer whose name is being edited.
     renaming_layer: Option<drift_core::LayerId>,
+    /// The Layers panel's filter, isolated layer and row heights.
+    layer_list: layers_ui::LayerList,
     show_grid: bool,
     show_axes: bool,
     /// Fill tessellations, kept while the document is unchanged.
@@ -511,8 +515,10 @@ impl DriftApp {
             status_colors: true,
             layer_names: Default::default(),
             expanded_layers: Default::default(),
+            layer_counts: Default::default(),
             layer_drag: None,
             renaming_layer: None,
+            layer_list: Default::default(),
             show_grid: true,
             show_axes: true,
             fill_meshes: Default::default(),

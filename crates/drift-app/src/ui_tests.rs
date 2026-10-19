@@ -1040,14 +1040,253 @@ fn floating_panels_stack_and_come_apart() {
     );
     h.run();
     save_png("drift_ui_stacked.png", &mut h);
-    // Pull Layers out of the stack by its header, onto the canvas: it floats on its own.
-    let header = h.state().header_rect(Panel::Layers).unwrap();
+    // Pull Blocks out of the stack by its header, onto the canvas: it floats on its own.
+    let header = h.state().header_rect(Panel::Blocks).unwrap();
     let from = header.left_center() + egui::vec2(60.0, 0.0);
     let to = h.state().canvas_rect.left_center() + egui::vec2(120.0, 0.0);
     drag_steps(&mut h, from, to, 10, None);
     assert_eq!(
         h.state().layout.floating,
-        [vec![Panel::Blocks], vec![Panel::Layers]]
+        [vec![Panel::Layers], vec![Panel::Blocks]]
+    );
+}
+
+#[test]
+fn a_floating_stack_stays_inside_a_short_canvas() {
+    let Some(mut h) = harness() else { return };
+    let stack = [Panel::Layers, Panel::Inspector, Panel::Parameters];
+    h.state_mut().layout.move_to(stack[0], Place::Float, None);
+    for w in stack.windows(2) {
+        h.state_mut().layout.stack(w[1], w[0], true);
+    }
+    h.run_steps(4);
+    // The window shrinks to a canvas shorter than the stack wants (and than it was).
+    h.set_size(egui::vec2(1280.0, 380.0));
+    h.run_steps(6);
+    save_png("drift_ui_floating_short.png", &mut h);
+    let canvas = h.state().canvas_rect;
+    let (_, window) = h.state().floating_rects(Panel::Layers).unwrap();
+    let header = h.state().header_rect(Panel::Layers).unwrap();
+    assert!(
+        window.top() >= canvas.top() - 0.5 && header.top() >= canvas.top() - 0.5,
+        "window {window:?} or header {header:?} above the canvas {canvas:?}"
+    );
+    assert!(
+        window.height() <= canvas.height() + 0.5,
+        "{window:?} in {canvas:?}"
+    );
+    // And back to a tall window: still all there.
+    h.set_size(egui::vec2(1280.0, 800.0));
+    h.run_steps(6);
+    let canvas = h.state().canvas_rect;
+    let (_, window) = h.state().floating_rects(Panel::Layers).unwrap();
+    assert!(window.top() >= canvas.top() - 0.5 && window.bottom() <= canvas.bottom() + 0.5);
+}
+
+#[test]
+fn a_floating_stack_shares_its_height_by_content_and_keeps_dragged_sizes() {
+    let Some(mut h) = harness() else { return };
+    h.state_mut()
+        .layout
+        .move_to(Panel::Layers, Place::Float, None);
+    h.state_mut()
+        .layout
+        .stack(Panel::Inspector, Panel::Layers, true);
+    h.run_steps(6);
+    save_png("drift_ui_stack_fit.png", &mut h);
+    let (layers, _) = h.state().floating_rects(Panel::Layers).unwrap();
+    let (inspector, _) = h.state().floating_rects(Panel::Inspector).unwrap();
+    // The Layers panel takes what it needs (up to an even share), the Inspector the rest.
+    assert!(
+        layers.height() <= inspector.height() + 1.0,
+        "layers {layers:?}, inspector {inspector:?}"
+    );
+    // Dragging the divider down gives Layers more, and the shares are saved.
+    let from = egui::pos2(layers.center().x, layers.bottom() + 3.5);
+    drag_steps(&mut h, from, from + egui::vec2(0.0, 60.0), 6, None);
+    let (dragged, _) = h.state().floating_rects(Panel::Layers).unwrap();
+    assert!(
+        (dragged.height() - layers.height() - 60.0).abs() < 2.0,
+        "{layers:?} → {dragged:?}"
+    );
+    let prefs = h.state().layout.prefs();
+    assert!(
+        prefs
+            .iter()
+            .any(|p| p.starts_with("dock_weights=inspector:")),
+        "{prefs:?}"
+    );
+    // The top header moves the whole stack.
+    let header = h.state().header_rect(Panel::Layers).unwrap();
+    let from = header.left_center() + egui::vec2(80.0, 0.0);
+    drag_steps(&mut h, from, from + egui::vec2(-200.0, 40.0), 8, None);
+    assert_eq!(
+        h.state().layout.floating,
+        [vec![Panel::Layers, Panel::Inspector]]
+    );
+    let moved = h.state().header_rect(Panel::Layers).unwrap();
+    assert!(
+        (moved.left() - (header.left() - 200.0)).abs() < 2.0,
+        "{header:?} → {moved:?}"
+    );
+}
+
+#[test]
+fn stacked_panels_fold_to_their_headers() {
+    let Some(mut h) = harness() else { return };
+    let stack = [Panel::Layers, Panel::Inspector, Panel::Parameters];
+    h.state_mut().layout.move_to(stack[0], Place::Float, None);
+    for w in stack.windows(2) {
+        h.state_mut().layout.stack(w[1], w[0], true);
+    }
+    h.run_steps(6);
+    let height = |h: &Harness<'_, DriftApp>, p| h.state().floating_rects(p).unwrap().0.height();
+    let (_, window) = h.state().floating_rects(Panel::Layers).unwrap();
+    let inspector = height(&h, Panel::Inspector);
+    // Click the Parameters header (away from its buttons): it folds to just the header, and
+    // the window keeps its size, the others sharing the room.
+    let click = |h: &mut Harness<'_, DriftApp>, p| {
+        let at = h.state().header_rect(p).unwrap().left_center() + egui::vec2(40.0, 0.0);
+        h.hover_at(at);
+        h.run_steps(2);
+        button(h, at, true);
+        h.run_steps(2);
+        button(h, at, false);
+        h.run_steps(6);
+    };
+    click(&mut h, Panel::Parameters);
+    save_png("drift_ui_stack_folded.png", &mut h);
+    assert!(h.state().layout.folded.contains(&Panel::Parameters));
+    assert!((height(&h, Panel::Parameters) - 34.0).abs() < 0.5);
+    assert!(height(&h, Panel::Inspector) > inspector + 50.0);
+    let (_, after) = h.state().floating_rects(Panel::Layers).unwrap();
+    assert!(
+        (after.height() - window.height()).abs() < 1.0,
+        "{window:?} → {after:?}"
+    );
+    // The top one folds too, and then the last open one: the window shrinks to the three
+    // headers, where it was.
+    click(&mut h, Panel::Layers);
+    click(&mut h, Panel::Inspector);
+    assert_eq!(h.state().layout.folded, stack.into_iter().collect());
+    let (_, shut) = h.state().floating_rects(Panel::Layers).unwrap();
+    save_png("drift_ui_stack_all_folded.png", &mut h);
+    assert!(
+        (shut.height() - (3.0 * 34.0 + 2.0 * 7.0)).abs() < 12.0,
+        "{shut:?}"
+    );
+    assert!(
+        (shut.left_top() - window.left_top()).length() < 1.0,
+        "{window:?} → {shut:?}"
+    );
+    // One opens again, and the window has its size back.
+    click(&mut h, Panel::Parameters);
+    assert!(!h.state().layout.folded.contains(&Panel::Parameters));
+    let (_, again) = h.state().floating_rects(Panel::Layers).unwrap();
+    assert!(
+        (again.height() - window.height()).abs() < 1.0,
+        "{window:?} → {again:?}"
+    );
+    assert_eq!(
+        h.state().layout.floating,
+        [stack.to_vec()],
+        "clicks don't move panels"
+    );
+}
+
+#[test]
+fn a_panel_floating_alone_folds_its_window_to_the_header() {
+    let Some(mut h) = harness() else { return };
+    h.state_mut()
+        .layout
+        .move_to(Panel::Layers, Place::Float, None);
+    h.run_steps(6);
+    let window = |h: &Harness<'_, DriftApp>| h.state().floating_rects(Panel::Layers).unwrap().1;
+    let open = window(&h);
+    let click = |h: &mut Harness<'_, DriftApp>| {
+        let at =
+            h.state().header_rect(Panel::Layers).unwrap().left_center() + egui::vec2(40.0, 0.0);
+        h.hover_at(at);
+        h.run_steps(2);
+        button(h, at, true);
+        h.run_steps(2);
+        button(h, at, false);
+        h.run_steps(6);
+    };
+    // A click on its header folds it: the window shrinks to the header, in place.
+    click(&mut h);
+    assert!(h.state().layout.folded.contains(&Panel::Layers));
+    let shut = window(&h);
+    save_png("drift_ui_float_folded.png", &mut h);
+    assert!(shut.height() < 50.0, "{shut:?}");
+    assert!(
+        (shut.left_top() - open.left_top()).length() < 1.0,
+        "{open:?} → {shut:?}"
+    );
+    assert!((shut.width() - open.width()).abs() < 1.0);
+    // Another opens it again at the size it had.
+    click(&mut h);
+    assert!(!h.state().layout.folded.contains(&Panel::Layers));
+    let again = window(&h);
+    assert!(
+        (again.height() - open.height()).abs() < 1.0,
+        "{open:?} → {again:?}"
+    );
+    assert!((again.left_top() - open.left_top()).length() < 1.0);
+}
+
+#[test]
+fn a_folded_stack_opens_again_where_it_was() {
+    let Some(mut h) = harness() else { return };
+    h.state_mut()
+        .layout
+        .move_to(Panel::Layers, Place::Float, None);
+    h.state_mut()
+        .layout
+        .stack(Panel::Inspector, Panel::Layers, true);
+    h.run_steps(6);
+    let window = |h: &Harness<'_, DriftApp>| h.state().floating_rects(Panel::Layers).unwrap().1;
+    // Move the window by its top header, away from where it starts.
+    let header = h.state().header_rect(Panel::Layers).unwrap();
+    let from = header.left_center() + egui::vec2(40.0, 0.0);
+    drag_steps(&mut h, from, from + egui::vec2(-300.0, 60.0), 10, None);
+    h.run_steps(6);
+    let open = window(&h);
+    let click = |h: &mut Harness<'_, DriftApp>, p| {
+        let at = h.state().header_rect(p).unwrap().left_center() + egui::vec2(40.0, 0.0);
+        h.hover_at(at);
+        h.run_steps(2);
+        button(h, at, true);
+        h.run_steps(2);
+        button(h, at, false);
+        h.run_steps(6);
+    };
+    click(&mut h, Panel::Inspector);
+    click(&mut h, Panel::Layers);
+    let shut = window(&h);
+    assert!(
+        (shut.left_top() - open.left_top()).length() < 1.0,
+        "{open:?} → {shut:?}"
+    );
+    click(&mut h, Panel::Layers);
+    let again = window(&h);
+    assert!(
+        (again.left_top() - open.left_top()).length() < 1.0,
+        "{open:?} → {again:?}"
+    );
+    // Moved while folded, it opens where it was moved to (kept inside the canvas, so moved
+    // across: lower down, the open window would be nudged up to fit).
+    click(&mut h, Panel::Layers);
+    let header = h.state().header_rect(Panel::Layers).unwrap();
+    let from = header.left_center() + egui::vec2(40.0, 0.0);
+    drag_steps(&mut h, from, from + egui::vec2(200.0, 0.0), 10, None);
+    h.run_steps(6);
+    let moved = window(&h);
+    click(&mut h, Panel::Layers);
+    let again = window(&h);
+    assert!(
+        (again.left_top() - moved.left_top()).length() < 1.0,
+        "{moved:?} → {again:?}"
     );
 }
 
@@ -1901,6 +2140,235 @@ fn layer_rows_pick_and_drag_to_reorder() {
     assert_eq!(order, [drift_core::LayerId::DEFAULT, notes, walls, doors]);
 }
 
+/// A drawing with `n` layers named like an imported DWG's (A-WALL-007, ...), opened in the
+/// Layers panel. Returns the layers bottom up.
+fn many_layers(h: &mut Harness<'_, DriftApp>, n: usize) -> Vec<drift_core::LayerId> {
+    let kinds = ["WALL", "DOOR", "GLAZ", "FURN", "ANNO"];
+    let ids = {
+        let ed = &mut h.state_mut().editor;
+        ed.doc.begin();
+        let ids = (0..n)
+            .map(|i| {
+                let name = format!("A-{}-{i:03}", kinds[i % kinds.len()]);
+                ed.doc.add_layer(drift_core::Layer::new(&name))
+            })
+            .collect();
+        ed.commit("Layers");
+        ids
+    };
+    h.state_mut().show_panel(Panel::Layers);
+    h.run();
+    h.run();
+    ids
+}
+
+/// The layer rows drawn this frame.
+fn drawn_rows(h: &Harness<'_, DriftApp>) -> Vec<String> {
+    let doc = &h.state().editor.doc;
+    doc.layers()
+        .map(|(_, l)| l.name.clone())
+        // (Layer 0's name is also a curve count.)
+        .filter(|name| name != "0" && h.query_all_by_label(name).next().is_some())
+        .collect()
+}
+
+#[test]
+fn hundreds_of_layers_draw_only_the_rows_in_view() {
+    let Some(mut h) = harness() else { return };
+    let ids = many_layers(&mut h, 500);
+    // The top of the stack is in view; only a screenful of rows is drawn.
+    let rows = drawn_rows(&h);
+    assert!(rows.contains(&"A-ANNO-499".to_owned()), "{rows:?}");
+    assert!(rows.len() < 40, "{} rows drawn", rows.len());
+    save_png("drift_ui_many_layers.png", &mut h);
+    // Scrolled to the bottom, the first layers are drawn (and the top ones not).
+    let at = h.get_by_label("A-ANNO-499").rect().center();
+    for _ in 0..40 {
+        h.hover_at(at);
+        h.event(Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, -2000.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: Default::default(),
+        });
+        // (Rows pass under the pointer, their tooltips coming and going.)
+        h.step();
+    }
+    h.hover_at(h.state().canvas_rect.center());
+    h.run();
+    let rows = drawn_rows(&h);
+    assert!(rows.contains(&"A-WALL-000".to_owned()), "{rows:?}");
+    assert!(!rows.contains(&"A-ANNO-499".to_owned()));
+    assert!(rows.len() < 40, "{} rows drawn", rows.len());
+    // Opening a row there (taller) keeps the rows below it in place, and clicking one
+    // still makes it current.
+    let walls = ids[0];
+    h.state_mut().expanded_layers.insert(ids[3]);
+    h.run();
+    h.run();
+    let r = h.get_by_label("A-WALL-000").rect();
+    let at = egui::pos2(r.right() + 40.0, r.center().y);
+    h.hover_at(at);
+    h.run();
+    button(&h, at, true);
+    h.run();
+    button(&h, at, false);
+    h.run();
+    assert_eq!(h.state().editor.doc.current_layer(), walls);
+    save_png("drift_ui_many_layers_bottom.png", &mut h);
+}
+
+#[test]
+fn the_layer_filter_finds_layers_and_keeps_the_current_one() {
+    let Some(mut h) = harness() else { return };
+    let ids = many_layers(&mut h, 500);
+    let current = ids[1]; // A-DOOR-001
+    h.state_mut().editor.set_current_layer(current);
+    let field =
+        egui_kittest::kittest::By::new().predicate(|n| n.placeholder() == Some("Filter layers"));
+    h.get(field).click();
+    h.run();
+    type_text(&mut h, "glaz-01");
+    h.run();
+    // A-GLAZ-012 and -017, of the 501 layers (with 0).
+    assert!(h.query_by_label("2 of 501").is_some());
+    let rows = drawn_rows(&h);
+    assert!(
+        rows.iter()
+            .all(|r| r.starts_with("A-GLAZ-01") || r == "A-DOOR-001")
+    );
+    assert!(rows.contains(&"A-GLAZ-017".to_owned()));
+    // The current layer doesn't match but stays in sight above the list.
+    assert!(rows.contains(&"A-DOOR-001".to_owned()));
+    assert!(
+        h.query_by_label("Current layer (not matching the filter)")
+            .is_some()
+    );
+    save_png("drift_ui_layer_filter.png", &mut h);
+    // Any case; cleared by its button.
+    h.state_mut().layer_list.filter = "WALL-49".into();
+    h.run();
+    h.run();
+    assert!(h.query_by_label("2 of 501").is_some());
+    h.get_by_label("×").click();
+    h.run();
+    h.run();
+    assert!(h.state().layer_list.filter.is_empty());
+    assert!(drawn_rows(&h).contains(&"A-ANNO-499".to_owned()));
+}
+
+#[test]
+fn long_layer_names_lose_their_middle_and_show_whole_in_the_tooltip() {
+    let Some(mut h) = harness() else { return };
+    let long = "A-WALL-FULL-PATT-EXTERIOR-CONCRETE-200MM-HATCH";
+    h.state_mut().editor.add_layer(long);
+    h.state_mut().show_panel(Panel::Layers);
+    h.run();
+    h.run();
+    assert!(h.query_by_label(long).is_none());
+    // (The row's name, shortened; "Import PDF or DXF…" is the other.)
+    let shown = h
+        .query_all_by_label_contains("…")
+        .find(|n| n.value().is_some_and(|v| v.contains("HATCH")))
+        .expect("the shortened name");
+    let label = shown.value().unwrap_or_default();
+    assert!(
+        label.starts_with("A-WALL-") && label.ends_with("HATCH"),
+        "{label}"
+    );
+    let at = shown.rect().center();
+    h.hover_at(at);
+    for _ in 0..30 {
+        h.step();
+    }
+    assert!(h.query_by_label_contains(long).is_some());
+    save_png("drift_ui_long_layer_name.png", &mut h);
+}
+
+#[test]
+fn a_layer_is_isolated_and_the_isolate_ended_in_one_undo_step_each() {
+    let Some(mut h) = harness() else { return };
+    let ids = many_layers(&mut h, 12);
+    let visible = |h: &Harness<'_, DriftApp>| {
+        let doc = &h.state().editor.doc;
+        doc.layers()
+            .filter(|(_, l)| l.visible)
+            .map(|(id, _)| id)
+            .collect::<Vec<_>>()
+    };
+    // One layer hidden beforehand, to come back hidden.
+    let hidden = ids[5];
+    {
+        let ed = &mut h.state_mut().editor;
+        let mut l = ed.doc.layer(hidden).cloned().unwrap();
+        l.visible = false;
+        ed.update_layer(hidden, l);
+    }
+    h.run();
+    let before = visible(&h);
+    let target = ids[9]; // A-ANNO-009
+    // Right-click its row: Isolate.
+    let r = h.get_by_label("A-ANNO-009").rect();
+    let at = egui::pos2(r.right() + 30.0, r.center().y);
+    h.hover_at(at);
+    h.run();
+    for pressed in [true, false] {
+        h.event(Event::PointerButton {
+            pos: at,
+            button: PointerButton::Secondary,
+            pressed,
+            modifiers: EguiModifiers::NONE,
+        });
+        h.run();
+    }
+    h.get_by_label("Isolate").click();
+    h.run();
+    h.run();
+    assert_eq!(visible(&h), [target]);
+    assert_eq!(h.state().editor.doc.current_layer(), target);
+    assert!(h.query_by_label("Isolating A-ANNO-009").is_some());
+    save_png("drift_ui_layer_isolated.png", &mut h);
+    // One undo step: undone, the layers are as they were and the bar goes.
+    h.state_mut().undo();
+    h.run();
+    assert_eq!(visible(&h), before);
+    assert!(h.query_by_label("Isolating A-ANNO-009").is_none());
+    // Alt-click on another layer's eye isolates it; End isolate puts every layer back,
+    // the one hidden before still hidden.
+    let other = ids[2]; // A-GLAZ-002
+    let name = h.get_by_label("A-GLAZ-002").rect();
+    let eye = h
+        .query_all_by_label("Show or hide · Alt-click: show this layer alone")
+        .map(|n| n.rect())
+        .find(|e| (e.center().y - name.center().y).abs() < 4.0)
+        .expect("the row's eye");
+    h.hover_at(eye.center());
+    h.run();
+    h.event(Event::ModifiersChanged(EguiModifiers::ALT));
+    for pressed in [true, false] {
+        h.event(Event::PointerButton {
+            pos: eye.center(),
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: EguiModifiers::ALT,
+        });
+        h.run();
+    }
+    h.event(Event::ModifiersChanged(EguiModifiers::NONE));
+    h.run();
+    assert_eq!(visible(&h), [other]);
+    h.get_by_label("End isolate").click();
+    h.run();
+    h.run();
+    assert_eq!(visible(&h), before);
+    assert!(!visible(&h).contains(&hidden));
+    assert!(h.query_by_label("End isolate").is_none());
+    // Ending is one undo step too: undone, the layer is isolated again.
+    h.state_mut().undo();
+    h.run();
+    assert_eq!(visible(&h), [other]);
+}
+
 #[test]
 fn fill_tool_hatches_and_fills_regions() {
     let Some(mut h) = harness() else { return };
@@ -2698,9 +3166,11 @@ fn panels_float_dock_and_switch_layers() {
     }
     save_png("drift_ui_panel_dragging.png", &mut h);
     button(&h, canvas, false);
-    h.run();
-    h.run();
+    // (The new window appears under the pointer, where it was dropped, and stays there.)
+    h.run_steps(8);
     assert_eq!(h.state().layout.place(Panel::Layers), Place::Float);
+    let window = h.state().floating_rects(Panel::Layers).unwrap().1;
+    assert!(window.contains(canvas), "{window:?} under {canvas:?}");
     // The right dock shows the next tab.
     assert_eq!(h.state().layout.active[1], Some(Panel::Sheets));
     save_png("drift_ui_layers_floating.png", &mut h);

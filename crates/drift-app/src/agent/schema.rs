@@ -373,7 +373,7 @@ mirror {axis line, keep_original (default true)}; linear_array {by, count}; circ
         },
         ToolSpec {
             name: "import_file",
-            description: "Import an SVG, PDF, Illustrator (.ai) or DXF file as editable geometry or as an underlay to trace over. `scale` is model mm per paper mm (50 or \"1:50\" for a plan drawn at 1:50); for DXF it multiplies the file's own units.",
+            description: "Import an SVG, PDF, Illustrator (.ai), DXF or DWG file as editable geometry or as an underlay to trace over. `scale` is model mm per paper mm (50 or \"1:50\" for a plan drawn at 1:50); for DXF and DWG it multiplies the file's own units.",
             schema: object(
                 json!({
                     "path": { "type": "string" },

@@ -58,6 +58,18 @@ FONTS = [
     ),
 ]
 
+# Crates ported from other projects whose licences ask for their notices to be kept, though
+# the crates don't carry them: crate name -> (project, its repository, its licence id,
+# the licence file in scripts/upstream).
+UPSTREAM = {
+    "acadrust": (
+        "ACadSharp",
+        "https://github.com/DomCR/ACadSharp",
+        "MIT",
+        "ACadSharp-LICENSE.txt",
+    ),
+}
+
 # Licence-template lines that mention copyright without stating one.
 PLACEHOLDER = re.compile(
     r"\[yyyy\]|\{yyyy\}|<year>|\[year\]|\[fullname\]|\[name of copyright owner\]|<copyright holders?>",
@@ -190,6 +202,21 @@ def generate():
                 entry["users"].append(ident)
             crates[ident]["texts"].append(key)
 
+    # The licences of the projects some crates are ported from (see UPSTREAM).
+    upstream_texts = {}
+    for name, (project, _, licence_id, licence_file) in UPSTREAM.items():
+        users = [ident for ident in crates if ident[0] == name]
+        if not users:
+            continue
+        with open(os.path.join(ROOT, "scripts", "upstream", licence_file), encoding="utf-8") as f:
+            body = clean(f.read())
+        upstream_texts[name] = (body, copyright_lines(body))
+        key = (licence_id, body)
+        entry = texts.setdefault(
+            key, {"name": f"{project}'s licence", "id": licence_id, "users": []}
+        )
+        entry["users"].extend(u for u in users if u not in entry["users"])
+
     fonts_crate = next(
         (c["package"] for c in about["crates"] if c["package"]["name"] == "epaint_default_fonts"),
         None,
@@ -282,6 +309,12 @@ def generate():
             out.append(wrap(f"Copyright the authors: {', '.join(package['authors'])}", "    "))
         if package.get("repository"):
             out.append(f"    {package['repository']}")
+        if ident[0] in UPSTREAM:
+            project, url, licence_id, _ = UPSTREAM[ident[0]]
+            out.append(wrap(f"Ported from {project} ({licence_id}), whose notice is kept:", "    "))
+            for line in upstream_texts[ident[0]][1]:
+                out.append(wrap(line, "      "))
+            out.append(f"      {url}")
         # A crate's COPYRIGHT or NOTICE file, in full: some explain which licence covers what.
         for extra in files:
             if EXTRA_FILE.match(extra):

@@ -206,7 +206,12 @@ pub(super) fn import(s: &mut Session, a: &Value) -> Res {
             }
             "pdf" | "ai" => ed.import_pdf_underlay(&name, &bytes, page, scale)?,
             "dxf" => ed.import_dxf_underlay(&name, &text(), unit * scale)?,
-            other => return Err(format!("can't import .{other} files (svg, pdf, ai or dxf)")),
+            "dwg" => ed.import_dwg_underlay(&name, &bytes, unit * scale)?,
+            other => {
+                return Err(format!(
+                    "can't import .{other} files (svg, pdf, ai, dxf or dwg)"
+                ));
+            }
         };
         if offset != DVec2::ZERO {
             ed.update_underlay(report.id, "Move underlay", |u| u.at += offset);
@@ -231,7 +236,12 @@ pub(super) fn import(s: &mut Session, a: &Value) -> Res {
         }
         // A DXF says its units (bare ones are read in the drawing's); `scale` multiplies.
         "dxf" => drift_io::dxf::read(&text(), unit).map_err(|e| e.to_string())?,
-        other => return Err(format!("can't import .{other} files (svg, pdf, ai or dxf)")),
+        "dwg" => crate::underlays::read_dwg(&bytes, unit)?,
+        other => {
+            return Err(format!(
+                "can't import .{other} files (svg, pdf, ai, dxf or dwg)"
+            ));
+        }
     };
     let ed = &mut s.editor;
     let before: std::collections::BTreeSet<_> = ed.doc.iter().map(|(id, _)| id).collect();
@@ -248,7 +258,7 @@ pub(super) fn import(s: &mut Session, a: &Value) -> Res {
         .copied()
         .filter(|id| ed.doc.get(*id).is_some_and(|e| e.kind.is_point()))
         .collect();
-    if ext == "dxf" && scale != 1.0 {
+    if (ext == "dxf" || ext == "dwg") && scale != 1.0 {
         for p in &points {
             if let Ok(at) = ed.doc.point(*p) {
                 let _ = ed.doc.set_point(*p, at * scale);

@@ -304,7 +304,28 @@ impl Editor {
         mm_per_unit: f64,
     ) -> Result<UnderlayReport, String> {
         let import = drift_io::dxf::read(text, mm_per_unit).map_err(|e| e.to_string())?;
-        let prims = drift_io::dxf::underlay_prims(&import);
+        self.import_cad_underlay(name, &import)
+    }
+
+    /// Import a DWG file as an underlay (in its own units, read as `mm_per_unit` when it
+    /// doesn't say).
+    pub fn import_dwg_underlay(
+        &mut self,
+        name: &str,
+        bytes: &[u8],
+        mm_per_unit: f64,
+    ) -> Result<UnderlayReport, String> {
+        let import = read_dwg(bytes, mm_per_unit)?;
+        self.import_cad_underlay(name, &import)
+    }
+
+    /// A DXF or DWG drawing's curves as an underlay.
+    fn import_cad_underlay(
+        &mut self,
+        name: &str,
+        import: &drift_io::dxf::DxfImport,
+    ) -> Result<UnderlayReport, String> {
+        let prims = drift_io::dxf::underlay_prims(import);
         if prims.is_empty() {
             return Err(format!("{name} has no lines, arcs or circles"));
         }
@@ -522,6 +543,18 @@ impl Editor {
                 }
             })
     }
+}
+
+/// Read a DWG drawing, like a DXF one (see `drift_io::dwg_import`).
+#[cfg(feature = "dwg")]
+pub fn read_dwg(bytes: &[u8], mm_per_unit: f64) -> Result<drift_io::dxf::DxfImport, String> {
+    drift_io::dwg_import::read(bytes, mm_per_unit)
+}
+
+/// Read a DWG drawing: not in builds without the `dwg` feature.
+#[cfg(not(feature = "dwg"))]
+pub fn read_dwg(_bytes: &[u8], _mm_per_unit: f64) -> Result<drift_io::dxf::DxfImport, String> {
+    Err("this build of Drift can't read DWG files; save the drawing as DXF".into())
 }
 
 #[cfg(test)]

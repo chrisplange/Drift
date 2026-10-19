@@ -46,6 +46,10 @@ allow = [
 # the targets, so it lists them; they are not part of any Drift build.
 exceptions = [
     { allow = ["CDLA-Permissive-2.0"], crate = "webpki-root-certs" },
+    # DWG import (drift-io's `dwg` feature). MPL-2.0 is copyleft per file: Drift may link it
+    # under any licence, but changes to acadrust's own files must be published under MPL-2.0.
+    # It is ported from ACadSharp (MIT), whose notice scripts/notices.py adds.
+    { allow = ["MPL-2.0"], crate = "acadrust" },
 ]
 
 [licenses.private]

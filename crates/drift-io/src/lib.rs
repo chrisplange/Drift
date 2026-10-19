@@ -45,6 +45,8 @@ use serde::{Deserialize, Serialize};
 mod blocks;
 pub mod clip;
 mod drafting;
+#[cfg(feature = "dwg")]
+pub mod dwg_import;
 pub mod dxf;
 mod dxf_import;
 mod fonts;

@@ -369,3 +369,117 @@ fn the_seed_follows_when_nothing_else_changes() {
     ed.undo();
     assert_eq!(ed.doc.fill(id).unwrap().seed, v(1.0, 19.0));
 }
+
+/// An arrow of lines (a point on the left, a rectangle on the right), drawn in inches as
+/// in the crash report, with its rectangle's right side at `x`; hatched.
+fn hatched_arrow(ed: &mut Editor, x: f64) -> (Vec<EntityId>, Vec<EntityId>, FillId) {
+    let (p, sides) = polygon(
+        ed,
+        &[
+            v(x, 76.19999999999999),
+            v(x - 228.6, 76.19999999999999),
+            v(x - 330.2, 38.099999999999994),
+            v(x - 228.6, 0.0),
+            v(x, 0.0),
+        ],
+    );
+    let id = ed.add_fill_at(v(x - 100.0, 38.1)).expect("a fill");
+    (p, sides, id)
+}
+
+/// The points and curves of the sketch, by position.
+fn geometry(ed: &Editor) -> Vec<(EntityId, DVec2)> {
+    ed.doc
+        .iter()
+        .filter_map(|(id, e)| match e.kind {
+            EntityKind::Point(at) => Some((id, at)),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_hatch_moved_over_another_leaves_the_other_outline_alone() {
+    // Two hatched arrows, one shifted along the other so their top and bottom edges lie
+    // along each other. Picking the copy's hatch and moving it used to bring the edges of
+    // the other arrow lying under its own, stretching that arrow and joining the two.
+    let mut ed = Editor::default();
+    let (a, a_sides, _) = hatched_arrow(&mut ed, 0.0);
+    ed.selection = a_sides.iter().copied().collect();
+    ed.duplicate_selection();
+    assert_eq!(ed.nudge(v(25.400000000000034, 0.0)), Some(true));
+    let copy = *ed.selected_fills.iter().next().expect("the copy's hatch");
+    let copy_sides: BTreeSet<EntityId> = ed.selection.iter().copied().collect();
+    let still: Vec<DVec2> = a.iter().map(|p| ed.doc.point(*p).unwrap()).collect();
+
+    ed.selection.clear();
+    ed.selected_fills = [copy].into();
+    let (curves, _) = ed.selected_fill_curves().expect("the hatch's curves");
+    assert_eq!(curves.into_iter().collect::<BTreeSet<_>>(), copy_sides);
+    // Drop it right on the other, then move it back off: the other arrow stays put.
+    for d in [-25.4, 12.7, -12.7, 25.4] {
+        let (curves, _) = ed.selected_fill_curves().expect("the hatch's curves");
+        ed.selection = curves.into_iter().collect();
+        assert_eq!(ed.nudge(v(d, 0.0)), Some(true));
+        let now: Vec<DVec2> = a.iter().map(|p| ed.doc.point(*p).unwrap()).collect();
+        assert_eq!(now, still, "the other arrow moved");
+        found(&mut ed, copy);
+    }
+}
+
+#[test]
+fn moving_hatches_over_each_other_moves_only_their_own_curves() {
+    // A deterministic sweep of offsets and moves over two hatched arrows.
+    let mut seed: u64 = 0x9e37_79b9_7f4a_7c15;
+    let mut rnd = move |n: u64| {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        seed % n
+    };
+    for _ in 0..40 {
+        let mut ed = Editor::default();
+        let (_, a_sides, a_fill) = hatched_arrow(&mut ed, 0.0);
+        // Copies along the other, right on it, or a hair off it.
+        let dx = [25.4, 0.0, 228.6, 101.6, 1.6e-5, 12.7][rnd(6) as usize];
+        let dy = [0.0, 0.0, 38.1, 1e-9][rnd(4) as usize];
+        ed.selection = a_sides.iter().copied().collect();
+        ed.duplicate_selection();
+        ed.nudge(v(dx, dy));
+        let b_sides: BTreeSet<EntityId> = ed.selection.iter().copied().collect();
+        let b_fill = *ed.selected_fills.iter().next().unwrap();
+        for _ in 0..6 {
+            let (fill, own, other): (FillId, BTreeSet<EntityId>, BTreeSet<EntityId>) =
+                if rnd(2) == 0 {
+                    (a_fill, a_sides.iter().copied().collect(), b_sides.clone())
+                } else {
+                    (b_fill, b_sides.clone(), a_sides.iter().copied().collect())
+                };
+            ed.selection.clear();
+            ed.selected_fills = [fill].into();
+            let Some((curves, _)) = ed.selected_fill_curves() else {
+                continue;
+            };
+            assert!(
+                curves.iter().all(|c| own.contains(c)),
+                "{curves:?} are not all of {own:?}"
+            );
+            let before: Vec<_> = geometry(&ed)
+                .into_iter()
+                .filter(|(p, _)| ed.doc.defining_points(other.iter().copied()).contains(p))
+                .collect();
+            ed.selection = curves.into_iter().collect();
+            let d = v(
+                (rnd(9) as f64 - 4.0) * 12.7,
+                [0.0, 0.0, 38.1, -38.1][rnd(4) as usize],
+            );
+            ed.nudge(d);
+            let after: Vec<_> = geometry(&ed)
+                .into_iter()
+                .filter(|(p, _)| before.iter().any(|(q, _)| q == p))
+                .collect();
+            assert_eq!(after, before, "moving one hatch moved the other's outline");
+            let _ = ed.fill_shapes();
+        }
+    }
+}

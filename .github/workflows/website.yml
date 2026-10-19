@@ -1,9 +1,11 @@
 name: Website
 
 # Builds the website (website/, with the user guide from docs/guide and the web app at /app/)
-# and deploys it to Cloudflare Pages. It runs on every merge to main, and when a release is
-# published so the download links and release notes catch up. Pull requests that touch the
-# site only build it. See website/README.md for the one-time Cloudflare setup.
+# and deploys it to Cloudflare Pages. It runs on every merge to main. Releases are published in
+# the public releases repository, where this workflow can't hear them, so the release steps in
+# docs/releasing.md run it by hand afterwards (`gh workflow run website.yml`) for the download
+# links and release notes to catch up. Pull requests that touch the site only build it. See
+# website/README.md for the one-time Cloudflare setup.
 
 on:
   push:

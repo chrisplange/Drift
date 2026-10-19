@@ -63,6 +63,7 @@ impl Http for Agent {
 fn describe(e: ureq::Error) -> String {
     match e {
         ureq::Error::StatusCode(403 | 429) => "GitHub is limiting requests: try again later".into(),
+        ureq::Error::StatusCode(404) => "no Drift releases found on GitHub".into(),
         ureq::Error::StatusCode(code) => format!("GitHub answered {code}"),
         ureq::Error::Timeout(_) => "no answer from GitHub".into(),
         ureq::Error::HostNotFound | ureq::Error::ConnectionFailed => {

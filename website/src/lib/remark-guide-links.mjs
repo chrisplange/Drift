@@ -30,7 +30,7 @@ export function rewrite(url, fromFile) {
   if (rel.startsWith("..")) {
     const repoRel = path.relative(repoRoot, abs).split(path.sep).join("/");
     const kind = /\.[a-z0-9]+$/i.test(repoRel) ? "blob" : "tree";
-    return `${site.repoUrl}/${kind}/main/${repoRel}${anchor}`;
+    return `${site.sourceUrl}/${kind}/main/${repoRel}${anchor}`;
   }
   if (!rel.endsWith(".md")) return url;
   let slug = rel.replace(/\.md$/, "").replace(/(^|\/)README$/, "");

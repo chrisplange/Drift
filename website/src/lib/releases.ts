@@ -1,6 +1,6 @@
-// Drift's releases, read from the GitHub API when the site is built. The deploy workflow
-// also runs when a release is published, so these pages stay current with no edits; the
-// download page re-checks in the visitor's browser as well.
+// Drift's releases, read from the GitHub API when the site is built. The release steps in
+// docs/releasing.md rebuild the site once a release is published, so these pages stay current
+// with no edits; the download page re-checks in the visitor's browser as well.
 import { site } from "../site.config.mjs";
 
 export interface Asset {

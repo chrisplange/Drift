@@ -24,7 +24,7 @@ fn newer() -> Release {
         version,
         title: "Drift 99.0.0-alpha.1".into(),
         notes: "- Faster solver\n- New hatch patterns".into(),
-        page: "https://github.com/chrisplange/Drift/releases/tag/v99.0.0-alpha.1".into(),
+        page: "https://github.com/chrisplange/drift-releases/releases/tag/v99.0.0-alpha.1".into(),
         prerelease: true,
         assets,
     }

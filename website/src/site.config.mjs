@@ -6,11 +6,19 @@ export const site = {
   // passes the repository variable of the same name). Pages use it for their canonical link
   // and share tags; without it, those tags are left out.
   url: process.env.SITE_URL?.replace(/\/+$/, "") || undefined,
-  repo: "chrisplange/Drift",
+  // The public releases repository (downloads and release notes; no source). Keep in step
+  // with RELEASES_REPO in .github/workflows/package.yml.
+  repo: "chrisplange/drift-releases",
   // The release the front page's "What's new" section describes. Until it's published on
   // GitHub, the section says it's coming; after, it says it's out.
   nextRelease: { version: "0.1.0-beta.1.4", name: "Beta 1.4" },
+  // The source repository, for links into the code and docs. It is going private, so these
+  // links go when the guide and licence move fully onto the site.
+  sourceRepo: "chrisplange/Drift",
   get repoUrl() {
     return `https://github.com/${this.repo}`;
+  },
+  get sourceUrl() {
+    return `https://github.com/${this.sourceRepo}`;
   },
 };

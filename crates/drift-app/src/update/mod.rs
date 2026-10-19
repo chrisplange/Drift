@@ -18,12 +18,13 @@ use semver::Version;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
-/// Published releases, newest first. Drafts are never listed for a client that isn't
-/// signed in, so only releases that have been published are seen.
+/// Published releases, newest first, from the public releases repository (it has no source).
+/// Drafts are never listed for a client that isn't signed in, so only releases that have been
+/// published are seen. Keep in step with `RELEASES_REPO` in .github/workflows/package.yml.
 pub(crate) const RELEASES_URL: &str =
-    "https://api.github.com/repos/chrisplange/Drift/releases?per_page=30";
-/// Where to download Drift by hand.
-pub(crate) const DOWNLOAD_PAGE: &str = "https://github.com/chrisplange/Drift/releases";
+    "https://api.github.com/repos/chrisplange/drift-releases/releases?per_page=30";
+/// Where to download Drift by hand: the website's download page.
+pub(crate) const DOWNLOAD_PAGE: &str = "https://drift-website-c9y.pages.dev/download/";
 /// The public half of the key that signs releases (see docs/releasing.md).
 pub(crate) const RELEASE_KEY: &str = include_str!("release-key.pub");
 /// The checksum list on each release, and its signature.

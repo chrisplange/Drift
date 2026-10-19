@@ -31,16 +31,7 @@ pub fn link_dir() -> Option<PathBuf> {
     if let Some(dir) = std::env::var_os("DRIFT_LINK_DIR").filter(|d| !d.is_empty()) {
         return Some(PathBuf::from(dir));
     }
-    let base = if cfg!(windows) {
-        std::env::var_os("LOCALAPPDATA").map(PathBuf::from)
-    } else if cfg!(target_os = "macos") {
-        std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library/Application Support"))
-    } else {
-        std::env::var_os("XDG_STATE_HOME")
-            .map(PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state")))
-    }?;
-    Some(base.join("Drift").join("link"))
+    Some(drift_platform::crash::data_dir()?.join("link"))
 }
 
 fn now_ms() -> u64 {

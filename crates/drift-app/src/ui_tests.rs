@@ -8132,3 +8132,68 @@ fn boxes_pick_annotations_and_text_with_the_filter() {
     assert_eq!(ed.selected_texts, [text].into());
     assert!(picked(&h).is_empty());
 }
+
+#[test]
+fn dragging_a_hatch_over_another_moves_only_its_own_outline() {
+    // The drawing from the crash report: two hatched arrows, the second shifted an inch
+    // along the first so their top and bottom edges lie along each other. Dragging the
+    // second's hatch used to drag the first's top and bottom edges along too.
+    let Some(mut h) = harness() else { return };
+    let v = DVec2::new;
+    let text = r#"{"format":"drift","version":31,"meta":{"units":"mm"},"display":{"length":"fractional_in"},
+"entities":[
+{"type":"point","id":"e164","at":[0.0,76.19999999999999]},{"type":"point","id":"e165","at":[-228.6,76.19999999999999]},
+{"type":"line","id":"e166","a":"e164","b":"e165"},{"type":"point","id":"e167","at":[-330.2,38.099999999999994]},
+{"type":"line","id":"e168","a":"e165","b":"e167"},{"type":"point","id":"e169","at":[-228.6,0.0]},
+{"type":"line","id":"e170","a":"e167","b":"e169"},{"type":"point","id":"e171","at":[0.0,0.0]},
+{"type":"line","id":"e172","a":"e169","b":"e171"},{"type":"line","id":"e173","a":"e171","b":"e164"},
+{"type":"point","id":"e174","at":[25.400000000000034,76.19999999999999]},{"type":"point","id":"e175","at":[-203.19999999999996,76.19999999999999]},
+{"type":"point","id":"e176","at":[-304.79999999999995,38.099999999999994]},{"type":"point","id":"e177","at":[-203.19999999999996,0.0]},
+{"type":"point","id":"e178","at":[25.400000000000034,0.0]},
+{"type":"line","id":"e179","a":"e174","b":"e175"},{"type":"line","id":"e180","a":"e175","b":"e176"},
+{"type":"line","id":"e181","a":"e176","b":"e177"},{"type":"line","id":"e182","a":"e177","b":"e178"},
+{"type":"line","id":"e183","a":"e178","b":"e174"}],
+"constraints":[],
+"fills":[
+{"id":"f9","type":"hatch","boundary":["e166","e168","e170","e172","e173"],"seed":[-158.40076079135008,46.29783990313652],"pattern":"ANSI31"},
+{"id":"f10","type":"hatch","boundary":["e179","e180","e181","e182","e183"],"seed":[-115.83939393939389,38.099999999999994],"pattern":"ANSI31"}]}"#;
+    let (doc, _) = drift_io::load(text).unwrap();
+    h.state_mut()
+        .replace_document(doc, "arrows".into(), None, Default::default(), true);
+    h.run();
+    h.state_mut().fit_target = None;
+    h.state_mut().camera = drift_render::Camera {
+        center: v(-150.0, 38.0),
+        scale: 1.8,
+    };
+    h.run();
+    let first = |h: &Harness<'_, DriftApp>| -> Vec<DVec2> {
+        [164, 165, 167, 169, 171]
+            .map(|i| h.state().editor.doc.point(drift_core::EntityId(i)).unwrap())
+            .to_vec()
+    };
+    let before = first(&h);
+    // Pick the second arrow's hatch where only it is, and drag it back and forth over the
+    // first, right onto it too.
+    let mut at = v(10.0, 38.0);
+    click_world(&mut h, at);
+    assert_eq!(
+        h.state().editor.selected_fills,
+        [drift_core::FillId(10)].into()
+    );
+    for d in [-25.4, 12.7, -38.1, 50.8] {
+        click_world(&mut h, at);
+        drag_world(&mut h, at, at + v(d, 0.0));
+        at += v(d, 0.0);
+        assert_eq!(first(&h), before, "the first arrow moved");
+        let shapes = h.state_mut().editor.fill_shapes();
+        assert!(shapes.values().all(|s| !s.lost));
+    }
+    let moved = h
+        .state()
+        .editor
+        .doc
+        .point(drift_core::EntityId(174))
+        .unwrap();
+    assert!((moved.x - 25.4).abs() > 1.0, "the second arrow moved");
+}

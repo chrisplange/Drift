@@ -945,6 +945,19 @@ impl eframe::App for DriftApp {
         if let Some(notice) = self.editor.notice.take() {
             self.set_status(notice, true, now);
         }
+        // Far-off geometry from an edit (an import lists it in its report instead).
+        if !self.editor.far_off.is_empty() {
+            let far = std::mem::take(&mut self.editor.far_off);
+            let what = checker::far_off_count(&self.editor.doc, &far);
+            self.set_status(
+                format!(
+                    "More than 100,000 km from the origin now: {what}. Was a value mistyped? \
+                     Undo takes it back"
+                ),
+                true,
+                now,
+            );
+        }
         if let Some(text) = self.status_next.take() {
             self.set_status(text, false, now);
         }

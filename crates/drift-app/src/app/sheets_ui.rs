@@ -38,6 +38,8 @@ pub(crate) struct ImportSummary {
     pub skipped: Vec<String>,
     /// What was read approximately, in sentences.
     pub notes: Vec<String>,
+    /// Geometry that came in far off (see [`drift_core::FAR_MM`]), to pick.
+    pub far: Vec<drift_core::EntityId>,
 }
 
 /// How the sheet preview is looked at.
@@ -585,14 +587,17 @@ impl DriftApp {
             .iter()
             .map(|(kind, n)| format!("{n} × {kind}"))
             .collect();
-        // Anything left out or read approximately is worth more than a passing
+        // What the import's commit put far off: listed here, not in the status bar.
+        let far = std::mem::take(&mut self.editor.far_off);
+        // Anything left out, read approximately or far off is worth more than a passing
         // message.
-        if !skipped.is_empty() || !report.notes.is_empty() {
+        if !skipped.is_empty() || !report.notes.is_empty() || !far.is_empty() {
             self.import_report = Some(ImportSummary {
                 title: name.to_owned(),
                 summary: summary.clone(),
                 skipped,
                 notes: report.notes.clone(),
+                far,
             });
         }
         self.set_status(summary, false, now);
@@ -607,6 +612,9 @@ impl DriftApp {
         let mut open = true;
         let mut close = false;
         let mut check = false;
+        let mut pick_far = false;
+        let far_count =
+            (!report.far.is_empty()).then(|| checker::far_off_count(&self.editor.doc, &report.far));
         let title = format!("Imported {}", report.title);
         theme::dialog(ctx, &title)
             .id(egui::Id::new("import_report"))
@@ -635,6 +643,21 @@ impl DriftApp {
                             ui.label("•");
                             ui.label(note);
                         });
+                    }
+                }
+                if let Some(what) = &far_count {
+                    theme::section(ui, "Far off");
+                    ui.label(format!(
+                        "More than 100,000 km from the origin: {what}. Usually stray objects \
+                         in the file; they make fitting the view show the drawing as a dot."
+                    ));
+                    if ui
+                        .button("Select them")
+                        .on_hover_text("Pick them, to look at or delete")
+                        .clicked()
+                    {
+                        pick_far = true;
+                        close = true;
                     }
                 }
                 theme::dialog_buttons(ui, |ui| {
@@ -666,6 +689,9 @@ impl DriftApp {
                     }
                 });
             });
+        if pick_far {
+            self.editor.selection = report.far.iter().copied().collect();
+        }
         if check {
             self.open_sketch_check();
         }

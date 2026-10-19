@@ -16,6 +16,20 @@ use crate::editor::Editor;
 /// The default gap tolerance: ends closer than this (mm) are taken to be meant to meet.
 pub const DEFAULT_TOLERANCE: f64 = 0.5;
 
+/// What far-off geometry is, in words: "3 curves" (or points, where there are no curves).
+pub fn far_off_count(doc: &drift_core::Document, ids: &[EntityId]) -> String {
+    let curves = ids
+        .iter()
+        .filter(|id| doc.get(**id).is_some_and(|e| !e.kind.is_point()))
+        .count();
+    match (curves, ids.len()) {
+        (1, _) => "1 curve".to_owned(),
+        (0, 1) => "1 point".to_owned(),
+        (0, n) => format!("{n} points"),
+        (n, _) => format!("{n} curves"),
+    }
+}
+
 /// Something the checker found.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Issue {
@@ -75,6 +89,29 @@ fn ends(kind: &EntityKind) -> Option<[EntityId; 2]> {
 }
 
 impl Editor {
+    /// Of `ids`, the geometry reaching more than [`drift_core::FAR_MM`] from the origin (or
+    /// not finite): the curves, or where there are none, the points.
+    pub fn far_off_of(&self, ids: impl IntoIterator<Item = EntityId>) -> Vec<EntityId> {
+        let mut curves = Vec::new();
+        let mut points = Vec::new();
+        for id in ids {
+            let Some(e) = self.doc.get(id) else {
+                continue;
+            };
+            let Some(shape) = self.doc.shape(id) else {
+                continue;
+            };
+            if shape.bounds().is_far_off() {
+                if e.kind.is_point() {
+                    points.push(id);
+                } else {
+                    curves.push(id);
+                }
+            }
+        }
+        if curves.is_empty() { points } else { curves }
+    }
+
     /// What the checker finds, nearest first within each kind: zero-length curves, then
     /// gaps, then ends short of a curve. `tolerance` is in mm.
     pub fn check_sketch(&self, tolerance: f64) -> Vec<Issue> {

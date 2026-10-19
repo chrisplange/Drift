@@ -398,6 +398,47 @@ fn editing() {
     h.run();
     shot("transform-handles.png", &mut h);
 
+    // A window round a room, its dimension, a note and a line of text picks them all.
+    let mut h = harness().unwrap();
+    let (p, _) = rectangle(
+        &mut h,
+        DVec2::new(-40.0, -20.0),
+        DVec2::new(20.0, 20.0),
+        true,
+    );
+    {
+        let ed = &mut h.state_mut().editor;
+        ed.doc.begin();
+        ed.doc
+            .add_constraint(C::Distance {
+                a: p[0],
+                b: p[1],
+                value: 60.0,
+            })
+            .unwrap();
+        ed.doc
+            .add_annotation(drift_core::Annotation::Note {
+                text: "STAIR".into(),
+                at: DVec2::new(32.0, 10.0),
+                leaders: Vec::new(),
+                style: Default::default(),
+            })
+            .unwrap();
+        ed.doc.add_text(drift_core::SketchText::new(
+            "HALL",
+            DVec2::new(-30.0, -5.0),
+            6.0,
+        ));
+        ed.commit("Room");
+    }
+    fit(&mut h);
+    let (from, to) = (
+        screen(&h, DVec2::new(-43.0, -30.0)),
+        screen(&h, DVec2::new(38.0, 30.0)),
+    );
+    drag(&mut h, from, to);
+    shot("select-mixed.png", &mut h);
+
     // R turns a group of holes about its middle.
     let mut h = harness().unwrap();
     open_example(&mut h);

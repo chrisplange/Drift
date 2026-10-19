@@ -4459,3 +4459,256 @@ fn drawing_on_from_an_arc_follows_its_tangent() {
         "tangent rather than horizontal"
     );
 }
+
+/// A line from (0, 0) to (10, 0), a text at (0, 20), a free note at (30, 0), a leader note on
+/// the line's start with its text at (-10, 10), and a section mark from (40, -5) to (40, 5).
+fn mixed_fixture() -> (
+    Editor,
+    EntityId,
+    drift_core::TextId,
+    [drift_core::AnnotationId; 3],
+) {
+    use drift_core::{Anchor, Annotation, Leader, NoteStyle};
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    let (a, b) = (
+        ed.doc.add_point(v(0.0, 0.0)),
+        ed.doc.add_point(v(10.0, 0.0)),
+    );
+    let line = ed.doc.add_line(a, b).unwrap();
+    let text = ed
+        .doc
+        .add_text(drift_core::SketchText::new("Hall", v(0.0, 20.0), 3.0));
+    let note = |at, leaders| Annotation::Note {
+        text: "Note".into(),
+        at,
+        leaders,
+        style: NoteStyle::default(),
+    };
+    let free = ed
+        .doc
+        .add_annotation(note(v(30.0, 0.0), Vec::new()))
+        .unwrap();
+    let leadered = ed
+        .doc
+        .add_annotation(note(v(-10.0, 10.0), vec![Leader::to(Anchor::Point(a))]))
+        .unwrap();
+    let section = ed
+        .doc
+        .add_annotation(Annotation::Section {
+            a: v(40.0, -5.0),
+            b: v(40.0, 5.0),
+            label: "A".into(),
+            sheet: String::new(),
+            flip: false,
+            view: None,
+        })
+        .unwrap();
+    ed.commit("Setup");
+    (ed, line, text, [free, leadered, section])
+}
+
+fn box_select(ed: &mut Editor, tool: &mut SelectTool, from: DVec2, to: DVec2, m: Modifiers) {
+    let start = ptr(ed, tool, from);
+    tool.handle(Input::DragStart(start, m), ed);
+    let end = ptr(ed, tool, to);
+    tool.handle(Input::Drag(end), ed);
+    tool.handle(Input::DragEnd(end, m), ed);
+}
+
+fn note_label(ed: &Editor, id: drift_core::AnnotationId) -> DVec2 {
+    crate::notes::label_world(&ed.doc, ed.doc.annotation(id).unwrap()).unwrap()
+}
+
+#[test]
+fn boxes_pick_text_and_hand_annotations_to_the_app() {
+    use crate::editor::PickFilter;
+    let (mut ed, line, text, _) = mixed_fixture();
+    let mut tool = SelectTool::default();
+    let m = Modifiers::default();
+    // All: a window takes the line and the text, and leaves the annotations to the app.
+    box_select(&mut ed, &mut tool, v(-20.0, -10.0), v(50.0, 30.0), m);
+    assert!(ed.selection.contains(&line));
+    assert_eq!(ed.selected_texts, [text].into());
+    let b = ed.box_pick.take().expect("the box, for the app");
+    assert!(!b.crossing && !b.add);
+    // A window round only part of the text doesn't take it; a crossing box does.
+    let o = ed.text_outline(text).unwrap().bounds;
+    let mid = (o.min + o.max) * 0.5;
+    box_select(&mut ed, &mut tool, o.min - v(1.0, 1.0), mid, m);
+    assert!(ed.selected_texts.is_empty());
+    ed.box_pick = None;
+    // (From beside the text: a drag that starts on it moves it.)
+    let beside = v(o.max.x + 1.0, o.max.y + 1.0);
+    box_select(&mut ed, &mut tool, beside, mid, m);
+    assert_eq!(ed.selected_texts, [text].into());
+    assert!(ed.box_pick.take().unwrap().crossing);
+    // Text only: the same window takes the text and no geometry; a click on the line picks
+    // nothing.
+    ed.pick_filter = PickFilter::Text;
+    box_select(&mut ed, &mut tool, v(-20.0, -10.0), v(50.0, 30.0), m);
+    assert!(ed.selection.is_empty());
+    assert_eq!(ed.selected_texts, [text].into());
+    click(&mut ed, &mut tool, v(5.0, 0.0));
+    assert!(ed.selection.is_empty() && ed.selected_texts.is_empty());
+    // Annotations only: no geometry or text, only the box for the app.
+    ed.pick_filter = PickFilter::Annotations;
+    box_select(&mut ed, &mut tool, v(-20.0, -10.0), v(50.0, 30.0), m);
+    assert!(ed.selection.is_empty() && ed.selected_texts.is_empty());
+    assert!(ed.box_pick.is_some());
+    click(&mut ed, &mut tool, mid);
+    assert!(
+        ed.selected_texts.is_empty(),
+        "text isn't picked with Annotations"
+    );
+    // Edges: a box takes no text; Shift adds to what is picked.
+    ed.pick_filter = PickFilter::All;
+    box_select(&mut ed, &mut tool, v(-20.0, 15.0), v(50.0, 30.0), m);
+    assert_eq!(ed.selected_texts, [text].into());
+    ed.pick_filter = PickFilter::Edges;
+    let shift = Modifiers { shift: true, ..m };
+    box_select(&mut ed, &mut tool, v(-20.0, -10.0), v(50.0, 30.0), shift);
+    assert!(ed.selection.contains(&line));
+    assert_eq!(ed.selected_texts, [text].into(), "kept: Shift adds");
+}
+
+#[test]
+fn text_and_annotations_move_with_the_geometry() {
+    use drift_core::{Annotation, AnnotationRef};
+    let (mut ed, line, text, [free, leadered, section]) = mixed_fixture();
+    ed.selection = [line].into();
+    ed.selected_texts = [text].into();
+    ed.annotation_picks = [free, leadered, section]
+        .map(AnnotationRef::Annotation)
+        .to_vec();
+    let before = note_label(&ed, leadered);
+    let mut tool = SelectTool::default();
+    grab(&mut ed, &mut tool, v(5.0, 0.0));
+    tool.set_typed([Some(5.0), Some(2.0)]);
+    let p = ptr(&ed, &tool, v(5.0, 0.0));
+    tool.commit_typed(&p, &mut ed);
+    let d = v(5.0, 2.0);
+    assert_eq!(ed.doc.text(text).unwrap().at, v(0.0, 20.0) + d);
+    assert!((note_label(&ed, free) - (v(30.0, 0.0) + d)).length() < 1e-9);
+    assert!((note_label(&ed, leadered) - (before + d)).length() < 1e-6);
+    match ed.doc.annotation(section) {
+        Some(Annotation::Section { a, b, .. }) => {
+            assert_eq!((*a, *b), (v(40.0, -5.0) + d, v(40.0, 5.0) + d));
+        }
+        _ => unreachable!(),
+    }
+    // One undo step puts it all back.
+    ed.undo();
+    assert_eq!(ed.doc.text(text).unwrap().at, v(0.0, 20.0));
+    assert!((note_label(&ed, free) - v(30.0, 0.0)).length() < 1e-9);
+
+    // Only the leader note picked: its text moves, its tip stays on the line's end.
+    ed.selection.clear();
+    ed.selected_texts.clear();
+    ed.annotation_picks = vec![AnnotationRef::Annotation(leadered)];
+    assert_eq!(ed.nudge(v(0.0, 3.0)), Some(true));
+    assert!((note_label(&ed, leadered) - (before + v(0.0, 3.0))).length() < 1e-6);
+    let start = ed.doc.get(line).unwrap().kind.ends().unwrap()[0];
+    assert_eq!(ed.doc.point(start).unwrap(), v(0.0, 0.0));
+}
+
+#[test]
+fn text_and_annotations_turn_with_the_geometry() {
+    use drift_core::{Annotation, AnnotationRef};
+    let (mut ed, _, text, [free, _, section]) = mixed_fixture();
+    ed.selected_texts = [text].into();
+    ed.annotation_picks = vec![
+        AnnotationRef::Annotation(free),
+        AnnotationRef::Annotation(section),
+    ];
+    let mut tool = SelectTool::default();
+    let p = ptr(&ed, &tool, v(0.0, 0.0));
+    assert!(tool.key(ToolKey::R, Some(&p), &mut ed));
+    // About the pick's middle, a quarter turn.
+    let pivot = tool.spin.as_ref().unwrap().pivot;
+    tool.set_typed([Some(90.0), None]);
+    tool.commit_typed(&p, &mut ed);
+    let turn = |q: DVec2| pivot + (q - pivot).perp();
+    let t = ed.doc.text(text).unwrap();
+    assert!((t.at - turn(v(0.0, 20.0))).length() < 1e-9);
+    assert!((t.angle - 90.0).abs() < 1e-9);
+    assert!((note_label(&ed, free) - turn(v(30.0, 0.0))).length() < 1e-9);
+    let Some(Annotation::Section { a, .. }) = ed.doc.annotation(section) else {
+        unreachable!()
+    };
+    assert!((*a - turn(v(40.0, -5.0))).length() < 1e-9);
+}
+
+#[test]
+fn mirror_copy_and_delete_take_text_and_annotations_along() {
+    use drift_core::{Annotation, AnnotationRef};
+    let (mut ed, line, text, [free, leadered, section]) = mixed_fixture();
+    // A vertical axis at x = 50.
+    ed.doc.begin();
+    let (p, q) = (
+        ed.doc.add_point(v(50.0, -50.0)),
+        ed.doc.add_point(v(50.0, 50.0)),
+    );
+    let axis = ed.doc.add_line(p, q).unwrap();
+    ed.commit("Axis");
+    let pick_all = |ed: &mut Editor| {
+        ed.selection = [line].into();
+        ed.selected_texts = [text].into();
+        ed.annotation_picks = [free, leadered, section]
+            .map(AnnotationRef::Annotation)
+            .to_vec();
+    };
+    pick_all(&mut ed);
+    let riders = ed.riders();
+    let (_, (texts, notes)) = ed.mirror_with(&[line], axis, &riders).unwrap();
+    assert_eq!((texts.len(), notes.len()), (1, 3));
+    assert_eq!(ed.doc.texts().count(), 2);
+    // The free note lands mirrored; the section mark looks the other way.
+    assert!((note_label(&ed, notes[0]) - v(70.0, 0.0)).length() < 1e-9);
+    let Some(Annotation::Section { a, flip, .. }) = ed.doc.annotation(notes[2]) else {
+        unreachable!()
+    };
+    assert!((*a - v(60.0, -5.0)).length() < 1e-9 && *flip);
+    // The leader note's copy points at the mirrored line's end.
+    let Some(Annotation::Note { leaders, .. }) = ed.doc.annotation(notes[1]) else {
+        unreachable!()
+    };
+    let tip = ed.doc.anchor_pos(&leaders[0].to).unwrap();
+    assert!((tip - v(100.0, 0.0)).length() < 1e-6, "{tip}");
+    // The copied text still reads forwards.
+    assert_eq!(ed.doc.text(texts[0]).unwrap().angle, 0.0);
+    ed.undo();
+    assert_eq!(ed.doc.annotations().count(), 3);
+
+    // Shift+D copies them too, and the copies become the pick.
+    pick_all(&mut ed);
+    let n = ed.duplicate_selection();
+    assert_eq!(n, 5, "the line, the text and three annotations");
+    assert_eq!(ed.doc.annotations().count(), 6);
+    assert_eq!(ed.picked_notes().len(), 3);
+    assert!(!ed.picked_notes().contains(&free));
+    ed.undo();
+
+    // Delete takes all of it, with a picked dimension, in one step.
+    ed.doc.begin();
+    let dim = ed
+        .doc
+        .add_constraint(Constraint::Distance {
+            a: p,
+            b: q,
+            value: 100.0,
+        })
+        .unwrap();
+    ed.commit("Dimension");
+    pick_all(&mut ed);
+    ed.annotation_picks.push(AnnotationRef::Dimension(dim));
+    ed.delete_selection_with(&[]);
+    assert_eq!(ed.doc.annotations().count(), 0);
+    assert_eq!(ed.doc.texts().count(), 0);
+    assert!(ed.doc.constraint(dim).is_none());
+    assert!(ed.doc.get(line).is_none());
+    assert!(ed.annotation_picks.is_empty() && ed.selected_texts.is_empty());
+    ed.undo();
+    assert_eq!(ed.doc.annotations().count(), 3);
+    assert!(ed.doc.constraint(dim).is_some());
+}

@@ -110,7 +110,7 @@ impl DriftApp {
         self.editor.selection.clear();
         self.editor.selected_fills.clear();
         self.editor.selected_instances.clear();
-        self.annotation_picks.clear();
+        self.editor.annotation_picks.clear();
         self.selected_constraint = None;
         self.picked_view = None;
         self.editor.selected_annotation = Some(id);

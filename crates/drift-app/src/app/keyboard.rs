@@ -180,7 +180,7 @@ impl DriftApp {
         // G with another tool in hand moves what is picked: the select tool takes over.
         let picked = !self.editor.selection.is_empty()
             || !self.editor.selected_instances.is_empty()
-            || self.editor.selected_text.is_some();
+            || self.editor.picks_annotations();
         if pressed(Key::G)
             && !g_claimed
             && picked
@@ -237,7 +237,11 @@ impl DriftApp {
             self.tool.handle(Input::Finish, &mut self.editor);
         }
         if (pressed(Key::Delete) || pressed(Key::Backspace)) && !self.tool.is_busy() {
-            if let Some((id, k)) = self.selected_leader.take() {
+            if let Some((id, k)) = self.selected_leader.take()
+                && self.editor.selection.is_empty()
+                && self.editor.selected_texts.is_empty()
+                && self.editor.annotation_picks.is_empty()
+            {
                 // A picked leader goes on its own; its note stays.
                 self.remove_leader(id, k);
                 return;
@@ -255,10 +259,9 @@ impl DriftApp {
                 }
                 return;
             }
-            match self.selected_constraint.take() {
-                Some(id) => self.editor.remove_constraint(id),
-                None => self.editor.delete_selection(),
-            }
+            // Everything picked goes together: geometry, text, annotations and dimensions.
+            let picked: Vec<_> = self.selected_constraint.take().into_iter().collect();
+            self.editor.delete_selection_with(&picked);
         }
         if pressed(Key::W) {
             self.thin_lines = !self.thin_lines;

@@ -120,7 +120,10 @@ impl DriftApp {
         glyphs: &[annotations::GlyphLayout],
         pos: Option<egui::Pos2>,
     ) -> bool {
-        let idle = self.tool.kind() == ToolKind::Select && !self.tool.is_busy();
+        // (With the select tool's filter on Annotations or All.)
+        let idle = self.tool.kind() == ToolKind::Select
+            && !self.tool.is_busy()
+            && self.editor.pick_filter.annotations();
         if idle && self.leader_input(ui, response, map, layouts, pos) {
             return true;
         }
@@ -195,18 +198,23 @@ impl DriftApp {
                         .map(|k| (id, k))
                 });
                 if crate::app::visibility_ui::shift_click(ui) {
+                    // Added to what is picked, geometry and all.
                     self.toggle_annotation_pick(drift_core::AnnotationRef::Annotation(id));
                 } else {
-                    self.annotation_picks.clear();
+                    self.editor.annotation_picks.clear();
                     self.editor.selected_annotation = Some(id);
                     self.selected_constraint = None;
+                    self.editor.selection.clear();
+                    self.editor.selected_fills.clear();
+                    self.editor.selected_instances.clear();
+                    self.editor.selected_texts.clear();
+                    self.editor.selected_region = None;
                 }
-                self.editor.selection.clear();
-                self.editor.selected_fills.clear();
-                self.editor.selected_region = None;
                 return true;
             }
-            self.editor.selected_annotation = None;
+            if !crate::app::visibility_ui::shift_click(ui) && !ui.input(|i| i.modifiers.command) {
+                self.editor.selected_annotation = None;
+            }
             self.selected_leader = None;
         }
         false

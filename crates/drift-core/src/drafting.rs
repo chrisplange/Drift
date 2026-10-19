@@ -378,6 +378,93 @@ impl Annotation {
         }
     }
 
+    /// The annotation moved, turned or mirrored by the affine map `f`: its free positions (a
+    /// note's text and free leader tips, a section or elevation mark) and the offsets of
+    /// labels from their geometry. What it points at on the geometry is left as it is.
+    pub fn mapped(&self, f: &dyn Fn(DVec2) -> DVec2) -> Annotation {
+        let origin = f(DVec2::ZERO);
+        let lin = |v: DVec2| f(v) - origin;
+        let mirrored = lin(DVec2::X).perp_dot(lin(DVec2::Y)) < 0.0;
+        let mut a = self.clone();
+        match &mut a {
+            Annotation::Note { at, leaders, .. } => {
+                match leaders.first().map(|l| l.to) {
+                    None => *at = f(*at),
+                    // From a free tip: the text keeps its place from the tip's new place.
+                    Some(Anchor::Free(p)) => *at = f(p + *at) - f(p),
+                    Some(_) => *at = lin(*at),
+                }
+                for l in leaders {
+                    if let Anchor::Free(p) = &mut l.to {
+                        *p = f(*p);
+                    }
+                }
+            }
+            Annotation::HoleCallout { at, .. } | Annotation::ChamferCallout { at, .. } => {
+                *at = lin(*at);
+            }
+            Annotation::Ordinate { .. }
+            | Annotation::CentreMark { .. }
+            | Annotation::Centreline { .. } => {}
+            Annotation::Section { a, b, flip, .. } => {
+                *a = f(*a);
+                *b = f(*b);
+                // Mirrored, the side it looks to swaps.
+                if mirrored {
+                    *flip = !*flip;
+                }
+            }
+            Annotation::Elevation { at, angle, .. } => {
+                let d = lin(DVec2::from_angle(angle.to_radians()));
+                *at = f(*at);
+                *angle = d.y.atan2(d.x).to_degrees().rem_euclid(360.0);
+            }
+        }
+        a
+    }
+
+    /// The annotation on other geometry: `map` gives each entity's counterpart. A note's
+    /// leader to geometry without one keeps its tip where it is now (`pos` says where an anchor
+    /// is); other annotations need all their geometry (`None` otherwise).
+    pub fn with_entities(
+        &self,
+        map: &dyn Fn(EntityId) -> Option<EntityId>,
+        pos: &dyn Fn(&Anchor) -> Option<DVec2>,
+    ) -> Option<Annotation> {
+        let mut a = self.clone();
+        match &mut a {
+            Annotation::Note { leaders, .. } => {
+                for l in leaders {
+                    l.to = match l.to {
+                        Anchor::Free(p) => Anchor::Free(p),
+                        Anchor::Point(e) => match map(e) {
+                            Some(to) => Anchor::Point(to),
+                            None => Anchor::Free(pos(&l.to)?),
+                        },
+                        Anchor::Curve { curve, t } => match map(curve) {
+                            Some(to) => Anchor::Curve { curve: to, t },
+                            None => Anchor::Free(pos(&l.to)?),
+                        },
+                    };
+                }
+            }
+            Annotation::CentreMark { curve } | Annotation::HoleCallout { curve, .. } => {
+                *curve = map(*curve)?;
+            }
+            Annotation::Centreline { a, b } => {
+                *a = map(*a)?;
+                *b = map(*b)?;
+            }
+            Annotation::ChamferCallout { line, .. } => *line = map(*line)?,
+            Annotation::Ordinate { origin, point, .. } => {
+                *origin = map(*origin)?;
+                *point = map(*point)?;
+            }
+            Annotation::Section { .. } | Annotation::Elevation { .. } => {}
+        }
+        Some(a)
+    }
+
     pub(crate) fn replace_entity(&mut self, from: EntityId, into: EntityId) {
         let swap = |e: &mut EntityId| {
             if *e == from {
@@ -738,6 +825,67 @@ mod tests {
         (0..4)
             .map(|i| doc.add_line(p[i], p[(i + 1) % 4]).unwrap())
             .collect()
+    }
+
+    #[test]
+    fn annotations_map_their_free_positions_and_entities() {
+        let v = DVec2::new;
+        let turn = |p: DVec2| v(-p.y, p.x);
+        let mirror_x = |p: DVec2| v(-p.x, p.y);
+        // A note from a free tip: the text keeps its place from the tip.
+        let note = Annotation::Note {
+            text: "A".into(),
+            at: v(5.0, 0.0),
+            leaders: vec![Leader::to(Anchor::Free(v(10.0, 0.0)))],
+            style: NoteStyle::default(),
+        };
+        let Annotation::Note { at, leaders, .. } = note.mapped(&turn) else {
+            unreachable!()
+        };
+        assert_eq!(leaders[0].to, Anchor::Free(v(0.0, 10.0)));
+        assert!((at - v(0.0, 5.0)).length() < 1e-12, "{at}");
+        // A section mark mirrored looks the other way; an elevation turns with the map.
+        let section = Annotation::Section {
+            a: v(1.0, 0.0),
+            b: v(1.0, 5.0),
+            label: "A".into(),
+            sheet: String::new(),
+            flip: false,
+            view: None,
+        };
+        let Annotation::Section { a, b, flip, .. } = section.mapped(&mirror_x) else {
+            unreachable!()
+        };
+        assert_eq!((a, b, flip), (v(-1.0, 0.0), v(-1.0, 5.0), true));
+        let elevation = Annotation::Elevation {
+            at: v(2.0, 0.0),
+            angle: 0.0,
+            label: "1".into(),
+            sheet: String::new(),
+            view: None,
+        };
+        let Annotation::Elevation { at, angle, .. } = elevation.mapped(&turn) else {
+            unreachable!()
+        };
+        assert!((at - v(0.0, 2.0)).length() < 1e-12 && (angle - 90.0).abs() < 1e-9);
+        // On other geometry: a leader to geometry with no counterpart keeps its tip.
+        let (e1, e2) = (EntityId(1), EntityId(2));
+        let leadered = Annotation::Note {
+            text: "B".into(),
+            at: v(1.0, 1.0),
+            leaders: vec![Leader::to(Anchor::Point(e1)), Leader::to(Anchor::Point(e2))],
+            style: NoteStyle::default(),
+        };
+        let map = |e: EntityId| (e == e1).then_some(EntityId(9));
+        let pos = |_: &Anchor| Some(v(3.0, 3.0));
+        let Some(Annotation::Note { leaders, .. }) = leadered.with_entities(&map, &pos) else {
+            unreachable!()
+        };
+        assert_eq!(leaders[0].to, Anchor::Point(EntityId(9)));
+        assert_eq!(leaders[1].to, Anchor::Free(v(3.0, 3.0)));
+        // A centre mark needs its circle.
+        let mark = Annotation::CentreMark { curve: e2 };
+        assert_eq!(mark.with_entities(&map, &pos), None);
     }
 
     #[test]

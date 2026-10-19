@@ -68,9 +68,10 @@ display unit.
 
 | Key or action | Does |
 |---|---|
-| Click / drag | Select, or box-select (right: window, left: crossing) |
+| Click / drag | Select, or box-select (right: window, left: crossing); boxes take text, dimensions and annotations too, unless a pick filter leaves them out |
 | Shift+click | Add to the selection |
 | Ctrl+click | Toggle in or out of the selection |
+| Shift+drag | Add a box's contents to the selection |
 | Ctrl+A | Select all |
 | Tab | Highlight the chain under the pointer (click to pick it); with nothing under the pointer, widen the selection to whole chains |
 | Click near a line's middle | Pick its midpoint |

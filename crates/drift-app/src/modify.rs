@@ -2093,6 +2093,25 @@ impl Editor {
     /// Mirror entities about a line: copies kept symmetric to the originals (points on the
     /// line are shared).
     pub fn mirror(&mut self, ids: &[EntityId], axis: EntityId) -> Result<Vec<EntityId>, EditError> {
+        self.mirror_with(ids, axis, &crate::picks::Riders::default())
+            .map(|(copies, _)| copies)
+    }
+
+    /// Mirror entities, and the text and annotations picked with them, about a line: the
+    /// copies of the entities, and of the text and annotations.
+    #[allow(clippy::type_complexity)]
+    pub fn mirror_with(
+        &mut self,
+        ids: &[EntityId],
+        axis: EntityId,
+        riders: &crate::picks::Riders,
+    ) -> Result<
+        (
+            Vec<EntityId>,
+            (Vec<drift_core::TextId>, Vec<drift_core::AnnotationId>),
+        ),
+        EditError,
+    > {
         let Some(EntityKind::Line { a: ax, b: bx }) = self.doc.get(axis).map(|e| e.kind) else {
             return Err(invalid("mirror about a line"));
         };
@@ -2108,12 +2127,13 @@ impl Editor {
         let on_axis =
             |p: DVec2| (p - pa).perp_dot(u).abs() <= intersect::tolerance(p.abs().max_element());
         let ids: Vec<EntityId> = ids.iter().copied().filter(|id| *id != axis).collect();
-        if ids.is_empty() {
+        if ids.is_empty() && riders.is_empty() {
             return Err(invalid("select geometry to mirror, then the line"));
         }
         let doc_err = |e: drift_core::DocumentError| invalid(e.to_string());
         self.doc.begin();
         let mut created = Vec::new();
+        let mut copied = Default::default();
         let result = (|| -> Result<(), EditError> {
             let mut map: HashMap<EntityId, EntityId> = HashMap::new();
             for p in self.doc.defining_points(ids.iter().copied()) {
@@ -2183,10 +2203,15 @@ impl Editor {
                 created.push(new);
             }
             self.copy_fills_onto(|e| images.get(&e).copied(), reflect);
+            copied = self.copy_riders(
+                riders,
+                &|e| images.get(&e).or_else(|| map.get(&e)).copied(),
+                &reflect,
+            );
             Ok(())
         })();
         self.finish(result, "Mirror")?;
-        Ok(created)
+        Ok((created, copied))
     }
 
     /// Copies of entities moved by `transform` (applied `count` times, 1..=count), with the

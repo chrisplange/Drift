@@ -289,6 +289,11 @@ impl DriftApp {
             (crate::editor::PickFilter::Edges, "Select edges only"),
             (crate::editor::PickFilter::Points, "Select points only"),
             (
+                crate::editor::PickFilter::Annotations,
+                "Select annotations only",
+            ),
+            (crate::editor::PickFilter::Text, "Select text only"),
+            (
                 crate::editor::PickFilter::All,
                 "Select anything (no filter)",
             ),

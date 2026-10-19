@@ -1183,6 +1183,7 @@ dependencies = [
  "minisign",
  "minisign-verify",
  "pollster 1.0.1",
+ "proptest",
  "rustls",
  "semver",
  "serde",

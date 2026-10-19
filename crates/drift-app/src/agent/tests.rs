@@ -474,3 +474,26 @@ fn split_returns_both_pieces() {
     assert_eq!(lines["entities"][0]["from"], json!([400.0, 0.0]), "{lines}");
     assert!(v["point"].is_string(), "{v}");
 }
+
+#[test]
+fn a_curve_ending_on_an_arc_closes_an_area() {
+    // The lower half of a circle, its diameter, and a Bézier from the arc's end back onto
+    // its interior at (60, -80): the lock between them and the half disc are both areas,
+    // without splitting the arc by hand (#100).
+    let mut s = Session::new();
+    ok(
+        &mut s,
+        "add_geometry",
+        json!({ "items": [
+            { "type": "arc", "center": [0, 0], "start": [-100, 0], "end": [100, 0] },
+            { "type": "line", "from": [-100, 0], "to": [100, 0] },
+            { "type": "bezier", "from": [100, 0], "c1": [160, -20], "c2": [150, -70], "to": [60, -80] },
+        ] }),
+    );
+    let lock = ok(&mut s, "measure", json!({ "inside": [120, -40] }));
+    let area = lock["area_mm2"].as_f64().expect("area");
+    assert!((area - 2715.9).abs() < 0.1, "{lock}");
+    let disc = ok(&mut s, "measure", json!({ "inside": [0, -50] }));
+    let area = disc["area_mm2"].as_f64().expect("area");
+    assert!((area - 15707.96).abs() < 0.01, "{disc}");
+}

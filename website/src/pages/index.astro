@@ -63,28 +63,28 @@ const features: { img?: string; visual?: "ai"; title: string; text: string }[] =
 // What the next release (site.nextRelease) brings: the front page's "What's new" section.
 const news: { title: string; text: string; href?: string }[] = [
   {
-    title: "Open DWG files",
-    text: "Drift reads AutoCAD DWG drawings, from R14 to 2018. Import one as editable geometry, with its layers, blocks, hatches, text, dimensions and layouts, or trace over it as an underlay.",
+    title: "Imports that look like the file",
+    text: "PDF and Illustrator files come in true to the original: CMYK colours through the file's colour profile, fills with their own opacity, and opaque fills hiding the lines beneath. Scans and photos arrive as underlay pictures, and a scan-only page can be an underlay.",
   },
   {
-    title: "Perpendicular and tangent snaps",
-    text: "The line tool snaps and guides perpendicular or tangent to the lines, arcs and circles already there, the AutoCAD way or the SolidWorks way.",
+    title: "Big drawings, fast again",
+    text: "Changes after a large import commit in about a second instead of minutes: 372 seconds down to 1.1 on a dense 72,000-curve sheet.",
   },
   {
-    title: "Construction lines on sheets",
-    text: "Each view can show its construction geometry on the sheet, as light dashed hairlines.",
+    title: "Layers by the hundred",
+    text: "The Layers panel gains a filter once there are more than 8 layers, Isolate to show just one (End isolate brings the rest back), and long names shortened in the middle.",
   },
   {
-    title: "Pick annotations and text",
-    text: "New Annotations and Text selection filters, and drag boxes that pick dimensions, notes and text, as in AutoCAD.",
+    title: "Panels that fit",
+    text: "Floating panels size to their contents, fold to their headers, and stay where you put them.",
   },
   {
-    title: "Relations that stay local",
-    text: "Adding a relation moves what it relates, not the rest of the sketch.",
+    title: "Drags that behave",
+    text: "Lines carried along by a move keep their length, free curves always move, and drags settle the same at any size and position. Curves ending on an arc close their areas, and tangency at an unshared end is recognised.",
   },
   {
-    title: "Smoother editing",
-    text: "Fillets and chamfers at corners on an arc's centre, tangent arcs from ellipses and pen curves, extend to the nearest crossing, and a fix for a crash when moving one hatch over another. Drift now keeps a crash log, too.",
+    title: "Fixes and safeguards",
+    text: "Block copies in inch DWG and DXF drawings come in at the right size, geometry far from the origin is flagged (import reports can select it), and two crashes are gone. Drawings saved by Beta 1.4 don't open in earlier betas.",
   },
 ];
 ---

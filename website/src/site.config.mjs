@@ -9,7 +9,7 @@ export const site = {
   repo: "chrisplange/Drift",
   // The release the front page's "What's new" section describes. Until it's published on
   // GitHub, the section says it's coming; after, it says it's out.
-  nextRelease: { version: "0.1.0-beta.1.3", name: "Beta 1.3" },
+  nextRelease: { version: "0.1.0-beta.1.4", name: "Beta 1.4" },
   get repoUrl() {
     return `https://github.com/${this.repo}`;
   },

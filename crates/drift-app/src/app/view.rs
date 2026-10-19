@@ -85,6 +85,44 @@ impl DriftApp {
             .collect()
     }
 
+    /// The dimensions and annotations in a selection box just made (as they are drawn).
+    fn take_box_pick(
+        &mut self,
+        map: &ScreenMap,
+        dims: &[DimLayout],
+        notes: &[crate::notes::NoteLayout],
+    ) {
+        let Some(b) = self.editor.box_pick.take() else {
+            return;
+        };
+        if !b.add {
+            // (The tool cleared the editor's picks.)
+            self.selected_constraint = None;
+            self.selected_leader = None;
+        }
+        if !self.editor.pick_filter.annotations() {
+            return;
+        }
+        let r = egui::Rect::from_two_pos(map.to_screen(b.rect.min), map.to_screen(b.rect.max));
+        let found: Vec<drift_core::AnnotationRef> = dims
+            .iter()
+            .filter(|d| crate::picks::dimension_in_box(d, r, b.crossing))
+            .filter_map(|d| d.id.map(drift_core::AnnotationRef::Dimension))
+            .chain(
+                notes
+                    .iter()
+                    .filter(|l| crate::picks::note_in_box(l, r, b.crossing))
+                    .map(|l| drift_core::AnnotationRef::Annotation(l.id)),
+            )
+            .collect();
+        for f in found {
+            // The first becomes the primary pick, as with Shift+click.
+            if !self.annotation_picked(f) {
+                self.toggle_annotation_pick(f);
+            }
+        }
+    }
+
     /// Hover, pick, drag and double-click dimensions and relation glyphs. Returns true if the
     /// pointer input was used here (so the tool shouldn't see it).
     pub(crate) fn annotation_input(
@@ -100,13 +138,28 @@ impl DriftApp {
         // Dimensions can be picked and edited between dimensions too (the text is no use to
         // the dimension tool, which picks geometry).
         let annotating = idle || (self.tool.kind() == ToolKind::Dimension && !self.tool.is_busy());
+        // The select tool's filter: dimensions with Annotations (or All), relations with the
+        // geometry filters.
+        let filter = self.editor.pick_filter;
+        let select = self.tool.kind() == ToolKind::Select;
+        let (dims_ok, glyphs_ok) = (
+            !select || filter.annotations(),
+            !select || filter.geometry(),
+        );
         // Anywhere on a dimension's text, with a little to spare around it.
         let dim_at = |p: egui::Pos2| {
             dims.iter()
                 .rev()
+                .filter(|_| dims_ok)
                 .find(|d| d.text_rect.expand(annotations::TEXT_REACH).contains(p))
         };
-        let glyph_at = |p: egui::Pos2| glyphs.iter().rev().find(|g| g.rect.contains(p));
+        let glyph_at = |p: egui::Pos2| {
+            glyphs
+                .iter()
+                .rev()
+                .filter(|_| glyphs_ok)
+                .find(|g| g.rect.contains(p))
+        };
         let hit = |p: egui::Pos2| {
             dim_at(p)
                 .and_then(|d| d.id)
@@ -182,16 +235,22 @@ impl DriftApp {
                     .constraint(id)
                     .is_some_and(|c| c.is_dimension());
                 if shift && is_dimension {
+                    // Added to what is picked, geometry and all.
                     self.toggle_annotation_pick(drift_core::AnnotationRef::Dimension(id));
                 } else {
-                    self.annotation_picks.clear();
+                    self.editor.annotation_picks.clear();
+                    self.editor.selected_annotation = None;
+                    self.editor.selected_texts.clear();
                     self.selected_constraint = Some(id);
+                    self.editor.selection.clear();
                 }
-                self.editor.selection.clear();
                 return true;
             }
-            self.selected_constraint = None;
-            self.annotation_picks.clear();
+            // Shift or Ctrl adds geometry to the picked dimensions (the tool sees the click).
+            if !shift && !ui.input(|i| i.modifiers.command) {
+                self.selected_constraint = None;
+                self.editor.annotation_picks.clear();
+            }
         }
         false
     }
@@ -437,6 +496,7 @@ impl DriftApp {
                     .handle(Input::DragEnd(released, mods), &mut self.editor);
             }
         }
+        self.take_box_pick(&map, &dims, &notes);
         // With the select tool, right-click opens a menu for what's under the pointer (picking
         // it first, as in Illustrator) or for the view.
         let menu_tool = self.tool.kind() == ToolKind::Select && !self.tool.is_busy();
@@ -465,7 +525,7 @@ impl DriftApp {
             if let Some(r) = hovered
                 && !self.annotation_picked(r)
             {
-                self.annotation_picks.clear();
+                self.editor.annotation_picks.clear();
                 self.editor.selection.clear();
                 match r {
                     drift_core::AnnotationRef::Dimension(id) => {

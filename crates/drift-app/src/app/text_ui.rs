@@ -514,11 +514,11 @@ impl DriftApp {
 
     /// Edit the picked text: its words, size, angle and font; convert it to curves.
     pub(crate) fn text_inspector(&mut self, ui: &mut egui::Ui) -> bool {
-        let Some(id) = self.editor.selected_text else {
+        let Some(id) = self.editor.sole_text() else {
             return false;
         };
         let Some(t) = self.editor.doc.text(id).cloned() else {
-            self.editor.selected_text = None;
+            self.editor.selected_texts.clear();
             return false;
         };
         let units = self.editor.doc.units();

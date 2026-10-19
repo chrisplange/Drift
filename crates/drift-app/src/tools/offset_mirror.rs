@@ -169,7 +169,8 @@ impl Tool for MirrorTool {
                     return;
                 };
                 let ids: Vec<EntityId> = ed.selection.iter().copied().collect();
-                if ids.iter().all(|id| *id == axis) {
+                let riders = ed.riders();
+                if ids.iter().all(|id| *id == axis) && riders.is_empty() {
                     ed.notice = Some(
                         "Mirror: select the geometry to mirror first (Select tool), then pick \
                          Mirror and click the line"
@@ -177,8 +178,16 @@ impl Tool for MirrorTool {
                     );
                     return;
                 }
-                match ed.mirror(&ids, axis) {
-                    Ok(copies) => ed.selection = copies.into_iter().collect(),
+                match ed.mirror_with(&ids, axis, &riders) {
+                    Ok((copies, (texts, notes))) => {
+                        ed.selection = copies.into_iter().collect();
+                        ed.selected_texts = texts.into_iter().collect();
+                        ed.selected_annotation = None;
+                        ed.annotation_picks = notes
+                            .into_iter()
+                            .map(drift_core::AnnotationRef::Annotation)
+                            .collect();
+                    }
                     Err(e) => ed.notice = Some(format!("Mirror: {e}")),
                 }
             }

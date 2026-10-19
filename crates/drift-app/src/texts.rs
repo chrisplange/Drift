@@ -76,25 +76,6 @@ impl Editor {
         Some(o)
     }
 
-    /// Put a text's anchor at `at`, inside an open transaction (a move in progress).
-    pub fn place_text(&mut self, id: TextId, at: DVec2) {
-        if let Some(mut text) = self.doc.text(id).cloned() {
-            text.at = at;
-            self.doc.set_text(id, text);
-        }
-    }
-
-    /// Turn a text about `pivot` by `degrees` from where it was (its id, anchor and angle),
-    /// inside an open transaction.
-    pub fn turn_text(&mut self, was: (TextId, DVec2, f64), pivot: DVec2, degrees: f64) {
-        let (id, at, angle) = was;
-        if let Some(mut text) = self.doc.text(id).cloned() {
-            text.at = pivot + DVec2::from_angle(degrees.to_radians()).rotate(at - pivot);
-            text.angle = (angle + degrees).rem_euclid(360.0);
-            self.doc.set_text(id, text);
-        }
-    }
-
     /// The text under `p` (inside its bounds, with `tol` to spare), smallest first.
     pub fn text_at(&self, p: DVec2, tol: f64) -> Option<TextId> {
         self.doc
@@ -137,7 +118,7 @@ impl Editor {
                     .or(layer.color)
                     .and_then(|c| crate::editor::contrast(c.0, dark))
             };
-            let emphasis = if self.selected_text == Some(id) {
+            let emphasis = if self.selected_texts.contains(&id) {
                 Emphasis::Selected
             } else if self.hovered_text == Some(id) {
                 Emphasis::Hovered
@@ -158,7 +139,7 @@ impl Editor {
         self.doc.begin();
         let id = self.doc.add_text(text);
         self.commit("Text");
-        self.selected_text = Some(id);
+        self.selected_texts = [id].into();
         id
     }
 
@@ -222,9 +203,7 @@ impl Editor {
         self.doc.begin();
         self.doc.remove_text(id);
         self.commit("Delete text");
-        if self.selected_text == Some(id) {
-            self.selected_text = None;
-        }
+        self.selected_texts.remove(&id);
     }
 
     /// Replace a text with its outlines as curves and lines (each letter's contours
@@ -276,7 +255,7 @@ impl Editor {
         if !self.commit("Convert text") {
             return 0;
         }
-        self.selected_text = None;
+        self.selected_texts.remove(&id);
         self.selection = created.iter().copied().collect();
         created.len()
     }

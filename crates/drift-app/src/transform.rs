@@ -202,7 +202,7 @@ impl Editor {
     /// more picked curves. None for a lone curve (it has handles of its own) and while
     /// copies of blocks or text are picked with them (they don't scale).
     pub fn transform_box(&mut self) -> Option<TransformBox> {
-        if !self.selected_instances.is_empty() || self.selected_text.is_some() {
+        if !self.selected_instances.is_empty() || self.picks_annotations() {
             return None;
         }
         let region = self.region().filter(|r| {

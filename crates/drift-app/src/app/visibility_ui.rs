@@ -26,7 +26,7 @@ impl DriftApp {
         {
             out.push(AnnotationRef::Annotation(id));
         }
-        for r in &self.annotation_picks {
+        for r in &self.editor.annotation_picks {
             if doc.annotation_ref_exists(*r) && !out.contains(r) {
                 out.push(*r);
             }
@@ -37,7 +37,7 @@ impl DriftApp {
     /// Whether a dimension or annotation is picked (as well as, or instead of, the primary
     /// pick).
     pub(crate) fn annotation_picked(&self, r: AnnotationRef) -> bool {
-        self.annotation_picks.contains(&r)
+        self.editor.annotation_picks.contains(&r)
             || match r {
                 AnnotationRef::Dimension(id) => self.selected_constraint == Some(id),
                 AnnotationRef::Annotation(id) => self.editor.selected_annotation == Some(id),
@@ -46,8 +46,8 @@ impl DriftApp {
 
     /// Shift+click: add a dimension or annotation to what is picked, or take it out.
     pub(crate) fn toggle_annotation_pick(&mut self, r: AnnotationRef) {
-        if let Some(i) = self.annotation_picks.iter().position(|p| *p == r) {
-            self.annotation_picks.remove(i);
+        if let Some(i) = self.editor.annotation_picks.iter().position(|p| *p == r) {
+            self.editor.annotation_picks.remove(i);
             return;
         }
         // The first one picked becomes the primary pick (the inspector shows it).
@@ -65,7 +65,7 @@ impl DriftApp {
                 AnnotationRef::Annotation(id) => self.editor.selected_annotation = Some(id),
             }
         } else if !self.annotation_picked(r) {
-            self.annotation_picks.push(r);
+            self.editor.annotation_picks.push(r);
         }
     }
 

@@ -31,13 +31,13 @@ impl Tool for TextTool {
         ed.selection.clear();
         // On a text: type into it, from where it was clicked.
         if let Some(t) = ed.text_at(p.raw, p.tolerance) {
-            ed.selected_text = Some(t);
+            ed.selected_texts = [t].into();
             ed.editing_text = Some(t);
             ed.text_caret_at = Some(p.raw);
             return;
         }
         ed.add_text(drift_core::SketchText::new("", p.pos(), height));
-        ed.editing_text = ed.selected_text;
+        ed.editing_text = ed.sole_text();
     }
 
     fn cancel(&mut self, _ed: &mut Editor) -> bool {

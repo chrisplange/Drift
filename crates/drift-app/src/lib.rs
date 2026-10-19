@@ -29,6 +29,7 @@ mod overlay;
 mod parameters;
 #[cfg(test)]
 mod perf_tests;
+pub mod picks;
 mod soak;
 pub mod temp_dims;
 pub mod texts;
@@ -349,8 +350,6 @@ pub struct DriftApp {
     /// Temporary dimensions show on a picked curve (a preference), and those showing.
     show_temp_dims: bool,
     temp_dims: app::temp_dims_ui::TempDims,
-    /// Dimensions and annotations picked with Shift as well as the picked one.
-    annotation_picks: Vec<drift_core::AnnotationRef>,
     /// The Check sketch window, while it is open.
     sketch_check: Option<app::checker_ui::SketchCheck>,
     /// How far apart two ends may be for the sketch checker to take them as meant to meet
@@ -545,7 +544,6 @@ impl DriftApp {
             show_hidden_annotations: false,
             show_temp_dims: true,
             temp_dims: Default::default(),
-            annotation_picks: Vec::new(),
             gap_tolerance: crate::checker::DEFAULT_TOLERANCE,
             new_block_name: String::new(),
             block_search: String::new(),
@@ -965,7 +963,7 @@ impl eframe::App for DriftApp {
         self.editor.auto_relations = self.auto_relations;
         self.editor.always_endpoints = self.always_endpoints;
         // Text placed but left empty goes once it's no longer picked.
-        let keep = self.editor.selected_text;
+        let keep = self.editor.sole_text();
         self.editor.drop_empty_texts(keep);
         if self.pending.is_none() && self.editor.pending_driven.is_none() {
             if self.palette.is_none() {

@@ -1052,13 +1052,11 @@ property!(
         => free_moves_go(&plan, &pick, offset, steps));
 
 property!(
-    #[ignore = "#90 (PR #92), and with that a small per-step creep: #94"]
     move_keeps_untouched_lengths, move_keeps_untouched_lengths_heavy,
     (plan in plan(false), pick in curves_only(), offset in offset(20.0), steps in 1u32..=20)
         => no_unforced_stretch(&plan, &pick, offset, steps));
 
 property!(
-    #[ignore = "#94: the result depends on where the sketch is"]
     drag_is_invariant_under_similarity, drag_is_invariant_under_similarity_heavy,
     (plan in plan(true), pick in pick(), offset in offset(20.0), steps in 1u32..=20,
         t in similarity())
@@ -1134,4 +1132,24 @@ fn move_pushes_a_squeezed_arc_along() {
             assert!(run.end[i].distance(run.start[i] + offset) < 1e-9);
         }
     }
+}
+
+/// #94: a line hanging from the midpoint of a moved line is carried along at its length,
+/// step after step: the solve settles the preference that keeps it rather than stopping as
+/// soon as the relations hold, with the length a little off each time.
+#[test]
+fn carried_line_keeps_its_length_step_after_step() {
+    let p = DVec2::new;
+    let sketch = Sketch {
+        points: vec![p(0.0, 0.0), p(20.0, 0.0), p(10.0, 0.0), p(10.0, 10.0)],
+        // A, and B standing on A's midpoint.
+        curves: vec![Curve::Line(0, 1), Curve::Line(2, 3)],
+        rels: vec![Rel::Midpoint(2, 0)],
+    };
+    let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+    let ids = vec![built.curves[0]];
+    let run = drag(&mut built, &ids, p(0.0, 20.0), 20).unwrap();
+    assert!(run.committed && run.refused == 0);
+    let length = run.end[2].distance(run.end[3]);
+    assert!((length - 10.0).abs() < 1e-9, "B is {length} long");
 }

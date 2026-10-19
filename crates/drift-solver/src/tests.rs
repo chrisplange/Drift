@@ -1012,3 +1012,49 @@ fn a_dimension_from_a_fixed_point_reaches_far() {
     assert!(report.iterations < 10, "{}", report.iterations);
     assert!((doc.point(p[1]).unwrap().x - 1500.0).abs() < 1e-6);
 }
+
+/// #94: the smallest case found where a drag's result depended on where the sketch was. An
+/// arc and a line from its centre; moving the line lands the arc's ends in the same place
+/// relative to the sketch wherever the sketch is.
+fn move_line_from_arc_centre(shift: DVec2) -> Vec<DVec2> {
+    let mut doc = Document::new();
+    let c = doc.add_point(shift + v(8.0, 0.0));
+    let s = doc.add_point(shift + v(2.34, 5.66));
+    let e = doc.add_point(shift + v(0.0, 0.0));
+    let arc = doc.add_arc(c, s, e).unwrap();
+    let p = doc.add_point(shift + v(8.0, 0.0));
+    let q = doc.add_point(shift + v(18.0, 0.0));
+    let line = doc.add_line(p, q).unwrap();
+    doc.add_constraint(Constraint::Coincident { a: p, b: c })
+        .unwrap();
+    let delta = v(-3.51, -3.68);
+    doc.translate([line], delta);
+    let report = solve(
+        &mut doc,
+        &SolveOptions {
+            dragged: [Param::point(p), Param::point(q)].concat(),
+            radii: HashMap::from([(arc, 8.0)]),
+            lengths: HashMap::from([(line, 10.0)]),
+            ..Default::default()
+        },
+    );
+    assert!(report.converged, "{report:?}");
+    [c, s, e, p, q]
+        .iter()
+        .map(|id| doc.point(*id).unwrap() - shift)
+        .collect()
+}
+
+#[test]
+fn drag_result_does_not_depend_on_where_the_sketch_is() {
+    let here = move_line_from_arc_centre(DVec2::ZERO);
+    for shift in [v(400.0, 0.0), v(-250.0, 370.0), v(0.0, 1000.0)] {
+        let there = move_line_from_arc_centre(shift);
+        for (i, (a, b)) in here.iter().zip(&there).enumerate() {
+            assert!(
+                a.distance(*b) < 1e-9,
+                "shift {shift}: point {i} landed at {a} here and {b} there"
+            );
+        }
+    }
+}

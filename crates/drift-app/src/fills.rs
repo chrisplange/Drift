@@ -25,6 +25,23 @@ const HATCH_SEGMENT_LIMIT: usize = 40_000;
 pub struct FillShape {
     pub region: Region,
     pub lost: bool,
+    /// What moves with the fill: its outline curves and the curves around its holes. Not
+    /// the curves of another shape whose edges run along its outline.
+    pub curves: Vec<EntityId>,
+}
+
+/// A fill's outline curves and the curves of its region's holes, sorted. `ids` is the entity
+/// of each curve index of the curves `region` was found from.
+fn curves_of(fill: &Fill, region: &Region, ids: &[EntityId]) -> Vec<EntityId> {
+    let mut c: Vec<EntityId> = region
+        .holes
+        .iter()
+        .flat_map(|lp| lp.sources.iter().filter_map(|&i| ids.get(i).copied()))
+        .chain(fill.boundary.iter().copied())
+        .collect();
+    c.sort_unstable();
+    c.dedup();
+    c
 }
 
 /// A fill of a copy of a block, in the world: the block's `index`th fill, placed with the copy.
@@ -221,26 +238,29 @@ impl Editor {
             } else {
                 None
             };
-            if let Some(r) = uncrossed
-                .as_ref()
-                .or_else(|| find_region(&regions, &ids, &fill))
-            {
-                self.last_fill_shapes.insert(id, r.clone());
+            let found = uncrossed.or_else(|| {
+                find_region(&regions, &ids, &fill).map(|r| FillShape {
+                    curves: curves_of(&fill, r, &ids),
+                    region: r.clone(),
+                    lost: false,
+                })
+            });
+            if let Some(shape) = found {
+                self.last_fill_shapes.insert(id, shape.clone());
+                out.insert(id, shape);
+            } else if let Some(last) = self.last_fill_shapes.get(&id) {
                 out.insert(
                     id,
                     FillShape {
-                        region: r.clone(),
-                        lost: false,
+                        lost: true,
+                        ..last.clone()
                     },
                 );
-            } else if let Some(r) = self
-                .last_fill_shapes
-                .get(&id)
-                .or_else(|| region_at(&regions, fill.seed))
-            {
+            } else if let Some(r) = region_at(&regions, fill.seed) {
                 out.insert(
                     id,
                     FillShape {
+                        curves: curves_of(&fill, r, &ids),
                         region: r.clone(),
                         lost: true,
                     },
@@ -266,8 +286,8 @@ impl Editor {
         for (id, fill) in fills {
             let (region, outline) = if let Some(r) = exact_region(&regions, &ids, &fill) {
                 (r.clone(), None)
-            } else if let Some(r) = self.uncrossed_region(&fill) {
-                (r, None)
+            } else if let Some(shape) = self.uncrossed_region(&fill) {
+                (shape.region, None)
             } else if let Some(r) = successor_region(&regions, &ids, &fill) {
                 (r.clone(), Some(outline_of(r, &ids)))
             } else {
@@ -391,7 +411,7 @@ impl Editor {
 
     /// A fill's area among its own outline curves and the curves that don't cross them (so
     /// holes inside it stay), when curves crossing it have cut its outline.
-    fn uncrossed_region(&self, fill: &Fill) -> Option<Region> {
+    fn uncrossed_region(&self, fill: &Fill) -> Option<FillShape> {
         let outline: Vec<Shape> = fill
             .boundary
             .iter()
@@ -413,7 +433,12 @@ impl Editor {
             })
             .unzip();
         let regions = drift_geom::regions::regions(&curves);
-        exact_region(&regions, &ids, fill).cloned()
+        // (Its curve indices are into these curves, not the sketch's regions'.)
+        exact_region(&regions, &ids, fill).map(|r| FillShape {
+            curves: curves_of(fill, r, &ids),
+            region: r.clone(),
+            lost: false,
+        })
     }
 
     /// Fills in draw order (bottom first): by layer, then each fill's order.
@@ -430,14 +455,21 @@ impl Editor {
     }
 
     /// The curves that make up the picked fills' areas (outlines and holes), and the centre
-    /// of the first one: what moves or rotates when a fill is moved.
+    /// of the first one: what moves or rotates when a fill is moved. Only the curves the
+    /// areas were found from: another shape's edge lying along an outline stays put.
     pub fn selected_fill_curves(&mut self) -> Option<(Vec<EntityId>, DVec2)> {
         let shapes = self.fill_shapes();
         let mut ids = std::collections::BTreeSet::new();
         let mut centre = None;
         for f in self.selected_fills.clone() {
             if let Some(shape) = shapes.get(&f) {
-                ids.extend(self.region_curves(&shape.region));
+                // (A lost fill's last curves may have been deleted since.)
+                ids.extend(
+                    shape
+                        .curves
+                        .iter()
+                        .filter(|id| self.doc.get(**id).is_some()),
+                );
                 centre.get_or_insert(shape.region.centroid);
             }
         }
@@ -918,5 +950,64 @@ mod tests {
         assert_eq!(lib.get("ansi31").unwrap().description, "Mine");
         assert!(lib.get("ZIG").is_some());
         assert_eq!(lib.all().filter(|p| p.name == "ANSI31").count(), 1);
+    }
+
+    #[test]
+    fn overlapping_and_coincident_outlines_find_tessellate_and_hatch() {
+        // Two arrows of lines, the second shifted along the first: edges along each other,
+        // corners on each other's edges, right on top, or a hair off. Finding the areas,
+        // tessellating and hatching them must not panic.
+        use drift_core::Shape;
+        let mut seed: u64 = 99;
+        let mut rnd = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % 1_000_000) as f64 / 1_000_000.0
+        };
+        let patterns = PatternLibrary::default();
+        let pattern = patterns.get("ANSI31").unwrap().clone();
+        let tiny = [0.0, 1e-5, -1.6e-5, 1e-7, 1e-9, 1e-12, 3e-4, -2e-6];
+        for _ in 0..3000 {
+            let s = 0.5 + rnd() * 400.0;
+            let o = DVec2::new(rnd() * 400.0 - 200.0, rnd() * 400.0 - 200.0);
+            let a = [(0.0, 0.0), (0.6, 0.2), (1.0, 0.2), (1.0, -0.2), (0.6, -0.2)]
+                .map(|(x, y)| o + DVec2::new(x, y) * s);
+            let along = match (rnd() * 5.0) as u32 {
+                0 => 0.15 * s,
+                1 => rnd() * s,
+                2 => 0.4 * s,
+                3 => 0.0,
+                _ => (rnd() * 20.0).round() * 0.05 * s,
+            };
+            let across = match (rnd() * 4.0) as u32 {
+                0 => 0.4 * s,
+                1 => 0.2 * s,
+                _ => 0.0,
+            };
+            let d = DVec2::new(
+                along + tiny[(rnd() * 8.0) as usize],
+                across + tiny[(rnd() * 8.0) as usize],
+            );
+            let b = a.map(|p| p + d);
+            let curves: Vec<Shape> = [a, b]
+                .iter()
+                .flat_map(|p| {
+                    (0..5).map(|i| Shape::Line {
+                        a: p[i],
+                        b: p[(i + 1) % 5],
+                    })
+                })
+                .collect();
+            let placement = Placement {
+                scale: 1.0,
+                angle: 0.0,
+                origin: DVec2::ZERO,
+            };
+            for region in &drift_geom::regions::regions(&curves) {
+                let _ = tessellate(region, 0.04);
+                let _ = drift_draft::hatch(region, &pattern, &placement, None, HATCH_SEGMENT_LIMIT);
+            }
+        }
     }
 }

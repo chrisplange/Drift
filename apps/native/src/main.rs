@@ -12,6 +12,7 @@ static START_MAXIMIZED: AtomicBool = AtomicBool::new(false);
 fn main() -> eframe::Result {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
+    drift_app::install_crash_log();
     drift_app::start_memory_guard();
 
     // The window icon (drawn by assets/make_icon.py).

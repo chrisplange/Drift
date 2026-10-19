@@ -419,6 +419,12 @@ pub fn start_memory_guard() {
     drift_platform::memory::start_guard();
 }
 
+/// Log panics to `crash.log` in Drift's data folder (see `drift_platform::crash`), since the
+/// release app has no console to print them to. Call once from the native entry point.
+pub fn install_crash_log() {
+    drift_platform::crash::install_hook();
+}
+
 impl DriftApp {
     /// Maximise the window once its first frame is drawn. A window created maximised is
     /// shown by Windows straight away, before anything is drawn in it (and then hidden again
@@ -574,6 +580,13 @@ impl DriftApp {
             app.editor.notice = Some(format!(
                 "Drift stopped itself last time: it was using {:.1} GB of memory. Your last autosave has been restored.",
                 mb as f64 / 1024.0
+            ));
+        }
+        if let Some(message) = drift_platform::crash::take_note() {
+            let log = drift_platform::crash::log_path()
+                .map_or_else(|| "crash.log".into(), |p| p.display().to_string());
+            app.editor.notice = Some(format!(
+                "Drift crashed last time ({message}). Your last autosave has been restored. The details are in {log}."
             ));
         }
         theme::install_fonts(&cc.egui_ctx);

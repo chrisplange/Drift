@@ -353,7 +353,7 @@ pub struct Editor {
     pub(crate) copy_fills: Option<(u64, std::rc::Rc<Vec<crate::fills::CopyFill>>)>,
     /// Each fill's last region, kept for when its boundary is lost.
     pub(crate) last_fill_shapes:
-        std::collections::HashMap<drift_core::FillId, drift_geom::regions::Region>,
+        std::collections::HashMap<drift_core::FillId, crate::fills::FillShape>,
     /// Sides of the next polygon (0: the default), and whether it's drawn around its circle.
     pub polygon_sides: usize,
     pub polygon_circumscribed: bool,

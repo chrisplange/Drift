@@ -1901,6 +1901,235 @@ fn layer_rows_pick_and_drag_to_reorder() {
     assert_eq!(order, [drift_core::LayerId::DEFAULT, notes, walls, doors]);
 }
 
+/// A drawing with `n` layers named like an imported DWG's (A-WALL-007, ...), opened in the
+/// Layers panel. Returns the layers bottom up.
+fn many_layers(h: &mut Harness<'_, DriftApp>, n: usize) -> Vec<drift_core::LayerId> {
+    let kinds = ["WALL", "DOOR", "GLAZ", "FURN", "ANNO"];
+    let ids = {
+        let ed = &mut h.state_mut().editor;
+        ed.doc.begin();
+        let ids = (0..n)
+            .map(|i| {
+                let name = format!("A-{}-{i:03}", kinds[i % kinds.len()]);
+                ed.doc.add_layer(drift_core::Layer::new(&name))
+            })
+            .collect();
+        ed.commit("Layers");
+        ids
+    };
+    h.state_mut().show_panel(Panel::Layers);
+    h.run();
+    h.run();
+    ids
+}
+
+/// The layer rows drawn this frame.
+fn drawn_rows(h: &Harness<'_, DriftApp>) -> Vec<String> {
+    let doc = &h.state().editor.doc;
+    doc.layers()
+        .map(|(_, l)| l.name.clone())
+        // (Layer 0's name is also a curve count.)
+        .filter(|name| name != "0" && h.query_all_by_label(name).next().is_some())
+        .collect()
+}
+
+#[test]
+fn hundreds_of_layers_draw_only_the_rows_in_view() {
+    let Some(mut h) = harness() else { return };
+    let ids = many_layers(&mut h, 500);
+    // The top of the stack is in view; only a screenful of rows is drawn.
+    let rows = drawn_rows(&h);
+    assert!(rows.contains(&"A-ANNO-499".to_owned()), "{rows:?}");
+    assert!(rows.len() < 40, "{} rows drawn", rows.len());
+    save_png("drift_ui_many_layers.png", &mut h);
+    // Scrolled to the bottom, the first layers are drawn (and the top ones not).
+    let at = h.get_by_label("A-ANNO-499").rect().center();
+    for _ in 0..40 {
+        h.hover_at(at);
+        h.event(Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, -2000.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: Default::default(),
+        });
+        // (Rows pass under the pointer, their tooltips coming and going.)
+        h.step();
+    }
+    h.hover_at(h.state().canvas_rect.center());
+    h.run();
+    let rows = drawn_rows(&h);
+    assert!(rows.contains(&"A-WALL-000".to_owned()), "{rows:?}");
+    assert!(!rows.contains(&"A-ANNO-499".to_owned()));
+    assert!(rows.len() < 40, "{} rows drawn", rows.len());
+    // Opening a row there (taller) keeps the rows below it in place, and clicking one
+    // still makes it current.
+    let walls = ids[0];
+    h.state_mut().expanded_layers.insert(ids[3]);
+    h.run();
+    h.run();
+    let r = h.get_by_label("A-WALL-000").rect();
+    let at = egui::pos2(r.right() + 40.0, r.center().y);
+    h.hover_at(at);
+    h.run();
+    button(&h, at, true);
+    h.run();
+    button(&h, at, false);
+    h.run();
+    assert_eq!(h.state().editor.doc.current_layer(), walls);
+    save_png("drift_ui_many_layers_bottom.png", &mut h);
+}
+
+#[test]
+fn the_layer_filter_finds_layers_and_keeps_the_current_one() {
+    let Some(mut h) = harness() else { return };
+    let ids = many_layers(&mut h, 500);
+    let current = ids[1]; // A-DOOR-001
+    h.state_mut().editor.set_current_layer(current);
+    let field =
+        egui_kittest::kittest::By::new().predicate(|n| n.placeholder() == Some("Filter layers"));
+    h.get(field).click();
+    h.run();
+    type_text(&mut h, "glaz-01");
+    h.run();
+    // A-GLAZ-012 and -017, of the 501 layers (with 0).
+    assert!(h.query_by_label("2 of 501").is_some());
+    let rows = drawn_rows(&h);
+    assert!(
+        rows.iter()
+            .all(|r| r.starts_with("A-GLAZ-01") || r == "A-DOOR-001")
+    );
+    assert!(rows.contains(&"A-GLAZ-017".to_owned()));
+    // The current layer doesn't match but stays in sight above the list.
+    assert!(rows.contains(&"A-DOOR-001".to_owned()));
+    assert!(
+        h.query_by_label("Current layer (not matching the filter)")
+            .is_some()
+    );
+    save_png("drift_ui_layer_filter.png", &mut h);
+    // Any case; cleared by its button.
+    h.state_mut().layer_list.filter = "WALL-49".into();
+    h.run();
+    h.run();
+    assert!(h.query_by_label("2 of 501").is_some());
+    h.get_by_label("×").click();
+    h.run();
+    h.run();
+    assert!(h.state().layer_list.filter.is_empty());
+    assert!(drawn_rows(&h).contains(&"A-ANNO-499".to_owned()));
+}
+
+#[test]
+fn long_layer_names_lose_their_middle_and_show_whole_in_the_tooltip() {
+    let Some(mut h) = harness() else { return };
+    let long = "A-WALL-FULL-PATT-EXTERIOR-CONCRETE-200MM-HATCH";
+    h.state_mut().editor.add_layer(long);
+    h.state_mut().show_panel(Panel::Layers);
+    h.run();
+    h.run();
+    assert!(h.query_by_label(long).is_none());
+    // (The row's name, shortened; "Import PDF or DXF…" is the other.)
+    let shown = h
+        .query_all_by_label_contains("…")
+        .find(|n| n.value().is_some_and(|v| v.contains("HATCH")))
+        .expect("the shortened name");
+    let label = shown.value().unwrap_or_default();
+    assert!(
+        label.starts_with("A-WALL-") && label.ends_with("HATCH"),
+        "{label}"
+    );
+    let at = shown.rect().center();
+    h.hover_at(at);
+    for _ in 0..30 {
+        h.step();
+    }
+    assert!(h.query_by_label_contains(long).is_some());
+    save_png("drift_ui_long_layer_name.png", &mut h);
+}
+
+#[test]
+fn a_layer_is_isolated_and_the_isolate_ended_in_one_undo_step_each() {
+    let Some(mut h) = harness() else { return };
+    let ids = many_layers(&mut h, 12);
+    let visible = |h: &Harness<'_, DriftApp>| {
+        let doc = &h.state().editor.doc;
+        doc.layers()
+            .filter(|(_, l)| l.visible)
+            .map(|(id, _)| id)
+            .collect::<Vec<_>>()
+    };
+    // One layer hidden beforehand, to come back hidden.
+    let hidden = ids[5];
+    {
+        let ed = &mut h.state_mut().editor;
+        let mut l = ed.doc.layer(hidden).cloned().unwrap();
+        l.visible = false;
+        ed.update_layer(hidden, l);
+    }
+    h.run();
+    let before = visible(&h);
+    let target = ids[9]; // A-ANNO-009
+    // Right-click its row: Isolate.
+    let r = h.get_by_label("A-ANNO-009").rect();
+    let at = egui::pos2(r.right() + 30.0, r.center().y);
+    h.hover_at(at);
+    h.run();
+    for pressed in [true, false] {
+        h.event(Event::PointerButton {
+            pos: at,
+            button: PointerButton::Secondary,
+            pressed,
+            modifiers: EguiModifiers::NONE,
+        });
+        h.run();
+    }
+    h.get_by_label("Isolate").click();
+    h.run();
+    h.run();
+    assert_eq!(visible(&h), [target]);
+    assert_eq!(h.state().editor.doc.current_layer(), target);
+    assert!(h.query_by_label("Isolating A-ANNO-009").is_some());
+    save_png("drift_ui_layer_isolated.png", &mut h);
+    // One undo step: undone, the layers are as they were and the bar goes.
+    h.state_mut().undo();
+    h.run();
+    assert_eq!(visible(&h), before);
+    assert!(h.query_by_label("Isolating A-ANNO-009").is_none());
+    // Alt-click on another layer's eye isolates it; End isolate puts every layer back,
+    // the one hidden before still hidden.
+    let other = ids[2]; // A-GLAZ-002
+    let name = h.get_by_label("A-GLAZ-002").rect();
+    let eye = h
+        .query_all_by_label("Show or hide · Alt-click: show this layer alone")
+        .map(|n| n.rect())
+        .find(|e| (e.center().y - name.center().y).abs() < 4.0)
+        .expect("the row's eye");
+    h.hover_at(eye.center());
+    h.run();
+    h.event(Event::ModifiersChanged(EguiModifiers::ALT));
+    for pressed in [true, false] {
+        h.event(Event::PointerButton {
+            pos: eye.center(),
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: EguiModifiers::ALT,
+        });
+        h.run();
+    }
+    h.event(Event::ModifiersChanged(EguiModifiers::NONE));
+    h.run();
+    assert_eq!(visible(&h), [other]);
+    h.get_by_label("End isolate").click();
+    h.run();
+    h.run();
+    assert_eq!(visible(&h), before);
+    assert!(!visible(&h).contains(&hidden));
+    assert!(h.query_by_label("End isolate").is_none());
+    // Ending is one undo step too: undone, the layer is isolated again.
+    h.state_mut().undo();
+    h.run();
+    assert_eq!(visible(&h), [other]);
+}
+
 #[test]
 fn fill_tool_hatches_and_fills_regions() {
     let Some(mut h) = harness() else { return };

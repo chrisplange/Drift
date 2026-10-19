@@ -18,6 +18,7 @@ fn ptr(ed: &Editor, tool: &dyn Tool, at: DVec2) -> Pointer {
             SnapOptions {
                 tolerance: TOL,
                 grid: None,
+                from: None,
             },
             |id| tool.snap_excludes(ed, id),
         );
@@ -1564,6 +1565,7 @@ fn the_origin_is_a_snap_target() {
     let options = SnapOptions {
         tolerance: TOL,
         grid: None,
+        from: None,
     };
     // An empty sketch: near the origin snaps to it; further away, nothing.
     let s = ed
@@ -1622,6 +1624,7 @@ fn lines_turn_in_steps_with_angle_snapping() {
                 SnapOptions {
                     tolerance: TOL,
                     grid: None,
+                    from: None,
                 },
                 |id| tool.snap_excludes(ed, id),
             );
@@ -1753,6 +1756,7 @@ fn ptr_grid(ed: &Editor, tool: &dyn Tool, at: DVec2, grid: Option<f64>) -> Point
             SnapOptions {
                 tolerance: TOL,
                 grid,
+                from: None,
             },
             |id| tool.snap_excludes(ed, id),
         );
@@ -3896,6 +3900,7 @@ fn copies_of_blocks_offer_snap_points() {
     let options = SnapOptions {
         tolerance: 1.0,
         grid: None,
+        from: None,
     };
     let snap = |ed: &Editor, p: DVec2| ed.snap(p, options, |_| false);
     // Turned a quarter turn about its base point: the top runs from (90, 50) to (100, 70).
@@ -4260,4 +4265,197 @@ fn a_dimension_that_a_reshape_would_break_refuses_it() {
     let err = ed.extend_at(lines[0], v(9.0, 0.0)).unwrap_err();
     assert!(err.to_string().contains("distance"), "{err}");
     assert_eq!(ends_at(&ed, lines[0]).1, v(10.0, 0.0), "nothing changed");
+}
+
+// ---- Perpendicular and tangent snaps and guides ----
+
+/// A pointer as the canvas makes it with perpendicular and tangent snaps on.
+fn ptr_square(ed: &Editor, tool: &dyn Tool, at: DVec2) -> Pointer {
+    let mut p = Pointer::new(at, TOL);
+    p.perp_tangent = true;
+    p.snap = ed.index.snap(
+        at,
+        SnapOptions {
+            tolerance: TOL,
+            grid: None,
+            from: tool.snap_from(),
+        },
+        |id| tool.snap_excludes(ed, id),
+    );
+    tool.refine_pointer(&mut p);
+    p
+}
+
+fn click_square(ed: &mut Editor, tool: &mut dyn Tool, at: DVec2) {
+    let p = ptr_square(ed, tool, at);
+    tool.handle(Input::Hover(p), ed);
+    tool.handle(Input::Click(p, Modifiers::default()), ed);
+}
+
+/// The newest line's id and end points.
+fn newest_line(ed: &Editor) -> (EntityId, DVec2, DVec2) {
+    let (id, a, b) = ed
+        .doc
+        .iter()
+        .filter_map(|(id, e)| match e.kind {
+            EntityKind::Line { a, b } => Some((id, a, b)),
+            _ => None,
+        })
+        .max_by_key(|(id, ..)| *id)
+        .unwrap();
+    (id, ed.doc.point(a).unwrap(), ed.doc.point(b).unwrap())
+}
+
+fn base_line(ed: &mut Editor, a: DVec2, b: DVec2) -> EntityId {
+    ed.doc.begin();
+    let (pa, pb) = (ed.doc.add_point(a), ed.doc.add_point(b));
+    let line = ed.doc.add_line(pa, pb).unwrap();
+    ed.commit("Line");
+    line
+}
+
+#[test]
+fn lines_snap_square_onto_a_line_and_keep_it() {
+    let mut ed = with_auto_relations();
+    ed.auto_relations = true;
+    let base = base_line(&mut ed, v(0.0, 0.0), v(20.0, 0.0));
+    let mut tool = LineTool::default();
+    click_square(&mut ed, &mut tool, v(5.0, 10.0));
+    let p = ptr_square(&ed, &tool, v(5.2, 0.3));
+    let snap = p.snap.unwrap();
+    assert_eq!(
+        (snap.kind, snap.entity, snap.at),
+        (drift_geom::SnapKind::Perpendicular, Some(base), v(5.0, 0.0))
+    );
+    assert_eq!(p.auto_relation(), Some(GuideKind::Perpendicular(base)));
+    tool.handle(Input::Click(p, Modifiers::default()), &mut ed);
+    let (line, a, b) = newest_line(&ed);
+    assert!(close(a, v(5.0, 10.0)) && close(b, v(5.0, 0.0)));
+    let cs = constraints(&ed);
+    assert!(cs.contains(&Constraint::Perpendicular { a: line, b: base }));
+    assert!(
+        cs.iter()
+            .any(|c| matches!(c, Constraint::PointOnCurve { curve, .. } if *curve == base)),
+        "the end is kept on the line: {cs:?}"
+    );
+    // Square, not vertical: no axis relation as well.
+    assert!(line_relations(&ed).is_empty());
+}
+
+#[test]
+fn lines_snap_tangent_and_radial_to_circles() {
+    let mut ed = with_auto_relations();
+    ed.auto_relations = true;
+    ed.doc.begin();
+    let c = ed.doc.add_point(v(0.0, 0.0));
+    let circle = ed.doc.add_circle(c, 5.0).unwrap();
+    ed.commit("Circle");
+    let mut tool = LineTool::default();
+    click_square(&mut ed, &mut tool, v(10.0, 0.0));
+    // From (10, 0) the line touches the circle at 60 degrees.
+    let touch = DVec2::from_angle(60f64.to_radians()) * 5.0;
+    let p = ptr_square(&ed, &tool, touch + v(0.2, 0.2));
+    assert_eq!(p.snap.map(|s| s.kind), Some(drift_geom::SnapKind::Tangent));
+    tool.handle(Input::Click(p, Modifiers::default()), &mut ed);
+    let (line, _, b) = newest_line(&ed);
+    assert!(close(b, touch), "{b:?}");
+    assert!(constraints(&ed).contains(&Constraint::Tangent { a: line, b: circle }));
+
+    // On from the touching point, square onto the circle: along the radius, through the centre.
+    let far = DVec2::from_angle(240f64.to_radians()) * 5.0;
+    let p = ptr_square(&ed, &tool, far + v(0.2, -0.1));
+    assert_eq!(
+        p.snap.map(|s| s.kind),
+        Some(drift_geom::SnapKind::Perpendicular)
+    );
+    tool.handle(Input::Click(p, Modifiers::default()), &mut ed);
+    let (line, _, b) = newest_line(&ed);
+    assert!(close(b, far), "{b:?}");
+    assert!(constraints(&ed).contains(&Constraint::PointOnCurve {
+        point: c,
+        curve: line
+    }));
+}
+
+#[test]
+fn without_auto_relations_the_snaps_only_place_points() {
+    let mut ed = with_auto_relations();
+    ed.auto_relations = false;
+    base_line(&mut ed, v(0.0, 0.0), v(20.0, 0.0));
+    let mut tool = LineTool::default();
+    click_square(&mut ed, &mut tool, v(5.0, 10.0));
+    let mut p = ptr_square(&ed, &tool, v(5.2, 0.3));
+    p.relations = false;
+    tool.handle(Input::Click(p, Modifiers::default()), &mut ed);
+    let (_, _, b) = newest_line(&ed);
+    assert!(close(b, v(5.0, 0.0)));
+    assert!(constraints(&ed).is_empty(), "{:?}", constraints(&ed));
+}
+
+#[test]
+fn drawing_on_from_a_line_follows_a_square_guide() {
+    let mut ed = with_auto_relations();
+    ed.auto_relations = true;
+    let mut tool = LineTool::default();
+    click_square(&mut ed, &mut tool, v(0.0, 0.0));
+    click_square(&mut ed, &mut tool, v(10.0, 5.0));
+    let (first, ..) = newest_line(&ed);
+    // Square to (10, 5) from its end: along (-1, 2).
+    let dir = v(-1.0, 2.0).normalize();
+    let on_guide = v(10.0, 5.0) + dir * 10.0;
+    let p = ptr_square(&ed, &tool, on_guide + dir.perp() * 0.3);
+    let guide = p.guide.unwrap();
+    assert_eq!(guide.kind, GuideKind::Perpendicular(first));
+    assert!(close(p.pos(), on_guide), "{:?}", p.pos());
+    tool.handle(Input::Click(p, Modifiers::default()), &mut ed);
+    let (second, _, b) = newest_line(&ed);
+    assert!(close(b, on_guide));
+    assert!(constraints(&ed).contains(&Constraint::Perpendicular {
+        a: second,
+        b: first
+    }));
+
+    // Turned off: no guide, the point goes where the pointer is.
+    let mut p = Pointer::new(on_guide, TOL);
+    p.perp_tangent = false;
+    tool.refine_pointer(&mut p);
+    assert_eq!(p.guide, None);
+}
+
+#[test]
+fn square_to_a_level_line_stays_a_vertical_relation() {
+    let mut ed = with_auto_relations();
+    ed.auto_relations = true;
+    let mut tool = LineTool::default();
+    click_square(&mut ed, &mut tool, v(0.0, 0.0));
+    click_square(&mut ed, &mut tool, v(10.0, 0.0));
+    let p = ptr_square(&ed, &tool, v(10.2, 8.0));
+    assert_eq!(p.auto_relation(), Some(GuideKind::Vertical));
+}
+
+#[test]
+fn drawing_on_from_an_arc_follows_its_tangent() {
+    let mut ed = with_auto_relations();
+    ed.auto_relations = true;
+    ed.doc.begin();
+    let c = ed.doc.add_point(v(0.0, 0.0));
+    let s = ed.doc.add_point(v(5.0, 0.0));
+    let e = ed.doc.add_point(v(0.0, 5.0));
+    let arc = ed.doc.add_arc(c, s, e).unwrap();
+    ed.commit("Arc");
+    let mut tool = LineTool::default();
+    click_square(&mut ed, &mut tool, v(0.1, 5.1)); // the arc's end
+    assert_eq!(tool.chain_end(), Some(e));
+    // A slanting tangent: from (5, 0) the arc leaves straight up, so use the end at (0, 5),
+    // which leaves along -X. Off to the side of it by less than the tolerance.
+    let p = ptr_square(&ed, &tool, v(-8.0, 5.3));
+    assert_eq!(p.guide.map(|g| g.kind), Some(GuideKind::Tangent(arc)));
+    assert!(close(p.pos(), v(-8.0, 5.0)));
+    tool.handle(Input::Click(p, Modifiers::default()), &mut ed);
+    let (line, ..) = newest_line(&ed);
+    assert!(constraints(&ed).contains(&Constraint::Tangent { a: line, b: arc }));
+    assert!(
+        line_relations(&ed).is_empty(),
+        "tangent rather than horizontal"
+    );
 }

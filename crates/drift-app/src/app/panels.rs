@@ -1642,6 +1642,13 @@ impl DriftApp {
                     });
                     toggle(
                         ui,
+                        Glyph::PerpTangent,
+                        "Perpendicular & tangent",
+                        &mut self.perp_tangent_snap,
+                        "Perpendicular & tangent: lines snap square onto lines, circles and arcs,                          or tangent to circles and arcs, and follow guides square to a line or                          along an arc from the end you draw on from",
+                    );
+                    toggle(
+                        ui,
                         Glyph::Snap,
                         "Snap to grid",
                         &mut self.grid_snap,

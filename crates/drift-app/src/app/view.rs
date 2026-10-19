@@ -12,12 +12,17 @@ impl DriftApp {
         (pointer.shift, pointer.command) = self.keys_held;
         pointer.round_scale = self.round_scale;
         pointer.angle_step = self.angle_snap.filter(|_| snap);
+        pointer.perp_tangent = self.perp_tangent_snap;
         if snap && self.tool.wants_snap() {
             let options = SnapOptions {
                 tolerance: pointer.tolerance,
                 grid: self
                     .grid_snap
                     .then(|| grid_info(&self.camera, self.imperial()).minor),
+                from: self
+                    .perp_tangent_snap
+                    .then(|| self.tool.snap_from())
+                    .flatten(),
             };
             let ed = &self.editor;
             let tool = &self.tool;
@@ -933,6 +938,8 @@ impl DriftApp {
             let kind = match guide.kind {
                 GuideKind::Horizontal => Some(GlyphKind::Horizontal),
                 GuideKind::Vertical => Some(GlyphKind::Vertical),
+                GuideKind::Perpendicular(_) => Some(GlyphKind::Perpendicular),
+                GuideKind::Tangent(_) => Some(GlyphKind::Tangent),
                 GuideKind::Aligned => None,
             };
             if let Some(kind) = kind.filter(|_| self.auto_relations) {

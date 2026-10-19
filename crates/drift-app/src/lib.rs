@@ -210,6 +210,8 @@ pub struct DriftApp {
     wheel: app::view::Wheel,
     pointer: Option<Pointer>,
     grid_snap: bool,
+    /// Perpendicular and tangent snaps and guides while drawing lines.
+    perp_tangent_snap: bool,
     files: Files,
     file: FileState,
     pending: Option<Pending>,
@@ -448,6 +450,7 @@ impl DriftApp {
             wheel: Default::default(),
             pointer: None,
             grid_snap: false,
+            perp_tangent_snap: true,
             files,
             file: FileState {
                 name: UNTITLED.into(),

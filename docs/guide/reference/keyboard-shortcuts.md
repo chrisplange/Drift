@@ -43,7 +43,7 @@ mark** have no key: use the tool palette or the command palette.
 | Enter | Apply the typed values; with nothing typed, finish a polyline |
 | Right-click | Finish a polyline |
 | A / L | In a polyline: switch to a tangent arc, or back to lines, from the last point |
-| Alt (hold) | Place without snapping |
+| Alt (hold) | Place without snapping (also no perpendicular or tangent snaps) |
 | Alt+C | Draw construction geometry, or geometry again |
 | Esc | Stop typing, cancel the step, or (pressed again) go back to **Select** |
 

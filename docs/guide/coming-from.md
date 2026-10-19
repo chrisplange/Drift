@@ -31,7 +31,7 @@ lines.
 | Command line | The command palette (Ctrl+K), plus one-key tools: L line, C circle, A arc, R rectangle, T trim, E extend, O offset, M mirror, F fillet. |
 | Typing a distance after picking a direction | The same: start drawing, point the way, type the length, Enter. Tab moves to the angle. |
 | Ortho (F8) / polar tracking | X and Y lock the segment to an axis; **Angle snap** in the status bar steps the angle (1°, 5°, 15°, 45°). |
-| Object snaps | End, mid, centre, quadrant, nearest and the origin, always on. Hold Alt to place without snapping. Intersection isn't a snap yet. |
+| Object snaps | End, mid, centre, quadrant, nearest and the origin, always on; perpendicular and tangent while drawing lines (**Perpendicular & tangent** in the status bar). Hold Alt to place without snapping. Intersection isn't a snap yet. |
 | Object snap tracking | Inference lines: hover a point, move away, and a dashed guide shows when you're level with it or above it. |
 | Layers, ByLayer | The same model: colour, line weight and line type by layer unless set on the object. Layer **0** always exists. |
 | Blocks, INSERT, BEDIT, EXPLODE | **Make** block, **Place block** (I), double-click a copy to edit in place, **Explode**. Blocks go to and from DXF. |
@@ -54,6 +54,7 @@ Drift's sketcher is modelled on the SolidWorks sketch.
 |---|---|
 | Smart Dimension | **Dimension** (D): click geometry, place the label; the kind follows. Type the value straight away. |
 | Add Relations | The **Inspector**'s **Add relation** buttons, the right-click menu, or the relations pie (Q). |
+| Inferred relations | Lines snap straight and get Horizontal / Vertical. Drawing on from a line or arc, guides show square to the line or along the arc's tangent, and add Perpendicular or Tangent. |
 | Blue / black / red status | The same colours (white instead of black on the dark theme), and the DOF count in the status bar. |
 | Driven dimensions | Offered automatically when a dimension would over-define the sketch; switch with **Driven (reference)**. |
 | Equations / global variables | **Parameters → Variables**, with sliders. Link a dimension by typing a variable's name into it. |

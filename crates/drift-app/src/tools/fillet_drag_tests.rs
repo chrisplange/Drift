@@ -20,6 +20,7 @@ fn ptr(ed: &Editor, tool: &dyn Tool, at: DVec2) -> Pointer {
             SnapOptions {
                 tolerance: TOL,
                 grid: None,
+                from: None,
             },
             |id| tool.snap_excludes(ed, id),
         );

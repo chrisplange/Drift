@@ -4691,6 +4691,101 @@ fn tangency_to_a_partial_ellipse_or_curve_needs_a_shared_end() {
     assert_tangent_at(&ed, curve, joined, a);
 }
 
+/// A square whose top-left corner is an arc's centre point (the rectangle snapped to it) and
+/// whose bottom-left corner sits on another arc's centre without sharing it, as in a D-shaped
+/// outline with a square drawn against where its rounded end begins.
+fn corners_on_centres_fixture() -> (Editor, EntityId, EntityId) {
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    let top = ed.doc.add_point(v(0.0, 0.0));
+    let s1 = ed.doc.add_point(v(30.0, 0.0));
+    let e1 = ed.doc.add_point(v(0.0, 30.0));
+    ed.doc.add_arc(top, s1, e1).unwrap();
+    let centre2 = ed.doc.add_point(v(0.0, -20.0));
+    let s2 = ed.doc.add_point(v(0.0, -50.0));
+    let e2 = ed.doc.add_point(v(30.0, -20.0));
+    ed.doc.add_arc(centre2, s2, e2).unwrap();
+    let right_top = ed.doc.add_point(v(15.0, 0.0));
+    let right_bottom = ed.doc.add_point(v(15.0, -20.0));
+    let bottom = ed.doc.add_point(v(0.0, -20.0));
+    let corners = [top, right_top, right_bottom, bottom];
+    for i in 0..4 {
+        ed.doc.add_line(corners[i], corners[(i + 1) % 4]).unwrap();
+    }
+    ed.commit("Arcs and square");
+    (ed, top, centre2)
+}
+
+#[test]
+fn corners_on_arc_centres_are_filleted() {
+    let (mut ed, top, centre2) = corners_on_centres_fixture();
+    let mut tool = FilletTool::default();
+    // On the centre the square shares, and on the one it only sits on.
+    for at in [v(0.0, 0.0), v(0.0, -20.0)] {
+        click(&mut ed, &mut tool, at);
+        assert!(
+            tool.is_modal(),
+            "the corner at {at} is taken: {:?}",
+            ed.notice
+        );
+        tool.handle(Input::Finish, &mut ed);
+        assert!(ed.notice.is_none(), "{:?}", ed.notice);
+    }
+    assert_eq!(arcs(&ed.doc), 4, "two fillets");
+    assert_eq!(lines(&ed.doc), 4);
+    // The arcs keep their centres.
+    assert!(ed.doc.contains(top) && ed.doc.contains(centre2));
+    assert_eq!(ed.doc.users_of(top).count(), 1);
+    assert_eq!(ed.regions().len(), 1, "the square is still closed");
+}
+
+#[test]
+fn corners_on_arc_centres_are_chamfered() {
+    let (mut ed, _, _) = corners_on_centres_fixture();
+    let mut tool = ChamferTool::default();
+    for at in [v(0.0, 0.0), v(0.0, -20.0)] {
+        click(&mut ed, &mut tool, at);
+        assert!(
+            tool.is_modal(),
+            "the corner at {at} is taken: {:?}",
+            ed.notice
+        );
+        tool.handle(Input::Finish, &mut ed);
+    }
+    assert_eq!(lines(&ed.doc), 6, "two cuts");
+}
+
+#[test]
+fn a_corner_that_cant_be_filleted_says_why() {
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    let hub = ed.doc.add_point(v(0.0, 0.0));
+    for to in [v(10.0, 0.0), v(0.0, 10.0), v(-10.0, -10.0)] {
+        let p = ed.doc.add_point(to);
+        ed.doc.add_line(hub, p).unwrap();
+    }
+    ed.commit("Three lines");
+    let mut tool = FilletTool::default();
+    click(&mut ed, &mut tool, v(0.0, 0.0));
+    assert!(!tool.is_modal());
+    let notice = ed.notice.clone().unwrap_or_default();
+    assert!(notice.contains("3 curves meet here"), "{notice}");
+    // An open end: only one curve.
+    ed.notice = None;
+    click(&mut ed, &mut tool, v(10.0, 0.0));
+    let notice = ed.notice.clone().unwrap_or_default();
+    assert!(notice.contains("only one curve ends here"), "{notice}");
+}
+
+#[test]
+fn the_fillet_readout_says_default_before_a_size_is_set() {
+    let ed = Editor::default();
+    let tool = FilletTool::default();
+    let mut p = ptr(&ed, &tool, v(0.0, 0.0));
+    p.units.length = drift_core::units::LengthFormat::FractionalInch;
+    assert_eq!(tool.measurement(&p).as_deref(), Some("R default"));
+}
+
 /// A line from (0, 0) to (10, 0), a text at (0, 20), a free note at (30, 0), a leader note on
 /// the line's start with its text at (-10, 10), and a section mark from (40, -5) to (40, 5).
 fn mixed_fixture() -> (

@@ -88,8 +88,12 @@ What comes in:
 - Paper-space layouts, as sheets, with their viewports as views.
 
 What doesn't (yet): associative dimensions, what's drawn directly on a layout (title blocks,
-notes), MLEADER, TOLERANCE, images, 3D solids, tables, and binary DXF. DWG files aren't
-read: save them as DXF first.
+notes), MLEADER, TOLERANCE, images, 3D solids, tables, and binary DXF.
+
+DWG files (AutoCAD R14 to 2018) come in the same way: choose **File → Import…** and pick a
+`.dwg`, or drop it on the window. Drift reads it as it reads DXF, with the same report. A
+damaged file is read as far as it can be, and the report says so. Drift doesn't save DWG:
+export DXF instead.
 
 Drift's DXF export is described in [Sheets and output](10-sheets-and-output.md#5-output).
 

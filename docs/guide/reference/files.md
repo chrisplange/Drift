@@ -55,9 +55,9 @@ session, so the next start is fresh.
 
 | | Format | Notes |
 |---|---|---|
-| Import | DXF (ASCII) | As geometry: **File → Import…**. See [Underlays and DXF import](../tutorials/11-underlays-and-dxf.md). Binary DXF and DWG aren't read. |
+| Import | DXF (ASCII), DWG | As geometry: **File → Import…**. DWG is read for AutoCAD R14 to 2018 and comes in the same way as DXF. See [Underlays and DXF import](../tutorials/11-underlays-and-dxf.md). Binary DXF isn't read, and Drift doesn't save DWG: export DXF. |
 | Import | SVG, PDF, Illustrator (`.ai`) | As geometry or an underlay, at a drawing scale (found from its dimensions where it can be) or calibrated: **File → Import…**. See [Part 3](../tutorials/11-underlays-and-dxf.md#part-3-import-svg-pdf-and-illustrator-artwork). Vector PDFs only. |
-| Import | PDF, DXF, SVG, `.ai` | As an underlay to trace: **File → Import underlay…**. |
+| Import | PDF, DXF, DWG, SVG, `.ai` | As an underlay to trace: **File → Import underlay…**. |
 | Import | `.pat` | Hatch patterns: **Parameters → Hatch patterns → Import .pat…**. |
 | Import | `.ttf`, `.otf` | Fonts: **Add a font file…** in any font menu. |
 | Import | SVG | A title-block logo: **Sheets → Logo → Choose SVG…**. |

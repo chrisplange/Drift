@@ -8,17 +8,56 @@ use super::*;
 /// The corner point under the pointer, if two lines meet there (or, for a fillet, two lines
 /// or arcs).
 fn corner_under(ed: &Editor, p: &Pointer, arcs: bool) -> Option<EntityId> {
+    let is_corner = |id: EntityId| {
+        if arcs {
+            ed.fillet_corner(id).is_ok()
+        } else {
+            ed.corner(id).is_ok()
+        }
+    };
+    // The point snapped to may not be the corner but another on top of it (an arc's centre
+    // where a rectangle's corner happens to land): then the corner there.
+    let at = p
+        .snapped_point()
+        .and_then(|id| ed.doc.point(id).ok())
+        .unwrap_or(p.raw);
+    p.snapped_point().filter(|id| is_corner(*id)).or_else(|| {
+        ed.index.pick(at, p.tolerance, |id| {
+            ed.doc.get(id).is_some_and(|e| e.kind.is_point()) && is_corner(id)
+        })
+    })
+}
+
+/// What to tell the user when a click finds no corner: why the point under the pointer
+/// isn't one, or how to pick one.
+fn no_corner_notice(ed: &Editor, p: &Pointer, arcs: bool) -> String {
+    let (tool, how) = if arcs {
+        (
+            "Fillet",
+            "click a corner where two lines or arcs meet, or a fillet",
+        )
+    } else {
+        (
+            "Chamfer",
+            "click a corner where two lines meet, or a chamfer",
+        )
+    };
     let point = p.snapped_point().or_else(|| {
         ed.index.pick(p.raw, p.tolerance, |id| {
             ed.doc.get(id).is_some_and(|e| e.kind.is_point())
         })
-    })?;
-    let found = if arcs {
-        ed.fillet_corner(point).is_ok()
-    } else {
-        ed.corner(point).is_ok()
-    };
-    found.then_some(point)
+    });
+    let why = point.and_then(|q| {
+        if arcs {
+            ed.fillet_corner(q).err()
+        } else {
+            ed.corner(q).err()
+        }
+    });
+    match why {
+        Some(e) => format!("{tool}: can't use this point: {e}"),
+        None => format!("{tool}: {how}"),
+    }
 }
 
 /// The fillet under the pointer: an arc between two lines or arcs, tangent to both.
@@ -218,8 +257,7 @@ impl FilletTool {
             return self.sizing.is_some();
         }
         let Some(corner) = corner_under(ed, p, true) else {
-            ed.notice =
-                Some("Fillet: click a corner where two lines or arcs meet, or a fillet".into());
+            ed.notice = Some(no_corner_notice(ed, p, true));
             return false;
         };
         self.sizing = Sizing::begin(ed, corner, p, self.radius(ed), true);
@@ -338,11 +376,11 @@ impl Tool for FilletTool {
     fn measurement(&self, p: &Pointer) -> Option<String> {
         let r = self.typed[0]
             .or(self.sizing.map(|s| s.size))
-            .or(self.radius)
-            .unwrap_or(f64::NAN);
+            .or(self.radius);
+        // No size yet: the default (not a number, which fractional inches would show as 0").
         Some(format!(
             "R {}",
-            p.units.format_readout(r).replace("NaN", "default")
+            r.map_or_else(|| "default".into(), |r| p.units.format_readout(r))
         ))
     }
 
@@ -405,7 +443,7 @@ impl ChamferTool {
             return true;
         }
         let Some(corner) = corner_under(ed, p, false) else {
-            ed.notice = Some("Chamfer: click a corner where two lines meet, or a chamfer".into());
+            ed.notice = Some(no_corner_notice(ed, p, false));
             return false;
         };
         let size = self.distances(ed).0;

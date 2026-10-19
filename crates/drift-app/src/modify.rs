@@ -212,6 +212,15 @@ impl FilletInfo {
     }
 }
 
+/// Why a point isn't a corner: `ending` curves end there, not two.
+fn not_a_corner(ending: usize, what: &str) -> EditError {
+    invalid(match ending {
+        0 => format!("no curve ends here: pick a corner where two {what} meet"),
+        1 => format!("only one curve ends here: pick a corner where two {what} meet"),
+        n => format!("{n} curves meet here: pick a corner where only two {what} meet"),
+    })
+}
+
 /// Half the angle between two arms where they leave `corner`, and the shorter one's length.
 pub fn corner_angle(corner: DVec2, arms: [Arm; 2]) -> (f64, f64) {
     let (u1, u2) = (arms[0].dir(corner), arms[1].dir(corner));
@@ -1207,21 +1216,34 @@ impl Editor {
         Ok(point.expect("added"))
     }
 
+    /// The curves that end at point `p`. Anything else using it (an arc's or circle's centre
+    /// there, a curve's handle) doesn't make it less of a corner.
+    fn curves_ending_at(&self, p: EntityId) -> Vec<EntityId> {
+        self.doc
+            .users_of(p)
+            .filter(|id| {
+                self.doc
+                    .get(*id)
+                    .and_then(|e| e.kind.ends())
+                    .is_some_and(|ends| ends.contains(&p))
+            })
+            .collect()
+    }
+
     /// The two lines meeting at a corner point (and their far ends), for fillets and
     /// chamfers.
     pub fn corner(&self, p: EntityId) -> Result<[(EntityId, EntityId); 2], EditError> {
-        let users: Vec<EntityId> = self.doc.users_of(p).collect();
-        let lines: Vec<(EntityId, EntityId)> = users
-            .iter()
-            .filter_map(|id| match self.doc.get(*id)?.kind {
-                EntityKind::Line { a, b } => Some((*id, if a == p { b } else { a })),
-                _ => None,
-            })
-            .collect();
-        match lines.as_slice() {
-            [l1, l2] if users.len() == 2 => Ok([*l1, *l2]),
-            _ => Err(invalid("pick a corner where exactly two lines meet")),
-        }
+        let ending = self.curves_ending_at(p);
+        let [c1, c2] = ending[..] else {
+            return Err(not_a_corner(ending.len(), "lines"));
+        };
+        let line = |id: EntityId| match self.doc.get(id).map(|e| e.kind) {
+            Some(EntityKind::Line { a, b }) => Ok((id, if a == p { b } else { a })),
+            _ => Err(invalid(
+                "a chamfer joins two lines, and one here isn't a line (Fillet rounds arcs too)",
+            )),
+        };
+        Ok([line(c1)?, line(c2)?])
     }
 
     /// How a line or an arc runs from its end point `end`: towards its other end.
@@ -1264,17 +1286,20 @@ impl Editor {
     /// The two curves (lines or arcs) meeting at a corner point, and how each runs from it,
     /// for fillets.
     pub fn fillet_corner(&self, p: EntityId) -> Result<[(EntityId, Arm); 2], EditError> {
-        let users: Vec<EntityId> = self.doc.users_of(p).collect();
-        let arms: Vec<(EntityId, Arm)> = users
-            .iter()
-            .filter_map(|id| Some((*id, self.arm(*id, p)?)))
-            .collect();
-        match arms.as_slice() {
-            [a1, a2] if users.len() == 2 => Ok([*a1, *a2]),
-            _ => Err(invalid(
-                "pick a corner where exactly two lines or arcs meet",
-            )),
-        }
+        let ending = self.curves_ending_at(p);
+        let [c1, c2] = ending[..] else {
+            return Err(not_a_corner(ending.len(), "lines or arcs"));
+        };
+        let arm = |id: EntityId| match self.arm(id, p) {
+            Some(arm) => Ok((id, arm)),
+            None => Err(invalid(match self.doc.get(id).map(|e| e.kind) {
+                Some(EntityKind::Line { .. } | EntityKind::Arc { .. }) => {
+                    "one of the curves here has no length"
+                }
+                _ => "only lines and arcs can be filleted, and one here is another curve",
+            })),
+        };
+        Ok([arm(c1)?, arm(c2)?])
     }
 
     /// The fillet arc at corner `p` with radius `r`, for previews.

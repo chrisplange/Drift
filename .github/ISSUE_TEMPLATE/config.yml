@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: User guide
+    url: https://drift-website-c9y.pages.dev/guide/
+    about: How Drift works, step by step.

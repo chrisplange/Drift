@@ -46,7 +46,7 @@ const features: { img?: string; visual?: "ai"; title: string; text: string }[] =
   {
     img: "sheet",
     title: "Sheets, title blocks and output",
-    text: "Lay views out on A4 to A0 or ANSI sheets with a title block and revisions. Export true-scale vector PDF, SVG or DXF, and trace over PDF and DXF underlays.",
+    text: "Lay views out on A4 to A0 or ANSI sheets with a title block and revisions. Export true-scale vector PDF, SVG or DXF, and trace over PDF, DWG and DXF underlays.",
   },
   {
     img: "sheet-views",
@@ -63,29 +63,28 @@ const features: { img?: string; visual?: "ai"; title: string; text: string }[] =
 // What the next release (site.nextRelease) brings: the front page's "What's new" section.
 const news: { title: string; text: string; href?: string }[] = [
   {
-    title: "Assistants in your open drawing",
-    text: "Turn on the live link and Claude and other MCP assistants work on the drawing open in Drift. Watch each change as it happens, undo it, or keep drawing yourself.",
-    href: `${site.repoUrl}/blob/main/docs/ai.md`,
+    title: "Open DWG files",
+    text: "Drift reads AutoCAD DWG drawings, from R14 to 2018. Import one as editable geometry, with its layers, blocks, hatches, text, dimensions and layouts, or trace over it as an underlay.",
   },
   {
-    title: "Drift script",
-    text: "Describe a drawing by intent: rooms, walls, doors, windows, grids and hatches, by name. Drift builds it in one step you can undo.",
+    title: "Perpendicular and tangent snaps",
+    text: "The line tool snaps and guides perpendicular or tangent to the lines, arcs and circles already there, the AutoCAD way or the SolidWorks way.",
   },
   {
-    title: "Notes for some views only",
-    text: "Dimensions and notes can appear in just the views they belong to, like a note meant only for a detail, as in Revit.",
+    title: "Construction lines on sheets",
+    text: "Each view can show its construction geometry on the sheet, as light dashed hairlines.",
   },
   {
-    title: "Project title blocks",
-    text: "Set the project's name, number, client and address once, and every sheet's title block shows them, with an architectural layout and a status for each sheet.",
+    title: "Pick annotations and text",
+    text: "New Annotations and Text selection filters, and drag boxes that pick dimensions, notes and text, as in AutoCAD.",
   },
   {
-    title: "Steadier fillets",
-    text: "Sketches with filleted corners keep their shape while you drag them.",
+    title: "Relations that stay local",
+    text: "Adding a relation moves what it relates, not the rest of the sketch.",
   },
   {
-    title: "Crops at a keystroke",
-    text: "Shift+Alt+B shows or hides view crops, and crops snap while you drag them.",
+    title: "Smoother editing",
+    text: "Fillets and chamfers at corners on an arc's centre, tangent arcs from ellipses and pen curves, extend to the nearest crossing, and a fix for a crash when moving one hatch over another. Drift now keeps a crash log, too.",
   },
 ];
 ---
@@ -203,7 +202,7 @@ const news: { title: string; text: string; href?: string }[] = [
       <ul class="facts">
         <li><strong>Fast</strong><span>Sketches of thousands of entities solve in milliseconds, on the GPU-drawn canvas.</span></li>
         <li><strong>Exact</strong><span>Lines, arcs and text stay crisp at any zoom, and files keep every number exactly.</span></li>
-        <li><strong>Plays well with others</strong><span>DXF in and out, plus SVG, PDF and Illustrator import, as geometry or as an underlay to trace.</span></li>
+        <li><strong>Plays well with others</strong><span>DWG and DXF in, DXF out, plus SVG, PDF and Illustrator import, as geometry or as an underlay to trace.</span></li>
         <li><strong>Yours</strong><span>Plain-text .drift files that diff in git. No account, nothing in the cloud.</span></li>
       </ul>
     </div>

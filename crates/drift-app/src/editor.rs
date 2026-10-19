@@ -615,6 +615,16 @@ impl Editor {
         const MAX_SPLITS: u32 = 6;
         let orientation = drift_solver::Orientation::of(&self.doc, Some(scope));
         self.doc.translate(ids.iter().copied(), delta);
+        // Translating keeps the arcs it touches circular by putting their ends back on their
+        // circles, which can take a moved point off its target (the end of an arc that isn't
+        // moved with it): put those back, and the solve reshapes the arc instead.
+        for &(id, p) in &before.points {
+            if dragged.contains(&Param::X(id))
+                && self.doc.point(id).is_ok_and(|now| now != p + delta)
+            {
+                let _ = self.doc.set_point(id, p + delta);
+            }
+        }
         let report = drift_solver::solve(
             &mut self.doc,
             &SolveOptions {

@@ -523,3 +523,164 @@ fn perf_selection_breakdown() {
         }),
     );
 }
+
+/// A synthetic import like a dense architectural PDF sheet: `cells` rooms in a grid, each
+/// drawn as four lines with a few short lines inside (furniture, hatching), and a solid
+/// fill on every `fill_every`-th room, plus a few long grid lines across the whole sheet.
+/// No relations, like any import.
+pub(crate) fn sheet_import(cells: usize, fill_every: usize) -> drift_io::dxf::DxfImport {
+    use drift_core::Shape;
+    use drift_io::dxf::{DxfEntity, DxfHatch, DxfImport};
+    let mut import = DxfImport::default();
+    let line = |a: DVec2, b: DVec2| DxfEntity {
+        layer: "0".into(),
+        shape: Shape::Line { a, b },
+        line_type: None,
+        color: None,
+        weight: None,
+    };
+    let cols = (cells as f64).sqrt().ceil() as usize;
+    let mut rng = Lcg(7);
+    for k in 0..cells {
+        let o = v((k % cols) as f64 * 30.0, (k / cols) as f64 * 30.0);
+        let c = [v(0.0, 0.0), v(20.0, 0.0), v(20.0, 20.0), v(0.0, 20.0)].map(|p| o + p);
+        for n in 0..4 {
+            import.entities.push(line(c[n], c[(n + 1) % 4]));
+        }
+        for _ in 0..6 {
+            let a = o + v(2.0 + 16.0 * rng.next(), 2.0 + 16.0 * rng.next());
+            let b = o + v(2.0 + 16.0 * rng.next(), 2.0 + 16.0 * rng.next());
+            import.entities.push(line(a, b));
+        }
+        if k % fill_every == 0 {
+            import.hatches.push(DxfHatch {
+                layer: "0".into(),
+                loops: vec![
+                    (0..4)
+                        .map(|n| Shape::Line {
+                            a: c[n],
+                            b: c[(n + 1) % 4],
+                        })
+                        .collect(),
+                ],
+                solid: true,
+                pattern: "SOLID".into(),
+                scale: 1.0,
+                angle: 0.0,
+                color: None,
+                seeds: Vec::new(),
+            });
+        }
+    }
+    let size = cols as f64 * 30.0;
+    for n in 0..10 {
+        let t = 25.0 + n as f64 * size / 10.0;
+        import.entities.push(line(v(t, -10.0), v(t, size)));
+        import.entities.push(line(v(-10.0, t), v(size, t)));
+    }
+    import
+}
+
+#[test]
+#[ignore = "torture test: run with --release --ignored --nocapture"]
+fn perf_import_commit() {
+    let cells: usize = std::env::var("DRIFT_CELLS").map_or(2_000, |s| s.parse().unwrap());
+    let import = sheet_import(cells, 2);
+    let mut ed = Editor::new(Document::new());
+    ed.doc.begin();
+    let t = Instant::now();
+    let r = drift_io::dxf::add_to_document(&mut ed.doc, &import);
+    println!(
+        "add_to_document {:.2} s: {} curves, {} fills",
+        t.elapsed().as_secs_f64(),
+        r.curves,
+        ed.doc.fills().count()
+    );
+    let t = Instant::now();
+    let _ = ed.solve(&[]);
+    println!("solve {:.2} s", t.elapsed().as_secs_f64());
+    let t = Instant::now();
+    let _ = drift_solver::analyze(&ed.doc);
+    println!("analyze {:.2} s", t.elapsed().as_secs_f64());
+    let t = Instant::now();
+    let n = ed.regions().len();
+    println!("regions {:.2} s: {n}", t.elapsed().as_secs_f64());
+    let t = Instant::now();
+    ed.follow_fills();
+    println!("follow_fills {:.2} s", t.elapsed().as_secs_f64());
+    let t = Instant::now();
+    ed.doc.commit("Import");
+    println!("doc.commit {:.2} s", t.elapsed().as_secs_f64());
+    let t = Instant::now();
+    ed.sync();
+    println!("sync {:.2} s", t.elapsed().as_secs_f64());
+    let t = Instant::now();
+    let n = ed.fill_shapes().len();
+    println!("fill_shapes {:.2} s: {n}", t.elapsed().as_secs_f64());
+    write_digest(&mut ed);
+}
+
+/// A real PDF through the import path (page 1, as drawn): `DRIFT_PDF` names the file.
+#[test]
+#[ignore = "torture test: run with --release --ignored --nocapture"]
+fn perf_import_pdf() {
+    let Ok(path) = std::env::var("DRIFT_PDF") else {
+        return;
+    };
+    let bytes = std::fs::read(path).unwrap();
+    let t = Instant::now();
+    let art = drift_io::pdf_import::read_artwork(&bytes, 1, "sheet").unwrap();
+    let options = drift_io::vector::ImportOptions {
+        scale: 1.0,
+        construction_edges: true,
+    };
+    let import = drift_io::vector::to_import(&art, &options);
+    println!("read {:.2} s", t.elapsed().as_secs_f64());
+    let mut ed = Editor::new(Document::new());
+    ed.doc.begin();
+    let t = Instant::now();
+    let r = drift_io::dxf::add_to_document(&mut ed.doc, &import);
+    println!(
+        "add_to_document {:.2} s: {} curves, {} fills",
+        t.elapsed().as_secs_f64(),
+        r.curves,
+        ed.doc.fills().count()
+    );
+    let t = Instant::now();
+    assert!(ed.commit("Import"));
+    println!("commit {:.2} s", t.elapsed().as_secs_f64());
+    let t = Instant::now();
+    let shapes = ed.fill_shapes();
+    println!(
+        "fill_shapes {:.2} s: {} ({} lost)",
+        t.elapsed().as_secs_f64(),
+        shapes.len(),
+        shapes.values().filter(|s| s.lost).count()
+    );
+    write_digest(&mut ed);
+}
+
+/// Every fill and its area, as text, to the file `DRIFT_DIGEST` names (if any): for checking
+/// a change finds the same areas.
+fn write_digest(ed: &mut Editor) {
+    let Ok(path) = std::env::var("DRIFT_DIGEST") else {
+        return;
+    };
+    let mut digest = String::new();
+    for (id, s) in ed.fill_shapes().iter() {
+        let f = ed.doc.fill(*id).unwrap();
+        digest += &format!(
+            "{id:?} {:?} {:.6} {:.6} | {:.6} {:.6} {:.6} {} {:?}
+",
+            f.boundary,
+            f.seed.x,
+            f.seed.y,
+            s.region.area,
+            s.region.centroid.x,
+            s.region.centroid.y,
+            s.lost,
+            s.curves
+        );
+    }
+    std::fs::write(path, digest).unwrap();
+}

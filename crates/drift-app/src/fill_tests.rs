@@ -483,3 +483,26 @@ fn moving_hatches_over_each_other_moves_only_their_own_curves() {
         }
     }
 }
+
+/// A large import (thousands of curves, hundreds of fills, a lot of them crossed by long
+/// grid lines) commits and finds its fills' areas in moments: each fill's area is looked up,
+/// not found by going through every area, or every curve of the drawing (#84: a big PDF
+/// took minutes).
+#[test]
+fn large_import_commits_quickly() {
+    let import = crate::perf_tests::sheet_import(900, 2);
+    let mut ed = Editor::new(Document::new());
+    ed.doc.begin();
+    drift_io::dxf::add_to_document(&mut ed.doc, &import);
+    let t = std::time::Instant::now();
+    assert!(ed.commit("Import"));
+    let shapes = ed.fill_shapes();
+    let took = t.elapsed();
+    assert_eq!(shapes.len(), 450);
+    assert!(shapes.values().all(|s| !s.lost));
+    println!("large import committed in {took:?}");
+    assert!(
+        took < std::time::Duration::from_secs(10),
+        "committing the import took {took:?}"
+    );
+}

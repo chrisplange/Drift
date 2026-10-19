@@ -1,7 +1,7 @@
 //! Fills and hatches: finding each fill's region as the geometry changes, creating and editing
 //! fills, and turning them into GPU meshes and hatch lines.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
 
 use drift_core::{
@@ -131,28 +131,105 @@ impl PatternLibrary {
     }
 }
 
-/// The region bounded by exactly a fill's curves (nearest its seed if several).
-fn exact_region<'a>(regions: &'a [Region], ids: &[EntityId], fill: &Fill) -> Option<&'a Region> {
-    let curves = |r: &Region| -> Vec<EntityId> {
-        let mut c: Vec<EntityId> = r.outer.curves().into_iter().map(|i| ids[i]).collect();
-        c.sort_unstable();
-        c
-    };
-    let exact: Vec<&Region> = regions
-        .iter()
-        .filter(|r| curves(r) == fill.boundary)
-        .collect();
-    exact
-        .iter()
-        .find(|r| r.contains(fill.seed))
-        .or_else(|| {
-            exact.iter().min_by(|a, b| {
-                a.centroid
-                    .distance(fill.seed)
-                    .total_cmp(&b.centroid.distance(fill.seed))
+/// Regions with lookups by their outlines, so finding many fills' regions doesn't scan
+/// every region for each fill. `ids` is the entity of each curve index of the curves the
+/// regions were found from.
+struct Areas<'a> {
+    regions: &'a [Region],
+    ids: &'a [EntityId],
+    /// Regions (indices, in order) by their sorted outer curves.
+    by_outline: HashMap<Vec<EntityId>, Vec<usize>>,
+    /// Regions (indices, in order) by each curve of their outer boundary.
+    by_curve: HashMap<EntityId, Vec<usize>>,
+    /// Every curve the regions were found from.
+    curves: HashSet<EntityId>,
+}
+
+impl<'a> Areas<'a> {
+    fn new(regions: &'a [Region], ids: &'a [EntityId]) -> Self {
+        let mut by_outline: HashMap<Vec<EntityId>, Vec<usize>> = HashMap::new();
+        let mut by_curve: HashMap<EntityId, Vec<usize>> = HashMap::new();
+        for (i, r) in regions.iter().enumerate() {
+            let mut c: Vec<EntityId> = r.outer.curves().into_iter().map(|k| ids[k]).collect();
+            c.sort_unstable();
+            let mut distinct = c.clone();
+            distinct.dedup();
+            for id in distinct {
+                by_curve.entry(id).or_default().push(i);
+            }
+            by_outline.entry(c).or_default().push(i);
+        }
+        Self {
+            regions,
+            ids,
+            by_outline,
+            by_curve,
+            curves: ids.iter().copied().collect(),
+        }
+    }
+
+    /// Of `candidates`, the one around `seed`, else the one whose centre is nearest it.
+    fn nearest(&self, candidates: &[usize], seed: DVec2) -> Option<&'a Region> {
+        let regions = self.regions;
+        candidates
+            .iter()
+            .map(|&i| &regions[i])
+            .find(|r| r.contains(seed))
+            .or_else(|| {
+                candidates.iter().map(|&i| &regions[i]).min_by(|a, b| {
+                    a.centroid
+                        .distance(seed)
+                        .total_cmp(&b.centroid.distance(seed))
+                })
             })
-        })
-        .copied()
+    }
+
+    /// The region bounded by exactly a fill's curves (nearest its seed if several).
+    fn exact(&self, fill: &Fill) -> Option<&'a Region> {
+        self.nearest(self.by_outline.get(&fill.boundary)?, fill.seed)
+    }
+
+    /// The region a fill's outline became when an edit replaced or split some of its curves
+    /// (a fillet or a chamfer cut into a corner, a side split in two): one whose outline
+    /// still has every curve of the fill's outline that bounds areas, and more. The one
+    /// around the seed if several, else the nearest.
+    fn successor(&self, fill: &Fill) -> Option<&'a Region> {
+        let kept: Vec<EntityId> = fill
+            .boundary
+            .iter()
+            .copied()
+            .filter(|e| self.curves.contains(e))
+            .collect();
+        let first = kept.first()?;
+        let candidates: Vec<usize> = self
+            .by_curve
+            .get(first)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|&i| {
+                let outline = outline_of(&self.regions[i], self.ids);
+                kept.iter().all(|e| outline.binary_search(e).is_ok())
+            })
+            .collect();
+        self.nearest(&candidates, fill.seed)
+    }
+
+    /// Pick the region a fill belongs to: the one bounded by exactly its curves (nearest its
+    /// seed if several), else the one its outline became, else the one around its seed if
+    /// it still shares a boundary curve.
+    fn find(&self, fill: &Fill) -> Option<&'a Region> {
+        self.exact(fill)
+            .or_else(|| self.successor(fill))
+            .or_else(|| {
+                region_at(self.regions, fill.seed).filter(|r| {
+                    r.outer
+                        .curves()
+                        .into_iter()
+                        .any(|i| fill.boundary.binary_search(&self.ids[i]).is_ok())
+                })
+            })
+    }
 }
 
 /// The sorted, distinct entities of a region's outer boundary.
@@ -163,59 +240,9 @@ fn outline_of(region: &Region, ids: &[EntityId]) -> Vec<EntityId> {
     c
 }
 
-/// The region a fill's outline became when an edit replaced or split some of its curves (a
-/// fillet or a chamfer cut into a corner, a side split in two): one whose outline still has
-/// every curve of the fill's outline that bounds areas, and more. The one around the seed if
-/// several, else the nearest.
-fn successor_region<'a>(
-    regions: &'a [Region],
-    ids: &[EntityId],
-    fill: &Fill,
-) -> Option<&'a Region> {
-    let kept: Vec<EntityId> = fill
-        .boundary
-        .iter()
-        .copied()
-        .filter(|e| ids.contains(e))
-        .collect();
-    if kept.is_empty() {
-        return None;
-    }
-    let candidates: Vec<&Region> = regions
-        .iter()
-        .filter(|r| {
-            let outline = outline_of(r, ids);
-            kept.iter().all(|e| outline.binary_search(e).is_ok())
-        })
-        .collect();
-    candidates
-        .iter()
-        .find(|r| r.contains(fill.seed))
-        .or_else(|| {
-            candidates.iter().min_by(|a, b| {
-                a.centroid
-                    .distance(fill.seed)
-                    .total_cmp(&b.centroid.distance(fill.seed))
-            })
-        })
-        .copied()
-}
-
-/// Pick the region a fill belongs to: the one bounded by exactly its curves (nearest its
-/// seed if several), else the one its outline became, else the one around its seed if it
-/// still shares a boundary curve.
-fn find_region<'a>(regions: &'a [Region], ids: &[EntityId], fill: &Fill) -> Option<&'a Region> {
-    exact_region(regions, ids, fill)
-        .or_else(|| successor_region(regions, ids, fill))
-        .or_else(|| {
-            region_at(regions, fill.seed).filter(|r| {
-                r.outer
-                    .curves()
-                    .into_iter()
-                    .any(|i| fill.boundary.binary_search(&ids[i]).is_ok())
-            })
-        })
-}
+/// The sketch's solid curves with their bounds, in document order: what
+/// [`Editor::uncrossed_region`] finds a crossed fill's area among.
+type SolidCurves = Vec<(EntityId, Shape, Bounds)>;
 
 impl Editor {
     /// Every fill's region, as of the current document revision.
@@ -228,18 +255,21 @@ impl Editor {
         }
         let regions = self.regions();
         let ids = self.region_ids();
+        let areas = Areas::new(&regions, &ids);
         let fills: Vec<(FillId, Fill)> = self.doc.fills().map(|(id, f)| (id, f.clone())).collect();
+        let mut solid = None;
         let mut out = BTreeMap::new();
         for (id, fill) in fills {
             // A curve drawn across a fill cuts its outline into pieces: the fill keeps its
             // whole area, found again without the curves that cross it.
-            let uncrossed = if exact_region(&regions, &ids, &fill).is_none() {
-                self.uncrossed_region(&fill)
+            let uncrossed = if areas.exact(&fill).is_none() {
+                let solid = solid.get_or_insert_with(|| self.solid_curves());
+                self.uncrossed_region(&fill, solid)
             } else {
                 None
             };
             let found = uncrossed.or_else(|| {
-                find_region(&regions, &ids, &fill).map(|r| FillShape {
+                areas.find(&fill).map(|r| FillShape {
                     curves: curves_of(&fill, r, &ids),
                     region: r.clone(),
                     lost: false,
@@ -282,13 +312,17 @@ impl Editor {
         }
         let regions = self.regions();
         let ids = self.region_ids();
+        let areas = Areas::new(&regions, &ids);
         let fills: Vec<(FillId, Fill)> = self.doc.fills().map(|(id, f)| (id, f.clone())).collect();
+        let mut solid = None;
         for (id, fill) in fills {
-            let (region, outline) = if let Some(r) = exact_region(&regions, &ids, &fill) {
+            let (region, outline) = if let Some(r) = areas.exact(&fill) {
                 (r.clone(), None)
-            } else if let Some(shape) = self.uncrossed_region(&fill) {
+            } else if let Some(shape) =
+                self.uncrossed_region(&fill, solid.get_or_insert_with(|| self.solid_curves()))
+            {
                 (shape.region, None)
-            } else if let Some(r) = successor_region(&regions, &ids, &fill) {
+            } else if let Some(r) = areas.successor(&fill) {
                 (r.clone(), Some(outline_of(r, &ids)))
             } else {
                 continue;
@@ -409,9 +443,22 @@ impl Editor {
             .map(|c| FillStyle::of(&c.fill))
     }
 
+    /// The sketch's solid curves with their bounds, in document order.
+    fn solid_curves(&self) -> SolidCurves {
+        self.doc
+            .iter()
+            .filter(|(_, e)| !e.kind.is_point() && e.style == drift_core::LineKind::Solid)
+            .filter_map(|(id, _)| {
+                let shape = self.doc.shape(id)?;
+                Some((id, shape, shape.bounds()))
+            })
+            .collect()
+    }
+
     /// A fill's area among its own outline curves and the curves that don't cross them (so
     /// holes inside it stay), when curves crossing it have cut its outline.
-    fn uncrossed_region(&self, fill: &Fill) -> Option<FillShape> {
+    /// `solid` is [`solid_curves`](Self::solid_curves).
+    fn uncrossed_region(&self, fill: &Fill, solid: &SolidCurves) -> Option<FillShape> {
         let outline: Vec<Shape> = fill
             .boundary
             .iter()
@@ -420,21 +467,26 @@ impl Editor {
         if outline.len() != fill.boundary.len() {
             return None;
         }
-        let (ids, curves): (Vec<EntityId>, Vec<Shape>) = self
-            .doc
+        // Curves clear of the outline's box can't be inside its area or change it: only the
+        // ones near it are looked at.
+        let mut near: Bounds = outline.iter().map(Shape::bounds).collect();
+        let pad = 1e-6 * near.min.abs().max(near.max.abs()).max_element().max(1.0);
+        near.min -= DVec2::splat(pad);
+        near.max += DVec2::splat(pad);
+        let (ids, curves): (Vec<EntityId>, Vec<Shape>) = solid
             .iter()
-            .filter(|(_, e)| !e.kind.is_point() && e.style == drift_core::LineKind::Solid)
-            .filter_map(|(id, _)| Some((id, self.doc.shape(id)?)))
-            .filter(|(id, shape)| {
+            .filter(|(_, _, bounds)| bounds.intersects(&near))
+            .filter(|(id, shape, _)| {
                 fill.boundary.binary_search(id).is_ok()
                     || outline
                         .iter()
                         .all(|o| drift_geom::intersect::intersect(o, shape).is_empty())
             })
+            .map(|(id, shape, _)| (*id, *shape))
             .unzip();
         let regions = drift_geom::regions::regions(&curves);
         // (Its curve indices are into these curves, not the sketch's regions'.)
-        exact_region(&regions, &ids, fill).map(|r| FillShape {
+        Areas::new(&regions, &ids).exact(fill).map(|r| FillShape {
             curves: curves_of(fill, r, &ids),
             region: r.clone(),
             lost: false,

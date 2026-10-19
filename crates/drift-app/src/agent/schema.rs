@@ -186,7 +186,7 @@ Lines within 1 degree of level or plumb get horizontal/vertical relations (auto_
         ToolSpec {
             name: "add_relations",
             description: "Add geometric relations; one undo step. Types and fields: coincident {a, b points}; horizontal / vertical {line} or {a, b points}; \
-parallel, perpendicular, equal, collinear {a, b lines} (equal and concentric/coradial/tangent also take circles and arcs); tangent {a, b}; \
+parallel, perpendicular, equal, collinear {a, b lines} (equal and concentric/coradial/tangent also take circles and arcs); tangent {a, b} (b may also be an elliptical arc or curve that a ends on: tangent at that end); \
 concentric, coradial {a, b}; on_curve {point, curve}; symmetric {a, b points, axis line}; midpoint {point, line}; fix {point, at?} (pins it; defaults to where it is). \
 Relations already implied are skipped; one that conflicts fails the call.",
             schema: object(

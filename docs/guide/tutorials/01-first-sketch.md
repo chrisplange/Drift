@@ -106,8 +106,8 @@ While you draw a line, two more snaps look back at where the segment starts:
 - **Tangent** (marked with a small circle on a line): near a point where a line from your
   start would just touch a circle or arc, the pointer snaps there.
 
-Drawing on from the end of a line or an arc, a dashed guide shows when the new segment is
-square to the line, or carries on along the arc's tangent. Move close to it and the point
+Drawing on from the end of a line, an arc, a partial ellipse or a pen curve, a dashed guide
+shows when the new segment is square to the line, or carries on along the curve's tangent. Move close to it and the point
 goes exactly on it. (Square to a horizontal or vertical line is simply vertical or
 horizontal.)
 

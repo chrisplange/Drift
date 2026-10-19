@@ -79,7 +79,9 @@ pub enum Constraint {
         b: EntityId,
     },
     /// A line or circle/arc (`a`) tangent to a circle or arc (`b`). Which side (and, for two
-    /// circles, inside or outside) follows the geometry when the relation is added.
+    /// circles, inside or outside) follows the geometry when the relation is added. `b` may
+    /// also be an elliptical arc or a Bézier sharing an end point with `a`: the two are then
+    /// tangent at that point.
     Tangent {
         a: EntityId,
         b: EntityId,
@@ -195,7 +197,7 @@ impl Constraint {
             }
             Constraint::Midpoint { point, line } => vec![(point, Point), (line, Line)],
             Constraint::Smooth { point, a, b } => vec![(point, Point), (a, Point), (b, Point)],
-            Constraint::Tangent { a, b } => vec![(a, LineOrCircular), (b, Circular)],
+            Constraint::Tangent { a, b } => vec![(a, LineOrCircular), (b, Curve)],
             Constraint::Concentric { a, b } | Constraint::Coradial { a, b } => {
                 vec![(a, Circular), (b, Circular)]
             }

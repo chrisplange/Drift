@@ -1,34 +1,28 @@
-//! Tangent arc, continuing from the end of a line or arc.
+//! Tangent arc, continuing from the end of a line, arc, elliptical arc or curve.
 
 use super::*;
 
-/// The directions a curve leaves `point` in, for each line or arc ending there: (curve, unit
-/// direction continuing past the end).
+/// The directions a curve leaves `point` in, for each line, arc, elliptical arc or Bézier
+/// ending there: (curve, unit direction continuing past the end).
 pub(super) fn tangents_at(doc: &drift_core::Document, point: EntityId) -> Vec<(EntityId, DVec2)> {
-    let Ok(p) = doc.point(point) else {
-        return Vec::new();
-    };
-    let mut out = Vec::new();
-    for (id, e) in doc.iter() {
-        let dir = match e.kind {
-            EntityKind::Line { a, b } if a == point || b == point => {
-                let other = if a == point { b } else { a };
-                doc.point(other).ok().map(|q| p - q)
-            }
-            EntityKind::Arc { center, start, end } if start == point || end == point => {
-                doc.point(center).ok().map(|c| {
-                    // Counter-clockwise travel direction at the end; reversed at the start.
-                    let along = (p - c).perp();
-                    if end == point { along } else { -along }
-                })
-            }
-            _ => None,
-        };
-        if let Some(d) = dir.filter(|d| d.length() > 0.0) {
-            out.push((id, d.normalize()));
+    doc.iter()
+        .filter_map(|(id, _)| Some((id, doc.end_direction(id, point)?)))
+        .collect()
+}
+
+/// A Tangent relation between a new line or arc and the curve it continues from. An
+/// elliptical arc or Bézier goes second (tangent at the end they share).
+pub(super) fn tangent_relation(
+    doc: &drift_core::Document,
+    new: EntityId,
+    from: EntityId,
+) -> Constraint {
+    match doc.get(from).map(|e| e.kind) {
+        Some(EntityKind::EllipseArc { .. } | EntityKind::Bezier { .. }) => {
+            Constraint::Tangent { a: new, b: from }
         }
+        _ => Constraint::Tangent { a: from, b: new },
     }
-    out
 }
 
 /// An arc leaving `from` along `dir`: centre, end and whether it turns left (counter-clockwise),
@@ -143,7 +137,7 @@ impl TangentArcTool {
             ed.sync();
             return;
         };
-        ed.relate(Constraint::Tangent { a: curve, b: arc });
+        ed.relate(tangent_relation(&ed.doc, arc, curve));
         if let Some(value) = radius {
             ed.add_typed_dimension(0, Constraint::Radius { curve: arc, value });
         }
@@ -171,7 +165,7 @@ impl Tool for TangentArcTool {
 
     fn hint(&self) -> String {
         match self.start {
-            None => "Click the end of a line or arc to start a tangent arc".into(),
+            None => "Click the end of a line, arc or curve to start a tangent arc".into(),
             Some(_) => "Click the arc's end, or type radius (Tab: sweep) · L: lines · Enter / right-click to finish"
                 .into(),
         }
@@ -183,7 +177,8 @@ impl Tool for TangentArcTool {
                 None => match p.snapped_point() {
                     Some(point) if self.begin_at(point, ed) => {}
                     _ => {
-                        ed.notice = Some("Start a tangent arc on the end of a line or arc".into());
+                        ed.notice =
+                            Some("Start a tangent arc on the end of a line, arc or curve".into());
                     }
                 },
                 Some(_) => self.create(&p, ed),

@@ -9,8 +9,8 @@ pub struct LineTool {
     pub(super) typed: [Option<f64>; 2],
     /// Axis the current segment is locked to; cleared when the segment is placed.
     pub(super) lock: Option<Axis>,
-    /// Guides from the curves ending at the last point: square to a line, along an arc's
-    /// tangent (the relation and the guide's direction).
+    /// Guides from the curves ending at the last point: square to a line, along the tangent of
+    /// an arc, elliptical arc or Bézier (the relation and the guide's direction).
     pub(super) guides: Vec<(GuideKind, DVec2)>,
 }
 
@@ -87,7 +87,7 @@ impl LineTool {
         }
     }
 
-    /// Draw on from `anchor`, with guides from the lines and arcs that end there.
+    /// Draw on from `anchor`, with guides from the curves that end there.
     fn set_last(&mut self, anchor: Anchor, ed: &Editor) {
         self.last = Some(anchor);
         self.guides = anchor
@@ -97,7 +97,9 @@ impl LineTool {
             .into_iter()
             .filter_map(|(curve, dir)| match ed.doc.get(curve)?.kind {
                 EntityKind::Line { .. } => Some((GuideKind::Perpendicular(curve), dir.perp())),
-                EntityKind::Arc { .. } => Some((GuideKind::Tangent(curve), dir)),
+                EntityKind::Arc { .. }
+                | EntityKind::EllipseArc { .. }
+                | EntityKind::Bezier { .. } => Some((GuideKind::Tangent(curve), dir)),
                 _ => None,
             })
             .collect();

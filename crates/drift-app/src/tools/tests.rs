@@ -4460,6 +4460,237 @@ fn drawing_on_from_an_arc_follows_its_tangent() {
     );
 }
 
+/// A partial ellipse about the origin (semi-axes 8 along X and 4), counter-clockwise from
+/// -30° to 135°: (editor, arc, its start and end points, its major-axis point).
+fn ellipse_arc_fixture() -> (Editor, EntityId, [EntityId; 2], EntityId) {
+    let mut ed = with_auto_relations();
+    ed.auto_relations = true;
+    ed.doc.begin();
+    let c = ed.doc.add_point(v(0.0, 0.0));
+    let major = ed.doc.add_point(v(8.0, 0.0));
+    let minor = ed.doc.add_point(v(0.0, 4.0));
+    let at = |degrees: f64| {
+        let t = degrees.to_radians();
+        v(8.0 * t.cos(), 4.0 * t.sin())
+    };
+    let s = ed.doc.add_point(at(-30.0));
+    let e = ed.doc.add_point(at(135.0));
+    let arc = ed.doc.add_ellipse_arc(c, major, minor, s, e).unwrap();
+    ed.commit("Partial ellipse");
+    (ed, arc, [s, e], major)
+}
+
+/// A pen curve from (0, 0) to (10, 0) arching up; with `flat_end`, its second handle sits on
+/// its end (no length): (editor, curve, its anchors, its handles).
+fn pen_curve_fixture(flat_end: bool) -> (Editor, EntityId, [EntityId; 2], [EntityId; 2]) {
+    let mut ed = with_auto_relations();
+    ed.auto_relations = true;
+    ed.doc.begin();
+    let a = ed.doc.add_point(v(0.0, 0.0));
+    let c1 = ed.doc.add_point(v(2.0, 6.0));
+    let c2 = ed
+        .doc
+        .add_point(if flat_end { v(10.0, 0.0) } else { v(9.0, 4.0) });
+    let b = ed.doc.add_point(v(10.0, 0.0));
+    let curve = ed.doc.add_bezier(a, c1, c2, b).unwrap();
+    ed.commit("Curve");
+    (ed, curve, [a, b], [c1, c2])
+}
+
+/// The direction `curve` leaves its end `point` in.
+fn end_dir(ed: &Editor, curve: EntityId, point: EntityId) -> DVec2 {
+    tangent_arc::tangents_at(&ed.doc, point)
+        .into_iter()
+        .find(|(id, _)| *id == curve)
+        .map(|(_, d)| d)
+        .expect("curve ends at the point")
+}
+
+/// The newest entity other than a point.
+fn newest_curve(ed: &Editor) -> EntityId {
+    ed.doc
+        .iter()
+        .filter(|(_, e)| !e.kind.is_point())
+        .map(|(id, _)| id)
+        .max()
+        .unwrap()
+}
+
+/// `new` leaves `point` straight back along `old`: tangent there, not a corner.
+fn assert_tangent_at(ed: &Editor, old: EntityId, new: EntityId, point: EntityId) {
+    let (d_old, d_new) = (end_dir(ed, old, point), end_dir(ed, new, point));
+    assert!(
+        (d_old + d_new).length() < 1e-7,
+        "{d_old} vs {d_new}: not tangent"
+    );
+}
+
+/// Start a tangent arc on `point` and end it at `to`: the new arc.
+fn tangent_arc_from(ed: &mut Editor, point: EntityId, to: DVec2) -> EntityId {
+    let mut tool = TangentArcTool::default();
+    let from = ed.doc.point(point).unwrap();
+    click(ed, &mut tool, from);
+    assert_eq!(tool.chain_end(), Some(point), "started on the end");
+    assert!(ed.notice.is_none(), "{:?}", ed.notice);
+    click(ed, &mut tool, to);
+    assert!(ed.notice.is_none(), "{:?} at {to}", ed.notice);
+    let arc = newest_curve(ed);
+    assert!(matches!(
+        ed.doc.get(arc).unwrap().kind,
+        EntityKind::Arc { .. }
+    ));
+    arc
+}
+
+#[test]
+fn tangent_arcs_start_on_partial_ellipses() {
+    for end in 0..2 {
+        let (mut ed, ellipse, ends, major) = ellipse_arc_fixture();
+        let point = ends[end];
+        let from = ed.doc.point(point).unwrap();
+        let dir = end_dir(&ed, ellipse, point);
+        // Off to the left of the way it leaves.
+        let arc = tangent_arc_from(&mut ed, point, from + dir * 6.0 + dir.perp() * 3.0);
+        assert_tangent_at(&ed, ellipse, arc, point);
+        assert!(constraints(&ed).contains(&Constraint::Tangent { a: arc, b: ellipse }));
+        assert!(ed.analysis().conflicts.is_empty());
+        // Turn and stretch the ellipse: the arc stays tangent to it.
+        assert!(ed.move_point_to(major, v(7.0, 3.0)));
+        assert!(ed.doc.point(major).unwrap().distance(v(7.0, 3.0)) < 1e-6);
+        assert_tangent_at(&ed, ellipse, arc, point);
+    }
+}
+
+#[test]
+fn tangent_arcs_start_on_pen_curves() {
+    for flat_end in [false, true] {
+        for end in 0..2 {
+            let (mut ed, curve, ends, handles) = pen_curve_fixture(flat_end);
+            let point = ends[end];
+            let from = ed.doc.point(point).unwrap();
+            let dir = end_dir(&ed, curve, point);
+            if flat_end && end == 1 {
+                // No handle at the end: along the other handle.
+                assert!((dir - (v(10.0, 0.0) - v(2.0, 6.0)).normalize()).length() < 1e-12);
+            }
+            let arc = tangent_arc_from(&mut ed, point, from + dir * 6.0 - dir.perp() * 3.0);
+            assert_tangent_at(&ed, curve, arc, point);
+            assert!(constraints(&ed).contains(&Constraint::Tangent { a: arc, b: curve }));
+            assert!(ed.analysis().conflicts.is_empty());
+            // Swing the handle that sets the direction: the arc follows.
+            let handle = if end == 0 || flat_end {
+                handles[0]
+            } else {
+                handles[1]
+            };
+            let to = ed.doc.point(handle).unwrap() + v(-1.5, 1.0);
+            assert!(ed.move_point_to(handle, to));
+            assert_tangent_at(&ed, curve, arc, point);
+            if flat_end && end == 1 {
+                // Pulled out, the handle at the end takes over the direction (turned a
+                // little from the other handle's).
+                let back = DVec2::from_angle(0.3).rotate(-end_dir(&ed, curve, point));
+                let out = ed.doc.point(point).unwrap() + back * 2.0;
+                assert!(ed.move_point_to(handles[1], out));
+                assert!(ed.doc.point(handles[1]).unwrap().distance(out) < 1e-6);
+                assert_tangent_at(&ed, curve, arc, point);
+                let dir = end_dir(&ed, curve, point);
+                let now = ed.doc.point(point).unwrap() - ed.doc.point(handles[1]).unwrap();
+                assert!(dir.dot(now.normalize()) > 1.0 - 1e-9, "{dir}");
+                // Swung right round in one go, it doesn't fold the arc back into a cusp.
+                let round = ed.doc.point(point).unwrap() + v(2.0, 1.0);
+                ed.move_point_to(handles[1], round);
+                assert_tangent_at(&ed, curve, arc, point);
+            }
+        }
+    }
+}
+
+#[test]
+fn tangent_arcs_chain_on_from_a_curve() {
+    let (mut ed, curve, [_, b], _) = pen_curve_fixture(false);
+    let mut tool = TangentArcTool::default();
+    click(&mut ed, &mut tool, v(10.0, 0.0));
+    let dir = end_dir(&ed, curve, b);
+    click(
+        &mut ed,
+        &mut tool,
+        v(10.0, 0.0) + dir * 5.0 + dir.perp() * 2.0,
+    );
+    let first = newest_curve(&ed);
+    let joint = tool.chain_end().unwrap();
+    let next = ed.doc.point(joint).unwrap() + v(3.0, -6.0);
+    click(&mut ed, &mut tool, next);
+    let second = newest_curve(&ed);
+    assert_ne!(first, second);
+    assert_tangent_at(&ed, first, second, joint);
+    assert_eq!(tangents(&ed), 2);
+}
+
+#[test]
+fn lines_draw_on_tangent_from_partial_ellipses_and_curves() {
+    let ellipse = {
+        let (ed, arc, [_, e], major) = ellipse_arc_fixture();
+        (ed, arc, e, major)
+    };
+    let pen = {
+        let (ed, curve, [a, _], [c1, _]) = pen_curve_fixture(false);
+        (ed, curve, a, c1)
+    };
+    for (mut ed, curve, point, mover) in [ellipse, pen] {
+        let from = ed.doc.point(point).unwrap();
+        let mut tool = LineTool::default();
+        click_square(&mut ed, &mut tool, from + v(0.1, 0.1));
+        assert_eq!(tool.chain_end(), Some(point));
+        let dir = end_dir(&ed, curve, point);
+        let on_guide = from + dir * 8.0;
+        let p = ptr_square(&ed, &tool, on_guide + dir.perp() * 0.3);
+        assert_eq!(p.guide.map(|g| g.kind), Some(GuideKind::Tangent(curve)));
+        assert!(close(p.pos(), on_guide), "{:?}", p.pos());
+        tool.handle(Input::Click(p, Modifiers::default()), &mut ed);
+        let (line, ..) = newest_line(&ed);
+        assert_tangent_at(&ed, curve, line, point);
+        assert!(constraints(&ed).contains(&Constraint::Tangent { a: line, b: curve }));
+        // Editing the curve keeps the line along it.
+        let to = ed.doc.point(mover).unwrap() + v(-1.0, 2.0);
+        assert!(ed.move_point_to(mover, to));
+        assert_tangent_at(&ed, curve, line, point);
+
+        // A in a polyline carries on with a tangent arc from the line's end, as before.
+        let mut arcs = TangentArcTool::default();
+        arcs.continue_from(tool.chain_end().unwrap(), &mut ed);
+        assert!(arcs.is_busy());
+    }
+}
+
+#[test]
+fn tangency_to_a_partial_ellipse_or_curve_needs_a_shared_end() {
+    let (mut ed, curve, [a, _], _) = pen_curve_fixture(false);
+    ed.doc.begin();
+    let p = ed.doc.add_point(v(0.0, 0.0));
+    let q = ed.doc.add_point(v(-5.0, 0.0));
+    let apart = ed.doc.add_line(p, q).unwrap();
+    let r = ed.doc.add_point(v(-3.0, -5.0));
+    let joined = ed.doc.add_line(a, r).unwrap();
+    ed.commit("Lines");
+    let tangent = |a, b| Constraint::Tangent { a, b };
+    assert!(ed.doc.validate(&tangent(apart, curve)).is_err());
+    assert!(ed.doc.validate(&tangent(joined, curve)).is_ok());
+    // Selected together, the joined line and curve are offered Tangent; the other isn't.
+    let offered = |ed: &Editor| {
+        ed.relation_options()
+            .into_iter()
+            .find(|o| o.label == "Tangent")
+    };
+    ed.selection = [apart, curve].into();
+    assert!(offered(&ed).is_none());
+    ed.selection = [joined, curve].into();
+    let option = offered(&ed).expect("Tangent offered");
+    // Applied, it turns the line to leave along the curve's first handle.
+    ed.add_constraints("Tangent", &option.constraints).unwrap();
+    assert_tangent_at(&ed, curve, joined, a);
+}
+
 /// A square whose top-left corner is an arc's centre point (the rectangle snapped to it) and
 /// whose bottom-left corner sits on another arc's centre without sharing it, as in a D-shaped
 /// outline with a square drawn against where its rounded end begins.

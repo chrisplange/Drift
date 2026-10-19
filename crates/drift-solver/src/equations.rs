@@ -112,6 +112,18 @@ pub enum Equation {
         point: [usize; 2],
         ctrl: [[usize; 2]; 4],
     },
+    /// A direction tangent to an ellipse at its point `at` (or, with `normal`, square to it):
+    /// the sine of the angle between `dir` (`[ax, ay, bx, by]`) and the ellipse's tangent
+    /// (or normal) there. With `M = major − center`, `P = M⊥`, `d = at − center` and
+    /// `b = |minor − center|`, the outward normal is `b²(d·M)M + |M|²(d·P)P`.
+    EllipseTangent {
+        at: [usize; 2],
+        center: [usize; 2],
+        major: [usize; 2],
+        minor: [usize; 2],
+        dir: [usize; 4],
+        normal: bool,
+    },
     /// `sin(θ − φ) = 0`, where θ is the angle from line 1 to line 2. Params are
     /// `[ax, ay, bx, by]` for each line.
     Angle {
@@ -134,7 +146,10 @@ impl Equation {
 
     /// Whether the residual is an angle (unitless) rather than a length (mm).
     pub fn is_angular(&self) -> bool {
-        matches!(self, Equation::Angle { .. })
+        matches!(
+            self,
+            Equation::Angle { .. } | Equation::EllipseTangent { .. }
+        )
     }
 
     pub fn params(&self) -> Vec<usize> {
@@ -179,6 +194,21 @@ impl Equation {
             Equation::OnBezier { point, ctrl } => {
                 point.iter().chain(ctrl.iter().flatten()).copied().collect()
             }
+            Equation::EllipseTangent {
+                at,
+                center,
+                major,
+                minor,
+                dir,
+                ..
+            } => at
+                .iter()
+                .chain(center)
+                .chain(major)
+                .chain(minor)
+                .chain(dir)
+                .copied()
+                .collect(),
         }
     }
 
@@ -276,6 +306,60 @@ impl Equation {
                     (center[1], -(gd[1] + gm[1] + gn[1])),
                 ]);
                 r - a
+            }
+            Equation::EllipseTangent {
+                at,
+                center,
+                major,
+                minor,
+                dir,
+                normal,
+            } => {
+                use drift_core::DVec2;
+                let pt = |p: [usize; 2]| DVec2::new(val(p[0]), val(p[1]));
+                let c = pt(center);
+                let (d, m, f) = (pt(at) - c, pt(major) - c, pt(minor) - c);
+                let p = m.perp();
+                let (a2, b2) = (m.length_squared(), f.length_squared());
+                let (s, k) = (d.dot(m), d.dot(p));
+                let n = m * (b2 * s) + p * (a2 * k);
+                let v = DVec2::new(val(dir[2]) - val(dir[0]), val(dir[3]) - val(dir[1]));
+                // As `Angle` with line 1 = v and line 2 = n: sin of the angle from the
+                // normal (cross) or from the tangent (dot).
+                let (cs, sn) = if normal { (1.0, 0.0) } else { (0.0, -1.0) };
+                let len1sq = v.length_squared().max(1e-300);
+                let len2sq = n.length_squared().max(1e-300);
+                let norm = (len1sq * len2sq).sqrt();
+                let r = (v.perp_dot(n) * cs - v.dot(n) * sn) / norm;
+                let gv =
+                    DVec2::new(cs * n.y - sn * n.x, -cs * n.x - sn * n.y) / norm - v * (r / len1sq);
+                let gn =
+                    DVec2::new(-cs * v.y - sn * v.x, cs * v.x - sn * v.y) / norm - n * (r / len2sq);
+                // Through n = b²·s·M + |M|²·k·P to d, M and the minor point.
+                let (mg, pg) = (m.dot(gn), p.dot(gn));
+                let gd = m * (b2 * mg) + p * (a2 * pg);
+                let gm = d * (b2 * mg)
+                    + gn * (b2 * s)
+                    + m * (2.0 * k * pg)
+                    + DVec2::new(d.y, -d.x) * (a2 * pg)
+                    + DVec2::new(gn.y, -gn.x) * (a2 * k);
+                let gf = f * (2.0 * s * mg);
+                let gc = -(gd + gm + gf);
+                grad.extend([
+                    (at[0], gd.x),
+                    (at[1], gd.y),
+                    (major[0], gm.x),
+                    (major[1], gm.y),
+                    (minor[0], gf.x),
+                    (minor[1], gf.y),
+                    (center[0], gc.x),
+                    (center[1], gc.y),
+                    (dir[0], -gv.x),
+                    (dir[1], -gv.y),
+                    (dir[2], gv.x),
+                    (dir[3], gv.y),
+                ]);
+                r
             }
             Equation::LengthValue { length, value } => length.eval(val, 1.0, grad) - value,
             Equation::EqualLength { a, b } => a.eval(val, 1.0, grad) - b.eval(val, -1.0, grad),
@@ -541,6 +625,22 @@ mod tests {
                 major: [6, 3],
                 minor: [4, 7],
             },
+            Equation::EllipseTangent {
+                at: [0, 1],
+                center: [2, 3],
+                major: [4, 5],
+                minor: [6, 7],
+                dir: [0, 1, 8, 2],
+                normal: false,
+            },
+            Equation::EllipseTangent {
+                at: [8, 2],
+                center: [0, 1],
+                major: [6, 3],
+                minor: [4, 7],
+                dir: [5, 6, 2, 3],
+                normal: true,
+            },
         ];
         for eq in eqs {
             check_gradient(eq, &X);
@@ -576,6 +676,41 @@ mod tests {
             let x = with(p.x, p.y);
             assert!(eq.eval(&|i| x[i], &mut Vec::new()).abs() < 1e-12);
         }
+    }
+
+    #[test]
+    fn ellipse_tangent_residual() {
+        // Ellipse centred at (1, 2), semi-axes 4 along 30° and 2; a point at t = 0.8 with
+        // its tangent and normal, and a direction 0.1 rad off the tangent.
+        let (c, u) = (
+            drift_core::DVec2::new(1.0, 2.0),
+            drift_core::DVec2::from_angle(30f64.to_radians()),
+        );
+        let t = 0.8f64;
+        let p = c + u * 4.0 * t.cos() + u.perp() * 2.0 * t.sin();
+        let tangent = -u * 4.0 * t.sin() + u.perp() * 2.0 * t.cos();
+        let (major, minor) = (c + u * 4.0, c - u.perp() * 2.0);
+        let eval = |dir: drift_core::DVec2, normal: bool| {
+            let q = p + dir;
+            let x = [
+                p.x, p.y, c.x, c.y, major.x, major.y, minor.x, minor.y, q.x, q.y,
+            ];
+            let eq = Equation::EllipseTangent {
+                at: [0, 1],
+                center: [2, 3],
+                major: [4, 5],
+                minor: [6, 7],
+                dir: [0, 1, 8, 9],
+                normal,
+            };
+            check_gradient(eq, &x);
+            eq.eval(&|i| x[i], &mut Vec::new())
+        };
+        assert!(eval(tangent, false).abs() < 1e-14);
+        assert!(eval(-tangent * 3.0, false).abs() < 1e-14);
+        assert!(eval(tangent.perp(), true).abs() < 1e-14);
+        let off = drift_core::DVec2::from_angle(0.1).rotate(tangent);
+        assert!((eval(off, false).abs() - 0.1f64.sin()).abs() < 1e-12);
     }
 
     #[test]

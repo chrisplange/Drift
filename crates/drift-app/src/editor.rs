@@ -1862,6 +1862,21 @@ impl Editor {
             }
             _ => {}
         }
+        // A line or arc tangent to an elliptical arc or Bézier, at the end the two share.
+        if let ([], [curve], [other], []) | ([], [curve], [], [other]) = (
+            sel.points.as_slice(),
+            sel.open_curves.as_slice(),
+            sel.lines.as_slice(),
+            sel.circulars.as_slice(),
+        ) {
+            let tangent = Constraint::Tangent {
+                a: *other,
+                b: *curve,
+            };
+            if self.doc.validate(&tangent).is_ok() {
+                out.push(opt("Tangent", vec![tangent]));
+            }
+        }
         // A relation that already holds across the whole selection isn't offered again.
         out.retain(|o| !o.constraints.is_empty());
         if !self.selection.is_empty() {
@@ -2081,13 +2096,11 @@ impl Editor {
                 Some(EntityKind::Circle { .. } | EntityKind::Arc { .. }) => {
                     kinds.circulars.push(*id)
                 }
+                Some(EntityKind::EllipseArc { .. } | EntityKind::Bezier { .. }) => {
+                    kinds.open_curves.push(*id)
+                }
                 // No relation buttons for ellipses yet.
-                Some(
-                    EntityKind::Ellipse { .. }
-                    | EntityKind::EllipseArc { .. }
-                    | EntityKind::Bezier { .. },
-                )
-                | None => {}
+                Some(EntityKind::Ellipse { .. }) | None => {}
             }
         }
         kinds
@@ -2901,6 +2914,8 @@ struct SelectionKinds {
     points: Vec<EntityId>,
     lines: Vec<EntityId>,
     circulars: Vec<EntityId>,
+    /// Elliptical arcs and Béziers (only tangency at an end so far).
+    open_curves: Vec<EntityId>,
 }
 
 #[cfg(test)]

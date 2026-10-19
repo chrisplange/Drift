@@ -136,6 +136,12 @@ impl EntityKind {
         }
     }
 
+    /// An end point this curve and `other` both have.
+    pub fn shared_end(&self, other: &EntityKind) -> Option<EntityId> {
+        let theirs = other.ends()?;
+        self.ends()?.into_iter().find(|p| theirs.contains(p))
+    }
+
     /// Lines, circles and arcs; ellipses and elliptical arcs are curves too, but most modify
     /// tools don't handle them yet.
     pub fn is_ellipse(&self) -> bool {
@@ -620,6 +626,44 @@ impl Document {
     /// All entities in id order.
     pub fn iter(&self) -> impl Iterator<Item = (EntityId, &Entity)> {
         self.entities.iter().map(|(id, e)| (*id, e))
+    }
+
+    /// The unit direction `curve` leaves its end `point` in, continuing past it (for a line,
+    /// arc, elliptical arc or Bézier); `None` if it doesn't end there.
+    pub fn end_direction(&self, curve: EntityId, point: EntityId) -> Option<DVec2> {
+        let at = |id: EntityId| self.point(id).ok();
+        let p = at(point)?;
+        let d = match self.get(curve)?.kind {
+            EntityKind::Line { a, b } if a == point || b == point => {
+                Some(p - at(if a == point { b } else { a })?)
+            }
+            EntityKind::Arc { center, start, end } if start == point || end == point => {
+                // Counter-clockwise travel direction at the end; reversed at the start.
+                let along = (p - at(center)?).perp();
+                Some(if end == point { along } else { -along })
+            }
+            EntityKind::EllipseArc {
+                center,
+                major,
+                minor,
+                start,
+                end,
+            } if start == point || end == point => {
+                let c = at(center)?;
+                let (m, b) = (at(major)? - c, at(minor)?.distance(c));
+                // The derivative of c + M·cos t + M⊥·(b/a)·sin t, counter-clockwise like an arc.
+                let t = crate::shape::ellipse_angle(c, m, b, p);
+                let along = m.perp() * (b / m.length()) * t.cos() - m * t.sin();
+                Some(if end == point { along } else { -along })
+            }
+            EntityKind::Bezier { a, c1, c2, b } if a == point || b == point => {
+                // Out along the end's handle, or the next control point where it has no length.
+                let ctrl = [at(a)?, at(c1)?, at(c2)?, at(b)?];
+                Some(p - ctrl[crate::shape::bezier_end_handle(&ctrl, a != point)])
+            }
+            _ => None,
+        }?;
+        d.try_normalize()
     }
 
     pub fn point(&self, id: EntityId) -> Result<DVec2, DocumentError> {
@@ -1696,10 +1740,25 @@ impl Document {
             }
             kinds.push(kind);
         }
-        // Tangency needs at least one circular curve (enforced by the slot) and is
-        // meaningless between a curve and itself (caught by `is_degenerate`).
+        // Tangency is meaningless between a curve and itself (caught by `is_degenerate`).
         if let Some(why) = self.self_referencing(constraint) {
             return Err(DocumentError::Degenerate(why));
+        }
+        // Tangent to a circle or arc, or at a shared end to an elliptical arc or Bézier.
+        if let Constraint::Tangent { b, .. } = constraint {
+            let ok = match kinds[1] {
+                EntityKind::Circle { .. } | EntityKind::Arc { .. } => true,
+                EntityKind::EllipseArc { .. } | EntityKind::Bezier { .. } => {
+                    kinds[0].shared_end(&kinds[1]).is_some()
+                }
+                _ => false,
+            };
+            if !ok {
+                return Err(DocumentError::WrongKind {
+                    id: *b,
+                    expected: "a circle or arc, or an elliptical arc or curve ending where it does",
+                });
+            }
         }
         // Equal needs two lines or two circular curves.
         if let Constraint::Equal { b, .. } = constraint {

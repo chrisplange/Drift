@@ -284,8 +284,9 @@ pub fn degenerate_entities(doc: &Document) -> Vec<EntityId> {
 pub struct Orientation {
     /// Arcs and their counter-clockwise sweeps (radians).
     arcs: Vec<(EntityId, f64)>,
-    /// Tangent pairs and their side: which side of the line a curve's centre is on (±1), or
-    /// for two curves whether they touch from outside (+1) or one inside the other (−1).
+    /// Tangent pairs and their side: which side of the line a curve's centre is on (±1), for
+    /// two curves whether they touch from outside (+1) or one inside the other (−1), and at a
+    /// shared end whether one carries on from the other (−1) or turns back in a cusp (+1).
     sides: Vec<((EntityId, EntityId), f64)>,
 }
 
@@ -356,6 +357,12 @@ fn tangent_side(doc: &Document, a: EntityId, b: EntityId) -> Option<f64> {
         _ => None,
     };
     let sign = |v: f64| (v != 0.0).then(|| v.signum());
+    if let kind_b @ (EntityKind::EllipseArc { .. } | EntityKind::Bezier { .. }) = doc.get(b)?.kind {
+        // Tangent at a shared end: one carries on from the other (−1), or turns back along
+        // it in a cusp (+1).
+        let t = doc.get(a)?.kind.shared_end(&kind_b)?;
+        return sign(doc.end_direction(a, t)?.dot(doc.end_direction(b, t)?));
+    }
     match doc.get(a)?.kind {
         EntityKind::Line { a: la, b: lb } => {
             let (pa, pb) = (doc.point(la).ok()?, doc.point(lb).ok()?);

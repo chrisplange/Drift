@@ -367,7 +367,7 @@ impl ToolKind {
             ToolKind::EllipseArc => "An ellipse's centre and axes, then where it starts and ends",
             ToolKind::Arc => "Centre, start, end. Press A again for other arc types",
             ToolKind::ThreePointArc => "Start, end, then a point on the arc",
-            ToolKind::TangentArc => "Continues tangent from the end of a line or arc",
+            ToolKind::TangentArc => "Continues tangent from the end of a line, arc or curve",
             ToolKind::Point => "A sketch point, for reference or construction",
             ToolKind::Text => "A line of text drawn as outlines, convertible to curves",
             ToolKind::Block => "Place copies of a block from the Blocks tab; R turns, X mirrors",

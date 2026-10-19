@@ -375,6 +375,88 @@ impl System {
                         source: Some(cid),
                     });
                 }
+                Constraint::Tangent { a, b }
+                    if matches!(
+                        doc.get(b).map(|e| e.kind),
+                        Some(EntityKind::EllipseArc { .. } | EntityKind::Bezier { .. })
+                    ) =>
+                {
+                    // Tangent at the end the two share: each curve's direction there, as a
+                    // line along it (a line, a Bézier's handle) or square to it (an arc's
+                    // radius), or the ellipse itself. Curves pulled apart since the relation
+                    // was added have no shared end, and the relation then holds nothing.
+                    let kind = |id: EntityId| doc.get(id).map(|e| e.kind);
+                    if let (Some(ka), Some(kb)) = (kind(a), kind(b))
+                        && let Some(t) = ka.shared_end(&kb)
+                    {
+                        let pt = point(t);
+                        // `a`: (direction line, whether it is square to the curve).
+                        let (dir, normal) = match ka {
+                            EntityKind::Line { a: la, b: lb } => {
+                                let o = if la == t { lb } else { la };
+                                ([x(o), y(o), pt[0], pt[1]], false)
+                            }
+                            _ => {
+                                let c = point(center(a));
+                                ([c[0], c[1], pt[0], pt[1]], true)
+                            }
+                        };
+                        let equation = match kb {
+                            EntityKind::EllipseArc {
+                                center: c,
+                                major,
+                                minor,
+                                ..
+                            } => Equation::EllipseTangent {
+                                at: pt,
+                                center: point(c),
+                                major: point(major),
+                                minor: point(minor),
+                                dir,
+                                normal,
+                            },
+                            EntityKind::Bezier { a: s, c1, c2, b: e } => {
+                                // The handle at the shared end, or the next control point where
+                                // that handle has no length.
+                                let (ctrl, at_end) = ([s, c1, c2, e], s != t);
+                                let handle = match ctrl.map(|q| doc.point(q)) {
+                                    [Ok(p0), Ok(p1), Ok(p2), Ok(p3)] => {
+                                        drift_core::shape::bezier_end_handle(
+                                            &[p0, p1, p2, p3],
+                                            at_end,
+                                        )
+                                    }
+                                    _ if at_end => 2,
+                                    _ => 1,
+                                };
+                                // A handle with no length stays on its anchor (unless it is being
+                                // pulled out), or the curve's direction there would follow
+                                // wherever rounding left it rather than the point used here.
+                                let own = if at_end { 2 } else { 1 };
+                                if handle != own
+                                    && !Param::point(ctrl[own]).iter().any(|q| dragged.contains(q))
+                                {
+                                    let [hx, hy] = point(ctrl[own]);
+                                    equalities.push((hx, pt[0]));
+                                    equalities.push((hy, pt[1]));
+                                }
+                                let h = point(ctrl[handle]);
+                                let along = [h[0], h[1], pt[0], pt[1]];
+                                let phi = if normal {
+                                    std::f64::consts::FRAC_PI_2
+                                } else {
+                                    0.0
+                                };
+                                Equation::angle(dir, along, phi)
+                            }
+                            _ => unreachable!("matched above"),
+                        };
+                        rows.push(Row {
+                            equation,
+                            source: Some(cid),
+                        });
+                    }
+                }
                 Constraint::Tangent { a, b } => {
                     let cb = center(b);
                     // Curves that share an end point (fillets) are tangent *at* that point.

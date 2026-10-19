@@ -29,7 +29,7 @@ become dimensions when **Auto relations** is on.
 | **Partial ellipse** | C, C, C | As the ellipse, then where it starts and ends (anticlockwise). | Half-lengths. |
 | **Arc** | A | Centre, start (sets the radius), end. Move round the centre to choose the direction. | Radius, then sweep. |
 | **3-pt arc** | A, A | Start, end, then a point on the arc. | Chord length, Tab, angle; then radius. |
-| **Tangent arc** | A, A, A | Starts from the end of a line or arc, tangent to it. Chains like a polyline; L switches to lines. | Radius, Tab, sweep. |
+| **Tangent arc** | A, A, A | Starts from the end of a line, arc, partial ellipse or pen curve, tangent to it. Chains like a polyline; L switches to lines. | Radius, Tab, sweep. |
 | **Slot** | U | **Straight** (two end centres, then the width), **Centre** (the middle, then an end centre) or **Arc** (the arc's centre, the two end centres, then the width). U again cycles; also in the top bar. | Length, then width. |
 | **Point** | V | Click to place a point. | X, Tab, Y. |
 | **Text** | Shift+T | Click where the text starts (its baseline), or in an existing text, and type. Enter finishes; Shift+Enter starts a new line. Top bar: **Height**. | — |

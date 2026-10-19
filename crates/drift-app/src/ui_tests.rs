@@ -8085,3 +8085,107 @@ fn dragging_a_hatch_over_another_moves_only_its_own_outline() {
         .unwrap();
     assert!((moved.x - 25.4).abs() > 1.0, "the second arrow moved");
 }
+
+#[test]
+fn tangent_arcs_and_lines_start_on_a_partial_ellipse_and_a_pen_curve() {
+    use drift_core::Constraint;
+    let Some(mut h) = harness() else { return };
+    h.state_mut().auto_relations = true;
+    // A partial ellipse (semi-axes 40 and 20) from -30° to 135°, and a pen curve below it.
+    let ellipse_at = |degrees: f64| {
+        let t = degrees.to_radians();
+        DVec2::new(40.0 * t.cos(), 20.0 * t.sin())
+    };
+    let (ellipse, end, curve, curve_end) = {
+        let ed = &mut h.state_mut().editor;
+        ed.doc.begin();
+        let c = ed.doc.add_point(DVec2::ZERO);
+        let major = ed.doc.add_point(DVec2::new(40.0, 0.0));
+        let minor = ed.doc.add_point(DVec2::new(0.0, 20.0));
+        let s = ed.doc.add_point(ellipse_at(-30.0));
+        let e = ed.doc.add_point(ellipse_at(135.0));
+        let ellipse = ed.doc.add_ellipse_arc(c, major, minor, s, e).unwrap();
+        let a = ed.doc.add_point(DVec2::new(-50.0, -40.0));
+        let c1 = ed.doc.add_point(DVec2::new(-40.0, -20.0));
+        let c2 = ed.doc.add_point(DVec2::new(-10.0, -60.0));
+        let b = ed.doc.add_point(DVec2::new(0.0, -40.0));
+        let curve = ed.doc.add_bezier(a, c1, c2, b).unwrap();
+        ed.commit("Shapes");
+        (ellipse, e, curve, b)
+    };
+    let tangents = |h: &Harness<'_, DriftApp>| -> Vec<Constraint> {
+        h.state()
+            .editor
+            .doc
+            .constraints()
+            .map(|(_, c)| *c)
+            .filter(|c| matches!(c, Constraint::Tangent { .. }))
+            .collect()
+    };
+    let leaving = |h: &Harness<'_, DriftApp>, c: drift_core::EntityId, p| {
+        h.state()
+            .editor
+            .doc
+            .end_direction(c, p)
+            .expect("ends there")
+    };
+
+    // The reported case: the tangent arc tool on the ellipse's end (A three times).
+    for _ in 0..3 {
+        h.key_press(Key::A);
+        h.run();
+    }
+    assert_eq!(h.state().tool.kind(), ToolKind::TangentArc);
+    let from = ellipse_at(135.0);
+    click_world(&mut h, from);
+    assert!(
+        h.state().tool.is_busy(),
+        "started on the partial ellipse's end"
+    );
+    let dir = leaving(&h, ellipse, end);
+    let to = from + dir * 25.0 + dir.perp() * 15.0;
+    h.hover_at(screen(&h, to));
+    h.run();
+    save_png("drift_ui_tangent_arc_on_partial_ellipse.png", &mut h);
+    click_world(&mut h, to);
+    let arc = h.state().editor.doc.iter().map(|(id, _)| id).max().unwrap();
+    assert!(tangents(&h).contains(&Constraint::Tangent { a: arc, b: ellipse }));
+    assert!((leaving(&h, arc, end) + dir).length() < 1e-9, "tangent");
+    h.key_press(Key::Escape);
+    h.run();
+    h.key_press(Key::Escape);
+    h.run();
+
+    // A line on from the pen curve's end, along its tangent guide, then A for a tangent arc.
+    h.key_press(Key::L);
+    h.run();
+    let from = DVec2::new(0.0, -40.0);
+    click_world(&mut h, from);
+    let dir = leaving(&h, curve, curve_end);
+    let on_guide = from + dir * 20.0;
+    h.hover_at(screen(&h, on_guide + dir.perp() * 0.2));
+    h.run();
+    let guide = h
+        .state()
+        .pointer
+        .and_then(|p| p.guide)
+        .expect("the tangent guide");
+    assert_eq!(guide.kind, crate::editor::GuideKind::Tangent(curve));
+    click_world(&mut h, on_guide + dir.perp() * 0.2);
+    let line = h.state().editor.doc.iter().map(|(id, _)| id).max().unwrap();
+    assert!(tangents(&h).contains(&Constraint::Tangent { a: line, b: curve }));
+    assert!(
+        (leaving(&h, line, curve_end) + dir).length() < 1e-6,
+        "tangent"
+    );
+    h.key_press(Key::A);
+    h.run();
+    assert_eq!(h.state().tool.kind(), ToolKind::TangentArc);
+    let next = on_guide + dir * 15.0 - dir.perp() * 15.0;
+    h.hover_at(screen(&h, next));
+    h.run();
+    save_png("drift_ui_tangent_line_and_arc_from_curve.png", &mut h);
+    click_world(&mut h, next);
+    assert_eq!(tangents(&h).len(), 3);
+    assert!(h.state().editor.analysis().conflicts.is_empty());
+}

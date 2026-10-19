@@ -63,6 +63,22 @@ pub fn bezier_tangent(p: &[DVec2; 4], t: f64) -> DVec2 {
     (p[1] - p[0]) * (3.0 * u * u) + (p[2] - p[1]) * (6.0 * u * t) + (p[3] - p[2]) * (3.0 * t * t)
 }
 
+/// Which control point sets a cubic Bézier's direction at its start (`at_end` false) or end:
+/// that end's handle, or where the handle has no length (to within rounding), the next
+/// control point along. The curve runs from it towards the end.
+pub fn bezier_end_handle(p: &[DVec2; 4], at_end: bool) -> usize {
+    let (anchor, order) = if at_end {
+        (p[3], [2, 1, 0])
+    } else {
+        (p[0], [1, 2, 3])
+    };
+    let scale = p.iter().fold(1.0f64, |m, q| m.max(q.abs().max_element()));
+    order
+        .into_iter()
+        .find(|&i| p[i].distance(anchor) > 1e-9 * scale)
+        .unwrap_or(order[0])
+}
+
 /// The second derivative of a cubic Bézier at `t`.
 pub fn bezier_second(p: &[DVec2; 4], t: f64) -> DVec2 {
     (p[2] - p[1] * 2.0 + p[0]) * (6.0 * (1.0 - t)) + (p[3] - p[2] * 2.0 + p[1]) * (6.0 * t)

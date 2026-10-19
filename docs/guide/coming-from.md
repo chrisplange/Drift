@@ -54,7 +54,7 @@ Drift's sketcher is modelled on the SolidWorks sketch.
 |---|---|
 | Smart Dimension | **Dimension** (D): click geometry, place the label; the kind follows. Type the value straight away. |
 | Add Relations | The **Inspector**'s **Add relation** buttons, the right-click menu, or the relations pie (Q). |
-| Inferred relations | Lines snap straight and get Horizontal / Vertical. Drawing on from a line or arc, guides show square to the line or along the arc's tangent, and add Perpendicular or Tangent. |
+| Inferred relations | Lines snap straight and get Horizontal / Vertical. Drawing on from a line, arc, partial ellipse or pen curve, guides show square to the line or along the curve's tangent, and add Perpendicular or Tangent. |
 | Blue / black / red status | The same colours (white instead of black on the dark theme), and the DOF count in the status bar. |
 | Driven dimensions | Offered automatically when a dimension would over-define the sketch; switch with **Driven (reference)**. |
 | Equations / global variables | **Parameters → Variables**, with sliders. Link a dimension by typing a variable's name into it. |

@@ -115,6 +115,10 @@ choose it.
 
 To pick two things, click the first and Shift+click the second.
 
+Tangent works between a line, circle or arc and a circle or arc anywhere, and between a
+line or arc and a partial ellipse or pen curve where the two meet at an end: it keeps one
+carrying on along the other there.
+
 ## Automatic relations
 
 With **Auto relations** on (its switch in the status bar, or Shift+Alt+R), Drift adds relations as you draw: horizontal and

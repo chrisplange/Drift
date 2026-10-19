@@ -1058,3 +1058,125 @@ fn drag_result_does_not_depend_on_where_the_sketch_is() {
         }
     }
 }
+
+/// #97: a tangency touching at an end the two curves don't share. The general
+/// "distance = radius" form has a double root there (the end's own row has the same gradient,
+/// or the line pivots about its end), so a solve only crawls to about √(tolerance·r): a move
+/// landed 4e-5 off. Saying the tangency is at that end lands it exactly, in a few iterations.
+///
+/// The issue's shape: arcs R1 (centre c1) and R2 (centre c2, a half circle from s2 to c1), the
+/// line L from c2 to s2 (so its extension passes through c1), and arc R3 ending at c1 with L
+/// tangent to it — at c1, which L doesn't share. R2 is moved in one step.
+#[test]
+fn tangent_touching_at_an_arc_end_on_the_line_lands_exactly() {
+    let d = |deg: f64| DVec2::from_angle(deg.to_radians());
+    let mut doc = Document::new();
+    let c1 = doc.add_point(v(8.0, 0.0));
+    let s1 = doc.add_point(v(8.0, 0.0) + d(135.0) * 8.0);
+    let p0 = doc.add_point(v(0.0, 0.0));
+    let r1 = doc.add_arc(c1, s1, p0).unwrap();
+    let c2 = doc.add_point(v(8.0, 0.0) + d(120.0) * 8.0);
+    let s2 = doc.add_point(v(8.0, 0.0) + d(120.0) * 16.0);
+    let r2 = doc.add_arc(c2, s2, c1).unwrap();
+    let l = doc.add_line(c2, s2).unwrap();
+    let c3 = doc.add_point(v(8.0, 0.0) + d(210.0) * 12.0);
+    let s3 = doc.add_point(v(8.0, 0.0) + d(210.0) * 12.0 + d(-15.0) * 12.0);
+    let r3 = doc.add_arc(c3, s3, c1).unwrap();
+    doc.add_constraint(Constraint::Tangent { a: l, b: r3 })
+        .unwrap();
+    assert!(solved(&mut doc).converged);
+    let (report, off) = move_curves(&mut doc, &[r2], v(0.0, -5.54), &[r1, r2, r3], &[l]);
+    assert!(report.converged, "{report:?}");
+    assert!(off < 1e-9, "the dragged points landed {off} off");
+    assert!(report.iterations < 20, "{report:?}");
+    assert!(unmet(&doc, 1e-9).is_empty());
+    // The tangency is still at R3's end: c1 is on L, and the radius there is square to it.
+    let (pc1, pc2, ps2, pc3) = (
+        doc.point(c1).unwrap(),
+        doc.point(c2).unwrap(),
+        doc.point(s2).unwrap(),
+        doc.point(c3).unwrap(),
+    );
+    let u = (ps2 - pc2).normalize();
+    assert!(u.perp_dot(pc1 - pc2).abs() < 1e-9);
+    assert!(u.dot(pc3 - pc1).abs() < 1e-9);
+}
+
+/// #97: the same double root where a line stands on an arc's circle (its end on the circle)
+/// and is tangent to it. Moving the arc lands exactly.
+#[test]
+fn tangent_line_standing_on_a_circle_lands_exactly() {
+    let d = |deg: f64| DVec2::from_angle(deg.to_radians());
+    let mut doc = Document::new();
+    let c = doc.add_point(v(0.0, 0.0));
+    let s = doc.add_point(d(200.0) * 8.0);
+    let e = doc.add_point(d(330.0) * 8.0);
+    let arc = doc.add_arc(c, s, e).unwrap();
+    let foot = doc.add_point(d(60.0) * 8.0);
+    let far = doc.add_point(d(60.0) * 8.0 + d(150.0) * 10.0);
+    let line = doc.add_line(foot, far).unwrap();
+    doc.add_constraint(Constraint::PointOnCurve {
+        point: foot,
+        curve: arc,
+    })
+    .unwrap();
+    doc.add_constraint(Constraint::Tangent { a: line, b: arc })
+        .unwrap();
+    assert!(solved(&mut doc).converged);
+    let (report, off) = move_curves(&mut doc, &[arc], v(7.3, -4.1), &[arc], &[line]);
+    assert!(report.converged, "{report:?}");
+    assert!(off < 1e-9, "the dragged points landed {off} off");
+    assert!(report.iterations < 20, "{report:?}");
+    assert!(unmet(&doc, 1e-9).is_empty());
+}
+
+/// Move `curves` by `delta` in one step the way `Editor::drag` does: their points dragged
+/// to where the move puts them, arcs keeping their radii and lines their lengths where they
+/// can. Returns the report and how far the dragged points landed from their targets.
+fn move_curves(
+    doc: &mut Document,
+    curves: &[EntityId],
+    delta: DVec2,
+    arcs: &[EntityId],
+    lines: &[EntityId],
+) -> (SolveReport, f64) {
+    let radii: HashMap<EntityId, f64> = arcs
+        .iter()
+        .map(|&a| (a, crate::radius_of(doc, a).unwrap()))
+        .collect();
+    let lengths: HashMap<EntityId, f64> = lines
+        .iter()
+        .map(|&l| {
+            let EntityKind::Line { a, b } = doc.get(l).unwrap().kind else {
+                panic!()
+            };
+            (l, doc.point(a).unwrap().distance(doc.point(b).unwrap()))
+        })
+        .collect();
+    let dragged: Vec<EntityId> = doc
+        .defining_points(curves.iter().copied())
+        .into_iter()
+        .collect();
+    let targets: Vec<(EntityId, DVec2)> = dragged
+        .iter()
+        .map(|&id| (id, doc.point(id).unwrap() + delta))
+        .collect();
+    doc.translate(curves.iter().copied(), delta);
+    for &(id, at) in &targets {
+        doc.set_point(id, at).unwrap();
+    }
+    let report = solve(
+        doc,
+        &SolveOptions {
+            dragged: dragged.iter().flat_map(|&p| Param::point(p)).collect(),
+            radii,
+            lengths,
+            ..Default::default()
+        },
+    );
+    let off = targets
+        .iter()
+        .map(|&(id, at)| doc.point(id).unwrap().distance(at))
+        .fold(0.0, f64::max);
+    (report, off)
+}

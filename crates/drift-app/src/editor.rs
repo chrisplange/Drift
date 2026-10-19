@@ -704,8 +704,10 @@ impl Editor {
         if !conflicts && !orientation.turned(&self.doc) {
             return true;
         }
-        if !conflicts && depth >= MAX_SPLITS {
-            // Even the smallest step turns these.
+        if depth >= MAX_SPLITS {
+            // Even the smallest step turns these. (Or can't be solved: a curve the move has
+            // left behind until nothing is left of it, a tangent line squeezed to a point,
+            // turns as it goes through zero and the solve fails on it.)
             *turned = orientation.turned_curves(&self.doc);
         }
         self.restore_geometry(before);

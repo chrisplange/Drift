@@ -82,7 +82,7 @@ fn write_report(info: &std::panic::PanicHookInfo<'_>) -> std::io::Result<()> {
     writeln!(
         file,
         "=== Drift {} panicked (unix time {when}) ===\nthread: {thread}\nat: {location}\nmessage: {message}\nbacktrace:\n{backtrace}\n",
-        env!("CARGO_PKG_VERSION"),
+        crate::VERSION,
     )?;
     std::fs::write(&note, &message)
 }

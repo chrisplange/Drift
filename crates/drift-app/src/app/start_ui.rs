@@ -33,7 +33,7 @@ fn system_name() -> String {
 }
 
 /// The version shown to users, e.g. "0.1.0-alpha.1".
-pub(crate) const VERSION: &str = env!("CARGO_PKG_VERSION");
+pub(crate) const VERSION: &str = drift_platform::VERSION;
 
 /// The licences and copyright notices of the fonts and crates built into Drift, made by
 /// scripts/notices.py. They also ship as a file beside the program.

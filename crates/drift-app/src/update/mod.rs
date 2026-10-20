@@ -39,7 +39,7 @@ const ASSET_LIMIT: u64 = 1 << 30;
 
 /// The running version.
 pub(crate) fn current_version() -> Version {
-    Version::parse(env!("CARGO_PKG_VERSION")).expect("the crate version is semver")
+    Version::parse(drift_platform::VERSION).expect("the crate version is semver")
 }
 
 /// Fetches a URL. The real one is [`net::Agent`]; tests use a fake.

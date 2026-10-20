@@ -297,7 +297,7 @@ impl DriftApp {
 
     pub(crate) fn file_bytes(&self) -> Vec<u8> {
         let mut meta = self.file.meta.clone();
-        meta.generator = Some(format!("Drift {}", env!("CARGO_PKG_VERSION")));
+        meta.generator = Some(format!("Drift {}", drift_platform::VERSION));
         drift_io::save(&self.editor.doc, &meta).into_bytes()
     }
 

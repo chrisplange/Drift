@@ -97,7 +97,7 @@ impl ServerHandler for Drift {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(
-                Implementation::new("drift", env!("CARGO_PKG_VERSION"))
+                Implementation::new("drift", drift_platform::VERSION)
                     .with_title("Drift")
                     .with_description("Parametric 2D CAD drawings: sketch, constrain, dimension, render and analyse"),
             )
@@ -179,7 +179,7 @@ fn main() {
             "--open" => open = args.next(),
             "--no-link" => link = false,
             "--version" | "-V" => {
-                println!("drift-mcp {}", env!("CARGO_PKG_VERSION"));
+                println!("drift-mcp {}", drift_platform::VERSION);
                 return;
             }
             "--help" | "-h" => {

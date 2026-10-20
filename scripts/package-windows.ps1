@@ -1,7 +1,7 @@
 # Build Drift's Windows downloads into dist\ :
 #
 #   Drift-<version>-windows-x64.zip         the program alone, to unpack and run
-#   Drift-<version>-windows-x64-setup.exe   the installer (needs Inno Setup 6)
+#   Drift-<version>-windows-x64-setup.exe   the installer (needs Inno Setup 6 or 7)
 #
 #   powershell -ExecutionPolicy Bypass -File scripts\package-windows.ps1
 #
@@ -40,13 +40,15 @@ Write-Host "wrote $zip"
 
 # The installer.
 $iscc = @(
-    (Get-Command iscc -ErrorAction SilentlyContinue | ForEach-Object Source),
-    "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
-    "$env:ProgramFiles\Inno Setup 6\ISCC.exe",
-    "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe"
+    (Get-Command iscc -ErrorAction SilentlyContinue | ForEach-Object Source)
+    foreach ($major in 7, 6) {
+        "$env:ProgramFiles\Inno Setup $major\ISCC.exe"
+        "${env:ProgramFiles(x86)}\Inno Setup $major\ISCC.exe"
+        "$env:LOCALAPPDATA\Programs\Inno Setup $major\ISCC.exe"
+    }
 ) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
 if (-not $iscc) {
-    Write-Warning 'Inno Setup 6 was not found, so no installer was built.'
+    Write-Warning 'Inno Setup (6 or 7) was not found, so no installer was built.'
     Write-Warning 'Install it (winget install JRSoftware.InnoSetup) and run this script again.'
     exit 0
 }

@@ -1,8 +1,8 @@
 # Profiles in Blender
 
 **What you'll make:** a crown moulding swept along a wall and a turned vase, both drawn in
-Drift and modelled in Blender. When you change a profile in Drift and save, the Blender
-model updates.
+Drift and modelled in Blender. When you edit a profile in Drift, the Blender model follows as
+you work.
 
 Time: about 15 minutes. You need Blender 4.2 or later.
 
@@ -106,11 +106,19 @@ rotate the `Crown` object, or set the path's **Tilt**.
 ## 7. Change a profile in Drift
 
 1. In Blender, open the **Drift** tab and tick **Auto-reload**.
-2. In Drift, edit `Crown` (double-click a copy), change it, and save (Ctrl+S). You can save
-   while the block is still open for editing.
+2. In Drift, edit `Crown` (double-click a copy) and change it: drag a point, or change a
+   dimension.
 
-Within about a second, the moulding in Blender takes the new shape. The tab's status line
-says what was updated, and when.
+While a profile block is open for editing, Drift rewrites the profiles file as you work,
+up to ten times a second, and the moulding in Blender follows within about a tenth of a
+second. The tab's status line says what was updated, and when.
+
+This live link needs the drawing to have been saved once, so the profiles file has a place
+beside it. It doesn't save the drawing itself. If you close Drift without saving, the
+profiles file keeps the last shape Blender saw: save again, or undo and save, to bring the
+two back in step.
+
+Outside block editing, the profiles file changes only when you save.
 
 Without Auto-reload, click **Reload All**, or select the profile objects and click
 **Selected**.
@@ -123,8 +131,6 @@ If you delete a block, or unmark it, the Blender object stays. The Drift tab lis
 
 ## Good to know
 
-- The profiles file is saved with the drawing, so a profile updates only when you save.
-  Updating while you drag is planned.
 - Arcs, circles and ellipses become Bézier curves, accurate to within a few millionths of
   their size.
 - The add-on never reads the `.drift` file itself, only the profiles file.

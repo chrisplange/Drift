@@ -15,5 +15,7 @@ pub(crate) const GUIDE: &str = site!("/guide/");
 /// Where to download Drift by hand (the updater links it; the web build has no updater).
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub(crate) const DOWNLOAD: &str = site!("/download/");
+/// Drift's licence, in plain words, with the agreement.
+pub(crate) const LICENCE: &str = site!("/licence/");
 /// Where to report a problem or ask for a feature.
 pub(crate) const REPORT: &str = "https://github.com/chrisplange/drift-releases/issues/new/choose";

@@ -326,6 +326,11 @@ impl DriftApp {
                         );
                         ui.label(format!("Version {VERSION}"));
                         ui.label(egui::RichText::new("Parametric 2D sketching").weak());
+                        ui.label(
+                            egui::RichText::new("© 2026 Christopher Lange. All rights reserved.")
+                                .small()
+                                .weak(),
+                        );
                     });
                 });
                 ui.add_space(8.0);
@@ -363,6 +368,8 @@ impl DriftApp {
                     }
                     ui.hyperlink_to("Website", crate::links::WEBSITE);
                     ui.hyperlink_to("User guide", crate::links::GUIDE);
+                    ui.hyperlink_to("Licence", crate::links::LICENCE)
+                        .on_hover_text("Drift's end-user licence agreement");
                 });
             });
         if close {

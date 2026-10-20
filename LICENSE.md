@@ -1,105 +1,191 @@
-# Functional Source License, Version 1.1, ALv2 Future License
+# Drift End-User Licence Agreement
 
-## Abbreviation
+> **DRAFT — for review by a lawyer before use. This draft is general information, not legal
+> advice.** Items in [square brackets] are placeholders to fill in or decide. Notes marked
+> *Reviewer note* are for the reviewer, and should be removed from the final text.
 
-FSL-1.1-ALv2
+Version [1.0], [date]
 
-## Notice
+Copyright 2026 Christopher Lange. All rights reserved.
 
-Copyright 2026 Christopher Lange
+This End-User Licence Agreement (the "Agreement") is between you and Christopher Lange
+[trading as / of: address, or company name and registered address] ("we", "us"). It covers
+Drift, a parametric 2D drawing application, as described in section 1.
 
-## Terms and Conditions
+By installing, copying or using Drift, you agree to this Agreement. If you don't agree, don't
+install or use Drift. If you are agreeing on behalf of an organisation, you confirm that you
+may bind it, and "you" means that organisation.
 
-### Licensor ("We")
+## 1. What this Agreement covers
 
-The party offering the Software under these Terms and Conditions.
+"Drift" means:
+- the Drift application for Windows and macOS;
+- its companion programs, such as the `drift-mcp` server;
+- the browser version and demo;
+- its documentation;
+- any updates we provide for them, unless an update comes with its own terms.
 
-### The Software
+Drift includes open-source components licensed by others. Section 6 explains how those are
+treated.
 
-The "Software" is each version of the software that we make available under
-these Terms and Conditions, as indicated by our inclusion of these Terms and
-Conditions with the Software.
+## 2. Your licence
 
-### License Grant
+Subject to this Agreement [and to paying any fees that apply under section 8], we grant you a
+licence to install and use Drift on computers you own or control. The licence is:
+- non-exclusive;
+- non-transferable;
+- worldwide;
+- [perpetual for the version you obtained / for the term of your subscription].
 
-Subject to your compliance with this License Grant and the Patents,
-Redistribution and Trademark clauses below, we hereby grant you the right to
-use, copy, modify, create derivative works, publicly perform, publicly display
-and redistribute the Software for any Permitted Purpose identified below.
+You may use it for personal and commercial work.
 
-### Permitted Purpose
+[Licence scope to decide, for example:
+- per user, or per device;
+- how many installations per licence;
+- whether a licence may be moved to a new computer.]
 
-A Permitted Purpose is any purpose other than a Competing Use. A Competing Use
-means making the Software available to others in a commercial product or
-service that:
+You may make one backup copy of the installer.
 
-1. substitutes for the Software;
+## 3. What you may not do
 
-2. substitutes for any other product or service we offer using the Software
-   that exists as of the date we make the Software available; or
+Except as this Agreement or applicable law expressly allows, you may not:
 
-3. offers the same or substantially similar functionality as the Software.
+1. copy, distribute, sell, rent, lend, lease or sublicense Drift, or make it available to
+   others over a network;
+2. modify Drift, translate it, or make derivative works from it;
+3. decompile, disassemble or otherwise reverse engineer Drift, or try to obtain its source
+   code. Where the law gives you a right to do this (for example, to achieve interoperability),
+   you may exercise that right, but only to the extent that the law permits it and does not
+   allow a contract to exclude it;
+4. remove or work around any licence key, demo limitation, or other technical measure in Drift;
+5. remove or change any copyright, trademark or licence notice in Drift.
 
-Permitted Purposes specifically include using the Software:
+## 4. Your drawings and data
 
-1. for your internal use and access;
+The drawings, files and other content you create or import with Drift are yours. We claim no
+rights in them.
 
-2. for non-commercial education;
+Drift works on your computer. It doesn't send your drawings or personal data to us. When
+update checks are on, Drift asks GitHub (api.github.com) for the list of Drift releases, and
+sends nothing else. You can turn update checks off in Preferences.
 
-3. for non-commercial research; and
+[Reviewer note: keep this section in step with the website's privacy information and with
+any future licence activation or telemetry.]
 
-4. in connection with professional services that you provide to a licensee
-   using the Software in accordance with these Terms and Conditions.
+## 5. Check your work
 
-### Patents
+Drift is a drawing tool. You are responsible for checking the drawings, dimensions, areas
+and other results you make with it before relying on them, for example for construction,
+manufacturing, permits or contracts. Drift is not designed for uses where an error could
+cause death, personal injury, or serious damage to property or the environment.
 
-To the extent your use for a Permitted Purpose would necessarily infringe our
-patents, the license grant above includes a license under our patents. If you
-make a claim against any party that the Software infringes or contributes to
-the infringement of any patent, then your patent license to the Software ends
-immediately.
+## 6. Open-source components
 
-### Redistribution
+Drift includes fonts and software libraries licensed by their authors under open-source
+licences. They are listed, with their licences and copyright notices, in
+`THIRD-PARTY-NOTICES.txt`, which comes with every copy of Drift and is shown in **About Drift →
+Licences…**.
 
-The Terms and Conditions apply to all copies, modifications and derivatives of
-the Software.
+Your use of each component is governed by its own licence. Nothing in this Agreement limits
+the rights those licences give you.
 
-If you redistribute any copies, modifications or derivatives of the Software,
-you must include a copy of or a link to these Terms and Conditions and not
-remove any copyright notices provided in or with the Software.
+Where a component's licence requires us to make its source code available, you can get it from
+the project named for that component in `THIRD-PARTY-NOTICES.txt`. In particular, Drift's DWG
+import uses acadrust, licensed under the Mozilla Public License 2.0. Drift uses it unmodified,
+and its source code is available from <https://github.com/hakanaktt/acadrust> and
+<https://crates.io/crates/acadrust>. [Reviewer note:
+confirm this meets MPL-2.0 section 3.2 for executable distribution.]
 
-### Disclaimer
+## 7. Updates and pre-release versions
 
-THE SOFTWARE IS PROVIDED "AS IS" AND WITHOUT WARRANTIES OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING WITHOUT LIMITATION WARRANTIES OF FITNESS FOR A PARTICULAR
-PURPOSE, MERCHANTABILITY, TITLE OR NON-INFRINGEMENT.
+We may provide updates, but we don't have to. Drift can check for updates and install them
+when you choose to. It installs an update only if the update is signed with Drift's release key.
 
-IN NO EVENT WILL WE HAVE ANY LIABILITY TO YOU ARISING OUT OF OR RELATED TO THE
-SOFTWARE, INCLUDING INDIRECT, SPECIAL, INCIDENTAL OR CONSEQUENTIAL DAMAGES,
-EVEN IF WE HAVE BEEN INFORMED OF THEIR POSSIBILITY IN ADVANCE.
+Versions marked alpha, beta or pre-release are provided for evaluation. They may contain
+errors, change without notice, or lose data. Save your work often, and keep backups.
 
-### Trademarks
+## 8. Fees
 
-Except for displaying the License Details and identifying us as the origin of
-the Software, you have no right under these Terms and Conditions to use our
-trademarks, trade names, service marks or product names.
+[While Drift is in beta, it is provided free of charge.]
 
-## Grant of Future License
+[If you buy a licence or subscription, the price, payment, renewal, cancellation and refund
+terms shown when you buy also apply. Consumers may have a statutory right to withdraw from a
+purchase; set out how that applies to digital content here.]
 
-We hereby irrevocably grant you an additional license to use the Software under
-the Apache License, Version 2.0 that is effective on the second anniversary of
-the date we make the Software available. On or after that date, you may use the
-Software under the Apache License, Version 2.0, in which case the following
-will apply:
+## 9. Ownership
 
-Licensed under the Apache License, Version 2.0 (the "License"); you may not use
-this file except in compliance with the License.
+Drift is licensed, not sold. We, and our licensors, keep all rights, title and interest in
+Drift, including all intellectual property rights, except the rights this Agreement expressly
+grants you. "Drift" and the Drift logo are [trademarks] of Christopher Lange.
 
-You may obtain a copy of the License at
+## 10. Feedback
 
-http://www.apache.org/licenses/LICENSE-2.0
+If you send us suggestions, bug reports or other feedback, we may use them freely and
+without any obligation to you. Please don't include confidential material, or drawings you
+aren't free to share, in public bug reports.
 
-Unless required by applicable law or agreed to in writing, software distributed
-under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
-CONDITIONS OF ANY KIND, either express or implied. See the License for the
-specific language governing permissions and limitations under the License.
+## 11. Termination
+
+This Agreement lasts until it is terminated. It ends automatically if you breach it [and
+don't remedy the breach within 14 days of notice]. You may end it at any time by deleting
+every copy of Drift you have.
+
+When it ends:
+- you must stop using Drift and delete every copy you have;
+- sections 4, 5, 6, 9, 10, 12, 13 and 15 continue to apply.
+
+## 12. No warranty
+
+TO THE EXTENT PERMITTED BY LAW, DRIFT IS PROVIDED "AS IS" AND "AS AVAILABLE", WITHOUT
+WARRANTY OF ANY KIND, EXPRESS OR IMPLIED. THIS INCLUDES ANY WARRANTY OF MERCHANTABILITY,
+SATISFACTORY QUALITY, FITNESS FOR A PARTICULAR PURPOSE, ACCURACY AND NON-INFRINGEMENT. WE
+DON'T WARRANT THAT DRIFT WILL BE ERROR-FREE OR UNINTERRUPTED, OR THAT ITS RESULTS WILL BE
+ACCURATE.
+
+If you are a consumer, you may have statutory rights that this section cannot exclude or
+limit. Nothing in this Agreement affects those rights.
+
+## 13. Limitation of liability
+
+TO THE EXTENT PERMITTED BY LAW, WE ARE NOT LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL,
+CONSEQUENTIAL OR PUNITIVE DAMAGES, OR FOR LOSS OF PROFITS, REVENUE, BUSINESS, GOODWILL OR
+DATA, ARISING FROM OR RELATED TO DRIFT OR THIS AGREEMENT. THIS APPLIES HOWEVER THE DAMAGES ARE
+CAUSED, AND EVEN IF WE WERE TOLD THEY WERE POSSIBLE.
+
+OUR TOTAL LIABILITY IS LIMITED TO THE GREATER OF THE AMOUNT YOU PAID FOR DRIFT IN THE 12 MONTHS
+BEFORE THE CLAIM AND [AMOUNT AND CURRENCY].
+
+Nothing in this Agreement excludes or limits liability that cannot be excluded or limited by
+law. Depending on where you are, that may include liability for:
+- death or personal injury caused by negligence;
+- fraud;
+- wilful misconduct or gross negligence.
+
+[Reviewer note: check these clauses against the consumer and contract law of the governing
+jurisdiction, and of the countries where Drift will be sold.]
+
+## 14. Export
+
+You must comply with all export and sanctions laws that apply to your use of Drift.
+
+## 15. General
+
+- **Governing law.** This Agreement is governed by the laws of [jurisdiction]. Disputes go
+  to the courts of [place], except where consumer law gives you the right to bring
+  proceedings in your own country.
+- **Earlier versions.** Drift versions up to and including 0.1.0-beta.1.5 were released
+  under the Functional Source License, Version 1.1, ALv2 Future License (FSL-1.1-ALv2). Copies
+  of those versions remain under that licence, and this Agreement doesn't change it. This
+  Agreement applies to later versions.
+- **Changes.** We may update this Agreement for future versions of Drift. The version that
+  comes with a copy of Drift applies to that copy.
+- **Entire agreement.** This Agreement, and any purchase terms under section 8, is the whole
+  agreement between you and us about Drift.
+- **Severability.** If any part of this Agreement can't be enforced, the rest still applies.
+- **No waiver.** Not enforcing a right is not a waiver of it.
+- **Assignment.** You may not transfer this Agreement without our written consent. We may
+  transfer it to a successor of the Drift business.
+
+## Contact
+
+[Contact email or address for licensing questions]

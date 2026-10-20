@@ -42,7 +42,6 @@ graphics adapter.
 
 ## Licence
 
-Drift is released under the [FSL-1.1-ALv2](LICENSE.md), as described in the
-[README](README.md#licence). By contributing, you license your contribution to Christopher
-Lange, Drift's licensor, under the Apache License, Version 2.0, so that it can be released as
-part of Drift under the FSL now and under Apache-2.0 when each version converts.
+Drift is proprietary software, released to its users under the [Drift End-User Licence
+Agreement](LICENSE.md), as described in the [README](README.md#licence). The repository is
+private and takes no outside contributions.

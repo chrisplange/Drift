@@ -1,6 +1,7 @@
 name: Package
 
 # Builds the downloads: the Windows installer and zip, and the universal macOS disk image.
+# Each holds Drift and drift-mcp, the MCP server for AI assistants (the scripts build both).
 # Run it by hand from the Actions tab, or push a tag like v0.1.0-beta.1.5.
 #
 # Releases are published from the public releases repository, not this one: it holds the

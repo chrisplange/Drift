@@ -3,6 +3,8 @@
 #   Drift-<version>-windows-x64.zip         the program alone, to unpack and run
 #   Drift-<version>-windows-x64-setup.exe   the installer (needs Inno Setup 6)
 #
+# Both hold drift.exe and drift-mcp.exe, the MCP server AI assistants use (docs/ai.md).
+#
 #   powershell -ExecutionPolicy Bypass -File scripts\package-windows.ps1
 #
 # Without Inno Setup the zip is still made and the script says how to get the installer.
@@ -20,9 +22,15 @@ if ($manifest -notmatch '(?ms)^\[workspace\.package\].*?^version\s*=\s*"([^"]+)"
 $version = $Matches[1]
 Write-Host "Packaging Drift $version"
 
+# Two builds rather than one, so drift-mcp's dependencies can't change drift.exe's features.
 cargo build --release --bin drift
 if ($LASTEXITCODE -ne 0) { throw 'the release build failed' }
+cargo build --release --bin drift-mcp
+if ($LASTEXITCODE -ne 0) { throw 'the drift-mcp release build failed' }
 $exe = Join-Path $root 'target\release\drift.exe'
+$mcp = Join-Path $root 'target\release\drift-mcp.exe'
+& $mcp --version
+if ($LASTEXITCODE -ne 0) { throw 'drift-mcp.exe does not run' }
 
 $dist = Join-Path $root 'dist'
 New-Item -ItemType Directory -Force $dist | Out-Null
@@ -32,7 +40,7 @@ $zip = Join-Path $dist "Drift-$version-windows-x64.zip"
 $stage = Join-Path $dist 'stage\Drift'
 if (Test-Path (Join-Path $dist 'stage')) { Remove-Item -Recurse -Force (Join-Path $dist 'stage') }
 New-Item -ItemType Directory -Force $stage | Out-Null
-Copy-Item $exe, (Join-Path $root 'LICENSE.md'), (Join-Path $root 'THIRD-PARTY-NOTICES.txt') $stage
+Copy-Item $exe, $mcp, (Join-Path $root 'LICENSE.md'), (Join-Path $root 'THIRD-PARTY-NOTICES.txt') $stage
 if (Test-Path $zip) { Remove-Item -Force $zip }
 Compress-Archive -Path $stage -DestinationPath $zip
 Remove-Item -Recurse -Force (Join-Path $dist 'stage')

@@ -18,6 +18,8 @@ pub(crate) struct Link {
     /// Why the link couldn't start (it isn't tried again until the preference is turned
     /// off and on).
     pub(crate) failed: Option<String>,
+    /// Where `drift-mcp` is, if not next to this program (tests use their own).
+    pub(crate) mcp_server: Option<PathBuf>,
     /// When this window last told assistants it is the one in use, and under which name.
     touched: (f64, String),
 }
@@ -168,5 +170,102 @@ impl DriftApp {
                     .color(ui.visuals().error_fg_color),
             );
         }
+        let Some(server) = self.link.mcp_server.clone().or_else(mcp_server_path) else {
+            return;
+        };
+        let shown = server.to_string_lossy().into_owned();
+        if !server.is_file() {
+            ui.label(
+                egui::RichText::new(format!(
+                    "drift-mcp isn't installed next to Drift ({shown})."
+                ))
+                .small()
+                .weak(),
+            );
+            return;
+        }
+        theme::row(ui, "Server", |ui| {
+            ui.add(egui::Label::new(egui::RichText::new(&shown).small()).truncate())
+                .on_hover_text(format!(
+                    "{shown}
+
+drift-mcp, the MCP server assistants start to work with Drift"
+                ));
+        });
+        if ui
+            .button("Copy Claude Desktop config")
+            .on_hover_text(
+                "The mcpServers entry for claude_desktop_config.json (Claude Desktop → \
+                 Settings → Developer → Edit Config). It lets the server use files in your \
+                 Documents folder only.",
+            )
+            .clicked()
+        {
+            let root = std::env::home_dir()
+                .map(|home| home.join("Documents"))
+                .filter(|docs| docs.is_dir());
+            ui.ctx().copy_text(claude_config(&server, root.as_deref()));
+            let now = ui.input(|i| i.time);
+            self.set_status(
+                "Copied. Paste it into claude_desktop_config.json (merge it into mcpServers if \
+                 there are other servers there), then restart Claude Desktop."
+                    .to_owned(),
+                false,
+                now,
+            );
+        }
+    }
+}
+
+/// Where the installed `drift-mcp` is: next to this program (in `Drift.app/Contents/MacOS`
+/// on macOS).
+fn mcp_server_path() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    Some(
+        exe.parent()?
+            .join(format!("drift-mcp{}", std::env::consts::EXE_SUFFIX)),
+    )
+}
+
+/// Claude Desktop's config with Drift's server in it, limited to `root` when there is one.
+/// Windows paths are written with forward slashes, which read better in JSON and work the same.
+fn claude_config(server: &std::path::Path, root: Option<&std::path::Path>) -> String {
+    let path = |p: &std::path::Path| {
+        let p = p.to_string_lossy();
+        if cfg!(windows) {
+            p.replace('\\', "/")
+        } else {
+            p.into_owned()
+        }
+    };
+    let mut drift = serde_json::json!({ "command": path(server) });
+    if let Some(root) = root {
+        drift["args"] = serde_json::json!(["--root", path(root)]);
+    }
+    let config = serde_json::json!({ "mcpServers": { "drift": drift } });
+    serde_json::to_string_pretty(&config).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn claude_config_names_the_server_and_its_root() {
+        let server = std::path::Path::new("/Applications/Drift.app/Contents/MacOS/drift-mcp");
+        let root = std::path::Path::new("/Users/you/Documents");
+        let config: serde_json::Value =
+            serde_json::from_str(&claude_config(server, Some(root))).unwrap();
+        let drift = &config["mcpServers"]["drift"];
+        assert_eq!(
+            drift["command"],
+            "/Applications/Drift.app/Contents/MacOS/drift-mcp"
+        );
+        assert_eq!(
+            drift["args"],
+            serde_json::json!(["--root", "/Users/you/Documents"])
+        );
+        let bare: serde_json::Value = serde_json::from_str(&claude_config(server, None)).unwrap();
+        assert!(bare["mcpServers"]["drift"].get("args").is_none());
     }
 }

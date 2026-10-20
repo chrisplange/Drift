@@ -3,6 +3,9 @@
 #
 #   dist/Drift-<version>-macos-universal.dmg
 #
+# The app holds drift-mcp too, the MCP server AI assistants use (docs/ai.md), at
+# Drift.app/Contents/MacOS/drift-mcp.
+#
 # Run it on a Mac with Xcode's command line tools and Rust:
 #
 #   scripts/package-macos.sh
@@ -27,6 +30,9 @@ export MACOSX_DEPLOYMENT_TARGET=11.0
 rustup target add aarch64-apple-darwin x86_64-apple-darwin
 cargo build --release --bin drift --target aarch64-apple-darwin
 cargo build --release --bin drift --target x86_64-apple-darwin
+# Separate builds, so drift-mcp's dependencies can't change drift's features.
+cargo build --release --bin drift-mcp --target aarch64-apple-darwin
+cargo build --release --bin drift-mcp --target x86_64-apple-darwin
 
 DIST=dist
 APP="$DIST/Drift.app"
@@ -38,6 +44,11 @@ lipo -create -output "$APP/Contents/MacOS/drift" \
     target/aarch64-apple-darwin/release/drift \
     target/x86_64-apple-darwin/release/drift
 lipo -info "$APP/Contents/MacOS/drift"
+lipo -create -output "$APP/Contents/MacOS/drift-mcp" \
+    target/aarch64-apple-darwin/release/drift-mcp \
+    target/x86_64-apple-darwin/release/drift-mcp
+lipo -info "$APP/Contents/MacOS/drift-mcp"
+"$APP/Contents/MacOS/drift-mcp" --version
 
 # The icon, at every size macOS asks for, from the 1024 px drawing.
 ICONSET=$(mktemp -d)/Drift.iconset
@@ -52,6 +63,8 @@ iconutil -c icns -o "$APP/Contents/Resources/Drift.icns" "$ICONSET"
 sed -e "s/@VERSION@/$VERSION/" -e "s/@BUILD@/$BUILD/" installer/macos/Info.plist > "$APP/Contents/Info.plist"
 cp LICENSE.md THIRD-PARTY-NOTICES.txt "$APP/Contents/Resources/"
 
+# drift-mcp first: it runs on its own, outside the app, so it needs a signature of its own.
+codesign --force --options runtime --sign "${CODESIGN_IDENTITY:--}" "$APP/Contents/MacOS/drift-mcp"
 codesign --force --deep --options runtime --sign "${CODESIGN_IDENTITY:--}" "$APP"
 codesign --verify --deep --strict "$APP"
 

@@ -161,6 +161,22 @@ impl DriftApp {
         {
             self.set_status(format!("Can't make it driving: it {e}"), true, now);
         }
+        // Extension lines start past geometry they would run along, unless dragged.
+        if self.editor.doc.extension_starts(id) != [None, None]
+            && ui
+                .button("Reset extension lines")
+                .on_hover_text(
+                    "Start the extension lines automatically again: a gap past the end of \
+                     geometry they would run along, else a gap from the measured points",
+                )
+                .clicked()
+        {
+            self.editor.doc.begin();
+            for end in 0..2 {
+                let _ = self.editor.doc.set_extension_start(id, end, None);
+            }
+            self.editor.commit("Reset extension lines");
+        }
         let mut note = self.editor.doc.dim_note(id).cloned().unwrap_or_default();
         let before = note.clone();
         theme::section(ui, "Text");
@@ -285,9 +301,14 @@ impl DriftApp {
         self.style_section(ui);
         ui.add_space(8.0);
         ui.label(
-            egui::RichText::new("Double-click the dimension on the canvas to change its value.")
-                .small()
-                .weak(),
+            egui::RichText::new(if angle {
+                "Double-click the dimension on the canvas to change its value."
+            } else {
+                "Double-click the dimension on the canvas to change its value. Drag the squares \
+                 at the extension lines' starts to move them; double-click one to reset it."
+            })
+            .small()
+            .weak(),
         );
         true
     }

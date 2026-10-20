@@ -2336,6 +2336,9 @@ impl Editor {
                         if let Some(p) = self.doc.placement(cid) {
                             let _ = self.doc.set_placement(new, p);
                         }
+                        for (end, s) in self.doc.extension_starts(cid).into_iter().enumerate() {
+                            let _ = self.doc.set_extension_start(new, end, s);
+                        }
                         if let Some(e) = self.doc.expression(cid) {
                             self.doc.set_expression(new, Some(e.to_owned()));
                         }

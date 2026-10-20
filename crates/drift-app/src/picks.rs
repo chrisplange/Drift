@@ -300,10 +300,13 @@ fn in_box(pieces: &[Piece], r: Rect, crossing: bool) -> bool {
 pub(crate) fn dimension_in_box(d: &DimLayout, r: Rect, crossing: bool) -> bool {
     let mut pieces = vec![Piece::Rect(d.text_rect)];
     match &d.shape {
-        DimShape::Linear { p, d } => {
-            pieces.push(Piece::Line(vec![p[0], d[0]]));
-            pieces.push(Piece::Line(vec![p[1], d[1]]));
-            pieces.push(Piece::Line(vec![d[0], d[1]]));
+        DimShape::Linear { d: ends, .. } => {
+            for i in 0..2 {
+                if let Some(line) = d.shape.extension_line(i) {
+                    pieces.push(Piece::Line(line.to_vec()));
+                }
+            }
+            pieces.push(Piece::Line(ends.to_vec()));
         }
         DimShape::Radius { tip, from, .. } => pieces.push(Piece::Line(vec![*from, *tip])),
         DimShape::Diameter { ends } => pieces.push(Piece::Line(ends.to_vec())),

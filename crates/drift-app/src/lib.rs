@@ -274,6 +274,8 @@ pub struct DriftApp {
     hovered_constraint: Option<ConstraintId>,
     /// A dimension label being dragged, and the grab offset from the label (world units).
     label_drag: Option<(ConstraintId, DVec2)>,
+    /// The start of a dimension's extension line being dragged: the dimension and its end.
+    ext_drag: Option<(ConstraintId, usize)>,
     /// While a label is dragged: the dimension it snapped level with (a guide, world).
     dim_guide: Option<[DVec2; 2]>,
     dimension_edit: Option<DimensionEdit>,
@@ -505,6 +507,7 @@ impl DriftApp {
             selected_constraint: None,
             hovered_constraint: None,
             label_drag: None,
+            ext_drag: None,
             dim_guide: None,
             dimension_edit: None,
             typing: None,

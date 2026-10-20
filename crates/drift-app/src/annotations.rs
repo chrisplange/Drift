@@ -9,7 +9,7 @@ use std::f32::consts::TAU as TAU32;
 
 use drift_core::{
     ArrowStyle, Constraint, ConstraintId, DVec2, Document, DraftStyle, EntityId, EntityKind,
-    Tolerance, Units,
+    LineKind, Tolerance, Units,
 };
 use eframe::egui::{self, Color32, Pos2, Rect, Stroke, StrokeKind, Vec2, pos2, vec2};
 
@@ -307,10 +307,55 @@ pub fn corner_order(doc: &Document, a: EntityId, b: EntityId) -> (EntityId, Enti
     }
 }
 
+/// How far drawn geometry runs from `at` in the direction `out` (a unit vector): along lines
+/// through `at` parallel to `out`, and on along lines that carry on from their ends (a wall
+/// drawn in pieces). An extension line from `at` going `out` would run on top of it that far.
+/// 0 when no line does. Construction lines and lines on hidden layers don't count.
+pub(crate) fn geometry_run(doc: &Document, at: DVec2, out: DVec2) -> f64 {
+    let tol = 1e-6 * (1.0 + at.abs().max_element());
+    let lines: Vec<(DVec2, DVec2)> = doc
+        .iter()
+        .filter(|(id, e)| e.style != LineKind::Construction && doc.is_visible(*id))
+        .filter_map(|(_, e)| match e.kind {
+            EntityKind::Line { a, b } => Some((doc.point(a).ok()?, doc.point(b).ok()?)),
+            _ => None,
+        })
+        .filter(|(a, b)| {
+            let len = (*b - *a).length();
+            len > tol && (*b - *a).perp_dot(out).abs() <= 1e-6 * len
+        })
+        .collect();
+    let mut reach = 0.0;
+    for _ in 0..64 {
+        let tip = at + out * reach;
+        let next = lines
+            .iter()
+            .filter(|(a, _)| (tip - *a).perp_dot(out).abs() <= tol)
+            .filter_map(|(a, b)| {
+                let (ta, tb) = ((*a - at).dot(out), (*b - at).dot(out));
+                (ta.min(tb) <= reach + tol && reach <= ta.max(tb) + tol).then_some(ta.max(tb))
+            })
+            .fold(reach, f64::max);
+        if next <= reach + tol {
+            break;
+        }
+        reach = next;
+    }
+    reach
+}
+
 #[derive(Clone, Debug)]
 pub enum DimShape {
-    /// Extension lines from the measured points `p` to the dimension line ends `d`.
-    Linear { p: [Pos2; 2], d: [Pos2; 2] },
+    /// Extension lines from the measured points `p` to the dimension line ends `d`. Each is
+    /// drawn from `start` along it from `p` (a gap past the measured point, or past geometry
+    /// it would run along, or where it was put by hand). `ends` are the measured points in
+    /// the sketch and the extension lines' directions there, for dragging their starts.
+    Linear {
+        p: [Pos2; 2],
+        d: [Pos2; 2],
+        start: [f32; 2],
+        ends: [Option<(DVec2, DVec2)>; 2],
+    },
     /// A leader from `from` to the arrow tip `tip` on the curve.
     Radius { center: Pos2, tip: Pos2, from: Pos2 },
     /// A line across the circle through its centre, arrows at both ends.
@@ -324,6 +369,33 @@ pub enum DimShape {
         start: f32,
         sweep: f32,
     },
+}
+
+impl DimShape {
+    /// A linear dimension's extension line at end `i` (0 or 1), from where it starts to the
+    /// dimension line (without its overshoot), if it is drawn.
+    pub fn extension_line(&self, i: usize) -> Option<[Pos2; 2]> {
+        let DimShape::Linear { p, d, start, .. } = self else {
+            return None;
+        };
+        let v = d[i] - p[i];
+        let len = v.length();
+        (len > 1e-3 && len > start[i]).then(|| [p[i] + v / len * start[i], d[i]])
+    }
+
+    /// Grips at the starts of a linear dimension's extension lines: the end, where the grip
+    /// is, and the measured point and direction in the sketch a drag measures along.
+    pub fn extension_grips(&self) -> Vec<(usize, Pos2, DVec2, DVec2)> {
+        let DimShape::Linear { p, d, start, ends } = self else {
+            return Vec::new();
+        };
+        (0..2)
+            .filter_map(|i| {
+                let (at, out) = ends[i]?;
+                Some((i, p[i] + dir(p[i], d[i]) * start[i], at, out))
+            })
+            .collect()
+    }
 }
 
 /// Logical points per millimetre on paper (96 dpi), for drafting sizes on screen.
@@ -916,9 +988,25 @@ pub fn layout_dimension(
             DimShape::Linear {
                 p: [p1, p2],
                 d: [d1, d2],
+                start: [style.gap; 2],
+                ends: [None; 2],
             },
             d1 + u * along,
         )
+    };
+    // The measured points in the sketch, and a direction square to the dimension line.
+    let measured: Option<([DVec2; 2], DVec2)> = match *c {
+        Constraint::Distance { a, b, .. } => p(a).zip(p(b)).map(|(a, b)| ([a, b], (b - a).perp())),
+        Constraint::PointLineDistance { point, line, .. } => {
+            p(point).and_then(|q| foot(doc, q, line).map(|f| ([q, f], (f - q).perp())))
+        }
+        Constraint::HorizontalDistance { a, b, .. } => {
+            p(a).zip(p(b)).map(|(a, b)| ([a, b], DVec2::Y))
+        }
+        Constraint::VerticalDistance { a, b, .. } => {
+            p(a).zip(p(b)).map(|(a, b)| ([a, b], DVec2::X))
+        }
+        _ => None,
     };
 
     let (shape, text_pos) = match *c {
@@ -931,13 +1019,25 @@ pub fn layout_dimension(
             let (p1, p2) = (s(p(a)?), s(p(b)?));
             let y = relieved(label.y, p1.y.min(p2.y), p1.y.max(p2.y));
             let d = [pos2(p1.x, y), pos2(p2.x, y)];
-            (DimShape::Linear { p: [p1, p2], d }, pos2(label.x, y))
+            let shape = DimShape::Linear {
+                p: [p1, p2],
+                d,
+                start: [style.gap; 2],
+                ends: [None; 2],
+            };
+            (shape, pos2(label.x, y))
         }
         Constraint::VerticalDistance { a, b, .. } => {
             let (p1, p2) = (s(p(a)?), s(p(b)?));
             let x = relieved(label.x, p1.x.min(p2.x), p1.x.max(p2.x));
             let d = [pos2(x, p1.y), pos2(x, p2.y)];
-            (DimShape::Linear { p: [p1, p2], d }, pos2(x, label.y))
+            let shape = DimShape::Linear {
+                p: [p1, p2],
+                d,
+                start: [style.gap; 2],
+                ends: [None; 2],
+            };
+            (shape, pos2(x, label.y))
         }
         Constraint::Radius { curve, .. } | Constraint::Diameter { curve, .. } => {
             let center = s(center_of(doc, curve)?);
@@ -1006,6 +1106,41 @@ pub fn layout_dimension(
         }
         _ => return None,
     };
+    let mut shape = shape;
+    if let (
+        DimShape::Linear {
+            p: sp,
+            d,
+            start,
+            ends,
+        },
+        Some((world, n)),
+    ) = (&mut shape, measured)
+        && let Some(n) = n.try_normalize()
+    {
+        // Where each extension line starts: where it was put by hand, else a gap past the
+        // end of geometry it would run along (toward the dimension line), else a gap from
+        // the measured point.
+        let manual = id.map_or([None; 2], |id| doc.extension_starts(id));
+        for i in 0..2 {
+            let v = d[i] - sp[i];
+            let toward = (map.to_world(d[i]) - world[i]).dot(n);
+            if v.length() < 1e-3 || toward == 0.0 {
+                continue;
+            }
+            let out = n * toward.signum();
+            let u = v.normalized();
+            let along = |t: f64| (s(world[i] + out * t) - sp[i]).dot(u);
+            start[i] = match manual[i] {
+                Some(t) => along(t),
+                None => match geometry_run(doc, world[i], out) {
+                    run if run > 0.0 => along(run) + style.gap,
+                    _ => style.gap,
+                },
+            };
+            ends[i] = Some((world[i], out));
+        }
+    }
     let driven = id.is_some_and(|id| doc.is_driven(id));
     let text = dimension_label(doc, id, c);
     let straddles = matches!(shape, DimShape::Linear { .. }) && style.aligned;
@@ -1102,12 +1237,10 @@ pub fn paint_dimension(
     let style = &dim.style;
     let stroke = Stroke::new(1.0, color);
     match &dim.shape {
-        DimShape::Linear { p, d } => {
+        DimShape::Linear { d, .. } => {
             for i in 0..2 {
-                let v = d[i] - p[i];
-                if v.length() > style.gap {
-                    let u = v.normalized();
-                    pen.line(&[p[i] + u * style.gap, d[i] + u * style.overshoot], stroke);
+                if let Some([from, to]) = dim.shape.extension_line(i) {
+                    pen.line(&[from, to + dir(from, to) * style.overshoot], stroke);
                 }
             }
             pen.line(&[d[0], d[1]], stroke);
@@ -1677,6 +1810,161 @@ mod tests {
         };
         let len = 44.0 + a;
         assert!((settle_label(len / 2.0 + 2.0, len, 20.0, &iso) - (len / 2.0)).abs() < 1e-3);
+    }
+
+    /// A painter for laying out text, on a context that never draws.
+    fn painter() -> egui::Painter {
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx);
+        ctx.run_ui(egui::RawInput::default(), |_| {})
+            .textures_delta
+            .clear();
+        egui::Painter::new(
+            ctx,
+            egui::LayerId::background(),
+            Rect::from_min_size(Pos2::ZERO, vec2(1000.0, 1000.0)),
+        )
+    }
+
+    /// The extension lines a dimension draws: the lines running across its dimension line
+    /// (on screen), each as (its start, its end past the dimension line).
+    fn extension_lines(painter: &egui::Painter, dim: &DimLayout) -> Vec<[Pos2; 2]> {
+        let DimShape::Linear { d, .. } = &dim.shape else {
+            panic!("not linear");
+        };
+        let along = dir(d[0], d[1]);
+        let pen = Recorder::new(painter);
+        paint_dimension(
+            &pen,
+            dim,
+            AnnotationState::Normal,
+            &AnnotationColors::new(true),
+        );
+        pen.take()
+            .into_iter()
+            .filter_map(|r| match r {
+                Recorded::Line(pts, _) if pts.len() == 2 => {
+                    let v = pts[1] - pts[0];
+                    // Square to the dimension line, and not an arrowhead.
+                    (v.length() > 8.0 && v.normalized().dot(along).abs() < 1e-3)
+                        .then(|| [pts[0], pts[1]])
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn extension_lines_start_past_the_geometry_they_run_along() {
+        // Two upright lines of different lengths, dimensioned between their bottom ends with
+        // the dimension line above both: each extension line starts a gap above its own
+        // line's top, not at the bottom (as drafted by hand, and as Revit does).
+        let painter = painter();
+        let mut doc = Document::new();
+        let a0 = doc.add_point(DVec2::new(0.0, 0.0));
+        let a_mid = doc.add_point(DVec2::new(0.0, 50.0));
+        let a1 = doc.add_point(DVec2::new(0.0, 100.0));
+        // The left one in two pieces, end to end.
+        let left = doc.add_line(a0, a_mid).unwrap();
+        doc.add_line(a_mid, a1).unwrap();
+        let b0 = doc.add_point(DVec2::new(40.0, 0.0));
+        let b1 = doc.add_point(DVec2::new(40.0, 60.0));
+        doc.add_line(b0, b1).unwrap();
+        let map = ScreenMap {
+            rect: Rect::from_min_size(Pos2::ZERO, vec2(1000.0, 1000.0)),
+            camera: drift_render::Camera {
+                center: DVec2::new(20.0, 60.0),
+                scale: 2.0,
+            },
+        };
+        let gap = DimStyle::default().gap;
+        let s = |x: f64, y: f64| map.to_screen(DVec2::new(x, y));
+        let near = |a: Pos2, b: Pos2| a.distance(b) < 0.01;
+        let check = |c: Constraint, label: DVec2, starts: [Pos2; 2]| {
+            let id = doc.constraints().find(|(_, k)| **k == c).map(|(id, _)| id);
+            let dim = layout_dimension(&painter, &doc, id, &c, Some(label), &map).unwrap();
+            let lines = extension_lines(&painter, &dim);
+            assert_eq!(lines.len(), 2, "{c:?}: {lines:?}");
+            for (line, start) in lines.iter().zip(starts) {
+                assert!(
+                    near(line[0], start),
+                    "{c:?}: {line:?} should start at {start:?}"
+                );
+            }
+        };
+        let value = 40.0;
+        // Above: past the tops (the left one past both its pieces).
+        let up = DVec2::new(0.0, 130.0);
+        let past_tops = [
+            s(0.0, 100.0) - vec2(0.0, gap),
+            s(40.0, 60.0) - vec2(0.0, gap),
+        ];
+        check(
+            Constraint::HorizontalDistance {
+                a: a0,
+                b: b0,
+                value,
+            },
+            up,
+            past_tops,
+        );
+        check(
+            Constraint::Distance {
+                a: a0,
+                b: b0,
+                value,
+            },
+            up,
+            past_tops,
+        );
+        // Picked at the tops instead: the same.
+        let tops = Constraint::HorizontalDistance {
+            a: a1,
+            b: b1,
+            value,
+        };
+        check(tops, DVec2::new(0.0, 50.0), past_tops);
+        // Below: the lines run away from the dimension line, so from the picked points.
+        let bottoms = [s(0.0, 0.0) + vec2(0.0, gap), s(40.0, 0.0) + vec2(0.0, gap)];
+        let down = DVec2::new(0.0, -30.0);
+        check(
+            Constraint::HorizontalDistance {
+                a: a0,
+                b: b0,
+                value,
+            },
+            down,
+            bottoms,
+        );
+        // Point to line: past the tops from the point and from the foot on the line.
+        let pl = Constraint::PointLineDistance {
+            point: b0,
+            line: left,
+            value,
+        };
+        check(pl, up, [past_tops[1], past_tops[0]]);
+
+        // Set by hand: where it was put, from the measured point toward the dimension line.
+        let mut doc2 = doc.clone();
+        let h = doc2
+            .add_constraint(Constraint::HorizontalDistance {
+                a: a0,
+                b: b0,
+                value,
+            })
+            .unwrap();
+        doc2.set_extension_start(h, 0, Some(30.0)).unwrap();
+        let c = *doc2.constraint(h).unwrap();
+        let dim = layout_dimension(&painter, &doc2, Some(h), &c, Some(up), &map).unwrap();
+        let lines = extension_lines(&painter, &dim);
+        assert!(near(lines[0][0], s(0.0, 30.0)), "{lines:?}");
+        assert!(near(lines[1][0], past_tops[1]), "{lines:?}");
+        // It keeps its distance when the geometry moves.
+        doc2.set_point(a0, DVec2::new(-5.0, 10.0)).unwrap();
+        let c = *doc2.constraint(h).unwrap();
+        let dim = layout_dimension(&painter, &doc2, Some(h), &c, Some(up), &map).unwrap();
+        let lines = extension_lines(&painter, &dim);
+        assert!(near(lines[0][0], s(-5.0, 40.0)), "{lines:?}");
     }
 
     #[test]

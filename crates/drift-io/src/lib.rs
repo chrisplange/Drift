@@ -6,7 +6,7 @@
 //! ```json
 //! {
 //!   "format": "drift",
-//!   "version": 33,
+//!   "version": 34,
 //!   "meta": {"title":"Bracket","units":"mm","generator":"Drift 0.1.0"},
 //!   "display": {"length":"architectural","fraction":16},
 //!   "variables": [
@@ -91,8 +91,9 @@ pub const EXTENSION: &str = "drift";
 /// 30 = adds the `project` the sheets share (name, number, client, address, company and
 /// field set) and a sheet's `status`; 31 = a `shown` entry's `views` (a dimension or
 /// annotation drawn in those views only); 32 = adds a view's `construction` (construction
-/// geometry shown on sheets); 33 = adds an underlay's `images` (pictures from a PDF page).
-pub const FORMAT_VERSION: u32 = 33;
+/// geometry shown on sheets); 33 = adds an underlay's `images` (pictures from a PDF page);
+/// 34 = adds a dimension's `ext` (extension line starts set by hand).
+pub const FORMAT_VERSION: u32 = 34;
 const FORMAT_TAG: &str = "drift";
 
 /// Document-level properties stored alongside the geometry.
@@ -343,6 +344,10 @@ struct ConstraintRecord {
     /// A driven (reference) dimension: shown but not enforced.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     driven: bool,
+    /// Where a linear dimension's extension lines start, set by hand (mm from each measured
+    /// point toward the dimension line; `null` for an end left automatic).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ext: Option<[Option<f64>; 2]>,
     /// The expression the dimension's value comes from (the value is its last result).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     expr: Option<String>,
@@ -1057,6 +1062,8 @@ pub fn save(doc: &Document, meta: &Metadata) -> String {
         .map(|(id, c)| {
             let mut r = constraint_record(id, c, doc.placement(id), doc.is_driven(id));
             r.expr = doc.expression(id).map(str::to_owned);
+            let ext = doc.extension_starts(id);
+            r.ext = (ext != [None, None]).then_some(ext);
             if let Some(n) = doc.dim_note(id) {
                 r.prefix = (!n.prefix.is_empty()).then(|| n.prefix.clone());
                 r.suffix = (!n.suffix.is_empty()).then(|| n.suffix.clone());
@@ -1438,8 +1445,10 @@ pub fn load_with_notes(text: &str) -> Result<(Document, Metadata, Vec<String>), 
     let mut driven = Vec::new();
     let mut exprs = Vec::new();
     let mut notes = Vec::new();
+    let mut exts = Vec::new();
     for mut rec in file.constraints {
         let expr = rec.expr.take();
+        let ext = rec.ext.take();
         let note = drafting::dim_note(
             rec.prefix.take(),
             rec.suffix.take(),
@@ -1456,6 +1465,12 @@ pub fn load_with_notes(text: &str) -> Result<(Document, Metadata, Vec<String>), 
         }
         if is_driven {
             driven.push(id);
+        }
+        if let Some(ext) = ext {
+            if ext.iter().flatten().any(|s| !s.is_finite()) {
+                return Err(LoadError::NonFinite(id.to_string()));
+            }
+            exts.push((id, ext));
         }
         if !seen_constraints.insert(id) {
             return Err(LoadError::DuplicateId(id.to_string()));
@@ -1474,12 +1489,19 @@ pub fn load_with_notes(text: &str) -> Result<(Document, Metadata, Vec<String>), 
     let gone = |id: &ConstraintId| dropped.iter().any(|(d, _)| d == id);
     labels.retain(|(id, _)| !gone(id));
     driven.retain(|id| !gone(id));
+    exts.retain(|(id, _)| !gone(id));
     notes.retain(|(id, _)| !gone(id));
     for (id, label) in labels {
         doc.set_placement(id, label).map_err(LoadError::Document)?;
     }
     for id in driven {
         doc.set_driven(id, true).map_err(LoadError::Document)?;
+    }
+    for (id, ext) in exts {
+        for (end, start) in ext.into_iter().enumerate() {
+            doc.set_extension_start(id, end, start)
+                .map_err(LoadError::Document)?;
+        }
     }
     for (id, n) in notes {
         doc.set_dim_note(id, Some(n));
@@ -1871,7 +1893,7 @@ mod tests {
         let text = save(&doc, &Metadata::default());
         let expected = r#"{
   "format": "drift",
-  "version": 33,
+  "version": 34,
   "meta": {"units":"mm"},
   "entities": [
     {"type":"point","id":"e1","at":[0.0,0.0]},
@@ -2005,6 +2027,55 @@ mod tests {
         assert_eq!(loaded.constraint_count(), 24);
         assert!(text.contains(r#""label":[1.5,-2.25]"#));
         assert!(text.contains(r#""driven":true"#));
+    }
+
+    #[test]
+    fn extension_line_starts_set_by_hand_round_trip() {
+        let mut doc = Document::new();
+        let a = doc.add_point(DVec2::new(0.0, 0.0));
+        let b = doc.add_point(DVec2::new(40.0, 0.0));
+        let c = doc.add_point(DVec2::new(0.0, 30.0));
+        let d = doc.add_point(DVec2::new(40.0, 30.0));
+        let h = doc
+            .add_constraint(Constraint::HorizontalDistance { a, b, value: 40.0 })
+            .unwrap();
+        let both = doc
+            .add_constraint(Constraint::Distance {
+                a: c,
+                b: d,
+                value: 40.0,
+            })
+            .unwrap();
+        let auto = doc
+            .add_constraint(Constraint::Distance {
+                a,
+                b: d,
+                value: 50.0,
+            })
+            .unwrap();
+        // One end set by hand, the other left automatic; both ends set; none.
+        doc.set_extension_start(h, 1, Some(12.5)).unwrap();
+        doc.set_extension_start(both, 0, Some(-2.0)).unwrap();
+        doc.set_extension_start(both, 1, Some(3.25)).unwrap();
+        let text = save(&doc, &Metadata::default());
+        assert!(text.contains(r#""ext":[null,12.5]"#), "{text}");
+        assert!(text.contains(r#""ext":[-2.0,3.25]"#), "{text}");
+        let (loaded, _) = load(&text).unwrap();
+        assert_eq!(loaded, doc);
+        assert_eq!(loaded.extension_starts(h), [None, Some(12.5)]);
+        assert_eq!(loaded.extension_starts(both), [Some(-2.0), Some(3.25)]);
+        assert_eq!(loaded.extension_starts(auto), [None, None]);
+        // Back to automatic: nothing written.
+        let mut doc = loaded;
+        doc.set_extension_start(h, 1, None).unwrap();
+        assert!(!save(&doc, &Metadata::default()).contains(r#""ext":[null"#));
+        // A file from before extension starts opens with them all automatic.
+        let old = text.replace(r#","ext":[null,12.5]"#, "");
+        let old = old.replace(r#","ext":[-2.0,3.25]"#, "");
+        let old = old.replace(r#""version": 34"#, r#""version": 33"#);
+        let (loaded, _) = load(&old).unwrap();
+        assert_eq!(loaded.extension_starts(h), [None, None]);
+        assert_eq!(loaded.extension_starts(both), [None, None]);
     }
 
     #[test]
@@ -2884,7 +2955,7 @@ mod tests {
         doc.add_text(drift_core::SketchText::new("A", DVec2::ZERO, 3.0));
 
         let text = save(&doc, &Metadata::default());
-        assert!(text.contains("\"version\": 33"));
+        assert!(text.contains("\"version\": 34"));
         // A mark points at its view.
         assert!(text.contains(r#""flip":true,"view":"w"#), "{text}");
         assert!(text.contains(r#""styles": ["#) && text.contains(r#""alt_units":"none""#));

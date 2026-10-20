@@ -318,6 +318,7 @@ enum Key {
     Entity(EntityId),
     Constraint(ConstraintId),
     Placement(ConstraintId),
+    ExtensionStarts(ConstraintId),
     /// Present (with `Record::Driven`) when the dimension is driven.
     Driven(ConstraintId),
     Variable(VariableId),
@@ -353,6 +354,7 @@ enum Record {
     Entity(Entity),
     Constraint(Constraint),
     Placement(DVec2),
+    ExtensionStarts([Option<f64>; 2]),
     Driven,
     Variable(Variable),
     Expression(String),
@@ -414,6 +416,10 @@ pub struct Document {
     /// Where dimension labels sit: an offset in world units from the dimension's anchor
     /// (e.g. the midpoint of a measured line). Missing means "default placement".
     placements: BTreeMap<ConstraintId, DVec2>,
+    /// Where a linear dimension's extension lines start, set by hand: per end, a distance
+    /// from the measured point along the extension line toward the dimension line. A missing
+    /// entry, or `None` for an end, means "automatic".
+    extension_starts: BTreeMap<ConstraintId, [Option<f64>; 2]>,
     /// Driven (reference) dimensions: they show a measurement but don't constrain.
     driven: BTreeSet<ConstraintId>,
     variables: BTreeMap<VariableId, Variable>,
@@ -473,6 +479,7 @@ impl PartialEq for Document {
         self.entities == other.entities
             && self.constraints == other.constraints
             && self.placements == other.placements
+            && self.extension_starts == other.extension_starts
             && self.driven == other.driven
             && self.variables == other.variables
             && self.expressions == other.expressions
@@ -507,6 +514,7 @@ impl Default for Document {
             entities: BTreeMap::new(),
             constraints: BTreeMap::new(),
             placements: BTreeMap::new(),
+            extension_starts: BTreeMap::new(),
             driven: BTreeSet::new(),
             variables: BTreeMap::new(),
             expressions: BTreeMap::new(),
@@ -831,6 +839,11 @@ impl Document {
             Key::Entity(id) => self.entities.get(&id).copied().map(Record::Entity),
             Key::Constraint(id) => self.constraints.get(&id).copied().map(Record::Constraint),
             Key::Placement(id) => self.placements.get(&id).copied().map(Record::Placement),
+            Key::ExtensionStarts(id) => self
+                .extension_starts
+                .get(&id)
+                .copied()
+                .map(Record::ExtensionStarts),
             Key::Driven(id) => self.driven.contains(&id).then_some(Record::Driven),
             Key::Variable(id) => self.variables.get(&id).cloned().map(Record::Variable),
             Key::Expression(id) => self.expressions.get(&id).cloned().map(Record::Expression),
@@ -897,6 +910,12 @@ impl Document {
             }
             (Key::Placement(id), _) => {
                 self.placements.remove(&id);
+            }
+            (Key::ExtensionStarts(id), Some(Record::ExtensionStarts(s))) => {
+                self.extension_starts.insert(id, s);
+            }
+            (Key::ExtensionStarts(id), _) => {
+                self.extension_starts.remove(&id);
             }
             (Key::Driven(id), Some(_)) => {
                 self.driven.insert(id);
@@ -1823,6 +1842,10 @@ impl Document {
             self.touch_key(Key::Placement(id));
             self.placements.remove(&id);
         }
+        if self.extension_starts.contains_key(&id) {
+            self.touch_key(Key::ExtensionStarts(id));
+            self.extension_starts.remove(&id);
+        }
         if self.driven.contains(&id) {
             self.touch_key(Key::Driven(id));
             self.driven.remove(&id);
@@ -1871,6 +1894,38 @@ impl Document {
         if self.placements.get(&id) != Some(&offset) {
             self.touch_key(Key::Placement(id));
             self.placements.insert(id, offset);
+        }
+        Ok(())
+    }
+
+    /// Where a dimension's extension lines start, per end: a distance from the measured point
+    /// along the extension line (toward the dimension line), or `None` for automatic.
+    pub fn extension_starts(&self, id: ConstraintId) -> [Option<f64>; 2] {
+        self.extension_starts.get(&id).copied().unwrap_or_default()
+    }
+
+    /// Set where one end's extension line starts (`end` 0 or 1), or `None` for automatic.
+    pub fn set_extension_start(
+        &mut self,
+        id: ConstraintId,
+        end: usize,
+        start: Option<f64>,
+    ) -> Result<(), DocumentError> {
+        if !self.constraints.contains_key(&id) {
+            return Err(DocumentError::MissingConstraint(id));
+        }
+        if end > 1 || start.is_some_and(|s| !s.is_finite()) {
+            return Err(DocumentError::InvalidValue);
+        }
+        let mut starts = self.extension_starts(id);
+        if starts[end] != start {
+            starts[end] = start;
+            self.touch_key(Key::ExtensionStarts(id));
+            if starts == [None, None] {
+                self.extension_starts.remove(&id);
+            } else {
+                self.extension_starts.insert(id, starts);
+            }
         }
         Ok(())
     }
@@ -2118,6 +2173,11 @@ impl Document {
         keys.extend(self.entities.keys().map(|id| Key::Entity(*id)));
         keys.extend(self.constraints.keys().map(|id| Key::Constraint(*id)));
         keys.extend(self.placements.keys().map(|id| Key::Placement(*id)));
+        keys.extend(
+            self.extension_starts
+                .keys()
+                .map(|id| Key::ExtensionStarts(*id)),
+        );
         keys.extend(self.driven.iter().map(|id| Key::Driven(*id)));
         keys.extend(self.variables.keys().map(|id| Key::Variable(*id)));
         keys.extend(self.expressions.keys().map(|id| Key::Expression(*id)));

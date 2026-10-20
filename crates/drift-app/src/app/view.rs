@@ -2,6 +2,9 @@
 
 use crate::*;
 
+/// How near a press counts as on an extension line's grip (points).
+const EXTENSION_GRIP_REACH: f32 = 6.0;
+
 impl DriftApp {
     pub(crate) fn make_pointer(&self, map: &ScreenMap, pos: egui::Pos2, snap: bool) -> Pointer {
         let raw = map.to_world(pos);
@@ -172,6 +175,49 @@ impl DriftApp {
             None
         };
 
+        // The grips at the starts of the picked dimension's extension lines.
+        let picked = self.selected_constraint;
+        let grip_at = |p: egui::Pos2| -> Option<(ConstraintId, usize, DVec2, DVec2)> {
+            let id = picked?;
+            let dim = dims.iter().find(|d| d.id == Some(id))?;
+            dim.shape
+                .extension_grips()
+                .into_iter()
+                .find(|(_, at, ..)| at.distance(p) <= EXTENSION_GRIP_REACH)
+                .map(|(end, _, from, out)| (id, end, from, out))
+        };
+        // Dragging one: the extension line starts where it is dropped (along its line).
+        if idle
+            && self.ext_drag.is_none()
+            && self.label_drag.is_none()
+            && response.drag_started_by(PointerButton::Primary)
+            && let Some(origin) = ui.input(|i| i.pointer.press_origin())
+            && let Some((id, end, ..)) = grip_at(origin)
+        {
+            self.ext_drag = Some((id, end));
+            self.editor.doc.begin();
+        }
+        if let Some((id, end)) = self.ext_drag {
+            if let Some(p) = response.interact_pointer_pos()
+                && let Some((_, _, from, out)) = dims
+                    .iter()
+                    .find(|d| d.id == Some(id))
+                    .and_then(|d| d.shape.extension_grips().into_iter().find(|g| g.0 == end))
+            {
+                let t = (map.to_world(p) - from).dot(out);
+                let _ = self.editor.doc.set_extension_start(id, end, Some(t));
+            }
+            if !response.dragged_by(PointerButton::Primary) {
+                self.ext_drag = None;
+                self.editor.commit("Move extension line");
+            }
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+            return true;
+        }
+        if idle && pos.and_then(grip_at).is_some() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+        }
+
         // Dragging a dimension label.
         if idle
             && self.label_drag.is_none()
@@ -220,6 +266,19 @@ impl DriftApp {
             return false;
         }
         let at = release_pos(ui, PointerButton::Primary).or(pos);
+        // A double-click on a grip starts its extension line automatically again; a click on
+        // one keeps the dimension picked.
+        if idle && let Some((id, end, ..)) = at.and_then(grip_at) {
+            if response.double_clicked_by(PointerButton::Primary) {
+                self.editor.doc.begin();
+                let _ = self.editor.doc.set_extension_start(id, end, None);
+                self.editor.commit("Reset extension line");
+                return true;
+            }
+            if response.clicked_by(PointerButton::Primary) {
+                return true;
+            }
+        }
         if response.double_clicked_by(PointerButton::Primary)
             && let Some(id) = at.and_then(|p| dim_at(p).and_then(|d| d.id))
         {
@@ -253,6 +312,34 @@ impl DriftApp {
             }
         }
         false
+    }
+
+    /// Grips at the starts of a picked dimension's extension lines: hollow while the start is
+    /// automatic, filled once it is set by hand.
+    fn paint_extension_grips(
+        &self,
+        painter: &egui::Painter,
+        dim: &DimLayout,
+        id: ConstraintId,
+        colors: &AnnotationColors,
+    ) {
+        let color = colors.selected;
+        let manual = self.editor.doc.extension_starts(id);
+        for (end, at, ..) in dim.shape.extension_grips() {
+            let square = egui::Rect::from_center_size(at, egui::Vec2::splat(7.0));
+            let fill = if manual[end].is_some() {
+                color
+            } else {
+                colors.text_background
+            };
+            painter.rect_filled(square, 1.0, fill);
+            painter.rect_stroke(
+                square,
+                1.0,
+                egui::Stroke::new(1.2, color),
+                egui::StrokeKind::Middle,
+            );
+        }
     }
 
     pub(crate) fn open_dimension_edit(&mut self, id: ConstraintId) {
@@ -897,6 +984,9 @@ impl DriftApp {
                 let faded = own.faded();
                 let look = if shown.canvas { &own } else { &faded };
                 annotations::paint_dimension(painter, dim, state(id), look);
+                if self.selected_constraint == Some(id) && self.tool.kind() == ToolKind::Select {
+                    self.paint_extension_grips(painter, dim, id, &colors);
+                }
                 if !shown.sheets {
                     Self::paint_off_sheets_badge(painter, dim.text_rect.right_top(), look.normal);
                 }

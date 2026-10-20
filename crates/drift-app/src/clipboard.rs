@@ -149,6 +149,9 @@ pub fn copy_into(
         if let Some(offset) = src.placement(id) {
             let _ = dst.set_placement(copy, offset);
         }
+        for (end, start) in src.extension_starts(id).into_iter().enumerate() {
+            let _ = dst.set_extension_start(copy, end, start);
+        }
         if let Some(note) = src.dim_note(id) {
             dst.set_dim_note(copy, Some(note.clone()));
         }

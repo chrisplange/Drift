@@ -889,6 +889,123 @@ fn a_dragged_dimension_snaps_level_with_another() {
 }
 
 #[test]
+fn extension_lines_start_past_geometry_and_their_grips_drag_and_reset() {
+    let Some(mut h) = harness() else { return };
+    // Two upright lines of different lengths, dimensioned between their bottom ends with the
+    // dimension line above both.
+    let (id, bottom) = {
+        let ed = &mut h.state_mut().editor;
+        ed.doc.begin();
+        let p = [(0.0, 0.0), (0.0, 100.0), (40.0, 0.0), (40.0, 60.0)]
+            .map(|(x, y)| ed.doc.add_point(DVec2::new(x, y)));
+        ed.doc.add_line(p[0], p[1]).unwrap();
+        ed.doc.add_line(p[2], p[3]).unwrap();
+        let id = ed
+            .doc
+            .add_constraint(drift_core::Constraint::HorizontalDistance {
+                a: p[0],
+                b: p[2],
+                value: 40.0,
+            })
+            .unwrap();
+        ed.doc.set_placement(id, DVec2::new(0.0, 130.0)).unwrap();
+        ed.commit("Lines");
+        (id, p[0])
+    };
+    h.run();
+    h.state_mut().fit_target = None;
+    h.state_mut().camera = drift_render::Camera {
+        center: DVec2::new(20.0, 70.0),
+        scale: 3.0,
+    };
+    h.run();
+    h.run();
+    save_png("drift_ui_extension_lines_auto.png", &mut h);
+
+    // Pick the dimension: grips sit where its extension lines start, past each line's top.
+    let dim = first_dimension(&h);
+    let at = dim.text_rect.center();
+    h.hover_at(at);
+    h.run();
+    button(&h, at, true);
+    h.run();
+    button(&h, at, false);
+    h.run();
+    assert_eq!(h.state().selected_constraint, Some(id));
+    let grips = dim.shape.extension_grips();
+    assert_eq!(grips.len(), 2);
+    let gap = dim.style.gap;
+    let tops = [
+        screen(&h, DVec2::new(0.0, 100.0)),
+        screen(&h, DVec2::new(40.0, 60.0)),
+    ];
+    for (g, top) in grips.iter().zip(tops) {
+        assert!(g.1.distance(top - egui::vec2(0.0, gap)) < 0.1, "{g:?}");
+    }
+    save_png("drift_ui_extension_lines_picked.png", &mut h);
+
+    // Drag the left one's start down the line: it is set by hand, as a distance from the
+    // measured point, in one undo step.
+    let to = screen(&h, DVec2::new(0.0, 40.0));
+    h.hover_at(grips[0].1);
+    h.run();
+    button(&h, grips[0].1, true);
+    h.run();
+    for k in 1..=4 {
+        h.hover_at(grips[0].1 + (to - grips[0].1) * (k as f32 / 4.0));
+        h.run();
+    }
+    button(&h, to, false);
+    h.run();
+    let start = h.state().editor.doc.extension_starts(id);
+    assert!(
+        start[0].is_some_and(|t| (t - 40.0).abs() < 0.05),
+        "{start:?}"
+    );
+    assert_eq!(start[1], None);
+    assert_eq!(h.state().selected_constraint, Some(id), "still picked");
+    save_png("drift_ui_extension_lines_dragged.png", &mut h);
+    // It keeps its distance from the measured point when the geometry moves.
+    {
+        let ed = &mut h.state_mut().editor;
+        ed.doc.begin();
+        ed.doc.set_point(bottom, DVec2::new(0.0, -10.0)).unwrap();
+        ed.commit("Move");
+    }
+    h.run();
+    let grip = first_dimension(&h).shape.extension_grips()[0].1;
+    assert!(
+        grip.distance(screen(&h, DVec2::new(0.0, 30.0))) < 0.1,
+        "{grip:?}"
+    );
+    h.key_press_modifiers(EguiModifiers::COMMAND, Key::Z);
+    h.run();
+    h.key_press_modifiers(EguiModifiers::COMMAND, Key::Z);
+    h.run();
+    assert_eq!(h.state().editor.doc.extension_starts(id), [None, None]);
+    h.key_press_modifiers(EguiModifiers::COMMAND | EguiModifiers::SHIFT, Key::Z);
+    h.run();
+    assert!(h.state().editor.doc.extension_starts(id)[0].is_some());
+
+    // A double-click on its grip starts it automatically again.
+    h.ctx
+        .options_mut(|o| o.input_options.max_double_click_delay = 0.6);
+    let grip = first_dimension(&h).shape.extension_grips()[0].1;
+    h.hover_at(grip);
+    h.run();
+    for _ in 0..2 {
+        button(&h, grip, true);
+        h.step();
+        button(&h, grip, false);
+        h.step();
+    }
+    h.run();
+    assert_eq!(h.state().editor.doc.extension_starts(id), [None, None]);
+    assert_eq!(h.state().selected_constraint, Some(id), "still picked");
+    assert!(h.state().dimension_edit.is_none(), "not the value editor");
+}
+
+#[test]
 fn drawing_tools_show_drifts_own_crosshair() {
     let Some(mut h) = harness() else { return };
     h.state_mut().crosshair.size = 60.0;

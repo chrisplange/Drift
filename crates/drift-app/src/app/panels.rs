@@ -374,6 +374,17 @@ impl DriftApp {
                     }
                     ui.separator();
                     self.model_export_buttons(ui, &painter);
+                    ui.separator();
+                    if ui
+                        .button("Blender profiles…")
+                        .on_hover_text(
+                            "The blocks marked as Blender profiles, for the Drift Profiles \
+                             add-on (saving writes them beside the drawing too)",
+                        )
+                        .clicked()
+                    {
+                        self.export_profiles();
+                    }
                 });
                 if ui
                     .add(egui::Button::new("Print…").shortcut_text(shortcut("P", false)))

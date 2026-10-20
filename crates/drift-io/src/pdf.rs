@@ -76,20 +76,13 @@ fn pdf_string(s: &str) -> Vec<u8> {
 
 /// Cubic Bézier segments for an arc (at most 90° each).
 fn arc_path(out: &mut String, center: DVec2, r: f64, start: f64, sweep: f64, move_to: bool) {
-    let pieces = ((sweep.abs() / std::f64::consts::FRAC_PI_2).ceil() as usize).max(1);
-    let step = sweep / pieces as f64;
-    let k = 4.0 / 3.0 * (step / 4.0).tan();
-    let at = |a: f64| center + DVec2::from_angle(a) * r;
-    let tangent = |a: f64| DVec2::from_angle(a).perp() * r;
+    let cubics =
+        drift_core::shape::arc_cubics(center, r, start, sweep, std::f64::consts::FRAC_PI_2);
     if move_to {
-        let _ = writeln!(out, "{} m", pt(at(start)));
+        let _ = writeln!(out, "{} m", pt(cubics[0][0]));
     }
-    for i in 0..pieces {
-        let a0 = start + step * i as f64;
-        let a1 = a0 + step;
-        let c1 = at(a0) + tangent(a0) * k;
-        let c2 = at(a1) - tangent(a1) * k;
-        let _ = writeln!(out, "{} {} {} c", pt(c1), pt(c2), pt(at(a1)));
+    for [_, c1, c2, end] in cubics {
+        let _ = writeln!(out, "{} {} {} c", pt(c1), pt(c2), pt(end));
     }
 }
 

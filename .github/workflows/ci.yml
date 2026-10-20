@@ -53,6 +53,37 @@ jobs:
           path: target/tmp/*.png
           if-no-files-found: ignore
 
+  blender:
+    name: Blender add-on
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Profiles file to splines (no Blender)
+        run: python -m unittest discover -s integrations/blender/tests -p "test_*.py" -v
+      - name: The manifest's version is Drift's
+        run: python scripts/package-blender-addon.py --check
+
+  # The add-on in a real Blender (the oldest it supports), headless. It downloads Blender, so
+  # it is optional: a failure to fetch it doesn't fail the build.
+  blender-headless:
+    name: Blender add-on (headless Blender 4.2)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch Blender 4.2 LTS
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q libxrender1 libxi6 libxkbcommon0 libsm6 libgl1 libxxf86vm1 libxfixes3
+          curl -sSfL https://download.blender.org/release/Blender4.2/blender-4.2.0-linux-x64.tar.xz | tar -xJ -C "$RUNNER_TEMP"
+      - name: Import, sweep, lathe and reload
+        run: >
+          "$RUNNER_TEMP/blender-4.2.0-linux-x64/blender" --background --factory-startup
+          --python-exit-code 1 --python integrations/blender/tests/blender_headless.py
+
   deny:
     name: Licences and advisories
     runs-on: ubuntu-latest

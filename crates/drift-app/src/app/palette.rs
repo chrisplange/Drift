@@ -23,6 +23,7 @@ pub(crate) enum Command {
     ExportPdf,
     ExportSvg,
     ExportDxf,
+    ExportProfiles,
     ExportModelSvg,
     ExportModelPdf,
     Print,
@@ -254,6 +255,12 @@ impl DriftApp {
         add(Command::ExportPdf, "Export PDF…", "File", String::new());
         add(Command::ExportSvg, "Export SVG…", "File", String::new());
         add(Command::ExportDxf, "Export DXF…", "File", String::new());
+        add(
+            Command::ExportProfiles,
+            "Export Blender profiles…",
+            "File",
+            String::new(),
+        );
         add(
             Command::ExportModelSvg,
             "Export model as SVG…",
@@ -518,6 +525,7 @@ impl DriftApp {
             Command::ExportPdf => self.export_pdf(&painter),
             Command::ExportSvg => self.export_svg(&painter),
             Command::ExportDxf => self.export_dxf(&painter),
+            Command::ExportProfiles => self.export_profiles(),
             Command::ExportModelSvg => self.export_model(&painter, false),
             Command::ExportModelPdf => self.export_model(&painter, true),
             Command::Print => self.print(&painter),

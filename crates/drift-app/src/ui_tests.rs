@@ -3146,6 +3146,86 @@ fn a_blocks_base_point_is_picked_when_made_and_set_later() {
 }
 
 #[test]
+fn a_block_marked_as_a_blender_profile_is_written_beside_the_drawing_on_save() {
+    let Some(mut h) = harness() else { return };
+    // A block with a copy, picked.
+    let ed = &mut h.state_mut().editor;
+    ed.doc.begin();
+    let line = |a: (f64, f64), b: (f64, f64)| drift_core::BlockItem {
+        shape: drift_core::Shape::Line {
+            a: DVec2::new(a.0, a.1),
+            b: DVec2::new(b.0, b.1),
+        },
+        style: drift_core::LineKind::Solid,
+        appearance: Default::default(),
+    };
+    let block = ed.doc.add_block(drift_core::Block {
+        name: "Crown".into(),
+        items: vec![
+            line((0.0, 0.0), (40.0, 0.0)),
+            line((40.0, 0.0), (0.0, 30.0)),
+            line((0.0, 30.0), (0.0, 0.0)),
+        ],
+        ..Default::default()
+    });
+    let copy = ed
+        .doc
+        .add_instance(drift_core::Instance::new(block, DVec2::new(500.0, 500.0)))
+        .unwrap();
+    ed.commit("Block");
+    assert!(h.state().profiles_text().is_none(), "nothing marked yet");
+    h.state_mut().editor.selected_instances = [copy].into();
+    h.state_mut().show_panel(Panel::Inspector);
+    h.run();
+    // The Inspector's checkbox marks the block.
+    h.get_by_label("Blender profile").click();
+    h.run();
+    assert!(h.state().editor.doc.block(block).unwrap().profile);
+    assert_eq!(
+        h.state().editor.history.undo_label(),
+        Some("Mark as Blender profile")
+    );
+    save_png("drift_ui_blender_profile_inspector.png", &mut h);
+    // The Blocks panel says so.
+    h.state_mut().show_panel(Panel::Blocks);
+    h.run();
+    assert!(
+        h.query_by_label_contains("1 copy · Blender profile")
+            .is_some()
+    );
+    // In block coordinates, in metres, whatever the copy's placement.
+    let text = h.state().profiles_text().expect("a profile");
+    let file = drift_io::profiles::parse(&text).unwrap();
+    assert_eq!(file.profiles[0].name, "Crown");
+    assert_eq!(file.profiles[0].loops[0].knots[1].co, [0.04, 0.0]);
+    // Saving writes the file beside the drawing; unmarking and saving removes it.
+    let dir = std::env::temp_dir().join(format!("drift-ui-profiles-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let drawing = dir.join("Trim.drift");
+    let beside = dir.join("Trim.drift-profiles.json");
+    h.state_mut().file.path = Some(drawing.clone());
+    h.state_mut().save();
+    h.run();
+    assert!(drawing.exists());
+    let written = drift_io::profiles::parse(&std::fs::read_to_string(&beside).unwrap()).unwrap();
+    assert_eq!(written.profiles, file.profiles);
+    assert_eq!(written.source, "Trim.drift");
+    assert!(
+        h.state()
+            .status
+            .as_ref()
+            .unwrap()
+            .text
+            .contains("1 Blender profile")
+    );
+    h.state_mut().editor.set_block_profile(block, false);
+    h.state_mut().save();
+    h.run();
+    assert!(!beside.exists());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn the_model_exports_as_svg_and_pdf_from_the_file_menu() {
     let Some(mut h) = harness() else { return };
     h.get_by_label("File").click();

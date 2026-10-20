@@ -2457,6 +2457,7 @@ pub fn add_to_document(doc: &mut Document, import: &DxfImport) -> ImportReport {
                     name: def.name.clone(),
                     items,
                     fills: Vec::new(),
+                    profile: false,
                 })
             }
         };

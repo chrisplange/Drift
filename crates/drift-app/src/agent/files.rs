@@ -151,6 +151,14 @@ pub(super) fn save(s: &mut Session, a: &Value) -> Res {
     s.meta.generator = Some(format!("Drift {}", drift_platform::VERSION));
     let text = drift_io::save(&s.editor.doc, &s.meta);
     std::fs::write(&path, text).map_err(|e| format!("{}: {e}", shown(&path)))?;
+    // The Blender profiles beside it, as saving in the app writes them.
+    let blocks = s.editor.blocks_as_drawn();
+    let profiles =
+        match drift_io::profiles::update_beside(&path, blocks.iter().map(|(id, b)| (*id, b))) {
+            Ok(drift_io::profiles::Updated::Written(n)) => json!(n),
+            Ok(_) => json!(0),
+            Err(e) => json!(format!("not written: {e}")),
+        };
     s.path = Some(path.clone());
     let meta = s.meta.clone();
     if let Some(live) = &mut s.live {
@@ -159,7 +167,7 @@ pub(super) fn save(s: &mut Session, a: &Value) -> Res {
             meta,
         });
     }
-    Ok(json!({ "saved": shown(&path) }))
+    Ok(json!({ "saved": shown(&path), "blender_profiles": profiles }))
 }
 
 /// A scale argument: a number (model mm per paper mm) or "1:50".

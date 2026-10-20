@@ -331,7 +331,7 @@ impl DriftApp {
                 ui.add_space(8.0);
                 ui.label(
                     egui::RichText::new(
-                        "This is an alpha: save often, and expect rough edges. Your sketch is \
+                        "This is a beta: save often, and expect rough edges. Your sketch is \
                          also kept between sessions automatically.",
                     )
                     .small()
@@ -361,7 +361,8 @@ impl DriftApp {
                     {
                         self.show_licences = true;
                     }
-                    ui.hyperlink_to("Project page", env!("CARGO_PKG_REPOSITORY"));
+                    ui.hyperlink_to("Website", crate::links::WEBSITE);
+                    ui.hyperlink_to("User guide", crate::links::GUIDE);
                 });
             });
         if close {

@@ -2,7 +2,6 @@
 import { getCollection, render } from "astro:content";
 import Base from "../../layouts/Base.astro";
 import { guideHref, guideNav, guideTitle } from "../../lib/guide";
-import { site } from "../../site.config.mjs";
 
 export async function getStaticPaths() {
   const entries = await getCollection("guide");
@@ -21,7 +20,6 @@ const here = flat.findIndex((i) => i.id === entry.id);
 const prev = here > 0 ? flat[here - 1] : undefined;
 const next = here >= 0 && here < flat.length - 1 ? flat[here + 1] : undefined;
 const toc = headings.filter((h) => h.depth === 2);
-const source = `${site.sourceUrl}/blob/main/docs/guide/${entry.id === "index" ? "README" : entry.id}.md`;
 ---
 
 <Base title={entry.id === "index" ? "User guide" : title}>
@@ -72,7 +70,6 @@ const source = `${site.sourceUrl}/blob/main/docs/guide/${entry.id === "index" ? 
           )
         }
       </nav>
-      <p class="edit"><a href={source}>Edit this page on GitHub</a></p>
     </article>
 
     {
@@ -207,10 +204,6 @@ const source = `${site.sourceUrl}/blob/main/docs/guide/${entry.id === "index" ? 
   .pager .next {
     grid-column: 2;
     text-align: right;
-  }
-  .edit {
-    font-size: 0.85rem;
-    margin-top: 24px;
   }
   @media (max-width: 1180px) {
     .layout {

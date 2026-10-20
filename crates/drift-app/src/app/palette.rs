@@ -55,6 +55,8 @@ pub(crate) enum Command {
     Preferences,
     DrawingSettings,
     About,
+    UserGuide,
+    ReportProblem,
     Theme(egui::ThemePreference),
 }
 
@@ -396,6 +398,13 @@ impl DriftApp {
             "File",
             String::new(),
         );
+        add(Command::UserGuide, "User guide", "Help", String::new());
+        add(
+            Command::ReportProblem,
+            "Report a problem or ask for a feature",
+            "Help",
+            String::new(),
+        );
         add(Command::About, "About Drift", "Help", String::new());
         for (pref, label) in [
             (egui::ThemePreference::Dark, "Dark appearance"),
@@ -572,6 +581,8 @@ impl DriftApp {
             Command::Preferences => self.show_settings = true,
             Command::DrawingSettings => self.show_drawing_settings = true,
             Command::About => self.show_about = true,
+            Command::UserGuide => ctx.open_url(egui::OpenUrl::new_tab(crate::links::GUIDE)),
+            Command::ReportProblem => ctx.open_url(egui::OpenUrl::new_tab(crate::links::REPORT)),
             Command::Theme(pref) => ctx.set_theme(pref),
         }
     }

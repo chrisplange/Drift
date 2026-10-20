@@ -23,7 +23,7 @@ browser (WebGPU, with a WebGL2 fallback).
 window, step-by-step tutorials, and reference pages for tools, panels, units and keys.
 
 **Drawing with AI.** `drift-mcp` lets Claude and other MCP assistants sketch, constrain,
-dimension, render and analyse Drift drawings: see [Drawing with AI assistants](docs/ai.md).
+dimension, render and analyse Drift drawings: see [Drawing with AI assistants](docs/guide/ai/assistants.md).
 
 ## What works today
 

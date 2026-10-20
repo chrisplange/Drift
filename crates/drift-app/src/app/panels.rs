@@ -632,6 +632,10 @@ impl DriftApp {
                 });
             });
             ui.menu_button("Help", |ui| {
+                ui.hyperlink_to("User guide", crate::links::GUIDE);
+                ui.hyperlink_to("Report a problem…", crate::links::REPORT)
+                    .on_hover_text("Bug reports and feature requests, on GitHub");
+                ui.separator();
                 if ui.button("Keyboard shortcuts").clicked() {
                     self.show_shortcuts = true;
                 }

@@ -53,7 +53,8 @@ rest stand alone.
 - [Units and length formats](reference/units.md)
 - [Files and compatibility](reference/files.md)
 - [Keyboard shortcuts](reference/keyboard-shortcuts.md)
-- [Drawing with AI assistants](../ai.md): connect Claude to Drift through its MCP server.
+- [Drawing with AI assistants](ai/assistants.md): connect Claude to Drift through its MCP server.
+- [Drift script](ai/script.md): the language assistants write drawings in.
 
 ## Conventions
 
@@ -61,22 +62,8 @@ rest stand alone.
 - Keys are written as Ctrl+K, Shift+F, Alt+C. On a Mac, use Cmd for Ctrl and Option for Alt.
 - Menu paths are written **File → Open example**.
 
-## About the screenshots
-
-The screenshots are made by Drift's own headless UI tests, so they can be brought up to
-date whenever the interface changes. From the repository root:
-
-```bash
-cargo test -p drift-app docs_screenshots -- --ignored
-```
-
-The scenes are staged in
-[`crates/drift-app/src/ui_tests/docs.rs`](../../crates/drift-app/src/ui_tests/docs.rs) and
-written to [`docs/guide/images/`](images/). The test is skipped when the computer has no
-graphics adapter.
-
 ## Reporting problems
 
-Use [GitHub issues](https://github.com/chrisplange/Drift/issues). **Help → About Drift**
+Use [GitHub issues](https://github.com/chrisplange/drift-releases/issues). **Help → About Drift**
 has a **Copy details** button with the version and system information to paste into a
 report.

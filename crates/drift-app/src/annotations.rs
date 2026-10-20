@@ -197,6 +197,48 @@ pub fn default_offset(doc: &Document, c: &Constraint, scale: f64) -> DVec2 {
     }
 }
 
+/// Where a radius dimension's arrow lands, where its leader starts, and where its text goes,
+/// for a label dragged to `label` (screen points, y down). On an arc (`sweep`: its start and counter-clockwise sweep,
+/// radians) the arrow always lands on the arc itself: toward the label where the arc is,
+/// else straight through the centre from the far side, else radially at the arc's nearer
+/// end, with the text on the leader's end (as a linear dimension's text keeps to its line).
+fn radius_leader(
+    center: Pos2,
+    label: Pos2,
+    r: f32,
+    sweep: Option<(f64, f64)>,
+) -> (Pos2, Pos2, Pos2) {
+    let v = dir(center, label);
+    let outside = (label - center).length() > r;
+    let toward = |u: Vec2| (center + u * r, if outside { label } else { center }, label);
+    let Some((start, sweep)) = sweep else {
+        return toward(v);
+    };
+    // Screen y is down; arc angles are counter-clockwise with y up.
+    let screen = |a: f64| vec2(a.cos() as f32, -a.sin() as f32);
+    let on_arc = |u: Vec2| {
+        let a = f64::from(-u.y).atan2(f64::from(u.x));
+        (a - start).rem_euclid(std::f64::consts::TAU) <= sweep + 1e-9
+    };
+    if on_arc(v) {
+        return toward(v);
+    }
+    if on_arc(-v) {
+        // The leader runs from the label through the centre to the arc.
+        return (center - v * r, label, label);
+    }
+    // Neither way meets the arc: the leader stays radial, through whichever end is nearer
+    // the label, and runs out as far as the label (clear of the arc), the text at its end.
+    let ends = [screen(start), screen(start + sweep)];
+    let u = if ends[0].dot(v) >= ends[1].dot(v) {
+        ends[0]
+    } else {
+        ends[1]
+    };
+    let from = center + u * (label - center).dot(u).max(r + RELIEF_PT);
+    (center + u * r, from, from)
+}
+
 fn center_of(doc: &Document, curve: EntityId) -> Option<DVec2> {
     match doc.get(curve)?.kind {
         EntityKind::Circle { center, .. } | EntityKind::Arc { center, .. } => {
@@ -943,22 +985,17 @@ pub fn layout_dimension(
             let center = s(center_of(doc, curve)?);
             let r = (drift_solver::radius_of(doc, curve)? * map.camera.scale) as f32;
             let v = dir(center, label);
-            let shape = if matches!(c, Constraint::Radius { .. }) {
-                DimShape::Radius {
-                    center,
-                    tip: center + v * r,
-                    from: if (label - center).length() > r {
-                        label
-                    } else {
-                        center
-                    },
-                }
+            if matches!(c, Constraint::Radius { .. }) {
+                let sweep = match doc.shape(curve) {
+                    Some(drift_core::Shape::Arc { start, sweep, .. }) => Some((start, sweep)),
+                    _ => None,
+                };
+                let (tip, from, text) = radius_leader(center, label, r, sweep);
+                (DimShape::Radius { center, tip, from }, text)
             } else {
-                DimShape::Diameter {
-                    ends: [center - v * r, center + v * r],
-                }
-            };
-            (shape, label)
+                let ends = [center - v * r, center + v * r];
+                (DimShape::Diameter { ends }, label)
+            }
         }
         Constraint::Angle { a, b, degrees } => {
             let center = s(anchor);
@@ -1481,6 +1518,43 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn radius_arrows_land_on_the_arc() {
+        use std::f64::consts::FRAC_PI_2;
+        let c = pos2(0.0, 0.0);
+        let near = |a: Pos2, b: Pos2| (a - b).length() < 1e-3;
+        let h = 10.0 / 2f32.sqrt();
+        // A quarter arc from 0° to 90° (screen: right, then up).
+        let quarter = Some((0.0, FRAC_PI_2));
+        // Label beside the arc: the arrow points at it, the leader starts at the label.
+        let label = pos2(20.0, -20.0);
+        let (tip, from, text) = radius_leader(c, label, 10.0, quarter);
+        assert!(near(tip, pos2(h, -h)) && near(from, label) && near(text, label));
+        // Label across the centre from the arc (#115): the leader runs through the centre to
+        // the arc, not to the empty side of its circle.
+        let label = pos2(-20.0, 20.0);
+        let (tip, from, text) = radius_leader(c, label, 10.0, quarter);
+        assert!(near(tip, pos2(h, -h)), "{tip:?}");
+        assert!(near(from, label) && near(text, label));
+        // Label where neither way meets the arc: a radial leader through the nearer end, out
+        // as far as the label, with the text on its end.
+        let (tip, from, text) = radius_leader(c, pos2(40.0, 40.0), 10.0, quarter);
+        assert!(near(tip, pos2(10.0, 0.0)), "{tip:?}");
+        assert!(near(from, pos2(40.0, 0.0)) && near(text, from), "{from:?}");
+        let (tip, from, _) = radius_leader(c, pos2(-40.0, -40.0), 10.0, quarter);
+        assert!(near(tip, pos2(0.0, -10.0)), "{tip:?}");
+        assert!(near(from, pos2(0.0, -40.0)), "{from:?}");
+        // ...and clear of the arc when the label is close in.
+        let (_, from, _) = radius_leader(c, pos2(5.0, 5.0), 10.0, quarter);
+        assert!(near(from, pos2(10.0 + RELIEF_PT, 0.0)), "{from:?}");
+        // Inside the arc the leader starts at the centre.
+        let (tip, from, _) = radius_leader(c, pos2(3.0, -3.0), 10.0, quarter);
+        assert!(near(tip, pos2(h, -h)) && near(from, c));
+        // A circle points wherever the label is.
+        let (tip, _, _) = radius_leader(c, pos2(-20.0, 20.0), 10.0, None);
+        assert!(near(tip, pos2(-h, h)));
+    }
 
     #[test]
     fn dimension_texts() {

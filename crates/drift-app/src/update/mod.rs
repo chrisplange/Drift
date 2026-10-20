@@ -24,7 +24,7 @@ use sha2::{Digest, Sha256};
 pub(crate) const RELEASES_URL: &str =
     "https://api.github.com/repos/chrisplange/drift-releases/releases?per_page=30";
 /// Where to download Drift by hand: the website's download page.
-pub(crate) const DOWNLOAD_PAGE: &str = "https://drift-website-c9y.pages.dev/download/";
+pub(crate) const DOWNLOAD_PAGE: &str = crate::links::DOWNLOAD;
 /// The public half of the key that signs releases (see docs/releasing.md).
 pub(crate) const RELEASE_KEY: &str = include_str!("release-key.pub");
 /// The checksum list on each release, and its signature.
@@ -39,7 +39,7 @@ const ASSET_LIMIT: u64 = 1 << 30;
 
 /// The running version.
 pub(crate) fn current_version() -> Version {
-    Version::parse(env!("CARGO_PKG_VERSION")).expect("the crate version is semver")
+    Version::parse(drift_platform::VERSION).expect("the crate version is semver")
 }
 
 /// Fetches a URL. The real one is [`net::Agent`]; tests use a fake.

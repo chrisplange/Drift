@@ -88,9 +88,23 @@ fn pre_releases_order_numerically() {
     assert!(v("0.2.0-alpha.1") > v("0.1.0"));
 }
 
+/// A local test build (`scripts/package-windows.ps1` without `-Release`) is labelled
+/// `+test.<commit>`: it isn't offered the release it was built from, but is offered the next.
+#[test]
+fn test_builds_are_offered_only_later_releases() {
+    let json = list(&[
+        api_release("v0.1.0-beta.1.4", false, true, &[]),
+        api_release("v0.1.0-beta.1.5", false, true, &[]),
+    ]);
+    let all = releases(&json);
+    assert_eq!(newest(&all, &v("0.1.0-beta.1.5+test.9490d05")), None);
+    let offered = newest(&all, &v("0.1.0-beta.1.4+test.9490d05")).unwrap();
+    assert_eq!(offered.version, v("0.1.0-beta.1.5"));
+}
+
 #[test]
 fn the_running_version_is_semver() {
-    assert_eq!(current_version().to_string(), env!("CARGO_PKG_VERSION"));
+    assert_eq!(current_version().to_string(), drift_platform::VERSION);
 }
 
 #[test]

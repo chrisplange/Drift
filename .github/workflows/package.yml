@@ -1,6 +1,7 @@
 name: Package
 
-# Builds the downloads: the Windows installer and zip, and the universal macOS disk image.
+# Builds the downloads: the Windows installer and zip, the universal macOS disk image, and
+# the Drift profiles add-on for Blender.
 # Run it by hand from the Actions tab, or push a tag like v0.1.0-beta.1.5.
 #
 # Releases are published from the public releases repository, not this one: it holds the
@@ -29,7 +30,7 @@ jobs:
         run: choco install innosetup --no-progress -y
       - name: Package
         shell: pwsh
-        run: scripts\package-windows.ps1
+        run: scripts\package-windows.ps1 -Release
       - uses: actions/upload-artifact@v4
         with:
           name: drift-windows
@@ -55,12 +56,25 @@ jobs:
           path: dist/*.dmg
           if-no-files-found: error
 
+  blender:
+    name: Blender add-on
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Package
+        run: python3 scripts/package-blender-addon.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: drift-blender-addon
+          path: dist/drift_profiles-*.zip
+          if-no-files-found: error
+
   release:
     name: Draft release
     # Only for a version tag: the files go on a draft release, to look over and publish.
     # Drafts are invisible to Drift's updater: it offers a release once it is published.
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [windows, macos]
+    needs: [windows, macos, blender]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -82,7 +96,7 @@ jobs:
           merge-multiple: true
       - name: Checksums
         working-directory: dist
-        run: sha256sum Drift-* > SHA256SUMS.txt && cat SHA256SUMS.txt
+        run: sha256sum Drift-* drift_profiles-* > SHA256SUMS.txt && cat SHA256SUMS.txt
       # Drift's updater installs a release only if this signature checks out with the public
       # key built into the app (crates/drift-app/src/update/release-key.pub). See
       # docs/releasing.md for making the key and the MINISIGN_SECRET_KEY secret.
@@ -126,7 +140,7 @@ jobs:
             exit 1
           fi
           gh release create "$GITHUB_REF_NAME" --repo "$RELEASES_REPO" --target main \
-            dist/Drift-* dist/SHA256SUMS.txt dist/SHA256SUMS.txt.minisig \
+            dist/Drift-* dist/drift_profiles-* dist/SHA256SUMS.txt dist/SHA256SUMS.txt.minisig \
             --draft --prerelease --title "Drift ${GITHUB_REF_NAME#v}" --notes-file "$RUNNER_TEMP/notes.md"
       # Copies of Drift up to Beta 1.4 look for updates in this repository. While it is still
       # public, the release goes here too, so they find the version that looks in the new place.
@@ -136,5 +150,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" \
-            dist/Drift-* dist/SHA256SUMS.txt dist/SHA256SUMS.txt.minisig \
+            dist/Drift-* dist/drift_profiles-* dist/SHA256SUMS.txt dist/SHA256SUMS.txt.minisig \
             --draft --prerelease --title "Drift ${GITHUB_REF_NAME#v}" --notes-file "$RUNNER_TEMP/notes.md"

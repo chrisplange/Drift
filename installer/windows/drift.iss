@@ -1,4 +1,4 @@
-; Drift's Windows installer (Inno Setup 6). Build it with scripts\package-windows.ps1, which
+; Drift's Windows installer (Inno Setup 6 or 7). Build it with scripts\package-windows.ps1, which
 ; passes the version:  ISCC /DAppVersion=0.1.0-alpha.1 installer\windows\drift.iss
 ;
 ; It installs for the current user by default (no administrator prompt) and offers "for all

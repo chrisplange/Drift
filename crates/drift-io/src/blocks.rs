@@ -1,4 +1,5 @@
-//! File records for blocks and their placed copies (format 10; a block's `fills`, 22).
+//! File records for blocks and their placed copies (format 10; a block's `fills`, 22; its
+//! `profile` flag, 36).
 
 #[cfg(not(feature = "demo"))]
 use drift_core::LayerId;
@@ -72,6 +73,9 @@ pub(crate) struct BlockRecord {
     items: Vec<ItemRecord>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     fills: Vec<crate::drafting::FillRecord>,
+    /// Written to the Blender profiles file.
+    #[serde(default, skip_serializing_if = "is_false")]
+    profile: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -153,6 +157,7 @@ pub(crate) fn block_record(id: BlockId, b: &Block) -> BlockRecord {
             .iter()
             .map(crate::drafting::block_fill_record)
             .collect(),
+        profile: b.profile,
     }
 }
 
@@ -242,6 +247,7 @@ pub(crate) fn parse_block(r: BlockRecord) -> Result<(BlockId, Block), LoadError>
             name: r.name,
             items,
             fills,
+            profile: r.profile,
         },
     ))
 }

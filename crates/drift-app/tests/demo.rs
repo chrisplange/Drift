@@ -73,7 +73,7 @@ fn the_banner_says_nothing_is_saved_and_closes() {
 #[test]
 fn file_menu_saves_exports_and_prints_show_the_note() {
     let Some(mut h) = harness() else { return };
-    let items: [(&[&str], &str); 8] = [
+    let items: [(&[&str], &str); 9] = [
         (&["Save"], "Saving"),
         (&["Save as…"], "Saving"),
         (&["Export", "PDF…"], "Exporting a PDF"),
@@ -81,6 +81,10 @@ fn file_menu_saves_exports_and_prints_show_the_note() {
         (&["Export", "DXF…"], "Exporting a DXF"),
         (&["Export", "Model as SVG…"], "Exporting an SVG"),
         (&["Export", "Model as PDF…"], "Exporting a PDF"),
+        (
+            &["Export", "Blender profiles…"],
+            "Exporting Blender profiles",
+        ),
         (&["Print…"], "Printing"),
     ];
     for (path, what) in items {

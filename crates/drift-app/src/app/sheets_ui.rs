@@ -26,6 +26,11 @@ pub(crate) const DXF_FILE: FileType = FileType {
     name: "DXF",
     extensions: &["dxf"],
 };
+#[cfg(not(feature = "demo"))]
+pub(crate) const PROFILES_FILE: FileType = FileType {
+    name: "Drift profiles for Blender",
+    extensions: &["json"],
+};
 /// What File → Import takes: CAD drawings, and artwork from Illustrator and the like.
 pub(crate) const IMPORT_FILE: FileType = FileType {
     name: "DWG, DXF, SVG, PDF or Illustrator",

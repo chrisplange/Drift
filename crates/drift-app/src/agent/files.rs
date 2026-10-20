@@ -148,7 +148,7 @@ pub(super) fn save(s: &mut Session, a: &Value) -> Res {
             .filter(|p| extension(p) == "drift")
             .ok_or("the drawing has no .drift file yet: give a `path`")?,
     };
-    s.meta.generator = Some(format!("Drift {}", env!("CARGO_PKG_VERSION")));
+    s.meta.generator = Some(format!("Drift {}", drift_platform::VERSION));
     let text = drift_io::save(&s.editor.doc, &s.meta);
     std::fs::write(&path, text).map_err(|e| format!("{}: {e}", shown(&path)))?;
     s.path = Some(path.clone());

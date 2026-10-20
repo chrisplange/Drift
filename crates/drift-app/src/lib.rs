@@ -1064,7 +1064,7 @@ impl eframe::App for DriftApp {
             return;
         }
         let mut meta = self.file.meta.clone();
-        meta.generator = Some(format!("Drift {}", env!("CARGO_PKG_VERSION")));
+        meta.generator = Some(format!("Drift {}", drift_platform::VERSION));
         storage.set_string(KEY_DOCUMENT, drift_io::save(&self.editor.doc, &meta));
         storage.set_string(KEY_NAME, self.file.name.clone());
         let path = self

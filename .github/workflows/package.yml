@@ -29,7 +29,7 @@ jobs:
         run: choco install innosetup --no-progress -y
       - name: Package
         shell: pwsh
-        run: scripts\package-windows.ps1
+        run: scripts\package-windows.ps1 -Release
       - uses: actions/upload-artifact@v4
         with:
           name: drift-windows

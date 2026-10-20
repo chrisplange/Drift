@@ -650,7 +650,7 @@ impl DriftApp {
                 ui.label(
                     egui::RichText::new(format!(
                         "Drift {} · {}{memory}",
-                        env!("CARGO_PKG_VERSION"),
+                        drift_platform::VERSION,
                         self.backend
                     ))
                     .small()

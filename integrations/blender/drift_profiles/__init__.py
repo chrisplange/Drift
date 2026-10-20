@@ -1,4 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Christopher Lange
+#
+# This add-on is free software under the GNU General Public License, version 3 or later
+# (see LICENSE). It only reads the profiles files Drift writes; Drift itself is a separate
+# program under its own licence.
 """Drift profiles: curves drawn in Drift, swept or lathed in Blender, updated when Drift saves.
 
 In Drift, mark a block as a Blender profile; saving the drawing writes its curves beside it

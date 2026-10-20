@@ -6,8 +6,8 @@ being Drift's (Cargo.toml), so the add-on and the app that writes its files go t
     python scripts/package-blender-addon.py --check   fail if the manifest's version isn't Drift's
 
 The zip is a Blender extension (4.2 or later): the add-on's files at its top level, with
-blender_manifest.toml. Install it in Blender from Edit → Preferences → Get Extensions →
-Install from Disk.
+blender_manifest.toml and its licence (GPL-3.0-or-later). Install it in Blender from
+Edit → Preferences → Get Extensions → Install from Disk.
 """
 
 import os
@@ -53,7 +53,7 @@ def main():
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
         for name in sorted(os.listdir(ADDON)):
             path = os.path.join(ADDON, name)
-            if os.path.isfile(path) and (name.endswith(".py") or name == MANIFEST):
+            if os.path.isfile(path) and (name.endswith(".py") or name in (MANIFEST, "LICENSE")):
                 z.write(path, name)
     print(out)
 

@@ -642,6 +642,21 @@ mod tests {
     }
 
     #[test]
+    fn the_model_on_a_page_fitted_to_it() {
+        let page = crate::svg::tests::model().fitted(5.0);
+        let pdf = write(&[page], "Model");
+        let parsed = lopdf::Document::load_mem(&pdf).expect("a valid PDF");
+        assert_eq!(parsed.get_pages().len(), 1);
+        // 110 × 60 mm in points.
+        let text = String::from_utf8_lossy(&pdf);
+        assert!(text.contains("/MediaBox [0 0 311.811 170.079]"), "{text}");
+        let page = *parsed.get_pages().values().next().expect("a page");
+        let content = String::from_utf8_lossy(&parsed.get_page_content(page)).into_owned();
+        // The outline's first corner at (5, 5) mm.
+        assert!(content.contains("14.173 14.173 m"), "{content}");
+    }
+
+    #[test]
     fn writes_a_valid_true_scale_pdf() {
         let mut d = Drawing::new(DVec2::new(297.0, 210.0));
         let window = Some(Bounds {

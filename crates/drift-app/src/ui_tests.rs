@@ -3088,6 +3088,160 @@ fn a_sheet_prints_in_greyscale_or_black_and_white() {
 }
 
 #[test]
+fn a_blocks_base_point_is_picked_when_made_and_set_later() {
+    let Some(mut h) = harness() else { return };
+    // A 400 square, picked.
+    let ed = &mut h.state_mut().editor;
+    ed.doc.begin();
+    let p = [(0.0, 0.0), (400.0, 0.0), (400.0, 400.0), (0.0, 400.0)]
+        .map(|(x, y)| ed.doc.add_point(DVec2::new(x, y)));
+    let lines: Vec<drift_core::EntityId> = (0..4)
+        .map(|i| ed.doc.add_line(p[i], p[(i + 1) % 4]).unwrap())
+        .collect();
+    ed.commit("Square");
+    ed.selection = lines.into_iter().collect();
+    h.key_press_modifiers(EguiModifiers::SHIFT, Key::F);
+    h.run();
+    h.state_mut().show_panel(Panel::Blocks);
+    h.run();
+    // Make asks for the base point: a click on the corner snaps to it.
+    h.get_by_label("Make").click();
+    h.run();
+    assert_eq!(h.state().tool.kind(), ToolKind::BasePoint);
+    assert!(h.state().editor.doc.instances().next().is_none(), "not yet");
+    click_world(&mut h, DVec2::new(1.0, -1.0));
+    h.run();
+    assert_eq!(h.state().tool.kind(), ToolKind::Select);
+    let (copy, i) = h.state().editor.doc.instances().next().expect("the copy");
+    assert_eq!(i.at, DVec2::ZERO);
+    let block = i.block;
+    // The Inspector's Set base point, then Enter: the block's middle.
+    h.state_mut().editor.selected_instances = [copy].into();
+    h.state_mut().show_panel(Panel::Inspector);
+    h.run();
+    h.get_by_label("Set base point").click();
+    h.run();
+    assert_eq!(h.state().tool.kind(), ToolKind::BasePoint);
+    save_png("drift_ui_block_base_point.png", &mut h);
+    h.key_press(Key::Enter);
+    h.run();
+    h.run();
+    assert_eq!(h.state().tool.kind(), ToolKind::Select);
+    assert_eq!(
+        h.state().editor.doc.instance(copy).unwrap().at,
+        DVec2::new(200.0, 200.0)
+    );
+    let b = h.state().editor.doc.block(block).unwrap().bounds();
+    assert_eq!(b.center(), DVec2::ZERO);
+    assert_eq!(
+        h.state().editor.history.undo_label(),
+        Some("Set base point")
+    );
+    // Editing the block: its base point shows, and can be set from the banner.
+    h.state_mut().editor.edit_block(copy);
+    h.run();
+    assert!(h.query_by_label("Set base point").is_some());
+    h.state_mut().editor.finish_block_edit();
+    h.run();
+}
+
+#[test]
+fn the_model_exports_as_svg_and_pdf_from_the_file_menu() {
+    let Some(mut h) = harness() else { return };
+    h.get_by_label("File").click();
+    h.run();
+    h.get_by_label("Open example").click();
+    h.run();
+    h.run();
+    h.get_by_label("File").click();
+    h.run();
+    h.get_by_label_contains("Export").click();
+    h.run();
+    assert!(h.query_by_label("Model as SVG…").is_some());
+    assert!(h.query_by_label("Model as PDF…").is_some());
+    save_png("drift_ui_export_model_menu.png", &mut h);
+    // Dimensions and notes go with it until the box is cleared.
+    assert!(h.state().model_annotations);
+    let painter = h.ctx.layer_painter(egui::LayerId::background());
+    let with = h.state_mut().model_page(&painter).expect("the plate");
+    assert!(with.layers.iter().any(|l| l.name == "ANNOTATIONS"));
+    std::fs::write(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/tmp/drift_model.svg"),
+        drift_io::svg::write(&with),
+    )
+    .unwrap();
+    h.get_by_label("Dimensions and notes").click();
+    h.run();
+    assert!(!h.state().model_annotations);
+    let without = h.state_mut().model_page(&painter).expect("the plate");
+    assert!(without.layers.iter().all(|l| l.name != "ANNOTATIONS"));
+    // The 120 × 80 plate, at true size with 5 mm all round.
+    assert_eq!(without.size, DVec2::new(130.0, 90.0));
+    let svg = drift_io::svg::write(&without);
+    assert!(svg.contains(r#"width="130mm" height="90mm""#), "{svg}");
+    let pdf = drift_io::pdf::write(&[without], "Plate");
+    assert!(String::from_utf8_lossy(&pdf).contains("/MediaBox [0 0 368.504 255.118]"));
+}
+
+#[test]
+fn a_sheets_title_block_can_be_border_only_or_none() {
+    let Some(mut h) = harness() else { return };
+    h.get_by_label("File").click();
+    h.run();
+    h.get_by_label("Open example").click();
+    h.run();
+    h.state_mut().show_panel(Panel::Sheets);
+    h.run();
+    h.get_by_label("New sheet").click();
+    h.run();
+    h.run();
+    let id = h.state().current_sheet().expect("a sheet");
+    h.state_mut().show_panel(Panel::Inspector);
+    h.run();
+    let frame_items = |h: &mut Harness<'_, DriftApp>| {
+        let painter = h.ctx.layer_painter(egui::LayerId::background());
+        let pages = h.state_mut().pages(&painter);
+        pages[0]
+            .items
+            .iter()
+            .filter(|i| i.layer == drift_draft::sheet::FRAME_LAYER)
+            .count()
+    };
+    let modern = frame_items(&mut h);
+    // The choices, in order, with today's "None" now "Border only".
+    h.get_by_value("Modern").click();
+    h.run();
+    assert!(h.query_by_label("Border only").is_some());
+    save_png("drift_ui_title_block_choices.png", &mut h);
+    h.get_by_label("Border only").click();
+    h.run();
+    let sheet = h.state().editor.doc.sheet(id).unwrap().clone();
+    assert_eq!(sheet.title_block, drift_core::TitleBlock::Border);
+    let border = frame_items(&mut h);
+    assert!(border > 0 && border < modern, "{border} of {modern}");
+    // None: blank paper.
+    h.get_by_value("Border only").click();
+    h.run();
+    h.get_by_label("None").click();
+    h.run();
+    h.run();
+    let sheet = h.state().editor.doc.sheet(id).unwrap().clone();
+    assert_eq!(sheet.title_block, drift_core::TitleBlock::None);
+    save_png("drift_ui_title_block_none.png", &mut h);
+    let painter = h.ctx.layer_painter(egui::LayerId::background());
+    let pages = h.state_mut().pages(&painter);
+    let b = drift_draft::sheet::border(&sheet);
+    assert!(
+        !pages[0].items.iter().any(|i| matches!(
+            &i.prim,
+            drift_draft::page::Prim::Polyline { points, closed: true } if points.contains(&b.min)
+        )),
+        "no border"
+    );
+    assert!(frame_items(&mut h) < border);
+}
+
+#[test]
 fn sheets_preview_and_export() {
     let Some(mut h) = harness() else { return };
     h.get_by_label("File").click();

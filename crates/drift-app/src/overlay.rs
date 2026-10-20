@@ -184,6 +184,15 @@ pub fn move_guide(
     }
 }
 
+/// A block's base point: a small cross in a ring.
+pub fn base_point(painter: &egui::Painter, map: &ScreenMap, at: DVec2, colors: &OverlayColors) {
+    let c = map.to_screen(at);
+    let stroke = Stroke::new(1.5, colors.snap);
+    painter.line_segment([c - vec2(7.0, 0.0), c + vec2(7.0, 0.0)], stroke);
+    painter.line_segment([c - vec2(0.0, 7.0), c + vec2(0.0, 7.0)], stroke);
+    painter.circle_stroke(c, 3.5, stroke);
+}
+
 /// A rotate in progress: the pivot, the reference ray, the current ray and the arc between.
 pub fn rotate_guide(
     painter: &egui::Painter,

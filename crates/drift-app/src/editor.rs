@@ -354,6 +354,11 @@ pub struct Editor {
     pub hovered_instance: Option<drift_core::InstanceId>,
     /// A block being edited in place.
     pub block_edit: Option<crate::blocks::BlockEdit>,
+    /// What the Base point tool's click is for: a block's new base point, or the base point
+    /// of a block being made.
+    pub base_point_pick: Option<crate::blocks::BasePointPick>,
+    /// The Base point tool has done its one pick (the app goes back to the select tool).
+    pub base_point_done: bool,
     /// The block the Place block tool places.
     pub place_block: Option<drift_core::BlockId>,
     pub(crate) fill_shapes: Option<(

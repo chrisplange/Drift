@@ -2500,7 +2500,7 @@ pub fn add_to_document(doc: &mut Document, import: &DxfImport) -> ImportReport {
     for layout in &import.layouts {
         let mut sheet = Sheet::new(layout.name.clone());
         // Its own title block was drawn on the paper, which isn't imported.
-        sheet.title_block = TitleBlock::None;
+        sheet.title_block = TitleBlock::Border;
         if let Some(size) = layout.paper {
             let (long, short) = (size.x.max(size.y), size.x.min(size.y));
             sheet.portrait = size.y > size.x;
@@ -3690,7 +3690,7 @@ mod tests {
             .find(|s| s.name == "Ground floor")
             .unwrap();
         assert_eq!((sheet.paper, sheet.portrait), (PaperSize::A3, false));
-        assert_eq!(sheet.title_block, TitleBlock::None);
+        assert_eq!(sheet.title_block, TitleBlock::Border);
         let views = doc.placed_views(&sheet);
         assert_eq!(views.len(), 1);
         assert_eq!(views[0].scale, 50.0);

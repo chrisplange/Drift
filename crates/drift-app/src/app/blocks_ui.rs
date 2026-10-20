@@ -142,6 +142,43 @@ impl DriftApp {
         self.set_tool(ToolKind::Block);
     }
 
+    /// Make a block of the selection: first pick its base point (Enter keeps the centre).
+    pub(crate) fn start_make_block(&mut self, name: &str) {
+        match self.editor.check_make_block(name) {
+            Ok(()) => {
+                self.set_tool(ToolKind::BasePoint);
+                self.editor.base_point_pick =
+                    Some(crate::blocks::BasePointPick::Make(name.to_owned()));
+                self.status_next =
+                    Some("Click the block's base point, or press Enter for the centre".into());
+            }
+            Err(e) => self.status_next = Some(e),
+        }
+    }
+
+    /// Set the base point of `copy`'s block: pick it on that copy (Enter: the centre).
+    pub(crate) fn start_set_base_point(&mut self, copy: drift_core::InstanceId) {
+        self.set_tool(ToolKind::BasePoint);
+        self.editor.base_point_pick = Some(crate::blocks::BasePointPick::Block(copy));
+        self.status_next = Some(
+            "Click the new base point: every copy stays where it is (Enter: the centre)".into(),
+        );
+    }
+
+    /// A copy of `block` to pick its base point on: a picked one, else the first.
+    fn copy_of(&self, block: BlockId) -> Option<drift_core::InstanceId> {
+        let copies = || {
+            self.editor
+                .doc
+                .instances()
+                .filter(move |(_, i)| i.block == block)
+                .map(|(id, _)| id)
+        };
+        copies()
+            .find(|id| self.editor.selected_instances.contains(id))
+            .or_else(|| copies().next())
+    }
+
     /// The Blocks tab.
     pub(crate) fn blocks_panel(&mut self, ui: &mut egui::Ui) {
         let output = egui::ScrollArea::vertical()
@@ -169,13 +206,13 @@ impl DriftApp {
                 );
                 if ui
                     .button("Make")
-                    .on_hover_text("Make a block from the selection; a copy takes its place")
+                    .on_hover_text(
+                        "Make a block from the selection; a copy takes its place. Then click                          its base point, or press Enter for the centre",
+                    )
                     .clicked()
                 {
                     let name = std::mem::take(&mut self.new_block_name);
-                    if let Err(e) = self.editor.make_block(&name) {
-                        self.set_status(e, true, now);
-                    }
+                    self.start_make_block(&name);
                 }
             });
         }
@@ -219,6 +256,7 @@ impl DriftApp {
         let mut place = None;
         let mut delete = None;
         let mut rename = None;
+        let mut base_point = None;
         for (id, block) in shown {
             let picked =
                 self.tool.kind() == ToolKind::Block && self.editor.place_block == Some(*id);
@@ -273,6 +311,17 @@ impl DriftApp {
                     self.editor.select_copies(*id);
                     ui.close();
                 }
+                let copy = self.copy_of(*id);
+                if ui
+                    .add_enabled(copy.is_some(), egui::Button::new("Set base point"))
+                    .on_hover_text("Click a new base point on a copy; every copy stays put")
+                    .on_disabled_hover_text("Place a copy first, to pick the point on")
+                    .clicked()
+                    && let Some(copy) = copy
+                {
+                    base_point = Some(copy);
+                    ui.close();
+                }
                 let mut name = block.name.clone();
                 ui.horizontal(|ui| {
                     ui.label("Name");
@@ -312,6 +361,9 @@ impl DriftApp {
         }
         if let Some(id) = place {
             self.start_placing(id);
+        }
+        if let Some(copy) = base_point {
+            self.start_set_base_point(copy);
         }
         if let Some((id, name)) = rename
             && !name.is_empty()
@@ -553,6 +605,16 @@ impl DriftApp {
             {
                 self.editor.edit_block(first_id);
             }
+            if picked.len() == 1
+                && ui
+                    .button("Set base point")
+                    .on_hover_text(
+                        "Click a new base point for the block: every copy stays where it is",
+                    )
+                    .clicked()
+            {
+                self.start_set_base_point(first_id);
+            }
             if ui
                 .button("Explode")
                 .on_hover_text("Turn the copy back into ordinary geometry")
@@ -600,6 +662,16 @@ impl DriftApp {
             .clicked()
         {
             self.editor.finish_block_edit();
+        }
+        if ui
+            .add_sized(
+                [ui.available_width(), 26.0],
+                egui::Button::new("Set base point"),
+            )
+            .on_hover_text("Click a new base point (shown as a cross); every copy stays put")
+            .clicked()
+        {
+            self.start_set_base_point(edit.instance);
         }
         ui.separator();
         false

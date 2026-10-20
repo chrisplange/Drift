@@ -428,7 +428,6 @@ impl DriftApp {
     /// actions for the selection), and a search field for the command palette at the right.
     pub(crate) fn context_bar(&mut self, ui: &mut egui::Ui) {
         let kind = self.tool.kind();
-        let now = ui.input(|i| i.time);
         ui.horizontal(|ui| {
             ui.set_height(28.0);
             ui.spacing_mut().item_spacing.x = 6.0;
@@ -455,7 +454,7 @@ impl DriftApp {
                     let (r, _) = ui.allocate_exact_size(name.size(), egui::Sense::hover());
                     ui.painter().galley(r.min, name, egui::Color32::WHITE);
                     divider(ui);
-                    self.tool_options(ui, kind, now);
+                    self.tool_options(ui, kind);
                 });
             });
         });
@@ -510,7 +509,7 @@ impl DriftApp {
     }
 
     /// Options for the active tool.
-    fn tool_options(&mut self, ui: &mut egui::Ui, kind: ToolKind, now: f64) {
+    fn tool_options(&mut self, ui: &mut egui::Ui, kind: ToolKind) {
         let units = self.editor.doc.units();
         // What a drawing tool draws: geometry, or construction guides.
         if kind.draws_curves() {
@@ -527,7 +526,7 @@ impl DriftApp {
         match kind {
             // On a sheet the model's selection isn't what is being worked on.
             ToolKind::Select if self.sheet_preview => {}
-            ToolKind::Select => self.selection_actions(ui, now),
+            ToolKind::Select => self.selection_actions(ui),
             ToolKind::Circle | ToolKind::Ellipse | ToolKind::EllipseArc => {
                 if let Some(k) = keyed_choice(
                     ui,
@@ -704,7 +703,7 @@ impl DriftApp {
     }
 
     /// Quick actions for the selection (the select tool's options).
-    fn selection_actions(&mut self, ui: &mut egui::Ui, now: f64) {
+    fn selection_actions(&mut self, ui: &mut egui::Ui) {
         // What a click or a box picks: always offered with nothing picked; with something
         // picked (the bar is full), only while a filter is on.
         let picked = !self.editor.selection.is_empty()
@@ -809,9 +808,7 @@ impl DriftApp {
             }
             if curves && item(ui, "Make block", "") {
                 ui.close();
-                if let Err(e) = self.editor.make_block("") {
-                    self.set_status(e, true, now);
-                }
+                self.start_make_block("");
             }
         })
         .response
@@ -1109,9 +1106,7 @@ impl DriftApp {
                 }
             });
             if item(ui, "Make block", "") {
-                if let Err(e) = self.editor.make_block("") {
-                    self.set_status(e, true, now);
-                }
+                self.start_make_block("");
                 ui.close();
             }
         }

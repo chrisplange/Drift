@@ -587,7 +587,7 @@ fn item_svg(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use drift_core::{Bounds, DVec2, LineType};
     use drift_draft::page::Pen;
@@ -683,6 +683,58 @@ mod tests {
         assert!(svg.contains("data-layer=\"Walls &amp; doors\""));
         assert!(svg.contains("Ø6 &lt;THRU&gt;"));
         assert!(svg.contains(r#"text-anchor="middle""#));
+    }
+
+    /// Model space in world mm: a closed outline on one layer, a half circle on another.
+    pub(crate) fn model() -> Drawing {
+        let mut d = Drawing::new(DVec2::ZERO);
+        let pen = Pen::new(0.35);
+        let v = DVec2::new;
+        let corners = [
+            v(-50.0, -20.0),
+            v(50.0, -20.0),
+            v(50.0, 20.0),
+            v(-50.0, 20.0),
+        ];
+        for k in 0..4 {
+            d.line("Profile", pen, corners[k], corners[(k + 1) % 4]);
+        }
+        // Its top reaches 30 (the ends are at ±10, 20): the bounds follow the arc.
+        d.push(
+            "Holes",
+            pen,
+            Prim::Arc {
+                center: v(0.0, 20.0),
+                radius: 10.0,
+                start: 0.0,
+                sweep: std::f64::consts::PI,
+            },
+        );
+        d
+    }
+
+    #[test]
+    fn the_model_on_a_page_fitted_to_it() {
+        let page = model().fitted(5.0);
+        // 100 × 50 of geometry and 5 mm all round.
+        assert_eq!(page.size, DVec2::new(110.0, 60.0));
+        let svg = write(&page);
+        assert!(
+            svg.contains(r#"width="110mm" height="60mm" viewBox="0 0 110 60""#),
+            "{svg}"
+        );
+        // The outline is one closed path from (5, 5) on the page, y flipped.
+        assert!(
+            svg.contains(r#"d="M 5 55 L 105 55 L 105 15 L 5 15 L 5 55 Z""#),
+            "{svg}"
+        );
+        // A group per layer, in the order drawn.
+        let profile = svg.find(r#"inkscape:label="Profile""#).expect("Profile");
+        let holes = svg.find(r#"inkscape:label="Holes""#).expect("Holes");
+        assert!(profile < holes);
+        assert_eq!(svg.matches("<g ").count(), 2, "{svg}");
+        // Nothing drawn: an empty page.
+        assert_eq!(Drawing::new(DVec2::ZERO).fitted(5.0).size, DVec2::ZERO);
     }
 
     #[test]

@@ -56,7 +56,11 @@ Click bare paper on the sheet (or its title block) and the **Inspector** shows t
   beside it). Its tab and the Sheets list show the number and name.
 - **Paper:** **Size** (A4 to A0, ANSI A to E) and **Landscape** or **Portrait**.
 - **Colours:** how the sheet prints (see [Colour, greyscale or black & white](#colour-greyscale-or-black--white)).
-- **Title block:** **Modern**, **ISO 7200**, **ASME Y14.1** or **None**. Then the fields:
+- **Title block:** **Modern**, **ISO 7200**, **ASME Y14.1**, **Border only** (the ISO
+  border and centring marks, no title block) or **None** (blank paper: nothing printed,
+  for boards and sheets placed into a layout program; the drawing area is the paper less a
+  5 mm print margin). Drawings that chose **None** before blank paper came in open as
+  **Border only**, so they print as before. Then the fields:
   title, drawn by, checked, company, material and date (**Today** fills it in). The scale,
   the sheet number ("1 / 2") and the revision fill themselves in.
 - **Project settings…:** what every sheet shares (see below).
@@ -216,9 +220,28 @@ From the **Sheets** panel's **Output** section, or **File → Export**:
 | **PDF…** | The sheets you choose, one page each, at true scale and true line weights. With several sheets, a dialog lists them: tick the ones to export (**All**, or **This sheet**). Each keeps its number in the set (a reissued A-102 still reads 2 / 5). Without any sheets, the drawing fitted to A3. Text stays selectable. |
 | **SVG…** | The current sheet, at true scale, in millimetres. |
 | **DXF…** | The model at full size (not the sheets), with its layers and line types, in the drawing's units. |
+| **Model as SVG…** | The model at 1 : 1 in millimetres, with no paper, title block or border: the page fits the drawing with 5 mm all round. A named group per layer, and outlines as single joined paths, ready for Illustrator, Affinity, Inkscape, laser software or Blender. |
+| **Model as PDF…** | The same, as a one-page PDF at true size. |
 | **Print…** (Ctrl+P) | Asks which sheets as **PDF…** does, writes the PDF and opens it in your system's PDF viewer (a new tab in the browser), to print from there. |
 
 Exporting never replaces your `.drift` file.
+
+### The model at 1 : 1
+
+**Model as SVG…** and **Model as PDF…** are for flat shapes that go on to another program:
+laser cutting, signage, patterns, profiles. They're in **File → Export**, under **Model at
+1 : 1** in the Output section, and in the command palette (**Export model as SVG…**).
+
+- **What goes out:** with nothing picked, everything that prints. With curves, copies of
+  blocks, text or fills picked, only those, with the dimensions and notes picked or on the
+  picked curves.
+- **Left out**, as on a sheet: points, construction geometry, and hidden layers and layers
+  that don't print.
+- **Dimensions and notes**, ticked to start with, includes them. They're sized for the
+  drawing scale, as in DXF. Clear it for clean outlines.
+- Fills and hatches go out as filled paths and hatch lines.
+- The page's bottom-left corner is the drawing's bottom-left, less the 5 mm margin, so
+  exports of different shapes don't share an origin.
 
 ### Colour, greyscale or black & white
 
@@ -268,6 +291,8 @@ About DXF:
   and one view can be on several sheets.
 - **New sheet** lays the drawing out on paper with a title block, at a fitting scale.
 - PDF prints every sheet; SVG the current one; DXF the model at full size.
+- **Model as SVG…** and **Model as PDF…** export the model, or the selection, at 1 : 1 with
+  no sheet.
 - Each sheet prints in colour, greyscale or black & white, as its preview shows.
 
 ## Next

@@ -95,16 +95,34 @@ insertion point, and the ends, middles and centres of its own curves.
 3. Under **New block** at the top of the **Blocks** panel, type a name (or keep the
    suggested one) and click **Make**. You can also use **Edit → Make block**, or **Make
    block** in the top bar's **Actions** menu or the right-click menu.
+4. Drift asks for the block's **base point**, the point a copy is placed by. Click a snap
+   point: the table's back-left corner, say. Press Enter to use the middle of what you
+   picked instead. Esc gives up, and nothing is made.
 
-The block's base point is the middle of what you picked, and a copy takes the geometry's
-place. Fills inside the outline go into the block too: each copy fills its area, the hatch
-turning, mirroring and (for model patterns) scaling with the copy.
+A copy takes the geometry's place. Fills inside the outline go into the block too: each
+copy fills its area, the hatch turning, mirroring and (for model patterns) scaling with the
+copy.
+
+### Set base point
+
+To change a block's base point later, pick a copy and click **Set base point** in the
+**Inspector** (or right-click the block in the **Blocks** panel). The copy's current base
+point shows as a small cross. Click the new one, on any snap point of the copy: an end, a
+corner, a middle or a centre. Enter puts it in the middle of the block.
+
+The block's geometry moves relative to its base point, and every copy's insertion point
+moves with it, so nothing moves on the drawing. It's one undo step.
+
+Choose the point that matters: the back corner that sits against a wall, a door's hinge,
+or the axis a profile turns about. Exporting a block uses its base point as its origin.
 
 ## 6. Edit a block in place
 
 1. Double-click a copy (or pick it and click **Edit block**).
-2. The copy becomes ordinary geometry, framed as the block being edited. Change it, add to
-   it, delete from it; anything you draw joins the block.
+2. The copy becomes ordinary geometry, framed as the block being edited. Its base point
+   shows as a small cross. Change it, add to it, delete from it; anything you draw joins
+   the block. **Set base point** at the top of the **Inspector** moves the base point, as
+   above.
 3. Press Esc, click outside, or click **Finish editing** at the top of the **Inspector**.
 
 Every copy updates.
@@ -123,6 +141,8 @@ them back as blocks. See [Underlays and DXF import](11-underlays-and-dxf.md).
   standard US sizes; a click adds one and places it. **Make** turns a selection into a
   block.
 - Clicking a block starts placing it; R turns and X mirrors the next copy.
+- **Make** asks for the base point; **Set base point** moves it later without moving any
+  copy.
 - Double-click a copy to edit the block; every copy follows.
 
 ## Next

@@ -64,6 +64,7 @@ session, so the next start is fresh.
 | Export | PDF | Every sheet, true scale. |
 | Export | SVG | The current sheet, true scale: a named group per layer (Inkscape layers; Illustrator groups, which **Release to Layers** turns into layers) and joined paths. |
 | Export | DXF (R12) | The model at full size, with layers, line types and blocks. |
+| Export | SVG, PDF (model) | The model, or the selection, at 1 : 1 on a page fitted to it with a 5 mm margin: no sheet, title block or border. A named group per layer and joined paths (SVG). Points, construction and hidden or non-printing layers are left out; **Dimensions and notes** includes them. **File → Export → Model as SVG… / Model as PDF…**. |
 
 Exports never replace the `.drift` file: Ctrl+S always saves the sketch. See
 [Sheets and output](../tutorials/10-sheets-and-output.md#5-output).

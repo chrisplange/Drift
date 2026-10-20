@@ -125,14 +125,19 @@ pub enum TitleBlock {
     Iso,
     /// ASME Y14.1: a block along the bottom-right with the drawing number and size.
     Ansi,
+    /// No title block: only the border and centring marks (what "none" meant before blank
+    /// paper, so files keep it).
+    Border,
+    /// Blank paper: nothing drawn.
     None,
 }
 
 impl TitleBlock {
-    pub const ALL: [TitleBlock; 4] = [
+    pub const ALL: [TitleBlock; 5] = [
         TitleBlock::Modern,
         TitleBlock::Iso,
         TitleBlock::Ansi,
+        TitleBlock::Border,
         TitleBlock::None,
     ];
 
@@ -141,6 +146,7 @@ impl TitleBlock {
             TitleBlock::Modern => "Modern",
             TitleBlock::Iso => "ISO 7200",
             TitleBlock::Ansi => "ASME Y14.1",
+            TitleBlock::Border => "Border only",
             TitleBlock::None => "None",
         }
     }
@@ -150,7 +156,8 @@ impl TitleBlock {
             TitleBlock::Modern => "modern",
             TitleBlock::Iso => "iso",
             TitleBlock::Ansi => "ansi",
-            TitleBlock::None => "none",
+            TitleBlock::Border => "none",
+            TitleBlock::None => "blank",
         }
     }
 

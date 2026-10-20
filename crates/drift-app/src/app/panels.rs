@@ -372,6 +372,8 @@ impl DriftApp {
                     {
                         self.export_dxf(&painter);
                     }
+                    ui.separator();
+                    self.model_export_buttons(ui, &painter);
                 });
                 if ui
                     .add(egui::Button::new("Print…").shortcut_text(shortcut("P", false)))
@@ -533,10 +535,7 @@ impl DriftApp {
                     .on_hover_text("A block from the selection (name it in the Blocks tab)")
                     .clicked()
                 {
-                    let now = ui.input(|i| i.time);
-                    if let Err(e) = self.editor.make_block("") {
-                        self.set_status(e, true, now);
-                    }
+                    self.start_make_block("");
                 }
                 if ui
                     .add_enabled(

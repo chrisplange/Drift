@@ -443,9 +443,27 @@ impl Drawing {
                     b.include(*q);
                 }
                 Prim::Polyline { points, .. } => points.iter().for_each(|p| b.include(*p)),
-                Prim::Circle { center, radius } | Prim::Arc { center, radius, .. } => {
+                Prim::Circle { center, radius } => {
                     b.include(*center - DVec2::splat(*radius));
                     b.include(*center + DVec2::splat(*radius));
+                }
+                Prim::Arc {
+                    center,
+                    radius,
+                    start,
+                    sweep,
+                } => {
+                    // Its ends, and the quarter points it passes.
+                    let (from, to) = (start.min(start + sweep), start.max(start + sweep));
+                    let at = |a: f64| *center + DVec2::from_angle(a) * *radius;
+                    b.include(at(from));
+                    b.include(at(to));
+                    let quarter = std::f64::consts::FRAC_PI_2;
+                    let mut k = (from / quarter).ceil();
+                    while k * quarter <= to {
+                        b.include(at(k * quarter));
+                        k += 1.0;
+                    }
                 }
                 Prim::Ellipse { .. } | Prim::Bezier { .. } => {
                     prim_points(&item.prim).iter().for_each(|p| b.include(*p))
@@ -478,6 +496,34 @@ impl Drawing {
             }
         }
         b
+    }
+
+    /// The drawing with its blocks exploded, moved so that what is drawn, with `margin` mm
+    /// all round, fills the page from (0, 0): model space on a page fitted to it.
+    pub fn fitted(&self, margin: f64) -> Drawing {
+        let mut d = self.exploded();
+        let b = d.bounds();
+        if b.is_empty() {
+            d.size = DVec2::ZERO;
+            return d;
+        }
+        let by = DVec2::splat(margin) - b.min;
+        let t = Transform {
+            at: by,
+            rotor: DVec2::X,
+            angle: 0.0,
+            scale: 1.0,
+            mirror: false,
+        };
+        for item in &mut d.items {
+            item.prim = t.prim(&item.prim);
+            item.clip = item.clip.map(|c| Bounds {
+                min: c.min + by,
+                max: c.max + by,
+            });
+        }
+        d.size = b.max - b.min + DVec2::splat(2.0 * margin);
+        d
     }
 }
 

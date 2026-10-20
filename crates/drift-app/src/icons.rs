@@ -393,6 +393,12 @@ pub fn tool(painter: &egui::Painter, rect: Rect, kind: ToolKind, color: Color32)
             p.arrow_head((2.0, 10.0), vec2(-1.0, 0.0));
             p.arrow_head((18.0, 10.0), vec2(1.0, 0.0));
         }
+        ToolKind::BasePoint => {
+            // A block's box with a cross at its corner.
+            p.poly(&[(6.0, 6.0), (17.0, 6.0), (17.0, 15.0), (6.0, 15.0)], true);
+            p.line((2.5, 15.0), (9.5, 15.0));
+            p.line((6.0, 11.5), (6.0, 18.5));
+        }
     }
 }
 

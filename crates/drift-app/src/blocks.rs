@@ -19,6 +19,20 @@ pub struct BlockEdit {
     pub group: GroupId,
 }
 
+/// What the Base point tool's click picks the base point of.
+#[derive(Clone, Debug, PartialEq)]
+pub enum BasePointPick {
+    /// The block of this copy: its base point moves there, and every copy stays put.
+    Block(InstanceId),
+    /// A block made of the selection, with this name.
+    Make(String),
+}
+
+/// A block-coordinate shape or fill moved by `by` (the block's own coordinates shifted).
+fn shifted(by: DVec2) -> Instance {
+    Instance::new(BlockId(0), by)
+}
+
 impl Editor {
     /// A copy's extent in the world.
     pub fn instance_bounds(&self, id: InstanceId) -> Bounds {
@@ -186,6 +200,17 @@ impl Editor {
     /// Make a block from the selection and put a copy where the geometry was (the selection
     /// becomes that copy). The base point is the centre of the selection.
     pub fn make_block(&mut self, name: &str) -> Result<InstanceId, String> {
+        self.make_block_at(name, None)
+    }
+
+    /// Whether [`make_block`](Self::make_block) would work: something is picked and the
+    /// name is free.
+    pub fn check_make_block(&self, name: &str) -> Result<(), String> {
+        self.block_source(name).map(|_| ())
+    }
+
+    /// The curves a block made now would hold, their extent, and its name.
+    fn block_source(&self, name: &str) -> Result<(Vec<EntityId>, Bounds, String), String> {
         let referenced = self.doc.defining_points(
             self.selection
                 .iter()
@@ -218,7 +243,14 @@ impl Editor {
         if self.doc.block_named(&name).is_some() {
             return Err(format!("There is already a block called {name}"));
         }
-        let base = bounds.center();
+        Ok((ids, bounds, name))
+    }
+
+    /// Make a block from the selection, with its base point at `base` (a world point), or
+    /// the centre of the selection.
+    pub fn make_block_at(&mut self, name: &str, base: Option<DVec2>) -> Result<InstanceId, String> {
+        let (ids, bounds, name) = self.block_source(name)?;
+        let base = base.unwrap_or_else(|| bounds.center());
         let place = Instance::new(BlockId(0), base);
         let items: Vec<BlockItem> = ids
             .iter()
@@ -255,6 +287,69 @@ impl Editor {
         self.selection.clear();
         self.selected_instances = [id].into();
         Ok(id)
+    }
+
+    /// Move the base point of `instance`'s block to `world` (a point on the drawing, where
+    /// that copy is): the block's curves and fills shift in its own coordinates, and every
+    /// copy's insertion point moves so that nothing moves on the drawing. One undo step.
+    pub fn set_base_point(&mut self, instance: InstanceId, world: DVec2) -> Result<(), String> {
+        let copy = self
+            .doc
+            .instance(instance)
+            .copied()
+            .ok_or("That copy is gone")?;
+        let mut block = self
+            .doc
+            .block(copy.block)
+            .cloned()
+            .ok_or("That block is gone")?;
+        // The new base point in the block's coordinates.
+        let q = copy.invert(world);
+        if q.length() <= 1e-9 * world.abs().max_element().max(1.0) {
+            return Ok(());
+        }
+        let shift = shifted(-q);
+        for item in &mut block.items {
+            item.shape = shift.apply_shape(&item.shape);
+        }
+        for fill in &mut block.fills {
+            let layer = fill.layer;
+            *fill = shift.apply_fill(fill);
+            fill.layer = layer;
+        }
+        let copies: Vec<(InstanceId, Instance)> = self
+            .doc
+            .instances()
+            .filter(|(_, i)| i.block == copy.block)
+            .map(|(id, i)| (id, *i))
+            .collect();
+        self.doc.begin();
+        self.doc.set_block(copy.block, block);
+        for (id, i) in copies {
+            let at = i.apply(q);
+            let _ = self.doc.set_instance(id, Instance { at, ..i });
+        }
+        self.commit("Set base point");
+        Ok(())
+    }
+
+    /// The middle of `instance`'s block, on the drawing (where Set base point's Enter puts
+    /// it).
+    pub fn block_centre(&self, instance: InstanceId) -> Option<DVec2> {
+        let copy = self.doc.instance(instance)?;
+        let b = self.doc.block(copy.block)?.bounds();
+        (!b.is_empty()).then(|| copy.apply(b.center()))
+    }
+
+    /// Where the base point shows as a cross: on the copy being edited in place, or the copy
+    /// whose base point is being picked.
+    pub fn base_point_cross(&self, picking: bool) -> Option<DVec2> {
+        let copy = match (&self.base_point_pick, self.block_edit) {
+            (Some(BasePointPick::Block(id)), _) if picking => *id,
+            (_, Some(edit)) => edit.instance,
+            _ => return None,
+        };
+        self.doc.instance(copy).map(|i| i.at)
     }
 
     /// Place a copy of a block (one undo step), picking it.
@@ -792,6 +887,127 @@ mod tests {
         assert_eq!(ed.doc.fills().count(), 1);
         assert_eq!(ed.doc.block(b).unwrap().fills.len(), 1);
         assert_eq!(ed.copy_fills().len(), 1);
+    }
+
+    /// Every copy's curves on the drawing, by copy.
+    fn drawn(ed: &Editor) -> Vec<Vec<Shape>> {
+        ed.doc
+            .instances()
+            .map(|(id, _)| ed.doc.instance_items(id).iter().map(|i| i.shape).collect())
+            .collect()
+    }
+
+    fn same(a: &[Vec<Shape>], b: &[Vec<Shape>]) -> bool {
+        let close = |p: DVec2, q: DVec2| p.distance(q) < 1e-9;
+        a.len() == b.len()
+            && a.iter().zip(b).all(|(a, b)| {
+                a.len() == b.len()
+                    && a.iter().zip(b).all(|(s, t)| match (s, t) {
+                        (Shape::Line { a, b }, Shape::Line { a: c, b: d }) => {
+                            close(*a, *c) && close(*b, *d)
+                        }
+                        _ => s == t,
+                    })
+            })
+    }
+
+    #[test]
+    fn setting_the_base_point_keeps_every_copy_in_place() {
+        use drift_core::FillKind;
+        let (mut ed, lines) = square();
+        ed.add_fill_at(DVec2::new(100.0, 100.0)).unwrap();
+        ed.selected_fills.clear();
+        ed.selection = lines;
+        // Made with its base point at a corner, not the middle.
+        let first = ed.make_block_at("Plate", Some(DVec2::ZERO)).unwrap();
+        let b = ed.doc.instance(first).unwrap().block;
+        assert_eq!(ed.doc.instance(first).unwrap().at, DVec2::ZERO);
+        assert_eq!(ed.doc.block(b).unwrap().bounds().min, DVec2::ZERO);
+        // A second copy turned, mirrored and scaled.
+        ed.place_instance(b, DVec2::new(1000.0, 0.0), 90.0, true);
+        let second = ed.doc.instances().map(|(id, _)| id).max().unwrap();
+        let mut i = *ed.doc.instance(second).unwrap();
+        i.scale = 0.5;
+        ed.doc.begin();
+        ed.doc.set_instance(second, i).unwrap();
+        ed.commit("Scale");
+        let before = drawn(&ed);
+        let fills_before: Vec<DVec2> = ed
+            .copy_fills()
+            .iter()
+            .map(|c| c.region.outer.polygon(0.1)[0])
+            .collect();
+        let steps = ed.history.undo_label().map(str::to_owned);
+        // The far corner of the second copy becomes the base point.
+        let corner = ed
+            .doc
+            .instance(second)
+            .unwrap()
+            .apply(DVec2::new(400.0, 400.0));
+        ed.set_base_point(second, corner).unwrap();
+        assert_eq!(ed.history.undo_label(), Some("Set base point"));
+        // The block's own coordinates moved; the copies' insertion points followed.
+        let block = ed.doc.block(b).unwrap();
+        assert_eq!(block.bounds().max, DVec2::ZERO);
+        assert_eq!(block.fills[0].seed, DVec2::new(-300.0, -300.0));
+        assert!(ed.doc.instance(second).unwrap().at.distance(corner) < 1e-9);
+        assert!(
+            ed.doc
+                .instance(first)
+                .unwrap()
+                .at
+                .distance(DVec2::new(400.0, 400.0))
+                < 1e-9
+        );
+        // Nothing moved on the drawing, fills included.
+        assert!(
+            same(&before, &drawn(&ed)),
+            "{before:?}
+{:?}",
+            drawn(&ed)
+        );
+        let fills_after: Vec<DVec2> = ed
+            .copy_fills()
+            .iter()
+            .map(|c| c.region.outer.polygon(0.1)[0])
+            .collect();
+        assert_eq!(fills_before.len(), fills_after.len());
+        assert!(
+            fills_before
+                .iter()
+                .zip(&fills_after)
+                .all(|(a, b)| a.distance(*b) < 1e-6)
+        );
+        assert!(matches!(ed.copy_fills()[0].fill.kind, FillKind::Hatch(_)));
+        // One undo step brings the old base point back.
+        ed.undo();
+        assert_eq!(ed.history.undo_label().map(str::to_owned), steps);
+        assert_eq!(ed.doc.block(b).unwrap().bounds().min, DVec2::ZERO);
+        assert_eq!(ed.doc.instance(first).unwrap().at, DVec2::ZERO);
+        // The same base point again changes nothing (and adds no step).
+        ed.redo();
+        ed.set_base_point(first, DVec2::new(400.0, 400.0)).unwrap();
+        assert_eq!(ed.history.undo_label(), Some("Set base point"));
+        ed.undo();
+        assert_eq!(ed.history.undo_label().map(str::to_owned), steps);
+    }
+
+    #[test]
+    fn the_base_point_moves_while_a_block_is_edited() {
+        let (mut ed, lines) = square();
+        ed.selection = lines;
+        let copy = ed.make_block("Table").unwrap();
+        let b = ed.doc.instance(copy).unwrap().block;
+        ed.place_instance(b, DVec2::new(1000.0, 0.0), 90.0, false);
+        let before = drawn(&ed);
+        ed.edit_block(copy);
+        assert_eq!(ed.base_point_cross(false), Some(DVec2::new(200.0, 200.0)));
+        ed.set_base_point(copy, DVec2::ZERO).unwrap();
+        assert_eq!(ed.base_point_cross(false), Some(DVec2::ZERO));
+        ed.finish_block_edit();
+        assert_eq!(ed.doc.block(b).unwrap().bounds().min, DVec2::ZERO);
+        assert!(same(&before, &drawn(&ed)));
+        assert_eq!(ed.base_point_cross(false), None);
     }
 
     #[test]

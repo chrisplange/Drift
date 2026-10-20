@@ -15,6 +15,7 @@ use crate::editor::{Anchor, Editor, Guide, GuideKind, Pointer};
 
 mod annotate;
 mod arc;
+mod base_point;
 mod circle;
 mod corners;
 mod curve_ops;
@@ -45,6 +46,7 @@ pub(crate) mod view;
 
 pub use self::{
     annotate::{CalloutTool, CentreMarkTool, ElevationTool, NoteTool, OrdinateTool, SectionTool},
+    base_point::BasePointTool,
     corners::{ChamferTool, FilletTool},
     curve_ops::{ExtendTool, SplitTool, TrimTool},
     fill::FillTool,
@@ -202,6 +204,8 @@ pub enum ToolKind {
     Calibrate,
     /// Move an underlay by two points (from the Layers tab).
     MoveUnderlay,
+    /// Pick a block's base point (Set base point, or Make block).
+    BasePoint,
 }
 
 impl ToolKind {
@@ -348,6 +352,7 @@ impl ToolKind {
             ToolKind::Mirror => "Mirror",
             ToolKind::Calibrate => "Calibrate underlay",
             ToolKind::MoveUnderlay => "Move underlay",
+            ToolKind::BasePoint => "Base point",
         }
     }
 
@@ -393,6 +398,7 @@ impl ToolKind {
                 "Two points on the underlay, then the real distance between them"
             }
             ToolKind::MoveUnderlay => "A point on the underlay, then where it goes",
+            ToolKind::BasePoint => "Click the block's base point; Enter keeps the centre",
         }
     }
 
@@ -455,7 +461,8 @@ impl ToolKind {
             | ToolKind::CentreMark
             | ToolKind::Text
             | ToolKind::Calibrate
-            | ToolKind::MoveUnderlay => return None,
+            | ToolKind::MoveUnderlay
+            | ToolKind::BasePoint => return None,
         })
     }
 
@@ -494,6 +501,7 @@ impl ToolKind {
             ToolKind::Mirror => Box::<MirrorTool>::default(),
             ToolKind::Calibrate => Box::new(UnderlayTool::new(UnderlayMode::Calibrate)),
             ToolKind::MoveUnderlay => Box::new(UnderlayTool::new(UnderlayMode::Move)),
+            ToolKind::BasePoint => Box::<BasePointTool>::default(),
         }
     }
 }

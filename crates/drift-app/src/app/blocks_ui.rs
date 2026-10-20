@@ -313,54 +313,67 @@ impl DriftApp {
             if response.clicked() {
                 place = Some(*id);
             }
-            response.context_menu(|ui| {
-                if ui.button("Place copies").clicked() {
-                    place = Some(*id);
-                    ui.close();
-                }
-                if ui.button("Select all copies").clicked() {
-                    self.editor.select_copies(*id);
-                    ui.close();
-                }
-                let copy = self.copy_of(*id);
-                if ui
-                    .add_enabled(copy.is_some(), egui::Button::new("Set base point"))
-                    .on_hover_text("Click a new base point on a copy; every copy stays put")
-                    .on_disabled_hover_text("Place a copy first, to pick the point on")
-                    .clicked()
-                    && let Some(copy) = copy
-                {
-                    base_point = Some(copy);
-                    ui.close();
-                }
-                let mut is_profile = block.profile;
-                if ui
-                    .checkbox(&mut is_profile, "Blender profile")
-                    .on_hover_text(PROFILE_HINT)
-                    .changed()
-                {
-                    profile = Some((*id, is_profile));
-                }
-                let mut name = block.name.clone();
-                ui.horizontal(|ui| {
-                    ui.label("Name");
-                    if ui.text_edit_singleline(&mut name).lost_focus() && name.trim() != block.name
+            // Stays open while the name is typed: closes on a click outside, or an action.
+            egui::Popup::context_menu(&response)
+                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                .show(|ui| {
+                    if ui.button("Place copies").clicked() {
+                        place = Some(*id);
+                        ui.close();
+                    }
+                    if ui.button("Select all copies").clicked() {
+                        self.editor.select_copies(*id);
+                        ui.close();
+                    }
+                    let copy = self.copy_of(*id);
+                    if ui
+                        .add_enabled(copy.is_some(), egui::Button::new("Set base point"))
+                        .on_hover_text("Click a new base point on a copy; every copy stays put")
+                        .on_disabled_hover_text("Place a copy first, to pick the point on")
+                        .clicked()
+                        && let Some(copy) = copy
                     {
-                        rename = Some((*id, name.trim().to_owned()));
+                        base_point = Some(copy);
+                        ui.close();
+                    }
+                    let mut is_profile = block.profile;
+                    if ui
+                        .checkbox(&mut is_profile, "Blender profile")
+                        .on_hover_text(PROFILE_HINT)
+                        .changed()
+                    {
+                        profile = Some((*id, is_profile));
+                    }
+                    // What's typed is kept between frames until the field loses focus.
+                    let typed = egui::Id::new(("block_name_typed", *id));
+                    let mut name = ui
+                        .data(|d| d.get_temp::<String>(typed))
+                        .unwrap_or_else(|| block.name.clone());
+                    ui.horizontal(|ui| {
+                        ui.label("Name");
+                        let field = ui.text_edit_singleline(&mut name);
+                        if field.changed() {
+                            ui.data_mut(|d| d.insert_temp(typed, name.clone()));
+                        }
+                        if field.lost_focus() {
+                            ui.data_mut(|d| d.remove::<String>(typed));
+                            if name.trim() != block.name {
+                                rename = Some((*id, name.trim().to_owned()));
+                            }
+                        }
+                    });
+                    ui.separator();
+                    if ui
+                        .button(
+                            egui::RichText::new("Delete block and copies")
+                                .color(egui::Color32::from_rgb(0xff, 0x5d, 0x5d)),
+                        )
+                        .clicked()
+                    {
+                        delete = Some(*id);
+                        ui.close();
                     }
                 });
-                ui.separator();
-                if ui
-                    .button(
-                        egui::RichText::new("Delete block and copies")
-                            .color(egui::Color32::from_rgb(0xff, 0x5d, 0x5d)),
-                    )
-                    .clicked()
-                {
-                    delete = Some(*id);
-                    ui.close();
-                }
-            });
         }
         if unused > 0
             && ui
@@ -388,14 +401,11 @@ impl DriftApp {
             self.editor.set_block_profile(id, on);
         }
         if let Some((id, name)) = rename
-            && !name.is_empty()
-            && self.editor.doc.block_named(&name).is_none_or(|b| b == id)
-            && let Some(mut b) = self.editor.doc.block(id).cloned()
+            && let Err(e) = self
+                .editor
+                .rename(crate::blocks::RenameTarget::Block(id), &name)
         {
-            b.name = name;
-            self.editor.doc.begin();
-            self.editor.doc.set_block(id, b);
-            self.editor.commit("Rename block");
+            self.editor.notice = Some(e);
         }
         if let Some(id) = delete {
             self.editor.doc.begin();

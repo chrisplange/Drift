@@ -346,7 +346,7 @@ mirror {axis line, keep_original (default true)}; linear_array {by, count}; circ
         },
         ToolSpec {
             name: "add_fill",
-            description: "Fill or hatch the closed area around a point. Built-in hatch patterns: ANSI31 (diagonal, the default) to ANSI38, BRICK, BLOCK, CONCRETE, DOTS, EARTH, GLASS, GRID, INSULATION, SAND, STEEL, WOOD; the drawing may have imported more. Hatch `scale` multiplies the pattern's spacing.",
+            description: "Fill or hatch the closed area around a point. Built-in hatch patterns: ANSI31 (diagonal, the default) to ANSI38, BRICK, BLOCK, CONCRETE, DOTS, EARTH, GLASS, GRID, INSULATION, SAND, STEEL, WOOD; the drawing may have imported more. Hatch `scale` multiplies the pattern's spacing. An area that is already filled gets no second fill: its fill takes the new style, and the result says `restyled`.",
             schema: object(
                 json!({
                     "at": coord(), "kind": { "type": "string", "enum": ["solid", "hatch"] },

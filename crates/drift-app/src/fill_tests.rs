@@ -500,9 +500,279 @@ fn large_import_commits_quickly() {
     let took = t.elapsed();
     assert_eq!(shapes.len(), 450);
     assert!(shapes.values().all(|s| !s.lost));
+    // Fills the import made across its grid lines aren't flagged as divided.
+    assert!(ed.doc.fills().all(|(_, f)| !f.divided));
     println!("large import committed in {took:?}");
     assert!(
         took < std::time::Duration::from_secs(10),
         "committing the import took {took:?}"
+    );
+}
+
+/// A 100 × 100 square and, drawn on its own, a 50 × 50 square in its top right corner, so
+/// the small square's right and top sides lie along the big square's (#120). Returns the
+/// big square's corners and sides, then the small square's sides.
+fn nested_squares(ed: &mut Editor) -> (Vec<EntityId>, Vec<EntityId>, Vec<EntityId>) {
+    let (corners, big) = polygon(
+        ed,
+        &[v(0.0, 0.0), v(100.0, 0.0), v(100.0, 100.0), v(0.0, 100.0)],
+    );
+    let (_, small) = polygon(
+        ed,
+        &[
+            v(50.0, 50.0),
+            v(100.0, 50.0),
+            v(100.0, 100.0),
+            v(50.0, 100.0),
+        ],
+    );
+    (corners, big, small)
+}
+
+fn sorted(ids: impl IntoIterator<Item = EntityId>) -> Vec<EntityId> {
+    let mut ids: Vec<EntityId> = ids.into_iter().collect();
+    ids.sort_unstable();
+    ids.dedup();
+    ids
+}
+
+#[test]
+fn nested_squares_each_hatch_is_bounded_by_its_own_lines() {
+    let mut ed = Editor::new(Document::new());
+    let (corners, big, small) = nested_squares(&mut ed);
+    let l_shape = ed.add_fill_at(v(25.0, 25.0)).unwrap();
+    let corner = ed.add_fill_at(v(75.0, 75.0)).unwrap();
+    assert!(close(found(&mut ed, l_shape).0, 7500.0));
+    assert!(close(found(&mut ed, corner).0, 2500.0));
+    // The small square's hatch is bounded by the small square's own sides, not the big
+    // square's lines its top and right lie along.
+    assert_eq!(ed.doc.fill(corner).unwrap().boundary, sorted(small.clone()));
+    // The L: the big square's sides and the small square's bottom and left.
+    assert_eq!(
+        ed.doc.fill(l_shape).unwrap().boundary,
+        sorted(big.iter().copied().chain([small[0], small[3]]))
+    );
+
+    // Picking the small hatch brings only the small square, and moving it leaves the big
+    // square where it is.
+    ed.selection.clear();
+    ed.selected_fills = [corner].into();
+    let (curves, _) = ed.selected_fill_curves().expect("the hatch's curves");
+    assert_eq!(sorted(curves.iter().copied()), sorted(small.clone()));
+    let still: Vec<DVec2> = corners.iter().map(|p| ed.doc.point(*p).unwrap()).collect();
+    ed.selection = curves.into_iter().collect();
+    assert_eq!(ed.nudge(v(200.0, 0.0)), Some(true));
+    let now: Vec<DVec2> = corners.iter().map(|p| ed.doc.point(*p).unwrap()).collect();
+    assert_eq!(now, still, "moving the small hatch moved the big square");
+    assert!(close(found(&mut ed, corner).0, 2500.0));
+    // The big square, left on its own, is all the L's hatch's now.
+    assert!(close(found(&mut ed, l_shape).0, 10_000.0));
+}
+
+#[test]
+fn deleting_the_small_square_leaves_the_big_hatch_whole() {
+    let mut ed = Editor::new(Document::new());
+    let (_, big, small) = nested_squares(&mut ed);
+    let l_shape = ed.add_fill_at(v(25.0, 25.0)).unwrap();
+    let corner = ed.add_fill_at(v(75.0, 75.0)).unwrap();
+    ed.selected_fills.clear();
+    ed.selection = small.iter().copied().collect();
+    ed.delete_selection_with(&[]);
+    // The small square's hatch goes with all of its outline; the L's hatch takes the area
+    // its seed is in now, the whole big square, keeping its id and style.
+    assert!(ed.doc.fill(corner).is_none());
+    assert!(close(found(&mut ed, l_shape).0, 10_000.0));
+    assert_eq!(ed.doc.fill(l_shape).unwrap().boundary, sorted(big));
+    assert!(matches!(
+        ed.doc.fill(l_shape).unwrap().kind,
+        drift_core::FillKind::Hatch(_)
+    ));
+    // Undo brings both back as they were.
+    assert!(ed.undo());
+    assert!(close(found(&mut ed, l_shape).0, 7500.0));
+    assert!(close(found(&mut ed, corner).0, 2500.0));
+    assert!(ed.redo());
+    assert!(close(found(&mut ed, l_shape).0, 10_000.0));
+}
+
+#[test]
+fn deleting_part_of_an_outline_with_no_area_left_drops_the_fill() {
+    let mut ed = Editor::new(Document::new());
+    let (_, sides) = plate(&mut ed);
+    let id = ed.add_fill_at(v(5.0, 5.0)).unwrap();
+    ed.selected_fills.clear();
+    ed.selection = [sides[1]].into();
+    ed.delete_selection_with(&[]);
+    assert!(ed.doc.fill(id).is_none());
+    assert!(ed.undo());
+    assert!(close(found(&mut ed, id).0, 800.0));
+}
+
+/// The lower half of a circle, its diameter, and a lock: a curve from the arc's end back
+/// onto the arc. The fill was made over the half disc and the lock as one area, as when the
+/// lock's end on the arc wasn't a junction (#100), so its outline is the arc, the diameter and
+/// the lock's curve; it is shown over the half disc. Returns the fill, the arc, the diameter
+/// and the lock's curve.
+fn fill_over_half_disc_and_lock(ed: &mut Editor) -> (FillId, EntityId, EntityId, EntityId) {
+    ed.doc.begin();
+    let p = |ed: &mut Editor, x: f64, y: f64| ed.doc.add_point(v(x, y));
+    let (c, w, e) = (p(ed, 0.0, 0.0), p(ed, -100.0, 0.0), p(ed, 100.0, 0.0));
+    let arc = ed.doc.add_arc(c, w, e).unwrap();
+    let diameter = ed.doc.add_line(w, e).unwrap();
+    let (c1, c2, tip) = (p(ed, 160.0, -20.0), p(ed, 150.0, -70.0), p(ed, 60.0, -80.0));
+    let lock = ed.doc.add_bezier(e, c1, c2, tip).unwrap();
+    let id = ed.doc.add_fill(drift_core::Fill::new(
+        vec![arc, diameter, lock],
+        v(0.0, -50.0),
+        drift_core::FillKind::Solid,
+    ));
+    ed.commit("Shapes");
+    assert!(close(found(ed, id).0, HALF_DISC));
+    (id, arc, diameter, lock)
+}
+
+const HALF_DISC: f64 = PI * 5000.0;
+/// The lock between the arc and the Bézier.
+const LOCK: f64 = 2715.9;
+
+#[test]
+fn a_split_that_divides_a_fills_area_flags_it_and_keeps_it_whole() {
+    // Splitting the arc where the lock meets it leaves the fill's outline closed around both
+    // areas (#101): by default it is kept whole and flagged, and the notice says so.
+    let mut ed = Editor::new(Document::new());
+    let (id, arc, _, _) = fill_over_half_disc_and_lock(&mut ed);
+    ed.notice = None;
+    ed.split_at(arc, v(60.0, -80.0)).unwrap();
+    let (area, _) = found(&mut ed, id);
+    assert!((area - (HALF_DISC + LOCK)).abs() < 1.0, "{area}");
+    assert!(ed.doc.fill(id).unwrap().divided);
+    assert_eq!(ed.fill_shapes()[&id].parts, 2);
+    assert_eq!(
+        ed.fill_changes,
+        vec![crate::fills::FillChange::Divided { id, parts: 2 }]
+    );
+    assert!(ed.notice.as_deref().is_some_and(|n| n.contains("2 areas")));
+    // Undo takes the flag back with the split.
+    assert!(ed.undo());
+    assert!(!ed.doc.fill(id).unwrap().divided);
+    assert!(ed.redo());
+    assert!(ed.doc.fill(id).unwrap().divided);
+
+    // Split into one fill per area: the half disc keeps the fill.
+    let fills = ed.split_fill(id).unwrap();
+    assert_eq!(fills.len(), 2);
+    assert_eq!(fills[0], id);
+    assert!(close(found(&mut ed, id).0, HALF_DISC));
+    assert!((found(&mut ed, fills[1]).0 - LOCK).abs() < 1.0);
+    assert!(ed.doc.fills().all(|(_, f)| !f.divided));
+    assert!(ed.undo());
+
+    // Fit it to its seed's area.
+    ed.fit_fill_to_seed(id).unwrap();
+    assert!(close(found(&mut ed, id).0, HALF_DISC));
+    assert!(!ed.doc.fill(id).unwrap().divided);
+    assert_eq!(ed.doc.fills().count(), 1);
+    assert!(ed.undo());
+
+    // Keep it whole: the flag goes, and a later edit doesn't raise it again.
+    ed.keep_fill_whole(id);
+    assert!(!ed.doc.fill(id).unwrap().divided);
+    assert!((found(&mut ed, id).0 - (HALF_DISC + LOCK)).abs() < 1.0);
+    ed.fill_changes.clear();
+    let far = ed.doc.add_point(v(500.0, 500.0));
+    ed.doc.begin();
+    ed.doc.set_point(far, v(510.0, 500.0)).unwrap();
+    ed.commit("Move");
+    assert!(!ed.doc.fill(id).unwrap().divided);
+    assert!(ed.fill_changes.is_empty());
+}
+
+#[test]
+fn a_split_that_divides_a_fills_area_can_follow_its_seed() {
+    // With "follow its seed" in Preferences, the fill takes the half disc around its seed.
+    let mut ed = Editor::new(Document::new());
+    ed.follow_divided_fills = true;
+    let (id, arc, diameter, lock) = fill_over_half_disc_and_lock(&mut ed);
+    ed.split_at(arc, v(60.0, -80.0)).unwrap();
+    let (area, _) = found(&mut ed, id);
+    assert!(close(area, HALF_DISC), "{area}");
+    let fill = ed.doc.fill(id).unwrap();
+    assert!(!fill.divided);
+    assert!(fill.boundary.contains(&arc) && fill.boundary.contains(&diameter));
+    assert!(!fill.boundary.contains(&lock), "{:?}", fill.boundary);
+    assert!(seed_inside(&mut ed, id));
+    assert!(matches!(
+        ed.fill_changes[..],
+        [crate::fills::FillChange::Refound { id: f, .. }] if f == id
+    ));
+}
+
+#[test]
+fn a_line_drawn_across_a_fill_is_flagged_or_followed() {
+    for follow in [false, true] {
+        let mut ed = Editor::new(Document::new());
+        ed.follow_divided_fills = follow;
+        let (_, sides) = plate(&mut ed);
+        let id = ed.add_fill_at(v(5.0, 5.0)).unwrap();
+        // A line right across it, past both sides.
+        ed.doc.begin();
+        let a = ed.doc.add_point(v(10.0, -5.0));
+        let b = ed.doc.add_point(v(10.0, 25.0));
+        let across = ed.doc.add_line(a, b).unwrap();
+        ed.commit("Line");
+        let (area, _) = found(&mut ed, id);
+        if follow {
+            assert!(close(area, 200.0), "{area}");
+            assert!(!ed.doc.fill(id).unwrap().divided);
+        } else {
+            assert!(close(area, 800.0), "{area}");
+            assert!(ed.doc.fill(id).unwrap().divided);
+            assert_eq!(ed.fill_shapes()[&id].parts, 2);
+            // Kept whole on purpose: splitting its side where the line crosses it changes
+            // nothing more.
+            ed.keep_fill_whole(id);
+            ed.fill_changes.clear();
+            ed.split_at(sides[0], v(10.0, 0.0)).unwrap();
+            assert!(close(found(&mut ed, id).0, 800.0));
+            assert!(!ed.doc.fill(id).unwrap().divided);
+            assert!(ed.fill_changes.is_empty(), "{:?}", ed.fill_changes);
+        }
+        // Taking the line away makes it one area again.
+        ed.doc.begin();
+        ed.doc.delete([across]);
+        ed.commit("Delete");
+        if !follow {
+            assert!(close(found(&mut ed, id).0, 800.0));
+            assert!(!ed.doc.fill(id).unwrap().divided);
+        }
+    }
+}
+
+#[test]
+fn deleting_part_of_a_fills_outline_says_what_became_of_it() {
+    let mut ed = Editor::new(Document::new());
+    let (_, big, small) = nested_squares(&mut ed);
+    let l_shape = ed.add_fill_at(v(25.0, 25.0)).unwrap();
+    ed.notice = None;
+    ed.selected_fills.clear();
+    ed.selection = small.iter().copied().collect();
+    ed.delete_selection_with(&[]);
+    assert!(matches!(
+        ed.fill_changes[..],
+        [crate::fills::FillChange::Refound { id, after, .. }] if id == l_shape && close(after, 10_000.0)
+    ));
+    assert!(
+        ed.notice
+            .as_deref()
+            .is_some_and(|n| n.contains("around its seed"))
+    );
+    // A side of the big square: no area is left, and it goes.
+    ed.fill_changes.clear();
+    ed.selection = [big[0]].into();
+    ed.delete_selection_with(&[]);
+    assert!(ed.doc.fill(l_shape).is_none());
+    assert_eq!(
+        ed.fill_changes,
+        vec![crate::fills::FillChange::Dropped { id: l_shape }]
     );
 }

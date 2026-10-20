@@ -4,8 +4,8 @@
 use std::collections::BTreeSet;
 
 use drift_core::{
-    DVec2, EntityId, EntityKind, FillKind, Hatch, Layer, LineKind, LineType, LineWeight, Rgb,
-    SketchText, TextAlign,
+    DVec2, EntityId, EntityKind, FillId, FillKind, Hatch, Layer, LineKind, LineType, LineWeight,
+    Rgb, SketchText, TextAlign,
 };
 use drift_solver::Param;
 use serde_json::{Value, json};
@@ -417,9 +417,12 @@ pub(super) fn add_fill(s: &mut Session, a: &Value) -> Res {
             weight: None,
         },
     );
+    let before: Vec<FillId> = ed.doc.fills().map(|(id, _)| id).collect();
     let result = ed.add_fill_at(at);
     ed.fill_style = style;
     let id = result?;
+    // An area that is already filled isn't filled twice: its fill takes the new style.
+    let restyled = before.contains(&id);
     if let Some(l) = layer
         && let Some(mut f) = ed.doc.fill(id).cloned()
     {
@@ -428,7 +431,14 @@ pub(super) fn add_fill(s: &mut Session, a: &Value) -> Res {
     }
     let regions = ed.regions();
     let area = drift_geom::regions::region_at(&regions, at).map(|r| r.area);
-    Ok(json!({ "id": id.to_string(), "area_mm2": area.map(args::num) }))
+    let mut out = json!({ "id": id.to_string(), "area_mm2": area.map(args::num) });
+    if restyled {
+        out["restyled"] = json!(true);
+        out["note"] = json!(format!(
+            "this area was already filled: {id} took the new style, no new fill was made"
+        ));
+    }
+    Ok(out)
 }
 
 pub(super) fn add_text(s: &mut Session, a: &Value) -> Res {

@@ -791,6 +791,28 @@ impl Document {
         self.journal.is_some()
     }
 
+    /// True if curve `id` was deleted, or given other points or another kind (split, trimmed,
+    /// extended), in the open transaction.
+    pub fn reshaped_in_transaction(&self, id: EntityId) -> bool {
+        let Some(journal) = &self.journal else {
+            return false;
+        };
+        match journal.get(&Key::Entity(id)) {
+            Some(Some(Record::Entity(before))) => self
+                .entities
+                .get(&id)
+                .is_none_or(|now| now.kind != before.kind),
+            _ => false,
+        }
+    }
+
+    /// True if fill `id` was added in the open transaction.
+    pub fn fill_created_in_transaction(&self, id: FillId) -> bool {
+        self.journal
+            .as_ref()
+            .is_some_and(|j| matches!(j.get(&Key::Fill(id)), Some(None)))
+    }
+
     /// Entities created in the open transaction (that still exist).
     pub fn created_in_transaction(&self) -> Vec<EntityId> {
         let Some(journal) = &self.journal else {
@@ -1493,12 +1515,18 @@ impl Document {
         for id in dangling {
             self.remove_measurement(id);
         }
-        // A fill whose boundary lost a curve has no area left to fill: it goes too (and
-        // comes back with the curve on undo).
+        // A fill whose whole boundary goes has nothing left to fill: it goes too (and comes
+        // back with its curves on undo). One that keeps some of its curves keeps the deleted
+        // ones' ids, so the editor can find the area around its seed now (or drop it when
+        // there is none).
         let emptied: Vec<FillId> = self
             .fills
             .iter()
-            .filter(|(_, f)| f.boundary.iter().any(|e| doomed.contains(e)))
+            .filter(|(_, f)| {
+                f.boundary
+                    .iter()
+                    .all(|e| doomed.contains(e) || !self.entities.contains_key(e))
+            })
             .map(|(id, _)| *id)
             .collect();
         for id in emptied {

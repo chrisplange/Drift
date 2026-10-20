@@ -75,6 +75,9 @@ pub struct Fill {
     pub weight: Option<LineWeight>,
     /// Draw order within the layer: higher draws on top.
     pub order: i32,
+    /// An edit left it covering more than one area (it was kept whole and flagged, to be
+    /// fitted to one area, split, or kept whole).
+    pub divided: bool,
 }
 
 impl Fill {
@@ -90,6 +93,7 @@ impl Fill {
             opacity: 0.35,
             weight: None,
             order: 0,
+            divided: false,
         }
     }
 }
@@ -966,9 +970,12 @@ mod tests {
                 style: Default::default(),
             })
         );
-        // A fill goes with its boundary: without one of its curves there is no area left.
-        let fill = doc.add_fill(Fill::new(lines, DVec2::splat(5.0), FillKind::Solid));
+        // A fill goes with its whole boundary. With some of its curves left, it stays for the
+        // editor to find its area again (#120).
+        let fill = doc.add_fill(Fill::new(lines.clone(), DVec2::splat(5.0), FillKind::Solid));
         doc.delete([lines_first(&doc)]);
+        assert!(doc.fill(fill).is_some());
+        doc.delete(lines);
         assert!(doc.fill(fill).is_none());
     }
 

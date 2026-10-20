@@ -43,6 +43,7 @@ The light or dark theme, or follow the system. (Also **View → Appearance**.)
 |---|---|
 | **Find closed areas on each layer separately** | An area is closed only by curves on one layer, so furniture or notes on other layers don't cut it up. An outline must then be all on one layer. |
 | **Pick an area only where it is filled or hatched** | On (the default): clicking inside an empty outline picks nothing, so a box selection can start there. Off: it picks the area, to measure it. |
+| **When an edit divides a filled area** | **Keep whole and flag** (the default): the fill or hatch keeps covering the whole area and is marked *Covers 2 areas*; pick it to fit it to one area, split it into one per area, or keep it whole. **Follow its seed**: it takes the area where it was first clicked, and a notice says so. |
 
 ## Crosshair
 

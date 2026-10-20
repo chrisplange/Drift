@@ -11,8 +11,13 @@ Time: about 10 minutes.
 
 A fill or hatch fills a **closed area**: a region bounded by solid curves. Holes inside it
 (islands) are left out. Fills are associative: when the geometry changes, the fill
-follows. If its boundary breaks (a curve deleted, or a gap opened), the fill keeps its last
-shape and the **Inspector** offers **Re-pick boundary**.
+follows. If curves of its outline are deleted, it takes the area its seed is in now (the
+point where it was first clicked), and a notice says so; with no area left there, it goes.
+If its boundary breaks some other way (a gap opened), the fill keeps its last shape and the
+**Inspector** offers **Re-pick boundary**.
+
+Where two shapes' lines lie along each other, each fill is bounded by its own shape's lines,
+so picking or moving one doesn't bring the other's lines along.
 
 Construction geometry doesn't close areas. Neither, if you turn on **Edit → Preferences… →
 Drawing aids → Find closed areas on each layer separately**, do curves on other layers.
@@ -81,7 +86,12 @@ To use your own AutoCAD or Revit patterns, go to **Parameters → Hatch patterns
 .pat…**. Imported patterns are stored in the drawing, so they travel with the file.
 
 A fill belongs to the curves around it: move or reshape them and it follows. A line drawn
-across a fill doesn't cut it; the fill keeps its whole area until its own outline changes.
+across a fill doesn't cut it: the fill keeps its whole area, and is marked **Covers 2
+areas** on the canvas. Pick it and the **Inspector** offers **Fit to its seed's area**,
+**Split into 2** (one fill per area, in the same style) or **Keep whole** (which clears the
+mark). To have such fills take the area where they were first clicked instead, choose
+**Follow its seed** in **Edit → Preferences… → Drawing aids → When an edit divides a filled
+area**.
 
 Hatches are clipped exactly to their boundary and stay crisp at any zoom. A hatch too dense
 to see at the current zoom is drawn as a tint.

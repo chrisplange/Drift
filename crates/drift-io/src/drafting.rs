@@ -65,6 +65,9 @@ pub(crate) struct FillRecord {
     weight: Option<f64>,
     #[serde(default, skip_serializing_if = "is_zero")]
     order: i32,
+    /// An edit left it covering more than one area (v37).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    divided: bool,
 }
 
 #[cfg(not(feature = "demo"))]
@@ -87,6 +90,7 @@ pub(crate) fn block_fill_record(f: &Fill) -> FillRecord {
     let mut r = style_record(f);
     r.layer = None;
     r.order = 0;
+    r.divided = false;
     r
 }
 
@@ -109,6 +113,7 @@ fn style_record(f: &Fill) -> FillRecord {
         opacity: None,
         weight: f.weight.map(LineWeight::mm),
         order: f.order,
+        divided: f.divided,
     };
     match &f.kind {
         FillKind::Solid => {
@@ -140,6 +145,7 @@ pub(crate) fn parse_block_fill(mut r: FillRecord, block: &str) -> Result<Fill, L
     let mut fill = parse_fill_body(r)?;
     fill.boundary.clear();
     fill.layer = LayerId::DEFAULT;
+    fill.divided = false;
     Ok(fill)
 }
 
@@ -174,6 +180,7 @@ fn parse_fill_body(r: FillRecord) -> Result<Fill, LoadError> {
     }
     fill.weight = r.weight.map(LineWeight::nearest);
     fill.order = r.order;
+    fill.divided = r.divided;
     Ok(fill)
 }
 

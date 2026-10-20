@@ -287,6 +287,20 @@ pub fn region_fill(
     painter.add(egui::Shape::mesh(mesh));
 }
 
+/// A small rounded label centred on `at` (a fill marked as covering several areas).
+pub fn badge(painter: &egui::Painter, at: Pos2, text: &str, fg: Color32, bg: Color32) {
+    let galley = painter.layout_no_wrap(text.to_owned(), egui::FontId::proportional(11.0), fg);
+    let rect = egui::Rect::from_center_size(at, galley.size() + egui::vec2(10.0, 4.0));
+    painter.rect(
+        rect,
+        4.0,
+        bg,
+        egui::Stroke::new(1.0, fg),
+        egui::StrokeKind::Inside,
+    );
+    painter.galley(rect.center() - galley.size() / 2.0, galley, fg);
+}
+
 /// A small text label with a background, offset from the cursor.
 pub fn cursor_label(painter: &egui::Painter, at: Pos2, lines: &[String], colors: &OverlayColors) {
     let info = CursorInfo {

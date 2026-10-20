@@ -89,6 +89,7 @@ impl DriftApp {
             ("hidden", self.show_hidden_annotations),
             ("rlayer", self.editor.regions_by_layer),
             ("rfill", self.editor.regions_need_fill),
+            ("dfollow", self.editor.follow_divided_fills),
             ("tdims", self.show_temp_dims),
             ("ai", self.ai_link),
         ];
@@ -158,6 +159,7 @@ impl DriftApp {
                 "hidden" => self.show_hidden_annotations = on,
                 "rlayer" => self.editor.regions_by_layer = on,
                 "rfill" => self.editor.regions_need_fill = on,
+                "dfollow" => self.editor.follow_divided_fills = on,
                 "tdims" => self.show_temp_dims = on,
                 "ai" => self.ai_link = on,
                 #[cfg(not(target_arch = "wasm32"))]

@@ -16,7 +16,10 @@ AppName=Drift
 AppVersion={#AppVersion}
 AppVerName=Drift {#AppVersion}
 AppPublisher=Drift
-AppPublisherURL=https://github.com/chrisplange/Drift
+AppPublisherURL=https://drift-website-c9y.pages.dev/
+; The end-user licence agreement, which the installer asks the user to accept. A silent
+; install (the in-app updater) accepts it without the page.
+LicenseFile=..\..\LICENSE.md
 DefaultDirName={autopf}\Drift
 DisableProgramGroupPage=yes
 DisableDirPage=auto

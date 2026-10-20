@@ -3,8 +3,8 @@
 #
 #   dist/Drift-<version>-macos-universal.dmg
 #
-# The app holds drift-mcp too, the MCP server AI assistants use (docs/ai.md), at
-# Drift.app/Contents/MacOS/drift-mcp.
+# The app holds drift-mcp too, the MCP server AI assistants use
+# (docs/guide/ai/assistants.md), at Drift.app/Contents/MacOS/drift-mcp.
 #
 # Run it on a Mac with Xcode's command line tools and Rust:
 #

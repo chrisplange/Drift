@@ -82,7 +82,7 @@ zooms). The middle or right mouse button drags the view either way.
 **Let AI assistants edit the open drawing** turns on the live link (desktop only). Claude,
 or another assistant connected through `drift-mcp`, then works on the drawing in this
 window, and you see each change as it is made. It is off until you turn it on. See
-[Drawing with AI assistants](../../ai.md).
+[Drawing with AI assistants](../ai/assistants.md).
 
 **Server** shows where the installed `drift-mcp` is. **Copy Claude Desktop config** copies
 the entry to paste into Claude Desktop's `claude_desktop_config.json`, with `--root` set to

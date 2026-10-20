@@ -19,9 +19,10 @@ Snapshots aren't saved in the file.
 
 ## Versions
 
-The file records a format version. This build writes version 27, in which views belong to
-the drawing and sheets place them. A file from before that opens with each of its sheets'
-views made a view of its own.
+The file records a format version. This build writes version 36, in which a block can be
+marked as a Blender profile. A file from before version 27, when views came to belong to the
+drawing and sheets to place them, opens with each of its sheets' views made a view of its
+own.
 
 - **Older files always open** in newer builds. They're upgraded as they load.
 - **Newer files don't open in older builds.** The older build says the file's version is
@@ -66,8 +67,34 @@ session, so the next start is fresh.
 | Export | DXF (R12) | The model at full size, with layers, line types and blocks. |
 | Export | SVG, PDF (model) | The model, or the selection, at 1 : 1 on a page fitted to it with a 5 mm margin: no sheet, title block or border. A named group per layer and joined paths (SVG). Points, construction and hidden or non-printing layers are left out; **Dimensions and notes** includes them. **File → Export → Model as SVG… / Model as PDF…**. |
 
+| Export | Blender profiles (`.drift-profiles.json`) | The blocks marked as **Blender profile**, for the Drift Profiles add-on: **File → Export → Blender profiles…**. Saving writes them beside the drawing too. See below. |
+
 Exports never replace the `.drift` file: Ctrl+S always saves the sketch. See
 [Sheets and output](../tutorials/10-sheets-and-output.md#5-output).
+
+## The Blender profiles file
+
+When any block is marked as a **Blender profile**, saving `Trim.drift` also writes
+`Trim.drift-profiles.json` beside it. When no block is marked, saving deletes that file.
+Blender's Drift Profiles add-on reads it; see
+[Profiles in Blender](../tutorials/13-profiles-in-blender.md).
+
+The file has its own format, versioned separately from `.drift`
+(`"format": "drift-profiles"`, `"version": 1`). It holds:
+
+- One profile per marked block: its name, and its id, which stays the same when the block
+  is renamed.
+- The block's solid curves, joined end to end into loops. Construction and centre lines,
+  points, dimensions, text and fills are left out.
+- Coordinates in metres, y up, with the block's base point as the origin.
+- Each loop as cubic Bézier knots, each knot a point and its two handles. Arcs, circles and
+  ellipses become Béziers.
+- A `closed` flag on each loop. An open loop is half of a turned shape; a closed loop
+  inside another is a hole.
+
+Profiles are listed in block order, so the file changes only where the drawing did. Drift
+writes the whole file under a temporary name and then renames it, so the add-on never reads
+half a file.
 
 ## The clipboard
 

@@ -11,6 +11,15 @@ pub mod memory;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+/// Drift's version: the crate version, or the one a build was given in `DRIFT_VERSION`.
+/// `scripts/package-windows.ps1` labels local test builds that way, e.g.
+/// `0.1.0-beta.1.5+test.9490d05`; semver puts it just after the release it was built from,
+/// so the updater offers the next release but not that one.
+pub const VERSION: &str = match option_env!("DRIFT_VERSION") {
+    Some(v) => v,
+    None => env!("CARGO_PKG_VERSION"),
+};
+
 /// Where a document was opened from or saved to. Only native builds have paths; the browser
 /// has no persistent file handles yet, so every web save is a download.
 pub type FilePath = PathBuf;

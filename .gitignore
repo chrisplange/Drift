@@ -3,3 +3,4 @@
 *.drift.bak
 /apps/web/target
 /dist
+__pycache__/

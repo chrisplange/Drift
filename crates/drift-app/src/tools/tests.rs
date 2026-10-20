@@ -3970,6 +3970,7 @@ fn copies_of_blocks_offer_snap_points() {
     let block = ed.doc.add_block(Block {
         name: "Table".into(),
         fills: Vec::new(),
+        profile: false,
         items: vec![
             line(v(0.0, 0.0), v(20.0, 0.0)),
             line(v(20.0, 0.0), v(20.0, 10.0)),

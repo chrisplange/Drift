@@ -187,6 +187,48 @@ pub fn ellipse_point(center: DVec2, major: DVec2, minor: f64, t: f64) -> DVec2 {
     center + major * t.cos() + n * t.sin()
 }
 
+/// Cubic Béziers along an ellipse (or part of one) from parametric angle `start` over
+/// `sweep`, each spanning at most `max_step` radians. A circle is the ellipse with `major`
+/// of length `minor` along +x.
+pub fn ellipse_cubics(
+    center: DVec2,
+    major: DVec2,
+    minor: f64,
+    start: f64,
+    sweep: f64,
+    max_step: f64,
+) -> Vec<[DVec2; 4]> {
+    let pieces = ((sweep.abs() / max_step).ceil() as usize).max(1);
+    let step = sweep / pieces as f64;
+    let k = 4.0 / 3.0 * (step / 4.0).tan();
+    let n = major.perp().normalize_or_zero() * minor;
+    let at = |t: f64| center + major * t.cos() + n * t.sin();
+    let tangent = |t: f64| n * t.cos() - major * t.sin();
+    (0..pieces)
+        .map(|i| {
+            let t0 = start + step * i as f64;
+            let t1 = t0 + step;
+            [
+                at(t0),
+                at(t0) + tangent(t0) * k,
+                at(t1) - tangent(t1) * k,
+                at(t1),
+            ]
+        })
+        .collect()
+}
+
+/// Cubic Béziers along a circular arc, each spanning at most `max_step` radians.
+pub fn arc_cubics(
+    center: DVec2,
+    radius: f64,
+    start: f64,
+    sweep: f64,
+    max_step: f64,
+) -> Vec<[DVec2; 4]> {
+    ellipse_cubics(center, DVec2::X * radius, radius, start, sweep, max_step)
+}
+
 /// An ellipse (or part of one) as connected points, at least `min_segments` segments and
 /// finer for big ones.
 pub fn flatten_ellipse(
@@ -264,6 +306,40 @@ impl Shape {
                 sweep,
             } => ellipse_bounds(center, major, minor, start, sweep),
             Shape::Bezier { p } => bezier_bounds(&p),
+        }
+    }
+
+    /// The curve as cubic Béziers from its start to its end, round arcs and ellipses in
+    /// pieces of at most `max_step` radians (a line has its handles at its thirds). A point
+    /// has none.
+    pub fn cubics(&self, max_step: f64) -> Vec<[DVec2; 4]> {
+        match *self {
+            Shape::Point(_) => Vec::new(),
+            Shape::Line { a, b } => vec![[a, a + (b - a) / 3.0, a + (b - a) * (2.0 / 3.0), b]],
+            Shape::Circle { center, radius } => arc_cubics(center, radius, 0.0, TAU, max_step),
+            Shape::Arc {
+                center,
+                radius,
+                start,
+                sweep,
+            } => arc_cubics(center, radius, start, sweep, max_step),
+            Shape::Ellipse {
+                center,
+                major,
+                minor,
+                start,
+                sweep,
+            } => ellipse_cubics(center, major, minor, start, sweep, max_step),
+            Shape::Bezier { p } => vec![p],
+        }
+    }
+
+    /// Whether the curve ends where it starts (a whole circle or ellipse).
+    pub fn is_closed(&self) -> bool {
+        match *self {
+            Shape::Circle { .. } => true,
+            Shape::Ellipse { sweep, .. } => sweep.abs() >= TAU - 1e-12,
+            _ => false,
         }
     }
 }

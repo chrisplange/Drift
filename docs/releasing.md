@@ -121,6 +121,14 @@ The updater expects these names on a release. Keep them if the packaging changes
 - `SHA256SUMS.txt`
 - `SHA256SUMS.txt.minisig`
 
+Each release also carries `drift_profiles-<version>.zip`, the Blender add-on that reads the
+profiles files Drift writes (see the guide's
+[Profiles in Blender](guide/tutorials/13-profiles-in-blender.md)). The Package workflow
+builds it with `python scripts/package-blender-addon.py`, which stamps Drift's version into
+its manifest. CI fails if the version in
+`integrations/blender/drift_profiles/blender_manifest.toml` isn't Cargo.toml's. After a
+version bump, run the script once and commit the manifest.
+
 ## Code signing (not set up)
 
 Releases aren't code-signed yet, so Windows SmartScreen and macOS Gatekeeper warn on the

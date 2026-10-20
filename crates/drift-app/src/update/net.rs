@@ -18,7 +18,7 @@ impl Agent {
             .build();
         let agent = ureq::Agent::config_builder()
             .tls_config(tls)
-            .user_agent(format!("Drift/{}", env!("CARGO_PKG_VERSION")))
+            .user_agent(format!("Drift/{}", drift_platform::VERSION))
             .timeout_connect(Some(Duration::from_secs(15)))
             .timeout_recv_response(Some(Duration::from_secs(30)))
             .build()

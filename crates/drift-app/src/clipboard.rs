@@ -304,8 +304,8 @@ impl Editor {
         }
     }
 
-    /// The selection as clipboard text (`None` with nothing to copy).
-    pub fn copy_selection(&self) -> Option<String> {
+    /// The selection as a small document of its own (`None` with nothing to copy).
+    pub fn copy_fragment(&self) -> Option<Document> {
         let picked = self.picked();
         if picked.curves.is_empty()
             && picked.instances.is_empty()
@@ -319,10 +319,25 @@ impl Editor {
         fragment.begin();
         copy_into(&self.doc, &mut fragment, &picked, DVec2::ZERO, false);
         fragment.commit("Copy");
+        Some(fragment)
+    }
+
+    /// The selection as clipboard text (`None` with nothing to copy).
+    #[cfg(not(feature = "demo"))]
+    pub fn copy_selection(&self) -> Option<String> {
+        let fragment = self.copy_fragment()?;
         Some(drift_io::save(&fragment, &drift_io::Metadata::default()))
     }
 
     /// Copy the selection and delete it.
+    pub fn cut_fragment(&mut self) -> Option<Document> {
+        let fragment = self.copy_fragment()?;
+        self.delete_selection();
+        Some(fragment)
+    }
+
+    /// Copy the selection as clipboard text and delete it.
+    #[cfg(not(feature = "demo"))]
     pub fn cut_selection(&mut self) -> Option<String> {
         let text = self.copy_selection()?;
         self.delete_selection();
@@ -333,10 +348,20 @@ impl Editor {
     /// pasted things become the selection. Returns how many were pasted.
     pub fn paste(&mut self, text: &str, at: Option<DVec2>) -> Result<usize, String> {
         let (fragment, _) = drift_io::load(text).map_err(|e| e.to_string())?;
-        let picked = everything(&fragment);
+        self.paste_fragment(&fragment, at)
+    }
+
+    /// Paste a copied piece of a sketch (see [`Editor::copy_fragment`]), as
+    /// [`Editor::paste`] does.
+    pub fn paste_fragment(
+        &mut self,
+        fragment: &Document,
+        at: Option<DVec2>,
+    ) -> Result<usize, String> {
+        let picked = everything(fragment);
         let offset = match at {
             Some(at) => {
-                let b = extent(&fragment);
+                let b = extent(fragment);
                 if b.is_empty() {
                     DVec2::ZERO
                 } else {
@@ -346,7 +371,7 @@ impl Editor {
             None => DVec2::ZERO,
         };
         self.doc.begin();
-        let made = copy_into(&fragment, &mut self.doc, &picked, offset, false);
+        let made = copy_into(fragment, &mut self.doc, &picked, offset, false);
         if !self.commit("Paste") {
             return Err("the pasted geometry could not be solved".into());
         }

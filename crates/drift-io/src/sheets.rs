@@ -1,9 +1,11 @@
 //! File records for sheets (format 8) and views (format 27).
 
+#[cfg(not(feature = "demo"))]
+use drift_core::LayerId;
 use drift_core::{
     Bounds, DVec2, PaperSize, Revision, Sheet, SheetColours, SheetId, TitleBlock, TitleFields,
 };
-use drift_core::{FieldSet, LayerId, Project, View, ViewFrame, ViewId, Viewport};
+use drift_core::{FieldSet, Project, View, ViewFrame, ViewId, Viewport};
 use serde::{Deserialize, Serialize};
 
 use crate::{LoadError, parse_prefixed};
@@ -61,6 +63,7 @@ pub(crate) struct ProjectRecord {
     fields: Option<String>,
 }
 
+#[cfg(not(feature = "demo"))]
 pub(crate) fn project_record(p: &Project) -> Option<ProjectRecord> {
     (*p != Project::default()).then(|| ProjectRecord {
         name: p.name.clone(),
@@ -129,6 +132,7 @@ pub(crate) struct ViewRecord {
     hidden_layers: Vec<String>,
 }
 
+#[cfg(not(feature = "demo"))]
 pub(crate) fn view_record(id: ViewId, v: &View) -> ViewRecord {
     ViewRecord {
         id: id.to_string(),
@@ -253,6 +257,7 @@ pub(crate) struct SheetRecord {
     colours: Option<String>,
 }
 
+#[cfg(not(feature = "demo"))]
 pub(crate) fn sheet_record(id: SheetId, s: &Sheet) -> SheetRecord {
     let f = &s.fields;
     SheetRecord {

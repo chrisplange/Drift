@@ -4,6 +4,8 @@ mod blocks_ui;
 pub(crate) mod checker_ui;
 mod context_ui;
 pub(crate) mod crosshair;
+#[cfg(feature = "demo")]
+pub(crate) mod demo_ui;
 pub(crate) mod dialogs;
 pub(crate) mod dim_align;
 pub(crate) mod dock_ui;
@@ -15,7 +17,7 @@ mod groups_ui;
 pub(crate) mod hatch_ui;
 pub(crate) mod import_ui;
 mod keyboard;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), not(feature = "demo")))]
 pub(crate) mod link_ui;
 pub(crate) mod mark_views;
 pub(crate) mod note_ui;

@@ -29,6 +29,8 @@ jobs:
       - run: cargo clippy --workspace --all-targets
       - name: Clippy (wasm32)
         run: cargo clippy --target wasm32-unknown-unknown -p drift-core -p drift-geom -p drift-io -p drift-platform -p drift-solver -p drift-render -p drift-app -p drift-web
+      - name: Clippy (wasm32, the browser demo)
+        run: cargo clippy --target wasm32-unknown-unknown -p drift-web --features demo
 
   test:
     name: Test (${{ matrix.os }})
@@ -45,6 +47,8 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers
       - run: cargo test --workspace
+      # The browser demo: saving, exporting and printing show a note, and copies stay inside.
+      - run: cargo test -p drift-app --features demo --test demo
       - name: Upload render test images
         if: always()
         uses: actions/upload-artifact@v4
@@ -90,11 +94,21 @@ jobs:
         run: >
           trunk build --release --cargo-profile web-release
           --public-url "/${{ github.event.repository.name }}/"
+      # The demo the website serves at /app/ (website.yml builds and deploys it).
+      - name: Build the demo
+        working-directory: apps/web
+        run: >
+          trunk build --release --cargo-profile web-release --features demo
+          --public-url /app/ --dist dist-demo
       - name: Check bundle size (budget 6 MB gzipped)
         run: |
-          size=$(gzip -9 -c apps/web/dist/*.wasm | wc -c)
-          echo "WASM gzipped: $((size / 1024)) KiB" | tee -a "$GITHUB_STEP_SUMMARY"
-          test "$size" -lt $((6 * 1024 * 1024))
+          for dist in dist dist-demo; do
+            size=$(gzip -9 -c apps/web/$dist/*.wasm | wc -c)
+            echo "WASM gzipped ($dist): $((size / 1024)) KiB" | tee -a "$GITHUB_STEP_SUMMARY"
+            test "$size" -lt $((6 * 1024 * 1024))
+          done
+      - name: The demo has no way to download a file
+        run: scripts/check-demo-build.sh apps/web/dist-demo apps/web/dist
       # Once the website is live (the SITE_URL repository variable is set, e.g.
       # https://drift.example), GitHub Pages only redirects to its /app/; until then it
       # serves the app itself. The website workflow builds and deploys the site.

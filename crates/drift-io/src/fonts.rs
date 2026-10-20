@@ -1,6 +1,7 @@
 //! File records for the fonts a drawing carries (format 19): each family's font files as
 //! base64, and the family its annotations are set in.
 
+#[cfg(not(feature = "demo"))]
 use std::collections::BTreeSet;
 
 use drift_core::{EmbeddedFont, FontFile, FontSet};
@@ -8,8 +9,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::LoadError;
 
+#[cfg(not(feature = "demo"))]
 const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
+#[cfg(not(feature = "demo"))]
 pub(crate) fn base64(data: &[u8]) -> String {
     let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
@@ -87,6 +90,7 @@ pub(crate) struct FontsRecord {
     embedded: Vec<FamilyRecord>,
 }
 
+#[cfg(not(feature = "demo"))]
 /// The record to save: the drawing's font, and only the families `used` (one that nothing
 /// is set in any more isn't worth its megabytes).
 pub(crate) fn fonts_record(fonts: &FontSet, used: &BTreeSet<String>) -> Option<FontsRecord> {

@@ -51,11 +51,14 @@ pub mod dxf;
 mod dxf_import;
 mod fonts;
 mod icc;
+// The writers (PDF, SVG, DXF and `.drift`) are left out of the browser demo.
+#[cfg(not(feature = "demo"))]
 pub mod pdf;
 mod pdf_image;
 pub mod pdf_import;
 mod pdf_text;
 mod sheets;
+#[cfg(not(feature = "demo"))]
 pub mod svg;
 pub mod svg_import;
 mod texts;
@@ -395,6 +398,7 @@ const LENGTH_FORMATS: [(LengthFormat, &str); 7] = [
 ];
 
 impl DisplayRecord {
+    #[cfg(not(feature = "demo"))]
     /// Only the settings that differ from the defaults.
     fn from_units(u: Units) -> Self {
         fn diff<T: PartialEq>(a: T, b: T) -> Option<T> {
@@ -486,6 +490,7 @@ struct Look {
 }
 
 impl Look {
+    #[cfg(not(feature = "demo"))]
     fn of(entity: &Entity) -> Look {
         let a = entity.appearance;
         Look {
@@ -543,6 +548,7 @@ const KINDS: [(Kind, &str); 3] = [
     (Kind::Number, "number"),
 ];
 
+#[cfg(not(feature = "demo"))]
 fn kind_name(kind: Kind) -> &'static str {
     KINDS
         .iter()
@@ -558,6 +564,7 @@ fn parse_prefixed(s: &str, prefix: char) -> Result<u32, LoadError> {
         .ok_or_else(|| LoadError::BadId(s.to_owned()))
 }
 
+#[cfg(not(feature = "demo"))]
 fn constraint_record(
     id: ConstraintId,
     c: &Constraint,
@@ -859,6 +866,7 @@ struct GroupRecord {
     members: Vec<String>,
 }
 
+#[cfg(not(feature = "demo"))]
 fn id_string(id: EntityId) -> String {
     id.to_string()
 }
@@ -871,6 +879,7 @@ fn parse_id(s: &str) -> Result<EntityId, LoadError> {
         .ok_or_else(|| LoadError::BadId(s.to_owned()))
 }
 
+#[cfg(not(feature = "demo"))]
 fn record(id: EntityId, entity: &Entity) -> EntityRecord {
     let style = entity.style.into();
     let id = id_string(id);
@@ -973,6 +982,7 @@ fn record(id: EntityId, entity: &Entity) -> EntityRecord {
 }
 
 /// Serialize a document to `.drift` JSON.
+#[cfg(not(feature = "demo"))]
 pub fn save(doc: &Document, meta: &Metadata) -> String {
     let mut out = String::new();
     out.push_str("{\n");
@@ -1201,6 +1211,7 @@ pub fn save(doc: &Document, meta: &Metadata) -> String {
     out
 }
 
+#[cfg(not(feature = "demo"))]
 /// Write `"name": [ ... ]` with one item per line.
 fn push_array(out: &mut String, name: &str, items: &[String], more: bool) {
     out.push_str(&format!("  \"{name}\": ["));

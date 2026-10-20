@@ -9,7 +9,9 @@ use drift_core::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{LENGTH_FORMATS, LoadError, id_string, parse_id, parse_layer_id, parse_prefixed};
+#[cfg(not(feature = "demo"))]
+use crate::id_string;
+use crate::{LENGTH_FORMATS, LoadError, parse_id, parse_layer_id, parse_prefixed};
 
 fn is_zero(v: &i32) -> bool {
     *v == 0
@@ -65,6 +67,7 @@ pub(crate) struct FillRecord {
     order: i32,
 }
 
+#[cfg(not(feature = "demo"))]
 pub(crate) fn fill_record(doc: &Document, id: FillId, f: &Fill) -> FillRecord {
     let mut r = style_record(f);
     r.id = id.to_string();
@@ -78,6 +81,7 @@ pub(crate) fn fill_record(doc: &Document, id: FillId, f: &Fill) -> FillRecord {
     r
 }
 
+#[cfg(not(feature = "demo"))]
 /// A block's fill: its seed and style.
 pub(crate) fn block_fill_record(f: &Fill) -> FillRecord {
     let mut r = style_record(f);
@@ -86,6 +90,7 @@ pub(crate) fn block_fill_record(f: &Fill) -> FillRecord {
     r
 }
 
+#[cfg(not(feature = "demo"))]
 fn style_record(f: &Fill) -> FillRecord {
     let default = Fill::new(Vec::new(), DVec2::ZERO, FillKind::Solid);
     let mut r = FillRecord {
@@ -205,6 +210,7 @@ pub(crate) struct LeaderRecord {
     shoulder: Option<f64>,
 }
 
+#[cfg(not(feature = "demo"))]
 fn leader_record(l: &Leader) -> LeaderRecord {
     LeaderRecord {
         to: match l.to {
@@ -362,6 +368,7 @@ pub(crate) enum AnnotationRecord {
     },
 }
 
+#[cfg(not(feature = "demo"))]
 pub(crate) fn annotation_record(id: AnnotationId, a: &Annotation) -> AnnotationRecord {
     let id = id.to_string();
     match a {
@@ -637,6 +644,7 @@ pub(crate) enum ToleranceRecord {
     Fit { fit: String },
 }
 
+#[cfg(not(feature = "demo"))]
 pub(crate) fn tolerance_record(t: &Tolerance) -> Option<ToleranceRecord> {
     Some(match t {
         Tolerance::None => return None,
@@ -703,6 +711,7 @@ fn is_yes(b: &bool) -> bool {
     *b
 }
 
+#[cfg(not(feature = "demo"))]
 pub(crate) fn shown_record(
     r: AnnotationRef,
     s: Shown,
@@ -777,6 +786,7 @@ pub(crate) struct StyleRecord {
     color: Option<String>,
 }
 
+#[cfg(not(feature = "demo"))]
 pub(crate) fn override_record(r: AnnotationRef, s: &StyleOverride) -> StyleRecord {
     StyleRecord {
         of: match r {
@@ -872,6 +882,7 @@ pub(crate) struct DraftRecord {
     color: Option<String>,
 }
 
+#[cfg(not(feature = "demo"))]
 pub(crate) fn draft_record(s: &DraftStyle) -> Option<DraftRecord> {
     (*s != DraftStyle::default()).then(|| DraftRecord {
         standard: match s.standard {

@@ -55,7 +55,10 @@ impl DriftApp {
         self.drawing_settings_window(ctx);
         self.relation_pie(ctx);
         self.import_report_window(ctx);
+        #[cfg(not(feature = "demo"))]
         self.output_window(ctx);
+        #[cfg(feature = "demo")]
+        self.demo_note(ctx);
         self.sketch_check_window(ctx);
         #[cfg(not(target_arch = "wasm32"))]
         self.update_notice(ctx);

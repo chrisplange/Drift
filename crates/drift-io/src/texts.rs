@@ -43,6 +43,7 @@ pub(crate) struct TextRecord {
     color: Option<String>,
 }
 
+#[cfg(not(feature = "demo"))]
 pub(crate) fn text_record(id: TextId, t: &SketchText) -> TextRecord {
     TextRecord {
         id: id.to_string(),

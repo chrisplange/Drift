@@ -7,11 +7,14 @@
 //! them in an AC1009 file, but a strict R12 reader may skip them. Text uses DXF's `%%c` / `%%d` / `%%p`
 //! codes for Ø, ° and ±.
 
+#[cfg(not(feature = "demo"))]
 use std::collections::BTreeMap;
 use std::f64::consts::TAU;
+#[cfg(not(feature = "demo"))]
 use std::fmt::Write as _;
 
 use drift_core::{DVec2, LengthFormat, LineType, Rgb, Shape, Units};
+#[cfg(not(feature = "demo"))]
 use drift_draft::page::{Align, Drawing, Prim, dash_pattern};
 
 /// The AutoCAD Color Index entries we map to and from (index, colour).
@@ -77,6 +80,7 @@ pub(crate) fn aci_rgb(index: i64) -> Option<Rgb> {
     Some(Rgb([byte(r), byte(g), byte(b)]))
 }
 
+#[cfg(not(feature = "demo"))]
 fn line_type_name(t: LineType) -> &'static str {
     match t {
         LineType::Continuous => "CONTINUOUS",
@@ -97,6 +101,7 @@ pub(crate) fn parse_line_type(name: &str) -> LineType {
     }
 }
 
+#[cfg(not(feature = "demo"))]
 /// A layer name DXF accepts.
 fn layer_name(name: &str) -> String {
     let s: String = name
@@ -112,6 +117,7 @@ fn layer_name(name: &str) -> String {
     if s.is_empty() { "0".into() } else { s }
 }
 
+#[cfg(not(feature = "demo"))]
 fn dxf_text(s: &str) -> String {
     s.chars()
         .map(|c| match c {
@@ -126,8 +132,10 @@ fn dxf_text(s: &str) -> String {
         .collect()
 }
 
+#[cfg(not(feature = "demo"))]
 struct Out(String);
 
+#[cfg(not(feature = "demo"))]
 impl Out {
     fn pair(&mut self, code: i32, value: impl std::fmt::Display) {
         let _ = write!(self.0, "{code:>3}\n{value}\n");
@@ -199,6 +207,7 @@ impl DxfUnits {
 }
 
 /// Write a drawing (in world millimetres) as R12 DXF, in `units`.
+#[cfg(not(feature = "demo"))]
 pub fn write(d: &Drawing, units: DxfUnits) -> String {
     let d = &d.scaled(1.0 / units.mm_per_unit);
     let mut o = Out(String::new());
@@ -314,6 +323,7 @@ pub fn write(d: &Drawing, units: DxfUnits) -> String {
     o.0
 }
 
+#[cfg(not(feature = "demo"))]
 /// One entity (an `Insert` becomes an INSERT of its block).
 fn write_item(
     o: &mut Out,

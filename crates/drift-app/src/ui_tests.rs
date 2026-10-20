@@ -4123,6 +4123,7 @@ fn copy_paste_and_nudge_on_the_canvas() {
     h.event(Event::Copy);
     h.run();
     let copied = h.state().clipboard.clone().expect("copied");
+    let copied = drift_io::save(&copied, &Default::default());
     let at = DVec2::new(70.0, 45.0);
     h.hover_at(screen(&h, at));
     h.run();

@@ -181,7 +181,11 @@ impl DriftApp {
                 .take(MAX_RECENT)
                 .collect();
         }
-        let Some(text) = storage.get_string(KEY_DOCUMENT).filter(|t| !t.is_empty()) else {
+        // The demo starts afresh each time (and never kept a drawing to restore).
+        let Some(text) = storage
+            .get_string(KEY_DOCUMENT)
+            .filter(|t| !t.is_empty() && cfg!(not(feature = "demo")))
+        else {
             return;
         };
         match drift_io::load(&text) {
@@ -295,12 +299,14 @@ impl DriftApp {
         }
     }
 
+    #[cfg(not(feature = "demo"))]
     pub(crate) fn file_bytes(&self) -> Vec<u8> {
         let mut meta = self.file.meta.clone();
         meta.generator = Some(format!("Drift {}", env!("CARGO_PKG_VERSION")));
         drift_io::save(&self.editor.doc, &meta).into_bytes()
     }
 
+    #[cfg(not(feature = "demo"))]
     pub(crate) fn save(&mut self) {
         // Only ever overwrite a sketch file: never an export or an imported drawing.
         match &self.file.path {
@@ -309,9 +315,20 @@ impl DriftApp {
         }
     }
 
+    #[cfg(not(feature = "demo"))]
     pub(crate) fn save_as(&mut self) {
         self.files
             .save_as(&self.file.name, DRIFT_FILE, self.file_bytes());
+    }
+
+    #[cfg(feature = "demo")]
+    pub(crate) fn save(&mut self) {
+        self.not_in_demo("Saving");
+    }
+
+    #[cfg(feature = "demo")]
+    pub(crate) fn save_as(&mut self) {
+        self.not_in_demo("Saving");
     }
 
     pub(crate) fn handle_file_events(&mut self, now: f64) {

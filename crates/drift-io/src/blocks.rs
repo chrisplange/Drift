@@ -1,8 +1,10 @@
 //! File records for blocks and their placed copies (format 10; a block's `fills`, 22).
 
+#[cfg(not(feature = "demo"))]
+use drift_core::LayerId;
 use drift_core::{
-    Appearance, Block, BlockId, BlockItem, DVec2, Instance, InstanceId, LayerId, LineKind,
-    LineType, LineWeight, Rgb, Shape,
+    Appearance, Block, BlockId, BlockItem, DVec2, Instance, InstanceId, LineKind, LineType,
+    LineWeight, Rgb, Shape,
 };
 use serde::{Deserialize, Serialize};
 
@@ -88,6 +90,7 @@ pub(crate) struct InstanceRecord {
     layer: Option<String>,
 }
 
+#[cfg(not(feature = "demo"))]
 pub(crate) fn block_record(id: BlockId, b: &Block) -> BlockRecord {
     let items = b
         .items
@@ -243,6 +246,7 @@ pub(crate) fn parse_block(r: BlockRecord) -> Result<(BlockId, Block), LoadError>
     ))
 }
 
+#[cfg(not(feature = "demo"))]
 pub(crate) fn instance_record(id: InstanceId, i: &Instance) -> InstanceRecord {
     InstanceRecord {
         id: id.to_string(),

@@ -6,7 +6,7 @@
 //! ```json
 //! {
 //!   "format": "drift",
-//!   "version": 34,
+//!   "version": 35,
 //!   "meta": {"title":"Bracket","units":"mm","generator":"Drift 0.1.0"},
 //!   "display": {"length":"architectural","fraction":16},
 //!   "variables": [
@@ -92,8 +92,9 @@ pub const EXTENSION: &str = "drift";
 /// field set) and a sheet's `status`; 31 = a `shown` entry's `views` (a dimension or
 /// annotation drawn in those views only); 32 = adds a view's `construction` (construction
 /// geometry shown on sheets); 33 = adds an underlay's `images` (pictures from a PDF page);
-/// 34 = adds a dimension's `ext` (extension line starts set by hand).
-pub const FORMAT_VERSION: u32 = 34;
+/// 34 = adds a dimension's `ext` (extension line starts set by hand); 35 = a sheet's
+/// `title_block` can be `blank` (blank paper; `none` stays the border without a title block).
+pub const FORMAT_VERSION: u32 = 35;
 const FORMAT_TAG: &str = "drift";
 
 /// Document-level properties stored alongside the geometry.
@@ -1893,7 +1894,7 @@ mod tests {
         let text = save(&doc, &Metadata::default());
         let expected = r#"{
   "format": "drift",
-  "version": 34,
+  "version": 35,
   "meta": {"units":"mm"},
   "entities": [
     {"type":"point","id":"e1","at":[0.0,0.0]},
@@ -2072,7 +2073,7 @@ mod tests {
         // A file from before extension starts opens with them all automatic.
         let old = text.replace(r#","ext":[null,12.5]"#, "");
         let old = old.replace(r#","ext":[-2.0,3.25]"#, "");
-        let old = old.replace(r#""version": 34"#, r#""version": 33"#);
+        let old = old.replace(r#""version": 35"#, r#""version": 33"#);
         let (loaded, _) = load(&old).unwrap();
         assert_eq!(loaded.extension_starts(h), [None, None]);
         assert_eq!(loaded.extension_starts(both), [None, None]);
@@ -2382,6 +2383,30 @@ mod tests {
         let flat = r#"{"format":"drift","version":26,"meta":{"units":"mm"},"entities":[],
             "views":[{"id":"w1","scale":1.0,"center":[0.0,0.0],"size":[0.0,10.0]}]}"#;
         assert!(load(flat).is_err(), "a crop with no width");
+    }
+
+    #[test]
+    fn blank_paper_round_trips_and_old_none_keeps_its_border() {
+        use drift_core::{Sheet, TitleBlock};
+        let mut doc = Document::new();
+        for (name, title_block) in [("Blank", TitleBlock::None), ("Framed", TitleBlock::Border)] {
+            let mut sheet = Sheet::new(name);
+            sheet.title_block = title_block;
+            doc.add_sheet(sheet);
+        }
+        let text = save(&doc, &Metadata::default());
+        assert!(text.contains(r#""title_block":"blank""#), "{text}");
+        assert!(text.contains(r#""title_block":"none""#), "{text}");
+        let (again, _) = load(&text).unwrap();
+        assert_eq!(again, doc);
+        // A file from before blank paper: its "none" is the border, as it printed then.
+        let v34 = r#"{"format":"drift","version":34,"meta":{"units":"mm"},"entities":[],
+            "sheets":[{"id":"s1","name":"Old","paper":"A3","title_block":"none"}]}"#;
+        let (old, _) = load(v34).unwrap();
+        assert_eq!(
+            old.sheets().next().unwrap().1.title_block,
+            TitleBlock::Border
+        );
     }
 
     #[test]
@@ -2955,7 +2980,7 @@ mod tests {
         doc.add_text(drift_core::SketchText::new("A", DVec2::ZERO, 3.0));
 
         let text = save(&doc, &Metadata::default());
-        assert!(text.contains("\"version\": 34"));
+        assert!(text.contains("\"version\": 35"));
         // A mark points at its view.
         assert!(text.contains(r#""flip":true,"view":"w"#), "{text}");
         assert!(text.contains(r#""styles": ["#) && text.contains(r#""alt_units":"none""#));

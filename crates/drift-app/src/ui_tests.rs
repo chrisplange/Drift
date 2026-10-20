@@ -3184,6 +3184,64 @@ fn the_model_exports_as_svg_and_pdf_from_the_file_menu() {
 }
 
 #[test]
+fn a_sheets_title_block_can_be_border_only_or_none() {
+    let Some(mut h) = harness() else { return };
+    h.get_by_label("File").click();
+    h.run();
+    h.get_by_label("Open example").click();
+    h.run();
+    h.state_mut().show_panel(Panel::Sheets);
+    h.run();
+    h.get_by_label("New sheet").click();
+    h.run();
+    h.run();
+    let id = h.state().current_sheet().expect("a sheet");
+    h.state_mut().show_panel(Panel::Inspector);
+    h.run();
+    let frame_items = |h: &mut Harness<'_, DriftApp>| {
+        let painter = h.ctx.layer_painter(egui::LayerId::background());
+        let pages = h.state_mut().pages(&painter);
+        pages[0]
+            .items
+            .iter()
+            .filter(|i| i.layer == drift_draft::sheet::FRAME_LAYER)
+            .count()
+    };
+    let modern = frame_items(&mut h);
+    // The choices, in order, with today's "None" now "Border only".
+    h.get_by_value("Modern").click();
+    h.run();
+    assert!(h.query_by_label("Border only").is_some());
+    save_png("drift_ui_title_block_choices.png", &mut h);
+    h.get_by_label("Border only").click();
+    h.run();
+    let sheet = h.state().editor.doc.sheet(id).unwrap().clone();
+    assert_eq!(sheet.title_block, drift_core::TitleBlock::Border);
+    let border = frame_items(&mut h);
+    assert!(border > 0 && border < modern, "{border} of {modern}");
+    // None: blank paper.
+    h.get_by_value("Border only").click();
+    h.run();
+    h.get_by_label("None").click();
+    h.run();
+    h.run();
+    let sheet = h.state().editor.doc.sheet(id).unwrap().clone();
+    assert_eq!(sheet.title_block, drift_core::TitleBlock::None);
+    save_png("drift_ui_title_block_none.png", &mut h);
+    let painter = h.ctx.layer_painter(egui::LayerId::background());
+    let pages = h.state_mut().pages(&painter);
+    let b = drift_draft::sheet::border(&sheet);
+    assert!(
+        !pages[0].items.iter().any(|i| matches!(
+            &i.prim,
+            drift_draft::page::Prim::Polyline { points, closed: true } if points.contains(&b.min)
+        )),
+        "no border"
+    );
+    assert!(frame_items(&mut h) < border);
+}
+
+#[test]
 fn sheets_preview_and_export() {
     let Some(mut h) = harness() else { return };
     h.get_by_label("File").click();

@@ -63,7 +63,7 @@ Drift's sketcher is modelled on the SolidWorks sketch.
 | Sketch fillet / chamfer | F (F again for chamfer). Size on the canvas by moving the pointer, or type it. |
 | Convert entities, offset, mirror, patterns | Offset (O), Mirror (M), linear and circular patterns in the **Inspector**. |
 | Repair sketch | **Edit → Check sketch…** |
-| Drawings | Sheets with views, title blocks (modern, ISO 7200, ASME Y14.1) and ISO or ASME dimension styles. |
+| Drawings | Sheets with views, title blocks (modern, ISO 7200, ASME Y14.1, border only, or blank paper) and ISO or ASME dimension styles. |
 | Splines | The pen tool (P) draws Bézier curves the Illustrator way. |
 
 What's different: there's one sketch, no features or 3D. Drift adds Blender-style keys for

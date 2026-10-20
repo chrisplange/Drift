@@ -56,7 +56,11 @@ Click bare paper on the sheet (or its title block) and the **Inspector** shows t
   beside it). Its tab and the Sheets list show the number and name.
 - **Paper:** **Size** (A4 to A0, ANSI A to E) and **Landscape** or **Portrait**.
 - **Colours:** how the sheet prints (see [Colour, greyscale or black & white](#colour-greyscale-or-black--white)).
-- **Title block:** **Modern**, **ISO 7200**, **ASME Y14.1** or **None**. Then the fields:
+- **Title block:** **Modern**, **ISO 7200**, **ASME Y14.1**, **Border only** (the ISO
+  border and centring marks, no title block) or **None** (blank paper: nothing printed,
+  for boards and sheets placed into a layout program; the drawing area is the paper less a
+  5 mm print margin). Drawings that chose **None** before blank paper came in open as
+  **Border only**, so they print as before. Then the fields:
   title, drawn by, checked, company, material and date (**Today** fills it in). The scale,
   the sheet number ("1 / 2") and the revision fill themselves in.
 - **Project settings…:** what every sheet shares (see below).

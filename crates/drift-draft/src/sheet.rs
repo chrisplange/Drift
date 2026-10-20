@@ -37,11 +37,17 @@ const VALUE_HEIGHT: f64 = 3.0;
 const TITLE_HEIGHT: f64 = 5.0;
 const REV_ROW: f64 = 6.0;
 
+/// How far in from the paper's edge blank paper's drawing area keeps (what printers leave).
+pub const PRINT_MARGIN: f64 = 5.0;
+
 /// The border's inner rectangle: (left, bottom, right, top) margins differ by standard (ISO
-/// leaves 20 mm on the left for filing).
+/// leaves 20 mm on the left for filing). Blank paper has no border: the paper less the
+/// print margin.
 pub fn border(sheet: &Sheet) -> Bounds {
     let size = sheet.size();
-    let (left, other) = if sheet.title_block == TitleBlock::Modern {
+    let (left, other) = if sheet.title_block == TitleBlock::None {
+        (PRINT_MARGIN, PRINT_MARGIN)
+    } else if sheet.title_block == TitleBlock::Modern {
         // Even all round.
         (10.0, 10.0)
     } else if sheet.paper.is_ansi() || sheet.title_block == TitleBlock::Ansi {
@@ -165,7 +171,7 @@ pub fn title_block_bounds(sheet: &Sheet) -> Option<Bounds> {
         TitleBlock::Modern => (b.max.x - b.min.x, STRIP),
         TitleBlock::Iso => (180.0, 36.0),
         TitleBlock::Ansi => (177.8, 38.1),
-        TitleBlock::None => return None,
+        TitleBlock::Border | TitleBlock::None => return None,
     };
     let w = w.min(b.max.x - b.min.x);
     Some(Bounds {
@@ -208,9 +214,14 @@ pub fn draw_frame(
     logo: Option<&crate::logo::Logo>,
     d: &mut Drawing,
 ) {
-    if sheet.title_block == TitleBlock::Modern {
-        draw_modern(sheet, project, scale, sheet_no, logo, d);
-        return;
+    match sheet.title_block {
+        // Blank paper.
+        TitleBlock::None => return,
+        TitleBlock::Modern => {
+            draw_modern(sheet, project, scale, sheet_no, logo, d);
+            return;
+        }
+        TitleBlock::Iso | TitleBlock::Ansi | TitleBlock::Border => {}
     }
     let b = border(sheet);
     d.rect(FRAME_LAYER, Pen::new(BORDER_PEN), b.min, b.max);
@@ -849,8 +860,57 @@ mod tests {
         // The title block sits in the bottom-right corner of the border.
         let tb = title_block_bounds(&sheet).unwrap();
         assert!((tb.max.x - 410.0).abs() < 1e-9 && (tb.min.y - 10.0).abs() < 1e-9);
-        sheet.title_block = TitleBlock::None;
+        sheet.title_block = TitleBlock::Border;
         assert!(title_block_bounds(&sheet).is_none());
+    }
+
+    #[test]
+    fn border_only_draws_the_frame_and_none_draws_nothing() {
+        let mut sheet = Sheet::new("Board");
+        sheet.revisions.push(Revision {
+            rev: "A".into(),
+            date: "2026-10-20".into(),
+            description: "First issue".into(),
+            by: "CL".into(),
+        });
+        let frame = |sheet: &Sheet| {
+            let mut d = Drawing::new(sheet.size());
+            draw_frame(sheet, &Project::default(), "1:1", (1, 1), None, &mut d);
+            d
+        };
+        // Border only: the ISO border and four centring marks, with the revision table.
+        sheet.title_block = TitleBlock::Border;
+        let d = frame(&sheet);
+        let b = border(&sheet);
+        assert!(d.items.iter().any(|i| matches!(
+            &i.prim,
+            Prim::Polyline { points, closed: true } if points.contains(&b.min)
+        )));
+        let marks = d
+            .items
+            .iter()
+            .filter(|i| {
+                matches!(i.prim, Prim::Line(a, _) if a.x == 0.0 || a.y == 0.0
+                || a.x == 210.0 || a.y == 148.5)
+            })
+            .count();
+        assert!(marks >= 2, "{:?}", d.items);
+        assert!(texts(&d).iter().any(|t| t == "First issue"));
+        assert_eq!(view_area(&sheet), drawing_area(&sheet));
+        // None: blank paper, and the whole of it less a print margin to draw on.
+        sheet.title_block = TitleBlock::None;
+        assert!(frame(&sheet).items.is_empty());
+        assert!(title_block_bounds(&sheet).is_none());
+        assert_eq!(
+            view_area(&sheet),
+            Bounds {
+                min: DVec2::splat(PRINT_MARGIN),
+                max: DVec2::new(420.0, 297.0) - DVec2::splat(PRINT_MARGIN),
+            }
+        );
+        // Keys: an old "none" is Border only, so old files print as before.
+        assert_eq!(TitleBlock::parse("none"), Some(TitleBlock::Border));
+        assert_eq!(TitleBlock::parse("blank"), Some(TitleBlock::None));
     }
 
     #[test]

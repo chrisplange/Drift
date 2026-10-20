@@ -14,6 +14,9 @@ import json
 FORMAT = "drift-profiles"
 VERSION = 1
 EXTENSION = ".drift-profiles.json"
+#: What the import file browser shows. Blender cuts each filter pattern to 15 characters, so
+#: "*.drift-profiles.json" would match nothing: this is the end of the name that fits.
+FILTER_GLOB = "*profiles.json"
 
 #: The planes a profile can be laid in: XY to sweep along a curve (a bevel object), XZ to
 #: lathe round Z (a Screw modifier), with the profile's x as the radius.

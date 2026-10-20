@@ -78,6 +78,14 @@ class FixtureTest(unittest.TestCase):
         self.assertAlmostEqual(mm[0]["points"][1]["co"][0], 40.0)
         self.assertAlmostEqual(metres[0]["points"][1]["co"][0], 0.04)
 
+    def test_the_file_browser_shows_drifts_files(self):
+        import fnmatch
+
+        # Blender keeps only the first 15 characters of a filter pattern.
+        self.assertLessEqual(len(convert.FILTER_GLOB), 15)
+        self.assertTrue(fnmatch.fnmatch("Trim" + convert.EXTENSION, convert.FILTER_GLOB))
+        self.assertTrue(fnmatch.fnmatch(os.path.basename(FIXTURE), convert.FILTER_GLOB))
+
     def test_profiles_are_found_by_id(self):
         self.assertIsNone(convert.find(self.data, "b99"))
 

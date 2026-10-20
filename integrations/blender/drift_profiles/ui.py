@@ -56,7 +56,7 @@ class DRIFT_OT_import_profiles(bpy.types.Operator, ImportHelper):
     bl_options = {"REGISTER", "UNDO"}
 
     filename_ext = ".json"
-    filter_glob: StringProperty(default="*" + convert.EXTENSION, options={"HIDDEN"})
+    filter_glob: StringProperty(default=convert.FILTER_GLOB, options={"HIDDEN"})
 
     def execute(self, context):
         try:

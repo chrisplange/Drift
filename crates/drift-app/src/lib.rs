@@ -22,6 +22,7 @@ pub mod fonts;
 mod icons;
 mod layers_ui;
 pub mod library;
+pub(crate) mod links;
 #[cfg(test)]
 mod mem_tests;
 pub mod modify;

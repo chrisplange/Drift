@@ -166,7 +166,7 @@ Usage: drift-mcp [--root <folder>] [--open <file.drift>] [--no-link]
   --no-link         never work on the drawing open in Drift, only on files
   --version         print the version
 
-Configure it as an MCP server in Claude Desktop or Claude Code: see docs/ai.md.";
+Configure it as an MCP server in Claude Desktop or Claude Code: see https://drift-website-c9y.pages.dev/guide/ai/assistants/.";
 
 fn main() {
     let mut root: Option<PathBuf> = None;

@@ -6,7 +6,7 @@ take the place of ids. Drift's solver makes the geometry exact, and the drawing 
 parametric: change a variable later and everything tied to it follows.
 
 AI assistants write scripts through the `run_script` tool of Drift's MCP server (see
-[Drawing with AI assistants](ai.md)). A script is one undo step, and all or nothing: if any
+[Drawing with AI assistants](assistants.md)). A script is one undo step, and all or nothing: if any
 line fails, nothing changes, and the error says which line it was and how Drift read it.
 
 ```

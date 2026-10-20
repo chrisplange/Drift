@@ -104,6 +104,8 @@ jobs:
       # changing dependencies, and commit the result.
       - run: python3 scripts/notices.py --check
 
+  # The browser build, checked on every change though only the website serves it (at /app/,
+  # built by the Website workflow).
   web:
     name: Web build
     runs-on: ubuntu-latest
@@ -118,40 +120,9 @@ jobs:
           tool: trunk
       - name: Build
         working-directory: apps/web
-        run: >
-          trunk build --release --cargo-profile web-release
-          --public-url "/${{ github.event.repository.name }}/"
+        run: trunk build --release --cargo-profile web-release --public-url /app/
       - name: Check bundle size (budget 6 MB gzipped)
         run: |
           size=$(gzip -9 -c apps/web/dist/*.wasm | wc -c)
           echo "WASM gzipped: $((size / 1024)) KiB" | tee -a "$GITHUB_STEP_SUMMARY"
           test "$size" -lt $((6 * 1024 * 1024))
-      # Once the website is live (the SITE_URL repository variable is set, e.g.
-      # https://drift.example), GitHub Pages only redirects to its /app/; until then it
-      # serves the app itself. The website workflow builds and deploys the site.
-      - name: Redirect page for GitHub Pages
-        if: vars.SITE_URL != ''
-        env:
-          SITE_URL: ${{ vars.SITE_URL }}
-        run: |
-          mkdir -p pages-redirect
-          sed "s#SITE_URL#${SITE_URL%/}#g" website/github-pages-redirect.html > pages-redirect/index.html
-          cp pages-redirect/index.html pages-redirect/404.html
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: ${{ vars.SITE_URL != '' && 'pages-redirect' || 'apps/web/dist' }}
-
-  deploy:
-    name: Deploy to GitHub Pages
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [lint, test, web]
-    runs-on: ubuntu-latest
-    permissions:
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@v4

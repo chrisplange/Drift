@@ -181,7 +181,11 @@ impl DriftApp {
                 .take(MAX_RECENT)
                 .collect();
         }
-        let Some(text) = storage.get_string(KEY_DOCUMENT).filter(|t| !t.is_empty()) else {
+        // The demo starts afresh each time (and never kept a drawing to restore).
+        let Some(text) = storage
+            .get_string(KEY_DOCUMENT)
+            .filter(|t| !t.is_empty() && cfg!(not(feature = "demo")))
+        else {
             return;
         };
         match drift_io::load(&text) {
@@ -295,12 +299,14 @@ impl DriftApp {
         }
     }
 
+    #[cfg(not(feature = "demo"))]
     pub(crate) fn file_bytes(&self) -> Vec<u8> {
         let mut meta = self.file.meta.clone();
         meta.generator = Some(format!("Drift {}", drift_platform::VERSION));
         drift_io::save(&self.editor.doc, &meta).into_bytes()
     }
 
+    #[cfg(not(feature = "demo"))]
     pub(crate) fn save(&mut self) {
         // Only ever overwrite a sketch file: never an export or an imported drawing.
         match &self.file.path {
@@ -309,18 +315,36 @@ impl DriftApp {
         }
     }
 
+    #[cfg(not(feature = "demo"))]
     pub(crate) fn save_as(&mut self) {
         self.files
             .save_as(&self.file.name, DRIFT_FILE, self.file_bytes());
     }
 
+    #[cfg(feature = "demo")]
+    pub(crate) fn save(&mut self) {
+        self.not_in_demo("Saving");
+    }
+
+    #[cfg(feature = "demo")]
+    pub(crate) fn save_as(&mut self) {
+        self.not_in_demo("Saving");
+    }
+
+    #[cfg(feature = "demo")]
+    pub(crate) fn export_profiles(&mut self) {
+        self.not_in_demo("Exporting Blender profiles");
+    }
+
     /// The Blender profiles file's text, or `None` when no block is marked as a profile.
+    #[cfg(not(feature = "demo"))]
     pub(crate) fn profiles_text(&self) -> Option<String> {
         let blocks = self.editor.blocks_as_drawn();
         drift_io::profiles::write(blocks.iter().map(|(id, b)| (*id, b)), &self.file.name)
     }
 
     /// File → Export → Blender profiles: the profiles file, wherever it's wanted.
+    #[cfg(not(feature = "demo"))]
     pub(crate) fn export_profiles(&mut self) {
         match self.profiles_text() {
             Some(text) => {
@@ -343,7 +367,7 @@ impl DriftApp {
 
     /// After saving the drawing at `path`: write its Blender profiles beside it, or delete
     /// the ones left from before when no block is a profile now. What to add to "Saved …".
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(not(target_arch = "wasm32"), not(feature = "demo")))]
     fn update_profiles_beside(&self, path: &std::path::Path) -> Result<String, String> {
         use drift_io::profiles::{Updated, update_beside};
         let blocks = self.editor.blocks_as_drawn();
@@ -454,12 +478,12 @@ impl DriftApp {
                     }
                 }
                 FileEvent::Saved { name, path } => {
-                    #[cfg(not(target_arch = "wasm32"))]
+                    #[cfg(all(not(target_arch = "wasm32"), not(feature = "demo")))]
                     let profiles = match path.as_deref().filter(|p| is_sketch_file(p)) {
                         Some(p) => self.update_profiles_beside(p),
                         None => Ok(String::new()),
                     };
-                    #[cfg(target_arch = "wasm32")]
+                    #[cfg(any(target_arch = "wasm32", feature = "demo"))]
                     let profiles: Result<String, String> = Ok(String::new());
                     match profiles {
                         Ok(more) => self.set_status(format!("Saved {name}{more}"), false, now),

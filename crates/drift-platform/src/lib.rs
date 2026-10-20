@@ -84,6 +84,7 @@ impl Files {
     }
 
     /// Ask the user for a file to open.
+    #[cfg(not(all(target_arch = "wasm32", feature = "demo")))]
     pub fn open(&self, file_type: FileType) {
         let this = self.clone();
         spawn(async move {
@@ -102,6 +103,22 @@ impl Files {
                 path,
                 contents,
             });
+        });
+    }
+
+    /// Ask the user for a file to open, with the browser's own file input. The browser demo
+    /// leaves rfd out: its web dialog also holds the code that downloads a saved file.
+    #[cfg(all(target_arch = "wasm32", feature = "demo"))]
+    pub fn open(&self, file_type: FileType) {
+        let this = self.clone();
+        spawn(async move {
+            if let Some((name, contents)) = web_pick::pick(file_type.extensions).await {
+                this.post(FileEvent::Opened {
+                    name,
+                    path: None,
+                    contents,
+                });
+            }
         });
     }
 
@@ -134,6 +151,7 @@ impl Files {
 
     /// Ask the user where to save, then write `contents` there. On the web this downloads the
     /// file under `suggested_name`.
+    #[cfg(not(feature = "demo"))]
     pub fn save_as(&self, suggested_name: &str, file_type: FileType, contents: Vec<u8>) {
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -159,6 +177,7 @@ impl Files {
     /// Ask the user where to write an export (a PDF, SVG or DXF copy), then write it. Unlike
     /// [`Files::save_as`], this reports [`FileEvent::Exported`]: the export does not become
     /// the document's file.
+    #[cfg(not(feature = "demo"))]
     pub fn export(&self, suggested_name: &str, file_type: FileType, contents: Vec<u8>) {
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -189,6 +208,7 @@ impl Files {
 
     /// Open `contents` in the system's viewer for its type (a new browser tab on the web), e.g. a
     /// PDF to print. Native builds write it to a temporary folder first.
+    #[cfg(not(feature = "demo"))]
     pub fn open_externally(&self, name: &str, contents: &[u8]) {
         #[cfg(not(target_arch = "wasm32"))]
         self.post(open_native(name, contents));
@@ -197,6 +217,7 @@ impl Files {
     }
 
     /// Overwrite a file that was previously opened or saved (native only).
+    #[cfg(not(feature = "demo"))]
     pub fn save_to(&self, path: &FilePath, contents: &[u8]) {
         #[cfg(not(target_arch = "wasm32"))]
         self.post(write_native(path.clone(), contents));
@@ -210,7 +231,7 @@ impl Files {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), not(feature = "demo")))]
 fn write_native(path: PathBuf, contents: &[u8]) -> FileEvent {
     let name = path
         .file_name()
@@ -225,7 +246,7 @@ fn write_native(path: PathBuf, contents: &[u8]) -> FileEvent {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), not(feature = "demo")))]
 fn open_native(name: &str, contents: &[u8]) -> FileEvent {
     let dir = std::env::temp_dir().join("drift");
     let path = dir.join(name);
@@ -259,7 +280,39 @@ fn spawn(future: impl std::future::Future<Output = ()> + 'static) {
     wasm_bindgen_futures::spawn_local(future);
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", feature = "demo"))]
+mod web_pick {
+    use wasm_bindgen::JsCast as _;
+    use wasm_bindgen::closure::Closure;
+    use wasm_bindgen_futures::JsFuture;
+
+    /// A file the user picks (its name and contents), or `None` if they cancel.
+    pub async fn pick(extensions: &[&str]) -> Option<(String, Vec<u8>)> {
+        let document = web_sys::window()?.document()?;
+        let input: web_sys::HtmlInputElement =
+            document.create_element("input").ok()?.dyn_into().ok()?;
+        input.set_type("file");
+        let accept: Vec<String> = extensions.iter().map(|e| format!(".{e}")).collect();
+        input.set_accept(&accept.join(","));
+        // Settled by a pick or a cancel, whichever comes.
+        let chosen = js_sys::Promise::new(&mut |resolve, _| {
+            let done = Closure::once_into_js(move || {
+                let _ = resolve.call0(&wasm_bindgen::JsValue::UNDEFINED);
+            });
+            for event in ["change", "cancel"] {
+                let _ = input.add_event_listener_with_callback(event, done.unchecked_ref());
+            }
+        });
+        input.click();
+        JsFuture::from(chosen).await.ok()?;
+        let file = input.files()?.get(0)?;
+        let buffer = JsFuture::from(file.array_buffer()).await.ok()?;
+        Some((file.name(), js_sys::Uint8Array::new(&buffer).to_vec()))
+    }
+}
+
+// Downloads and blob URLs: the ways a file leaves the browser build, so not in the demo.
+#[cfg(all(target_arch = "wasm32", not(feature = "demo")))]
 mod web {
     use wasm_bindgen::JsCast as _;
 

@@ -552,7 +552,7 @@ impl DriftApp {
                 self.show_start = true;
             }
         });
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(all(not(target_arch = "wasm32"), not(feature = "demo")))]
         self.link_prefs(ui);
         theme::section(ui, "Memory");
         let gb = |b: u64| b as f64 / (1024.0 * 1024.0 * 1024.0);

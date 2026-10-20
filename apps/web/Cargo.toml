@@ -14,5 +14,10 @@ eframe.workspace = true
 log.workspace = true
 wasm-bindgen-futures = "0.4"
 
+[features]
+# The try-before-you-buy demo served on the website: no saving, exporting or printing (that
+# code isn't built in). `trunk build --features demo`.
+demo = ["drift-app/demo"]
+
 [lints]
 workspace = true

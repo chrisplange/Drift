@@ -3,6 +3,8 @@
 //! The same [`DriftApp`] runs natively and in the browser via eframe. Editing logic lives in
 //! [`editor`] and [`tools`], which don't depend on egui.
 
+// The assistant tools read and write files, so they aren't in the demo.
+#[cfg(not(feature = "demo"))]
 pub mod agent;
 mod annotations;
 mod app;
@@ -109,6 +111,8 @@ const MAX_RECENT: usize = 10;
 struct FileState {
     name: String,
     path: Option<FilePath>,
+    // Kept for saving, which the demo doesn't do.
+    #[cfg_attr(feature = "demo", allow(dead_code))]
     meta: Metadata,
     /// Document revision at the last save or load. `None` means never saved.
     clean_revision: Option<u64>,
@@ -253,7 +257,7 @@ pub struct DriftApp {
     /// File → Drawing settings: the units and drafting style saved with the drawing.
     show_drawing_settings: bool,
     /// What was last copied or cut here (for Edit → Paste).
-    clipboard: Option<String>,
+    clipboard: Option<drift_core::Document>,
     /// The command palette, while open.
     palette: Option<app::palette::Palette>,
     recent_commands: Vec<app::palette::Command>,
@@ -345,6 +349,7 @@ pub struct DriftApp {
     /// Model exports (SVG and PDF at 1 : 1) include dimensions and notes.
     model_annotations: bool,
     /// The output dialog choosing the sheets for a PDF or print, while open.
+    #[cfg(not(feature = "demo"))]
     output_dialog: Option<app::sheets_ui::Output>,
     /// The model view picked in the Views list or on the canvas (its crop shows grips).
     picked_view: Option<drift_core::ViewId>,
@@ -419,8 +424,10 @@ pub struct DriftApp {
     updates: app::update_ui::Updates,
     /// AI assistants may edit the open drawing through the live link (a preference).
     ai_link: bool,
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(not(target_arch = "wasm32"), not(feature = "demo")))]
     link: app::link_ui::Link,
+    #[cfg(feature = "demo")]
+    demo: app::demo_ui::Demo,
 }
 
 /// Start the memory guard: past a hard limit the app ends itself rather than exhaust the
@@ -549,6 +556,7 @@ impl DriftApp {
             status_next: None,
             pdf_left_out: Default::default(),
             model_annotations: true,
+            #[cfg(not(feature = "demo"))]
             output_dialog: None,
             picked_view: None,
             confirm_delete_view: None,
@@ -586,8 +594,10 @@ impl DriftApp {
             #[cfg(not(target_arch = "wasm32"))]
             updates: Default::default(),
             ai_link: false,
-            #[cfg(not(target_arch = "wasm32"))]
+            #[cfg(all(not(target_arch = "wasm32"), not(feature = "demo")))]
             link: Default::default(),
+            #[cfg(feature = "demo")]
+            demo: Default::default(),
         };
         if let Some(mb) = drift_platform::memory::take_stop_note() {
             app.editor.notice = Some(format!(
@@ -612,6 +622,25 @@ impl DriftApp {
             app.restore_session(storage);
         }
         app
+    }
+}
+
+impl DriftApp {
+    /// Keep the drawing in eframe's storage, to restore next time.
+    #[cfg(not(feature = "demo"))]
+    fn save_document(&self, storage: &mut dyn eframe::Storage) {
+        let mut meta = self.file.meta.clone();
+        meta.generator = Some(format!("Drift {}", drift_platform::VERSION));
+        storage.set_string(KEY_DOCUMENT, drift_io::save(&self.editor.doc, &meta));
+        storage.set_string(KEY_NAME, self.file.name.clone());
+        let path = self
+            .file
+            .path
+            .as_ref()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        storage.set_string(KEY_PATH, path);
+        storage.set_string(KEY_DIRTY, if self.is_dirty() { "1" } else { "0" }.into());
     }
 }
 
@@ -979,7 +1008,7 @@ impl eframe::App for DriftApp {
         self.check_memory(now);
         #[cfg(not(target_arch = "wasm32"))]
         self.updates_tick(&ctx, now);
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(all(not(target_arch = "wasm32"), not(feature = "demo")))]
         self.link_tick(&ctx, now);
         // A sketch dropped on the window opens.
         let dropped = ctx.input(|i| i.raw.dropped_files.first().map(|f| f.path().to_owned()));
@@ -1006,6 +1035,8 @@ impl eframe::App for DriftApp {
         let frame = |x: i8, y: i8| {
             egui::Frame::side_top_panel(&style).inner_margin(egui::Margin::symmetric(x, y))
         };
+        #[cfg(feature = "demo")]
+        self.demo_banner(ui);
         egui::Panel::top("menu")
             .frame(frame(8, 3))
             .show(ui, |ui| self.menu_bar(ui));
@@ -1062,20 +1093,11 @@ impl eframe::App for DriftApp {
         if self.discard_session {
             // "Don't save" on quitting: start fresh next time.
             storage.set_string(KEY_DOCUMENT, String::new());
-            return;
+        } else {
+            // The demo keeps nothing: a drawing in the browser's storage could be read out.
+            #[cfg(not(feature = "demo"))]
+            self.save_document(storage);
         }
-        let mut meta = self.file.meta.clone();
-        meta.generator = Some(format!("Drift {}", drift_platform::VERSION));
-        storage.set_string(KEY_DOCUMENT, drift_io::save(&self.editor.doc, &meta));
-        storage.set_string(KEY_NAME, self.file.name.clone());
-        let path = self
-            .file
-            .path
-            .as_ref()
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        storage.set_string(KEY_PATH, path);
-        storage.set_string(KEY_DIRTY, if self.is_dirty() { "1" } else { "0" }.into());
     }
 
     /// A downloaded update starts installing as Drift goes.

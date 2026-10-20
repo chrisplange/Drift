@@ -73,6 +73,7 @@ pub(crate) struct ImageRecord {
     png: String,
 }
 
+#[cfg(not(feature = "demo"))]
 /// A picture as a PNG.
 fn encode_png(image: &UnderlayImage) -> Vec<u8> {
     let mut out = Vec::new();
@@ -114,6 +115,7 @@ fn decode_png(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
 
 const BASE64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
+#[cfg(not(feature = "demo"))]
 fn base64(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
@@ -152,6 +154,7 @@ fn unbase64(text: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
+#[cfg(not(feature = "demo"))]
 pub(crate) fn underlay_record(id: UnderlayId, u: &Underlay) -> UnderlayRecord {
     let prims = u
         .prims

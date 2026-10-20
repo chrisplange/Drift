@@ -23,6 +23,7 @@ pub(crate) enum Command {
     ExportPdf,
     ExportSvg,
     ExportDxf,
+    ExportProfiles,
     ExportModelSvg,
     ExportModelPdf,
     Print,
@@ -57,6 +58,8 @@ pub(crate) enum Command {
     Preferences,
     DrawingSettings,
     About,
+    UserGuide,
+    ReportProblem,
     Theme(egui::ThemePreference),
 }
 
@@ -255,6 +258,12 @@ impl DriftApp {
         add(Command::ExportSvg, "Export SVG…", "File", String::new());
         add(Command::ExportDxf, "Export DXF…", "File", String::new());
         add(
+            Command::ExportProfiles,
+            "Export Blender profiles…",
+            "File",
+            String::new(),
+        );
+        add(
             Command::ExportModelSvg,
             "Export model as SVG…",
             "File",
@@ -410,6 +419,13 @@ impl DriftApp {
             "File",
             String::new(),
         );
+        add(Command::UserGuide, "User guide", "Help", String::new());
+        add(
+            Command::ReportProblem,
+            "Report a problem or ask for a feature",
+            "Help",
+            String::new(),
+        );
         add(Command::About, "About Drift", "Help", String::new());
         for (pref, label) in [
             (egui::ThemePreference::Dark, "Dark appearance"),
@@ -518,6 +534,7 @@ impl DriftApp {
             Command::ExportPdf => self.export_pdf(&painter),
             Command::ExportSvg => self.export_svg(&painter),
             Command::ExportDxf => self.export_dxf(&painter),
+            Command::ExportProfiles => self.export_profiles(),
             Command::ExportModelSvg => self.export_model(&painter, false),
             Command::ExportModelPdf => self.export_model(&painter, true),
             Command::Print => self.print(&painter),
@@ -584,6 +601,8 @@ impl DriftApp {
             Command::Preferences => self.show_settings = true,
             Command::DrawingSettings => self.show_drawing_settings = true,
             Command::About => self.show_about = true,
+            Command::UserGuide => ctx.open_url(egui::OpenUrl::new_tab(crate::links::GUIDE)),
+            Command::ReportProblem => ctx.open_url(egui::OpenUrl::new_tab(crate::links::REPORT)),
             Command::Theme(pref) => ctx.set_theme(pref),
         }
     }

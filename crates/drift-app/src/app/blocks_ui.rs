@@ -5,6 +5,11 @@ use drift_core::{BlockId, InstanceId, LayerId, Shape};
 
 use crate::*;
 
+/// What the Blender profile checkbox does.
+const PROFILE_HINT: &str = "Saving writes the block's curves, from its base point, to a \
+    profiles file beside the drawing, for the Drift Profiles add-on to sweep or lathe in \
+    Blender. Blender updates each time you save";
+
 /// A block's thumbnail: its curves fitted into `size`.
 fn thumbnail(ui: &mut egui::Ui, block: &drift_core::Block, size: f32) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::click());
@@ -257,6 +262,7 @@ impl DriftApp {
         let mut delete = None;
         let mut rename = None;
         let mut base_point = None;
+        let mut profile = None;
         for (id, block) in shown {
             let picked =
                 self.tool.kind() == ToolKind::Block && self.editor.place_block == Some(*id);
@@ -280,11 +286,16 @@ impl DriftApp {
                                 place = Some(*id);
                             }
                             let n = counts.get(id).copied().unwrap_or(0);
+                            let copies = match n {
+                                0 => "Not placed".to_owned(),
+                                1 => "1 copy".to_owned(),
+                                n => format!("{n} copies"),
+                            };
                             ui.label(
-                                egui::RichText::new(match n {
-                                    0 => "Not placed".to_owned(),
-                                    1 => "1 copy".to_owned(),
-                                    n => format!("{n} copies"),
+                                egui::RichText::new(if block.profile {
+                                    format!("{copies} · Blender profile")
+                                } else {
+                                    copies
                                 })
                                 .small()
                                 .weak(),
@@ -321,6 +332,14 @@ impl DriftApp {
                 {
                     base_point = Some(copy);
                     ui.close();
+                }
+                let mut is_profile = block.profile;
+                if ui
+                    .checkbox(&mut is_profile, "Blender profile")
+                    .on_hover_text(PROFILE_HINT)
+                    .changed()
+                {
+                    profile = Some((*id, is_profile));
                 }
                 let mut name = block.name.clone();
                 ui.horizontal(|ui| {
@@ -364,6 +383,9 @@ impl DriftApp {
         }
         if let Some(copy) = base_point {
             self.start_set_base_point(copy);
+        }
+        if let Some((id, on)) = profile {
+            self.editor.set_block_profile(id, on);
         }
         if let Some((id, name)) = rename
             && !name.is_empty()
@@ -521,6 +543,18 @@ impl DriftApp {
             });
         if let Some(b) = replace {
             self.editor.replace_block(b);
+        }
+        let mut is_profile = self
+            .editor
+            .doc
+            .block(first.block)
+            .is_some_and(|b| b.profile);
+        if ui
+            .checkbox(&mut is_profile, "Blender profile")
+            .on_hover_text(PROFILE_HINT)
+            .changed()
+        {
+            self.editor.set_block_profile(first.block, is_profile);
         }
         let mut edited = first;
         if picked.len() == 1 {

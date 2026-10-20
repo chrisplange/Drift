@@ -1500,7 +1500,7 @@ zooms to fit; F is Fillet (again for Chamfer).
     title blocks.
 - **Part 7 (in progress): packaging.**
   - `drift.exe` carries its icon and version details (`apps/native/build.rs`, winresource).
-  - `scripts/package-windows.ps1` builds `dist/`: a portable zip, and with Inno Setup 6 the
+  - `scripts/package-windows.ps1` builds `dist/`: a portable zip, and with Inno Setup 6 or 7 the
     installer from `installer/windows/drift.iss` (per-user by default, Start menu entry,
     optional desktop icon, `.drift` association, clean upgrade and uninstall).
   - `scripts/package-macos.sh` builds a universal `Drift.app` in a `.dmg` (Apple silicon

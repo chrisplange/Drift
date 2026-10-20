@@ -8,7 +8,7 @@
 **[User guide](https://drift-website-c9y.pages.dev/guide/)** ·
 **[Release notes](https://drift-website-c9y.pages.dev/releases/)**
 
-Drift is a source-available 2D CAD sketcher with SolidWorks-style geometric and dimensional
+Drift is a 2D CAD sketcher with SolidWorks-style geometric and dimensional
 constraints, built for technical drawings and design exploration. It is written in Rust, renders
 on the GPU with [wgpu](https://wgpu.rs), and runs natively on Windows, macOS and Linux and in the
 browser (WebGPU, with a WebGL2 fallback).
@@ -23,7 +23,7 @@ browser (WebGPU, with a WebGL2 fallback).
 window, step-by-step tutorials, and reference pages for tools, panels, units and keys.
 
 **Drawing with AI.** `drift-mcp` lets Claude and other MCP assistants sketch, constrain,
-dimension, render and analyse Drift drawings: see [Drawing with AI assistants](docs/ai.md).
+dimension, render and analyse Drift drawings: see [Drawing with AI assistants](docs/guide/ai/assistants.md).
 
 ## What works today
 
@@ -246,9 +246,12 @@ cargo test --workspace
 
 ## Licence
 
-Drift is licensed under the [Functional Source License, Version 1.1, ALv2 Future
-License](LICENSE.md) (FSL-1.1-ALv2). You may use, copy, change and share it for any purpose
-except making a product or service that competes with Drift. Two years after each version
-is released, that version is also available under the Apache License, Version 2.0.
+Drift is proprietary software, licensed to its users under the [Drift End-User Licence
+Agreement](LICENSE.md). This repository is private: its source code is not licensed to anyone
+else. The open-source fonts and crates Drift is built with are listed, with their licences,
+in [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt).
 
-Copyright 2026 Christopher Lange.
+Versions up to and including 0.1.0-beta.1.5 were released under the Functional Source
+License, Version 1.1, ALv2 Future License (FSL-1.1-ALv2), and those versions stay under it.
+
+Copyright 2026 Christopher Lange. All rights reserved.

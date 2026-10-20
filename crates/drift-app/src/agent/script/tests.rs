@@ -743,7 +743,7 @@ fn feet_and_inches_dimensions_keep_their_text() {
     assert!(close(line_len(&s, &id(&v, "r.west")), 3048.0));
 }
 
-/// The examples in docs/script.md run as written.
+/// The examples in docs/guide/ai/script.md run as written.
 #[test]
 fn the_documented_examples_run() {
     let mut s = Session::new();

@@ -5,7 +5,8 @@ members = ["crates/*", "apps/*"]
 [workspace.package]
 version = "0.1.0-beta.1.5"
 edition = "2024"
-license = "FSL-1.1-ALv2"
+# Proprietary: Drift's end-user licence agreement, in LICENSE.md.
+license = "LicenseRef-Drift-EULA"
 repository = "https://github.com/chrisplange/Drift"
 # Not published to crates.io: the crates are parts of one application.
 publish = false

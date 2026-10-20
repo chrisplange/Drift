@@ -1,0 +1,20 @@
+schema_version = "1.0.0"
+
+id = "drift_profiles"
+# Kept in step with Drift's version (Cargo.toml) by scripts/package-blender-addon.py.
+version = "0.1.0-beta.1.5"
+name = "Drift Profiles"
+tagline = "Sweep and lathe profiles drawn in Drift, updated as Drift saves"
+maintainer = "Christopher Lange"
+type = "add-on"
+website = "https://github.com/chrisplange/drift-releases"
+
+tags = ["Import-Export", "Modeling"]
+
+blender_version_min = "4.2.0"
+
+license = ["SPDX:GPL-3.0-or-later"]
+
+# Reads the profiles file Drift writes beside a drawing.
+[permissions]
+files = "Read profiles saved by Drift"

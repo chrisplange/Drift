@@ -63,7 +63,7 @@ pub(crate) struct FillRecord {
     weight: Option<f64>,
     #[serde(default, skip_serializing_if = "is_zero")]
     order: i32,
-    /// An edit left it covering more than one area (v36).
+    /// An edit left it covering more than one area (v37).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     divided: bool,
 }

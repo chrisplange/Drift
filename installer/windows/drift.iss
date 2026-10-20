@@ -1,9 +1,9 @@
-; Drift's Windows installer (Inno Setup 6). Build it with scripts\package-windows.ps1, which
+; Drift's Windows installer (Inno Setup 6 or 7). Build it with scripts\package-windows.ps1, which
 ; passes the version:  ISCC /DAppVersion=0.1.0-alpha.1 installer\windows\drift.iss
 ;
 ; It installs for the current user by default (no administrator prompt) and offers "for all
 ; users" in a dialog; adds a Start menu entry, an optional desktop icon, and opens .drift
-; sketches with Drift.
+; sketches with Drift. drift-mcp.exe, the MCP server for AI assistants, goes next to drift.exe.
 
 #ifndef AppVersion
   #define AppVersion "0.0.0"
@@ -16,7 +16,10 @@ AppName=Drift
 AppVersion={#AppVersion}
 AppVerName=Drift {#AppVersion}
 AppPublisher=Drift
-AppPublisherURL=https://github.com/chrisplange/Drift
+AppPublisherURL=https://drift-website-c9y.pages.dev/
+; The end-user licence agreement, which the installer asks the user to accept. A silent
+; install (the in-app updater) accepts it without the page.
+LicenseFile=..\..\LICENSE.md
 DefaultDirName={autopf}\Drift
 DisableProgramGroupPage=yes
 DisableDirPage=auto
@@ -47,6 +50,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Files]
 Source: "..\..\target\release\drift.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\..\target\release\drift-mcp.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\LICENSE.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\THIRD-PARTY-NOTICES.txt"; DestDir: "{app}"; Flags: ignoreversion
 

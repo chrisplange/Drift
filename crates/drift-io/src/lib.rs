@@ -6,7 +6,7 @@
 //! ```json
 //! {
 //!   "format": "drift",
-//!   "version": 36,
+//!   "version": 37,
 //!   "meta": {"title":"Bracket","units":"mm","generator":"Drift 0.1.0"},
 //!   "display": {"length":"architectural","fraction":16},
 //!   "variables": [
@@ -55,6 +55,7 @@ pub mod pdf;
 mod pdf_image;
 pub mod pdf_import;
 mod pdf_text;
+pub mod profiles;
 mod sheets;
 pub mod svg;
 pub mod svg_import;
@@ -94,8 +95,9 @@ pub const EXTENSION: &str = "drift";
 /// geometry shown on sheets); 33 = adds an underlay's `images` (pictures from a PDF page);
 /// 34 = adds a dimension's `ext` (extension line starts set by hand); 35 = a sheet's
 /// `title_block` can be `blank` (blank paper; `none` stays the border without a title block);
-/// 36 = adds a fill's `divided` (an edit left it covering more than one area).
-pub const FORMAT_VERSION: u32 = 36;
+/// 36 = adds a block's `profile` flag (written to the Blender profiles file); 37 = adds a
+/// fill's `divided` (an edit left it covering more than one area).
+pub const FORMAT_VERSION: u32 = 37;
 const FORMAT_TAG: &str = "drift";
 
 /// Document-level properties stored alongside the geometry.
@@ -1895,7 +1897,7 @@ mod tests {
         let text = save(&doc, &Metadata::default());
         let expected = r#"{
   "format": "drift",
-  "version": 36,
+  "version": 37,
   "meta": {"units":"mm"},
   "entities": [
     {"type":"point","id":"e1","at":[0.0,0.0]},
@@ -2074,7 +2076,7 @@ mod tests {
         // A file from before extension starts opens with them all automatic.
         let old = text.replace(r#","ext":[null,12.5]"#, "");
         let old = old.replace(r#","ext":[-2.0,3.25]"#, "");
-        let old = old.replace(r#""version": 36"#, r#""version": 33"#);
+        let old = old.replace(r#""version": 37"#, r#""version": 33"#);
         let (loaded, _) = load(&old).unwrap();
         assert_eq!(loaded.extension_starts(h), [None, None]);
         assert_eq!(loaded.extension_starts(both), [None, None]);
@@ -2384,6 +2386,28 @@ mod tests {
         let flat = r#"{"format":"drift","version":26,"meta":{"units":"mm"},"entities":[],
             "views":[{"id":"w1","scale":1.0,"center":[0.0,0.0],"size":[0.0,10.0]}]}"#;
         assert!(load(flat).is_err(), "a crop with no width");
+    }
+
+    #[test]
+    fn a_blocks_profile_flag_round_trips_and_old_blocks_are_not_profiles() {
+        let mut doc = Document::new();
+        for (name, profile) in [("Crown", true), ("Chair", false)] {
+            doc.add_block(drift_core::Block {
+                name: name.into(),
+                profile,
+                ..Default::default()
+            });
+        }
+        let text = save(&doc, &Metadata::default());
+        assert_eq!(text.matches(r#""profile":true"#).count(), 1, "{text}");
+        assert!(!text.contains(r#""profile":false"#), "{text}");
+        let (again, _) = load(&text).unwrap();
+        assert_eq!(again, doc);
+        // A file from before the flag: its blocks aren't profiles.
+        let v35 = r#"{"format":"drift","version":35,"meta":{"units":"mm"},"entities":[],
+            "blocks":[{"id":"b1","name":"Old","items":[{"type":"line","a":[0,0],"b":[1,0]}]}]}"#;
+        let (old, _) = load(v35).unwrap();
+        assert!(!old.blocks().next().unwrap().1.profile);
     }
 
     #[test]
@@ -2857,6 +2881,7 @@ mod tests {
         .unwrap();
         let chair = doc.add_block(drift_core::Block {
             name: "Chair".into(),
+            profile: true,
             fills: vec![drift_core::Fill::new(
                 Vec::new(),
                 DVec2::new(0.0, 50.0),
@@ -2982,7 +3007,7 @@ mod tests {
         doc.add_text(drift_core::SketchText::new("A", DVec2::ZERO, 3.0));
 
         let text = save(&doc, &Metadata::default());
-        assert!(text.contains("\"version\": 36"));
+        assert!(text.contains("\"version\": 37"));
         // A fill an edit divided keeps its mark.
         assert!(text.contains(r#""divided":true"#), "{text}");
         // A mark points at its view.

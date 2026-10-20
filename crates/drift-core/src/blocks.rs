@@ -48,6 +48,8 @@ pub struct Block {
     /// its `seed` (in block coordinates); its `boundary`, `layer` and `order` aren't used
     /// (a copy's fills are on the copy's layer).
     pub fills: Vec<Fill>,
+    /// Written to the drawing's Blender profiles file on save, to sweep or lathe there.
+    pub profile: bool,
 }
 
 impl Block {
@@ -339,6 +341,7 @@ mod tests {
         let chair = Block {
             name: "Chair".into(),
             fills: Vec::new(),
+            profile: false,
             items: vec![BlockItem {
                 shape: Shape::Line {
                     a: DVec2::new(-200.0, 0.0),

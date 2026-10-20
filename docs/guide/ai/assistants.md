@@ -12,16 +12,22 @@ drawing exact. It stays parametric, so a dimension you change later still drives
 assistant also checks its own work. It can render the drawing to a picture and analyse it
 for degrees of freedom, conflicts, open ends and room areas, then fix what's wrong.
 
-## Building the server
+## Where the server is
 
-`drift-mcp` is part of the Drift source tree. Build it with Rust (1.92 or later):
+`drift-mcp` comes with Drift, next to the Drift program:
 
-```bash
-cargo build --release -p drift-mcp
-```
+| Drift from | `drift-mcp` is at |
+|---|---|
+| The Windows installer, for you only (the default) | `C:\Users\you\AppData\Local\Programs\Drift\drift-mcp.exe` |
+| The Windows installer, for all users | `C:\Program Files\Drift\drift-mcp.exe` |
+| The Windows zip | `drift-mcp.exe`, in the `Drift` folder you unpacked |
+| The macOS disk image | `/Applications/Drift.app/Contents/MacOS/drift-mcp` |
 
-The program is `target/release/drift-mcp` (`drift-mcp.exe` on Windows). Copy it anywhere
-you like. It needs no other files, and no GPU: its pictures are drawn on the CPU.
+Replace `you` with your user name, and the folder with yours if you installed somewhere
+else. Drift shows the path in **Edit → Preferences → General**, under **AI assistants**,
+and **Copy Claude Desktop config** there copies a ready-made config for Claude Desktop. You don't run the server yourself: the assistant starts it. It needs no GPU (its
+pictures are drawn on the CPU), and updating Drift updates it too. To check it's there,
+run it from a terminal with `--version`.
 
 Options:
 
@@ -29,36 +35,55 @@ Options:
 |---|---|
 | `--root <folder>` | Only read and write files inside this folder. Relative paths the assistant gives are taken from here. Recommended. |
 | `--open <file.drift>` | Start with this drawing open. |
+| `--no-link` | Never work on the drawing open in Drift, only on files. |
 
 ## Connecting Claude Desktop
 
 Open Claude Desktop's settings, then **Developer → Edit Config**. This opens
 `claude_desktop_config.json`: on Windows it is in `%APPDATA%\Claude\`, on macOS in
-`~/Library/Application Support/Claude/`. Add Drift under `mcpServers`:
+`~/Library/Application Support/Claude/`. Paste what Drift's **Copy Claude Desktop config**
+copied: if the file already has servers under `mcpServers`, add Drift's entry next to them.
+Or write it yourself. On Windows:
 
 ```json
 {
   "mcpServers": {
     "drift": {
-      "command": "C:/Tools/drift-mcp.exe",
+      "command": "C:/Users/you/AppData/Local/Programs/Drift/drift-mcp.exe",
       "args": ["--root", "C:/Users/you/Documents/Drawings"]
     }
   }
 }
 ```
 
-On macOS or Linux, use paths like `/Users/you/bin/drift-mcp` and
-`/Users/you/Documents/Drawings`. In JSON, write Windows paths with forward slashes, or
-double each backslash (`C:\\Tools\\drift-mcp.exe`).
+In JSON, write Windows paths with forward slashes, as here, or double each backslash
+(`C:\\Program Files\\Drift\\drift-mcp.exe`). On macOS:
+
+```json
+{
+  "mcpServers": {
+    "drift": {
+      "command": "/Applications/Drift.app/Contents/MacOS/drift-mcp",
+      "args": ["--root", "/Users/you/Documents/Drawings"]
+    }
+  }
+}
+```
 
 Restart Claude Desktop. Drift's tools then appear in the tools menu of a new chat.
 
 ## Connecting Claude Code
 
-From a terminal, in the project where you want to use it:
+From a terminal, in the project where you want to use it. On Windows:
 
 ```bash
-claude mcp add drift -- C:/Tools/drift-mcp.exe --root C:/Users/you/Documents/Drawings
+claude mcp add drift -- C:/Users/you/AppData/Local/Programs/Drift/drift-mcp.exe --root C:/Users/you/Documents/Drawings
+```
+
+On macOS:
+
+```bash
+claude mcp add drift -- /Applications/Drift.app/Contents/MacOS/drift-mcp --root ~/Documents/Drawings
 ```
 
 Add `--scope project` to share it with everyone working on the project. That writes it to
@@ -68,14 +93,15 @@ Add `--scope project` to share it with everyone working on the project. That wri
 {
   "mcpServers": {
     "drift": {
-      "command": "C:/Tools/drift-mcp.exe",
+      "command": "/Applications/Drift.app/Contents/MacOS/drift-mcp",
       "args": ["--root", "."]
     }
   }
 }
 ```
 
-`claude mcp list` shows whether it connected.
+Everyone who shares it needs Drift installed in the same place. `claude mcp list` shows
+whether it connected.
 
 ## Working live in Drift
 
@@ -103,7 +129,7 @@ goes back to files, rather than carrying on somewhere else. The assistant can ch
 drawing it is on with the `drift_link` tool, and switch between the window and its own
 files.
 
-The link is for Drift on Windows, macOS and Linux, not the web version. To keep the server
+The link is for Drift on Windows and macOS, not the web version. To keep the server
 away from your open drawings altogether, start it with `--no-link`. If it's started with
 `--open <file>`, it begins on that file instead of the window.
 

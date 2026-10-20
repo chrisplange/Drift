@@ -1,0 +1,30 @@
+---
+import Base from "../../layouts/Base.astro";
+// The third-party notices, as shipped next to Drift (made by scripts/notices.py).
+import notices from "../../../../THIRD-PARTY-NOTICES.txt?raw";
+---
+
+<Base
+  title="Third-party notices"
+  description="The open-source fonts and libraries Drift is built with, with their licences and copyright notices."
+>
+  <div class="wrap page prose">
+    <p class="eyebrow"><a href="/licence/">Licence</a></p>
+    <h1>Third-party notices</h1>
+    <p class="lede">
+      The open-source fonts and libraries Drift is built with, with their licences and
+      copyright notices. The same text comes with every copy of Drift.
+    </p>
+    <pre class="notices">{notices}</pre>
+  </div>
+</Base>
+
+<style>
+  .page {
+    padding-top: 56px;
+  }
+  .notices {
+    white-space: pre-wrap;
+    font-size: 0.8rem;
+  }
+</style>

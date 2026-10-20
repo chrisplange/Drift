@@ -14,4 +14,9 @@ const guide = defineCollection({
   }),
 });
 
-export const collections = { guide };
+// Drift's end-user licence agreement, from LICENSE.md at the repository root (id "license").
+const legal = defineCollection({
+  loader: glob({ pattern: "LICENSE.md", base: ".." }),
+});
+
+export const collections = { guide, legal };

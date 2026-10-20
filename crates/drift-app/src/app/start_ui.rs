@@ -33,7 +33,7 @@ fn system_name() -> String {
 }
 
 /// The version shown to users, e.g. "0.1.0-alpha.1".
-pub(crate) const VERSION: &str = env!("CARGO_PKG_VERSION");
+pub(crate) const VERSION: &str = drift_platform::VERSION;
 
 /// The licences and copyright notices of the fonts and crates built into Drift, made by
 /// scripts/notices.py. They also ship as a file beside the program.
@@ -326,12 +326,17 @@ impl DriftApp {
                         );
                         ui.label(format!("Version {VERSION}"));
                         ui.label(egui::RichText::new("Parametric 2D sketching").weak());
+                        ui.label(
+                            egui::RichText::new("© 2026 Christopher Lange. All rights reserved.")
+                                .small()
+                                .weak(),
+                        );
                     });
                 });
                 ui.add_space(8.0);
                 ui.label(
                     egui::RichText::new(
-                        "This is an alpha: save often, and expect rough edges. Your sketch is \
+                        "This is a beta: save often, and expect rough edges. Your sketch is \
                          also kept between sessions automatically.",
                     )
                     .small()
@@ -361,7 +366,10 @@ impl DriftApp {
                     {
                         self.show_licences = true;
                     }
-                    ui.hyperlink_to("Project page", env!("CARGO_PKG_REPOSITORY"));
+                    ui.hyperlink_to("Website", crate::links::WEBSITE);
+                    ui.hyperlink_to("User guide", crate::links::GUIDE);
+                    ui.hyperlink_to("Licence", crate::links::LICENCE)
+                        .on_hover_text("Drift's end-user licence agreement");
                 });
             });
         if close {

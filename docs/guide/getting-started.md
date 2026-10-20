@@ -10,7 +10,7 @@ time you open one.
 
 ### Windows
 
-Download from the [Releases page](https://github.com/chrisplange/Drift/releases):
+Download from the [download page](https://drift-website-c9y.pages.dev/download/):
 
 - **`Drift-<version>-windows-x64-setup.exe`**, the installer. It installs for your user
   only (no administrator rights needed), adds Drift to the Start menu, can add a desktop
@@ -23,7 +23,7 @@ If Windows SmartScreen says it protected your PC, click **More info**, then **Ru
 ### macOS
 
 Download **`Drift-<version>-macos-universal.dmg`** from the
-[Releases page](https://github.com/chrisplange/Drift/releases). It runs on Apple silicon and
+[download page](https://drift-website-c9y.pages.dev/download/). It runs on Apple silicon and
 Intel Macs. Open the disk image and drag **Drift** to **Applications**.
 
 The first time, macOS Gatekeeper may refuse to open it. Right-click (or Control-click)
@@ -35,17 +35,12 @@ or drop the file on Drift's window.
 
 ### Linux
 
-There is no Linux package yet. Build from source with the Rust toolchain from
-[rustup.rs](https://rustup.rs):
-
-```bash
-cargo run -p drift --release
-```
+There is no Linux version yet. Use Drift in the browser.
 
 ### In the browser
 
-Open <https://chrisplange.github.io/Drift/>. It's the same program, built from the latest
-code on `main`, so it may be ahead of the installers. It uses WebGPU where the browser has
+Open <https://drift-website-c9y.pages.dev/app/>. It's the same program, and may be a little
+ahead of the installers. It uses WebGPU where the browser has
 it, and WebGL2 otherwise.
 
 In the browser:

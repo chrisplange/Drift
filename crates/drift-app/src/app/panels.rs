@@ -374,6 +374,17 @@ impl DriftApp {
                     }
                     ui.separator();
                     self.model_export_buttons(ui, &painter);
+                    ui.separator();
+                    if ui
+                        .button("Blender profiles…")
+                        .on_hover_text(
+                            "The blocks marked as Blender profiles, for the Drift Profiles \
+                             add-on (saving writes them beside the drawing too)",
+                        )
+                        .clicked()
+                    {
+                        self.export_profiles();
+                    }
                 });
                 if ui
                     .add(egui::Button::new("Print…").shortcut_text(shortcut("P", false)))
@@ -631,6 +642,10 @@ impl DriftApp {
                 });
             });
             ui.menu_button("Help", |ui| {
+                ui.hyperlink_to("User guide", crate::links::GUIDE);
+                ui.hyperlink_to("Report a problem…", crate::links::REPORT)
+                    .on_hover_text("Bug reports and feature requests, on GitHub");
+                ui.separator();
                 if ui.button("Keyboard shortcuts").clicked() {
                     self.show_shortcuts = true;
                 }
@@ -650,7 +665,7 @@ impl DriftApp {
                 ui.label(
                     egui::RichText::new(format!(
                         "Drift {} · {}{memory}",
-                        env!("CARGO_PKG_VERSION"),
+                        drift_platform::VERSION,
                         self.backend
                     ))
                     .small()

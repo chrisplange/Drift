@@ -75,9 +75,7 @@ else is automated.
 6. **Tell the site its address.** In **Settings → Secrets and variables → Actions →
    Variables**, add a repository variable `SITE_URL` set to that address, for example
    `https://drift-website-abc.pages.dev`, and run the Website workflow again. Pages use it for
-   their canonical links and link previews; until it's set, those tags are left out. It also
-   makes GitHub Pages (chrisplange.github.io/Drift/) redirect to the new site's `/app/` from
-   the next CI run.
+   their canonical links and link previews; until it's set, those tags are left out.
 
 Until the secrets exist, the workflow still builds the site on every run, but it doesn't
 deploy it.

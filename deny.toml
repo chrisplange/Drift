@@ -1,5 +1,5 @@
 # cargo-deny configuration: https://embarkstudios.github.io/cargo-deny/
-# Keeps every dependency under a permissive licence, so Drift (FSL-1.1-ALv2) can ship them.
+# Keeps every dependency under a licence that lets Drift, a proprietary application, ship it.
 
 
 [graph]
@@ -53,7 +53,7 @@ exceptions = [
 ]
 
 [licenses.private]
-# Drift's own crates aren't published; their licence is Drift's (see LICENSE.md).
+# Drift's own crates aren't published; they are proprietary (see LICENSE.md).
 ignore = true
 
 [bans]

@@ -26,9 +26,22 @@ If you add or update a dependency, also regenerate `THIRD-PARTY-NOTICES.txt` wit
 `python scripts/notices.py` (it needs `cargo install cargo-about --locked --features cli`).
 CI checks that it matches `Cargo.lock`.
 
+## The user guide's screenshots
+
+The screenshots are made by Drift's own headless UI tests, so they can be brought up to
+date whenever the interface changes. From the repository root:
+
+```bash
+cargo test -p drift-app docs_screenshots -- --ignored
+```
+
+The scenes are staged in
+[`crates/drift-app/src/ui_tests/docs.rs`](crates/drift-app/src/ui_tests/docs.rs) and
+written to [`docs/guide/images/`](docs/guide/images/). The test is skipped when the computer has no
+graphics adapter.
+
 ## Licence
 
-Drift is released under the [FSL-1.1-ALv2](LICENSE.md), as described in the
-[README](README.md#licence). By contributing, you license your contribution to Christopher
-Lange, Drift's licensor, under the Apache License, Version 2.0, so that it can be released as
-part of Drift under the FSL now and under Apache-2.0 when each version converts.
+Drift is proprietary software, released to its users under the [Drift End-User Licence
+Agreement](LICENSE.md), as described in the [README](README.md#licence). The repository is
+private and takes no outside contributions.

@@ -19,6 +19,13 @@ pub struct BlockEdit {
     pub group: GroupId,
 }
 
+/// What F2 renames.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum RenameTarget {
+    Block(BlockId),
+    Group(GroupId),
+}
+
 /// What the Base point tool's click picks the base point of.
 #[derive(Clone, Debug, PartialEq)]
 pub enum BasePointPick {
@@ -788,6 +795,62 @@ impl Editor {
         });
     }
 
+    /// What F2 renames: the picked group, or the block whose copies are all that's picked.
+    pub fn rename_target(&self) -> Option<RenameTarget> {
+        if let Some(g) = self.selected_group() {
+            return Some(RenameTarget::Group(g));
+        }
+        if !self.selection.is_empty() || !self.selected_texts.is_empty() {
+            return None;
+        }
+        let mut blocks = self
+            .selected_instances
+            .iter()
+            .filter_map(|i| self.doc.instance(*i).map(|x| x.block));
+        let first = blocks.next()?;
+        blocks
+            .all(|b| b == first)
+            .then_some(RenameTarget::Block(first))
+    }
+
+    /// The current name of a block or group.
+    pub fn name_of(&self, target: RenameTarget) -> Option<String> {
+        match target {
+            RenameTarget::Block(b) => self.doc.block(b).map(|x| x.name.clone()),
+            RenameTarget::Group(g) => self.doc.group(g).map(|x| x.name.clone()),
+        }
+    }
+
+    /// Rename a block or group, as one undo step. A block's name must be new among blocks;
+    /// neither may be blank. Says why when it refuses.
+    pub fn rename(&mut self, target: RenameTarget, name: &str) -> Result<(), String> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err("A name can't be blank".into());
+        }
+        if self.name_of(target).ok_or("That's gone")? == name {
+            return Ok(());
+        }
+        match target {
+            RenameTarget::Block(id) => {
+                if self.doc.block_named(name).is_some_and(|b| b != id) {
+                    return Err(format!("Another block is already named {name}"));
+                }
+                let mut b = self.doc.block(id).cloned().ok_or("That block is gone")?;
+                b.name = name.to_owned();
+                self.doc.begin();
+                self.doc.set_block(id, b);
+                self.commit("Rename block");
+            }
+            RenameTarget::Group(id) => {
+                self.doc.begin();
+                self.doc.rename_group(id, name);
+                self.commit("Rename group");
+            }
+        }
+        Ok(())
+    }
+
     /// Delete the blocks that have no copies (but not one being edited). Returns how many.
     pub fn purge_unused_blocks(&mut self) -> usize {
         let counts = self.copy_counts();
@@ -828,6 +891,56 @@ mod tests {
             .map(|i| doc.add_line(p[i], p[(i + 1) % 4]).unwrap())
             .collect();
         (Editor::new(doc), lines)
+    }
+
+    #[test]
+    fn blocks_and_groups_are_renamed_by_what_is_picked() {
+        let (mut ed, lines) = square();
+        ed.selection = lines;
+        let copy = ed.make_block("Table").unwrap();
+        let block = ed.doc.instance(copy).unwrap().block;
+        ed.place_instance(block, DVec2::new(1000.0, 0.0), 0.0, false);
+        // Nothing picked: nothing to rename.
+        ed.selection.clear();
+        ed.selected_instances.clear();
+        assert_eq!(ed.rename_target(), None);
+        // Copies of one block: that block.
+        ed.selected_instances = ed.doc.instances().map(|(id, _)| id).collect();
+        assert_eq!(ed.rename_target(), Some(RenameTarget::Block(block)));
+        let target = RenameTarget::Block(block);
+        ed.rename(target, "  Desk ").unwrap();
+        assert_eq!(ed.name_of(target).as_deref(), Some("Desk"));
+        // One undo step brings the old name back.
+        ed.undo();
+        assert_eq!(ed.name_of(target).as_deref(), Some("Table"));
+        ed.redo();
+        assert_eq!(ed.name_of(target).as_deref(), Some("Desk"));
+        // Blank and taken names are refused, saying why.
+        assert!(ed.rename(target, "   ").is_err());
+        ed.selection = square_lines(&mut ed);
+        ed.selected_instances.clear();
+        ed.make_block("Chair").unwrap();
+        let err = ed.rename(target, "Chair").unwrap_err();
+        assert!(err.contains("Chair"), "{err}");
+        assert_eq!(ed.name_of(target).as_deref(), Some("Desk"));
+        // A picked group: the group.
+        ed.selection = square_lines(&mut ed);
+        let g = ed.make_group().unwrap();
+        assert_eq!(ed.rename_target(), Some(RenameTarget::Group(g)));
+        ed.rename(RenameTarget::Group(g), "Room A").unwrap();
+        assert_eq!(ed.doc.group(g).unwrap().name, "Room A");
+    }
+
+    /// Another 400 square, drawn as one undo step: its lines.
+    fn square_lines(ed: &mut Editor) -> BTreeSet<EntityId> {
+        ed.doc.begin();
+        let p = [(0.0, 0.0), (400.0, 0.0), (400.0, 400.0), (0.0, 400.0)]
+            .map(|(x, y)| ed.doc.add_point(DVec2::new(x + 5000.0, y)));
+        let lines = (0..4)
+            .map(|i| ed.doc.add_line(p[i], p[(i + 1) % 4]).unwrap())
+            .collect();
+        ed.commit("Square");
+        lines
     }
 
     #[test]

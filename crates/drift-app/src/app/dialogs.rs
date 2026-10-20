@@ -54,6 +54,7 @@ impl DriftApp {
         self.settings_window(ctx);
         self.drawing_settings_window(ctx);
         self.relation_pie(ctx);
+        self.rename_dialog(ctx);
         self.import_report_window(ctx);
         #[cfg(not(feature = "demo"))]
         self.output_window(ctx);

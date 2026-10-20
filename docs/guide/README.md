@@ -44,6 +44,8 @@ rest stand alone.
 11. [Underlays and DXF import](tutorials/11-underlays-and-dxf.md).
 12. [Checking a sketch](tutorials/12-sketch-checker.md): gaps, short ends and curves of no
     length.
+13. [Profiles in Blender](tutorials/13-profiles-in-blender.md): mouldings and turned shapes
+    drawn in Drift, swept or lathed in Blender, updated when you save.
 
 **Reference.** One page per area, to look things up.
 

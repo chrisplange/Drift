@@ -270,7 +270,12 @@ impl Editor {
             .all(|id| self.doc.get(*id).is_some_and(|e| e.layer == layer));
         let (fills, filled) = self.capture_fills(&ids.iter().copied().collect(), &place);
         self.doc.begin();
-        let block = self.doc.add_block(Block { name, items, fills });
+        let block = self.doc.add_block(Block {
+            name,
+            items,
+            fills,
+            profile: false,
+        });
         for f in filled {
             self.doc.remove_fill(f);
         }
@@ -577,20 +582,10 @@ impl Editor {
         }
     }
 
-    /// Write the edited geometry back into the block (every copy updates) and remove the
-    /// temporary geometry.
-    pub fn finish_block_edit(&mut self) {
-        let Some(edit) = self.block_edit.take() else {
-            return;
-        };
-        self.open_group = None;
-        let (Some(group), Some(copy), Some(mut block)) = (
-            self.doc.group(edit.group).cloned(),
-            self.doc.instance(edit.instance).copied(),
-            self.doc.block(edit.block).cloned(),
-        ) else {
-            return;
-        };
+    /// The curves of a block being edited in place, as they are now, in block coordinates.
+    fn edited_items(&self, edit: &BlockEdit) -> Option<Vec<BlockItem>> {
+        let group = self.doc.group(edit.group)?;
+        let copy = self.doc.instance(edit.instance)?;
         let referenced = self.doc.defining_points(
             group
                 .members
@@ -598,20 +593,57 @@ impl Editor {
                 .copied()
                 .filter(|id| self.doc.get(*id).is_some_and(|e| !e.kind.is_point())),
         );
-        block.items = group
-            .members
-            .iter()
-            .filter(|id| !referenced.contains(id))
-            .filter_map(|id| {
-                let e = self.doc.get(*id)?;
-                let shape = self.doc.shape(*id)?;
-                Some(BlockItem {
-                    shape: copy.invert_shape(&shape),
-                    style: e.style,
-                    appearance: e.appearance,
+        Some(
+            group
+                .members
+                .iter()
+                .filter(|id| !referenced.contains(id))
+                .filter_map(|id| {
+                    let e = self.doc.get(*id)?;
+                    let shape = self.doc.shape(*id)?;
+                    Some(BlockItem {
+                        shape: copy.invert_shape(&shape),
+                        style: e.style,
+                        appearance: e.appearance,
+                    })
                 })
+                .collect(),
+        )
+    }
+
+    /// The drawing's blocks, with a block being edited in place as it is now: what the
+    /// Blender profiles file is written from.
+    pub fn blocks_as_drawn(&self) -> Vec<(BlockId, Block)> {
+        self.doc
+            .blocks()
+            .map(|(id, b)| {
+                let mut b = b.clone();
+                if let Some(edit) = self.block_edit.filter(|e| e.block == id)
+                    && let Some(items) = self.edited_items(&edit)
+                {
+                    b.items = items;
+                }
+                (id, b)
             })
-            .collect();
+            .collect()
+    }
+
+    /// Write the edited geometry back into the block (every copy updates) and remove the
+    /// temporary geometry.
+    pub fn finish_block_edit(&mut self) {
+        let Some(edit) = self.block_edit.take() else {
+            return;
+        };
+        self.open_group = None;
+        let (Some(group), Some(copy), Some(mut block), Some(items)) = (
+            self.doc.group(edit.group).cloned(),
+            self.doc.instance(edit.instance).copied(),
+            self.doc.block(edit.block).cloned(),
+            self.edited_items(&edit),
+        ) else {
+            return;
+        };
+        block.items = items;
         let (fills, filled) = self.capture_fills(&group.members, &copy);
         block.fills = fills;
         self.doc.begin();
@@ -736,6 +768,24 @@ impl Editor {
     pub fn library_block(&mut self, entry: &crate::library::Entry) -> BlockId {
         self.add_library_blocks([entry]);
         self.doc.block_named(&entry.block.name).expect("just added")
+    }
+
+    /// Mark a block as a Blender profile, or not (one undo step).
+    pub fn set_block_profile(&mut self, id: BlockId, profile: bool) {
+        let Some(mut block) = self.doc.block(id).cloned() else {
+            return;
+        };
+        if block.profile == profile {
+            return;
+        }
+        block.profile = profile;
+        self.doc.begin();
+        self.doc.set_block(id, block);
+        self.commit(if profile {
+            "Mark as Blender profile"
+        } else {
+            "Unmark Blender profile"
+        });
     }
 
     /// Delete the blocks that have no copies (but not one being edited). Returns how many.

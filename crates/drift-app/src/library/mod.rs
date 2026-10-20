@@ -318,6 +318,7 @@ impl Sketch {
             name,
             items: self.items,
             fills: self.fills,
+            profile: false,
         }
     }
 }

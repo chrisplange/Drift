@@ -6,7 +6,7 @@
 //! ```json
 //! {
 //!   "format": "drift",
-//!   "version": 35,
+//!   "version": 36,
 //!   "meta": {"title":"Bracket","units":"mm","generator":"Drift 0.1.0"},
 //!   "display": {"length":"architectural","fraction":16},
 //!   "variables": [
@@ -93,8 +93,9 @@ pub const EXTENSION: &str = "drift";
 /// annotation drawn in those views only); 32 = adds a view's `construction` (construction
 /// geometry shown on sheets); 33 = adds an underlay's `images` (pictures from a PDF page);
 /// 34 = adds a dimension's `ext` (extension line starts set by hand); 35 = a sheet's
-/// `title_block` can be `blank` (blank paper; `none` stays the border without a title block).
-pub const FORMAT_VERSION: u32 = 35;
+/// `title_block` can be `blank` (blank paper; `none` stays the border without a title block);
+/// 36 = adds a fill's `divided` (an edit left it covering more than one area).
+pub const FORMAT_VERSION: u32 = 36;
 const FORMAT_TAG: &str = "drift";
 
 /// Document-level properties stored alongside the geometry.
@@ -1894,7 +1895,7 @@ mod tests {
         let text = save(&doc, &Metadata::default());
         let expected = r#"{
   "format": "drift",
-  "version": 35,
+  "version": 36,
   "meta": {"units":"mm"},
   "entities": [
     {"type":"point","id":"e1","at":[0.0,0.0]},
@@ -2073,7 +2074,7 @@ mod tests {
         // A file from before extension starts opens with them all automatic.
         let old = text.replace(r#","ext":[null,12.5]"#, "");
         let old = old.replace(r#","ext":[-2.0,3.25]"#, "");
-        let old = old.replace(r#""version": 35"#, r#""version": 33"#);
+        let old = old.replace(r#""version": 36"#, r#""version": 33"#);
         let (loaded, _) = load(&old).unwrap();
         assert_eq!(loaded.extension_starts(h), [None, None]);
         assert_eq!(loaded.extension_starts(both), [None, None]);
@@ -2619,6 +2620,7 @@ mod tests {
         hatch.background = Some(Rgb([255, 255, 200]));
         let mut h = Fill::new(curves.clone(), DVec2::new(3.0, 4.0), FillKind::Hatch(hatch));
         h.weight = Some(LineWeight(35));
+        h.divided = true;
         doc.add_fill(h);
         doc.add_annotation(Annotation::Note {
             text: "Deburr all edges\nBreak sharp corners".into(),
@@ -2980,7 +2982,9 @@ mod tests {
         doc.add_text(drift_core::SketchText::new("A", DVec2::ZERO, 3.0));
 
         let text = save(&doc, &Metadata::default());
-        assert!(text.contains("\"version\": 35"));
+        assert!(text.contains("\"version\": 36"));
+        // A fill an edit divided keeps its mark.
+        assert!(text.contains(r#""divided":true"#), "{text}");
         // A mark points at its view.
         assert!(text.contains(r#""flip":true,"view":"w"#), "{text}");
         assert!(text.contains(r#""styles": ["#) && text.contains(r#""alt_units":"none""#));

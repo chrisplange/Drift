@@ -239,6 +239,43 @@ impl DriftApp {
                     self.set_tool(ToolKind::Fill);
                 }
             }
+            if let Some(parts) = shape.filter(|_| fill.divided).map(|s| s.parts) {
+                ui.add_space(4.0);
+                ui.label(
+                    egui::RichText::new(format!(
+                        "Covers {parts} areas: an edit divided its area, and it was kept whole."
+                    ))
+                    .color(theme::warning_color(ui.visuals().dark_mode))
+                    .small(),
+                );
+                ui.horizontal_wrapped(|ui| {
+                    let result = if ui
+                        .button("Fit to its seed's area")
+                        .on_hover_text("Cover only the area where it was first clicked")
+                        .clicked()
+                    {
+                        Some(self.editor.fit_fill_to_seed(first))
+                    } else if ui
+                        .button(format!("Split into {parts}"))
+                        .on_hover_text("One fill per area, each in this style")
+                        .clicked()
+                    {
+                        Some(self.editor.split_fill(first).map(|_| ()))
+                    } else {
+                        if ui
+                            .button("Keep whole")
+                            .on_hover_text("Clear the mark and keep covering every area")
+                            .clicked()
+                        {
+                            self.editor.keep_fill_whole(first);
+                        }
+                        None
+                    };
+                    if let Some(Err(e)) = result {
+                        self.editor.notice = Some(e);
+                    }
+                });
+            }
             theme::section(ui, "Style");
             let mut style = FillStyle::of(&fill);
             if fills.len() == 1 && matches!(fill.kind, FillKind::Hatch(_)) {

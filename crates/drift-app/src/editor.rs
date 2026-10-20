@@ -370,6 +370,15 @@ pub struct Editor {
     /// Each fill's last region, kept for when its boundary is lost.
     pub(crate) last_fill_shapes:
         std::collections::HashMap<drift_core::FillId, crate::fills::FillShape>,
+    /// Whether each fill was last found kept whole across curves that cross it, so an edit
+    /// that newly divides its area can be told from one that leaves it as it was.
+    pub(crate) fill_crossed: std::collections::HashMap<drift_core::FillId, bool>,
+    /// An edit that divides a fill's area moves the fill to the area around its seed
+    /// (Preferences); off, the fill is kept whole and flagged.
+    pub follow_divided_fills: bool,
+    /// What edits did to fills beyond following their outlines, until taken (by the
+    /// assistant's results; the app clears it).
+    pub fill_changes: Vec<crate::fills::FillChange>,
     /// Sides of the next polygon (0: the default), and whether it's drawn around its circle.
     pub polygon_sides: usize,
     pub polygon_circumscribed: bool,
@@ -437,6 +446,7 @@ impl Editor {
     pub fn keep_prefs_from(&mut self, was: &Editor) {
         self.regions_by_layer = was.regions_by_layer;
         self.regions_need_fill = was.regions_need_fill;
+        self.follow_divided_fills = was.follow_divided_fills;
         self.pick_filter = was.pick_filter;
         self.dim_mode = was.dim_mode;
         self.dim_overall = was.dim_overall;
@@ -2268,12 +2278,18 @@ impl Editor {
 
     pub fn undo(&mut self) -> bool {
         let done = self.history.undo(&mut self.doc);
+        // (Fills are back as they were: whether each was kept whole across curves is found
+        // again when it is next looked at.)
+        self.fill_crossed.clear();
         self.sync();
         done
     }
 
     pub fn redo(&mut self) -> bool {
         let done = self.history.redo(&mut self.doc);
+        // (Fills are back as they were: whether each was kept whole across curves is found
+        // again when it is next looked at.)
+        self.fill_crossed.clear();
         self.sync();
         done
     }

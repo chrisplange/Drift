@@ -497,3 +497,53 @@ fn a_curve_ending_on_an_arc_closes_an_area() {
     let area = disc["area_mm2"].as_f64().expect("area");
     assert!((area - 15707.96).abs() < 0.01, "{disc}");
 }
+
+#[test]
+fn add_fill_in_a_filled_area_says_it_restyled_the_fill() {
+    let mut s = Session::new();
+    ok(
+        &mut s,
+        "add_geometry",
+        json!({ "items": [{ "type": "rectangle", "corner": [0, 0], "width": 100, "height": 50 }] }),
+    );
+    let first = ok(&mut s, "add_fill", json!({ "at": [10, 10] }));
+    assert_eq!(first.get("restyled"), None, "{first}");
+    let again = ok(
+        &mut s,
+        "add_fill",
+        json!({ "at": [90, 40], "kind": "solid", "color": "#336699" }),
+    );
+    assert_eq!(again["id"], first["id"], "{again}");
+    assert_eq!(again["restyled"], true, "{again}");
+    assert!(again["note"].is_string(), "{again}");
+    let info = ok(&mut s, "drawing_info", json!({}));
+    assert_eq!(info["fills"], 1);
+}
+
+#[test]
+fn a_line_drawn_across_a_fill_is_reported() {
+    let mut s = Session::new();
+    ok(
+        &mut s,
+        "add_geometry",
+        json!({ "items": [{ "type": "rectangle", "corner": [0, 0], "width": 100, "height": 50 }] }),
+    );
+    let fill = ok(&mut s, "add_fill", json!({ "at": [10, 10] }));
+    let v = ok(
+        &mut s,
+        "add_geometry",
+        json!({ "items": [{ "type": "line", "from": [40, -10], "to": [40, 60] }] }),
+    );
+    let fills = v["fills"].as_array().expect("fill changes");
+    assert_eq!(fills.len(), 1, "{v}");
+    assert_eq!(fills[0]["id"], fill["id"], "{v}");
+    assert_eq!(fills[0]["change"], "divided", "{v}");
+    assert_eq!(fills[0]["areas"], 2, "{v}");
+    // A step that changes no fill says nothing about fills.
+    let v = ok(
+        &mut s,
+        "add_geometry",
+        json!({ "items": [{ "type": "point", "at": [500, 500] }] }),
+    );
+    assert!(v.get("fills").is_none(), "{v}");
+}

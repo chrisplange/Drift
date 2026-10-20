@@ -844,6 +844,32 @@ impl DriftApp {
                 overlay::region_fill(&painter, &map, &shape.region, color.gamma_multiply(alpha));
             }
         }
+        // Fills an edit divided, kept whole: marked at their seed until fitted, split or
+        // kept.
+        let dark = ui.visuals().dark_mode;
+        for (id, fill) in self.editor.doc.fills() {
+            let Some(shape) = shapes.get(&id).filter(|s| fill.divided && s.parts > 1) else {
+                continue;
+            };
+            if self
+                .editor
+                .doc
+                .layer(fill.layer)
+                .is_some_and(|l| !l.visible)
+            {
+                continue;
+            }
+            let at = map.to_screen(fill.seed);
+            if rect.expand(40.0).contains(at) {
+                let bg = if dark {
+                    egui::Color32::from_rgb(0x41, 0x24, 0x02)
+                } else {
+                    egui::Color32::from_rgb(0xfa, 0xee, 0xda)
+                };
+                let text = format!("Covers {} areas", shape.parts);
+                overlay::badge(&painter, at, &text, theme::warning_color(dark), bg);
+            }
+        }
         // Drawn where the handles are now (a drag this frame has moved them).
         if let Some(h) = self.hatch_handles(&map) {
             self.paint_hatch_handles(&painter, &map, &h, &colors);

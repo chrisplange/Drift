@@ -959,6 +959,8 @@ impl eframe::App for DriftApp {
         if let Some(notice) = self.editor.notice.take() {
             self.set_status(notice, true, now);
         }
+        // (The notice said what edits did to fills; only the assistant lists them.)
+        self.editor.fill_changes.clear();
         // Far-off geometry from an edit (an import lists it in its report instead).
         if !self.editor.far_off.is_empty() {
             let far = std::mem::take(&mut self.editor.far_off);

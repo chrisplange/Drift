@@ -610,6 +610,23 @@ impl DriftApp {
              outline picks nothing (box selection starts there). Off: it picks the area, to \
              measure it",
         );
+        ui.label("When an edit divides a filled area");
+        let options = [(false, "Keep whole and flag"), (true, "Follow its seed")];
+        if let Some(follow) = theme::segmented(ui, self.editor.follow_divided_fills, &options) {
+            self.editor.follow_divided_fills = follow;
+        }
+        ui.label(
+            egui::RichText::new(if self.editor.follow_divided_fills {
+                "The fill or hatch takes the area its seed is in (where it was first clicked); \
+                 the rest is left empty, and a notice says so."
+            } else {
+                "The fill or hatch keeps covering the whole area and is marked \"Covers 2 \
+                 areas\". Pick it to fit it to one area, split it into one per area, or keep it \
+                 whole."
+            })
+            .small()
+            .weak(),
+        );
     }
 
     fn mouse_prefs(&mut self, ui: &mut egui::Ui) {

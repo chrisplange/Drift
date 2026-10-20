@@ -28,6 +28,44 @@ pub struct FillShape {
     /// What moves with the fill: its outline curves and the curves around its holes. Not
     /// the curves of another shape whose edges run along its outline.
     pub curves: Vec<EntityId>,
+    /// Kept whole across curves that cross it: it covers more than one area.
+    pub crossed: bool,
+    /// For a fill flagged as [`divided`](Fill::divided), how many areas it covers.
+    pub parts: usize,
+}
+
+/// What an edit did to a fill beyond following its outline, for a notice and the agent's
+/// result.
+#[derive(Clone, Debug, PartialEq)]
+pub enum FillChange {
+    /// The edit left it covering `parts` areas: it was kept whole and flagged.
+    Divided { id: FillId, parts: usize },
+    /// It took the area around its seed (`before` is its area before the edit, if known).
+    Refound {
+        id: FillId,
+        before: Option<f64>,
+        after: f64,
+    },
+    /// Curves of its outline were deleted and no area was left around it: it went.
+    Dropped { id: FillId },
+}
+
+/// The areas among `regions` that make up `whole` (a fill kept whole across curves that
+/// divide it).
+fn parts_of<'a>(whole: &Region, regions: &'a [Region]) -> Vec<&'a Region> {
+    let b = whole.bounds;
+    let pad = 1e-6 * b.min.abs().max(b.max.abs()).max_element().max(1.0);
+    regions
+        .iter()
+        .filter(|r| {
+            r.area <= whole.area * (1.0 + 1e-9)
+                && r.bounds.min.x >= b.min.x - pad
+                && r.bounds.min.y >= b.min.y - pad
+                && r.bounds.max.x <= b.max.x + pad
+                && r.bounds.max.y <= b.max.y + pad
+                && whole.contains(crate::editor::interior_point(r, r.centroid))
+        })
+        .collect()
 }
 
 /// A fill's outline curves and the curves of its region's holes, sorted. `ids` is the entity
@@ -273,9 +311,15 @@ impl Editor {
                     curves: curves_of(&fill, r, &ids),
                     region: r.clone(),
                     lost: false,
+                    crossed: false,
+                    parts: 0,
                 })
             });
-            if let Some(shape) = found {
+            if let Some(mut shape) = found {
+                if fill.divided {
+                    shape.parts = parts_of(&shape.region, &regions).len();
+                }
+                self.fill_crossed.insert(id, shape.crossed);
                 self.last_fill_shapes.insert(id, shape.clone());
                 out.insert(id, shape);
             } else if let Some(last) = self.last_fill_shapes.get(&id) {
@@ -293,6 +337,8 @@ impl Editor {
                         curves: curves_of(&fill, r, &ids),
                         region: r.clone(),
                         lost: true,
+                        crossed: false,
+                        parts: 0,
                     },
                 );
             }
@@ -306,6 +352,15 @@ impl Editor {
     /// (so undo takes it back with the edit): when the edit replaced or split curves of a
     /// fill's outline, the area's new outline becomes the fill's, and a seed the edit left
     /// outside the area (a moved corner, a fillet over it) moves back in.
+    ///
+    /// A fill the edit left covering several areas (a curve drawn across it, a split that
+    /// made a junction) is kept whole and flagged as [`divided`](Fill::divided), or, with
+    /// [`follow_divided_fills`](Editor::follow_divided_fills), takes the area around its
+    /// seed. One that was already kept whole across curves stays so. When the edit deleted
+    /// or reshaped curves of its outline and no area has what is left of it, the fill takes
+    /// the area around its seed (#120, #101), or goes if there is none. What happened beyond
+    /// following an outline is noted in [`fill_changes`](Editor::fill_changes) and the
+    /// notice.
     pub(crate) fn follow_fills(&mut self) {
         if self.doc.fills().next().is_none() {
             return;
@@ -315,24 +370,222 @@ impl Editor {
         let areas = Areas::new(&regions, &ids);
         let fills: Vec<(FillId, Fill)> = self.doc.fills().map(|(id, f)| (id, f.clone())).collect();
         let mut solid = None;
+        let mut created: Option<Vec<EntityId>> = None;
+        let mut changes = Vec::new();
         for (id, fill) in fills {
-            let (region, outline) = if let Some(r) = areas.exact(&fill) {
-                (r.clone(), None)
-            } else if let Some(shape) =
-                self.uncrossed_region(&fill, solid.get_or_insert_with(|| self.solid_curves()))
+            let reshaped = fill
+                .boundary
+                .iter()
+                .any(|e| self.doc.reshaped_in_transaction(*e));
+            let deleted = fill.boundary.iter().any(|e| !self.doc.contains(*e));
+            let before = self.last_fill_shapes.get(&id).map(|s| s.region.area);
+            // Whether it was kept whole across curves before this edit (unknown for a fill
+            // not looked at since it was made or opened).
+            let was_crossed = self.fill_crossed.get(&id).copied();
+            let mut followed = fill.clone();
+            let mut crossed = false;
+            let region = if let Some(r) = areas.exact(&fill) {
+                followed.divided = false;
+                r.clone()
+            } else if let Some((whole, outline)) = self
+                .uncrossed_region(&fill, solid.get_or_insert_with(|| self.solid_curves()))
+                .map(|s| (s.region, None))
+                .or_else(|| {
+                    reshaped
+                        .then(|| {
+                            let created = created.get_or_insert_with(|| {
+                                self.doc
+                                    .created_in_transaction()
+                                    .into_iter()
+                                    .filter(|e| {
+                                        self.doc.get(*e).is_some_and(|e| !e.kind.is_point())
+                                    })
+                                    .collect()
+                            });
+                            let solid = solid.get_or_insert_with(|| self.solid_curves());
+                            self.reshaped_whole(&fill, solid, created)
+                        })
+                        .flatten()
+                        .map(|(r, o)| (r, Some(o)))
+                })
             {
-                (shape.region, None)
+                let at_seed =
+                    region_at(&regions, fill.seed).filter(|r| r.area < whole.area * (1.0 - 1e-9));
+                let newly = at_seed.is_some()
+                    && was_crossed == Some(false)
+                    && !fill.divided
+                    && !self.doc.fill_created_in_transaction(id);
+                if newly
+                    && self.follow_divided_fills
+                    && let Some(part) = at_seed
+                {
+                    followed.boundary = outline_of(part, &ids);
+                    changes.push(FillChange::Refound {
+                        id,
+                        before,
+                        after: part.area,
+                    });
+                    part.clone()
+                } else {
+                    if let Some(outline) = outline {
+                        followed.boundary = outline;
+                    }
+                    crossed = at_seed.is_some();
+                    if !crossed {
+                        followed.divided = false;
+                        if deleted {
+                            changes.push(FillChange::Refound {
+                                id,
+                                before,
+                                after: whole.area,
+                            });
+                        }
+                    } else if newly {
+                        followed.divided = true;
+                        changes.push(FillChange::Divided {
+                            id,
+                            parts: parts_of(&whole, &regions).len(),
+                        });
+                    }
+                    whole
+                }
             } else if let Some(r) = areas.successor(&fill) {
-                (r.clone(), Some(outline_of(r, &ids)))
+                followed.boundary = outline_of(r, &ids);
+                followed.divided = false;
+                r.clone()
+            } else if reshaped && let Some(r) = region_at(&regions, fill.seed) {
+                followed.boundary = outline_of(r, &ids);
+                followed.divided = false;
+                changes.push(FillChange::Refound {
+                    id,
+                    before,
+                    after: r.area,
+                });
+                r.clone()
             } else {
+                if reshaped && deleted {
+                    // Curves of its outline were deleted and no area is left around it.
+                    self.doc.remove_fill(id);
+                    changes.push(FillChange::Dropped { id });
+                }
                 continue;
             };
-            let mut followed = fill.clone();
-            if let Some(outline) = outline {
-                followed.boundary = outline;
-            }
             followed.seed = crate::editor::interior_point(&region, fill.seed);
             self.doc.set_fill(id, followed);
+            self.fill_crossed.insert(id, crossed);
+        }
+        if !changes.is_empty() {
+            if self.notice.is_none() {
+                self.notice = Some(self.describe_fill_changes(&changes));
+            }
+            self.fill_changes.extend(changes);
+        }
+    }
+
+    /// A notice for what edits did to fills.
+    fn describe_fill_changes(&self, changes: &[FillChange]) -> String {
+        let units = self.doc.units();
+        let what = |id: FillId| match self.doc.fill(id).map(|f| &f.kind) {
+            Some(FillKind::Hatch(_)) => "A hatch",
+            _ => "A fill",
+        };
+        let first = match &changes[0] {
+            FillChange::Divided { id, parts } => format!(
+                "{} now covers {parts} areas: it was kept whole. Pick it to fit it to one area \
+                 or split it",
+                what(*id)
+            ),
+            FillChange::Refound { id, before, after } => match before {
+                Some(b) if (b - after).abs() > 1e-9 * after.max(1.0) => format!(
+                    "{} now fills the area around its seed ({} → {})",
+                    what(*id),
+                    units.format_area(*b),
+                    units.format_area(*after)
+                ),
+                _ => format!("{} now fills the area around its seed", what(*id)),
+            },
+            FillChange::Dropped { .. } => {
+                "A fill or hatch was removed: no area is left around it".to_owned()
+            }
+        };
+        match changes.len() {
+            1 => first,
+            n => format!("{first} (and {} more fill changes)", n - 1),
+        }
+    }
+
+    /// Fit a fill flagged as covering several areas to the one around its seed (one undo
+    /// step).
+    pub fn fit_fill_to_seed(&mut self, id: FillId) -> Result<(), String> {
+        let fill = self
+            .doc
+            .fill(id)
+            .cloned()
+            .ok_or("That fill no longer exists")?;
+        let regions = self.regions();
+        let ids = self.region_ids();
+        let r = region_at(&regions, fill.seed).ok_or("There is no closed area at its seed")?;
+        let mut fitted = fill;
+        fitted.boundary = outline_of(r, &ids);
+        fitted.seed = crate::editor::interior_point(r, fitted.seed);
+        fitted.divided = false;
+        self.doc.begin();
+        self.doc.set_fill(id, fitted);
+        self.commit("Fit fill to its area");
+        Ok(())
+    }
+
+    /// Split a fill covering several areas into one fill per area, in its style (one undo
+    /// step). The area around its seed keeps the fill; the new fills and it are selected.
+    pub fn split_fill(&mut self, id: FillId) -> Result<Vec<FillId>, String> {
+        let fill = self
+            .doc
+            .fill(id)
+            .cloned()
+            .ok_or("That fill no longer exists")?;
+        let shapes = self.fill_shapes();
+        let whole = &shapes.get(&id).ok_or("That fill has no area")?.region;
+        let regions = self.regions();
+        let ids = self.region_ids();
+        let parts = parts_of(whole, &regions);
+        if parts.len() < 2 {
+            return Err("It covers only one area".into());
+        }
+        let home = parts
+            .iter()
+            .position(|r| r.contains(fill.seed))
+            .unwrap_or(0);
+        self.doc.begin();
+        let mut out = vec![id];
+        for (k, part) in parts.iter().enumerate() {
+            let mut piece = fill.clone();
+            piece.boundary = outline_of(part, &ids);
+            piece.seed = crate::editor::interior_point(part, part.centroid);
+            piece.divided = false;
+            if k == home {
+                piece.seed = crate::editor::interior_point(part, fill.seed);
+                self.doc.set_fill(id, piece);
+            } else {
+                let new = self.doc.add_fill(piece.clone());
+                // (Its layer and look as the original's; `add_fill` put it on top.)
+                piece.order = self.doc.fill(new).map_or(piece.order, |f| f.order);
+                self.doc.set_fill(new, piece);
+                out.push(new);
+            }
+        }
+        self.commit("Split fill");
+        self.selection.clear();
+        self.selected_region = None;
+        self.selected_fills = out.iter().copied().collect();
+        Ok(out)
+    }
+
+    /// Keep a fill flagged as covering several areas whole, and clear the flag (one undo
+    /// step).
+    pub fn keep_fill_whole(&mut self, id: FillId) {
+        if let Some(mut fill) = self.doc.fill(id).cloned() {
+            fill.divided = false;
+            self.update_fill(id, fill);
         }
     }
 
@@ -459,12 +712,70 @@ impl Editor {
     /// holes inside it stay), when curves crossing it have cut its outline.
     /// `solid` is [`solid_curves`](Self::solid_curves).
     fn uncrossed_region(&self, fill: &Fill, solid: &SolidCurves) -> Option<FillShape> {
-        let outline: Vec<Shape> = fill
+        if fill.boundary.iter().any(|e| !self.doc.contains(*e)) {
+            return None;
+        }
+        let (regions, ids) = self.regions_among(&fill.boundary, solid)?;
+        // (Its curve indices are into these curves, not the sketch's regions'.)
+        Areas::new(&regions, &ids).exact(fill).map(|r| FillShape {
+            curves: curves_of(fill, r, &ids),
+            region: r.clone(),
+            lost: false,
+            crossed: true,
+            parts: 0,
+        })
+    }
+
+    /// A fill's whole area after an edit reshaped its outline (split a side where a curve
+    /// crosses it, cut a fillet into it): the area around its seed among what is left of its
+    /// outline, the curves the edit made (`created`) and the curves that don't cross them,
+    /// if that area's outline is all of the fill's curves left plus new ones. Returns the
+    /// area and its outline.
+    fn reshaped_whole(
+        &self,
+        fill: &Fill,
+        solid: &SolidCurves,
+        created: &[EntityId],
+    ) -> Option<(Region, Vec<EntityId>)> {
+        let kept: Vec<EntityId> = fill
             .boundary
+            .iter()
+            .copied()
+            .filter(|e| self.doc.contains(*e))
+            .collect();
+        let near: Bounds = kept
+            .iter()
+            .filter_map(|e| self.doc.shape(*e))
+            .map(|s| s.bounds())
+            .collect();
+        let mut outline: Vec<EntityId> = kept.clone();
+        outline.extend(created.iter().copied().filter(|e| {
+            self.doc
+                .shape(*e)
+                .is_some_and(|s| s.bounds().intersects(&near))
+        }));
+        outline.sort_unstable();
+        outline.dedup();
+        let (regions, ids) = self.regions_among(&outline, solid)?;
+        let r = region_at(&regions, fill.seed)?;
+        let found = outline_of(r, &ids);
+        (kept.iter().all(|e| found.binary_search(e).is_ok())
+            && found.iter().all(|e| outline.binary_search(e).is_ok()))
+        .then(|| (r.clone(), found))
+    }
+
+    /// The areas among `outline_ids` (sorted curves) and the solid curves near them that
+    /// don't cross them, with the entity of each of their curve indices.
+    fn regions_among(
+        &self,
+        outline_ids: &[EntityId],
+        solid: &SolidCurves,
+    ) -> Option<(Vec<Region>, Vec<EntityId>)> {
+        let outline: Vec<Shape> = outline_ids
             .iter()
             .filter_map(|id| self.doc.shape(*id))
             .collect();
-        if outline.len() != fill.boundary.len() {
+        if outline.is_empty() {
             return None;
         }
         // Curves clear of the outline's box can't be inside its area or change it: only the
@@ -477,20 +788,14 @@ impl Editor {
             .iter()
             .filter(|(_, _, bounds)| bounds.intersects(&near))
             .filter(|(id, shape, _)| {
-                fill.boundary.binary_search(id).is_ok()
+                outline_ids.binary_search(id).is_ok()
                     || outline
                         .iter()
                         .all(|o| drift_geom::intersect::intersect(o, shape).is_empty())
             })
             .map(|(id, shape, _)| (*id, *shape))
             .unzip();
-        let regions = drift_geom::regions::regions(&curves);
-        // (Its curve indices are into these curves, not the sketch's regions'.)
-        Areas::new(&regions, &ids).exact(fill).map(|r| FillShape {
-            curves: curves_of(fill, r, &ids),
-            region: r.clone(),
-            lost: false,
-        })
+        Some((drift_geom::regions::regions(&curves), ids))
     }
 
     /// Fills in draw order (bottom first): by layer, then each fill's order.

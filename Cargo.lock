@@ -1243,6 +1243,7 @@ name = "drift-mcp"
 version = "0.1.0-beta.1.5"
 dependencies = [
  "drift-app",
+ "drift-platform",
  "rmcp",
  "serde_json",
  "tokio",

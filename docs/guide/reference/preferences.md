@@ -84,6 +84,10 @@ or another assistant connected through `drift-mcp`, then works on the drawing in
 window, and you see each change as it is made. It is off until you turn it on. See
 [Drawing with AI assistants](../ai/assistants.md).
 
+**Server** shows where the installed `drift-mcp` is. **Copy Claude Desktop config** copies
+the entry to paste into Claude Desktop's `claude_desktop_config.json`, with `--root` set to
+your Documents folder.
+
 ## Memory
 
 Shows how much memory Drift is using. Drift warns at 3 GB and closes itself at 8 GB, so a

@@ -3,7 +3,7 @@
 ;
 ; It installs for the current user by default (no administrator prompt) and offers "for all
 ; users" in a dialog; adds a Start menu entry, an optional desktop icon, and opens .drift
-; sketches with Drift.
+; sketches with Drift. drift-mcp.exe, the MCP server for AI assistants, goes next to drift.exe.
 
 #ifndef AppVersion
   #define AppVersion "0.0.0"
@@ -47,6 +47,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Files]
 Source: "..\..\target\release\drift.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\..\target\release\drift-mcp.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\LICENSE.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\THIRD-PARTY-NOTICES.txt"; DestDir: "{app}"; Flags: ignoreversion
 

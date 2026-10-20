@@ -224,3 +224,41 @@ hatch bath.walls ANSI31"#;
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn preferences_show_the_server_and_copy_its_config() {
+    let Some(mut h) = harness() else { return };
+    let dir = link_dir("prefs");
+    let server = dir.join(format!("drift-mcp{}", std::env::consts::EXE_SUFFIX));
+    std::fs::write(&server, b"").unwrap();
+    h.state_mut().link.mcp_server = Some(server.clone());
+    h.state_mut().show_settings = true;
+    h.run();
+    h.run();
+    let shown = server.to_string_lossy().into_owned();
+    assert!(
+        h.query_by_label(&shown).is_some(),
+        "the server's path is shown"
+    );
+    save_png("drift_ui_preferences_ai.png", &mut h);
+    h.get_by_label("Copy Claude Desktop config").click();
+    h.step();
+    let copied = h
+        .output()
+        .platform_output
+        .commands
+        .iter()
+        .find_map(|c| match c {
+            egui::OutputCommand::CopyText(text) => Some(text.clone()),
+            _ => None,
+        });
+    let config: serde_json::Value =
+        serde_json::from_str(&copied.expect("the config was copied")).unwrap();
+    let command = config["mcpServers"]["drift"]["command"].as_str().unwrap();
+    assert_eq!(std::path::Path::new(command), server);
+    // Not installed: it says so instead.
+    std::fs::remove_file(&server).unwrap();
+    h.run();
+    assert!(h.query_by_label("Copy Claude Desktop config").is_none());
+    let _ = std::fs::remove_dir_all(&dir);
+}

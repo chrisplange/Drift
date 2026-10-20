@@ -388,6 +388,39 @@ impl DriftApp {
         self.files.export(&name, SVG_FILE, text.into_bytes());
     }
 
+    /// The model at true size on a page fitted to it: the selection, or (with nothing picked)
+    /// everything that prints. `None` when there is nothing to draw.
+    pub(crate) fn model_page(&mut self, painter: &egui::Painter) -> Option<Drawing> {
+        self.hatch_patterns
+            .update(self.editor.doc.custom_patterns());
+        let only = self.model_scope();
+        let d = crate::output::model_page(
+            &mut self.editor,
+            &self.hatch_patterns,
+            painter,
+            only.as_ref(),
+            self.model_annotations,
+        );
+        (!d.items.is_empty()).then_some(d)
+    }
+
+    /// Export the model (or the selection) at 1 : 1 as SVG or PDF.
+    pub(crate) fn export_model(&mut self, painter: &egui::Painter, pdf: bool) {
+        let Some(d) = self.model_page(painter) else {
+            self.status_next = Some("Nothing to export: no geometry that prints".into());
+            return;
+        };
+        let stem = self.file_stem();
+        if pdf {
+            let bytes = drift_io::pdf::write(&[d], &stem);
+            self.files.export(&format!("{stem}.pdf"), PDF_FILE, bytes);
+        } else {
+            let text = drift_io::svg::write(&d);
+            self.files
+                .export(&format!("{stem}.svg"), SVG_FILE, text.into_bytes());
+        }
+    }
+
     pub(crate) fn dxf_text(&mut self, painter: &egui::Painter) -> String {
         self.hatch_patterns
             .update(self.editor.doc.custom_patterns());
@@ -1100,6 +1133,46 @@ impl DriftApp {
                 self.print(&painter);
             }
         });
+        ui.label(egui::RichText::new("Model at 1 : 1").weak());
+        ui.horizontal_wrapped(|ui| self.model_export_buttons(ui, &painter));
+    }
+
+    /// Model as SVG and PDF, and whether they carry dimensions and notes.
+    pub(crate) fn model_export_buttons(&mut self, ui: &mut egui::Ui, painter: &egui::Painter) {
+        let scope = if self.model_scope().is_some() {
+            "The selection"
+        } else {
+            "Everything that prints"
+        };
+        if ui
+            .button("Model as SVG…")
+            .on_hover_text(format!(
+                "{scope}, at true size on a page fitted to it, a group per layer"
+            ))
+            .clicked()
+        {
+            self.export_model(painter, false);
+        }
+        if ui
+            .button("Model as PDF…")
+            .on_hover_text(format!("{scope}, at true size on a page fitted to it"))
+            .clicked()
+        {
+            self.export_model(painter, true);
+        }
+        ui.checkbox(&mut self.model_annotations, "Dimensions and notes")
+            .on_hover_text("Model exports include dimensions and notes");
+    }
+
+    /// What a model export is limited to: the pick, if anything is picked.
+    fn model_scope(&self) -> Option<crate::output::Scope> {
+        let dimension = self.selected_constraint.filter(|id| {
+            self.editor
+                .doc
+                .constraint(*id)
+                .is_some_and(|c| c.is_dimension())
+        });
+        crate::output::Scope::of_selection(&self.editor, dimension)
     }
 
     // ----- The sheet preview -----------------------------------------------------------------

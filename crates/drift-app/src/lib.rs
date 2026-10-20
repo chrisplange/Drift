@@ -341,6 +341,8 @@ pub struct DriftApp {
     status_next: Option<String>,
     /// Sheets left out of the PDF and print (chosen in the output dialog, for this session).
     pdf_left_out: std::collections::BTreeSet<drift_core::SheetId>,
+    /// Model exports (SVG and PDF at 1 : 1) include dimensions and notes.
+    model_annotations: bool,
     /// The output dialog choosing the sheets for a PDF or print, while open.
     output_dialog: Option<app::sheets_ui::Output>,
     /// The model view picked in the Views list or on the canvas (its crop shows grips).
@@ -545,6 +547,7 @@ impl DriftApp {
             add_view_on: None,
             status_next: None,
             pdf_left_out: Default::default(),
+            model_annotations: true,
             output_dialog: None,
             picked_view: None,
             confirm_delete_view: None,

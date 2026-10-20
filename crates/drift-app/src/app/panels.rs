@@ -372,6 +372,8 @@ impl DriftApp {
                     {
                         self.export_dxf(&painter);
                     }
+                    ui.separator();
+                    self.model_export_buttons(ui, &painter);
                 });
                 if ui
                     .add(egui::Button::new("Print…").shortcut_text(shortcut("P", false)))

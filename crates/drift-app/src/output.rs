@@ -56,6 +56,62 @@ struct Space<'a> {
     /// The view drawn (dimensions and annotations drawn in other views only are left out);
     /// `None` draws them all.
     view: Option<drift_core::ViewId>,
+    /// What is drawn, when it is only some of the sketch (a model export of the selection).
+    only: Option<&'a Scope>,
+}
+
+/// What a model export is limited to: the picked curves, copies of blocks, text and fills, and
+/// the dimensions and annotations picked or on picked curves only.
+#[derive(Clone, Debug, Default)]
+pub struct Scope {
+    /// The picked curves, with the points that define them.
+    pub entities: BTreeSet<EntityId>,
+    pub instances: BTreeSet<drift_core::InstanceId>,
+    pub texts: BTreeSet<drift_core::TextId>,
+    pub fills: BTreeSet<drift_core::FillId>,
+    pub dimensions: BTreeSet<drift_core::ConstraintId>,
+    pub annotations: BTreeSet<drift_core::AnnotationId>,
+}
+
+impl Scope {
+    /// The editor's pick, with `dimension` (the app's picked one); `None` when nothing is
+    /// picked.
+    pub fn of_selection(ed: &Editor, dimension: Option<drift_core::ConstraintId>) -> Option<Scope> {
+        let scope = Scope {
+            entities: ed
+                .doc
+                .defining_points(ed.selection.iter().copied())
+                .into_iter()
+                .chain(ed.selection.iter().copied())
+                .collect(),
+            instances: ed.selected_instances.clone(),
+            texts: ed.selected_texts.clone(),
+            fills: ed.selected_fills.clone(),
+            dimensions: ed
+                .picked_dimensions()
+                .into_iter()
+                .chain(dimension)
+                .collect(),
+            annotations: ed.picked_notes().into_iter().collect(),
+        };
+        let empty = scope.entities.is_empty()
+            && scope.instances.is_empty()
+            && scope.texts.is_empty()
+            && scope.fills.is_empty()
+            && scope.dimensions.is_empty()
+            && scope.annotations.is_empty();
+        (!empty).then_some(scope)
+    }
+
+    /// Whether a dimension or annotation on `entities` is drawn: it is picked, or on picked
+    /// curves only.
+    fn takes(&self, r: drift_core::AnnotationRef, entities: &[EntityId]) -> bool {
+        let picked = match r {
+            drift_core::AnnotationRef::Dimension(id) => self.dimensions.contains(&id),
+            drift_core::AnnotationRef::Annotation(id) => self.annotations.contains(&id),
+        };
+        picked || (!entities.is_empty() && entities.iter().all(|e| self.entities.contains(e)))
+    }
 }
 
 impl Space<'_> {
@@ -70,7 +126,17 @@ impl Space<'_> {
 
     /// Whether a dimension or annotation is drawn in this view.
     fn has(&self, doc: &drift_core::Document, r: drift_core::AnnotationRef) -> bool {
+        let entities = || match r {
+            drift_core::AnnotationRef::Dimension(id) => doc
+                .constraint(id)
+                .map(|c| c.entities().collect())
+                .unwrap_or_default(),
+            drift_core::AnnotationRef::Annotation(id) => {
+                doc.annotation(id).map(|a| a.entities()).unwrap_or_default()
+            }
+        };
         self.view.is_none_or(|v| doc.in_view(r, v))
+            && self.only.is_none_or(|o| o.takes(r, &entities()))
     }
 
     /// Whether a dimension or annotation on `entities` is left out with them: it is when every
@@ -130,7 +196,7 @@ fn geometry(ed: &Editor, s: &Space, d: &mut Drawing) {
             continue;
         }
         let layer = doc.layer_of(id);
-        if !s.draws(e.layer, layer) {
+        if !s.draws(e.layer, layer) || s.only.is_some_and(|o| !o.entities.contains(&id)) {
             continue;
         }
         let Some(shape) = doc.shape(id) else { continue };
@@ -141,11 +207,11 @@ fn geometry(ed: &Editor, s: &Space, d: &mut Drawing) {
     }
     // Sketch text: as text, line by line in its own font, each line from its own start (so
     // nothing downstream needs to measure it to align it).
-    for (_, t) in doc.texts() {
+    for (id, t) in doc.texts() {
         let Some(layer) = doc.layer(t.layer) else {
             continue;
         };
-        if !s.draws(t.layer, layer) {
+        if !s.draws(t.layer, layer) || s.only.is_some_and(|o| !o.texts.contains(&id)) {
             continue;
         }
         ed.ensure_font(&t.font);
@@ -183,7 +249,7 @@ fn geometry(ed: &Editor, s: &Space, d: &mut Drawing) {
         let Some(layer) = doc.layer(copy.layer) else {
             continue;
         };
-        if !s.draws(copy.layer, layer) {
+        if !s.draws(copy.layer, layer) || s.only.is_some_and(|o| !o.instances.contains(&id)) {
             continue;
         }
         let Some(block) = doc.block(copy.block) else {
@@ -319,8 +385,14 @@ fn fills(ed: &mut Editor, patterns: &PatternLibrary, s: &Space, d: &mut Drawing)
     // The sketch's fills, then copies' fills over them.
     let fills = order
         .iter()
+        .filter(|id| s.only.is_none_or(|o| o.fills.contains(id)))
         .filter_map(|id| Some((ed.doc.fill(*id)?, &shapes.get(id)?.region)))
-        .chain(copies.iter().map(|c| (&c.fill, &c.region)));
+        .chain(
+            copies
+                .iter()
+                .filter(|c| s.only.is_none_or(|o| o.instances.contains(&c.instance)))
+                .map(|c| (&c.fill, &c.region)),
+        );
     for (fill, region) in fills {
         let layer = ed.doc.layer(fill.layer).cloned();
         if layer.as_ref().is_some_and(|l| !s.draws(fill.layer, l)) {
@@ -631,6 +703,7 @@ pub fn sheet_drawing(
             construction: v.construction,
             hidden: &v.hidden_layers,
             view: Some(v.id),
+            only: None,
         };
         view(ed, patterns, painter, &space, &mut d);
     }
@@ -675,6 +748,7 @@ pub fn model_drawing(
         construction: false,
         hidden: &ALL_LAYERS,
         view: None,
+        only: None,
     };
     view(ed, patterns, painter, &space, &mut d);
     let b = d.bounds();
@@ -682,6 +756,45 @@ pub fn model_drawing(
         d.size = b.max - b.min;
     }
     d
+}
+
+/// The margin (mm) round a model export's page.
+pub const MODEL_MARGIN: f64 = 5.0;
+
+/// Model space at true size (1 : 1) on a page fitted to it with a small margin, for SVG and
+/// PDF: what prints of the sketch, or of `only` (the selection), with or without its
+/// dimensions and notes. Annotations are sized for the document's drawing scale, as in DXF.
+pub fn model_page(
+    ed: &mut Editor,
+    patterns: &PatternLibrary,
+    painter: &egui::Painter,
+    only: Option<&Scope>,
+    annotate: bool,
+) -> Drawing {
+    let n = ed.doc.draft_style().scale;
+    let mut d = Drawing::new(DVec2::ZERO);
+    d.font = ed.drawing_font();
+    drift_draft::font::set_drawing_font(d.font.clone());
+    d.line_type_scale = n;
+    let space = Space {
+        world: DVec2::ZERO,
+        page: DVec2::ZERO,
+        k: 1.0,
+        n,
+        clip: None,
+        inserts: false,
+        dimensions: annotate,
+        notes: annotate,
+        construction: false,
+        hidden: &ALL_LAYERS,
+        view: None,
+        only,
+    };
+    view(ed, patterns, painter, &space, &mut d);
+    // Only the layers drawn on, in their order, each a group of its own.
+    d.layers
+        .retain(|l| d.items.iter().any(|i| i.layer == l.name));
+    d.fitted(MODEL_MARGIN)
 }
 
 /// A window onto the sketch as a page of `size` mm: world point `center` at the page's
@@ -711,6 +824,7 @@ pub fn view_drawing(
         construction: false,
         hidden: &ALL_LAYERS,
         view: None,
+        only: None,
     };
     view(ed, patterns, painter, &space, &mut d);
     d
@@ -1166,6 +1280,63 @@ mod tests {
             .filter(|i| i.pen.line_type == LineType::Dashed && i.pen.width == HAIRLINE)
             .cloned()
             .collect()
+    }
+
+    #[test]
+    fn the_model_exports_at_true_size_on_a_fitted_page() {
+        let mut doc = Document::new();
+        let profile = doc.add_layer(Layer::new("Profile"));
+        let mut off = Layer::new("Off");
+        off.printable = false;
+        let off = doc.add_layer(off);
+        let base = line(&mut doc, [0.0, 0.0], [100.0, 0.0], profile);
+        let side = line(&mut doc, [100.0, 0.0], [100.0, 40.0], profile);
+        let guide = line(&mut doc, [-500.0, 0.0], [500.0, 0.0], profile);
+        doc.set_style(guide, LineKind::Construction);
+        line(&mut doc, [0.0, 0.0], [0.0, 900.0], off);
+        let ends: Vec<EntityId> = doc.defining_points([base]).into_iter().collect();
+        doc.add_constraint(drift_core::Constraint::Distance {
+            a: ends[0],
+            b: ends[1],
+            value: 100.0,
+        })
+        .unwrap();
+        let mut ed = Editor::new(doc);
+        let painter = painter();
+        let patterns = PatternLibrary::default();
+        let page = |ed: &mut Editor, only: Option<&Scope>, annotate| {
+            model_page(ed, &patterns, &painter, only, annotate)
+        };
+        // Without its dimension: the two lines, 1 : 1, 5 mm in from the page's edges. The
+        // construction line, points and the layer that doesn't print are left out.
+        let bare = page(&mut ed, None, false);
+        assert_eq!(bare.size, DVec2::new(110.0, 50.0));
+        assert_eq!(bare.items.len(), 2);
+        assert!(bare.items.iter().all(|i| i.layer == "Profile"));
+        assert!(bare.items.contains(&item(
+            "Profile",
+            bare.items[0].pen,
+            Prim::Line(DVec2::new(5.0, 5.0), DVec2::new(105.0, 5.0)),
+            None,
+        )));
+        assert_eq!(
+            bare.layers
+                .iter()
+                .map(|l| l.name.as_str())
+                .collect::<Vec<_>>(),
+            ["Profile"]
+        );
+        // With it, on a layer of its own.
+        let dimensioned = page(&mut ed, None, true);
+        assert!(on(&dimensioned, ANNOTATION_LAYER).count() > 0);
+        // Only the picked line (the dimension on the other one isn't on it).
+        ed.selection = [side].into();
+        let only = Scope::of_selection(&ed, None).expect("a pick");
+        let picked = page(&mut ed, Some(&only), true);
+        assert_eq!(picked.items.len(), 1, "{:?}", picked.items);
+        assert_eq!(picked.size, DVec2::new(10.0, 50.0));
+        ed.selection.clear();
+        assert!(Scope::of_selection(&ed, None).is_none());
     }
 
     #[test]

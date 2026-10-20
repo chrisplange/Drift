@@ -104,7 +104,9 @@ geometry itself (in the **Inspector**, or the top bar's **Stroke** menus).
   switches (**Dimensions**, **Notes**, **Construction**, **Crop**) apply wherever it's
   placed.
 - **Output:** **PDF…**, **SVG…**, **DXF…** and **Print…**. With several sheets, **PDF…** and
-  **Print…** ask which sheets to include.
+  **Print…** ask which sheets to include. Under **Model at 1 : 1**: **Model as SVG…**,
+  **Model as PDF…** and **Dimensions and notes** (the model, or the selection, with no
+  sheet).
 
 A sheet's own settings (number, name, paper, title block, revisions, **Delete sheet**) and
 a placed view's (title, scale, frame, what it shows, alignment, **Remove from sheet**) are

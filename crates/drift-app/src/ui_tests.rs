@@ -3088,6 +3088,44 @@ fn a_sheet_prints_in_greyscale_or_black_and_white() {
 }
 
 #[test]
+fn the_model_exports_as_svg_and_pdf_from_the_file_menu() {
+    let Some(mut h) = harness() else { return };
+    h.get_by_label("File").click();
+    h.run();
+    h.get_by_label("Open example").click();
+    h.run();
+    h.run();
+    h.get_by_label("File").click();
+    h.run();
+    h.get_by_label_contains("Export").click();
+    h.run();
+    assert!(h.query_by_label("Model as SVG…").is_some());
+    assert!(h.query_by_label("Model as PDF…").is_some());
+    save_png("drift_ui_export_model_menu.png", &mut h);
+    // Dimensions and notes go with it until the box is cleared.
+    assert!(h.state().model_annotations);
+    let painter = h.ctx.layer_painter(egui::LayerId::background());
+    let with = h.state_mut().model_page(&painter).expect("the plate");
+    assert!(with.layers.iter().any(|l| l.name == "ANNOTATIONS"));
+    std::fs::write(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/tmp/drift_model.svg"),
+        drift_io::svg::write(&with),
+    )
+    .unwrap();
+    h.get_by_label("Dimensions and notes").click();
+    h.run();
+    assert!(!h.state().model_annotations);
+    let without = h.state_mut().model_page(&painter).expect("the plate");
+    assert!(without.layers.iter().all(|l| l.name != "ANNOTATIONS"));
+    // The 120 × 80 plate, at true size with 5 mm all round.
+    assert_eq!(without.size, DVec2::new(130.0, 90.0));
+    let svg = drift_io::svg::write(&without);
+    assert!(svg.contains(r#"width="130mm" height="90mm""#), "{svg}");
+    let pdf = drift_io::pdf::write(&[without], "Plate");
+    assert!(String::from_utf8_lossy(&pdf).contains("/MediaBox [0 0 368.504 255.118]"));
+}
+
+#[test]
 fn sheets_preview_and_export() {
     let Some(mut h) = harness() else { return };
     h.get_by_label("File").click();

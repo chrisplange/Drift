@@ -3088,6 +3088,64 @@ fn a_sheet_prints_in_greyscale_or_black_and_white() {
 }
 
 #[test]
+fn a_blocks_base_point_is_picked_when_made_and_set_later() {
+    let Some(mut h) = harness() else { return };
+    // A 400 square, picked.
+    let ed = &mut h.state_mut().editor;
+    ed.doc.begin();
+    let p = [(0.0, 0.0), (400.0, 0.0), (400.0, 400.0), (0.0, 400.0)]
+        .map(|(x, y)| ed.doc.add_point(DVec2::new(x, y)));
+    let lines: Vec<drift_core::EntityId> = (0..4)
+        .map(|i| ed.doc.add_line(p[i], p[(i + 1) % 4]).unwrap())
+        .collect();
+    ed.commit("Square");
+    ed.selection = lines.into_iter().collect();
+    h.key_press_modifiers(EguiModifiers::SHIFT, Key::F);
+    h.run();
+    h.state_mut().show_panel(Panel::Blocks);
+    h.run();
+    // Make asks for the base point: a click on the corner snaps to it.
+    h.get_by_label("Make").click();
+    h.run();
+    assert_eq!(h.state().tool.kind(), ToolKind::BasePoint);
+    assert!(h.state().editor.doc.instances().next().is_none(), "not yet");
+    click_world(&mut h, DVec2::new(1.0, -1.0));
+    h.run();
+    assert_eq!(h.state().tool.kind(), ToolKind::Select);
+    let (copy, i) = h.state().editor.doc.instances().next().expect("the copy");
+    assert_eq!(i.at, DVec2::ZERO);
+    let block = i.block;
+    // The Inspector's Set base point, then Enter: the block's middle.
+    h.state_mut().editor.selected_instances = [copy].into();
+    h.state_mut().show_panel(Panel::Inspector);
+    h.run();
+    h.get_by_label("Set base point").click();
+    h.run();
+    assert_eq!(h.state().tool.kind(), ToolKind::BasePoint);
+    save_png("drift_ui_block_base_point.png", &mut h);
+    h.key_press(Key::Enter);
+    h.run();
+    h.run();
+    assert_eq!(h.state().tool.kind(), ToolKind::Select);
+    assert_eq!(
+        h.state().editor.doc.instance(copy).unwrap().at,
+        DVec2::new(200.0, 200.0)
+    );
+    let b = h.state().editor.doc.block(block).unwrap().bounds();
+    assert_eq!(b.center(), DVec2::ZERO);
+    assert_eq!(
+        h.state().editor.history.undo_label(),
+        Some("Set base point")
+    );
+    // Editing the block: its base point shows, and can be set from the banner.
+    h.state_mut().editor.edit_block(copy);
+    h.run();
+    assert!(h.query_by_label("Set base point").is_some());
+    h.state_mut().editor.finish_block_edit();
+    h.run();
+}
+
+#[test]
 fn the_model_exports_as_svg_and_pdf_from_the_file_menu() {
     let Some(mut h) = harness() else { return };
     h.get_by_label("File").click();

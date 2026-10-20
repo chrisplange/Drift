@@ -34,7 +34,7 @@ lines.
 | Object snaps | End, mid, centre, quadrant, nearest and the origin, always on; perpendicular and tangent while drawing lines (**Perpendicular & tangent** in the status bar). Hold Alt to place without snapping. Intersection isn't a snap yet. |
 | Object snap tracking | Inference lines: hover a point, move away, and a dashed guide shows when you're level with it or above it. |
 | Layers, ByLayer | The same model: colour, line weight and line type by layer unless set on the object. Layer **0** always exists. |
-| Blocks, INSERT, BEDIT, EXPLODE | **Make** block, **Place block** (I), double-click a copy to edit in place, **Explode**. Blocks go to and from DXF. |
+| Blocks, INSERT, BEDIT, BASE, EXPLODE | **Make** block (then click its base point), **Place block** (I), double-click a copy to edit in place, **Set base point**, **Explode**. Blocks go to and from DXF. |
 | BHATCH, pick points | **Fill / hatch** (H): click inside an area. Hatches are associative. `.pat` files import. |
 | Paper space layouts and viewports | Sheets and views. A DXF's layouts come in as sheets. |
 | MOVE, ROTATE with base point | G and R with the selection, B to pick the base point or pivot; type values. |

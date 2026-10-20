@@ -535,10 +535,7 @@ impl DriftApp {
                     .on_hover_text("A block from the selection (name it in the Blocks tab)")
                     .clicked()
                 {
-                    let now = ui.input(|i| i.time);
-                    if let Err(e) = self.editor.make_block("") {
-                        self.set_status(e, true, now);
-                    }
+                    self.start_make_block("");
                 }
                 if ui
                     .add_enabled(

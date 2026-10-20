@@ -36,7 +36,7 @@ What's picked, and what you can do with it. Its contents depend on the selection
 | A fill or hatch | Its **Style**, **Layer**, draw order and **Area**. See [Fills and hatches](../tutorials/06-fills-and-hatches.md). |
 | A text | Its words, **Height**, **Angle**, **Font**, **Align**, **Spacing** and **Wrap**, and **Convert to curves**. |
 | Several things, with text or annotations among them | How many of each ("4 lines · 1 dimension · 1 note · 1 text"), and **Show** for the dimensions and annotations. Delete, Move, Rotate, Mirror and Copy act on all of it. |
-| A block copy | **Block**, **Placement**, **Layer**, **Edit block**, **Explode** and **Select all copies**. |
+| A block copy | **Block**, **Placement**, **Layer**, **Edit block**, **Set base point**, **Explode** and **Select all copies**. |
 | A group | Its **Name**, **Members**, **Edit group** and **Ungroup**. |
 | A closed area (with area picking on) | **Area**, **Perimeter**, **Centroid** and **Holes**, and **Fill** / **Hatch** buttons. |
 
@@ -115,11 +115,12 @@ in the **Inspector**: pick bare paper, or the view, on the sheet. See
 
 ## Blocks
 
-- **New block** (a name and **Make**), when something is picked.
+- **New block** (a name and **Make**), when something is picked. **Make** then asks for
+  the base point: click a snap point, or press Enter for the middle.
 - A search field, over the drawing's blocks and the whole library.
 - **In the drawing:** the drawing's blocks, a thumbnail of each and how many copies are
-  placed. Click a block to place copies; right-click it to rename it, select its copies or
-  delete it. **Purge unused** deletes the blocks with no copies.
+  placed. Click a block to place copies; right-click it to rename it, select its copies,
+  set its base point or delete it. **Purge unused** deletes the blocks with no copies.
 - **Library:** a category (**Doors**, **Windows**, **Kitchen**, **Bath**, **Furniture**,
   **Laundry and utility**, or all of them), its families and their sizes as tiles. Click a
   tile to add that block (once) and place copies; a tile already in the drawing is

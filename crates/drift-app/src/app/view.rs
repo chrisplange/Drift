@@ -649,6 +649,10 @@ impl DriftApp {
         if let Some(id) = self.editor.pending_note_edit.take() {
             self.open_note_edit(id, true);
         }
+        // A base point just picked: back to the select tool.
+        if std::mem::take(&mut self.editor.base_point_done) {
+            self.set_tool(ToolKind::Select);
+        }
         // A view just drawn: picked, with the select tool, to name and reframe.
         // (Asked for from a sheet: it goes on that sheet.)
         if let Some(id) = self.editor.new_view.take()
@@ -814,6 +818,13 @@ impl DriftApp {
                 }
             }
             None => {}
+        }
+        // A block's base point, while it is edited or picked.
+        if let Some(at) = self
+            .editor
+            .base_point_cross(self.tool.kind() == ToolKind::BasePoint)
+        {
+            overlay::base_point(&painter, &map, at, &colors);
         }
         // Picked and hovered fills.
         let shapes = self.editor.fill_shapes();

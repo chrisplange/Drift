@@ -565,11 +565,7 @@ impl DriftApp {
             Command::Ungroup => {
                 self.editor.ungroup();
             }
-            Command::MakeBlock => {
-                if let Err(e) = self.editor.make_block("") {
-                    self.set_status(e, true, now);
-                }
-            }
+            Command::MakeBlock => self.start_make_block(""),
             Command::Explode => self.editor.explode_selected(),
             Command::Construction => self.editor.toggle_construction(),
             Command::ZoomToFit => self.fit_target = Some(self.fit_bounds()),

@@ -417,9 +417,15 @@ impl DriftApp {
             }
             _ => {}
         }
-        let blocks = self.editor.blocks_as_drawn();
-        // A failed write is tried again on the next change, and saving reports it.
-        let _ = drift_io::profiles::update_beside(path, blocks.iter().map(|(id, b)| (*id, b)));
+        // A failed write is tried again on the next change, and saving reports it. The demo
+        // writes no files.
+        #[cfg(not(feature = "demo"))]
+        {
+            let blocks = self.editor.blocks_as_drawn();
+            let _ = drift_io::profiles::update_beside(path, blocks.iter().map(|(id, b)| (*id, b)));
+        }
+        #[cfg(feature = "demo")]
+        let _ = path;
         self.live_profiles = Some((revision, now));
         None
     }

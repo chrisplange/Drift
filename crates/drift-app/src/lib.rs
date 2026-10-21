@@ -355,6 +355,8 @@ pub struct DriftApp {
     picked_view: Option<drift_core::ViewId>,
     /// A view placed on sheets that Delete was pressed for, waiting for a yes.
     confirm_delete_view: Option<drift_core::ViewId>,
+    /// The Rename dialog (F2), while open.
+    renaming: Option<app::rename_ui::Renaming>,
     /// Show views' crops and names on the canvas (View → View crops).
     show_view_crops: bool,
     /// A drag on a view's crop on the canvas.
@@ -560,6 +562,7 @@ impl DriftApp {
             output_dialog: None,
             picked_view: None,
             confirm_delete_view: None,
+            renaming: None,
             show_view_crops: true,
             crop_drag: None,
             import_report: None,
@@ -847,6 +850,10 @@ const SHORTCUTS: &[(&str, &[(&str, &str)])] = &[
                 "Ctrl+G / Ctrl+Shift+G",
                 "Group / ungroup; double-click a group to enter it",
             ),
+            (
+                "F2",
+                "Rename the selected group, or the block of the selected copies",
+            ),
             ("Ctrl+A", "Select all"),
             (
                 "Q",
@@ -1024,7 +1031,8 @@ impl eframe::App for DriftApp {
         // Text placed but left empty goes once it's no longer picked.
         let keep = self.editor.sole_text();
         self.editor.drop_empty_texts(keep);
-        if self.pending.is_none() && self.editor.pending_driven.is_none() {
+        if self.pending.is_none() && self.editor.pending_driven.is_none() && self.renaming.is_none()
+        {
             if self.palette.is_none() {
                 self.handle_typing(&ctx);
                 self.shortcuts(&ctx);

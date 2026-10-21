@@ -5,7 +5,9 @@ use std::num::NonZeroU64;
 use std::ops::Range;
 use std::sync::Arc;
 
-use crate::frame::{ArcInstance, FillVertex, Frame, Globals, ImageVertex, SegmentInstance};
+use crate::frame::{
+    ArcInstance, FillVertex, Frame, Globals, GroupRanges, ImageVertex, SegmentInstance,
+};
 
 /// GPU resources for drawing the canvas. Create once, then [`prepare`](Self::prepare) and
 /// [`paint`](Self::paint) every frame.
@@ -30,6 +32,8 @@ pub struct CanvasRenderer {
     textures: HashMap<usize, CachedTexture>,
     /// This frame's pictures: which texture, and which of `image_vertices`.
     image_draws: Vec<(usize, Range<u32>)>,
+    /// This frame's draw groups (see [`Frame::groups`]).
+    groups: Vec<GroupRanges>,
 }
 
 struct CachedTexture {
@@ -237,12 +241,14 @@ impl CanvasRenderer {
             image_vertices: InstanceBuffer::new(device, "drift_image_vertices"),
             textures: HashMap::new(),
             image_draws: Vec::new(),
+            groups: Vec::new(),
         }
     }
 
     /// Upload a frame's data to the GPU.
     pub fn prepare(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, frame: &Frame) {
         queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&frame.globals));
+        self.groups.clone_from(&frame.groups);
         self.segments.upload(device, queue, &frame.segments);
         self.arcs.upload(device, queue, &frame.arcs);
         self.under_segments
@@ -376,13 +382,80 @@ impl CanvasRenderer {
         pass.set_pipeline(&self.grid_pipeline);
         pass.draw(0..3, 0..1);
 
-        if self.fills.count > 0 {
-            pass.set_pipeline(&self.fill_pipeline);
-            pass.set_vertex_buffer(0, self.fills.buffer.slice(..self.fills.bytes));
-            pass.draw(0..self.fills.count, 0..1);
+        if self.groups.is_empty() {
+            // Every fill under every curve.
+            self.draw_fills(pass, 0..self.fills.count);
+            self.draw_images(pass);
+            self.draw_under(pass);
+            self.draw_curves(pass, &self.arc_pipeline, &self.arcs, 0..self.arcs.count);
+            self.draw_curves(
+                pass,
+                &self.segment_pipeline,
+                &self.segments,
+                0..self.segments.count,
+            );
+        } else {
+            // Stacked: pictures and underlays at the bottom, then each group over the last.
+            self.draw_images(pass);
+            self.draw_under(pass);
+            for g in &self.groups {
+                self.draw_fills(pass, g.fills.clone());
+                self.draw_curves(pass, &self.arc_pipeline, &self.arcs, g.arcs.clone());
+                self.draw_curves(
+                    pass,
+                    &self.segment_pipeline,
+                    &self.segments,
+                    g.segments.clone(),
+                );
+            }
         }
+    }
 
-        // Pictures over the fills, under every curve (as underlays' curves are).
+    fn draw_fills(&self, pass: &mut wgpu::RenderPass<'_>, range: Range<u32>) {
+        if range.is_empty() {
+            return;
+        }
+        pass.set_pipeline(&self.fill_pipeline);
+        pass.set_vertex_buffer(0, self.fills.buffer.slice(..self.fills.bytes));
+        pass.draw(range, 0..1);
+    }
+
+    /// Draw a range of a buffer's instances (arcs or segments) with `pipeline`.
+    fn draw_curves(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        pipeline: &wgpu::RenderPipeline,
+        buffer: &InstanceBuffer,
+        range: Range<u32>,
+    ) {
+        if range.is_empty() {
+            return;
+        }
+        pass.set_pipeline(pipeline);
+        pass.set_vertex_buffer(0, buffer.buffer.slice(..buffer.bytes));
+        pass.draw(0..4, range);
+    }
+
+    /// Curves under the sketch (underlays, and hatch lines when fills aren't stacked): arcs
+    /// before lines so line ends draw over arc ends; both are anti-aliased, so that order
+    /// is cosmetic.
+    fn draw_under(&self, pass: &mut wgpu::RenderPass<'_>) {
+        self.draw_curves(
+            pass,
+            &self.arc_pipeline,
+            &self.under_arcs,
+            0..self.under_arcs.count,
+        );
+        self.draw_curves(
+            pass,
+            &self.segment_pipeline,
+            &self.under_segments,
+            0..self.under_segments.count,
+        );
+    }
+
+    /// Pictures (underlays'), in the order given.
+    fn draw_images(&self, pass: &mut wgpu::RenderPass<'_>) {
         if !self.image_draws.is_empty() {
             pass.set_pipeline(&self.image_pipeline);
             pass.set_vertex_buffer(
@@ -396,21 +469,6 @@ impl CanvasRenderer {
                     pass.set_bind_group(1, &t.bind_group, &[]);
                     pass.draw(range.clone(), 0..1);
                 }
-            }
-        }
-
-        // Curves under the sketch (hatch lines, underlays) first. Then arcs before lines so
-        // line ends draw over arc ends; both are anti-aliased, so that order is cosmetic.
-        for (pipeline, buffer) in [
-            (&self.arc_pipeline, &self.under_arcs),
-            (&self.segment_pipeline, &self.under_segments),
-            (&self.arc_pipeline, &self.arcs),
-            (&self.segment_pipeline, &self.segments),
-        ] {
-            if buffer.count > 0 {
-                pass.set_pipeline(pipeline);
-                pass.set_vertex_buffer(0, buffer.buffer.slice(..buffer.bytes));
-                pass.draw(0..4, 0..buffer.count);
             }
         }
     }

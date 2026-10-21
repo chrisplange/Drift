@@ -77,8 +77,8 @@ impl EllipseTool {
         let (c, m) = (center.pos, major.pos);
         ed.doc.begin();
         let made = (|| -> Result<(), drift_core::DocumentError> {
-            let pc = center.resolve(&mut ed.doc);
-            let pm = major.resolve(&mut ed.doc);
+            let pc = center.own(&mut ed.doc);
+            let pm = major.own(&mut ed.doc);
             let pn = ed.doc.add_point(c + (m - c).perp().normalize() * b);
             let ellipse = match ends {
                 Some((s, e)) => {
@@ -87,7 +87,9 @@ impl EllipseTool {
                 }
                 None => ed.doc.add_ellipse(pc, pm, pn)?,
             };
-            let _ = ellipse;
+            if ends.is_none() {
+                ed.fill_new_shape(&[ellipse]);
+            }
             // A level or plumb axis keeps it.
             let scale = c.distance(m).max(1.0) * 1e-9;
             if ed.auto_relations {

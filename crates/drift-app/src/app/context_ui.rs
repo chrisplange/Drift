@@ -659,6 +659,19 @@ impl DriftApp {
             // Tools without options: the bar names the tool, the status bar says what to do.
             _ => {}
         }
+        // Tools that draw closed shapes can fill them as they go.
+        if matches!(
+            kind,
+            ToolKind::Rectangle
+                | ToolKind::Polygon
+                | ToolKind::Circle
+                | ToolKind::Ellipse
+                | ToolKind::Slot
+                | ToolKind::Pen
+        ) {
+            divider(ui);
+            self.new_shape_fill_bar(ui);
+        }
     }
 
     /// Pick only edges, points, annotations or text, or anything; what is picked now keeps

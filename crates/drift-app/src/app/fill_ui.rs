@@ -419,6 +419,25 @@ impl DriftApp {
 
     /// The Fill tool's bar: solid or hatch, the colour or pattern, and the eyedropper.
     pub(crate) fn fill_tool_bar(&mut self, ui: &mut egui::Ui) {
+        self.fill_style_bar(ui);
+        self.eyedropper_button(ui);
+    }
+
+    /// The drawing tools' Fill control: whether closed shapes come out filled as they are
+    /// drawn, and in what style (the Fill tool's).
+    pub(crate) fn new_shape_fill_bar(&mut self, ui: &mut egui::Ui) {
+        ui.checkbox(&mut self.editor.fill_new_shapes, "Fill")
+            .on_hover_text(
+                "Closed shapes are filled or hatched as they are drawn, in this style (the \
+                 Fill tool's); the fill is part of the shape's undo step",
+            );
+        if self.editor.fill_new_shapes {
+            self.fill_style_bar(ui);
+        }
+    }
+
+    /// Solid or hatch, and the colour or pattern, of the current fill style.
+    fn fill_style_bar(&mut self, ui: &mut egui::Ui) {
         let dark = ui.visuals().dark_mode;
         self.hatch_patterns
             .update(self.editor.doc.custom_patterns());
@@ -451,7 +470,6 @@ impl DriftApp {
         if style != self.editor.fill_style {
             self.editor.fill_style = style;
         }
-        self.eyedropper_button(ui);
     }
 
     /// Buttons under a selected region's measurements: fill or hatch it.

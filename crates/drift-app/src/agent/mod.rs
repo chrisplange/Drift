@@ -292,6 +292,11 @@ impl Session {
                     "change": "removed",
                     "note": "curves of its outline were deleted and no area is left around it",
                 }),
+                FillChange::Merged { id, into } => json!({
+                    "id": id.to_string(),
+                    "change": "removed",
+                    "note": format!("it came to cover the same area as {into}, which kept it"),
+                }),
             })
             .collect()
     }

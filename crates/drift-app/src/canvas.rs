@@ -2,7 +2,7 @@
 
 use drift_core::{DVec2, SketchItem};
 use drift_render::{
-    Camera, CanvasImage, CanvasRenderer, FillMesh, Frame, Palette, Viewport, build_frame,
+    Camera, CanvasImage, CanvasRenderer, DrawGroup, FillMesh, Frame, Palette, Viewport, build_frame,
 };
 use eframe::egui;
 use eframe::egui_wgpu::{self, wgpu};
@@ -10,14 +10,16 @@ use eframe::egui_wgpu::{self, wgpu};
 /// Creates per-frame canvas callbacks. The GPU renderer itself lives in egui-wgpu's callback
 /// resources so it can be reached from the render thread.
 /// How the canvas is drawn this frame.
-/// What the canvas draws: curves under everything (hatch lines, underlays), the sketch's
-/// curves on top, filled areas (beneath both), and underlays' pictures (over the fills,
-/// under the curves).
+/// What the canvas draws. With no `groups`: curves under everything (hatch lines,
+/// underlays), the sketch's curves on top, filled areas (beneath both), and underlays'
+/// pictures (over the fills, under the curves). With `groups` (fills stacked): pictures,
+/// then `under`, then `fills`, then each group over the last, then `items` on top.
 pub struct CanvasContent<'a> {
     pub under: &'a [SketchItem],
     pub items: &'a [SketchItem],
     pub fills: &'a [FillMesh],
     pub images: &'a [CanvasImage],
+    pub groups: &'a [DrawGroup<'a>],
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -59,6 +61,7 @@ impl CanvasPainter {
             items,
             fills,
             images,
+            groups,
         } = content;
         let palette = if options.dark_mode {
             Palette::dark()
@@ -75,9 +78,20 @@ impl CanvasPainter {
             show_grid: options.show_grid,
             show_axes: options.show_axes,
         };
-        let mut frame = build_frame(items, camera, viewport, &palette);
+        let mut frame = if groups.is_empty() {
+            let mut frame = build_frame(items, camera, viewport, &palette);
+            frame.push_fills(fills, camera, viewport);
+            frame
+        } else {
+            let mut frame = build_frame(&[], camera, viewport, &palette);
+            frame.push_group(fills, &[], camera, viewport, &palette);
+            for g in groups {
+                frame.push_group(g.fills, g.items, camera, viewport, &palette);
+            }
+            frame.push_group(&[], items, camera, viewport, &palette);
+            frame
+        };
         frame.push_under(under, camera, viewport, &palette);
-        frame.push_fills(fills, camera, viewport);
         frame.push_images(images, camera, viewport);
         egui_wgpu::Callback::new_paint_callback(rect, CanvasCallback { frame })
     }

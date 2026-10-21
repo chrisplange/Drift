@@ -5,8 +5,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
 
 use drift_core::{
-    Bounds, DVec2, EntityId, Fill, FillId, FillKind, Hatch, InstanceId, LineWeight, Rgb, Shape,
-    SketchItem,
+    Bounds, DVec2, EntityId, Fill, FillId, FillKind, Hatch, InstanceId, LayerId, LineWeight, Rgb,
+    Shape, SketchItem,
 };
 use drift_draft::{Pattern, Placement};
 use drift_geom::regions::{Region, region_at};
@@ -48,6 +48,9 @@ pub enum FillChange {
     },
     /// Curves of its outline were deleted and no area was left around it: it went.
     Dropped { id: FillId },
+    /// The edit brought it onto the same area as `into` (drawn on top), which kept it: it
+    /// went.
+    Merged { id: FillId, into: FillId },
 }
 
 /// The areas among `regions` that make up `whole` (a fill kept whole across curves that
@@ -105,7 +108,7 @@ impl Default for FillStyle {
         Self {
             kind: FillKind::Hatch(Hatch::new("ANSI31")),
             color: None,
-            opacity: 0.35,
+            opacity: 1.0,
             weight: None,
         }
     }
@@ -222,9 +225,25 @@ impl<'a> Areas<'a> {
             })
     }
 
-    /// The region bounded by exactly a fill's curves (nearest its seed if several).
+    /// The region bounded by exactly a fill's curves: the one around its seed if several;
+    /// else, when an edit cut a curve out of the fill's area (a shape trimmed against the
+    /// one it overlapped), the area around the seed if its outline is part of the fill's
+    /// curves; else the nearest.
     fn exact(&self, fill: &Fill) -> Option<&'a Region> {
-        self.nearest(self.by_outline.get(&fill.boundary)?, fill.seed)
+        let candidates = self.by_outline.get(&fill.boundary)?;
+        let (regions, ids) = (self.regions, self.ids);
+        candidates
+            .iter()
+            .map(|&i| &regions[i])
+            .find(|r| r.contains(fill.seed))
+            .or_else(|| {
+                region_at(regions, fill.seed).filter(|r| {
+                    outline_of(r, ids)
+                        .iter()
+                        .all(|e| fill.boundary.binary_search(e).is_ok())
+                })
+            })
+            .or_else(|| self.nearest(candidates, fill.seed))
     }
 
     /// The region a fill's outline became when an edit replaced or split some of its curves
@@ -254,19 +273,25 @@ impl<'a> Areas<'a> {
     }
 
     /// Pick the region a fill belongs to: the one bounded by exactly its curves (nearest its
-    /// seed if several), else the one its outline became, else the one around its seed if
-    /// it still shares a boundary curve.
-    fn find(&self, fill: &Fill) -> Option<&'a Region> {
+    /// seed if several), else the one its outline became, else the one around `near` (a
+    /// point inside its last shape, so it follows a shape moving off the area it was in),
+    /// else the one around its seed; the last two only if they share a boundary curve with
+    /// it.
+    fn find(&self, fill: &Fill, near: Option<DVec2>) -> Option<&'a Region> {
         self.exact(fill)
             .or_else(|| self.successor(fill))
-            .or_else(|| {
-                region_at(self.regions, fill.seed).filter(|r| {
-                    r.outer
-                        .curves()
-                        .into_iter()
-                        .any(|i| fill.boundary.binary_search(&self.ids[i]).is_ok())
-                })
-            })
+            .or_else(|| near.and_then(|p| self.sharing_at(p, fill)))
+            .or_else(|| self.sharing_at(fill.seed, fill))
+    }
+
+    /// The region around `p`, if its outline shares a curve with the fill's.
+    fn sharing_at(&self, p: DVec2, fill: &Fill) -> Option<&'a Region> {
+        region_at(self.regions, p).filter(|r| {
+            r.outer
+                .curves()
+                .into_iter()
+                .any(|i| fill.boundary.binary_search(&self.ids[i]).is_ok())
+        })
     }
 }
 
@@ -306,8 +331,12 @@ impl Editor {
             } else {
                 None
             };
+            let near = self
+                .last_fill_shapes
+                .get(&id)
+                .map(|s| crate::editor::interior_point(&s.region, s.region.centroid));
             let found = uncrossed.or_else(|| {
-                areas.find(&fill).map(|r| FillShape {
+                areas.find(&fill, near).map(|r| FillShape {
                     curves: curves_of(&fill, r, &ids),
                     region: r.clone(),
                     lost: false,
@@ -372,19 +401,34 @@ impl Editor {
         let mut solid = None;
         let mut created: Option<Vec<EntityId>> = None;
         let mut changes = Vec::new();
+        // Fills whose outline this edit changed.
+        let mut moved: HashSet<FillId> = HashSet::new();
         for (id, fill) in fills {
             let reshaped = fill
                 .boundary
                 .iter()
                 .any(|e| self.doc.reshaped_in_transaction(*e));
             let deleted = fill.boundary.iter().any(|e| !self.doc.contains(*e));
+            // Or its curves were moved: a point of theirs was.
+            let shifted = reshaped
+                || self
+                    .doc
+                    .defining_points(fill.boundary.iter().copied())
+                    .iter()
+                    .any(|p| self.doc.reshaped_in_transaction(*p));
             let before = self.last_fill_shapes.get(&id).map(|s| s.region.area);
+            // A point inside its last shape: what it follows when its outline is gone.
+            let near = self
+                .last_fill_shapes
+                .get(&id)
+                .map(|s| crate::editor::interior_point(&s.region, s.region.centroid));
             // Whether it was kept whole across curves before this edit (unknown for a fill
             // not looked at since it was made or opened).
             let was_crossed = self.fill_crossed.get(&id).copied();
             let mut followed = fill.clone();
             let mut crossed = false;
             let region = if let Some(r) = areas.exact(&fill) {
+                followed.boundary = outline_of(r, &ids);
                 followed.divided = false;
                 r.clone()
             } else if let Some((whole, outline)) = self
@@ -415,8 +459,12 @@ impl Editor {
                     && was_crossed == Some(false)
                     && !fill.divided
                     && !self.doc.fill_created_in_transaction(id);
+                // A curve drawn across an intact outline never shrinks its fill: it keeps
+                // its whole area, marked as covering several. The preference to follow the
+                // seed applies only when the edit cut the outline itself (`reshaped`).
                 if newly
                     && self.follow_divided_fills
+                    && reshaped
                     && let Some(part) = at_seed
                 {
                     followed.boundary = outline_of(part, &ids);
@@ -453,6 +501,19 @@ impl Editor {
                 followed.boundary = outline_of(r, &ids);
                 followed.divided = false;
                 r.clone()
+            } else if shifted && let Some(r) = near.and_then(|p| areas.sharing_at(p, &fill)) {
+                // Its outline is gone (a shape it was bounded by moved off the area, or it
+                // moved off another): it follows the shape it was in.
+                followed.boundary = outline_of(r, &ids);
+                followed.divided = false;
+                if deleted {
+                    changes.push(FillChange::Refound {
+                        id,
+                        before,
+                        after: r.area,
+                    });
+                }
+                r.clone()
             } else if reshaped && let Some(r) = region_at(&regions, fill.seed) {
                 followed.boundary = outline_of(r, &ids);
                 followed.divided = false;
@@ -471,8 +532,32 @@ impl Editor {
                 continue;
             };
             followed.seed = crate::editor::interior_point(&region, fill.seed);
+            if followed.boundary != fill.boundary {
+                moved.insert(id);
+            }
             self.doc.set_fill(id, followed);
             self.fill_crossed.insert(id, crossed);
+        }
+        // Fills the edit brought onto one area (two filled shapes trimmed into one outline,
+        // the wall between two filled rooms deleted): the one drawn on top keeps it, the
+        // others go.
+        let mut by_outline: BTreeMap<Vec<EntityId>, Vec<FillId>> = BTreeMap::new();
+        for id in self.fills_in_order() {
+            if let Some(f) = self.doc.fill(id) {
+                by_outline.entry(f.boundary.clone()).or_default().push(id);
+            }
+        }
+        for ids in by_outline.into_values() {
+            let Some((&into, below)) = ids.split_last() else {
+                continue;
+            };
+            if below.is_empty() || !ids.iter().any(|id| moved.contains(id)) {
+                continue;
+            }
+            for &id in below {
+                self.doc.remove_fill(id);
+                changes.push(FillChange::Merged { id, into });
+            }
         }
         if !changes.is_empty() {
             if self.notice.is_none() {
@@ -507,6 +592,10 @@ impl Editor {
             FillChange::Dropped { .. } => {
                 "A fill or hatch was removed: no area is left around it".to_owned()
             }
+            FillChange::Merged { id, into } => format!(
+                "{} was removed: it came to cover the same area as {into}",
+                what(*id)
+            ),
         };
         match changes.len() {
             1 => first,
@@ -910,6 +999,32 @@ impl Editor {
         Ok(id)
     }
 
+    /// Fill a closed shape a drawing tool has just made, inside the open transaction (one
+    /// undo step with the shape), when new shapes are to be filled: the area bounded by
+    /// `curves` on their own, in the current fill style, on the current layer. A path that
+    /// crosses itself gets its biggest area. Returns the fill, if one was made.
+    pub(crate) fn fill_new_shape(&mut self, curves: &[EntityId]) -> Option<FillId> {
+        if !self.fill_new_shapes || curves.is_empty() {
+            return None;
+        }
+        let shapes: Vec<Shape> = curves
+            .iter()
+            .map(|id| self.doc.shape(*id))
+            .collect::<Option<_>>()?;
+        let regions = drift_geom::regions::regions(&shapes);
+        let region = regions.iter().max_by(|a, b| a.area.total_cmp(&b.area))?;
+        let boundary: Vec<EntityId> = region
+            .outer
+            .curves()
+            .into_iter()
+            .map(|i| curves[i])
+            .collect();
+        let seed = crate::editor::interior_point(region, region.centroid);
+        let mut fill = Fill::new(boundary, seed, FillKind::Solid);
+        self.fill_style.apply(&mut fill);
+        Some(self.doc.add_fill(fill))
+    }
+
     /// Give a fill the boundary of the area around `p` (after its own boundary was lost).
     pub fn repick_fill_at(&mut self, id: FillId, p: DVec2) -> Result<(), String> {
         let boundary = self
@@ -1028,12 +1143,33 @@ impl MeshCache {
     }
 }
 
-/// What the canvas draws for fills: triangles under everything, and hatch lines (drawn
-/// before the sketch's curves).
-#[derive(Default)]
-pub struct FillGraphics {
+/// What the canvas draws for one fill: its triangles (a solid fill, a hatch's background,
+/// or a tint standing in for too dense a hatch) and its hatch lines.
+#[derive(Clone, Debug, Default)]
+pub struct FillGroup {
+    pub layer: LayerId,
+    /// The sketch's fill this is; a copy's fill has none.
+    pub fill: Option<FillId>,
     pub meshes: Vec<FillMesh>,
     pub lines: Vec<SketchItem>,
+}
+
+/// What the canvas draws for fills, in draw order (bottom first).
+#[derive(Default)]
+pub struct FillGraphics {
+    pub groups: Vec<FillGroup>,
+}
+
+impl FillGraphics {
+    /// Every fill's triangles, in draw order.
+    pub fn meshes(&self) -> Vec<FillMesh> {
+        self.groups.iter().flat_map(|g| g.meshes.clone()).collect()
+    }
+
+    /// Every hatch's lines, in draw order.
+    pub fn lines(&self) -> Vec<SketchItem> {
+        self.groups.iter().flat_map(|g| g.lines.clone()).collect()
+    }
 }
 
 /// The default colour of solid fills without a colour of their own or their layer's.
@@ -1096,11 +1232,20 @@ pub fn fill_graphics(
         if !bounds.intersects(&view) {
             continue;
         }
+        let mut group = FillGroup {
+            layer: fill.layer,
+            fill: match id {
+                MeshKey::Fill(f) => Some(f),
+                MeshKey::Copy(..) => None,
+            },
+            meshes: Vec::new(),
+            lines: Vec::new(),
+        };
         let own = fill.color.or(layer.and_then(|l| l.fill_colour()));
-        let mut tint = |color: Rgb, alpha: f64, out: &mut FillGraphics| {
+        let mut tint = |color: Rgb, alpha: f64, group: &mut FillGroup| {
             let mesh = cache.get(revision, id, region);
             let [r, g, b] = color.0;
-            out.meshes.push(FillMesh {
+            group.meshes.push(FillMesh {
                 vertices: mesh.0.clone(),
                 indices: mesh.1.clone(),
                 color: [r, g, b, (alpha.clamp(0.0, 1.0) * 255.0).round() as u8],
@@ -1111,49 +1256,51 @@ pub fn fill_graphics(
                 tint(
                     own.unwrap_or(default_fill_color(dark)),
                     fill.opacity,
-                    &mut out,
+                    &mut group,
                 );
             }
             FillKind::Hatch(h) => {
                 if let Some(bg) = h.background {
-                    tint(bg, 1.0, &mut out);
+                    tint(bg, 1.0, &mut group);
                 }
                 let line = own.unwrap_or(default_line_color(dark));
                 let scale = h.scale * if h.model { 1.0 } else { draft_scale };
-                let Some(pattern) = patterns.get(&h.pattern) else {
-                    tint(line, 0.25, &mut out);
-                    continue;
-                };
-                if pattern.min_spacing() * scale * px_per_mm < MIN_HATCH_SPACING_PX {
-                    tint(line, 0.25, &mut out);
-                    continue;
-                }
                 let placement = Placement {
                     scale,
                     angle: h.angle,
                     origin: h.origin,
                 };
-                let hatching = drift_draft::hatch(
-                    region,
-                    pattern,
-                    &placement,
-                    Some(view),
-                    HATCH_SEGMENT_LIMIT,
-                );
-                if hatching.truncated {
-                    tint(line, 0.25, &mut out);
-                    continue;
+                let hatching = patterns
+                    .get(&h.pattern)
+                    .filter(|p| p.min_spacing() * scale * px_per_mm >= MIN_HATCH_SPACING_PX)
+                    .map(|pattern| {
+                        drift_draft::hatch(
+                            region,
+                            pattern,
+                            &placement,
+                            Some(view),
+                            HATCH_SEGMENT_LIMIT,
+                        )
+                    })
+                    .filter(|hatching| !hatching.truncated);
+                match hatching {
+                    // No pattern, too dense to see, or too much of it: a tint instead.
+                    None => tint(line, 0.25, &mut group),
+                    Some(hatching) => {
+                        let weight = fill.weight.unwrap_or_default().0;
+                        group
+                            .lines
+                            .extend(hatching.segments.into_iter().map(|[a, b]| {
+                                let mut item = SketchItem::new(Shape::Line { a, b });
+                                item.color = own.map(|c| c.0);
+                                item.weight = weight;
+                                item
+                            }));
+                    }
                 }
-                let weight = fill.weight.unwrap_or_default().0;
-                out.lines
-                    .extend(hatching.segments.into_iter().map(|[a, b]| {
-                        let mut item = SketchItem::new(Shape::Line { a, b });
-                        item.color = own.map(|c| c.0);
-                        item.weight = weight;
-                        item
-                    }));
             }
         }
+        out.groups.push(group);
     }
     out
 }
@@ -1279,13 +1426,15 @@ mod tests {
         };
         // Zoomed in: real hatch lines.
         let g = fill_graphics(&mut ed, &mut cache, &patterns, view, 10.0, true);
-        assert!(g.meshes.is_empty());
-        assert!(g.lines.len() > 10);
+        assert_eq!(g.groups.len(), 1);
+        assert!(g.meshes().is_empty());
+        assert!(g.lines().len() > 10);
         // Zoomed far out: a tint instead.
         let g = fill_graphics(&mut ed, &mut cache, &patterns, view, 0.1, true);
-        assert_eq!(g.meshes.len(), 1);
-        assert!(g.lines.is_empty());
-        let (vertices, indices) = (&g.meshes[0].vertices, &g.meshes[0].indices);
+        let meshes = g.meshes();
+        assert_eq!(meshes.len(), 1);
+        assert!(g.lines().is_empty());
+        let (vertices, indices) = (&meshes[0].vertices, &meshes[0].indices);
         // The tessellation covers the plate minus the hole.
         let area: f64 = indices
             .as_chunks::<3>()

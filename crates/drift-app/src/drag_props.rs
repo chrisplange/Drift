@@ -700,6 +700,17 @@ fn drag(
     offset: DVec2,
     steps: u32,
 ) -> Result<Run, TestCaseError> {
+    drag_along(built, ids, &[offset], steps)
+}
+
+/// [`drag`] through each offset of `path` in turn (in `steps` steps each), as one drag and
+/// one commit.
+fn drag_along(
+    built: &mut Built,
+    ids: &[EntityId],
+    path: &[DVec2],
+    steps: u32,
+) -> Result<Run, TestCaseError> {
     let start = built.positions();
     DRAGS.with(|d| {
         let names = |ids: &[EntityId]| -> Vec<usize> {
@@ -719,7 +730,7 @@ fn drag(
             "  points {:?}
   curves {:?}
   relations {:?}
-  dragged {what} {:?} by {offset} in {steps} steps",
+  dragged {what} {:?} through {path:?} in {steps} steps each",
             start,
             built.sketch.curves,
             built.sketch.rels,
@@ -736,8 +747,17 @@ fn drag(
     built.ed.doc.begin();
     let mut applied = DVec2::ZERO;
     let mut refused = 0;
-    for k in 1..=steps {
-        let target = offset * f64::from(k) / f64::from(steps);
+    let mut from = DVec2::ZERO;
+    let targets: Vec<DVec2> = path
+        .iter()
+        .flat_map(|&to| {
+            let leg = (1..=steps).map(move |k| from.lerp(to, f64::from(k) / f64::from(steps)));
+            from = to;
+            leg
+        })
+        .collect();
+    for (k, target) in targets.into_iter().enumerate() {
+        let k = k + 1;
         let before = built.positions();
         if built.ed.drag(ids, target - applied, &dragged) {
             applied = target;
@@ -993,6 +1013,120 @@ fn select_all_translates(plan: &Plan, offset: DVec2, steps: u32) -> Result<(), T
             run.end[i]
         );
     }
+    Ok(())
+}
+
+/// Property 7 (minimal movement): what the drag can't reach (no relation or shared point
+/// joins it to the dragged) doesn't move at all, to the bit.
+fn untouched_stays_put(
+    plan: &Plan,
+    pick: &Pick,
+    offset: DVec2,
+    steps: u32,
+) -> Result<(), TestCaseError> {
+    let Some(sketch) = plan.sketch() else {
+        return Ok(());
+    };
+    let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+    let ids = pick.ids(&built);
+    let reach = drift_solver::connected(&built.ed.doc, ids.iter().copied());
+    let run = drag(&mut built, &ids, offset, steps)?;
+    for (i, p) in built.points.iter().enumerate() {
+        if !reach.contains(p) {
+            prop_assert!(
+                run.end[i] == run.start[i],
+                "point {i}, out of the drag's reach, moved from {} to {}",
+                run.start[i],
+                run.end[i]
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Property 8 (path independence): a drag straight to `offset` and one by way of `via` end in
+/// the same place, where neither is refused nor turns an arc or tangency (a branch switch).
+fn path_independent(
+    plan: &Plan,
+    pick: &Pick,
+    offset: DVec2,
+    via: DVec2,
+    steps: u32,
+) -> Result<(), TestCaseError> {
+    let Some(sketch) = plan.sketch() else {
+        return Ok(());
+    };
+    let mut direct = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+    let mut around = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+    let orientation = Orientation::of(&direct.ed.doc, None);
+    let ids = pick.ids(&direct);
+    let a = drag(&mut direct, &ids, offset, steps)?;
+    let b = drag_along(&mut around, &ids, &[offset + via, offset], steps)?;
+    if a.refused + b.refused > 0
+        || !a.committed
+        || !b.committed
+        || orientation.turned(&direct.ed.doc)
+        || orientation.turned(&around.ed.doc)
+    {
+        return Ok(());
+    }
+    let size = offset.length() + via.length();
+    for i in 0..a.end.len() {
+        prop_assert!(
+            close(a.end[i], b.end[i], a.end[i].length() + size),
+            "point {i} ended at {} going straight but at {} going round",
+            a.end[i],
+            b.end[i]
+        );
+    }
+    Ok(())
+}
+
+/// Property 9 (no creep): dragging out and back to the start, in one drag, puts everything
+/// back where it was (where no step is refused and nothing turns).
+fn no_creep(plan: &Plan, pick: &Pick, offset: DVec2, steps: u32) -> Result<(), TestCaseError> {
+    let Some(sketch) = plan.sketch() else {
+        return Ok(());
+    };
+    let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+    let orientation = Orientation::of(&built.ed.doc, None);
+    let ids = pick.ids(&built);
+    let run = drag_along(&mut built, &ids, &[offset, DVec2::ZERO], steps)?;
+    if run.refused > 0 || orientation.turned(&built.ed.doc) {
+        return Ok(());
+    }
+    for i in 0..run.start.len() {
+        prop_assert!(
+            close(
+                run.end[i],
+                run.start[i],
+                run.start[i].length() + offset.length()
+            ),
+            "point {i} crept from {} to {} out and back",
+            run.start[i],
+            run.end[i]
+        );
+    }
+    Ok(())
+}
+
+/// Property 10 (determinism): the same drag on the same sketch gives bit-identical results.
+fn deterministic(plan: &Plan, pick: &Pick, offset: DVec2, steps: u32) -> Result<(), TestCaseError> {
+    let Some(sketch) = plan.sketch() else {
+        return Ok(());
+    };
+    let mut first = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+    let mut second = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+    let ids = pick.ids(&first);
+    let a = drag(&mut first, &ids, offset, steps)?;
+    let b = drag(&mut second, &ids, offset, steps)?;
+    prop_assert_eq!((a.committed, a.refused), (b.committed, b.refused));
+    prop_assert!(
+        a.end == b.end,
+        "{:?} the first time, {:?} the second",
+        a.end,
+        b.end
+    );
     Ok(())
 }
 
@@ -1283,3 +1417,26 @@ fn move_that_squeezes_a_tangent_line_carries_it_along() {
         assert!(run.end[i].distance(run.start[i] + offset) < 1e-9);
     }
 }
+
+property!(drag_leaves_the_unreached_alone, drag_leaves_the_unreached_alone_heavy,
+    (plan in plan(true), pick in pick(), offset in offset(20.0), steps in 1u32..=20)
+        => untouched_stays_put(&plan, &pick, offset, steps));
+
+property!(
+    // Each frame solves from the last frame's result, so where a drag ends depends on the way
+    // there; solving from the drag's start is step 3 of docs/solver-drag-regions-plan.md §2.
+    #[ignore = "path-dependent until drags solve from their start (solver-drag-regions plan, 2.3)"]
+    drag_is_path_independent, drag_is_path_independent_heavy,
+    (plan in plan(true), pick in pick(), offset in offset(20.0), via in offset(10.0),
+        steps in 1u32..=10)
+        => path_independent(&plan, &pick, offset, via, steps));
+
+property!(
+    #[ignore = "creeps until drags solve from their start (solver-drag-regions plan, 2.3)"]
+    drag_out_and_back_does_not_creep, drag_out_and_back_does_not_creep_heavy,
+    (plan in plan(true), pick in pick(), offset in offset(20.0), steps in 1u32..=10)
+        => no_creep(&plan, &pick, offset, steps));
+
+property!(drag_is_deterministic, drag_is_deterministic_heavy,
+    (plan in plan(true), pick in pick(), offset in offset(20.0), steps in 1u32..=20)
+        => deterministic(&plan, &pick, offset, steps));

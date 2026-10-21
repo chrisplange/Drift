@@ -15,7 +15,7 @@ mod linalg;
 mod sparse;
 mod system;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use drift_core::{Constraint, ConstraintId, DVec2, Document, EntityId, EntityKind};
 
@@ -158,7 +158,11 @@ pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
         options.scope.as_deref(),
         &options.radii,
     );
-    for (&line, &u) in &options.directions {
+    // Sorted, so the preferences' rows come in the same order every run (a hash map's order
+    // would change the floating-point sums, and with them the result's last bits).
+    let mut directions: Vec<_> = options.directions.iter().collect();
+    directions.sort_unstable_by_key(|(id, _)| **id);
+    for (&line, &u) in directions {
         if let Some(EntityKind::Line { a, b }) = doc.get(line).map(|e| e.kind) {
             let ends = [Param::X(a), Param::Y(a), Param::X(b), Param::Y(b)]
                 .map(|p| sys.param_index.get(&p).copied());
@@ -198,7 +202,9 @@ pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
             sys.keep_radius.retain(|(k, _)| k.map(Some) != key);
         }
     }
-    for (&line, &length) in &options.lengths {
+    let mut lengths: Vec<_> = options.lengths.iter().collect();
+    lengths.sort_unstable_by_key(|(id, _)| **id);
+    for (&line, &length) in lengths {
         if let Some(EntityKind::Line { a, b }) = doc.get(line).map(|e| e.kind)
             && !dragged_group(a)
             && !dragged_group(b)
@@ -664,7 +670,7 @@ fn components(sys: &System, tol: &Tolerances) -> (Vec<Component>, Vec<usize>) {
             soft_roots.push(g);
         }
     }
-    let mut by_root: HashMap<usize, Component> = HashMap::new();
+    let mut by_root: BTreeMap<usize, Component> = BTreeMap::new();
     for g in soft_roots {
         by_root
             .entry(find(&mut parent, g))
@@ -871,7 +877,7 @@ fn newton(
     // column's diagonal alone would turn with the sketch: a row's gradient at a point is a
     // vector, and the diagonals are its components squared. The regularisation would then
     // differ for the same sketch turned, and with it, slightly, the result; #94.)
-    let mut scales: HashMap<(EntityId, bool), [Option<usize>; 2]> = HashMap::new();
+    let mut scales: BTreeMap<(EntityId, bool), [Option<usize>; 2]> = BTreeMap::new();
     let mut radii_cols: Vec<usize> = Vec::new();
     for (c, g) in comp.unknowns.iter().enumerate() {
         for &i in &sys.groups[*g].members {
@@ -1440,7 +1446,7 @@ pub fn free_directions(doc: &Document) -> HashMap<EntityId, Freedom> {
     let (comps, _) = components(&sys, &options.tolerances);
     let values: Vec<f64> = sys.groups.iter().map(|g| g.value).collect();
     // Null-space basis vectors, as group → component, indexed by the groups they touch.
-    let mut basis: Vec<HashMap<usize, f64>> = Vec::new();
+    let mut basis: Vec<BTreeMap<usize, f64>> = Vec::new();
     let mut skipped: HashSet<usize> = HashSet::new();
     let in_component: HashSet<usize> = comps
         .iter()
@@ -1448,7 +1454,7 @@ pub fn free_directions(doc: &Document) -> HashMap<EntityId, Freedom> {
         .collect();
     for g in 0..sys.groups.len() {
         if !sys.groups[g].fixed && !in_component.contains(&g) {
-            basis.push(HashMap::from([(g, 1.0)]));
+            basis.push(BTreeMap::from([(g, 1.0)]));
         }
     }
     for comp in &comps {
@@ -1495,11 +1501,11 @@ pub fn free_directions(doc: &Document) -> HashMap<EntityId, Freedom> {
             }
         }
         let pivots = rref(&mut m, 1e-9);
-        let pivot_row: HashMap<usize, usize> =
+        let pivot_row: BTreeMap<usize, usize> =
             pivots.iter().enumerate().map(|(r, c)| (*c, r)).collect();
         for free in (0..n).filter(|c| !pivot_row.contains_key(c)) {
             // x_free = 1, x_pivot = -R[row, free]; undo the column scaling.
-            let mut v = HashMap::new();
+            let mut v = BTreeMap::new();
             v.insert(comp.unknowns[free], 1.0 / col_norm[free]);
             for (&pc, &r) in &pivot_row {
                 let x = -m.at(r, free);

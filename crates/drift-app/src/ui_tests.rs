@@ -9147,14 +9147,15 @@ fn dragging_a_hatch_over_another_moves_only_its_own_outline() {
     };
     let before = first(&h);
     // Pick the second arrow's hatch where only it is, and drag it back and forth over the
-    // first, right onto it too.
+    // first, right onto it too. (Each press is well clear of the first arrow's right side at
+    // x = 0, so it lands on the hatch, not the line.)
     let mut at = v(10.0, 38.0);
     click_world(&mut h, at);
     assert_eq!(
         h.state().editor.selected_fills,
         [drift_core::FillId(10)].into()
     );
-    for d in [-25.4, 12.7, -38.1, 50.8] {
+    for d in [-25.4, -12.7, 38.1, -50.8] {
         click_world(&mut h, at);
         drag_world(&mut h, at, at + v(d, 0.0));
         at += v(d, 0.0);

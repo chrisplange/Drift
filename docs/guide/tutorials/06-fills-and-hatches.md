@@ -61,8 +61,8 @@ whatever else crosses it or lies inside it, and it stays whole through splits, f
 chamfers of its sides. A fill clicked inside such a shape with the Fill tool is the shape's
 too. Deleting or trimming away a side opens the shape: its fill keeps its last area until
 the ends meet again. Trimming two shapes into each other joins them into one shape with one
-fill (the one drawn on top). Islands inside a shape are not holes; to leave them out, fill
-an area among several shapes' lines with the Fill tool instead.
+fill (the one drawn on top). Shapes lying inside a shape are left out of its fill as holes,
+as they are of any area's; a shape with a fill of its own covers what is beneath it anyway.
 
 ## 3. Copy a style with the eyedropper
 

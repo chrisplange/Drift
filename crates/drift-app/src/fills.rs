@@ -1113,13 +1113,27 @@ impl Editor {
             .map(|(id, _)| id)
     }
 
-    /// The area inside a closed path: the biggest area its curves bound on their own (a
-    /// path that crosses itself bounds several). None for an open path.
+    /// The area inside a closed path: bounded by its curves alone (whatever crosses them
+    /// is ignored), with the shapes lying inside it left out as holes, as an area's are.
+    /// A path that crosses itself bounds several areas: the biggest. None for an open path.
     pub(crate) fn path_region(&self, id: PathId) -> Option<Region> {
         let path = self.doc.path(id)?;
         if !path.closed {
             return None;
         }
+        let outline = sorted(&path.curves);
+        // Its curves with the ones inside that don't cross them: the islands are holes.
+        let solid = self.solid_curves();
+        if let Some((regions, ids)) = self.regions_among(&outline, &solid)
+            && let Some(candidates) = Areas::new(&regions, &ids).by_outline.get(&outline)
+            && let Some(r) = candidates
+                .iter()
+                .map(|&i| &regions[i])
+                .max_by(|a, b| a.area.total_cmp(&b.area))
+        {
+            return Some(r.clone());
+        }
+        // Crossing itself (no area has all its curves as outline): the biggest it bounds.
         let shapes: Vec<Shape> = path
             .curves
             .iter()

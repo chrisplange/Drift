@@ -961,7 +961,7 @@ fn a_paths_fill_follows_its_own_outline_alone() {
     assert_eq!(fill.path, Some(path));
     assert!(close(found(&mut ed, id).0, 800.0));
     assert_eq!(ed.doc.path_of(sides[1]), Some(path));
-    // A line across it and a circle inside it: neither cuts it nor makes a hole.
+    // A line across it doesn't cut it; a circle inside it is a hole.
     ed.doc.begin();
     let a = ed.doc.add_point(v(20.0, -5.0));
     let b = ed.doc.add_point(v(20.0, 25.0));
@@ -969,10 +969,11 @@ fn a_paths_fill_follows_its_own_outline_alone() {
     let c = ed.doc.add_point(v(10.0, 10.0));
     ed.doc.add_circle(c, 3.0).unwrap();
     ed.commit("Across and inside");
-    assert!(close(found(&mut ed, id).0, 800.0));
+    let hole = PI * 9.0;
+    assert!(close(found(&mut ed, id).0, 800.0 - hole));
     assert!(!ed.doc.fill(id).unwrap().divided);
     assert!(ed.fill_changes.is_empty(), "{:?}", ed.fill_changes);
-    assert_eq!(ed.fill_shapes()[&id].region.holes.len(), 0);
+    assert_eq!(ed.fill_shapes()[&id].region.holes.len(), 1);
     // Splitting a side puts the new piece in the path, in order.
     ed.split_at(sides[0], v(10.0, 0.0)).unwrap();
     let now = ed.doc.path(path).unwrap().clone();
@@ -983,13 +984,13 @@ fn a_paths_fill_follows_its_own_outline_alone() {
         now.curves[2], sides[1],
         "the piece follows the side it was cut from"
     );
-    assert!(close(found(&mut ed, id).0, 800.0));
+    assert!(close(found(&mut ed, id).0, 800.0 - hole));
     // A fillet too.
     ed.fillet(p[2], 5.0).unwrap();
     let now = ed.doc.path(path).unwrap().clone();
     assert!(now.closed);
     assert_eq!(now.curves.len(), 6);
-    assert!(close(found(&mut ed, id).0, 800.0 - CORNER_ROUND));
+    assert!(close(found(&mut ed, id).0, 800.0 - hole - CORNER_ROUND));
     assert_eq!(
         sorted(now.curves.clone()),
         ed.doc.fill(id).unwrap().boundary
@@ -1002,7 +1003,7 @@ fn a_paths_fill_follows_its_own_outline_alone() {
     assert!(ed.fill_shapes()[&id].lost);
     assert!(ed.undo());
     assert!(ed.doc.path(path).unwrap().closed);
-    assert!(close(found(&mut ed, id).0, 800.0 - CORNER_ROUND));
+    assert!(close(found(&mut ed, id).0, 800.0 - hole - CORNER_ROUND));
 }
 
 /// Two circles drawn as shapes with their fills, overlapping, trimmed into each other: the

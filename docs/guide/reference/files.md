@@ -76,6 +76,9 @@ Exports never replace the `.drift` file: Ctrl+S always saves the sketch. See
 
 When any block is marked as a **Blender profile**, saving `Trim.drift` also writes
 `Trim.drift-profiles.json` beside it. When no block is marked, saving deletes that file.
+While a profile block is open for editing, Drift also rewrites the file as the block
+changes, up to ten times a second, without saving the drawing. Blender's Auto-reload uses
+this to follow your edit as you work.
 Blender's Drift Profiles add-on reads it; see
 [Profiles in Blender](../tutorials/13-profiles-in-blender.md).
 

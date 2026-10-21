@@ -2,6 +2,9 @@
 
 use crate::*;
 
+/// The live link to Blender writes the profiles file at most this often (seconds).
+pub(crate) const LIVE_PROFILES_S: f64 = 0.1;
+
 /// Whether a path names a sketch (by its extension).
 fn is_sketch_file(path: &std::path::Path) -> bool {
     path.extension()
@@ -388,6 +391,43 @@ impl DriftApp {
                 ", but the Blender profiles could not be written: {e}"
             )),
         }
+    }
+
+    /// The live link to Blender: while a block marked as a Blender profile is open for
+    /// editing, rewrite the profiles file beside the drawing as the block changes, at most
+    /// every [`LIVE_PROFILES_S`], so Blender's Auto-reload follows the edit before it's
+    /// saved. Returns how long to wait before a change still to be written can go out.
+    pub(crate) fn live_profiles(&mut self, now: f64) -> Option<f64> {
+        let editing = self
+            .editor
+            .block_edit
+            .filter(|e| self.editor.doc.block(e.block).is_some_and(|b| b.profile));
+        let (Some(_), Some(path)) = (
+            editing,
+            self.file.path.as_deref().filter(|p| is_sketch_file(p)),
+        ) else {
+            self.live_profiles = None;
+            return None;
+        };
+        let revision = self.editor.doc.revision();
+        match self.live_profiles {
+            Some((written, _)) if written == revision => return None,
+            Some((_, at)) if now - at < LIVE_PROFILES_S => {
+                return Some(LIVE_PROFILES_S - (now - at));
+            }
+            _ => {}
+        }
+        // A failed write is tried again on the next change, and saving reports it. The demo
+        // writes no files.
+        #[cfg(not(feature = "demo"))]
+        {
+            let blocks = self.editor.blocks_as_drawn();
+            let _ = drift_io::profiles::update_beside(path, blocks.iter().map(|(id, b)| (*id, b)));
+        }
+        #[cfg(feature = "demo")]
+        let _ = path;
+        self.live_profiles = Some((revision, now));
+        None
     }
 
     pub(crate) fn handle_file_events(&mut self, now: f64) {

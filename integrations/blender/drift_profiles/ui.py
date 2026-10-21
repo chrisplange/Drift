@@ -15,8 +15,9 @@ ORIENTATION_ITEMS = (
     ("XZ", "XZ · lathe", "Stand the profile up, to spin round Z with a Screw modifier"),
 )
 
-# How often Auto-reload looks at the files, in seconds.
-POLL = 1.0
+# How often Auto-reload looks at the files, in seconds: Drift rewrites them as often while a
+# profile block is open for editing (its live link), and on every save.
+POLL = 0.1
 
 
 def set_status(text):
@@ -56,7 +57,7 @@ class DRIFT_OT_import_profiles(bpy.types.Operator, ImportHelper):
     bl_options = {"REGISTER", "UNDO"}
 
     filename_ext = ".json"
-    filter_glob: StringProperty(default="*" + convert.EXTENSION, options={"HIDDEN"})
+    filter_glob: StringProperty(default=convert.FILTER_GLOB, options={"HIDDEN"})
 
     def execute(self, context):
         try:
@@ -220,7 +221,8 @@ def register():
         bpy.utils.register_class(cls)
     bpy.types.Scene.drift_auto_reload = BoolProperty(
         name="Auto-reload",
-        description="Reload profiles each time Drift saves them (checks every second)",
+        description="Reload profiles as Drift changes them: on save, and while a profile "
+        "block is open for editing in Drift",
         default=False,
     )
     bpy.types.WindowManager.drift_status = StringProperty(name="Drift profiles status")

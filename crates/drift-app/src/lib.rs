@@ -246,6 +246,9 @@ pub struct DriftApp {
     /// Closing was confirmed (or nothing was unsaved): let the window close.
     quit_confirmed: bool,
     quit_sent: bool,
+    /// While a Blender profile block is open for editing: the document revision last written
+    /// to the profiles file beside the drawing, and when.
+    live_profiles: Option<(u64, f64)>,
     /// "Don't save" on quitting: the session isn't kept for the next start.
     discard_session: bool,
     /// The start panel over an empty sketch.
@@ -497,6 +500,7 @@ impl DriftApp {
             after_save: None,
             quit_confirmed: false,
             quit_sent: false,
+            live_profiles: None,
             discard_session: false,
             // Tests drive the bare canvas.
             show_start: !cfg!(test),
@@ -992,6 +996,9 @@ impl eframe::App for DriftApp {
         let now = ctx.input(|i| i.time);
         let before = self.ui_signature();
         self.handle_file_events(now);
+        if let Some(wait) = self.live_profiles(now) {
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(wait));
+        }
         fonts::sync_screen(&ctx, &self.editor, &mut self.screen_font);
         if let Some(notice) = self.editor.notice.take() {
             self.set_status(notice, true, now);

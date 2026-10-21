@@ -3214,6 +3214,68 @@ fn a_blocks_base_point_is_picked_when_made_and_set_later() {
 }
 
 #[test]
+fn a_profile_block_open_for_editing_is_written_live_without_saving() {
+    let Some(mut h) = harness() else { return };
+    let dir = std::env::temp_dir().join(format!("drift-ui-live-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let beside = dir.join("Live.drift-profiles.json");
+    let app = h.state_mut();
+    app.file.path = Some(dir.join("Live.drift"));
+    let ed = &mut app.editor;
+    ed.doc.begin();
+    let block = ed.doc.add_block(drift_core::Block {
+        name: "Bead".into(),
+        items: vec![drift_core::BlockItem {
+            shape: drift_core::Shape::Line {
+                a: DVec2::ZERO,
+                b: DVec2::new(10.0, 0.0),
+            },
+            style: drift_core::LineKind::Solid,
+            appearance: Default::default(),
+        }],
+        profile: true,
+        ..Default::default()
+    });
+    let copy = ed
+        .doc
+        .add_instance(drift_core::Instance::new(block, DVec2::ZERO))
+        .unwrap();
+    ed.commit("Block");
+    let far_end = || {
+        let text = std::fs::read_to_string(&beside).ok()?;
+        let file = drift_io::profiles::parse(&text).unwrap();
+        Some(file.profiles[0].loops[0].knots[1].co[0])
+    };
+    // Not while the block is closed: only saving writes then.
+    assert_eq!(h.state_mut().live_profiles(0.0), None);
+    assert!(!beside.exists());
+    // Opened for editing: written straight away, then as it changes.
+    h.state_mut().editor.edit_block(copy);
+    assert_eq!(h.state_mut().live_profiles(1.0), None);
+    assert_eq!(far_end(), Some(0.01));
+    let ed = &mut h.state_mut().editor;
+    let end = ed
+        .doc
+        .iter()
+        .map(|(id, _)| id)
+        .find(|id| ed.doc.point(*id).is_ok_and(|p| p.x > 5.0))
+        .expect("the line's far end");
+    ed.doc.set_point(end, DVec2::new(25.0, 0.0)).unwrap();
+    // Within 0.1 s of the last write it waits (the frame asks to come back)…
+    let wait = h.state_mut().live_profiles(1.05).expect("a wait");
+    assert!((wait - 0.05).abs() < 1e-9, "{wait}");
+    assert_eq!(far_end(), Some(0.01));
+    // …then writes the block as it is now.
+    assert_eq!(h.state_mut().live_profiles(1.11), None);
+    assert_eq!(far_end(), Some(0.025));
+    // Nothing more to write until it changes again.
+    assert_eq!(h.state_mut().live_profiles(2.0), None);
+    h.state_mut().editor.finish_block_edit();
+    assert_eq!(h.state_mut().live_profiles(3.0), None);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn a_block_marked_as_a_blender_profile_is_written_beside_the_drawing_on_save() {
     let Some(mut h) = harness() else { return };
     // A block with a copy, picked.

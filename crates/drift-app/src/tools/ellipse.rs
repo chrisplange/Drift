@@ -88,7 +88,7 @@ impl EllipseTool {
                 None => ed.doc.add_ellipse(pc, pm, pn)?,
             };
             if ends.is_none() {
-                ed.fill_new_shape(&[ellipse]);
+                ed.add_shape(&[ellipse]);
             }
             // A level or plumb axis keeps it.
             let scale = c.distance(m).max(1.0) * 1e-9;

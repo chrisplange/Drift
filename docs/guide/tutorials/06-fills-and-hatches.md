@@ -53,6 +53,17 @@ pattern: every closed shape you draw comes out filled in that style, as part of 
 undo step (a pen path is filled when you close it on its first point). The style is the
 Fill tool's, so the eyedropper and the **Inspector**'s **New fills** section set it too.
 
+## Shapes
+
+A shape drawn with one of those tools (or a pen path closed on its first point) is recorded
+as one shape, whether or not it is filled. Its fill is the area inside its own outline,
+whatever else crosses it or lies inside it, and it stays whole through splits, fillets and
+chamfers of its sides. A fill clicked inside such a shape with the Fill tool is the shape's
+too. Deleting or trimming away a side opens the shape: its fill keeps its last area until
+the ends meet again. Trimming two shapes into each other joins them into one shape with one
+fill (the one drawn on top). Shapes lying inside a shape are left out of its fill as holes,
+as they are of any area's; a shape with a fill of its own covers what is beneath it anyway.
+
 ## 3. Copy a style with the eyedropper
 
 Hold Alt and click a fill or hatch with the **Fill / hatch** tool. Its style becomes the

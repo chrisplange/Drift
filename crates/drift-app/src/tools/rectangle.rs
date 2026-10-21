@@ -73,7 +73,7 @@ impl RectangleTool {
                 },
             );
         }
-        ed.fill_new_shape(&lines);
+        ed.add_shape(&lines);
         ed.commit("Rectangle");
         self.first = None;
     }

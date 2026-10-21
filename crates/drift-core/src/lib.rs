@@ -14,6 +14,7 @@ pub mod fonts;
 pub mod groups;
 pub mod layers;
 pub mod params;
+pub mod paths;
 pub mod shape;
 pub mod sheets;
 pub mod texts;
@@ -36,6 +37,7 @@ pub use fonts::{EmbeddedFont, FontFile, FontSet};
 pub use glam::DVec2;
 pub use groups::{Group, GroupId};
 pub use layers::{Appearance, Layer, LayerId, LineType, LineWeight, Rgb};
+pub use paths::{Path, PathId};
 pub use shape::{DofState, Emphasis, LineKind, Shape, SketchItem};
 pub use sheets::{
     FieldSet, PaperSize, PlacedView, Project, Revision, Sheet, SheetColours, SheetId, TitleBlock,

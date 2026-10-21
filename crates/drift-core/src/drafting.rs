@@ -6,6 +6,7 @@ use glam::DVec2;
 
 use crate::document::EntityId;
 use crate::layers::{LayerId, LineWeight, Rgb};
+use crate::paths::PathId;
 use crate::sheets::ViewId;
 use crate::units::{LengthFormat, Units};
 
@@ -78,6 +79,9 @@ pub struct Fill {
     /// An edit left it covering more than one area (it was kept whole and flagged, to be
     /// fitted to one area, split, or kept whole).
     pub divided: bool,
+    /// The path (a shape drawn as one) whose inside it fills: it is found from that path's
+    /// curves alone, and goes with it. None: an area among the sketch's curves.
+    pub path: Option<PathId>,
 }
 
 impl Fill {
@@ -94,6 +98,7 @@ impl Fill {
             weight: None,
             order: 0,
             divided: false,
+            path: None,
         }
     }
 }

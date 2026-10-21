@@ -5358,3 +5358,61 @@ fn a_fill_follows_its_circle_dragged_off_one_it_overlapped() {
         assert!(shapes.values().all(|s| !s.lost));
     }
 }
+
+/// With automatic relations off, moving an arc piece away from the pieces it shares a
+/// centre with lets go of the centre (the piece takes a copy of the point). Confirming the
+/// move applies it again from the original geometry, with another copy: the drag's cached
+/// solver scope, keyed on counts alone, still held the first (2026-10-21: a crash in the
+/// solver on confirming the move).
+#[test]
+fn a_move_confirmed_after_letting_go_of_a_shared_centre_solves() {
+    let mut ed = Editor::default();
+    ed.auto_relations = false;
+    ed.doc.begin();
+    let c = ed.doc.add_point(v(0.0, 0.0));
+    let s = ed.doc.add_point(v(50.0, 0.0));
+    let e = ed.doc.add_point(v(-50.0, 0.0));
+    let arc = ed.doc.add_arc(c, s, e).unwrap();
+    ed.commit("Arc");
+    ed.split_at(arc, v(-30.0, 40.0)).unwrap();
+    ed.split_at(arc, v(30.0, 40.0)).unwrap();
+    let middle = ed
+        .doc
+        .iter()
+        .find(|(_, en)| match en.kind {
+            EntityKind::Arc { start, end, .. } => {
+                ed.doc.point(start).unwrap().y > 1.0 && ed.doc.point(end).unwrap().y > 1.0
+            }
+            _ => false,
+        })
+        .map(|(id, _)| id)
+        .expect("the middle piece");
+    let ids = vec![middle];
+    let dragged = |ed: &Editor| -> Vec<Param> {
+        ed.doc
+            .defining_points(ids.iter().copied())
+            .iter()
+            .copied()
+            .flat_map(Param::point)
+            .collect()
+    };
+    // The interactive drag, then the confirm: rolled back and applied again.
+    ed.doc.begin();
+    ed.detach_for_move(&ids);
+    assert!(ed.drag(&ids, v(0.0, 10.0), &dragged(&ed)));
+    ed.doc.rollback();
+    ed.doc.begin();
+    ed.detach_for_move(&ids);
+    assert!(ed.drag(&ids, v(0.0, 30.0), &dragged(&ed)));
+    ed.commit("Move");
+    let EntityKind::Arc { center, .. } = ed.doc.get(middle).unwrap().kind else {
+        unreachable!()
+    };
+    assert_ne!(center, c, "the piece took its own centre");
+    assert_eq!(ed.doc.point(center).unwrap(), v(0.0, 30.0));
+    assert_eq!(
+        ed.doc.point(c).unwrap(),
+        v(0.0, 0.0),
+        "the others kept theirs"
+    );
+}

@@ -357,6 +357,14 @@ pub fn connected(doc: &Document, seeds: impl IntoIterator<Item = EntityId>) -> H
         .collect()
 }
 
+/// Relations whose geometry is gone or no longer of the kinds they need (a trim or a
+/// split changed a curve under them), with why. The solver leaves them out.
+pub fn invalid_constraints(doc: &Document) -> Vec<(drift_core::ConstraintId, String)> {
+    doc.constraints()
+        .filter_map(|(id, c)| doc.validate(c).err().map(|e| (id, e.to_string())))
+        .collect()
+}
+
 /// Entities whose geometry has collapsed: zero-length lines, zero-radius circles and arcs.
 /// Constraints can be satisfied by collapsing geometry (e.g. horizontal + vertical on one
 /// line), which a sketcher should refuse.

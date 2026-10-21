@@ -6,7 +6,7 @@
 //! ```json
 //! {
 //!   "format": "drift",
-//!   "version": 37,
+//!   "version": 38,
 //!   "meta": {"title":"Bracket","units":"mm","generator":"Drift 0.1.0"},
 //!   "display": {"length":"architectural","fraction":16},
 //!   "variables": [
@@ -101,7 +101,7 @@ pub const EXTENSION: &str = "drift";
 /// `title_block` can be `blank` (blank paper; `none` stays the border without a title block);
 /// 36 = adds a block's `profile` flag (written to the Blender profiles file); 37 = adds a
 /// fill's `divided` (an edit left it covering more than one area).
-pub const FORMAT_VERSION: u32 = 37;
+pub const FORMAT_VERSION: u32 = 38;
 const FORMAT_TAG: &str = "drift";
 
 /// Document-level properties stored alongside the geometry.
@@ -851,6 +851,9 @@ struct FileRecord {
     sheets: Vec<sheets::SheetRecord>,
     #[serde(default)]
     groups: Vec<GroupRecord>,
+    /// Curves drawn as one shape (v38).
+    #[serde(default)]
+    paths: Vec<PathRecord>,
     #[serde(default)]
     blocks: Vec<blocks::BlockRecord>,
     #[serde(default)]
@@ -868,6 +871,16 @@ struct GroupRecord {
     id: String,
     name: String,
     members: Vec<String>,
+}
+
+/// Curves drawn as one shape, in order round it.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PathRecord {
+    id: String,
+    curves: Vec<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    closed: bool,
 }
 
 #[cfg(not(feature = "demo"))]
@@ -1166,6 +1179,17 @@ pub fn save(doc: &Document, meta: &Metadata) -> String {
             .expect("group serializes")
         })
         .collect();
+    let paths: Vec<String> = doc
+        .paths()
+        .map(|(id, p)| {
+            serde_json::to_string(&PathRecord {
+                id: id.to_string(),
+                curves: p.curves.iter().map(|e| id_string(*e)).collect(),
+                closed: p.closed,
+            })
+            .expect("path serializes")
+        })
+        .collect();
     let block_lines: Vec<String> = doc
         .blocks()
         .map(|(id, b)| {
@@ -1198,6 +1222,7 @@ pub fn save(doc: &Document, meta: &Metadata) -> String {
         ("views", &views),
         ("sheets", &sheets),
         ("groups", &groups),
+        ("paths", &paths),
         ("blocks", &block_lines),
         ("instances", &instances),
         ("underlays", &underlay_lines),
@@ -1646,6 +1671,25 @@ pub fn load_with_notes(text: &str) -> Result<(Document, Metadata, Vec<String>), 
         )
         .map_err(LoadError::Document)?;
     }
+    for p in file.paths {
+        let id = drift_core::PathId(parse_prefixed(&p.id, 'p')?);
+        if doc.path(id).is_some() {
+            return Err(LoadError::DuplicateId(p.id));
+        }
+        let curves = p
+            .curves
+            .iter()
+            .map(|c| parse_id(c))
+            .collect::<Result<_, _>>()?;
+        doc.insert_path(
+            id,
+            drift_core::Path {
+                curves,
+                closed: p.closed,
+            },
+        )
+        .map_err(LoadError::Document)?;
+    }
     for r in file.views {
         let id_text = r.id.clone();
         let (id, mut view) = sheets::parse_view(r)?;
@@ -1909,7 +1953,7 @@ mod tests {
         let text = save(&doc, &Metadata::default());
         let expected = r#"{
   "format": "drift",
-  "version": 37,
+  "version": 38,
   "meta": {"units":"mm"},
   "entities": [
     {"type":"point","id":"e1","at":[0.0,0.0]},
@@ -2088,7 +2132,7 @@ mod tests {
         // A file from before extension starts opens with them all automatic.
         let old = text.replace(r#","ext":[null,12.5]"#, "");
         let old = old.replace(r#","ext":[-2.0,3.25]"#, "");
-        let old = old.replace(r#""version": 37"#, r#""version": 33"#);
+        let old = old.replace(r#""version": 38"#, r#""version": 33"#);
         let (loaded, _) = load(&old).unwrap();
         assert_eq!(loaded.extension_starts(h), [None, None]);
         assert_eq!(loaded.extension_starts(both), [None, None]);
@@ -2940,6 +2984,20 @@ mod tests {
             members: curves.iter().copied().take(2).collect(),
         })
         .unwrap();
+        // A shape drawn as one, with its fill.
+        let shape = doc
+            .add_path(drift_core::Path {
+                curves: curves.iter().copied().skip(2).take(2).collect(),
+                closed: true,
+            })
+            .unwrap();
+        let mut shaped = drift_core::Fill::new(
+            Vec::new(),
+            DVec2::new(1.0, 2.0),
+            drift_core::FillKind::Solid,
+        );
+        shaped.path = Some(shape);
+        doc.add_fill(shaped);
         // An ellipse and part of it, with every point exactly where adding them puts them.
         let [ec, em, en, es, ee] = [
             DVec2::new(300.0, 0.0),
@@ -3019,7 +3077,7 @@ mod tests {
         doc.add_text(drift_core::SketchText::new("A", DVec2::ZERO, 3.0));
 
         let text = save(&doc, &Metadata::default());
-        assert!(text.contains("\"version\": 37"));
+        assert!(text.contains("\"version\": 38"));
         // A fill an edit divided keeps its mark.
         assert!(text.contains(r#""divided":true"#), "{text}");
         // A mark points at its view.
@@ -3053,6 +3111,7 @@ mod tests {
             "sheets",
             "views",
             "groups",
+            "paths",
             "blocks",
             "instances",
             "underlays",

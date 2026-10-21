@@ -19,8 +19,8 @@ Snapshots aren't saved in the file.
 
 ## Versions
 
-The file records a format version. This build writes version 36, in which a block can be
-marked as a Blender profile. A file from before version 27, when views came to belong to the
+The file records a format version. This build writes version 38, in which shapes drawn
+as one (paths) are recorded and a fill can belong to one. A file from before version 27, when views came to belong to the
 drawing and sheets to place them, opens with each of its sheets' views made a view of its
 own.
 

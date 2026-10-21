@@ -35,7 +35,7 @@ impl CircleTool {
                         },
                     );
                 }
-                ed.fill_new_shape(&[circle]);
+                ed.add_shape(&[circle]);
                 ed.commit("Circle");
             }
             Err(_) => {

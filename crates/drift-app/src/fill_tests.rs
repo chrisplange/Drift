@@ -708,7 +708,9 @@ fn a_split_that_divides_a_fills_area_can_follow_its_seed() {
 }
 
 #[test]
-fn a_line_drawn_across_a_fill_is_flagged_or_followed() {
+fn a_line_drawn_across_a_fill_is_flagged_and_kept_whole() {
+    // Whichever way the divided-fill preference is set: a curve drawn across a fill never
+    // changes its area (the preference is for edits that cut the outline itself).
     for follow in [false, true] {
         let mut ed = Editor::new(Document::new());
         ed.follow_divided_fills = follow;
@@ -721,30 +723,23 @@ fn a_line_drawn_across_a_fill_is_flagged_or_followed() {
         let across = ed.doc.add_line(a, b).unwrap();
         ed.commit("Line");
         let (area, _) = found(&mut ed, id);
-        if follow {
-            assert!(close(area, 200.0), "{area}");
-            assert!(!ed.doc.fill(id).unwrap().divided);
-        } else {
-            assert!(close(area, 800.0), "{area}");
-            assert!(ed.doc.fill(id).unwrap().divided);
-            assert_eq!(ed.fill_shapes()[&id].parts, 2);
-            // Kept whole on purpose: splitting its side where the line crosses it changes
-            // nothing more.
-            ed.keep_fill_whole(id);
-            ed.fill_changes.clear();
-            ed.split_at(sides[0], v(10.0, 0.0)).unwrap();
-            assert!(close(found(&mut ed, id).0, 800.0));
-            assert!(!ed.doc.fill(id).unwrap().divided);
-            assert!(ed.fill_changes.is_empty(), "{:?}", ed.fill_changes);
-        }
+        assert!(close(area, 800.0), "follow {follow}: {area}");
+        assert!(ed.doc.fill(id).unwrap().divided);
+        assert_eq!(ed.fill_shapes()[&id].parts, 2);
+        // Kept whole on purpose: splitting its side where the line crosses it changes
+        // nothing more.
+        ed.keep_fill_whole(id);
+        ed.fill_changes.clear();
+        ed.split_at(sides[0], v(10.0, 0.0)).unwrap();
+        assert!(close(found(&mut ed, id).0, 800.0));
+        assert!(!ed.doc.fill(id).unwrap().divided);
+        assert!(ed.fill_changes.is_empty(), "{:?}", ed.fill_changes);
         // Taking the line away makes it one area again.
         ed.doc.begin();
         ed.doc.delete([across]);
         ed.commit("Delete");
-        if !follow {
-            assert!(close(found(&mut ed, id).0, 800.0));
-            assert!(!ed.doc.fill(id).unwrap().divided);
-        }
+        assert!(close(found(&mut ed, id).0, 800.0));
+        assert!(!ed.doc.fill(id).unwrap().divided);
     }
 }
 
@@ -775,4 +770,178 @@ fn deleting_part_of_a_fills_outline_says_what_became_of_it() {
         ed.fill_changes,
         vec![crate::fills::FillChange::Dropped { id: l_shape }]
     );
+}
+
+/// Two filled circles touching, then a third circle drawn across both: each fill keeps its
+/// whole disc (and is flagged as divided), rather than shrinking to a part.
+#[test]
+fn a_circle_drawn_across_two_filled_circles_leaves_them_whole() {
+    for gap in [0.0, 20.0] {
+        let mut ed = Editor::default();
+        ed.doc.begin();
+        let a = ed.doc.add_point(v(0.0, 0.0));
+        ed.doc.add_circle(a, 250.0).unwrap();
+        let b = ed.doc.add_point(v(500.0 + gap, 0.0));
+        ed.doc.add_circle(b, 250.0).unwrap();
+        ed.commit("Circles");
+        let fa = ed.add_fill_at(v(0.0, 0.0)).unwrap();
+        let fb = ed.add_fill_at(v(500.0 + gap, 0.0)).unwrap();
+        let disc = PI * 250.0 * 250.0;
+        assert!(close(found(&mut ed, fa).0, disc));
+        // The fills have been shown (so the editor knows they weren't crossed before).
+        let _ = ed.fill_shapes();
+        ed.doc.begin();
+        let c = ed.doc.add_point(v(250.0 + gap / 2.0, 350.0));
+        ed.doc.add_circle(c, 355.0).unwrap();
+        ed.commit("Circle");
+        let (area_a, _) = found(&mut ed, fa);
+        let (area_b, _) = found(&mut ed, fb);
+        assert!(
+            close(area_a, disc),
+            "gap {gap}: fill a now covers {area_a}, not {disc}"
+        );
+        assert!(
+            close(area_b, disc),
+            "gap {gap}: fill b now covers {area_b}, not {disc}"
+        );
+        assert!(ed.doc.fill(fa).unwrap().divided);
+        assert_eq!(ed.doc.fill(fa).unwrap().boundary.len(), 1);
+    }
+}
+
+/// Two overlapping filled circles, trimmed to a peanut, then a circle drawn across the
+/// peanut: the fill keeps the whole peanut (marked as covering two areas), whichever way
+/// the divided-fill preference is set. With "Follow its seed", both fills shrank to the
+/// part around their seeds (2026-10-21).
+#[test]
+fn a_circle_drawn_across_a_trimmed_peanut_leaves_its_fills_whole() {
+    for (follow, seeds) in [
+        (false, [v(-670.0, 600.0), v(-930.0, 600.0)]),
+        (true, [v(-670.0, 600.0), v(-930.0, 600.0)]),
+        (true, [v(-700.0, 650.0), v(-900.0, 650.0)]),
+    ] {
+        let mut ed = Editor::default();
+        ed.follow_divided_fills = follow;
+        ed.doc.begin();
+        let a = ed.doc.add_point(v(-670.0, 600.0));
+        let ca = ed.doc.add_circle(a, 150.0).unwrap();
+        let b = ed.doc.add_point(v(-930.0, 600.0));
+        let cb = ed.doc.add_circle(b, 150.0).unwrap();
+        ed.commit("Circles");
+        let fa = ed.add_fill_at(seeds[0]).unwrap();
+        let fb = ed.add_fill_at(seeds[1]).unwrap();
+        let _ = ed.fill_shapes();
+        // Trim the inner arcs away: a peanut bounded by two 300-degree arcs, with one fill
+        // (the fills came onto one area, and the one drawn on top kept it).
+        ed.trim_at(ca, v(-800.0, 600.0)).unwrap();
+        let _ = ed.fill_shapes();
+        ed.trim_at(cb, v(-800.0, 600.0)).unwrap();
+        assert!(ed.doc.fill(fa).is_none());
+        let peanut = found(&mut ed, fb).0;
+        assert!(!ed.doc.fill(fb).unwrap().divided);
+        ed.fill_changes.clear();
+        ed.doc.begin();
+        let c = ed.doc.add_point(v(-800.0, 800.0));
+        ed.doc.add_circle(c, 228.035085).unwrap();
+        ed.commit("Circle");
+        let f = fb;
+        let (area, _) = found(&mut ed, f);
+        assert!(
+            close(area, peanut),
+            "follow {follow} seeds {seeds:?}: fill {f} went from {peanut} to {area}"
+        );
+        let fill = ed.doc.fill(f).unwrap();
+        assert!(fill.divided, "marked as covering two areas");
+        assert_eq!(fill.boundary.len(), 2, "its outline is still the two arcs");
+        assert_eq!(
+            ed.fill_changes,
+            vec![crate::fills::FillChange::Divided { id: fb, parts: 2 }]
+        );
+    }
+}
+
+/// Two overlapping filled circles trimmed into each other (the user's second bug,
+/// 2026-10-21): after the first trim each fill keeps its own part (one loses the lens, the
+/// other keeps its whole disc); after the second the outline is one peanut, and the fill
+/// drawn on top keeps it while the other is removed, with a notice. Undo brings it back.
+#[test]
+fn trimming_overlapping_filled_circles_leaves_one_fill_on_the_outline() {
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    let a = ed.doc.add_point(v(-670.0, 600.0));
+    let ca = ed.doc.add_circle(a, 150.0).unwrap();
+    let b = ed.doc.add_point(v(-930.0, 600.0));
+    let cb = ed.doc.add_circle(b, 150.0).unwrap();
+    ed.commit("Circles");
+    let fa = ed.add_fill_at(v(-670.0, 600.0)).unwrap();
+    let fb = ed.add_fill_at(v(-930.0, 600.0)).unwrap();
+    let _ = ed.fill_shapes();
+    ed.trim_at(ca, v(-800.0, 600.0)).unwrap();
+    let disc = PI * 150.0 * 150.0;
+    let (area_a, _) = found(&mut ed, fa);
+    assert!(
+        area_a < disc && area_a > disc * 0.9,
+        "{area_a}: a's crescent"
+    );
+    assert!(close(found(&mut ed, fb).0, disc), "b keeps its whole disc");
+    assert_eq!(ed.doc.fill(fb).unwrap().seed, v(-930.0, 600.0));
+    assert!(ed.fill_changes.is_empty(), "{:?}", ed.fill_changes);
+    ed.notice = None;
+    ed.trim_at(cb, v(-800.0, 600.0)).unwrap();
+    assert!(ed.doc.fill(fa).is_none(), "the lower fill went");
+    assert_eq!(ed.doc.fills().count(), 1);
+    let (area, _) = found(&mut ed, fb);
+    assert!(area > disc * 1.5, "{area}: the whole peanut");
+    assert_eq!(
+        ed.fill_changes,
+        vec![crate::fills::FillChange::Merged { id: fa, into: fb }]
+    );
+    assert!(
+        ed.notice.as_deref().is_some_and(|n| n.contains("removed")),
+        "{:?}",
+        ed.notice
+    );
+    assert!(ed.undo());
+    assert_eq!(ed.doc.fills().count(), 2);
+    assert!(close(found(&mut ed, fb).0, disc));
+}
+
+/// Deleting the wall between two filled rooms (#129): the merged room keeps one fill, the
+/// one drawn on top, and the other is removed.
+#[test]
+fn deleting_the_wall_between_two_filled_rooms_leaves_one_fill() {
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    let p: Vec<EntityId> = [
+        (0.0, 0.0),
+        (20.0, 0.0),
+        (40.0, 0.0),
+        (40.0, 10.0),
+        (20.0, 10.0),
+        (0.0, 10.0),
+    ]
+    .iter()
+    .map(|&(x, y)| ed.doc.add_point(v(x, y)))
+    .collect();
+    for i in 0..6 {
+        ed.doc.add_line(p[i], p[(i + 1) % 6]).unwrap();
+    }
+    let wall = ed.doc.add_line(p[1], p[4]).unwrap();
+    ed.commit("Rooms");
+    let left = ed.add_fill_at(v(10.0, 5.0)).unwrap();
+    let right = ed.add_fill_at(v(30.0, 5.0)).unwrap();
+    let _ = ed.fill_shapes();
+    ed.doc.begin();
+    ed.doc.delete([wall]);
+    ed.commit("Delete");
+    assert!(ed.doc.fill(left).is_none());
+    assert_eq!(ed.doc.fills().count(), 1);
+    assert!(close(found(&mut ed, right).0, 400.0));
+    assert!(ed.fill_changes.contains(&crate::fills::FillChange::Merged {
+        id: left,
+        into: right
+    }));
+    assert!(ed.undo());
+    assert_eq!(ed.doc.fills().count(), 2);
+    assert!(close(found(&mut ed, left).0, 200.0));
 }

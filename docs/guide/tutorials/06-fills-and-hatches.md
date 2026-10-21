@@ -14,7 +14,10 @@ A fill or hatch fills a **closed area**: a region bounded by solid curves. Holes
 follows. If curves of its outline are deleted, it takes the area its seed is in now (the
 point where it was first clicked), and a notice says so; with no area left there, it goes.
 If its boundary breaks some other way (a gap opened), the fill keeps its last shape and the
-**Inspector** offers **Re-pick boundary**.
+**Inspector** offers **Re-pick boundary**. When an edit brings two fills onto one area (two
+filled shapes trimmed into one outline, the wall between two filled rooms deleted), the one
+drawn on top keeps the area and the other is removed; a notice says so, and undo brings it
+back.
 
 Where two shapes' lines lie along each other, each fill is bounded by its own shape's lines,
 so picking or moving one doesn't bring the other's lines along.
@@ -41,6 +44,14 @@ The tool's settings are the style of the *next* fill, whatever is picked.
 
 A fill you've just made stays picked. Clicking a fill again with the tool gives it the
 current style.
+
+## Fill as you draw
+
+With the **Rectangle**, **Polygon**, **Circle**, **Ellipse**, **Slot** or **Pen** tool
+active, tick **Fill** in the top bar and choose **Solid** or **Hatch** and the colour or
+pattern: every closed shape you draw comes out filled in that style, as part of the same
+undo step (a pen path is filled when you close it on its first point). The style is the
+Fill tool's, so the eyedropper and the **Inspector**'s **New fills** section set it too.
 
 ## 3. Copy a style with the eyedropper
 
@@ -89,9 +100,10 @@ A fill belongs to the curves around it: move or reshape them and it follows. A l
 across a fill doesn't cut it: the fill keeps its whole area, and is marked **Covers 2
 areas** on the canvas. Pick it and the **Inspector** offers **Fit to its seed's area**,
 **Split into 2** (one fill per area, in the same style) or **Keep whole** (which clears the
-mark). To have such fills take the area where they were first clicked instead, choose
-**Follow its seed** in **Edit → Preferences… → Drawing aids → When an edit divides a filled
-area**.
+mark). A curve drawn across a fill never changes its area. When an edit cuts the outline
+itself (a side split where another line crosses it, say), the fill is kept whole and marked
+the same way; to have it take the area where it was first clicked instead, choose **Follow
+its seed** in **Edit → Preferences… → Drawing aids → When an edit divides a filled area**.
 
 Hatches are clipped exactly to their boundary and stay crisp at any zoom. A hatch too dense
 to see at the current zoom is drawn as a tint.

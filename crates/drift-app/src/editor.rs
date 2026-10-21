@@ -230,8 +230,16 @@ impl Anchor {
         }
     }
 
+    /// A point of the shape's own at this anchor, whatever it was snapped to: a closed
+    /// shape or a pen path drawn onto another shape's point or curve is placed there, not
+    /// joined to it (join shapes with relations, or by trimming). Call inside a transaction.
+    pub fn own(&self, doc: &mut Document) -> EntityId {
+        doc.add_point(self.pos)
+    }
+
     /// The point entity for this anchor, creating it if needed (with its Midpoint or On curve
-    /// relation, if it was snapped to a midpoint or curve). Call inside a transaction.
+    /// relation, if it was snapped to a midpoint or curve): lines and arcs drawn from a
+    /// point continue from it. Call inside a transaction.
     pub fn resolve(&self, doc: &mut Document) -> EntityId {
         match self.existing {
             Some(id) if doc.contains(id) => id,
@@ -335,6 +343,9 @@ pub struct Editor {
     pub repick_fill: Option<drift_core::FillId>,
     /// The Fill tool's next click picks up a fill's style instead of filling.
     pub fill_eyedropper: bool,
+    /// Closed shapes the drawing tools make (rectangles, polygons, circles, ellipses, slots,
+    /// closed pen paths) are filled as they are drawn, in [`fill_style`](Self::fill_style).
+    pub fill_new_shapes: bool,
     pub selected_annotation: Option<drift_core::AnnotationId>,
     /// Dimensions and annotations picked besides the primary ones (the app's picked
     /// dimension and `selected_annotation`): added with Shift, or by a box.
@@ -376,6 +387,9 @@ pub struct Editor {
     /// An edit that divides a fill's area moves the fill to the area around its seed
     /// (Preferences); off, the fill is kept whole and flagged.
     pub follow_divided_fills: bool,
+    /// Draw each fill or hatch over everything below it, with its outline on top (as a
+    /// drawing program stacks objects). Off: every fill is drawn under every curve.
+    pub stacked_fills: bool,
     /// What edits did to fills beyond following their outlines, until taken (by the
     /// assistant's results; the app clears it).
     pub fill_changes: Vec<crate::fills::FillChange>,
@@ -429,6 +443,7 @@ impl Editor {
             doc,
             auto_relations: true,
             regions_need_fill: true,
+            stacked_fills: true,
             ..Default::default()
         };
         // Bring linked dimensions up to date with their expressions (not an undo step).
@@ -446,7 +461,10 @@ impl Editor {
     pub fn keep_prefs_from(&mut self, was: &Editor) {
         self.regions_by_layer = was.regions_by_layer;
         self.regions_need_fill = was.regions_need_fill;
+        self.stacked_fills = was.stacked_fills;
         self.follow_divided_fills = was.follow_divided_fills;
+        self.fill_new_shapes = was.fill_new_shapes;
+        self.fill_style = was.fill_style.clone();
         self.pick_filter = was.pick_filter;
         self.dim_mode = was.dim_mode;
         self.dim_overall = was.dim_overall;
@@ -2942,6 +2960,16 @@ impl Editor {
     /// Render items: each entity with its layer's (or its own) weight and line type, and either
     /// constraint-status colours or layer colours (adjusted for contrast with the theme).
     pub fn items_styled(&self, status_colors: bool, dark: bool) -> Vec<SketchItem> {
+        self.items_tagged(status_colors, dark)
+            .into_iter()
+            .map(|t| t.item)
+            .collect()
+    }
+
+    /// [`items_styled`](Self::items_styled), each item with the entity and layer it draws:
+    /// what stacking fills and curves by object needs. Lit-up (hovered, picked) items come
+    /// last.
+    pub fn items_tagged(&self, status_colors: bool, dark: bool) -> Vec<TaggedItem> {
         let mut items = Vec::with_capacity(self.doc.len());
         let mut emphasized = Vec::new();
         let hidden = self.hidden_handles();
@@ -3013,11 +3041,19 @@ impl Editor {
             } else {
                 Emphasis::Normal
             };
+            let tagged = TaggedItem {
+                entity: Some(id),
+                layer: entity.layer,
+                item,
+            };
             if emphasis == Emphasis::Normal {
-                items.push(item);
+                items.push(tagged);
             } else {
                 // Draw emphasized items last so they sit on top.
-                emphasized.push(item.with_emphasis(emphasis));
+                emphasized.push(TaggedItem {
+                    item: item.with_emphasis(emphasis),
+                    ..tagged
+                });
             }
         }
         // Copies of blocks (not the one being edited in place).
@@ -3054,16 +3090,29 @@ impl Editor {
                         look.line_type.unwrap_or(layer.line_type),
                     )
                     .with_emphasis(emphasis);
+                let tagged = TaggedItem {
+                    entity: None,
+                    layer: i.layer,
+                    item: sketch,
+                };
                 if emphasis == Emphasis::Normal {
-                    items.push(sketch);
+                    items.push(tagged);
                 } else {
-                    emphasized.push(sketch);
+                    emphasized.push(tagged);
                 }
             }
         }
         items.extend(emphasized);
         items
     }
+}
+
+/// A render item with what it draws: the entity (none for a copy of a block) and its layer.
+#[derive(Clone, Copy, Debug)]
+pub struct TaggedItem {
+    pub entity: Option<EntityId>,
+    pub layer: drift_core::LayerId,
+    pub item: SketchItem,
 }
 
 /// A layer colour that would be hard to see on the theme's background (WCAG contrast ratio
@@ -3712,13 +3761,15 @@ pub(crate) fn interior_point(region: &drift_geom::regions::Region, near: DVec2) 
     if region.contains(region.centroid) {
         return region.centroid;
     }
+    // Of a grid of points over its bounds, the inside one nearest `near`.
     let (b, n) = (region.bounds, 24);
     (1..n)
         .flat_map(|i| (1..n).map(move |j| (i, j)))
         .map(|(i, j)| {
             b.min + (b.max - b.min) * DVec2::new(f64::from(i), f64::from(j)) / f64::from(n)
         })
-        .find(|p| region.contains(*p))
+        .filter(|p| region.contains(*p))
+        .min_by(|p, q| p.distance(near).total_cmp(&q.distance(near)))
         .unwrap_or(region.centroid)
 }
 

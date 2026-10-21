@@ -3386,6 +3386,160 @@ fn pen_paths_chain_with_tab_and_their_areas_move() {
 }
 
 #[test]
+fn shapes_drawn_onto_another_shapes_points_stay_distinct() {
+    let mut ed = Editor::default();
+    let mut rect = RectangleTool::default();
+    click(&mut ed, &mut rect, v(0.0, 0.0));
+    click(&mut ed, &mut rect, v(40.0, 20.0));
+    let corners = count(&ed.doc, |k| k.is_point());
+    assert_eq!(corners, 4);
+    let corner = ed
+        .doc
+        .iter()
+        .find(|(id, e)| e.kind.is_point() && ed.doc.point(*id).ok() == Some(v(40.0, 20.0)))
+        .map(|(id, _)| id)
+        .unwrap();
+    // A circle centred on the corner (the pointer snaps onto it) gets a centre of its own.
+    let mut circle = CircleTool::default();
+    let m = Modifiers::default();
+    let start = ptr(&ed, &circle, v(40.0, 20.0));
+    assert_eq!(
+        start.snapped_point(),
+        Some(corner),
+        "the pointer snapped to the corner"
+    );
+    circle.handle(Input::DragStart(start, m), &mut ed);
+    let end = ptr(&ed, &circle, v(50.0, 20.0));
+    circle.handle(Input::Drag(end), &mut ed);
+    circle.handle(Input::DragEnd(end, m), &mut ed);
+    let (circle_id, centre) = ed
+        .doc
+        .iter()
+        .find_map(|(id, e)| match e.kind {
+            EntityKind::Circle { center, .. } => Some((id, center)),
+            _ => None,
+        })
+        .unwrap();
+    assert_ne!(centre, corner);
+    assert_eq!(ed.doc.point(centre).ok(), Some(v(40.0, 20.0)));
+    // A rectangle from the corner, a pen path started on it, and a slot ending on it too.
+    let mut rect = RectangleTool::default();
+    click(&mut ed, &mut rect, v(40.0, 20.0));
+    click(&mut ed, &mut rect, v(60.0, 30.0));
+    let mut pen = PenTool::default();
+    for at in [v(40.0, 20.0), v(70.0, 50.0), v(40.0, 50.0), v(40.1, 20.1)] {
+        click(&mut ed, &mut pen, at);
+    }
+    let mut slot = SlotTool::default();
+    click(&mut ed, &mut slot, v(0.0, 20.0));
+    click(&mut ed, &mut slot, v(40.0, 20.0));
+    click(&mut ed, &mut slot, v(20.0, 22.0));
+    let at_corner = ed
+        .doc
+        .iter()
+        .filter(|(id, e)| e.kind.is_point() && ed.doc.point(*id).ok() == Some(v(40.0, 20.0)))
+        .count();
+    assert_eq!(
+        at_corner, 5,
+        "the corner, the centre, a corner, a path point, a slot end"
+    );
+    // Moving the circle leaves the first rectangle where it was.
+    ed.doc.begin();
+    ed.doc.translate([circle_id, centre], v(100.0, 0.0));
+    ed.commit("Move");
+    assert_eq!(ed.doc.point(corner).ok(), Some(v(40.0, 20.0)));
+    assert_eq!(ed.doc.point(centre).ok(), Some(v(140.0, 20.0)));
+    // Lines still continue from a point they start on.
+    let mut line = LineTool::default();
+    click(&mut ed, &mut line, v(40.0, 20.0));
+    click(&mut ed, &mut line, v(40.0, -20.0));
+    line.cancel(&mut ed);
+    let shares = ed.doc.iter().any(|(_, e)| match e.kind {
+        EntityKind::Line { a, b } => a == corner || b == corner,
+        _ => false,
+    });
+    assert!(shares, "a line drawn from the corner shares it");
+}
+
+#[test]
+fn closed_shapes_come_out_filled_when_asked() {
+    use drift_core::{FillKind, Rgb};
+    let mut ed = Editor::default();
+    ed.fill_new_shapes = true;
+    ed.fill_style = crate::fills::FillStyle {
+        kind: FillKind::Solid,
+        color: Some(Rgb([10, 20, 30])),
+        opacity: 0.5,
+        weight: None,
+    };
+    let fills = |ed: &Editor| ed.doc.fills().count();
+    // A rectangle: filled in the same undo step.
+    let mut tool = RectangleTool::default();
+    click(&mut ed, &mut tool, v(0.0, 0.0));
+    click(&mut ed, &mut tool, v(40.0, 20.0));
+    assert_eq!(fills(&ed), 1);
+    let (id, fill) = ed.doc.fills().next().map(|(i, f)| (i, f.clone())).unwrap();
+    assert_eq!(fill.boundary.len(), 4);
+    assert_eq!(fill.color, Some(Rgb([10, 20, 30])));
+    assert!((ed.fill_shapes()[&id].region.area - 800.0).abs() < 1e-6);
+    assert!(ed.undo());
+    assert_eq!(
+        (fills(&ed), lines(&ed.doc)),
+        (0, 0),
+        "one step with the rectangle"
+    );
+    assert!(ed.redo());
+    assert_eq!(fills(&ed), 1);
+    // A circle (dragged out), a polygon, a slot and a closed pen path each get one.
+    let mut tool = CircleTool::default();
+    let m = Modifiers::default();
+    let start = ptr(&ed, &tool, v(100.0, 0.0));
+    tool.handle(Input::DragStart(start, m), &mut ed);
+    let end = ptr(&ed, &tool, v(110.0, 0.0));
+    tool.handle(Input::Drag(end), &mut ed);
+    tool.handle(Input::DragEnd(end, m), &mut ed);
+    assert_eq!(fills(&ed), 2);
+    let mut tool = PolygonTool::default();
+    click(&mut ed, &mut tool, v(200.0, 0.0));
+    click(&mut ed, &mut tool, v(210.0, 0.0));
+    assert_eq!(fills(&ed), 3);
+    let mut tool = SlotTool::default();
+    click(&mut ed, &mut tool, v(300.0, 0.0));
+    click(&mut ed, &mut tool, v(330.0, 0.0));
+    click(&mut ed, &mut tool, v(315.0, 4.0));
+    assert_eq!(fills(&ed), 4);
+    let mut tool = PenTool::default();
+    for at in [v(400.0, 0.0), v(430.0, 0.0), v(415.0, 20.0), v(400.1, 0.1)] {
+        click(&mut ed, &mut tool, at);
+    }
+    assert_eq!(fills(&ed), 5);
+    assert!(!tool.is_busy());
+    // Each is bounded by its own shape's curves alone, and shown whole.
+    let shapes = ed.fill_shapes();
+    assert_eq!(shapes.len(), 5);
+    assert!(shapes.values().all(|s| !s.lost && !s.crossed));
+    let mut sides: Vec<usize> = ed.doc.fills().map(|(_, f)| f.boundary.len()).collect();
+    sides.sort_unstable();
+    assert_eq!(
+        sides,
+        [1, 3, 4, 4, 6],
+        "circle, pen path, rectangle, slot, hexagon"
+    );
+    // An open path gets none, nor does a shape drawn with the setting off.
+    let mut tool = PenTool::default();
+    for at in [v(500.0, 0.0), v(530.0, 0.0), v(515.0, 20.0)] {
+        click(&mut ed, &mut tool, at);
+    }
+    tool.cancel(&mut ed);
+    assert_eq!(fills(&ed), 5);
+    ed.fill_new_shapes = false;
+    let mut tool = RectangleTool::default();
+    click(&mut ed, &mut tool, v(600.0, 0.0));
+    click(&mut ed, &mut tool, v(640.0, 20.0));
+    assert_eq!(fills(&ed), 5);
+}
+
+#[test]
 fn pen_clicks_make_corners_and_drags_make_smooth_points() {
     let mut ed = Editor::default();
     let mut tool = PenTool::default();
@@ -5137,4 +5291,70 @@ fn mirror_copy_and_delete_take_text_and_annotations_along() {
     ed.undo();
     assert_eq!(ed.doc.annotations().count(), 3);
     assert!(ed.doc.constraint(dim).is_some());
+}
+
+/// Dragging a filled circle away from one it overlapped (2026-10-21): its fill follows it,
+/// growing from the crescent it was found as into the whole disc, and neither jumps into
+/// the other circle nor is left behind; the other circle's fill stays put. Whichever
+/// circle is dragged, and whether the fill came with the circle or from a click in it.
+#[test]
+fn a_fill_follows_its_circle_dragged_off_one_it_overlapped() {
+    for (fill_on_create, drag_b) in [(true, true), (false, true), (true, false), (false, false)] {
+        let mut ed = Editor::default();
+        ed.doc.begin();
+        let a = ed.doc.add_point(v(0.0, 0.0));
+        let ca = ed.doc.add_circle(a, 40.0).unwrap();
+        ed.commit("Circle a");
+        ed.fill_new_shapes = fill_on_create;
+        ed.doc.begin();
+        let b = ed.doc.add_point(v(70.0, 0.0));
+        let cb = ed.doc.add_circle(b, 45.0).unwrap();
+        let made = ed.fill_new_shape(&[cb]);
+        ed.commit("Circle b");
+        // With the circles overlapping, a click in either finds a crescent.
+        let fb = made.unwrap_or_else(|| ed.add_fill_at(v(90.0, 0.0)).unwrap());
+        let fa = ed.add_fill_at(v(-20.0, 0.0)).unwrap();
+        let _ = ed.fill_shapes();
+        let (moved, centre, step) = if drag_b {
+            (cb, b, v(10.0, 2.0))
+        } else {
+            (ca, a, v(-10.0, 2.0))
+        };
+        let dragged: Vec<Param> = [centre].into_iter().flat_map(Param::point).collect();
+        ed.doc.begin();
+        for k in 1..=12 {
+            assert!(ed.drag(&[moved], step, &dragged));
+            // (The canvas looks at the fills every frame.)
+            let shapes = ed.fill_shapes();
+            for (f, c, r) in [(fb, b, 45.0), (fa, a, 40.0)] {
+                let shape = &shapes[&f];
+                let at = ed.doc.point(c).unwrap();
+                assert!(
+                    !shape.lost && shape.region.contains(at),
+                    "create {fill_on_create} drag_b {drag_b} step {k}: fill {f} at {:?}, circle at {at:?}",
+                    shape.region.centroid
+                );
+                if k >= 3 {
+                    assert!(
+                        (shape.region.area - PI * r * r).abs() < 1e-6,
+                        "the whole disc"
+                    );
+                }
+            }
+        }
+        ed.commit("Move");
+        for (f, c) in [(fb, cb), (fa, ca)] {
+            let fill = ed.doc.fill(f).unwrap().clone();
+            assert_eq!(
+                fill.boundary,
+                vec![c],
+                "create {fill_on_create} drag_b {drag_b}"
+            );
+            let shapes = ed.fill_shapes();
+            assert!(shapes[&f].region.contains(fill.seed), "its seed is inside");
+        }
+        assert!(ed.undo());
+        let shapes = ed.fill_shapes();
+        assert!(shapes.values().all(|s| !s.lost));
+    }
 }

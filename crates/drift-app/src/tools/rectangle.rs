@@ -28,9 +28,9 @@ impl RectangleTool {
             return;
         }
         ed.doc.begin();
-        let p0 = first.resolve(&mut ed.doc);
+        let p0 = first.own(&mut ed.doc);
         let p1 = ed.doc.add_point(DVec2::new(c.x, a.y));
-        let p2 = second.resolve(&mut ed.doc);
+        let p2 = second.own(&mut ed.doc);
         let p3 = ed.doc.add_point(DVec2::new(a.x, c.y));
         let corners = [p0, p1, p2, p3];
         let mut lines = Vec::new();
@@ -73,6 +73,7 @@ impl RectangleTool {
                 },
             );
         }
+        ed.fill_new_shape(&lines);
         ed.commit("Rectangle");
         self.first = None;
     }

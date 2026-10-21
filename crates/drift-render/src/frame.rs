@@ -144,6 +144,26 @@ pub struct Frame {
     pub under_arcs: Vec<ArcInstance>,
     pub segments: Vec<SegmentInstance>,
     pub arcs: Vec<ArcInstance>,
+    /// Draw groups, bottom first: each a filled area and the curves drawn right over it
+    /// (its hatch lines and outline), as ranges of `fills`, `arcs` and `segments`. Each is
+    /// drawn over every group before it, so a fill covers the curves of the groups beneath.
+    /// With no groups, every fill is drawn under every curve.
+    pub groups: Vec<GroupRanges>,
+}
+
+/// What one draw group covers of a frame's `fills`, `arcs` and `segments`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct GroupRanges {
+    pub fills: std::ops::Range<u32>,
+    pub arcs: std::ops::Range<u32>,
+    pub segments: std::ops::Range<u32>,
+}
+
+/// A draw group to add to a frame: filled areas, and the curves drawn right over them.
+#[derive(Clone, Copy, Debug)]
+pub struct DrawGroup<'a> {
+    pub fills: &'a [FillMesh],
+    pub items: &'a [SketchItem],
 }
 
 /// Grid spacing currently shown, in world units.
@@ -182,7 +202,50 @@ pub fn build_frame(
     builder.frame
 }
 
+/// Add items' curves and points to `frame`'s `arcs` and `segments`.
+fn build_into(
+    frame: &mut Frame,
+    items: &[SketchItem],
+    camera: &Camera,
+    viewport: Viewport,
+    palette: &Palette,
+) {
+    let mut builder = Builder {
+        camera,
+        viewport,
+        palette,
+        half_size: viewport.size_px * 0.5 + DVec2::splat(CULL_MARGIN_PX),
+        frame: std::mem::take(frame),
+    };
+    for item in items {
+        builder.add(item);
+    }
+    *frame = builder.frame;
+}
+
 impl Frame {
+    /// Add a draw group: filled areas, then curves over them (hatch lines, outlines), all
+    /// drawn over every group added before.
+    pub fn push_group(
+        &mut self,
+        meshes: &[FillMesh],
+        items: &[SketchItem],
+        camera: &Camera,
+        viewport: Viewport,
+        palette: &Palette,
+    ) {
+        let fills = self.fills.len() as u32;
+        self.push_fills(meshes, camera, viewport);
+        let arcs = self.arcs.len() as u32;
+        let segments = self.segments.len() as u32;
+        build_into(self, items, camera, viewport, palette);
+        self.groups.push(GroupRanges {
+            fills: fills..self.fills.len() as u32,
+            arcs: arcs..self.arcs.len() as u32,
+            segments: segments..self.segments.len() as u32,
+        });
+    }
+
     /// Add curves drawn under all the frame's others (after fills, before the sketch).
     pub fn push_under(
         &mut self,
@@ -971,5 +1034,62 @@ mod tests {
             assert!(on_screen < MIN_GRID_SPACING_PT * 10.0 + 1e-9);
             assert!((grid.minor.log10() - grid.minor.log10().round()).abs() < 1e-9);
         }
+    }
+
+    /// Stacked draw groups: each group covers just its own fills and curves, in order, and a
+    /// frame built the plain way has none.
+    #[test]
+    fn draw_groups_cover_their_own_fills_and_curves() {
+        let camera = Camera::default();
+        let palette = Palette::light();
+        let square = FillMesh {
+            vertices: vec![
+                DVec2::ZERO,
+                DVec2::new(10.0, 0.0),
+                DVec2::new(10.0, 10.0),
+                DVec2::new(0.0, 10.0),
+            ],
+            indices: vec![0, 1, 2, 0, 2, 3],
+            color: [255; 4],
+        };
+        let line = SketchItem::new(Shape::Line {
+            a: DVec2::ZERO,
+            b: DVec2::new(10.0, 10.0),
+        });
+        let circle = SketchItem::new(Shape::Circle {
+            center: DVec2::ZERO,
+            radius: 5.0,
+        });
+        let mut frame = Frame::default();
+        frame.push_group(
+            std::slice::from_ref(&square),
+            &[line, line],
+            &camera,
+            viewport(),
+            &palette,
+        );
+        frame.push_group(&[], &[circle], &camera, viewport(), &palette);
+        frame.push_group(&[square], &[], &camera, viewport(), &palette);
+        let [a, b, c] = frame.groups.as_slice() else {
+            panic!("three groups");
+        };
+        assert_eq!(
+            (a.fills.clone(), a.arcs.clone(), a.segments.clone()),
+            (0..6, 0..0, 0..2)
+        );
+        assert_eq!(
+            (b.fills.clone(), b.arcs.clone(), b.segments.clone()),
+            (6..6, 0..1, 2..2)
+        );
+        assert_eq!(
+            (c.fills.clone(), c.arcs.clone(), c.segments.clone()),
+            (6..12, 1..1, 2..2)
+        );
+        assert_eq!(frame.fills.len(), 12);
+        assert!(
+            build_frame(&[line], &camera, viewport(), &palette)
+                .groups
+                .is_empty()
+        );
     }
 }

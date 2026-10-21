@@ -625,8 +625,9 @@ impl DriftApp {
         }
         ui.label(
             egui::RichText::new(if self.editor.follow_divided_fills {
-                "The fill or hatch takes the area its seed is in (where it was first clicked); \
-                 the rest is left empty, and a notice says so."
+                "When its outline is cut, the fill or hatch takes the area its seed is in \
+                 (where it was first clicked); the rest is left empty, and a notice says so. A \
+                 curve drawn across it leaves it whole."
             } else {
                 "The fill or hatch keeps covering the whole area and is marked \"Covers 2 \
                  areas\". Pick it to fit it to one area, split it into one per area, or keep it \
@@ -674,6 +675,15 @@ impl DriftApp {
         ui.checkbox(
             &mut self.thin_lines,
             "Thin lines (every line one pixel wide)",
+        );
+        ui.checkbox(
+            &mut self.editor.stacked_fills,
+            "Fills cover what is beneath them",
+        )
+        .on_hover_text(
+            "On: each solid fill or hatch is drawn over everything below it, with its outline \
+             on top, as a drawing program stacks shapes. Off: every fill is drawn under every \
+             curve",
         );
         ui.checkbox(&mut self.always_endpoints, "Always show end points")
             .on_hover_text("Off: only on hovered or picked curves");

@@ -11,7 +11,7 @@ export const site = {
   repo: "chrisplange/drift-releases",
   // The release the front page's "What's new" section describes. Until it's published on
   // GitHub, the section says it's coming; after, it says it's out.
-  nextRelease: { version: "0.1.0-beta.1.4", name: "Beta 1.4" },
+  nextRelease: { version: "0.1.0-beta.1.5", name: "Beta 1.5" },
   // The source repository, for links into the code and docs. It is going private, so these
   // links go when the guide and licence move fully onto the site.
   sourceRepo: "chrisplange/Drift",

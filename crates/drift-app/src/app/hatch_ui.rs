@@ -2,7 +2,8 @@
 //! tile joint or a brick course can sit on a corner), the other turns the pattern. Revit
 //! aligns and moves its model patterns the same way.
 
-use drift_core::{FillId, FillKind};
+use drift_core::{Bounds, DVec2, FillId, FillKind};
+use drift_geom::regions::RegionTolerance;
 
 use crate::overlay::OverlayColors;
 use crate::*;
@@ -30,6 +31,16 @@ const ARM: f32 = 56.0;
 const REACH: f32 = 9.0;
 /// The angle handle turns in these steps (Alt: freely).
 const ANGLE_STEP: f64 = 15.0;
+
+/// Whether a hatch origin lies in an area's bounds. An origin on the outline (a corner, an
+/// edge) counts as in, whichever side of it rounding left the bounds.
+fn origin_in(origin: DVec2, b: &Bounds) -> bool {
+    let pad = RegionTolerance::for_extent(b.min.abs().max(b.max.abs()).max_element()).snap;
+    origin.x >= b.min.x - pad
+        && origin.x <= b.max.x + pad
+        && origin.y >= b.min.y - pad
+        && origin.y <= b.max.y + pad
+}
 
 impl HatchHandles {
     fn grip_at(&self, p: egui::Pos2) -> Option<HatchGrip> {
@@ -63,11 +74,7 @@ impl DriftApp {
         let region = &shapes.get(&id).filter(|s| !s.lost)?.region;
         // An origin away from the area (a new hatch's is the sketch's) is shown in the middle
         // of the area: dragging the handle puts the origin where it is dropped.
-        let b = region.bounds;
-        let near = origin.x >= b.min.x
-            && origin.x <= b.max.x
-            && origin.y >= b.min.y
-            && origin.y <= b.max.y;
+        let near = origin_in(origin, &region.bounds);
         let moving = self.hatch_drag == Some((id, HatchGrip::Origin));
         let at = if near || moving {
             origin
@@ -220,5 +227,25 @@ impl DriftApp {
             }
             None => self.hatch_snap = None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_origin_on_the_outline_is_in_whatever_the_rounding() {
+        let v = DVec2::new;
+        let b = |min_y: f64| Bounds {
+            min: v(-188.96, min_y),
+            max: v(141.24, 76.2),
+        };
+        // A corner origin, with the bottom edge rounded either way (as a drag left it).
+        for min_y in [0.0, 7.1e-15, -7.1e-15] {
+            assert!(origin_in(v(0.0, 0.0), &b(min_y)), "{min_y}");
+        }
+        assert!(!origin_in(v(0.0, -0.01), &b(0.0)));
+        assert!(!origin_in(v(500.0, 30.0), &b(0.0)));
     }
 }

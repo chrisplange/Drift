@@ -1,17 +1,20 @@
 //! Closed regions formed by curves: the faces of the planar arrangement of lines, arcs and
 //! circles, with exact areas, perimeters and centroids.
 //!
-//! Curves are split where they cross, the pieces become edges of a graph, dangling edges are
+//! Curves are split where they cross, and every end and crossing is snapped to one vertex
+//! set with one tolerance ([`RegionTolerance`]); each curve then passes through every vertex
+//! within that tolerance of it. The pieces become edges of a graph, dangling edges are
 //! pruned, and faces are traced by always taking the next edge clockwise at each vertex (so
 //! each bounded face is traced counter-clockwise). Edges leaving a vertex in the same
 //! direction (a fillet arc tangent to its line) are ordered by curvature. A separate shape
 //! inside a region becomes a hole of the smallest region containing it.
 
+use std::cmp::Ordering;
 use std::f64::consts::TAU;
 
 use drift_core::{Bounds, DVec2, Shape};
 
-use crate::intersect::{intersect, tolerance};
+use crate::intersect::intersect;
 
 /// One piece of a curve between two vertices.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -235,28 +238,161 @@ fn loop_bounds(lp: &Loop) -> Bounds {
     lp.edges.iter().map(|e| e.shape().bounds()).collect()
 }
 
-/// Split curves (lines, arcs, circles) where they cross into edges, each with the index of
-/// the curve it came from.
-fn split(curves: &[Shape]) -> Vec<(Edge, usize)> {
+/// The one set of tolerances a region build works with, derived from the drawing's extent
+/// (its largest coordinate, which is what bounds floating-point error). Every stage uses
+/// these and nothing else.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RegionTolerance {
+    /// Points this close are one vertex; a curve end this close to another curve lies on it.
+    pub snap: f64,
+    /// Pieces of curve this short collapse to a point.
+    pub min_edge: f64,
+    /// Loops enclosing less than this are numerical noise, not faces.
+    pub min_area: f64,
+}
+
+impl RegionTolerance {
+    /// Tolerances for coordinates up to `extent` in size.
+    pub fn for_extent(extent: f64) -> Self {
+        let scale = if extent.is_finite() {
+            extent.abs().max(1.0)
+        } else {
+            1.0
+        };
+        let snap = 1e-9 * scale;
+        RegionTolerance {
+            snap,
+            min_edge: snap,
+            min_area: 1e-12 * scale * scale,
+        }
+    }
+
+    /// Tolerances for a set of curves.
+    pub fn for_curves(curves: &[Shape]) -> Self {
+        let extent = curves
+            .iter()
+            .map(|c| {
+                let b = c.bounds();
+                b.min.abs().max(b.max.abs()).max_element()
+            })
+            .filter(|e| e.is_finite())
+            .fold(0.0, f64::max);
+        Self::for_extent(extent)
+    }
+}
+
+/// The snap stage: points within `snap` of each other (transitively) become one vertex,
+/// placed at the lowest of its points (by x, then y), and vertices are numbered in that
+/// order. Neither depends on the order the points come in. Returns the vertices and each
+/// point's vertex.
+fn snap_points(points: &[DVec2], snap: f64) -> (Vec<DVec2>, Vec<usize>) {
+    fn root(parent: &mut [usize], mut i: usize) -> usize {
+        while parent[i] != i {
+            parent[i] = parent[parent[i]];
+            i = parent[i];
+        }
+        i
+    }
+    let n = points.len();
+    let mut order: Vec<usize> = (0..n).collect();
+    order.sort_by(|&a, &b| by_position(points[a], points[b]));
+    let mut parent: Vec<usize> = (0..n).collect();
+    // Cells as large as the snap distance: a point's neighbours are in its own cell or the
+    // eight around it.
+    let cell = snap.max(f64::MIN_POSITIVE);
+    let key = |p: DVec2| ((p.x / cell).floor() as i64, (p.y / cell).floor() as i64);
+    let mut grid: std::collections::HashMap<(i64, i64), Vec<usize>> =
+        std::collections::HashMap::new();
+    for &i in &order {
+        let p = points[i];
+        let (kx, ky) = key(p);
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                for &j in grid.get(&(kx + dx, ky + dy)).into_iter().flatten() {
+                    if points[j].distance(p) <= snap {
+                        let (ri, rj) = (root(&mut parent, i), root(&mut parent, j));
+                        parent[ri.max(rj)] = ri.min(rj);
+                    }
+                }
+            }
+        }
+        grid.entry((kx, ky)).or_default().push(i);
+    }
+    let mut id_of_root = vec![usize::MAX; n];
+    let mut verts = Vec::new();
+    let mut vertex = vec![0; n];
+    for &i in &order {
+        let r = root(&mut parent, i);
+        if id_of_root[r] == usize::MAX {
+            id_of_root[r] = verts.len();
+            verts.push(points[i]);
+        }
+        vertex[i] = id_of_root[r];
+    }
+    (verts, vertex)
+}
+
+fn by_position(p: DVec2, q: DVec2) -> Ordering {
+    p.x.total_cmp(&q.x).then(p.y.total_cmp(&q.y))
+}
+
+/// A key ordering curves by where they are, so each pair is intersected the same way round
+/// whatever order the curves were given in.
+fn curve_key(s: &Shape) -> [f64; 6] {
+    let b = s.bounds();
+    let p = match *s {
+        Shape::Point(p) => p,
+        Shape::Line { a, .. } => a,
+        Shape::Circle { center, .. }
+        | Shape::Arc { center, .. }
+        | Shape::Ellipse { center, .. } => center,
+        Shape::Bezier { p } => p[0],
+    };
+    [b.min.x, b.min.y, b.max.x, b.max.y, p.x, p.y]
+}
+
+fn key_cmp(a: &[f64; 6], b: &[f64; 6]) -> Ordering {
+    a.iter()
+        .zip(b)
+        .map(|(x, y)| x.total_cmp(y))
+        .find(|o| o.is_ne())
+        .unwrap_or(Ordering::Equal)
+}
+
+/// One piece of a curve between two snapped vertices.
+struct Piece {
+    edge: Edge,
+    source: usize,
+    from: usize,
+    to: usize,
+}
+
+/// Split curves where they cross, snap every end and crossing to one vertex set, and return
+/// the vertices and the pieces between them, each with the index of the curve it came from.
+/// Ellipses and Béziers take part as fine chords, with a vertex at each crossing.
+fn split(curves: &[Shape], tol: &RegionTolerance) -> (Vec<DVec2>, Vec<Piece>) {
     let n = curves.len();
+    let pad = tol.snap;
     let mut cuts: Vec<Vec<(f64, DVec2)>> = vec![Vec::new(); n];
     let bounds: Vec<_> = curves.iter().map(Shape::bounds).collect();
+    let keys: Vec<_> = curves.iter().map(curve_key).collect();
     // Sweep along x: only curves whose x ranges overlap are compared.
     let mut order: Vec<usize> = (0..n).collect();
     order.sort_by(|&a, &b| bounds[a].min.x.total_cmp(&bounds[b].min.x));
-    let pad_all = bounds
-        .iter()
-        .map(|b| tolerance(b.max.abs().max_element()))
-        .fold(0.0, f64::max);
     for (k, &first) in order.iter().enumerate() {
         for &second in &order[k + 1..] {
-            if bounds[second].min.x > bounds[first].max.x + pad_all {
+            if bounds[second].min.x > bounds[first].max.x + pad {
                 break;
             }
-            // Same order as an all-pairs loop, so cut lists come out the same.
-            let (i, j) = (first.min(second), first.max(second));
+            let (i, j) = if key_cmp(&keys[first], &keys[second])
+                .then(first.cmp(&second))
+                .is_lt()
+            {
+                (first, second)
+            } else {
+                (second, first)
+            };
             let (a, b) = (bounds[i], bounds[j]);
-            let pad = tolerance(a.max.abs().max_element().max(b.max.abs().max_element()));
             if a.max.x + pad < b.min.x
                 || b.max.x + pad < a.min.x
                 || a.max.y + pad < b.min.y
@@ -268,24 +404,19 @@ fn split(curves: &[Shape]) -> Vec<(Edge, usize)> {
                 cuts[i].push((h.t[0], h.at));
                 cuts[j].push((h.t[1], h.at));
             }
-            // Curves lying along each other don't cross, but each is cut where the other
-            // ends, so the stretch they share becomes the same edge in both.
-            ends_on(&curves[i], &curves[j], pad, &mut cuts[i]);
-            ends_on(&curves[j], &curves[i], pad, &mut cuts[j]);
         }
     }
-    let mut edges = Vec::new();
-    for (source, (shape, mut c)) in curves.iter().zip(cuts).enumerate() {
+    // Each curve's stops in order along it (parameter and point): its ends, its cuts, and
+    // the chord points of ellipses and Béziers. Circles wrap round to their first stop.
+    let mut stops: Vec<Vec<(f64, DVec2)>> = Vec::with_capacity(n);
+    for (shape, mut c) in curves.iter().zip(cuts) {
         c.sort_by(|x, y| x.0.total_cmp(&y.0));
-        match *shape {
+        stops.push(match *shape {
             Shape::Line { a, b } => {
-                let mut pts = vec![a];
-                pts.extend(c.iter().map(|(_, p)| *p));
-                pts.push(b);
-                pts.dedup_by(|p, q| p.distance(*q) <= tolerance(p.abs().max_element()));
-                for w in pts.windows(2) {
-                    edges.push((Edge::Line { a: w[0], b: w[1] }, source));
-                }
+                let mut s = vec![(0.0, a)];
+                s.extend(c);
+                s.push((1.0, b));
+                s
             }
             Shape::Arc {
                 center,
@@ -293,49 +424,16 @@ fn split(curves: &[Shape]) -> Vec<(Edge, usize)> {
                 start,
                 sweep,
             } => {
-                let mut ts = vec![0.0];
-                ts.extend(c.iter().map(|(t, _)| *t));
-                ts.push(sweep);
-                ts.dedup_by(|x, y| {
-                    (*x - *y).abs() * radius <= tolerance(center.abs().max_element() + radius)
-                });
-                for w in ts.windows(2) {
-                    edges.push((
-                        Edge::Arc {
-                            center,
-                            radius,
-                            start: start + w[0],
-                            sweep: w[1] - w[0],
-                        },
-                        source,
-                    ));
-                }
+                let mut s = vec![(0.0, center + radius * DVec2::from_angle(start))];
+                s.extend(c);
+                s.push((sweep, center + radius * DVec2::from_angle(start + sweep)));
+                s
             }
             Shape::Circle { center, radius } => {
-                let mut ts: Vec<f64> = c.iter().map(|(t, _)| *t).collect();
-                ts.dedup_by(|x, y| {
-                    (*x - *y).abs() * radius <= tolerance(center.abs().max_element() + radius)
-                });
-                if ts.is_empty() {
-                    ts.push(0.0);
+                if c.is_empty() {
+                    c.push((0.0, center + radius * DVec2::X));
                 }
-                for k in 0..ts.len() {
-                    let t0 = ts[k];
-                    let t1 = if k + 1 < ts.len() {
-                        ts[k + 1]
-                    } else {
-                        ts[0] + TAU
-                    };
-                    edges.push((
-                        Edge::Arc {
-                            center,
-                            radius,
-                            start: t0,
-                            sweep: t1 - t0,
-                        },
-                        source,
-                    ));
-                }
+                c
             }
             Shape::Ellipse {
                 center,
@@ -343,47 +441,127 @@ fn split(curves: &[Shape]) -> Vec<(Edge, usize)> {
                 minor,
                 start,
                 sweep,
-            } => {
-                // Ellipses take part as fine straight edges, with a vertex at each crossing.
-                let end = sweep.min(TAU);
-                let pts = chords_through(&c, end, 48, |t| {
-                    drift_core::shape::ellipse_point(center, major, minor, start + t)
-                });
-                for w in pts.windows(2) {
-                    edges.push((Edge::Line { a: w[0], b: w[1] }, source));
-                }
-            }
+            } => chords_through(&c, sweep.min(TAU), 48, |t| {
+                drift_core::shape::ellipse_point(center, major, minor, start + t)
+            }),
             Shape::Bezier { p } => {
-                let pts = chords_through(&c, 1.0, 24, |t| drift_core::shape::bezier_point(&p, t));
-                for w in pts.windows(2) {
-                    edges.push((Edge::Line { a: w[0], b: w[1] }, source));
+                chords_through(&c, 1.0, 24, |t| drift_core::shape::bezier_point(&p, t))
+            }
+            Shape::Point(_) => Vec::new(),
+        });
+    }
+    let points: Vec<DVec2> = stops.iter().flatten().map(|(_, p)| *p).collect();
+    let (verts, vertex_of) = snap_points(&points, tol.snap);
+    let mut next = 0;
+    let mut pieces = Vec::new();
+    for (source, (shape, s)) in curves.iter().zip(stops).enumerate() {
+        let mut raw: Vec<(f64, usize)> = s
+            .iter()
+            .map(|(t, _)| *t)
+            .zip(&vertex_of[next..])
+            .map(|(t, &v)| (t, v))
+            .collect();
+        next += s.len();
+        // Each curve also passes through every vertex within `snap` of it: where another
+        // curve ends on it, or crosses a curve lying along it. So curves lying along each
+        // other share the same vertices, and the stretch they share becomes one edge.
+        raw.extend(vertices_on(shape, &verts, tol.snap));
+        raw.sort_by(|x, y| x.0.total_cmp(&y.0));
+        // Stops at one vertex merge. The first is kept, except that the curve's far end
+        // replaces a cut snapped onto it.
+        let mut at: Vec<(f64, usize)> = Vec::with_capacity(raw.len());
+        let count = raw.len();
+        for (k, (t, v)) in raw.into_iter().enumerate() {
+            let merged = at.len();
+            match at.last_mut() {
+                Some(last) if last.1 == v => {
+                    if k + 1 == count && merged > 1 {
+                        last.0 = t;
+                    }
+                }
+                _ => at.push((t, v)),
+            }
+        }
+        let mut push = |edge: Edge, from: usize, to: usize| {
+            if from != to || edge.length() > tol.min_edge {
+                pieces.push(Piece {
+                    edge,
+                    source,
+                    from,
+                    to,
+                });
+            }
+        };
+        match *shape {
+            Shape::Circle { center, radius } => {
+                if at.len() > 1 && at[0].1 == at[at.len() - 1].1 {
+                    at.pop();
+                }
+                for k in 0..at.len() {
+                    let (t0, u) = at[k];
+                    let (t1, v) = match at.get(k + 1) {
+                        Some(&next) => next,
+                        None => (at[0].0 + TAU, at[0].1),
+                    };
+                    let edge = Edge::Arc {
+                        center,
+                        radius,
+                        start: t0,
+                        sweep: t1 - t0,
+                    };
+                    push(edge, u, v);
                 }
             }
-            Shape::Point(_) => {}
+            Shape::Arc {
+                center,
+                radius,
+                start,
+                ..
+            } => {
+                for w in at.windows(2) {
+                    let edge = Edge::Arc {
+                        center,
+                        radius,
+                        start: start + w[0].0,
+                        sweep: w[1].0 - w[0].0,
+                    };
+                    push(edge, w[0].1, w[1].1);
+                }
+            }
+            _ => {
+                for w in at.windows(2) {
+                    let edge = Edge::Line {
+                        a: verts[w[0].1],
+                        b: verts[w[1].1],
+                    };
+                    push(edge, w[0].1, w[1].1);
+                }
+            }
         }
     }
-    // Pieces shorter than the tolerance have both ends at one vertex: nothing to trace.
-    edges.retain(|(e, _)| e.length() > tolerance(e.start().abs().max_element()));
-    edges
+    (verts, pieces)
 }
 
-/// Cut `curve` (a line, arc or circle) where an end of `other` lies on it, within `tol`.
-fn ends_on(curve: &Shape, other: &Shape, tol: f64, cuts: &mut Vec<(f64, DVec2)>) {
-    let ends: [DVec2; 2] = match *other {
-        Shape::Line { a, b } => [a, b],
-        Shape::Arc {
-            center,
-            radius,
-            start,
-            sweep,
-        } => [
-            center + radius * DVec2::from_angle(start),
-            center + radius * DVec2::from_angle(start + sweep),
-        ],
-        Shape::Bezier { p } => [p[0], p[3]],
-        _ => return,
-    };
-    for p in ends {
+/// The vertices within `snap` of the interior of `curve` (a line, arc or circle), with
+/// their parameters along it.
+fn vertices_on(curve: &Shape, verts: &[DVec2], snap: f64) -> Vec<(f64, usize)> {
+    let b = curve.bounds();
+    let mut found = Vec::new();
+    if !matches!(
+        curve,
+        Shape::Line { .. } | Shape::Arc { .. } | Shape::Circle { .. }
+    ) {
+        return found;
+    }
+    // Vertices are sorted by x: only those in the curve's x range are looked at.
+    let first = verts.partition_point(|p| p.x < b.min.x - snap);
+    for (i, &p) in verts.iter().enumerate().skip(first) {
+        if p.x > b.max.x + snap {
+            break;
+        }
+        if p.y < b.min.y - snap || p.y > b.max.y + snap {
+            continue;
+        }
         match *curve {
             Shape::Line { a, b } => {
                 let d = b - a;
@@ -392,10 +570,8 @@ fn ends_on(curve: &Shape, other: &Shape, tol: f64, cuts: &mut Vec<(f64, DVec2)>)
                     continue;
                 }
                 let t = (p - a).dot(d) / (len * len);
-                let off = d.perp_dot(p - a).abs() / len;
-                // Strictly inside: an end at an end is already a shared vertex.
-                if off <= tol && t * len > tol && (1.0 - t) * len > tol {
-                    cuts.push((t, a + d * t));
+                if t > 0.0 && t < 1.0 && d.perp_dot(p - a).abs() / len <= snap {
+                    found.push((t, i));
                 }
             }
             Shape::Arc {
@@ -405,23 +581,21 @@ fn ends_on(curve: &Shape, other: &Shape, tol: f64, cuts: &mut Vec<(f64, DVec2)>)
                 sweep,
             } => {
                 let r = p - center;
-                if (r.length() - radius).abs() > tol {
-                    continue;
-                }
                 let t = (r.y.atan2(r.x) - start).rem_euclid(TAU);
-                if t * radius > tol && (sweep - t) * radius > tol {
-                    cuts.push((t, p));
+                if (r.length() - radius).abs() <= snap && t > 0.0 && t < sweep {
+                    found.push((t, i));
                 }
             }
             Shape::Circle { center, radius } => {
                 let r = p - center;
-                if (r.length() - radius).abs() <= tol {
-                    cuts.push((r.y.atan2(r.x).rem_euclid(TAU), p));
+                if (r.length() - radius).abs() <= snap {
+                    found.push((r.y.atan2(r.x).rem_euclid(TAU), i));
                 }
             }
             _ => {}
         }
     }
+    found
 }
 
 /// A curve over parameters `0..=end` as `n` chords, plus a vertex exactly at each cut (so
@@ -431,7 +605,7 @@ fn chords_through(
     end: f64,
     n: usize,
     at: impl Fn(f64) -> DVec2,
-) -> Vec<DVec2> {
+) -> Vec<(f64, DVec2)> {
     let inner: Vec<(f64, DVec2)> = cuts
         .iter()
         .copied()
@@ -446,75 +620,78 @@ fn chords_through(
         .collect();
     stops.extend(inner);
     stops.sort_by(|x, y| x.0.total_cmp(&y.0));
-    stops.into_iter().map(|(_, p)| p).collect()
+    stops
 }
 
-/// Find the closed regions formed by `curves`.
+/// Find the closed regions formed by `curves`, with tolerances from their extent.
+///
+/// The output is canonical: vertices are numbered by position, edges by their vertices,
+/// and loops start at, and regions and holes are ordered by, their lowest-numbered edge.
+/// So the same picture gives the same regions in the same order, whatever order the curves
+/// come in (only the curve indices in [`Loop::sources`] follow the input).
 pub fn regions(curves: &[Shape]) -> Vec<Region> {
-    let edges = split(curves);
-    // Vertices: edge ends merged within tolerance.
-    let mut verts: Vec<DVec2> = Vec::new();
-    // A grid of cells much larger than the tolerance: a point's match is in its own cell or
-    // a neighbouring one.
-    let cell = edges
-        .iter()
-        .map(|(e, _)| tolerance(e.start().abs().max_element()))
-        .fold(1e-9, f64::max)
-        * 8.0;
-    let key = |p: DVec2| ((p.x / cell).floor() as i64, (p.y / cell).floor() as i64);
-    let mut grid: std::collections::HashMap<(i64, i64), Vec<usize>> =
-        std::collections::HashMap::new();
-    let mut vertex = |p: DVec2| -> usize {
-        let tol = tolerance(p.abs().max_element());
-        let (kx, ky) = key(p);
-        for dx in -1..=1 {
-            for dy in -1..=1 {
-                if let Some(list) = grid.get(&(kx + dx, ky + dy))
-                    && let Some(&i) = list.iter().find(|&&i| verts[i].distance(p) <= tol)
-                {
-                    return i;
-                }
-            }
-        }
-        verts.push(p);
-        grid.entry((kx, ky)).or_default().push(verts.len() - 1);
-        verts.len() - 1
-    };
+    regions_with(curves, &RegionTolerance::for_curves(curves))
+}
+
+/// [`regions`] with explicit tolerances.
+pub fn regions_with(curves: &[Shape], tol: &RegionTolerance) -> Vec<Region> {
+    let (verts, pieces) = split(curves, tol);
     // How many pieces each curve was cut into.
-    let mut pieces = vec![0usize; curves.len()];
-    for (_, source) in &edges {
-        pieces[*source] += 1;
+    let mut count = vec![0usize; curves.len()];
+    for p in &pieces {
+        count[p.source] += 1;
     }
+    // Pieces in canonical order: each runs from its lower vertex, and they are sorted by
+    // their vertices, then their middles.
+    let middle = |e: &Edge| match *e {
+        Edge::Line { a, b } => (a + b) * 0.5,
+        Edge::Arc {
+            center,
+            radius,
+            start,
+            sweep,
+        } => center + radius * DVec2::from_angle(start + sweep * 0.5),
+    };
+    let mut canon: Vec<(usize, usize, DVec2, Edge, usize)> = pieces
+        .into_iter()
+        .map(|p| {
+            let (u, v, e) = if p.from <= p.to {
+                (p.from, p.to, p.edge)
+            } else {
+                (p.to, p.from, p.edge.reversed())
+            };
+            (u, v, middle(&e), e, p.source)
+        })
+        .collect();
+    canon.sort_by(|x, y| {
+        (x.0, x.1)
+            .cmp(&(y.0, y.1))
+            .then(by_position(x.2, y.2))
+            .then(x.4.cmp(&y.4))
+    });
     // Half-edges: 2k forward, 2k+1 backward. The same edge twice (curves drawn on top of
     // each other) counts once: an edge is known by its ends and its middle. It is credited
     // to the curve cut into the fewest pieces, so a curve that spans just this piece (a
     // small shape's side along a longer line) owns it, not the longer line.
     let mut half: Vec<(usize, usize, Edge)> = Vec::new(); // (from, to, geometry)
     let mut source_of: Vec<usize> = Vec::new();
-    let mut seen: std::collections::HashMap<(usize, usize, i64, i64), usize> =
-        std::collections::HashMap::new();
-    for (e, source) in &edges {
-        let (u, v) = (vertex(e.start()), vertex(e.end()));
-        let middle = match *e {
-            Edge::Line { a, b } => (a + b) * 0.5,
-            Edge::Arc {
-                center,
-                radius,
-                start,
-                sweep,
-            } => center + radius * DVec2::from_angle(start + sweep * 0.5),
-        };
-        let (mx, my) = key(middle);
-        if let Some(&k) = seen.get(&(u.min(v), u.max(v), mx, my)) {
-            if pieces[*source] < pieces[source_of[k]] {
-                source_of[k] = *source;
+    let mut middles: Vec<DVec2> = Vec::new();
+    // Kept edges from `group` on share the current piece's ends.
+    let (mut group, mut ends) = (0, None);
+    for (u, v, mid, e, source) in canon {
+        if ends != Some((u, v)) {
+            (group, ends) = (source_of.len(), Some((u, v)));
+        }
+        if let Some(k) = (group..source_of.len()).find(|&k| middles[k].distance(mid) <= tol.snap) {
+            if count[source] < count[source_of[k]] {
+                source_of[k] = source;
             }
             continue;
         }
-        seen.insert((u.min(v), u.max(v), mx, my), source_of.len());
-        half.push((u, v, *e));
+        half.push((u, v, e));
         half.push((v, u, e.reversed()));
-        source_of.push(*source);
+        source_of.push(source);
+        middles.push(mid);
     }
     // Prune dangling edges (vertices of degree one) repeatedly.
     let mut alive = vec![true; half.len()];
@@ -562,6 +739,7 @@ pub fn regions(curves: &[Shape]) -> Vec<Region> {
         list.sort_by(|&a, &b| {
             let (aa, ac) = key(a);
             let (ba, bc) = key(b);
+            // Same direction up to rounding (an angle, not a distance): order by curvature.
             if (aa - ba).abs() <= 1e-9 {
                 ac.total_cmp(&bc)
             } else {
@@ -602,14 +780,13 @@ pub fn regions(curves: &[Shape]) -> Vec<Region> {
     }
     // Counter-clockwise loops bound regions; clockwise ones are outer boundaries of shapes
     // (holes when inside a region).
-    let tol_area = 1e-12;
     let mut outers: Vec<Loop> = Vec::new();
     let mut boundaries: Vec<Loop> = Vec::new();
     for lp in loops {
         let a = lp.signed_area();
-        if a > tol_area {
+        if a > tol.min_area {
             outers.push(lp);
-        } else if a < -tol_area {
+        } else if a < -tol.min_area {
             boundaries.push(lp);
         }
     }
@@ -633,10 +810,10 @@ pub fn regions(curves: &[Shape]) -> Vec<Region> {
         let host = result
             .iter()
             .enumerate()
-            .filter(|(_, r)| r.area > own_area * (1.0 + 1e-9))
+            .filter(|(_, r)| r.area > own_area + tol.min_area)
             // Only regions whose bounds hold this boundary's (cheap) are checked closely.
             .filter(|(_, r)| {
-                let pad = tolerance(own.max.abs().max_element()) * 10.0;
+                let pad = tol.snap;
                 r.bounds.min.x <= own.min.x + pad
                     && r.bounds.min.y <= own.min.y + pad
                     && r.bounds.max.x >= own.max.x - pad
@@ -645,7 +822,7 @@ pub fn regions(curves: &[Shape]) -> Vec<Region> {
             .filter(|(_, r)| {
                 outline
                     .iter()
-                    .all(|p| r.outer.contains(*p) || near_outline(&r.outer, *p))
+                    .all(|p| r.outer.contains(*p) || near_outline(&r.outer, *p, tol))
             })
             .min_by(|a, b| a.1.area.total_cmp(&b.1.area))
             .map(|(i, _)| i);
@@ -662,10 +839,10 @@ pub fn regions(curves: &[Shape]) -> Vec<Region> {
     result
 }
 
-fn near_outline(lp: &Loop, p: DVec2) -> bool {
-    lp.edges.iter().any(|e| {
-        crate::primitives::distance(&e.shape(), p) <= tolerance(p.abs().max_element()) * 10.0
-    })
+fn near_outline(lp: &Loop, p: DVec2, tol: &RegionTolerance) -> bool {
+    lp.edges
+        .iter()
+        .any(|e| crate::primitives::distance(&e.shape(), p) <= tol.snap)
 }
 
 /// Centroid from finely flattened loops (holes subtract).

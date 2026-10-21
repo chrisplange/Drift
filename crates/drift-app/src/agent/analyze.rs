@@ -79,6 +79,10 @@ pub(super) fn analyze(s: &mut Session) -> Res {
         .into_iter()
         .map(args::id)
         .collect();
+    let invalid: Vec<Value> = drift_solver::invalid_constraints(doc)
+        .into_iter()
+        .map(|(id, why)| json!({ "id": id.to_string(), "why": why }))
+        .collect();
     let overlapping: Vec<Value> = ed.overlapping().iter().map(|id| args::id(*id)).collect();
     let open = open_ends(s);
     let ed = &mut s.editor;
@@ -144,6 +148,7 @@ pub(super) fn analyze(s: &mut Session) -> Res {
         "conflicts": conflicts,
         "redundant": redundant,
         "degenerate": degenerate,
+        "invalid_relations": invalid,
         "overlapping": overlapping,
         "open_ends": open,
         "regions": areas,

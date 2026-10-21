@@ -945,3 +945,143 @@ fn deleting_the_wall_between_two_filled_rooms_leaves_one_fill() {
     assert_eq!(ed.doc.fills().count(), 2);
     assert!(close(found(&mut ed, left).0, 200.0));
 }
+
+/// A rectangle recorded as a shape (a path) with its fill: a line across it and a circle
+/// inside it change nothing (no hole, no division); a split side and a fillet go into the
+/// path; a deleted side opens it, so the fill keeps its last area until undone.
+#[test]
+fn a_paths_fill_follows_its_own_outline_alone() {
+    let mut ed = Editor::default();
+    ed.fill_new_shapes = true;
+    let (p, sides) = plate(&mut ed);
+    ed.doc.begin();
+    let path = ed.add_shape(&sides).unwrap();
+    ed.commit("Shape");
+    let (id, fill) = ed.doc.fills().next().map(|(i, f)| (i, f.clone())).unwrap();
+    assert_eq!(fill.path, Some(path));
+    assert!(close(found(&mut ed, id).0, 800.0));
+    assert_eq!(ed.doc.path_of(sides[1]), Some(path));
+    // A line across it and a circle inside it: neither cuts it nor makes a hole.
+    ed.doc.begin();
+    let a = ed.doc.add_point(v(20.0, -5.0));
+    let b = ed.doc.add_point(v(20.0, 25.0));
+    ed.doc.add_line(a, b).unwrap();
+    let c = ed.doc.add_point(v(10.0, 10.0));
+    ed.doc.add_circle(c, 3.0).unwrap();
+    ed.commit("Across and inside");
+    assert!(close(found(&mut ed, id).0, 800.0));
+    assert!(!ed.doc.fill(id).unwrap().divided);
+    assert!(ed.fill_changes.is_empty(), "{:?}", ed.fill_changes);
+    assert_eq!(ed.fill_shapes()[&id].region.holes.len(), 0);
+    // Splitting a side puts the new piece in the path, in order.
+    ed.split_at(sides[0], v(10.0, 0.0)).unwrap();
+    let now = ed.doc.path(path).unwrap().clone();
+    assert!(now.closed);
+    assert_eq!(now.curves.len(), 5);
+    assert_eq!(now.curves[0], sides[0]);
+    assert_eq!(
+        now.curves[2], sides[1],
+        "the piece follows the side it was cut from"
+    );
+    assert!(close(found(&mut ed, id).0, 800.0));
+    // A fillet too.
+    ed.fillet(p[2], 5.0).unwrap();
+    let now = ed.doc.path(path).unwrap().clone();
+    assert!(now.closed);
+    assert_eq!(now.curves.len(), 6);
+    assert!(close(found(&mut ed, id).0, 800.0 - CORNER_ROUND));
+    assert_eq!(
+        sorted(now.curves.clone()),
+        ed.doc.fill(id).unwrap().boundary
+    );
+    // Deleting a side opens the path: the fill keeps its last area, and both come back.
+    ed.doc.begin();
+    ed.doc.delete([sides[3]]);
+    ed.commit("Delete");
+    assert!(!ed.doc.path(path).unwrap().closed);
+    assert!(ed.fill_shapes()[&id].lost);
+    assert!(ed.undo());
+    assert!(ed.doc.path(path).unwrap().closed);
+    assert!(close(found(&mut ed, id).0, 800.0 - CORNER_ROUND));
+}
+
+/// Two circles drawn as shapes with their fills, overlapping, trimmed into each other: the
+/// first trim opens its path (its fill waits); the second closes one path of both arcs,
+/// with one fill, the topmost's.
+#[test]
+fn trimming_two_paths_into_one_outline_joins_them() {
+    let mut ed = Editor::default();
+    ed.fill_new_shapes = true;
+    ed.doc.begin();
+    let a = ed.doc.add_point(v(-670.0, 600.0));
+    let ca = ed.doc.add_circle(a, 150.0).unwrap();
+    let pa = ed.add_shape(&[ca]).unwrap();
+    ed.commit("A");
+    ed.doc.begin();
+    let b = ed.doc.add_point(v(-930.0, 600.0));
+    let cb = ed.doc.add_circle(b, 150.0).unwrap();
+    let pb = ed.add_shape(&[cb]).unwrap();
+    ed.commit("B");
+    let fill_of = |ed: &Editor, p: drift_core::PathId| {
+        ed.doc
+            .fills()
+            .find(|(_, f)| f.path == Some(p))
+            .map(|(id, _)| id)
+    };
+    let (fa, fb) = (fill_of(&ed, pa).unwrap(), fill_of(&ed, pb).unwrap());
+    let disc = PI * 150.0 * 150.0;
+    assert!(close(found(&mut ed, fa).0, disc));
+    assert!(close(found(&mut ed, fb).0, disc));
+    ed.trim_at(ca, v(-800.0, 600.0)).unwrap();
+    assert!(!ed.doc.path(pa).unwrap().closed);
+    assert!(ed.fill_shapes()[&fa].lost);
+    assert!(close(found(&mut ed, fb).0, disc));
+    ed.notice = None;
+    ed.trim_at(cb, v(-800.0, 600.0)).unwrap();
+    let paths: Vec<(drift_core::PathId, drift_core::Path)> =
+        ed.doc.paths().map(|(id, p)| (id, p.clone())).collect();
+    assert_eq!(paths.len(), 1, "{paths:?}");
+    let (pid, path) = &paths[0];
+    assert!(path.closed);
+    assert_eq!(sorted(path.curves.clone()), sorted(vec![ca, cb]));
+    assert_eq!(ed.doc.fills().count(), 1);
+    let (f, fill) = ed.doc.fills().next().map(|(i, f)| (i, f.clone())).unwrap();
+    assert_eq!(
+        (f, fill.path),
+        (fb, Some(*pid)),
+        "the topmost fill kept the shape"
+    );
+    assert!(found(&mut ed, f).0 > disc * 1.5, "the whole peanut");
+    assert!(
+        ed.fill_changes
+            .contains(&crate::fills::FillChange::Merged { id: fa, into: fb })
+    );
+    assert!(ed.notice.as_deref().is_some_and(|n| n.contains("removed")));
+    assert!(ed.undo());
+    assert_eq!(ed.doc.paths().count(), 2);
+    assert_eq!(ed.doc.fills().count(), 2);
+}
+
+/// A click with the Fill tool inside a shape drawn as one makes the fill the shape's: a
+/// line across it leaves it whole, and re-picking its boundary makes it an area fill again.
+#[test]
+fn the_fill_tool_binds_to_the_path_it_clicks_in() {
+    let mut ed = Editor::default();
+    let (_, sides) = plate(&mut ed);
+    ed.doc.begin();
+    let path = ed.add_shape(&sides).unwrap();
+    ed.commit("Shape");
+    assert_eq!(ed.doc.fills().count(), 0, "the Fill switch was off");
+    let id = ed.add_fill_at(v(5.0, 5.0)).unwrap();
+    assert_eq!(ed.doc.fill(id).unwrap().path, Some(path));
+    ed.doc.begin();
+    let a = ed.doc.add_point(v(20.0, -5.0));
+    let b = ed.doc.add_point(v(20.0, 25.0));
+    ed.doc.add_line(a, b).unwrap();
+    ed.commit("Across");
+    assert!(close(found(&mut ed, id).0, 800.0));
+    assert!(!ed.doc.fill(id).unwrap().divided);
+    ed.repick_fill_at(id, v(5.0, 5.0)).unwrap();
+    assert_eq!(ed.doc.fill(id).unwrap().path, None);
+    assert!(close(found(&mut ed, id).0, 400.0), "the half the line left");
+}

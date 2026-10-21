@@ -204,6 +204,10 @@ impl System {
         radii: &HashMap<EntityId, f64>,
     ) -> Self {
         let keep = |id: EntityId| scope.is_none_or(|s| s.contains(&id));
+        // Relations whose geometry is in scope and still of the kinds they need (a trim or
+        // a split can change a curve's kind under one): the rest are left out rather than
+        // break the build. [`crate::invalid_constraints`] reports them.
+        let usable = |c: &Constraint| c.entities().all(keep) && doc.validate(c).is_ok();
         // ---- Parameters ----
         let mut params = Vec::new();
         let mut values = Vec::new();
@@ -234,7 +238,7 @@ impl System {
         // Lines that dimensions measure to the midpoint of get a hidden midpoint: two unknowns
         // tied to the line's ends by two equations, so they add no freedom.
         let mut midpoint_lines = Vec::new();
-        for (_, c) in doc.constraints().filter(|(_, c)| c.entities().all(keep)) {
+        for (_, c) in doc.constraints().filter(|(_, c)| usable(c)) {
             for (id, slot) in c.slots() {
                 if slot == drift_core::Slot::PointOrMidpoint
                     && let Some(EntityKind::Line { .. }) = doc.get(id).map(|e| e.kind)
@@ -315,7 +319,7 @@ impl System {
         // whose ends are joined that way share that end as much as curves sharing a point.
         let joined_ends: Vec<usize> = {
             let mut joined = UnionFind::new(params.len());
-            for (cid, c) in doc.constraints().filter(|(_, c)| c.entities().all(keep)) {
+            for (cid, c) in doc.constraints().filter(|(_, c)| usable(c)) {
                 if let Constraint::Coincident { a, b } = *c
                     && !doc.is_driven(cid)
                 {
@@ -332,13 +336,13 @@ impl System {
         // Points held on curves, for tangencies touching at an end held that way.
         let on_curve: HashSet<(EntityId, EntityId)> = doc
             .constraints()
-            .filter(|(cid, c)| c.entities().all(keep) && !doc.is_driven(*cid))
+            .filter(|(cid, c)| usable(c) && !doc.is_driven(*cid))
             .filter_map(|(_, c)| match *c {
                 Constraint::PointOnCurve { point, curve } => Some((point, curve)),
                 _ => None,
             })
             .collect();
-        for (cid, constraint) in doc.constraints().filter(|(_, c)| c.entities().all(keep)) {
+        for (cid, constraint) in doc.constraints().filter(|(_, c)| usable(c)) {
             if doc.is_driven(cid) {
                 // Driven (reference) dimensions only report; they don't constrain.
                 continue;

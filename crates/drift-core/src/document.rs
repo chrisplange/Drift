@@ -16,6 +16,7 @@ use crate::drafting::{
 };
 use crate::groups::{Group, GroupId};
 use crate::layers::{Appearance, Layer, LayerId};
+use crate::paths::{Path, PathId};
 use crate::sheets::{PlacedView, Sheet, SheetId, View, ViewId};
 use crate::texts::{SketchText, TextId};
 use crate::underlays::{Underlay, UnderlayId};
@@ -343,6 +344,7 @@ enum Key {
     Sheet(SheetId),
     View(ViewId),
     Group(GroupId),
+    Path(PathId),
     Block(BlockId),
     Instance(InstanceId),
     Underlay(UnderlayId),
@@ -377,6 +379,7 @@ enum Record {
     Sheet(Sheet),
     View(View),
     Group(Group),
+    Path(Path),
     Block(Block),
     Instance(Instance),
     Underlay(Underlay),
@@ -455,6 +458,7 @@ pub struct Document {
     /// Views of the model, placed on sheets by their viewports.
     views: BTreeMap<ViewId, View>,
     groups: BTreeMap<GroupId, Group>,
+    paths: BTreeMap<PathId, Path>,
     blocks: BTreeMap<BlockId, Block>,
     instances: BTreeMap<InstanceId, Instance>,
     underlays: BTreeMap<UnderlayId, Underlay>,
@@ -501,6 +505,7 @@ impl PartialEq for Document {
             && self.sheets == other.sheets
             && self.views == other.views
             && self.groups == other.groups
+            && self.paths == other.paths
             && self.blocks == other.blocks
             && self.instances == other.instances
             && self.underlays == other.underlays
@@ -537,6 +542,7 @@ impl Default for Document {
             sheets: BTreeMap::new(),
             views: BTreeMap::new(),
             groups: BTreeMap::new(),
+            paths: BTreeMap::new(),
             blocks: BTreeMap::new(),
             instances: BTreeMap::new(),
             underlays: BTreeMap::new(),
@@ -806,6 +812,13 @@ impl Document {
         }
     }
 
+    /// True if path `id` was added in the open transaction.
+    pub fn path_created_in_transaction(&self, id: PathId) -> bool {
+        self.journal
+            .as_ref()
+            .is_some_and(|j| matches!(j.get(&Key::Path(id)), Some(None)))
+    }
+
     /// True if fill `id` was added in the open transaction.
     pub fn fill_created_in_transaction(&self, id: FillId) -> bool {
         self.journal
@@ -888,6 +901,7 @@ impl Document {
             Key::Sheet(id) => self.sheets.get(&id).cloned().map(Record::Sheet),
             Key::View(id) => self.views.get(&id).cloned().map(Record::View),
             Key::Group(id) => self.groups.get(&id).cloned().map(Record::Group),
+            Key::Path(id) => self.paths.get(&id).cloned().map(Record::Path),
             Key::Block(id) => self.blocks.get(&id).cloned().map(Record::Block),
             Key::Instance(id) => self.instances.get(&id).copied().map(Record::Instance),
             Key::Underlay(id) => self.underlays.get(&id).cloned().map(Record::Underlay),
@@ -1054,6 +1068,12 @@ impl Document {
             }
             (Key::Group(id), _) => {
                 self.groups.remove(&id);
+            }
+            (Key::Path(id), Some(Record::Path(p))) => {
+                self.paths.insert(id, p);
+            }
+            (Key::Path(id), _) => {
+                self.paths.remove(&id);
             }
             (Key::Block(id), Some(Record::Block(b))) => {
                 self.blocks.insert(id, b);
@@ -1322,6 +1342,17 @@ impl Document {
             if matches!(kind, EntityKind::Arc { .. }) {
                 self.normalize_arc(id);
             }
+            // Relations the change made meaningless go with it: a point held on a curve
+            // that now ends at it, a curve of a kind a relation can't take.
+            let stale: Vec<ConstraintId> = self
+                .constraints
+                .iter()
+                .filter(|(_, c)| c.entities().any(|e| e == id) && self.validate(c).is_err())
+                .map(|(cid, _)| *cid)
+                .collect();
+            for cid in stale {
+                self.remove_constraint(cid);
+            }
         }
         Ok(())
     }
@@ -1534,6 +1565,50 @@ impl Document {
         }
         self.drop_dangling_annotations();
         self.prune_groups();
+        self.prune_paths();
+    }
+
+    /// Drop deleted curves from paths (a path missing one is open), remove paths left with
+    /// none, and unbind the fills of those.
+    fn prune_paths(&mut self) {
+        let stale: Vec<PathId> = self
+            .paths
+            .iter()
+            .filter(|(_, p)| p.curves.iter().any(|e| !self.entities.contains_key(e)))
+            .map(|(id, _)| *id)
+            .collect();
+        for id in stale {
+            self.touch_key(Key::Path(id));
+            let entities = &self.entities;
+            let empty = match self.paths.get_mut(&id) {
+                Some(p) => {
+                    p.curves.retain(|e| entities.contains_key(e));
+                    p.closed = false;
+                    p.curves.is_empty()
+                }
+                None => false,
+            };
+            if empty {
+                self.paths.remove(&id);
+                self.unbind_fills(id);
+            }
+        }
+    }
+
+    /// Fills of a path that is gone fill an area among the sketch's curves again.
+    fn unbind_fills(&mut self, path: PathId) {
+        let bound: Vec<FillId> = self
+            .fills
+            .iter()
+            .filter(|(_, f)| f.path == Some(path))
+            .map(|(id, _)| *id)
+            .collect();
+        for id in bound {
+            self.touch_key(Key::Fill(id));
+            if let Some(f) = self.fills.get_mut(&id) {
+                f.path = None;
+            }
+        }
     }
 
     /// Drop deleted entities from groups, and groups left with fewer than one member.
@@ -2228,6 +2303,7 @@ impl Document {
         keys.extend(self.sheets.keys().map(|id| Key::Sheet(*id)));
         keys.extend(self.views.keys().map(|id| Key::View(*id)));
         keys.extend(self.groups.keys().map(|id| Key::Group(*id)));
+        keys.extend(self.paths.keys().map(|id| Key::Path(*id)));
         keys.extend(self.blocks.keys().map(|id| Key::Block(*id)));
         keys.extend(self.instances.keys().map(|id| Key::Instance(*id)));
         keys.extend(self.underlays.keys().map(|id| Key::Underlay(*id)));
@@ -3087,6 +3163,109 @@ impl Document {
         if self.groups.contains_key(&id) {
             self.touch_key(Key::Group(id));
             self.groups.remove(&id);
+        }
+    }
+
+    pub fn paths(&self) -> impl Iterator<Item = (PathId, &Path)> {
+        self.paths.iter().map(|(id, p)| (*id, p))
+    }
+
+    pub fn path(&self, id: PathId) -> Option<&Path> {
+        self.paths.get(&id)
+    }
+
+    /// The path a curve belongs to.
+    pub fn path_of(&self, curve: EntityId) -> Option<PathId> {
+        self.paths
+            .iter()
+            .find(|(_, p)| p.curves.contains(&curve))
+            .map(|(id, _)| *id)
+    }
+
+    /// Take `curves` out of any path they are in (a path left with none goes, and its fill
+    /// is unbound).
+    fn unpath_curves(&mut self, curves: &[EntityId]) {
+        let touched: Vec<PathId> = self
+            .paths
+            .iter()
+            .filter(|(_, p)| p.curves.iter().any(|c| curves.contains(c)))
+            .map(|(id, _)| *id)
+            .collect();
+        for id in touched {
+            self.touch_key(Key::Path(id));
+            let empty = match self.paths.get_mut(&id) {
+                Some(p) => {
+                    p.curves.retain(|c| !curves.contains(c));
+                    p.curves.is_empty()
+                }
+                None => false,
+            };
+            if empty {
+                self.paths.remove(&id);
+                self.unbind_fills(id);
+            }
+        }
+    }
+
+    fn check_path(&self, path: &Path) -> Result<(), DocumentError> {
+        if path.curves.is_empty() {
+            return Err(DocumentError::Degenerate("path"));
+        }
+        match path
+            .curves
+            .iter()
+            .find(|c| !self.entities.get(c).is_some_and(|e| !e.kind.is_point()))
+        {
+            Some(c) => Err(DocumentError::Missing(*c)),
+            None => Ok(()),
+        }
+    }
+
+    /// Make a path: curves drawn as one shape, in order. They leave any path they were in.
+    pub fn add_path(&mut self, path: Path) -> Result<PathId, DocumentError> {
+        self.check_path(&path)?;
+        self.unpath_curves(&path.curves);
+        let id = PathId(self.next_drafting());
+        self.touch_key(Key::Path(id));
+        self.paths.insert(id, path);
+        Ok(id)
+    }
+
+    /// Insert a path with a known id (loading a file).
+    pub fn insert_path(&mut self, id: PathId, path: Path) -> Result<(), DocumentError> {
+        self.check_path(&path)?;
+        self.unpath_curves(&path.curves);
+        self.next_drafting_id = self.next_drafting_id.max(id.0 + 1);
+        self.touch_key(Key::Path(id));
+        self.paths.insert(id, path);
+        Ok(())
+    }
+
+    /// Replace a path's curves and closure. Curves it takes leave any other path.
+    pub fn set_path(&mut self, id: PathId, path: Path) -> Result<(), DocumentError> {
+        if !self.paths.contains_key(&id) || self.paths.get(&id) == Some(&path) {
+            return Ok(());
+        }
+        self.check_path(&path)?;
+        let taken: Vec<EntityId> = path
+            .curves
+            .iter()
+            .copied()
+            .filter(|c| self.path_of(*c).is_some_and(|p| p != id))
+            .collect();
+        self.unpath_curves(&taken);
+        self.touch_key(Key::Path(id));
+        self.paths.insert(id, path);
+        Ok(())
+    }
+
+    /// Remove a path (its curves stay); its fill fills an area among the sketch's curves
+    /// again.
+    pub fn remove_path(&mut self, id: PathId) {
+        if self.paths.contains_key(&id) {
+            self.touch_key(Key::Path(id));
+            self.paths.remove(&id);
+            self.unbind_fills(id);
         }
     }
 

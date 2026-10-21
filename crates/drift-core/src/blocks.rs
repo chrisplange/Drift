@@ -192,6 +192,7 @@ impl Instance {
         let mut f = f.clone();
         f.seed = self.apply(f.seed);
         f.layer = self.layer;
+        f.path = None;
         if let FillKind::Hatch(h) = &mut f.kind {
             h.origin = self.apply(h.origin);
             let angle = if self.mirror {
@@ -215,6 +216,7 @@ impl Instance {
         f.boundary.clear();
         f.layer = LayerId::DEFAULT;
         f.order = 0;
+        f.path = None;
         if let FillKind::Hatch(h) = &mut f.kind {
             h.origin = self.invert(h.origin);
             let angle = h.angle - self.angle;

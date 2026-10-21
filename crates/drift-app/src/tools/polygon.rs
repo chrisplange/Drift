@@ -119,7 +119,7 @@ impl PolygonTool {
             for i in 0..sides {
                 lines.push(ed.doc.add_line(points[i], points[(i + 1) % sides])?);
             }
-            ed.fill_new_shape(&lines);
+            ed.add_shape(&lines);
             if !ed.auto_relations {
                 // Plain lines: no construction circle holding them regular.
                 ed.doc.delete([circle]);

@@ -191,7 +191,7 @@ impl PenTool {
                     });
                     changed = true;
                 }
-                changed |= ed.fill_new_shape(&self.curves).is_some();
+                changed |= ed.add_shape(&self.curves).is_some();
                 if changed {
                     ed.commit("Close path");
                 } else {

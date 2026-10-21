@@ -68,6 +68,9 @@ pub(crate) struct FillRecord {
     /// An edit left it covering more than one area (v37).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     divided: bool,
+    /// The path (a shape drawn as one) it fills the inside of (v38).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    path: Option<String>,
 }
 
 #[cfg(not(feature = "demo"))]
@@ -81,6 +84,10 @@ pub(crate) fn fill_record(doc: &Document, id: FillId, f: &Fill) -> FillRecord {
         .filter(|e| doc.contains(**e))
         .map(|e| id_string(*e))
         .collect();
+    r.path = f
+        .path
+        .filter(|p| doc.path(*p).is_some())
+        .map(|p| p.to_string());
     r
 }
 
@@ -114,6 +121,7 @@ fn style_record(f: &Fill) -> FillRecord {
         weight: f.weight.map(LineWeight::mm),
         order: f.order,
         divided: f.divided,
+        path: None,
     };
     match &f.kind {
         FillKind::Solid => {
@@ -146,6 +154,7 @@ pub(crate) fn parse_block_fill(mut r: FillRecord, block: &str) -> Result<Fill, L
     fill.boundary.clear();
     fill.layer = LayerId::DEFAULT;
     fill.divided = false;
+    fill.path = None;
     Ok(fill)
 }
 
@@ -181,6 +190,10 @@ fn parse_fill_body(r: FillRecord) -> Result<Fill, LoadError> {
     fill.weight = r.weight.map(LineWeight::nearest);
     fill.order = r.order;
     fill.divided = r.divided;
+    fill.path = match &r.path {
+        Some(p) => Some(drift_core::PathId(crate::parse_prefixed(p, 'p')?)),
+        None => None,
+    };
     Ok(fill)
 }
 

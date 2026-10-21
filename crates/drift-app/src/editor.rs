@@ -511,6 +511,13 @@ impl Editor {
         if let Some((key, s, scope)) = &*self.drag_scope.borrow()
             && key == ids
             && *s == structure
+            // Still the same geometry: a move that let go of shared points and was then
+            // applied again from the original geometry has new points, in the same number.
+            && self
+                .doc
+                .defining_points(ids.iter().copied())
+                .iter()
+                .all(|p| scope.contains(p))
         {
             return scope.clone();
         }
@@ -574,8 +581,16 @@ impl Editor {
         self.refresh_driven();
         self.adopt_into_open_group();
         self.make_new_curves_construction();
+        self.follow_paths();
         self.follow_fills();
         let tx = self.doc.commit(label);
+        debug_assert!(
+            self.doc
+                .constraints()
+                .all(|(_, c)| self.doc.validate(c).is_ok()),
+            "{label}: a relation refers to geometry of the wrong kind: {:?}",
+            drift_solver::invalid_constraints(&self.doc)
+        );
         self.far_off = self.far_off_of(tx.entities());
         self.history.push(tx);
         self.sync();
@@ -2954,6 +2969,8 @@ impl Editor {
         }
         if split {
             self.index.update(&self.doc);
+            // The points that let go are new: the scope of a drag from before is stale.
+            *self.drag_scope.borrow_mut() = None;
         }
     }
 

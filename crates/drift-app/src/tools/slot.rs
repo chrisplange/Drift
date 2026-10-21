@@ -269,7 +269,7 @@ impl SlotTool {
                     let end1 = ed.doc.add_arc(e1, p1, p4)?;
                     let axis = ed.doc.add_line(e1, e2)?;
                     ed.doc.set_style(axis, LineKind::Construction);
-                    ed.fill_new_shape(&[top, end2, bottom, end1]);
+                    ed.add_shape(&[top, end2, bottom, end1]);
                     for (line, arc) in [(top, end1), (top, end2), (bottom, end1), (bottom, end2)] {
                         ed.relate(Constraint::Tangent { a: line, b: arc });
                     }
@@ -330,7 +330,7 @@ impl SlotTool {
                     let inner = ed.doc.add_arc(o, s_in, e_in)?;
                     let cap_e = ed.doc.add_arc(ce, e_out, e_in)?;
                     let cap_s = ed.doc.add_arc(cs, s_in, s_out)?;
-                    ed.fill_new_shape(&[outer, cap_e, inner, cap_s]);
+                    ed.add_shape(&[outer, cap_e, inner, cap_s]);
                     for (cap, arc) in [
                         (cap_e, outer),
                         (cap_e, inner),

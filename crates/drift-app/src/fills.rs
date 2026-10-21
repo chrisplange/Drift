@@ -1,12 +1,12 @@
 //! Fills and hatches: finding each fill's region as the geometry changes, creating and editing
 //! fills, and turning them into GPU meshes and hatch lines.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
 
 use drift_core::{
-    Bounds, DVec2, EntityId, Fill, FillId, FillKind, Hatch, InstanceId, LayerId, LineWeight, Rgb,
-    Shape, SketchItem,
+    Bounds, DVec2, EntityId, Fill, FillId, FillKind, Hatch, InstanceId, LayerId, LineWeight,
+    PathId, Rgb, Shape, SketchItem,
 };
 use drift_draft::{Pattern, Placement};
 use drift_geom::regions::{Region, region_at};
@@ -295,6 +295,19 @@ impl<'a> Areas<'a> {
     }
 }
 
+/// The end points of a curve (none for a circle or a whole ellipse).
+fn curve_ends(doc: &drift_core::Document, c: EntityId) -> Option<[EntityId; 2]> {
+    doc.get(c).and_then(|e| e.kind.ends())
+}
+
+/// A sorted, distinct copy of a path's curves: a fill's boundary.
+fn sorted(curves: &[EntityId]) -> Vec<EntityId> {
+    let mut c = curves.to_vec();
+    c.sort_unstable();
+    c.dedup();
+    c
+}
+
 /// The sorted, distinct entities of a region's outer boundary.
 fn outline_of(region: &Region, ids: &[EntityId]) -> Vec<EntityId> {
     let mut c: Vec<EntityId> = region.outer.curves().into_iter().map(|i| ids[i]).collect();
@@ -323,6 +336,33 @@ impl Editor {
         let mut solid = None;
         let mut out = BTreeMap::new();
         for (id, fill) in fills {
+            // A shape's fill (of a path) is the area inside that path alone.
+            if let Some(pid) = fill.path
+                && let Some(curves) = self.doc.path(pid).map(|p| sorted(&p.curves))
+            {
+                if let Some(region) = self.path_region(pid) {
+                    let shape = FillShape {
+                        region,
+                        lost: false,
+                        curves,
+                        crossed: false,
+                        parts: 0,
+                    };
+                    self.fill_crossed.insert(id, false);
+                    self.last_fill_shapes.insert(id, shape.clone());
+                    out.insert(id, shape);
+                } else if let Some(last) = self.last_fill_shapes.get(&id) {
+                    // Its path is open: the fill keeps its last shape until the ends meet.
+                    out.insert(
+                        id,
+                        FillShape {
+                            lost: true,
+                            ..last.clone()
+                        },
+                    );
+                }
+                continue;
+            }
             // A curve drawn across a fill cuts its outline into pieces: the fill keeps its
             // whole area, found again without the curves that cross it.
             let uncrossed = if areas.exact(&fill).is_none() {
@@ -404,6 +444,21 @@ impl Editor {
         // Fills whose outline this edit changed.
         let mut moved: HashSet<FillId> = HashSet::new();
         for (id, fill) in fills {
+            // A shape's fill keeps to its path: its outline is the path's curves, it is
+            // never divided, and its seed stays inside.
+            if let Some(pid) = fill.path
+                && let Some(curves) = self.doc.path(pid).map(|p| sorted(&p.curves))
+            {
+                let mut followed = fill.clone();
+                followed.boundary = curves;
+                followed.divided = false;
+                if let Some(region) = self.path_region(pid) {
+                    followed.seed = crate::editor::interior_point(&region, fill.seed);
+                }
+                self.doc.set_fill(id, followed);
+                self.fill_crossed.insert(id, false);
+                continue;
+            }
             let reshaped = fill
                 .boundary
                 .iter()
@@ -543,7 +598,9 @@ impl Editor {
         // others go.
         let mut by_outline: BTreeMap<Vec<EntityId>, Vec<FillId>> = BTreeMap::new();
         for id in self.fills_in_order() {
-            if let Some(f) = self.doc.fill(id) {
+            if let Some(f) = self.doc.fill(id)
+                && f.path.is_none()
+            {
                 by_outline.entry(f.boundary.clone()).or_default().push(id);
             }
         }
@@ -704,6 +761,23 @@ impl Editor {
         curves: impl Fn(EntityId) -> Option<EntityId>,
         place: impl Fn(DVec2) -> DVec2,
     ) {
+        // Paths whose curves were all copied are paths of the copies too.
+        let paths: Vec<(PathId, drift_core::Path)> = self
+            .doc
+            .paths()
+            .filter(|(_, p)| p.curves.iter().all(|c| curves(*c).is_some()))
+            .map(|(id, p)| (id, p.clone()))
+            .collect();
+        let mut copied_paths: HashMap<PathId, PathId> = HashMap::new();
+        for (id, p) in paths {
+            let copy = drift_core::Path {
+                curves: p.curves.iter().filter_map(|c| curves(*c)).collect(),
+                closed: p.closed,
+            };
+            if let Ok(new) = self.doc.add_path(copy) {
+                copied_paths.insert(id, new);
+            }
+        }
         let fills: Vec<Fill> = self
             .doc
             .fills()
@@ -716,6 +790,7 @@ impl Editor {
             fill.boundary = fill.boundary.iter().filter_map(|e| curves(*e)).collect();
             fill.boundary.sort_unstable();
             fill.boundary.dedup();
+            fill.path = fill.path.and_then(|p| copied_paths.get(&p).copied());
             fill.seed = place(fill.seed);
             if let FillKind::Hatch(h) = &mut fill.kind {
                 let along = DVec2::from_angle(h.angle.to_radians());
@@ -963,6 +1038,12 @@ impl Editor {
             .ok_or("Click inside a closed area to fill it")?;
         let mut fill = Fill::new(boundary, p, FillKind::Solid);
         self.fill_style.apply(&mut fill);
+        // Inside a shape drawn as one (the area is its inside): the fill is the shape's.
+        fill.path = self
+            .doc
+            .paths()
+            .find(|(_, path)| path.closed && sorted(&path.curves) == fill.boundary)
+            .map(|(id, _)| id);
         // An area that is already filled isn't filled twice: its fill takes the current style
         // (so clicking again with another pattern swaps it) and is selected.
         let shapes = self.fill_shapes();
@@ -999,30 +1080,229 @@ impl Editor {
         Ok(id)
     }
 
-    /// Fill a closed shape a drawing tool has just made, inside the open transaction (one
-    /// undo step with the shape), when new shapes are to be filled: the area bounded by
-    /// `curves` on their own, in the current fill style, on the current layer. A path that
-    /// crosses itself gets its biggest area. Returns the fill, if one was made.
+    /// Record a closed shape a drawing tool has just made as a path (its `curves` in order
+    /// round it), inside the open transaction, and fill it when new shapes are to be filled:
+    /// one undo step with the shape. Returns the path.
+    pub(crate) fn add_shape(&mut self, curves: &[EntityId]) -> Option<PathId> {
+        let path = self
+            .doc
+            .add_path(drift_core::Path {
+                curves: curves.to_vec(),
+                closed: true,
+            })
+            .ok()?;
+        if self.fill_new_shapes
+            && let Some(region) = self.path_region(path)
+        {
+            let seed = crate::editor::interior_point(&region, region.centroid);
+            let mut fill = Fill::new(curves.to_vec(), seed, FillKind::Solid);
+            fill.path = Some(path);
+            self.fill_style.apply(&mut fill);
+            self.doc.add_fill(fill);
+        }
+        Some(path)
+    }
+
+    /// [`add_shape`](Self::add_shape), returning the fill it made.
+    #[cfg(test)]
     pub(crate) fn fill_new_shape(&mut self, curves: &[EntityId]) -> Option<FillId> {
-        if !self.fill_new_shapes || curves.is_empty() {
+        let path = self.add_shape(curves)?;
+        self.doc
+            .fills()
+            .find(|(_, f)| f.path == Some(path))
+            .map(|(id, _)| id)
+    }
+
+    /// The area inside a closed path: the biggest area its curves bound on their own (a
+    /// path that crosses itself bounds several). None for an open path.
+    pub(crate) fn path_region(&self, id: PathId) -> Option<Region> {
+        let path = self.doc.path(id)?;
+        if !path.closed {
             return None;
         }
-        let shapes: Vec<Shape> = curves
+        let shapes: Vec<Shape> = path
+            .curves
             .iter()
-            .map(|id| self.doc.shape(*id))
+            .map(|c| self.doc.shape(*c))
             .collect::<Option<_>>()?;
-        let regions = drift_geom::regions::regions(&shapes);
-        let region = regions.iter().max_by(|a, b| a.area.total_cmp(&b.area))?;
-        let boundary: Vec<EntityId> = region
-            .outer
-            .curves()
+        drift_geom::regions::regions(&shapes)
             .into_iter()
-            .map(|i| curves[i])
+            .max_by(|a, b| a.area.total_cmp(&b.area))
+    }
+
+    /// Follow curves end to end from `first` (through the end points they share): the
+    /// chain through the curves `rank` allows, the lowest rank first at a junction, and
+    /// whether it closes. A lone circle or whole ellipse is a closed chain of one.
+    fn chain_from(
+        &self,
+        first: EntityId,
+        rank: &dyn Fn(EntityId) -> Option<u8>,
+    ) -> (Vec<EntityId>, bool) {
+        let ends = |c: EntityId| self.doc.get(c).and_then(|e| e.kind.ends());
+        let Some([start, mut at]) = ends(first) else {
+            return (vec![first], true);
+        };
+        let mut chain = vec![first];
+        let mut used: HashSet<EntityId> = HashSet::from([first]);
+        // Forward from the first curve's end; if that doesn't close, back from its start.
+        for forward in [true, false] {
+            if !forward {
+                at = start;
+            }
+            loop {
+                if forward && at == start {
+                    return (chain, true);
+                }
+                let next = self
+                    .doc
+                    .users_of(at)
+                    .filter(|c| !used.contains(c))
+                    .filter(|c| ends(*c).is_some_and(|e| e.contains(&at)))
+                    .filter_map(|c| rank(c).map(|r| (r, c)))
+                    .min();
+                let Some((_, c)) = next else {
+                    break;
+                };
+                let Some([s, e]) = ends(c) else {
+                    break;
+                };
+                used.insert(c);
+                if forward {
+                    chain.push(c);
+                } else {
+                    chain.insert(0, c);
+                }
+                at = if s == at { e } else { s };
+            }
+        }
+        (chain, false)
+    }
+
+    /// Keep each path a shape as an edit changes its curves, inside the edit's open
+    /// transaction: a side split, filleted or chamfered takes the new curves into the path
+    /// in order; a path cut open (a side deleted or trimmed) stays open until its ends meet
+    /// again; and open paths whose ends meet (two shapes trimmed into one outline) join
+    /// into one closed path, whose fill is the topmost of theirs (the others go, as
+    /// [`FillChange::Merged`]).
+    pub(crate) fn follow_paths(&mut self) {
+        if self.doc.paths().next().is_none() {
+            return;
+        }
+        let created: HashSet<EntityId> = self
+            .doc
+            .created_in_transaction()
+            .into_iter()
+            .filter(|e| self.doc.get(*e).is_some_and(|en| !en.kind.is_point()))
             .collect();
-        let seed = crate::editor::interior_point(region, region.centroid);
-        let mut fill = Fill::new(boundary, seed, FillKind::Solid);
-        self.fill_style.apply(&mut fill);
-        Some(self.doc.add_fill(fill))
+        let paths: Vec<(PathId, drift_core::Path)> =
+            self.doc.paths().map(|(id, p)| (id, p.clone())).collect();
+        let mut joined: HashSet<PathId> = HashSet::new();
+        let mut changes = Vec::new();
+        for (id, path) in &paths {
+            if joined.contains(id) || self.doc.path_created_in_transaction(*id) {
+                continue;
+            }
+            let own: Vec<EntityId> = path
+                .curves
+                .iter()
+                .copied()
+                .filter(|c| self.doc.contains(*c))
+                .collect();
+            let Some(&first) = own.first() else {
+                continue;
+            };
+            // Only a path the edit touched: cut open, a curve reshaped, or a new curve
+            // meeting one of its ends.
+            let own_ends: HashSet<EntityId> = own
+                .iter()
+                .filter_map(|c| curve_ends(&self.doc, *c))
+                .flat_map(|e| e.into_iter())
+                .collect();
+            let touched = !path.closed
+                || own.iter().any(|c| self.doc.reshaped_in_transaction(*c))
+                || created.iter().any(|c| {
+                    curve_ends(&self.doc, *c)
+                        .is_some_and(|e| e.iter().any(|p| own_ends.contains(p)))
+                });
+            if !touched {
+                continue;
+            }
+            let others: HashMap<EntityId, PathId> = paths
+                .iter()
+                .filter(|(o, p)| o != id && !p.closed && !joined.contains(o))
+                .flat_map(|(o, p)| p.curves.iter().map(move |c| (*c, *o)))
+                .collect();
+            let rank = |c: EntityId| {
+                if own.contains(&c) {
+                    Some(0)
+                } else if created.contains(&c) {
+                    Some(1)
+                } else if others.contains_key(&c) {
+                    Some(2)
+                } else {
+                    None
+                }
+            };
+            let (chain, closed) = self.chain_from(first, &rank);
+            let followed = if closed {
+                // Open paths it closed through join it: their fills become one (the
+                // topmost's), as fills brought onto one area do.
+                let absorbed: BTreeSet<PathId> = chain
+                    .iter()
+                    .filter_map(|c| others.get(c).copied())
+                    .collect();
+                if !absorbed.is_empty() {
+                    let mut fills: Vec<FillId> = self
+                        .fills_in_order()
+                        .into_iter()
+                        .filter(|f| {
+                            self.doc.fill(*f).is_some_and(|fill| {
+                                fill.path == Some(*id)
+                                    || fill.path.is_some_and(|p| absorbed.contains(&p))
+                            })
+                        })
+                        .collect();
+                    if let Some(keep) = fills.pop() {
+                        if let Some(mut fill) = self.doc.fill(keep).cloned() {
+                            fill.path = Some(*id);
+                            self.doc.set_fill(keep, fill);
+                        }
+                        for f in fills {
+                            self.doc.remove_fill(f);
+                            changes.push(FillChange::Merged { id: f, into: keep });
+                        }
+                    }
+                    for a in absorbed {
+                        joined.insert(a);
+                        self.doc.remove_path(a);
+                    }
+                }
+                drift_core::Path {
+                    curves: chain,
+                    closed: true,
+                }
+            } else {
+                // Open: its chain, then any of its curves the chain doesn't reach.
+                let mut curves = chain;
+                let rest: Vec<EntityId> = own
+                    .iter()
+                    .copied()
+                    .filter(|c| !curves.contains(c))
+                    .collect();
+                curves.extend(rest);
+                drift_core::Path {
+                    curves,
+                    closed: false,
+                }
+            };
+            let _ = self.doc.set_path(*id, followed);
+        }
+        if !changes.is_empty() {
+            if self.notice.is_none() {
+                self.notice = Some(self.describe_fill_changes(&changes));
+            }
+            self.fill_changes.extend(changes);
+        }
     }
 
     /// Give a fill the boundary of the area around `p` (after its own boundary was lost).
@@ -1038,6 +1318,7 @@ impl Editor {
         sorted.dedup();
         fill.boundary = sorted;
         fill.seed = p;
+        fill.path = None;
         self.doc.begin();
         self.doc.set_fill(id, fill);
         self.commit("Re-pick fill boundary");

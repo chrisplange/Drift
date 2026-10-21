@@ -1,14 +1,13 @@
-// Rewrites links in the user guide so the same Markdown works on GitHub and on the site:
+// Rewrites links in the user guide so the same Markdown works in the repository and on the site:
 //
 //   getting-started.md          -> /guide/getting-started/
 //   ../reference/units.md#mm    -> /guide/reference/units/#mm
 //   README.md                   -> /guide/
-//   ../../README.md (outside)   -> the file on GitHub
+//   ../../README.md (outside)   -> an error: the source repository is private
 //
 // Images are left alone: Astro resolves relative image paths itself.
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { site } from "../site.config.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "../../..");
@@ -29,8 +28,10 @@ export function rewrite(url, fromFile) {
   const anchor = hash ? `#${hash}` : "";
   if (rel.startsWith("..")) {
     const repoRel = path.relative(repoRoot, abs).split(path.sep).join("/");
-    const kind = /\.[a-z0-9]+$/i.test(repoRel) ? "blob" : "tree";
-    return `${site.sourceUrl}/${kind}/main/${repoRel}${anchor}`;
+    throw new Error(
+      `${path.relative(repoRoot, fromFile)} links to ${repoRel}, outside docs/guide: ` +
+        "the source repository is private, so the guide can only link to its own pages",
+    );
   }
   if (!rel.endsWith(".md")) return url;
   let slug = rel.replace(/\.md$/, "").replace(/(^|\/)README$/, "");

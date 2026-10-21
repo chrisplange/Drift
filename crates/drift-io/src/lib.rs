@@ -6,7 +6,7 @@
 //! ```json
 //! {
 //!   "format": "drift",
-//!   "version": 36,
+//!   "version": 37,
 //!   "meta": {"title":"Bracket","units":"mm","generator":"Drift 0.1.0"},
 //!   "display": {"length":"architectural","fraction":16},
 //!   "variables": [
@@ -51,12 +51,16 @@ pub mod dxf;
 mod dxf_import;
 mod fonts;
 mod icc;
+// The writers (PDF, SVG, DXF and `.drift`) are left out of the browser demo.
+#[cfg(not(feature = "demo"))]
 pub mod pdf;
 mod pdf_image;
 pub mod pdf_import;
 mod pdf_text;
+#[cfg(not(feature = "demo"))]
 pub mod profiles;
 mod sheets;
+#[cfg(not(feature = "demo"))]
 pub mod svg;
 pub mod svg_import;
 mod texts;
@@ -95,8 +99,9 @@ pub const EXTENSION: &str = "drift";
 /// geometry shown on sheets); 33 = adds an underlay's `images` (pictures from a PDF page);
 /// 34 = adds a dimension's `ext` (extension line starts set by hand); 35 = a sheet's
 /// `title_block` can be `blank` (blank paper; `none` stays the border without a title block);
-/// 36 = adds a block's `profile` flag (written to the Blender profiles file).
-pub const FORMAT_VERSION: u32 = 36;
+/// 36 = adds a block's `profile` flag (written to the Blender profiles file); 37 = adds a
+/// fill's `divided` (an edit left it covering more than one area).
+pub const FORMAT_VERSION: u32 = 37;
 const FORMAT_TAG: &str = "drift";
 
 /// Document-level properties stored alongside the geometry.
@@ -397,6 +402,7 @@ const LENGTH_FORMATS: [(LengthFormat, &str); 7] = [
 ];
 
 impl DisplayRecord {
+    #[cfg(not(feature = "demo"))]
     /// Only the settings that differ from the defaults.
     fn from_units(u: Units) -> Self {
         fn diff<T: PartialEq>(a: T, b: T) -> Option<T> {
@@ -488,6 +494,7 @@ struct Look {
 }
 
 impl Look {
+    #[cfg(not(feature = "demo"))]
     fn of(entity: &Entity) -> Look {
         let a = entity.appearance;
         Look {
@@ -545,6 +552,7 @@ const KINDS: [(Kind, &str); 3] = [
     (Kind::Number, "number"),
 ];
 
+#[cfg(not(feature = "demo"))]
 fn kind_name(kind: Kind) -> &'static str {
     KINDS
         .iter()
@@ -560,6 +568,7 @@ fn parse_prefixed(s: &str, prefix: char) -> Result<u32, LoadError> {
         .ok_or_else(|| LoadError::BadId(s.to_owned()))
 }
 
+#[cfg(not(feature = "demo"))]
 fn constraint_record(
     id: ConstraintId,
     c: &Constraint,
@@ -861,6 +870,7 @@ struct GroupRecord {
     members: Vec<String>,
 }
 
+#[cfg(not(feature = "demo"))]
 fn id_string(id: EntityId) -> String {
     id.to_string()
 }
@@ -873,6 +883,7 @@ fn parse_id(s: &str) -> Result<EntityId, LoadError> {
         .ok_or_else(|| LoadError::BadId(s.to_owned()))
 }
 
+#[cfg(not(feature = "demo"))]
 fn record(id: EntityId, entity: &Entity) -> EntityRecord {
     let style = entity.style.into();
     let id = id_string(id);
@@ -975,6 +986,7 @@ fn record(id: EntityId, entity: &Entity) -> EntityRecord {
 }
 
 /// Serialize a document to `.drift` JSON.
+#[cfg(not(feature = "demo"))]
 pub fn save(doc: &Document, meta: &Metadata) -> String {
     let mut out = String::new();
     out.push_str("{\n");
@@ -1203,6 +1215,7 @@ pub fn save(doc: &Document, meta: &Metadata) -> String {
     out
 }
 
+#[cfg(not(feature = "demo"))]
 /// Write `"name": [ ... ]` with one item per line.
 fn push_array(out: &mut String, name: &str, items: &[String], more: bool) {
     out.push_str(&format!("  \"{name}\": ["));
@@ -1896,7 +1909,7 @@ mod tests {
         let text = save(&doc, &Metadata::default());
         let expected = r#"{
   "format": "drift",
-  "version": 36,
+  "version": 37,
   "meta": {"units":"mm"},
   "entities": [
     {"type":"point","id":"e1","at":[0.0,0.0]},
@@ -2075,7 +2088,7 @@ mod tests {
         // A file from before extension starts opens with them all automatic.
         let old = text.replace(r#","ext":[null,12.5]"#, "");
         let old = old.replace(r#","ext":[-2.0,3.25]"#, "");
-        let old = old.replace(r#""version": 36"#, r#""version": 33"#);
+        let old = old.replace(r#""version": 37"#, r#""version": 33"#);
         let (loaded, _) = load(&old).unwrap();
         assert_eq!(loaded.extension_starts(h), [None, None]);
         assert_eq!(loaded.extension_starts(both), [None, None]);
@@ -2643,6 +2656,7 @@ mod tests {
         hatch.background = Some(Rgb([255, 255, 200]));
         let mut h = Fill::new(curves.clone(), DVec2::new(3.0, 4.0), FillKind::Hatch(hatch));
         h.weight = Some(LineWeight(35));
+        h.divided = true;
         doc.add_fill(h);
         doc.add_annotation(Annotation::Note {
             text: "Deburr all edges\nBreak sharp corners".into(),
@@ -3005,7 +3019,9 @@ mod tests {
         doc.add_text(drift_core::SketchText::new("A", DVec2::ZERO, 3.0));
 
         let text = save(&doc, &Metadata::default());
-        assert!(text.contains("\"version\": 36"));
+        assert!(text.contains("\"version\": 37"));
+        // A fill an edit divided keeps its mark.
+        assert!(text.contains(r#""divided":true"#), "{text}");
         // A mark points at its view.
         assert!(text.contains(r#""flip":true,"view":"w"#), "{text}");
         assert!(text.contains(r#""styles": ["#) && text.contains(r#""alt_units":"none""#));

@@ -245,16 +245,17 @@ impl SlotTool {
                 } => {
                     let d = (c2 - c1).normalize();
                     let n = d.perp();
-                    // Clicked points are reused (they may be existing points).
+                    // Clicked points are the slot's own (snapping to another shape's point
+                    // places them there without joining).
                     let (e1, e2, m) = match middle {
                         Some(_) => {
-                            let m = anchors[0].resolve(&mut ed.doc);
-                            let e2 = anchors[1].resolve(&mut ed.doc);
+                            let m = anchors[0].own(&mut ed.doc);
+                            let e2 = anchors[1].own(&mut ed.doc);
                             (ed.doc.add_point(c1), e2, Some(m))
                         }
                         None => (
-                            anchors[0].resolve(&mut ed.doc),
-                            anchors[1].resolve(&mut ed.doc),
+                            anchors[0].own(&mut ed.doc),
+                            anchors[1].own(&mut ed.doc),
                             None,
                         ),
                     };
@@ -268,6 +269,7 @@ impl SlotTool {
                     let end1 = ed.doc.add_arc(e1, p1, p4)?;
                     let axis = ed.doc.add_line(e1, e2)?;
                     ed.doc.set_style(axis, LineKind::Construction);
+                    ed.fill_new_shape(&[top, end2, bottom, end1]);
                     for (line, arc) in [(top, end1), (top, end2), (bottom, end1), (bottom, end2)] {
                         ed.relate(Constraint::Tangent { a: line, b: arc });
                     }
@@ -312,13 +314,13 @@ impl SlotTool {
                 } => {
                     let us = (s - center).normalize();
                     let ue = (e - center).normalize();
-                    let o = anchors[0].resolve(&mut ed.doc);
+                    let o = anchors[0].own(&mut ed.doc);
                     // The clicked start centre is one of the ends (which, depends on the
                     // direction it was drawn in).
                     let (cs, ce) = if anchors[1].pos == s {
-                        (anchors[1].resolve(&mut ed.doc), ed.doc.add_point(e))
+                        (anchors[1].own(&mut ed.doc), ed.doc.add_point(e))
                     } else {
-                        (ed.doc.add_point(s), anchors[1].resolve(&mut ed.doc))
+                        (ed.doc.add_point(s), anchors[1].own(&mut ed.doc))
                     };
                     let s_out = ed.doc.add_point(s + us * half);
                     let s_in = ed.doc.add_point(s - us * half);
@@ -328,6 +330,7 @@ impl SlotTool {
                     let inner = ed.doc.add_arc(o, s_in, e_in)?;
                     let cap_e = ed.doc.add_arc(ce, e_out, e_in)?;
                     let cap_s = ed.doc.add_arc(cs, s_in, s_out)?;
+                    ed.fill_new_shape(&[outer, cap_e, inner, cap_s]);
                     for (cap, arc) in [
                         (cap_e, outer),
                         (cap_e, inner),

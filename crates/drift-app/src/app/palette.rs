@@ -46,6 +46,7 @@ pub(crate) enum Command {
     Delete,
     Duplicate,
     Group,
+    Rename,
     Ungroup,
     MakeBlock,
     Explode,
@@ -58,6 +59,8 @@ pub(crate) enum Command {
     Preferences,
     DrawingSettings,
     About,
+    UserGuide,
+    ReportProblem,
     Theme(egui::ThemePreference),
 }
 
@@ -365,6 +368,12 @@ impl DriftApp {
         add(Command::Duplicate, "Duplicate", "Edit", "Shift+D".into());
         add(Command::Group, "Group", "Edit", ctrl("G"));
         add(Command::Ungroup, "Ungroup", "Edit", ctrl_shift("G"));
+        add(
+            Command::Rename,
+            "Rename block or group…",
+            "Edit",
+            "F2".into(),
+        );
         add(Command::MakeBlock, "Make block", "Edit", String::new());
         add(
             Command::Explode,
@@ -415,6 +424,13 @@ impl DriftApp {
             Command::DrawingSettings,
             "Drawing settings…",
             "File",
+            String::new(),
+        );
+        add(Command::UserGuide, "User guide", "Help", String::new());
+        add(
+            Command::ReportProblem,
+            "Report a problem or ask for a feature",
+            "Help",
             String::new(),
         );
         add(Command::About, "About Drift", "Help", String::new());
@@ -570,6 +586,7 @@ impl DriftApp {
             Command::Group => {
                 self.editor.make_group();
             }
+            Command::Rename => self.start_rename(),
             Command::Ungroup => {
                 self.editor.ungroup();
             }
@@ -592,6 +609,8 @@ impl DriftApp {
             Command::Preferences => self.show_settings = true,
             Command::DrawingSettings => self.show_drawing_settings = true,
             Command::About => self.show_about = true,
+            Command::UserGuide => ctx.open_url(egui::OpenUrl::new_tab(crate::links::GUIDE)),
+            Command::ReportProblem => ctx.open_url(egui::OpenUrl::new_tab(crate::links::REPORT)),
             Command::Theme(pref) => ctx.set_theme(pref),
         }
     }

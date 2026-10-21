@@ -133,6 +133,11 @@ impl DriftApp {
         }
         let plain = ctx.input(|i| i.modifiers.is_none());
         let pressed = |key| plain && ctx.input(|i| i.key_pressed(key));
+        // F2 renames the picked group or block, as in most editors.
+        if pressed(Key::F2) && !self.tool.is_busy() && !ctx.egui_wants_keyboard_input() {
+            self.start_rename();
+            return;
+        }
         // Tab selects a chain of connected curves (Revit-style). egui moves keyboard focus on
         // Tab, so take focus back from any button it landed on.
         if pressed(Key::Tab) && !self.tool.is_busy() {

@@ -49,10 +49,10 @@ impl DriftApp {
     /// Copy the selection to the clipboard (and remember it, for Edit → Paste).
     pub(crate) fn copy(&mut self, ctx: &egui::Context) {
         let now = ctx.input(|i| i.time);
-        match self.editor.copy_selection() {
-            Some(text) => {
-                ctx.copy_text(text.clone());
-                self.clipboard = Some(text);
+        match self.editor.copy_fragment() {
+            Some(fragment) => {
+                Self::to_system_clipboard(ctx, &fragment);
+                self.clipboard = Some(fragment);
                 self.set_status("Copied".into(), false, now);
             }
             None => self.set_status("Select something to copy first".into(), false, now),
@@ -61,15 +61,25 @@ impl DriftApp {
 
     pub(crate) fn cut(&mut self, ctx: &egui::Context) {
         let now = ctx.input(|i| i.time);
-        match self.editor.cut_selection() {
-            Some(text) => {
-                ctx.copy_text(text.clone());
-                self.clipboard = Some(text);
+        match self.editor.cut_fragment() {
+            Some(fragment) => {
+                Self::to_system_clipboard(ctx, &fragment);
+                self.clipboard = Some(fragment);
                 self.set_status("Cut".into(), false, now);
             }
             None => self.set_status("Select something to cut first".into(), false, now),
         }
     }
+
+    /// Put copied geometry on the system clipboard, as text another Drift window can paste.
+    /// The demo keeps copies to itself: nothing it copies can be pasted outside it.
+    #[cfg(not(feature = "demo"))]
+    fn to_system_clipboard(ctx: &egui::Context, fragment: &drift_core::Document) {
+        ctx.copy_text(drift_io::save(fragment, &drift_io::Metadata::default()));
+    }
+
+    #[cfg(feature = "demo")]
+    fn to_system_clipboard(_: &egui::Context, _: &drift_core::Document) {}
 
     /// Where a paste lands: under the pointer when it's over the canvas, else mid-view.
     fn paste_point(&self) -> DVec2 {
@@ -86,23 +96,15 @@ impl DriftApp {
         if self.tool.kind() != ToolKind::Select {
             self.set_tool(ToolKind::Select);
         }
-        let at = self.paste_point();
         if clipboard::is_fragment(text) {
-            match self.editor.paste(text, (!in_place).then_some(at)) {
-                Ok(n) => {
-                    self.set_status(format!("Pasted {n}"), false, now);
-                    // Straight into a move, to put the copy where it belongs (as after
-                    // duplicating); Esc leaves it where it landed.
-                    if !in_place && self.pointer.is_some() {
-                        self.tool
-                            .key(ToolKey::G, self.pointer.as_ref(), &mut self.editor);
-                    }
-                }
-                Err(e) => self.set_status(format!("Can't paste that: {e}"), true, now),
-            }
+            let result = self
+                .editor
+                .paste(text, (!in_place).then_some(self.paste_point()));
+            self.pasted(result, in_place, now);
             return;
         }
         // Plain text becomes sketch text: its first line, at the usual height.
+        let at = self.paste_point();
         let line: String = text
             .lines()
             .find(|l| !l.trim().is_empty())
@@ -125,10 +127,37 @@ impl DriftApp {
         self.set_status("Pasted as text".into(), false, now);
     }
 
+    /// Paste what was copied here.
+    fn paste_fragment(&mut self, fragment: &drift_core::Document, in_place: bool, now: f64) {
+        self.abort_operation();
+        if self.tool.kind() != ToolKind::Select {
+            self.set_tool(ToolKind::Select);
+        }
+        let at = (!in_place).then_some(self.paste_point());
+        let result = self.editor.paste_fragment(fragment, at);
+        self.pasted(result, in_place, now);
+    }
+
+    /// Say how a paste of geometry went.
+    fn pasted(&mut self, result: Result<usize, String>, in_place: bool, now: f64) {
+        match result {
+            Ok(n) => {
+                self.set_status(format!("Pasted {n}"), false, now);
+                // Straight into a move, to put the copy where it belongs (as after
+                // duplicating); Esc leaves it where it landed.
+                if !in_place && self.pointer.is_some() {
+                    self.tool
+                        .key(ToolKey::G, self.pointer.as_ref(), &mut self.editor);
+                }
+            }
+            Err(e) => self.set_status(format!("Can't paste that: {e}"), true, now),
+        }
+    }
+
     /// Edit → Paste: what was last copied here (menus can't read the system clipboard).
     pub(crate) fn paste_copied(&mut self, in_place: bool, now: f64) {
         match self.clipboard.clone() {
-            Some(text) => self.paste(&text, in_place, now),
+            Some(fragment) => self.paste_fragment(&fragment, in_place, now),
             None => self.set_status(
                 format!(
                     "Nothing copied yet ({} pastes from other windows)",
@@ -163,7 +192,17 @@ impl DriftApp {
             self.cut(ctx);
         }
         if let Some(text) = paste {
-            self.paste(&text, shift, now);
+            // The demo never puts its copies on the system clipboard, so Ctrl+V pastes the
+            // last one made here (and other text only when nothing was copied).
+            let copied = if cfg!(feature = "demo") {
+                self.clipboard.clone()
+            } else {
+                None
+            };
+            match copied {
+                Some(fragment) => self.paste_fragment(&fragment, shift, now),
+                None => self.paste(&text, shift, now),
+            }
         }
         // Arrows nudge the selection by a grid step (ten with Shift), with the select tool.
         if self.tool.kind() != ToolKind::Select || self.tool.is_busy() || self.sheet_preview {

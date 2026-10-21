@@ -642,6 +642,10 @@ impl DriftApp {
                 });
             });
             ui.menu_button("Help", |ui| {
+                ui.hyperlink_to("User guide", crate::links::GUIDE);
+                ui.hyperlink_to("Report a problem…", crate::links::REPORT)
+                    .on_hover_text("Bug reports and feature requests, on GitHub");
+                ui.separator();
                 if ui.button("Keyboard shortcuts").clicked() {
                     self.show_shortcuts = true;
                 }
@@ -661,7 +665,7 @@ impl DriftApp {
                 ui.label(
                     egui::RichText::new(format!(
                         "Drift {} · {}{memory}",
-                        env!("CARGO_PKG_VERSION"),
+                        drift_platform::VERSION,
                         self.backend
                     ))
                     .small()
@@ -1536,7 +1540,7 @@ impl DriftApp {
                         )
                         .on_hover_text("Zoom: click for fit, selection and fixed sizes");
                     egui::Popup::menu(&button).show(|ui| self.zoom_menu(ui));
-                    #[cfg(not(target_arch = "wasm32"))]
+                    #[cfg(all(not(target_arch = "wasm32"), not(feature = "demo")))]
                     self.link_pill(ui);
                     if !self.editor.doc.is_empty() {
                         let analysis = self.editor.analysis();

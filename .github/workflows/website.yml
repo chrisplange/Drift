@@ -43,7 +43,8 @@ jobs:
           # A release event points at its tag; the site is always built from main.
           ref: ${{ github.event_name == 'release' && 'main' || '' }}
 
-      # The web app, served at /app/.
+      # The web app, served at /app/: the demo, which can't save, export or print (the code
+      # isn't built in), with the download page as SITE_URL/download/.
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
@@ -54,8 +55,12 @@ jobs:
       - name: Build the web app
         working-directory: apps/web
         run: >
-          trunk build --release --cargo-profile web-release
+          trunk build --release --cargo-profile web-release --features demo
           --public-url /app/ --dist ../../website/public/app
+        env:
+          DRIFT_SITE_URL: ${{ vars.SITE_URL }}
+      - name: Check the web app is the demo
+        run: scripts/check-demo-build.sh website/public/app
 
       # The site.
       - uses: actions/setup-node@v4

@@ -23,7 +23,7 @@ impl CircleTool {
             return;
         }
         ed.doc.begin();
-        let c = center.resolve(&mut ed.doc);
+        let c = center.own(&mut ed.doc);
         match ed.doc.add_circle(c, radius) {
             Ok(circle) => {
                 if dimension {
@@ -35,6 +35,7 @@ impl CircleTool {
                         },
                     );
                 }
+                ed.fill_new_shape(&[circle]);
                 ed.commit("Circle");
             }
             Err(_) => {

@@ -86,9 +86,12 @@ As you draw, the pointer snaps to what's near it, and a marker shows what it fou
 - **The origin.**
 - **The grid**, if **Snap to grid** is on (Shift+G, or the status bar).
 
-Snapping onto an existing point connects to it: the two curves share that point. Snapping
-onto a curve or a midpoint keeps the new point there with an **On curve** or **Midpoint**
-relation (when **Auto relations** is on).
+Snapping onto an existing point with the **Line** or an arc tool connects to it: the two
+curves share that point. Snapping onto a curve or a midpoint keeps the new point there with
+an **On curve** or **Midpoint** relation (when **Auto relations** is on). A closed shape
+(rectangle, polygon, circle, ellipse, slot) or a pen path is different: snapping places it
+exactly there, but its points stay its own, so moving it later leaves the other shape alone.
+To join shapes, add a **Coincident** relation, or trim them into each other.
 
 **Inference lines** help you line things up. Hover over an existing point for a moment, then
 move away: a dashed guide appears when the pointer is level with it or straight above or

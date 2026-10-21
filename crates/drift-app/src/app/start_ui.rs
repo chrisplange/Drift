@@ -33,7 +33,7 @@ fn system_name() -> String {
 }
 
 /// The version shown to users, e.g. "0.1.0-alpha.1".
-pub(crate) const VERSION: &str = env!("CARGO_PKG_VERSION");
+pub(crate) const VERSION: &str = drift_platform::VERSION;
 
 /// The licences and copyright notices of the fonts and crates built into Drift, made by
 /// scripts/notices.py. They also ship as a file beside the program.
@@ -326,12 +326,17 @@ impl DriftApp {
                         );
                         ui.label(format!("Version {VERSION}"));
                         ui.label(egui::RichText::new("Parametric 2D sketching").weak());
+                        ui.label(
+                            egui::RichText::new("© 2026 Christopher Lange. All rights reserved.")
+                                .small()
+                                .weak(),
+                        );
                     });
                 });
                 ui.add_space(8.0);
                 ui.label(
                     egui::RichText::new(
-                        "This is an alpha: save often, and expect rough edges. Your sketch is \
+                        "This is a beta: save often, and expect rough edges. Your sketch is \
                          also kept between sessions automatically.",
                     )
                     .small()
@@ -361,7 +366,10 @@ impl DriftApp {
                     {
                         self.show_licences = true;
                     }
-                    ui.hyperlink_to("Project page", env!("CARGO_PKG_REPOSITORY"));
+                    ui.hyperlink_to("Website", crate::links::WEBSITE);
+                    ui.hyperlink_to("User guide", crate::links::GUIDE);
+                    ui.hyperlink_to("Licence", crate::links::LICENCE)
+                        .on_hover_text("Drift's end-user licence agreement");
                 });
             });
         if close {
@@ -544,7 +552,7 @@ impl DriftApp {
                 self.show_start = true;
             }
         });
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(all(not(target_arch = "wasm32"), not(feature = "demo")))]
         self.link_prefs(ui);
         theme::section(ui, "Memory");
         let gb = |b: u64| b as f64 / (1024.0 * 1024.0 * 1024.0);
@@ -610,6 +618,24 @@ impl DriftApp {
              outline picks nothing (box selection starts there). Off: it picks the area, to \
              measure it",
         );
+        ui.label("When an edit divides a filled area");
+        let options = [(false, "Keep whole and flag"), (true, "Follow its seed")];
+        if let Some(follow) = theme::segmented(ui, self.editor.follow_divided_fills, &options) {
+            self.editor.follow_divided_fills = follow;
+        }
+        ui.label(
+            egui::RichText::new(if self.editor.follow_divided_fills {
+                "When its outline is cut, the fill or hatch takes the area its seed is in \
+                 (where it was first clicked); the rest is left empty, and a notice says so. A \
+                 curve drawn across it leaves it whole."
+            } else {
+                "The fill or hatch keeps covering the whole area and is marked \"Covers 2 \
+                 areas\". Pick it to fit it to one area, split it into one per area, or keep it \
+                 whole."
+            })
+            .small()
+            .weak(),
+        );
     }
 
     fn mouse_prefs(&mut self, ui: &mut egui::Ui) {
@@ -649,6 +675,15 @@ impl DriftApp {
         ui.checkbox(
             &mut self.thin_lines,
             "Thin lines (every line one pixel wide)",
+        );
+        ui.checkbox(
+            &mut self.editor.stacked_fills,
+            "Fills cover what is beneath them",
+        )
+        .on_hover_text(
+            "On: each solid fill or hatch is drawn over everything below it, with its outline \
+             on top, as a drawing program stacks shapes. Off: every fill is drawn under every \
+             curve",
         );
         ui.checkbox(&mut self.always_endpoints, "Always show end points")
             .on_hover_text("Off: only on hovered or picked curves");

@@ -56,6 +56,8 @@ impl Press {
 #[derive(Default)]
 pub struct PenTool {
     pub(super) path: Vec<PathPoint>,
+    /// The path's segments so far (to fill it when it closes).
+    pub(super) curves: Vec<EntityId>,
     pub(super) press: Option<Press>,
     pub(super) pointer: Option<Pointer>,
 }
@@ -106,8 +108,10 @@ impl PenTool {
             return None;
         }
         ed.doc.begin();
-        let a = last.id.unwrap_or_else(|| last.at.resolve(&mut ed.doc));
-        let b = to_id.unwrap_or_else(|| to.resolve(&mut ed.doc));
+        // The path's points are its own: one placed on another shape's point isn't joined
+        // to it.
+        let a = last.id.unwrap_or_else(|| last.at.own(&mut ed.doc));
+        let b = to_id.unwrap_or_else(|| to.own(&mut ed.doc));
         let (made, c1, c2) = match segment_handles(last.at.pos, last.out, to.pos, inn) {
             None => (ed.doc.add_line(a, b), None, None),
             Some((h1, h2)) => {
@@ -116,11 +120,11 @@ impl PenTool {
                 (ed.doc.add_bezier(a, c1, c2, b), Some(c1), Some(c2))
             }
         };
-        if made.is_err() {
+        let Ok(curve) = made else {
             ed.doc.rollback();
             ed.sync();
             return None;
-        }
+        };
         // The point it leaves is smooth: its handles stay in line.
         if last.smooth
             && let (Some(h_in), Some(h_out)) = (last.in_handle, c1)
@@ -137,6 +141,7 @@ impl PenTool {
         let n = self.path.len();
         self.path[n - 1].id = Some(a);
         self.path[n - 1].out_handle = c1;
+        self.curves.push(curve);
         Some((b, c2))
     }
 
@@ -152,6 +157,7 @@ impl PenTool {
         closing: bool,
     ) {
         if self.path.is_empty() {
+            self.curves.clear();
             self.path.push(PathPoint {
                 at,
                 id: None,
@@ -171,17 +177,27 @@ impl PenTool {
                     .then_some(first.in_pos)
                     .flatten()
             });
-            if let Some((_, c2)) = self.segment(ed, first.at, first.id, inn)
-                && (first.smooth || smooth)
-                && let (Some(h_in), Some(h_out), Some(id)) = (c2, first.out_handle, first.id)
-            {
+            if let Some((_, c2)) = self.segment(ed, first.at, first.id, inn) {
+                // Closing smoothly, and filling the closed path, are one more step.
                 ed.doc.begin();
-                let _ = ed.doc.add_constraint(Constraint::Smooth {
-                    point: id,
-                    a: h_in,
-                    b: h_out,
-                });
-                ed.commit("Close path");
+                let mut changed = false;
+                if (first.smooth || smooth)
+                    && let (Some(h_in), Some(h_out), Some(id)) = (c2, first.out_handle, first.id)
+                {
+                    let _ = ed.doc.add_constraint(Constraint::Smooth {
+                        point: id,
+                        a: h_in,
+                        b: h_out,
+                    });
+                    changed = true;
+                }
+                changed |= ed.fill_new_shape(&self.curves).is_some();
+                if changed {
+                    ed.commit("Close path");
+                } else {
+                    ed.doc.rollback();
+                    ed.sync();
+                }
             }
             self.reset();
             return;

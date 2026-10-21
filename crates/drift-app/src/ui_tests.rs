@@ -3087,6 +3087,74 @@ fn a_sheet_prints_in_greyscale_or_black_and_white() {
     );
 }
 
+/// A picked 400 square made into the block "Table": the app, with its one copy picked.
+fn table_block(h: &mut Harness<'static, DriftApp>) -> drift_core::BlockId {
+    let ed = &mut h.state_mut().editor;
+    ed.doc.begin();
+    let p = [(0.0, 0.0), (400.0, 0.0), (400.0, 400.0), (0.0, 400.0)]
+        .map(|(x, y)| ed.doc.add_point(DVec2::new(x, y)));
+    let lines: Vec<drift_core::EntityId> = (0..4)
+        .map(|i| ed.doc.add_line(p[i], p[(i + 1) % 4]).unwrap())
+        .collect();
+    ed.commit("Square");
+    ed.selection = lines.into_iter().collect();
+    let copy = ed.make_block("Table").unwrap();
+    ed.selection.clear();
+    ed.selected_instances = [copy].into();
+    let block = ed.doc.instance(copy).unwrap().block;
+    h.run();
+    block
+}
+
+#[test]
+fn f2_renames_the_picked_blocks_copies() {
+    let Some(mut h) = harness() else { return };
+    let block = table_block(&mut h);
+    h.key_press(Key::F2);
+    h.run();
+    // The dialog opens on the old name, selected: typing replaces it.
+    assert!(h.query_by_label("Rename block").is_some(), "the dialog");
+    h.get_by_role(egui::accesskit::Role::TextInput)
+        .type_text("Desk");
+    h.run();
+    save_png("drift_ui_rename_block.png", &mut h);
+    // Letters typed into the dialog don't start tools.
+    assert_eq!(h.state().tool.kind(), ToolKind::Select);
+    h.key_press(Key::Enter);
+    h.run();
+    h.run();
+    assert_eq!(h.state().editor.doc.block(block).unwrap().name, "Desk");
+    assert!(h.query_by_label("Rename block").is_none(), "closed");
+}
+
+#[test]
+fn a_blocks_menu_stays_open_while_its_name_is_typed() {
+    let Some(mut h) = harness() else { return };
+    let block = table_block(&mut h);
+    // Nothing picked, so the only name field is the menu's.
+    h.state_mut().editor.selected_instances.clear();
+    h.state_mut().show_panel(Panel::Blocks);
+    h.run();
+    // Right-click the block's row, then click into the menu's Name field (#130).
+    h.get_by_label("Table").click_secondary();
+    h.run();
+    let field = |n: &egui_kittest::kittest::AccessKitNode<'_>| {
+        n.role() == egui::accesskit::Role::TextInput && n.value().as_deref() == Some("Table")
+    };
+    h.get_by(field).click();
+    h.run();
+    assert!(
+        h.query_by_label("Delete block and copies").is_some(),
+        "the menu stays open"
+    );
+    h.get_by(field).type_text(" 2");
+    h.run();
+    h.key_press(Key::Enter);
+    h.run();
+    h.run();
+    assert_eq!(h.state().editor.doc.block(block).unwrap().name, "Table 2");
+}
+
 #[test]
 fn a_blocks_base_point_is_picked_when_made_and_set_later() {
     let Some(mut h) = harness() else { return };
@@ -4265,6 +4333,7 @@ fn copy_paste_and_nudge_on_the_canvas() {
     h.event(Event::Copy);
     h.run();
     let copied = h.state().clipboard.clone().expect("copied");
+    let copied = drift_io::save(&copied, &Default::default());
     let at = DVec2::new(70.0, 45.0);
     h.hover_at(screen(&h, at));
     h.run();

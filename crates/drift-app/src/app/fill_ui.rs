@@ -239,6 +239,43 @@ impl DriftApp {
                     self.set_tool(ToolKind::Fill);
                 }
             }
+            if let Some(parts) = shape.filter(|_| fill.divided).map(|s| s.parts) {
+                ui.add_space(4.0);
+                ui.label(
+                    egui::RichText::new(format!(
+                        "Covers {parts} areas: an edit divided its area, and it was kept whole."
+                    ))
+                    .color(theme::warning_color(ui.visuals().dark_mode))
+                    .small(),
+                );
+                ui.horizontal_wrapped(|ui| {
+                    let result = if ui
+                        .button("Fit to its seed's area")
+                        .on_hover_text("Cover only the area where it was first clicked")
+                        .clicked()
+                    {
+                        Some(self.editor.fit_fill_to_seed(first))
+                    } else if ui
+                        .button(format!("Split into {parts}"))
+                        .on_hover_text("One fill per area, each in this style")
+                        .clicked()
+                    {
+                        Some(self.editor.split_fill(first).map(|_| ()))
+                    } else {
+                        if ui
+                            .button("Keep whole")
+                            .on_hover_text("Clear the mark and keep covering every area")
+                            .clicked()
+                        {
+                            self.editor.keep_fill_whole(first);
+                        }
+                        None
+                    };
+                    if let Some(Err(e)) = result {
+                        self.editor.notice = Some(e);
+                    }
+                });
+            }
             theme::section(ui, "Style");
             let mut style = FillStyle::of(&fill);
             if fills.len() == 1 && matches!(fill.kind, FillKind::Hatch(_)) {
@@ -382,6 +419,25 @@ impl DriftApp {
 
     /// The Fill tool's bar: solid or hatch, the colour or pattern, and the eyedropper.
     pub(crate) fn fill_tool_bar(&mut self, ui: &mut egui::Ui) {
+        self.fill_style_bar(ui);
+        self.eyedropper_button(ui);
+    }
+
+    /// The drawing tools' Fill control: whether closed shapes come out filled as they are
+    /// drawn, and in what style (the Fill tool's).
+    pub(crate) fn new_shape_fill_bar(&mut self, ui: &mut egui::Ui) {
+        ui.checkbox(&mut self.editor.fill_new_shapes, "Fill")
+            .on_hover_text(
+                "Closed shapes are filled or hatched as they are drawn, in this style (the \
+                 Fill tool's); the fill is part of the shape's undo step",
+            );
+        if self.editor.fill_new_shapes {
+            self.fill_style_bar(ui);
+        }
+    }
+
+    /// Solid or hatch, and the colour or pattern, of the current fill style.
+    fn fill_style_bar(&mut self, ui: &mut egui::Ui) {
         let dark = ui.visuals().dark_mode;
         self.hatch_patterns
             .update(self.editor.doc.custom_patterns());
@@ -414,7 +470,6 @@ impl DriftApp {
         if style != self.editor.fill_style {
             self.editor.fill_style = style;
         }
-        self.eyedropper_button(ui);
     }
 
     /// Buttons under a selected region's measurements: fill or hatch it.

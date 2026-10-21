@@ -157,7 +157,7 @@ impl DriftApp {
             Msg::Checked(Ok(None)) => {
                 u.phase = Phase::Idle;
                 if manual {
-                    let text = format!("Drift {} is the newest version", env!("CARGO_PKG_VERSION"));
+                    let text = format!("Drift {} is the newest version", drift_platform::VERSION);
                     self.set_status(text, false, now);
                 }
             }
@@ -327,7 +327,7 @@ impl DriftApp {
                     _ => {
                         ui.heading(format!("Drift {} is available", release.version));
                         ui.label(
-                            egui::RichText::new(format!("You have {}.", env!("CARGO_PKG_VERSION")))
+                            egui::RichText::new(format!("You have {}.", drift_platform::VERSION))
                                 .weak(),
                         );
                         if !release.notes.trim().is_empty() {
@@ -459,7 +459,7 @@ impl DriftApp {
                     format!("Drift {} is available", r.version)
                 }
                 (Phase::Ready(_), Some(r)) => format!("Drift {} is ready to install", r.version),
-                _ => format!("This is Drift {}", env!("CARGO_PKG_VERSION")),
+                _ => format!("This is Drift {}", drift_platform::VERSION),
             };
             ui.label(egui::RichText::new(note).weak());
         });

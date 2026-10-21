@@ -238,6 +238,7 @@ impl Session {
     /// or, if it fails, undone and forgotten. The result gains the sketch's status.
     fn step(&mut self, label: &str, f: impl FnOnce(&mut Self) -> Res) -> Res {
         let before = self.editor.history.recorded();
+        self.editor.fill_changes.clear();
         let result = f(self);
         if self.editor.doc.in_transaction() {
             self.editor.doc.rollback();
@@ -247,7 +248,11 @@ impl Session {
             Ok(mut v) => {
                 self.editor.history.squash_last(n, label);
                 self.editor.sync();
+                let fills = self.fill_changes();
                 if let Some(o) = v.as_object_mut() {
+                    if !fills.is_empty() {
+                        o.insert("fills".into(), Value::Array(fills));
+                    }
                     o.insert("sketch".into(), self.status());
                 }
                 Ok(v)
@@ -256,10 +261,44 @@ impl Session {
                 let ed = &mut self.editor;
                 ed.history.discard_last(n, &mut ed.doc);
                 ed.notice = None;
+                ed.fill_changes.clear();
                 ed.sync();
                 Err(format!("{e} (nothing was changed)"))
             }
         }
+    }
+
+    /// What the step's edits did to fills beyond following their outlines (taken).
+    fn fill_changes(&mut self) -> Vec<Value> {
+        use crate::fills::FillChange;
+        std::mem::take(&mut self.editor.fill_changes)
+            .into_iter()
+            .map(|c| match c {
+                FillChange::Divided { id, parts } => json!({
+                    "id": id.to_string(),
+                    "change": "divided",
+                    "areas": parts,
+                    "note": "an edit divided its area; it was kept whole and flagged",
+                }),
+                FillChange::Refound { id, before, after } => json!({
+                    "id": id.to_string(),
+                    "change": "refound",
+                    "area_before_mm2": before.map(args::num),
+                    "area_mm2": args::num(after),
+                    "note": "it now fills the area around its seed",
+                }),
+                FillChange::Dropped { id } => json!({
+                    "id": id.to_string(),
+                    "change": "removed",
+                    "note": "curves of its outline were deleted and no area is left around it",
+                }),
+                FillChange::Merged { id, into } => json!({
+                    "id": id.to_string(),
+                    "change": "removed",
+                    "note": format!("it came to cover the same area as {into}, which kept it"),
+                }),
+            })
+            .collect()
     }
 
     /// Several tools in order, as one undo step.

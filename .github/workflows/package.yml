@@ -1,7 +1,8 @@
 name: Package
 
 # Builds the downloads: the Windows installer and zip, the universal macOS disk image, and
-# the Drift profiles add-on for Blender.
+# the Drift profiles add-on for Blender. The Windows and macOS downloads hold drift-mcp too,
+# the MCP server for AI assistants (the scripts build it).
 # Run it by hand from the Actions tab, or push a tag like v0.1.0-beta.1.5.
 #
 # Releases are published from the public releases repository, not this one: it holds the
@@ -30,7 +31,7 @@ jobs:
         run: choco install innosetup --no-progress -y
       - name: Package
         shell: pwsh
-        run: scripts\package-windows.ps1
+        run: scripts\package-windows.ps1 -Release
       - uses: actions/upload-artifact@v4
         with:
           name: drift-windows
@@ -88,6 +89,14 @@ jobs:
           version=$(awk '/^\[workspace\.package\]/{p=1} p && /^version/{gsub(/[" ]/,"",$0); sub(/version=/,""); print; exit}' Cargo.toml)
           if [ "v$version" != "$GITHUB_REF_NAME" ]; then
             echo "tag $GITHUB_REF_NAME does not match Cargo.toml's version $version" >&2
+            exit 1
+          fi
+      # The installer shows LICENSE.md for the user to accept: never ship one still marked as
+      # a draft for legal review.
+      - name: Check the licence agreement is final
+        run: |
+          if grep -qw DRAFT LICENSE.md; then
+            echo "LICENSE.md is still marked DRAFT: finish its legal review before releasing" >&2
             exit 1
           fi
       - uses: actions/download-artifact@v4

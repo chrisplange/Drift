@@ -6,11 +6,13 @@ use drift_core::{
     PaperSize, PlacedView, Revision, Sheet, SheetColours, SheetId, TitleBlock, ViewFrame, ViewId,
     Viewport,
 };
+#[cfg(not(feature = "demo"))]
 use drift_draft::page::Drawing;
 use drift_platform::FileType;
 
 use crate::*;
 
+#[cfg(not(feature = "demo"))]
 pub(crate) const PDF_FILE: FileType = FileType {
     name: "PDF",
     extensions: &["pdf"],
@@ -19,10 +21,12 @@ pub(crate) const SVG_FILE: FileType = FileType {
     name: "SVG",
     extensions: &["svg"],
 };
+#[cfg(not(feature = "demo"))]
 pub(crate) const DXF_FILE: FileType = FileType {
     name: "DXF",
     extensions: &["dxf"],
 };
+#[cfg(not(feature = "demo"))]
 pub(crate) const PROFILES_FILE: FileType = FileType {
     name: "Drift profiles for Blender",
     extensions: &["json"],
@@ -209,6 +213,7 @@ fn next_revision(rev: Option<&str>) -> String {
 }
 
 /// What the output dialog makes.
+#[cfg(not(feature = "demo"))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Output {
     Pdf,
@@ -312,6 +317,7 @@ impl DriftApp {
     }
 
     /// Every sheet as a page (or, with no sheets, a fitted A3 sheet).
+    #[cfg(not(feature = "demo"))]
     pub(crate) fn pages(&mut self, painter: &egui::Painter) -> Vec<Drawing> {
         let doc = &self.editor.doc;
         let mut sheets: Vec<(Sheet, Vec<PlacedView>)> = doc
@@ -344,6 +350,7 @@ impl DriftApp {
             .collect()
     }
 
+    #[cfg(not(feature = "demo"))]
     /// The sheets chosen for the PDF and print, as a PDF. Each keeps its number in the whole
     /// set ("2 / 5"), so a reissued sheet matches the set it belongs to.
     pub(crate) fn pdf_bytes(&mut self, painter: &egui::Painter) -> Vec<u8> {
@@ -361,6 +368,7 @@ impl DriftApp {
         drift_io::pdf::write(&pages, &self.file_stem())
     }
 
+    #[cfg(not(feature = "demo"))]
     /// Export a PDF: with several sheets, first a dialog to choose which.
     pub(crate) fn export_pdf(&mut self, painter: &egui::Painter) {
         if self.editor.doc.sheets().nth(1).is_some() {
@@ -370,12 +378,14 @@ impl DriftApp {
         }
     }
 
+    #[cfg(not(feature = "demo"))]
     fn write_pdf(&mut self, painter: &egui::Painter) {
         let bytes = self.pdf_bytes(painter);
         let name = format!("{}.pdf", self.file_stem());
         self.files.export(&name, PDF_FILE, bytes);
     }
 
+    #[cfg(not(feature = "demo"))]
     /// The current sheet as SVG.
     pub(crate) fn svg_text(&mut self, painter: &egui::Painter) -> String {
         let pages = self.pages(painter);
@@ -386,6 +396,7 @@ impl DriftApp {
         drift_io::svg::write(&pages[index.min(pages.len() - 1)])
     }
 
+    #[cfg(not(feature = "demo"))]
     pub(crate) fn export_svg(&mut self, painter: &egui::Painter) {
         let text = self.svg_text(painter);
         let name = format!("{}.svg", self.file_stem());
@@ -394,6 +405,7 @@ impl DriftApp {
 
     /// The model at true size on a page fitted to it: the selection, or (with nothing picked)
     /// everything that prints. `None` when there is nothing to draw.
+    #[cfg(not(feature = "demo"))]
     pub(crate) fn model_page(&mut self, painter: &egui::Painter) -> Option<Drawing> {
         self.hatch_patterns
             .update(self.editor.doc.custom_patterns());
@@ -408,6 +420,7 @@ impl DriftApp {
         (!d.items.is_empty()).then_some(d)
     }
 
+    #[cfg(not(feature = "demo"))]
     /// Export the model (or the selection) at 1 : 1 as SVG or PDF.
     pub(crate) fn export_model(&mut self, painter: &egui::Painter, pdf: bool) {
         let Some(d) = self.model_page(painter) else {
@@ -425,6 +438,7 @@ impl DriftApp {
         }
     }
 
+    #[cfg(not(feature = "demo"))]
     pub(crate) fn dxf_text(&mut self, painter: &egui::Painter) -> String {
         self.hatch_patterns
             .update(self.editor.doc.custom_patterns());
@@ -432,12 +446,14 @@ impl DriftApp {
         drift_io::dxf::write(&d, drift_io::dxf::DxfUnits::of(&self.editor.doc.units()))
     }
 
+    #[cfg(not(feature = "demo"))]
     pub(crate) fn export_dxf(&mut self, painter: &egui::Painter) {
         let text = self.dxf_text(painter);
         let name = format!("{}.dxf", self.file_stem());
         self.files.export(&name, DXF_FILE, text.into_bytes());
     }
 
+    #[cfg(not(feature = "demo"))]
     /// Print: with several sheets, first a dialog to choose which.
     pub(crate) fn print(&mut self, painter: &egui::Painter) {
         if self.editor.doc.sheets().nth(1).is_some() {
@@ -447,6 +463,7 @@ impl DriftApp {
         }
     }
 
+    #[cfg(not(feature = "demo"))]
     /// Choose the sheets for a PDF or print, then make it.
     pub(crate) fn output_window(&mut self, ctx: &egui::Context) {
         let Some(kind) = self.output_dialog else {
@@ -547,12 +564,43 @@ impl DriftApp {
         }
     }
 
+    #[cfg(not(feature = "demo"))]
     /// Open the chosen sheets as a PDF in the system viewer (a browser tab on the web) to
     /// print.
     fn open_to_print(&mut self, painter: &egui::Painter) {
         let bytes = self.pdf_bytes(painter);
         let name = format!("{}.pdf", self.file_stem());
         self.files.open_externally(&name, &bytes);
+    }
+
+    // The demo's stand-ins: a note where the desktop app writes a file.
+    #[cfg(feature = "demo")]
+    pub(crate) fn export_pdf(&mut self, _: &egui::Painter) {
+        self.not_in_demo("Exporting a PDF");
+    }
+
+    #[cfg(feature = "demo")]
+    pub(crate) fn export_svg(&mut self, _: &egui::Painter) {
+        self.not_in_demo("Exporting an SVG");
+    }
+
+    #[cfg(feature = "demo")]
+    pub(crate) fn export_dxf(&mut self, _: &egui::Painter) {
+        self.not_in_demo("Exporting a DXF");
+    }
+
+    #[cfg(feature = "demo")]
+    pub(crate) fn export_model(&mut self, _: &egui::Painter, pdf: bool) {
+        self.not_in_demo(if pdf {
+            "Exporting a PDF"
+        } else {
+            "Exporting an SVG"
+        });
+    }
+
+    #[cfg(feature = "demo")]
+    pub(crate) fn print(&mut self, _: &egui::Painter) {
+        self.not_in_demo("Printing");
     }
 
     /// Add a DXF file to the document, as one undo step: its curves, text, hatches, blocks

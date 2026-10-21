@@ -14,7 +14,7 @@ fn main() {
             .set("CompanyName", "Drift")
             .set(
                 "LegalCopyright",
-                "Copyright 2026 Christopher Lange. FSL-1.1-ALv2.",
+                "Copyright 2026 Christopher Lange. All rights reserved.",
             )
             .set("OriginalFilename", "drift.exe");
         // Without the Windows SDK's resource compiler the app still builds, just without

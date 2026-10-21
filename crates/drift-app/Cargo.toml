@@ -40,6 +40,10 @@ ureq = { version = "3.4", default-features = false, features = ["rustls-no-provi
 default = ["dwg"]
 # Reading DWG drawings (File > Import, Import underlay).
 dwg = ["drift-io/dwg"]
+# The browser demo: everything but saving, exporting and printing, whose code (and the file
+# writers in drift-io and drift-platform) is left out of the build. The menu items stay and
+# say where to download Drift. Copies stay inside the app, and the session isn't kept.
+demo = ["drift-io/demo", "drift-platform/demo"]
 
 [lints]
 workspace = true

@@ -29,6 +29,7 @@ const groupLabels: Record<string, string> = {
   "": "Start here",
   tutorials: "Tutorials",
   reference: "Reference",
+  ai: "Drawing with AI",
 };
 
 /**

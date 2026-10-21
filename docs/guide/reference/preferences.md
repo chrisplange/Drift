@@ -43,6 +43,7 @@ The light or dark theme, or follow the system. (Also **View → Appearance**.)
 |---|---|
 | **Find closed areas on each layer separately** | An area is closed only by curves on one layer, so furniture or notes on other layers don't cut it up. An outline must then be all on one layer. |
 | **Pick an area only where it is filled or hatched** | On (the default): clicking inside an empty outline picks nothing, so a box selection can start there. Off: it picks the area, to measure it. |
+| **When an edit divides a filled area** | What happens when an edit cuts a filled area's outline so that it bounds several areas (a side split where a line crosses it, a fillet that makes a junction). **Keep whole and flag** (the default): the fill or hatch keeps covering the whole area and is marked *Covers 2 areas*; pick it to fit it to one area, split it into one per area, or keep it whole. **Follow its seed**: it takes the area where it was first clicked, and a notice says so. A curve merely drawn across a fill never changes it: the fill keeps its whole area, marked *Covers 2 areas*, whichever is chosen. |
 
 ## Crosshair
 
@@ -67,6 +68,7 @@ zooms). The middle or right mouse button drags the view either way.
 |---|---|
 | **Colour curves by constraint status** | Blue, white or black, and red by how well defined. Off: each curve's own or its layer's colour. Also Shift+C. |
 | **Thin lines (every line one pixel wide)** | For editing dense drawings. It never changes the drawing or its output. Also W. |
+| **Fills cover what is beneath them** | On (the default): each solid fill or hatch is drawn over everything below it, with its outline on top, as a drawing program stacks shapes; fills higher in the draw order (**Bring to front**, higher layers) cover lower ones and their outlines. Off: every fill is drawn under every curve. |
 | **Always show end points** | Off: end points show only on hovered or picked curves. Also the **End points** switch in the status bar (Shift+Alt+V). |
 | **Show dimensions and notes** | Also Alt+D. |
 | **Show relations** | The relation symbols. Also Alt+R. |
@@ -82,7 +84,11 @@ zooms). The middle or right mouse button drags the view either way.
 **Let AI assistants edit the open drawing** turns on the live link (desktop only). Claude,
 or another assistant connected through `drift-mcp`, then works on the drawing in this
 window, and you see each change as it is made. It is off until you turn it on. See
-[Drawing with AI assistants](../../ai.md).
+[Drawing with AI assistants](../ai/assistants.md).
+
+**Server** shows where the installed `drift-mcp` is. **Copy Claude Desktop config** copies
+the entry to paste into Claude Desktop's `claude_desktop_config.json`, with `--root` set to
+your Documents folder.
 
 ## Memory
 

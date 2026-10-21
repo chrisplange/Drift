@@ -715,18 +715,24 @@ impl DriftApp {
                 max: a.max(b),
             }
         };
+        let dark = ui.visuals().dark_mode;
         let fills = crate::fills::fill_graphics(
             &mut self.editor,
             &mut self.fill_meshes,
             &self.hatch_patterns,
             view,
             self.camera.scale,
-            ui.visuals().dark_mode,
+            dark,
         );
-        // Geometry (GPU): underlays and hatch lines under everything else.
-        let mut under = self.editor.underlay_items(view, ui.visuals().dark_mode);
+        // Geometry (GPU): underlays under everything else.
+        let mut under = self.editor.underlay_items(view, dark);
         let images = self.editor.underlay_images();
-        under.extend(fills.lines);
+        let stacked = self.editor.stacked_fills;
+        // Fills under every curve: their hatch lines go under the sketch too.
+        let meshes = if stacked { Vec::new() } else { fills.meshes() };
+        if !stacked {
+            under.extend(fills.lines());
+        }
         let mut items = Vec::new();
         if self.show_dimensions {
             items.extend(crate::notes::centre_items(
@@ -736,10 +742,59 @@ impl DriftApp {
                 &|id| self.on_canvas(drift_core::AnnotationRef::Annotation(id)),
             ));
         }
-        items.extend(
-            self.editor
-                .items_styled(self.status_colors, ui.visuals().dark_mode),
-        );
+        // Stacked: each fill and the curves of its outline are one draw group, drawn over
+        // every group before it (by layer, then the fills' order). Curves outlining no fill
+        // go at the top of their layer; a curve outlining several fills goes with the
+        // topmost. Lit-up curves, text, handles and previews go over everything.
+        let mut groups: Vec<(Vec<drift_render::FillMesh>, Vec<drift_core::SketchItem>)> =
+            Vec::new();
+        if stacked {
+            let shapes = self.editor.fill_shapes();
+            let mut curve_group: std::collections::HashMap<drift_core::EntityId, usize> =
+                std::collections::HashMap::new();
+            let mut loose: std::collections::HashMap<drift_core::LayerId, usize> =
+                std::collections::HashMap::new();
+            let mut fill_groups: Vec<Option<crate::fills::FillGroup>> =
+                fills.groups.into_iter().map(Some).collect();
+            let layers: Vec<drift_core::LayerId> =
+                self.editor.doc.layers().map(|(id, _)| id).collect();
+            for layer in layers {
+                for slot in &mut fill_groups {
+                    if let Some(g) = slot.take_if(|g| g.layer == layer) {
+                        if let Some(fid) = g.fill
+                            && let Some(shape) = shapes.get(&fid)
+                        {
+                            for c in &shape.curves {
+                                curve_group.insert(*c, groups.len());
+                            }
+                        }
+                        groups.push((g.meshes, g.lines));
+                    }
+                }
+                loose.insert(layer, groups.len());
+                groups.push((Vec::new(), Vec::new()));
+            }
+            // (Fills on a layer that no longer exists, if any, go on top.)
+            for g in fill_groups.into_iter().flatten() {
+                groups.push((g.meshes, g.lines));
+            }
+            for t in self.editor.items_tagged(self.status_colors, dark) {
+                let at = (t.item.emphasis == drift_core::Emphasis::Normal)
+                    .then(|| {
+                        t.entity
+                            .and_then(|e| curve_group.get(&e))
+                            .or_else(|| loose.get(&t.layer))
+                            .copied()
+                    })
+                    .flatten();
+                match at {
+                    Some(k) => groups[k].1.push(t.item),
+                    None => items.push(t.item),
+                }
+            }
+        } else {
+            items.extend(self.editor.items_styled(self.status_colors, dark));
+        }
         items.extend(
             self.editor
                 .text_items(self.status_colors, ui.visuals().dark_mode),
@@ -774,14 +829,19 @@ impl DriftApp {
         );
         items.extend(self.tool.editor_preview(&self.editor));
         let ppp = f64::from(ui.ctx().pixels_per_point());
+        let group_refs: Vec<drift_render::DrawGroup<'_>> = groups
+            .iter()
+            .map(|(fills, items)| drift_render::DrawGroup { fills, items })
+            .collect();
         let callback = self.painter.callback(
             rect,
             ppp,
             crate::canvas::CanvasContent {
                 under: &under,
                 items: &items,
-                fills: &fills.meshes,
+                fills: &meshes,
                 images: &images,
+                groups: &group_refs,
             },
             &self.camera,
             crate::canvas::CanvasOptions {
@@ -842,6 +902,32 @@ impl DriftApp {
                     colors.window
                 };
                 overlay::region_fill(&painter, &map, &shape.region, color.gamma_multiply(alpha));
+            }
+        }
+        // Fills an edit divided, kept whole: marked at their seed until fitted, split or
+        // kept.
+        let dark = ui.visuals().dark_mode;
+        for (id, fill) in self.editor.doc.fills() {
+            let Some(shape) = shapes.get(&id).filter(|s| fill.divided && s.parts > 1) else {
+                continue;
+            };
+            if self
+                .editor
+                .doc
+                .layer(fill.layer)
+                .is_some_and(|l| !l.visible)
+            {
+                continue;
+            }
+            let at = map.to_screen(fill.seed);
+            if rect.expand(40.0).contains(at) {
+                let bg = if dark {
+                    egui::Color32::from_rgb(0x41, 0x24, 0x02)
+                } else {
+                    egui::Color32::from_rgb(0xfa, 0xee, 0xda)
+                };
+                let text = format!("Covers {} areas", shape.parts);
+                overlay::badge(&painter, at, &text, theme::warning_color(dark), bg);
             }
         }
         // Drawn where the handles are now (a drag this frame has moved them).

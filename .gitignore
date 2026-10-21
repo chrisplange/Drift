@@ -1,5 +1,6 @@
 /target
 /apps/web/dist
+/apps/web/dist-demo
 *.drift.bak
 /apps/web/target
 /dist

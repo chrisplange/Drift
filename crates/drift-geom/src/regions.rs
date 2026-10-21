@@ -480,12 +480,19 @@ pub fn regions(curves: &[Shape]) -> Vec<Region> {
         grid.entry((kx, ky)).or_default().push(verts.len() - 1);
         verts.len() - 1
     };
+    // How many pieces each curve was cut into.
+    let mut pieces = vec![0usize; curves.len()];
+    for (_, source) in &edges {
+        pieces[*source] += 1;
+    }
     // Half-edges: 2k forward, 2k+1 backward. The same edge twice (curves drawn on top of
-    // each other) counts once: an edge is known by its ends and its middle.
+    // each other) counts once: an edge is known by its ends and its middle. It is credited
+    // to the curve cut into the fewest pieces, so a curve that spans just this piece (a
+    // small shape's side along a longer line) owns it, not the longer line.
     let mut half: Vec<(usize, usize, Edge)> = Vec::new(); // (from, to, geometry)
     let mut source_of: Vec<usize> = Vec::new();
-    let mut seen: std::collections::HashSet<(usize, usize, i64, i64)> =
-        std::collections::HashSet::new();
+    let mut seen: std::collections::HashMap<(usize, usize, i64, i64), usize> =
+        std::collections::HashMap::new();
     for (e, source) in &edges {
         let (u, v) = (vertex(e.start()), vertex(e.end()));
         let middle = match *e {
@@ -498,9 +505,13 @@ pub fn regions(curves: &[Shape]) -> Vec<Region> {
             } => center + radius * DVec2::from_angle(start + sweep * 0.5),
         };
         let (mx, my) = key(middle);
-        if !seen.insert((u.min(v), u.max(v), mx, my)) {
+        if let Some(&k) = seen.get(&(u.min(v), u.max(v), mx, my)) {
+            if pieces[*source] < pieces[source_of[k]] {
+                source_of[k] = *source;
+            }
             continue;
         }
+        seen.insert((u.min(v), u.max(v), mx, my), source_of.len());
         half.push((u, v, *e));
         half.push((v, u, e.reversed()));
         source_of.push(*source);
@@ -834,6 +845,26 @@ mod tests {
         let found = regions(&curves);
         assert_eq!(found.len(), 1);
         assert!((found[0].area - 100.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn an_overlapped_piece_belongs_to_the_curve_that_spans_it() {
+        // A small square in a big square's corner, its right and top sides along the big
+        // square's (#120): the corner region is bounded by the small square's own sides.
+        let mut curves = rect(0.0, 0.0, 100.0, 100.0);
+        curves.extend(rect(50.0, 50.0, 100.0, 100.0));
+        let found = regions(&curves);
+        assert_eq!(found.len(), 2);
+        let corner = region_at(&found, v(75.0, 75.0)).expect("corner");
+        assert_eq!(corner.outer.curves(), vec![4, 5, 6, 7]);
+        let l_shape = region_at(&found, v(25.0, 25.0)).expect("L");
+        assert_eq!(l_shape.outer.curves(), vec![0, 1, 2, 3, 4, 7]);
+        // Drawn the other way round, the same.
+        let mut curves = rect(50.0, 50.0, 100.0, 100.0);
+        curves.extend(rect(0.0, 0.0, 100.0, 100.0));
+        let found = regions(&curves);
+        let corner = region_at(&found, v(75.0, 75.0)).expect("corner");
+        assert_eq!(corner.outer.curves(), vec![0, 1, 2, 3]);
     }
 
     /// The lower half of a circle, its diameter, and a curve ending on the arc's interior

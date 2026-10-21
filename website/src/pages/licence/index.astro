@@ -1,0 +1,89 @@
+---
+import { getEntry, render } from "astro:content";
+import Base from "../../layouts/Base.astro";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
+// The agreement is published here once it is final. While LICENSE.md is still a draft for
+// legal review, the page gives the summary only.
+const entry = await getEntry("legal", "license");
+// The site builds from website/, so the agreement is one level up.
+const text = readFileSync(resolve(process.cwd(), "../LICENSE.md"), "utf-8");
+const draft = !entry || text.includes("DRAFT");
+const agreement = entry && !draft ? await render(entry) : undefined;
+---
+
+<Base
+  title="Licence"
+  description="Drift's licence in plain words: what the end-user licence agreement lets you do."
+>
+  <div class="wrap page prose">
+    <p class="eyebrow">Licence</p>
+    <h1>Drift's licence <em>in plain words</em></h1>
+    <p class="lede">
+      Drift is proprietary software. Its end-user licence agreement lets you install it and use
+      it for your work. The drawings you make are yours.
+    </p>
+
+    <h2>What you can do</h2>
+    <ul>
+      <li>Install Drift on computers you own or control, and use it for anything: your own projects, your firm's drawings, client work, teaching.</li>
+      <li>Keep everything you draw with it. Drift claims no rights in your drawings and doesn't send them anywhere.</li>
+    </ul>
+
+    <h2>What you can't do</h2>
+    <ul>
+      <li>Copy, share, sell or rent Drift itself, or make it available to others over a network.</li>
+      <li>Change Drift, or decompile or reverse engineer it, except where the law allows that.</li>
+      <li>Work around a licence key or the limits of the demo.</li>
+    </ul>
+
+    <h2>Check your drawings</h2>
+    <p>
+      Drift is a drawing tool. Check the dimensions, areas and other results before you rely
+      on them for building, making or signing anything.
+    </p>
+
+    <h2>Earlier versions</h2>
+    <p>
+      Versions up to and including Beta 1.5 (0.1.0-beta.1.5) were released under the
+      Functional Source License, Version 1.1, ALv2 Future License (FSL-1.1-ALv2). Copies of
+      those versions stay under it.
+    </p>
+
+    <h2>Other people's code</h2>
+    <p>
+      Drift is built with open-source libraries and fonts, each under its own licence. They are
+      listed, with their licences and copyright notices, in the{" "}
+      <a href="/licence/notices/">third-party notices</a>, which also come with every copy of
+      Drift and are shown under <strong>About Drift → Licences…</strong>
+    </p>
+
+    {
+      agreement ? (
+        <>
+          <h2 id="agreement">The agreement</h2>
+          <agreement.Content />
+        </>
+      ) : (
+        <p>
+          The full agreement comes with Drift: it is shown when you install it, and is in
+          <code>LICENSE.md</code> next to the program.
+        </p>
+      )
+    }
+
+    <blockquote>
+      <p>
+        This page is a summary to help you understand the licence. It isn't legal advice, and
+        if it ever differs from the licence agreement, the agreement is what counts.
+      </p>
+    </blockquote>
+  </div>
+</Base>
+
+<style>
+  .page {
+    padding-top: 56px;
+  }
+</style>

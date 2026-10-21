@@ -117,6 +117,15 @@ pub fn ok_color(dark: bool) -> Color32 {
     }
 }
 
+/// Something to look at that isn't an error (a fill covering several areas).
+pub fn warning_color(dark: bool) -> Color32 {
+    if dark {
+        Color32::from_rgb(0xef, 0x9f, 0x27)
+    } else {
+        Color32::from_rgb(0x85, 0x4f, 0x0b)
+    }
+}
+
 /// Family for headings and emphasis (a bold system face when one is available).
 pub fn bold() -> FontFamily {
     FontFamily::Name("bold".into())

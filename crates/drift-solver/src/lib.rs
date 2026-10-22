@@ -110,6 +110,11 @@ pub struct SolveReport {
     pub converged: bool,
     /// Newton iterations used by the slowest component.
     pub iterations: usize,
+    /// The most steps any component took on its way to the relations that went badly (their
+    /// linearisation promised far more than they did, or they were refused): the mark of a
+    /// solve that wanders round a fold between solutions rather than heading for the nearest
+    /// one (#103), where a drag should go in smaller steps.
+    pub wandered: usize,
     /// Constraints that could not be satisfied.
     pub conflicts: Vec<ConstraintId>,
     /// Constraints already implied by others (found during substitution).
@@ -135,6 +140,15 @@ const UNFOCUSED_MOBILITY: f64 = 1e-3;
 /// preferences (radii, directions and lengths to keep) and finishes on the relations alone:
 /// a safety net for a solve the preferences' steps keep unsettling (see `newton`).
 const SOFT_PATIENCE: usize = 20;
+
+/// A step that delivers less than this share of what its linearisation promised went badly
+/// (see [`SolveReport::wandered`]).
+const WANDERING_GAIN: f64 = 0.25;
+
+/// How far off the rows a preference's step may leave them, as a fraction of its size: what a
+/// step along a curved relation leaves (second order, mended by the next step) rather than
+/// one that pulls against them (first order).
+const SECOND_ORDER: f64 = 0.25;
 
 /// Iterations a solve goes on for after its rows hold, for its soft preferences to settle
 /// (see `newton`). Enough for a preference on freely moving geometry, which closes most of
@@ -270,6 +284,7 @@ fn land_dragged(
     if landed.converged {
         SolveReport {
             iterations: landed.iterations.max(report.iterations),
+            wandered: landed.wandered.max(report.wandered),
             ..landed
         }
     } else {
@@ -371,6 +386,27 @@ pub fn invalid_constraints(doc: &Document) -> Vec<(drift_core::ConstraintId, Str
         .collect()
 }
 
+/// Whether solving `scope` (closed as [`connected`] closes it) can do anything a plain move
+/// doesn't: it holds a relation or dimension, geometry pinned on a locked layer, or a curve
+/// that keeps a shape of its own (an arc's ends on its circle, an ellipse's axes square).
+/// Relations the solver leaves out (see [`invalid_constraints`]) don't count. Free points,
+/// lines, circles and Béziers go exactly where they are put, so a drag of them needn't solve
+/// at all.
+pub fn needs_solve(doc: &Document, scope: &HashSet<EntityId>) -> bool {
+    let constrained = doc.constraints().any(|(cid, c)| {
+        !doc.is_driven(cid) && doc.validate(c).is_ok() && c.entities().any(|e| scope.contains(&e))
+    });
+    let shaped = scope.iter().any(|&id| {
+        matches!(
+            doc.get(id).map(|e| e.kind),
+            Some(
+                EntityKind::Arc { .. } | EntityKind::Ellipse { .. } | EntityKind::EllipseArc { .. }
+            )
+        )
+    });
+    constrained || shaped || doc.locked_entities().iter().any(|id| scope.contains(id))
+}
+
 /// Entities whose geometry has collapsed: zero-length lines, zero-radius circles and arcs.
 /// Constraints can be satisfied by collapsing geometry (e.g. horizontal + vertical on one
 /// line), which a sketcher should refuse.
@@ -451,6 +487,11 @@ pub struct Orientation {
     /// two curves whether they touch from outside (+1) or one inside the other (−1), and at a
     /// shared end whether one carries on from the other (−1) or turns back in a cusp (+1).
     sides: Vec<((EntityId, EntityId), f64)>,
+    /// Distances whose sign a solve could flip, and the side each is on: which way a
+    /// horizontal or vertical distance runs, which side of its line a point at a distance from
+    /// it is (±1). The distance holds just as well the other way, mirrored, and one big step
+    /// lands there whenever it's the nearer fit.
+    signs: Vec<((EntityId, EntityId), Constraint, f64)>,
 }
 
 /// A sweep that changes by more than this in one solve has jumped, not turned.
@@ -479,7 +520,26 @@ impl Orientation {
                 _ => None,
             })
             .collect();
-        Self { arcs, sides }
+        let signs = doc
+            .constraints()
+            .filter_map(|(id, c)| {
+                let (a, b) = match *c {
+                    Constraint::HorizontalDistance { a, b, value }
+                    | Constraint::VerticalDistance { a, b, value } => {
+                        (value != 0.0).then_some((a, b))?
+                    }
+                    Constraint::PointLineDistance { point, line, value } => {
+                        (value != 0.0).then_some((point, line))?
+                    }
+                    _ => return None,
+                };
+                if !(keep(a) || keep(b)) || doc.is_driven(id) {
+                    return None;
+                }
+                Some(((a, b), *c, distance_sign(doc, c)?))
+            })
+            .collect();
+        Self { arcs, sides, signs }
     }
 
     /// True if `doc` has an arc turned inside out, or a tangency moved to the other side,
@@ -504,9 +564,37 @@ impl Orientation {
                 out.extend([a, b]);
             }
         }
+        for &((a, b), c, before) in &self.signs {
+            if distance_sign(doc, &c).is_some_and(|now| now != before) {
+                out.extend([a, b]);
+            }
+        }
         out.sort();
         out.dedup();
         out
+    }
+}
+
+/// Which way a horizontal or vertical distance runs, or which side of its line a point at a
+/// distance from it is (see [`Orientation`]); `None` where it's undecided (no distance).
+fn distance_sign(doc: &Document, c: &Constraint) -> Option<f64> {
+    // (A distance may be to a line's midpoint.)
+    let at = |id: EntityId| match doc.get(id)?.kind {
+        EntityKind::Line { a, b } => Some((doc.point(a).ok()? + doc.point(b).ok()?) / 2.0),
+        _ => doc.point(id).ok(),
+    };
+    let sign = |v: f64| (v != 0.0).then(|| v.signum());
+    match *c {
+        Constraint::HorizontalDistance { a, b, .. } => sign(at(b)?.x - at(a)?.x),
+        Constraint::VerticalDistance { a, b, .. } => sign(at(b)?.y - at(a)?.y),
+        Constraint::PointLineDistance { point, line, .. } => {
+            let EntityKind::Line { a, b } = doc.get(line)?.kind else {
+                return None;
+            };
+            let (pa, pb) = (doc.point(a).ok()?, doc.point(b).ok()?);
+            sign((pb - pa).perp_dot(at(point)? - pa))
+        }
+        _ => None,
     }
 }
 
@@ -805,6 +893,9 @@ fn scaled_norm2(res: &[f64], scales: &[f64]) -> f64 {
 struct ComponentOutcome {
     converged: bool,
     iterations: usize,
+    /// Steps on the way to the relations that its linearisation badly mispredicted (or that
+    /// were refused): see [`SolveReport::wandered`].
+    wandered: usize,
 }
 
 /// Damped weighted minimum-norm Gauss–Newton on one component.
@@ -819,6 +910,7 @@ fn newton(
     values: &mut [f64],
     tol: &Tolerances,
     dragging: bool,
+    across: f64,
 ) -> ComponentOutcome {
     let n = comp.unknowns.len();
     let m = comp.rows.len();
@@ -904,6 +996,7 @@ fn newton(
         .collect();
 
     let mut lambda = 0.0f64;
+    let mut wandered = 0;
     let mut keep_soft = keep_soft_preferences(sys);
     let start = values.to_vec();
     // Whether the soft preferences have settled: the rows holding isn't the end while a
@@ -936,6 +1029,7 @@ fn newton(
                 return ComponentOutcome {
                     converged: true,
                     iterations: iteration,
+                    wandered,
                 };
             }
             settling += 1;
@@ -999,6 +1093,7 @@ fn newton(
                 return ComponentOutcome {
                     converged: true,
                     iterations: iteration,
+                    wandered,
                 };
             }
         }
@@ -1123,9 +1218,19 @@ fn newton(
         let Some((mut delta, soft_delta)) = solved else {
             break;
         };
-        let max_step = (hi - lo).max(1.0);
+        let max_step = across;
+        // (How far a point moves, not a coordinate: the same however the drawing is turned.)
         let limit = |delta: &mut Vec<f64>| {
-            let biggest = delta.iter().fold(0.0f64, |acc, d| acc.max(d.abs()));
+            let biggest = scales
+                .iter()
+                .map(|cols| {
+                    cols.iter()
+                        .flatten()
+                        .map(|&c| delta[c] * delta[c])
+                        .sum::<f64>()
+                        .sqrt()
+                })
+                .fold(0.0f64, f64::max);
             if biggest > max_step {
                 let k = max_step / biggest;
                 delta.iter_mut().for_each(|d| *d *= k);
@@ -1133,6 +1238,10 @@ fn newton(
             biggest.min(max_step)
         };
         let rows_moved = limit(&mut delta);
+        // (A step cut short is one its linearisation got badly wrong too.)
+        if rows_moved >= max_step && !converged(&res, values) {
+            wandered += 1;
+        }
 
         let mut trial = values.to_vec();
         for (c, g) in comp.unknowns.iter().enumerate() {
@@ -1157,6 +1266,9 @@ fn newton(
             } else {
                 1.0
             };
+            if !rows_hold && gain < WANDERING_GAIN {
+                wandered += 1;
+            }
             last_moved = rows_moved;
             values.copy_from_slice(&trial);
             res = trial_res;
@@ -1178,7 +1290,15 @@ fn newton(
                         trial[*g] += soft_delta[c];
                     }
                     let (trial_res, trial_jac) = evaluate(sys, &comp.rows, &trial, &col_of);
-                    let gained = scaled_norm2(&trial_res, &row_scale) < before
+                    // Or what it leaves them off by is second order, a fraction of the step
+                    // (it went along a curved relation, which the next step mends). Judged
+                    // only against the tolerance, a step along a curved relation that already
+                    // holds would be refused or not by where the sketch is (the tolerance
+                    // goes with the coordinates), and the preference crawl or close
+                    // accordingly: the same drag would end differently there (#103).
+                    let after = scaled_norm2(&trial_res, &row_scale);
+                    let gained = after < before
+                        || after.sqrt() <= before.sqrt() + SECOND_ORDER * moved
                         || converged(&trial_res, &trial);
                     if gained {
                         values.copy_from_slice(&trial);
@@ -1198,6 +1318,9 @@ fn newton(
                 lambda = 0.0;
             }
         } else {
+            if !rows_hold {
+                wandered += 1;
+            }
             lambda = lambda.max(1e-6 * max_diag) * nu;
             nu *= 2.0;
             if lambda > 1e12 * max_diag {
@@ -1208,6 +1331,37 @@ fn newton(
     ComponentOutcome {
         converged: converged(&res, values),
         iterations: MAX_ITERATIONS,
+        wandered,
+    }
+}
+
+/// How far the drawing is across, for the step limit in [`newton`]: twice its farthest point
+/// from its middle, which is the same however the drawing is turned or wherever it is. (The
+/// spread of the coordinates, x and y together, grows as the drawing moves away from the
+/// origin, so the same step would be cut short at one place and not another, and the same
+/// drag land elsewhere: #103.) Infinite for a drawing of one point.
+fn drawing_across(sys: &System, values: &[f64]) -> f64 {
+    let mut points: BTreeMap<EntityId, [Option<f64>; 2]> = BTreeMap::new();
+    for (i, p) in sys.params.iter().enumerate() {
+        match *p {
+            Param::X(id) => points.entry(id).or_default()[0] = Some(values[sys.group_of[i]]),
+            Param::Y(id) => points.entry(id).or_default()[1] = Some(values[sys.group_of[i]]),
+            _ => {}
+        }
+    }
+    let points: Vec<DVec2> = points
+        .into_values()
+        .filter_map(|[x, y]| Some(DVec2::new(x?, y?)))
+        .collect();
+    let middle = points.iter().sum::<DVec2>() / points.len().max(1) as f64;
+    let size = points
+        .iter()
+        .map(|p| p.distance(middle))
+        .fold(0.0, f64::max);
+    if size > 0.0 {
+        2.0 * size
+    } else {
+        f64::INFINITY
     }
 }
 
@@ -1249,10 +1403,19 @@ fn run(sys: &mut System, options: &SolveOptions, iterate: bool) -> SolveReport {
             report.dependent_equations += 1;
         }
     }
+    let across = drawing_across(sys, &values);
     for comp in &comps {
         if iterate {
-            let outcome = newton(sys, comp, &mut values, tol, !options.dragged.is_empty());
+            let outcome = newton(
+                sys,
+                comp,
+                &mut values,
+                tol,
+                !options.dragged.is_empty(),
+                across,
+            );
             report.iterations = report.iterations.max(outcome.iterations);
+            report.wandered = report.wandered.max(outcome.wandered);
             if !outcome.converged {
                 failed_rows.extend(&comp.rows);
             }

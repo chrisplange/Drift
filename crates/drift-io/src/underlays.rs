@@ -8,7 +8,7 @@ use std::sync::Arc;
 use drift_core::{DVec2, RefPrim, Rgb, Underlay, UnderlayId, UnderlayImage};
 use serde::{Deserialize, Serialize};
 
-use crate::{LoadError, parse_prefixed};
+use crate::{LoadError, parse_layer_id, parse_prefixed};
 
 fn yes() -> bool {
     true
@@ -24,6 +24,10 @@ fn is_false(b: &bool) -> bool {
 
 fn is_zero(x: &f64) -> bool {
     *x == 0.0
+}
+
+fn is_zero_i32(x: &i32) -> bool {
+    *x == 0
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -59,6 +63,11 @@ pub(crate) struct UnderlayRecord {
     snap: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     locked: bool,
+    /// The layer its pictures stack on, and where among its fills and curves (v40).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    layer: Option<String>,
+    #[serde(default, skip_serializing_if = "is_zero_i32")]
+    order: i32,
     prims: Vec<PrimRecord>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     images: Vec<ImageRecord>,
@@ -191,6 +200,8 @@ pub(crate) fn underlay_record(id: UnderlayId, u: &Underlay) -> UnderlayRecord {
         visible: u.visible,
         snap: u.snap,
         locked: u.locked,
+        layer: u.layer.map(|l| l.to_string()),
+        order: u.order,
         prims,
         images: u
             .images
@@ -271,6 +282,8 @@ pub(crate) fn parse_underlay(r: UnderlayRecord) -> Result<(UnderlayId, Underlay)
             visible: r.visible,
             snap: r.snap,
             locked: r.locked,
+            layer: r.layer.as_deref().map(parse_layer_id).transpose()?,
+            order: r.order,
         },
     ))
 }

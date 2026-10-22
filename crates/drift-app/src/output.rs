@@ -167,12 +167,9 @@ fn on_paper(c: Rgb, opacity: f64) -> Rgb {
         .map(|v| (255.0 - (255.0 - f64::from(v)) * a).round() as u8))
 }
 
-/// The sketch's curves, as printed: no points, no construction curves unless the view shows
-/// them (and never an import's fill edges), nothing on hidden or non-printing layers, or on
-/// layers the view leaves out.
-fn geometry(ed: &Editor, s: &Space, d: &mut Drawing) {
-    let doc = &ed.doc;
-    for (_, layer) in doc.layers() {
+/// List the drawing's layers in their draw order (for formats that keep them).
+fn declare_layers(ed: &Editor, d: &mut Drawing) {
+    for (_, layer) in ed.doc.layers() {
         d.layer(LayerInfo {
             name: layer.name.clone(),
             color: layer.color.unwrap_or(Pen::BLACK),
@@ -180,34 +177,64 @@ fn geometry(ed: &Editor, s: &Space, d: &mut Drawing) {
             line_type: layer.line_type,
         });
     }
-    // Layer by layer, in their draw order.
-    let ranks = doc.layer_ranks();
-    let mut entities: Vec<_> = doc.iter().collect();
-    entities.sort_by_key(|(_, e)| ranks.get(&e.layer).copied().unwrap_or(0));
-    let fill_edges = if s.construction {
+}
+
+/// An import's fill edges: construction curves that never print, even where the view shows
+/// construction.
+fn fill_edges(ed: &Editor, s: &Space) -> BTreeSet<EntityId> {
+    if s.construction {
         ed.fill_edges()
     } else {
         Default::default()
-    };
-    for (id, e) in entities {
-        if e.kind.is_point()
-            || (e.style == LineKind::Construction && (!s.construction || fill_edges.contains(&id)))
-        {
-            continue;
-        }
-        let layer = doc.layer_of(id);
-        if !s.draws(e.layer, layer) || s.only.is_some_and(|o| !o.entities.contains(&id)) {
-            continue;
-        }
-        let Some(shape) = doc.shape(id) else { continue };
-        if let Some(prim) = shape_prim(s, &shape) {
-            let pen = pen_for(e.style, e.appearance, layer);
-            d.items.push(item(&layer.name, pen, prim, s.clip));
-        }
     }
-    // Sketch text: as text, line by line in its own font, each line from its own start (so
-    // nothing downstream needs to measure it to align it).
-    for (id, t) in doc.texts() {
+}
+
+/// A curve of the sketch as printed: not a point, nor a construction curve unless the view
+/// shows them (never one of `fill_edges`), nor on a hidden or non-printing layer, or one
+/// the view leaves out.
+fn curve(ed: &Editor, s: &Space, fill_edges: &BTreeSet<EntityId>, id: EntityId, d: &mut Drawing) {
+    let doc = &ed.doc;
+    let Some(e) = doc.get(id) else { return };
+    if e.kind.is_point()
+        || (e.style == LineKind::Construction && (!s.construction || fill_edges.contains(&id)))
+    {
+        return;
+    }
+    let layer = doc.layer_of(id);
+    if !s.draws(e.layer, layer)
+        || s.only.is_some_and(|o| !o.entities.contains(&id))
+        || !stroked(e.appearance, layer)
+    {
+        return;
+    }
+    let Some(shape) = doc.shape(id) else { return };
+    if let Some(prim) = shape_prim(s, &shape) {
+        let pen = pen_for(e.style, e.appearance, layer);
+        d.items.push(item(&layer.name, pen, prim, s.clip));
+    }
+}
+
+/// The sketch's curves as printed (see [`curve`]), layer by layer in their draw order,
+/// then its text and the copies of blocks: all over every fill, as when fills don't cover
+/// what is beneath them.
+fn geometry(ed: &Editor, s: &Space, d: &mut Drawing) {
+    declare_layers(ed, d);
+    let ranks = ed.doc.layer_ranks();
+    let mut entities: Vec<_> = ed.doc.iter().collect();
+    entities.sort_by_key(|(_, e)| ranks.get(&e.layer).copied().unwrap_or(0));
+    let edges = fill_edges(ed, s);
+    for (id, _) in entities {
+        curve(ed, s, &edges, id, d);
+    }
+    texts(ed, s, None, d);
+    copies(ed, s, None, &mut BTreeSet::new(), d);
+}
+
+/// Sketch text (all of it, or `on` one layer): as text, line by line in its own font, each
+/// line from its own start (so nothing downstream needs to measure it to align it).
+fn texts(ed: &Editor, s: &Space, on: Option<LayerId>, d: &mut Drawing) {
+    let doc = &ed.doc;
+    for (id, t) in doc.texts().filter(|(_, t)| on.is_none_or(|l| t.layer == l)) {
         let Some(layer) = doc.layer(t.layer) else {
             continue;
         };
@@ -243,9 +270,22 @@ fn geometry(ed: &Editor, s: &Space, d: &mut Drawing) {
             d.items.push(item(&layer.name, pen, prim, s.clip));
         }
     }
-    // Copies of blocks: their curves (sheets), or block definitions and inserts (DXF).
-    let mut defined = std::collections::BTreeSet::new();
-    for (id, copy) in doc.instances() {
+}
+
+/// Copies of blocks (all of them, or `on` one layer): their curves (sheets), or block
+/// definitions and inserts (DXF; `defined` are the blocks defined so far).
+fn copies(
+    ed: &Editor,
+    s: &Space,
+    on: Option<LayerId>,
+    defined: &mut BTreeSet<drift_core::BlockId>,
+    d: &mut Drawing,
+) {
+    let doc = &ed.doc;
+    for (id, copy) in doc
+        .instances()
+        .filter(|(_, c)| on.is_none_or(|l| c.layer == l))
+    {
         let Some(layer) = doc.layer(copy.layer) else {
             continue;
         };
@@ -266,7 +306,9 @@ fn geometry(ed: &Editor, s: &Space, d: &mut Drawing) {
                 let items = block
                     .items
                     .iter()
-                    .filter(|it| it.style != LineKind::Construction)
+                    .filter(|it| {
+                        it.style != LineKind::Construction && stroked(it.appearance, layer)
+                    })
                     .filter_map(|it| {
                         let prim = shape_prim(&local, &it.shape)?;
                         Some(item(
@@ -296,7 +338,9 @@ fn geometry(ed: &Editor, s: &Space, d: &mut Drawing) {
             ));
         } else {
             for it in doc.instance_items(id) {
-                if it.style == LineKind::Construction && !s.construction {
+                if (it.style == LineKind::Construction && !s.construction)
+                    || !stroked(it.appearance, layer)
+                {
                     continue;
                 }
                 if let Some(prim) = shape_prim(s, &it.shape) {
@@ -306,6 +350,55 @@ fn geometry(ed: &Editor, s: &Space, d: &mut Drawing) {
             }
         }
     }
+}
+
+/// The drawing in its stack (see [`crate::stack`]), as the canvas draws it: layer by layer,
+/// each fill drawn with its outline over what is beneath it, and each layer's text and
+/// copies of blocks at its top. (Underlays' pictures never print.)
+fn stacked(ed: &mut Editor, patterns: &PatternLibrary, s: &Space, d: &mut Drawing) {
+    use crate::stack::FillRef;
+    let stack = ed.stack();
+    let shapes = ed.fill_shapes();
+    let copy_fills = ed.copy_fills();
+    let ed = &*ed;
+    declare_layers(ed, d);
+    let edges = fill_edges(ed, s);
+    let mut defined = BTreeSet::new();
+    for (k, g) in stack.groups.iter().enumerate() {
+        match g.fill {
+            Some(FillRef::Fill(id)) => {
+                if s.only.is_none_or(|o| o.fills.contains(&id))
+                    && let (Some(f), Some(shape)) = (ed.doc.fill(id), shapes.get(&id))
+                {
+                    fill(ed, patterns, s, f, &shape.region, d);
+                }
+            }
+            Some(FillRef::Copy(instance, index)) => {
+                if s.only.is_none_or(|o| o.instances.contains(&instance))
+                    && let Some(c) = copy_fills
+                        .iter()
+                        .find(|c| c.instance == instance && c.index == index)
+                {
+                    fill(ed, patterns, s, &c.fill, &c.region, d);
+                }
+            }
+            None => {}
+        }
+        for id in &g.curves {
+            curve(ed, s, &edges, *id, d);
+        }
+        if let Some(layer) = g.layer
+            && stack.tops.get(&layer) == Some(&k)
+        {
+            texts(ed, s, Some(layer), d);
+            copies(ed, s, Some(layer), &mut defined, d);
+        }
+    }
+}
+
+/// Whether a curve prints at all: one without a stroke doesn't (its fill does).
+fn stroked(look: drift_core::Appearance, layer: &drift_core::Layer) -> bool {
+    look.line_type.unwrap_or(layer.line_type).is_stroked()
 }
 
 /// How a curve prints: its own or its layer's colour, weight and line type (centre-style
@@ -376,14 +469,15 @@ fn shape_prim(s: &Space, shape: &Shape) -> Option<Prim> {
     })
 }
 
-/// Fills and hatches, bottom first.
+/// Fills and hatches, bottom first: all under every curve, as when fills don't cover what
+/// is beneath them.
 fn fills(ed: &mut Editor, patterns: &PatternLibrary, s: &Space, d: &mut Drawing) {
     let shapes = ed.fill_shapes();
     let copies = ed.copy_fills();
     let order = ed.fills_in_order();
     let ed = &*ed;
     // The sketch's fills, then copies' fills over them.
-    let fills = order
+    let all = order
         .iter()
         .filter(|id| s.only.is_none_or(|o| o.fills.contains(id)))
         .filter_map(|id| Some((ed.doc.fill(*id)?, &shapes.get(id)?.region)))
@@ -393,70 +487,82 @@ fn fills(ed: &mut Editor, patterns: &PatternLibrary, s: &Space, d: &mut Drawing)
                 .filter(|c| s.only.is_none_or(|o| o.instances.contains(&c.instance)))
                 .map(|c| (&c.fill, &c.region)),
         );
-    for (fill, region) in fills {
-        let layer = ed.doc.layer(fill.layer).cloned();
-        if layer.as_ref().is_some_and(|l| !s.draws(fill.layer, l)) {
-            continue;
+    for (f, region) in all {
+        fill(ed, patterns, s, f, region, d);
+    }
+}
+
+/// A fill or hatch as printed.
+fn fill(
+    ed: &Editor,
+    patterns: &PatternLibrary,
+    s: &Space,
+    fill: &drift_core::Fill,
+    region: &drift_geom::regions::Region,
+    d: &mut Drawing,
+) {
+    let layer = ed.doc.layer(fill.layer).cloned();
+    if layer.as_ref().is_some_and(|l| !s.draws(fill.layer, l)) {
+        return;
+    }
+    let layer_name = layer.as_ref().map_or("0".to_owned(), |l| l.name.clone());
+    let own = fill.color.or(layer.as_ref().and_then(|l| l.fill_colour()));
+    let rings: Vec<Vec<DVec2>> = std::iter::once(&region.outer)
+        .chain(&region.holes)
+        .map(|lp| lp.polygon(0.02).into_iter().map(|p| s.at(p)).collect())
+        .collect();
+    let triangles: Vec<[DVec2; 3]> = crate::fills::tessellate(region, 0.02)
+        .map(|(v, idx)| {
+            idx.as_chunks::<3>()
+                .0
+                .iter()
+                .map(|t| t.map(|i| s.at(v[i as usize])))
+                .collect()
+        })
+        .unwrap_or_default();
+    let solid = |color: Rgb, d: &mut Drawing| {
+        d.items.push(item(
+            &layer_name,
+            Pen::new(0.0).with_color(color),
+            Prim::Fill {
+                rings: rings.clone(),
+                triangles: triangles.clone(),
+                mask: false,
+            },
+            s.clip,
+        ));
+    };
+    match &fill.kind {
+        FillKind::Solid => {
+            solid(
+                on_paper(own.unwrap_or(Rgb([0x80, 0x88, 0x94])), fill.opacity),
+                d,
+            );
         }
-        let layer_name = layer.as_ref().map_or("0".to_owned(), |l| l.name.clone());
-        let own = fill.color.or(layer.as_ref().and_then(|l| l.fill_colour()));
-        let rings: Vec<Vec<DVec2>> = std::iter::once(&region.outer)
-            .chain(&region.holes)
-            .map(|lp| lp.polygon(0.02).into_iter().map(|p| s.at(p)).collect())
-            .collect();
-        let triangles: Vec<[DVec2; 3]> = crate::fills::tessellate(region, 0.02)
-            .map(|(v, idx)| {
-                idx.as_chunks::<3>()
-                    .0
-                    .iter()
-                    .map(|t| t.map(|i| s.at(v[i as usize])))
-                    .collect()
-            })
-            .unwrap_or_default();
-        let solid = |color: Rgb, d: &mut Drawing| {
-            d.items.push(item(
-                &layer_name,
-                Pen::new(0.0).with_color(color),
-                Prim::Fill {
-                    rings: rings.clone(),
-                    triangles: triangles.clone(),
-                    mask: false,
-                },
-                s.clip,
-            ));
-        };
-        match &fill.kind {
-            FillKind::Solid => {
-                solid(
-                    on_paper(own.unwrap_or(Rgb([0x80, 0x88, 0x94])), fill.opacity),
-                    d,
-                );
+        FillKind::Hatch(h) => {
+            if let Some(bg) = h.background {
+                solid(bg, d);
             }
-            FillKind::Hatch(h) => {
-                if let Some(bg) = h.background {
-                    solid(bg, d);
-                }
-                let color = own.unwrap_or(Pen::BLACK);
-                let Some(pattern) = patterns.get(&h.pattern) else {
-                    solid(on_paper(color, 0.25), d);
-                    continue;
-                };
-                let placement = Placement {
-                    scale: h.scale * if h.model { 1.0 } else { s.n },
-                    angle: h.angle,
-                    origin: h.origin,
-                };
-                let hatching = drift_draft::hatch(region, pattern, &placement, None, HATCH_LIMIT);
-                if hatching.truncated {
-                    solid(on_paper(color, 0.25), d);
-                    continue;
-                }
-                let width = fill.weight.map_or(HAIRLINE, |w| w.mm().max(HAIRLINE));
-                let pen = Pen::new(width).with_color(color);
-                for [a, b] in hatching.segments {
-                    d.items
-                        .push(item(&layer_name, pen, Prim::Line(s.at(a), s.at(b)), s.clip));
-                }
+            let color = own.unwrap_or(Pen::BLACK);
+            let Some(pattern) = patterns.get(&h.pattern) else {
+                solid(on_paper(color, 0.25), d);
+                return;
+            };
+            let placement = Placement {
+                scale: h.scale * if h.model { 1.0 } else { s.n },
+                angle: h.angle,
+                origin: h.origin,
+            };
+            let hatching = drift_draft::hatch(region, pattern, &placement, None, HATCH_LIMIT);
+            if hatching.truncated {
+                solid(on_paper(color, 0.25), d);
+                return;
+            }
+            let width = fill.weight.map_or(HAIRLINE, |w| w.mm().max(HAIRLINE));
+            let pen = Pen::new(width).with_color(color);
+            for [a, b] in hatching.segments {
+                d.items
+                    .push(item(&layer_name, pen, Prim::Line(s.at(a), s.at(b)), s.clip));
             }
         }
     }
@@ -642,7 +748,8 @@ fn annotations(ed: &Editor, painter: &egui::Painter, s: &Space, d: &mut Drawing)
     });
 }
 
-/// Everything in the view: fills under curves, then centre lines and annotations.
+/// Everything in the view: the drawing stacked as the canvas draws it (or every fill under
+/// every curve, as the drawing's rules say), then centre lines and annotations.
 fn view(
     ed: &mut Editor,
     patterns: &PatternLibrary,
@@ -650,8 +757,12 @@ fn view(
     s: &Space,
     d: &mut Drawing,
 ) {
-    fills(ed, patterns, s, d);
-    geometry(ed, s, d);
+    if ed.doc.rules().stacked_fills {
+        stacked(ed, patterns, s, d);
+    } else {
+        fills(ed, patterns, s, d);
+        geometry(ed, s, d);
+    }
     centre_lines(ed, s, d);
     annotations(ed, painter, s, d);
 }
@@ -988,7 +1099,7 @@ pub fn paint_drawing(
         };
         let line = |pts: Vec<Pos2>, corners: bool| {
             if dashes.len() >= 2 && dashes[0] > 1.0 {
-                p.extend(egui::Shape::dashed_line(&pts, stroke, dashes[0], dashes[1]));
+                crate::overlay::dashed(p, &pts, stroke, dashes[0], dashes[1]);
             } else {
                 round(&pts, corners);
                 p.add(egui::Shape::line(pts, stroke));

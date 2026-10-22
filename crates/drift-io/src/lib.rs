@@ -6,7 +6,7 @@
 //! ```json
 //! {
 //!   "format": "drift",
-//!   "version": 39,
+//!   "version": 40,
 //!   "meta": {"title":"Bracket","units":"mm","generator":"Drift 0.1.0"},
 //!   "display": {"length":"architectural","fraction":16},
 //!   "variables": [
@@ -102,8 +102,10 @@ pub const EXTENSION: &str = "drift";
 /// 36 = adds a block's `profile` flag (written to the Blender profiles file); 37 = adds a
 /// fill's `divided` (an edit left it covering more than one area); 38 = adds `paths` (curves
 /// drawn as one shape); 39 = adds `rules` (how closed areas and fills behave, and the gap
-/// tolerance; they were the app's preferences before, so an older file gets the app's).
-pub const FORMAT_VERSION: u32 = 39;
+/// tolerance; they were the app's preferences before, so an older file gets the app's);
+/// 40 = adds `stack` (where curves stack among their layer's fills, for those not at the top
+/// of their layer) and an underlay's `layer` and `order` (where its pictures stack).
+pub const FORMAT_VERSION: u32 = 40;
 const FORMAT_TAG: &str = "drift";
 
 /// Document-level properties stored alongside the geometry.
@@ -912,6 +914,9 @@ struct FileRecord {
     /// Curves drawn as one shape (v38).
     #[serde(default)]
     paths: Vec<PathRecord>,
+    /// Where curves stack on their layer, for those not at its top (v40).
+    #[serde(default)]
+    stack: Vec<StackRecord>,
     #[serde(default)]
     blocks: Vec<blocks::BlockRecord>,
     #[serde(default)]
@@ -929,6 +934,14 @@ struct GroupRecord {
     id: String,
     name: String,
     members: Vec<String>,
+}
+
+/// Where a curve stacks among its layer's fills and curves.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StackRecord {
+    id: String,
+    order: i32,
 }
 
 /// Curves drawn as one shape, in order round it.
@@ -1253,6 +1266,17 @@ pub fn save(doc: &Document, meta: &Metadata) -> String {
             .expect("path serializes")
         })
         .collect();
+    let stack: Vec<String> = doc
+        .iter()
+        .filter_map(|(id, e)| Some((id, e.order?)))
+        .map(|(id, order)| {
+            serde_json::to_string(&StackRecord {
+                id: id_string(id),
+                order,
+            })
+            .expect("stack serializes")
+        })
+        .collect();
     let block_lines: Vec<String> = doc
         .blocks()
         .map(|(id, b)| {
@@ -1286,6 +1310,7 @@ pub fn save(doc: &Document, meta: &Metadata) -> String {
         ("sheets", &sheets),
         ("groups", &groups),
         ("paths", &paths),
+        ("stack", &stack),
         ("blocks", &block_lines),
         ("instances", &instances),
         ("underlays", &underlay_lines),
@@ -1742,6 +1767,10 @@ pub fn load_with_notes(text: &str) -> Result<(Document, Metadata, Vec<String>), 
         )
         .map_err(LoadError::Document)?;
     }
+    for s in file.stack {
+        doc.set_order(parse_id(&s.id)?, Some(s.order))
+            .map_err(LoadError::Document)?;
+    }
     for p in file.paths {
         let id = drift_core::PathId(parse_prefixed(&p.id, 'p')?);
         if doc.path(id).is_some() {
@@ -2041,13 +2070,16 @@ mod tests {
     fn a_file_from_before_drawing_rules_opens_with_the_defaults_and_says_so() {
         let doc = demo::mounting_plate();
         let text = save(&doc, &Metadata::default());
-        let old = text.replace(r#""version": 39"#, r#""version": 38"#);
+        let old = text.replace(
+            &format!(r#""version": {FORMAT_VERSION}"#),
+            r#""version": 38"#,
+        );
         assert_ne!(old, text);
         let (loaded, meta) = load(&old).unwrap();
         assert_eq!(loaded.rules(), DrawingRules::default());
         assert!(meta.older_rules, "the app applies its own");
         // Saved again, it is a current file.
-        assert!(save(&loaded, &meta).contains(r#""version": 39"#));
+        assert!(save(&loaded, &meta).contains(&format!(r#""version": {FORMAT_VERSION}"#)));
         let (_, meta) = load(&save(&loaded, &meta)).unwrap();
         assert!(!meta.older_rules);
     }
@@ -2066,7 +2098,7 @@ mod tests {
         let text = save(&doc, &Metadata::default());
         let expected = r#"{
   "format": "drift",
-  "version": 39,
+  "version": 40,
   "meta": {"units":"mm"},
   "entities": [
     {"type":"point","id":"e1","at":[0.0,0.0]},
@@ -2245,7 +2277,10 @@ mod tests {
         // A file from before extension starts opens with them all automatic.
         let old = text.replace(r#","ext":[null,12.5]"#, "");
         let old = old.replace(r#","ext":[-2.0,3.25]"#, "");
-        let old = old.replace(r#""version": 39"#, r#""version": 33"#);
+        let old = old.replace(
+            &format!(r#""version": {FORMAT_VERSION}"#),
+            r#""version": 33"#,
+        );
         let (loaded, _) = load(&old).unwrap();
         assert_eq!(loaded.extension_starts(h), [None, None]);
         assert_eq!(loaded.extension_starts(both), [None, None]);
@@ -3181,7 +3216,17 @@ mod tests {
             across: DVec2::new(20.0, 0.0),
             down: DVec2::new(0.0, -10.0),
         }]);
+        // Placed in the stack, on a layer among its fills.
+        survey.layer = Some(LayerId::DEFAULT);
+        survey.order = 3;
         doc.add_underlay(survey);
+        // A curve with a place of its own in the stack.
+        let first_curve = doc
+            .iter()
+            .find(|(_, e)| !e.kind.is_point())
+            .map(|(id, _)| id)
+            .unwrap();
+        doc.set_order(first_curve, Some(-2)).unwrap();
         let mut sign = drift_core::SketchText::new("EXIT → 2", DVec2::new(5.0, -40.0), 12.5);
         sign.angle = 15.0;
         sign.font = drift_core::TextFont::Mono;
@@ -3190,7 +3235,15 @@ mod tests {
         doc.add_text(drift_core::SketchText::new("A", DVec2::ZERO, 3.0));
 
         let text = save(&doc, &Metadata::default());
-        assert!(text.contains("\"version\": 39"));
+        assert!(text.contains(&format!("\"version\": {FORMAT_VERSION}")));
+        assert!(text.contains(r#""layer":"l0","order":3"#), "{text}");
+        assert!(
+            text.contains(&format!(
+                r#""stack": [
+    {{"id":"{first_curve}","order":-2}}"#
+            )),
+            "{text}"
+        );
         // A fill an edit divided keeps its mark.
         assert!(text.contains(r#""divided":true"#), "{text}");
         // A mark points at its view.

@@ -94,6 +94,41 @@ pub fn picture_underlay(
     Some(u)
 }
 
+/// Give an import's pictures their place in the drawing's stack: on the lowest layer its
+/// fills came in on, over those fills and under its lines (where a drawing program shows
+/// them over a filled background). Without fills they stay beneath the drawing. `before`
+/// are the fills the drawing had before the import.
+pub fn place_pictures(
+    doc: &mut drift_core::Document,
+    id: UnderlayId,
+    before: &std::collections::BTreeSet<drift_core::FillId>,
+) {
+    let ranks = doc.layer_ranks();
+    let new: Vec<(drift_core::LayerId, i32)> = doc
+        .fills()
+        .filter(|(f, _)| !before.contains(f))
+        .map(|(_, f)| (f.layer, f.order))
+        .collect();
+    let Some(layer) = new
+        .iter()
+        .map(|(l, _)| *l)
+        .min_by_key(|l| ranks.get(l).copied().unwrap_or(usize::MAX))
+    else {
+        return;
+    };
+    let order = new
+        .iter()
+        .filter(|(l, _)| *l == layer)
+        .map(|(_, o)| *o)
+        .max()
+        .unwrap_or(0);
+    if let Some(mut u) = doc.underlay(id).cloned() {
+        u.layer = Some(layer);
+        u.order = order;
+        doc.set_underlay(id, u);
+    }
+}
+
 impl Editor {
     /// Re-index underlays that were added, moved or changed since the last call.
     pub fn update_underlays(&mut self) {
@@ -126,16 +161,27 @@ impl Editor {
     /// The visible underlays' curves within `view`, faded towards the background.
     /// The visible underlays' pictures, for the canvas.
     pub fn underlay_images(&self) -> Vec<drift_render::CanvasImage> {
+        self.underlay_pictures()
+            .into_iter()
+            .map(|(_, i)| i)
+            .collect()
+    }
+
+    /// The pictures of visible underlays, each with its underlay.
+    pub fn underlay_pictures(&self) -> Vec<(UnderlayId, drift_render::CanvasImage)> {
         let mut out = Vec::new();
-        for (_, u) in self.doc.underlays().filter(|(_, u)| u.visible) {
+        for (id, u) in self.doc.underlays().filter(|(_, u)| u.visible) {
             for image in u.images.iter() {
-                out.push(drift_render::CanvasImage {
-                    pixels: image.rgba.clone(),
-                    width: image.width,
-                    height: image.height,
-                    corners: image.corners().map(|p| u.to_world(p)),
-                    opacity: u.opacity as f32,
-                });
+                out.push((
+                    id,
+                    drift_render::CanvasImage {
+                        pixels: image.rgba.clone(),
+                        width: image.width,
+                        height: image.height,
+                        corners: image.corners().map(|p| u.to_world(p)),
+                        opacity: u.opacity as f32,
+                    },
+                ));
             }
         }
         out

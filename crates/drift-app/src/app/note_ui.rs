@@ -570,12 +570,13 @@ impl DriftApp {
         if let Some((_, LeaderGrip::New(from))) = self.leader_grip
             && let Some(to) = painter.ctx().input(|i| i.pointer.latest_pos())
         {
-            painter.extend(egui::Shape::dashed_line(
+            crate::overlay::dashed(
+                painter,
                 &[from, to],
                 egui::Stroke::new(1.0, accent),
                 4.0,
                 3.0,
-            ));
+            );
         }
     }
 

@@ -6,6 +6,10 @@
 //! exactly as ELLIPSE and SPLINE entities, which are newer than R12: most readers take
 //! them in an AC1009 file, but a strict R12 reader may skip them. Text uses DXF's `%%c` / `%%d` / `%%p`
 //! codes for Ø, ° and ±.
+//!
+//! R12 has no draw order of its own: entities are written in the drawing's order (fills
+//! stacked as on screen), which programs that draw in file order show as Drift does; others
+//! may draw fills over or under lines as they choose.
 
 #[cfg(not(feature = "demo"))]
 use std::collections::BTreeMap;
@@ -88,6 +92,8 @@ fn line_type_name(t: LineType) -> &'static str {
         LineType::Hidden => "HIDDEN",
         LineType::Center => "CENTER",
         LineType::Phantom => "PHANTOM",
+        // (Curves without a stroke aren't written.)
+        LineType::None => "CONTINUOUS",
     }
 }
 

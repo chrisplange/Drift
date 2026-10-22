@@ -207,6 +207,42 @@ impl DriftApp {
                 edited.color = c;
             }
         });
+        // Where its pictures stack: beneath the drawing, or on a layer among its fills (an
+        // import's pictures go over the fills that came in with them).
+        if !u.images.is_empty() {
+            let layers: Vec<(drift_core::LayerId, String)> = self
+                .editor
+                .doc
+                .layers()
+                .map(|(id, l)| (id, l.name.clone()))
+                .collect();
+            let name = |l: Option<drift_core::LayerId>| match l {
+                Some(l) => layers
+                    .iter()
+                    .find(|(id, _)| *id == l)
+                    .map_or("Beneath the drawing".to_owned(), |(_, n)| format!("On {n}")),
+                None => "Beneath the drawing".to_owned(),
+            };
+            theme::row(ui, "Pictures", |ui| {
+                egui::ComboBox::from_id_salt(("underlay_pictures", id.0))
+                    .selected_text(name(u.layer))
+                    .show_ui(ui, |ui| {
+                        for l in std::iter::once(None).chain(layers.iter().map(|(id, _)| Some(*id)))
+                        {
+                            if ui.selectable_label(u.layer == l, name(l)).clicked() {
+                                edited.layer = l;
+                            }
+                        }
+                    })
+                    .response
+                    .on_hover_text(
+                        "Beneath the drawing, or on a layer: over its fills, under its lines",
+                    );
+            });
+            if u.layer.is_some() {
+                self.arrange_row(ui);
+            }
+        }
         ui.add_enabled_ui(!u.locked, |ui| {
             // 1 : n, as the import dialog has it: a PDF's curves are in points, the others' in
             // millimetres on their paper.

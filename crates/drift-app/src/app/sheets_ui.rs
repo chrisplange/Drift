@@ -1593,7 +1593,8 @@ impl DriftApp {
             } else {
                 accent
             };
-            painter.extend(egui::Shape::dashed_line(
+            crate::overlay::dashed(
+                painter,
                 &[
                     self.paper_to_preview(rect, a),
                     self.paper_to_preview(rect, b),
@@ -1601,7 +1602,7 @@ impl DriftApp {
                 egui::Stroke::new(1.0, color),
                 6.0,
                 4.0,
-            ));
+            );
         }
         for (i, view) in views.iter().enumerate() {
             let frame = self.view_rect(rect, view);

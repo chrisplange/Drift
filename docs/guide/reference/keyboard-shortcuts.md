@@ -82,6 +82,8 @@ display unit.
 | Q | Relations pie: hold and flick, or tap and click |
 | Alt+C | Toggle construction on the picked curves |
 | Ctrl+G / Ctrl+Shift+G | Group / ungroup; double-click a group to enter it |
+| Ctrl+] / Ctrl+[ | Bring forward / send backward the picked fills and shapes on their layer |
+| Ctrl+Shift+] / Ctrl+Shift+[ | Bring to front / send to back on their layer |
 | Double-click text | Type into it in place |
 | Ctrl+C / Ctrl+X / Ctrl+V | Copy, cut, paste under the pointer |
 | Ctrl+Shift+V | Paste in place |

@@ -256,6 +256,10 @@ pub struct Entity {
     pub layer: LayerId,
     /// Colour / weight / line type overrides (by layer when unset).
     pub appearance: Appearance,
+    /// Where a curve stacks among its layer's fills and curves: higher draws on top (as a
+    /// fill's `order`); `None`, at the top of the layer, as curves always were. The curves
+    /// outlining a fill draw with it instead.
+    pub order: Option<i32>,
 }
 
 impl Entity {
@@ -265,6 +269,7 @@ impl Entity {
             style: LineKind::Solid,
             layer: LayerId::DEFAULT,
             appearance: Appearance::default(),
+            order: None,
         }
     }
 }
@@ -2227,6 +2232,18 @@ impl Document {
         Ok(())
     }
 
+    /// Set where an entity stacks on its layer (see [`Entity::order`]).
+    pub fn set_order(&mut self, id: EntityId, order: Option<i32>) -> Result<(), DocumentError> {
+        let e = self.entities.get(&id).ok_or(DocumentError::Missing(id))?;
+        if e.order != order {
+            self.touch(id);
+            if let Some(x) = self.entities.get_mut(&id) {
+                x.order = order;
+            }
+        }
+        Ok(())
+    }
+
     /// Set an entity's appearance overrides.
     pub fn set_appearance(
         &mut self,
@@ -2250,13 +2267,15 @@ impl Document {
             return;
         };
         if let Some(dst) = self.entities.get(&to).copied()
-            && (dst.style, dst.layer, dst.appearance) != (src.style, src.layer, src.appearance)
+            && (dst.style, dst.layer, dst.appearance, dst.order)
+                != (src.style, src.layer, src.appearance, src.order)
         {
             self.touch(to);
             if let Some(x) = self.entities.get_mut(&to) {
                 x.style = src.style;
                 x.layer = src.layer;
                 x.appearance = src.appearance;
+                x.order = src.order;
             }
         }
     }
@@ -2694,24 +2713,6 @@ impl Document {
             self.touch_key(Key::Fill(id));
             self.fills.remove(&id);
         }
-    }
-
-    /// Move a fill above (`front`) or below every other fill on its layer.
-    pub fn reorder_fill(&mut self, id: FillId, front: bool) {
-        let Some(mut fill) = self.fills.get(&id).cloned() else {
-            return;
-        };
-        let others = self
-            .fills
-            .iter()
-            .filter(|(fid, f)| **fid != id && f.layer == fill.layer)
-            .map(|(_, f)| f.order);
-        fill.order = if front {
-            others.max().map_or(0, |o| o + 1)
-        } else {
-            others.min().map_or(0, |o| o - 1)
-        };
-        self.set_fill(id, fill);
     }
 
     pub fn annotations(&self) -> impl Iterator<Item = (AnnotationId, &Annotation)> {

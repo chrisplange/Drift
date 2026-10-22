@@ -25,6 +25,74 @@ impl ScreenMap {
     }
 }
 
+/// `path` dashed, as far as it shows in `painter`'s clip rectangle (see [`dashes`]).
+pub fn dashed(painter: &egui::Painter, path: &[Pos2], stroke: Stroke, dash: f32, gap: f32) {
+    painter.extend(dashes(path, painter.clip_rect(), stroke, dash, gap));
+}
+
+/// `path` as dashes, only where it crosses `clip` (padded by the stroke): a frame or
+/// leader zoomed far past the canvas costs no more than the part of it on screen (#150).
+/// Each dash keeps its place along the whole path, so panning doesn't make them crawl.
+pub fn dashes(path: &[Pos2], clip: Rect, stroke: Stroke, dash: f32, gap: f32) -> Vec<egui::Shape> {
+    let clip = clip.expand(stroke.width + 1.0);
+    let period = f64::from(dash + gap);
+    let mut out = Vec::new();
+    if period <= 0.0 || !period.is_finite() {
+        return out;
+    }
+    let mut along = 0.0;
+    for w in path.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        let length = f64::from((b - a).length());
+        if let Some((t0, t1)) = clip_to_rect(a, b, clip) {
+            let (s0, s1) = (along + length * t0, along + length * t1);
+            let at = |s: f64| a + (b - a) * ((s - along) / length) as f32;
+            let mut k = (s0 / period).floor();
+            while k * period < s1 {
+                let start = (k * period).max(s0);
+                let end = (k * period + f64::from(dash)).min(s1);
+                if end > start {
+                    out.push(egui::Shape::line_segment([at(start), at(end)], stroke));
+                }
+                k += 1.0;
+            }
+        }
+        along += length;
+    }
+    out
+}
+
+/// The part of a segment inside `r`, as parameters along it (Liang–Barsky); `None` when
+/// none of it is, or it has no length.
+fn clip_to_rect(a: Pos2, b: Pos2, r: Rect) -> Option<(f64, f64)> {
+    let (ax, ay) = (f64::from(a.x), f64::from(a.y));
+    let (dx, dy) = (f64::from(b.x) - ax, f64::from(b.y) - ay);
+    if dx == 0.0 && dy == 0.0 {
+        return None;
+    }
+    let (mut t0, mut t1) = (0.0_f64, 1.0_f64);
+    for (p, q) in [
+        (-dx, ax - f64::from(r.min.x)),
+        (dx, f64::from(r.max.x) - ax),
+        (-dy, ay - f64::from(r.min.y)),
+        (dy, f64::from(r.max.y) - ay),
+    ] {
+        if p == 0.0 {
+            if q < 0.0 {
+                return None;
+            }
+        } else {
+            let t = q / p;
+            if p < 0.0 {
+                t0 = t0.max(t);
+            } else {
+                t1 = t1.min(t);
+            }
+        }
+    }
+    (t0 < t1).then_some((t0, t1))
+}
+
 pub struct OverlayColors {
     pub snap: Color32,
     pub window: Color32,
@@ -159,7 +227,7 @@ pub fn selection_box(
             r.left_bottom(),
             r.left_top(),
         ];
-        painter.extend(egui::Shape::dashed_line(&path, stroke, 6.0, 4.0));
+        dashed(painter, &path, stroke, 6.0, 4.0);
     } else {
         painter.rect_stroke(r, 0.0, stroke, StrokeKind::Middle);
     }
@@ -179,7 +247,7 @@ pub fn move_guide(
     painter.circle_filled(b, 2.0, colors.snap);
     if let Some(to) = to {
         let t = map.to_screen(to);
-        painter.extend(egui::Shape::dashed_line(&[b, t], stroke, 5.0, 3.0));
+        dashed(painter, &[b, t], stroke, 5.0, 3.0);
         painter.circle_filled(t, 3.0, colors.snap);
     }
 }
@@ -215,12 +283,13 @@ pub fn rotate_guide(
     // Screen angles turn clockwise, so a counter-clockwise turn is negative. Whole turns
     // (a typed 3600°, say) add nothing to the picture, and must not add points to it.
     let sweep = -((deg % 360.0).to_radians() as f32);
-    painter.extend(egui::Shape::dashed_line(
+    dashed(
+        painter,
         &[c, c + dir(a0) * (r + 14.0)],
         Stroke::new(1.0, colors.snap.gamma_multiply(0.7)),
         4.0,
         3.0,
-    ));
+    );
     painter.line_segment([c, c + dir(a0 + sweep) * (r + 14.0)], stroke);
     let n = (sweep.abs() / 0.08).ceil().clamp(2.0, 128.0) as usize;
     let arc: Vec<Pos2> = (0..=n)
@@ -530,4 +599,66 @@ pub fn turn_glyph(painter: &egui::Painter, at: Pos2, color: Color32) {
     painter.add(egui::Shape::line(arc, stroke));
     painter.line_segment([tip, tip + vec2(-3.5, -1.0)], stroke);
     painter.line_segment([tip, tip + vec2(0.5, -3.5)], stroke);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ends(shapes: &[egui::Shape]) -> Vec<[Pos2; 2]> {
+        shapes
+            .iter()
+            .map(|s| match s {
+                egui::Shape::LineSegment { points, .. } => *points,
+                other => panic!("a dash is a segment, not {other:?}"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn dashes_cost_only_what_shows() {
+        let clip = Rect::from_min_max(Pos2::ZERO, Pos2::new(100.0, 100.0));
+        let stroke = Stroke::new(1.0, Color32::WHITE);
+        // A frame side a hundred million pixels long, zoomed far in: only the dashes on the
+        // canvas (padded by the stroke) are made.
+        let far = [Pos2::new(-5.0e7, 50.0), Pos2::new(5.0e7, 50.0)];
+        let shown = ends(&dashes(&far, clip, stroke, 6.0, 4.0));
+        assert!((10..=12).contains(&shown.len()), "{}", shown.len());
+        assert!(
+            shown
+                .iter()
+                .flatten()
+                .all(|p| (-3.0..=103.0).contains(&p.x))
+        );
+        // Dashes keep their places along the path, wherever it is cut: the same as the
+        // uncut path's, where both show.
+        let path = [
+            Pos2::new(-37.0, 20.0),
+            Pos2::new(60.0, 20.0),
+            Pos2::new(60.0, 90.0),
+        ];
+        let wide = Rect::from_min_max(Pos2::new(-100.0, -100.0), Pos2::new(200.0, 200.0));
+        let all = ends(&dashes(&path, wide, stroke, 6.0, 4.0));
+        let cut = ends(&dashes(&path, clip, stroke, 6.0, 4.0));
+        let within = |p: Pos2, [c, d]: [Pos2; 2]| {
+            (c.distance(p) + p.distance(d) - c.distance(d)).abs() < 1e-3
+        };
+        for [a, b] in &cut {
+            assert!(
+                all.iter()
+                    .any(|dash| within(*a, *dash) && within(*b, *dash)),
+                "{a:?} to {b:?} isn't where the uncut path has a dash"
+            );
+        }
+        assert!(
+            dashes(
+                &[Pos2::new(-50.0, -50.0), Pos2::new(-10.0, -60.0)],
+                clip,
+                stroke,
+                6.0,
+                4.0
+            )
+            .is_empty()
+        );
+    }
 }

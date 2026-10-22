@@ -726,8 +726,8 @@ impl DriftApp {
         );
         // Geometry (GPU): underlays under everything else.
         let mut under = self.editor.underlay_items(view, dark);
-        let images = self.editor.underlay_images();
         let stacked = self.editor.doc.rules().stacked_fills;
+        let pictures = self.editor.underlay_pictures();
         // Fills under every curve: their hatch lines go under the sketch too.
         let meshes = if stacked { Vec::new() } else { fills.meshes() };
         if !stacked {
@@ -742,63 +742,59 @@ impl DriftApp {
                 &|id| self.on_canvas(drift_core::AnnotationRef::Annotation(id)),
             ));
         }
-        // Stacked: each fill and the curves of its outline are one draw group, drawn over
-        // every group before it (by layer, then the fills' order). Curves outlining no fill
-        // go at the top of their layer; a curve outlining several fills goes with the
-        // topmost. Lit-up curves, text, handles and previews go over everything.
-        let mut groups: Vec<(Vec<drift_render::FillMesh>, Vec<drift_core::SketchItem>)> =
-            Vec::new();
+        // Stacked: one draw group per step of the drawing's stack (the same order prints and
+        // exports follow): a fill with the curves of its outline, placed pictures, or a run
+        // of loose curves, each over every group before it. Points, text and copies' curves
+        // go at the top of their layer. Lit-up curves, handles and previews go over
+        // everything.
+        let mut groups: Vec<DrawContent> = Vec::new();
+        let mut images = Vec::new();
+        let text = self.editor.text_items_tagged(self.status_colors, dark);
         if stacked {
-            let shapes = self.editor.fill_shapes();
-            let mut curve_group: std::collections::HashMap<drift_core::EntityId, usize> =
-                std::collections::HashMap::new();
-            let mut loose: std::collections::HashMap<drift_core::LayerId, usize> =
-                std::collections::HashMap::new();
-            let mut fill_groups: Vec<Option<crate::fills::FillGroup>> =
-                fills.groups.into_iter().map(Some).collect();
-            let layers: Vec<drift_core::LayerId> =
-                self.editor.doc.layers().map(|(id, _)| id).collect();
-            for layer in layers {
-                for slot in &mut fill_groups {
-                    if let Some(g) = slot.take_if(|g| g.layer == layer) {
-                        if let Some(fid) = g.fill
-                            && let Some(shape) = shapes.get(&fid)
-                        {
-                            for c in &shape.curves {
-                                curve_group.insert(*c, groups.len());
-                            }
-                        }
-                        groups.push((g.meshes, g.lines));
-                    }
+            let stack = self.editor.stack();
+            let mut fill_groups: std::collections::HashMap<
+                crate::stack::FillRef,
+                crate::fills::FillGroup,
+            > = fills.groups.into_iter().map(|g| (g.fill, g)).collect();
+            let shown = |layer: Option<drift_core::LayerId>| {
+                layer.is_none_or(|l| self.editor.doc.layer(l).is_none_or(|l| l.visible))
+            };
+            for g in &stack.groups {
+                let mut content = DrawContent::default();
+                if let Some(f) = g.fill.and_then(|f| fill_groups.remove(&f)) {
+                    content.fills = f.meshes;
+                    content.items = f.lines;
                 }
-                loose.insert(layer, groups.len());
-                groups.push((Vec::new(), Vec::new()));
+                let placed = pictures
+                    .iter()
+                    .filter(|(u, _)| shown(g.layer) && g.pictures.contains(u))
+                    .map(|(_, image)| image.clone());
+                if g.layer.is_some() {
+                    content.images.extend(placed);
+                } else {
+                    images.extend(placed);
+                }
+                groups.push(content);
             }
-            // (Fills on a layer that no longer exists, if any, go on top.)
-            for g in fill_groups.into_iter().flatten() {
-                groups.push((g.meshes, g.lines));
-            }
-            for t in self.editor.items_tagged(self.status_colors, dark) {
+            for t in self
+                .editor
+                .items_tagged(self.status_colors, dark)
+                .into_iter()
+                .chain(text)
+            {
                 let at = (t.item.emphasis == drift_core::Emphasis::Normal)
-                    .then(|| {
-                        t.entity
-                            .and_then(|e| curve_group.get(&e))
-                            .or_else(|| loose.get(&t.layer))
-                            .copied()
-                    })
+                    .then(|| stack.group_of(t.entity, t.layer))
                     .flatten();
-                match at {
-                    Some(k) => groups[k].1.push(t.item),
+                match at.and_then(|k| groups.get_mut(k)) {
+                    Some(g) => g.items.push(t.item),
                     None => items.push(t.item),
                 }
             }
         } else {
+            images.extend(pictures.into_iter().map(|(_, image)| image));
             items.extend(self.editor.items_styled(self.status_colors, dark));
+            items.extend(text.into_iter().map(|t| t.item));
         }
-        items.extend(
-            self.editor
-                .text_items(self.status_colors, ui.visuals().dark_mode),
-        );
         // Bézier handles around picked curves, and their curvature combs.
         let handle_grey = if ui.visuals().dark_mode {
             [0x8a, 0x90, 0x9a]
@@ -831,7 +827,11 @@ impl DriftApp {
         let ppp = f64::from(ui.ctx().pixels_per_point());
         let group_refs: Vec<drift_render::DrawGroup<'_>> = groups
             .iter()
-            .map(|(fills, items)| drift_render::DrawGroup { fills, items })
+            .map(|g| drift_render::DrawGroup {
+                fills: &g.fills,
+                images: &g.images,
+                items: &g.items,
+            })
             .collect();
         let callback = self.painter.callback(
             rect,
@@ -949,12 +949,13 @@ impl DriftApp {
         if let Some([a, b]) = self.dim_guide {
             let (a, b) = (map.to_screen(a), map.to_screen(b));
             let along = (b - a).normalized() * 16.0;
-            painter.extend(egui::Shape::dashed_line(
+            crate::overlay::dashed(
+                &painter,
                 &[a - along, b + along],
                 egui::Stroke::new(1.0, colors.snap),
                 4.0,
                 3.0,
-            ));
+            );
         }
         if let Some(at) = crosshair_at {
             let color = ui.visuals().strong_text_color().gamma_multiply(0.9);
@@ -1177,12 +1178,7 @@ impl DriftApp {
             let at = map.to_screen(guide.at);
             let stroke = egui::Stroke::new(1.0, colors.preview.gamma_multiply(0.8));
             for from in guide.from.iter().flatten() {
-                painter.extend(egui::Shape::dashed_line(
-                    &[map.to_screen(*from), at],
-                    stroke,
-                    4.0,
-                    3.0,
-                ));
+                crate::overlay::dashed(painter, &[map.to_screen(*from), at], stroke, 4.0, 3.0);
             }
             let kind = match guide.kind {
                 GuideKind::Horizontal => Some(GlyphKind::Horizontal),
@@ -1448,4 +1444,12 @@ impl Wheel {
             }
         })
     }
+}
+
+/// What one draw group of the canvas holds (see [`drift_render::DrawGroup`]).
+#[derive(Default)]
+struct DrawContent {
+    fills: Vec<drift_render::FillMesh>,
+    images: Vec<drift_render::CanvasImage>,
+    items: Vec<drift_core::SketchItem>,
 }

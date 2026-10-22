@@ -803,6 +803,14 @@ impl Editor {
         }
     }
 
+    /// The curves of a shape's outline, if `fill` is a shape's own (a closed path's): a
+    /// shape is picked, moved and copied as one with its fill.
+    pub fn shape_outline(&self, fill: FillId) -> Option<Vec<EntityId>> {
+        let path = self.doc.fill(fill)?.path?;
+        let path = self.doc.path(path).filter(|p| p.closed)?;
+        Some(path.curves.clone())
+    }
+
     /// Copy the fills whose whole outline was copied onto the copies, inside the open
     /// transaction: `curves` gives each copied curve's copy, `place` moves a point as the
     /// copy was moved (turned or mirrored), and hatches turn with it.
@@ -1400,16 +1408,6 @@ impl Editor {
         self.doc.set_fill(id, fill);
         self.commit("Edit fill");
     }
-
-    pub fn reorder_fill(&mut self, id: FillId, front: bool) {
-        self.doc.begin();
-        self.doc.reorder_fill(id, front);
-        self.commit(if front {
-            "Bring to front"
-        } else {
-            "Send to back"
-        });
-    }
 }
 
 /// Tessellate a region (holes excluded) into world-space triangles. Arcs are flattened in
@@ -1462,11 +1460,7 @@ pub fn tessellate(region: &Region, max_angle: f64) -> Option<(Vec<DVec2>, Vec<u3
 type Mesh = Rc<(Vec<DVec2>, Vec<u32>)>;
 
 /// Which fill a tessellation is of: a fill, or a copy's fill.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-enum MeshKey {
-    Fill(FillId),
-    Copy(InstanceId, usize),
-}
+use crate::stack::FillRef as MeshKey;
 
 /// Tessellations by fill, kept while the document doesn't change.
 #[derive(Default)]
@@ -1490,11 +1484,11 @@ impl MeshCache {
 
 /// What the canvas draws for one fill: its triangles (a solid fill, a hatch's background,
 /// or a tint standing in for too dense a hatch) and its hatch lines.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct FillGroup {
     pub layer: LayerId,
-    /// The sketch's fill this is; a copy's fill has none.
-    pub fill: Option<FillId>,
+    /// The fill this is: the sketch's, or a copy's.
+    pub fill: crate::stack::FillRef,
     pub meshes: Vec<FillMesh>,
     pub lines: Vec<SketchItem>,
 }
@@ -1579,10 +1573,7 @@ pub fn fill_graphics(
         }
         let mut group = FillGroup {
             layer: fill.layer,
-            fill: match id {
-                MeshKey::Fill(f) => Some(f),
-                MeshKey::Copy(..) => None,
-            },
+            fill: id,
             meshes: Vec::new(),
             lines: Vec::new(),
         };

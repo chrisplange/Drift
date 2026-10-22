@@ -73,7 +73,8 @@ Each underlay in the **Layers** panel has:
 - **Convert to geometry**: turn the underlay into lines, arcs and circles on the current
   layer, with touching ends joined, so you can edit them.
 
-Underlays are kept inside the `.drift` file. They never print or export.
+Underlays are kept inside the `.drift` file. They never print or export, pictures
+included.
 
 ## Part 2: import a DXF as geometry
 
@@ -141,8 +142,11 @@ The same dialog opens for every format. It has:
      click two points on it (a wall's ends, say) and type their real distance: the import
      is scaled to fit, about the first point.
    - **Bring in images as pictures**, for a PDF or Illustrator file with photos or scans in
-     it (on unless you turn it off): they come in as pictures on an underlay beneath the
-     drawing.
+     it (on unless you turn it off): they come in as pictures on an underlay, placed over
+     the fills that came in with them and under their lines, so a picture on a filled
+     background shows. The underlay's **Pictures** setting in the **Layers** panel puts
+     them back beneath the drawing, or on another layer; **Arrange** moves them among that
+     layer's fills.
    - What to do with **edges of shapes that are filled but not outlined**: construction
      (they shape the fill and don't print, so it looks as it did) or lines (they print).
 

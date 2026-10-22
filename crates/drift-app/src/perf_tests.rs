@@ -790,3 +790,117 @@ fn perf_drag_pushing_an_arc() {
     let all: u32 = solves.iter().sum();
     println!("  solves per frame: most {most}, {all} in all; {refused} frames refused");
 }
+
+/// The drawing of issue #150 (49 solid fills, 39 block copies, notes in an embedded font, a
+/// view's crop), from `DRIFT_ZOOM_FIXTURE` or `tests/fixtures`; without it, a stand-in with
+/// what made zooming in slow: fills, a group and a view's dashed crop.
+fn zoom_drawing() -> (Document, drift_io::Metadata) {
+    let path = std::env::var("DRIFT_ZOOM_FIXTURE").unwrap_or_else(|_| {
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/athenian_bar_shelves.drift"
+        )
+        .into()
+    });
+    if let Ok(text) = std::fs::read_to_string(&path) {
+        println!("zoom drawing: {path}");
+        return drift_io::load(&text).expect("the zoom drawing loads");
+    }
+    println!("zoom drawing: a stand-in ({path} isn't there)");
+    let mut doc = Document::new();
+    doc.begin();
+    let mut first = Vec::new();
+    for k in 0..40 {
+        let o = v(f64::from(k % 8) * 300.0, f64::from(k / 8) * 200.0);
+        let p = [(0.0, 0.0), (250.0, 0.0), (250.0, 150.0), (0.0, 150.0)]
+            .map(|(x, y)| doc.add_point(o + v(x, y)));
+        let lines: Vec<EntityId> = (0..4)
+            .map(|i| doc.add_line(p[i], p[(i + 1) % 4]).unwrap())
+            .collect();
+        let fill = drift_core::Fill::new(
+            lines.clone(),
+            o + v(125.0, 75.0),
+            drift_core::FillKind::Solid,
+        );
+        doc.add_fill(fill);
+        if k == 0 {
+            first = lines;
+        }
+    }
+    doc.add_group(drift_core::Group {
+        name: "Group".into(),
+        members: first.into_iter().collect(),
+    })
+    .unwrap();
+    doc.add_view(drift_core::View::new(
+        "Plan",
+        Bounds {
+            min: v(-50.0, -50.0),
+            max: v(2450.0, 1050.0),
+        },
+        50.0,
+    ));
+    doc.commit("Zoom drawing");
+    (doc, drift_io::Metadata::default())
+}
+
+/// Issue #150: zoomed in on the same spot, a frame must cost about what it does at 100%
+/// (it was 2 ms at 100% and 60 ms at 10,000%: dashed frames were cut into dashes across
+/// their whole length on screen, not just the part that shows).
+#[test]
+#[ignore = "torture test: run with --release --ignored --nocapture"]
+fn perf_zoom_frame_cost() {
+    use egui_kittest::Harness;
+
+    let instance = eframe::egui_wgpu::wgpu::Instance::default();
+    if pollster::block_on(
+        instance.request_adapter(&eframe::egui_wgpu::wgpu::RequestAdapterOptions::default()),
+    )
+    .is_err()
+    {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    }
+    let (doc, meta) = zoom_drawing();
+    let mut h = Harness::builder()
+        .with_size([1600.0, 1000.0])
+        .wgpu()
+        .build_eframe(|cc| crate::DriftApp::new(cc));
+    h.run();
+    h.state_mut()
+        .replace_document(doc, "zoom".into(), None, meta, true);
+    h.state_mut().show_view_crops = true;
+    h.run();
+    h.state_mut().fit_target = None;
+    let fitted = h.state().camera;
+    // About the middle, and about a fill's seed (something is on screen at every zoom).
+    let seeds: Vec<DVec2> = h.state().editor.doc.fills().map(|(_, f)| f.seed).collect();
+    let anchors = [fitted.center, seeds[seeds.len() / 2]];
+    for anchor in anchors {
+        println!("\nzoomed in about {:.1}, {:.1}:", anchor.x, anchor.y);
+        let mut at_100 = 0.0;
+        for percent in [100.0, 1000.0, 3000.0, 10000.0] {
+            h.state_mut().camera = drift_render::Camera {
+                center: anchor,
+                // Zoom as the status bar shows it: real size on a 96 dpi screen.
+                scale: percent / 100.0 * 96.0 / 25.4,
+            };
+            h.step();
+            let (step, worst) = time(20, |_| h.step());
+            let (render, _) = time(3, |_| {
+                let _ = h.render();
+            });
+            println!(
+                "{percent:>7}%   frame {step:>7.2} ms (worst {worst:>6.2})   GPU render and read back {render:>7.2} ms"
+            );
+            if percent == 100.0 {
+                at_100 = step;
+            } else {
+                assert!(
+                    step < (at_100 * 3.0).max(at_100 + 3.0),
+                    "a frame at {percent}% took {step:.2} ms, {at_100:.2} ms at 100%"
+                );
+            }
+        }
+    }
+}

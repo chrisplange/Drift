@@ -558,11 +558,16 @@ impl DriftApp {
             self.editor.doc.iter().map(|(id, _)| id).collect();
         let texts_before: std::collections::BTreeSet<_> =
             self.editor.doc.texts().map(|(id, _)| id).collect();
+        let fills_before: std::collections::BTreeSet<_> =
+            self.editor.doc.fills().map(|(id, _)| id).collect();
         self.editor.doc.begin();
         let report = drift_io::dxf::add_to_document(&mut self.editor.doc, &import);
-        // Its pictures come in as an underlay beneath it, in the same step.
+        // Its pictures come in as an underlay in the same step, placed over its fills.
         let pictures = crate::underlays::picture_underlay(&name, &images, scale, DVec2::ZERO)
             .map(|u| self.editor.doc.add_underlay(u));
+        if let Some(id) = pictures {
+            crate::underlays::place_pictures(&mut self.editor.doc, id, &fills_before);
+        }
         self.editor.commit(label);
         let imported = crate::underlays::Imported {
             underlays: pictures.into_iter().collect(),

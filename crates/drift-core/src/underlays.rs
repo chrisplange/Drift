@@ -9,7 +9,7 @@ use glam::DVec2;
 
 use crate::Shape;
 use crate::bounds::Bounds;
-use crate::layers::Rgb;
+use crate::layers::{LayerId, Rgb};
 
 /// Stable identifier of an underlay.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -105,6 +105,11 @@ pub struct Underlay {
     pub snap: bool,
     /// Locked underlays can't be moved, scaled or calibrated.
     pub locked: bool,
+    /// Where its pictures stack in the drawing: on this layer, among its fills and curves
+    /// by `order` (an import's pictures, where the file had them). `None`: beneath the whole
+    /// drawing, as a reference to trace over. Its curves are always beneath the drawing.
+    pub layer: Option<LayerId>,
+    pub order: i32,
 }
 
 /// Sketch units (mm) per PDF point.
@@ -125,6 +130,8 @@ impl Underlay {
             visible: true,
             snap: true,
             locked: false,
+            layer: None,
+            order: 0,
         }
     }
 

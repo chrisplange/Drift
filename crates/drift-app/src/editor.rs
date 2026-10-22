@@ -385,6 +385,8 @@ pub struct Editor {
     )>,
     /// The fills of copies of blocks, in the world (by document revision).
     pub(crate) copy_fills: Option<(u64, std::rc::Rc<Vec<crate::fills::CopyFill>>)>,
+    /// What draws over what (by document revision).
+    pub(crate) stack: Option<(u64, std::rc::Rc<crate::stack::Stack>)>,
     /// Each fill's last region, kept for when its boundary is lost.
     pub(crate) last_fill_shapes:
         std::collections::HashMap<drift_core::FillId, crate::fills::FillShape>,

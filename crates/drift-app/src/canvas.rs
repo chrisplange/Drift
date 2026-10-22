@@ -12,8 +12,9 @@ use eframe::egui_wgpu::{self, wgpu};
 /// How the canvas is drawn this frame.
 /// What the canvas draws. With no `groups`: curves under everything (hatch lines,
 /// underlays), the sketch's curves on top, filled areas (beneath both), and underlays'
-/// pictures (over the fills, under the curves). With `groups` (fills stacked): pictures,
-/// then `under`, then `fills`, then each group over the last, then `items` on top.
+/// pictures (over the fills, under the curves). With `groups` (fills stacked, in the
+/// drawing's [stack](crate::stack)): `images` (pictures beneath the drawing), then `under`,
+/// then `fills`, then each group over the last, then `items` on top.
 pub struct CanvasContent<'a> {
     pub under: &'a [SketchItem],
     pub items: &'a [SketchItem],
@@ -78,21 +79,29 @@ impl CanvasPainter {
             show_grid: options.show_grid,
             show_axes: options.show_axes,
         };
-        let mut frame = if groups.is_empty() {
-            let mut frame = build_frame(items, camera, viewport, &palette);
-            frame.push_fills(fills, camera, viewport);
-            frame
-        } else {
-            let mut frame = build_frame(&[], camera, viewport, &palette);
-            frame.push_group(fills, &[], camera, viewport, &palette);
-            for g in groups {
-                frame.push_group(g.fills, g.items, camera, viewport, &palette);
-            }
-            frame.push_group(&[], items, camera, viewport, &palette);
-            frame
-        };
-        frame.push_under(under, camera, viewport, &palette);
+        let mut frame = build_frame(
+            if groups.is_empty() { items } else { &[] },
+            camera,
+            viewport,
+            &palette,
+        );
+        // (Pictures in no group: beneath the groups, or over the fills without them.)
         frame.push_images(images, camera, viewport);
+        if groups.is_empty() {
+            frame.push_fills(fills, camera, viewport);
+        } else {
+            let group = |fills, items| DrawGroup {
+                fills,
+                items,
+                ..DrawGroup::default()
+            };
+            frame.push_group(group(fills, &[]), camera, viewport, &palette);
+            for g in groups {
+                frame.push_group(*g, camera, viewport, &palette);
+            }
+            frame.push_group(group(&[], items), camera, viewport, &palette);
+        }
+        frame.push_under(under, camera, viewport, &palette);
         egui_wgpu::Callback::new_paint_callback(rect, CanvasCallback { frame })
     }
 }

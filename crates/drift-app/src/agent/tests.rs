@@ -390,7 +390,10 @@ fn new_drawings_and_older_files_get_the_rules_drift_gives_them() {
     // A file from before drawings kept their rules gets them too, and the notes say so.
     let plate = drift_core::demo::mounting_plate();
     let current = drift_io::save(&plate, &drift_io::Metadata::default());
-    let older = current.replace(r#""version": 39"#, r#""version": 38"#);
+    let older = current.replace(
+        &format!(r#""version": {}"#, drift_io::FORMAT_VERSION),
+        r#""version": 38"#,
+    );
     assert_ne!(older, current);
     std::fs::write(dir.join("old.drift"), older).unwrap();
     let v = ok(&mut s, "open_drawing", json!({ "path": "old.drift" }));

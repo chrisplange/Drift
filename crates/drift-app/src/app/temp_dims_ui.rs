@@ -54,8 +54,7 @@ impl Pen for Dashed<'_> {
     }
 
     fn line(&self, points: &[egui::Pos2], stroke: egui::Stroke) {
-        self.0
-            .extend(egui::Shape::dashed_line(points, stroke, 4.0, 3.0));
+        crate::overlay::dashed(self.0, points, stroke, 4.0, 3.0);
     }
 
     fn polygon(&self, points: Vec<egui::Pos2>, color: egui::Color32) {
@@ -228,12 +227,13 @@ impl DriftApp {
             && let Some(from) = layouts.iter().find(|l| l.index == i).and_then(|l| l.end)
             && let Some(to) = self.pointer.map(|p| map.to_screen(p.raw))
         {
-            painter.extend(egui::Shape::dashed_line(
+            crate::overlay::dashed(
+                painter,
                 &[from, to],
                 egui::Stroke::new(1.0, colors.hovered),
                 4.0,
                 3.0,
-            ));
+            );
         }
     }
 

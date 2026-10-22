@@ -88,6 +88,10 @@ pub enum LineType {
     Center,
     /// Long dash, two dots.
     Phantom,
+    /// No stroke: the curve isn't drawn or printed (it is shown dashed only while picked
+    /// or hovered), but it still bounds areas, snaps and holds relations, as a shape with
+    /// a fill and no stroke in a drawing program. A curve's own setting, never a layer's.
+    None,
 }
 
 impl LineType {
@@ -106,6 +110,7 @@ impl LineType {
             LineType::Hidden => "Hidden",
             LineType::Center => "Centre",
             LineType::Phantom => "Phantom",
+            LineType::None => "None",
         }
     }
 
@@ -116,11 +121,20 @@ impl LineType {
             LineType::Hidden => "hidden",
             LineType::Center => "center",
             LineType::Phantom => "phantom",
+            LineType::None => "none",
         }
     }
 
     pub fn from_name(s: &str) -> Option<LineType> {
-        Self::ALL.into_iter().find(|t| t.name() == s)
+        Self::ALL
+            .into_iter()
+            .chain([LineType::None])
+            .find(|t| t.name() == s)
+    }
+
+    /// Whether a curve of this type is drawn and printed (see [`LineType::None`]).
+    pub fn is_stroked(self) -> bool {
+        self != LineType::None
     }
 }
 

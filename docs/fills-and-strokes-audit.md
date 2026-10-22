@@ -301,3 +301,10 @@ Worth doing after the above, roughly in this order of visibility:
 5. **3.5 joins, stroke opacity, alignment.**
 
 Each step is shippable on its own and each makes the next one smaller.
+
+**Status (2026-10-22):** 1 and 2 are done (#137, #138). 1's per-layer z for curves came in
+batch 2 (Arrange, format 40), with print, PDF, SVG and DXF following the canvas's stack.
+3 is done: the Inspector, Stroke: none (a `LineType::None`), and a click inside a shape's
+fill picks the shape (outline and fill; copies get their own path). Clicking one side of
+the outline still picks that curve alone, and groups don't yet carry area fills for copy
+and pattern.

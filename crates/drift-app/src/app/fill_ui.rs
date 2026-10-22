@@ -111,6 +111,61 @@ pub(crate) fn fill_style_editor(
         }
     }
     ui.add_space(4.0);
+    fill_style_fields(ui, style, patterns, dark, id);
+    *style != before
+}
+
+/// What a fill style editor with a None choice did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FillEdit {
+    Unchanged,
+    Changed,
+    /// None was chosen: the fill is to go.
+    Removed,
+}
+
+/// Edit a fill style, with None (no fill) beside Solid and Hatch, as a shape's Fill.
+pub(crate) fn fill_style_editor_or_none(
+    ui: &mut egui::Ui,
+    style: &mut FillStyle,
+    patterns: &PatternLibrary,
+    dark: bool,
+    id: &str,
+) -> FillEdit {
+    let before = style.clone();
+    let solid = matches!(style.kind, FillKind::Solid);
+    match theme::segmented(
+        ui,
+        Some(solid),
+        &[
+            (None, "None"),
+            (Some(true), "Solid"),
+            (Some(false), "Hatch"),
+        ],
+    ) {
+        Some(None) => return FillEdit::Removed,
+        Some(Some(true)) if !solid => style.kind = FillKind::Solid,
+        Some(Some(false)) if solid => style.kind = FillKind::Hatch(Hatch::new("ANSI31")),
+        _ => {}
+    }
+    ui.add_space(4.0);
+    fill_style_fields(ui, style, patterns, dark, id);
+    if *style != before {
+        FillEdit::Changed
+    } else {
+        FillEdit::Unchanged
+    }
+}
+
+/// A fill style's fields: colour and opacity for a solid fill; pattern, scale, angle, size,
+/// lines and background for a hatch.
+fn fill_style_fields(
+    ui: &mut egui::Ui,
+    style: &mut FillStyle,
+    patterns: &PatternLibrary,
+    dark: bool,
+    id: &str,
+) {
     match &mut style.kind {
         FillKind::Solid => {
             theme::row(ui, "Colour", |ui| {
@@ -186,13 +241,74 @@ pub(crate) fn fill_style_editor(
             });
         }
     }
-    *style != before
 }
 
 impl DriftApp {
     /// The inspector's fill sections: selected fills, the Fill tool's settings, or buttons to
     /// fill the selected region. Returns true if it showed something that replaces the usual
     /// "No selection" content.
+    /// What is wrong with a fill, with what to do about it: its boundary lost, or an
+    /// edit dividing its area.
+    pub(crate) fn fill_notices(&mut self, ui: &mut egui::Ui, first: FillId) {
+        let Some(fill) = self.editor.doc.fill(first).cloned() else {
+            return;
+        };
+        let shapes = self.editor.fill_shapes();
+        let shape = shapes.get(&first);
+        if shape.is_none_or(|s| s.lost) {
+            ui.add_space(4.0);
+            ui.label(
+                egui::RichText::new(
+                    "Boundary lost: its curves no longer enclose an area. It keeps its last \
+                 shape until you re-pick it.",
+                )
+                .color(egui::Color32::from_rgb(0xff, 0x5d, 0x5d))
+                .small(),
+            );
+            if ui.button("Re-pick boundary").clicked() {
+                self.editor.repick_fill = Some(first);
+                self.set_tool(ToolKind::Fill);
+            }
+        }
+        if let Some(parts) = shape.filter(|_| fill.divided).map(|s| s.parts) {
+            ui.add_space(4.0);
+            ui.label(
+                egui::RichText::new(format!(
+                    "Covers {parts} areas: an edit divided its area, and it was kept whole."
+                ))
+                .color(theme::warning_color(ui.visuals().dark_mode))
+                .small(),
+            );
+            ui.horizontal_wrapped(|ui| {
+                let result = if ui
+                    .button("Fit to its seed's area")
+                    .on_hover_text("Cover only the area where it was first clicked")
+                    .clicked()
+                {
+                    Some(self.editor.fit_fill_to_seed(first))
+                } else if ui
+                    .button(format!("Split into {parts}"))
+                    .on_hover_text("One fill per area, each in this style")
+                    .clicked()
+                {
+                    Some(self.editor.split_fill(first).map(|_| ()))
+                } else {
+                    if ui
+                        .button("Keep whole")
+                        .on_hover_text("Clear the mark and keep covering every area")
+                        .clicked()
+                    {
+                        self.editor.keep_fill_whole(first);
+                    }
+                    None
+                };
+                if let Some(Err(e)) = result {
+                    self.editor.notice = Some(e);
+                }
+            });
+        }
+    }
+
     pub(crate) fn fill_inspector(&mut self, ui: &mut egui::Ui) -> bool {
         let dark = ui.visuals().dark_mode;
         self.hatch_patterns
@@ -207,65 +323,14 @@ impl DriftApp {
         if let Some(&first) = fills.first() {
             let fill = self.editor.doc.fill(first).cloned().expect("exists");
             let shapes = self.editor.fill_shapes();
-            let shape = shapes.get(&first);
+            let shape = shapes.get(&first).cloned();
             let title = match (&fill.kind, fills.len()) {
                 (FillKind::Solid, 1) => "Fill".to_owned(),
                 (FillKind::Hatch(_), 1) => "Hatch".to_owned(),
                 (_, n) => format!("{n} fills"),
             };
             app::panels::title(ui, Some(ToolKind::Fill), &title, "");
-            if shape.is_none_or(|s| s.lost) {
-                ui.add_space(4.0);
-                ui.label(
-                    egui::RichText::new(
-                        "Boundary lost: its curves no longer enclose an area. It keeps its last \
-                         shape until you re-pick it.",
-                    )
-                    .color(egui::Color32::from_rgb(0xff, 0x5d, 0x5d))
-                    .small(),
-                );
-                if ui.button("Re-pick boundary").clicked() {
-                    self.editor.repick_fill = Some(first);
-                    self.set_tool(ToolKind::Fill);
-                }
-            }
-            if let Some(parts) = shape.filter(|_| fill.divided).map(|s| s.parts) {
-                ui.add_space(4.0);
-                ui.label(
-                    egui::RichText::new(format!(
-                        "Covers {parts} areas: an edit divided its area, and it was kept whole."
-                    ))
-                    .color(theme::warning_color(ui.visuals().dark_mode))
-                    .small(),
-                );
-                ui.horizontal_wrapped(|ui| {
-                    let result = if ui
-                        .button("Fit to its seed's area")
-                        .on_hover_text("Cover only the area where it was first clicked")
-                        .clicked()
-                    {
-                        Some(self.editor.fit_fill_to_seed(first))
-                    } else if ui
-                        .button(format!("Split into {parts}"))
-                        .on_hover_text("One fill per area, each in this style")
-                        .clicked()
-                    {
-                        Some(self.editor.split_fill(first).map(|_| ()))
-                    } else {
-                        if ui
-                            .button("Keep whole")
-                            .on_hover_text("Clear the mark and keep covering every area")
-                            .clicked()
-                        {
-                            self.editor.keep_fill_whole(first);
-                        }
-                        None
-                    };
-                    if let Some(Err(e)) = result {
-                        self.editor.notice = Some(e);
-                    }
-                });
-            }
+            self.fill_notices(ui, first);
             theme::section(ui, "Style");
             let mut style = FillStyle::of(&fill);
             if fills.len() == 1 && matches!(fill.kind, FillKind::Hatch(_)) {
@@ -320,23 +385,8 @@ impl DriftApp {
                 }
                 self.editor.commit("Move fill to layer");
             }
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                if ui
-                    .button("Bring to front")
-                    .on_hover_text("Draw above the other fills on its layer")
-                    .clicked()
-                {
-                    self.editor.reorder_fill(first, true);
-                }
-                if ui
-                    .button("Send to back")
-                    .on_hover_text("Draw below the other fills on its layer")
-                    .clicked()
-                {
-                    self.editor.reorder_fill(first, false);
-                }
-            });
+            theme::section(ui, "Arrange");
+            self.arrange_row(ui);
             if let Some(shape) = shape {
                 let units = self.editor.doc.units();
                 let r = &shape.region;

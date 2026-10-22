@@ -1715,3 +1715,35 @@ fn dragging_a_corner_arc_leaves_the_rest_of_the_outline() {
         }
     }
 }
+
+/// #148: a drag of a line whose end starts a line with an arc tangent at its midpoint leaves
+/// the tangency off by about 2e-6 rad (the touching-end form of the tangency is chosen after
+/// the translation, when the midpoint is off the line).
+#[test]
+#[ignore = "#148"]
+fn drag_keeps_a_tangency_at_a_midpoint() {
+    let p = DVec2::new;
+    let sketch = Sketch {
+        points: vec![
+            p(0.0, 0.0),
+            p(19.318516525781366, 5.176380902050415),
+            p(9.659258262890683, 2.5881904510252074),
+            p(12.24744871391589, 12.24744871391589),
+            p(11.729810623710845, -5.13921615928734),
+            p(4.801607393435337, -1.1392161592873373),
+            p(5.176380902050415, 19.318516525781366),
+        ],
+        curves: vec![
+            Curve::Line(0, 1),
+            Curve::Line(2, 3),
+            Curve::Arc(4, 2, 5),
+            Curve::Line(0, 6),
+        ],
+        rels: vec![Rel::Midpoint(2, 0), Rel::Tangent(0, 2)],
+    };
+    let offset = p(0.0, -18.264919971439852);
+    let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+    let ids = vec![built.curves[3]];
+    let run = drag(&mut built, &ids, offset, 1).unwrap();
+    assert!(run.committed && run.refused == 0);
+}

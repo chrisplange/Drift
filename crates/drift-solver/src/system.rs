@@ -49,17 +49,50 @@ pub struct System {
     /// Constraints entirely implied by others during substitution.
     pub redundant: Vec<ConstraintId>,
     pub entities: Vec<(EntityId, EntityShape)>,
-    /// Arcs that should keep a size where they can: centre x, y and start x, y, and the
-    /// radius ([`crate::SolveOptions::radii`], for arcs neither of whose ends is dragged). Not
-    /// equations, only a preference in the minimum-change step (see `newton`).
-    pub keep_radius: Vec<([usize; 4], f64)>,
-    /// Lines that should keep a direction where they can: their ends' x, y and the unit
-    /// direction ([`crate::SolveOptions::directions`]). A preference, like `keep_radius`.
-    pub keep_direction: Vec<([usize; 4], DVec2)>,
-    /// Lines that should keep a length where they can: their ends' x, y and the length
-    /// ([`crate::SolveOptions::lengths`]). A preference, like `keep_radius`, but one a solve
-    /// gives up where the relations rule it out (see `newton`).
-    pub keep_length: Vec<([usize; 4], f64)>,
+    /// The shapes to keep where the relations leave it open: arcs' radii
+    /// ([`crate::SolveOptions::radii`], for arcs neither of whose ends is dragged), lines'
+    /// lengths and directions. Not equations, one preference in the minimum-change step,
+    /// ranked below the relations (see `newton`).
+    pub keep: Vec<Shape>,
+}
+
+/// A shape to keep where the relations leave it open (see [`System::keep`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Shape {
+    /// The distance between two points (an arc's centre and start, a line's ends): x and y
+    /// of each, and the distance.
+    Distance([usize; 4], f64),
+    /// A line's direction: its ends' x and y, and the unit direction.
+    Direction([usize; 4], DVec2),
+}
+
+impl Shape {
+    /// The parameters it is over.
+    pub fn params(&self) -> &[usize; 4] {
+        match self {
+            Shape::Distance(k, _) | Shape::Direction(k, _) => k,
+        }
+    }
+
+    /// How far off the shape is at `value`, as a distance (a direction's: how far one end is
+    /// off the line through the other), and its gradient over [`params`](Self::params), a
+    /// unit vector per end. `None` where the shape has collapsed (no distance to keep).
+    pub fn offset(&self, value: impl Fn(usize) -> f64) -> Option<([f64; 4], f64)> {
+        match *self {
+            Shape::Distance(k, d0) => {
+                let [ax, ay, bx, by] = k.map(value);
+                let d = (bx - ax).hypot(by - ay);
+                (d > 0.0).then(|| {
+                    let (ux, uy) = ((bx - ax) / d, (by - ay) / d);
+                    ([-ux, -uy, ux, uy], d - d0)
+                })
+            }
+            Shape::Direction(k, u) => {
+                let [ax, ay, bx, by] = k.map(value);
+                Some(([-u.y, u.x, u.y, -u.x], (bx - ax) * u.y - (by - ay) * u.x))
+            }
+        }
+    }
 }
 
 struct UnionFind {
@@ -93,7 +126,12 @@ impl UnionFind {
 }
 
 /// Inverse weight for dragged parameters: they barely move, so the rest of the sketch adapts.
+/// The first rank of what stays put (see [`crate::SolveOptions`]).
 pub(crate) const DRAGGED_MOBILITY: f64 = 1e-6;
+
+/// Inverse weight for carried parameters ([`crate::SolveOptions::carried`]): they stay put
+/// too, but give way before the dragged where the relations won't have both. The second rank.
+pub(crate) const CARRIED_MOBILITY: f64 = 1e-4;
 
 /// How a tangency touches at a curve's end (see [`touching_end`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -191,18 +229,21 @@ fn center_of(doc: &Document, curve: EntityId) -> Option<DVec2> {
 
 impl System {
     pub fn build(doc: &Document, dragged: &[Param], tol: &Tolerances) -> Self {
-        Self::build_in(doc, dragged, tol, None, &HashMap::new())
+        Self::build_in(doc, dragged, &[], tol, None, &HashMap::new())
     }
 
     /// Build the system for the entities in `scope` only (everything if `None`). The scope
     /// must be closed under shared points and constraints (see [`crate::connected`]).
+    /// `dragged` and `carried` are the parameters held where they are, in that order of rank.
     pub fn build_in(
         doc: &Document,
         dragged: &[Param],
+        carried: &[Param],
         tol: &Tolerances,
         scope: Option<&std::collections::HashSet<EntityId>>,
         radii: &HashMap<EntityId, f64>,
     ) -> Self {
+        let held: Vec<Param> = dragged.iter().chain(carried).copied().collect();
         let keep = |id: EntityId| scope.is_none_or(|s| s.contains(&id));
         // Relations whose geometry is in scope and still of the kinds they need (a trim or
         // a split can change a curve's kind under one): the rest are left out rather than
@@ -561,7 +602,7 @@ impl System {
                                 // wherever rounding left it rather than the point used here.
                                 let own = if at_end { 2 } else { 1 };
                                 if handle != own
-                                    && !Param::point(ctrl[own]).iter().any(|q| dragged.contains(q))
+                                    && !Param::point(ctrl[own]).iter().any(|q| held.contains(q))
                                 {
                                     let [hx, hy] = point(ctrl[own]);
                                     equalities.push((hx, pt[0]));
@@ -867,11 +908,14 @@ impl System {
         // Arcs keep their end on the circle through their start. (Which arcs keep their
         // radius, `solve` decides: dragging an end reshapes the arc, dragging its centre
         // carries it along.)
-        let mut keep_radius = Vec::new();
+        let mut keep_shape = Vec::new();
         for (id, entity) in doc.iter().filter(|(id, _)| keep(*id)) {
             if let EntityKind::Arc { center, start, end } = entity.kind {
                 if let Some(&r) = radii.get(&id) {
-                    keep_radius.push(([x(center), y(center), x(start), y(start)], r));
+                    keep_shape.push(Shape::Distance(
+                        [x(center), y(center), x(start), y(start)],
+                        r,
+                    ));
                 }
                 rows.push(Row {
                     equation: Equation::EqualLength {
@@ -905,13 +949,17 @@ impl System {
             .iter()
             .filter_map(|p| param_index.get(p).copied())
             .collect();
+        let held: Vec<usize> = held
+            .iter()
+            .filter_map(|p| param_index.get(p).copied())
+            .collect();
         for group in &mut groups {
-            // Start from the dragged members where there are any (so merging e.g. a dragged
+            // Start from the held members where there are any (so merging e.g. a dragged
             // point with a coincident one moves the other point, and the drag lands where it
             // was asked to), else from the mean of the members.
-            let has_dragged = group.members.iter().any(|i| dragged.contains(i));
+            let has_held = group.members.iter().any(|i| held.contains(i));
             let weight = |i: &usize| {
-                if !has_dragged || dragged.contains(i) {
+                if !has_held || held.contains(i) {
                     1.0
                 } else {
                     0.0
@@ -926,6 +974,8 @@ impl System {
                 / total;
             if group.members.iter().any(|i| dragged.contains(i)) {
                 group.mobility = DRAGGED_MOBILITY;
+            } else if has_held {
+                group.mobility = CARRIED_MOBILITY;
             }
             let pins: Vec<(f64, ConstraintId)> = group
                 .members
@@ -953,9 +1003,7 @@ impl System {
             conflicts,
             redundant,
             entities,
-            keep_radius,
-            keep_direction: Vec::new(),
-            keep_length: Vec::new(),
+            keep: keep_shape,
         }
     }
 

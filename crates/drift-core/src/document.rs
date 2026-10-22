@@ -477,6 +477,9 @@ pub struct Document {
     revision: u64,
     /// Pre-images of everything touched by the open transaction.
     journal: Option<HashMap<Key, Option<Record>>>,
+    /// Counts transactions begun, so work spanning calls (a drag) can tell it is still in the
+    /// same one (not part of the content).
+    transaction_serial: u64,
     /// Leader targets as of the last [`remember_leader_targets`](Self::remember_leader_targets)
     /// (not part of the content).
     last_anchor_pos: HashMap<AnnotationId, DVec2>,
@@ -559,6 +562,7 @@ impl Default for Document {
             next_drafting_id: 1,
             revision: 0,
             journal: None,
+            transaction_serial: 0,
             last_anchor_pos: HashMap::new(),
         }
     }
@@ -795,7 +799,14 @@ impl Document {
     pub fn begin(&mut self) {
         if self.journal.is_none() {
             self.journal = Some(HashMap::new());
+            self.transaction_serial += 1;
         }
+    }
+
+    /// Which transaction is open (or was last): a new number for each [`begin`](Self::begin)
+    /// that opens one.
+    pub fn transaction_serial(&self) -> u64 {
+        self.transaction_serial
     }
 
     pub fn in_transaction(&self) -> bool {

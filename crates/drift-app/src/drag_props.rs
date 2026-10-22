@@ -857,8 +857,10 @@ fn free_moves_go(plan: &Plan, pick: &Pick, offset: DVec2, steps: u32) -> Result<
     Ok(())
 }
 
-/// Property 3: A line the move doesn't touch (not selected, no selected point, nothing holding it)
-/// keeps its length.
+/// Property 3: A line hanging from what the move takes (its far end free: on no other curve, in
+/// no relation) and not itself touched by it (not selected, no selected point, nothing holding
+/// it) keeps its length: it is carried along, not stretched (#90). A line whose far end holds
+/// on to more geometry may stretch instead, so the move doesn't shove that along (#143).
 fn no_unforced_stretch(
     plan: &Plan,
     pick: &Pick,
@@ -905,12 +907,28 @@ fn no_unforced_stretch(
         })
         .flatten()
         .collect();
+    let mut uses: std::collections::HashMap<EntityId, usize> = Default::default();
+    for (_, e) in built.ed.doc.iter().filter(|(_, e)| !e.kind.is_point()) {
+        for p in e.kind.points() {
+            *uses.entry(p).or_default() += 1;
+        }
+    }
+    let named: HashSet<EntityId> = built
+        .ed
+        .doc
+        .constraints()
+        .flat_map(|(_, c)| c.entities())
+        .collect();
+    let free = |p: &EntityId| uses.get(p) == Some(&1) && !named.contains(p);
     let run = drag(&mut built, &ids, offset, steps)?;
     for (l, curve) in sketch.curves.iter().enumerate() {
         let Curve::Line(a, b) = *curve else {
             continue;
         };
         let (pa, pb) = (built.points[a], built.points[b]);
+        if !free(&pa) && !free(&pb) {
+            continue;
+        }
         if ids.contains(&built.curves[l])
             || [pa, pb]
                 .iter()
@@ -1036,6 +1054,108 @@ fn untouched_stays_put(
             prop_assert!(
                 run.end[i] == run.start[i],
                 "point {i}, out of the drag's reach, moved from {} to {}",
+                run.start[i],
+                run.end[i]
+            );
+        }
+    }
+    Ok(())
+}
+
+/// The points a drag may move: the dragged, everything relations link to them (a relation
+/// links all the points it names, an arc its centre and ends; a line's ends only through
+/// relations), and the free end of a line hanging from those, which a move of curves carries
+/// along. #143: the rest of an outline that only shares ends with them stays put.
+fn related_to(doc: &drift_core::Document, ids: &[EntityId], curves: bool) -> HashSet<EntityId> {
+    let points = |id: EntityId| -> Vec<EntityId> {
+        match doc.get(id) {
+            Some(e) if e.kind.is_point() => vec![id],
+            Some(e) => e.kind.points().collect(),
+            None => Vec::new(),
+        }
+    };
+    let mut related: HashSet<EntityId> = doc
+        .defining_points(ids.iter().copied())
+        .into_iter()
+        .collect();
+    let groups: Vec<Vec<EntityId>> = doc
+        .constraints()
+        .filter(|(id, _)| !doc.is_driven(*id))
+        .map(|(_, c)| c.entities().flat_map(points).collect())
+        .chain(
+            doc.iter()
+                .filter(|(_, e)| {
+                    !e.kind.is_point() && !matches!(e.kind, drift_core::EntityKind::Line { .. })
+                })
+                .map(|(id, _)| points(id)),
+        )
+        .collect();
+    loop {
+        let before = related.len();
+        for group in &groups {
+            if group.iter().any(|p| related.contains(p)) {
+                related.extend(group.iter().copied());
+            }
+        }
+        if related.len() == before {
+            break;
+        }
+    }
+    if curves {
+        let mut uses: std::collections::HashMap<EntityId, usize> = Default::default();
+        for (_, e) in doc.iter().filter(|(_, e)| !e.kind.is_point()) {
+            for p in e.kind.points() {
+                *uses.entry(p).or_default() += 1;
+            }
+        }
+        let named: HashSet<EntityId> = doc.constraints().flat_map(|(_, c)| c.entities()).collect();
+        let free = |p: EntityId| uses.get(&p) == Some(&1) && !named.contains(&p);
+        let hanging: Vec<EntityId> = doc
+            .iter()
+            .filter_map(|(_, e)| match e.kind {
+                drift_core::EntityKind::Line { a, b } if related.contains(&a) && free(b) => Some(b),
+                drift_core::EntityKind::Line { a, b } if related.contains(&b) && free(a) => Some(a),
+                _ => None,
+            })
+            .collect();
+        related.extend(hanging);
+    }
+    related
+}
+
+/// Property 11 (#143): a drag leaves the curves no relation links to it as they were, even where
+/// they share an end with what moves (that end moves; their far ends don't), unless the drag
+/// had to push a curve that couldn't give way any further. (Relations hold throughout: every
+/// drag checks that, coincidences among them.)
+fn unrelated_stay_put(
+    plan: &Plan,
+    pick: &Pick,
+    offset: DVec2,
+    steps: u32,
+) -> Result<(), TestCaseError> {
+    let Some(sketch) = plan.sketch() else {
+        return Ok(());
+    };
+    let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+    let ids = pick.ids(&built);
+    let curves = ids
+        .iter()
+        .all(|id| built.ed.doc.get(*id).is_some_and(|e| !e.kind.is_point()));
+    let related = related_to(&built.ed.doc, &ids, curves);
+    let run = drag(&mut built, &ids, offset, steps)?;
+    if built.ed.drag_pushed() {
+        return Ok(());
+    }
+    for (i, p) in built.points.iter().enumerate() {
+        if !related.contains(p) {
+            // (Within round-off: unlike the unreached, these are in the solve.)
+            prop_assert!(
+                close(
+                    run.end[i],
+                    run.start[i],
+                    run.start[i].length() + offset.length()
+                ),
+                "point {i}, which no relation links to the drag, moved from {} to {}",
                 run.start[i],
                 run.end[i]
             );
@@ -1204,6 +1324,96 @@ property!(select_all_moves_rigidly, select_all_moves_rigidly_heavy,
     (plan in plan(false), offset in offset(20.0), steps in 1u32..=20)
         => select_all_translates(&plan, offset, steps));
 
+/// Free sketches: lines only, no relations (arcs keep a shape of their own, and the other
+/// build steps add relations).
+fn free_plan() -> impl Strategy<Value = Plan> {
+    prop::collection::vec(op(), 1..8).prop_map(|ops| Plan {
+        ops: ops
+            .into_iter()
+            .filter(|op| matches!(op, Op::Step { .. } | Op::Close { .. }))
+            .collect(),
+        extras: vec![false; 48],
+        fix: None,
+        length: None,
+    })
+}
+
+/// Property 8: dragging a point of free geometry moves that point and nothing else, the
+/// others not by a bit (no solve nudges them), as in a drawing program.
+fn free_point_drag_is_exact(
+    plan: &Plan,
+    point: usize,
+    offset: DVec2,
+    steps: u32,
+) -> Result<(), TestCaseError> {
+    let Some(sketch) = plan.sketch() else {
+        return Ok(());
+    };
+    let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+    let i = point % built.points.len();
+    let id = built.points[i];
+    let run = drag(&mut built, &[id], offset, steps)?;
+    prop_assert!(run.committed && run.refused == 0, "a free drag was refused");
+    for (j, (&end, &start)) in run.end.iter().zip(&run.start).enumerate() {
+        if j == i {
+            let want = start + offset;
+            prop_assert!(
+                close(end, want, want.length() + offset.length()),
+                "the dragged point ended at {end} instead of {want}"
+            );
+        } else {
+            prop_assert_eq!(end, start, "point {} moved", j);
+        }
+    }
+    Ok(())
+}
+
+property!(free_point_drag_moves_only_it, free_point_drag_moves_only_it_heavy,
+    (plan in free_plan(), point in 0usize..64, offset in offset(20.0), steps in 1u32..=20)
+        => free_point_drag_is_exact(&plan, point, offset, steps));
+
+/// Step 1: moving free lines moves them exactly, as in a drawing program: a line hanging from
+/// a moved one stretches, its far end staying put. Moved without its ends dragged (the line's
+/// shape left open), the hanging line is carried along at its length instead, by the solve.
+#[test]
+fn free_lines_move_exactly() {
+    let p = DVec2::new;
+    let sketch = Sketch {
+        points: vec![p(0.0, 0.0), p(10.0, 0.0), p(13.0, 4.0)],
+        curves: vec![Curve::Line(0, 1), Curve::Line(1, 2)],
+        rels: vec![],
+    };
+    let offset = p(3.3, -7.1);
+    let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+    let ids = built.curves.clone();
+    let run = drag(&mut built, &ids, offset, 5).unwrap();
+    assert!(run.committed && run.refused == 0);
+    for (start, end) in run.start.iter().zip(&run.end) {
+        assert!(
+            end.distance(*start + offset) < 1e-12,
+            "{start} went to {end}"
+        );
+    }
+    let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+    let ids = vec![built.curves[0]];
+    let run = drag(&mut built, &ids, offset, 5).unwrap();
+    assert!(run.committed && run.refused == 0);
+    assert_eq!(run.end[2], run.start[2], "the far end moved");
+    for i in 0..2 {
+        assert!(run.end[i].distance(run.start[i] + offset) < 1e-12);
+    }
+    let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+    built.ed.doc.begin();
+    assert!(built.ed.drag(&[built.curves[0]], offset, &[]));
+    built.ed.commit("Move");
+    let end = built.positions();
+    let length = end[2].distance(end[1]);
+    assert!(
+        (length - 5.0).abs() < 1e-9,
+        "the hanging line is {length} long"
+    );
+}
+
 /// #93: a move that makes an unselected point follow (a line's far end, kept by its midpoint
 /// and an equal length) lands exactly, even in one step.
 #[test]
@@ -1292,11 +1502,12 @@ fn a_line_hanging_from_a_carried_arc_follows_it() {
     let offset = p(-14.355787012675158, 0.0);
     let run = drag(&mut built, &ids, offset, 1).unwrap();
     assert!(run.committed && run.refused == 0);
-    // R2's end took R1's start with it, R1 was carried, and L went along with its centre.
+    // R2's end took R1's start with it; R1 shrank as far as it could, then was pushed (its
+    // centre left behind the start no more), and L went along with its centre.
+    let centre = run.end[1];
     assert!(
-        run.end[1].distance(run.start[1] + offset) < 1e-9,
-        "centre at {}",
-        run.end[1]
+        centre.x < run.start[1].x - 5.0 && centre.y.abs() < 1e-9,
+        "centre at {centre}"
     );
     let length = run.end[1].distance(run.end[3]);
     assert!((length - 10.0).abs() < 1e-9, "L is {length} long");
@@ -1422,21 +1633,85 @@ property!(drag_leaves_the_unreached_alone, drag_leaves_the_unreached_alone_heavy
     (plan in plan(true), pick in pick(), offset in offset(20.0), steps in 1u32..=20)
         => untouched_stays_put(&plan, &pick, offset, steps));
 
-property!(
-    // Each frame solves from the last frame's result, so where a drag ends depends on the way
-    // there; solving from the drag's start is step 3 of docs/solver-drag-regions-plan.md §2.
-    #[ignore = "path-dependent until drags solve from their start (solver-drag-regions plan, 2.3)"]
-    drag_is_path_independent, drag_is_path_independent_heavy,
+property!(drag_leaves_the_unrelated_alone, drag_leaves_the_unrelated_alone_heavy,
+    (plan in plan(true), pick in pick(), offset in offset(20.0), steps in 1u32..=20)
+        => unrelated_stay_put(&plan, &pick, offset, steps));
+
+property!(drag_is_path_independent, drag_is_path_independent_heavy,
     (plan in plan(true), pick in pick(), offset in offset(20.0), via in offset(10.0),
         steps in 1u32..=10)
         => path_independent(&plan, &pick, offset, via, steps));
 
-property!(
-    #[ignore = "creeps until drags solve from their start (solver-drag-regions plan, 2.3)"]
-    drag_out_and_back_does_not_creep, drag_out_and_back_does_not_creep_heavy,
+property!(drag_out_and_back_does_not_creep, drag_out_and_back_does_not_creep_heavy,
     (plan in plan(true), pick in pick(), offset in offset(20.0), steps in 1u32..=10)
         => no_creep(&plan, &pick, offset, steps));
 
 property!(drag_is_deterministic, drag_is_deterministic_heavy,
     (plan in plan(true), pick in pick(), offset in offset(20.0), steps in 1u32..=20)
         => deterministic(&plan, &pick, offset, steps));
+
+/// #143: an L-shaped outline with an R10 corner (tangent to a horizontal top line and an upright
+/// left side) and a rectangle sharing the inner corner. Dragging the corner arc, or its centre,
+/// moves the arc, its tangent lines and what those hold on to (the bottom-left corner, which
+/// the upright side takes along; the far rounded corner, which the top line's end takes), and
+/// nothing else: the lower leg, the bar's underside and the rectangle stay where they are.
+#[test]
+fn dragging_a_corner_arc_leaves_the_rest_of_the_outline() {
+    let p = DVec2::new;
+    let sketch = Sketch {
+        points: vec![
+            p(0.0, 0.0),
+            p(0.0, 90.0),
+            p(10.0, 90.0),
+            p(10.0, 100.0),
+            p(170.0, 100.0),
+            p(170.0, 70.0),
+            p(200.0, 70.0),
+            p(200.0, 50.0),
+            p(60.0, 50.0),
+            p(60.0, 0.0),
+            p(120.0, 50.0),
+            p(120.0, 0.0),
+        ],
+        curves: vec![
+            Curve::Line(0, 1),
+            Curve::Arc(2, 3, 1),
+            Curve::Line(3, 4),
+            Curve::Arc(5, 6, 4),
+            Curve::Line(6, 7),
+            Curve::Line(7, 8),
+            Curve::Line(8, 9),
+            Curve::Line(9, 0),
+            Curve::Line(8, 10),
+            Curve::Line(10, 11),
+            Curve::Line(11, 9),
+            Curve::Line(9, 8),
+        ],
+        rels: vec![
+            Rel::Tangent(0, 1),
+            Rel::Tangent(2, 1),
+            Rel::Horizontal(2),
+            Rel::Vertical(0),
+        ],
+    };
+    let offset = p(-21.0, 18.0);
+    for arc in [false, true] {
+        for steps in [1, 20] {
+            let mut built = Built::new(&sketch, Similarity::IDENTITY).unwrap();
+            let ids = if arc {
+                vec![built.curves[1]]
+            } else {
+                vec![built.points[2]]
+            };
+            let run = drag(&mut built, &ids, offset, steps).unwrap();
+            assert!(run.committed && run.refused == 0);
+            for i in 7..12 {
+                assert_eq!(run.end[i], run.start[i], "point {i} moved");
+            }
+            // The corner went where it was taken, the left side upright and the top level.
+            assert!(run.end[2].distance(run.start[2] + offset) < 1e-9);
+            assert!((run.end[0].x - run.end[1].x).abs() < 1e-9);
+            assert!((run.end[3].y - run.end[4].y).abs() < 1e-9);
+        }
+    }
+}

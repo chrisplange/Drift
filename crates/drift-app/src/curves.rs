@@ -220,6 +220,7 @@ impl Editor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use drift_solver::Param;
 
     fn v(x: f64, y: f64) -> DVec2 {
         DVec2::new(x, y)
@@ -279,5 +280,40 @@ mod tests {
         // A comb for the picked curve.
         ed.selection = [c1].into();
         assert_eq!(ed.curvature_combs(5.0, [0, 0, 0]).len(), 41 + 40);
+    }
+
+    /// As a drawing program does it: dragging one handle of a smooth anchor swings the other
+    /// round at its own length, the anchor and everything else staying where they are; dragging a curve carries the next curve's handle along with the shared anchor.
+    #[test]
+    fn smooth_anchors_move_like_a_pen_tool() {
+        let mut ed = Editor::default();
+        let (p, [c1, _]) = s_curve(&mut ed);
+        assert_eq!(ed.toggle_smooth(p[3]), Ok(true));
+        let before = p.map(|q| ed.doc.point(q).unwrap());
+        let reach = before[4].distance(before[3]);
+        ed.doc.begin();
+        let dragged: Vec<Param> = Param::point(p[2]).into_iter().collect();
+        assert!(ed.drag(&[p[2]], v(-4.0, 9.0), &dragged));
+        ed.commit("Drag");
+        let after = p.map(|q| ed.doc.point(q).unwrap());
+        let (anchor, h1, h2) = (after[3], after[2], after[4]);
+        assert!(anchor.distance(before[3]) < 1e-12, "the anchor stays");
+        assert!((h2.distance(anchor) - reach).abs() < 1e-12, "at its length");
+        assert!(((h1 - anchor).normalize() + (h2 - anchor).normalize()).length() < 1e-12);
+        for i in [0, 1, 5, 6] {
+            assert!(after[i].distance(before[i]) < 1e-12, "point {i} moved");
+        }
+        // The first curve dragged: the anchor takes the next curve's handle along.
+        ed.doc.begin();
+        let points = ed.doc.defining_points([c1]);
+        let dragged: Vec<Param> = points.iter().copied().flat_map(Param::point).collect();
+        let delta = v(3.0, -2.0);
+        assert!(ed.drag(&[c1], delta, &dragged));
+        ed.commit("Drag");
+        assert!(ed.doc.point(p[4]).unwrap().distance(after[4] + delta) < 1e-12);
+        for i in [5, 6] {
+            let now = ed.doc.point(p[i]).unwrap();
+            assert!(now.distance(after[i]) < 1e-12, "point {i} moved");
+        }
     }
 }

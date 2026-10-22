@@ -5426,3 +5426,244 @@ fn a_move_confirmed_after_letting_go_of_a_shared_centre_solves() {
         "the others kept theirs"
     );
 }
+
+/// Moving one side of an open outline (a narrow leg hanging from it, its foot kept
+/// horizontal) carries the leg along, however few frames the drag takes or whatever grid it
+/// snaps to: never turns the foot round (it keeps its length either way) or squeezes it to a
+/// point, which a big step can land on as the nearer fit.
+#[test]
+fn fast_drag_carries_a_hanging_leg_without_turning_it() {
+    use drift_core::Constraint;
+    for (grid, frames) in [
+        (None, 1),
+        (None, 2),
+        (None, 3),
+        (Some(10.0), 2),
+        (Some(10.0), 4),
+    ] {
+        let mut ed = Editor::default();
+        ed.doc.begin();
+        let pts = [
+            v(0.0, 52.6),
+            v(0.0, 0.0),
+            v(240.0, 0.0),
+            v(240.0, -108.8),
+            v(256.7, -108.8),
+            v(256.7, 14.0),
+            v(56.7, 14.0),
+            v(-23.0, 35.7),
+        ]
+        .map(|p| ed.doc.add_point(p));
+        let l: Vec<_> = (0..7)
+            .map(|i| ed.doc.add_line(pts[i], pts[i + 1]).unwrap())
+            .collect();
+        for (i, &line) in l.iter().take(6).enumerate() {
+            ed.doc
+                .add_constraint(if i % 2 == 0 {
+                    Constraint::Vertical { line }
+                } else {
+                    Constraint::Horizontal { line }
+                })
+                .unwrap();
+        }
+        let angle = Constraint::Angle {
+            a: l[6],
+            b: l[0],
+            degrees: 0.0,
+        };
+        let degrees = drift_solver::measure(&ed.doc, &angle).unwrap();
+        ed.doc.add_constraint(angle.with_value(degrees)).unwrap();
+        ed.commit("Setup");
+        let foot = |ed: &Editor| ed.doc.point(pts[4]).unwrap() - ed.doc.point(pts[3]).unwrap();
+        let was = foot(&ed);
+        ed.selection = [l[5]].into();
+        let mut tool = SelectTool::default();
+        let m = Modifiers::default();
+        let from = v(150.0, 14.0);
+        tool.handle(
+            Input::DragStart(ptr_grid(&ed, &tool, from, grid), m),
+            &mut ed,
+        );
+        for k in 1..=frames {
+            let to = from + v(-52.0, 9.0) * (f64::from(k) / f64::from(frames));
+            tool.handle(Input::Drag(ptr_grid(&ed, &tool, to, grid)), &mut ed);
+        }
+        let now = foot(&ed);
+        assert!(
+            now.distance(was) < 1e-9,
+            "{grid:?} in {frames}: the foot went from {was} to {now}"
+        );
+    }
+}
+
+/// Moving one side of an outline, with a wobble on the way (or the grab snapping to a grid
+/// row), stretches the lines in the way rather than tilting them: the far side, kept only
+/// tangent to a round, stays upright in every frame of the drag.
+#[test]
+fn moving_a_side_keeps_the_other_lines_straight() {
+    use drift_core::Constraint as C;
+    let paths: [(&str, Vec<DVec2>); 4] = [
+        (
+            "straight",
+            (1..=11).map(|k| v(5.0 * k as f64, 0.0)).collect(),
+        ),
+        (
+            "wobble",
+            vec![
+                v(3.0, 2.0),
+                v(8.0, 4.0),
+                v(14.0, 3.0),
+                v(22.0, 1.0),
+                v(31.0, 0.0),
+                v(42.0, 0.0),
+                v(53.8, 0.0),
+            ],
+        ),
+        (
+            "down",
+            vec![
+                v(3.0, -3.0),
+                v(9.0, -4.0),
+                v(20.0, -2.0),
+                v(35.0, 0.0),
+                v(53.8, 0.0),
+            ],
+        ),
+        ("fast", vec![v(20.0, 3.0), v(53.8, 0.0)]),
+    ];
+    for grid in [None, Some(5.0), Some(10.0)] {
+        for (name, path) in &paths {
+            let mut ed = Editor::default();
+            ed.doc.begin();
+            let d = &mut ed.doc;
+            let p = |d: &mut Document, x: f64, y: f64| d.add_point(v(x, y));
+            let ltop = p(d, 0.0, 90.0);
+            let t0 = p(d, 24.25, 90.0);
+            let t1 = p(d, 24.25, 125.25);
+            let t2 = p(d, 44.15, 125.25);
+            let t3 = p(d, 44.15, 90.0);
+            let r1 = p(d, 66.05, 90.0);
+            let r2 = p(d, 66.05, 0.0);
+            let b1 = p(d, 39.97, 0.0);
+            let b2 = p(d, 39.97, 39.8);
+            let ae = p(d, 5.0, 39.8);
+            let ac = p(d, 5.0, 44.8);
+            let as_ = p(d, 0.0, 44.8);
+            let top_left = d.add_line(ltop, t0).unwrap();
+            let tl = d.add_line(t0, t1).unwrap();
+            let _tab = d.add_line(t1, t2).unwrap();
+            let tr = d.add_line(t2, t3).unwrap();
+            let top_right = d.add_line(t3, r1).unwrap();
+            let right = d.add_line(r1, r2).unwrap();
+            let _bottom = d.add_line(r2, b1).unwrap();
+            let inner = d.add_line(b1, b2).unwrap();
+            let bl = d.add_line(b2, ae).unwrap();
+            let arc = d.add_arc(ac, as_, ae).unwrap();
+            let left = d.add_line(as_, ltop).unwrap();
+            for c in [
+                C::Horizontal { line: top_left },
+                C::Parallel {
+                    a: top_left,
+                    b: top_right,
+                },
+                C::Vertical { line: tl },
+                C::Vertical { line: tr },
+                C::Vertical { line: right },
+                C::Vertical { line: inner },
+                C::Horizontal { line: bl },
+                C::Tangent { a: bl, b: arc },
+                C::Tangent { a: left, b: arc },
+                C::Radius {
+                    curve: arc,
+                    value: 5.0,
+                },
+                C::Distance {
+                    a: r1,
+                    b: r2,
+                    value: 90.0,
+                },
+            ] {
+                d.add_constraint(c).unwrap();
+            }
+            ed.commit("Setup");
+            ed.selection = [right].into();
+            let mut tool = SelectTool::default();
+            let m = Modifiers::default();
+            let from = v(66.05, 45.0);
+            tool.handle(
+                Input::DragStart(ptr_grid(&ed, &tool, from, grid), m),
+                &mut ed,
+            );
+            let mut worst: f64 = 0.0;
+            for &step in path {
+                tool.handle(
+                    Input::Drag(ptr_grid(&ed, &tool, from + step, grid)),
+                    &mut ed,
+                );
+                let (a, b) = (ed.doc.point(as_).unwrap(), ed.doc.point(ltop).unwrap());
+                worst = worst.max((b.x - a.x).abs());
+            }
+            assert!(
+                worst < 1e-9,
+                "{grid:?} {name}: the far side tilted by {worst}"
+            );
+        }
+    }
+}
+
+/// A point held 3.5 above a corner of a rectangle (by horizontal and vertical distances) stays
+/// above it while a side is dragged up with grid snapping: the grid's big steps would otherwise
+/// land it 3.5 below, where the distance holds as well.
+#[test]
+fn grid_snapped_drag_keeps_a_dimensioned_point_on_its_side() {
+    use drift_core::Constraint;
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    let c = [v(0.3, 0.2), v(10.3, 0.2), v(10.3, 7.9), v(0.3, 7.9)].map(|p| ed.doc.add_point(p));
+    let lines: Vec<_> = (0..4)
+        .map(|i| ed.doc.add_line(c[i], c[(i + 1) % 4]).unwrap())
+        .collect();
+    let tail = ed.doc.add_point(v(16.1, 11.4));
+    ed.doc.add_line(c[2], tail).unwrap();
+    for (i, &line) in lines.iter().enumerate() {
+        ed.doc
+            .add_constraint(if i % 2 == 0 {
+                Constraint::Horizontal { line }
+            } else {
+                Constraint::Vertical { line }
+            })
+            .unwrap();
+    }
+    for c in [
+        Constraint::HorizontalDistance {
+            a: c[2],
+            b: tail,
+            value: 5.8,
+        },
+        Constraint::VerticalDistance {
+            a: c[2],
+            b: tail,
+            value: 3.5,
+        },
+    ] {
+        ed.doc.add_constraint(c).unwrap();
+    }
+    ed.commit("Setup");
+    ed.selection = [lines[2]].into();
+    let mut tool = SelectTool::default();
+    let m = Modifiers::default();
+    let from = v(5.1, 7.9);
+    let grid = Some(5.0);
+    tool.handle(
+        Input::DragStart(ptr_grid(&ed, &tool, from, grid), m),
+        &mut ed,
+    );
+    for to in [v(5.6, 8.4), v(7.7, 10.6), v(9.2, 12.8), v(11.6, 14.1)] {
+        tool.handle(Input::Drag(ptr_grid(&ed, &tool, to, grid)), &mut ed);
+        let rise = ed.doc.point(tail).unwrap().y - ed.doc.point(c[2]).unwrap().y;
+        assert!(
+            (rise - 3.5).abs() < 1e-9,
+            "at {to} the point is {rise} above"
+        );
+    }
+}

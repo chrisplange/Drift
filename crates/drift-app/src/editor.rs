@@ -13,8 +13,8 @@ use drift_geom::{PointRole, SceneIndex, Snap};
 use drift_solver::{Definition, Param, SolveOptions, SolveReport};
 
 /// Where some geometry is, to put it back after a drag step that went wrong
-/// ([`Editor::drag`]).
-#[derive(Default)]
+/// ([`Editor::drag`]), and what the drag keeps.
+#[derive(Clone, Default)]
 struct Geometry {
     points: Vec<(EntityId, DVec2)>,
     circles: Vec<(EntityId, f64)>,
@@ -22,6 +22,35 @@ struct Geometry {
     radii: std::collections::HashMap<EntityId, f64>,
     /// Lines' lengths to keep where they can (when a move of curves carries them along).
     lengths: std::collections::HashMap<EntityId, f64>,
+    /// Lines a move of curves keeps from turning round (all but those with a dragged end).
+    lines: Vec<EntityId>,
+}
+
+/// Badly mispredicted steps in a drag frame's solve (see `SolveReport::wandered`) from which
+/// it is taken again in smaller steps ([`Editor::drag`]).
+const WANDERED: usize = 1;
+
+/// The most steps a drag frame takes when one solve won't do ([`Editor::drag`]): enough to go
+/// round a fold, not so many that a move that can't be made at all costs a frame a second.
+const DRAG_BUDGET: u32 = 24;
+
+/// The drag [`Editor::drag`] is in the middle of. Every frame solves from the geometry as
+/// the drag found it, moved by the whole way so far, so where the drag is depends on that
+/// alone, not on the way the pointer went there.
+struct DragSession {
+    /// The transaction it's in.
+    serial: u64,
+    ids: Vec<EntityId>,
+    dragged: Vec<Param>,
+    /// The geometry as the drag found it, and the sizes and lengths it keeps.
+    start: Geometry,
+    /// How far the drag has gone (the last frame that could go).
+    offset: DVec2,
+    /// Where the last frame left the points: a call that doesn't find them there (something
+    /// else moved them) starts a new drag.
+    end: Vec<(EntityId, DVec2)>,
+    /// Whether the last frame pushed curves along that couldn't give way any further.
+    pushed: bool,
 }
 
 /// Why an edit was refused.
@@ -267,6 +296,14 @@ type DragScope = (
 #[derive(Default)]
 pub struct Editor {
     pub doc: Document,
+    /// The drag in progress, if any ([`Editor::drag`]).
+    drag_session: Option<DragSession>,
+    /// The most a drag frame's solves have wandered (see `SolveReport::wandered`).
+    drag_wandered: usize,
+    /// How many more steps a drag frame may take (see `Editor::drag_towards`).
+    drag_budget: u32,
+    /// Whether a step of the drag frame in progress pushed curves along.
+    drag_pushed: bool,
     pub history: History,
     pub selection: BTreeSet<EntityId>,
     pub hovered: Option<EntityId>,
@@ -625,6 +662,11 @@ impl Editor {
     ///
     /// Moving whole curves carries the lines hanging from them along where it can, at their
     /// length, rather than stretching them; dragging a point reshapes what it ends.
+    ///
+    /// Successive calls in one transaction, on the same geometry, are one drag. Each solves
+    /// from the geometry as the drag found it, moved by the whole way so far, keeping its
+    /// sizes and lengths from then: where a drag is depends only on how far it
+    /// has gone, not the way there, and out and back puts everything back.
     pub fn drag(&mut self, ids: &[EntityId], delta: DVec2, dragged: &[Param]) -> bool {
         let curves = ids
             .iter()
@@ -633,30 +675,240 @@ impl Editor {
         let ids = &self.with_handles(ids);
         // Only what's connected to the dragged geometry is solved.
         let scope = self.drag_scope(ids);
-        let mut before = self.geometry_of(&scope);
-        if curves {
-            before.lengths = scope
-                .iter()
-                .filter_map(|&id| match self.doc.get(id)?.kind {
-                    EntityKind::Line { a, b } => Some((
-                        id,
-                        self.doc.point(a).ok()?.distance(self.doc.point(b).ok()?),
-                    )),
-                    _ => None,
-                })
-                .collect();
+        let now = self.geometry_of(&scope);
+        let serial = self.doc.transaction_serial();
+        let session = self.drag_session.take().filter(|s| {
+            self.doc.in_transaction()
+                && s.serial == serial
+                && s.ids == *ids
+                && s.dragged == dragged
+                && s.end.len() == now.points.len()
+                && s.end
+                    .iter()
+                    .all(|&(id, p)| self.doc.point(id).ok() == Some(p))
+        });
+        let (start, offset) = match session {
+            Some(session) => (session.start, session.offset),
+            None => (self.drag_start(&scope, &now, curves, dragged), DVec2::ZERO),
+        };
+        self.restore_geometry(&start);
+        let ok = self.drag_from_start(ids, offset + delta, dragged, &scope, &start, curves);
+        if !ok {
+            // Where the last frame left it.
+            self.restore_geometry(&now);
+            self.index.update_moved(&self.doc, scope.iter().copied());
+        }
+        let end = self.geometry_of(&scope).points;
+        self.drag_session = Some(DragSession {
+            serial,
+            ids: ids.clone(),
+            dragged: dragged.to_vec(),
+            start,
+            offset: if ok { offset + delta } else { offset },
+            end,
+            pushed: ok && self.drag_pushed,
+        });
+        ok
+    }
+
+    /// Whether the drag in progress pushes curves along that couldn't give way any further
+    /// (an arc squeezed as small as it goes, a line that would turn round): they move though
+    /// nothing relates them to what is dragged.
+    pub fn drag_pushed(&self) -> bool {
+        self.drag_session.as_ref().is_some_and(|s| s.pushed)
+    }
+
+    /// Move the geometry, as the drag found it (`start`), by `offset`: in steps of an eighth
+    /// of its size at most, so a long way goes round the shape as the pointer would have
+    /// taken it, not across a fold to whichever other solution one big solve happens to land
+    /// on (#103). The steps depend on the offset and the shape alone, so the drag still ends
+    /// where its target says, at any size, and moves on smoothly as the target does (each
+    /// further step starts where the last one ended). Free geometry, which a solve doesn't
+    /// touch, goes in one.
+    fn drag_from_start(
+        &mut self,
+        ids: &[EntityId],
+        offset: DVec2,
+        dragged: &[Param],
+        scope: &std::rc::Rc<std::collections::HashSet<EntityId>>,
+        start: &Geometry,
+        curves: bool,
+    ) -> bool {
+        self.drag_wandered = 0;
+        self.drag_pushed = false;
+        let ok = self.drag_frame(ids, offset, dragged, scope, start, curves);
+        // (Or couldn't go at all: in steps it may, going round what one solve can't.)
+        if ok && self.drag_wandered < WANDERED {
+            return ok;
+        }
+        // (Its size as the farthest point from its middle: the same however it's turned.)
+        let middle =
+            start.points.iter().map(|&(_, p)| p).sum::<DVec2>() / start.points.len().max(1) as f64;
+        let size = start
+            .points
+            .iter()
+            .map(|&(_, p)| p.distance(middle))
+            .fold(0.0, f64::max);
+        let whole = offset.length();
+        // (At most 16 of them: a small part dragged a long way needn't crawl.)
+        let step = (size / 4.0).max(whole / 16.0);
+        if step <= 0.0 || (ok && whole <= step) {
+            return ok;
+        }
+        self.restore_geometry(start);
+        self.drag_budget = DRAG_BUDGET;
+        self.drag_pushed = false;
+        let along = offset / whole;
+        let mut at = DVec2::ZERO;
+        let mut k = 1;
+        loop {
+            // (The last step ends at the offset itself, not at a rounding of it.)
+            let last = step * f64::from(k) >= whole;
+            let next = if last {
+                offset
+            } else {
+                along * (step * f64::from(k))
+            };
+            if !self.drag_towards(ids, at, next, dragged, scope, start, curves, 0) {
+                return false;
+            }
+            if last {
+                return true;
+            }
+            at = next;
+            k += 1;
+        }
+    }
+
+    /// One step of [`drag_from_start`](Self::drag_from_start), from `at` to `to` (offsets
+    /// from the start), in halves where a solve can't make it whole (up to 4 deep).
+    #[allow(clippy::too_many_arguments)]
+    fn drag_towards(
+        &mut self,
+        ids: &[EntityId],
+        at: DVec2,
+        to: DVec2,
+        dragged: &[Param],
+        scope: &std::rc::Rc<std::collections::HashSet<EntityId>>,
+        start: &Geometry,
+        curves: bool,
+        depth: u32,
+    ) -> bool {
+        if self.drag_budget == 0 {
+            return false;
+        }
+        self.drag_budget -= 1;
+        let mut here = self.geometry_of(scope);
+        here.radii = start.radii.clone();
+        here.lengths = start.lengths.clone();
+        here.lines = start.lines.clone();
+        if self.drag_frame(ids, to - at, dragged, scope, &here, curves) {
+            return true;
+        }
+        let half = (at + to) / 2.0;
+        depth < 4
+            && self.drag_towards(ids, at, half, dragged, scope, start, curves, depth + 1)
+            && self.drag_towards(ids, half, to, dragged, scope, start, curves, depth + 1)
+    }
+
+    /// The geometry as a drag starting now finds it, with what the drag keeps: the arcs'
+    /// radii and, for a move of curves, the lengths of the lines hanging from what moves.
+    fn drag_start(
+        &self,
+        scope: &std::collections::HashSet<EntityId>,
+        now: &Geometry,
+        curves: bool,
+        dragged: &[Param],
+    ) -> Geometry {
+        let dragged_set: std::collections::HashSet<Param> = dragged.iter().copied().collect();
+        let dragged_point = |p: EntityId| Param::point(p).iter().any(|q| dragged_set.contains(q));
+        let mut before = now.clone();
+        if !curves {
+            return before;
+        }
+        let mut lines: Vec<EntityId> = scope
+            .iter()
+            .copied()
+            .filter(|&id| {
+                matches!(self.doc.get(id).map(|e| e.kind),
+                    Some(EntityKind::Line { a, b }) if !dragged_point(a) && !dragged_point(b))
+            })
+            .collect();
+        lines.sort_unstable();
+        // A line hangs from the moved geometry when its other end is free: on no other curve,
+        // in no relation. Only such a line is carried along at its length (as it would be in
+        // a drawing program); one whose far end holds on to more geometry stretches instead,
+        // so a move doesn't shove everything beyond it along (#143).
+        let mut uses: std::collections::HashMap<EntityId, usize> = std::collections::HashMap::new();
+        for &id in scope {
+            if let Some(e) = self.doc.get(id)
+                && !e.kind.is_point()
+            {
+                for p in e.kind.points() {
+                    *uses.entry(p).or_default() += 1;
+                }
+            }
+        }
+        let related: std::collections::HashSet<EntityId> = self
+            .doc
+            .constraints()
+            .flat_map(|(_, c)| c.entities().collect::<Vec<_>>())
+            .collect();
+        let free = |p: EntityId| uses.get(&p) == Some(&1) && !related.contains(&p);
+        for &id in &lines {
+            if let Some(EntityKind::Line { a, b }) = self.doc.get(id).map(|e| e.kind)
+                && (free(a) || free(b))
+                && let (Ok(pa), Ok(pb)) = (self.doc.point(a), self.doc.point(b))
+            {
+                before.lengths.insert(id, pa.distance(pb));
+            }
+        }
+        before.lines = lines;
+        before
+    }
+
+    /// One call's worth of [`drag`](Self::drag), keeping what `before` says to.
+    fn drag_frame(
+        &mut self,
+        ids: &[EntityId],
+        delta: DVec2,
+        dragged: &[Param],
+        scope: &std::rc::Rc<std::collections::HashSet<EntityId>>,
+        before: &Geometry,
+        curves: bool,
+    ) -> bool {
+        let dragged_set: std::collections::HashSet<Param> = dragged.iter().copied().collect();
+        // Free geometry (no relations, nothing pinned, no arcs keeping their shape) goes exactly
+        // where it is moved, as in a drawing program: no solve to nudge it. Unless the move
+        // stretches a line hanging from moved curves, which a solve carries along instead.
+        if !drift_solver::needs_solve(&self.doc, scope) {
+            // (A line with a dragged end is reshaped by it, solve or not.)
+            let moved = self.doc.defining_points(ids.iter().copied());
+            let carried = |p: EntityId| {
+                moved.contains(&p) && !Param::point(p).iter().all(|q| dragged_set.contains(q))
+            };
+            let stretched = before.lengths.keys().any(|&line| {
+                matches!(self.doc.get(line).map(|e| e.kind),
+                    Some(EntityKind::Line { a, b })
+                        if moved.contains(&a) != moved.contains(&b) && (carried(a) || carried(b)))
+            });
+            if !stretched {
+                self.doc.translate(ids.iter().copied(), delta);
+                self.index.update_moved(&self.doc, scope.iter().copied());
+                return true;
+            }
         }
         let mut turned = Vec::new();
-        let mut ok = self.drag_in_steps(ids, delta, dragged, &[], &scope, &before, 0, &mut turned);
+        let mut ok = self.drag_in_steps(ids, delta, dragged, &[], scope, before, 0, &mut turned);
         if !ok {
-            self.restore_geometry(&before);
+            self.restore_geometry(before);
         }
         // A move of curves that would turn an arc inside out (or flip a tangency) even in
         // small steps carries that curve along rather than stopping: an arc squeezed by a
         // moved end is pushed once it can't shrink any further. (Carried, not dragged: a
         // line hanging from the pushed arc still keeps its length, as one hanging from the
         // selection does.)
-        let mut ids = ids.clone();
+        let mut ids = ids.to_vec();
         let mut carried_points = Vec::new();
         while !ok && curves && !turned.is_empty() {
             let carried: Vec<EntityId> = std::mem::take(&mut turned)
@@ -679,17 +931,18 @@ impl Editor {
                 delta,
                 dragged,
                 &carried_points,
-                &scope,
-                &before,
+                scope,
+                before,
                 0,
                 &mut turned,
             );
             if !ok {
-                self.restore_geometry(&before);
+                self.restore_geometry(before);
             }
         }
         // Only the connected part can have moved.
         self.index.update_moved(&self.doc, scope.iter().copied());
+        self.drag_pushed |= ok && !carried_points.is_empty();
         ok
     }
 
@@ -710,6 +963,25 @@ impl Editor {
     ) -> bool {
         const MAX_SPLITS: u32 = 6;
         let orientation = drift_solver::Orientation::of(&self.doc, Some(scope));
+        // Lines carried along at their length point the same way after the step: keeping a
+        // length holds just as well with the line turned round (or let go through zero),
+        // which a big step can land on as the nearer fit. A line with a dragged end is
+        // reshaped by it, and may turn.
+        let dragged_set: std::collections::HashSet<Param> = dragged.iter().copied().collect();
+        let dragged_point = |p: EntityId| Param::point(p).iter().any(|q| dragged_set.contains(q));
+        let carried_lines: Vec<(EntityId, EntityId, EntityId, DVec2)> = before
+            .lines
+            .iter()
+            .filter_map(|&line| match self.doc.get(line)?.kind {
+                EntityKind::Line { a, b } if !dragged_point(a) && !dragged_point(b) => Some((
+                    line,
+                    a,
+                    b,
+                    self.doc.point(b).ok()? - self.doc.point(a).ok()?,
+                )),
+                _ => None,
+            })
+            .collect();
         self.doc.translate(ids.iter().copied(), delta);
         // Translating keeps the arcs it touches circular by putting their ends back on their
         // circles, which can take a moved point off its target (the end of an arc that isn't
@@ -721,6 +993,7 @@ impl Editor {
                 let _ = self.doc.set_point(id, p + delta);
             }
         }
+        self.keep_smooth_anchors(ids, delta, scope);
         let report = drift_solver::solve(
             &mut self.doc,
             &SolveOptions {
@@ -735,8 +1008,19 @@ impl Editor {
                 ..Default::default()
             },
         );
+        self.drag_wandered = self.drag_wandered.max(report.wandered);
         let conflicts = self.new_conflicts(&report);
-        if !conflicts && !orientation.turned(&self.doc) {
+        let mut flipped: Vec<EntityId> = carried_lines
+            .iter()
+            .filter(
+                |&&(_, a, b, was)| match (self.doc.point(a), self.doc.point(b)) {
+                    (Ok(a), Ok(b)) => (b - a).dot(was) <= 0.0,
+                    _ => false,
+                },
+            )
+            .map(|&(line, ..)| line)
+            .collect();
+        if !conflicts && flipped.is_empty() && !orientation.turned(&self.doc) {
             return true;
         }
         if depth >= MAX_SPLITS {
@@ -744,6 +1028,7 @@ impl Editor {
             // left behind until nothing is left of it, a tangent line squeezed to a point,
             // turns as it goes through zero and the solve fails on it.)
             *turned = orientation.turned_curves(&self.doc);
+            turned.append(&mut flipped);
         }
         self.restore_geometry(before);
         // (Only a turn is worth smaller steps: a conflict is the same at any size.)
@@ -763,8 +1048,10 @@ impl Editor {
             return false;
         }
         let mut halfway = self.geometry_of(scope);
-        // The lengths to keep are still those from before the move.
+        // What to keep is still what it was before the move.
+        halfway.radii = before.radii.clone();
         halfway.lengths = before.lengths.clone();
+        halfway.lines = before.lines.clone();
         self.drag_in_steps(
             ids,
             delta / 2.0,
@@ -775,6 +1062,57 @@ impl Editor {
             depth + 1,
             turned,
         )
+    }
+
+    /// After `ids` moved by `delta`: keep the smooth anchors among `scope` smooth the way a
+    /// drawing program does, before any solve. A handle dragged on its own swings the other
+    /// one round to stay opposite, at its own length, with the anchor where it is; an anchor
+    /// moved with one handle takes the other along. The relation then holds as it is, so a
+    /// solve has nothing to nudge (it would otherwise move the anchor and both handles a little
+    /// each, and the curves on either side with them).
+    fn keep_smooth_anchors(
+        &mut self,
+        ids: &[EntityId],
+        delta: DVec2,
+        scope: &std::collections::HashSet<EntityId>,
+    ) {
+        let moved = self.doc.defining_points(ids.iter().copied());
+        let smooth: Vec<(EntityId, EntityId, EntityId)> = self
+            .doc
+            .constraints()
+            .filter_map(|(id, c)| match *c {
+                Constraint::Smooth { point, a, b }
+                    if scope.contains(&point) && !self.doc.is_driven(id) =>
+                {
+                    Some((point, a, b))
+                }
+                _ => None,
+            })
+            .collect();
+        for (anchor, a, b) in smooth {
+            let at = |id| moved.contains(&id);
+            for (dragged, other) in [(a, b), (b, a)] {
+                if !at(dragged) || at(other) {
+                    continue;
+                }
+                let (Ok(p), Ok(h), Ok(o)) = (
+                    self.doc.point(anchor),
+                    self.doc.point(dragged),
+                    self.doc.point(other),
+                ) else {
+                    continue;
+                };
+                let to = if at(anchor) {
+                    o + delta
+                } else {
+                    match (p - h).try_normalize() {
+                        Some(away) => p + away * o.distance(p),
+                        None => continue,
+                    }
+                };
+                let _ = self.doc.set_point(other, to);
+            }
+        }
     }
 
     /// Where the points of `scope` are and the sizes of its circles and arcs, for
@@ -793,6 +1131,9 @@ impl Editor {
                 _ => {}
             }
         }
+        // (In id order, not the set's: sums over them come out the same every run.)
+        out.points.sort_unstable_by_key(|&(id, _)| id);
+        out.circles.sort_unstable_by_key(|&(id, _)| id);
         out
     }
 

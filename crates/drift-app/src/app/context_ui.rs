@@ -179,6 +179,8 @@ fn sample_dashes(t: drift_core::LineType) -> &'static [f32] {
         T::Hidden => &[3.0, 2.0],
         T::Center => &[9.0, 2.0, 2.0, 2.0],
         T::Phantom => &[9.0, 2.0, 2.0, 2.0, 2.0, 2.0],
+        // No stroke: faint dots, as the canvas shows it picked.
+        T::None => &[1.0, 3.0],
     }
 }
 
@@ -1019,6 +1021,9 @@ impl DriftApp {
         if curves && item(ui, "Mirror…", "M") {
             ui.close();
             self.switch_tool(ToolKind::Mirror);
+        }
+        if self.editor.can_arrange() {
+            self.arrange_menu(ui, now);
         }
         let (on_relations, on_dims) = self.editor.selection_constraints();
         if !on_relations.is_empty()

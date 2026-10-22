@@ -23,6 +23,12 @@ mod import;
 /// The live link: assistants editing the open drawing.
 #[cfg(not(target_arch = "wasm32"))]
 mod link;
+/// A filled shape as one object in the Inspector: Stroke and Fill.
+#[cfg(not(feature = "demo"))]
+mod shapes;
+/// Print matches the screen: one stacking order for the canvas and the exports.
+#[cfg(not(feature = "demo"))]
+mod stacking;
 /// The update notice and Preferences → Updates.
 #[cfg(not(target_arch = "wasm32"))]
 mod updates;
@@ -9519,7 +9525,10 @@ fn drawing_rules_are_the_drawings_and_older_files_get_this_computers() {
     // An older file opens with them (nothing changes on day one) ...
     let plate = drift_core::demo::mounting_plate();
     let current = drift_io::save(&plate, &drift_io::Metadata::default());
-    let older = current.replace(r#""version": 39"#, r#""version": 38"#);
+    let older = current.replace(
+        &format!(r#""version": {}"#, drift_io::FORMAT_VERSION),
+        r#""version": 38"#,
+    );
     assert_ne!(older, current);
     let (doc, meta) = drift_io::load(&older).unwrap();
     h.state_mut()

@@ -266,8 +266,13 @@ impl Editor {
     /// Change the appearance overrides of the selected curves with `f`.
     pub fn update_selection_appearance(&mut self, f: impl Fn(&mut Appearance)) {
         let ids: Vec<EntityId> = self.selection.iter().copied().collect();
+        self.update_appearance(&ids, f);
+    }
+
+    /// Change the appearance overrides of curves with `f` (one undo step).
+    pub fn update_appearance(&mut self, ids: &[EntityId], f: impl Fn(&mut Appearance)) {
         self.doc.begin();
-        for id in ids {
+        for &id in ids {
             if let Some(mut a) = self.doc.get(id).map(|e| e.appearance) {
                 f(&mut a);
                 let _ = self.doc.set_appearance(id, a);
@@ -357,6 +362,13 @@ fn line_type_combo(
             }
             for t in LineType::ALL {
                 changed |= ui.selectable_value(value, Some(t), t.label()).changed();
+            }
+            // A curve's own (never a layer's): no stroke.
+            if by_layer {
+                changed |= ui
+                    .selectable_value(value, Some(LineType::None), LineType::None.label())
+                    .on_hover_text("Not drawn or printed; still bounds areas, snaps and solves")
+                    .changed();
             }
         });
     changed
@@ -1174,7 +1186,6 @@ impl DriftApp {
         if curves.is_empty() {
             return;
         }
-        let dark = ui.visuals().dark_mode;
         let first = self.editor.doc.get(curves[0]).copied().expect("exists");
         let uniform_layer = curves.iter().all(|id| {
             self.editor
@@ -1223,26 +1234,42 @@ impl DriftApp {
                     self.editor.move_selection_to_layer(id);
                 }
                 ui.end_row();
-
-                let a = first.appearance;
-                label(ui, "Colour");
-                if let Some(c) = color_choice(ui, a.color, "By layer", dark) {
-                    self.editor.update_selection_appearance(|x| x.color = c);
-                }
-                ui.end_row();
-                label(ui, "Weight");
-                let mut w = a.weight;
-                if weight_combo(ui, "selection_weight", &mut w, true) {
-                    self.editor.update_selection_appearance(|x| x.weight = w);
-                }
-                ui.end_row();
-                label(ui, "Line type");
-                let mut t = a.line_type;
-                if line_type_combo(ui, "selection_type", &mut t, true) {
-                    self.editor.update_selection_appearance(|x| x.line_type = t);
-                }
-                ui.end_row();
+                self.stroke_rows(ui, &curves, "selection");
             });
+    }
+
+    /// Colour, weight and line type rows (in a two-column grid) for `curves`' own
+    /// appearance, shown as the first's; `salt` keeps the combos' ids apart.
+    pub(crate) fn stroke_rows(&mut self, ui: &mut egui::Ui, curves: &[EntityId], salt: &str) {
+        let Some(first) = curves
+            .first()
+            .and_then(|id| self.editor.doc.get(*id))
+            .copied()
+        else {
+            return;
+        };
+        let dark = ui.visuals().dark_mode;
+        let label = |ui: &mut egui::Ui, text: &str| {
+            ui.label(egui::RichText::new(text).color(ui.visuals().weak_text_color()));
+        };
+        let a = first.appearance;
+        label(ui, "Colour");
+        if let Some(c) = color_choice(ui, a.color, "By layer", dark) {
+            self.editor.update_appearance(curves, |x| x.color = c);
+        }
+        ui.end_row();
+        label(ui, "Weight");
+        let mut w = a.weight;
+        if weight_combo(ui, (salt, "weight"), &mut w, true) {
+            self.editor.update_appearance(curves, |x| x.weight = w);
+        }
+        ui.end_row();
+        label(ui, "Line type");
+        let mut t = a.line_type;
+        if line_type_combo(ui, (salt, "type"), &mut t, true) {
+            self.editor.update_appearance(curves, |x| x.line_type = t);
+        }
+        ui.end_row();
     }
 }
 

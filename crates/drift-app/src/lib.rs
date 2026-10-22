@@ -36,6 +36,7 @@ mod parameters;
 mod perf_tests;
 pub mod picks;
 mod soak;
+pub mod stack;
 pub mod temp_dims;
 pub mod texts;
 mod theme;

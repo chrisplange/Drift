@@ -9,6 +9,7 @@ use crate::*;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Command {
     Tool(ToolKind),
+    Arrange(crate::stack::Arrange),
     Toggle(ViewFlag),
     Panel(Panel),
     HideAllPanels,
@@ -355,6 +356,16 @@ impl DriftApp {
         add(Command::Delete, "Delete selection", "Edit", "Del".into());
         add(Command::Duplicate, "Duplicate", "Edit", "Shift+D".into());
         add(Command::Group, "Group", "Edit", ctrl("G"));
+        if !self.editor.selection.is_empty() || !self.editor.selected_fills.is_empty() {
+            for how in crate::stack::Arrange::ALL {
+                add(
+                    Command::Arrange(how),
+                    how.label(),
+                    "Edit",
+                    Self::arrange_keys(how),
+                );
+            }
+        }
         add(Command::Ungroup, "Ungroup", "Edit", ctrl_shift("G"));
         add(
             Command::Rename,
@@ -576,6 +587,10 @@ impl DriftApp {
             }
             Command::Group => {
                 self.editor.make_group();
+            }
+            Command::Arrange(how) => {
+                let now = ctx.input(|i| i.time);
+                self.arrange(how, now);
             }
             Command::Rename => self.start_rename(),
             Command::Ungroup => {

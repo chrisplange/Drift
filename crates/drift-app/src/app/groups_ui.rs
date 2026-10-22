@@ -39,7 +39,7 @@ impl DriftApp {
             rect.left_top(),
         ];
         if dashed {
-            painter.extend(egui::Shape::dashed_line(&corners, stroke, 5.0, 3.0));
+            crate::overlay::dashed(painter, &corners, stroke, 5.0, 3.0);
         } else {
             painter.add(egui::Shape::line(corners, stroke));
         }

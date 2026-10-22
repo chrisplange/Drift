@@ -309,12 +309,7 @@ impl DriftApp {
                 rect.left_bottom(),
                 rect.left_top(),
             ];
-            painter.extend(egui::Shape::dashed_line(
-                &corners,
-                egui::Stroke::new(width, c),
-                8.0,
-                5.0,
-            ));
+            crate::overlay::dashed(painter, &corners, egui::Stroke::new(width, c), 8.0, 5.0);
             let label = Self::crop_label(painter, rect, view);
             // On a patch of the canvas's colour, to read over hatching.
             let ground = if dark {

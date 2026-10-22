@@ -736,25 +736,33 @@ impl Tool for SelectTool {
                 if !mods.shift && !mods.command {
                     ed.selected_instances.clear();
                 }
-                // Clicking inside a fill (not on a curve) picks the fill; inside another
-                // closed area, the region.
+                // Clicking inside a fill (not on a curve) picks the fill: a shape's fill picks
+                // the shape, its outline with it (so Duplicate, Copy, Move and Delete act on
+                // all of it). Inside another closed area, the region.
                 let fill = if hit.is_none() && anything {
                     ed.fill_at(p.raw)
                 } else {
                     None
                 };
+                let outline = fill.and_then(|f| ed.shape_outline(f)).unwrap_or_default();
                 match fill {
                     Some(f) if mods.command => {
-                        if !ed.selected_fills.remove(&f) {
+                        if ed.selected_fills.remove(&f) {
+                            for c in &outline {
+                                ed.selection.remove(c);
+                            }
+                        } else {
                             ed.selected_fills.insert(f);
+                            ed.selection.extend(outline);
                         }
                     }
                     Some(f) if mods.shift => {
                         ed.selected_fills.insert(f);
+                        ed.selection.extend(outline);
                     }
                     Some(f) => {
                         ed.selected_fills = [f].into();
-                        ed.selection.clear();
+                        ed.selection = outline.into_iter().collect();
                         ed.selected_region = None;
                         return;
                     }

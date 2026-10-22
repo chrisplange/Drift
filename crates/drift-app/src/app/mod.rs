@@ -1,5 +1,6 @@
 //! `DriftApp` behaviour, split by area.
 
+mod arrange_ui;
 mod blocks_ui;
 pub(crate) mod checker_ui;
 mod context_ui;
@@ -26,6 +27,7 @@ pub(crate) mod panels;
 pub(crate) mod patterns;
 pub(crate) mod pie;
 pub(crate) mod rename_ui;
+pub(crate) mod shape_ui;
 pub(crate) mod sheet_editor;
 pub(crate) mod sheets_ui;
 pub(crate) mod start_ui;

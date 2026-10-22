@@ -656,6 +656,8 @@ pub fn dash_pattern(line_type: LineType) -> &'static [f64] {
         LineType::Hidden => &[2.0, 1.0],
         LineType::Center => &[12.0, 1.5, 1.5, 1.5],
         LineType::Phantom => &[12.0, 1.5, 1.5, 1.5, 1.5, 1.5],
+        // (Curves without a stroke aren't put on the page.)
+        LineType::None => &[],
     }
 }
 

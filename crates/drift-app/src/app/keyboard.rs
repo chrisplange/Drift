@@ -43,6 +43,18 @@ impl DriftApp {
         if consume(cmd(Key::G)) {
             self.editor.make_group();
         }
+        // Arrange: Ctrl+] and Ctrl+[ one step, with Shift all the way (Shift first).
+        for (keys, how) in [
+            (cmd_shift(Key::CloseBracket), crate::stack::Arrange::ToFront),
+            (cmd_shift(Key::OpenBracket), crate::stack::Arrange::ToBack),
+            (cmd(Key::CloseBracket), crate::stack::Arrange::Forward),
+            (cmd(Key::OpenBracket), crate::stack::Arrange::Backward),
+        ] {
+            if consume(keys) {
+                let now = ctx.input(|i| i.time);
+                self.arrange(how, now);
+            }
+        }
         if consume(cmd(Key::L)) {
             self.toggle_panel(crate::dock::Panel::Layers);
         }

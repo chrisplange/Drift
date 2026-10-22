@@ -136,7 +136,8 @@ pub struct Frame {
     pub globals: Globals,
     /// Filled triangles, drawn under all curves.
     pub fills: Vec<FillVertex>,
-    /// Pictures (underlays'), drawn over the fills and under all curves.
+    /// Pictures (underlays'). Those in no group are drawn over the fills and under all
+    /// curves, or with groups, beneath them all.
     pub images: Vec<FrameImage>,
     /// Curves drawn under all the others (hatch lines, underlays): arcs and lines are drawn
     /// in separate passes, so order within one list can't keep them below.
@@ -144,10 +145,10 @@ pub struct Frame {
     pub under_arcs: Vec<ArcInstance>,
     pub segments: Vec<SegmentInstance>,
     pub arcs: Vec<ArcInstance>,
-    /// Draw groups, bottom first: each a filled area and the curves drawn right over it
-    /// (its hatch lines and outline), as ranges of `fills`, `arcs` and `segments`. Each is
-    /// drawn over every group before it, so a fill covers the curves of the groups beneath.
-    /// With no groups, every fill is drawn under every curve.
+    /// Draw groups, bottom first: each a filled area, pictures, and the curves drawn right
+    /// over them (hatch lines and outline), as ranges of `fills`, `images`, `arcs` and
+    /// `segments`. Each is drawn over every group before it, so a fill covers the curves of
+    /// the groups beneath. With no groups, every fill is drawn under every curve.
     pub groups: Vec<GroupRanges>,
 }
 
@@ -155,14 +156,17 @@ pub struct Frame {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct GroupRanges {
     pub fills: std::ops::Range<u32>,
+    pub images: std::ops::Range<u32>,
     pub arcs: std::ops::Range<u32>,
     pub segments: std::ops::Range<u32>,
 }
 
-/// A draw group to add to a frame: filled areas, and the curves drawn right over them.
-#[derive(Clone, Copy, Debug)]
+/// A draw group to add to a frame: filled areas, pictures, and the curves drawn right over
+/// them.
+#[derive(Clone, Copy, Debug, Default)]
 pub struct DrawGroup<'a> {
     pub fills: &'a [FillMesh],
+    pub images: &'a [CanvasImage],
     pub items: &'a [SketchItem],
 }
 
@@ -224,23 +228,25 @@ fn build_into(
 }
 
 impl Frame {
-    /// Add a draw group: filled areas, then curves over them (hatch lines, outlines), all
-    /// drawn over every group added before.
+    /// Add a draw group: filled areas, then pictures, then curves over them (hatch lines,
+    /// outlines), all drawn over every group added before.
     pub fn push_group(
         &mut self,
-        meshes: &[FillMesh],
-        items: &[SketchItem],
+        group: DrawGroup<'_>,
         camera: &Camera,
         viewport: Viewport,
         palette: &Palette,
     ) {
         let fills = self.fills.len() as u32;
-        self.push_fills(meshes, camera, viewport);
+        self.push_fills(group.fills, camera, viewport);
+        let images = self.images.len() as u32;
+        self.push_images(group.images, camera, viewport);
         let arcs = self.arcs.len() as u32;
         let segments = self.segments.len() as u32;
-        build_into(self, items, camera, viewport, palette);
+        build_into(self, group.items, camera, viewport, palette);
         self.groups.push(GroupRanges {
             fills: fills..self.fills.len() as u32,
+            images: images..self.images.len() as u32,
             arcs: arcs..self.arcs.len() as u32,
             segments: segments..self.segments.len() as u32,
         });
@@ -487,6 +493,8 @@ impl Builder<'_> {
                     LineType::Hidden => dashes([3.0, 2.0, 0.0]),
                     LineType::Center => dashes([16.0, 3.0, 2.0]),
                     LineType::Phantom => dashes([16.0, 3.0, -2.0]),
+                    // No stroke: only seen picked or hovered (see `add`), as fine dashes.
+                    LineType::None => [2.0 * ppp, 3.0 * ppp, 0.0],
                 },
             ),
             LineKind::Construction => (
@@ -539,6 +547,14 @@ impl Builder<'_> {
     }
 
     fn add(&mut self, item: &SketchItem) {
+        // A curve without a stroke shows only while picked, hovered or in conflict.
+        if item.line_type == LineType::None
+            && item.kind == LineKind::Solid
+            && item.emphasis == Emphasis::Normal
+            && item.dof != DofState::Over
+        {
+            return;
+        }
         let (color, half_width, dash) = self.style(item);
         match item.shape {
             Shape::Point(p) => {
@@ -1061,15 +1077,17 @@ mod tests {
             radius: 5.0,
         });
         let mut frame = Frame::default();
-        frame.push_group(
-            std::slice::from_ref(&square),
-            &[line, line],
-            &camera,
-            viewport(),
-            &palette,
-        );
-        frame.push_group(&[], &[circle], &camera, viewport(), &palette);
-        frame.push_group(&[square], &[], &camera, viewport(), &palette);
+        let group = |fills, items| DrawGroup {
+            fills,
+            items,
+            ..DrawGroup::default()
+        };
+        let lines = [line, line];
+        let circles = [circle];
+        let squares = [square];
+        frame.push_group(group(&squares, &lines), &camera, viewport(), &palette);
+        frame.push_group(group(&[], &circles), &camera, viewport(), &palette);
+        frame.push_group(group(&squares, &[]), &camera, viewport(), &palette);
         let [a, b, c] = frame.groups.as_slice() else {
             panic!("three groups");
         };

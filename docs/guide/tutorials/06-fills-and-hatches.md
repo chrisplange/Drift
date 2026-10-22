@@ -72,15 +72,35 @@ eyedropper. It works on the fills inside block copies too.
 
 ## 4. Edit a fill
 
-Pick a fill with the **Select** tool by clicking inside it. The **Inspector** shows:
+Pick a fill with the **Select** tool by clicking inside it. Inside a filled **shape** (see
+[Shapes](#shapes)), the click picks the whole shape, its outline with its fill, as in a
+drawing program: **Duplicate** (Shift+D), copy and paste, move and **Delete** act on all of
+it, and a copy is a shape of its own with its own fill. A fill of an area among several
+shapes' lines is picked on its own.
 
-- **Style:** **Solid** or **Hatch**. For a solid fill: **Colour** and **Opacity**. For a
-  hatch: **Pattern**, **Scale**, **Angle**, **Size** (**Drafting** or **Model**), the
-  **Lines** colour and **Weight**, and a **Background** colour.
-- **Layer**, and **Bring to front** / **Send to back** for the order among fills on that
-  layer. Fills on a higher layer draw over those on lower ones (drag layers to reorder
-  them in the **Layers** panel). Fills always draw beneath curves.
-- **Area**, **Perimeter** and **Centroid**.
+A picked shape shows in the **Inspector** as one object, whether you picked it by its fill
+or by its whole outline (a group of it, say):
+
+- **Stroke:** **Line** or **None**. With a line: its **Colour**, **Weight** and **Line
+  type**, each "By layer" unless set. **None** hides the outline: it isn't drawn or
+  printed (it shows dashed only while picked or hovered), but it still bounds the fill,
+  snaps and keeps its relations.
+- **Fill:** **None**, **Solid** or **Hatch**. For a solid fill: **Colour** and **Opacity**.
+  For a hatch: **Pattern**, **Scale**, **Angle**, **Size** (**Drafting** or **Model**), the
+  **Lines** colour and **Weight**, and a **Background** colour. **None** removes the fill
+  and leaves the shape, picked by its outline.
+- **Layer** (the outline and the fill move together), **Arrange** (see
+  [What draws over what](#what-draws-over-what)), **Area** and **Perimeter**, and
+  **Delete** (the whole shape).
+
+A fill of an area among several shapes' lines (a room among walls, say) is a fill of its
+own: its **Inspector** shows its **Style** (as **Fill** above, without **None**), **Layer**,
+**Arrange**, and **Area**, **Perimeter** and **Centroid**.
+
+When the picked curves include whole filled shapes and more (a group of a shape and other
+lines), the curves' **Inspector** has a **Fill** section for those shapes too.
+
+Any curve can be given no stroke the same way: **Line type → None** in its **Inspector**.
 
 **Drafting** patterns keep the same size on paper whatever the sheet's scale. **Model**
 patterns have a real size (brick courses, block joints) and scale with the drawing, as in
@@ -120,6 +140,35 @@ area** (saved with the drawing).
 Hatches are clipped exactly to their boundary and stay crisp at any zoom. A hatch too dense
 to see at the current zoom is drawn as a tint.
 
+## What draws over what
+
+Each fill covers what is beneath it, with its own outline drawn over it, as a drawing
+program stacks shapes. Layers stack in their order in the **Layers** panel (drag them to
+reorder). On a layer, each new fill goes over the ones before it, and lines that outline no
+fill stay on top.
+
+To change the order on a layer, pick fills or shapes (click inside a fill, or on any line
+of its outline: the shape moves as one) and choose **Arrange** in the right-click menu or
+the **Inspector**:
+
+| Command | Shortcut | Moves it |
+|---|---|---|
+| **Bring to front** | Ctrl+Shift+] | over everything on its layer |
+| **Bring forward** | Ctrl+] | over the next thing above it that it overlaps |
+| **Send backward** | Ctrl+[ | under the next thing beneath it that it overlaps |
+| **Send to back** | Ctrl+Shift+[ | under everything on its layer |
+
+Lines that outline no fill can be arranged the same way, so a line can go under a fill
+that covers it. Each command is one undo step, and the order is saved with the drawing.
+
+Printing, PDF and SVG draw everything in the same order as the canvas. An SVG keeps a
+named group per layer. DXF has no draw order of its own: the fills are written in this
+order, which most programs follow.
+
+The drawing setting **Fills cover what is beneath them** (**File → Drawing settings…**)
+turns this off: then every fill draws beneath every line, on screen and on paper alike, as
+a CAD overlay.
+
 ## Fill colours and layers
 
 A fill takes its colour from its layer unless you give it one. Each layer has a stroke
@@ -132,6 +181,8 @@ colour and a separate fill colour (**Same as stroke** by default); set them in t
 - Alt+click picks up a fill's style.
 - A picked hatch's square handle moves its origin; the round one turns it.
 - Drafting patterns are sized on paper, model patterns in the world.
+- Each fill covers what is beneath it; **Arrange** (Ctrl+] and Ctrl+[) changes the order,
+  and print matches the screen.
 
 ## Next
 

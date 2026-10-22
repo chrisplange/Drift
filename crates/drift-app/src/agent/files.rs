@@ -268,9 +268,13 @@ pub(super) fn import(s: &mut Session, a: &Value) -> Res {
     };
     let ed = &mut s.editor;
     let before: std::collections::BTreeSet<_> = ed.doc.iter().map(|(id, _)| id).collect();
+    let fills_before: std::collections::BTreeSet<_> = ed.doc.fills().map(|(id, _)| id).collect();
     ed.doc.begin();
     let report = drift_io::dxf::add_to_document(&mut ed.doc, &import);
     let pictures = pictures.map(|u| ed.doc.add_underlay(u));
+    if let Some(id) = pictures {
+        crate::underlays::place_pictures(&mut ed.doc, id, &fills_before);
+    }
     let made: Vec<_> = ed
         .doc
         .iter()

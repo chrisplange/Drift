@@ -266,6 +266,8 @@ impl CanvasRenderer {
             let key = Arc::as_ptr(&image.pixels) as usize;
             if !self.textures.contains_key(&key) {
                 let Some(bind_group) = self.upload_texture(device, queue, image, max_side) else {
+                    // (Kept in step with the frame's pictures, which groups count by.)
+                    self.image_draws.push((key, 0..0));
                     continue;
                 };
                 self.textures.insert(
@@ -385,7 +387,7 @@ impl CanvasRenderer {
         if self.groups.is_empty() {
             // Every fill under every curve.
             self.draw_fills(pass, 0..self.fills.count);
-            self.draw_images(pass);
+            self.draw_images(pass, 0..self.image_draws.len());
             self.draw_under(pass);
             self.draw_curves(pass, &self.arc_pipeline, &self.arcs, 0..self.arcs.count);
             self.draw_curves(
@@ -395,11 +397,23 @@ impl CanvasRenderer {
                 0..self.segments.count,
             );
         } else {
-            // Stacked: pictures and underlays at the bottom, then each group over the last.
-            self.draw_images(pass);
+            // Stacked: pictures in no group and underlays at the bottom, then each group
+            // over the last.
+            let mut grouped = vec![false; self.image_draws.len()];
+            for g in &self.groups {
+                for k in g.images.clone() {
+                    if let Some(x) = grouped.get_mut(k as usize) {
+                        *x = true;
+                    }
+                }
+            }
+            for (k, _) in grouped.iter().enumerate().filter(|(_, g)| !**g) {
+                self.draw_images(pass, k..k + 1);
+            }
             self.draw_under(pass);
             for g in &self.groups {
                 self.draw_fills(pass, g.fills.clone());
+                self.draw_images(pass, g.images.start as usize..g.images.end as usize);
                 self.draw_curves(pass, &self.arc_pipeline, &self.arcs, g.arcs.clone());
                 self.draw_curves(
                     pass,
@@ -454,9 +468,10 @@ impl CanvasRenderer {
         );
     }
 
-    /// Pictures (underlays'), in the order given.
-    fn draw_images(&self, pass: &mut wgpu::RenderPass<'_>) {
-        if !self.image_draws.is_empty() {
+    /// Pictures (underlays'), a range of this frame's, in the order given.
+    fn draw_images(&self, pass: &mut wgpu::RenderPass<'_>, range: Range<usize>) {
+        let draws = self.image_draws.get(range).unwrap_or_default();
+        if !draws.is_empty() {
             pass.set_pipeline(&self.image_pipeline);
             pass.set_vertex_buffer(
                 0,
@@ -464,7 +479,10 @@ impl CanvasRenderer {
                     .buffer
                     .slice(..self.image_vertices.bytes),
             );
-            for (key, range) in &self.image_draws {
+            for (key, range) in draws {
+                if range.is_empty() {
+                    continue;
+                }
                 if let Some(t) = self.textures.get(key) {
                     pass.set_bind_group(1, &t.bind_group, &[]);
                     pass.draw(range.clone(), 0..1);

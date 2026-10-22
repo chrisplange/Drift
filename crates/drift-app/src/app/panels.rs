@@ -966,6 +966,7 @@ impl DriftApp {
             || self.annotation_inspector(ui)
             || self.text_inspector(ui)
             || self.instance_inspector(ui)
+            || self.shape_inspector(ui)
             || self.fill_inspector(ui)
             || self.dimension_inspector(ui)
         {
@@ -1113,6 +1114,18 @@ impl DriftApp {
                 self.set_selection_style(style);
             }
             self.appearance_panel(ui);
+            // Filled shapes among the picked curves (a group's, say): their fills too.
+            let shapes = self.shapes_in_selection();
+            if !shapes.fills.is_empty() {
+                let title = match shapes.fills.len() {
+                    1 => "Fill".to_owned(),
+                    n => format!("Fill · {n} shapes"),
+                };
+                theme::section(ui, &title);
+                self.shapes_fill_section(ui, &shapes);
+            }
+            theme::section(ui, "Arrange");
+            self.arrange_row(ui);
         }
 
         let now = ui.input(|i| i.time);

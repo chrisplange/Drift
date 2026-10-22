@@ -99,6 +99,19 @@ impl Editor {
 
     /// Outlines of the visible texts, coloured by their own or their layer's colour.
     pub fn text_items(&self, status_colors: bool, dark: bool) -> Vec<SketchItem> {
+        self.text_items_tagged(status_colors, dark)
+            .into_iter()
+            .map(|t| t.item)
+            .collect()
+    }
+
+    /// [`text_items`](Self::text_items), each with its text's layer (to draw at the top of
+    /// it, in the drawing's stack).
+    pub fn text_items_tagged(
+        &self,
+        status_colors: bool,
+        dark: bool,
+    ) -> Vec<crate::editor::TaggedItem> {
         let mut items = Vec::new();
         for (id, t) in self.doc.texts() {
             let Some(layer) = self.doc.layer(t.layer) else {
@@ -126,9 +139,13 @@ impl Editor {
                 Emphasis::Normal
             };
             items.extend(o.contours.iter().flatten().map(|s| {
-                SketchItem::new(*s)
-                    .with_look(color, 0, LineType::Continuous)
-                    .with_emphasis(emphasis)
+                crate::editor::TaggedItem {
+                    entity: None,
+                    layer: t.layer,
+                    item: SketchItem::new(*s)
+                        .with_look(color, 0, LineType::Continuous)
+                        .with_emphasis(emphasis),
+                }
             }));
         }
         items

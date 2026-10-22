@@ -173,7 +173,22 @@ pub fn copy_into(
         .filter(|(_, f)| !f.boundary.is_empty() && f.boundary.iter().all(|e| map.contains_key(e)))
         .map(|(id, f)| (id, f.clone()))
         .collect();
+    // Shapes (paths) whose curves were all copied are shapes of the copies too, so their
+    // fills stay theirs.
+    let mut paths = BTreeMap::new();
+    for (id, p) in src.paths() {
+        if p.curves.iter().all(|c| map.contains_key(c)) {
+            let copy = drift_core::Path {
+                curves: p.curves.iter().map(|c| map[c]).collect(),
+                closed: p.closed,
+            };
+            if let Ok(new) = dst.add_path(copy) {
+                paths.insert(id, new);
+            }
+        }
+    }
     for (id, mut fill) in fills {
+        fill.path = fill.path.and_then(|p| paths.get(&p).copied());
         fill.boundary = fill.boundary.iter().map(|e| map[e]).collect();
         fill.boundary.sort_unstable();
         fill.seed += offset;

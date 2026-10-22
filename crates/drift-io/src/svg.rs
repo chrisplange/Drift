@@ -3,6 +3,10 @@
 //! of that name, which its Release to Layers makes layers of), curves that meet joined into
 //! one path (so their corners join), true arcs, even–odd fills, presentation attributes
 //! rather than CSS, and text in Helvetica / Arial.
+//!
+//! Items keep the drawing's order within each layer's group, and the groups come in the
+//! order their layers are first drawn: the stacking order on screen, as long as each layer's
+//! items are drawn together (a fill's outline on another layer goes in that layer's group).
 
 use std::fmt::Write as _;
 

@@ -284,7 +284,7 @@ fn dialogs(dark: bool) {
 <g id="Walls"><rect x="72" y="72" width="288" height="144" fill="none" stroke="#000"/></g>
 </svg>"##;
     h.state_mut()
-        .begin_vector_import("plan.svg", svg.as_bytes().to_vec(), 0.0);
+        .begin_import("plan.svg", svg.as_bytes().to_vec(), None, 0.0);
     h.run_steps(3);
     shot(dark, "43-import", &mut h);
     h.state_mut().pending_import = None;

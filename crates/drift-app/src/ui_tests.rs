@@ -18,6 +18,8 @@ mod audit;
 mod audit_sheets;
 /// Screenshots for the user guide.
 mod docs;
+/// One way in for drawings: Import…, its presets and dropped files.
+mod import;
 /// The live link: assistants editing the open drawing.
 #[cfg(not(target_arch = "wasm32"))]
 mod link;
@@ -3907,7 +3909,17 @@ fn pdf_underlay_calibrate_and_trace() {
         },
     );
     let bytes = drift_io::pdf::write(&[d], "Plan");
-    h.state_mut().import_underlay_file("plan.pdf", bytes, 0.0);
+    h.state_mut().begin_import(
+        "plan.pdf",
+        bytes,
+        Some(crate::app::import_ui::ImportAs::Underlay),
+        0.0,
+    );
+    h.run();
+    h.get_by_label("Import").click();
+    h.run();
+    // No status toast: it would take the clicks below.
+    h.state_mut().status = None;
     h.run();
     let (id, u) = {
         let doc = &h.state().editor.doc;
@@ -5792,7 +5804,8 @@ fn far_off_geometry_is_reported() {
             )
         })
         .collect();
-    h.state_mut().import_dxf("stray.dxf", &text, 0.0);
+    h.state_mut()
+        .import_now("stray.dxf", text.clone().into_bytes(), 0.0);
     h.run_steps(3);
     let report = h.state().import_report.clone().expect("a report");
     assert_eq!(report.far.len(), 1);
@@ -5987,7 +6000,8 @@ fn a_dxf_from_a_live_project_comes_in_whole() {
         .iter()
         .map(|(c, v)| format!("{c:>3}\n{v}\n"))
         .collect();
-    h.state_mut().import_dxf("room.dxf", &text, 0.0);
+    h.state_mut()
+        .import_now("room.dxf", text.clone().into_bytes(), 0.0);
     h.run_steps(3);
     let app = h.state_mut();
     let doc = &app.editor.doc;
@@ -7605,7 +7619,7 @@ fn svg_artwork_is_imported_as_curves_on_its_layers_at_a_scale() {
 </g>
 </svg>"##;
     h.state_mut()
-        .begin_vector_import("plan.svg", svg.as_bytes().to_vec(), 0.0);
+        .begin_import("plan.svg", svg.as_bytes().to_vec(), None, 0.0);
     h.run_steps(3);
     assert!(h.state().pending_import.is_some(), "the dialog is up");
     // At 1:50, then calibrated.
@@ -7722,7 +7736,7 @@ fn the_import_dialog_says_what_wont_come_across_before_importing() {
   <line x1="90" y1="50" x2="150" y2="50" stroke="black"/>
 </svg>"##;
     h.state_mut()
-        .begin_vector_import("poster.svg", svg.as_bytes().to_vec(), 0.0);
+        .begin_import("poster.svg", svg.as_bytes().to_vec(), None, 0.0);
     h.run_steps(3);
     save_png("drift_ui_import_heads_up.png", &mut h);
     assert!(h.query_by_label("Before you import").is_some());
@@ -7743,7 +7757,7 @@ fn the_import_dialog_says_what_wont_come_across_before_importing() {
         r#"<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm" viewBox="0 0 100 100"><path d="{d}" stroke="black" fill="none"/></svg>"#
     );
     h.state_mut()
-        .begin_vector_import("traced.svg", big.into_bytes(), 0.0);
+        .begin_import("traced.svg", big.into_bytes(), None, 0.0);
     h.run_steps(3);
     assert!(
         h.query_by_label_contains("more than a sketch can work with")

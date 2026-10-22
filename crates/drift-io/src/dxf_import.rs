@@ -1641,6 +1641,12 @@ pub fn decode(bytes: &[u8]) -> String {
 /// Read an ASCII DXF file. Files that don't say their units (`$INSUNITS` missing or 0) are
 /// read in `default_mm_per_unit` (the document's display unit).
 pub fn read(text: &str, default_mm_per_unit: f64) -> Result<DxfImport, String> {
+    read_at(text, default_mm_per_unit, 1.0)
+}
+
+/// Read an ASCII DXF file as [`read`] does, drawn at 1 : `drawn_at`: a drawing made at
+/// paper size comes in that many times larger.
+pub fn read_at(text: &str, default_mm_per_unit: f64, drawn_at: f64) -> Result<DxfImport, String> {
     if text.starts_with("AutoCAD Binary DXF") {
         return Err(
             "this is a binary DXF file; save it as ASCII DXF (the usual kind) and try again".into(),
@@ -1880,7 +1886,7 @@ pub fn read(text: &str, default_mm_per_unit: f64) -> Result<DxfImport, String> {
     }
 
     let mut reader = Reader {
-        scale,
+        scale: scale * drawn_at,
         blocks,
         line_types,
         skipped: BTreeMap::new(),
@@ -2576,6 +2582,34 @@ mod tests {
             Shape::Line { a, b } => a + (b - a) * t,
             _ => panic!("{shape:?}"),
         }
+    }
+
+    #[test]
+    fn a_drawing_drawn_at_a_scale_comes_in_that_much_larger() {
+        let file = dxf(&[
+            (0, "SECTION"),
+            (2, "HEADER"),
+            (9, "$INSUNITS"),
+            (70, "4"),
+            (0, "ENDSEC"),
+            (0, "SECTION"),
+            (2, "ENTITIES"),
+            (0, "LINE"),
+            (8, "0"),
+            (10, "0"),
+            (20, "0"),
+            (11, "100"),
+            (21, "0"),
+            (0, "ENDSEC"),
+            (0, "EOF"),
+        ]);
+        let length = |import: &DxfImport| match import.entities[0].shape {
+            Shape::Line { a, b } => a.distance(b),
+            ref other => panic!("{other:?}"),
+        };
+        assert!((length(&read(&file, 1.0).unwrap()) - 100.0).abs() < 1e-9);
+        // In millimetres, so the unit for unitless files doesn't matter; 1 : 50 does.
+        assert!((length(&read_at(&file, 25.4, 50.0).unwrap()) - 5000.0).abs() < 1e-9);
     }
 
     #[test]

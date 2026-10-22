@@ -50,7 +50,9 @@ session, so the next start is fresh.
 - **File → Open…** (Ctrl+O): a `.drift` file.
 - **File → Open recent**: the last ten.
 - Pass a `.drift` file on the command line, or drop it on the window, to open it. Dropping
-  a DXF imports it into the open sketch; dropping a PDF adds it as an underlay.
+  a DWG, DXF, SVG, PDF or `.ai` file asks how it should come in: **Open as new drawing**,
+  **Import as geometry** or **Underlay to trace** (the last two through the import dialog).
+  See [Dropping a file on the window](../tutorials/11-underlays-and-dxf.md#dropping-a-file-on-the-window).
 - On Windows, the installer can make `.drift` files open in Drift. On macOS, use
   **File → Open…** or drop the file on the window for now.
 
@@ -58,9 +60,8 @@ session, so the next start is fresh.
 
 | | Format | Notes |
 |---|---|---|
-| Import | DXF (ASCII), DWG | As geometry: **File → Import…**. DWG is read for AutoCAD R14 to 2018 and comes in the same way as DXF. See [Underlays and DXF import](../tutorials/11-underlays-and-dxf.md). Binary DXF isn't read, and Drift doesn't save DWG: export DXF. |
+| Import | DXF (ASCII), DWG | As geometry or an underlay, at a drawing scale or calibrated: **File → Import…**. DWG is read for AutoCAD R14 to 2018 and comes in the same way as DXF. See [Underlays and DXF import](../tutorials/11-underlays-and-dxf.md). Binary DXF isn't read, and Drift doesn't save DWG: export DXF. |
 | Import | SVG, PDF, Illustrator (`.ai`) | As geometry or an underlay, at a drawing scale (found from its dimensions where it can be) or calibrated: **File → Import…**. See [Part 3](../tutorials/11-underlays-and-dxf.md#part-3-import-svg-pdf-and-illustrator-artwork). Vector PDFs only. |
-| Import | PDF, DXF, DWG, SVG, `.ai` | As an underlay to trace: **File → Import underlay…**. |
 | Import | `.pat` | Hatch patterns: **Parameters → Hatch patterns → Import .pat…**. |
 | Import | `.ttf`, `.otf` | Fonts: **Add a font file…** in any font menu. |
 | Import | SVG | A title-block logo: **Sheets → Logo → Choose SVG…**. |

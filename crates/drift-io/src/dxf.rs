@@ -498,7 +498,7 @@ fn write_item(
 
 pub use crate::dxf_import::{
     DxfBlock, DxfEntity, DxfHatch, DxfImport, DxfInsert, DxfLayer, DxfLayout, DxfText, DxfViewport,
-    ImportReport, add_to_document, decode, read,
+    ImportReport, add_to_document, decode, read, read_at,
 };
 
 /// The curves of a DXF import as underlay curves (in mm), with copies of blocks expanded.

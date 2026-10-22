@@ -1,23 +1,10 @@
-//! Underlays in the UI: importing DWG, DXF, SVG, PDF and Illustrator files as underlays
-//! (choosing a PDF page), and the Underlays section of the Layers panel.
+//! Underlays in the UI: what an underlay import reports, and the Underlays section of the
+//! Layers panel. Files come in through the import dialog (`import_ui`).
 
 use drift_core::{UnderlayId, underlays::MM_PER_POINT};
 
 use crate::icons::Glyph;
 use crate::*;
-
-pub(crate) const UNDERLAY_FILE: FileType = FileType {
-    name: "DWG, DXF, SVG, PDF or Illustrator drawing",
-    extensions: &["pdf", "dwg", "dxf", "svg", "ai"],
-};
-
-/// A multi-page PDF waiting for its page to be chosen.
-pub(crate) struct PendingPdf {
-    name: String,
-    bytes: Vec<u8>,
-    pages: u32,
-    page: u32,
-}
 
 /// Drawing scales for PDF underlays: a label and n in 1 : n.
 pub(crate) const SCALES: &[(&str, f64)] = &[
@@ -51,53 +38,6 @@ fn is_pdf(source: &str) -> bool {
 }
 
 impl DriftApp {
-    /// Open the file picker for an underlay.
-    pub(crate) fn pick_underlay_file(&mut self) {
-        self.import_as_underlay = true;
-        self.files.open(UNDERLAY_FILE);
-    }
-
-    /// An opened DWG, DXF, SVG, PDF or Illustrator file, to become an underlay.
-    pub(crate) fn import_underlay_file(&mut self, name: &str, bytes: Vec<u8>, now: f64) {
-        let lower = name.to_ascii_lowercase();
-        if lower.ends_with(".svg") && !bytes.starts_with(b"%PDF") {
-            let stem = name.rsplit_once('.').map_or(name, |(s, _)| s);
-            let result = drift_io::svg_import::read(&String::from_utf8_lossy(&bytes), stem)
-                .and_then(|art| self.editor.import_svg_underlay(name, &art, 1.0));
-            self.underlay_imported(name, result, now);
-            return;
-        }
-        if lower.ends_with(".dwg") {
-            let unit = self.editor.doc.units().length.mm_per_unit();
-            let result = self.editor.import_dwg_underlay(name, &bytes, unit);
-            self.underlay_imported(name, result, now);
-            return;
-        }
-        if lower.ends_with(".dxf") {
-            let unit = self.editor.doc.units().length.mm_per_unit();
-            let text = drift_io::dxf::decode(&bytes);
-            let result = self.editor.import_dxf_underlay(name, &text, unit);
-            self.underlay_imported(name, result, now);
-            return;
-        }
-        match drift_io::pdf_import::page_count(&bytes) {
-            Ok(0) => self.set_status(format!("{name} has no pages"), true, now),
-            Ok(1) => {
-                let result = self.editor.import_pdf_underlay(name, &bytes, 1, 1.0);
-                self.underlay_imported(name, result, now);
-            }
-            Ok(pages) => {
-                self.pending_pdf = Some(PendingPdf {
-                    name: name.to_owned(),
-                    bytes,
-                    pages,
-                    page: 1,
-                });
-            }
-            Err(e) => self.set_status(format!("Could not import {name}: {e}"), true, now),
-        }
-    }
-
     pub(crate) fn underlay_imported(
         &mut self,
         name: &str,
@@ -123,56 +63,6 @@ impl DriftApp {
                 self.fit_target = Some(self.fit_bounds());
             }
             Err(e) => self.set_status(format!("Could not import {name}: {e}"), true, now),
-        }
-    }
-
-    /// The page picker for a multi-page PDF.
-    pub(crate) fn underlay_dialog(&mut self, ctx: &egui::Context) {
-        let Some(pending) = &mut self.pending_pdf else {
-            return;
-        };
-        let mut choice = None;
-        let frame = theme::dialog_frame(&ctx.style_of(ctx.theme()));
-        let modal = egui::Modal::new(egui::Id::new("pdf_page"))
-            .frame(frame)
-            .show(ctx, |ui| {
-                ui.set_width(340.0);
-                theme::dialog_title(ui, "Which page?", false);
-                ui.label(format!(
-                    "{} has {} pages. Pick the one to trace over.",
-                    pending.name, pending.pages
-                ));
-                ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    ui.label("Page");
-                    ui.add(egui::DragValue::new(&mut pending.page).range(1..=pending.pages));
-                    ui.label(format!("of {}", pending.pages));
-                });
-                theme::dialog_buttons(ui, |ui| {
-                    if ui.button("Cancel").clicked() {
-                        choice = Some(false);
-                    }
-                    let dark = ui.visuals().dark_mode;
-                    if ui.add(theme::primary_button("Import", dark)).clicked() {
-                        choice = Some(true);
-                    }
-                });
-            });
-        if modal.should_close() && choice.is_none() {
-            choice = Some(false);
-        }
-        if let Some(import) = choice {
-            let pending = self.pending_pdf.take().expect("pending PDF");
-            if import {
-                let now = ctx.input(|i| i.time);
-                let result = self.editor.import_pdf_underlay(
-                    &pending.name,
-                    &pending.bytes,
-                    pending.page,
-                    1.0,
-                );
-                self.underlay_imported(&pending.name, result, now);
-            }
         }
     }
 
@@ -281,11 +171,11 @@ impl DriftApp {
         }
         ui.add_space(6.0);
         if ui
-            .button("Import underlay…")
+            .button("Import…")
             .on_hover_text("Place a DWG, DXF, SVG, PDF or Illustrator drawing under the sketch")
             .clicked()
         {
-            self.pick_underlay_file();
+            self.pick_import_file(true);
         }
     }
 
@@ -318,40 +208,47 @@ impl DriftApp {
             }
         });
         ui.add_enabled_ui(!u.locked, |ui| {
-            if is_pdf(&u.source) {
-                let n = u.scale / MM_PER_POINT;
-                let current = SCALES
-                    .iter()
-                    .find(|(_, s)| ((s - n) / s).abs() < 1e-4)
-                    .map_or_else(|| format!("1 : {n:.2}"), |(l, _)| (*l).to_owned());
-                theme::row(ui, "Scale", |ui| {
-                    egui::ComboBox::from_id_salt(("underlay_scale", id.0))
-                        .selected_text(current)
-                        .width(150.0)
-                        .show_ui(ui, |ui| {
-                            for (label, s) in SCALES {
-                                if ui
-                                    .selectable_label(((s - n) / s).abs() < 1e-4, *label)
-                                    .clicked()
-                                {
-                                    edited.scale = s * MM_PER_POINT;
-                                }
+            // 1 : n, as the import dialog has it: a PDF's curves are in points, the others' in
+            // millimetres on their paper.
+            let per = if is_pdf(&u.source) { MM_PER_POINT } else { 1.0 };
+            let n = u.scale / per;
+            let current = SCALES
+                .iter()
+                .find(|(_, s)| ((s - n) / s).abs() < 1e-4)
+                .map_or_else(
+                    || drift_core::sheets::scale_label(n),
+                    |(l, _)| (*l).to_owned(),
+                );
+            theme::row(ui, "Scale", |ui| {
+                egui::ComboBox::from_id_salt(("underlay_scale", id.0))
+                    .selected_text(current)
+                    .width(130.0)
+                    .show_ui(ui, |ui| {
+                        for (label, s) in SCALES {
+                            if ui
+                                .selectable_label(((s - n) / s).abs() < 1e-4, *label)
+                                .clicked()
+                            {
+                                edited.scale = s * per;
                             }
-                        })
-                        .response
-                        .on_hover_text("The scale the PDF was drawn at (or calibrate it)");
-                });
-            } else {
-                theme::row(ui, "Scale", |ui| {
-                    let mut s = u.scale;
-                    if ui
-                        .add(egui::DragValue::new(&mut s).speed(0.01).range(1e-6..=1e6))
-                        .changed()
-                    {
-                        edited.scale = s;
-                    }
-                });
-            }
+                        }
+                    })
+                    .response
+                    .on_hover_text("The scale the drawing was drawn at (or calibrate it)");
+                ui.label("1 :");
+                let mut shown = n;
+                if ui
+                    .add(
+                        egui::DragValue::new(&mut shown)
+                            .range(1e-6..=1e6)
+                            .speed(0.5)
+                            .max_decimals(3),
+                    )
+                    .changed()
+                {
+                    edited.scale = shown * per;
+                }
+            });
             let unit = units.length.mm_per_unit();
             theme::row(ui, "Position", |ui| {
                 for (axis, value) in [("X", u.at.x), ("Y", u.at.y)] {

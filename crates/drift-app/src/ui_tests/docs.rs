@@ -852,7 +852,17 @@ fn underlay() {
         },
     );
     let bytes = drift_io::pdf::write(&[d], "Plan");
-    h.state_mut().import_underlay_file("plan.pdf", bytes, 0.0);
+    h.state_mut().begin_import(
+        "plan.pdf",
+        bytes,
+        Some(crate::app::import_ui::ImportAs::Underlay),
+        0.0,
+    );
+    h.run();
+    h.get_by_label("Import").click();
+    h.run();
+    // No status toast: it would take the clicks below.
+    h.state_mut().status = None;
     h.run();
     h.get_by_label("Calibrate…").click();
     h.run();

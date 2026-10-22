@@ -572,3 +572,95 @@ fn a_line_drawn_across_a_fill_is_reported() {
     );
     assert!(v.get("fills").is_none(), "{v}");
 }
+
+#[test]
+fn underlays_are_drawn_at_the_scale_given_whatever_the_format() {
+    let dir = std::env::temp_dir().join(format!("drift-agent-scale-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    // A 50 mm line on a 100 mm page, and a DXF in millimetres with a 100 mm line.
+    std::fs::write(
+        dir.join("plan.svg"),
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm"
+ viewBox="0 0 100 100"><path d="M10 50 L60 50" stroke="black" fill="none"/></svg>"#,
+    )
+    .unwrap();
+    let dxf = [
+        "0",
+        "SECTION",
+        "2",
+        "HEADER",
+        "9",
+        "$INSUNITS",
+        "70",
+        "4",
+        "0",
+        "ENDSEC",
+        "0",
+        "SECTION",
+        "2",
+        "ENTITIES",
+        "0",
+        "LINE",
+        "8",
+        "0",
+        "10",
+        "0",
+        "20",
+        "0",
+        "11",
+        "100",
+        "21",
+        "0",
+        "0",
+        "ENDSEC",
+        "0",
+        "EOF",
+    ]
+    .join("\n");
+    std::fs::write(dir.join("plan.dxf"), dxf).unwrap();
+    let mut s = Session::new().with_root(dir.clone());
+    let underlay_width = |s: &Session, id: &str| {
+        let (_, u) = s
+            .editor
+            .doc
+            .underlays()
+            .find(|(i, _)| i.to_string() == id)
+            .expect("the underlay");
+        (u.scale, u.bounds().size().x)
+    };
+    for (file, scale, n, width) in [
+        ("plan.svg", json!("1:50"), 50.0, 2500.0),
+        ("plan.dxf", json!("1:50"), 50.0, 5000.0),
+        ("plan.dxf", json!(20), 20.0, 2000.0),
+    ] {
+        let got = ok(
+            &mut s,
+            "import_file",
+            json!({ "path": file, "as": "underlay", "scale": scale }),
+        );
+        let id = str_at(&got, &["underlay"]).to_owned();
+        let (got_n, w) = underlay_width(&s, &id);
+        assert!(
+            (w - width).abs() < 1e-6 && (got_n - n).abs() < 1e-9,
+            "{file} at {scale}: scale {got_n}, {w} wide"
+        );
+    }
+    // As geometry, a DXF drawn at 1 : 50 comes in 50 times larger.
+    let got = ok(
+        &mut s,
+        "import_file",
+        json!({ "path": "plan.dxf", "scale": "1:50" }),
+    );
+    assert_eq!(got["curves"], 1, "{got}");
+    let long = s
+        .editor
+        .doc
+        .iter()
+        .filter_map(|(id, _)| match s.editor.doc.shape(id) {
+            Some(drift_core::Shape::Line { a, b }) => Some(a.distance(b)),
+            _ => None,
+        })
+        .fold(0.0, f64::max);
+    assert!((long - 5000.0).abs() < 1e-6, "{long}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

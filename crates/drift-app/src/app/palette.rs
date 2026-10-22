@@ -18,8 +18,7 @@ pub(crate) enum Command {
     OpenExample,
     Save,
     SaveAs,
-    ImportDxf,
-    ImportUnderlay,
+    Import,
     ExportPdf,
     ExportSvg,
     ExportDxf,
@@ -243,18 +242,7 @@ impl DriftApp {
         add(Command::OpenExample, "Open example", "File", String::new());
         add(Command::Save, "Save", "File", ctrl("S"));
         add(Command::SaveAs, "Save as…", "File", ctrl_shift("S"));
-        add(
-            Command::ImportDxf,
-            "Import DXF, SVG, PDF or Illustrator…",
-            "File",
-            String::new(),
-        );
-        add(
-            Command::ImportUnderlay,
-            "Import underlay…",
-            "File",
-            String::new(),
-        );
+        add(Command::Import, "Import…", "File", String::new());
         add(Command::ExportPdf, "Export PDF…", "File", String::new());
         add(Command::ExportSvg, "Export SVG…", "File", String::new());
         add(Command::ExportDxf, "Export DXF…", "File", String::new());
@@ -486,6 +474,10 @@ impl DriftApp {
                 },
             );
         }
+        // Import… is the one way in, for tracing over a drawing too.
+        if let Some(import) = out.iter_mut().find(|e| e.command == Command::Import) {
+            import.words = "underlay trace dwg dxf svg pdf illustrator ai drawing";
+        }
         out
     }
 
@@ -536,8 +528,7 @@ impl DriftApp {
             Command::OpenExample => self.request(Pending::Example),
             Command::Save => self.save(),
             Command::SaveAs => self.save_as(),
-            Command::ImportDxf => self.files.open(app::sheets_ui::IMPORT_FILE),
-            Command::ImportUnderlay => self.pick_underlay_file(),
+            Command::Import => self.pick_import_file(false),
             Command::ExportPdf => self.export_pdf(&painter),
             Command::ExportSvg => self.export_svg(&painter),
             Command::ExportDxf => self.export_dxf(&painter),

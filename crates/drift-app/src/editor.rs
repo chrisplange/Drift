@@ -315,16 +315,14 @@ pub struct Editor {
     /// Tab over a curve: its chain, highlighted to be picked by the next click (the curve
     /// the pointer was on, and the chain).
     pub chain_preview: Option<(EntityId, BTreeSet<EntityId>)>,
-    /// Closed areas are found from each layer's curves separately.
-    pub regions_by_layer: bool,
     /// Drawing tools draw construction geometry (Alt+C with a drawing tool in hand).
     pub draw_construction: bool,
     /// The tool in hand draws curves (kept up to date by the app): with
     /// [`draw_construction`](Self::draw_construction), what it adds is construction.
     pub drawing_curves: bool,
-    /// A click inside a closed area picks it only when a fill or hatch is in it (an empty
-    /// outline's inside picks nothing).
-    pub regions_need_fill: bool,
+    /// A click inside an empty closed area picks it whatever the drawing's rules say (the
+    /// assistant measures areas; it isn't saved with the drawing).
+    pub pick_any_area: bool,
     /// How the dimension tool goes on after a horizontal or vertical dimension.
     pub dim_mode: DimMode,
     /// Chain dimensions end with an overall dimension (a reference) outside them.
@@ -384,12 +382,6 @@ pub struct Editor {
     /// Whether each fill was last found kept whole across curves that cross it, so an edit
     /// that newly divides its area can be told from one that leaves it as it was.
     pub(crate) fill_crossed: std::collections::HashMap<drift_core::FillId, bool>,
-    /// An edit that divides a fill's area moves the fill to the area around its seed
-    /// (Preferences); off, the fill is kept whole and flagged.
-    pub follow_divided_fills: bool,
-    /// Draw each fill or hatch over everything below it, with its outline on top (as a
-    /// drawing program stacks objects). Off: every fill is drawn under every curve.
-    pub stacked_fills: bool,
     /// What edits did to fills beyond following their outlines, until taken (by the
     /// assistant's results; the app clears it).
     pub fill_changes: Vec<crate::fills::FillChange>,
@@ -442,8 +434,6 @@ impl Editor {
         let mut editor = Self {
             doc,
             auto_relations: true,
-            regions_need_fill: true,
-            stacked_fills: true,
             ..Default::default()
         };
         // Bring linked dimensions up to date with their expressions (not an undo step).
@@ -456,13 +446,10 @@ impl Editor {
         editor
     }
 
-    /// Take the preferences kept on an editor (how areas are found and picked, how the
-    /// dimension tool goes on) from the one this replaces, for a newly opened drawing.
+    /// Take the preferences kept on an editor (how new shapes are filled, what is picked,
+    /// how the dimension tool goes on) from the one this replaces, for a newly opened drawing.
     pub fn keep_prefs_from(&mut self, was: &Editor) {
-        self.regions_by_layer = was.regions_by_layer;
-        self.regions_need_fill = was.regions_need_fill;
-        self.stacked_fills = was.stacked_fills;
-        self.follow_divided_fills = was.follow_divided_fills;
+        self.pick_any_area = was.pick_any_area;
         self.fill_new_shapes = was.fill_new_shapes;
         self.fill_style = was.fill_style.clone();
         self.pick_filter = was.pick_filter;
@@ -1171,13 +1158,13 @@ impl Editor {
     /// references, not boundaries), recomputed when the document changes.
     pub fn regions(&mut self) -> std::rc::Rc<Vec<drift_geom::regions::Region>> {
         // (Switching per-layer finding on or off counts as a change.)
-        let revision = self.doc.revision() * 2 + u64::from(self.regions_by_layer);
+        let revision = self.doc.revision() * 2 + u64::from(self.doc.rules().regions_by_layer);
         if let Some((r, regions)) = &self.regions
             && *r == revision
         {
             return regions.clone();
         }
-        if self.regions_by_layer {
+        if self.doc.rules().regions_by_layer {
             return self.regions_per_layer(revision);
         }
         let bounding = self.fill_edges();
@@ -1569,6 +1556,33 @@ impl Editor {
     }
 
     /// Change the display units (an undoable document setting; no geometry moves).
+    /// A click inside an empty closed area picks nothing (the drawing's rule, unless the
+    /// assistant is picking).
+    pub fn regions_need_fill(&self) -> bool {
+        self.doc.rules().regions_need_fill && !self.pick_any_area
+    }
+
+    /// Change the drawing's rules (how areas are found and picked, how fills stack and
+    /// follow edits, the gap tolerance), as one undo step: changes in a row (a dragged
+    /// tolerance) make one step.
+    pub fn change_rules(&mut self, change: impl FnOnce(&mut drift_core::DrawingRules)) {
+        const LABEL: &str = "Change drawing settings";
+        let mut rules = self.doc.rules();
+        change(&mut rules);
+        if rules == self.doc.rules() {
+            return;
+        }
+        self.doc.begin();
+        self.doc.set_rules(rules);
+        let tx = self.doc.commit(LABEL);
+        if self.history.undo_label() == Some(LABEL) {
+            self.history.merge_into_last(tx);
+        } else {
+            self.history.push(tx);
+        }
+        self.sync();
+    }
+
     pub fn set_units(&mut self, units: Units) {
         self.doc.begin();
         self.doc.set_units(units);

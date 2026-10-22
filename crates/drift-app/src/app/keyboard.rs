@@ -306,13 +306,6 @@ impl DriftApp {
         // Shift+Alt+B: views' crops and names (their boundaries) on the canvas.
         if shift_alt(Key::B) {
             self.show_view_crops = !self.show_view_crops;
-            let now = ctx.input(|i| i.time);
-            let text = if self.show_view_crops {
-                "View crops shown"
-            } else {
-                "View crops hidden"
-            };
-            self.set_status(text.into(), false, now);
         }
         // Alt+C: with a drawing tool, draw construction geometry (or not); else make the
         // picked curves construction (or not).

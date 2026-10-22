@@ -172,7 +172,7 @@ dimension, render and analyse Drift drawings: see [Drawing with AI assistants](d
   Dragging keeps every constraint satisfied while the grabbed geometry follows the pointer.
   Under-defined geometry is blue, fully defined is white (or black in the light theme), and
   conflicting is red, with a remaining-DOF count in the status bar. Sketches of thousands of
-  entities solve in milliseconds (Help → Run solver benchmark measures it in your browser).
+  entities solve in milliseconds.
 - **Undo and redo** for every edit, with drags recorded as a single step.
 - **Files:** native `.drift` JSON with one entity per line, so files diff cleanly in git. Saving
   and loading round-trips numbers exactly. Open/save dialogs on desktop; open and download in

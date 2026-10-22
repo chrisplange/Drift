@@ -179,7 +179,7 @@ fn preferences_have_an_updates_section() {
     h.state_mut().show_settings = true;
     h.run();
     h.run();
-    h.get_by_label("Updates").click();
+    h.get_by_label("Updates & Labs").click();
     h.run();
     h.run();
     assert!(

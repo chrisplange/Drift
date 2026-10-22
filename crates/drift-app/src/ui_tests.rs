@@ -2080,7 +2080,7 @@ fn clicking_inside_closed_geometry_selects_its_region() {
     );
     h.state_mut().editor.pick_filter = crate::editor::PickFilter::All;
     // By default an area is picked only where it is filled: the plate is empty.
-    assert!(h.state().editor.regions_need_fill);
+    assert!(h.state().editor.regions_need_fill());
     click_world(&mut h, DVec2::new(100.0, 10.0));
     assert!(
         h.state_mut().editor.region().is_none(),
@@ -2088,7 +2088,9 @@ fn clicking_inside_closed_geometry_selects_its_region() {
     );
     assert!(h.state().view_prefs().contains("rfill=1"));
     // With that off, the inside of any closed outline picks it.
-    h.state_mut().editor.regions_need_fill = false;
+    h.state_mut()
+        .editor
+        .change_rules(|r| r.regions_need_fill = false);
     click_world(&mut h, DVec2::new(100.0, 10.0));
     let region = h.state_mut().editor.region().expect("the plate region");
     assert_eq!(region.holes.len(), 6, "bore, four bolt holes and the slot");
@@ -6582,9 +6584,12 @@ fn check_sketch_finds_and_fixes_gaps() {
     h.run();
     assert_eq!(h.state_mut().sketch_issues().len(), 2);
 
-    // The tolerance is kept with the preferences.
-    h.state_mut().gap_tolerance = 0.25;
-    assert!(h.state().view_prefs().contains("gaptol=0.25"));
+    // The tolerance is kept with the drawing, not the preferences.
+    h.state_mut()
+        .editor
+        .change_rules(|r| r.gap_tolerance = 0.25);
+    assert_eq!(h.state().editor.doc.rules().gap_tolerance, 0.25);
+    assert!(h.state().view_prefs().contains("gaptol=0.5"));
     assert_eq!(
         h.state_mut().sketch_issues().len(),
         1,
@@ -9336,4 +9341,156 @@ fn tangent_arcs_and_lines_start_on_a_partial_ellipse_and_a_pen_curve() {
     click_world(&mut h, next);
     assert_eq!(tangents(&h).len(), 3);
     assert!(h.state().editor.analysis().conflicts.is_empty());
+}
+
+#[test]
+fn view_switches_say_so_and_hidden_dimensions_and_relations_come_back_each_start() {
+    let Some(mut h) = harness() else { return };
+    let status = |h: &Harness<'static, DriftApp>| {
+        h.state()
+            .status
+            .as_ref()
+            .map(|s| s.text.clone())
+            .unwrap_or_default()
+    };
+    h.key_press_modifiers(EguiModifiers::ALT, Key::D);
+    h.run();
+    h.run();
+    assert!(!h.state().show_dimensions);
+    assert!(
+        status(&h).starts_with("Dimensions and notes hidden"),
+        "{}",
+        status(&h)
+    );
+    h.key_press_modifiers(EguiModifiers::ALT, Key::R);
+    h.run();
+    h.run();
+    assert!(!h.state().show_relations);
+    assert!(status(&h).starts_with("Relations hidden"), "{}", status(&h));
+    h.key_press(Key::W);
+    h.run();
+    h.run();
+    assert!(h.state().thin_lines);
+    assert_eq!(status(&h), "Thin lines");
+    save_png("drift_ui_dimensions_relations_hidden.png", &mut h);
+    // While they're hidden the status bar says so; a click shows them again.
+    h.get_by_label("Relations hidden ×").click();
+    h.run();
+    h.run();
+    assert!(h.state().show_relations);
+    assert_eq!(status(&h), "Relations shown");
+    assert!(h.query_by_label("Relations hidden ×").is_none());
+    h.state_mut().show_relations = false;
+    h.run();
+
+    // Hidden dimensions and relations aren't kept; thin lines are.
+    let mut storage = MemoryStorage::default();
+    eframe::App::save(h.state_mut(), &mut storage);
+    let prefs = h.state().view_prefs();
+    let keys: Vec<&str> = prefs
+        .split(';')
+        .filter_map(|p| p.split('=').next())
+        .collect();
+    assert!(
+        !keys.contains(&"dims") && !keys.contains(&"rels"),
+        "{prefs}"
+    );
+    let Some(mut fresh) = harness() else { return };
+    fresh.state_mut().restore_session(&storage);
+    fresh.run();
+    assert!(fresh.state().show_dimensions && fresh.state().show_relations);
+    assert!(fresh.state().thin_lines);
+    // Preferences saved by an older build that hid them don't either.
+    fresh.state_mut().apply_view_prefs("dims=0;rels=0");
+    assert!(fresh.state().show_dimensions && fresh.state().show_relations);
+}
+
+#[test]
+fn drawing_rules_are_the_drawings_and_older_files_get_this_computers() {
+    let Some(mut h) = harness() else { return };
+    // Preferences from before format 39 held the rules: they become those of new drawings.
+    h.state_mut()
+        .apply_view_prefs("rlayer=1;rfill=0;stack=0;dfollow=1;gaptol=0.75");
+    let mine = drift_core::DrawingRules {
+        regions_by_layer: true,
+        regions_need_fill: false,
+        stacked_fills: false,
+        follow_divided_fills: true,
+        gap_tolerance: 0.75,
+    };
+    assert_eq!(h.state().new_rules, mine);
+    h.state_mut().perform(crate::Pending::New);
+    h.run();
+    assert_eq!(h.state().editor.doc.rules(), mine);
+    assert!(!h.state().is_dirty(), "a new drawing is clean");
+
+    // An older file opens with them (nothing changes on day one) ...
+    let plate = drift_core::demo::mounting_plate();
+    let current = drift_io::save(&plate, &drift_io::Metadata::default());
+    let older = current.replace(r#""version": 39"#, r#""version": 38"#);
+    assert_ne!(older, current);
+    let (doc, meta) = drift_io::load(&older).unwrap();
+    h.state_mut()
+        .replace_document(doc, "old.drift".into(), None, meta, true);
+    assert_eq!(h.state().editor.doc.rules(), mine);
+    // ... and a current one with its own, whatever this computer's are.
+    let (doc, meta) = drift_io::load(&current).unwrap();
+    h.state_mut()
+        .replace_document(doc, "new.drift".into(), None, meta, true);
+    assert_eq!(
+        h.state().editor.doc.rules(),
+        drift_core::DrawingRules::default()
+    );
+
+    // Drawing settings changes them as an undo step, and saves them with the drawing.
+    h.state_mut().show_drawing_settings = true;
+    h.run();
+    h.run();
+    save_png("drift_ui_drawing_settings_rules.png", &mut h);
+    h.get_by_label("Find closed areas on each layer separately")
+        .click();
+    h.run();
+    h.run();
+    assert!(h.state().editor.doc.rules().regions_by_layer);
+    assert!(h.state().is_dirty());
+    let text = drift_io::save(&h.state().editor.doc, &drift_io::Metadata::default());
+    let (loaded, _) = drift_io::load(&text).unwrap();
+    assert!(loaded.rules().regions_by_layer);
+    h.get_by_label("Use for new drawings").scroll_to_me();
+    h.run();
+    h.run();
+    h.get_by_label("Use for new drawings").click();
+    h.run();
+    assert_eq!(h.state().new_rules, h.state().editor.doc.rules());
+    assert!(h.state().view_prefs().contains("rlayer=1"));
+    h.state_mut().undo();
+    assert!(!h.state().editor.doc.rules().regions_by_layer);
+}
+
+#[test]
+fn preferences_has_three_pages() {
+    let Some(mut h) = harness() else { return };
+    h.state_mut().show_settings = true;
+    h.run();
+    h.run();
+    h.get_by_label("Full screen");
+    h.get_by_label("Pan");
+    assert!(h.query_by_label("Show the grid").is_none(), "a View switch");
+    assert!(h.query_by_label("Reset panel layout").is_none());
+    h.get_by_label("Drawing aids").click();
+    h.run();
+    h.run();
+    h.get_by_label("Add relations automatically while drawing");
+    h.get_by_label("Always show end points");
+    assert!(
+        h.query_by_label("Find closed areas on each layer separately")
+            .is_none(),
+        "saved with the drawing"
+    );
+    save_png("drift_ui_preferences_drawing_aids.png", &mut h);
+    h.get_by_label("Updates & Labs").click();
+    h.run();
+    h.run();
+    h.get_by_label("Check for updates when Drift starts");
+    h.get_by_label("Let AI assistants edit the open drawing");
 }

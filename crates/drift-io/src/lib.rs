@@ -6,7 +6,7 @@
 //! ```json
 //! {
 //!   "format": "drift",
-//!   "version": 38,
+//!   "version": 39,
 //!   "meta": {"title":"Bracket","units":"mm","generator":"Drift 0.1.0"},
 //!   "display": {"length":"architectural","fraction":16},
 //!   "variables": [
@@ -36,9 +36,9 @@
 use std::collections::BTreeMap;
 
 use drift_core::{
-    Appearance, Constraint, ConstraintId, DVec2, Document, DocumentError, Entity, EntityId,
-    EntityKind, Kind, Layer, LayerId, LengthFormat, LineKind, LineType, LineWeight, MeasurementId,
-    Rgb, Units, Variable, VariableId, Variant, VariantId,
+    Appearance, Constraint, ConstraintId, DVec2, Document, DocumentError, DrawingRules, Entity,
+    EntityId, EntityKind, Kind, Layer, LayerId, LengthFormat, LineKind, LineType, LineWeight,
+    MeasurementId, Rgb, Units, Variable, VariableId, Variant, VariantId,
 };
 use serde::{Deserialize, Serialize};
 
@@ -100,8 +100,10 @@ pub const EXTENSION: &str = "drift";
 /// 34 = adds a dimension's `ext` (extension line starts set by hand); 35 = a sheet's
 /// `title_block` can be `blank` (blank paper; `none` stays the border without a title block);
 /// 36 = adds a block's `profile` flag (written to the Blender profiles file); 37 = adds a
-/// fill's `divided` (an edit left it covering more than one area).
-pub const FORMAT_VERSION: u32 = 38;
+/// fill's `divided` (an edit left it covering more than one area); 38 = adds `paths` (curves
+/// drawn as one shape); 39 = adds `rules` (how closed areas and fills behave, and the gap
+/// tolerance; they were the app's preferences before, so an older file gets the app's).
+pub const FORMAT_VERSION: u32 = 39;
 const FORMAT_TAG: &str = "drift";
 
 /// Document-level properties stored alongside the geometry.
@@ -114,6 +116,10 @@ pub struct Metadata {
     pub units: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub generator: Option<String>,
+    /// The file is from before drawings kept their own [`rules`](Document::rules) (v39):
+    /// they were the app's preferences then, so the app should apply its own.
+    #[serde(skip)]
+    pub older_rules: bool,
 }
 
 fn default_units() -> String {
@@ -126,6 +132,7 @@ impl Default for Metadata {
             title: None,
             units: default_units(),
             generator: None,
+            older_rules: false,
         }
     }
 }
@@ -373,6 +380,53 @@ struct ConstraintRecord {
     /// Text shown instead of the value (`EQ`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     text: Option<String>,
+}
+
+/// How a drawing's closed areas and fills behave (v39). Every field is optional (defaults
+/// apply).
+#[derive(Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RulesRecord {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    areas_by_layer: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pick_filled_only: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    stacked_fills: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    follow_divided: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    gap_tolerance: Option<f64>,
+}
+
+impl RulesRecord {
+    /// Only what differs from the defaults.
+    fn from_rules(rules: DrawingRules) -> Self {
+        let d = DrawingRules::default();
+        let differs = |a: bool, b: bool| (a != b).then_some(a);
+        Self {
+            areas_by_layer: differs(rules.regions_by_layer, d.regions_by_layer),
+            pick_filled_only: differs(rules.regions_need_fill, d.regions_need_fill),
+            stacked_fills: differs(rules.stacked_fills, d.stacked_fills),
+            follow_divided: differs(rules.follow_divided_fills, d.follow_divided_fills),
+            gap_tolerance: (rules.gap_tolerance != d.gap_tolerance).then_some(rules.gap_tolerance),
+        }
+    }
+
+    fn to_rules(&self) -> Result<DrawingRules, LoadError> {
+        let d = DrawingRules::default();
+        let gap_tolerance = self.gap_tolerance.unwrap_or(d.gap_tolerance);
+        if !(gap_tolerance.is_finite() && gap_tolerance > 0.0) {
+            return Err(LoadError::NonFinite("rules.gap_tolerance".into()));
+        }
+        Ok(DrawingRules {
+            regions_by_layer: self.areas_by_layer.unwrap_or(d.regions_by_layer),
+            regions_need_fill: self.pick_filled_only.unwrap_or(d.regions_need_fill),
+            stacked_fills: self.stacked_fills.unwrap_or(d.stacked_fills),
+            follow_divided_fills: self.follow_divided.unwrap_or(d.follow_divided_fills),
+            gap_tolerance,
+        })
+    }
 }
 
 /// How lengths and angles are displayed. Every field is optional (defaults apply).
@@ -839,6 +893,9 @@ struct FileRecord {
     /// The title blocks' logo, as SVG text.
     #[serde(default)]
     logo: Option<String>,
+    /// How closed areas and fills behave (v39).
+    #[serde(default)]
+    rules: Option<RulesRecord>,
     /// The project the sheets share.
     #[serde(default)]
     project: Option<sheets::ProjectRecord>,
@@ -1019,6 +1076,11 @@ pub fn save(doc: &Document, meta: &Metadata) -> String {
     if !doc.logo().is_empty() {
         let l = serde_json::to_string(doc.logo()).expect("logo serializes");
         out.push_str(&format!("  \"logo\": {l},\n"));
+    }
+    let rules = RulesRecord::from_rules(doc.rules());
+    if rules != RulesRecord::default() {
+        let r = serde_json::to_string(&rules).expect("rules serialize");
+        out.push_str(&format!("  \"rules\": {r},\n"));
     }
     if let Some(p) = sheets::project_record(doc.project()) {
         let p = serde_json::to_string(&p).expect("project serializes");
@@ -1265,8 +1327,13 @@ pub fn load(text: &str) -> Result<(Document, Metadata), LoadError> {
 /// meaningless (a point held on a curve it is the end of), which older builds could save.
 pub fn load_with_notes(text: &str) -> Result<(Document, Metadata, Vec<String>), LoadError> {
     let value: serde_json::Value = serde_json::from_str(text)?;
+    let older_rules = value
+        .get("version")
+        .and_then(serde_json::Value::as_u64)
+        .is_some_and(|v| v < 39);
     let value = migrate(value)?;
-    let file: FileRecord = serde_json::from_value(value)?;
+    let mut file: FileRecord = serde_json::from_value(value)?;
+    file.meta.older_rules = older_rules;
     if file.meta.units != "mm" {
         return Err(LoadError::UnsupportedUnits(file.meta.units));
     }
@@ -1549,6 +1616,9 @@ pub fn load_with_notes(text: &str) -> Result<(Document, Metadata, Vec<String>), 
     }
     if let Some(display) = &file.display {
         doc.set_units(display.to_units()?);
+    }
+    if let Some(rules) = &file.rules {
+        doc.set_rules(rules.to_rules()?);
     }
     for (rank, l) in file.layers.into_iter().enumerate() {
         let id = parse_layer_id(&l.id)?;
@@ -1882,6 +1952,8 @@ pub fn migrate(value: serde_json::Value) -> Result<serde_json::Value, LoadError>
         // v1 → v2: constraints were introduced; a v1 file simply has none.
         value["constraints"] = serde_json::Value::Array(Vec::new());
     }
+    // v38 → v39: a drawing's rules were the app's preferences; the file is read with the
+    // defaults, and `Metadata::older_rules` tells the app to apply its own.
     // v2 → v26 only added optional fields, sections and constraint types: nothing to convert
     // here (a sheet's own views, from before v27, are made model views as the file is read).
     value["version"] = FORMAT_VERSION.into();
@@ -1940,6 +2012,46 @@ mod tests {
     }
 
     #[test]
+    fn drawing_rules_round_trip() {
+        let mut doc = demo::mounting_plate();
+        let text = save(&doc, &Metadata::default());
+        assert!(!text.contains("\"rules\""), "the defaults aren't written");
+        let rules = DrawingRules {
+            regions_by_layer: true,
+            regions_need_fill: false,
+            stacked_fills: false,
+            follow_divided_fills: true,
+            gap_tolerance: 0.25,
+        };
+        doc.set_rules(rules);
+        let text = save(&doc, &Metadata::default());
+        assert!(text.contains("\"rules\": {"), "{text}");
+        let (loaded, meta) = load(&text).unwrap();
+        assert_eq!(loaded.rules(), rules);
+        assert!(!meta.older_rules);
+        assert_eq!(save(&loaded, &meta), text);
+        // A bad tolerance doesn't open.
+        let bad = text.replace("\"gap_tolerance\":0.25", "\"gap_tolerance\":-1.0");
+        assert_ne!(bad, text);
+        assert!(load(&bad).is_err());
+    }
+
+    #[test]
+    fn a_file_from_before_drawing_rules_opens_with_the_defaults_and_says_so() {
+        let doc = demo::mounting_plate();
+        let text = save(&doc, &Metadata::default());
+        let old = text.replace(r#""version": 39"#, r#""version": 38"#);
+        assert_ne!(old, text);
+        let (loaded, meta) = load(&old).unwrap();
+        assert_eq!(loaded.rules(), DrawingRules::default());
+        assert!(meta.older_rules, "the app applies its own");
+        // Saved again, it is a current file.
+        assert!(save(&loaded, &meta).contains(r#""version": 39"#));
+        let (_, meta) = load(&save(&loaded, &meta)).unwrap();
+        assert!(!meta.older_rules);
+    }
+
+    #[test]
     fn writes_one_entity_per_line() {
         let mut doc = Document::new();
         let a = doc.add_point(DVec2::new(0.0, 0.0));
@@ -1953,7 +2065,7 @@ mod tests {
         let text = save(&doc, &Metadata::default());
         let expected = r#"{
   "format": "drift",
-  "version": 38,
+  "version": 39,
   "meta": {"units":"mm"},
   "entities": [
     {"type":"point","id":"e1","at":[0.0,0.0]},
@@ -2132,7 +2244,7 @@ mod tests {
         // A file from before extension starts opens with them all automatic.
         let old = text.replace(r#","ext":[null,12.5]"#, "");
         let old = old.replace(r#","ext":[-2.0,3.25]"#, "");
-        let old = old.replace(r#""version": 38"#, r#""version": 33"#);
+        let old = old.replace(r#""version": 39"#, r#""version": 33"#);
         let (loaded, _) = load(&old).unwrap();
         assert_eq!(loaded.extension_starts(h), [None, None]);
         assert_eq!(loaded.extension_starts(both), [None, None]);
@@ -3077,7 +3189,7 @@ mod tests {
         doc.add_text(drift_core::SketchText::new("A", DVec2::ZERO, 3.0));
 
         let text = save(&doc, &Metadata::default());
-        assert!(text.contains("\"version\": 38"));
+        assert!(text.contains("\"version\": 39"));
         // A fill an edit divided keeps its mark.
         assert!(text.contains(r#""divided":true"#), "{text}");
         // A mark points at its view.

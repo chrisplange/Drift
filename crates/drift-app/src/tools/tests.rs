@@ -1910,6 +1910,8 @@ fn grab_bases_a_point_on_itself() {
 #[test]
 fn grab_moves_a_selected_region_from_its_centroid() {
     let mut ed = Editor::default();
+    // Empty areas pick (not the default rule).
+    ed.change_rules(|r| r.regions_need_fill = false);
     ed.doc.begin();
     let c = [v(0.0, 0.0), v(10.0, 0.0), v(10.0, 6.0), v(0.0, 6.0)].map(|p| ed.doc.add_point(p));
     for i in 0..4 {
@@ -1934,6 +1936,8 @@ fn grab_moves_a_selected_region_from_its_centroid() {
 #[test]
 fn a_selected_region_stays_lit_while_it_moves() {
     let mut ed = Editor::default();
+    // Empty areas pick (not the default rule).
+    ed.change_rules(|r| r.regions_need_fill = false);
     ed.doc.begin();
     let c = [v(0.0, 0.0), v(10.0, 0.0), v(10.0, 6.0), v(0.0, 6.0)].map(|p| ed.doc.add_point(p));
     for i in 0..4 {
@@ -2130,6 +2134,8 @@ fn transform_handles_scale_stretch_and_turn() {
 #[test]
 fn a_held_stretch_keeps_the_area_picked_and_alt_scales_only_along_it() {
     let mut ed = Editor::default();
+    // Empty areas pick (not the default rule).
+    ed.change_rules(|r| r.regions_need_fill = false);
     ed.doc.begin();
     let c =
         [v(0.0, 0.0), v(100.0, 0.0), v(100.0, 100.0), v(0.0, 100.0)].map(|p| ed.doc.add_point(p));
@@ -2208,6 +2214,8 @@ fn a_held_stretch_keeps_the_area_picked_and_alt_scales_only_along_it() {
 #[test]
 fn dragging_inside_a_picked_area_moves_it() {
     let mut ed = Editor::default();
+    // Empty areas pick (not the default rule).
+    ed.change_rules(|r| r.regions_need_fill = false);
     ed.doc.begin();
     let c = [v(0.0, 0.0), v(10.0, 0.0), v(10.0, 6.0), v(0.0, 6.0)].map(|p| ed.doc.add_point(p));
     for i in 0..4 {
@@ -2934,6 +2942,8 @@ fn rotate_by_reference_turns_an_edge_onto_a_line() {
 #[test]
 fn clicking_inside_a_closed_area_picks_its_outline() {
     let (mut ed, _) = rotated_rectangle_fixture();
+    // Empty areas pick (not the default rule).
+    ed.change_rules(|r| r.regions_need_fill = false);
     ed.selection.clear();
     let lines: BTreeSet<EntityId> = ed
         .doc
@@ -3342,7 +3352,7 @@ fn pen_drag(ed: &mut Editor, tool: &mut dyn Tool, at: DVec2, to: DVec2, alt: boo
 fn pen_paths_chain_with_tab_and_their_areas_move() {
     // A closed pen path: a corner, a smooth point dragged out, another, and back to the start.
     let mut ed = Editor::default();
-    ed.regions_need_fill = false;
+    ed.change_rules(|r| r.regions_need_fill = false);
     let mut tool = PenTool::default();
     click(&mut ed, &mut tool, v(0.0, 0.0));
     pen_drag(&mut ed, &mut tool, v(20.0, 12.0), v(28.0, 12.0), false);
@@ -4024,7 +4034,7 @@ fn closed_areas_can_be_found_per_layer() {
     // All together, the line cuts the room in two.
     assert_eq!(ed.regions().len(), 2);
     // Per layer, the room is whole.
-    ed.regions_by_layer = true;
+    ed.change_rules(|r| r.regions_by_layer = true);
     let regions = ed.regions();
     assert_eq!(regions.len(), 1);
     assert!((regions[0].area - 200.0).abs() < 1e-6);
@@ -4043,7 +4053,7 @@ fn closed_areas_can_be_found_per_layer() {
     ed.doc.set_entity_layer(wall, other).unwrap();
     ed.commit("Layer");
     assert!(ed.regions().is_empty());
-    ed.regions_by_layer = false;
+    ed.change_rules(|r| r.regions_by_layer = false);
     assert_eq!(ed.regions().len(), 2);
 }
 
@@ -4095,7 +4105,7 @@ fn areas_are_picked_only_where_filled_when_asked() {
     }
     ed.commit("Setup");
     ed.add_fill_at(v(15.0, 5.0)).unwrap();
-    ed.regions_need_fill = true;
+    ed.change_rules(|r| r.regions_need_fill = true);
     let mut tool = SelectTool::default();
     // The empty room: nothing.
     click(&mut ed, &mut tool, v(5.0, 5.0));
@@ -4104,7 +4114,7 @@ fn areas_are_picked_only_where_filled_when_asked() {
     click(&mut ed, &mut tool, v(15.0, 5.0));
     assert_eq!(ed.selected_fills.len(), 1);
     // Off: the empty room's area.
-    ed.regions_need_fill = false;
+    ed.change_rules(|r| r.regions_need_fill = false);
     click(&mut ed, &mut tool, v(5.0, 5.0));
     assert!(ed.region().is_some());
 }

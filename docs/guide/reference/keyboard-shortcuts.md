@@ -60,8 +60,8 @@ display unit.
 | Double-click a dimension | Edit its value |
 | Drag a dimension | Move its label |
 | N | **Note**; Enter finishes, Shift+Enter adds a line |
-| Alt+D | Show or hide dimensions and notes |
-| Alt+R | Show or hide relation symbols |
+| Alt+D | Show or hide dimensions and notes (shown again at each start; the status bar says while they're hidden) |
+| Alt+R | Show or hide relation symbols (likewise) |
 | Alt+H | Show hidden annotations, faded, to pick them again |
 
 ## Selection and editing
@@ -104,6 +104,10 @@ In a move or rotate (G, R): click or Enter places, Esc or right-click cancels.
 | Shift+C | Constraint status colours, or curves' own and their layers' colours |
 | W | Thin lines: every line one pixel wide |
 | Shift+Alt+B | Show or hide views' crops and names (**View → View crops**) |
+| Shift+Alt+V | Always show end points, or only on hovered and picked curves |
+| Shift+Alt+R | Add relations automatically while drawing, or not (**Edit → Preferences… → Drawing aids**) |
+
+Each of these says in the status bar what it just did.
 
 In the sheet preview: Shift+F fits the sheet, Delete takes the picked view off the sheet
 (it stays in the drawing), Esc returns to the model.

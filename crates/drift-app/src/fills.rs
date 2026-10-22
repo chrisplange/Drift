@@ -424,7 +424,7 @@ impl Editor {
     ///
     /// A fill the edit left covering several areas (a curve drawn across it, a split that
     /// made a junction) is kept whole and flagged as [`divided`](Fill::divided), or, with
-    /// [`follow_divided_fills`](Editor::follow_divided_fills), takes the area around its
+    /// [`follow_divided_fills`](drift_core::DrawingRules::follow_divided_fills), takes the area around its
     /// seed. One that was already kept whole across curves stays so. When the edit deleted
     /// or reshaped curves of its outline and no area has what is left of it, the fill takes
     /// the area around its seed (#120, #101), or goes if there is none. What happened beyond
@@ -518,7 +518,7 @@ impl Editor {
                 // its whole area, marked as covering several. The preference to follow the
                 // seed applies only when the edit cut the outline itself (`reshaped`).
                 if newly
-                    && self.follow_divided_fills
+                    && self.doc.rules().follow_divided_fills
                     && reshaped
                     && let Some(part) = at_seed
                 {

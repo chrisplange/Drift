@@ -767,7 +767,7 @@ impl Tool for SelectTool {
                 ed.selected_region = match hit {
                     // (A filled area was picked as its fill above: with areas picked only
                     // where filled, an empty outline's inside picks nothing.)
-                    None if anything && !ed.regions_need_fill => {
+                    None if anything && !ed.regions_need_fill() => {
                         let regions = ed.regions();
                         drift_geom::regions::region_at(&regions, p.raw).map(|_| p.raw)
                     }

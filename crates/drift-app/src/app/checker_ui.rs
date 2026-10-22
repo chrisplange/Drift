@@ -23,7 +23,7 @@ impl DriftApp {
     /// The issues for the document as it is now (found again only when it changes).
     pub(crate) fn sketch_issues(&mut self) -> Vec<Issue> {
         let revision = self.editor.doc.revision();
-        let tolerance = self.gap_tolerance;
+        let tolerance = self.editor.doc.rules().gap_tolerance;
         let Some(check) = &mut self.sketch_check else {
             return Vec::new();
         };
@@ -49,7 +49,7 @@ impl DriftApp {
         let mut show: Option<Issue> = None;
         let mut fix: Option<Issue> = None;
         let mut fix_all = false;
-        let mut tolerance = self.gap_tolerance;
+        let mut tolerance = self.editor.doc.rules().gap_tolerance;
         theme::dialog(ctx, "Check sketch")
             .id(egui::Id::new("sketch_check"))
             .open(&mut open)
@@ -163,7 +163,7 @@ impl DriftApp {
                     }
                 });
             });
-        self.gap_tolerance = tolerance;
+        self.editor.change_rules(|r| r.gap_tolerance = tolerance);
         if let Some(issue) = show {
             self.show_issue(&issue);
         }

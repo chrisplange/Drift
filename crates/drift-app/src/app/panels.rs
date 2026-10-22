@@ -308,6 +308,14 @@ impl DriftApp {
                 if ui.button("Open example").clicked() {
                     self.request(Pending::Example);
                 }
+                if ui
+                    .button("Show the start panel")
+                    .on_hover_text("New, recent and example drawings, over an empty sketch")
+                    .clicked()
+                {
+                    self.show_start = true;
+                    ui.close();
+                }
                 ui.separator();
                 if ui
                     .add(egui::Button::new("Save").shortcut_text(shortcut("S", false)))
@@ -324,7 +332,10 @@ impl DriftApp {
                 ui.separator();
                 if ui
                     .button("Drawing settings…")
-                    .on_hover_text("Units and drafting style, saved with this drawing")
+                    .on_hover_text(
+                        "Units, how areas and fills behave, and drafting style: saved with this \
+                         drawing",
+                    )
                     .clicked()
                 {
                     self.show_drawing_settings = true;
@@ -633,8 +644,6 @@ impl DriftApp {
                 toggle_item(ui, &mut self.show_combs, "Curvature combs", "");
                 toggle_item(ui, &mut self.show_view_crops, "View crops", "Shift+Alt+B");
                 ui.separator();
-                toggle_item(ui, &mut self.auto_relations, "Automatic relations", "");
-                ui.separator();
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new("Appearance").weak());
                     ui.set_max_width(ui.min_rect().width() + 170.0);
@@ -649,6 +658,8 @@ impl DriftApp {
                 if ui.button("Keyboard shortcuts").clicked() {
                     self.show_shortcuts = true;
                 }
+                // For development: it tells users nothing.
+                #[cfg(debug_assertions)]
                 if ui.button("Run solver benchmark").clicked() {
                     self.benchmark = Some(run_benchmark());
                 }
@@ -658,13 +669,9 @@ impl DriftApp {
                 if ui.button("About Drift").clicked() {
                     self.show_about = true;
                 }
-                let memory = match self.memory.0 {
-                    0 => String::new(),
-                    bytes => format!(" · {} MB", bytes / (1024 * 1024)),
-                };
                 ui.label(
                     egui::RichText::new(format!(
-                        "Drift {} · {}{memory}",
+                        "Drift {} · {}",
                         drift_platform::VERSION,
                         self.backend
                     ))
@@ -1038,7 +1045,7 @@ impl DriftApp {
                     );
                     ui.label(egui::RichText::new("Nothing selected").weak());
                 });
-                let hint = if self.editor.regions_need_fill {
+                let hint = if self.editor.regions_need_fill() {
                     "Click geometry, or a fill or hatch, to inspect it."
                 } else {
                     "Click geometry to inspect it, or inside a closed area to measure it."
@@ -1587,6 +1594,33 @@ impl DriftApp {
                             );
                         if click.clicked() {
                             self.select_overlapping(_now);
+                        }
+                    }
+                    // Dimensions or relations switched off for now: say so, and show them
+                    // again on a click.
+                    let grey = ui.visuals().weak_text_color();
+                    for (shown, text, keys) in [
+                        (self.show_relations, "Relations hidden ×", "Alt+R"),
+                        (self.show_dimensions, "Dimensions hidden ×", "Alt+D"),
+                    ] {
+                        if shown {
+                            continue;
+                        }
+                        let pill = theme::pill(ui, text, grey);
+                        let click =
+                            ui.interact(pill.rect, ui.id().with(text), egui::Sense::click());
+                        click.widget_info(|| {
+                            egui::WidgetInfo::labeled(egui::WidgetType::Button, true, text)
+                        });
+                        if click
+                            .on_hover_text(format!("Click (or {keys}) to show them again"))
+                            .clicked()
+                        {
+                            if text.starts_with("Rel") {
+                                self.show_relations = true;
+                            } else {
+                                self.show_dimensions = true;
+                            }
                         }
                     }
                     let hidden = self.hidden_annotation_count();

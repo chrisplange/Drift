@@ -9,7 +9,7 @@ pub(crate) mod demo_ui;
 pub(crate) mod dialogs;
 pub(crate) mod dim_align;
 pub(crate) mod dock_ui;
-mod document;
+pub(crate) mod document;
 mod drafting_ui;
 mod edit;
 mod fill_ui;

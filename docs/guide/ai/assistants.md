@@ -24,7 +24,7 @@ for degrees of freedom, conflicts, open ends and room areas, then fix what's wro
 | The macOS disk image | `/Applications/Drift.app/Contents/MacOS/drift-mcp` |
 
 Replace `you` with your user name, and the folder with yours if you installed somewhere
-else. Drift shows the path in **Edit → Preferences → General**, under **AI assistants**,
+else. Drift shows the path in **Edit → Preferences → Updates & Labs**, under **Labs**,
 and **Copy Claude Desktop config** there copies a ready-made config for Claude Desktop. You don't run the server yourself: the assistant starts it. It needs no GPU (its
 pictures are drawn on the CPU), and updating Drift updates it too. To check it's there,
 run it from a terminal with `--version`.
@@ -105,7 +105,7 @@ whether it connected.
 
 ## Working live in Drift
 
-1. In Drift, open **Edit → Preferences → General** and tick **Let AI assistants edit the
+1. In Drift, open **Edit → Preferences → Updates & Labs** and tick **Let AI assistants edit the
    open drawing**. The status bar shows **AI link on**.
 2. Ask the assistant to work on your drawing. When it connects, the status bar shows
    **Assistant connected**.

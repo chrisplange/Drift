@@ -22,8 +22,8 @@ back.
 Where two shapes' lines lie along each other, each fill is bounded by its own shape's lines,
 so picking or moving one doesn't bring the other's lines along.
 
-Construction geometry doesn't close areas. Neither, if you turn on **Edit → Preferences… →
-Drawing aids → Find closed areas on each layer separately**, do curves on other layers.
+Construction geometry doesn't close areas. Neither, if you turn on **File → Drawing settings… →
+Closed areas and fills → Find closed areas on each layer separately**, do curves on other layers.
 
 ## 1. Choose the style first
 
@@ -114,7 +114,8 @@ areas** on the canvas. Pick it and the **Inspector** offers **Fit to its seed's 
 mark). A curve drawn across a fill never changes its area. When an edit cuts the outline
 itself (a side split where another line crosses it, say), the fill is kept whole and marked
 the same way; to have it take the area where it was first clicked instead, choose **Follow
-its seed** in **Edit → Preferences… → Drawing aids → When an edit divides a filled area**.
+its seed** in **File → Drawing settings… → Closed areas and fills → When an edit divides a filled
+area** (saved with the drawing).
 
 Hatches are clipped exactly to their boundary and stay crisp at any zoom. A hatch too dense
 to see at the current zoom is drawn as a tint.

@@ -26,7 +26,8 @@ With the **Select** tool (S, or Esc from any tool):
 
 Clicking inside a fill or hatch picks it. Clicking inside an empty outline picks nothing, so
 a box selection can start there. (To pick a closed area and measure it instead, turn off
-**Edit → Preferences… → Drawing aids → Pick an area only where it is filled or hatched**.
+**File → Drawing settings… → Closed areas and fills → Pick an area only where it is
+filled or hatched**; it is saved with the drawing.
 A picked area shows its area, perimeter and centroid in the **Inspector**.)
 
 ### Pick filter: All, Edges, Points, Annotations, Text

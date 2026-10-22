@@ -146,7 +146,7 @@ impl Session {
             // Drift's own preferences carry over to its next drawing.
             editor.keep_prefs_from(&self.editor);
         } else {
-            editor.regions_need_fill = false;
+            editor.pick_any_area = true;
         }
         self.editor = editor;
     }
@@ -400,7 +400,7 @@ impl Session {
 /// tools add their own), and areas picked whether filled or not.
 fn new_editor(doc: drift_core::Document) -> Editor {
     let mut ed = Editor::new(doc);
-    ed.regions_need_fill = false;
+    ed.pick_any_area = true;
     ed
 }
 

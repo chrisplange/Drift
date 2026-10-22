@@ -246,11 +246,18 @@ fn perf_editor_pipeline() {
         "items with 1,000 picked (per frame)",
         time(10, |_| items = ed.items_styled(true, true)),
     );
+    // (Their points are the dragged, as the Grab tool passes them.)
+    let dragged: Vec<drift_solver::Param> = ed
+        .doc
+        .defining_points(some.iter().copied())
+        .into_iter()
+        .flat_map(drift_solver::Param::point)
+        .collect();
     ed.doc.begin();
     report(
         "drag 1,000 curves (per mouse move)",
         time(10, |_| {
-            ed.drag(&some, v(0.5, 0.25), &[]);
+            ed.drag(&some, v(0.5, 0.25), &dragged);
         }),
     );
     let t = Instant::now();

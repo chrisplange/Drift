@@ -21,7 +21,7 @@ use drift_core::{Constraint, ConstraintId, DVec2, Document, EntityId, EntityKind
 
 use crate::linalg::{Matrix, rref};
 use crate::sparse::{Dd, Skyline, qr_rank};
-use crate::system::{EntityShape, System};
+use crate::system::{EntityShape, Shape, System};
 
 /// A solver unknown: a point coordinate or a circle radius.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -59,6 +59,12 @@ impl Default for Tolerances {
     }
 }
 
+/// What a solve keeps, in rank: the relations always hold; among the geometry that meets
+/// them, the [`dragged`](Self::dragged) stay put first, then the [`carried`](Self::carried),
+/// then (with a [`focus`](Self::focus)) everything else; then the shapes
+/// ([`radii`](Self::radii), [`lengths`](Self::lengths), [`directions`](Self::directions))
+/// are kept where that still leaves them open, as one preference. A lower rank never
+/// moves a higher one.
 #[derive(Clone, Debug, Default)]
 pub struct SolveOptions {
     /// Parameters that should stay where they are if at all possible (e.g. the point under the
@@ -66,8 +72,9 @@ pub struct SolveOptions {
     pub dragged: Vec<Param>,
     /// Parameters a drag carries along with it (the points of a curve a move pushes rather
     /// than reshapes): they stay where they are asked to like [`dragged`](Self::dragged), but
-    /// no one dragged them, so a line or arc they end keeps its length or radius preference
-    /// like any other (dragging an end reshapes its curve; being carried doesn't).
+    /// give way before the dragged where the relations won't have both, and no one dragged
+    /// them, so a line or arc they end keeps its length or radius preference like any other
+    /// (dragging an end reshapes its curve; being carried doesn't).
     pub carried: Vec<Param>,
     /// Also run the degrees-of-freedom analysis.
     pub analyze: bool,
@@ -129,17 +136,15 @@ pub struct SolveReport {
 
 const MAX_ITERATIONS: usize = 100;
 
-/// How strongly arcs keep their radius in a minimum-change step, relative to moving a point.
-const KEEP_RADIUS: f64 = 100.0;
+/// How strongly a shape is kept in a minimum-change step, relative to moving a point: being
+/// off a radius, length or direction by some distance costs as much as moving a point that
+/// far, this many times over.
+const KEEP_SHAPE: f64 = 100.0;
 
 /// Inverse weight for parameters outside [`SolveOptions::focus`] when it is set: moving them
-/// costs this many times as much as moving the focus.
+/// costs this many times as much as moving the focus. The third rank of what stays put,
+/// after the dragged and the carried (`system::DRAGGED_MOBILITY`, `system::CARRIED_MOBILITY`).
 const UNFOCUSED_MOBILITY: f64 = 1e-3;
-
-/// Iterations after which a drag's solve still short of its relations lets go of all its soft
-/// preferences (radii, directions and lengths to keep) and finishes on the relations alone:
-/// a safety net for a solve the preferences' steps keep unsettling (see `newton`).
-const SOFT_PATIENCE: usize = 20;
 
 /// A step that delivers less than this share of what its linearisation promised went badly
 /// (see [`SolveReport::wandered`]).
@@ -150,24 +155,28 @@ const WANDERING_GAIN: f64 = 0.25;
 /// one that pulls against them (first order).
 const SECOND_ORDER: f64 = 0.25;
 
+/// At most this many passes take out of a preference's step what the relations feel (see
+/// `newton`), and no more once a pass changes it by less than [`FELT_ROUND_OFF`] of it.
+const FELT_PASSES: usize = 6;
+const FELT_ROUND_OFF: f64 = 1e-14;
+
 /// Iterations a solve goes on for after its rows hold, for its soft preferences to settle
-/// (see `newton`). Enough for a preference on freely moving geometry, which closes most of
-/// what is left of it every step; one that can only crawl, on heavy geometry, is left where
-/// it got to.
+/// (see `newton`). Not a safety net but what bounds how far a shape is kept: each step closes
+/// a share of what is left of a preference that goes as the square of how much of its
+/// gradient the relations leave free (unitless, so the same at any size or turn). One on
+/// freely moving geometry closes in a few steps; one the relations nearly rule out could
+/// only be met by swinging geometry far (its offset over that share), and crawls toward
+/// that a step at a time, so after this many it is left where it got to, at most some ten
+/// times its offset away. (Without the bound the heavy drag properties creep and fling.)
 const SETTLE_PATIENCE: usize = 10;
 
 /// Solve the document's constraints in place. Changes go through the document's normal edit
 /// methods, so they are recorded by an open transaction.
 pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
-    let held: Vec<Param> = options
-        .dragged
-        .iter()
-        .chain(&options.carried)
-        .copied()
-        .collect();
     let mut sys = System::build_in(
         doc,
-        &held,
+        &options.dragged,
+        &options.carried,
         &options.tolerances,
         options.scope.as_deref(),
         &options.radii,
@@ -181,7 +190,7 @@ pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
             let ends = [Param::X(a), Param::Y(a), Param::X(b), Param::Y(b)]
                 .map(|p| sys.param_index.get(&p).copied());
             if let [Some(ax), Some(ay), Some(bx), Some(by)] = ends {
-                sys.keep_direction.push(([ax, ay, bx, by], u));
+                sys.keep.push(Shape::Direction([ax, ay, bx, by], u));
             }
         }
     }
@@ -213,7 +222,8 @@ pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
                 Param::Y(start),
             ]
             .map(|p| sys.param_index.get(&p).copied());
-            sys.keep_radius.retain(|(k, _)| k.map(Some) != key);
+            sys.keep
+                .retain(|s| !matches!(s, Shape::Distance(k, _) if k.map(Some) == key));
         }
     }
     let mut lengths: Vec<_> = options.lengths.iter().collect();
@@ -226,7 +236,7 @@ pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
             let ends = [Param::X(a), Param::Y(a), Param::X(b), Param::Y(b)]
                 .map(|p| sys.param_index.get(&p).copied());
             if let [Some(ax), Some(ay), Some(bx), Some(by)] = ends {
-                sys.keep_length.push(([ax, ay, bx, by], length));
+                sys.keep.push(Shape::Distance([ax, ay, bx, by], length));
             }
         }
     }
@@ -242,57 +252,72 @@ pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
             }
         }
     }
-    // Where the dragged parameters were asked to be.
-    let targets: Vec<(usize, f64)> = sys
-        .groups
+    // Where the dragged, then the carried, parameters were asked to be.
+    let targets: Vec<Vec<(usize, f64)>> = [&options.dragged, &options.carried]
         .iter()
-        .enumerate()
-        .filter(|(_, g)| !g.fixed && g.mobility == system::DRAGGED_MOBILITY)
-        .map(|(i, g)| (i, g.value))
+        .map(|params| {
+            let mut groups: Vec<usize> = params
+                .iter()
+                .filter_map(|p| sys.param_index.get(p).map(|&i| sys.group_of[i]))
+                .filter(|&g| !sys.groups[g].fixed)
+                .collect();
+            groups.sort_unstable();
+            groups.dedup();
+            groups
+                .into_iter()
+                .map(|g| (g, sys.groups[g].value))
+                .collect()
+        })
         .collect();
     let mut report = run(&mut sys, options, true);
     if report.converged {
-        report = land_dragged(&mut sys, options, &targets, report);
+        report = land(&mut sys, options, &targets, report);
     }
     write_back(doc, &sys);
     report
 }
 
-/// After a drag's solve: the dragged parameters are only heavy, not pinned, so where other
-/// geometry has to follow them they give a little (and, steps being measured from where the
-/// solve is rather than from the targets, nothing pulls them back). Pin them where they were
-/// asked to be and solve again; keep that if the relations still hold, so a move lands
-/// exactly wherever it can.
-fn land_dragged(
+/// After a drag's solve: the dragged and carried parameters are only heavy, not pinned, so
+/// where other geometry has to follow them they give a little (and, steps being measured from
+/// where the solve is rather than from the targets, nothing pulls them back). Pin them where
+/// they were asked to be and solve again, rank by rank (the dragged first, then the carried
+/// with them); keep each that leaves the relations met, so a move lands exactly wherever it
+/// can, and what it pushes along lands with it where that still leaves room.
+fn land(
     sys: &mut System,
     options: &SolveOptions,
-    targets: &[(usize, f64)],
-    report: SolveReport,
+    targets: &[Vec<(usize, f64)>],
+    mut report: SolveReport,
 ) -> SolveReport {
-    if targets.iter().all(|&(g, v)| sys.groups[g].value == v) {
-        return report;
-    }
-    let solved: Vec<f64> = sys.groups.iter().map(|g| g.value).collect();
-    for &(g, v) in targets {
-        sys.groups[g].value = v;
-        sys.groups[g].fixed = true;
-    }
-    let landed = run(sys, options, true);
-    for &(g, _) in targets {
-        sys.groups[g].fixed = false;
-    }
-    if landed.converged {
-        SolveReport {
-            iterations: landed.iterations.max(report.iterations),
-            wandered: landed.wandered.max(report.wandered),
-            ..landed
+    let mut pinned: Vec<(usize, f64)> = Vec::new();
+    for rank in targets {
+        pinned.extend(rank);
+        if rank.is_empty() || pinned.iter().all(|&(g, v)| sys.groups[g].value == v) {
+            continue;
         }
-    } else {
-        for (group, v) in sys.groups.iter_mut().zip(solved) {
-            group.value = v;
+        let solved: Vec<f64> = sys.groups.iter().map(|g| g.value).collect();
+        for &(g, v) in &pinned {
+            sys.groups[g].value = v;
+            sys.groups[g].fixed = true;
         }
-        report
+        let landed = run(sys, options, true);
+        for &(g, _) in &pinned {
+            sys.groups[g].fixed = false;
+        }
+        if landed.converged {
+            report = SolveReport {
+                iterations: landed.iterations.max(report.iterations),
+                wandered: landed.wandered.max(report.wandered),
+                ..landed
+            };
+        } else {
+            for (group, v) in sys.groups.iter_mut().zip(solved) {
+                group.value = v;
+            }
+            return report;
+        }
     }
+    report
 }
 
 /// The constraints the geometry doesn't meet as it stands (nothing is moved): those with an
@@ -735,20 +760,10 @@ fn components(sys: &System, tol: &Tolerances) -> (Vec<Component>, Vec<usize>) {
     // one that is off: a rigid move of a big sketch has thousands that aren't.)
     let value = |p: usize| sys.groups[sys.group_of[p]].value;
     let scale = |k: &[usize; 4]| k.iter().map(|p| value(*p).abs()).fold(1.0, f64::max);
-    let radii = sys.keep_radius.iter().map(|(k, r0)| {
-        let [cx, cy, sx, sy] = k.map(value);
-        (k, (sx - cx).hypot(sy - cy) - r0)
-    });
-    let directions = sys.keep_direction.iter().map(|(k, u)| {
-        let [ax, ay, bx, by] = k.map(value);
-        (k, (bx - ax) * u.y - (by - ay) * u.x)
-    });
-    let lengths = sys.keep_length.iter().map(|(k, l0)| {
-        let [ax, ay, bx, by] = k.map(value);
-        (k, (bx - ax).hypot(by - ay) - l0)
-    });
     let mut soft_roots: Vec<usize> = Vec::new();
-    for (k, off) in radii.chain(directions).chain(lengths) {
+    for shape in &sys.keep {
+        let k = shape.params();
+        let off = shape.offset(value).map_or(0.0, |(_, off)| off);
         let free: Vec<usize> = k
             .iter()
             .map(|p| sys.group_of[*p])
@@ -900,10 +915,8 @@ struct ComponentOutcome {
 
 /// Damped weighted minimum-norm Gauss–Newton on one component.
 ///
-/// `dragging` is a drag's solve (the landing pass too, where the dragged parameters are
-/// pinned): only there do the soft preferences give way to the relations after
-/// [`SOFT_PATIENCE`] iterations; a new relation's solve can take its time over them, which
-/// are what keep the rest of the sketch in shape there.
+/// `dragging` is a drag's solve (the landing passes too, where the dragged parameters are
+/// pinned): there the solve goes on until nothing moves, not only until the rows hold.
 fn newton(
     sys: &System,
     comp: &Component,
@@ -946,15 +959,10 @@ fn newton(
             }
         }
     }
-    // The soft preferences (see below) couple their parameters too.
-    let soft = sys
-        .keep_radius
-        .iter()
-        .map(|(k, _)| k)
-        .chain(sys.keep_direction.iter().map(|(k, _)| k))
-        .chain(sys.keep_length.iter().map(|(k, _)| k));
-    for k in soft {
-        let cols: Vec<usize> = k
+    // The shapes kept (see below) couple their parameters too.
+    for shape in &sys.keep {
+        let cols: Vec<usize> = shape
+            .params()
             .iter()
             .filter_map(|p| col_of.get(&sys.group_of[*p]).copied())
             .collect();
@@ -997,8 +1005,6 @@ fn newton(
 
     let mut lambda = 0.0f64;
     let mut wandered = 0;
-    let mut keep_soft = keep_soft_preferences(sys);
-    let start = values.to_vec();
     // Whether the soft preferences have settled: the rows holding isn't the end while a
     // preference is still closing (each step takes most, not all, of what is left of it
     // within the relations' null space), or the result would depend on how many steps the
@@ -1007,7 +1013,7 @@ fn newton(
     // the rows hold, keep stepping until a step moves nothing (at the tolerance). A
     // preference the relations rule out has no step left in the null space, so it stops at
     // once; without preferences there is nothing to settle.
-    let mut settled = !keep_soft;
+    let mut settled = sys.keep.is_empty();
     let mut settling = 0;
     // How far the last step moved anything. A drag's solve isn't over while a step still
     // moves something, even with the rows holding: where the drag can't land, the dragged
@@ -1018,9 +1024,6 @@ fn newton(
     // Levenberg–Marquardt damping, raised by `nu` on a refused step and lowered by how well
     // the step did what its linearisation promised (Nielsen).
     let mut nu = 2.0f64;
-    // Whether a preference's step has moved anything yet (only then can the preferences be
-    // what keeps the solve from its relations).
-    let mut soft_stepped = false;
     for iteration in 0..MAX_ITERATIONS {
         let rows_hold = converged(&res, values);
         let at_rest = !dragging || last_moved <= still_at(values, tol);
@@ -1034,50 +1037,16 @@ fn newton(
             }
             settling += 1;
         }
-        if dragging && keep_soft && soft_stepped && !rows_hold && iteration >= SOFT_PATIENCE {
-            // Still short of the relations: start again without the preferences (the steps
-            // taken with them may have wandered off where the relations alone can't recover).
-            keep_soft = false;
-            settled = true;
-            for g in &comp.unknowns {
-                values[*g] = start[*g];
-            }
-            (res, jac) = evaluate(sys, &comp.rows, values, &col_of);
-            lambda = 0.0;
-        }
-        // And lines kept to their length, like arcs to their radius.
-        let (keep_radius, keep_direction, keep_length) = if keep_soft {
-            (
-                &sys.keep_radius[..],
-                &sys.keep_direction[..],
-                &sys.keep_length[..],
-            )
-        } else {
-            (&[][..], &[][..], &[][..])
-        };
-        let radii = keep_radius.iter().filter_map(|(k, r0)| {
-            let [cx, cy, sx, sy] = k.map(|p| values[sys.group_of[p]]);
-            let r = (sx - cx).hypot(sy - cy);
-            (r > 0.0).then(|| {
-                let (ux, uy) = ((sx - cx) / r, (sy - cy) / r);
-                (k, [-ux, -uy, ux, uy], r - r0)
+        // The shapes kept: arcs' radii, lines' lengths and directions, each as how far off
+        // it is and the gradient of that over its four parameters.
+        let soft_terms: Vec<(&[usize; 4], [f64; 4], f64)> = sys
+            .keep
+            .iter()
+            .filter_map(|shape| {
+                let (gradient, off) = shape.offset(|p| values[sys.group_of[p]])?;
+                Some((shape.params(), gradient, off))
             })
-        });
-        let directions = keep_direction.iter().map(|(k, u)| {
-            let [ax, ay, bx, by] = k.map(|p| values[sys.group_of[p]]);
-            let off = (bx - ax) * u.y - (by - ay) * u.x;
-            (k, [-u.y, u.x, u.y, -u.x], off)
-        });
-        let lengths = keep_length.iter().filter_map(|(k, l0)| {
-            let [ax, ay, bx, by] = k.map(|p| values[sys.group_of[p]]);
-            let l = (bx - ax).hypot(by - ay);
-            (l > 0.0).then(|| {
-                let (ux, uy) = ((bx - ax) / l, (by - ay) / l);
-                (k, [-ux, -uy, ux, uy], l - l0)
-            })
-        });
-        let soft_terms: Vec<(&[usize; 4], [f64; 4], f64)> =
-            radii.chain(directions).chain(lengths).collect();
+            .collect();
         // What the preferences have left to do, at the tolerance: nothing where the rows
         // hold and none is off (a move that carries everything along as it is), and then
         // there is nothing to settle and no step to build.
@@ -1131,14 +1100,12 @@ fn newton(
         // μ·M⁻¹ picks the smallest weighted change among the solutions (and keeps
         // under-constrained systems solvable); λ adds Levenberg–Marquardt damping.
         let mu = 1e-10 * max_diag;
-        // Part of that change: arcs keep the sizes they are asked to where they can. Where a
-        // move could go either way (a concentric round's lines follow it, or the round
-        // shrinks), being off that size costs as much as moving a point KEEP_RADIUS times as
-        // far. A round that only its points pin down would otherwise give way a little every
-        // step of a drag, until it collapses. (A soft pull: μ is tiny, so it only chooses
-        // among the solutions.)
-        // Lines kept to their direction the same way: being off it costs as much as moving
-        // one end sideways by that much, KEEP_RADIUS times over.
+        // Part of that change: the shapes are kept where they can be. Where a move could go
+        // either way (a concentric round's lines follow it, or the round shrinks), being
+        // off a radius, length or direction costs as much as moving a point that far,
+        // KEEP_SHAPE times over. A round that only its points pin down would otherwise give
+        // way a little every step of a drag, until it collapses. (A soft pull: μ is tiny, so
+        // it only chooses among the solutions.)
         for &(k, gradient, off) in &soft_terms {
             let mut grad: Vec<(usize, f64)> = Vec::with_capacity(4);
             for (p, g) in k.iter().zip(gradient) {
@@ -1150,9 +1117,9 @@ fn newton(
                 }
             }
             for (i, &(c1, g1)) in grad.iter().enumerate() {
-                soft_rhs[c1] = soft_rhs[c1].add_product(-mu * KEEP_RADIUS * g1, off);
+                soft_rhs[c1] = soft_rhs[c1].add_product(-mu * KEEP_SHAPE * g1, off);
                 for &(c2, g2) in &grad[..=i] {
-                    normal.add_product(c1, c2, mu * KEEP_RADIUS * g1, g2);
+                    normal.add_product(c1, c2, mu * KEEP_SHAPE * g1, g2);
                 }
             }
         }
@@ -1173,19 +1140,23 @@ fn newton(
                 let step = factor.solve_refined(&rhs);
                 let soft_step = soft.then(|| {
                     let mut soft_step = factor.solve_refined(&soft_rhs);
-                    // Not the dragged: they are where the user put them. A preference only
-                    // the dragged could meet (through the relations) would otherwise inch
-                    // them along, heavy as they are, for thousands of iterations, and the
-                    // solve would stop part way, wherever its patience ran out (#104).
+                    // Not the dragged or carried: they are where the user put them. A
+                    // preference only they could meet (through the relations) would
+                    // otherwise inch them along, heavy as they are, for thousands of
+                    // iterations, and the solve would stop part way, wherever its patience
+                    // ran out (#104).
                     for (s, m) in soft_step.iter_mut().zip(&mobility) {
-                        if *m <= system::DRAGGED_MOBILITY {
+                        if *m <= system::CARRIED_MOBILITY {
                             *s = 0.0;
                         }
                     }
-                    // Twice: the matrix regularises the heavy unknowns (the dragged, at
-                    // 1e-4 of the rows) as well as the null space, so one pass leaves that
-                    // much of what the relations feel; a second takes it to 1e-8.
-                    for _ in 0..2 {
+                    // Until nothing is left of it but round-off: the matrix regularises the
+                    // heavy unknowns (the dragged, at 1e-4 of the rows) as well as the null
+                    // space, so one pass leaves that much of what the relations feel, and
+                    // each further pass that much of what the last left.
+                    let size = |v: &[f64]| v.iter().map(|x| x * x).sum::<f64>().sqrt();
+                    let whole = size(&soft_step);
+                    for _ in 0..FELT_PASSES {
                         let mut felt = vec![Dd::default(); n];
                         for row in &scaled_jac {
                             let change = row.iter().fold(Dd::default(), |sum, &(c, g)| {
@@ -1198,6 +1169,9 @@ fn newton(
                         let felt = factor.solve_refined(&felt);
                         for (s, f) in soft_step.iter_mut().zip(&felt) {
                             *s -= f;
+                        }
+                        if size(&felt) <= FELT_ROUND_OFF * whole {
+                            break;
                         }
                     }
                     soft_step
@@ -1283,7 +1257,6 @@ fn newton(
                 // (Settled once nothing moves at all: a relations' step that still moves
                 // something changes what the preferences have left to do.)
                 let mut moved = limit(&mut soft_delta);
-                soft_stepped |= moved > still;
                 for _ in 0..4 {
                     let mut trial = values.to_vec();
                     for (c, g) in comp.unknowns.iter().enumerate() {
@@ -1374,11 +1347,6 @@ fn still_at(values: &[f64], tol: &Tolerances) -> f64 {
             (lo.min(*v), hi.max(*v))
         });
     tol.length * hi.abs().max(lo.abs()).max(1.0)
-}
-
-/// Whether any soft preference is in play: radii, directions or lengths to keep.
-fn keep_soft_preferences(sys: &System) -> bool {
-    !sys.keep_radius.is_empty() || !sys.keep_direction.is_empty() || !sys.keep_length.is_empty()
 }
 
 fn run(sys: &mut System, options: &SolveOptions, iterate: bool) -> SolveReport {

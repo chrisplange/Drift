@@ -3,98 +3,111 @@ import { site } from "../site.config.mjs";
 const year = new Date().getFullYear();
 ---
 
+<!-- The footer is the sheet's title block. -->
 <footer class="site-footer">
-  <div class="wrap cols">
-    <div class="about">
-      <a class="brand" href="/"><img src="/logo.svg" alt="" width="24" height="24" /> {site.name}</a>
-      <p>{site.tagline}. Now in beta.</p>
+  <div class="wrap">
+    <div class="block">
+      <div class="cell name">
+        <span class="label">Project</span>
+        <a class="brand" href="/">DRIFT</a>
+        <p>2D technical illustration for designers and artists. In beta.</p>
+      </div>
+      <nav class="cell" aria-label="Footer">
+        <span class="label">Get it</span>
+        <a href="/download/">Download</a>
+        <a href="/app/">Try the demo</a>
+        <a href="/releases/">Release notes</a>
+      </nav>
+      <nav class="cell" aria-label="Learn">
+        <span class="label">Learn</span>
+        <a href="/guide/">User guide</a>
+        <a href="/guide/getting-started/">Getting started</a>
+        <a href="/guide/reference/keyboard-shortcuts/">Keyboard shortcuts</a>
+      </nav>
+      <nav class="cell" aria-label="Project">
+        <span class="label">Project</span>
+        <a href={site.repoUrl}>Drift on GitHub</a>
+        <a href={`${site.repoUrl}/issues`}>Report a problem</a>
+        <a href="/licence/">Licence</a>
+      </nav>
     </div>
-    <nav aria-label="Footer">
-      <h3>Drift</h3>
-      <a href="/download/">Download</a>
-      <a href="/app/">Try the demo</a>
-      <a href="/releases/">Release notes</a>
-    </nav>
-    <nav aria-label="Learn">
-      <h3>Learn</h3>
-      <a href="/guide/">User guide</a>
-      <a href="/guide/getting-started/">Getting started</a>
-      <a href="/guide/reference/keyboard-shortcuts/">Keyboard shortcuts</a>
-    </nav>
-    <nav aria-label="Project">
-      <h3>Project</h3>
-      <a href={site.repoUrl}>Drift on GitHub</a>
-      <a href={`${site.repoUrl}/issues`}>Report a problem</a>
-      <a href="/licence/">Licence</a>
-    </nav>
-  </div>
-  <div class="wrap legal">
-    <span>© {year} Christopher Lange</span>
-    <span>Drift is proprietary software.</span>
+    <div class="legal">
+      <span>© {year} Christopher Lange</span>
+      <span>Drift is proprietary software.</span>
+    </div>
   </div>
 </footer>
 
 <style>
   .site-footer {
-    border-top: 1px solid var(--line);
-    background: var(--surface);
     margin-top: 64px;
-    padding: 48px 0 28px;
+    padding: 0 0 28px;
     font-size: 0.92rem;
   }
-  .cols {
+  .block {
     display: grid;
     grid-template-columns: 2fr repeat(3, 1fr);
-    gap: 32px;
+    border: 2px solid var(--text);
   }
-  .brand {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    color: var(--text);
-    font-family: var(--display);
-    font-size: 1.5rem;
-    font-weight: 400;
-  }
-  .about p {
-    color: var(--text-weak);
-    margin: 10px 0 0;
-    max-width: 22em;
-  }
-  nav {
+  .cell {
     display: flex;
     flex-direction: column;
     gap: 6px;
+    padding: 14px 16px 18px;
+    border-left: 1px solid var(--text);
+    min-width: 0;
   }
-  nav h3 {
-    font-size: 0.78rem;
-    font-family: var(--mono);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
+  .cell:first-child {
+    border-left: 0;
+  }
+  .label {
+    margin-bottom: 4px;
+  }
+  .brand {
+    color: var(--accent);
+    font: 900 2rem/1 var(--display);
+    font-stretch: 80%;
+    text-decoration: none;
+  }
+  .name p {
     color: var(--text-weak);
-    font-weight: 500;
-    margin: 0 0 4px;
+    margin: 6px 0 0;
+    max-width: 24em;
   }
   nav a {
     color: var(--text);
+    text-decoration: none;
+  }
+  nav a:hover {
+    color: var(--accent);
   }
   .legal {
     display: flex;
     flex-wrap: wrap;
     justify-content: space-between;
     gap: 8px;
+    margin-top: 14px;
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
     color: var(--text-weak);
-    margin-top: 40px;
-    padding-top: 20px;
-    border-top: 1px solid var(--line);
-    font-size: 0.85rem;
   }
   @media (max-width: 760px) {
-    .cols {
+    .block {
       grid-template-columns: 1fr 1fr;
     }
-    .about {
+    .name {
       grid-column: 1 / -1;
+      border-bottom: 1px solid var(--text);
+    }
+    .cell:nth-child(2) {
+      border-left: 0;
+    }
+    .cell:nth-child(4) {
+      grid-column: 1 / -1;
+      border-left: 0;
+      border-top: 1px solid var(--text);
     }
   }
 </style>

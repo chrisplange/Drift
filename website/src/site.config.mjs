@@ -1,7 +1,7 @@
 // Site-wide settings.
 export const site = {
   name: "Drift",
-  tagline: "Precise, parametric 2D sketching",
+  tagline: "2D technical illustration for designers and artists",
   // The site's public address, from the SITE_URL environment variable (the Website workflow
   // passes the repository variable of the same name). Pages use it for their canonical link
   // and share tags; without it, those tags are left out.

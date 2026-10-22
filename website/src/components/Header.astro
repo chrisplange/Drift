@@ -1,6 +1,12 @@
 ---
 import { site } from "../site.config.mjs";
 
+interface Props {
+  /** On the front page the small wordmark waits until the big one has scrolled away. */
+  home?: boolean;
+}
+const { home = false } = Astro.props;
+
 const links = [
   { href: "/download/", label: "Download" },
   { href: "/guide/", label: "Guide" },
@@ -10,37 +16,39 @@ const links = [
 const path = Astro.url.pathname;
 ---
 
-<header class="site-header">
-  <div class="wrap bar">
-    <a class="brand" href="/" aria-label={`${site.name} home`}>
-      <img src="/logo.svg" alt="" width="28" height="28" />
-      <span>{site.name}</span>
-    </a>
-    <nav aria-label="Main">
-      <ul>
-        {
-          links.map((l) => (
-            <li>
-              <a href={l.href} aria-current={path.startsWith(l.href) ? "page" : undefined}>
-                {l.label}
-              </a>
-            </li>
-          ))
-        }
-        <li>
-          <a href={site.repoUrl} class="gh" aria-label="Drift on GitHub">
-            <svg viewBox="0 0 16 16" width="18" height="18" aria-hidden="true"
-              ><path
-                fill="currentColor"
-                d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"
-              ></path></svg
-            >
-          </a>
-        </li>
-      </ul>
-    </nav>
-    <a class="btn btn-primary try" href="/app/">Try the demo</a>
-  </div>
+<header class:list={["site-header", { home }]} id="site-header">
+  <a class="brand" href="/" aria-label={`${site.name} home`}>DRIFT</a>
+  <nav aria-label="Main">
+    <ul>
+      {
+        links.map((l) => (
+          <li>
+            <a href={l.href} aria-current={path.startsWith(l.href) ? "page" : undefined}>
+              {l.label}
+            </a>
+          </li>
+        ))
+      }
+      <li>
+        <a href={site.repoUrl} class="gh" aria-label="Drift on GitHub">
+          <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"
+            ><path
+              fill="currentColor"
+              d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"
+            ></path></svg
+          >
+        </a>
+      </li>
+    </ul>
+  </nav>
+  <details class="menu">
+    <summary>Menu +</summary>
+    <ul>
+      {links.map((l) => <li><a href={l.href}>{l.label}</a></li>)}
+      <li><a href={site.repoUrl}>GitHub</a></li>
+    </ul>
+  </details>
+  <a class="btn btn-primary try" href="/app/">Try the demo</a>
 </header>
 
 <style>
@@ -48,77 +56,100 @@ const path = Astro.url.pathname;
     position: sticky;
     top: 0;
     z-index: 50;
-    background: color-mix(in srgb, var(--bg) 70%, transparent);
-    backdrop-filter: saturate(1.6) blur(16px);
-    -webkit-backdrop-filter: saturate(1.6) blur(16px);
-    border-bottom: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
-  }
-  .bar {
+    height: var(--header);
     display: flex;
     align-items: center;
-    gap: 16px;
-    height: 60px;
+    gap: 8px;
+    padding: 0 max(16px, env(safe-area-inset-right, 0px)) 0 max(16px, env(safe-area-inset-left, 0px));
+    background: var(--bg);
+    border-bottom: 1px solid var(--line);
+    transition: border-color 0.3s;
+  }
+  @media (min-width: 720px) {
+    .site-header {
+      padding: 0 32px;
+    }
   }
   .brand {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    color: var(--text);
-    font-family: var(--display);
-    font-weight: 400;
-    font-size: 1.6rem;
-    letter-spacing: -0.01em;
     margin-right: auto;
+    color: var(--accent);
+    font: 900 1.5rem/1 var(--display);
+    font-stretch: 80%;
+    letter-spacing: -0.01em;
+    text-decoration: none;
+    transition:
+      opacity 0.3s,
+      transform 0.3s;
   }
   .brand:hover {
-    text-decoration: none;
-    color: var(--text);
+    color: var(--accent-hover);
   }
-  nav ul {
+  /* Front page: no rule and no small wordmark until the big one has gone */
+  .home:not(.past) {
+    border-bottom-color: transparent;
+  }
+  .home:not(.past) .brand {
+    opacity: 0;
+    transform: translateY(-8px);
+    pointer-events: none;
+  }
+  ul {
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 2px;
     list-style: none;
     margin: 0;
     padding: 0;
   }
-  nav a {
+  nav a,
+  .menu summary,
+  .menu a {
     display: flex;
     align-items: center;
-    padding: 6px 10px;
-    border-radius: var(--radius-sm);
-    color: var(--text-weak);
-    font-size: 0.93rem;
+    height: 40px;
+    padding: 0 12px;
+    color: var(--text);
+    font: 800 0.75rem var(--display);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    text-decoration: none;
   }
   nav a:hover,
   nav a[aria-current="page"] {
-    color: var(--text);
-    background: var(--raised);
-    text-decoration: none;
+    color: var(--accent);
   }
   .try {
-    padding: 7px 14px;
-    font-size: 0.88rem;
+    padding: 0 14px;
+    height: 40px;
+  }
+  .menu {
+    display: none;
+    position: relative;
+  }
+  .menu summary {
+    list-style: none;
+    cursor: pointer;
+  }
+  .menu summary::-webkit-details-marker {
+    display: none;
+  }
+  .menu ul {
+    position: absolute;
+    right: 0;
+    top: 44px;
+    flex-direction: column;
+    align-items: stretch;
+    min-width: 180px;
+    background: var(--bg);
+    border: 1px solid var(--line-strong);
+    padding: 6px 0;
   }
   @media (max-width: 760px) {
-    .bar {
-      flex-wrap: wrap;
-      height: auto;
-      padding-top: 10px;
-      padding-bottom: 6px;
-      row-gap: 4px;
-    }
     nav {
-      order: 3;
-      width: 100%;
-      overflow-x: auto;
-      scrollbar-width: none;
-    }
-    nav::-webkit-scrollbar {
       display: none;
     }
-    nav a {
-      padding: 6px 8px;
+    .menu {
+      display: block;
     }
   }
 </style>

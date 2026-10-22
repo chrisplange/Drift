@@ -1,513 +1,446 @@
 ---
-import { Image } from "astro:assets";
 import Base from "../layouts/Base.astro";
-import DownloadButtons from "../components/DownloadButtons.astro";
-import SketchScroll from "../components/SketchScroll.astro";
-import { screen } from "../lib/screens";
-import { friendlyVersion, getReleases } from "../lib/releases";
-import { site } from "../site.config.mjs";
-
-const releases = await getReleases();
-const latest = releases[0];
-const next = site.nextRelease;
-const nextIsOut = releases.some((r) => r.version === next.version);
-
-const features: { img?: string; visual?: "ai"; title: string; text: string }[] = [
-  {
-    img: "dims-fully-defined",
-    title: "Dimensions that drive the drawing",
-    text: "Smart dimensions read what you click: lengths, angles, radii, distances. Type a new value and the geometry follows. Blue means still free; white means fully defined.",
-  },
-  {
-    img: "relations-pie",
-    title: "Relations at a flick",
-    text: "Hold Q and flick towards horizontal, tangent, equal or symmetric. Drift adds the obvious ones as you draw, and refuses ones that would over-define the sketch, with a reason.",
-  },
-  {
-    img: "parameters",
-    title: "Parameters and variants",
-    text: "Name a value, width = 1200, and drive dimensions with expressions. Drag a slider to watch the sketch re-solve, and keep named variants to compare options side by side.",
-  },
-  {
-    img: "view-crops",
-    title: "Views on the canvas",
-    text: "Crop named views of the model right on the canvas, Revit-style, and place them on sheets. Each view picks its layers and its own dimensions and notes; section and elevation marks link to the views they cut.",
-  },
-  {
-    img: "fills",
-    title: "Poché, hatches and fills",
-    text: "Click inside a closed area to hatch it: concrete, earth, insulation, brick, or any AutoCAD or Revit .pat file. Fills stay on their outlines through every edit.",
-  },
-  {
-    img: "blocks",
-    title: "Blocks and a furniture library",
-    text: "Doors, windows, fixtures and furniture to drop in, or make blocks of your own. Edit one and every copy updates. DXF blocks come across both ways.",
-  },
-  {
-    img: "sheet",
-    title: "Sheets, title blocks and output",
-    text: "Lay views out on A4 to A0 or ANSI sheets with a title block and revisions. Export true-scale vector PDF, SVG or DXF, and trace over PDF, DWG and DXF underlays.",
-  },
-  {
-    img: "sheet-views",
-    title: "Colour, greyscale or black & white",
-    text: "Choose per sheet how it prints: in colour, in greys, or as a crisp monochrome plot. The sheet preview shows exactly what comes out.",
-  },
-  {
-    visual: "ai",
-    title: "Draw with AI",
-    text: "drift-mcp lets Claude and other MCP assistants sketch, constrain, dimension, render and analyse Drift drawings: live, in the drawing you have open, or from a short Drift script.",
-  },
-];
-
-// What the next release (site.nextRelease) brings: the front page's "What's new" section.
-const newsLede = {
-  out: "Beta 1.5 is here, with a new home for updates and everything new in Beta 1.4.",
-  coming: "Beta 1.5 is on its way, with a new home for updates and everything new in Beta 1.4.",
-};
-const news: { title: string; text: string; href?: string }[] = [
-  {
-    title: "A new home for updates",
-    text: "Drift now looks for updates on its new public releases page, home to every download and release note. As before, each update is checked against Drift's release key before it installs.",
-  },
-  {
-    title: "Imports that look like the file",
-    text: "PDF and Illustrator files come in true to the original: CMYK colours through the file's colour profile, fills with their own opacity, and opaque fills hiding the lines beneath. Scans and photos arrive as underlay pictures, and a scan-only page can be an underlay.",
-  },
-  {
-    title: "Big drawings, fast again",
-    text: "Changes after a large import commit in about a second instead of minutes: 372 seconds down to 1.1 on a dense 72,000-curve sheet.",
-  },
-  {
-    title: "Layers and panels that fit",
-    text: "The Layers panel gains a filter past 8 layers and Isolate to show just one. Floating panels size to their contents, fold to their headers, and stay where you put them.",
-  },
-  {
-    title: "Drags that behave",
-    text: "Lines carried along by a move keep their length, free curves always move, and drags settle the same at any size and position. Curves ending on an arc close their areas, and tangency at an unshared end is recognised.",
-  },
-  {
-    title: "Fixes and safeguards",
-    text: "Block copies in inch DWG and DXF drawings come in at the right size, geometry far from the origin is flagged (import reports can select it), and two crashes are gone. Drawings saved by Beta 1.4 or later don't open in earlier betas.",
-  },
-];
 ---
 
-<Base>
-  <section class="hero">
-    <div class="wrap hero-inner">
-      <div class="hero-text">
-        <a class="pill" href="/releases/">
-          {latest ? `${friendlyVersion(latest.version)} is out` : "Release notes"}
-        </a>
-        <h1>Sketch with <em>intent</em>.<br /><span>Change your mind <em>freely</em>.</span></h1>
-        <p class="lede">
-          Start messy. End perfect. Drift handles everything in between, and never asks you to
-          commit too early.
-        </p>
-        <div class="cta">
-          <a class="btn btn-primary" href="/download/">Download the beta</a>
-          <a class="btn" href="/app/">Try the demo</a>
+<!-- The front page is a drawing sheet: four columns with their rules showing, the wordmark drawn as
+     constrained geometry, four features, and a title block. -->
+<Base home>
+  <div class="wrap sheet">
+    <div class="rules" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+
+    <section class="hero" aria-label="Drift">
+      <div class="hero-pin">
+        <svg id="mark" viewBox="0 -70 1520 470" role="img" aria-label="DRIFT">
+          <line class="cons" x1="-20" y1="36" x2="1420" y2="36"></line>
+          <line class="cons" x1="-20" y1="330" x2="1420" y2="330"></line>
+          <g>
+            <path class="glyph" fill-rule="evenodd" d="M0 36 L150 36 C240 36 300 100 300 183 C300 266 240 330 150 330 L0 330 Z M78 102 L145 102 C195 102 222 135 222 183 C222 231 195 264 145 264 L78 264 Z"></path>
+            <path class="glyph" fill-rule="evenodd" d="M342 36 L502 36 C580 36 632 80 632 145 C632 195 600 230 555 242 L632 330 L542 330 L472 252 L420 252 L420 330 L342 330 Z M420 102 L495 102 C530 102 552 120 552 145 C552 170 530 188 495 188 L420 188 Z"></path>
+            <path class="glyph" d="M674 36 L764 36 L764 330 L674 330 Z"></path>
+            <path class="glyph" d="M806 36 L1056 36 L1056 102 L884 102 L884 156 L1030 156 L1030 220 L884 220 L884 330 L806 330 Z"></path>
+            <path class="glyph" d="M1100 36 L1400 36 L1400 102 L1289 102 L1289 330 L1211 330 L1211 102 L1100 102 Z"></path>
+          </g>
+          <g class="dims">
+            <!-- overall width: extension lines down from the baseline corners, value in a break in the line -->
+            <path class="ext" d="M0 338V398M1400 338V398"></path>
+            <path class="dim" d="M0 386H636M764 386H1400"></path>
+            <polygon class="arw" points="0,386 14,382.5 14,389.5"></polygon>
+            <polygon class="arw" points="1400,386 1386,382.5 1386,389.5"></polygon>
+            <text class="dimt" x="700" y="392" text-anchor="middle">1400.00</text>
+            <!-- cap height: extension lines out from the T, value along the line -->
+            <path class="ext" d="M1408 36H1462M1408 330H1462"></path>
+            <path class="dim" d="M1450 36V146M1450 220V330"></path>
+            <polygon class="arw" points="1450,36 1446.5,50 1453.5,50"></polygon>
+            <polygon class="arw" points="1450,330 1446.5,316 1453.5,316"></polygon>
+            <text class="dimt" x="1450" y="183" text-anchor="middle" dominant-baseline="middle" transform="rotate(-90 1450 183)">294.00</text>
+          </g>
+        </svg>
+
+        <div class="thesis">
+          <span class="label">2D technical illustration for designers and artists · in beta</span>
+          <h1>Draw it wrong first.</h1>
+          <p>
+            Rough it in. Then say what you meant: this wall is 12 feet, that gap is 900 mm, these two
+            match. The drawing pulls itself into shape.
+          </p>
         </div>
-        <p class="platforms">Windows · macOS · Browser · Now in beta</p>
       </div>
-      <div class="hero-shot">
-        <Image
-          src={screen("window")}
-          alt="Drift's window: a dimensioned mounting plate, the tool bar on the left and the Inspector on the right"
-          widths={[640, 960, 1280]}
-          sizes="(max-width: 900px) 100vw, 640px"
-          loading="eager"
-          fetchpriority="high"
-        />
+    </section>
+  </div>
+
+  <div class="wrap sheet">
+    <div class="rules" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+
+    <section class="zones" id="features">
+      <h2>Numbers that push back</h2>
+      <article class="zone lead">
+        <span class="label"><span>A</span><span>12′ → 14′</span></span>
+        <h3>Change a number. Watch the wall move.</h3>
+        <p>The dimension is the drawing. Type a new one, in feet or millimeters, and everything tied to it follows.</p>
+      </article>
+      <article class="zone">
+        <span class="label"><span>B</span><span>Q</span></span>
+        <h3>Hold Q and flick</h3>
+        <p>Parallel. Tangent. Equal. Done.</p>
+      </article>
+      <article class="zone">
+        <span class="label"><span>C</span><span>.dwg</span></span>
+        <h3>Bring the old files</h3>
+        <p>DWG, DXF, PDF, Illustrator. Trace right over them.</p>
+      </article>
+      <article class="zone">
+        <span class="label"><span>D</span><span>AI</span></span>
+        <h3>Lend Claude the pencil</h3>
+        <p>It draws in the file you have open. You keep the undo.</p>
+      </article>
+    </section>
+
+    <section class="end" aria-label="Get Drift">
+      <a class="big" href="/app/">
+        <svg viewBox="0 0 1400 170" role="img" aria-label="Try the demo">
+          <text x="0" y="150" textLength="1400" lengthAdjust="spacingAndGlyphs" font-size="190">TRY THE DEMO ↗</text>
+        </svg>
+      </a>
+      <div class="tb">
+        <div><span class="label">Project</span><span class="v">Drift</span></div>
+        <div><span class="label">Status</span><span class="v">In beta</span></div>
+        <div><span class="label">Runs on</span><span class="v">Windows · macOS · Browser</span></div>
+        <div><span class="label">Sheet</span><a class="btn btn-primary" href="/download/">Download</a></div>
       </div>
-    </div>
-  </section>
-
-  <SketchScroll />
-
-  <section class="section features" id="features">
-    <div class="wrap">
-      <p class="eyebrow">What's in it</p>
-      <h2>The precision of CAD, <em>the pace of a sketch</em></h2>
-      <p class="lede">
-        Drift borrows constraint sketching from mechanical CAD and makes it quick enough for
-        early design: plans, sections, details, joinery, signage and fabrication drawings.
-      </p>
-      <div class="grid">
-        {
-          features.map((f) => (
-            <article class="feature">
-              <div class="shot">
-                {f.img ? (
-                  <Image src={screen(f.img)} alt="" widths={[480, 720]} sizes="(max-width: 760px) 100vw, 360px" />
-                ) : (
-                  <div class="ai" aria-hidden="true">
-                    <p class="ask">Draw a 1200 × 600 table top with 40 mm corners, fully dimensioned.</p>
-                    <p class="reply">
-                      <span>4 lines · 4 arcs · 6 dimensions</span>
-                      <b>Fully defined</b>
-                    </p>
-                  </div>
-                )}
-              </div>
-              <h3>{f.title}</h3>
-              <p>{f.text}</p>
-            </article>
-          ))
-        }
-      </div>
-    </div>
-  </section>
-
-  <section class="section news" id="whats-new">
-    <div class="wrap">
-      <p class="eyebrow">{nextIsOut ? `${next.name} is out` : `Coming in ${next.name}`}</p>
-      <h2>What's <em>new</em> in {next.name}</h2>
-      <p class="lede">
-        {
-          nextIsOut ? newsLede.out : newsLede.coming
-        }
-      </p>
-      <ul class="news-list">
-        {
-          news.map((n) => (
-            <li>
-              <h3>{n.href ? <a href={n.href}>{n.title}</a> : n.title}</h3>
-              <p>{n.text}</p>
-            </li>
-          ))
-        }
-      </ul>
-      <p class="news-links">
-        {nextIsOut && <a class="btn btn-primary" href="/download/">Get {next.name}</a>}
-        <a href="/releases/">All release notes →</a>
-      </p>
-    </div>
-  </section>
-
-  <section class="section designers">
-    <div class="wrap two">
-      <div>
-        <p class="eyebrow">Feels familiar</p>
-        <h2>Keys you <em>already know</em></h2>
-        <p>
-          Drift is made for people who already draw in Revit, AutoCAD,
-          SolidWorks, Illustrator or Affinity. Units can be millimetres or feet-and-inches with
-          fractions, typed any way you like: <code>1'-6 1/2"</code>, <code>450mm</code>,
-          <code>=width/2</code>.
-        </p>
-        <p>
-          The pen draws like Illustrator's. G moves and R rotates, Blender-style, with X and Y to
-          lock an axis. Ctrl/⌘+K finds every command.
-        </p>
-        <a href="/guide/coming-from/">Coming from another program →</a>
-      </div>
-      <ul class="facts">
-        <li><strong>Fast</strong><span>Sketches of thousands of entities solve in milliseconds, on the GPU-drawn canvas.</span></li>
-        <li><strong>Exact</strong><span>Lines, arcs and text stay crisp at any zoom, and files keep every number exactly.</span></li>
-        <li><strong>Plays well with others</strong><span>DWG and DXF in, DXF out, plus SVG, PDF and Illustrator import, as geometry or as an underlay to trace.</span></li>
-        <li><strong>Yours</strong><span>Plain-text .drift files that diff in git. No account, nothing in the cloud.</span></li>
-      </ul>
-    </div>
-  </section>
-
-  <section class="section try">
-    <div class="wrap try-inner card">
-      <div>
-        <p class="eyebrow">No install</p>
-        <h2>Try the demo <em>in your browser</em></h2>
-        <p class="lede">
-          Draw, constrain and import drawings of any size (DWG, DXF, PDF, Illustrator, SVG),
-          with nothing to install. The demo saves and exports nothing: download Drift to keep
-          your work.
-        </p>
-      </div>
-      <a class="btn btn-primary" href="/app/">Try the demo</a>
-    </div>
-  </section>
-
-  <section class="section get" id="download">
-    <div class="wrap">
-      <p class="eyebrow">Download</p>
-      <h2>Get the <em>beta</em></h2>
-      <p class="lede">
-        Drift is in beta for Windows and macOS, with a demo in your browser.{" "}
-        <a href="/licence/">About the licence</a>.
-      </p>
-      <DownloadButtons compact />
-      <p class="links">
-        <a href="/guide/">Read the user guide</a>
-        <a href="/releases/">What's new</a>
-      </p>
-    </div>
-  </section>
+    </section>
+  </div>
 </Base>
 
 <style>
-  .hero {
-    padding: 72px 0 40px;
-    overflow: hidden;
-  }
-  .hero-inner {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
-    gap: 48px;
-    align-items: center;
-  }
-  .hero h1 {
-    margin-top: 18px;
-  }
-  .hero h1 span {
-    color: var(--text-weak);
-  }
-  .pill:hover {
-    text-decoration: none;
-    color: var(--text);
-  }
-  .cta {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 12px;
-    margin-top: 28px;
-  }
-  .platforms {
-    color: var(--text-weak);
-    font-size: 0.85rem;
-    margin-top: 16px;
-  }
-  .hero-shot {
+  .sheet {
     position: relative;
-    border-radius: var(--radius);
-    border: 1px solid var(--line-strong);
-    overflow: hidden;
-    box-shadow:
-      0 40px 120px -30px color-mix(in srgb, var(--accent) 45%, transparent),
-      0 30px 80px -20px rgb(0 0 0 / 0.7),
-      0 0 0 1px rgb(255 255 255 / 0.04);
-    transform: perspective(1600px) rotateY(-6deg) rotateX(2deg);
-    transition: transform 0.8s cubic-bezier(0.2, 0.7, 0.2, 1);
   }
-  .hero-shot:hover {
-    transform: perspective(1600px) rotateY(0deg) rotateX(0deg);
+  /* the visible grid */
+  .rules {
+    position: absolute;
+    inset: 0 16px;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    pointer-events: none;
   }
-  .hero-shot img {
-    display: block;
+  @media (min-width: 720px) {
+    .rules {
+      inset: 0 32px;
+    }
+  }
+  .rules span {
+    border-left: 1px solid var(--line);
+  }
+  .rules span:last-child {
+    border-right: 1px solid var(--line);
+  }
+  .sheet > section {
+    position: relative;
   }
 
-  .grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 20px;
-    margin-top: 48px;
+  /* hero */
+  .hero-pin {
+    padding-top: clamp(24px, 5vw, 56px);
   }
-  /* Each feature is a card, so its text never sits on the drawing behind the page. */
-  .feature {
-    padding: 10px 10px 22px;
-    border-radius: calc(var(--radius) + 6px);
-    border: 1px solid var(--line);
-    background: color-mix(in srgb, var(--panel) 96%, transparent);
-    backdrop-filter: blur(6px);
-    -webkit-backdrop-filter: blur(6px);
+  .hero:global(.scrub) {
+    height: calc(100vh - var(--header) + var(--scrub));
   }
-  .feature h3,
-  .feature p {
-    padding: 0 10px;
+  .hero:global(.scrub) .hero-pin {
+    position: sticky;
+    top: var(--header);
   }
-  .feature .shot {
-    aspect-ratio: 16 / 10;
-    overflow: hidden;
-    border-radius: var(--radius);
-    border: 1px solid var(--line);
-    margin-bottom: 18px;
-    background: var(--surface);
-    transition:
-      border-color 0.3s,
-      box-shadow 0.3s;
-  }
-  .feature:hover .shot {
-    border-color: color-mix(in srgb, var(--accent) 60%, var(--line));
-    box-shadow: var(--glow);
-  }
-  .feature img {
+  .hero svg {
     display: block;
     width: 100%;
-    height: 100%;
-    object-fit: cover;
-    transition: transform 0.6s cubic-bezier(0.2, 0.7, 0.2, 1);
+    height: auto;
+    overflow: visible;
   }
-  .feature:hover img {
-    transform: scale(1.04);
+  .glyph {
+    transform-box: fill-box;
+    transform-origin: 50% 100%;
+    fill: var(--accent);
+    stroke: var(--accent);
+    stroke-width: 2;
+    stroke-linejoin: round;
   }
-  .ai {
-    height: 100%;
+  .cons {
+    stroke: var(--text);
+    stroke-width: 0.8;
+    stroke-dasharray: 6 5;
+    fill: none;
+    opacity: 0.55;
+  }
+  .ext {
+    stroke: var(--annot);
+    stroke-width: 0.75;
+    fill: none;
+  }
+  .dim {
+    stroke: var(--annot);
+    stroke-width: 1;
+    fill: none;
+  }
+  .arw {
+    fill: var(--annot);
+  }
+  .dimt {
+    font-family: var(--dimfont);
+    font-weight: 300;
+    font-size: 18px;
+    letter-spacing: 0.01em;
+    font-variant-numeric: tabular-nums;
+    fill: var(--annot);
+  }
+  .thesis {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    margin-top: clamp(32px, 6vw, 80px);
+    padding-bottom: clamp(40px, 7vw, 96px);
+  }
+  .thesis .label {
+    grid-column: 1 / -1;
+    margin-bottom: 14px;
+  }
+  .thesis h1 {
+    grid-column: 1 / 3;
+    font-size: clamp(1.6rem, 3vw, 2.4rem);
+    font-stretch: 85%;
+    line-height: 1;
+    margin: 0;
+    padding-right: 24px;
+  }
+  .thesis p {
+    grid-column: 3 / 5;
+    margin: 0;
+    max-width: 52ch;
+    align-self: end;
+    color: var(--text-weak);
+    padding-left: 16px;
+  }
+
+  /* features */
+  .zones {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    padding: clamp(48px, 8vw, 112px) 0;
+  }
+  .zones h2 {
+    grid-column: 1 / -1;
+    font-size: clamp(2.75rem, 8.5vw, 8rem);
+    line-height: 0.86;
+    margin: 0 0 clamp(32px, 5vw, 64px);
+  }
+  .zone {
+    padding: 20px 16px 28px;
+    border-top: 2px solid var(--text);
     display: flex;
     flex-direction: column;
-    justify-content: center;
-    gap: 12px;
-    padding: 22px;
-    background:
-      radial-gradient(ellipse at 100% 0%, color-mix(in srgb, var(--accent) 22%, transparent), transparent 60%),
-      var(--surface);
-    font-size: 0.85rem;
+    gap: 10px;
+    min-width: 0;
   }
-  .ai p {
-    margin: 0;
-    color: var(--text);
-  }
-  .ai .ask {
-    align-self: flex-end;
-    max-width: 85%;
-    padding: 10px 14px;
-    border-radius: 16px 16px 4px 16px;
-    background: var(--raised);
-    border: 1px solid var(--line-strong);
-  }
-  .ai .reply {
+  .zone .label {
     display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 8px;
-    font-family: var(--mono);
-    font-size: 0.75rem;
-    color: var(--text-weak);
-  }
-  .ai .reply span {
-    color: var(--text-weak);
-  }
-  .ai .reply b {
-    font-family: var(--font);
-    font-weight: 600;
-    padding: 2px 10px;
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--ok) 16%, transparent);
-    color: var(--ok);
-  }
-  .news-list {
-    list-style: none;
-    margin: 40px 0 0;
-    padding: 0;
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 1px;
-    background: var(--line);
-    border: 1px solid var(--line);
-    border-radius: var(--radius);
-    overflow: hidden;
-  }
-  .news-list li {
-    background: var(--panel);
-    padding: 24px;
-  }
-  .news-list h3 a {
-    color: var(--text);
-  }
-  .news-list p {
-    margin: 0;
-    color: var(--text-weak);
-    font-size: 0.95rem;
-  }
-  .news-links {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 24px;
-    margin-top: 28px;
-  }
-  .feature p {
-    color: var(--text-weak);
-    font-size: 0.95rem;
-    margin: 0;
-  }
-
-  .designers {
-    background: color-mix(in srgb, var(--surface) 96%, transparent);
-    border-top: 1px solid var(--line);
-    border-bottom: 1px solid var(--line);
-  }
-  .two {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 64px;
-    align-items: start;
-  }
-  .two p {
-    color: var(--text-weak);
-  }
-  .facts {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: grid;
-    gap: 2px;
-  }
-  .facts li {
-    padding: 18px 0;
-    border-bottom: 1px solid var(--line);
-    display: grid;
-    grid-template-columns: 170px 1fr;
-    gap: 16px;
-  }
-  .facts span {
-    color: var(--text-weak);
-  }
-
-  .try-inner {
-    display: flex;
-    align-items: center;
     justify-content: space-between;
-    gap: 32px;
-    padding: 40px;
-    background:
-      radial-gradient(ellipse at 100% 0%, color-mix(in srgb, var(--accent) 30%, transparent), transparent 60%),
-      radial-gradient(ellipse at 0% 100%, color-mix(in srgb, var(--kiss) 14%, transparent), transparent 55%),
-      var(--panel);
   }
-  .try-inner .lede {
-    margin-bottom: 0;
+  .zone h3 {
+    font-size: 1.25rem;
+    margin: 0;
   }
-
-  .get .links {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 24px;
-    margin-top: 40px;
+  .zone p {
+    margin: 0;
+    color: var(--text-weak);
     font-size: 0.95rem;
   }
+  .zone.lead {
+    background: var(--text);
+    color: var(--bg);
+  }
+  .zone.lead p,
+  .zone.lead .label {
+    color: #55554f;
+  }
+  .zone.lead h3 {
+    font-size: clamp(1.6rem, 2.6vw, 2.4rem);
+    font-stretch: 75%;
+    line-height: 0.95;
+  }
 
-  @media (max-width: 960px) {
-    .hero-shot {
-      transform: none;
-    }
-    .hero-inner,
-    .two {
-      grid-template-columns: minmax(0, 1fr);
-      gap: 40px;
-    }
-    .grid,
-    .news-list {
+  /* sign-off and title block */
+  .end {
+    padding-top: clamp(40px, 6vw, 80px);
+  }
+  .big {
+    display: block;
+    text-decoration: none;
+  }
+  .big svg {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+  .big text {
+    font-family: var(--display);
+    font-weight: 900;
+    font-stretch: 75%;
+    fill: var(--text);
+    transition: fill 0.2s;
+  }
+  .big:hover text {
+    fill: var(--accent);
+  }
+  .tb {
+    display: grid;
+    grid-template-columns: 2fr 1fr 1fr 1fr;
+    border: 2px solid var(--text);
+    margin: 24px 0 0;
+    background: var(--bg);
+  }
+  .tb > div {
+    padding: 10px 12px;
+    border-left: 1px solid var(--text);
+    min-width: 0;
+  }
+  .tb > div:first-child {
+    border-left: 0;
+  }
+  .tb .label {
+    display: block;
+    margin-bottom: 4px;
+  }
+  .tb .v {
+    font: 800 0.95rem var(--display);
+    text-transform: uppercase;
+  }
+
+  @media (max-width: 760px) {
+    .rules {
       grid-template-columns: repeat(2, 1fr);
     }
-  }
-  @media (max-width: 640px) {
-    .hero {
-      padding-top: 40px;
+    .rules span:nth-child(n + 3) {
+      display: none;
     }
-    .grid,
-    .news-list {
-      grid-template-columns: minmax(0, 1fr);
+    .thesis,
+    .zones {
+      grid-template-columns: 1fr 1fr;
     }
-    .facts li {
-      grid-template-columns: minmax(0, 1fr);
-      gap: 4px;
+    .thesis h1,
+    .thesis p {
+      grid-column: 1 / -1;
+      padding: 0;
     }
-    .try-inner {
-      flex-direction: column;
-      align-items: flex-start;
-      padding: 24px;
+    .thesis p {
+      margin-top: 16px;
     }
-    .section {
-      padding: 64px 0;
+    .zone {
+      grid-column: 1 / -1;
+      padding-left: 0;
+      padding-right: 0;
+    }
+    .zone.lead {
+      padding-left: 16px;
+      padding-right: 16px;
+    }
+    .tb {
+      grid-template-columns: 1fr 1fr;
+    }
+    .tb > div:nth-child(3) {
+      border-left: 0;
+    }
+    .tb > div:nth-child(n + 3) {
+      border-top: 1px solid var(--text);
     }
   }
 </style>
+
+<script>
+  // The header's small wordmark appears once the big one has scrolled away.
+  const head = document.getElementById("site-header")!;
+  const mark = document.getElementById("mark")!;
+  new IntersectionObserver(([e]) => head.classList.toggle("past", !e.isIntersecting), {
+    rootMargin: "-64px 0px 0px 0px",
+  }).observe(mark);
+
+  // The wordmark is drawn the way Drift works: it opens as a rough sketch with every point thrown
+  // off, and scrolling solves it into shape, fills it and dimensions it while the hero holds still.
+  // Then the dimensions clear and the letters tip forward as the page moves on. Scrolling back up
+  // runs it in reverse. Without JS, or with reduced motion, the finished wordmark simply shows.
+  if (!matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    const $$ = (s: string) => [...document.querySelectorAll<SVGElement>(s)];
+    const clamp = (v: number) => Math.max(0, Math.min(1, v));
+    const span = (t: number, a: number, b: number) => clamp((t - a) / (b - a));
+    const play = (ms: number, frame: (t: number) => void) => {
+      const t0 = performance.now();
+      const tick = (now: number) => {
+        const t = clamp((now - t0) / ms);
+        frame(t);
+        if (t < 1) requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    };
+
+    const glyphs = $$("#mark .glyph");
+    const truth = glyphs.map((g) => g.getAttribute("d")!);
+    let seed = 7;
+    const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647 - 0.5;
+    // a lean, stretch and shift per letter, plus a little jitter on every point
+    const centres = [150, 487, 719, 931, 1250];
+    const throws = glyphs.map((_, li) => ({
+      sx: 1 + rnd() * 0.5,
+      sy: 1 + rnd() * 0.5,
+      skew: rnd() * 0.5,
+      dx: rnd() * 90,
+      dy: rnd() * 60,
+      cx: centres[li],
+    }));
+    // each coordinate pair becomes "x y X Y": its true and its thrown position
+    const bent = truth.map((d, li) => {
+      const t = throws[li];
+      return d.replace(/(-?[\d.]+) (-?[\d.]+)/g, (_, xs: string, ys: string) => {
+        const x = +xs, y = +ys;
+        const X = t.cx + (x - t.cx) * t.sx + (y - 183) * t.skew + t.dx + rnd() * 24;
+        const Y = 183 + (y - 183) * t.sy + t.dy + rnd() * 24;
+        return `${x} ${y} ${X} ${Y}`;
+      });
+    });
+    const shape = (li: number, k: number) =>
+      bent[li].replace(/(-?[\d.]+) (-?[\d.]+) (-?[\d.]+) (-?[\d.]+)/g, (_, x: string, y: string, X: string, Y: string) =>
+        `${(+x + (+X - +x) * k).toFixed(1)} ${(+y + (+Y - +y) * k).toFixed(1)}`,
+      );
+
+    const dimLines = $$("#mark .dims path").map((el) => {
+      el.setAttribute("pathLength", "1");
+      el.style.strokeDasharray = "1 1";
+      el.style.strokeDashoffset = "1";
+      return el;
+    });
+    const dimMarks = $$("#mark .dims text, #mark .dims polygon");
+    const cons = $$("#mark .cons");
+    const dims = document.querySelector<SVGGElement>("#mark .dims")!;
+    [...dimMarks, ...cons].forEach((el) => (el.style.opacity = "0"));
+    glyphs.forEach((g, li) => {
+      g.style.fillOpacity = "0";
+      g.setAttribute("d", shape(li, 1));
+    });
+    const ease = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+
+    const frame = (t: number) => {
+      const k = 1 - ease(span(t, 0.32, 0.62));
+      glyphs.forEach((g, li) => {
+        g.setAttribute("d", shape(li, k));
+        g.style.fillOpacity = String(span(t, 0.62, 0.78));
+      });
+      cons.forEach((el) => (el.style.opacity = String(0.55 * span(t, 0.3, 0.5))));
+      dimLines.forEach((el, i) => {
+        const o = i / dimLines.length;
+        el.style.strokeDashoffset = String(1 - span(t, 0.7 + o * 0.15, 0.9 + o * 0.1));
+      });
+      dimMarks.forEach((el) => (el.style.opacity = String(span(t, 0.85, 1))));
+    };
+
+    // SCRUB px of scrolling solves, fills and dimensions; over FALL px more the dimensions clear
+    // and the letters fall. The hero lets go as they start to tip, so the page moves while they fall.
+    const SCRUB = 900, FALL = 500;
+    const hero = document.querySelector<HTMLElement>(".hero")!;
+    hero.classList.add("scrub");
+    hero.style.setProperty("--scrub", `${SCRUB + FALL * 0.25}px`);
+    const fall = (f: number) => {
+      dims.style.opacity = String(1 - span(f, 0, 0.25));
+      cons.forEach((el) => (el.style.opacity = String(0.55 * (1 - span(f, 0, 0.25)))));
+      const a = span(f, 0.25, 1) ** 2 * (Math.PI / 2);
+      // seen from the front, a letter falling towards you shortens to its baseline and spreads at the top
+      glyphs.forEach((g) => (g.style.transform = a ? `scale(${1 + 0.12 * Math.sin(a)}, ${Math.cos(a)})` : ""));
+    };
+    let ready = false;
+    const onScroll = () => {
+      if (!ready) return;
+      frame(0.3 + 0.7 * clamp(scrollY / SCRUB));
+      fall(clamp((scrollY - SCRUB) / FALL));
+    };
+    addEventListener("scroll", () => requestAnimationFrame(onScroll), { passive: true });
+    setTimeout(() => play(700, (u) => frame(0.3 * u)), 150);
+    setTimeout(() => {
+      ready = true;
+      onScroll();
+    }, 900);
+  }
+</script>

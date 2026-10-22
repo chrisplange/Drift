@@ -1,6 +1,6 @@
 //! The inspector for fills and hatches, and the Fill tool's settings.
 
-use drift_core::{FillId, FillKind, Hatch, Shape};
+use drift_core::{FillId, FillKind, Hatch};
 use drift_draft::{Pattern, Placement};
 
 use crate::fills::{FillStyle, PatternLibrary};
@@ -23,19 +23,9 @@ fn swatch(ui: &mut egui::Ui, pattern: Option<&Pattern>, size: egui::Vec2) -> egu
         }
         Some(pattern) => {
             let (w, h) = (f64::from(rect.width()), f64::from(rect.height()));
-            let corners = [
-                DVec2::new(0.0, 0.0),
-                DVec2::new(w, 0.0),
-                DVec2::new(w, h),
-                DVec2::new(0.0, h),
-            ];
-            let shapes: Vec<Shape> = (0..4)
-                .map(|i| Shape::Line {
-                    a: corners[i],
-                    b: corners[(i + 1) % 4],
-                })
-                .collect();
-            if let Some(region) = drift_geom::regions::regions(&shapes).first() {
+            // (The swatch itself, as a region: no need to find it among curves each paint.)
+            let region = drift_geom::regions::Region::rectangle(DVec2::ZERO, DVec2::new(w, h));
+            {
                 // Show model patterns (real-world size) shrunk to a few courses.
                 let spacing = pattern.min_spacing();
                 let scale = if spacing.is_finite() && spacing > 0.0 {
@@ -47,7 +37,7 @@ fn swatch(ui: &mut egui::Ui, pattern: Option<&Pattern>, size: egui::Vec2) -> egu
                     scale,
                     ..Placement::default()
                 };
-                let hatching = drift_draft::hatch(region, pattern, &placement, None, 2000);
+                let hatching = drift_draft::hatch(&region, pattern, &placement, None, 2000);
                 let stroke = egui::Stroke::new(1.0, visuals.text_color());
                 let to =
                     |p: DVec2| egui::pos2(rect.left() + p.x as f32, rect.bottom() - p.y as f32);

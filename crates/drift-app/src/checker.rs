@@ -13,9 +13,6 @@ use drift_solver::Param;
 
 use crate::editor::Editor;
 
-/// The default gap tolerance: ends closer than this (mm) are taken to be meant to meet.
-pub const DEFAULT_TOLERANCE: f64 = drift_core::DrawingRules::DEFAULT_GAP_TOLERANCE;
-
 /// What far-off geometry is, in words: "3 curves" (or points, where there are no curves).
 pub fn far_off_count(doc: &drift_core::Document, ids: &[EntityId]) -> String {
     let curves = ids
@@ -330,6 +327,9 @@ impl Editor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A new drawing's gap tolerance (mm).
+    const DEFAULT_TOLERANCE: f64 = drift_core::DrawingRules::DEFAULT_GAP_TOLERANCE;
 
     fn v(x: f64, y: f64) -> DVec2 {
         DVec2::new(x, y)

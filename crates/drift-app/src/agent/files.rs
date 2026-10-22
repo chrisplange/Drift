@@ -78,6 +78,7 @@ fn replaced(s: &mut Session) {
 pub(super) fn new_drawing(s: &mut Session, a: &Value) -> Res {
     may_replace(s)?;
     let mut doc = Document::new();
+    doc.set_rules(s.new_rules);
     if let Some(u) = args::opt_str(a, "units")? {
         let length = match u {
             "mm" => LengthFormat::Millimetre,
@@ -119,7 +120,12 @@ pub(super) fn open(s: &mut Session, a: &Value) -> Res {
     may_replace(s)?;
     let path = resolve(s, args::str_(a, "path")?, true)?;
     let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", shown(&path)))?;
-    let (doc, meta, notes) = drift_io::load_with_notes(&text).map_err(|e| e.to_string())?;
+    let (mut doc, meta, mut notes) = drift_io::load_with_notes(&text).map_err(|e| e.to_string())?;
+    // A file from before drawings kept their rules gets Drift's, as in the app.
+    if meta.older_rules {
+        doc.set_rules(s.new_rules);
+        notes.push(crate::app::document::OLDER_RULES.into());
+    }
     s.replace(doc);
     s.meta = meta;
     s.path = Some(path.clone());

@@ -1720,7 +1720,6 @@ fn dragging_a_corner_arc_leaves_the_rest_of_the_outline() {
 /// the tangency off by about 2e-6 rad (the touching-end form of the tangency is chosen after
 /// the translation, when the midpoint is off the line).
 #[test]
-#[ignore = "#148"]
 fn drag_keeps_a_tangency_at_a_midpoint() {
     let p = DVec2::new;
     let sketch = Sketch {

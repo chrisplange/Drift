@@ -47,7 +47,6 @@ zooms). The middle or right mouse button drags the view either way.
 | Setting | What it does |
 |---|---|
 | **Add relations automatically while drawing** | Horizontal, vertical, coincident, tangent and so on, as you snap. Also the **Auto relations** switch in the status bar (Shift+Alt+R). |
-| **Snap to the grid** | Also Shift+G and the status bar. The arrow keys nudge the selection one grid step. |
 | **Snap perpendicular and tangent** | Lines snap square onto lines, circles and arcs, or tangent to circles and arcs, and follow guides. Also the status bar and the canvas's right-click menu. |
 | **Angle snap** | Off, 1°, 5°, 15° or 45°: lines are drawn at those steps (Alt places freely). Also the status bar. |
 | **Round sizes when scaling with dimensions (Alt)** | With a transform handle and Alt, the width and height step through round sizes. Off: any size. |
@@ -57,7 +56,6 @@ zooms). The middle or right mouse button drags the view either way.
 | Setting | What it does |
 |---|---|
 | **Show temporary dimensions on the picked geometry** | Revit-style temporary dimensions when one line, circle or arc is picked. See [Temporary dimensions](../tutorials/05-temporary-dimensions.md). |
-| **Always show end points** | Off: end points show only on hovered or picked curves. Also the **End points** switch in the status bar (Shift+Alt+V). |
 
 ## Updates
 
@@ -86,18 +84,22 @@ says in the status bar what it just did.
 |---|---|---|
 | **Grid** | Ctrl+' | Yes |
 | **Origin axes** | | Yes |
-| **Snap to grid** | Shift+G | Yes |
+| **Snap to grid** (the arrow keys then nudge the selection one grid step) | Shift+G | Yes |
 | **Thin lines** (every line one pixel wide; never changes the output) | W | Yes |
 | **Constraint status colours** (off: each curve's own or its layer's colour) | Shift+C | Yes |
-| **Always show end points** | Shift+Alt+V | Yes |
+| **Always show end points** (off: only on hovered or picked curves) | Shift+Alt+V | Yes |
 | **Dimensions and notes** | Alt+D | No: shown again at each start |
 | **Hidden annotations (faded)** | Alt+H | Yes |
 | **Relations** | Alt+R | No: shown again at each start |
 | **Curvature combs** | | Yes |
 | **View crops** | Shift+Alt+B | Yes |
+| **Free directions** (Parameters) | | Yes |
+| **Variant ghosts** (Parameters) | | Yes |
 
-While dimensions or relations are hidden, the status bar shows **Dimensions hidden ×** or
-**Relations hidden ×**; click it to show them again.
+While dimensions or relations are hidden, the status bar shows **Dims & notes off · Show**
+or **Relations off · Show**; click it to show them again. While some dimensions or notes
+are hidden one by one, it shows **3 hidden annotations** (or **Showing 3 hidden** while
+they are shown faded); click it to switch.
 
 Also in the menus:
 
@@ -131,13 +133,18 @@ drawing rather than as a preference:
 | **Find closed areas on each layer separately** | An area is closed only by curves on one layer, so furniture or notes on other layers don't cut it up. An outline must then be all on one layer. |
 | **Pick an area only where it is filled or hatched** | On (the default): clicking inside an empty outline picks nothing, so a box selection can start there. Off: it picks the area, to measure it. |
 | **Fills cover what is beneath them** | On (the default): each solid fill or hatch is drawn over everything below it, with its outline on top, as a drawing program stacks shapes; fills higher in the draw order (**Bring to front**, higher layers) cover lower ones and their outlines. Off: every fill is drawn under every curve. |
-| **When an edit divides a filled area** | What happens when an edit cuts a filled area's outline so that it bounds several areas (a side split where a line crosses it, a fillet that makes a junction). **Keep whole and flag** (the default): the fill or hatch keeps covering the whole area and is marked *Covers 2 areas*; pick it to fit it to one area, split it into one per area, or keep it whole. **Follow its seed**: it takes the area where it was first clicked, and a notice says so. A curve merely drawn across a fill never changes it: the fill keeps its whole area, marked *Covers 2 areas*, whichever is chosen. |
-| **Gaps up to** | Check sketch takes ends closer than this to be meant to meet. Also in the **Check sketch** window. |
+| **When an edit divides a filled area** | What happens when an edit cuts a filled area's outline so that it bounds several areas (a side split where a line crosses it, a fillet that makes a junction). **Keep whole and flag** (the default): the fill or hatch keeps covering the whole area and is marked *Covers 2 areas*; pick it to fit it to one area, split it into one per area, or keep it whole. **Follow where it was first clicked**: it takes the area where it was first clicked, and a notice says so. A curve merely drawn across a fill never changes it: the fill keeps its whole area, marked *Covers 2 areas*, whichever is chosen. |
 
-Changing one is an undo step. **Use for new drawings** makes the open drawing's settings
-the ones new drawings start with on this computer. A drawing saved before these were kept
+Under **Check sketch**, **Gaps up to**: Check sketch takes ends closer than this to be meant
+to meet. It is the same setting as in the **Check sketch** window.
+
+Changing one is an undo step (dragging or typing a value is one step).
+**Use these area and fill rules for new drawings** makes the open drawing's rules and gap
+tolerance the ones new drawings start with on this computer: File → New, a file opened as
+a new drawing, and a new drawing an assistant starts. A drawing saved before these were kept
 in the file (file version 38 or older) opens with the ones new drawings start with, which
-at first are the values you had set in Preferences.
+at first are the values you had set in Preferences. The status bar says so as it opens;
+save it to keep them in the file.
 
 The tool bars' **Fill** switch (fill closed shapes as they are drawn) is remembered as you
 last left it.

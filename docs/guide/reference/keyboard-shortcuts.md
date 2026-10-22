@@ -86,10 +86,13 @@ display unit.
 | Ctrl+C / Ctrl+X / Ctrl+V | Copy, cut, paste under the pointer |
 | Ctrl+Shift+V | Paste in place |
 | Delete or Backspace | Delete the selection, or the picked relation or dimension |
-| Esc or right-click | Cancel the operation, or clear the selection |
-| Right-click (Select tool) | The canvas menu |
+| F2 | Rename the picked group or block |
+| Esc | Cancel the operation, or clear the selection; with a dialog or window open, close it (and nothing else) |
+| Right-click | In a drawing tool, finish (as Enter does); in **Select**, the canvas menu; in a move or rotate, cancel |
 
-In a move or rotate (G, R): click or Enter places, Esc or right-click cancels.
+In a move or rotate (G, R): click or Enter places, Esc or right-click cancels. While a
+dialog or window is open (Preferences, Drawing settings, Check sketch, an import…), the
+canvas takes no keys: Delete, Ctrl+Z and the tool keys wait until it is closed.
 
 ## View
 

@@ -157,7 +157,7 @@ Shift+click picks several dimensions and notes to change at once. The right-clic
 **Hide on canvas** and **Leave off sheets** too.
 
 To bring hidden ones back, press Alt+H (or **View → Hidden annotations**, or click the
-**N hidden** pill in the status bar). Hidden annotations then show faded, so you can pick
+**3 hidden annotations** pill in the status bar). Hidden annotations then show faded, so you can pick
 them and switch them back on. Alt+H again hides them.
 
 Alt+D hides or shows every dimension and note at once (**View → Dimensions and notes**).

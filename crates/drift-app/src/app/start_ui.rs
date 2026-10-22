@@ -565,8 +565,6 @@ impl DriftApp {
         .on_hover_text(
             "Horizontal, vertical, coincident, tangent and so on, as you snap · Shift+Alt+R",
         );
-        ui.checkbox(&mut self.grid_snap, "Snap to the grid")
-            .on_hover_text("Arrow keys also move the selection by one grid step · Shift+G");
         ui.checkbox(
             &mut self.perp_tangent_snap,
             "Snap perpendicular and tangent",
@@ -603,13 +601,12 @@ impl DriftApp {
              to keep it as a dimension, and drag the square at its far end onto other geometry \
              to measure to that",
         );
-        ui.checkbox(&mut self.always_endpoints, "Always show end points")
-            .on_hover_text("Off: only on hovered or picked curves · Shift+Alt+V");
         ui.label(
             egui::RichText::new(
-                "What the canvas shows (grid, dimensions, relations, line weights, status \
-                 colours) is in the View menu. How a drawing's areas and fills behave is \
-                 saved with it, in File → Drawing settings.",
+                "What the canvas shows (grid, end points, dimensions, relations, line \
+                 weights, status colours) and snapping to the grid are in the View menu. How \
+                 a drawing's areas and fills behave is saved with it, in File → Drawing \
+                 settings.",
             )
             .small()
             .weak(),
@@ -672,7 +669,10 @@ impl DriftApp {
                  under every curve",
             );
         ui.label("When an edit divides a filled area");
-        let options = [(false, "Keep whole and flag"), (true, "Follow its seed")];
+        let options = [
+            (false, "Keep whole and flag"),
+            (true, "Follow where it was first clicked"),
+        ];
         if let Some(follow) = theme::segmented(ui, rules.follow_divided_fills, &options) {
             rules.follow_divided_fills = follow;
         }
@@ -689,32 +689,22 @@ impl DriftApp {
             .small()
             .weak(),
         );
-        let units = self.editor.doc.units();
-        theme::row(ui, "Gaps up to", |ui| {
-            let per = units.length.mm_per_unit();
-            let mut shown = rules.gap_tolerance / per;
-            if ui
-                .add(
-                    egui::DragValue::new(&mut shown)
-                        .speed(0.01)
-                        .range(0.0001..=1000.0)
-                        .max_decimals(4)
-                        .suffix(format!(" {}", units.length.symbol())),
-                )
-                .on_hover_text("Check sketch takes ends closer than this to be meant to meet")
-                .changed()
-            {
-                rules.gap_tolerance = shown * per;
-            }
-        });
         self.editor.change_rules(|r| *r = rules);
+        theme::section(ui, "Check sketch");
+        self.gap_tolerance_row(ui);
+        ui.add_space(4.0);
+        let rules = self.editor.doc.rules();
         let same = rules == self.new_rules;
         if ui
-            .add_enabled(!same, egui::Button::new("Use for new drawings"))
+            .add_enabled(
+                !same,
+                egui::Button::new("Use these area and fill rules for new drawings"),
+            )
             .on_hover_text(if same {
-                "New drawings start with these"
+                "New drawings start with these rules and this gap tolerance"
             } else {
-                "Start new drawings (and older files) with these, on this computer"
+                "Start new drawings (and older files) with these rules and this gap tolerance, \
+                 on this computer"
             })
             .clicked()
         {

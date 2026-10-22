@@ -80,6 +80,8 @@ const EMPTY_VIEW: Bounds = Bounds {
     min: DVec2::new(-100.0, -60.0),
     max: DVec2::new(100.0, 60.0),
 };
+/// What Save As writes (File → Open takes these and every importable drawing).
+#[cfg(not(feature = "demo"))]
 const DRIFT_FILE: FileType = FileType {
     name: "Drift sketch",
     extensions: &[drift_io::EXTENSION],
@@ -126,8 +128,10 @@ enum Pending {
     Example,
     /// Open the nth recent file.
     Recent(usize),
-    /// Open the dropped drawing (`open_as_new`) as a new drawing.
-    OpenDropped,
+    /// Open a sketch by its path (`open_path`): dropped, or named on the command line.
+    OpenPath,
+    /// Make a new drawing from the import waiting in `import_new`.
+    ImportNew,
     /// Close the window.
     Quit,
     /// Close the window and install the downloaded update.
@@ -424,8 +428,13 @@ pub struct DriftApp {
     /// A drawing dropped on the window (or passed on the command line), asking whether to
     /// open it as a new drawing, import it or trace over it.
     dropped: Option<FilePath>,
-    /// A dropped drawing to open as a new drawing once unsaved changes are dealt with.
-    open_as_new: Option<FilePath>,
+    /// A dropped sketch to open once unsaved changes are dealt with.
+    open_path: Option<FilePath>,
+    /// An import to open as a new drawing once unsaved changes are dealt with (and whether
+    /// they have been).
+    import_new: Option<(app::import_ui::PendingImport, bool)>,
+    /// What the file picker open now was opened for (a logo, a font, hatch patterns).
+    picking: Option<app::document::Picking>,
     /// Maximise the window once its first frame is drawn (see [`DriftApp::maximize_when_shown`]).
     maximize: bool,
     /// Memory in use (bytes) as of the last check, when that was, and whether the user has
@@ -605,7 +614,9 @@ impl DriftApp {
             import_as: None,
             pending_import: None,
             dropped: None,
-            open_as_new: None,
+            open_path: None,
+            import_new: None,
+            picking: None,
             maximize: false,
             memory: (0, f64::NEG_INFINITY, false),
             soak: soak::Soak::from_env(),
@@ -1038,10 +1049,23 @@ impl eframe::App for DriftApp {
         #[cfg(all(not(target_arch = "wasm32"), not(feature = "demo")))]
         self.link_tick(&ctx, now);
         // A sketch dropped on the window opens; another drawing asks how it comes in.
-        let dropped = ctx.input(|i| i.raw.dropped_files.first().map(|f| f.path().to_owned()));
+        let (dropped, more) = ctx.input(|i| {
+            let files = &i.raw.dropped_files;
+            (files.first().map(|f| f.path().to_owned()), files.len() > 1)
+        });
         if let Some(path) = dropped
             && cfg!(not(target_arch = "wasm32"))
         {
+            if more {
+                let name = path
+                    .file_name()
+                    .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+                self.set_status(
+                    format!("Several files were dropped: only {name} is opened"),
+                    false,
+                    now,
+                );
+            }
             self.open_file(path);
         }
         self.editor.auto_relations = self.auto_relations;
@@ -1049,8 +1073,9 @@ impl eframe::App for DriftApp {
         // Text placed but left empty goes once it's no longer picked.
         let keep = self.editor.sole_text();
         self.editor.drop_empty_texts(keep);
-        if self.pending.is_none() && self.editor.pending_driven.is_none() && self.renaming.is_none()
-        {
+        // Esc closes the frontmost window; while a dialog is open the canvas takes no keys.
+        self.close_top_dialog(&ctx);
+        if !self.any_dialog_open() {
             if self.palette.is_none() {
                 self.handle_typing(&ctx);
                 self.shortcuts(&ctx);

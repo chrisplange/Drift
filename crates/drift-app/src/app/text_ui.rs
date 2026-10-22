@@ -169,7 +169,7 @@ impl DriftApp {
                     self.set_status(note, false, now);
                 }
             }
-            Some(FontPick::AddFile) => self.files.open(crate::FONT_FILE),
+            Some(FontPick::AddFile) => self.pick_file(crate::app::document::Picking::Font),
             _ => {}
         }
         if let Some(family) = self.editor.drawing_font_missing() {
@@ -665,7 +665,7 @@ impl DriftApp {
                 }
                 edited.font = TextFont::System(family);
             }
-            Some(FontPick::AddFile) => self.files.open(crate::FONT_FILE),
+            Some(FontPick::AddFile) => self.pick_file(crate::app::document::Picking::Font),
             Some(FontPick::Standard) | None => {}
         }
         if let TextFont::System(family) = &t.font

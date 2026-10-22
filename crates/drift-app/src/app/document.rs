@@ -6,7 +6,86 @@ use crate::*;
 pub(crate) const LIVE_PROFILES_S: f64 = 0.1;
 
 /// How many switches the View menu has (see `view_flags`).
-pub(crate) const VIEW_FLAGS: usize = 11;
+pub(crate) const VIEW_FLAGS: usize = 13;
+
+/// What an older file's rules are taken from, said once as it opens.
+pub(crate) const OLDER_RULES: &str =
+    "Area and fill rules taken from your settings; save to keep them in the file";
+
+/// Read one of the rules new drawings start with from a saved preference (`key=value`).
+/// False when `key` isn't one of them.
+pub(crate) fn rules_pref(rules: &mut drift_core::DrawingRules, key: &str, value: &str) -> bool {
+    let on = value == "1";
+    match key {
+        "rlayer" => rules.regions_by_layer = on,
+        "rfill" => rules.regions_need_fill = on,
+        "stack" => rules.stacked_fills = on,
+        "dfollow" => rules.follow_divided_fills = on,
+        "gaptol" => {
+            if let Some(t) = value
+                .parse::<f64>()
+                .ok()
+                .filter(|t| *t > 0.0 && t.is_finite())
+            {
+                rules.gap_tolerance = t;
+            }
+        }
+        _ => return false,
+    }
+    true
+}
+
+/// The rules new drawings start with, from saved preferences (see `view_prefs`).
+#[cfg(all(not(target_arch = "wasm32"), not(feature = "demo")))]
+pub(crate) fn rules_from_prefs(text: &str) -> drift_core::DrawingRules {
+    let mut rules = drift_core::DrawingRules::default();
+    for (key, value) in text.split(';').filter_map(|p| p.split_once('=')) {
+        rules_pref(&mut rules, key, value);
+    }
+    rules
+}
+
+/// The rules Drift starts new drawings with on this computer, read from its saved settings
+/// (for the assistant's server, which runs apart from the app). The defaults if there are
+/// none.
+#[cfg(all(not(target_arch = "wasm32"), not(feature = "demo")))]
+pub fn saved_new_rules() -> drift_core::DrawingRules {
+    let text = eframe::storage_dir("Drift")
+        .and_then(|dir| std::fs::read_to_string(dir.join("app.ron")).ok())
+        .unwrap_or_default();
+    // A RON map of strings: `"drift.view": "grid=1;…"` (the preferences hold no quotes).
+    let key = format!("\"{KEY_VIEW}\"");
+    let prefs = text
+        .split_once(&key)
+        .and_then(|(_, rest)| rest.trim_start().strip_prefix(':'))
+        .and_then(|rest| rest.trim_start().strip_prefix('"'))
+        .and_then(|rest| rest.split_once('"'))
+        .map_or("", |(prefs, _)| prefs);
+    rules_from_prefs(prefs)
+}
+
+/// What a file picker was opened for: the file chosen there is used for that, whatever its
+/// name (#151: a logo is an SVG, which Import also takes). Files opened otherwise (dropped,
+/// File → Open, a recent file) go by their name and content.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Picking {
+    /// The title block logo (Drawing settings → Logo → Choose SVG…).
+    Logo,
+    /// A font to keep in the drawing (Add a font file… in a font menu).
+    Font,
+    /// Hatch patterns (Parameters → Hatch patterns → Import .pat…).
+    Patterns,
+}
+
+impl Picking {
+    fn file_type(self) -> FileType {
+        match self {
+            Picking::Logo => crate::app::sheets_ui::SVG_FILE,
+            Picking::Font => crate::FONT_FILE,
+            Picking::Patterns => crate::PAT_FILE,
+        }
+    }
+}
 
 /// Whether a path names a sketch (by its extension).
 fn is_sketch_file(path: &std::path::Path) -> bool {
@@ -64,6 +143,7 @@ impl DriftApp {
         // A file from before drawings kept their rules had this computer's.
         if meta.older_rules {
             doc.set_rules(self.new_rules);
+            self.status_next = Some(OLDER_RULES.into());
         }
         let revision = doc.revision();
         // Preferences kept on the editor carry over to the next drawing.
@@ -135,7 +215,7 @@ impl DriftApp {
                 continue;
             };
             let on = value == "1";
-            if self.crosshair.apply(key, value) {
+            if self.crosshair.apply(key, value) || rules_pref(&mut self.new_rules, key, value) {
                 continue;
             }
             match key {
@@ -144,15 +224,6 @@ impl DriftApp {
                         .parse::<f64>()
                         .ok()
                         .filter(|step| ANGLE_STEPS.contains(step));
-                }
-                "gaptol" => {
-                    if let Some(t) = value
-                        .parse::<f64>()
-                        .ok()
-                        .filter(|t| *t > 0.0 && t.is_finite())
-                    {
-                        self.new_rules.gap_tolerance = t;
-                    }
                 }
                 "wheel" => {
                     if let Some(mode) = crate::app::view::WheelMode::from_key(value) {
@@ -171,11 +242,7 @@ impl DriftApp {
                 "combs" => self.show_combs = on,
                 "rscale" => self.round_scale = on,
                 "hidden" => self.show_hidden_annotations = on,
-                "rlayer" => self.new_rules.regions_by_layer = on,
-                "rfill" => self.new_rules.regions_need_fill = on,
-                "stack" => self.new_rules.stacked_fills = on,
                 "newfill" => self.editor.fill_new_shapes = on,
-                "dfollow" => self.new_rules.follow_divided_fills = on,
                 "tdims" => self.show_temp_dims = on,
                 "ai" => self.ai_link = on,
                 #[cfg(not(target_arch = "wasm32"))]
@@ -231,6 +298,15 @@ impl DriftApp {
         }
     }
 
+    /// A new, empty drawing, with the rules new drawings start with on this computer. Every
+    /// new drawing starts here: File → New, a file opened as a new drawing, and the
+    /// assistant's `new_drawing`. (The example is a drawing of its own, opened as it is.)
+    pub(crate) fn new_document(&self) -> Document {
+        let mut doc = Document::new();
+        doc.set_rules(self.new_rules);
+        doc
+    }
+
     /// Give the drawing open now (a new, untouched one) the rules new drawings start with.
     pub(crate) fn start_with_new_rules(&mut self) {
         let clean = !self.is_dirty();
@@ -251,12 +327,12 @@ impl DriftApp {
     }
 
     /// Open a sketch by its path (the command line, or a file dropped on the window). A
-    /// drawing Import takes asks first whether to open it as a new drawing, import it into
-    /// this one or trace over it.
+    /// drawing Import takes asks first whether to open it as a new drawing or import it
+    /// into this one. A sketch joins the recent files once it has been read.
     pub fn open_file(&mut self, path: FilePath) {
         if is_sketch_file(&path) {
-            self.remember(path);
-            self.request(Pending::Recent(0));
+            self.open_path = Some(path);
+            self.request(Pending::OpenPath);
         } else if path
             .file_name()
             .is_some_and(|n| app::import_ui::importable(&n.to_string_lossy()))
@@ -305,30 +381,24 @@ impl DriftApp {
         match action {
             Pending::New => {
                 self.show_start = !cfg!(test);
-                let mut doc = Document::new();
-                doc.set_rules(self.new_rules);
+                let doc = self.new_document();
                 self.replace_document(doc, UNTITLED.into(), None, Metadata::default(), true);
             }
-            Pending::Open => self.files.open(DRIFT_FILE),
+            Pending::Open => self.files.open(app::import_ui::OPEN_FILE),
             Pending::Recent(i) => {
                 if let Some(path) = self.recent.get(i).cloned() {
                     self.files.open_path(&path);
                 }
             }
-            Pending::OpenDropped => {
-                if let Some(path) = self.open_as_new.take() {
-                    let stem = path
-                        .file_stem()
-                        .map_or_else(|| "Untitled".into(), |s| s.to_string_lossy());
-                    self.replace_document(
-                        Document::new(),
-                        format!("{stem}.{}", drift_io::EXTENSION),
-                        None,
-                        Metadata::default(),
-                        true,
-                    );
-                    self.import_as = Some(app::import_ui::ImportAs::NewDrawing);
+            Pending::OpenPath => {
+                if let Some(path) = self.open_path.take() {
                     self.files.open_path(&path);
+                }
+            }
+            Pending::ImportNew => {
+                // Made in the next frame (see `import_dialog`), which knows the time.
+                if let Some((_, go)) = &mut self.import_new {
+                    *go = true;
                 }
             }
             Pending::Quit => self.quit_confirmed = true,
@@ -468,6 +538,35 @@ impl DriftApp {
         None
     }
 
+    /// Open the file picker for `what`: the file chosen comes back to be used for that.
+    pub(crate) fn pick_file(&mut self, what: Picking) {
+        self.picking = Some(what);
+        // (Tests hand over their files themselves: no system dialog.)
+        #[cfg(not(test))]
+        self.files.open(what.file_type());
+        #[cfg(test)]
+        let _ = what.file_type();
+    }
+
+    /// Use a file chosen in a picker opened for `what`.
+    fn use_picked(&mut self, what: Picking, name: &str, contents: Vec<u8>, now: f64) {
+        let done = match what {
+            Picking::Logo => self
+                .set_logo(&String::from_utf8_lossy(&contents))
+                .map(|()| format!("{name} is now the title block logo")),
+            Picking::Font => self.editor.add_font_file(contents).map(|family| {
+                format!("{family} is now kept in this drawing: pick it in a font menu")
+            }),
+            Picking::Patterns => self
+                .import_patterns(&String::from_utf8_lossy(&contents))
+                .map(|n| format!("Imported {n} hatch pattern(s) from {name}")),
+        };
+        match done {
+            Ok(said) => self.set_status(said, false, now),
+            Err(e) => self.set_status(format!("Could not use {name}: {e}"), true, now),
+        }
+    }
+
     pub(crate) fn handle_file_events(&mut self, now: f64) {
         for event in self.files.take_events() {
             match event {
@@ -477,55 +576,31 @@ impl DriftApp {
                     contents,
                 } => {
                     let lower = name.to_ascii_lowercase();
+                    // Chosen in a picker opened for something: used for that.
+                    if let Some(what) = self.picking.take() {
+                        self.import_as = None;
+                        self.use_picked(what, &name, contents, now);
+                        continue;
+                    }
                     // A drawing to import (a PDF by its content, not its name) asks how it
-                    // should come in, unless that was chosen before it was picked.
+                    // should come in, starting where that was chosen before it was picked,
+                    // or (opened with File → Open) on a new drawing.
                     let import_as = self.import_as.take();
                     if contents.starts_with(b"%PDF") || app::import_ui::importable(&name) {
-                        self.begin_import(&name, contents, import_as, now);
+                        let as_ = import_as.unwrap_or(app::import_ui::ImportAs::NewDrawing);
+                        self.begin_import(&name, contents, Some(as_), now);
+                        continue;
+                    }
+                    // Dropped fonts and hatch patterns go into the open sketch, by their name.
+                    if lower.ends_with(".ttf") || lower.ends_with(".otf") {
+                        self.use_picked(Picking::Font, &name, contents, now);
+                        continue;
+                    }
+                    if lower.ends_with(".pat") {
+                        self.use_picked(Picking::Patterns, &name, contents, now);
                         continue;
                     }
                     let text = String::from_utf8_lossy(&contents);
-                    if lower.ends_with(".ttf") || lower.ends_with(".otf") {
-                        match self.editor.add_font_file(contents) {
-                            Ok(family) => self.set_status(
-                                format!(
-                                    "{family} is now kept in this drawing: pick it in a font menu"
-                                ),
-                                false,
-                                now,
-                            ),
-                            Err(e) => {
-                                self.set_status(format!("Could not add {name}: {e}"), true, now)
-                            }
-                        }
-                        continue;
-                    }
-                    if lower.ends_with(".svg") {
-                        match self.set_logo(&text) {
-                            Ok(()) => self.set_status(
-                                format!("{name} is now the title block logo"),
-                                false,
-                                now,
-                            ),
-                            Err(e) => {
-                                self.set_status(format!("Could not use {name}: {e}"), true, now)
-                            }
-                        }
-                        continue;
-                    }
-                    if name.to_ascii_lowercase().ends_with(".pat") {
-                        match self.import_patterns(&text) {
-                            Ok(n) => self.set_status(
-                                format!("Imported {n} hatch pattern(s) from {name}"),
-                                false,
-                                now,
-                            ),
-                            Err(e) => {
-                                self.set_status(format!("Could not import {name}: {e}"), true, now)
-                            }
-                        }
-                        continue;
-                    }
                     match drift_io::load_with_notes(&text) {
                         Ok((doc, meta, dropped)) => {
                             let status = if dropped.is_empty() {
@@ -584,6 +659,11 @@ impl DriftApp {
                     // A recent file that has gone is dropped from the list.
                     self.recent.retain(|p| p.exists());
                     self.set_status(message, true, now);
+                }
+                FileEvent::Cancelled => {
+                    // What the picked file was to be for goes with it.
+                    self.import_as = None;
+                    self.picking = None;
                 }
             }
         }
@@ -684,6 +764,16 @@ impl DriftApp {
                 self.show_view_crops,
                 "View crops shown",
                 "View crops hidden",
+            ),
+            (
+                self.params.show_free,
+                "Free directions shown",
+                "Free directions hidden",
+            ),
+            (
+                self.params.show_ghosts,
+                "Variant ghosts shown",
+                "Variant ghosts hidden",
             ),
         ]
     }

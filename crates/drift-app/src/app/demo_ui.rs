@@ -23,6 +23,13 @@ pub(crate) struct Demo {
     banner_closed: bool,
 }
 
+impl Demo {
+    /// Its note (in place of a save, export or print) is up.
+    pub(crate) fn note_open(&self) -> bool {
+        self.note.is_some()
+    }
+}
+
 /// Open the download page in a new tab, leaving the demo (and the drawing) as it is.
 fn open_download(ctx: &egui::Context) {
     ctx.open_url(egui::OpenUrl::new_tab(download_url()));

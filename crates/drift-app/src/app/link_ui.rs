@@ -80,6 +80,7 @@ impl DriftApp {
             meta: self.file.meta.clone(),
             dirty,
             ctx: ctx.clone(),
+            new_rules: self.new_rules,
         };
         let (out, change) = agent::call_live(doc, &job.tool, &job.args, job.root.clone());
         match change {

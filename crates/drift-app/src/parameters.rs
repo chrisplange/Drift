@@ -97,7 +97,7 @@ impl DriftApp {
             self.remove_pattern(&name);
         }
         if ui.button("Import .pat…").clicked() {
-            self.files.open(crate::PAT_FILE);
+            self.pick_file(crate::app::document::Picking::Patterns);
         }
     }
 
@@ -525,11 +525,14 @@ impl DriftApp {
             return;
         }
         let revision = self.editor.doc.revision();
-        if self
-            .params
-            .ghosts
-            .as_ref()
-            .is_none_or(|(r, _)| *r != revision)
+        // Each variant is solved on a copy of the drawing: not in every frame of a drag (or
+        // any edit under way), but once it is done.
+        if !self.editor.doc.in_transaction()
+            && self
+                .params
+                .ghosts
+                .as_ref()
+                .is_none_or(|(r, _)| *r != revision)
         {
             let active = self.editor.active_variant();
             let ids: Vec<_> = self

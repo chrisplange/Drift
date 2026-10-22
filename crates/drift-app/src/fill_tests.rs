@@ -811,7 +811,7 @@ fn a_circle_drawn_across_two_filled_circles_leaves_them_whole() {
 
 /// Two overlapping filled circles, trimmed to a peanut, then a circle drawn across the
 /// peanut: the fill keeps the whole peanut (marked as covering two areas), whichever way
-/// the divided-fill preference is set. With "Follow its seed", both fills shrank to the
+/// the divided-fill preference is set. With "Follow where it was first clicked", both fills shrank to the
 /// part around their seeds (2026-10-21).
 #[test]
 fn a_circle_drawn_across_a_trimmed_peanut_leaves_its_fills_whole() {
@@ -1117,7 +1117,6 @@ fn move_fill(ed: &mut Editor, id: FillId, by: DVec2) {
 }
 
 #[test]
-#[ignore = "#133: a tie hands the shared piece to the neighbour's line"]
 fn staggered_rectangles_sharing_part_of_a_side_keep_their_own_lines() {
     // A on the bottom, B on top shifted right: A's top and B's bottom overlap for half
     // their length, and each is cut once by the other's corner, a tie for "fewest pieces".
@@ -1180,7 +1179,6 @@ fn splitting_the_big_squares_side_inside_the_overlap_keeps_the_corner_hatch_its_
 }
 
 #[test]
-#[ignore = "#134: a fill whose whole outline goes isn't re-found at its seed"]
 fn a_rectangle_drawn_twice_keeps_its_fill_when_either_copy_goes() {
     for keep_first in [true, false] {
         let mut ed = Editor::new(Document::new());
@@ -1223,8 +1221,27 @@ fn deleting_the_big_square_keeps_the_corner_hatch() {
     // The corner hatch is bounded by the small square's own sides, so it stays as it was.
     assert!(close(found(&mut ed, corner).0, 2500.0));
     assert_eq!(ed.doc.fill(corner).unwrap().boundary, sorted(small));
-    // The L's seed is in no area now.
+    // The L's seed is in no area now: it goes, said so, rather than moving onto the small
+    // square the rest of its outline bounds (#135).
     assert!(ed.doc.fill(l_shape).is_none());
+    assert!(
+        ed.fill_changes
+            .contains(&crate::fills::FillChange::Dropped { id: l_shape }),
+        "{:?}",
+        ed.fill_changes
+    );
+    assert!(
+        ed.notice
+            .as_deref()
+            .is_some_and(|n| n.contains("no area is left around it")),
+        "{:?}",
+        ed.notice
+    );
+    assert_eq!(
+        ed.doc.fills().count(),
+        1,
+        "nothing stacked on the corner hatch"
+    );
     assert!(ed.undo());
     assert!(close(found(&mut ed, l_shape).0, 7500.0));
     assert!(close(found(&mut ed, corner).0, 2500.0));

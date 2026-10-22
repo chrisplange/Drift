@@ -31,14 +31,8 @@ pub(crate) const PROFILES_FILE: FileType = FileType {
     name: "Drift profiles for Blender",
     extensions: &["json"],
 };
-/// What File → Import takes: CAD drawings, and artwork from Illustrator and the like.
-pub(crate) const IMPORT_FILE: FileType = FileType {
-    name: "DWG, DXF, SVG, PDF or Illustrator",
-    extensions: &["dwg", "dxf", "svg", "pdf", "ai"],
-};
-
 /// What an import brought in and what it couldn't, shown until closed.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct ImportSummary {
     pub title: String,
     pub summary: String,
@@ -549,9 +543,6 @@ impl DriftApp {
                     }
                 });
             });
-        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            close = true;
-        }
         if go {
             self.output_dialog = None;
             let painter = ctx.layer_painter(egui::LayerId::background());
@@ -1005,7 +996,7 @@ impl DriftApp {
                 )
                 .clicked()
             {
-                self.files.open(SVG_FILE);
+                self.pick_file(crate::app::document::Picking::Logo);
             }
             if has && ui.button("Remove").clicked() {
                 self.editor.doc.begin();

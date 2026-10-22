@@ -44,7 +44,90 @@ pub(crate) fn keycaps(ui: &mut egui::Ui, keys: &str) {
     }
 }
 
+/// The windows Esc closes, by their egui ids, frontmost first when egui can't tell.
+const WINDOWS: [&str; 9] = [
+    "Licences",
+    "About Drift",
+    "Keyboard shortcuts",
+    "Solver benchmark",
+    "output_sheets",
+    "import_report",
+    "sketch_check",
+    "Drawing settings",
+    "Preferences",
+];
+
 impl DriftApp {
+    /// A modal prompt is up (it takes the keyboard and closes itself on Esc).
+    fn modal_open(&self) -> bool {
+        #[cfg(feature = "demo")]
+        if self.demo.note_open() {
+            return true;
+        }
+        self.pending.is_some()
+            || self.editor.pending_driven.is_some()
+            || self.renaming.is_some()
+            || self.pending_import.is_some()
+            || self.dropped.is_some()
+    }
+
+    /// Whether a window is open over the canvas, by its id in [`WINDOWS`].
+    fn window_open(&self, id: &str) -> bool {
+        match id {
+            "Licences" => self.show_licences,
+            "About Drift" => self.show_about,
+            "Keyboard shortcuts" => self.show_shortcuts,
+            "Solver benchmark" => self.benchmark.is_some(),
+            #[cfg(not(feature = "demo"))]
+            "output_sheets" => self.output_dialog.is_some(),
+            "import_report" => self.import_report.is_some(),
+            "sketch_check" => self.sketch_check.is_some(),
+            "Drawing settings" => self.show_drawing_settings,
+            "Preferences" => self.show_settings,
+            _ => false,
+        }
+    }
+
+    fn close_window(&mut self, id: &str) {
+        match id {
+            "Licences" => self.show_licences = false,
+            "About Drift" => self.show_about = false,
+            "Keyboard shortcuts" => self.show_shortcuts = false,
+            "Solver benchmark" => self.benchmark = None,
+            #[cfg(not(feature = "demo"))]
+            "output_sheets" => self.output_dialog = None,
+            "import_report" => self.import_report = None,
+            "sketch_check" => self.sketch_check = None,
+            "Drawing settings" => self.show_drawing_settings = false,
+            "Preferences" => self.show_settings = false,
+            _ => {}
+        }
+    }
+
+    /// A dialog or window is open: the canvas's keys wait until it is closed.
+    pub(crate) fn any_dialog_open(&self) -> bool {
+        self.modal_open() || WINDOWS.iter().any(|id| self.window_open(id))
+    }
+
+    /// Esc closes the frontmost open window, and is used up so that it doesn't also cancel
+    /// the tool or clear what is picked. (Modal prompts close themselves on Esc.)
+    pub(crate) fn close_top_dialog(&mut self, ctx: &egui::Context) {
+        if self.modal_open() || !WINDOWS.iter().any(|id| self.window_open(id)) {
+            return;
+        }
+        if !ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+            return;
+        }
+        let top = ctx.memory(|m| m.areas().top_layer_id(egui::Order::Middle));
+        let front = WINDOWS
+            .iter()
+            .find(|id| self.window_open(id) && top.is_some_and(|l| l.id == egui::Id::new(**id)))
+            .or_else(|| WINDOWS.iter().find(|id| self.window_open(id)));
+        if let Some(id) = front {
+            self.close_window(id);
+        }
+    }
+
     pub(crate) fn dialogs(&mut self, ctx: &egui::Context) {
         self.drop_dialog(ctx);
         self.import_dialog(ctx);
@@ -153,7 +236,7 @@ impl DriftApp {
                         }
                         self.perform(action);
                     }
-                    Choice::Cancel => {}
+                    Choice::Cancel => self.import_new = None,
                 }
             }
         }
@@ -194,9 +277,6 @@ impl DriftApp {
                 if !ui.data(|d| d.get_temp::<bool>(seen).unwrap_or(false)) {
                     field.request_focus();
                     ui.data_mut(|d| d.insert_temp(seen, true));
-                }
-                if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                    close = true;
                 }
                 let query = filter.trim().to_lowercase();
                 egui::ScrollArea::vertical()

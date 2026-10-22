@@ -552,7 +552,12 @@ impl Editor {
                     }
                     whole
                 }
-            } else if let Some(r) = areas.successor(&fill) {
+            } else if let Some(r) = areas
+                .successor(&fill)
+                // What is left of an outline the edit deleted curves of may bound another
+                // area (a shape in its corner): not one the fill's seed isn't in (#135).
+                .filter(|r| !deleted || r.contains(fill.seed))
+            {
                 followed.boundary = outline_of(r, &ids);
                 followed.divided = false;
                 r.clone()
@@ -621,6 +626,51 @@ impl Editor {
                 self.notice = Some(self.describe_fill_changes(&changes));
             }
             self.fill_changes.extend(changes);
+        }
+    }
+
+    /// Delete entities inside an open transaction, as [`Document::delete`] does. A fill or
+    /// hatch whose whole outline goes with them stays when the same outline is drawn again
+    /// (a shape drawn twice, #134): it takes the copy that is left. Otherwise it goes with
+    /// them.
+    ///
+    /// [`Document::delete`]: drift_core::Document::delete
+    pub(crate) fn delete_curves(&mut self, ids: impl IntoIterator<Item = EntityId>) {
+        // (Shapes' fills keep to their paths, which a delete takes apart: not those.)
+        let shapes = self.fill_shapes();
+        let areas: Vec<(FillId, Region)> = self
+            .doc
+            .fills()
+            .filter(|(_, f)| f.path.is_none())
+            .filter_map(|(id, _)| Some((id, shapes.get(&id)?.region.clone())))
+            .collect();
+        let fills: Vec<(FillId, Fill)> = areas
+            .iter()
+            .filter_map(|(id, _)| Some((*id, self.doc.fill(*id)?.clone())))
+            .collect();
+        self.doc.delete(ids);
+        let gone: Vec<(FillId, Fill, Region)> = fills
+            .into_iter()
+            .zip(areas)
+            .filter(|((id, _), _)| self.doc.fill(*id).is_none())
+            .map(|((id, fill), (_, region))| (id, fill, region))
+            .collect();
+        if gone.is_empty() {
+            return;
+        }
+        let regions = self.regions();
+        let ids = self.region_ids();
+        for (id, mut fill, was) in gone {
+            let Some(twin) = region_at(&regions, fill.seed) else {
+                continue;
+            };
+            let size = was.area.abs().sqrt().max(1.0);
+            let same = (twin.area - was.area).abs() <= 1e-9 * size * size
+                && twin.centroid.distance(was.centroid) <= 1e-9 * size;
+            if same {
+                fill.boundary = outline_of(twin, &ids);
+                let _ = self.doc.insert_fill(id, fill);
+            }
         }
     }
 

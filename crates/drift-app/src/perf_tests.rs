@@ -692,3 +692,101 @@ fn write_digest(ed: &mut Editor) {
     }
     std::fs::write(path, digest).unwrap();
 }
+
+/// A chain of `bars` bars of fixed length from a fixed point, lying along x, its far end
+/// dragged round to the other side: a drag whose one big solve mispredicts round the fold
+/// (#103), so frames go in steps.
+fn folding_chain(bars: usize) -> (Editor, EntityId) {
+    let mut doc = Document::new();
+    doc.begin();
+    let points: Vec<EntityId> = (0..=bars)
+        .map(|k| doc.add_point(v(k as f64 * 10.0, 0.0)))
+        .collect();
+    doc.add_constraint(Constraint::Fix {
+        point: points[0],
+        at: DVec2::ZERO,
+    })
+    .unwrap();
+    for pair in points.windows(2) {
+        doc.add_line(pair[0], pair[1]).unwrap();
+        doc.add_constraint(Constraint::Distance {
+            a: pair[0],
+            b: pair[1],
+            value: 10.0,
+        })
+        .unwrap();
+    }
+    doc.commit("Chain");
+    (Editor::new(doc), points[bars])
+}
+
+#[test]
+#[ignore = "torture test: run with --release --ignored --nocapture"]
+fn perf_drag_wandering() {
+    println!();
+    // Within reach, and (the last) out of it: a move that can't be made at all.
+    for (bars, out) in [(3, 0.8), (12, 0.8), (48, 0.8), (12, 1.5)] {
+        let (mut ed, tip) = folding_chain(bars);
+        let reach = bars as f64 * 10.0;
+        let dragged = drift_solver::Param::point(tip);
+        ed.doc.begin();
+        // Round a half circle to the other side, in 60 frames.
+        let frames = 60;
+        let mut at = v(reach, 0.0);
+        let mut solves = Vec::new();
+        let mut refused = 0;
+        let r = time(frames, |k| {
+            let t = (k + 1) as f64 / frames as f64 * std::f64::consts::PI;
+            let to = v(t.cos(), t.sin()) * reach * out;
+            refused += usize::from(!ed.drag(&[tip], to - at, &dragged));
+            at = ed.doc.point(tip).unwrap();
+            solves.push(ed.drag_solves);
+        });
+        ed.doc.rollback();
+        report(
+            &format!("folding drag, {bars} bars to {out} × (per frame)"),
+            r,
+        );
+        let most = solves.iter().max().copied().unwrap_or(0);
+        let all: u32 = solves.iter().sum();
+        println!("  solves per frame: most {most}, {all} in all; {refused} frames refused");
+    }
+}
+
+#[test]
+#[ignore = "torture test: run with --release --ignored --nocapture"]
+fn perf_drag_pushing_an_arc() {
+    // A line, an arc ending at its start, and a line from there tangent to the arc; the first
+    // line dragged across, squeezing the arc until it is pushed along (as in drag_props).
+    println!();
+    let mut doc = Document::new();
+    doc.begin();
+    let p = [
+        v(0.0, 0.0),
+        v(2.5881904510252074, 9.659258262890683),
+        v(2.0705523608201624, -7.727406610312547),
+        v(6.070552360820166, -0.7992033800370404),
+        v(9.659258262890685, 2.588190451025203),
+    ]
+    .map(|q| doc.add_point(q));
+    let a = doc.add_line(p[0], p[1]).unwrap();
+    let arc = doc.add_arc(p[2], p[3], p[0]).unwrap();
+    let b = doc.add_line(p[0], p[4]).unwrap();
+    doc.add_constraint(Constraint::Tangent { a: b, b: arc })
+        .unwrap();
+    doc.commit("Shape");
+    let mut ed = Editor::new(doc);
+    ed.doc.begin();
+    let frames = 60;
+    let mut solves = Vec::new();
+    let mut refused = 0;
+    let r = time(frames, |_| {
+        refused += usize::from(!ed.drag(&[a], v(1.0, 0.0), &[]));
+        solves.push(ed.drag_solves);
+    });
+    ed.doc.rollback();
+    report("pushing a squeezed arc (per frame)", r);
+    let most = solves.iter().max().copied().unwrap_or(0);
+    let all: u32 = solves.iter().sum();
+    println!("  solves per frame: most {most}, {all} in all; {refused} frames refused");
+}

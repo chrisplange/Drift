@@ -174,6 +174,84 @@ fn draw_select_delete_undo() {
 }
 
 #[test]
+fn canvas_keys_wait_while_a_dialog_is_open_and_esc_closes_it() {
+    let Some(mut h) = harness() else { return };
+    h.key_press(Key::L);
+    h.run();
+    click_world(&mut h, DVec2::new(-30.0, 0.0));
+    click_world(&mut h, DVec2::new(30.0, 0.0));
+    h.key_press(Key::Escape);
+    h.run();
+    h.key_press(Key::Escape);
+    h.run();
+    assert_eq!(lines(&h), 1, "line drawn");
+    h.key_press_modifiers(EguiModifiers::COMMAND, Key::A);
+    h.run();
+    assert_eq!(h.state().editor.selection.len(), 1, "line picked");
+
+    type Open = fn(&mut DriftApp);
+    type IsOpen = fn(&DriftApp) -> bool;
+    let dialogs: [(&str, Open, IsOpen); 7] = [
+        (
+            "Preferences",
+            |a| a.show_settings = true,
+            |a| a.show_settings,
+        ),
+        (
+            "Drawing settings",
+            |a| a.show_drawing_settings = true,
+            |a| a.show_drawing_settings,
+        ),
+        ("About", |a| a.show_about = true, |a| a.show_about),
+        (
+            "Keyboard shortcuts",
+            |a| a.show_shortcuts = true,
+            |a| a.show_shortcuts,
+        ),
+        (
+            "Check sketch",
+            |a| a.open_sketch_check(),
+            |a| a.sketch_check.is_some(),
+        ),
+        (
+            "Import report",
+            |a| {
+                a.import_report = Some(crate::app::sheets_ui::ImportSummary::default());
+            },
+            |a| a.import_report.is_some(),
+        ),
+        (
+            "Drop dialog",
+            |a| a.dropped = Some("elsewhere.dxf".into()),
+            |a| a.dropped.is_some(),
+        ),
+    ];
+    for (name, open, is_open) in dialogs {
+        open(h.state_mut());
+        h.run();
+        h.key_press(Key::Delete);
+        h.run();
+        h.key_press_modifiers(EguiModifiers::COMMAND, Key::Z);
+        h.run();
+        assert_eq!(lines(&h), 1, "{name}: Delete and Ctrl+Z wait");
+        assert!(is_open(h.state()), "{name}: still open");
+        h.key_press(Key::Escape);
+        h.run();
+        assert!(!is_open(h.state()), "{name}: Esc closes it");
+        assert_eq!(
+            h.state().editor.selection.len(),
+            1,
+            "{name}: the same Esc keeps the pick"
+        );
+        assert_eq!(h.state().tool.kind(), ToolKind::Select);
+    }
+    // With the dialogs gone, Delete acts again.
+    h.key_press(Key::Delete);
+    h.run();
+    assert_eq!(lines(&h), 0);
+}
+
+#[test]
 fn click_uses_release_position_when_events_are_batched() {
     // Regression: when a slow frame batches the release with later pointer motion, the click
     // must land where the button was released, not where the pointer ended up.
@@ -6836,7 +6914,7 @@ fn dimensions_hide_leave_sheets_and_take_text() {
     h.run();
     assert_eq!(laid_out(&h), vec![height]);
     assert!(
-        h.query_by_label("1 hidden").is_some(),
+        h.query_by_label("1 hidden annotation").is_some(),
         "the status bar counts it"
     );
     save_png("drift_ui_dimension_hidden.png", &mut h);
@@ -7768,7 +7846,7 @@ fn the_import_dialog_says_what_wont_come_across_before_importing() {
     assert!(h.state().pending_import.is_some(), "refused: still asking");
     assert_eq!(h.state().editor.doc.iter().count(), 0);
     // As an underlay it's fine.
-    h.state_mut().pending_import.as_mut().unwrap().underlay = true;
+    h.state_mut().pending_import.as_mut().unwrap().mode = crate::app::import_ui::ImportAs::Underlay;
     h.run_steps(2);
     h.get_by_label("Import").click();
     h.run_steps(3);
@@ -9388,12 +9466,12 @@ fn view_switches_say_so_and_hidden_dimensions_and_relations_come_back_each_start
     assert_eq!(status(&h), "Thin lines");
     save_png("drift_ui_dimensions_relations_hidden.png", &mut h);
     // While they're hidden the status bar says so; a click shows them again.
-    h.get_by_label("Relations hidden ×").click();
+    h.get_by_label("Relations off · Show").click();
     h.run();
     h.run();
     assert!(h.state().show_relations);
     assert_eq!(status(&h), "Relations shown");
-    assert!(h.query_by_label("Relations hidden ×").is_none());
+    assert!(h.query_by_label("Relations off · Show").is_none());
     h.state_mut().show_relations = false;
     h.run();
 
@@ -9447,6 +9525,13 @@ fn drawing_rules_are_the_drawings_and_older_files_get_this_computers() {
     h.state_mut()
         .replace_document(doc, "old.drift".into(), None, meta, true);
     assert_eq!(h.state().editor.doc.rules(), mine);
+    // ... and says so, once.
+    assert_eq!(
+        h.state().status_next.as_deref(),
+        Some(crate::app::document::OLDER_RULES)
+    );
+    h.run();
+    assert!(h.state().status_next.is_none());
     // ... and a current one with its own, whatever this computer's are.
     let (doc, meta) = drift_io::load(&current).unwrap();
     h.state_mut()
@@ -9470,15 +9555,44 @@ fn drawing_rules_are_the_drawings_and_older_files_get_this_computers() {
     let text = drift_io::save(&h.state().editor.doc, &drift_io::Metadata::default());
     let (loaded, _) = drift_io::load(&text).unwrap();
     assert!(loaded.rules().regions_by_layer);
-    h.get_by_label("Use for new drawings").scroll_to_me();
+    h.get_by_label("Use these area and fill rules for new drawings")
+        .scroll_to_me();
     h.run();
     h.run();
-    h.get_by_label("Use for new drawings").click();
+    h.get_by_label("Use these area and fill rules for new drawings")
+        .click();
     h.run();
     assert_eq!(h.state().new_rules, h.state().editor.doc.rules());
     assert!(h.state().view_prefs().contains("rlayer=1"));
     h.state_mut().undo();
     assert!(!h.state().editor.doc.rules().regions_by_layer);
+}
+
+#[test]
+fn a_dragged_or_typed_tolerance_is_one_undo_step_and_clears_redo() {
+    let Some(mut h) = harness() else { return };
+    let ed = &mut h.state_mut().editor;
+    let start = ed.doc.rules().gap_tolerance;
+    // A tick box, then a tolerance edited in three frames of one drag.
+    ed.change_rules(|r| r.stacked_fills = !r.stacked_fills);
+    ed.change_rules_merging(false, |r| r.gap_tolerance = 1.0);
+    ed.change_rules_merging(true, |r| r.gap_tolerance = 1.5);
+    ed.change_rules_merging(true, |r| r.gap_tolerance = 2.0);
+    ed.undo();
+    assert_eq!(ed.doc.rules().gap_tolerance, start, "the drag was one step");
+    assert_ne!(
+        ed.doc.rules().stacked_fills,
+        drift_core::DrawingRules::default().stacked_fills,
+        "the tick box was a step of its own"
+    );
+    // A new drag after an undo is its own step, and what was undone can't be redone over.
+    ed.undo();
+    assert!(ed.history.can_redo());
+    ed.change_rules_merging(false, |r| r.gap_tolerance = 3.0);
+    ed.change_rules_merging(true, |r| r.gap_tolerance = 4.0);
+    assert!(!ed.history.can_redo());
+    ed.undo();
+    assert_eq!(ed.doc.rules(), drift_core::DrawingRules::default());
 }
 
 #[test]
@@ -9495,7 +9609,9 @@ fn preferences_has_three_pages() {
     h.run();
     h.run();
     h.get_by_label("Add relations automatically while drawing");
-    h.get_by_label("Always show end points");
+    // Snapping to the grid and end points are in the View menu only.
+    assert!(h.query_by_label("Always show end points").is_none());
+    assert!(h.query_by_label("Snap to the grid").is_none());
     assert!(
         h.query_by_label("Find closed areas on each layer separately")
             .is_none(),

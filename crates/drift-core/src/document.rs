@@ -339,6 +339,7 @@ enum Key {
     Draft,
     Patterns,
     Logo,
+    Rules,
     Project,
     Fonts,
     Sheet(SheetId),
@@ -374,6 +375,7 @@ enum Record {
     Draft(DraftStyle),
     Patterns(String),
     Logo(String),
+    Rules(crate::DrawingRules),
     Project(crate::Project),
     Fonts(crate::fonts::FontSet),
     Sheet(Sheet),
@@ -450,6 +452,8 @@ pub struct Document {
     patterns: String,
     /// The title blocks' logo, as SVG text ("" for none), so it travels with the file.
     logo: String,
+    /// How the drawing's closed areas and fills behave.
+    rules: crate::DrawingRules,
     /// The project every sheet's title block shares.
     project: crate::Project,
     /// Fonts kept in the drawing, and the one its annotations are set in.
@@ -537,6 +541,7 @@ impl Default for Document {
             draft: DraftStyle::default(),
             patterns: String::new(),
             logo: String::new(),
+            rules: crate::DrawingRules::default(),
             project: crate::Project::default(),
             fonts: Default::default(),
             sheets: BTreeMap::new(),
@@ -896,6 +901,7 @@ impl Document {
             Key::Draft => Some(Record::Draft(self.draft)),
             Key::Patterns => Some(Record::Patterns(self.patterns.clone())),
             Key::Logo => Some(Record::Logo(self.logo.clone())),
+            Key::Rules => Some(Record::Rules(self.rules)),
             Key::Project => Some(Record::Project(self.project.clone())),
             Key::Fonts => Some(Record::Fonts(self.fonts.clone())),
             Key::Sheet(id) => self.sheets.get(&id).cloned().map(Record::Sheet),
@@ -1035,6 +1041,8 @@ impl Document {
             (Key::Patterns, _) => {}
             (Key::Logo, Some(Record::Logo(l))) => self.logo = l,
             (Key::Logo, _) => {}
+            (Key::Rules, Some(Record::Rules(r))) => self.rules = r,
+            (Key::Rules, _) => {}
             (Key::Project, Some(Record::Project(p))) => self.project = p,
             (Key::Project, _) => {}
             (Key::Fonts, Some(Record::Fonts(f))) => self.fonts = f,
@@ -2298,6 +2306,7 @@ impl Document {
         keys.push(Key::Draft);
         keys.push(Key::Patterns);
         keys.push(Key::Logo);
+        keys.push(Key::Rules);
         keys.push(Key::Project);
         keys.push(Key::Fonts);
         keys.extend(self.sheets.keys().map(|id| Key::Sheet(*id)));
@@ -3561,6 +3570,18 @@ impl Document {
         if self.logo != svg {
             self.touch_key(Key::Logo);
             self.logo = svg;
+        }
+    }
+
+    /// How the drawing's closed areas and fills behave (saved with it).
+    pub fn rules(&self) -> crate::DrawingRules {
+        self.rules
+    }
+
+    pub fn set_rules(&mut self, rules: crate::DrawingRules) {
+        if self.rules != rules {
+            self.touch_key(Key::Rules);
+            self.rules = rules;
         }
     }
 

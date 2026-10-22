@@ -5,6 +5,9 @@ use crate::*;
 /// The live link to Blender writes the profiles file at most this often (seconds).
 pub(crate) const LIVE_PROFILES_S: f64 = 0.1;
 
+/// How many switches the View menu has (see `view_flags`).
+pub(crate) const VIEW_FLAGS: usize = 11;
+
 /// Whether a path names a sketch (by its extension).
 fn is_sketch_file(path: &std::path::Path) -> bool {
     path.extension()
@@ -50,7 +53,7 @@ impl DriftApp {
 
     pub(crate) fn replace_document(
         &mut self,
-        doc: Document,
+        mut doc: Document,
         name: String,
         path: Option<FilePath>,
         meta: Metadata,
@@ -58,6 +61,10 @@ impl DriftApp {
     ) {
         self.tool.cancel(&mut self.editor);
         self.tool = ToolKind::Select.create();
+        // A file from before drawings kept their rules had this computer's.
+        if meta.older_rules {
+            doc.set_rules(self.new_rules);
+        }
         let revision = doc.revision();
         // Preferences kept on the editor carry over to the next drawing.
         let mut editor = Editor::new(doc);
@@ -74,8 +81,10 @@ impl DriftApp {
         };
     }
 
-    /// View preferences as `key=0|1` pairs (unknown keys are ignored when reading).
+    /// Preferences and view settings as `key=0|1` pairs (unknown keys are ignored when
+    /// reading). Hidden dimensions and relations aren't kept: they are back each start.
     pub(crate) fn view_prefs(&self) -> String {
+        let rules = self.new_rules;
         let flags = [
             ("grid", self.show_grid),
             ("axes", self.show_axes),
@@ -83,18 +92,19 @@ impl DriftApp {
             ("ptsnap", self.perp_tangent_snap),
             ("thin", self.thin_lines),
             ("status", self.status_colors),
-            ("dims", self.show_dimensions),
-            ("rels", self.show_relations),
             ("auto", self.auto_relations),
             ("ends", self.always_endpoints),
             ("crops", self.show_view_crops),
+            ("combs", self.show_combs),
             ("rscale", self.round_scale),
             ("hidden", self.show_hidden_annotations),
-            ("rlayer", self.editor.regions_by_layer),
-            ("rfill", self.editor.regions_need_fill),
-            ("stack", self.editor.stacked_fills),
+            // The rules new drawings start with (they were preferences before format 39).
+            ("rlayer", rules.regions_by_layer),
+            ("rfill", rules.regions_need_fill),
+            ("stack", rules.stacked_fills),
+            ("dfollow", rules.follow_divided_fills),
+            // The tool bars' Fill switch, as it was last left.
             ("newfill", self.editor.fill_new_shapes),
-            ("dfollow", self.editor.follow_divided_fills),
             ("tdims", self.show_temp_dims),
             ("ai", self.ai_link),
         ];
@@ -104,7 +114,7 @@ impl DriftApp {
             .collect();
         prefs.push(format!("wheel={}", self.wheel.mode.key()));
         prefs.push(format!("asnap={}", self.angle_snap.unwrap_or(0.0)));
-        prefs.push(format!("gaptol={}", self.gap_tolerance));
+        prefs.push(format!("gaptol={}", rules.gap_tolerance));
         prefs.extend(self.crosshair.prefs());
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -141,7 +151,7 @@ impl DriftApp {
                         .ok()
                         .filter(|t| *t > 0.0 && t.is_finite())
                     {
-                        self.gap_tolerance = t;
+                        self.new_rules.gap_tolerance = t;
                     }
                 }
                 "wheel" => {
@@ -155,18 +165,17 @@ impl DriftApp {
                 "ptsnap" => self.perp_tangent_snap = on,
                 "thin" => self.thin_lines = on,
                 "status" => self.status_colors = on,
-                "dims" => self.show_dimensions = on,
-                "rels" => self.show_relations = on,
                 "auto" => self.auto_relations = on,
                 "ends" => self.always_endpoints = on,
                 "crops" => self.show_view_crops = on,
+                "combs" => self.show_combs = on,
                 "rscale" => self.round_scale = on,
                 "hidden" => self.show_hidden_annotations = on,
-                "rlayer" => self.editor.regions_by_layer = on,
-                "rfill" => self.editor.regions_need_fill = on,
-                "stack" => self.editor.stacked_fills = on,
+                "rlayer" => self.new_rules.regions_by_layer = on,
+                "rfill" => self.new_rules.regions_need_fill = on,
+                "stack" => self.new_rules.stacked_fills = on,
                 "newfill" => self.editor.fill_new_shapes = on,
-                "dfollow" => self.editor.follow_divided_fills = on,
+                "dfollow" => self.new_rules.follow_divided_fills = on,
                 "tdims" => self.show_temp_dims = on,
                 "ai" => self.ai_link = on,
                 #[cfg(not(target_arch = "wasm32"))]
@@ -182,6 +191,7 @@ impl DriftApp {
         if let Some(prefs) = storage.get_string(KEY_VIEW) {
             self.apply_view_prefs(&prefs);
         }
+        self.start_with_new_rules();
         if let Some(recent) = storage.get_string(KEY_RECENT) {
             self.recent = recent
                 .lines()
@@ -218,6 +228,15 @@ impl DriftApp {
                 self.replace_document(doc, name, path, meta, !dirty);
             }
             Err(e) => log::warn!("could not restore the previous session: {e}"),
+        }
+    }
+
+    /// Give the drawing open now (a new, untouched one) the rules new drawings start with.
+    pub(crate) fn start_with_new_rules(&mut self) {
+        let clean = !self.is_dirty();
+        self.editor.doc.set_rules(self.new_rules);
+        if clean {
+            self.file.clean_revision = Some(self.editor.doc.revision());
         }
     }
 
@@ -279,13 +298,9 @@ impl DriftApp {
         match action {
             Pending::New => {
                 self.show_start = !cfg!(test);
-                self.replace_document(
-                    Document::new(),
-                    UNTITLED.into(),
-                    None,
-                    Metadata::default(),
-                    true,
-                );
+                let mut doc = Document::new();
+                doc.set_rules(self.new_rules);
+                self.replace_document(doc, UNTITLED.into(), None, Metadata::default(), true);
             }
             Pending::Open => self.files.open(DRIFT_FILE),
             Pending::Recent(i) => {
@@ -612,6 +627,69 @@ impl DriftApp {
             log::warn!("{text}");
         }
         self.status = Some(Status { text, error, until });
+    }
+
+    /// The View menu's switches, with what the status bar says when each is turned on or
+    /// off.
+    fn view_flags(&self) -> [(bool, &'static str, &'static str); VIEW_FLAGS] {
+        [
+            (self.show_grid, "Grid shown", "Grid hidden"),
+            (self.show_axes, "Origin axes shown", "Origin axes hidden"),
+            (
+                self.grid_snap,
+                "Snapping to the grid",
+                "Not snapping to the grid",
+            ),
+            (self.thin_lines, "Thin lines", "Lines at their weights"),
+            (
+                self.status_colors,
+                "Curves coloured by constraint status",
+                "Curves in their own and their layers' colours",
+            ),
+            (
+                self.always_endpoints,
+                "End points always shown",
+                "End points shown on hovered and picked curves",
+            ),
+            (
+                self.show_dimensions,
+                "Dimensions and notes shown",
+                "Dimensions and notes hidden (Alt+D shows them)",
+            ),
+            (
+                self.show_hidden_annotations,
+                "Hidden annotations shown, faded",
+                "Hidden annotations not shown",
+            ),
+            (
+                self.show_relations,
+                "Relations shown",
+                "Relations hidden (Alt+R shows them)",
+            ),
+            (
+                self.show_combs,
+                "Curvature combs shown",
+                "Curvature combs hidden",
+            ),
+            (
+                self.show_view_crops,
+                "View crops shown",
+                "View crops hidden",
+            ),
+        ]
+    }
+
+    /// Say in the status bar which View switch just changed.
+    pub(crate) fn announce_view_changes(&mut self, now: f64) {
+        let flags = self.view_flags();
+        let values = flags.map(|(on, _, _)| on);
+        if let Some(seen) = self.view_seen
+            && let Some(changed) = (0..VIEW_FLAGS).find(|&i| seen[i] != values[i])
+        {
+            let (on, shown, hidden) = flags[changed];
+            self.set_status(if on { shown } else { hidden }.into(), false, now);
+        }
+        self.view_seen = Some(values);
     }
 
     /// Abort the active tool's operation in progress, keeping the selection.

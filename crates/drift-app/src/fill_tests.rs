@@ -691,7 +691,7 @@ fn a_split_that_divides_a_fills_area_flags_it_and_keeps_it_whole() {
 fn a_split_that_divides_a_fills_area_can_follow_its_seed() {
     // With "follow its seed" in Preferences, the fill takes the half disc around its seed.
     let mut ed = Editor::new(Document::new());
-    ed.follow_divided_fills = true;
+    ed.change_rules(|r| r.follow_divided_fills = true);
     let (id, arc, diameter, lock) = fill_over_half_disc_and_lock(&mut ed);
     ed.split_at(arc, v(60.0, -80.0)).unwrap();
     let (area, _) = found(&mut ed, id);
@@ -713,7 +713,7 @@ fn a_line_drawn_across_a_fill_is_flagged_and_kept_whole() {
     // changes its area (the preference is for edits that cut the outline itself).
     for follow in [false, true] {
         let mut ed = Editor::new(Document::new());
-        ed.follow_divided_fills = follow;
+        ed.change_rules(|r| r.follow_divided_fills = follow);
         let (_, sides) = plate(&mut ed);
         let id = ed.add_fill_at(v(5.0, 5.0)).unwrap();
         // A line right across it, past both sides.
@@ -821,7 +821,7 @@ fn a_circle_drawn_across_a_trimmed_peanut_leaves_its_fills_whole() {
         (true, [v(-700.0, 650.0), v(-900.0, 650.0)]),
     ] {
         let mut ed = Editor::default();
-        ed.follow_divided_fills = follow;
+        ed.change_rules(|r| r.follow_divided_fills = follow);
         ed.doc.begin();
         let a = ed.doc.add_point(v(-670.0, 600.0));
         let ca = ed.doc.add_circle(a, 150.0).unwrap();

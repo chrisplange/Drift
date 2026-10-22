@@ -727,7 +727,7 @@ impl DriftApp {
         // Geometry (GPU): underlays under everything else.
         let mut under = self.editor.underlay_items(view, dark);
         let images = self.editor.underlay_images();
-        let stacked = self.editor.stacked_fills;
+        let stacked = self.editor.doc.rules().stacked_fills;
         // Fills under every curve: their hatch lines go under the sketch too.
         let meshes = if stacked { Vec::new() } else { fills.meshes() };
         if !stacked {

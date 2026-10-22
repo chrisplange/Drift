@@ -343,6 +343,16 @@ impl DriftApp {
                     .weak(),
                 );
                 theme::section(ui, "Details");
+                let gb = |b: u64| b as f64 / (1024.0 * 1024.0 * 1024.0);
+                theme::row(ui, "Memory", |ui| {
+                    ui.label(format!("{:.2} GB in use", gb(self.memory.0)))
+                        .on_hover_text(format!(
+                            "Drift warns at {:.0} GB and closes itself at {:.0} GB, so a fault \
+                             can't exhaust the computer; the sketch is restored next time.",
+                            gb(drift_platform::memory::WARN_BYTES),
+                            gb(drift_platform::memory::limit())
+                        ));
+                });
                 for line in details.lines().skip(1) {
                     if let Some((k, v)) = line.split_once(": ") {
                         theme::row(ui, k, |ui| {
@@ -425,8 +435,8 @@ impl DriftApp {
         self.show_licences = open && !close;
     }
 
-    /// Edit → Preferences: the settings from the View menu, status bar and Parameters panel
-    /// in one place.
+    /// Edit → Preferences: how Drift works on this computer (what the canvas shows is in
+    /// the View menu, and a drawing's own rules in Drawing settings).
     pub(crate) fn settings_window(&mut self, ctx: &egui::Context) {
         if !self.show_settings {
             return;
@@ -485,8 +495,8 @@ impl DriftApp {
         self.show_settings = open && !close;
     }
 
-    /// File → Drawing settings: what is saved with this drawing (its units and drafting
-    /// style), apart from Preferences, which are the app's.
+    /// File → Drawing settings: what is saved with this drawing (its units, how its areas
+    /// and fills behave, its drafting style), apart from Preferences, which are the app's.
     pub(crate) fn drawing_settings_window(&mut self, ctx: &egui::Context) {
         if !self.show_drawing_settings {
             return;
@@ -516,6 +526,7 @@ impl DriftApp {
                             ui.set_max_width(ui.available_width() - 10.0);
                             self.project_section(ui);
                             self.units_section(ui);
+                            self.rules_section(ui);
                             self.drafting_section(ui);
                         });
                     });
@@ -527,10 +538,12 @@ impl DriftApp {
         match page {
             PrefsPage::General => self.general_prefs(ui),
             PrefsPage::Drawing => self.drawing_prefs(ui),
-            PrefsPage::Display => self.display_prefs(ui),
-            PrefsPage::Mouse => self.mouse_prefs(ui),
             #[cfg(not(target_arch = "wasm32"))]
-            PrefsPage::Updates => self.updates_section(ui),
+            PrefsPage::Updates => {
+                self.updates_section(ui);
+                #[cfg(not(feature = "demo"))]
+                self.link_prefs(ui);
+            }
         }
         ui.add_space(4.0);
     }
@@ -538,48 +551,39 @@ impl DriftApp {
     fn general_prefs(&mut self, ui: &mut egui::Ui) {
         theme::section(ui, "Appearance");
         theme::appearance(ui);
-        theme::section(ui, "Window");
-        ui.horizontal(|ui| {
-            if ui.button("Reset panel layout").clicked() {
-                self.layout = Default::default();
-                self.dock_view.hide_all = false;
-            }
-            if ui
-                .button("Show the start panel")
-                .on_hover_text("It appears over an empty, unsaved sketch")
-                .clicked()
-            {
-                self.show_start = true;
-            }
-        });
-        #[cfg(all(not(target_arch = "wasm32"), not(feature = "demo")))]
-        self.link_prefs(ui);
-        theme::section(ui, "Memory");
-        let gb = |b: u64| b as f64 / (1024.0 * 1024.0 * 1024.0);
-        ui.label(
-            egui::RichText::new(format!(
-                "Using {:.2} GB. Drift warns at {:.0} GB and closes itself at {:.0} GB, so a \
-                 fault can't exhaust the computer; the sketch is restored next time.",
-                gb(self.memory.0),
-                gb(drift_platform::memory::WARN_BYTES),
-                gb(drift_platform::memory::limit())
-            ))
-            .small()
-            .weak(),
-        );
+        theme::section(ui, "Crosshair");
+        self.crosshair_prefs(ui);
+        self.mouse_prefs(ui);
     }
 
     fn drawing_prefs(&mut self, ui: &mut egui::Ui) {
-        theme::section(ui, "Grid and snapping");
-        ui.checkbox(&mut self.show_grid, "Show the grid");
-        ui.checkbox(&mut self.show_axes, "Show the origin axes");
-        ui.checkbox(&mut self.grid_snap, "Snap to the grid")
-            .on_hover_text("Arrow keys also move the selection by one grid step");
+        theme::section(ui, "While drawing");
         ui.checkbox(
             &mut self.auto_relations,
             "Add relations automatically while drawing",
         )
-        .on_hover_text("Horizontal, vertical, coincident, tangent and so on, as you snap");
+        .on_hover_text(
+            "Horizontal, vertical, coincident, tangent and so on, as you snap · Shift+Alt+R",
+        );
+        ui.checkbox(&mut self.grid_snap, "Snap to the grid")
+            .on_hover_text("Arrow keys also move the selection by one grid step · Shift+G");
+        ui.checkbox(
+            &mut self.perp_tangent_snap,
+            "Snap perpendicular and tangent",
+        )
+        .on_hover_text(
+            "Lines snap square onto lines, circles and arcs, or tangent to circles and arcs",
+        );
+        ui.horizontal(|ui| {
+            ui.label("Angle snap");
+            let mut options = vec![(None, "Off".to_owned())];
+            options.extend(crate::ANGLE_STEPS.map(|s| (Some(s), format!("{s}°"))));
+            let options: Vec<(Option<f64>, &str)> =
+                options.iter().map(|(v, l)| (*v, l.as_str())).collect();
+            if let Some(step) = theme::segmented(ui, self.angle_snap, &options) {
+                self.angle_snap = step;
+            }
+        });
         ui.checkbox(
             &mut self.round_scale,
             "Round sizes when scaling with dimensions (Alt)",
@@ -588,7 +592,7 @@ impl DriftApp {
             "A scale handle with Alt steps the picked geometry's width and height through \
              round sizes in the document's units, finer as you zoom in. Off: any size",
         );
-        theme::section(ui, "Dimensions");
+        theme::section(ui, "Picked geometry");
         ui.checkbox(
             &mut self.show_temp_dims,
             "Show temporary dimensions on the picked geometry",
@@ -599,40 +603,14 @@ impl DriftApp {
              to keep it as a dimension, and drag the square at its far end onto other geometry \
              to measure to that",
         );
-        theme::section(ui, "Closed areas");
-        ui.checkbox(
-            &mut self.editor.regions_by_layer,
-            "Find closed areas on each layer separately",
-        )
-        .on_hover_text(
-            "On: an area is closed only by curves on one layer, so furniture, notes or \
-             hatching on other layers don't cut it up or close it. Its outline must then be \
-             all on one layer (a door line on another layer leaves a wall open)",
-        );
-        ui.checkbox(
-            &mut self.editor.regions_need_fill,
-            "Pick an area only where it is filled or hatched",
-        )
-        .on_hover_text(
-            "On: a click inside a solid fill or hatch picks it, and a click inside an empty \
-             outline picks nothing (box selection starts there). Off: it picks the area, to \
-             measure it",
-        );
-        ui.label("When an edit divides a filled area");
-        let options = [(false, "Keep whole and flag"), (true, "Follow its seed")];
-        if let Some(follow) = theme::segmented(ui, self.editor.follow_divided_fills, &options) {
-            self.editor.follow_divided_fills = follow;
-        }
+        ui.checkbox(&mut self.always_endpoints, "Always show end points")
+            .on_hover_text("Off: only on hovered or picked curves · Shift+Alt+V");
         ui.label(
-            egui::RichText::new(if self.editor.follow_divided_fills {
-                "When its outline is cut, the fill or hatch takes the area its seed is in \
-                 (where it was first clicked); the rest is left empty, and a notice says so. A \
-                 curve drawn across it leaves it whole."
-            } else {
-                "The fill or hatch keeps covering the whole area and is marked \"Covers 2 \
-                 areas\". Pick it to fit it to one area, split it into one per area, or keep it \
-                 whole."
-            })
+            egui::RichText::new(
+                "What the canvas shows (grid, dimensions, relations, line weights, status \
+                 colours) is in the View menu. How a drawing's areas and fills behave is \
+                 saved with it, in File → Drawing settings.",
+            )
             .small()
             .weak(),
         );
@@ -640,7 +618,7 @@ impl DriftApp {
 
     fn mouse_prefs(&mut self, ui: &mut egui::Ui) {
         use crate::app::view::WheelMode;
-        theme::section(ui, "Scrolling");
+        theme::section(ui, "Mouse and trackpad");
         let options = WheelMode::ALL.map(|m| (m, m.label()));
         if let Some(mode) = theme::segmented(ui, self.wheel.mode, &options) {
             self.wheel.mode = mode;
@@ -665,33 +643,83 @@ impl DriftApp {
         );
     }
 
-    fn display_prefs(&mut self, ui: &mut egui::Ui) {
-        theme::section(ui, "Display");
+    /// Drawing settings → Closed areas and fills: the drawing's rules (saved with it).
+    fn rules_section(&mut self, ui: &mut egui::Ui) {
+        theme::section(ui, "Closed areas and fills");
+        let mut rules = self.editor.doc.rules();
         ui.checkbox(
-            &mut self.status_colors,
-            "Colour curves by constraint status",
-        )
-        .on_hover_text("Off: each curve's own colour, or its layer's");
-        ui.checkbox(
-            &mut self.thin_lines,
-            "Thin lines (every line one pixel wide)",
-        );
-        ui.checkbox(
-            &mut self.editor.stacked_fills,
-            "Fills cover what is beneath them",
+            &mut rules.regions_by_layer,
+            "Find closed areas on each layer separately",
         )
         .on_hover_text(
-            "On: each solid fill or hatch is drawn over everything below it, with its outline \
-             on top, as a drawing program stacks shapes. Off: every fill is drawn under every \
-             curve",
+            "On: an area is closed only by curves on one layer, so furniture, notes or \
+             hatching on other layers don't cut it up or close it. Its outline must then be \
+             all on one layer (a door line on another layer leaves a wall open)",
         );
-        ui.checkbox(&mut self.always_endpoints, "Always show end points")
-            .on_hover_text("Off: only on hovered or picked curves");
-        ui.checkbox(&mut self.show_dimensions, "Show dimensions and notes");
-        ui.checkbox(&mut self.show_relations, "Show relations");
-        ui.checkbox(&mut self.show_combs, "Curvature combs on picked curves");
-        theme::section(ui, "Crosshair");
-        self.crosshair_prefs(ui);
+        ui.checkbox(
+            &mut rules.regions_need_fill,
+            "Pick an area only where it is filled or hatched",
+        )
+        .on_hover_text(
+            "On: a click inside a solid fill or hatch picks it, and a click inside an empty \
+             outline picks nothing (box selection starts there). Off: it picks the area, to \
+             measure it",
+        );
+        ui.checkbox(&mut rules.stacked_fills, "Fills cover what is beneath them")
+            .on_hover_text(
+                "On: each solid fill or hatch is drawn over everything below it, with its \
+                 outline on top, as a drawing program stacks shapes. Off: every fill is drawn \
+                 under every curve",
+            );
+        ui.label("When an edit divides a filled area");
+        let options = [(false, "Keep whole and flag"), (true, "Follow its seed")];
+        if let Some(follow) = theme::segmented(ui, rules.follow_divided_fills, &options) {
+            rules.follow_divided_fills = follow;
+        }
+        ui.label(
+            egui::RichText::new(if rules.follow_divided_fills {
+                "When its outline is cut, the fill or hatch takes the area its seed is in \
+                 (where it was first clicked); the rest is left empty, and a notice says so. A \
+                 curve drawn across it leaves it whole."
+            } else {
+                "The fill or hatch keeps covering the whole area and is marked \"Covers 2 \
+                 areas\". Pick it to fit it to one area, split it into one per area, or keep it \
+                 whole."
+            })
+            .small()
+            .weak(),
+        );
+        let units = self.editor.doc.units();
+        theme::row(ui, "Gaps up to", |ui| {
+            let per = units.length.mm_per_unit();
+            let mut shown = rules.gap_tolerance / per;
+            if ui
+                .add(
+                    egui::DragValue::new(&mut shown)
+                        .speed(0.01)
+                        .range(0.0001..=1000.0)
+                        .max_decimals(4)
+                        .suffix(format!(" {}", units.length.symbol())),
+                )
+                .on_hover_text("Check sketch takes ends closer than this to be meant to meet")
+                .changed()
+            {
+                rules.gap_tolerance = shown * per;
+            }
+        });
+        self.editor.change_rules(|r| *r = rules);
+        let same = rules == self.new_rules;
+        if ui
+            .add_enabled(!same, egui::Button::new("Use for new drawings"))
+            .on_hover_text(if same {
+                "New drawings start with these"
+            } else {
+                "Start new drawings (and older files) with these, on this computer"
+            })
+            .clicked()
+        {
+            self.new_rules = rules;
+        }
     }
 }
 
@@ -701,37 +729,22 @@ pub(crate) enum PrefsPage {
     #[default]
     General,
     Drawing,
-    Display,
-    Mouse,
     #[cfg(not(target_arch = "wasm32"))]
     Updates,
 }
 
 impl PrefsPage {
     #[cfg(not(target_arch = "wasm32"))]
-    const ALL: [PrefsPage; 5] = [
-        PrefsPage::General,
-        PrefsPage::Drawing,
-        PrefsPage::Display,
-        PrefsPage::Mouse,
-        PrefsPage::Updates,
-    ];
+    const ALL: [PrefsPage; 3] = [PrefsPage::General, PrefsPage::Drawing, PrefsPage::Updates];
     #[cfg(target_arch = "wasm32")]
-    const ALL: [PrefsPage; 4] = [
-        PrefsPage::General,
-        PrefsPage::Drawing,
-        PrefsPage::Display,
-        PrefsPage::Mouse,
-    ];
+    const ALL: [PrefsPage; 2] = [PrefsPage::General, PrefsPage::Drawing];
 
     fn label(self) -> &'static str {
         match self {
             PrefsPage::General => "General",
             PrefsPage::Drawing => "Drawing aids",
-            PrefsPage::Display => "Display",
-            PrefsPage::Mouse => "Mouse and trackpad",
             #[cfg(not(target_arch = "wasm32"))]
-            PrefsPage::Updates => "Updates",
+            PrefsPage::Updates => "Updates & Labs",
         }
     }
 }

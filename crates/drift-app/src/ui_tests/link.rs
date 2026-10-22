@@ -235,6 +235,10 @@ fn preferences_show_the_server_and_copy_its_config() {
     h.state_mut().show_settings = true;
     h.run();
     h.run();
+    // Under Labs.
+    h.get_by_label("Updates & Labs").click();
+    h.run();
+    h.run();
     let shown = server.to_string_lossy().into_owned();
     assert!(
         h.query_by_label(&shown).is_some(),

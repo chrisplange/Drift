@@ -272,7 +272,7 @@ pub struct DriftApp {
     dimension_text: std::collections::HashMap<ConstraintId, String>,
     /// A dimension field to focus next frame (e.g. right after creating the dimension).
     focus_dimension: Option<ConstraintId>,
-    /// Results of Help → Run solver benchmark.
+    /// Results of Help → Run solver benchmark (in development builds).
     benchmark: Option<Vec<String>>,
     show_dimensions: bool,
     show_relations: bool,
@@ -373,9 +373,12 @@ pub struct DriftApp {
     temp_dims: app::temp_dims_ui::TempDims,
     /// The Check sketch window, while it is open.
     sketch_check: Option<app::checker_ui::SketchCheck>,
-    /// How far apart two ends may be for the sketch checker to take them as meant to meet
-    /// (mm).
-    gap_tolerance: f64,
+    /// The rules a new drawing starts with (how its areas and fills behave, its gap
+    /// tolerance), and those an older file is given: kept on this computer.
+    new_rules: drift_core::DrawingRules,
+    /// The View menu's switches as of the last frame, to say in the status bar when one
+    /// changes (by a key, a menu, the status bar or the palette).
+    view_seen: Option<[bool; app::document::VIEW_FLAGS]>,
     /// The name typed for a new block.
     new_block_name: String,
     /// The Blocks tab's search, over the drawing's blocks and the library.
@@ -574,7 +577,8 @@ impl DriftApp {
             show_hidden_annotations: false,
             show_temp_dims: true,
             temp_dims: Default::default(),
-            gap_tolerance: crate::checker::DEFAULT_TOLERANCE,
+            new_rules: drift_core::DrawingRules::default(),
+            view_seen: None,
             new_block_name: String::new(),
             block_search: String::new(),
             library_category: Some(library::Category::Doors),
@@ -823,8 +827,8 @@ const SHORTCUTS: &[(&str, &[(&str, &str)])] = &[
             ),
             (
                 "Click inside a fill or hatch",
-                "Select it (inside an empty outline too, with Preferences → Closed areas → \
-                 pick only where filled turned off: area, perimeter and centroid)",
+                "Select it (inside an empty outline too, with Drawing settings → Closed areas \
+                 and fills → pick only where filled turned off: area, perimeter and centroid)",
             ),
             ("Click near a line's middle", "Pick its midpoint"),
             (
@@ -1086,6 +1090,7 @@ impl eframe::App for DriftApp {
         self.dock_drag(&ctx);
 
         self.dialogs(&ctx);
+        self.announce_view_changes(now);
         self.update_title(&ctx);
         self.text_was_focused = ctx.text_edit_focused();
         // Panels drawn earlier in the frame may show stale state if a later panel (e.g. the

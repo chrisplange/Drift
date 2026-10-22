@@ -65,7 +65,7 @@ choices:
   for updates…** shows a skipped one again.
 
 To check at any time, use **Help → Check for updates…**. To stop the check at start, turn
-off **Edit → Preferences → Updates → Check for updates when Drift starts**. The check only
+off **Edit → Preferences → Updates & Labs → Check for updates when Drift starts**. The check only
 asks GitHub (`api.github.com`) for the list of Drift releases. Nothing about you or your
 drawings is sent.
 
@@ -99,7 +99,7 @@ Drift opens with a start panel over an empty sketch.
 - **Recent** lists the sketches you've opened or saved. **File → Open recent** keeps ten.
 
 The panel also goes as soon as you pick a tool or click the canvas. To see it again, use
-**Edit → Preferences… → General → Show the start panel**.
+**File → Show the start panel**.
 
 > Drift restores your last session when it starts, so after the first run you'll usually
 > see your previous sketch instead.
@@ -174,8 +174,8 @@ Ctrl+L shows or hides the **Layers** panel on its own.
 | Zoom to a set size | Click the zoom percentage in the status bar: fit, selection, 25% to 400%, and **100% (life size)**. |
 
 Drift tells a mouse wheel from a trackpad by how it scrolls. If it guesses wrong (a
-free-spinning wheel, or a touch mouse), set **Edit → Preferences… → Mouse and trackpad →
-Scrolling** to **Zoom** or **Pan**. With **Pan**, Ctrl+scroll zooms.
+free-spinning wheel, or a touch mouse), set **Edit → Preferences… → General → Mouse and
+trackpad** to **Zoom** or **Pan**. With **Pan**, Ctrl+scroll zooms.
 
 Ctrl+' hides or shows the grid.
 

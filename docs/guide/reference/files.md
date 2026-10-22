@@ -19,8 +19,10 @@ Snapshots aren't saved in the file.
 
 ## Versions
 
-The file records a format version. This build writes version 38, in which shapes drawn
-as one (paths) are recorded and a fill can belong to one. A file from before version 27, when views came to belong to the
+The file records a format version. This build writes version 39, which keeps the drawing's
+own rules for closed areas and fills (see
+[Drawing settings](preferences.md#closed-areas-and-fills)); version 38 recorded shapes drawn
+as one (paths). A file from before version 39 opens with the rules new drawings start with. A file from before version 27, when views came to belong to the
 drawing and sheets to place them, opens with each of its sheets' views made a view of its
 own.
 

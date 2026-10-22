@@ -351,6 +351,31 @@ fn files_round_trip_and_stay_in_the_root() {
 }
 
 #[test]
+fn a_drawings_rules_travel_with_it_and_the_assistants_picking_does_not() {
+    let dir = std::env::temp_dir().join(format!("drift-agent-rules-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut s = Session::new().with_root(dir.clone());
+    rough_room(&mut s);
+    // The assistant picks empty areas, but that isn't the drawing's rule.
+    assert!(!s.editor.regions_need_fill());
+    assert!(s.editor.doc.rules().regions_need_fill);
+    s.editor.change_rules(|r| {
+        r.stacked_fills = false;
+        r.gap_tolerance = 2.0;
+    });
+    ok(&mut s, "save_drawing", json!({ "path": "rules.drift" }));
+    let text = std::fs::read_to_string(dir.join("rules.drift")).unwrap();
+    assert!(!text.contains("pick_filled_only"), "{text}");
+    let mut t = Session::new().with_root(dir.clone());
+    ok(&mut t, "open_drawing", json!({ "path": "rules.drift" }));
+    let rules = t.editor.doc.rules();
+    assert!(!rules.stacked_fills && rules.regions_need_fill);
+    assert_eq!(rules.gap_tolerance, 2.0);
+    assert!(!t.editor.regions_need_fill(), "still picks empty areas");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn every_tool_has_an_object_schema_and_is_dispatched() {
     let mut s = Session::new();
     for t in tools() {

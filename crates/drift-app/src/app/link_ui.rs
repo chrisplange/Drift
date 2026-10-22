@@ -147,16 +147,21 @@ impl DriftApp {
                  undo steps like yours. Click to disconnect it."
             } else {
                 "AI assistants (through drift-mcp) can connect to edit this drawing. Turn it \
-                 off in Preferences → General."
+                 off in Preferences → Updates & Labs."
             });
         if click.clicked() && connected > 0 {
             server.disconnect_all();
         }
     }
 
-    /// Preferences → General → AI assistants.
+    /// Preferences → Updates & Labs → Labs: the AI link.
     pub(crate) fn link_prefs(&mut self, ui: &mut egui::Ui) {
-        theme::section(ui, "AI assistants");
+        theme::section(ui, "Labs");
+        ui.label(
+            egui::RichText::new("Still taking shape: it may change between versions.")
+                .small()
+                .weak(),
+        );
         ui.checkbox(&mut self.ai_link, "Let AI assistants edit the open drawing")
             .on_hover_text(
                 "Claude and other assistants connected through drift-mcp work on the drawing \

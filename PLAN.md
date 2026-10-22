@@ -1181,7 +1181,7 @@ written but hasn't run yet (no GitHub repo).*
     an opacity, and Visible / Snap / Locked switches.
   - Underlays can't be selected or edited. They print and export nowhere.
 - **Import:**
-  - File → Import underlay… (or opening any PDF) takes a PDF or DXF file.
+  - File → Import underlay… (or opening any PDF) takes a PDF or DXF file. (Later merged into File → Import…: one dialog for geometry or underlay, every format.)
   - PDF: a pure-Rust reader (`lopdf` plus our own content interpreter) follows the
     transforms (`cm`, `q`/`Q`), lines, curves (flattened), rectangles and closed paths
     through nested form XObjects. Filled shapes come in as their outlines. Text and images

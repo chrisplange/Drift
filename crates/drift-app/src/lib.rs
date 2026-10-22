@@ -126,6 +126,8 @@ enum Pending {
     Example,
     /// Open the nth recent file.
     Recent(usize),
+    /// Open the dropped drawing (`open_as_new`) as a new drawing.
+    OpenDropped,
     /// Close the window.
     Quit,
     /// Close the window and install the downloaded update.
@@ -414,12 +416,16 @@ pub struct DriftApp {
     always_endpoints: bool,
     /// Lines are drawn at multiples of this many degrees (angle snapping), if on.
     angle_snap: Option<f64>,
-    /// The next opened file becomes an underlay (File → Import underlay).
-    import_as_underlay: bool,
-    /// A multi-page PDF waiting for its page to be chosen.
-    pending_pdf: Option<app::underlays_ui::PendingPdf>,
-    /// An SVG or PDF file waiting for the import dialog.
+    /// How the next file opened to import comes in, when that was chosen before it was
+    /// picked (the Underlays section's Import…, or a file dropped on the window).
+    import_as: Option<app::import_ui::ImportAs>,
+    /// A file waiting for the import dialog.
     pending_import: Option<app::import_ui::PendingImport>,
+    /// A drawing dropped on the window (or passed on the command line), asking whether to
+    /// open it as a new drawing, import it or trace over it.
+    dropped: Option<FilePath>,
+    /// A dropped drawing to open as a new drawing once unsaved changes are dealt with.
+    open_as_new: Option<FilePath>,
     /// Maximise the window once its first frame is drawn (see [`DriftApp::maximize_when_shown`]).
     maximize: bool,
     /// Memory in use (bytes) as of the last check, when that was, and whether the user has
@@ -596,9 +602,10 @@ impl DriftApp {
             text_blink: 0.0,
             always_endpoints: false,
             angle_snap: None,
-            import_as_underlay: false,
-            pending_pdf: None,
+            import_as: None,
             pending_import: None,
+            dropped: None,
+            open_as_new: None,
             maximize: false,
             memory: (0, f64::NEG_INFINITY, false),
             soak: soak::Soak::from_env(),
@@ -1030,7 +1037,7 @@ impl eframe::App for DriftApp {
         self.updates_tick(&ctx, now);
         #[cfg(all(not(target_arch = "wasm32"), not(feature = "demo")))]
         self.link_tick(&ctx, now);
-        // A sketch dropped on the window opens.
+        // A sketch dropped on the window opens; another drawing asks how it comes in.
         let dropped = ctx.input(|i| i.raw.dropped_files.first().map(|f| f.path().to_owned()));
         if let Some(path) = dropped
             && cfg!(not(target_arch = "wasm32"))

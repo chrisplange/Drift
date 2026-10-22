@@ -10,7 +10,7 @@ use std::io::Cursor;
 
 use acadrust::{DwgReadOptions, DwgReader, DxfWriter};
 
-use crate::dxf_import::{DxfImport, decode, read as read_dxf};
+use crate::dxf_import::{DxfImport, decode, read_at as read_dxf};
 
 /// Whether `bytes` look like a DWG file (they start with its version, `AC10..`).
 pub fn is_dwg(bytes: &[u8]) -> bool {
@@ -71,8 +71,13 @@ pub fn to_dxf(bytes: &[u8]) -> Result<(String, bool), String> {
 /// Read a DWG file. Files that don't say their units are read in `default_mm_per_unit`
 /// (the document's display unit).
 pub fn read(bytes: &[u8], default_mm_per_unit: f64) -> Result<DxfImport, String> {
+    read_at(bytes, default_mm_per_unit, 1.0)
+}
+
+/// Read a DWG file as [`read`] does, drawn at 1 : `drawn_at`.
+pub fn read_at(bytes: &[u8], default_mm_per_unit: f64, drawn_at: f64) -> Result<DxfImport, String> {
     let (text, partial) = to_dxf(bytes)?;
-    let mut import = read_dxf(&text, default_mm_per_unit)?;
+    let mut import = read_dxf(&text, default_mm_per_unit, drawn_at)?;
     if partial {
         import.notes.insert(
             0,

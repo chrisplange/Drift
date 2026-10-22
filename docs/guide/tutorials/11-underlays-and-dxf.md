@@ -1,11 +1,15 @@
 # Underlays and DXF import
 
-There are two ways to bring another program's drawing into Drift:
+Every drawing from another program comes in one way: **File → Import…**. It takes DWG,
+DXF, SVG, PDF and Illustrator (`.ai`) files, and its dialog asks how the drawing comes in:
 
-- **As an underlay:** a PDF or DXF placed behind your sketch to trace over. You can snap to
+- **As an underlay:** a drawing placed behind your sketch to trace over. You can snap to
   it, but not edit it, and it never prints.
-- **As geometry:** a DXF whose lines, arcs, text, hatches and blocks become ordinary Drift
-  geometry you can edit.
+- **As geometry:** its lines, arcs, text, hatches and blocks become ordinary Drift geometry
+  you can edit.
+
+Either way, the dialog has the same scale controls for every format (see
+[The import dialog](#the-import-dialog)).
 
 **What you'll do:** trace a room from a 1:50 PDF plan, then look at what a DXF import gives
 you.
@@ -16,23 +20,28 @@ Time: about 10 minutes.
 
 ### 1. Import the PDF
 
-1. Choose **File → Import underlay…** (or **Import underlay…** in the **Layers** panel)
-   and pick a PDF. You can also drop a PDF on Drift's window.
-2. For a PDF of several pages, choose the page.
+1. Choose **File → Import…** and pick a PDF. **Import…** in the **Underlays** section of
+   the **Layers** panel does the same, with the dialog already set to **Underlay to
+   trace**. You can also drop a PDF on Drift's window and choose **Underlay to trace**.
+2. In the dialog, choose **Underlay to trace**, and the page for a PDF of several pages.
+3. Set **Drawn at** to the scale the plan was drawn at, such as **1 : 50** or
+   1/4" = 1'-0". Drift suggests one where it can read it from the drawing.
+4. Click **Import**.
 
-The page comes in at its paper size, with its lower-left corner on the origin, drawn faded
+The page comes in at that scale, with its lower-left corner on the origin, drawn faded
 grey behind the sketch. The **Layers** panel opens with the underlay picked.
 
 PDF underlays read the vector drawing: lines, curves, rectangles and filled shapes (as
-their outlines). Text and images are skipped. Scanned (raster) PDFs have nothing to read.
+their outlines), and its pictures unless you turn off **Bring in images as pictures**. Text
+is skipped. A scanned PDF comes in as its picture.
 
-### 2. Set its scale
+### 2. Check or correct its scale
 
-A plan drawn at 1:50 comes in 50 times too small. Either:
+If you didn't know the scale, the plan may be the wrong size. Either:
 
 - **Pick the scale:** in the underlay's **Scale** menu, choose the scale it was drawn at,
-  such as **1 : 50** or 1/4" = 1'-0". Or
-- **Calibrate it:**
+  or type it after **1 :**. Or
+- **Calibrate it** (or tick **Then calibrate** in the import dialog to go straight to it):
   1. Click **Calibrate…**.
   2. Click a point on the underlay whose distance you know, such as a wall end. It snaps.
   3. Click the other end.
@@ -56,7 +65,8 @@ Each underlay in the **Layers** panel has:
 
 - Switches for visible, snap and locked.
 - **Opacity** and **Colour** (grey by default).
-- **Scale**, **Position** (X, Y) and **Angle** (with 0, 90, 180 and 270 buttons).
+- **Scale** (the same 1 : n menu as the import dialog, for every format), **Position**
+  (X, Y) and **Angle** (with 0, 90, 180 and 270 buttons).
 - **Move…**: click a point on the underlay, then where it should go.
 - **Zoom to**, and **×** to delete it.
 - **Convert to geometry**: turn the underlay into lines, arcs and circles on the current
@@ -66,10 +76,13 @@ Underlays are kept inside the `.drift` file. They never print or export.
 
 ## Part 2: import a DXF as geometry
 
-1. Choose **File → Import…** and pick the file. Or drop a DXF on the window.
-2. The drawing is added to the open sketch, in its own units (read from the file; a file
+1. Choose **File → Import…** and pick the file. Or drop a DXF on the window and choose
+   **Import as geometry**.
+2. In the dialog, keep **Editable geometry**. **Drawn at** is 1 : 1 for a drawing made full
+   size, as CAD drawings usually are; set it for one drawn at paper size. Click **Import**.
+3. The drawing is added to the open sketch, in its own units (read from the file; a file
    that doesn't say is read in your display unit).
-3. A report window lists what came in, anything left out, and anything read with changes.
+4. A report window lists what came in, anything left out, and anything read with changes.
    **Copy this report** copies it, and **Check sketch…** looks for gaps (see
    [Checking a sketch](12-sketch-checker.md)).
 
@@ -105,8 +118,14 @@ copy of the artwork Illustrator saves in them, so **Create PDF Compatible File**
 on when the file was saved (it is unless someone turned it off). Files from Illustrator 8 and
 earlier aren't read.
 
-1. Choose **File → Import…** and pick an SVG, PDF or `.ai` file. Or drop one on the window.
-2. In the dialog, choose:
+1. Choose **File → Import…** and pick an SVG, PDF or `.ai` file. Or drop one on the window
+   and choose **Import as geometry** or **Underlay to trace**.
+2. In the import dialog, choose the options below.
+3. A report lists what came in and anything left out.
+
+### The import dialog
+
+The same dialog opens for every format. It has:
    - **Editable geometry** or **Underlay to trace**.
    - The **page** (an **artboard**, for an Illustrator file).
    - **Drawn at**: the scale the drawing is at on its paper. At 1:50, 1 mm on the paper is
@@ -120,13 +139,30 @@ earlier aren't read.
    - **Then calibrate**, if you don't know the scale or want to check it. Once it's in,
      click two points on it (a wall's ends, say) and type their real distance: the import
      is scaled to fit, about the first point.
+   - **Bring in images as pictures**, for a PDF or Illustrator file with photos or scans in
+     it (on unless you turn it off): they come in as pictures on an underlay beneath the
+     drawing.
    - What to do with **edges of shapes that are filled but not outlined**: construction
      (they shape the fill and don't print, so it looks as it did) or lines (they print).
-   Under **Before you import**, the dialog lists what won't come across as it looks
-   (gradients, transparency, images left out, clipping it couldn't apply) and warns about a
-   very large drawing. Above about 400,000 curves it won't import as geometry: bring it in
-   as an underlay, or split it first.
-3. A report lists what came in and anything left out.
+
+Under **Before you import**, the dialog lists what won't come across as it looks
+(gradients, transparency, images left out, clipping it couldn't apply) and warns about a
+very large drawing. Above about 400,000 curves it won't import as geometry: bring it in as
+an underlay, or split it first.
+
+A DWG or DXF has no pages and no suggested scale (it is usually full size, 1 : 1), but
+**Drawn at** and **Then calibrate** work the same way.
+
+### Dropping a file on the window
+
+Drop a `.drift` file on Drift's window to open it. Drop a DWG, DXF, SVG, PDF or `.ai` file
+and Drift asks how it should come in:
+
+- **Open as new drawing:** a new drawing of its own, with the file's contents as geometry
+  at the defaults (the first page, at the scale Drift suggests). If the drawing open now
+  has unsaved changes, Drift asks first.
+- **Import as geometry** or **Underlay to trace:** into the drawing open now, through the
+  import dialog.
 
 What comes in:
 
@@ -148,7 +184,7 @@ out, strokes are trimmed exactly where they leave it, and fills are cut to recta
 other convex clips. A fill crossing a clip of another shape comes in whole, and the dialog
 says so.
 
-What doesn't come across: images, gradients (they come in as their first colour, so
+What doesn't come across: an SVG's images, gradients (they come in as their first colour, so
 presentation artwork will look different), transparency, blend modes and soft masks. Illustrator's brushes, width
 profiles and effects come in as the filled shapes they draw, and text converted to outlines
 comes in as shapes. An SVG
@@ -160,11 +196,12 @@ them), and curves that meet are joined into one path.
 
 ## What you learned
 
-- **File → Import underlay…** puts a PDF or DXF behind the sketch to trace; calibrate it
-  from two points and a known distance.
-- **File → Import…** brings a DXF in as editable geometry, with a report of what changed.
-- An SVG or PDF comes in the same way, as geometry or an underlay, at the scale it was drawn
-  at or calibrated from two points.
+- **File → Import…** is the one way in for DWG, DXF, SVG, PDF and Illustrator files: as
+  editable geometry or as an underlay to trace, with a report of what changed.
+- Every format gets the same scale controls: **Drawn at** 1 : n, a suggested scale where
+  Drift can read one, and **Then calibrate** from two points and a known distance.
+- A file dropped on the window asks whether to open it as a new drawing, import it or trace
+  over it.
 
 ## Next
 

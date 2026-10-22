@@ -603,44 +603,6 @@ impl DriftApp {
         self.not_in_demo("Printing");
     }
 
-    /// Add a DXF file to the document, as one undo step: its curves, text, hatches, blocks
-    /// and layouts. What came in, and what couldn't, is listed in a report that stays up
-    /// until it is closed.
-    pub(crate) fn import_dxf(&mut self, name: &str, text: &str, now: f64) {
-        let unit = self.editor.doc.units().length.mm_per_unit();
-        self.import_cad(name, drift_io::dxf::read(text, unit), "Import DXF", now);
-    }
-
-    /// Add a DWG file to the document, as [`Self::import_dxf`] does a DXF file.
-    pub(crate) fn import_dwg(&mut self, name: &str, bytes: &[u8], now: f64) {
-        let unit = self.editor.doc.units().length.mm_per_unit();
-        self.import_cad(
-            name,
-            crate::underlays::read_dwg(bytes, unit),
-            "Import DWG",
-            now,
-        );
-    }
-
-    fn import_cad(
-        &mut self,
-        name: &str,
-        read: Result<drift_io::dxf::DxfImport, String>,
-        label: &str,
-        now: f64,
-    ) {
-        match read {
-            Ok(import) => {
-                self.abort_operation();
-                self.editor.doc.begin();
-                let report = drift_io::dxf::add_to_document(&mut self.editor.doc, &import);
-                self.editor.commit(label);
-                self.report_import(name, &report, now);
-            }
-            Err(e) => self.set_status(format!("Could not import {name}: {e}"), true, now),
-        }
-    }
-
     /// Say what an import brought in; what it left out or changed stays up in a report.
     pub(crate) fn report_import(
         &mut self,

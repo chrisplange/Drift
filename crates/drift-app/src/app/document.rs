@@ -250,13 +250,20 @@ impl DriftApp {
         self.recent.truncate(MAX_RECENT);
     }
 
-    /// Open a sketch by its path (the command line, or a file dropped on the window).
+    /// Open a sketch by its path (the command line, or a file dropped on the window). A
+    /// drawing Import takes asks first whether to open it as a new drawing, import it into
+    /// this one or trace over it.
     pub fn open_file(&mut self, path: FilePath) {
         if is_sketch_file(&path) {
             self.remember(path);
             self.request(Pending::Recent(0));
+        } else if path
+            .file_name()
+            .is_some_and(|n| app::import_ui::importable(&n.to_string_lossy()))
+        {
+            self.dropped = Some(path);
         } else {
-            // A drawing in another format is brought into the open sketch, which stays.
+            // Fonts and hatch patterns go into the open sketch, which stays.
             self.files.open_path(&path);
         }
     }
@@ -305,6 +312,22 @@ impl DriftApp {
             Pending::Open => self.files.open(DRIFT_FILE),
             Pending::Recent(i) => {
                 if let Some(path) = self.recent.get(i).cloned() {
+                    self.files.open_path(&path);
+                }
+            }
+            Pending::OpenDropped => {
+                if let Some(path) = self.open_as_new.take() {
+                    let stem = path
+                        .file_stem()
+                        .map_or_else(|| "Untitled".into(), |s| s.to_string_lossy());
+                    self.replace_document(
+                        Document::new(),
+                        format!("{stem}.{}", drift_io::EXTENSION),
+                        None,
+                        Metadata::default(),
+                        true,
+                    );
+                    self.import_as = Some(app::import_ui::ImportAs::NewDrawing);
                     self.files.open_path(&path);
                 }
             }
@@ -454,28 +477,14 @@ impl DriftApp {
                     contents,
                 } => {
                     let lower = name.to_ascii_lowercase();
-                    // From Import underlay: an underlay. Otherwise a PDF (by its content, not
-                    // its name) or an SVG asks how it should come in.
-                    let as_underlay = std::mem::take(&mut self.import_as_underlay);
-                    let pdf = contents.starts_with(b"%PDF");
-                    let cad = lower.ends_with(".dxf") || lower.ends_with(".dwg");
-                    if as_underlay && (pdf || cad || lower.ends_with(".svg")) {
-                        self.import_underlay_file(&name, contents, now);
-                        continue;
-                    }
-                    if pdf || lower.ends_with(".svg") || lower.ends_with(".ai") {
-                        self.begin_vector_import(&name, contents, now);
+                    // A drawing to import (a PDF by its content, not its name) asks how it
+                    // should come in, unless that was chosen before it was picked.
+                    let import_as = self.import_as.take();
+                    if contents.starts_with(b"%PDF") || app::import_ui::importable(&name) {
+                        self.begin_import(&name, contents, import_as, now);
                         continue;
                     }
                     let text = String::from_utf8_lossy(&contents);
-                    if lower.ends_with(".dxf") {
-                        self.import_dxf(&name, &drift_io::dxf::decode(&contents), now);
-                        continue;
-                    }
-                    if lower.ends_with(".dwg") {
-                        self.import_dwg(&name, &contents, now);
-                        continue;
-                    }
                     if lower.ends_with(".ttf") || lower.ends_with(".otf") {
                         match self.editor.add_font_file(contents) {
                             Ok(family) => self.set_status(

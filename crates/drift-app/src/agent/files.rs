@@ -212,9 +212,16 @@ pub(super) fn import(s: &mut Session, a: &Value) -> Res {
                 let art = drift_io::svg_import::read(&text(), &stem)?;
                 ed.import_svg_underlay(&name, &art, scale)?
             }
-            "pdf" | "ai" => ed.import_pdf_underlay(&name, &bytes, page, scale)?,
-            "dxf" => ed.import_dxf_underlay(&name, &text(), unit * scale)?,
-            "dwg" => ed.import_dwg_underlay(&name, &bytes, unit * scale)?,
+            "pdf" | "ai" => ed.import_pdf_underlay(&name, &bytes, page, scale, true)?,
+            // Read at full size, then drawn at 1 : scale, as the import dialog does it.
+            "dxf" => {
+                let import = drift_io::dxf::read(&text(), unit)?;
+                ed.import_cad_underlay(&name, &import, scale)?
+            }
+            "dwg" => {
+                let import = crate::underlays::read_dwg(&bytes, unit)?;
+                ed.import_cad_underlay(&name, &import, scale)?
+            }
             other => {
                 return Err(format!(
                     "can't import .{other} files (svg, pdf, ai, dxf or dwg)"
@@ -245,8 +252,8 @@ pub(super) fn import(s: &mut Session, a: &Value) -> Res {
             drift_io::vector::to_import(&art, &options)
         }
         // A DXF says its units (bare ones are read in the drawing's); `scale` multiplies.
-        "dxf" => drift_io::dxf::read(&text(), unit).map_err(|e| e.to_string())?,
-        "dwg" => crate::underlays::read_dwg(&bytes, unit)?,
+        "dxf" => drift_io::dxf::read_at(&text(), unit, scale)?,
+        "dwg" => crate::underlays::read_dwg_at(&bytes, unit, scale)?,
         other => {
             return Err(format!(
                 "can't import .{other} files (svg, pdf, ai, dxf or dwg)"
@@ -269,13 +276,6 @@ pub(super) fn import(s: &mut Session, a: &Value) -> Res {
         .copied()
         .filter(|id| ed.doc.get(*id).is_some_and(|e| e.kind.is_point()))
         .collect();
-    if (ext == "dxf" || ext == "dwg") && scale != 1.0 {
-        for p in &points {
-            if let Ok(at) = ed.doc.point(*p) {
-                let _ = ed.doc.set_point(*p, at * scale);
-            }
-        }
-    }
     if offset != DVec2::ZERO {
         ed.doc.translate(points.iter().copied(), offset);
     }

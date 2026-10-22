@@ -401,6 +401,7 @@ struct RulesRecord {
 
 impl RulesRecord {
     /// Only what differs from the defaults.
+    #[cfg(not(feature = "demo"))]
     fn from_rules(rules: DrawingRules) -> Self {
         let d = DrawingRules::default();
         let differs = |a: bool, b: bool| (a != b).then_some(a);

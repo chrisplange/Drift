@@ -298,15 +298,19 @@ impl Editor {
     }
 
     /// Import page `page` of a PDF as an underlay drawn at 1 : `scale` (1 for paper size), its
-    /// lower-left corner at the origin.
+    /// lower-left corner at the origin, with its pictures or without them.
     pub fn import_pdf_underlay(
         &mut self,
         name: &str,
         bytes: &[u8],
         page: u32,
         scale: f64,
+        images: bool,
     ) -> Result<UnderlayReport, String> {
-        let read = drift_io::pdf_import::read_page(bytes, page)?;
+        let mut read = drift_io::pdf_import::read_page(bytes, page)?;
+        if !images {
+            read.images.clear();
+        }
         if read.prims.is_empty() && read.images.is_empty() {
             return Err(format!(
                 "page {page} of {name} has nothing Drift can show (no drawing or pictures)"
@@ -354,7 +358,7 @@ impl Editor {
         mm_per_unit: f64,
     ) -> Result<UnderlayReport, String> {
         let import = drift_io::dxf::read(text, mm_per_unit).map_err(|e| e.to_string())?;
-        self.import_cad_underlay(name, &import)
+        self.import_cad_underlay(name, &import, 1.0)
     }
 
     /// Import a DWG file as an underlay (in its own units, read as `mm_per_unit` when it
@@ -366,21 +370,23 @@ impl Editor {
         mm_per_unit: f64,
     ) -> Result<UnderlayReport, String> {
         let import = read_dwg(bytes, mm_per_unit)?;
-        self.import_cad_underlay(name, &import)
+        self.import_cad_underlay(name, &import, 1.0)
     }
 
-    /// A DXF or DWG drawing's curves as an underlay.
-    fn import_cad_underlay(
+    /// A DXF or DWG drawing's curves (as read, in mm) as an underlay drawn at 1 : `scale`.
+    pub fn import_cad_underlay(
         &mut self,
         name: &str,
         import: &drift_io::dxf::DxfImport,
+        scale: f64,
     ) -> Result<UnderlayReport, String> {
         let prims = drift_io::dxf::underlay_prims(import);
         if prims.is_empty() {
             return Err(format!("{name} has no lines, arcs or circles"));
         }
         let stem = name.rsplit_once('.').map_or(name, |(s, _)| s);
-        let u = Underlay::new(stem, name, prims);
+        let mut u = Underlay::new(stem, name, prims);
+        u.scale = scale;
         let curves = u.curve_count();
         let skipped: Vec<String> = import
             .skipped
@@ -615,14 +621,27 @@ impl Editor {
 }
 
 /// Read a DWG drawing, like a DXF one (see `drift_io::dwg_import`).
-#[cfg(feature = "dwg")]
 pub fn read_dwg(bytes: &[u8], mm_per_unit: f64) -> Result<drift_io::dxf::DxfImport, String> {
-    drift_io::dwg_import::read(bytes, mm_per_unit)
+    read_dwg_at(bytes, mm_per_unit, 1.0)
+}
+
+/// Read a DWG drawing drawn at 1 : `drawn_at`.
+#[cfg(feature = "dwg")]
+pub fn read_dwg_at(
+    bytes: &[u8],
+    mm_per_unit: f64,
+    drawn_at: f64,
+) -> Result<drift_io::dxf::DxfImport, String> {
+    drift_io::dwg_import::read_at(bytes, mm_per_unit, drawn_at)
 }
 
 /// Read a DWG drawing: not in builds without the `dwg` feature.
 #[cfg(not(feature = "dwg"))]
-pub fn read_dwg(_bytes: &[u8], _mm_per_unit: f64) -> Result<drift_io::dxf::DxfImport, String> {
+pub fn read_dwg_at(
+    _bytes: &[u8],
+    _mm_per_unit: f64,
+    _drawn_at: f64,
+) -> Result<drift_io::dxf::DxfImport, String> {
     Err("this build of Drift can't read DWG files; save the drawing as DXF".into())
 }
 
@@ -790,7 +809,9 @@ mod tests {
         );
         let bytes = drift_io::pdf::write(&[d.clone(), d.clone()], "Plan");
         let mut ed = Editor::default();
-        let report = ed.import_pdf_underlay("plan.pdf", &bytes, 2, 1.0).unwrap();
+        let report = ed
+            .import_pdf_underlay("plan.pdf", &bytes, 2, 1.0, true)
+            .unwrap();
         assert_eq!(report.page, Some((2, 2)));
         let u = ed.doc.underlay(report.id).unwrap();
         assert_eq!(u.name, "plan p2");
@@ -798,7 +819,10 @@ mod tests {
         let s = u.shapes();
         let Shape::Line { a, b } = s[0] else { panic!() };
         assert!((a.distance(b) - 100.0).abs() < 0.01);
-        assert!(ed.import_pdf_underlay("plan.pdf", &bytes, 3, 1.0).is_err());
+        assert!(
+            ed.import_pdf_underlay("plan.pdf", &bytes, 3, 1.0, true)
+                .is_err()
+        );
 
         let dxf = drift_io::dxf::write(&d, drift_io::dxf::DxfUnits::MM);
         let report = ed.import_dxf_underlay("plan.dxf", &dxf, 1.0).unwrap();

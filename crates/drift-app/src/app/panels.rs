@@ -344,21 +344,12 @@ impl DriftApp {
                 if ui
                     .button("Import…")
                     .on_hover_text(
-                        "Add a DWG, DXF, SVG, PDF or Illustrator drawing to the sketch: its curves, \
-                         fills, text and layers, to edit",
+                        "Bring in a DWG, DXF, SVG, PDF or Illustrator drawing: as curves, fills \
+                         and text to edit, or as an underlay to trace over",
                     )
                     .clicked()
                 {
-                    self.files.open(app::sheets_ui::IMPORT_FILE);
-                }
-                if ui
-                    .button("Import underlay…")
-                    .on_hover_text(
-                        "A DWG, DXF, SVG, PDF or Illustrator drawing to trace over (Layers panel)",
-                    )
-                    .clicked()
-                {
-                    self.pick_underlay_file();
+                    self.pick_import_file(false);
                 }
                 let painter = ui.painter().clone();
                 ui.menu_button("Export", |ui| {

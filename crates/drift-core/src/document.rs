@@ -3700,6 +3700,8 @@ impl History {
         if tx.is_empty() {
             return;
         }
+        // A change made now can't be redone over.
+        self.redo.clear();
         match self.undo.last_mut() {
             Some(last) => {
                 for (key, before, after) in tx.changes {

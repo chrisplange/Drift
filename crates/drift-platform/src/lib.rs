@@ -45,6 +45,8 @@ pub enum FileEvent {
         name: String,
     },
     Failed(String),
+    /// The user closed the file picker without choosing a file.
+    Cancelled,
 }
 
 /// A file type filter for dialogs, e.g. `("Drift sketch", &["drift"])`.
@@ -91,6 +93,7 @@ impl Files {
             let dialog =
                 rfd::AsyncFileDialog::new().add_filter(file_type.name, file_type.extensions);
             let Some(handle) = dialog.pick_file().await else {
+                this.post(FileEvent::Cancelled);
                 return;
             };
             let contents = handle.read().await;
@@ -112,12 +115,13 @@ impl Files {
     pub fn open(&self, file_type: FileType) {
         let this = self.clone();
         spawn(async move {
-            if let Some((name, contents)) = web_pick::pick(file_type.extensions).await {
-                this.post(FileEvent::Opened {
+            match web_pick::pick(file_type.extensions).await {
+                Some((name, contents)) => this.post(FileEvent::Opened {
                     name,
                     path: None,
                     contents,
-                });
+                }),
+                None => this.post(FileEvent::Cancelled),
             }
         });
     }

@@ -22,7 +22,8 @@ Time: about 10 minutes.
 
 1. Choose **File → Import…** and pick a PDF. **Import…** in the **Underlays** section of
    the **Layers** panel does the same, with the dialog already set to **Underlay to
-   trace**. You can also drop a PDF on Drift's window and choose **Underlay to trace**.
+   trace**. You can also drop a PDF on Drift's window and choose **Import into this
+   drawing…**.
 2. In the dialog, choose **Underlay to trace**, and the page for a PDF of several pages.
 3. Set **Drawn at** to the scale the plan was drawn at, such as **1 : 50** or
    1/4" = 1'-0". Drift suggests one where it can read it from the drawing.
@@ -77,7 +78,7 @@ Underlays are kept inside the `.drift` file. They never print or export.
 ## Part 2: import a DXF as geometry
 
 1. Choose **File → Import…** and pick the file. Or drop a DXF on the window and choose
-   **Import as geometry**.
+   **Import into this drawing…**.
 2. In the dialog, keep **Editable geometry**. **Drawn at** is 1 : 1 for a drawing made full
    size, as CAD drawings usually are; set it for one drawn at paper size. Click **Import**.
 3. The drawing is added to the open sketch, in its own units (read from the file; a file
@@ -119,14 +120,14 @@ on when the file was saved (it is unless someone turned it off). Files from Illu
 earlier aren't read.
 
 1. Choose **File → Import…** and pick an SVG, PDF or `.ai` file. Or drop one on the window
-   and choose **Import as geometry** or **Underlay to trace**.
+   and choose **Import into this drawing…**.
 2. In the import dialog, choose the options below.
 3. A report lists what came in and anything left out.
 
 ### The import dialog
 
 The same dialog opens for every format. It has:
-   - **Editable geometry** or **Underlay to trace**.
+   - **New drawing**, **Editable geometry** (in this drawing) or **Underlay to trace**.
    - The **page** (an **artboard**, for an Illustrator file).
    - **Drawn at**: the scale the drawing is at on its paper. At 1:50, 1 mm on the paper is
      50 mm in the sketch. The dialog shows how big that makes it. Where it can, Drift
@@ -156,13 +157,16 @@ A DWG or DXF has no pages and no suggested scale (it is usually full size, 1 : 1
 ### Dropping a file on the window
 
 Drop a `.drift` file on Drift's window to open it. Drop a DWG, DXF, SVG, PDF or `.ai` file
-and Drift asks how it should come in:
+and Drift asks where it should go:
 
-- **Open as new drawing:** a new drawing of its own, with the file's contents as geometry
-  at the defaults (the first page, at the scale Drift suggests). If the drawing open now
-  has unsaved changes, Drift asks first.
-- **Import as geometry** or **Underlay to trace:** into the drawing open now, through the
-  import dialog.
+- **Open as new drawing:** a new drawing of its own, with the file's contents as geometry.
+  The import dialog follows, set to **New drawing**, for the page, the scale and
+  calibrating. If the drawing open now has unsaved changes, Drift asks before it goes.
+- **Import into this drawing…:** the import dialog, set to **Editable geometry**; choose
+  **Underlay to trace** there to trace over it instead.
+
+**File → Open…** takes the same files, as new drawings. A file that can't be read leaves
+the drawing open now as it is.
 
 What comes in:
 
@@ -200,8 +204,8 @@ them), and curves that meet are joined into one path.
   editable geometry or as an underlay to trace, with a report of what changed.
 - Every format gets the same scale controls: **Drawn at** 1 : n, a suggested scale where
   Drift can read one, and **Then calibrate** from two points and a known distance.
-- A file dropped on the window asks whether to open it as a new drawing, import it or trace
-  over it.
+- A file dropped on the window asks whether to open it as a new drawing or import it into
+  this one; the import dialog does the rest.
 
 ## Next
 

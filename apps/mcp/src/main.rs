@@ -38,7 +38,8 @@ impl Drift {
         std::thread::Builder::new()
             .name("drawing".into())
             .spawn(move || {
-                let mut session = Session::new();
+                // New drawings (and older files) get the rules Drift gives them here.
+                let mut session = Session::new().with_new_rules(agent::saved_new_rules());
                 if let Some(root) = &root {
                     session = session.with_root(root.clone());
                 }

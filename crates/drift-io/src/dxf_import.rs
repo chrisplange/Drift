@@ -1638,6 +1638,97 @@ pub fn decode(bytes: &[u8]) -> String {
     }
 }
 
+/// A shape `k` times larger about the origin.
+fn scale_shape(shape: &Shape, k: f64) -> Shape {
+    match *shape {
+        Shape::Point(p) => Shape::Point(p * k),
+        Shape::Line { a, b } => Shape::Line { a: a * k, b: b * k },
+        Shape::Circle { center, radius } => Shape::Circle {
+            center: center * k,
+            radius: radius * k,
+        },
+        Shape::Arc {
+            center,
+            radius,
+            start,
+            sweep,
+        } => Shape::Arc {
+            center: center * k,
+            radius: radius * k,
+            start,
+            sweep,
+        },
+        Shape::Ellipse {
+            center,
+            major,
+            minor,
+            start,
+            sweep,
+        } => Shape::Ellipse {
+            center: center * k,
+            major: major * k,
+            minor: minor * k,
+            start,
+            sweep,
+        },
+        Shape::Bezier { p } => Shape::Bezier {
+            p: p.map(|q| q * k),
+        },
+    }
+}
+
+impl DxfText {
+    fn scaled(mut self, k: f64) -> Self {
+        self.at *= k;
+        self.height *= k;
+        self.wrap = self.wrap.map(|w| w * k);
+        self
+    }
+}
+
+impl DxfEntity {
+    fn scaled(mut self, k: f64) -> Self {
+        self.shape = scale_shape(&self.shape, k);
+        self
+    }
+}
+
+impl DxfImport {
+    /// The drawing as [`read_at`] reads it at 1 : `k` times what it was read at, without
+    /// reading the file again. (Hatch patterns and block copies keep their own scales, as
+    /// there.)
+    pub fn scaled(mut self, k: f64) -> Self {
+        self.entities = self.entities.into_iter().map(|e| e.scaled(k)).collect();
+        self.texts = self.texts.into_iter().map(|t| t.scaled(k)).collect();
+        for hatch in &mut self.hatches {
+            for edge in hatch.loops.iter_mut().flatten() {
+                *edge = scale_shape(edge, k);
+            }
+            for seed in &mut hatch.seeds {
+                *seed *= k;
+            }
+        }
+        for block in &mut self.blocks {
+            block.entities = std::mem::take(&mut block.entities)
+                .into_iter()
+                .map(|e| e.scaled(k))
+                .collect();
+            block.texts = std::mem::take(&mut block.texts)
+                .into_iter()
+                .map(|t| t.scaled(k))
+                .collect();
+        }
+        for insert in &mut self.inserts {
+            insert.at *= k;
+        }
+        for view in self.layouts.iter_mut().flat_map(|l| &mut l.views) {
+            view.center *= k;
+            view.scale *= k;
+        }
+        self
+    }
+}
+
 /// Read an ASCII DXF file. Files that don't say their units (`$INSUNITS` missing or 0) are
 /// read in `default_mm_per_unit` (the document's display unit).
 pub fn read(text: &str, default_mm_per_unit: f64) -> Result<DxfImport, String> {
@@ -2570,6 +2661,32 @@ mod tests {
         a.distance(b) < 1e-9
     }
 
+    /// Reading a file at 1 : 50 and scaling a full-size read by 50 give the same drawing
+    /// (to rounding): every number in it agrees, and everything else is the same.
+    fn assert_scaled_read_matches(file: &str) {
+        let numbers = |import: &DxfImport| {
+            let text = format!("{import:?}");
+            let values: Vec<f64> = text
+                .split(|c: char| !(c.is_ascii_digit() || "-.eE".contains(c)))
+                .filter(|piece| piece.chars().any(|c| c.is_ascii_digit()))
+                .filter_map(|piece| piece.parse().ok())
+                .collect();
+            let skeleton: String = text
+                .chars()
+                .filter(|c| !(c.is_ascii_digit() || "-.eE".contains(*c)))
+                .collect();
+            (skeleton, values)
+        };
+        let direct = read_at(file, 1.0, 50.0).unwrap();
+        let scaled = read(file, 1.0).unwrap().scaled(50.0);
+        let (a, b) = (numbers(&direct), numbers(&scaled));
+        assert_eq!(a.0, b.0);
+        assert_eq!(a.1.len(), b.1.len());
+        for (x, y) in a.1.iter().zip(&b.1) {
+            assert!((x - y).abs() <= 1e-9 * x.abs().max(1.0), "{x} vs {y}");
+        }
+    }
+
     fn at(shape: &Shape, t: f64) -> DVec2 {
         match *shape {
             Shape::Bezier { p } => {
@@ -3110,6 +3227,7 @@ mod tests {
         assert!(
             solid.seed.x > 60.0 && solid.seed.x < 80.0 && solid.seed.y > 0.0 && solid.seed.y < 20.0
         );
+        assert_scaled_read_matches(&file);
     }
 
     #[test]
@@ -3310,6 +3428,7 @@ mod tests {
             .filter(|t| (t.angle - 90.0).abs() < 1e-9)
             .count();
         assert_eq!(turned, 2);
+        assert_scaled_read_matches(&file);
     }
 
     #[test]

@@ -20,23 +20,32 @@ pub(crate) enum ImportSource {
     Dwg(Vec<u8>),
 }
 
-/// How the next file opened to import comes in, when that was chosen before it was picked.
+/// What File → Import takes: CAD drawings, and artwork from Illustrator and the like.
+pub(crate) const IMPORT_FILE: FileType = FileType {
+    name: "DWG, DXF, SVG, PDF or Illustrator",
+    extensions: &["dwg", "dxf", "svg", "pdf", "ai"],
+};
+
+/// What File → Open takes: sketches, and every drawing Import takes (each opens as a new
+/// drawing, through the import dialog).
+pub(crate) const OPEN_FILE: FileType = FileType {
+    name: "Drift sketch, DWG, DXF, SVG, PDF or Illustrator",
+    extensions: &[drift_io::EXTENSION, "dwg", "dxf", "svg", "pdf", "ai"],
+};
+
+/// Scales this close (as a fraction) are the same scale.
+const SAME_SCALE: f64 = 1e-9;
+
+/// Where a drawing being imported goes: the import dialog's choice, which can be made
+/// before the file is picked (the Underlays section's Import…, the drop dialog).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ImportAs {
-    /// The dialog, set to editable geometry.
-    Geometry,
-    /// The dialog, set to an underlay (from the Underlays section).
-    Underlay,
-    /// As geometry at the defaults, without asking, into the new drawing it was opened as.
+    /// A new drawing of its own, made from it.
     NewDrawing,
-}
-
-/// What the drop dialog was answered with.
-#[derive(Clone, Copy)]
-enum DropChoice {
-    Open,
-    Import(ImportAs),
-    Cancel,
+    /// Editable geometry in this drawing.
+    Geometry,
+    /// An underlay in this drawing, to trace.
+    Underlay,
 }
 
 /// A file waiting for the import dialog.
@@ -45,8 +54,8 @@ pub(crate) struct PendingImport {
     pub source: ImportSource,
     pub pages: u32,
     pub page: u32,
-    /// As an underlay rather than curves.
-    pub underlay: bool,
+    /// Where it goes: a new drawing, or this one as curves or as an underlay.
+    pub mode: ImportAs,
     /// The scale it was drawn at, 1 : n.
     pub scale: f64,
     pub construction_edges: bool,
@@ -73,6 +82,11 @@ impl PendingImport {
         self.name
             .rsplit_once('.')
             .map_or(self.name.as_str(), |(s, _)| s)
+    }
+
+    /// As an underlay rather than curves.
+    pub fn underlay(&self) -> bool {
+        self.mode == ImportAs::Underlay
     }
 
     /// A DXF or DWG drawing, rather than artwork.
@@ -144,7 +158,7 @@ impl PendingImport {
 /// Whether a file name is one Import takes.
 pub(crate) fn importable(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
-    crate::app::sheets_ui::IMPORT_FILE
+    IMPORT_FILE
         .extensions
         .iter()
         .any(|e| lower.ends_with(&format!(".{e}")))
@@ -161,11 +175,12 @@ impl DriftApp {
         });
         // (Tests pick their files themselves: no system dialog.)
         #[cfg(not(test))]
-        self.files.open(crate::app::sheets_ui::IMPORT_FILE);
+        self.files.open(IMPORT_FILE);
     }
 
-    /// A file opened to import: ask how it should come in (or, `as_` NewDrawing, bring it
-    /// in at the defaults).
+    /// A file opened to import: ask how it should come in, starting on `as_` (editable
+    /// geometry if not given). The file is read here, so one that can't be read is said so
+    /// and changes nothing.
     pub(crate) fn begin_import(
         &mut self,
         name: &str,
@@ -209,12 +224,12 @@ impl DriftApp {
         };
         let cad = matches!(source, ImportSource::Dxf(_) | ImportSource::Dwg(_));
         let unit_mm = self.editor.doc.units().length.mm_per_unit();
-        let mut pending = PendingImport {
+        self.pending_import = Some(PendingImport {
             name: name.to_owned(),
             source,
             pages,
             page: 1,
-            underlay: as_ == Some(ImportAs::Underlay),
+            mode: as_.unwrap_or(ImportAs::Geometry),
             scale: 1.0,
             // A CAD drawing's fill edges print, as they did in it.
             construction_edges: !cad,
@@ -226,18 +241,18 @@ impl DriftApp {
             art: None,
             guess: None,
             cad: None,
-        };
-        if as_ == Some(ImportAs::NewDrawing) {
-            // The defaults: page 1, the scale its dimensions show.
-            pending.guess(unit_mm);
-            self.finish_import(&mut pending, now);
-        } else {
-            self.pending_import = Some(pending);
-        }
+        });
     }
 
     /// The import dialog, while a file is waiting for it.
     pub(crate) fn import_dialog(&mut self, ctx: &egui::Context) {
+        // A new drawing from an import, once unsaved changes were dealt with.
+        if self.import_new.as_ref().is_some_and(|(_, go)| *go)
+            && let Some((mut pending, _)) = self.import_new.take()
+        {
+            let now = ctx.input(|i| i.time);
+            self.finish_import(&mut pending, now);
+        }
         let units = self.editor.doc.units();
         let Some(pending) = &mut self.pending_import else {
             return;
@@ -247,20 +262,33 @@ impl DriftApp {
         let modal = egui::Modal::new(egui::Id::new("vector_import"))
             .frame(frame)
             .show(ctx, |ui| {
-                ui.set_width(420.0);
-                theme::dialog_title(ui, &format!("Import {}", pending.name), false);
-                if let Some(underlay) = theme::segmented(
+                ui.set_width(440.0);
+                let title = match pending.mode {
+                    ImportAs::NewDrawing => format!("Open {} as a new drawing", pending.name),
+                    _ => format!("Import {}", pending.name),
+                };
+                theme::dialog_title(ui, &title, false);
+                if let Some(mode) = theme::segmented(
                     ui,
-                    pending.underlay,
-                    &[(false, "Editable geometry"), (true, "Underlay to trace")],
+                    pending.mode,
+                    &[
+                        (ImportAs::NewDrawing, "New drawing"),
+                        (ImportAs::Geometry, "Editable geometry"),
+                        (ImportAs::Underlay, "Underlay to trace"),
+                    ],
                 ) {
-                    pending.underlay = underlay;
+                    pending.mode = mode;
                 }
                 ui.label(
-                    egui::RichText::new(if pending.underlay {
-                        "A drawing behind the sketch to snap to and trace over."
-                    } else {
-                        "Curves, fills and text on their layers, to edit."
+                    egui::RichText::new(match pending.mode {
+                        ImportAs::NewDrawing => {
+                            "A new drawing of its own, with its curves, fills and text to edit."
+                        }
+                        ImportAs::Geometry => {
+                            "Into this drawing, as curves, fills and text on their layers, to \
+                             edit."
+                        }
+                        ImportAs::Underlay => "Behind this drawing, to snap to and trace over.",
                     })
                     .weak(),
                 );
@@ -283,7 +311,7 @@ impl DriftApp {
                     ui.label("Drawn at");
                     let current = SCALES
                         .iter()
-                        .find(|(_, n)| ((n - pending.scale) / n).abs() < 1e-9)
+                        .find(|(_, n)| ((n - pending.scale) / n).abs() < SAME_SCALE)
                         .map_or_else(
                             || drift_core::sheets::scale_label(pending.scale),
                             |(label, _)| (*label).to_owned(),
@@ -354,7 +382,7 @@ impl DriftApp {
                             ))
                             .weak(),
                         );
-                        if (pending.scale - g.scale).abs() > 1e-9
+                        if ((pending.scale - g.scale) / g.scale).abs() > SAME_SCALE
                             && ui.small_button("Use").clicked()
                         {
                             pending.scale = g.scale;
@@ -383,14 +411,14 @@ impl DriftApp {
                 };
                 // A PDF's pictures come in with it either way; an SVG's only as geometry.
                 let pdf = matches!(pending.source, ImportSource::Pdf(_));
-                if pictures && (pdf || !pending.underlay) {
+                if pictures && (pdf || !pending.underlay()) {
                     ui.checkbox(&mut pending.images, "Bring in images as pictures")
                         .on_hover_text(
                             "Photos and scans in the file come in as pictures on an underlay \
                              beneath the drawing",
                         );
                 }
-                if !pending.underlay {
+                if !pending.underlay() {
                     ui.add_space(6.0);
                     ui.label("Edges of shapes that are filled but not outlined:");
                     ui.radio_value(
@@ -409,8 +437,13 @@ impl DriftApp {
                         choice = Some(false);
                     }
                     let dark = ui.visuals().dark_mode;
+                    let go = if pending.mode == ImportAs::NewDrawing {
+                        "Open"
+                    } else {
+                        "Import"
+                    };
                     if ui
-                        .add_enabled(ready, theme::primary_button("Import", dark))
+                        .add_enabled(ready, theme::primary_button(go, dark))
                         .clicked()
                     {
                         choice = Some(true);
@@ -423,8 +456,14 @@ impl DriftApp {
         if choice == Some(true)
             && let Some(mut pending) = self.pending_import.take()
         {
-            let now = ctx.input(|i| i.time);
-            self.finish_import(&mut pending, now);
+            if pending.mode == ImportAs::NewDrawing && self.is_dirty() {
+                // Asks first; saved or not, it goes on in `import_dialog`.
+                self.import_new = Some((pending, false));
+                self.request(Pending::ImportNew);
+            } else {
+                let now = ctx.input(|i| i.time);
+                self.finish_import(&mut pending, now);
+            }
         } else if choice == Some(false) {
             self.pending_import = None;
         }
@@ -434,7 +473,7 @@ impl DriftApp {
     pub(crate) fn finish_import(&mut self, pending: &mut PendingImport, now: f64) {
         let name = pending.name.clone();
         let scale = pending.scale;
-        if pending.underlay {
+        if pending.underlay() {
             let result = match &pending.source {
                 ImportSource::Pdf(bytes) => self.editor.import_pdf_underlay(
                     &name,
@@ -472,14 +511,17 @@ impl DriftApp {
             ImportSource::Dwg(_) => "Import DWG",
         };
         let read = if pending.is_cad() {
-            // Read again at its scale (it was read at full size for the dialog).
-            let read = if (scale - 1.0).abs() < 1e-12 {
-                pending.cad();
-                pending.cad.take().expect("read")
-            } else {
-                pending.read_cad(scale)
-            };
-            read.map(|mut import| {
+            // As read for the dialog, at full size: brought to its scale.
+            pending.cad();
+            let read = pending.cad.take().expect("read");
+            read.map(|import| {
+                if (scale - 1.0).abs() < SAME_SCALE {
+                    import
+                } else {
+                    import.scaled(scale)
+                }
+            })
+            .map(|mut import| {
                 import.fill_edges_construction = pending.construction_edges;
                 (import, Vec::new())
             })
@@ -505,6 +547,12 @@ impl DriftApp {
                 return;
             }
         };
+        if pending.mode == ImportAs::NewDrawing {
+            // Read first: a file that can't be read leaves the drawing open now as it is.
+            let doc = self.new_document();
+            let name = format!("{}.{}", pending.stem(), drift_io::EXTENSION);
+            self.replace_document(doc, name, None, Metadata::default(), true);
+        }
         self.abort_operation();
         let before: std::collections::BTreeSet<_> =
             self.editor.doc.iter().map(|(id, _)| id).collect();
@@ -550,8 +598,8 @@ impl DriftApp {
         self.editor.last_import = Some(imported);
     }
 
-    /// A drawing dropped on the window: open it as a new drawing, import it into this one,
-    /// or trace over it. The import dialog follows for the last two.
+    /// A drawing dropped on the window: open it as a new drawing, or import it into this
+    /// one. The import dialog follows either way, set to what was chosen.
     pub(crate) fn drop_dialog(&mut self, ctx: &egui::Context) {
         let Some(path) = &self.dropped else {
             return;
@@ -565,25 +613,20 @@ impl DriftApp {
             .frame(frame)
             .show(ctx, |ui| {
                 ui.set_width(360.0);
-                theme::dialog_title(ui, &format!("Open {name}"), false);
-                ui.label("How should it come in?");
+                theme::dialog_title(ui, &format!("Import {name}"), false);
+                ui.label("Open it as a drawing of its own, or bring it into this one?");
                 ui.add_space(6.0);
                 let wide = egui::vec2(ui.available_width(), 0.0);
                 let options = [
                     (
-                        DropChoice::Open,
+                        ImportAs::NewDrawing,
                         "Open as new drawing",
                         "A new drawing of its own, with its curves, fills and text to edit",
                     ),
                     (
-                        DropChoice::Import(ImportAs::Geometry),
-                        "Import as geometry",
-                        "Into this drawing, as curves, fills and text to edit",
-                    ),
-                    (
-                        DropChoice::Import(ImportAs::Underlay),
-                        "Underlay to trace",
-                        "Behind this drawing, to snap to and trace over",
+                        ImportAs::Geometry,
+                        "Import into this drawing…",
+                        "As curves to edit, or as an underlay to trace: the import dialog asks",
                     ),
                 ];
                 for (what, label, hint) in options {
@@ -592,40 +635,39 @@ impl DriftApp {
                         .on_hover_text(hint)
                         .clicked()
                     {
-                        choice = Some(what);
+                        choice = Some(Some(what));
                     }
                 }
                 theme::dialog_buttons(ui, |ui| {
                     if ui.button("Cancel").clicked() {
-                        choice = Some(DropChoice::Cancel);
+                        choice = Some(None);
                     }
                 });
             });
         if modal.should_close() && choice.is_none() {
-            choice = Some(DropChoice::Cancel);
+            choice = Some(None);
         }
         let Some(choice) = choice else {
             return;
         };
         let path = self.dropped.take().expect("dropped");
-        match choice {
-            DropChoice::Open => {
-                // Asks first when the drawing open now has unsaved changes.
-                self.open_as_new = Some(path);
-                self.request(Pending::OpenDropped);
-            }
-            DropChoice::Import(as_) => {
-                self.import_as = Some(as_);
-                self.files.open_path(&path);
-            }
-            DropChoice::Cancel => {}
+        if let Some(as_) = choice {
+            // The import dialog follows, once the file is read.
+            self.import_as = Some(as_);
+            self.files.open_path(&path);
         }
     }
 
-    /// Import a file as editable geometry at the defaults, without asking.
+    /// Import a file as editable geometry at the defaults (page 1, the scale its dimensions
+    /// show), without asking.
     #[cfg(test)]
     pub(crate) fn import_now(&mut self, name: &str, bytes: Vec<u8>, now: f64) {
-        self.begin_import(name, bytes, Some(ImportAs::NewDrawing), now);
+        self.begin_import(name, bytes, Some(ImportAs::Geometry), now);
+        if let Some(mut pending) = self.pending_import.take() {
+            let unit_mm = pending.unit_mm;
+            pending.guess(unit_mm);
+            self.finish_import(&mut pending, now);
+        }
     }
 }
 
@@ -637,7 +679,7 @@ fn art_summary(
     units: drift_core::Units,
 ) -> (bool, bool) {
     let scale = pending.scale;
-    let underlay = pending.underlay;
+    let underlay = pending.underlay();
     match pending.art() {
         Ok(art) => {
             let paths = art.paths.len();
@@ -648,7 +690,7 @@ fn art_summary(
                     "Paper {} × {} mm, {} in the sketch.",
                     fmt_mm(size.x),
                     fmt_mm(size.y),
-                    if (scale - 1.0).abs() < 1e-12 {
+                    if (scale - 1.0).abs() < SAME_SCALE {
                         "the same".to_owned()
                     } else {
                         // Metric lengths are written without their unit.
@@ -703,7 +745,7 @@ fn art_summary(
 
 /// What a DXF or DWG drawing holds, and what won't come across. Whether it can be imported.
 fn cad_summary(ui: &mut egui::Ui, pending: &mut PendingImport) -> bool {
-    let underlay = pending.underlay;
+    let underlay = pending.underlay();
     match pending.cad() {
         Ok(import) => {
             let curves = import.entities.len();

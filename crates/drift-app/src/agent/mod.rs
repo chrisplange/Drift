@@ -11,6 +11,9 @@
 //! relation that conflicts, say), the drawing is left as it was.
 
 mod analyze;
+
+#[cfg(not(target_arch = "wasm32"))]
+pub use crate::app::document::saved_new_rules;
 mod args;
 mod constrain;
 mod edit;
@@ -57,6 +60,8 @@ pub struct Session {
     ctx: Option<eframe::egui::Context>,
     /// Working on the drawing open in Drift (the live link), rather than on its own.
     live: Option<Live>,
+    /// The rules a new drawing (and an older file) is given, as Drift gives them.
+    new_rules: drift_core::DrawingRules,
 }
 
 /// A drawing open in Drift, lent to the tools for one call through the live link.
@@ -68,6 +73,8 @@ pub struct LiveDoc<'a> {
     pub dirty: bool,
     /// The app's own context, whose fonts lay out annotations as on screen.
     pub ctx: eframe::egui::Context,
+    /// The rules Drift starts new drawings with.
+    pub new_rules: drift_core::DrawingRules,
 }
 
 /// What Drift must do after a live call: the tools replaced or saved its drawing.
@@ -110,6 +117,7 @@ pub fn call_live(
             dirty: doc.dirty,
             change: None,
         }),
+        new_rules: doc.new_rules,
     };
     if let Some(root) = root {
         s = s.with_root(root);
@@ -136,7 +144,14 @@ impl Session {
             patterns: PatternLibrary::default(),
             ctx: None,
             live: None,
+            new_rules: drift_core::DrawingRules::default(),
         }
+    }
+
+    /// Start new drawings (and give older files) these rules, as Drift does.
+    pub fn with_new_rules(mut self, rules: drift_core::DrawingRules) -> Self {
+        self.new_rules = rules;
+        self
     }
 
     /// Put a new or opened drawing in place of the current one.

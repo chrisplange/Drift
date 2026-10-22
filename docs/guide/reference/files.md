@@ -47,11 +47,14 @@ session, so the next start is fresh.
 
 ## Opening files
 
-- **File → Open…** (Ctrl+O): a `.drift` file.
+- **File → Open…** (Ctrl+O): a `.drift` file, or a DWG, DXF, SVG, PDF or `.ai` file, which
+  opens as a new drawing through the import dialog.
 - **File → Open recent**: the last ten.
 - Pass a `.drift` file on the command line, or drop it on the window, to open it. Dropping
-  a DWG, DXF, SVG, PDF or `.ai` file asks how it should come in: **Open as new drawing**,
-  **Import as geometry** or **Underlay to trace** (the last two through the import dialog).
+  a DWG, DXF, SVG, PDF or `.ai` file asks where it should go: **Open as new drawing** or
+  **Import into this drawing…**; the import dialog follows either way. If several files
+  are dropped, only the first is opened. A file that can't be read leaves the drawing open
+  now as it is.
   See [Dropping a file on the window](../tutorials/11-underlays-and-dxf.md#dropping-a-file-on-the-window).
 - On Windows, the installer can make `.drift` files open in Drift. On macOS, use
   **File → Open…** or drop the file on the window for now.
@@ -61,7 +64,7 @@ session, so the next start is fresh.
 | | Format | Notes |
 |---|---|---|
 | Import | DXF (ASCII), DWG | As geometry or an underlay, at a drawing scale or calibrated: **File → Import…**. DWG is read for AutoCAD R14 to 2018 and comes in the same way as DXF. See [Underlays and DXF import](../tutorials/11-underlays-and-dxf.md). Binary DXF isn't read, and Drift doesn't save DWG: export DXF. |
-| Import | SVG, PDF, Illustrator (`.ai`) | As geometry or an underlay, at a drawing scale (found from its dimensions where it can be) or calibrated: **File → Import…**. See [Part 3](../tutorials/11-underlays-and-dxf.md#part-3-import-svg-pdf-and-illustrator-artwork). Vector PDFs only. |
+| Import | SVG, PDF, Illustrator (`.ai`) | As geometry or an underlay, at a drawing scale (found from its dimensions where it can be) or calibrated: **File → Import…**. See [Part 3](../tutorials/11-underlays-and-dxf.md#part-3-import-svg-pdf-and-illustrator-artwork). A PDF's vector drawing comes in as curves; a scanned PDF, which has none, comes in as its picture (an underlay). |
 | Import | `.pat` | Hatch patterns: **Parameters → Hatch patterns → Import .pat…**. |
 | Import | `.ttf`, `.otf` | Fonts: **Add a font file…** in any font menu. |
 | Import | SVG | A title-block logo: **Sheets → Logo → Choose SVG…**. |

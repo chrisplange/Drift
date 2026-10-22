@@ -380,6 +380,9 @@ impl System {
             .filter(|(cid, c)| usable(c) && !doc.is_driven(*cid))
             .filter_map(|(_, c)| match *c {
                 Constraint::PointOnCurve { point, curve } => Some((point, curve)),
+                // A line's midpoint is on it too: a tangency touching there takes its form
+                // from the relation, not from where the point happens to be (#148).
+                Constraint::Midpoint { point, line } => Some((point, line)),
                 _ => None,
             })
             .collect();

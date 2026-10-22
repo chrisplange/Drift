@@ -10,8 +10,8 @@ const LISTED: usize = 200;
 /// The open Check sketch window.
 #[derive(Default)]
 pub(crate) struct SketchCheck {
-    /// What was found, as of a document revision and tolerance.
-    found: Option<(u64, f64, Vec<Issue>)>,
+    /// What was found, as of a document revision (a new tolerance bumps it).
+    found: Option<(u64, Vec<Issue>)>,
 }
 
 impl DriftApp {
@@ -28,12 +28,43 @@ impl DriftApp {
             return Vec::new();
         };
         match &check.found {
-            Some((r, t, issues)) if *r == revision && *t == tolerance => issues.clone(),
+            Some((r, issues)) if *r == revision => issues.clone(),
             _ => {
                 let issues = self.editor.check_sketch(tolerance);
-                check.found = Some((revision, tolerance, issues.clone()));
+                check.found = Some((revision, issues.clone()));
                 issues
             }
+        }
+    }
+
+    /// The drawing's gap tolerance, as Check sketch and Drawing settings both edit it: a drag
+    /// or a typed value is one undo step.
+    pub(crate) fn gap_tolerance_row(&mut self, ui: &mut egui::Ui) {
+        let units = self.editor.doc.units();
+        let per = units.length.mm_per_unit();
+        let mut shown = self.editor.doc.rules().gap_tolerance / per;
+        let mut response = None;
+        theme::row(ui, "Gaps up to", |ui| {
+            response = Some(
+                ui.add(
+                    egui::DragValue::new(&mut shown)
+                        .speed(0.01)
+                        .range(0.0001..=1000.0)
+                        .max_decimals(4)
+                        .suffix(format!(" {}", units.length.symbol())),
+                )
+                .on_hover_text(
+                    "Check sketch takes ends closer than this to be meant to meet, and leaves ends \
+                 further apart as they are",
+                ),
+            );
+        });
+        if let Some(response) = response.filter(egui::Response::changed) {
+            // Still the same drag, or the same typing: one step.
+            let continuing = (response.dragged() && !response.drag_started())
+                || (response.has_focus() && !response.gained_focus());
+            self.editor
+                .change_rules_merging(continuing, |r| r.gap_tolerance = shown * per);
         }
     }
 
@@ -49,7 +80,6 @@ impl DriftApp {
         let mut show: Option<Issue> = None;
         let mut fix: Option<Issue> = None;
         let mut fix_all = false;
-        let mut tolerance = self.editor.doc.rules().gap_tolerance;
         theme::dialog(ctx, "Check sketch")
             .id(egui::Id::new("sketch_check"))
             .open(&mut open)
@@ -61,26 +91,7 @@ impl DriftApp {
                 if theme::dialog_title(ui, "Check sketch", true) {
                     close = true;
                 }
-                theme::row(ui, "Gaps up to", |ui| {
-                    let per = units.length.mm_per_unit();
-                    let mut shown = tolerance / per;
-                    if ui
-                        .add(
-                            egui::DragValue::new(&mut shown)
-                                .speed(0.01)
-                                .range(0.0001..=1000.0)
-                                .max_decimals(4)
-                                .suffix(format!(" {}", units.length.symbol())),
-                        )
-                        .on_hover_text(
-                            "Ends closer than this are taken to be meant to meet. Ends further \
-                             apart are left as they are",
-                        )
-                        .changed()
-                    {
-                        tolerance = shown * per;
-                    }
-                });
+                self.gap_tolerance_row(ui);
                 ui.add_space(4.0);
                 if issues.is_empty() {
                     ui.label("No gaps, ends short of a curve, or curves of no length.");
@@ -163,7 +174,6 @@ impl DriftApp {
                     }
                 });
             });
-        self.editor.change_rules(|r| r.gap_tolerance = tolerance);
         if let Some(issue) = show {
             self.show_issue(&issue);
         }

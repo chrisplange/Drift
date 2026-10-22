@@ -376,6 +376,30 @@ fn a_drawings_rules_travel_with_it_and_the_assistants_picking_does_not() {
 }
 
 #[test]
+fn new_drawings_and_older_files_get_the_rules_drift_gives_them() {
+    let dir = std::env::temp_dir().join(format!("drift-agent-new-rules-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mine = drift_core::DrawingRules {
+        regions_by_layer: true,
+        gap_tolerance: 1.25,
+        ..Default::default()
+    };
+    let mut s = Session::new().with_root(dir.clone()).with_new_rules(mine);
+    ok(&mut s, "new_drawing", json!({}));
+    assert_eq!(s.editor.doc.rules(), mine);
+    // A file from before drawings kept their rules gets them too, and the notes say so.
+    let plate = drift_core::demo::mounting_plate();
+    let current = drift_io::save(&plate, &drift_io::Metadata::default());
+    let older = current.replace(r#""version": 39"#, r#""version": 38"#);
+    assert_ne!(older, current);
+    std::fs::write(dir.join("old.drift"), older).unwrap();
+    let v = ok(&mut s, "open_drawing", json!({ "path": "old.drift" }));
+    assert_eq!(s.editor.doc.rules(), mine);
+    assert!(v["notes"].to_string().contains("save to keep them"), "{v}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn every_tool_has_an_object_schema_and_is_dispatched() {
     let mut s = Session::new();
     for t in tools() {

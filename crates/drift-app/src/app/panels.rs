@@ -1591,8 +1591,8 @@ impl DriftApp {
                     // again on a click.
                     let grey = ui.visuals().weak_text_color();
                     for (shown, text, keys) in [
-                        (self.show_relations, "Relations hidden ×", "Alt+R"),
-                        (self.show_dimensions, "Dimensions hidden ×", "Alt+D"),
+                        (self.show_relations, "Relations off · Show", "Alt+R"),
+                        (self.show_dimensions, "Dims & notes off · Show", "Alt+D"),
                     ] {
                         if shown {
                             continue;
@@ -1618,9 +1618,12 @@ impl DriftApp {
                     if hidden > 0 {
                         let grey = ui.visuals().weak_text_color();
                         let text = if self.show_hidden_annotations {
-                            format!("{hidden} hidden, shown")
+                            format!("Showing {hidden} hidden")
                         } else {
-                            format!("{hidden} hidden")
+                            format!(
+                                "{hidden} hidden annotation{}",
+                                if hidden == 1 { "" } else { "s" }
+                            )
                         };
                         let pill = theme::pill(ui, &text, grey);
                         let click =
@@ -1628,10 +1631,13 @@ impl DriftApp {
                         click.widget_info(|| {
                             egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &text)
                         });
-                        let click = click.on_hover_text(
+                        let click = click.on_hover_text(if self.show_hidden_annotations {
+                            "Dimensions and annotations hidden on the canvas, shown faded. Click \
+                             (or Alt+H) to leave them out again"
+                        } else {
                             "Dimensions and annotations hidden on the canvas. Click (or Alt+H) \
-                             to show them faded, so they can be picked and shown again",
-                        );
+                             to show them faded, so they can be picked and shown again"
+                        });
                         if click.clicked() {
                             self.show_hidden_annotations = !self.show_hidden_annotations;
                         }

@@ -349,30 +349,6 @@ impl Editor {
         })
     }
 
-    /// Import a DXF file as an underlay (in its own units, read as `mm_per_unit` when it
-    /// doesn't say).
-    pub fn import_dxf_underlay(
-        &mut self,
-        name: &str,
-        text: &str,
-        mm_per_unit: f64,
-    ) -> Result<UnderlayReport, String> {
-        let import = drift_io::dxf::read(text, mm_per_unit).map_err(|e| e.to_string())?;
-        self.import_cad_underlay(name, &import, 1.0)
-    }
-
-    /// Import a DWG file as an underlay (in its own units, read as `mm_per_unit` when it
-    /// doesn't say).
-    pub fn import_dwg_underlay(
-        &mut self,
-        name: &str,
-        bytes: &[u8],
-        mm_per_unit: f64,
-    ) -> Result<UnderlayReport, String> {
-        let import = read_dwg(bytes, mm_per_unit)?;
-        self.import_cad_underlay(name, &import, 1.0)
-    }
-
     /// A DXF or DWG drawing's curves (as read, in mm) as an underlay drawn at 1 : `scale`.
     pub fn import_cad_underlay(
         &mut self,
@@ -825,7 +801,8 @@ mod tests {
         );
 
         let dxf = drift_io::dxf::write(&d, drift_io::dxf::DxfUnits::MM);
-        let report = ed.import_dxf_underlay("plan.dxf", &dxf, 1.0).unwrap();
+        let import = drift_io::dxf::read(&dxf, 1.0).unwrap();
+        let report = ed.import_cad_underlay("plan.dxf", &import, 1.0).unwrap();
         assert_eq!(report.curves, 1);
         assert_eq!(ed.doc.underlays().count(), 2);
     }

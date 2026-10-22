@@ -272,7 +272,7 @@ pub(super) fn delete(s: &mut Session, a: &Value) -> Res {
             AnyId::Text(t) => ed.doc.remove_text(t),
         }
     }
-    ed.doc.delete(entities);
+    ed.delete_curves(entities);
     ed.selection.clear();
     ed.commit("Delete");
     Ok(json!({ "deleted": ids.len() }))

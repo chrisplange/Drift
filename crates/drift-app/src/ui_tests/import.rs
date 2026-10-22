@@ -122,16 +122,16 @@ fn a_dropped_drawing_asks_how_it_comes_in() {
     assert!(h.state().pending_import.is_none());
     assert!(lines(h.state()).is_empty());
 
-    // Import as geometry: the import dialog follows, set to geometry.
+    // Import into this drawing: the import dialog follows, set to geometry.
     drop_file(&mut h, &path);
-    h.get_by_label("Import as geometry").click();
+    h.get_by_label("Import into this drawing…").click();
     h.run_steps(3);
     let pending = h
         .state()
         .pending_import
         .as_ref()
         .expect("the import dialog");
-    assert!(!pending.underlay);
+    assert_eq!(pending.mode, ImportAs::Geometry);
     // DWG and DXF get the same scale controls as artwork.
     h.get_by_label("Drawn at");
     h.get_by_label("Then calibrate: pick two points on it and type their real distance");
@@ -142,11 +142,20 @@ fn a_dropped_drawing_asks_how_it_comes_in() {
     assert_eq!(got.len(), 1);
     assert!((got[0] - 100.0).abs() < 1e-6, "{got:?}");
 
-    // Underlay to trace: the import dialog follows, set to an underlay.
+    // An underlay to trace: chosen in the import dialog (the drop asks only once).
     drop_file(&mut h, &path);
-    h.get_by_label("Underlay to trace").click();
+    assert!(h.query_by_label("Underlay to trace").is_none());
+    h.get_by_label("Import into this drawing…").click();
     h.run_steps(3);
-    assert!(h.state().pending_import.as_ref().expect("dialog").underlay);
+    h.get_by_label("Underlay to trace").click();
+    h.run();
+    assert!(
+        h.state()
+            .pending_import
+            .as_ref()
+            .expect("dialog")
+            .underlay()
+    );
     h.get_by_label("Import").click();
     h.run_steps(3);
     assert_eq!(h.state().editor.doc.underlays().count(), 1);
@@ -166,25 +175,36 @@ fn opening_a_dropped_drawing_as_new_guards_unsaved_changes() {
     // Open as new drawing asks first; Cancel keeps the drawing.
     drop_file(&mut h, &path);
     h.get_by_label("Open as new drawing").click();
+    h.run_steps(3);
+    h.get_by_label("Open").click();
     h.run_steps(2);
     assert!(h.state().pending.is_some(), "asks to save first");
     h.get_by_label("Cancel").click();
     h.run_steps(2);
     assert!(h.state().pending.is_none());
+    assert!(h.state().import_new.is_none(), "the import is given up");
     let got = lines(h.state());
     assert!(got.len() == 1 && (got[0] - 30.0).abs() < 1e-6, "{got:?}");
 
     // Don't save: the dropped drawing opens as a new drawing of its own, unsaved.
     drop_file(&mut h, &path);
     h.get_by_label("Open as new drawing").click();
+    h.run_steps(3);
+    // The import dialog, set to a new drawing, with the scale and calibrate there too.
+    let pending = h
+        .state()
+        .pending_import
+        .as_ref()
+        .expect("the import dialog");
+    assert_eq!(pending.mode, ImportAs::NewDrawing);
+    h.get_by_label("Drawn at");
+    h.get_by_label("Open").click();
     h.run_steps(2);
+    assert!(h.state().pending.is_some(), "asks to save first");
     h.get_by_label("Don't save").click();
     h.run_steps(4);
     let app = h.state();
-    assert!(
-        app.pending_import.is_none(),
-        "no import dialog for a new drawing"
-    );
+    assert!(app.pending_import.is_none());
     let got = lines(app);
     assert!(got.len() == 1 && (got[0] - 100.0).abs() < 1e-6, "{got:?}");
     assert_eq!(app.file.name, "plan.drift");
@@ -196,7 +216,9 @@ fn opening_a_dropped_drawing_as_new_guards_unsaved_changes() {
     h.state_mut().file.clean_revision = Some(h.state().editor.doc.revision());
     drop_file(&mut h, &path2);
     h.get_by_label("Open as new drawing").click();
-    h.run_steps(4);
+    h.run_steps(3);
+    h.get_by_label("Open").click();
+    h.run_steps(3);
     assert!(h.state().pending.is_none());
     let got = lines(h.state());
     assert!(got.len() == 1 && (got[0] - 70.0).abs() < 1e-6, "{got:?}");
@@ -224,6 +246,91 @@ fn a_dropped_drift_file_still_opens() {
 }
 
 #[test]
+fn an_unreadable_drop_leaves_the_drawing_and_the_recent_files_alone() {
+    let Some(mut h) = harness() else { return };
+    h.state_mut()
+        .import_now("mine.dxf", line_dxf(30.0).into_bytes(), 0.0);
+    h.run();
+    let recent = h.state().recent.clone();
+    // A sketch that isn't one.
+    let bad = temp_file("unreadable", "broken.drift", b"not a drawing");
+    h.state_mut().file.clean_revision = Some(h.state().editor.doc.revision());
+    drop_file(&mut h, &bad);
+    h.run();
+    assert_eq!(lines(h.state()).len(), 1, "the drawing stays");
+    assert_ne!(h.state().file.name, "broken.drift");
+    assert_eq!(h.state().recent, recent, "not a recent file");
+    // A PDF that isn't one: said so, and no dialog.
+    let pdf = temp_file("unreadable", "broken.pdf", b"%PDF-1.4 nothing here");
+    drop_file(&mut h, &pdf);
+    h.get_by_label("Open as new drawing").click();
+    h.run_steps(3);
+    assert!(h.state().pending_import.is_none());
+    assert_eq!(lines(h.state()).len(), 1, "the drawing stays");
+    let _ = std::fs::remove_file(&bad);
+    let _ = std::fs::remove_file(&pdf);
+}
+
+#[test]
+fn several_dropped_files_say_only_the_first_is_opened() {
+    let Some(mut h) = harness() else { return };
+    let one = temp_file("several", "one.dxf", line_dxf(10.0).as_bytes());
+    let two = temp_file("several", "two.dxf", line_dxf(20.0).as_bytes());
+    for path in [&one, &two] {
+        h.input_mut()
+            .dropped_files
+            .push(std::sync::Arc::new(Dropped(path.to_path_buf())));
+    }
+    h.run();
+    assert_eq!(h.state().dropped.as_deref(), Some(one.as_path()));
+    let status = h.state().status.as_ref().map(|s| s.text.clone());
+    assert!(
+        status
+            .as_deref()
+            .is_some_and(|s| s.contains("only one.dxf is opened")),
+        "{status:?}"
+    );
+    let _ = std::fs::remove_file(&one);
+    let _ = std::fs::remove_file(&two);
+}
+
+#[test]
+fn file_open_takes_imports_as_new_drawings_with_this_computers_rules() {
+    let Some(mut h) = harness() else { return };
+    let rules = drift_core::DrawingRules {
+        stacked_fills: false,
+        gap_tolerance: 0.75,
+        ..Default::default()
+    };
+    h.state_mut().new_rules = rules;
+    // File → Open lists every drawing Import takes.
+    for ext in IMPORT_EXTENSIONS {
+        assert!(crate::app::import_ui::OPEN_FILE.extensions.contains(ext));
+    }
+    // One picked there (no import chosen beforehand) comes in as a new drawing.
+    let path = temp_file("open", "site.dxf", line_dxf(40.0).as_bytes());
+    h.state().files.open_path(&path);
+    h.run_steps(3);
+    let pending = h
+        .state()
+        .pending_import
+        .as_ref()
+        .expect("the import dialog");
+    assert_eq!(pending.mode, ImportAs::NewDrawing);
+    h.get_by_label("Open").click();
+    h.run_steps(3);
+    let app = h.state();
+    assert_eq!(app.file.name, "site.drift");
+    assert_eq!(app.editor.doc.rules(), rules, "the new drawing's rules");
+    let got = lines(app);
+    assert!(got.len() == 1 && (got[0] - 40.0).abs() < 1e-6, "{got:?}");
+    let _ = std::fs::remove_file(&path);
+}
+
+/// What File → Import takes.
+const IMPORT_EXTENSIONS: &[&str] = &["dwg", "dxf", "svg", "pdf", "ai"];
+
+#[test]
 fn import_from_the_underlays_section_starts_on_underlay() {
     let Some(mut h) = harness() else { return };
     h.state_mut().show_panel(Panel::Layers);
@@ -237,7 +344,13 @@ fn import_from_the_underlays_section_starts_on_underlay() {
     let path = temp_file("preset", "plan.svg", LINE_SVG.as_bytes());
     h.state().files.open_path(&path);
     h.run_steps(3);
-    assert!(h.state().pending_import.as_ref().expect("dialog").underlay);
+    assert!(
+        h.state()
+            .pending_import
+            .as_ref()
+            .expect("dialog")
+            .underlay()
+    );
     save_png("drift_ui_import_underlay_preset.png", &mut h);
     h.get_by_label("Cancel").click();
     h.run();
@@ -370,4 +483,52 @@ fn pdf_pictures_come_in_only_when_asked() {
     h.run_steps(3);
     assert_eq!(pictures(&h), 0);
     assert_eq!(h.state().editor.doc.underlays().count(), 1);
+}
+
+/// A logo of two shapes, as Drawing settings → Logo takes it.
+const LOGO_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 20">
+  <path fill="#ff6600" d="M0 0h20v20h-20z"/>
+  <rect x="26" y="6" width="34" height="8" fill="#111114"/>
+</svg>"##;
+
+#[test]
+fn an_svg_chosen_for_the_logo_becomes_the_logo_not_an_import() {
+    let Some(mut h) = harness() else { return };
+    // A sheet's Logo → Choose SVG… (#151).
+    h.state_mut().pick_file(crate::app::document::Picking::Logo);
+    let path = temp_file("logo", "logo.svg", LOGO_SVG.as_bytes());
+    h.state().files.open_path(&path);
+    h.run_steps(3);
+    let app = h.state();
+    assert!(!app.editor.doc.logo().is_empty(), "it is the logo");
+    assert!(app.pending_import.is_none(), "no import dialog");
+    assert_eq!(app.editor.doc.iter().count(), 0, "nothing on the canvas");
+    // The same file dropped on the window is a drawing to import, as before.
+    h.state().files.open_path(&path);
+    h.run_steps(3);
+    assert!(h.state().pending_import.is_some());
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn a_font_file_chosen_in_a_font_menu_is_kept_in_the_drawing() {
+    let Some(mut h) = harness() else { return };
+    // A font menu's "Add a font file…" (the built-in monospaced font stands in for the
+    // file picked; given a name Import would take, it is still a font).
+    h.state_mut().pick_file(crate::app::document::Picking::Font);
+    let hack = drift_draft::outline::builtin_font(true);
+    let path = temp_file("font", "hack.svg", &hack);
+    h.state().files.open_path(&path);
+    h.run_steps(3);
+    let app = h.state();
+    assert!(app.pending_import.is_none(), "no import dialog");
+    assert!(app.picking.is_none());
+    let status = app.status.as_ref().map(|s| s.text.clone());
+    assert!(
+        status
+            .as_deref()
+            .is_some_and(|s| s.contains("Hack is now kept")),
+        "{status:?}"
+    );
+    let _ = std::fs::remove_file(&path);
 }

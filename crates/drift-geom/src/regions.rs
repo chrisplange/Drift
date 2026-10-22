@@ -224,6 +224,30 @@ pub struct Region {
 }
 
 impl Region {
+    /// An axis-aligned rectangle from `min` to `max`, built directly (for a swatch, say,
+    /// without finding regions among curves).
+    pub fn rectangle(min: DVec2, max: DVec2) -> Region {
+        let corners = [min, DVec2::new(max.x, min.y), max, DVec2::new(min.x, max.y)];
+        let edges = (0..4)
+            .map(|i| Edge::Line {
+                a: corners[i],
+                b: corners[(i + 1) % 4],
+            })
+            .collect();
+        let size = max - min;
+        Region {
+            outer: Loop {
+                edges,
+                sources: vec![0, 1, 2, 3],
+            },
+            holes: Vec::new(),
+            area: size.x * size.y,
+            perimeter: 2.0 * (size.x + size.y),
+            centroid: (min + max) / 2.0,
+            bounds: Bounds { min, max },
+        }
+    }
+
     pub fn contains(&self, p: DVec2) -> bool {
         let b = &self.bounds;
         if p.x < b.min.x || p.x > b.max.x || p.y < b.min.y || p.y > b.max.y {
@@ -672,9 +696,12 @@ pub fn regions_with(curves: &[Shape], tol: &RegionTolerance) -> Vec<Region> {
     // Half-edges: 2k forward, 2k+1 backward. The same edge twice (curves drawn on top of
     // each other) counts once: an edge is known by its ends and its middle. It is credited
     // to the curve cut into the fewest pieces, so a curve that spans just this piece (a
-    // small shape's side along a longer line) owns it, not the longer line.
+    // small shape's side along a longer line) owns it, not the longer line; each face it
+    // bounds may still take another of the curves along it (see below).
     let mut half: Vec<(usize, usize, Edge)> = Vec::new(); // (from, to, geometry)
     let mut source_of: Vec<usize> = Vec::new();
+    // Every curve along each edge, the one credited first.
+    let mut along: Vec<Vec<usize>> = Vec::new();
     let mut middles: Vec<DVec2> = Vec::new();
     // Kept edges from `group` on share the current piece's ends.
     let (mut group, mut ends) = (0, None);
@@ -686,11 +713,15 @@ pub fn regions_with(curves: &[Shape], tol: &RegionTolerance) -> Vec<Region> {
             if count[source] < count[source_of[k]] {
                 source_of[k] = source;
             }
+            if !along[k].contains(&source) {
+                along[k].push(source);
+            }
             continue;
         }
         half.push((u, v, e));
         half.push((v, u, e.reversed()));
         source_of.push(source);
+        along.push(vec![source]);
         middles.push(mid);
     }
     // Prune dangling edges (vertices of degree one) repeatedly.
@@ -756,12 +787,14 @@ pub fn regions_with(curves: &[Shape], tol: &RegionTolerance) -> Vec<Region> {
         }
         let mut lp = Vec::new();
         let mut sources = Vec::new();
+        let mut edges = Vec::new();
         let mut h = start;
         let mut guard = 0;
         while !used[h] {
             used[h] = true;
             lp.push(half[h].2);
             sources.push(source_of[h / 2]);
+            edges.push(h / 2);
             let v = half[h].1;
             let twin = h ^ 1;
             let list = &out[v];
@@ -775,6 +808,7 @@ pub fn regions_with(curves: &[Shape], tol: &RegionTolerance) -> Vec<Region> {
             }
         }
         if h == start && !lp.is_empty() {
+            let sources = own_curves(&sources, &edges, &along, &count);
             loops.push(Loop { edges: lp, sources });
         }
     }
@@ -839,6 +873,49 @@ pub fn regions_with(curves: &[Shape], tol: &RegionTolerance) -> Vec<Region> {
     result
 }
 
+/// A loop's curves, where some of its edges lie along several (curves drawn over each other):
+/// each such edge goes to the curve that bounds more of the rest of the loop, so two shapes
+/// sharing part of a side each keep their own line along it (#133). Where none does, the edge
+/// keeps the curve it was credited to (`sources`). `edges` are the loop's edges' indices,
+/// `along` the curves along each edge, `count` the pieces each curve was cut into.
+fn own_curves(
+    sources: &[usize],
+    edges: &[usize],
+    along: &[Vec<usize>],
+    count: &[usize],
+) -> Vec<usize> {
+    let mut own = sources.to_vec();
+    for (i, &edge) in edges.iter().enumerate() {
+        let curves = &along[edge];
+        if curves.len() < 2 {
+            continue;
+        }
+        let elsewhere = |c: usize| {
+            sources
+                .iter()
+                .enumerate()
+                .filter(|&(j, &s)| j != i && s == c)
+                .count()
+        };
+        let credited = elsewhere(sources[i]);
+        if let Some(best) = curves
+            .iter()
+            .copied()
+            .filter(|&c| elsewhere(c) > credited)
+            .max_by_key(|&c| {
+                (
+                    elsewhere(c),
+                    std::cmp::Reverse(count[c]),
+                    std::cmp::Reverse(c),
+                )
+            })
+        {
+            own[i] = best;
+        }
+    }
+    own
+}
+
 fn near_outline(lp: &Loop, p: DVec2, tol: &RegionTolerance) -> bool {
     lp.edges
         .iter()
@@ -885,6 +962,30 @@ mod tests {
 
     fn line(a: DVec2, b: DVec2) -> Shape {
         Shape::Line { a, b }
+    }
+
+    #[test]
+    fn a_rectangle_built_directly_is_the_region_its_sides_bound() {
+        let found = regions(&rect(0.0, 0.0, 40.0, 16.0));
+        let built = Region::rectangle(v(0.0, 0.0), v(40.0, 16.0));
+        assert_eq!(found.len(), 1);
+        let r = &found[0];
+        assert!((r.area - built.area).abs() < 1e-9);
+        assert!((r.perimeter - built.perimeter).abs() < 1e-9);
+        assert!(r.centroid.distance(built.centroid) < 1e-9);
+        assert_eq!(r.bounds, built.bounds);
+        let corners = |lp: &Loop| {
+            let mut c: Vec<(i64, i64)> = lp
+                .polygon(0.1)
+                .iter()
+                .map(|p| (p.x.round() as i64, p.y.round() as i64))
+                .collect();
+            c.sort_unstable();
+            c.dedup();
+            c
+        };
+        assert_eq!(corners(&r.outer), corners(&built.outer));
+        assert!(built.contains(v(20.0, 8.0)) && !built.contains(v(41.0, 8.0)));
     }
 
     fn rect(x0: f64, y0: f64, x1: f64, y1: f64) -> Vec<Shape> {
@@ -1042,6 +1143,33 @@ mod tests {
         let found = regions(&curves);
         let corner = region_at(&found, v(75.0, 75.0)).expect("corner");
         assert_eq!(corner.outer.curves(), vec![0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn rectangles_sharing_part_of_a_side_each_keep_their_own_line_along_it() {
+        // A below, B above and shifted right: A's top and B's bottom overlap from 50 to 100,
+        // each cut once by the other's corner, a tie for "fewest pieces" (#133).
+        for b_first in [false, true] {
+            let (a, b) = (
+                rect(0.0, 0.0, 100.0, 100.0),
+                rect(50.0, 100.0, 150.0, 200.0),
+            );
+            let curves: Vec<Shape> = if b_first {
+                b.iter().chain(&a).copied().collect()
+            } else {
+                a.iter().chain(&b).copied().collect()
+            };
+            let (of_a, of_b) = if b_first {
+                (vec![4, 5, 6, 7], vec![0, 1, 2, 3])
+            } else {
+                (vec![0, 1, 2, 3], vec![4, 5, 6, 7])
+            };
+            let found = regions(&curves);
+            let lower = region_at(&found, v(25.0, 25.0)).expect("A");
+            let upper = region_at(&found, v(125.0, 175.0)).expect("B");
+            assert_eq!(lower.outer.curves(), of_a, "B first: {b_first}");
+            assert_eq!(upper.outer.curves(), of_b, "B first: {b_first}");
+        }
     }
 
     /// The lower half of a circle, its diameter, and a curve ending on the arc's interior

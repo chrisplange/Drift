@@ -1,7 +1,7 @@
 //! Editing state independent of the UI toolkit: document, history, selection, picking and
 //! constraint solving.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use drift_core::params::{self, Evaluation};
 use drift_core::{
@@ -307,8 +307,9 @@ pub struct Editor {
     /// Expressions typed into a tool's fields (index = field) that use variables, so the
     /// dimensions the tool creates can stay linked to them.
     pub typed_exprs: [Option<String>; 2],
-    /// Named copies of the document to return to (kept for the session).
-    pub snapshots: Vec<(String, Document)>,
+    /// The option the drawing is in, as of a document revision (comparing whole sketches
+    /// isn't free, so not every frame).
+    active_option: std::cell::Cell<Option<(u64, Option<VariantId>)>>,
     /// A variable being scrubbed with a slider: its expression before the scrub started.
     scrubbing: Option<(VariableId, String)>,
     /// Closed regions of the solid curves, as of a document revision.
@@ -1450,35 +1451,47 @@ impl Editor {
         self.commit("Change units");
     }
 
-    /// Save the current variable values as a new variant.
-    pub fn save_variant(&mut self, name: &str) -> VariantId {
-        let values = self
-            .doc
-            .variables()
-            .map(|(id, v)| (id, v.expr.clone()))
-            .collect();
+    /// Save the current state as a new option: the variable values, or with `whole`, a copy
+    /// of the whole sketch. One undo step.
+    pub fn save_option(&mut self, name: &str, whole: bool) -> VariantId {
+        let name = name.trim();
+        let option = if whole {
+            Variant::sketch(name, &self.doc)
+        } else {
+            Variant::values(name, self.current_values())
+        };
         self.doc.begin();
-        let id = self.doc.add_variant(Variant {
-            name: name.trim().to_owned(),
-            values,
-        });
-        self.commit("Save variant");
+        let id = self.doc.add_variant(option);
+        self.commit("Save option");
         id
     }
 
-    /// Overwrite a variant with the current variable values.
+    /// Save the current variable values as a new option.
+    pub fn save_variant(&mut self, name: &str) -> VariantId {
+        self.save_option(name, false)
+    }
+
+    fn current_values(&self) -> BTreeMap<VariableId, String> {
+        self.doc
+            .variables()
+            .map(|(id, v)| (id, v.expr.clone()))
+            .collect()
+    }
+
+    /// Store the current state in an option: its values, or the whole sketch for a
+    /// whole-sketch option. One undo step.
     pub fn update_variant(&mut self, id: VariantId) {
-        let Some(mut variant) = self.doc.variant(id).cloned() else {
+        let Some(old) = self.doc.variant(id).cloned() else {
             return;
         };
-        variant.values = self
-            .doc
-            .variables()
-            .map(|(v, var)| (v, var.expr.clone()))
-            .collect();
+        let option = if old.is_sketch() {
+            Variant::sketch(old.name, &self.doc)
+        } else {
+            Variant::values(old.name, self.current_values())
+        };
         self.doc.begin();
-        self.doc.set_variant(id, variant);
-        self.commit("Update variant");
+        self.doc.set_variant(id, option);
+        self.commit("Update option");
     }
 
     pub fn rename_variant(&mut self, id: VariantId, name: &str) {
@@ -1488,21 +1501,34 @@ impl Editor {
         variant.name = name.trim().to_owned();
         self.doc.begin();
         self.doc.set_variant(id, variant);
-        self.commit("Rename variant");
+        self.commit("Rename option");
     }
 
     pub fn remove_variant(&mut self, id: VariantId) {
         self.doc.begin();
         self.doc.remove_variant(id);
-        self.commit("Delete variant");
+        self.commit("Delete option");
     }
 
-    /// Apply a variant's variable values (one undo step; refused if the sketch can't take them).
+    /// Apply an option (one undo step): its variable values (refused if the sketch can't
+    /// take them), or the whole sketch it holds.
     pub fn apply_variant(&mut self, id: VariantId) -> Result<(), EditError> {
         let Some(variant) = self.doc.variant(id).cloned() else {
             return Err(EditError::Invalid(format!("{id} no longer exists")));
         };
         let label = format!("Apply {}", variant.name);
+        if let Some(sketch) = &variant.sketch {
+            self.doc.begin();
+            self.doc.restore_sketch(sketch);
+            self.selection.clear();
+            self.selected_midpoints.clear();
+            self.selected_instances.clear();
+            self.selected_fills.clear();
+            if !self.commit(&label) {
+                return Err(EditError::Conflict);
+            }
+            return Ok(());
+        }
         self.parameter_edit(&label, |doc| {
             for (var, expr) in &variant.values {
                 if doc.variable(*var).is_some() {
@@ -1514,22 +1540,47 @@ impl Editor {
         })
     }
 
-    /// The variant whose values match the current variables, if any.
+    /// The option the drawing is in: the values option whose values match the current
+    /// variables, or the whole-sketch option the sketch is the same as.
     pub fn active_variant(&self) -> Option<VariantId> {
-        self.doc.variants().find_map(|(id, v)| {
-            (!v.values.is_empty()
-                && v.values
-                    .iter()
-                    .all(|(var, e)| self.doc.variable(*var).is_none_or(|x| x.expr == *e)))
-            .then_some(id)
-        })
+        let revision = self.doc.revision();
+        if let Some((r, active)) = self.active_option.get()
+            && r == revision
+        {
+            return active;
+        }
+        let active = self.doc.variants().find_map(|(id, v)| {
+            let matches = match &v.sketch {
+                Some(sketch) => self.doc.same_sketch(sketch),
+                None => {
+                    !v.values.is_empty()
+                        && v.values
+                            .iter()
+                            .all(|(var, e)| self.doc.variable(*var).is_none_or(|x| x.expr == *e))
+                }
+            };
+            matches.then_some(id)
+        });
+        self.active_option.set(Some((revision, active)));
+        active
     }
 
-    /// The geometry of each variant (solved on a copy), for drawing ghosts.
+    /// An option's geometry, for drawing it as a ghost: a whole-sketch option's curves, or
+    /// the sketch solved with a values option's values (on a copy).
     pub fn variant_geometry(&self, id: VariantId) -> Option<Vec<SketchItem>> {
         let variant = self.doc.variant(id)?;
+        let curves = |doc: &Document| -> Vec<SketchItem> {
+            doc.iter()
+                .filter(|(_, e)| !e.kind.is_point() && e.style != LineKind::Construction)
+                .filter_map(|(id, _)| doc.shape(id))
+                .map(SketchItem::new)
+                .collect()
+        };
+        if let Some(sketch) = &variant.sketch {
+            return Some(curves(sketch));
+        }
         let mut copy = Editor {
-            doc: self.doc.clone(),
+            doc: self.doc.sketch_copy(),
             ..Default::default()
         };
         copy.doc.begin();
@@ -1538,14 +1589,7 @@ impl Editor {
         }
         copy.apply_parameters().ok()?;
         let report = copy.solve(&[]);
-        report.converged.then(|| {
-            copy.doc
-                .iter()
-                .filter(|(_, e)| !e.kind.is_point() && e.style != LineKind::Construction)
-                .filter_map(|(id, _)| copy.doc.shape(id))
-                .map(SketchItem::new)
-                .collect()
-        })
+        report.converged.then(|| curves(&copy.doc))
     }
 
     /// Pin a live measurement (a dimension definition that is only measured).
@@ -1567,25 +1611,6 @@ impl Editor {
         self.doc.begin();
         self.doc.remove_measurement(id);
         self.commit("Unpin measurement");
-    }
-
-    /// Keep a named copy of the document to return to later.
-    pub fn take_snapshot(&mut self, name: &str) {
-        self.snapshots
-            .push((name.trim().to_owned(), self.doc.clone()));
-    }
-
-    /// Return the document to a snapshot (one undo step).
-    pub fn restore_snapshot(&mut self, index: usize) {
-        let Some((name, snapshot)) = self.snapshots.get(index).cloned() else {
-            return;
-        };
-        self.doc.begin();
-        self.doc.restore_from(&snapshot);
-        self.commit(&format!("Restore {name}"));
-        self.selection.clear();
-        self.selected_midpoints.clear();
-        self.sync();
     }
 
     /// Add a dimension a tool created from typed field `field`, linked to the typed
@@ -2653,6 +2678,37 @@ impl Editor {
             .flat_map(|id| self.pick_set(*id))
             .collect();
         self.selection.extend(extra);
+        self.sync_group_fills();
+    }
+
+    /// The group (not the open one) a shape's fill goes with: the one its whole outline is
+    /// in.
+    pub fn fill_group(&self, fill: drift_core::FillId) -> Option<drift_core::GroupId> {
+        let outline = self.shape_outline(fill)?;
+        let g = self.doc.group_of(*outline.first()?)?;
+        (self.open_group != Some(g) && outline.iter().all(|c| self.doc.group_of(*c) == Some(g)))
+            .then_some(g)
+    }
+
+    /// A group picked whole picks its shapes' fills too (so a move, Duplicate, Copy or
+    /// Delete takes them with it), and one no longer picked lets them go.
+    pub fn sync_group_fills(&mut self) {
+        let grouped: Vec<(drift_core::FillId, bool)> = self
+            .doc
+            .fills()
+            .filter_map(|(f, _)| {
+                self.fill_group(f)?;
+                let outline = self.shape_outline(f)?;
+                Some((f, outline.iter().all(|c| self.selection.contains(c))))
+            })
+            .collect();
+        for (f, picked) in grouped {
+            if picked {
+                self.selected_fills.insert(f);
+            } else {
+                self.selected_fills.remove(&f);
+            }
+        }
     }
 
     /// The group the selection is exactly, if any.
@@ -3479,18 +3535,57 @@ mod tests {
     }
 
     #[test]
-    fn snapshots_restore_as_an_undoable_step() {
+    fn whole_sketch_options_apply_as_an_undoable_step() {
         let (mut ed, d, a, b) = dimensioned_line();
         let original = length(&ed, a, b);
-        ed.take_snapshot("Before");
+        let before = ed.save_option("Before", true);
+        assert_eq!(ed.active_variant(), Some(before));
         ed.set_dimension(d, 40.0).unwrap();
         ed.add_variable("w", "1", Kind::Length).unwrap();
-        ed.restore_snapshot(0);
+        assert_eq!(ed.active_variant(), None);
+        let after = ed.save_option("After", true);
+        ed.apply_variant(before).unwrap();
+        assert_eq!(ed.history.undo_label(), Some("Apply Before"));
         assert_eq!(length(&ed, a, b), original);
         assert_eq!(ed.doc.variables().count(), 0);
+        assert_eq!(ed.doc.variants().count(), 2, "applying keeps the options");
+        assert_eq!(ed.active_variant(), Some(before));
         ed.undo();
         assert!((length(&ed, a, b) - 40.0).abs() < 1e-9);
         assert_eq!(ed.doc.variables().count(), 1);
+        assert_eq!(ed.active_variant(), Some(after));
+        // Update stores the sketch as it is now; rename and delete are steps too.
+        ed.set_dimension(d, 45.0).unwrap();
+        ed.update_variant(before);
+        ed.apply_variant(after).unwrap();
+        ed.apply_variant(before).unwrap();
+        assert!((length(&ed, a, b) - 45.0).abs() < 1e-9);
+        ed.rename_variant(before, "Long");
+        assert_eq!(ed.doc.variant(before).unwrap().name, "Long");
+        ed.remove_variant(after);
+        assert_eq!(ed.doc.variants().count(), 1);
+        ed.undo();
+        ed.undo();
+        assert_eq!(ed.doc.variants().count(), 2);
+        assert_eq!(ed.doc.variant(before).unwrap().name, "Before");
+    }
+
+    #[test]
+    fn values_options_apply_as_an_undoable_step() {
+        let (mut ed, d, a, b) = dimensioned_line();
+        let w = ed.add_variable("w", "25", Kind::Length).unwrap();
+        ed.set_dimension_text(d, "w").unwrap();
+        let short = ed.save_option("Short", false);
+        ed.set_variable(w, "60").unwrap();
+        let long = ed.save_option("Long", false);
+        assert!(!ed.doc.variant(long).unwrap().is_sketch());
+        assert_eq!(ed.active_variant(), Some(long));
+        ed.apply_variant(short).unwrap();
+        assert!((length(&ed, a, b) - 25.0).abs() < 1e-9);
+        assert_eq!(ed.active_variant(), Some(short));
+        ed.undo();
+        assert!((length(&ed, a, b) - 60.0).abs() < 1e-9);
+        assert_eq!(ed.active_variant(), Some(long));
     }
 
     #[test]

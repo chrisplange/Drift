@@ -231,7 +231,9 @@ Copies keep the relations within the selection. The fields take expressions.
 - Double-click a group to edit inside it: members pick one by one, and anything you draw
   joins the group. Esc, or a click outside, leaves it.
 - The **Inspector** shows a picked group's name (rename it there), member count,
-  **Edit group** and **Ungroup**.
+  **Edit in place**, **Ungroup** and **Make block** (see
+  [Groups and blocks](07-blocks.md#groups-and-blocks): a group is one thing; a block is a
+  thing you reuse).
 
 ## Delete and undo
 

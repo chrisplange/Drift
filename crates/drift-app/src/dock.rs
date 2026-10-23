@@ -37,7 +37,7 @@ impl Panel {
     pub fn description(self) -> &'static str {
         match self {
             Panel::Inspector => "The selection's geometry, appearance, relations and dimensions",
-            Panel::Parameters => "Units, variables, variants, snapshots and pinned measurements",
+            Panel::Parameters => "Variables, options and pinned measurements",
             Panel::Layers => "Layers and underlays",
             Panel::Sheets => "Sheets, title blocks and output",
             Panel::Blocks => "Blocks and their copies",

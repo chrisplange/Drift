@@ -2105,12 +2105,33 @@ fn variables_drive_typed_dimensions_and_units_change_display() {
     h.state_mut().editor.set_variable(w, "4 in").unwrap();
     h.state_mut().editor.save_variant("Large");
     h.state_mut().editor.apply_variant(small).unwrap();
-    h.state_mut().params.show_ghosts = true;
+    let options: Vec<_> = h.state().editor.doc.variants().map(|(id, _)| id).collect();
+    h.state_mut().params.ghosted = options.into_iter().collect();
     h.run();
     h.run();
     let (a, b) = the_line(&h);
     assert!((a.distance(b) - 63.5).abs() < 1e-9);
     save_png("drift_ui_variant_ghosts.png", &mut h);
+
+    // A drag never works the ghosts out again, however many frames it lasts; letting go
+    // does, once per option shown.
+    let computed = h.state().params.ghost_computations;
+    let from = screen(&h, (a + b) / 2.0);
+    h.hover_at(from);
+    h.run();
+    button(&h, from, true);
+    h.run();
+    for k in 1..=8 {
+        h.hover_at(from + egui::vec2(0.0, 4.0 * k as f32));
+        h.run();
+    }
+    assert!(h.state().editor.doc.in_transaction(), "still dragging");
+    assert_eq!(h.state().params.ghost_computations, computed);
+    button(&h, from + egui::vec2(0.0, 32.0), false);
+    h.run();
+    h.run();
+    assert!(!h.state().editor.doc.in_transaction());
+    assert!(h.state().params.ghost_computations <= computed + 2);
 }
 
 #[test]
@@ -3202,7 +3223,8 @@ fn f2_renames_the_picked_blocks_copies() {
     h.run();
     // The dialog opens on the old name, selected: typing replaces it.
     assert!(h.query_by_label("Rename block").is_some(), "the dialog");
-    h.get_by_role(egui::accesskit::Role::TextInput)
+    // (The dialog's field has the focus; the Inspector shows the name too.)
+    h.get_by(|n| n.role() == egui::accesskit::Role::TextInput && n.is_focused())
         .type_text("Desk");
     h.run();
     save_png("drift_ui_rename_block.png", &mut h);
@@ -3274,6 +3296,7 @@ fn a_blocks_base_point_is_picked_when_made_and_set_later() {
     // The Inspector's Set base point, then Enter: the block's middle.
     h.state_mut().editor.selected_instances = [copy].into();
     h.state_mut().show_panel(Panel::Inspector);
+    h.run();
     h.run();
     h.get_by_label("Set base point").click();
     h.run();

@@ -744,6 +744,30 @@ impl Tool for SelectTool {
                 } else {
                     None
                 };
+                // A shape in a group (not the open one) picks the whole group, as a click on
+                // its outline does.
+                if let Some(f) = fill
+                    && ed.fill_group(f).is_some()
+                    && let Some(&first) = ed.shape_outline(f).as_ref().and_then(|o| o.first())
+                {
+                    if let Some(g) = ed.open_group
+                        && ed.doc.group_of(first) != Some(g)
+                    {
+                        ed.close_open_group();
+                    }
+                    let set = ed.pick_set(first);
+                    if mods.command && ed.selection.contains(&first) {
+                        ed.selection.retain(|e| !set.contains(e));
+                    } else if mods.shift || mods.command {
+                        ed.selection.extend(set);
+                    } else {
+                        ed.selection = set;
+                        ed.selected_fills.clear();
+                        ed.selected_region = None;
+                    }
+                    ed.sync_group_fills();
+                    return;
+                }
                 let outline = fill.and_then(|f| ed.shape_outline(f)).unwrap_or_default();
                 match fill {
                     Some(f) if mods.command => {
@@ -823,6 +847,7 @@ impl Tool for SelectTool {
                         ed.expand_groups();
                     }
                 }
+                ed.sync_group_fills();
             }
             // Double-click a group's member to edit inside the group.
             Input::DoubleClick(p) => {
@@ -851,11 +876,25 @@ impl Tool for SelectTool {
                     let hidden = ed.hidden_handles();
                     ed.index
                         .pick(p.raw, p.tolerance, |id| ed.pickable(id, &hidden))
-                } && let Some(g) = ed.doc.group_of(id)
-                    && ed.open_group != Some(g)
+                } {
+                    if let Some(g) = ed.doc.group_of(id)
+                        && ed.open_group != Some(g)
+                    {
+                        ed.open_group = Some(g);
+                        ed.selection = [id].into();
+                    }
+                    return;
+                }
+                // Inside a grouped shape's fill: into the group, with that shape picked.
+                if ed.pick_filter.anything()
+                    && let Some(f) = ed.fill_at(p.raw)
+                    && let Some(g) = ed.fill_group(f)
+                    && let Some(outline) = ed.shape_outline(f)
                 {
                     ed.open_group = Some(g);
-                    ed.selection = [id].into();
+                    ed.selected_fills = [f].into();
+                    ed.selection = outline.into_iter().collect();
+                    ed.selected_region = None;
                 }
             }
             Input::Finish => {}

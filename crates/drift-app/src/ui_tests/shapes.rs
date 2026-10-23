@@ -252,3 +252,165 @@ fn clicking_a_shapes_fill_picks_the_shape_and_shift_d_duplicates_it() {
     assert_eq!(ed.selected_fills, [area].into());
     assert!(ed.selection.is_empty());
 }
+
+#[test]
+fn a_group_becomes_a_block_and_back_from_the_inspector() {
+    let Some(mut h) = harness() else { return };
+    let (sides, _, _) = shapes(&mut h);
+    let ed = &mut h.state_mut().editor;
+    ed.selection = sides.iter().copied().collect();
+    let g = ed.make_group().unwrap();
+    h.run();
+    // A group and a block copy show the same layout: name, what it holds, the buttons.
+    assert!(shows(&h, "Members") && shows(&h, "Edit in place") && shows(&h, "Ungroup"));
+    h.get_by_label("Make block").click();
+    h.run();
+    h.run();
+    let ed = &h.state().editor;
+    assert!(ed.doc.group(g).is_none());
+    let copy = *ed
+        .selected_instances
+        .first()
+        .expect("the block's copy is picked");
+    let block = ed.doc.instance(copy).unwrap().block;
+    assert_eq!(ed.doc.block(block).unwrap().fills.len(), 1);
+    assert!(shows(&h, "Definition") && shows(&h, "Edit in place") && shows(&h, "Explode"));
+    h.get_by_label("Explode to group").click();
+    h.run();
+    h.run();
+    let ed = &h.state().editor;
+    let (_, group) = ed.doc.groups().next().expect("a group again");
+    assert_eq!(group.members.len(), 4);
+    assert!(
+        ed.doc.fills().any(|(_, f)| f.path.is_some()),
+        "a shape again"
+    );
+    assert!(shows(&h, "Members"));
+}
+
+/// Issue #159: a click inside the fill of a grouped shape picks the group, as a click on
+/// its outline does, fills and all; inside the group being edited, just that shape.
+#[test]
+fn clicking_a_grouped_shapes_fill_picks_the_group() {
+    let Some(mut h) = harness() else { return };
+    let (sides, shape, _) = shapes(&mut h);
+    let ed = &mut h.state_mut().editor;
+    ed.fill_new_shapes = true;
+    ed.doc.begin();
+    let doc = &mut ed.doc;
+    let p = [(0.0, 35.0), (20.0, 35.0), (20.0, 45.0), (0.0, 45.0)]
+        .map(|(x, y)| doc.add_point(DVec2::new(x, y)));
+    let other: Vec<EntityId> = (0..4)
+        .map(|i| doc.add_line(p[i], p[(i + 1) % 4]).unwrap())
+        .collect();
+    ed.add_shape(&other).unwrap();
+    ed.fill_new_shapes = false;
+    ed.commit("Second shape");
+    let second = ed
+        .doc
+        .fills()
+        .find(|(id, f)| *id != shape && f.path.is_some())
+        .unwrap()
+        .0;
+    ed.selection = sides.iter().chain(&other).copied().collect();
+    let g = ed.make_group().unwrap();
+    ed.selection.clear();
+    ed.selected_fills.clear();
+    h.run();
+    let members = h.state().editor.doc.group(g).unwrap().members.clone();
+
+    // Outside the group: the whole group, both shapes' fills with it.
+    click_world(&mut h, DVec2::new(20.0, 15.0));
+    let ed = &h.state().editor;
+    assert_eq!(ed.selection, members);
+    assert_eq!(ed.selected_fills, [shape, second].into());
+    // The other shape's fill picks the same; a G move carries all of it.
+    h.key_press(Key::Escape);
+    h.run();
+    click_world(&mut h, DVec2::new(10.0, 40.0));
+    assert_eq!(h.state().editor.selection, members);
+    h.hover_at(screen(&h, DVec2::new(10.0, 40.0)));
+    h.run();
+    h.key_press(Key::G);
+    h.run();
+    h.hover_at(screen(&h, DVec2::new(15.0, 40.0)));
+    h.run();
+    h.key_press(Key::X);
+    h.run();
+    type_text(&mut h, "100");
+    h.key_press(Key::Enter);
+    h.run();
+    let ed = &mut h.state_mut().editor;
+    let corner = ed.doc.point(p[0]).unwrap();
+    assert!((corner.x - 100.0).abs() < 1e-6, "{corner:?}");
+    let seeds: Vec<DVec2> = [shape, second].map(|f| ed.doc.fill(f).unwrap().seed).into();
+    assert!(
+        seeds.iter().all(|s| s.x > 95.0),
+        "the fills went along: {seeds:?}"
+    );
+    let areas = ed.fill_shapes();
+    assert!(!areas[&shape].lost && !areas[&second].lost);
+
+    // Inside the group being edited: just the shape clicked.
+    h.state_mut().editor.open_group = Some(g);
+    h.state_mut().editor.selection.clear();
+    h.state_mut().editor.selected_fills.clear();
+    h.run();
+    click_world(&mut h, DVec2::new(102.0, 5.0));
+    let ed = &h.state().editor;
+    assert_eq!(ed.open_group, Some(g));
+    assert_eq!(ed.selected_fills, [shape].into());
+    assert_eq!(ed.selection, sides.iter().copied().collect());
+}
+
+/// Issue #159: a click inside a block copy's fill picks the copy.
+#[test]
+fn clicking_a_block_copys_fill_picks_the_copy() {
+    let Some(mut h) = harness() else { return };
+    let (sides, _, _) = shapes(&mut h);
+    let ed = &mut h.state_mut().editor;
+    ed.selection = sides.iter().copied().collect();
+    let copy = ed.make_block("Tile").unwrap();
+    ed.selected_instances.clear();
+    h.run();
+    click_world(&mut h, DVec2::new(20.0, 15.0));
+    let ed = &h.state().editor;
+    assert_eq!(ed.selected_instances, [copy].into());
+    assert!(ed.selection.is_empty() && ed.selected_fills.is_empty());
+}
+
+/// A double click inside a grouped shape's fill enters the group with that shape picked,
+/// as a double click on its outline does.
+#[test]
+fn double_clicking_a_grouped_shapes_fill_enters_the_group() {
+    let Some(mut h) = harness() else { return };
+    let (sides, shape, _) = shapes(&mut h);
+    let ed = &mut h.state_mut().editor;
+    ed.doc.begin();
+    let a = ed.doc.add_point(DVec2::new(0.0, 40.0));
+    let b = ed.doc.add_point(DVec2::new(40.0, 40.0));
+    let line = ed.doc.add_line(a, b).unwrap();
+    ed.commit("Line");
+    ed.selection = sides.iter().copied().chain([line]).collect();
+    let g = ed.make_group().unwrap();
+    ed.selection.clear();
+    ed.selected_fills.clear();
+    h.run();
+    let at = screen(&h, DVec2::new(20.0, 15.0));
+    h.hover_at(at);
+    h.run();
+    // (The harness's frames are a quarter of a second apart: allow that between clicks.)
+    h.ctx
+        .options_mut(|o| o.input_options.max_double_click_delay = 5.0);
+    for _ in 0..2 {
+        button(&h, at, true);
+        h.step();
+        button(&h, at, false);
+        h.step();
+    }
+    h.run();
+    let ed = &h.state().editor;
+    assert_eq!(ed.open_group, Some(g));
+    assert_eq!(ed.selected_fills, [shape].into());
+    assert_eq!(ed.selection, sides.iter().copied().collect());
+}

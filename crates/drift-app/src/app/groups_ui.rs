@@ -108,6 +108,11 @@ impl DriftApp {
         };
         let open = self.editor.open_group == Some(g);
         theme::section(ui, if open { "Editing group" } else { "Group" });
+        ui.label(
+            egui::RichText::new("A group is one thing; a block is a thing you reuse.")
+                .small()
+                .weak(),
+        );
         let mut name = group.name.clone();
         theme::row(ui, "Name", |ui| {
             if ui
@@ -128,16 +133,17 @@ impl DriftApp {
             }
         });
         theme::row(ui, "Members", |ui| {
-            ui.label(group.members.len().to_string());
+            let n = group.members.len();
+            ui.label(format!("{n} {}", if n == 1 { "item" } else { "items" }));
         });
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             if open {
                 if ui.button("Finish editing").clicked() {
                     self.editor.open_group = None;
                     self.editor.selection = group.members.clone();
                 }
             } else if ui
-                .button("Edit group")
+                .button("Edit in place")
                 .on_hover_text("Pick its members one by one (or double-click the group)")
                 .clicked()
             {
@@ -151,6 +157,14 @@ impl DriftApp {
             {
                 self.editor.selection = group.members.clone();
                 self.editor.ungroup();
+            }
+            if ui
+                .button("Make block")
+                .on_hover_text("Make it a block, to reuse: named after it, with its fills")
+                .clicked()
+            {
+                let now = ui.input(|i| i.time);
+                self.block_from_group(g, now);
             }
         });
     }

@@ -222,4 +222,4 @@ are.
 ## Next
 
 [Parameters](03-parameters.md): drive dimensions from named variables, and switch between
-variants.
+options.

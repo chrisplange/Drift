@@ -825,6 +825,12 @@ impl DriftApp {
                 ui.close();
                 self.start_make_block("");
             }
+            if let Some(g) = self.editor.convertible_group()
+                && item(ui, "Make block from group", "")
+            {
+                ui.close();
+                self.block_from_group(g, ui.input(|i| i.time));
+            }
         })
         .response
         .on_hover_text("Duplicate, move, rotate, mirror, group, make a block");
@@ -1127,10 +1133,22 @@ impl DriftApp {
                 self.start_make_block("");
                 ui.close();
             }
+            if let Some(g) = self.editor.convertible_group()
+                && item(ui, "Make block from group", "")
+            {
+                self.block_from_group(g, now);
+                ui.close();
+            }
         }
-        if !self.editor.selected_instances.is_empty() && item(ui, "Explode block", "") {
-            self.editor.explode_selected();
-            ui.close();
+        if !self.editor.selected_instances.is_empty() {
+            if item(ui, "Explode block", "") {
+                self.editor.explode_selected();
+                ui.close();
+            }
+            if item(ui, "Explode to group", "") {
+                self.editor.explode_to_groups();
+                ui.close();
+            }
         }
         ui.separator();
         let red = ui.visuals().error_fg_color;

@@ -256,6 +256,15 @@ impl Editor {
     /// Make a block from the selection, with its base point at `base` (a world point), or
     /// the centre of the selection.
     pub fn make_block_at(&mut self, name: &str, base: Option<DVec2>) -> Result<InstanceId, String> {
+        self.make_block_labelled(name, base, "Make block")
+    }
+
+    fn make_block_labelled(
+        &mut self,
+        name: &str,
+        base: Option<DVec2>,
+        label: &str,
+    ) -> Result<InstanceId, String> {
         let (ids, bounds, name) = self.block_source(name)?;
         let base = base.unwrap_or_else(|| bounds.center());
         let place = Instance::new(BlockId(0), base);
@@ -295,10 +304,98 @@ impl Editor {
             i.layer = layer;
             let _ = self.doc.set_instance(id, i);
         }
-        self.commit("Make block");
+        self.commit(label);
         self.selection.clear();
         self.selected_instances = [id].into();
         Ok(id)
+    }
+
+    /// `name`, or `name 2`, `name 3`… if a block already has it.
+    fn free_block_name(&self, name: &str) -> String {
+        let name = name.trim();
+        (1..)
+            .map(|n| {
+                if n == 1 {
+                    name.to_owned()
+                } else {
+                    format!("{name} {n}")
+                }
+            })
+            .find(|n| self.doc.block_named(n).is_none())
+            .expect("a free name")
+    }
+
+    /// Make a block from a group (one undo step): named after the group, with its base point
+    /// at the group's centre, and its fills. A copy takes the group's place, picked.
+    pub fn block_from_group(&mut self, group: GroupId) -> Result<InstanceId, String> {
+        if self.block_edit.is_some() {
+            return Err("Finish editing the block first".into());
+        }
+        let g = self.doc.group(group).cloned().ok_or("That group is gone")?;
+        let name = self.free_block_name(&g.name);
+        let (selection, open) = (self.selection.clone(), self.open_group);
+        self.selection = g.members;
+        self.open_group = None;
+        let made = self.make_block_labelled(&name, None, "Make block from group");
+        if made.is_err() {
+            (self.selection, self.open_group) = (selection, open);
+        }
+        made
+    }
+
+    /// The group the picks are, if they are all of one group (the picked group, or the
+    /// one being edited).
+    pub fn convertible_group(&self) -> Option<GroupId> {
+        self.selected_group().or_else(|| {
+            let g = self.open_group?;
+            (self.selection.is_empty() && self.block_edit.is_none()).then_some(g)
+        })
+    }
+
+    /// Turn the picked block copies back into geometry, each copy a group named after its
+    /// block (one undo step). The groups' members are picked afterwards.
+    pub fn explode_to_groups(&mut self) -> Vec<GroupId> {
+        let copies: Vec<InstanceId> = self.selected_instances.iter().copied().collect();
+        if copies.is_empty() {
+            return Vec::new();
+        }
+        self.doc.begin();
+        let mut groups = Vec::new();
+        let mut picked = BTreeSet::new();
+        for id in copies {
+            let Some(name) = self
+                .doc
+                .instance(id)
+                .and_then(|i| self.doc.block(i.block))
+                .map(|b| b.name.clone())
+            else {
+                continue;
+            };
+            let created = self.add_copy_geometry(id);
+            self.doc.remove_instance(id);
+            let referenced = self.doc.defining_points(
+                created
+                    .iter()
+                    .copied()
+                    .filter(|e| self.doc.get(*e).is_some_and(|e| !e.kind.is_point())),
+            );
+            let members: BTreeSet<EntityId> = created
+                .into_iter()
+                .filter(|e| !referenced.contains(e))
+                .collect();
+            if let Ok(g) = self.doc.add_group(drift_core::Group {
+                name,
+                members: members.clone(),
+            }) {
+                groups.push(g);
+            }
+            picked.extend(members);
+        }
+        self.commit("Explode to group");
+        self.selected_instances.clear();
+        self.open_group = None;
+        self.selection = picked;
+        groups
     }
 
     /// Move the base point of `instance`'s block to `world` (a point on the drawing, where
@@ -500,6 +597,29 @@ impl Editor {
                 continue;
             }
             fill.boundary = boundary;
+            // A shape's fill (the block keeps its old path id as a mark) fills the shape the
+            // curves make again, as a path of their own.
+            fill.path = None;
+            if f.path.is_some() {
+                let mut curves: Vec<EntityId> = Vec::new();
+                for e in region
+                    .outer
+                    .curves()
+                    .into_iter()
+                    .filter_map(|i| made_from.get(i).copied().flatten())
+                {
+                    if !curves.contains(&e) {
+                        curves.push(e);
+                    }
+                }
+                fill.path = self
+                    .doc
+                    .add_path(drift_core::Path {
+                        curves,
+                        closed: true,
+                    })
+                    .ok();
+            }
             let fid = self.doc.add_fill(fill.clone());
             // On the copy's layer, over what is there.
             if let Some(mut added) = self.doc.fill(fid).cloned() {

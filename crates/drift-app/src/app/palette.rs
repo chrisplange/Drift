@@ -50,6 +50,13 @@ pub(crate) enum Command {
     Ungroup,
     MakeBlock,
     Explode,
+    BlockFromGroup,
+    ExplodeToGroup,
+    /// Save the drawing as a new option: the whole sketch, or the values only.
+    SaveOption(bool),
+    ApplyOption(drift_core::VariantId),
+    /// Show or hide an option's ghost.
+    GhostOption(drift_core::VariantId),
     Construction,
     ZoomToFit,
     ZoomToSelection,
@@ -78,14 +85,13 @@ pub(crate) enum ViewFlag {
     Relations,
     Hidden,
     Free,
-    Ghosts,
     Combs,
     Crops,
     AutoRelations,
 }
 
 impl ViewFlag {
-    const ALL: [ViewFlag; 15] = [
+    const ALL: [ViewFlag; 14] = [
         ViewFlag::Grid,
         ViewFlag::Axes,
         ViewFlag::Snap,
@@ -97,7 +103,6 @@ impl ViewFlag {
         ViewFlag::Relations,
         ViewFlag::Hidden,
         ViewFlag::Free,
-        ViewFlag::Ghosts,
         ViewFlag::Combs,
         ViewFlag::Crops,
         ViewFlag::AutoRelations,
@@ -116,7 +121,6 @@ impl ViewFlag {
             ViewFlag::Relations => "Relations",
             ViewFlag::Hidden => "Hidden annotations (faded)",
             ViewFlag::Free => "Free directions",
-            ViewFlag::Ghosts => "Variant ghosts",
             ViewFlag::Combs => "Curvature combs",
             ViewFlag::Crops => "View crops",
             ViewFlag::AutoRelations => "Automatic relations",
@@ -216,7 +220,6 @@ impl DriftApp {
             ViewFlag::Relations => &mut self.show_relations,
             ViewFlag::Hidden => &mut self.show_hidden_annotations,
             ViewFlag::Free => &mut self.params.show_free,
-            ViewFlag::Ghosts => &mut self.params.show_ghosts,
             ViewFlag::Combs => &mut self.show_combs,
             ViewFlag::Crops => &mut self.show_view_crops,
             ViewFlag::AutoRelations => &mut self.auto_relations,
@@ -380,6 +383,48 @@ impl DriftApp {
             "Edit",
             String::new(),
         );
+        if self.editor.convertible_group().is_some() {
+            add(
+                Command::BlockFromGroup,
+                "Make block from group",
+                "Edit",
+                String::new(),
+            );
+        }
+        if !self.editor.selected_instances.is_empty() {
+            add(
+                Command::ExplodeToGroup,
+                "Explode block copies to groups",
+                "Edit",
+                String::new(),
+            );
+        }
+        add(
+            Command::SaveOption(false),
+            "Save option (values only)",
+            "Parameters",
+            String::new(),
+        );
+        add(
+            Command::SaveOption(true),
+            "Save option (whole sketch)",
+            "Parameters",
+            String::new(),
+        );
+        let options: Vec<_> = self
+            .editor
+            .doc
+            .variants()
+            .map(|(id, v)| (id, v.name.clone()))
+            .collect();
+        for (id, name) in &options {
+            add(
+                Command::ApplyOption(*id),
+                &format!("Apply option {name}"),
+                "Parameters",
+                String::new(),
+            );
+        }
         add(
             Command::Construction,
             "Toggle construction",
@@ -456,6 +501,16 @@ impl DriftApp {
                 },
                 words: p.description(),
                 on: Some(shown),
+            });
+        }
+        for (id, v) in self.editor.doc.variants() {
+            out.push(Entry {
+                command: Command::GhostOption(id),
+                title: format!("Ghost of option {}", v.name),
+                group: "Parameters",
+                keys: String::new(),
+                words: "",
+                on: Some(self.params.ghosted.contains(&id)),
             });
         }
         for f in ViewFlag::ALL {
@@ -598,6 +653,31 @@ impl DriftApp {
             }
             Command::MakeBlock => self.start_make_block(""),
             Command::Explode => self.editor.explode_selected(),
+            Command::BlockFromGroup => {
+                if let Some(g) = self.editor.convertible_group() {
+                    let now = ctx.input(|i| i.time);
+                    self.block_from_group(g, now);
+                }
+            }
+            Command::ExplodeToGroup => {
+                self.editor.explode_to_groups();
+            }
+            Command::SaveOption(whole) => {
+                let n = self.editor.doc.variants().count() + 1;
+                self.editor.save_option(&format!("Option {n}"), whole);
+                self.show_panel(Panel::Parameters);
+            }
+            Command::ApplyOption(id) => {
+                if let Err(e) = self.editor.apply_variant(id) {
+                    let now = ctx.input(|i| i.time);
+                    self.set_status(format!("Can't apply it: {e}"), true, now);
+                }
+            }
+            Command::GhostOption(id) => {
+                if !self.params.ghosted.remove(&id) {
+                    self.params.ghosted.insert(id);
+                }
+            }
             Command::Construction => self.editor.toggle_construction(),
             Command::ZoomToFit => self.fit_target = Some(self.fit_bounds()),
             Command::ZoomToSelection => {

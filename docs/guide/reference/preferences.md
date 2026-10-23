@@ -94,7 +94,7 @@ says in the status bar what it just did.
 | **Curvature combs** | | Yes |
 | **View crops** | Shift+Alt+B | Yes |
 | **Free directions** (Parameters) | | Yes |
-| **Variant ghosts** (Parameters) | | Yes |
+| **Option ghosts** (each option's eye, Parameters) | | No: hidden again at each start |
 
 While dimensions or relations are hidden, the status bar shows **Dims & notes off · Show**
 or **Relations off · Show**; click it to show them again. While some dimensions or notes

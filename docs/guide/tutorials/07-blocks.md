@@ -17,6 +17,10 @@ every copy changes.
 Copies are rigid: they aren't solved, so a drawing can hold thousands without slowing the
 sketch down.
 
+A group is one thing; a block is a thing you reuse. Group what belongs together in one
+place (a desk and its chair); make a block of what you'll place again and again (every desk
+in the office). One turns into the other, see [Groups and blocks](#groups-and-blocks).
+
 ## 1. Draw the room
 
 1. Start a new sketch (Ctrl+N), and set the units to **ft-in** at the bottom right.
@@ -76,14 +80,17 @@ room.
 Pick a copy with the **Select** tool: click its lines or anywhere inside its outline. It
 moves, turns and copies like anything else (drag, G, R, Shift+D, Delete).
 
-The **Inspector** shows the copy:
+The **Inspector** shows the copy, laid out as it shows a group:
 
-- **Block:** pick another block to replace this one with it.
+- **Name:** the block's name, which every copy shares.
+- **Definition:** pick another block to replace this one with it; it says how many copies
+  the block has.
+- **Edit in place**, **Explode** (turn the copy back into ordinary, connected geometry) and
+  **Explode to group** (the same, as a group named after the block).
+- **Set base point**, **Select all copies** and **Blender profile**.
 - **Placement:** **X**, **Y**, **Angle** (with 0, 90, 180 and 270 buttons), **Scale** and
   **Mirror**.
 - **Layer.**
-- **Edit block**, **Explode** (turn the copy back into ordinary, connected geometry) and
-  **Select all copies**.
 
 Tools snap to copies: to the corners, side middles and centre of each copy's box, its
 insertion point, and the ends, middles and centres of its own curves.
@@ -118,7 +125,7 @@ or the axis a profile turns about. Exporting a block uses its base point as its 
 
 ## 6. Edit a block in place
 
-1. Double-click a copy (or pick it and click **Edit block**).
+1. Double-click a copy (or pick it and click **Edit in place**).
 2. The copy becomes ordinary geometry, framed as the block being edited. Its base point
    shows as a small cross. Change it, add to it, delete from it; anything you draw joins
    the block. **Set base point** at the top of the **Inspector** moves the base point, as
@@ -129,6 +136,24 @@ Every copy updates.
 
 Right-click a block in the **Blocks** panel to rename it, select its copies or delete it.
 Deleting a block deletes its copies.
+
+## Groups and blocks
+
+A group is one thing; a block is a thing you reuse. The **Inspector** shows both the same
+way: a name, what it holds (a group's members, a copy's block), **Edit in place**, and
+**Ungroup** or **Explode**.
+
+- **Make block from group:** pick a group and click **Make block** in the **Inspector**
+  (also on the right-click menu, **Edit → Make block from group** and the command
+  palette). The block is named after the group (with a number if a block already has the
+  name), its base point is the middle of the group, and it keeps the group's fills. A copy
+  takes the group's place.
+- **Explode to group:** pick block copies and click **Explode to group**. Each copy becomes
+  ordinary geometry in a group named after its block, with its fills; shapes drawn filled
+  are shapes again.
+
+Each is one undo step. Groups don't hold other groups, so a group to make a block of is one
+whole group, picked or being edited.
 
 ## Blocks and other programs
 
@@ -144,6 +169,8 @@ them back as blocks. See [Underlays and DXF import](11-underlays-and-dxf.md).
 - **Make** asks for the base point; **Set base point** moves it later without moving any
   copy.
 - Double-click a copy to edit the block; every copy follows.
+- A group is one thing; a block is a thing you reuse. **Make block** and **Explode to
+  group** turn one into the other.
 
 ## Next
 

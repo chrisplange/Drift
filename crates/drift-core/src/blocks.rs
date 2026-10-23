@@ -32,6 +32,10 @@ impl std::fmt::Display for InstanceId {
     }
 }
 
+/// In a block, the `path` of a fill that filled a shape (curves drawn as one) where the
+/// block was made: exploded, its curves become a shape again.
+pub const SHAPE_FILL: crate::PathId = crate::PathId(0);
+
 /// One curve of a block, in block coordinates.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BlockItem {
@@ -216,7 +220,7 @@ impl Instance {
         f.boundary.clear();
         f.layer = LayerId::DEFAULT;
         f.order = 0;
-        f.path = None;
+        f.path = f.path.map(|_| SHAPE_FILL);
         if let FillKind::Hatch(h) = &mut f.kind {
             h.origin = self.invert(h.origin);
             let angle = h.angle - self.angle;

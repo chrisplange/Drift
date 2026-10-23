@@ -6,7 +6,7 @@
 //! ```json
 //! {
 //!   "format": "drift",
-//!   "version": 40,
+//!   "version": 41,
 //!   "meta": {"title":"Bracket","units":"mm","generator":"Drift 0.1.0"},
 //!   "display": {"length":"architectural","fraction":16},
 //!   "variables": [
@@ -25,7 +25,8 @@
 //! ```
 //!
 //! `display` (how lengths are shown), `variables`, `measurements` (pinned, measured-only
-//! dimensions) and `variants` (named sets of variable expressions) are written only when used.
+//! dimensions) and `options` (named sets of variable expressions, or whole sketches) are written
+//! only when used.
 //! Coordinates are always millimetres (`meta.units`), whatever the display units.
 //!
 //! Angles are stored in degrees, as the user typed them.
@@ -104,8 +105,11 @@ pub const EXTENSION: &str = "drift";
 /// drawn as one shape); 39 = adds `rules` (how closed areas and fills behave, and the gap
 /// tolerance; they were the app's preferences before, so an older file gets the app's);
 /// 40 = adds `stack` (where curves stack among their layer's fills, for those not at the top
-/// of their layer) and an underlay's `layer` and `order` (where its pictures stack).
-pub const FORMAT_VERSION: u32 = 40;
+/// of their layer) and an underlay's `layer` and `order` (where its pictures stack);
+/// 41 = `variants` become `options`, which hold variable values or a whole `sketch` (a Drift
+/// file of its own, leaving out the sections it has the `same` as the drawing), and a block's
+/// fill can have `"path": "shape"` (it filled a shape, which exploding makes again).
+pub const FORMAT_VERSION: u32 = 41;
 const FORMAT_TAG: &str = "drift";
 
 /// Document-level properties stored alongside the geometry.
@@ -594,14 +598,26 @@ struct VariableRecord {
     kind: String,
 }
 
+/// A design option (v41; `variants` before, which held values only).
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct VariantRecord {
+struct OptionRecord {
     id: String,
     name: String,
-    /// Variable id → expression.
+    /// Variable id → expression, for an option of values.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     values: BTreeMap<String, String>,
+    /// The whole sketch, as a Drift file of its own, for a whole-sketch option.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sketch: Option<serde_json::Value>,
+    /// Sections the sketch has the same as the drawing, left out of `sketch` (fonts,
+    /// pictures, blocks: they would double the file).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    same: Vec<String>,
 }
+
+/// The sections a whole-sketch option shares with the drawing when they are the same.
+const SHAREABLE: [&str; 5] = ["patterns", "logo", "fonts", "blocks", "underlays"];
 
 const KINDS: [(Kind, &str); 3] = [
     (Kind::Length, "length"),
@@ -879,7 +895,7 @@ struct FileRecord {
     #[serde(default)]
     measurements: Vec<ConstraintRecord>,
     #[serde(default)]
-    variants: Vec<VariantRecord>,
+    options: Vec<OptionRecord>,
     #[serde(default)]
     fills: Vec<drafting::FillRecord>,
     #[serde(default)]
@@ -1188,10 +1204,11 @@ pub fn save(doc: &Document, meta: &Metadata) -> String {
             serde_json::to_string(&r).expect("measurement serializes")
         })
         .collect();
-    let variants: Vec<String> = doc
+    let mut sections = None;
+    let options: Vec<String> = doc
         .variants()
         .map(|(id, v)| {
-            serde_json::to_string(&VariantRecord {
+            let mut record = OptionRecord {
                 id: id.to_string(),
                 name: v.name.clone(),
                 values: v
@@ -1199,8 +1216,25 @@ pub fn save(doc: &Document, meta: &Metadata) -> String {
                     .iter()
                     .map(|(var, e)| (var.to_string(), e.clone()))
                     .collect(),
-            })
-            .expect("variant serializes")
+                sketch: None,
+                same: Vec::new(),
+            };
+            if let Some(sketch) = &v.sketch {
+                let sections = sections.get_or_insert_with(|| shareable_sections(doc));
+                let mut value: serde_json::Value =
+                    serde_json::from_str(&save(sketch, &Metadata::default()))
+                        .expect("a saved sketch parses");
+                if let Some(map) = value.as_object_mut() {
+                    for key in SHAREABLE {
+                        if map.get(key).is_some_and(|v| sections.get(key) == Some(v)) {
+                            map.remove(key);
+                            record.same.push(key.to_owned());
+                        }
+                    }
+                }
+                record.sketch = Some(value);
+            }
+            serde_json::to_string(&record).expect("option serializes")
         })
         .collect();
     let fills: Vec<String> = doc
@@ -1301,7 +1335,7 @@ pub fn save(doc: &Document, meta: &Metadata) -> String {
         .collect();
     let tail = [
         ("measurements", &measurements),
-        ("variants", &variants),
+        ("options", &options),
         ("fills", &fills),
         ("annotations", &annotations),
         ("shown", &shown),
@@ -1328,6 +1362,41 @@ pub fn save(doc: &Document, meta: &Metadata) -> String {
     out
 }
 
+/// The drawing's [`SHAREABLE`] sections as [`save`] writes them.
+#[cfg(not(feature = "demo"))]
+fn shareable_sections(doc: &Document) -> serde_json::Map<String, serde_json::Value> {
+    let mut map = serde_json::Map::new();
+    if !doc.custom_patterns().is_empty() {
+        map.insert("patterns".into(), doc.custom_patterns().into());
+    }
+    if !doc.logo().is_empty() {
+        map.insert("logo".into(), doc.logo().into());
+    }
+    if let Some(record) = fonts::fonts_record(doc.fonts(), &doc.fonts_in_use()) {
+        map.insert(
+            "fonts".into(),
+            serde_json::to_value(record).expect("fonts serialize"),
+        );
+    }
+    let blocks: Vec<_> = doc
+        .blocks()
+        .map(|(id, b)| serde_json::to_value(blocks::block_record(id, b)).expect("block serializes"))
+        .collect();
+    if !blocks.is_empty() {
+        map.insert("blocks".into(), blocks.into());
+    }
+    let underlays: Vec<_> = doc
+        .underlays()
+        .map(|(id, u)| {
+            serde_json::to_value(underlays::underlay_record(id, u)).expect("underlay serializes")
+        })
+        .collect();
+    if !underlays.is_empty() {
+        map.insert("underlays".into(), underlays.into());
+    }
+    map
+}
+
 #[cfg(not(feature = "demo"))]
 /// Write `"name": [ ... ]` with one item per line.
 fn push_array(out: &mut String, name: &str, items: &[String], more: bool) {
@@ -1352,12 +1421,21 @@ pub fn load(text: &str) -> Result<(Document, Metadata), LoadError> {
 /// Load a file, also saying what had to be left out to open it: relations that had become
 /// meaningless (a point held on a curve it is the end of), which older builds could save.
 pub fn load_with_notes(text: &str) -> Result<(Document, Metadata, Vec<String>), LoadError> {
-    let value: serde_json::Value = serde_json::from_str(text)?;
+    load_value(serde_json::from_str(text)?)
+}
+
+/// [`load_with_notes`] from parsed JSON.
+fn load_value(value: serde_json::Value) -> Result<(Document, Metadata, Vec<String>), LoadError> {
     let older_rules = value
         .get("version")
         .and_then(serde_json::Value::as_u64)
         .is_some_and(|v| v < 39);
     let value = migrate(value)?;
+    // What whole-sketch options share with the drawing.
+    let sections: BTreeMap<&str, serde_json::Value> = SHAREABLE
+        .into_iter()
+        .filter_map(|key| Some((key, value.get(key)?.clone())))
+        .collect();
     let mut file: FileRecord = serde_json::from_value(value)?;
     file.meta.older_rules = older_rules;
     if file.meta.units != "mm" {
@@ -1616,7 +1694,7 @@ pub fn load_with_notes(text: &str) -> Result<(Document, Metadata, Vec<String>), 
     }
     let (mut doc, dropped) = Document::from_parts_dropping_degenerate(entities, constraints)
         .map_err(LoadError::Document)?;
-    let notes_out: Vec<String> = dropped
+    let mut notes_out: Vec<String> = dropped
         .iter()
         .map(|(id, why)| format!("{id} ({why})"))
         .collect();
@@ -1913,7 +1991,7 @@ pub fn load_with_notes(text: &str) -> Result<(Document, Metadata, Vec<String>), 
             Err(e) => return Err(LoadError::Document(e)),
         }
     }
-    for v in file.variants {
+    for v in file.options {
         let id = VariantId(parse_prefixed(&v.id, 'k')?);
         let mut values = BTreeMap::new();
         for (var, e) in v.values {
@@ -1923,13 +2001,24 @@ pub fn load_with_notes(text: &str) -> Result<(Document, Metadata, Vec<String>), 
             }
             values.insert(var_id, e);
         }
-        doc.set_variant(
-            id,
-            Variant {
-                name: v.name,
-                values,
-            },
-        );
+        let mut option = Variant::values(v.name, values);
+        if let Some(mut sketch) = v.sketch {
+            if let Some(map) = sketch.as_object_mut() {
+                for key in &v.same {
+                    if let Some(section) = sections.get(key.as_str()) {
+                        map.insert(key.clone(), section.clone());
+                    }
+                }
+            }
+            let (sketch, _, notes) = load_value(sketch)?;
+            notes_out.extend(
+                notes
+                    .into_iter()
+                    .map(|n| format!("{n}, in option {}", option.name)),
+            );
+            option.sketch = Some(sketch.sketch_copy().into());
+        }
+        doc.set_variant(id, option);
     }
     Ok((doc, file.meta, notes_out))
 }
@@ -1981,6 +2070,12 @@ pub fn migrate(value: serde_json::Value) -> Result<serde_json::Value, LoadError>
     if version < 2 {
         // v1 → v2: constraints were introduced; a v1 file simply has none.
         value["constraints"] = serde_json::Value::Array(Vec::new());
+    }
+    if version < 41
+        && let Some(variants) = value.as_object_mut().and_then(|m| m.remove("variants"))
+    {
+        // v40 → v41: variants (values only) are options.
+        value["options"] = variants;
     }
     // v38 → v39: a drawing's rules were the app's preferences; the file is read with the
     // defaults, and `Metadata::older_rules` tells the app to apply its own.
@@ -2098,7 +2193,7 @@ mod tests {
         let text = save(&doc, &Metadata::default());
         let expected = r#"{
   "format": "drift",
-  "version": 40,
+  "version": 41,
   "meta": {"units":"mm"},
   "entities": [
     {"type":"point","id":"e1","at":[0.0,0.0]},
@@ -2327,10 +2422,7 @@ mod tests {
             value: 0.0,
         })
         .unwrap();
-        doc.add_variant(Variant {
-            name: "Small".into(),
-            values: [(w, "5 mm".to_owned())].into(),
-        });
+        doc.add_variant(Variant::values("Small", [(w, "5 mm".to_owned())].into()));
         doc.set_units(Units {
             length: LengthFormat::Architectural,
             fraction: 32,
@@ -2364,6 +2456,140 @@ mod tests {
             .unwrap();
         assert!(loaded.variables().filter(|(id, _)| *id == v).count() == 1);
         assert!(v.0 > 5);
+    }
+
+    /// A drawing with a variable, an embedded font, a block placed once, and both kinds of
+    /// option.
+    fn optioned_drawing() -> (Document, VariantId, VariantId) {
+        let mut doc = demo::mounting_plate();
+        let w = doc
+            .add_variable(Variable {
+                name: "w".into(),
+                expr: "10 mm".into(),
+                kind: Kind::Length,
+            })
+            .unwrap();
+        doc.set_fonts(drift_core::FontSet {
+            embedded: [(
+                "Big".to_owned(),
+                drift_core::EmbeddedFont {
+                    regular: drift_core::FontFile::new(vec![1, 2, 3, 4, 5], 0),
+                    bold: None,
+                },
+            )]
+            .into(),
+            drawing: Some("Big".into()),
+        });
+        let block = doc.add_block(drift_core::Block {
+            name: "Mark".into(),
+            items: vec![drift_core::BlockItem {
+                shape: drift_core::Shape::Line {
+                    a: DVec2::ZERO,
+                    b: DVec2::new(5.0, 0.0),
+                },
+                style: Default::default(),
+                appearance: Default::default(),
+            }],
+            fills: Vec::new(),
+            profile: false,
+        });
+        doc.add_instance(drift_core::Instance::new(block, DVec2::new(1.0, 2.0)))
+            .unwrap();
+        let values = doc.add_variant(Variant::values("Narrow", [(w, "5 mm".to_owned())].into()));
+        let whole = doc.add_variant(Variant::sketch("Before", &doc));
+        // The drawing moves on from the copy.
+        let first = doc.iter().find(|(_, e)| e.kind.is_point()).unwrap().0;
+        doc.set_point(first, DVec2::new(-7.0, -7.0)).unwrap();
+        (doc, values, whole)
+    }
+
+    #[test]
+    fn options_of_both_kinds_round_trip() {
+        let (doc, values, whole) = optioned_drawing();
+        let text = save(&doc, &Metadata::default());
+        assert!(text.contains("\"options\": ["), "{text}");
+        assert!(!text.contains("\"variants\""));
+        // The copy leaves out what it has the same as the drawing (the font, the block).
+        assert!(
+            text.contains(r#""same":["fonts","blocks"]"#),
+            "{}",
+            text.lines().find(|l| l.contains("Before")).unwrap_or("")
+        );
+        assert_eq!(
+            text.matches("AQIDBAU").count(),
+            1,
+            "the font is written once"
+        );
+        let (loaded, _) = load(&text).unwrap();
+        assert_eq!(loaded, doc);
+        let sketch = loaded.variant(whole).unwrap().sketch.as_ref().unwrap();
+        assert_eq!(sketch.fonts(), doc.fonts());
+        assert_eq!(sketch.blocks().count(), 1);
+        assert_eq!(sketch.variants().count(), 0);
+        assert!(!loaded.variant(values).unwrap().is_sketch());
+        assert_eq!(save(&loaded, &Metadata::default()), text);
+    }
+
+    #[test]
+    fn a_whole_sketch_option_keeps_what_differs_from_the_drawing() {
+        let (mut doc, _, whole) = optioned_drawing();
+        doc.set_fonts(drift_core::FontSet::default());
+        let text = save(&doc, &Metadata::default());
+        assert!(text.contains(r#""same":["blocks"]"#), "{text}");
+        let (loaded, _) = load(&text).unwrap();
+        let sketch = loaded.variant(whole).unwrap().sketch.as_ref().unwrap();
+        assert_eq!(sketch.fonts().drawing.as_deref(), Some("Big"));
+        assert_eq!(loaded.fonts().drawing, None);
+    }
+
+    #[test]
+    fn a_block_fill_that_filled_a_shape_says_so() {
+        let mut doc = Document::new();
+        let mut fill = drift_core::Fill::new(
+            Vec::new(),
+            DVec2::new(1.0, 1.0),
+            drift_core::FillKind::Solid,
+        );
+        fill.path = Some(drift_core::blocks::SHAPE_FILL);
+        let area = drift_core::Fill::new(
+            Vec::new(),
+            DVec2::new(3.0, 3.0),
+            drift_core::FillKind::Solid,
+        );
+        doc.add_block(drift_core::Block {
+            name: "Tile".into(),
+            items: Vec::new(),
+            fills: vec![fill, area],
+            profile: false,
+        });
+        let text = save(&doc, &Metadata::default());
+        assert_eq!(text.matches(r#""path":"shape""#).count(), 1, "{text}");
+        let (loaded, _) = load(&text).unwrap();
+        assert_eq!(loaded, doc);
+    }
+
+    #[test]
+    fn version_40_variants_open_as_options_of_values() {
+        let mut doc = demo::mounting_plate();
+        let w = doc
+            .add_variable(Variable {
+                name: "w".into(),
+                expr: "10 mm".into(),
+                kind: Kind::Length,
+            })
+            .unwrap();
+        let k = doc.add_variant(Variant::values("Narrow", [(w, "5 mm".to_owned())].into()));
+        let text = save(&doc, &Metadata::default());
+        let old = text
+            .replace(&format!("\"version\": {FORMAT_VERSION}"), "\"version\": 40")
+            .replace("\"options\"", "\"variants\"");
+        assert!(old.contains(r#""variants": ["#) && old.contains("\"version\": 40"));
+        let (loaded, _) = load(&old).unwrap();
+        let option = loaded.variant(k).unwrap();
+        assert_eq!(option.name, "Narrow");
+        assert_eq!(option.values, [(w, "5 mm".to_owned())].into());
+        assert!(!option.is_sketch());
+        assert_eq!(save(&loaded, &Metadata::default()), text);
     }
 
     #[test]

@@ -904,3 +904,69 @@ fn perf_zoom_frame_cost() {
         }
     }
 }
+
+/// The torture sketch plus what makes a drawing heavy without changing often: a large
+/// embedded font, blocks with many curves, an underlay with many curves, imported patterns.
+fn heavy_document() -> Document {
+    use drift_core::{Block, BlockItem, LineKind, Shape, Underlay};
+    use drift_core::{EmbeddedFont, FontFile, FontSet};
+    let (mut doc, _) = torture_sketch();
+    doc.begin();
+    let mut fonts = FontSet::default();
+    fonts.embedded.insert(
+        "Big".into(),
+        EmbeddedFont {
+            regular: FontFile::new(vec![7; 8 << 20], 0),
+            bold: None,
+        },
+    );
+    doc.set_fonts(fonts);
+    for b in 0..20 {
+        let items = (0..2_000)
+            .map(|k| BlockItem {
+                shape: Shape::Line {
+                    a: v(k as f64, b as f64),
+                    b: v(k as f64 + 1.0, b as f64 + 1.0),
+                },
+                style: LineKind::Solid,
+                appearance: Default::default(),
+            })
+            .collect();
+        doc.add_block(Block {
+            name: format!("Block {b}"),
+            items,
+            fills: Vec::new(),
+            profile: false,
+        });
+    }
+    let prims = (0..50_000)
+        .map(|k| drift_core::RefPrim::Line(v(k as f64, 0.0), v(k as f64, 1.0)))
+        .collect();
+    doc.add_underlay(Underlay::new("Plan", "plan.pdf", prims));
+    doc.set_custom_patterns("*P, pattern\n0, 0,0, 0,1\n".repeat(20_000));
+    doc.commit("Heavy");
+    doc
+}
+
+/// A copy of the document (undo snapshots, options, option ghosts, agent edits) costs about
+/// nothing: its parts are shared until one is changed.
+#[test]
+#[ignore = "torture test: run with --release --ignored --nocapture"]
+fn perf_document_clone() {
+    println!();
+    let doc = heavy_document();
+    let mut copies = Vec::new();
+    let clone = time(50, |_| copies.push(doc.clone()));
+    report("clone a heavy document", clone);
+    copies.clear();
+    let first = doc.iter().find(|(_, e)| e.kind.is_point()).unwrap().0;
+    let edit = time(20, |k| {
+        let mut copy = doc.clone();
+        copy.begin();
+        let _ = copy.set_point(first, v(k as f64, 0.0));
+        copy.commit("Move");
+    });
+    report("clone, then move a point in the copy", edit);
+    assert!(clone.0 < 0.05, "cloning took {:.3} ms", clone.0);
+    assert_eq!(doc.clone(), doc);
+}

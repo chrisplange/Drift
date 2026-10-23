@@ -1,9 +1,9 @@
 # Parameters
 
 **What you'll make:** a panel whose width is a named variable, `width`, and whose height is
-always half of it. You'll save two variants, *Wide* and *Narrow*, and switch between them.
+always half of it. You'll save two options, *Wide* and *Narrow*, and switch between them.
 
-![The Parameters panel with the width variable, two variants, and the wide variant shown as a ghost](../images/parameters.png)
+![The Parameters panel with the width variable, two options, and the wide option shown as a ghost](../images/parameters.png)
 
 Time: about 10 minutes.
 
@@ -46,17 +46,25 @@ double-clicking one shows `width / 2` again.
 Each change is one undo step. A change that would break the sketch (a negative length, or a
 conflict) is refused with the reason, and nothing moves.
 
-## 4. Save variants
+## 4. Save options
 
-A variant is a named set of variable values.
+An option is a state of the drawing you can come back to in one step. It is saved in the
+file. Each option is one of two kinds, chosen beside **Save current**:
 
-1. Set `width` to `100`. Type `Wide` in the **name** field under **Variants** and click
-   **Save current**.
+- **Values only:** the variables' values. Applying it sets them, and the sketch follows.
+- **Whole sketch:** a copy of everything in the drawing. Applying it brings the drawing back
+  as it was, which is good for trying something out.
+
+1. Set `width` to `100`. Under **Options**, type `Wide` in the **name** field, leave the kind
+   on **Values only** and click **Save current**.
 2. Set `width` to `60`. Save it as `Narrow`.
-3. Click the dot beside a variant's name to apply it. The matching variant is marked.
-4. **Update** stores the current values in that variant; **×** deletes it.
-5. Tick **Show other variants as ghosts** to see the others drawn faintly behind the sketch
-   (also **View → Variant ghosts**).
+3. Click the dot beside an option's name to apply it. The option the drawing is in is marked.
+4. **Update** stores the drawing as it is now in that option, and **×** deletes it.
+   Double-click a name to rename it. Each of these is one undo step.
+5. Click an option's eye to draw it faintly behind the sketch as a ghost. Ghosts are
+   worked out again when an edit is finished, not while you drag.
+
+The command palette (Ctrl+K) can also save an option, apply one, or show its ghost.
 
 ## Expressions
 
@@ -80,12 +88,6 @@ Bare numbers take the display unit for lengths (inches for feet-and-inches) and 
 angles. Drift writes the unit into the stored expression, so changing the display units
 later never changes a value.
 
-## Snapshots
-
-Under **Snapshots**, type a name and click **Take snapshot** to keep a copy of the whole
-sketch as it is now. **Restore** brings it back, as one undo step. Snapshots last for the
-session only; they aren't saved in the file.
-
 ## Pinned measurements
 
 To keep an eye on a distance, length or angle that isn't dimensioned, pick the geometry,
@@ -97,7 +99,7 @@ with live values at the bottom of the **Parameters** panel, and update as you ed
 
 - Variables live in the **Parameters** panel; a dimension linked to one shows **Σ**.
 - Sliders scrub a variable and re-solve live.
-- Variants store sets of values; ghosts show the others.
+- Options store variable values or the whole sketch; an option's eye shows it as a ghost.
 - Expressions with units and variables work in every value field.
 
 ## Next

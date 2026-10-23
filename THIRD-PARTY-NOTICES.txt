@@ -2210,7 +2210,7 @@ tinyvec 1.13.3
     Copyright (c) 2019 Daniel "Lokathor" Gee.
     https://github.com/Lokathor/tinyvec
 
-tokio 1.53.2
+tokio 1.54.1
     Licence: MIT
     Copyright (c) Tokio Contributors
     https://github.com/tokio-rs/tokio
@@ -10576,7 +10576,7 @@ SOFTWARE.
 
 3.90 MIT License (MIT)
 ----------------------
-Used by: tokio 1.53.2, tokio-util 0.7.20
+Used by: tokio 1.54.1, tokio-util 0.7.20
 
 MIT License
 

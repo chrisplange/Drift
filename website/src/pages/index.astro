@@ -10,7 +10,7 @@ import Base from "../layouts/Base.astro";
 
     <section class="hero" aria-label="Drift">
       <div class="hero-pin">
-        <svg id="mark" viewBox="0 -70 1520 470" role="img" aria-label="DRIFT">
+        <svg id="mark" viewBox="0 -70 1440 440" role="img" aria-label="DRIFT">
           <line class="cons" x1="-20" y1="36" x2="1420" y2="36"></line>
           <line class="cons" x1="-20" y1="330" x2="1420" y2="330"></line>
           <g>
@@ -19,20 +19,6 @@ import Base from "../layouts/Base.astro";
             <path class="glyph" d="M674 36 L764 36 L764 330 L674 330 Z"></path>
             <path class="glyph" d="M806 36 L1056 36 L1056 102 L884 102 L884 156 L1030 156 L1030 220 L884 220 L884 330 L806 330 Z"></path>
             <path class="glyph" d="M1100 36 L1400 36 L1400 102 L1289 102 L1289 330 L1211 330 L1211 102 L1100 102 Z"></path>
-          </g>
-          <g class="dims">
-            <!-- overall width: extension lines down from the baseline corners, value in a break in the line -->
-            <path class="ext" d="M0 338V398M1400 338V398"></path>
-            <path class="dim" d="M0 386H636M764 386H1400"></path>
-            <polygon class="arw" points="0,386 14,382.5 14,389.5"></polygon>
-            <polygon class="arw" points="1400,386 1386,382.5 1386,389.5"></polygon>
-            <text class="dimt" x="700" y="392" text-anchor="middle">1400.00</text>
-            <!-- cap height: extension lines out from the T, value along the line -->
-            <path class="ext" d="M1408 36H1462M1408 330H1462"></path>
-            <path class="dim" d="M1450 36V146M1450 220V330"></path>
-            <polygon class="arw" points="1450,36 1446.5,50 1453.5,50"></polygon>
-            <polygon class="arw" points="1450,330 1446.5,316 1453.5,316"></polygon>
-            <text class="dimt" x="1450" y="183" text-anchor="middle" dominant-baseline="middle" transform="rotate(-90 1450 183)">294.00</text>
           </g>
         </svg>
 
@@ -149,27 +135,6 @@ import Base from "../layouts/Base.astro";
     stroke-dasharray: 6 5;
     fill: none;
     opacity: 0.55;
-  }
-  .ext {
-    stroke: var(--annot);
-    stroke-width: 0.75;
-    fill: none;
-  }
-  .dim {
-    stroke: var(--annot);
-    stroke-width: 1;
-    fill: none;
-  }
-  .arw {
-    fill: var(--annot);
-  }
-  .dimt {
-    font-family: var(--dimfont);
-    font-weight: 300;
-    font-size: 18px;
-    letter-spacing: 0.01em;
-    font-variant-numeric: tabular-nums;
-    fill: var(--annot);
   }
   .thesis {
     display: grid;
@@ -341,8 +306,8 @@ import Base from "../layouts/Base.astro";
   }).observe(mark);
 
   // The wordmark is drawn the way Drift works: it opens as a rough sketch with every point thrown
-  // off, and scrolling solves it into shape, fills it and dimensions it while the hero holds still.
-  // Then the dimensions clear and the letters tip forward as the page moves on. Scrolling back up
+  // off, and scrolling solves it into shape and fills it while the hero holds still.
+  // Then the guides clear and the letters tip forward as the page moves on. Scrolling back up
   // runs it in reverse. Without JS, or with reduced motion, the finished wordmark simply shows.
   if (!matchMedia("(prefers-reduced-motion: reduce)").matches) {
     const $$ = (s: string) => [...document.querySelectorAll<SVGElement>(s)];
@@ -387,16 +352,8 @@ import Base from "../layouts/Base.astro";
         `${(+x + (+X - +x) * k).toFixed(1)} ${(+y + (+Y - +y) * k).toFixed(1)}`,
       );
 
-    const dimLines = $$("#mark .dims path").map((el) => {
-      el.setAttribute("pathLength", "1");
-      el.style.strokeDasharray = "1 1";
-      el.style.strokeDashoffset = "1";
-      return el;
-    });
-    const dimMarks = $$("#mark .dims text, #mark .dims polygon");
     const cons = $$("#mark .cons");
-    const dims = document.querySelector<SVGGElement>("#mark .dims")!;
-    [...dimMarks, ...cons].forEach((el) => (el.style.opacity = "0"));
+    cons.forEach((el) => (el.style.opacity = "0"));
     glyphs.forEach((g, li) => {
       g.style.fillOpacity = "0";
       g.setAttribute("d", shape(li, 1));
@@ -410,21 +367,15 @@ import Base from "../layouts/Base.astro";
         g.style.fillOpacity = String(span(t, 0.62, 0.78));
       });
       cons.forEach((el) => (el.style.opacity = String(0.55 * span(t, 0.3, 0.5))));
-      dimLines.forEach((el, i) => {
-        const o = i / dimLines.length;
-        el.style.strokeDashoffset = String(1 - span(t, 0.7 + o * 0.15, 0.9 + o * 0.1));
-      });
-      dimMarks.forEach((el) => (el.style.opacity = String(span(t, 0.85, 1))));
     };
 
-    // SCRUB px of scrolling solves, fills and dimensions; over FALL px more the dimensions clear
-    // and the letters fall. The hero lets go as they start to tip, so the page moves while they fall.
-    const SCRUB = 900, FALL = 500;
+    // SCRUB px of scrolling solves and fills the wordmark; over FALL px more the guides clear
+    // and the letters fall. The hero lets go as soon as the letters are filled, so the page moves while they fall.
+    const SCRUB = 450, FALL = 400;
     const hero = document.querySelector<HTMLElement>(".hero")!;
     hero.classList.add("scrub");
-    hero.style.setProperty("--scrub", `${SCRUB + FALL * 0.25}px`);
+    hero.style.setProperty("--scrub", `${SCRUB}px`);
     const fall = (f: number) => {
-      dims.style.opacity = String(1 - span(f, 0, 0.25));
       cons.forEach((el) => (el.style.opacity = String(0.55 * (1 - span(f, 0, 0.25)))));
       const a = span(f, 0.25, 1) ** 2 * (Math.PI / 2);
       // seen from the front, a letter falling towards you shortens to its baseline and spreads at the top
@@ -433,7 +384,7 @@ import Base from "../layouts/Base.astro";
     let ready = false;
     const onScroll = () => {
       if (!ready) return;
-      frame(0.3 + 0.7 * clamp(scrollY / SCRUB));
+      frame(0.3 + 0.48 * clamp(scrollY / SCRUB)); // the timeline's fill ends at 0.78
       fall(clamp((scrollY - SCRUB) / FALL));
     };
     addEventListener("scroll", () => requestAnimationFrame(onScroll), { passive: true });

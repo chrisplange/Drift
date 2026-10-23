@@ -30,7 +30,7 @@ rest stand alone.
    typed sizes and axis locks.
 2. [Constraints and dimensions](tutorials/02-constraints-and-dimensions.md): relations, the
    Dimension tool, degrees of freedom and driven dimensions.
-3. [Parameters](tutorials/03-parameters.md): variables, expressions and variants.
+3. [Parameters](tutorials/03-parameters.md): variables, expressions and options.
 4. [Editing](tutorials/04-editing.md): selecting, moving, rotating, scaling, trim, fillet,
    offset, mirror and groups.
 5. [Temporary dimensions](tutorials/05-temporary-dimensions.md): Revit-style sizing of a

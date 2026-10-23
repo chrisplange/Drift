@@ -4,6 +4,7 @@
 //! geometry shares points. Each point's `x`/`y` and each circle's radius are the unknowns the
 //! constraint solver solves for; [`Constraint`]s relate them.
 
+use crate::shared::Shared;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::f64::consts::TAU;
 
@@ -231,11 +232,39 @@ impl std::fmt::Display for VariantId {
     }
 }
 
-/// A named set of variable expressions that can be applied in one step.
+/// A design option: a named state of the drawing to return to in one step. Either a set of
+/// variable expressions ("values only", applied over the current sketch) or a copy of the
+/// whole sketch (`sketch`; `values` is then empty).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Variant {
     pub name: String,
     pub values: BTreeMap<VariableId, String>,
+    /// The whole sketch, without options of its own (a copy shares the document's parts).
+    pub sketch: Option<Shared<Document>>,
+}
+
+impl Variant {
+    /// An option holding variable values.
+    pub fn values(name: impl Into<String>, values: BTreeMap<VariableId, String>) -> Self {
+        Self {
+            name: name.into(),
+            values,
+            sketch: None,
+        }
+    }
+
+    /// An option holding a copy of the whole sketch.
+    pub fn sketch(name: impl Into<String>, doc: &Document) -> Self {
+        Self {
+            name: name.into(),
+            values: BTreeMap::new(),
+            sketch: Some(Shared::new(doc.sketch_copy())),
+        }
+    }
+
+    pub fn is_sketch(&self) -> bool {
+        self.sketch.is_some()
+    }
 }
 
 /// Stable identifier of a pinned measurement.
@@ -378,11 +407,11 @@ enum Record {
     OnlyIn(BTreeSet<ViewId>),
     Style(crate::StyleOverride),
     Draft(DraftStyle),
-    Patterns(String),
-    Logo(String),
+    Patterns(Shared<String>),
+    Logo(Shared<String>),
     Rules(crate::DrawingRules),
     Project(crate::Project),
-    Fonts(crate::fonts::FontSet),
+    Fonts(Shared<crate::fonts::FontSet>),
     Sheet(Sheet),
     View(View),
     Group(Group),
@@ -421,57 +450,57 @@ impl Transaction {
 
 #[derive(Clone, Debug)]
 pub struct Document {
-    entities: BTreeMap<EntityId, Entity>,
-    constraints: BTreeMap<ConstraintId, Constraint>,
+    entities: Shared<BTreeMap<EntityId, Entity>>,
+    constraints: Shared<BTreeMap<ConstraintId, Constraint>>,
     /// Where dimension labels sit: an offset in world units from the dimension's anchor
     /// (e.g. the midpoint of a measured line). Missing means "default placement".
-    placements: BTreeMap<ConstraintId, DVec2>,
+    placements: Shared<BTreeMap<ConstraintId, DVec2>>,
     /// Where a linear dimension's extension lines start, set by hand: per end, a distance
     /// from the measured point along the extension line toward the dimension line. A missing
     /// entry, or `None` for an end, means "automatic".
-    extension_starts: BTreeMap<ConstraintId, [Option<f64>; 2]>,
+    extension_starts: Shared<BTreeMap<ConstraintId, [Option<f64>; 2]>>,
     /// Driven (reference) dimensions: they show a measurement but don't constrain.
-    driven: BTreeSet<ConstraintId>,
-    variables: BTreeMap<VariableId, Variable>,
+    driven: Shared<BTreeSet<ConstraintId>>,
+    variables: Shared<BTreeMap<VariableId, Variable>>,
     /// Dimensions whose value comes from an expression (e.g. `width / 2`).
-    expressions: BTreeMap<ConstraintId, String>,
-    variants: BTreeMap<VariantId, Variant>,
+    expressions: Shared<BTreeMap<ConstraintId, String>>,
+    variants: Shared<BTreeMap<VariantId, Variant>>,
     /// Pinned measurements: dimension definitions that are only measured, never solved.
-    measurements: BTreeMap<MeasurementId, Constraint>,
+    measurements: Shared<BTreeMap<MeasurementId, Constraint>>,
     units: Units,
-    layers: BTreeMap<LayerId, Layer>,
+    layers: Shared<BTreeMap<LayerId, Layer>>,
     /// The layer new geometry goes on.
     current_layer: LayerId,
-    fills: BTreeMap<FillId, Fill>,
-    annotations: BTreeMap<AnnotationId, Annotation>,
+    fills: Shared<BTreeMap<FillId, Fill>>,
+    annotations: Shared<BTreeMap<AnnotationId, Annotation>>,
     /// Prefixes, suffixes and tolerances of dimensions.
-    dim_notes: BTreeMap<ConstraintId, DimNote>,
+    dim_notes: Shared<BTreeMap<ConstraintId, DimNote>>,
     /// Dimensions and annotations not shown everywhere (the rest are).
-    shown: BTreeMap<crate::AnnotationRef, crate::Shown>,
+    shown: Shared<BTreeMap<crate::AnnotationRef, crate::Shown>>,
     /// Dimensions and annotations drawn in some views only (the rest are in every view).
-    only_in: BTreeMap<crate::AnnotationRef, BTreeSet<ViewId>>,
+    only_in: Shared<BTreeMap<crate::AnnotationRef, BTreeSet<ViewId>>>,
     /// Dimensions and annotations with settings of their own over the drawing's style.
-    styles: BTreeMap<crate::AnnotationRef, crate::StyleOverride>,
+    styles: Shared<BTreeMap<crate::AnnotationRef, crate::StyleOverride>>,
     draft: DraftStyle,
     /// Hatch patterns imported from `.pat` files, as `.pat` text, so they travel with the file.
-    patterns: String,
+    patterns: Shared<String>,
     /// The title blocks' logo, as SVG text ("" for none), so it travels with the file.
-    logo: String,
+    logo: Shared<String>,
     /// How the drawing's closed areas and fills behave.
     rules: crate::DrawingRules,
     /// The project every sheet's title block shares.
     project: crate::Project,
     /// Fonts kept in the drawing, and the one its annotations are set in.
-    fonts: crate::fonts::FontSet,
-    sheets: BTreeMap<SheetId, Sheet>,
+    fonts: Shared<crate::fonts::FontSet>,
+    sheets: Shared<BTreeMap<SheetId, Sheet>>,
     /// Views of the model, placed on sheets by their viewports.
-    views: BTreeMap<ViewId, View>,
-    groups: BTreeMap<GroupId, Group>,
-    paths: BTreeMap<PathId, Path>,
-    blocks: BTreeMap<BlockId, Block>,
-    instances: BTreeMap<InstanceId, Instance>,
-    underlays: BTreeMap<UnderlayId, Underlay>,
-    texts: BTreeMap<TextId, SketchText>,
+    views: Shared<BTreeMap<ViewId, View>>,
+    groups: Shared<BTreeMap<GroupId, Group>>,
+    paths: Shared<BTreeMap<PathId, Path>>,
+    blocks: Shared<BTreeMap<BlockId, Block>>,
+    instances: Shared<BTreeMap<InstanceId, Instance>>,
+    underlays: Shared<BTreeMap<UnderlayId, Underlay>>,
+    texts: Shared<BTreeMap<TextId, SketchText>>,
     next_id: u32,
     next_constraint_id: u32,
     /// Next id for variables, variants and measurements (one counter, ids never reused).
@@ -528,38 +557,38 @@ impl PartialEq for Document {
 impl Default for Document {
     fn default() -> Self {
         Self {
-            entities: BTreeMap::new(),
-            constraints: BTreeMap::new(),
-            placements: BTreeMap::new(),
-            extension_starts: BTreeMap::new(),
-            driven: BTreeSet::new(),
-            variables: BTreeMap::new(),
-            expressions: BTreeMap::new(),
-            variants: BTreeMap::new(),
-            measurements: BTreeMap::new(),
+            entities: BTreeMap::new().into(),
+            constraints: BTreeMap::new().into(),
+            placements: BTreeMap::new().into(),
+            extension_starts: BTreeMap::new().into(),
+            driven: BTreeSet::new().into(),
+            variables: BTreeMap::new().into(),
+            expressions: BTreeMap::new().into(),
+            variants: BTreeMap::new().into(),
+            measurements: BTreeMap::new().into(),
             units: Units::default(),
-            layers: BTreeMap::from([(LayerId::DEFAULT, Layer::new("0"))]),
+            layers: BTreeMap::from([(LayerId::DEFAULT, Layer::new("0"))]).into(),
             current_layer: LayerId::DEFAULT,
-            fills: BTreeMap::new(),
-            annotations: BTreeMap::new(),
-            dim_notes: BTreeMap::new(),
-            shown: BTreeMap::new(),
-            only_in: BTreeMap::new(),
-            styles: BTreeMap::new(),
+            fills: BTreeMap::new().into(),
+            annotations: BTreeMap::new().into(),
+            dim_notes: BTreeMap::new().into(),
+            shown: BTreeMap::new().into(),
+            only_in: BTreeMap::new().into(),
+            styles: BTreeMap::new().into(),
             draft: DraftStyle::default(),
-            patterns: String::new(),
-            logo: String::new(),
+            patterns: String::new().into(),
+            logo: String::new().into(),
             rules: crate::DrawingRules::default(),
             project: crate::Project::default(),
-            fonts: Default::default(),
-            sheets: BTreeMap::new(),
-            views: BTreeMap::new(),
-            groups: BTreeMap::new(),
-            paths: BTreeMap::new(),
-            blocks: BTreeMap::new(),
-            instances: BTreeMap::new(),
-            underlays: BTreeMap::new(),
-            texts: BTreeMap::new(),
+            fonts: Shared::default(),
+            sheets: BTreeMap::new().into(),
+            views: BTreeMap::new().into(),
+            groups: BTreeMap::new().into(),
+            paths: BTreeMap::new().into(),
+            blocks: BTreeMap::new().into(),
+            instances: BTreeMap::new().into(),
+            underlays: BTreeMap::new().into(),
+            texts: BTreeMap::new().into(),
             // Ids start at 1; `e0` and `c0` are not valid ids in `.drift` files.
             next_id: 1,
             next_constraint_id: 1,
@@ -611,7 +640,7 @@ impl Document {
             .map(|id| id.0 + 1)
             .max()
             .unwrap_or(1);
-        doc.constraints = kept;
+        doc.constraints = kept.into();
         Ok((doc, dropped))
     }
 
@@ -624,8 +653,8 @@ impl Document {
         let next_id = entities.keys().last().map_or(1, |id| id.0 + 1);
         let next_constraint_id = constraints.keys().last().map_or(1, |id| id.0 + 1);
         let doc = Self {
-            entities,
-            constraints,
+            entities: entities.into(),
+            constraints: constraints.into(),
             next_id,
             next_constraint_id,
             ..Self::default()
@@ -1274,13 +1303,11 @@ impl Document {
     pub fn set_point(&mut self, id: EntityId, at: DVec2) -> Result<(), DocumentError> {
         self.point(id)?;
         self.touch(id);
-        self.entities.insert(
-            id,
-            Entity {
-                kind: EntityKind::Point(at),
-                ..self.entities[&id]
-            },
-        );
+        let entity = Entity {
+            kind: EntityKind::Point(at),
+            ..self.entities[&id]
+        };
+        self.entities.insert(id, entity);
         Ok(())
     }
 
@@ -2351,10 +2378,18 @@ impl Document {
     }
 
     /// Make this document's content equal to `other`'s, as journalled changes (so it can be
-    /// undone). Used to restore snapshots.
+    /// undone).
     pub fn restore_from(&mut self, other: &Document) {
+        self.restore_parts(other, true);
+    }
+
+    /// [`restore_from`](Self::restore_from), keeping the options if not `options`.
+    fn restore_parts(&mut self, other: &Document, options: bool) {
         let mut keys = self.keys();
         keys.extend(other.keys());
+        if !options {
+            keys.retain(|k| !matches!(k, Key::Variant(_)));
+        }
         keys.sort();
         keys.dedup();
         for key in keys {
@@ -2368,6 +2403,29 @@ impl Document {
         self.next_constraint_id = self.next_constraint_id.max(other.next_constraint_id);
         self.next_param_id = self.next_param_id.max(other.next_param_id);
         self.next_drafting_id = self.next_drafting_id.max(other.next_drafting_id);
+    }
+
+    /// A copy of the drawing for a whole-sketch option: everything but its options (and no
+    /// open transaction). Cheap: its parts are shared until changed.
+    pub fn sketch_copy(&self) -> Document {
+        let mut copy = self.clone();
+        copy.variants = Shared::default();
+        copy.journal = None;
+        copy.last_anchor_pos.clear();
+        copy
+    }
+
+    /// Make the drawing what `sketch` holds, keeping its options (inside a transaction, so it
+    /// can be undone). Applies a whole-sketch option.
+    pub fn restore_sketch(&mut self, sketch: &Document) {
+        self.restore_parts(sketch, false);
+    }
+
+    /// True if the drawing is what `sketch` holds (its options aside).
+    pub fn same_sketch(&self, sketch: &Document) -> bool {
+        let mut me = self.clone();
+        me.variants = Shared::default();
+        me == *sketch
     }
 
     pub fn units(&self) -> Units {
@@ -3567,9 +3625,9 @@ impl Document {
     }
 
     pub fn set_custom_patterns(&mut self, pat: String) {
-        if self.patterns != pat {
+        if *self.patterns != pat {
             self.touch_key(Key::Patterns);
-            self.patterns = pat;
+            self.patterns = pat.into();
         }
     }
 
@@ -3579,9 +3637,9 @@ impl Document {
     }
 
     pub fn set_logo(&mut self, svg: String) {
-        if self.logo != svg {
+        if *self.logo != svg {
             self.touch_key(Key::Logo);
-            self.logo = svg;
+            self.logo = svg.into();
         }
     }
 
@@ -3615,9 +3673,9 @@ impl Document {
     }
 
     pub fn set_fonts(&mut self, fonts: crate::fonts::FontSet) {
-        if self.fonts != fonts {
+        if *self.fonts != fonts {
             self.touch_key(Key::Fonts);
-            self.fonts = fonts;
+            self.fonts = fonts.into();
         }
     }
 
@@ -4033,6 +4091,41 @@ mod tests {
             Document::from_parts_dropping_degenerate(entities, [(ConstraintId(4), bad)]).unwrap();
         assert_eq!(dropped, [(ConstraintId(4), "point on its own curve")]);
         assert_eq!(doc.constraints().count(), 0);
+    }
+
+    #[test]
+    fn copies_stay_apart_through_edits_undo_and_merged_steps() {
+        let mut doc = Document::new();
+        let mut history = History::default();
+        let (pts, lines) = square(&mut doc);
+        doc.begin();
+        doc.set_custom_patterns(
+            "*A, a
+0, 0,0, 0,1
+"
+            .into(),
+        );
+        history.push(doc.commit("Patterns"));
+        let copy = doc.clone();
+        assert_eq!(copy, doc);
+        doc.begin();
+        doc.translate([lines[0]], v(5.0, 5.0));
+        history.push(doc.commit("Move"));
+        // A second change folded into the same step.
+        doc.begin();
+        doc.set_point(pts[2], v(40.0, 40.0)).unwrap();
+        let tx = doc.commit("Move");
+        history.merge_into_last(tx);
+        assert_ne!(copy, doc);
+        assert!(history.undo(&mut doc));
+        assert_eq!(doc, copy, "one undo takes back both merged changes");
+        assert!(history.redo(&mut doc));
+        assert_eq!(doc.point(pts[2]).unwrap(), v(40.0, 40.0));
+        // Undoing past the copy changes the document, never the copy.
+        assert!(history.undo(&mut doc));
+        assert!(history.undo(&mut doc));
+        assert_eq!(doc.custom_patterns(), "");
+        assert!(copy.custom_patterns().starts_with("*A"));
     }
 
     #[test]

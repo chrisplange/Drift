@@ -550,6 +550,16 @@ impl DriftApp {
                 {
                     self.start_make_block("");
                 }
+                let group = self.editor.convertible_group();
+                if ui
+                    .add_enabled(group.is_some(), egui::Button::new("Make block from group"))
+                    .on_hover_text("The picked group as a block: named after it, with its fills")
+                    .clicked()
+                    && let Some(g) = group
+                {
+                    let now = ui.input(|i| i.time);
+                    self.block_from_group(g, now);
+                }
                 if ui
                     .add_enabled(
                         !self.editor.selected_instances.is_empty(),
@@ -558,6 +568,16 @@ impl DriftApp {
                     .clicked()
                 {
                     self.editor.explode_selected();
+                }
+                if ui
+                    .add_enabled(
+                        !self.editor.selected_instances.is_empty(),
+                        egui::Button::new("Explode to group"),
+                    )
+                    .on_hover_text("Turn each picked copy into a group named after its block")
+                    .clicked()
+                {
+                    self.editor.explode_to_groups();
                 }
                 ui.separator();
                 if ui
@@ -631,7 +651,6 @@ impl DriftApp {
                 );
                 toggle_item(ui, &mut self.show_relations, "Relations", "Alt+R");
                 toggle_item(ui, &mut self.params.show_free, "Free directions", "");
-                toggle_item(ui, &mut self.params.show_ghosts, "Variant ghosts", "");
                 toggle_item(ui, &mut self.show_combs, "Curvature combs", "");
                 toggle_item(ui, &mut self.show_view_crops, "View crops", "Shift+Alt+B");
                 ui.separator();

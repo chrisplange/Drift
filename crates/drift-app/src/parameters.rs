@@ -1,11 +1,12 @@
-//! The Parameters tab (variables with sliders, variants, snapshots, pinned
-//! measurements) and the canvas overlays that go with it (free-direction arrows, variant
-//! ghosts).
+//! The Parameters tab (variables with sliders, options, pinned measurements) and the canvas
+//! overlays that go with it (free-direction arrows, option ghosts).
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use drift_core::units::FRACTIONS;
-use drift_core::{EntityId, Kind, LengthFormat, Shape, SketchItem, VariableId, dimension_kind};
+use drift_core::{
+    EntityId, Kind, LengthFormat, Shape, SketchItem, VariableId, VariantId, dimension_kind,
+};
 use drift_solver::Freedom;
 use eframe::egui::{self, Color32, Pos2, Stroke, Vec2, vec2};
 
@@ -23,11 +24,18 @@ pub struct ParamUi {
     name_text: HashMap<VariableId, String>,
     /// A slider's range, fixed while it is dragged.
     slider_range: Option<(VariableId, f64, f64)>,
-    variant_name: String,
-    snapshot_name: String,
-    pub show_ghosts: bool,
+    option_name: String,
+    /// Whether a new option keeps the whole sketch (or only the variable values).
+    option_whole: bool,
+    /// An option being renamed, and the name typed so far.
+    renaming: Option<(VariantId, String)>,
+    /// Options drawn faintly as ghosts (for the session, like other view switches).
+    pub ghosted: BTreeSet<VariantId>,
     pub show_free: bool,
-    ghosts: Option<(u64, Vec<Vec<SketchItem>>)>,
+    /// Each ghost's geometry as of a document revision (`None`: it doesn't solve).
+    ghosts: HashMap<VariantId, (u64, Option<Vec<SketchItem>>)>,
+    /// How many times a ghost's geometry was worked out (tests count them).
+    pub(crate) ghost_computations: usize,
     free: Option<(u64, HashMap<EntityId, Freedom>)>,
 }
 
@@ -49,8 +57,7 @@ impl DriftApp {
                 // The drawing's units and drafting standard are in Preferences: this tab is
                 // for what drives the sketch.
                 self.variables_section(ui, now);
-                self.variants_section(ui, now);
-                self.snapshots_section(ui);
+                self.options_section(ui, now);
                 self.measurements_section(ui);
                 self.patterns_section(ui);
             });
@@ -320,114 +327,131 @@ impl DriftApp {
         }
     }
 
-    fn variants_section(&mut self, ui: &mut egui::Ui, now: f64) {
-        crate::theme::section(ui, "Variants");
+    fn options_section(&mut self, ui: &mut egui::Ui, now: f64) {
+        crate::theme::section(ui, "Options");
         let active = self.editor.active_variant();
-        let variants: Vec<_> = self
+        let options: Vec<_> = self
             .editor
             .doc
             .variants()
-            .map(|(id, v)| (id, v.name.clone()))
+            .map(|(id, v)| (id, v.name.clone(), v.is_sketch()))
             .collect();
+        if options.is_empty() {
+            ui.label(
+                egui::RichText::new(
+                    "Save the drawing as it is to come back to it in one step: its variable \
+                     values, or the whole sketch.",
+                )
+                .weak(),
+            );
+        }
         let mut status = None;
-        for (id, name) in variants {
+        for (id, name, whole) in options {
             ui.horizontal(|ui| {
-                if ui
-                    .radio(active == Some(id), &name)
-                    .on_hover_text("Apply this variant")
-                    .clicked()
-                    && active != Some(id)
-                    && let Err(e) = self.editor.apply_variant(id)
+                let kind = if whole { "Whole sketch" } else { "Values only" };
+                if let Some((rid, text)) = &mut self.params.renaming
+                    && *rid == id
                 {
-                    status = Some(format!("Can't apply {name}: {e}"));
+                    let r = ui.add(egui::TextEdit::singleline(text).desired_width(110.0));
+                    if r.lost_focus() {
+                        let text = std::mem::take(text);
+                        self.params.renaming = None;
+                        if !text.trim().is_empty() && text.trim() != name {
+                            self.editor.rename_variant(id, &text);
+                        }
+                    } else {
+                        r.request_focus();
+                    }
+                } else {
+                    let r = ui
+                        .radio(active == Some(id), &name)
+                        .on_hover_text(format!("{kind}. Click to apply; double-click to rename"));
+                    if r.double_clicked() {
+                        self.params.renaming = Some((id, name.clone()));
+                    } else if r.clicked()
+                        && active != Some(id)
+                        && let Err(e) = self.editor.apply_variant(id)
+                    {
+                        status = Some(format!("Can't apply {name}: {e}"));
+                    }
                 }
+                ui.label(
+                    egui::RichText::new(if whole { "sketch" } else { "values" })
+                        .small()
+                        .weak(),
+                );
+                let mut shown = self.params.ghosted.contains(&id);
+                let tip = if active == Some(id) {
+                    "Ghost: the drawing is in this option now"
+                } else {
+                    "Show this option faintly behind the drawing"
+                };
+                if crate::layers_ui::icon_toggle(
+                    ui,
+                    &mut shown,
+                    crate::icons::Glyph::Eye,
+                    true,
+                    tip,
+                ) {
+                    if shown {
+                        self.params.ghosted.insert(id);
+                    } else {
+                        self.params.ghosted.remove(&id);
+                    }
+                }
+                let update_tip = if whole {
+                    "Store the sketch as it is now in this option"
+                } else {
+                    "Store the current values in this option"
+                };
                 if ui
                     .small_button("Update")
-                    .on_hover_text("Store the current values in this variant")
+                    .on_hover_text(update_tip)
                     .clicked()
                 {
                     self.editor.update_variant(id);
                 }
                 if ui.small_button("×").on_hover_text("Delete").clicked() {
                     self.editor.remove_variant(id);
+                    self.params.ghosted.remove(&id);
                 }
             });
         }
         ui.horizontal(|ui| {
             ui.add(
-                egui::TextEdit::singleline(&mut self.params.variant_name)
+                egui::TextEdit::singleline(&mut self.params.option_name)
                     .hint_text("name")
                     .desired_width(110.0),
             );
-            if ui
-                .button("Save current")
-                .on_hover_text("Save the current variable values as a variant")
-                .clicked()
-            {
-                let n = self.editor.doc.variants().count() + 1;
-                let name = if self.params.variant_name.trim().is_empty() {
-                    format!("Variant {n}")
+            egui::ComboBox::from_id_salt("option_kind")
+                .selected_text(if self.params.option_whole {
+                    "Whole sketch"
                 } else {
-                    std::mem::take(&mut self.params.variant_name)
-                };
-                self.editor.save_variant(&name);
-            }
+                    "Values only"
+                })
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut self.params.option_whole, false, "Values only")
+                        .on_hover_text("The variables' values, applied over the sketch as it is");
+                    ui.selectable_value(&mut self.params.option_whole, true, "Whole sketch")
+                        .on_hover_text("Everything in the drawing, to return to as it was");
+                });
         });
-        ui.checkbox(
-            &mut self.params.show_ghosts,
-            "Show other variants as ghosts",
-        );
+        if ui
+            .button("Save current")
+            .on_hover_text("Save the drawing as it is now as an option (saved in the file)")
+            .clicked()
+        {
+            let n = self.editor.doc.variants().count() + 1;
+            let name = if self.params.option_name.trim().is_empty() {
+                format!("Option {n}")
+            } else {
+                std::mem::take(&mut self.params.option_name)
+            };
+            self.editor.save_option(&name, self.params.option_whole);
+        }
         if let Some(text) = status {
             self.set_status(text, true, now);
         }
-    }
-
-    fn snapshots_section(&mut self, ui: &mut egui::Ui) {
-        crate::theme::section(ui, "Snapshots");
-        let names: Vec<String> = self
-            .editor
-            .snapshots
-            .iter()
-            .map(|(n, _)| n.clone())
-            .collect();
-        let mut restore = None;
-        let mut delete = None;
-        for (i, name) in names.iter().enumerate() {
-            ui.horizontal(|ui| {
-                ui.label(name);
-                if ui.small_button("Restore").clicked() {
-                    restore = Some(i);
-                }
-                if ui.small_button("×").clicked() {
-                    delete = Some(i);
-                }
-            });
-        }
-        if let Some(i) = restore {
-            self.editor.restore_snapshot(i);
-        }
-        if let Some(i) = delete {
-            self.editor.snapshots.remove(i);
-        }
-        ui.horizontal(|ui| {
-            ui.add(
-                egui::TextEdit::singleline(&mut self.params.snapshot_name)
-                    .hint_text("name")
-                    .desired_width(110.0),
-            );
-            if ui
-                .button("Take snapshot")
-                .on_hover_text("Remember this state to return to (kept until Drift closes)")
-                .clicked()
-            {
-                let name = if self.params.snapshot_name.trim().is_empty() {
-                    format!("Snapshot {}", self.editor.snapshots.len() + 1)
-                } else {
-                    std::mem::take(&mut self.params.snapshot_name)
-                };
-                self.editor.take_snapshot(&name);
-            }
-        });
     }
 
     fn measurements_section(&mut self, ui: &mut egui::Ui) {
@@ -519,45 +543,53 @@ impl DriftApp {
         }
     }
 
-    /// Other variants' geometry drawn faintly behind the sketch.
-    pub(crate) fn paint_ghosts(&mut self, painter: &egui::Painter, map: &ScreenMap) {
-        if !self.params.show_ghosts {
+    /// The ghosts' geometry, worked out again after each committed edit (never during a
+    /// drag or any edit under way, which would cost a solve per option per frame).
+    pub(crate) fn refresh_ghosts(&mut self) {
+        let doc = &self.editor.doc;
+        self.params.ghosted.retain(|id| doc.variant(*id).is_some());
+        let ghosted = &self.params.ghosted;
+        self.params.ghosts.retain(|id, _| ghosted.contains(id));
+        if doc.in_transaction() {
             return;
         }
-        let revision = self.editor.doc.revision();
-        // Each variant is solved on a copy of the drawing: not in every frame of a drag (or
-        // any edit under way), but once it is done.
-        if !self.editor.doc.in_transaction()
-            && self
+        let revision = doc.revision();
+        for &id in &self.params.ghosted {
+            if self
                 .params
                 .ghosts
-                .as_ref()
+                .get(&id)
                 .is_none_or(|(r, _)| *r != revision)
-        {
-            let active = self.editor.active_variant();
-            let ids: Vec<_> = self
-                .editor
-                .doc
-                .variants()
-                .map(|(id, _)| id)
-                .filter(|id| Some(*id) != active)
-                .collect();
-            let ghosts = ids
-                .into_iter()
-                .filter_map(|id| self.editor.variant_geometry(id))
-                .collect();
-            self.params.ghosts = Some((revision, ghosts));
+            {
+                self.params.ghost_computations += 1;
+                let items = self.editor.variant_geometry(id);
+                self.params.ghosts.insert(id, (revision, items));
+            }
         }
-        let Some((_, ghosts)) = &self.params.ghosts else {
+    }
+
+    /// The options picked as ghosts, drawn faintly behind the sketch (not the one the
+    /// drawing is in: it would cover the drawing exactly).
+    pub(crate) fn paint_ghosts(&mut self, painter: &egui::Painter, map: &ScreenMap) {
+        if self.params.ghosted.is_empty() {
             return;
-        };
+        }
+        self.refresh_ghosts();
+        let active = self.editor.active_variant();
         let palette = [
             Color32::from_rgb(0xb3, 0x88, 0xff),
             Color32::from_rgb(0xff, 0x9e, 0x5e),
             Color32::from_rgb(0x4d, 0xd0, 0xc4),
             Color32::from_rgb(0xf0, 0x6e, 0xaa),
         ];
-        for (i, items) in ghosts.iter().enumerate() {
+        let order: Vec<VariantId> = self.editor.doc.variants().map(|(id, _)| id).collect();
+        for (i, id) in order.iter().enumerate() {
+            if Some(*id) == active {
+                continue;
+            }
+            let Some((_, Some(items))) = self.params.ghosts.get(id) else {
+                continue;
+            };
             let stroke = Stroke::new(1.2, palette[i % palette.len()].gamma_multiply(0.55));
             for item in items {
                 paint_shape(painter, map, &item.shape, stroke);

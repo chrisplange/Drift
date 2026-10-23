@@ -58,7 +58,7 @@ Drift's sketcher is modelled on the SolidWorks sketch.
 | Blue / black / red status | The same colours (white instead of black on the dark theme), and the DOF count in the status bar. |
 | Driven dimensions | Offered automatically when a dimension would over-define the sketch; switch with **Driven (reference)**. |
 | Equations / global variables | **Parameters → Variables**, with sliders. Link a dimension by typing a variable's name into it. |
-| Configurations | **Variants**, with ghosts. |
+| Configurations | **Options** (values or the whole sketch), with ghosts. |
 | Construction geometry (For construction) | Alt+C. |
 | Sketch fillet / chamfer | F (F again for chamfer). Size on the canvas by moving the pointer, or type it. |
 | Convert entities, offset, mirror, patterns | Offset (O), Mirror (M), linear and circular patterns in the **Inspector**. |

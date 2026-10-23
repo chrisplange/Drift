@@ -6,7 +6,7 @@ use crate::*;
 pub(crate) const LIVE_PROFILES_S: f64 = 0.1;
 
 /// How many switches the View menu has (see `view_flags`).
-pub(crate) const VIEW_FLAGS: usize = 13;
+pub(crate) const VIEW_FLAGS: usize = 12;
 
 /// What an older file's rules are taken from, said once as it opens.
 pub(crate) const OLDER_RULES: &str =
@@ -769,11 +769,6 @@ impl DriftApp {
                 self.params.show_free,
                 "Free directions shown",
                 "Free directions hidden",
-            ),
-            (
-                self.params.show_ghosts,
-                "Variant ghosts shown",
-                "Variant ghosts hidden",
             ),
         ]
     }

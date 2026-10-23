@@ -37,8 +37,8 @@ What's picked, and what you can do with it. Its contents depend on the selection
 | An area fill or hatch | Its **Style**, **Layer**, **Arrange** and **Area**. |
 | A text | Its words, **Height**, **Angle**, **Font**, **Align**, **Spacing** and **Wrap**, and **Convert to curves**. |
 | Several things, with text or annotations among them | How many of each ("4 lines · 1 dimension · 1 note · 1 text"), and **Show** for the dimensions and annotations. Delete, Move, Rotate, Mirror and Copy act on all of it. |
-| A block copy | **Block**, **Blender profile**, **Placement**, **Layer**, **Edit block**, **Set base point**, **Explode** and **Select all copies**. **Blender profile** writes the block to the drawing's profiles file on save (see [Profiles in Blender](../tutorials/13-profiles-in-blender.md)). |
-| A group | Its **Name**, **Members**, **Edit group** and **Ungroup**. |
+| A block copy | Laid out as a group: the block's **Name**, its **Definition** (another block to put in its place, and how many copies), **Edit in place**, **Explode** and **Explode to group**; then **Set base point**, **Select all copies**, **Blender profile**, **Placement** and **Layer**. **Blender profile** writes the block to the drawing's profiles file on save (see [Profiles in Blender](../tutorials/13-profiles-in-blender.md)). |
+| A group | Its **Name**, **Members**, **Edit in place**, **Ungroup** and **Make block** (a block named after it, with its fills). A group is one thing; a block is a thing you reuse (see [Groups and blocks](../tutorials/07-blocks.md#groups-and-blocks)). |
 | A closed area (with area picking on) | **Area**, **Perimeter**, **Centroid** and **Holes**, and **Fill** / **Hatch** buttons. |
 
 With the **Fill / hatch** tool active, the **Inspector** shows the style for **New fills**
@@ -53,9 +53,9 @@ settings…**.)
 
 - **Variables:** name, expression, kind and slider for each; a row to add one. See
   [Parameters](../tutorials/03-parameters.md).
-- **Variants:** apply, **Update**, delete, **Save current**, and **Show other variants as
-  ghosts**.
-- **Snapshots:** **Take snapshot** and **Restore** (this session only).
+- **Options:** saved states of the drawing, kept in the file: **Values only** or **Whole
+  sketch**. The dot applies one, the eye shows it as a ghost, **Update** stores the drawing
+  as it is now, double-click renames, **×** deletes. **Save current** adds one.
 - **Pinned measurements:** live values, with **Unpin**.
 - **Hatch patterns:** patterns imported into the drawing, and **Import .pat…**.
 

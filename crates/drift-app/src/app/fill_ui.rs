@@ -320,6 +320,13 @@ impl DriftApp {
             .copied()
             .filter(|id| self.editor.doc.fill(*id).is_some())
             .collect();
+        // A picked group's shapes' fills come with it: the curves' inspector shows the group
+        // and their Fill.
+        if !self.editor.selection.is_empty()
+            && fills.iter().all(|f| self.editor.fill_group(*f).is_some())
+        {
+            return false;
+        }
         if let Some(&first) = fills.first() {
             let fill = self.editor.doc.fill(first).cloned().expect("exists");
             let shapes = self.editor.fill_shapes();

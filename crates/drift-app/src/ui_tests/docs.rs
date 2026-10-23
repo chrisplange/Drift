@@ -373,7 +373,8 @@ fn parameters() {
         ed.set_variable(var, "60").unwrap();
         ed.save_variant("Narrow");
     }
-    h.state_mut().params.show_ghosts = true;
+    let options: Vec<_> = h.state().editor.doc.variants().map(|(id, _)| id).collect();
+    h.state_mut().params.ghosted = options.into_iter().collect();
     h.state_mut().show_panel(Panel::Parameters);
     // Room for the wide variant's ghost.
     h.state_mut().fit_target = Some(drift_core::Bounds {

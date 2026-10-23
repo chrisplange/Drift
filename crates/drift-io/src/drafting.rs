@@ -98,6 +98,8 @@ pub(crate) fn block_fill_record(f: &Fill) -> FillRecord {
     r.layer = None;
     r.order = 0;
     r.divided = false;
+    // It filled a shape (v41).
+    r.path = f.path.map(|_| "shape".to_owned());
     r
 }
 
@@ -150,11 +152,12 @@ pub(crate) fn parse_block_fill(mut r: FillRecord, block: &str) -> Result<Fill, L
     if r.id.is_empty() {
         r.id = block.to_owned();
     }
+    let shape = r.path.take().is_some();
     let mut fill = parse_fill_body(r)?;
     fill.boundary.clear();
     fill.layer = LayerId::DEFAULT;
     fill.divided = false;
-    fill.path = None;
+    fill.path = shape.then_some(drift_core::blocks::SHAPE_FILL);
     Ok(fill)
 }
 

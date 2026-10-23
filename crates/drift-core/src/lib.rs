@@ -17,6 +17,7 @@ pub mod params;
 pub mod paths;
 pub mod rules;
 pub mod shape;
+pub mod shared;
 pub mod sheets;
 pub mod texts;
 pub mod underlays;
@@ -41,6 +42,7 @@ pub use layers::{Appearance, Layer, LayerId, LineType, LineWeight, Rgb};
 pub use paths::{Path, PathId};
 pub use rules::DrawingRules;
 pub use shape::{DofState, Emphasis, LineKind, Shape, SketchItem};
+pub use shared::Shared;
 pub use sheets::{
     FieldSet, PaperSize, PlacedView, Project, Revision, Sheet, SheetColours, SheetId, TitleBlock,
     TitleFields, View, ViewFrame, ViewId, Viewport,

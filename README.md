@@ -108,8 +108,8 @@ dimension, render and analyse Drift drawings: see [Drawing with AI assistants](d
   - Variables such as `width = 120` and `hole = width / 10`, with sliders that re-solve the
     sketch live.
   - Dimensions linked to expressions (type `=width/2` into a dimension; it shows `Σ`).
-  - Named variants you can switch between, or show as ghosts.
-  - Snapshots to return to, and pinned measurements that update as you edit.
+  - Options you can switch between, or show as ghosts: variable values, or the whole sketch.
+  - Pinned measurements that update as you edit.
 - **Units:**
   - Metric (mm, cm, m) or imperial: decimal inches or feet, or architectural feet-inches with
     fractions (`1'-6 1/2"`).

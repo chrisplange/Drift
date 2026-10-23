@@ -1392,3 +1392,158 @@ fn deleting_the_wall_between_two_filled_areas_leaves_one_fill() {
     ed.delete_selection_with(&[]);
     assert_eq!(ed.doc.fills().count(), 1, "two fills stacked on one area");
 }
+
+/// Two filled shapes, one a shape drawn filled (with a path) and one an area filled with
+/// the Fill tool, grouped as "Desk".
+fn desk_group(ed: &mut Editor) -> (drift_core::GroupId, Vec<EntityId>) {
+    let (_, top) = plate(ed);
+    ed.fill_new_shapes = true;
+    ed.doc.begin();
+    ed.fill_new_shape(&top).unwrap();
+    ed.commit("Shape");
+    ed.fill_new_shapes = false;
+    let (_, leg) = polygon(
+        ed,
+        &[v(50.0, 0.0), v(60.0, 0.0), v(60.0, 10.0), v(50.0, 10.0)],
+    );
+    ed.add_fill_at(v(55.0, 5.0)).unwrap();
+    let curves: Vec<EntityId> = top.iter().chain(&leg).copied().collect();
+    ed.selection = curves.iter().copied().collect();
+    let g = ed.make_group().unwrap();
+    ed.rename(crate::blocks::RenameTarget::Group(g), "Desk")
+        .unwrap();
+    (g, curves)
+}
+
+/// The fills' areas, smallest first.
+fn fill_areas(ed: &mut Editor) -> Vec<f64> {
+    let shapes = ed.fill_shapes();
+    let mut areas: Vec<f64> = shapes
+        .values()
+        .inspect(|s| assert!(!s.lost, "a fill lost its area"))
+        .map(|s| s.region.area)
+        .collect();
+    areas.sort_by(f64::total_cmp);
+    areas
+}
+
+#[test]
+fn a_group_becomes_a_block_with_its_fills_and_comes_back_as_a_group() {
+    let mut ed = Editor::default();
+    let (g, _) = desk_group(&mut ed);
+    assert_eq!(ed.convertible_group(), Some(g));
+    let copy = ed.block_from_group(g).unwrap();
+    assert_eq!(ed.history.undo_label(), Some("Make block from group"));
+    let i = *ed.doc.instance(copy).unwrap();
+    let block = ed.doc.block(i.block).unwrap();
+    assert_eq!(block.name, "Desk");
+    assert_eq!(
+        block.fills.len(),
+        2,
+        "the shapes' fills went into the block"
+    );
+    assert!(close(i.at.x, 30.0) && close(i.at.y, 10.0), "{:?}", i.at);
+    assert!(ed.doc.group(g).is_none() && ed.doc.fills().count() == 0);
+    let areas: Vec<f64> = ed.copy_fills().iter().map(|c| c.region.area).collect();
+    assert_eq!(areas.len(), 2);
+    assert_eq!(ed.selected_instances, [copy].into());
+    // One step back: the group and its fills.
+    ed.undo();
+    assert_eq!(ed.doc.group(g).unwrap().name, "Desk");
+    assert_eq!(fill_areas(&mut ed).len(), 2);
+    assert_eq!(ed.doc.blocks().count(), 0);
+    ed.redo();
+
+    // And back: a group named after the block, carrying the fills, the shape still a shape.
+    ed.selected_instances = [copy].into();
+    let groups = ed.explode_to_groups();
+    assert_eq!(ed.history.undo_label(), Some("Explode to group"));
+    assert_eq!(groups.len(), 1);
+    let group = ed.doc.group(groups[0]).unwrap().clone();
+    assert_eq!(group.name, "Desk");
+    assert_eq!(group.members.len(), 8, "the curves, not their points");
+    assert_eq!(ed.selection, group.members);
+    assert!(ed.doc.instance(copy).is_none());
+    let areas = fill_areas(&mut ed);
+    assert!(
+        close(areas[0], 100.0) && close(areas[1], 800.0),
+        "{areas:?}"
+    );
+    let shape = ed.doc.fills().find(|(_, f)| f.path.is_some());
+    let (_, shape) = shape.expect("the shape drawn filled is a shape again");
+    let path = ed.doc.path(shape.path.unwrap()).unwrap();
+    assert!(path.closed && path.curves.len() == 4);
+    assert!(
+        ed.doc
+            .fills()
+            .all(|(_, f)| f.boundary.iter().all(|e| group.members.contains(e)))
+    );
+    ed.undo();
+    assert!(ed.doc.instance(copy).is_some() && ed.doc.groups().count() == 0);
+    assert_eq!(ed.doc.fills().count(), 0);
+}
+
+#[test]
+fn blocks_from_groups_take_free_names_and_copies_explode_to_a_group_each() {
+    let mut ed = Editor::default();
+    let (g, _) = desk_group(&mut ed);
+    let first = ed.block_from_group(g).unwrap();
+    let block = ed.doc.instance(first).unwrap().block;
+    // A second group of the same name: the block name is taken.
+    ed.place_instance(block, v(0.0, 100.0), 90.0, false);
+    ed.explode_to_groups();
+    let again = ed.doc.groups().next().unwrap().0;
+    let second = ed.block_from_group(again).unwrap();
+    let second_block = ed.doc.instance(second).unwrap().block;
+    assert_eq!(ed.doc.block(second_block).unwrap().name, "Desk 2");
+    assert_eq!(ed.doc.block(second_block).unwrap().fills.len(), 2);
+    // Several copies at once: one group each, one undo step.
+    ed.place_instance(block, v(200.0, 0.0), 0.0, true);
+    ed.selected_instances = ed.doc.instances().map(|(id, _)| id).collect();
+    let groups = ed.explode_to_groups();
+    assert_eq!(groups.len(), 3);
+    assert_eq!(fill_areas(&mut ed).len(), 6);
+    let mut names: Vec<String> = groups
+        .iter()
+        .map(|g| ed.doc.group(*g).unwrap().name.clone())
+        .collect();
+    names.sort();
+    assert_eq!(names, ["Desk", "Desk", "Desk 2"]);
+    ed.undo();
+    assert_eq!(ed.doc.instances().count(), 3);
+    assert_eq!(ed.doc.groups().count(), 0);
+}
+
+#[test]
+fn only_one_whole_group_converts() {
+    let mut ed = Editor::default();
+    let (g, curves) = desk_group(&mut ed);
+    // Part of a group, or two groups (groups don't nest), isn't a group to convert.
+    ed.selection = curves[..2].iter().copied().collect();
+    assert_eq!(ed.convertible_group(), None);
+    let (_, other) = polygon(
+        &mut ed,
+        &[v(0.0, 50.0), v(10.0, 50.0), v(10.0, 60.0), v(0.0, 60.0)],
+    );
+    ed.selection = other.iter().copied().collect();
+    ed.make_group().unwrap();
+    ed.selection = curves.iter().chain(&other).copied().collect();
+    assert_eq!(ed.convertible_group(), None);
+    // The group being edited, with nothing picked in it, converts.
+    ed.selection.clear();
+    ed.open_group = Some(g);
+    assert_eq!(ed.convertible_group(), Some(g));
+    ed.block_from_group(g).unwrap();
+    assert_eq!(ed.open_group, None);
+    assert_eq!(ed.doc.groups().count(), 1, "the other group stays");
+}
+
+#[test]
+fn a_duplicated_group_brings_its_fills() {
+    let mut ed = Editor::default();
+    let (g, _) = desk_group(&mut ed);
+    ed.selection = ed.doc.group(g).unwrap().members.clone();
+    assert!(ed.duplicate_selection() > 0);
+    let areas = fill_areas(&mut ed);
+    assert_eq!(areas.len(), 4, "{areas:?}");
+}

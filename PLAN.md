@@ -792,7 +792,10 @@ written but hasn't run yet (no GitHub repo).*
   shown as active. Other variants can be drawn as ghosts, solved on a copy and cached per
   revision.
 - **Snapshots:** named document copies for the session. Restoring is one undoable step via
-  `Document::restore_from`, which journals every differing key.
+  `Document::restore_from`, which journals every differing key. (Batch 3, format 41:
+  variants and snapshots became one list of **options** saved in the file, values only or
+  the whole sketch, with a ghost eye per option, worked out once per committed edit;
+  `Document` parts are `Shared` (copy on write), so copies are cheap.)
 - **Free directions (View → Show free directions):**
   - `drift_solver::free_directions` takes the null space of each component's equilibrated
     Jacobian by dense RREF (components up to 400 unknowns). Each point's 2×k motion block then

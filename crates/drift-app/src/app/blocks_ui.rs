@@ -147,6 +147,35 @@ impl DriftApp {
         self.set_tool(ToolKind::Block);
     }
 
+    /// Rename a block as its name is typed: one undo step for the typing, and only to a
+    /// name no other block has.
+    fn rename_block_typed(&mut self, block: BlockId, name: &str) {
+        let name = name.trim();
+        let ed = &mut self.editor;
+        if name.is_empty() || ed.doc.block_named(name).is_some_and(|b| b != block) {
+            return;
+        }
+        let Some(mut b) = ed.doc.block(block).cloned() else {
+            return;
+        };
+        b.name = name.to_owned();
+        ed.doc.begin();
+        ed.doc.set_block(block, b);
+        let tx = ed.doc.commit("Rename block");
+        if ed.history.undo_label() == Some("Rename block") {
+            ed.history.merge_into_last(tx);
+        } else {
+            ed.history.push(tx);
+        }
+    }
+
+    /// Make a block from a group, saying why not if it can't be.
+    pub(crate) fn block_from_group(&mut self, g: drift_core::GroupId, now: f64) {
+        if let Err(e) = self.editor.block_from_group(g) {
+            self.set_status(e, true, now);
+        }
+    }
+
     /// Make a block of the selection: first pick its base point (Enter keeps the centre).
     pub(crate) fn start_make_block(&mut self, name: &str) {
         match self.editor.check_make_block(name) {
@@ -539,20 +568,75 @@ impl DriftApp {
         let layers: Vec<(LayerId, String)> =
             doc.layers().map(|(id, l)| (id, l.name.clone())).collect();
         let units = doc.units();
-        theme::section(ui, "Block");
+        let copies = self
+            .editor
+            .copy_counts()
+            .get(&first.block)
+            .copied()
+            .unwrap_or(0);
+        theme::section(ui, "Block copy");
+        let mut typed = name.clone();
+        theme::row(ui, "Name", |ui| {
+            if ui
+                .add(
+                    egui::TextEdit::singleline(&mut typed)
+                        .desired_width(ui.available_width() - 8.0),
+                )
+                .on_hover_text("The block's name: every copy shares it")
+                .changed()
+            {
+                self.rename_block_typed(first.block, &typed);
+            }
+        });
         let mut replace = None;
-        egui::ComboBox::from_id_salt("instance_block")
-            .selected_text(&name)
-            .width(ui.available_width() - 8.0)
-            .show_ui(ui, |ui| {
-                for (id, n) in &blocks {
-                    if ui.selectable_label(*id == first.block, n).clicked() {
-                        replace = Some(*id);
+        theme::row(ui, "Definition", |ui| {
+            egui::ComboBox::from_id_salt("instance_block")
+                .selected_text(format!(
+                    "{name} · {copies} {}",
+                    if copies == 1 { "copy" } else { "copies" }
+                ))
+                .width(ui.available_width() - 8.0)
+                .show_ui(ui, |ui| {
+                    for (id, n) in &blocks {
+                        if ui.selectable_label(*id == first.block, n).clicked() {
+                            replace = Some(*id);
+                        }
                     }
-                }
-            });
+                })
+                .response
+                .on_hover_text("A block is a thing you reuse: pick another to put in its place");
+        });
         if let Some(b) = replace {
             self.editor.replace_block(b);
+        }
+        ui.horizontal_wrapped(|ui| {
+            if picked.len() == 1
+                && ui
+                    .button("Edit in place")
+                    .on_hover_text(
+                        "Change the block in place: every copy updates (or double-click it)",
+                    )
+                    .clicked()
+            {
+                self.editor.edit_block(first_id);
+            }
+            if ui
+                .button("Explode")
+                .on_hover_text("Turn the copy back into ordinary geometry")
+                .clicked()
+            {
+                self.editor.explode_selected();
+            }
+            if ui
+                .button("Explode to group")
+                .on_hover_text("Turn the copy into a group named after the block, with its fills")
+                .clicked()
+            {
+                self.editor.explode_to_groups();
+            }
+        });
+        if self.editor.selected_instances.is_empty() {
+            return true;
         }
         let mut is_profile = self
             .editor
@@ -641,16 +725,6 @@ impl DriftApp {
         ui.horizontal_wrapped(|ui| {
             if picked.len() == 1
                 && ui
-                    .button("Edit block")
-                    .on_hover_text(
-                        "Change the block in place: every copy updates (or double-click it)",
-                    )
-                    .clicked()
-            {
-                self.editor.edit_block(first_id);
-            }
-            if picked.len() == 1
-                && ui
                     .button("Set base point")
                     .on_hover_text(
                         "Click a new base point for the block: every copy stays where it is",
@@ -658,13 +732,6 @@ impl DriftApp {
                     .clicked()
             {
                 self.start_set_base_point(first_id);
-            }
-            if ui
-                .button("Explode")
-                .on_hover_text("Turn the copy back into ordinary geometry")
-                .clicked()
-            {
-                self.editor.explode_selected();
             }
             if ui.button("Select all copies").clicked() {
                 self.editor.select_copies(first.block);

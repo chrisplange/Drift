@@ -26,6 +26,7 @@ pub(crate) mod palette;
 pub(crate) mod panels;
 pub(crate) mod patterns;
 pub(crate) mod pie;
+pub(crate) mod recovery;
 pub(crate) mod rename_ui;
 pub(crate) mod shape_ui;
 pub(crate) mod sheet_editor;

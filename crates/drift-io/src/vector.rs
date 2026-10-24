@@ -6,6 +6,12 @@
 //! Both formats store circles and arcs as Bézier curves. Curves that are pieces of a circle
 //! (to the accuracy those approximations have) come back as true arcs and circles, and
 //! straight ones as lines, so what comes in is as editable as if it were drawn in Drift.
+// Reads files from anywhere: bad input is an error or is skipped, never a panic
+// (tests/import_robustness.rs). Tests may unwrap.
+#![cfg_attr(
+    not(test),
+    deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)
+)]
 
 use std::collections::BTreeMap;
 use std::f64::consts::{PI, TAU};

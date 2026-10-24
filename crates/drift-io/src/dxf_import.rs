@@ -7,6 +7,12 @@
 //! sketch; each layout becomes a sheet whose viewports are its views. What a Drift sketch
 //! cannot hold is counted in [`DxfImport::skipped`] or explained in [`DxfImport::notes`]
 //! rather than dropped silently.
+// Reads files from anywhere: bad input is an error or is skipped, never a panic
+// (tests/import_robustness.rs). Tests may unwrap.
+#![cfg_attr(
+    not(test),
+    deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)
+)]
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::f64::consts::TAU;
@@ -2125,6 +2131,47 @@ pub struct ImportReport {
     pub notes: Vec<String>,
 }
 
+/// Why a curve whose coordinates overflow (or aren't numbers) is left out.
+const TOO_LARGE: &str = "curves too large to draw";
+
+/// The largest coordinate an imported curve may have, in mm. Stray geometry far off (1e12
+/// and more) still comes in and is reported; near f64's limit the drawing's own sums and
+/// squares overflow and come out as NaN.
+const MAX_COORD: f64 = 1e30;
+
+/// Every point `add_to_document` makes for `shape` is a number within [`MAX_COORD`] (a NaN
+/// or infinite one would make a drawing that doesn't save).
+fn finite(shape: &Shape) -> bool {
+    let ok = |p: DVec2| p.abs().max_element() <= MAX_COORD;
+    match *shape {
+        Shape::Point(p) => ok(p),
+        Shape::Line { a, b } => ok(a) && ok(b),
+        Shape::Circle { center, radius } => ok(center) && radius.abs() <= MAX_COORD,
+        Shape::Arc {
+            center,
+            radius,
+            start,
+            sweep,
+        } => {
+            ok(center)
+                && ok(center + DVec2::from_angle(start) * radius)
+                && ok(center + DVec2::from_angle(start + sweep) * radius)
+        }
+        Shape::Ellipse {
+            center,
+            major,
+            minor,
+            start,
+            sweep,
+        } => {
+            let (axes, ends) =
+                drift_core::shape::ellipse_handles(center, major, minor, start, sweep);
+            axes.into_iter().chain(ends.into_iter().flatten()).all(ok)
+        }
+        Shape::Bezier { p } => p.into_iter().all(ok),
+    }
+}
+
 /// Points along a curve, for testing what is inside a hatch.
 fn flatten(shape: &Shape, out: &mut Vec<DVec2>) {
     match *shape {
@@ -2295,7 +2342,8 @@ pub fn add_to_document(doc: &mut Document, import: &DxfImport) -> ImportReport {
         let cell = ((p.x / tol).round() as i64, (p.y / tol).round() as i64);
         for dx in -1..=1 {
             for dy in -1..=1 {
-                if let Some(list) = points.get(&(cell.0 + dx, cell.1 + dy))
+                if let Some(list) =
+                    points.get(&(cell.0.saturating_add(dx), cell.1.saturating_add(dy)))
                     && let Some((_, id)) = list.iter().find(|(q, _)| q.distance(p) <= tol)
                 {
                     return *id;
@@ -2307,6 +2355,9 @@ pub fn add_to_document(doc: &mut Document, import: &DxfImport) -> ImportReport {
         id
     };
     let mut add_shape = |doc: &mut Document, shape: &Shape| -> Option<EntityId> {
+        if !finite(shape) {
+            return None;
+        }
         match *shape {
             Shape::Line { a, b } => {
                 let (pa, pb) = (point(doc, a), point(doc, b));
@@ -2414,6 +2465,10 @@ pub fn add_to_document(doc: &mut Document, import: &DxfImport) -> ImportReport {
 
     for e in &import.entities {
         let layer = layer_of(doc, &e.layer, &mut report);
+        if !finite(&e.shape) {
+            *report.skipped.entry(TOO_LARGE.into()).or_insert(0) += 1;
+            continue;
+        }
         let Some(id) = add_shape(doc, &e.shape) else {
             continue;
         };

@@ -356,6 +356,89 @@ fn session_restores_document_and_unsaved_state() {
     assert_eq!(fresh.state().file.name, crate::UNTITLED);
 }
 
+use eframe::Storage as _;
+
+/// A stored session as a newer Drift would autosave it.
+fn newer_session() -> (MemoryStorage, String) {
+    let newer = drift_io::FORMAT_VERSION + 1;
+    let text = drift_io::save(&drift_core::demo::mounting_plate(), &Default::default()).replace(
+        &format!("\"version\": {},", drift_io::FORMAT_VERSION),
+        &format!("\"version\": {newer},"),
+    );
+    assert!(text.contains(&format!("\"version\": {newer},")));
+    let mut storage = MemoryStorage::default();
+    storage.set_string(crate::KEY_DOCUMENT, text.clone());
+    storage.set_string(crate::KEY_NAME, "Later.drift".into());
+    (storage, text)
+}
+
+fn scratch_dir(name: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("drift-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    dir
+}
+
+#[test]
+fn a_session_from_a_newer_drift_is_kept_as_a_file_and_said() {
+    let Some(mut h) = harness() else { return };
+    let (mut storage, text) = newer_session();
+    let dir = scratch_dir("recovered");
+    h.state_mut()
+        .restore_session_keeping_in(&storage, Some(dir.clone()));
+    h.run();
+    // Kept byte for byte, in a file of its own.
+    let files: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect();
+    assert_eq!(files.len(), 1, "{files:?}");
+    let name = files[0].file_name().unwrap().to_string_lossy().into_owned();
+    assert!(
+        name.starts_with("recovered-") && name.ends_with(".drift"),
+        "{name}"
+    );
+    assert_eq!(std::fs::read_to_string(&files[0]).unwrap(), text);
+    // Said in a window that stays up, naming the version and the file.
+    let message = h.state().unrestored.as_ref().unwrap().message.clone();
+    let newer = drift_io::FORMAT_VERSION + 1;
+    assert!(
+        message.contains(&format!("newer Drift (format {newer})")) && message.contains(&name),
+        "{message}"
+    );
+    assert!(h.state().editor.doc.is_empty(), "a new drawing instead");
+    h.run_steps(30);
+    assert!(h.state().unrestored.is_some());
+    h.get_by_label("OK").click();
+    h.run();
+    assert!(h.state().unrestored.is_none());
+    // The next autosave stores the new drawing; the kept file is untouched.
+    eframe::App::save(h.state_mut(), &mut storage);
+    assert_ne!(storage.get_string(crate::KEY_DOCUMENT), Some(text.clone()));
+    assert_eq!(std::fs::read_to_string(&files[0]).unwrap(), text);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_session_that_cant_be_kept_is_not_autosaved_over() {
+    let Some(mut h) = harness() else { return };
+    let (mut storage, text) = newer_session();
+    // The data folder is a file: nothing can be written there.
+    let blocked = scratch_dir("blocked");
+    std::fs::write(&blocked, "not a folder").unwrap();
+    h.state_mut()
+        .restore_session_keeping_in(&storage, Some(blocked.clone()));
+    h.run();
+    let message = h.state().unrestored.as_ref().unwrap().message.clone();
+    assert!(message.contains("doesn't autosave over it"), "{message}");
+    eframe::App::save(h.state_mut(), &mut storage);
+    assert_eq!(storage.get_string(crate::KEY_DOCUMENT), Some(text));
+    assert_eq!(
+        storage.get_string(crate::KEY_NAME).as_deref(),
+        Some("Later.drift")
+    );
+    let _ = std::fs::remove_file(&blocked);
+}
+
 #[test]
 fn constrain_a_line_from_the_properties_panel() {
     use eframe::egui::accesskit::Role;

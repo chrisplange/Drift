@@ -1233,6 +1233,7 @@ dependencies = [
  "lopdf",
  "miniz_oxide 0.9.1",
  "png",
+ "proptest",
  "roxmltree 0.21.1",
  "serde",
  "serde_json",

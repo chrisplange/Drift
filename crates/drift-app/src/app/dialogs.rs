@@ -45,7 +45,8 @@ pub(crate) fn keycaps(ui: &mut egui::Ui, keys: &str) {
 }
 
 /// The windows Esc closes, by their egui ids, frontmost first when egui can't tell.
-const WINDOWS: [&str; 9] = [
+const WINDOWS: [&str; 10] = [
+    "unrestored",
     "Licences",
     "About Drift",
     "Keyboard shortcuts",
@@ -74,6 +75,7 @@ impl DriftApp {
     /// Whether a window is open over the canvas, by its id in [`WINDOWS`].
     fn window_open(&self, id: &str) -> bool {
         match id {
+            "unrestored" => self.unrestored.is_some(),
             "Licences" => self.show_licences,
             "About Drift" => self.show_about,
             "Keyboard shortcuts" => self.show_shortcuts,
@@ -90,6 +92,7 @@ impl DriftApp {
 
     fn close_window(&mut self, id: &str) {
         match id {
+            "unrestored" => self.unrestored = None,
             "Licences" => self.show_licences = false,
             "About Drift" => self.show_about = false,
             "Keyboard shortcuts" => self.show_shortcuts = false,
@@ -133,6 +136,7 @@ impl DriftApp {
         self.import_dialog(ctx);
         self.start_panel(ctx);
         self.about_window(ctx);
+        self.unrestored_window(ctx);
         self.licences_window(ctx);
         self.settings_window(ctx);
         self.drawing_settings_window(ctx);

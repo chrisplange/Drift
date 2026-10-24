@@ -258,6 +258,10 @@ pub struct DriftApp {
     live_profiles: Option<(u64, f64)>,
     /// "Don't save" on quitting: the session isn't kept for the next start.
     discard_session: bool,
+    /// The last session couldn't be restored: the window saying so, while it is up.
+    unrestored: Option<app::recovery::Unrestored>,
+    /// The stored session couldn't be kept as a file either: it isn't autosaved over.
+    hold_session: bool,
     /// The start panel over an empty sketch.
     show_start: bool,
     show_about: bool,
@@ -523,6 +527,8 @@ impl DriftApp {
             quit_sent: false,
             live_profiles: None,
             discard_session: false,
+            unrestored: None,
+            hold_session: false,
             // Tests drive the bare canvas.
             show_start: !cfg!(test),
             show_about: false,
@@ -1148,7 +1154,9 @@ impl eframe::App for DriftApp {
             .map(|p| p.to_string_lossy().into_owned())
             .collect();
         storage.set_string(KEY_RECENT, recent.join("\n"));
-        if self.discard_session {
+        if self.hold_session {
+            // The last session, which couldn't be opened or kept, stays as it was.
+        } else if self.discard_session {
             // "Don't save" on quitting: start fresh next time.
             storage.set_string(KEY_DOCUMENT, String::new());
         } else {

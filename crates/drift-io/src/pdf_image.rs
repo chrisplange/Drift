@@ -1,6 +1,12 @@
 //! A PDF image XObject as pixels: its samples (raw or Flate-compressed through lopdf, JPEG
 //! through zune-jpeg) in its colour space, with its soft mask, stencil mask or colour-key
 //! mask as alpha. Images are cut down to at most [`MAX_SIDE`] pixels a side.
+// Reads files from anywhere: bad input is an error or is skipped, never a panic
+// (tests/import_robustness.rs). Tests may unwrap.
+#![cfg_attr(
+    not(test),
+    deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)
+)]
 
 use std::collections::HashMap;
 

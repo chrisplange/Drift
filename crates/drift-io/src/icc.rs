@@ -4,6 +4,12 @@
 //!
 //! Only what CMYK profiles hold in practice is read: a version 2 `mft1` or `mft2` lookup from
 //! CMYK to Lab or XYZ. Anything else falls back to the approximation.
+// Reads files from anywhere: bad input is an error or is skipped, never a panic
+// (tests/import_robustness.rs). Tests may unwrap.
+#![cfg_attr(
+    not(test),
+    deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)
+)]
 
 use drift_core::Rgb;
 
@@ -97,7 +103,8 @@ impl CmykProfile {
             Some(v)
         };
         let inputs = (0..4).map(|_| read(n_in)).collect::<Option<Vec<_>>>()?;
-        let samples = read(grid.checked_pow(4)? * 3)?;
+        // (255⁴ × 3 doesn't fit a 32-bit `usize`, as on the web.)
+        let samples = read(grid.checked_pow(4)?.checked_mul(3)?)?;
         let outputs = (0..3).map(|_| read(n_out)).collect::<Option<Vec<_>>>()?;
         let mut profile = Self {
             inputs,
@@ -333,6 +340,38 @@ pub(crate) mod tests {
         let Rgb([half, _, _]) = p.to_rgb([0.5, 0.0, 0.0, 0.0]);
         assert!(r < half && half < 255, "{half}");
         assert!(CmykProfile::parse(b"not a profile").is_none());
+    }
+
+    #[test]
+    fn a_broken_profile_is_refused_or_followed_never_a_panic() {
+        let good = tiny_profile();
+        let colours = [
+            [0.0; 4],
+            [1.0; 4],
+            [0.3, 0.6, f64::NAN, 2.0],
+            [-1.0, 0.5, 0.5, 0.5],
+        ];
+        let try_one = |icc: &[u8]| {
+            if let Some(p) = CmykProfile::parse(icc) {
+                for c in colours {
+                    p.to_rgb(c);
+                }
+            }
+        };
+        for end in 0..good.len() {
+            try_one(&good[..end]);
+        }
+        for at in 0..good.len() {
+            for value in [0x00, 0x01, 0x02, 0x7f, 0x80, 0xff] {
+                let mut icc = good.clone();
+                icc[at] = value;
+                try_one(&icc);
+            }
+        }
+        // The biggest grid there can be, and no samples for it.
+        let mut huge = good.clone();
+        huge[144 + 10] = 255;
+        assert!(CmykProfile::parse(&huge).is_none());
     }
 
     #[test]

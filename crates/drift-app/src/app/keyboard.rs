@@ -240,6 +240,7 @@ impl DriftApp {
         }
         if pressed(Key::Escape) {
             if self.adding_leader.take().is_some()
+                || self.align_edge.take().is_some()
                 || self.selected_leader.take().is_some()
                 || self.selected_constraint.take().is_some()
                 || self.editor.selected_annotation.take().is_some()

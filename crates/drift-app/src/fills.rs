@@ -803,6 +803,185 @@ impl Editor {
         }
     }
 
+    /// Hatches whose whole outline was moved or turned as one in the open transaction move
+    /// and turn with it, so the pattern stays where it was on the shape (a stretched or
+    /// mirrored outline leaves its hatch alone). Worked out from the fills and outlines as
+    /// the transaction found them, so it can run after every step of a drag.
+    pub(crate) fn carry_hatches(&mut self) {
+        if !self.doc.in_transaction() {
+            return;
+        }
+        let hatches: Vec<(FillId, Fill)> = self
+            .doc
+            .fills()
+            .filter(|(_, f)| matches!(f.kind, FillKind::Hatch(_)) && !f.boundary.is_empty())
+            .map(|(id, f)| (id, f.clone()))
+            .collect();
+        for (id, mut fill) in hatches {
+            let Some(FillKind::Hatch(was)) = self.doc.fill_before_transaction(id).map(|f| f.kind)
+            else {
+                continue;
+            };
+            let Some((pivot, turn, shift)) = self.outline_motion(&fill.boundary) else {
+                continue;
+            };
+            let rotor = DVec2::from_angle(turn);
+            let FillKind::Hatch(h) = &mut fill.kind else {
+                continue;
+            };
+            let origin = pivot + rotor.rotate(was.origin - pivot) + shift;
+            let mut angle = was.angle + turn.to_degrees();
+            if turn != 0.0 {
+                // Kept in (-180, 180], rounded off the last bit a turn leaves.
+                angle = (angle + 180.0).rem_euclid(360.0) - 180.0;
+                if angle <= -180.0 {
+                    angle += 360.0;
+                }
+                angle = (angle * 1e9).round() / 1e9;
+            }
+            if h.origin != origin || h.angle != angle {
+                h.origin = origin;
+                h.angle = angle;
+                self.doc.set_fill(id, fill);
+            }
+        }
+    }
+
+    /// Set a hatch's pattern origin and angle (those given), as one undo step. False if
+    /// `fill` isn't a hatch or nothing changed.
+    pub fn align_hatch(&mut self, fill: FillId, origin: Option<DVec2>, angle: Option<f64>) -> bool {
+        let Some(mut f) = self.doc.fill(fill).cloned() else {
+            return false;
+        };
+        let FillKind::Hatch(h) = &mut f.kind else {
+            return false;
+        };
+        let was = (h.origin, h.angle);
+        if let Some(o) = origin {
+            h.origin = o;
+        }
+        if let Some(a) = angle {
+            let a = (a + 180.0).rem_euclid(360.0) - 180.0;
+            h.angle = (if a <= -180.0 { a + 360.0 } else { a } * 1e9).round() / 1e9;
+        }
+        if (h.origin, h.angle) == was {
+            return false;
+        }
+        self.doc.begin();
+        self.doc.set_fill(fill, f);
+        self.commit("Align hatch pattern")
+    }
+
+    /// Align a hatch to one of its outline's curves: the pattern runs along it, its origin
+    /// on the curve's start (as a brick or tile course is set out along a wall). False if
+    /// `curve` isn't one of the hatch's outline curves.
+    pub fn align_hatch_to_edge(&mut self, fill: FillId, curve: EntityId) -> bool {
+        let on_outline = self
+            .doc
+            .fill(fill)
+            .is_some_and(|f| f.boundary.contains(&curve));
+        let Some(shape) = self.doc.shape(curve).filter(|_| on_outline) else {
+            return false;
+        };
+        let (start, along) = match shape {
+            Shape::Line { a, b } => (a, b - a),
+            other => match other.cubics(std::f64::consts::FRAC_PI_2).first() {
+                Some(c) => (c[0], drift_core::shape::bezier_tangent(c, 0.0)),
+                None => return false,
+            },
+        };
+        if along.length_squared() <= 0.0 {
+            return false;
+        }
+        let angle = along.y.atan2(along.x).to_degrees();
+        self.align_hatch(fill, Some(start), Some(angle))
+    }
+
+    /// How `curves` were moved as one in the open transaction: turned by an angle (radians)
+    /// about a pivot, then shifted. None if they didn't move, or didn't move rigidly (or
+    /// were reshaped or made in it).
+    fn outline_motion(&self, curves: &[EntityId]) -> Option<(DVec2, f64, DVec2)> {
+        let position = |e: Option<drift_core::Entity>| match e?.kind {
+            drift_core::EntityKind::Point(p) => Some(p),
+            _ => None,
+        };
+        let mut pairs: Vec<(DVec2, DVec2)> = Vec::new();
+        for c in curves {
+            let before = self.doc.entity_before_transaction(*c)?;
+            let now = self.doc.get(*c)?;
+            if std::mem::discriminant(&before.kind) != std::mem::discriminant(&now.kind) {
+                return None;
+            }
+            for (p, q) in before.kind.points().zip(now.kind.points()) {
+                let from = position(self.doc.entity_before_transaction(p))?;
+                pairs.push((from, self.doc.point(q).ok()?));
+            }
+        }
+        let n = pairs.len() as f64;
+        if n == 0.0 {
+            return None;
+        }
+        let extent = pairs
+            .iter()
+            .map(|(a, _)| a.abs().max_element())
+            .fold(1.0, f64::max);
+        let tol = 1e-7 * extent;
+        if pairs.iter().all(|(a, b)| a.distance(*b) <= tol * 1e-3) {
+            return None;
+        }
+        let ca = pairs.iter().map(|(a, _)| *a).sum::<DVec2>() / n;
+        let cb = pairs.iter().map(|(_, b)| *b).sum::<DVec2>() / n;
+        let (mut dot, mut cross) = (0.0, 0.0);
+        for (a, b) in &pairs {
+            let (u, v) = (*a - ca, *b - cb);
+            dot += u.dot(v);
+            cross += u.perp_dot(v);
+        }
+        let turn = if dot.abs() + cross.abs() > tol * tol {
+            cross.atan2(dot)
+        } else {
+            0.0
+        };
+        // A turn too small to tell from rounding is a plain move.
+        let turn = if turn.abs() < 1e-12 { 0.0 } else { turn };
+        let rotor = DVec2::from_angle(turn);
+        let rigid = pairs
+            .iter()
+            .all(|(a, b)| (ca + rotor.rotate(*a - ca) + (cb - ca)).distance(*b) <= tol);
+        rigid.then_some((ca, turn, cb - ca))
+    }
+
+    /// The fills a selection box takes: a window those wholly inside it, a crossing box those
+    /// too and the ones whose outline it touches (not one it merely lies inside). Only fills
+    /// on shown, unlocked layers.
+    pub fn fills_in(&mut self, rect: &Bounds, crossing: bool) -> Vec<FillId> {
+        let shapes = self.fill_shapes();
+        let touched: HashSet<EntityId> = if crossing {
+            self.index.select_in_rect(rect, true).into_iter().collect()
+        } else {
+            HashSet::new()
+        };
+        self.doc
+            .fills()
+            .filter(|(_, f)| {
+                self.doc
+                    .layer(f.layer)
+                    .is_some_and(|l| l.visible && !l.locked)
+            })
+            .filter(|(id, f)| {
+                let inside = shapes.get(id).is_some_and(|s| {
+                    let b = &s.region.bounds;
+                    b.min.x >= rect.min.x
+                        && b.min.y >= rect.min.y
+                        && b.max.x <= rect.max.x
+                        && b.max.y <= rect.max.y
+                });
+                inside || f.boundary.iter().any(|c| touched.contains(c))
+            })
+            .map(|(id, _)| id)
+            .collect()
+    }
+
     /// The curves of a shape's outline, if `fill` is a shape's own (a closed path's): a
     /// shape is picked, moved and copied as one with its fill.
     pub fn shape_outline(&self, fill: FillId) -> Option<Vec<EntityId>> {

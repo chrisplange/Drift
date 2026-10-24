@@ -876,6 +876,26 @@ impl Document {
             .is_some_and(|j| matches!(j.get(&Key::Fill(id)), Some(None)))
     }
 
+    /// Entity `id` as it was when the open transaction began (as it is now outside one, or
+    /// if the transaction hasn't touched it). None if it didn't exist then.
+    pub fn entity_before_transaction(&self, id: EntityId) -> Option<Entity> {
+        match self.journal.as_ref().and_then(|j| j.get(&Key::Entity(id))) {
+            Some(Some(Record::Entity(e))) => Some(*e),
+            Some(_) => None,
+            None => self.entities.get(&id).copied(),
+        }
+    }
+
+    /// Fill `id` as it was when the open transaction began (see
+    /// [`entity_before_transaction`](Self::entity_before_transaction)).
+    pub fn fill_before_transaction(&self, id: FillId) -> Option<Fill> {
+        match self.journal.as_ref().and_then(|j| j.get(&Key::Fill(id))) {
+            Some(Some(Record::Fill(f))) => Some(f.clone()),
+            Some(_) => None,
+            None => self.fills.get(&id).cloned(),
+        }
+    }
+
     /// Entities created in the open transaction (that still exist).
     pub fn created_in_transaction(&self) -> Vec<EntityId> {
         let Some(journal) = &self.journal else {

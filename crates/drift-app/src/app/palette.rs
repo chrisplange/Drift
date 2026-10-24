@@ -301,21 +301,20 @@ impl DriftApp {
                 String::new(),
             );
         }
-        for (f, title) in [
-            (crate::editor::PickFilter::Edges, "Select edges only"),
-            (crate::editor::PickFilter::Points, "Select points only"),
-            (
-                crate::editor::PickFilter::Annotations,
-                "Select annotations only",
-            ),
-            (crate::editor::PickFilter::Text, "Select text only"),
-            (
-                crate::editor::PickFilter::All,
-                "Select anything (no filter)",
-            ),
-        ] {
-            add(Command::PickFilter(f), title, "Edit", String::new());
+        for kind in crate::editor::PickKind::ALL {
+            add(
+                Command::PickFilter(crate::editor::PickFilter::only(kind)),
+                &format!("Select {} only", kind.label().to_lowercase()),
+                "Edit",
+                String::new(),
+            );
         }
+        add(
+            Command::PickFilter(crate::editor::PickFilter::ALL),
+            "Select everything (no filter)",
+            "Edit",
+            String::new(),
+        );
         let (align, space) = self.can_align_dimensions();
         if align {
             add(

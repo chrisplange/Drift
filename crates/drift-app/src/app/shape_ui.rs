@@ -149,7 +149,21 @@ impl DriftApp {
             .update(self.editor.doc.custom_patterns());
         let dark = ui.visuals().dark_mode;
         let mut style = FillStyle::of(&fill);
-        match fill_style_editor_or_none(ui, &mut style, &self.hatch_patterns, dark, "shape") {
+        // One hatched shape: its pattern's alignment, with the angle among it.
+        let aligned =
+            shapes.fills.len() == 1 && matches!(fill.kind, drift_core::FillKind::Hatch(_));
+        let edit = fill_style_editor_or_none(
+            ui,
+            &mut style,
+            &self.hatch_patterns,
+            dark,
+            "shape",
+            !aligned,
+        );
+        if aligned && edit != FillEdit::Removed {
+            self.pattern_alignment(ui, shapes.fills[0]);
+        }
+        match edit {
             FillEdit::Unchanged => false,
             FillEdit::Changed => {
                 self.editor.doc.begin();

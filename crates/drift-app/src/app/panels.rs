@@ -83,7 +83,7 @@ enum SizeEdit {
 /// A value field in the inspector: shows `shown`, and returns what was typed once the field
 /// is left (Return, Tab or a click elsewhere) with something different in it. Esc puts the
 /// old value back. The text being typed lives in egui's memory.
-fn value_field(
+pub(crate) fn value_field(
     ui: &mut egui::Ui,
     key: egui::Id,
     shown: &str,
@@ -747,6 +747,35 @@ impl DriftApp {
                                 ui.label(egui::RichText::new(again).small().weak());
                             }
                         });
+                        // A filter on: a badge on the Select tool, so it isn't forgotten.
+                        let filter = self.editor.pick_filter;
+                        if kind == ToolKind::Select && !filter.is_all() {
+                            let r = response.rect;
+                            let at = egui::pos2(r.right() - 7.0, r.top() + 7.0);
+                            let dark = ui.visuals().dark_mode;
+                            ui.painter()
+                                .circle_filled(at, 4.0, theme::warning_color(dark));
+                            let kinds: Vec<&str> = filter.kinds().map(|k| k.label()).collect();
+                            let tip = if kinds.is_empty() {
+                                "Selection filter on: nothing can be picked".to_owned()
+                            } else {
+                                format!("Selection filter on: picks {}", kinds.join(", "))
+                            };
+                            let badge = ui
+                                .interact(
+                                    egui::Rect::from_center_size(at, egui::vec2(10.0, 10.0)),
+                                    ui.id().with("pick_filter_badge"),
+                                    egui::Sense::hover(),
+                                )
+                                .on_hover_text(tip);
+                            badge.widget_info(|| {
+                                egui::WidgetInfo::labeled(
+                                    egui::WidgetType::Label,
+                                    true,
+                                    "Selection filter on",
+                                )
+                            });
+                        }
                         if response.clicked() {
                             self.switch_tool(kind);
                         }
@@ -1813,7 +1842,10 @@ impl DriftApp {
         });
         // The hint, in whatever space is left between the readout and the right cluster (as
         // wide as it actually is, so the hint never lies over its controls).
-        let hint = if self.add_view_on.is_some() && !self.tool.is_busy() {
+        let hint = if self.align_edge.is_some() {
+            "Align to edge: click one of the shape's edges (the pattern runs along it from its              start) · Esc cancels"
+                .to_owned()
+        } else if self.add_view_on.is_some() && !self.tool.is_busy() {
             "Drag a rectangle round what the new view shows · Esc cancels".to_owned()
         } else if self.sheet_preview {
             "Drag a view to move it · Alt-drag the drawing inside it · its handles crop it · Esc \

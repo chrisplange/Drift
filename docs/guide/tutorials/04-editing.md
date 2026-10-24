@@ -21,7 +21,7 @@ With the **Select** tool (S, or Esc from any tool):
 | Pick everything inside a box | Drag from left to right (a window selection). |
 | Pick everything the box touches | Drag from right to left (a crossing selection). |
 | Pick a line's midpoint | Click near the middle of the line. |
-| Pick everything | Ctrl+A. |
+| Pick everything (that the pick filter lets through) | Ctrl+A. |
 | Clear the selection | Esc, or click empty canvas. |
 
 Clicking inside a fill or hatch picks it. Clicking inside an empty outline picks nothing, so
@@ -30,21 +30,30 @@ a box selection can start there. (To pick a closed area and measure it instead, 
 filled or hatched**; it is saved with the drawing.
 A picked area shows its area, perimeter and centroid in the **Inspector**.)
 
-### Pick filter: All, Edges, Points, Annotations, Text
+### Pick filters
 
-With nothing picked, the top bar shows **All**, **Edges**, **Points**, **Annotations** and
-**Text**. Each filter lets clicks, boxes and hover pick only that kind of thing:
+With nothing picked, the top bar shows what the Select tool picks: a toggle for each kind
+of thing, all on by default. Turn any off, in any mix, as with the selection filters in
+AutoCAD, Rhino or Vectorworks:
 
-| Filter | Picks |
+| Toggle | Picks |
 |---|---|
-| **All** | Everything: geometry, fills, areas, blocks, text, dimensions and annotations. |
-| **Edges** | Only curves (and the relation symbols on them). |
-| **Points** | Only points. A points-only box takes every point inside it. |
-| **Annotations** | Only dimensions, notes, callouts, centre marks, ordinates, and section and elevation marks. |
-| **Text** | Only sketch text. |
+| **Points** | End points, centres and standalone points. With **Edges** off, a box takes every point inside it. |
+| **Edges** | Lines, arcs, circles, ellipses and curves (and the relation symbols on them). |
+| **Fills** | Solid fills and hatches. With **Edges** off, a click inside a shape picks its fill without its outline. |
+| **Areas** | Empty closed areas (to measure or fill them). |
+| **Blocks** | Copies of blocks, and groups as a whole. Off, a click on a grouped line picks just that line. |
+| **Text** | Sketch text. |
+| **Annotations** | Dimensions, notes, callouts, centre marks, ordinates, and section and elevation marks. |
 
-Fills, blocks and areas are picked only with **All**. The filters are in the command palette
-too (Ctrl+K, "Select annotations only").
+- **Alt-click** or **double-click** a toggle to pick only that kind.
+- **All** turns every toggle back on.
+- While a filter is on, the **Select** tool in the toolbar has an orange dot; hover over it
+  to see what is picked.
+
+The filter applies to clicks, boxes, hover and Select all (Ctrl+A). It isn't saved with the
+drawing. The command palette has each one too (Ctrl+K, "Select fills only", "Select
+everything").
 
 ### Text and annotations in a selection
 
@@ -91,6 +100,8 @@ Without an axis lock, type the X offset, Tab, then the Y offset. Press B to choo
 different base point first: click a point (it snaps), then move. Click or Enter places; Esc
 or a right-click cancels. Snapped and typed moves land exactly.
 
+G moves a line picked by its midpoint too, from the midpoint.
+
 ### Moving a picked area or hatch
 
 A picked hatch (or area) moves with its outline: press G, or drag inside it. Lines that
@@ -105,7 +116,9 @@ Picked lines moved on their own always stretch the lines joined to them.
 
 Other ways to move:
 
-- **Drag** picked geometry. Drop an end point on another point to join them.
+- **Drag** picked geometry. Drop an end point on another point to join them. X or Y while
+  dragging locks the drag to that axis, as in a G move (press it again to unlock); once
+  locked, type a distance and press Enter to place it exactly.
 - **Arrow keys** nudge the selection one grid step; Shift+arrow, ten.
 - **Inspector fields:** type a new **Start**, **End**, **Center** or **Position**. The
   geometry moves as far as its relations let it.

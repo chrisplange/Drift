@@ -132,7 +132,7 @@ fn leader_target(ed: &Editor, p: &Pointer) -> Option<drift_core::Anchor> {
     if let Some(point) = p.snapped_point() {
         return Some(drift_core::Anchor::Point(point));
     }
-    let curve = match select::pick_target_with(ed, p, crate::editor::PickFilter::All)? {
+    let curve = match select::pick_target_with(ed, p, crate::editor::PickFilter::ALL)? {
         select::Target::Entity(id) | select::Target::Midpoint(id) => id,
     };
     if ed.doc.get(curve)?.kind.is_point() {

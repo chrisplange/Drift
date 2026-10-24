@@ -19,6 +19,9 @@ pub(crate) struct LayerList {
     pub filter: String,
     /// The layer shown on its own, and how every layer was before.
     pub isolated: Option<Isolated>,
+    /// Layer settings Alt-clicked onto all the other layers (at most one per setting), and
+    /// how every layer was before.
+    pub solos: Vec<Solo>,
     /// The height of a closed row, with the space after it, as last drawn.
     row: f32,
     /// The same for opened rows, which are taller.
@@ -33,11 +36,61 @@ pub(crate) struct Isolated {
     pub before: Vec<(LayerId, bool)>,
 }
 
+/// An on/off setting on a layer row (other than the eye, whose Alt-click isolates) that
+/// Alt-click sets the other way on every other layer, as in Illustrator; Alt-click again puts
+/// them back.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LayerFlag {
+    Locked,
+    Snappable,
+}
+
+impl LayerFlag {
+    pub fn get(self, layer: &Layer) -> bool {
+        match self {
+            LayerFlag::Locked => layer.locked,
+            LayerFlag::Snappable => layer.snappable,
+        }
+    }
+
+    pub fn set(self, layer: &mut Layer, on: bool) {
+        match self {
+            LayerFlag::Locked => layer.locked = on,
+            LayerFlag::Snappable => layer.snappable = on,
+        }
+    }
+
+    /// What the Alt-clicked layer gets: unlocked, snapped to (the others the opposite).
+    fn alone(self) -> bool {
+        match self {
+            LayerFlag::Locked => false,
+            LayerFlag::Snappable => true,
+        }
+    }
+
+    /// The undo step's name for an Alt-click, and for the one that puts the layers back.
+    fn labels(self) -> (&'static str, &'static str) {
+        match self {
+            LayerFlag::Locked => ("Lock other layers", "Put layer locks back"),
+            LayerFlag::Snappable => ("Snap to one layer", "Put layer snapping back"),
+        }
+    }
+}
+
+/// A setting Alt-clicked onto every layer but `layer`; ending it puts `before` back.
+pub(crate) struct Solo {
+    pub flag: LayerFlag,
+    pub layer: LayerId,
+    pub before: Vec<(LayerId, bool)>,
+}
+
 /// What a row asks of the panel, done once the list is drawn.
 enum LayerAction {
     Isolate(LayerId),
     EndIsolate,
     ShowAll,
+    /// Alt-click on a row's lock or snap toggle.
+    Solo(LayerFlag, LayerId),
 }
 
 /// The layers and how many curves each holds, worked out again only when the drawing
@@ -183,6 +236,62 @@ impl Editor {
             self.doc.set_layer(id, layer);
         }
         self.commit(label);
+    }
+
+    /// Set a setting on layers (the rest stay as they are), one undo step; nothing when none
+    /// change.
+    pub(crate) fn set_layers_flag(
+        &mut self,
+        flag: LayerFlag,
+        values: &[(LayerId, bool)],
+        label: &str,
+    ) {
+        let changed: Vec<(LayerId, Layer)> = values
+            .iter()
+            .filter_map(|&(id, on)| {
+                let mut layer = self.doc.layer(id)?.clone();
+                (flag.get(&layer) != on).then(|| {
+                    flag.set(&mut layer, on);
+                    (id, layer)
+                })
+            })
+            .collect();
+        if changed.is_empty() {
+            return;
+        }
+        self.doc.begin();
+        for (id, layer) in changed {
+            self.doc.set_layer(id, layer);
+        }
+        self.commit(label);
+    }
+
+    /// Set a setting on every layer but `id` the other way from `id` (lock every other
+    /// layer, or snap to `id` alone), as one undo step. Locking the others makes `id`
+    /// current, so drawing goes on there. Returns how each layer was, to put back with
+    /// [`Editor::set_layers_flag`].
+    pub(crate) fn solo_layer_flag(&mut self, flag: LayerFlag, id: LayerId) -> Vec<(LayerId, bool)> {
+        let before: Vec<(LayerId, bool)> = self
+            .doc
+            .layers()
+            .map(|(l, layer)| (l, flag.get(layer)))
+            .collect();
+        let alone = flag.alone();
+        self.doc.begin();
+        for (l, was) in &before {
+            let on = if *l == id { alone } else { !alone };
+            if *was != on
+                && let Some(mut layer) = self.doc.layer(*l).cloned()
+            {
+                flag.set(&mut layer, on);
+                self.doc.set_layer(*l, layer);
+            }
+        }
+        if flag == LayerFlag::Locked {
+            let _ = self.doc.set_current_layer(id);
+        }
+        self.commit(flag.labels().0);
+        before
     }
 
     /// Show `id` alone, made current, hiding every other layer: one undo step. Returns how
@@ -413,6 +522,9 @@ struct RowInfo<'a> {
     picked: &'a std::collections::BTreeSet<LayerId>,
     isolated: Option<LayerId>,
     any_hidden: bool,
+    /// The layer each setting is Alt-clicked onto, if any.
+    solo_lock: Option<LayerId>,
+    solo_snap: Option<LayerId>,
 }
 
 impl DriftApp {
@@ -456,6 +568,8 @@ impl DriftApp {
             picked: &picked,
             isolated: self.layer_list.isolated.as_ref().map(|i| i.layer),
             any_hidden,
+            solo_lock: self.solo_of(LayerFlag::Locked),
+            solo_snap: self.solo_of(LayerFlag::Snappable),
         };
         let mut status = None;
         let mut action = None;
@@ -605,6 +719,7 @@ impl DriftApp {
                     self.editor.doc.layers().map(|(id, _)| (id, true)).collect();
                 self.editor.set_layers_visible(&all, "Show all layers");
             }
+            Some(LayerAction::Solo(flag, id)) => self.toggle_solo(flag, id),
             None => {}
         }
         if let Some(text) = status {
@@ -612,9 +727,54 @@ impl DriftApp {
         }
     }
 
+    /// The layer a setting is Alt-clicked onto, if any.
+    fn solo_of(&self, flag: LayerFlag) -> Option<LayerId> {
+        self.layer_list
+            .solos
+            .iter()
+            .find(|s| s.flag == flag)
+            .map(|s| s.layer)
+    }
+
+    /// Alt-click on a layer's lock or snap toggle: set the other layers the other way, or,
+    /// on the layer it was done on, put them back (one undo step each).
+    pub(crate) fn toggle_solo(&mut self, flag: LayerFlag, id: LayerId) {
+        let was = self
+            .layer_list
+            .solos
+            .iter()
+            .position(|s| s.flag == flag)
+            .map(|i| self.layer_list.solos.remove(i));
+        match was {
+            Some(solo) if solo.layer == id => {
+                self.editor
+                    .set_layers_flag(flag, &solo.before, flag.labels().1);
+            }
+            was => {
+                let before = self.editor.solo_layer_flag(flag, id);
+                // Done on another layer meanwhile: the first one's "before" stays.
+                let before = was.map_or(before, |s| s.before);
+                self.layer_list.solos.push(Solo {
+                    flag,
+                    layer: id,
+                    before,
+                });
+            }
+        }
+    }
+
     /// Forget an isolate that is over: its layer deleted, or undone back to how the layers
-    /// were before it.
+    /// were before it. The same for lock and snap set on all but one layer.
     fn end_stale_isolate(&mut self) {
+        let doc = &self.editor.doc;
+        self.layer_list.solos.retain(|s| {
+            let gone = doc.layer(s.layer).is_none();
+            let undone = s
+                .before
+                .iter()
+                .all(|(id, on)| doc.layer(*id).is_none_or(|l| s.flag.get(l) == *on));
+            !gone && !undone
+        });
         let Some(iso) = &self.layer_list.isolated else {
             return;
         };
@@ -885,13 +1045,18 @@ impl DriftApp {
                 ui.spacing_mut().item_spacing.x = 0.0;
                 let mut locked = edited.locked;
                 let glyph = if locked { Glyph::Lock } else { Glyph::Unlock };
-                icon_toggle(
-                    ui,
-                    &mut locked,
-                    glyph,
-                    false,
-                    "Locked geometry can be snapped to but not edited",
-                );
+                let tip = if info.solo_lock == Some(id) {
+                    "Lock or unlock (locked geometry can be snapped to but not edited) · \
+                     Alt-click: put the other layers' locks back"
+                } else {
+                    "Lock or unlock (locked geometry can be snapped to but not edited) · \
+                     Alt-click: lock every other layer"
+                };
+                if icon_toggle(ui, &mut locked, glyph, false, tip) && ui.input(|i| i.modifiers.alt)
+                {
+                    locked = edited.locked;
+                    action = Some(LayerAction::Solo(LayerFlag::Locked, id));
+                }
                 edited.locked = locked;
                 let visible = edited.visible;
                 let tip = "Show or hide · Alt-click: show this layer alone";
@@ -905,13 +1070,20 @@ impl DriftApp {
                         LayerAction::Isolate(id)
                     });
                 }
-                icon_toggle(
-                    ui,
-                    &mut edited.snappable,
-                    Glyph::Snap,
-                    true,
-                    "Snap to this layer's geometry (off: it can still be picked and edited)",
-                );
+                let snappable = edited.snappable;
+                let tip = if info.solo_snap == Some(id) {
+                    "Snap to this layer's geometry (off: it can still be picked and edited) · \
+                     Alt-click: put the other layers' snapping back"
+                } else {
+                    "Snap to this layer's geometry (off: it can still be picked and edited) · \
+                     Alt-click: snap to this layer only"
+                };
+                if icon_toggle(ui, &mut edited.snappable, Glyph::Snap, true, tip)
+                    && ui.input(|i| i.modifiers.alt)
+                {
+                    edited.snappable = snappable;
+                    action = Some(LayerAction::Solo(LayerFlag::Snappable, id));
+                }
                 ui.add_space(4.0);
                 let n = info.counts.get(&id).copied().unwrap_or(0);
                 ui.label(egui::RichText::new(n.to_string()).small().weak())

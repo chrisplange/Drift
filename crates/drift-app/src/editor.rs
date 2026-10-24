@@ -582,6 +582,7 @@ impl Editor {
         self.make_new_curves_construction();
         self.follow_paths();
         self.follow_fills();
+        self.carry_hatches();
         let tx = self.doc.commit(label);
         debug_assert!(
             self.doc
@@ -747,6 +748,7 @@ impl Editor {
         let report = self.solve_in(&dragged, scope.clone());
         let ok = !self.new_conflicts(&report);
         self.index.update_moved(&self.doc, scope.iter().copied());
+        self.carry_hatches();
         (ok, removed)
     }
 
@@ -1118,7 +1120,12 @@ impl Editor {
         };
         let seed = self.region_motion.map_or(seed, |m| m.apply(seed));
         let regions = self.regions();
-        if let Some(found) = drift_geom::regions::region_at(&regions, seed) {
+        // (One whose outline is hidden isn't picked while it can't be seen.)
+        if let Some(found) = regions
+            .iter()
+            .filter(|r| r.contains(seed) && self.region_shown(r))
+            .min_by(|a, b| a.area.total_cmp(&b.area))
+        {
             let outline = self.outline_of(found);
             if self.region_outline.as_ref() != Some(&outline) {
                 self.region_outline = Some(outline);
@@ -1129,7 +1136,7 @@ impl Editor {
         let same = self.region_outline.as_ref().and_then(|outline| {
             regions
                 .iter()
-                .find(|r| self.outline_of(r) == *outline)
+                .find(|r| self.outline_of(r) == *outline && self.region_shown(r))
                 .cloned()
         });
         match same {
@@ -1152,6 +1159,29 @@ impl Editor {
                 None
             }
         }
+    }
+
+    /// The area a click at `p` picks: the smallest closed area around it whose outline can
+    /// be seen. One outlined (in part) by curves on hidden layers is never picked, though it
+    /// still bounds fills.
+    pub fn visible_region_at(&mut self, p: DVec2) -> Option<drift_geom::regions::Region> {
+        let regions = self.regions();
+        regions
+            .iter()
+            .filter(|r| r.contains(p) && self.region_shown(r))
+            .min_by(|a, b| a.area.total_cmp(&b.area))
+            .cloned()
+    }
+
+    /// Whether every curve of a region's outer outline is on a shown layer (from the last
+    /// [`regions`](Self::regions)).
+    fn region_shown(&self, region: &drift_geom::regions::Region) -> bool {
+        region
+            .outer
+            .curves()
+            .into_iter()
+            .filter_map(|i| self.region_ids.get(i))
+            .all(|id| self.doc.is_visible(*id))
     }
 
     /// The curves bounding a region (from the last [`regions`](Self::regions)).
@@ -2655,10 +2685,11 @@ impl Editor {
         }
     }
 
-    /// What picking `id` selects: its whole group, unless that group is open.
+    /// What picking `id` selects: its whole group, unless that group is open (or the filter
+    /// leaves out Blocks & groups: then the one curve).
     pub fn pick_set(&self, id: EntityId) -> BTreeSet<EntityId> {
         let set: BTreeSet<EntityId> = match self.doc.group_of(id) {
-            Some(g) if self.open_group != Some(g) => self
+            Some(g) if self.open_group != Some(g) && self.pick_filter.blocks() => self
                 .doc
                 .group(g)
                 .map_or_else(|| [id].into(), |g| g.members.clone()),
@@ -2703,12 +2734,23 @@ impl Editor {
             })
             .collect();
         for (f, picked) in grouped {
-            if picked {
+            if picked && self.pick_filter.fills() {
                 self.selected_fills.insert(f);
             } else {
                 self.selected_fills.remove(&f);
             }
         }
+    }
+
+    /// Pick a shape's fill alone (its outline let go): its hatch's handles show without the
+    /// transform box's.
+    pub fn pick_fill_alone(&mut self, fill: drift_core::FillId) {
+        self.selected_fills = [fill].into();
+        self.selection.clear();
+        self.selected_midpoints.clear();
+        self.selected_region = None;
+        self.selected_instances.clear();
+        self.selected_texts.clear();
     }
 
     /// The group the selection is exactly, if any.
@@ -2799,16 +2841,49 @@ impl Editor {
         self.commit("Toggle construction");
     }
 
-    /// Select every curve and standalone point.
+    /// Select everything the filter lets through: every curve and standalone point, and (with
+    /// their kinds on) the copies of blocks, sketch text and fills. Nothing hidden or locked.
     pub fn select_all(&mut self) {
+        let filter = self.pick_filter;
+        let shown = |doc: &drift_core::Document, layer: drift_core::LayerId| {
+            doc.layer(layer).is_some_and(|l| l.visible && !l.locked)
+        };
         self.selection = self
             .doc
             .iter()
             .filter(|(id, e)| {
-                !e.kind.is_point() || self.index.role(*id) == Some(PointRole::Standalone)
+                (!e.kind.is_point() || self.index.role(*id) == Some(PointRole::Standalone))
+                    && filter.allows(&self.doc, *id)
+                    && shown(&self.doc, e.layer)
             })
             .map(|(id, _)| id)
             .collect();
+        self.selected_midpoints.clear();
+        self.selected_region = None;
+        if filter.blocks() {
+            self.selected_instances = self
+                .doc
+                .instances()
+                .filter(|(_, i)| shown(&self.doc, i.layer))
+                .map(|(id, _)| id)
+                .collect();
+        }
+        if filter.texts() {
+            self.selected_texts = self
+                .doc
+                .texts()
+                .filter(|(_, t)| shown(&self.doc, t.layer))
+                .map(|(id, _)| id)
+                .collect();
+        }
+        if filter.fills() {
+            self.selected_fills = self
+                .doc
+                .fills()
+                .filter(|(_, f)| shown(&self.doc, f.layer))
+                .map(|(id, _)| id)
+                .collect();
+        }
     }
 
     pub fn bounds(&self) -> Bounds {
@@ -3761,74 +3836,154 @@ pub(crate) fn interior_point(region: &drift_geom::regions::Region, near: DVec2) 
         .unwrap_or(region.centroid)
 }
 
-/// What the select tool picks.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum PickFilter {
-    /// Anything: points, curves, areas, fills, text, blocks and annotations.
-    #[default]
-    All,
-    /// Only curves (lines, arcs, circles…).
-    Edges,
-    /// Only points (ends, centres, standalone points).
+/// A kind of thing the select tool picks, turned on and off on its own (as AutoCAD's, Rhino's
+/// and Vectorworks' selection filters are).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PickKind {
+    /// End points, centres and standalone points.
     Points,
-    /// Only annotations: dimensions, notes, callouts, centre marks, section and elevation
-    /// marks, ordinates.
-    Annotations,
-    /// Only sketch text.
+    /// Lines, arcs, circles, ellipses and Béziers.
+    Edges,
+    /// Solid fills and hatches.
+    Fills,
+    /// Empty closed areas (to measure or fill).
+    Areas,
+    /// Copies of blocks, and groups as a whole.
+    Blocks,
+    /// Sketch text.
     Text,
+    /// Dimensions, notes, callouts and marks.
+    Annotations,
 }
 
-impl PickFilter {
-    pub const ALL: [PickFilter; 5] = [
-        PickFilter::All,
-        PickFilter::Edges,
-        PickFilter::Points,
-        PickFilter::Annotations,
-        PickFilter::Text,
+impl PickKind {
+    pub const ALL: [PickKind; 7] = [
+        PickKind::Points,
+        PickKind::Edges,
+        PickKind::Fills,
+        PickKind::Areas,
+        PickKind::Blocks,
+        PickKind::Text,
+        PickKind::Annotations,
     ];
 
     pub fn label(self) -> &'static str {
         match self {
-            PickFilter::All => "All",
-            PickFilter::Edges => "Edges",
-            PickFilter::Points => "Points",
-            PickFilter::Annotations => "Annotations",
-            PickFilter::Text => "Text",
+            PickKind::Points => "Points",
+            PickKind::Edges => "Edges",
+            PickKind::Fills => "Fills",
+            PickKind::Areas => "Areas",
+            PickKind::Blocks => "Blocks & groups",
+            PickKind::Text => "Text",
+            PickKind::Annotations => "Annotations",
         }
     }
 
-    /// Whether an entity may be picked.
-    pub fn allows(self, doc: &drift_core::Document, id: EntityId) -> bool {
-        let is_point = doc.get(id).is_some_and(|e| e.kind.is_point());
+    /// What it picks, in a few words.
+    pub fn picks(self) -> &'static str {
         match self {
-            PickFilter::All => true,
-            PickFilter::Edges => !is_point,
-            PickFilter::Points => is_point,
-            PickFilter::Annotations | PickFilter::Text => false,
+            PickKind::Points => "end points, centres and standalone points",
+            PickKind::Edges => "lines, arcs, circles, ellipses and curves",
+            PickKind::Fills => "solid fills and hatches",
+            PickKind::Areas => "empty closed areas (to measure or fill)",
+            PickKind::Blocks => "copies of blocks, and groups as a whole",
+            PickKind::Text => "sketch text",
+            PickKind::Annotations => "dimensions, notes, callouts and marks",
         }
     }
 
-    /// Whether areas, fills and blocks may be picked (only with no filter).
-    pub fn anything(self) -> bool {
-        self == PickFilter::All
+    const fn bit(self) -> u8 {
+        1 << self as u8
+    }
+}
+
+/// What the select tool picks: any mix of [`PickKind`]s, all of them by default. It applies
+/// to clicks, box selection and Select all. A view setting: it isn't saved in the drawing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PickFilter(u8);
+
+impl Default for PickFilter {
+    fn default() -> Self {
+        Self::ALL
+    }
+}
+
+impl PickFilter {
+    /// Everything: no filter.
+    pub const ALL: PickFilter = PickFilter(0x7f);
+
+    /// Only `kind`.
+    pub const fn only(kind: PickKind) -> Self {
+        Self(kind.bit())
+    }
+
+    pub fn has(self, kind: PickKind) -> bool {
+        self.0 & kind.bit() != 0
+    }
+
+    /// With `kind` turned on or off.
+    pub fn with(self, kind: PickKind, on: bool) -> Self {
+        if on {
+            Self(self.0 | kind.bit())
+        } else {
+            Self(self.0 & !kind.bit())
+        }
+    }
+
+    /// Every kind on: no filter.
+    pub fn is_all(self) -> bool {
+        self == Self::ALL
+    }
+
+    /// The kinds that are on.
+    pub fn kinds(self) -> impl Iterator<Item = PickKind> {
+        PickKind::ALL.into_iter().filter(move |k| self.has(*k))
+    }
+
+    /// Whether an entity may be picked: a point with Points, a curve with Edges (or, in a
+    /// group, with Blocks & groups: the group is picked as a whole).
+    pub fn allows(self, doc: &drift_core::Document, id: EntityId) -> bool {
+        match doc.get(id) {
+            Some(e) if e.kind.is_point() => self.has(PickKind::Points),
+            Some(_) => {
+                self.has(PickKind::Edges)
+                    || (self.has(PickKind::Blocks) && doc.group_of(id).is_some())
+            }
+            None => false,
+        }
+    }
+
+    /// Whether a line's midpoint may be picked (it stands for the line and its middle).
+    pub fn midpoints(self) -> bool {
+        self.has(PickKind::Points) && self.has(PickKind::Edges)
     }
 
     /// Whether geometry (and the relations on it) may be picked.
     pub fn geometry(self) -> bool {
-        matches!(
-            self,
-            PickFilter::All | PickFilter::Edges | PickFilter::Points
-        )
+        self.has(PickKind::Points) || self.has(PickKind::Edges)
+    }
+
+    pub fn fills(self) -> bool {
+        self.has(PickKind::Fills)
+    }
+
+    pub fn areas(self) -> bool {
+        self.has(PickKind::Areas)
+    }
+
+    /// Whether copies of blocks and whole groups may be picked.
+    pub fn blocks(self) -> bool {
+        self.has(PickKind::Blocks)
     }
 
     /// Whether dimensions and annotations may be picked.
     pub fn annotations(self) -> bool {
-        matches!(self, PickFilter::All | PickFilter::Annotations)
+        self.has(PickKind::Annotations)
     }
 
     /// Whether sketch text may be picked.
     pub fn texts(self) -> bool {
-        matches!(self, PickFilter::All | PickFilter::Text)
+        self.has(PickKind::Text)
     }
 }
 

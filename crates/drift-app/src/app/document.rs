@@ -152,6 +152,7 @@ impl DriftApp {
         self.editor = editor;
         // An isolate belongs to the drawing it was made in (and its undo history).
         self.layer_list.isolated = None;
+        self.layer_list.solos.clear();
         self.fit_target = Some(self.fit_bounds());
         self.file = FileState {
             name,

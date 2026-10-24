@@ -459,8 +459,9 @@ mod tests {
     #[test]
     fn copy_and_paste_within_a_sketch() {
         let mut ed = sketch();
+        // (Select all takes the text too.)
         ed.select_all();
-        let lines = ed.selection.len();
+        let lines = ed.selection.len() + ed.selected_texts.len();
         let (entities, relations) = (ed.doc.len(), ed.doc.constraint_count());
         let text = ed.copy_selection().expect("something to copy");
         assert!(is_fragment(&text));

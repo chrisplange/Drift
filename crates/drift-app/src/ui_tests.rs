@@ -18,11 +18,20 @@ mod audit;
 mod audit_sheets;
 /// Screenshots for the user guide.
 mod docs;
+/// Aligning a hatch on a shape: handles, Pattern alignment, Align to edge, Alt-click.
+#[cfg(not(feature = "demo"))]
+mod hatch_align;
 /// One way in for drawings: Import…, its presets and dropped files.
 mod import;
+/// Alt-click a layer's lock or snap to set the other layers.
+mod layer_toggles;
 /// The live link: assistants editing the open drawing.
 #[cfg(not(target_arch = "wasm32"))]
 mod link;
+/// Selection filters you can combine.
+mod pick_filters;
+/// Picking and moving: G with a midpoint, axis locks in a drag, hidden areas.
+mod selection_move;
 /// A filled shape as one object in the Inspector: Stroke and Fill.
 #[cfg(not(feature = "demo"))]
 mod shapes;
@@ -112,6 +121,16 @@ fn set_placed(
     ed.doc.begin();
     ed.doc.set_placed_view(id, index, view);
     ed.commit(label);
+}
+
+/// Alt-click the select tool's filter toggle for `kind`: only that kind is picked.
+fn pick_only(h: &mut Harness<'_, DriftApp>, kind: &str) {
+    h.event(Event::ModifiersChanged(EguiModifiers::ALT));
+    h.run();
+    h.get_by_label(&format!("Pick {kind}")).click();
+    h.run();
+    h.event(Event::ModifiersChanged(EguiModifiers::NONE));
+    h.run();
 }
 
 fn save_png(name: &str, h: &mut Harness<'_, DriftApp>) {
@@ -2175,7 +2194,8 @@ fn clicking_inside_closed_geometry_selects_its_region() {
 
     let Some(mut h) = harness() else { return };
     // Preferences kept on the editor survive opening a drawing.
-    h.state_mut().editor.pick_filter = crate::editor::PickFilter::Points;
+    h.state_mut().editor.pick_filter =
+        crate::editor::PickFilter::only(crate::editor::PickKind::Points);
     h.get_by_label("File").click();
     h.run();
     h.get_by_label("Open example").click();
@@ -2183,9 +2203,9 @@ fn clicking_inside_closed_geometry_selects_its_region() {
     h.run();
     assert_eq!(
         h.state().editor.pick_filter,
-        crate::editor::PickFilter::Points
+        crate::editor::PickFilter::only(crate::editor::PickKind::Points)
     );
-    h.state_mut().editor.pick_filter = crate::editor::PickFilter::All;
+    h.state_mut().editor.pick_filter = crate::editor::PickFilter::ALL;
     // By default an area is picked only where it is filled: the plate is empty.
     assert!(h.state().editor.regions_need_fill());
     click_world(&mut h, DVec2::new(100.0, 10.0));
@@ -7118,15 +7138,14 @@ fn top_bar_switches_for_dimensions_selection_and_sheet_scales() {
     // The select tool's filter.
     h.key_press(Key::S);
     h.run();
-    h.get_by_label("Edges").click();
-    h.run();
+    pick_only(&mut h, "Edges");
     assert_eq!(
         h.state().editor.pick_filter,
-        crate::editor::PickFilter::Edges
+        crate::editor::PickFilter::only(crate::editor::PickKind::Edges)
     );
     h.get_by_label("All").click();
     h.run();
-    assert_eq!(h.state().editor.pick_filter, crate::editor::PickFilter::All);
+    assert_eq!(h.state().editor.pick_filter, crate::editor::PickFilter::ALL);
     // Sheet scales in feet and inches: the architectural ones, written as they are.
     let mut units = h.state().editor.doc.units();
     units.length = drift_core::LengthFormat::Architectural;
@@ -7356,7 +7375,7 @@ fn chain_dimensions_in_the_window() {
         }
         ed.commit("Setup");
         // A filter left on in the select tool doesn't hold the dimension tool back.
-        ed.pick_filter = crate::editor::PickFilter::Edges;
+        ed.pick_filter = crate::editor::PickFilter::only(crate::editor::PickKind::Edges);
     }
     h.run();
     h.key_press(Key::D);
@@ -9233,9 +9252,11 @@ fn boxes_pick_annotations_and_text_with_the_filter() {
 
     // Annotations only (the select tool's options bar): a window takes the dimension and the
     // note, not the geometry or the text.
-    h.get_by_label("Annotations").click();
-    h.run();
-    assert_eq!(h.state().editor.pick_filter, PickFilter::Annotations);
+    pick_only(&mut h, "Annotations");
+    assert_eq!(
+        h.state().editor.pick_filter,
+        PickFilter::only(crate::editor::PickKind::Annotations)
+    );
     everything(&mut h);
     let refs = picked(&h);
     assert!(refs.contains(&AnnotationRef::Dimension(width)), "{refs:?}");
@@ -9284,9 +9305,11 @@ fn boxes_pick_annotations_and_text_with_the_filter() {
     h.run();
     h.key_press(Key::Escape);
     h.run();
-    h.get_all_by_label("Text").next().unwrap().click();
-    h.run();
-    assert_eq!(h.state().editor.pick_filter, PickFilter::Text);
+    pick_only(&mut h, "Text");
+    assert_eq!(
+        h.state().editor.pick_filter,
+        PickFilter::only(crate::editor::PickKind::Text)
+    );
     everything(&mut h);
     let ed = &h.state().editor;
     assert!(ed.selection.is_empty());

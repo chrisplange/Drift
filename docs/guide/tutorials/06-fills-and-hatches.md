@@ -106,17 +106,36 @@ Any curve can be given no stroke the same way: **Line type → None** in its **I
 patterns have a real size (brick courses, block joints) and scale with the drawing, as in
 Revit.
 
-## 5. Set a hatch's origin and angle on the canvas
+## 5. Align a hatch's pattern
 
-A picked hatch has two handles:
+Pick a hatched shape (click inside it) and its pattern gets two purple handles of its own,
+inside the shape:
 
 - The **square** handle is the pattern's origin. Drag it to move the pattern; it snaps to
   points, so you can start the pattern exactly on a corner.
-- The **round** handle turns the pattern, in 15° steps.
+- The **round** handle turns the pattern, in 15° steps (hold Alt to turn it freely).
 
-![A picked hatch: its origin moved onto the lower-left corner and the pattern turned to 30°](../images/hatch-handles.png)
+Hover over a handle to see which is which. While the whole shape is picked, an origin on
+its outline (a corner, say) is shown in the middle of the shape, clear of the transform
+box's handles; the pattern still starts where the origin is.
 
-Each drag is one undo step.
+![A picked hatched shape: the pattern's handles inside it, and Pattern alignment in the Inspector](../images/hatch-handles.png)
+
+The **Inspector**'s **Fill** section has **Pattern alignment** for a picked hatch:
+
+- **Origin**: type X and Y (units, variables and expressions work, as in any field), or
+  click a corner or the centre of the small square below them.
+- **Angle**: type an angle, or click **Align to edge…** and then one of the shape's edges.
+  The pattern runs along that edge, with its origin on the edge's start: the way courses of
+  brick or tile are set out along a wall. Esc cancels.
+- **Reset** puts the origin back on the drawing's origin and the angle at 0°.
+
+To work on the pattern alone, **Alt-click** or **double-click** inside the shape: that picks
+its fill without its outline, so the transform box is out of the way. In a group,
+double-click once to go into the group (the shape is picked), and again for its fill.
+
+Moving or turning a shape carries its pattern with it, so the pattern stays where it was on
+the shape. Each change is one undo step.
 
 ## Patterns
 
@@ -179,7 +198,8 @@ colour and a separate fill colour (**Same as stroke** by default); set them in t
 
 - H fills or hatches a closed area; set the style before you click.
 - Alt+click picks up a fill's style.
-- A picked hatch's square handle moves its origin; the round one turns it.
+- A picked hatch's square handle moves its origin; the round one turns it. **Pattern
+  alignment** in the Inspector types them, or aligns the pattern to an edge.
 - Drafting patterns are sized on paper, model patterns in the world.
 - Each fill covers what is beneath it; **Arrange** (Ctrl+] and Ctrl+[) changes the order,
   and print matches the screen.

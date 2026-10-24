@@ -334,6 +334,8 @@ pub struct DriftApp {
     /// A picked hatch's handle being dragged, and what its origin snapped to.
     hatch_drag: Option<(drift_core::FillId, app::hatch_ui::HatchGrip)>,
     hatch_snap: Option<drift_geom::Snap>,
+    /// Align to edge… is waiting for a click on one of this hatch's outline curves.
+    align_edge: Option<drift_core::FillId>,
     /// The sheet shown in the Sheets tab and the preview.
     active_sheet: Option<drift_core::SheetId>,
     /// The canvas shows the current sheet as it prints, instead of the model.
@@ -566,6 +568,7 @@ impl DriftApp {
             leader_grip: None,
             adding_leader: None,
             hatch_drag: None,
+            align_edge: None,
             hatch_snap: None,
             note_edit: None,
             active_sheet: None,

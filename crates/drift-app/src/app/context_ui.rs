@@ -42,6 +42,66 @@ pub(super) fn choice<T: Copy + PartialEq>(
     out
 }
 
+/// The select tool's filter: a toggle for each kind it picks, and All. Alt-click or
+/// double-click a toggle for that kind alone. Returns the filter clicked to.
+fn pick_filter_toggles(
+    ui: &mut egui::Ui,
+    filter: crate::editor::PickFilter,
+) -> Option<crate::editor::PickFilter> {
+    use crate::editor::{PickFilter, PickKind};
+    let mut out = None;
+    ui.spacing_mut().item_spacing.x = 2.0;
+    caption(ui, "Pick");
+    for kind in PickKind::ALL {
+        let on = filter.has(kind);
+        let label = match kind {
+            // (Short, so the bar fits; the tooltip has the whole name.)
+            PickKind::Blocks => "Blocks",
+            k => k.label(),
+        };
+        let response = ui
+            .add(
+                egui::Button::new(egui::RichText::new(label).size(12.0))
+                    .selected(on)
+                    .min_size(egui::vec2(0.0, 22.0)),
+            )
+            .on_hover_text(format!(
+                "{}: picks {} · Alt-click or double-click: pick only {}",
+                kind.label(),
+                kind.picks(),
+                kind.label().to_lowercase()
+            ));
+        response.widget_info(|| {
+            egui::WidgetInfo::selected(
+                egui::WidgetType::Checkbox,
+                true,
+                on,
+                format!("Pick {}", kind.label()),
+            )
+        });
+        let alone =
+            response.double_clicked() || (response.clicked() && ui.input(|i| i.modifiers.alt));
+        if alone {
+            out = Some(PickFilter::only(kind));
+        } else if response.clicked() {
+            out = Some(filter.with(kind, !on));
+        }
+    }
+    ui.add_space(2.0);
+    if ui
+        .add_enabled(
+            !filter.is_all(),
+            egui::Button::new(egui::RichText::new("All").size(12.0))
+                .min_size(egui::vec2(0.0, 22.0)),
+        )
+        .on_hover_text("Pick everything again")
+        .clicked()
+    {
+        out = Some(PickFilter::ALL);
+    }
+    out
+}
+
 /// [`choice`], with a tooltip on the whole control (for the key that switches it).
 fn keyed_choice<T: Copy + PartialEq>(
     ui: &mut egui::Ui,
@@ -676,17 +736,22 @@ impl DriftApp {
         }
     }
 
-    /// Pick only edges, points, annotations or text, or anything; what is picked now keeps
-    /// only what the filter allows.
+    /// Set what the select tool picks; what is picked now keeps only what the filter allows.
     pub(crate) fn set_pick_filter(&mut self, filter: crate::editor::PickFilter) {
         let ed = &mut self.editor;
         ed.pick_filter = filter;
-        if !filter.anything() {
-            let doc = &ed.doc;
-            ed.selection.retain(|id| filter.allows(doc, *id));
+        let doc = &ed.doc;
+        ed.selection.retain(|id| filter.allows(doc, *id));
+        if !filter.fills() {
             ed.selected_fills.clear();
+        }
+        if !filter.blocks() {
             ed.selected_instances.clear();
+        }
+        if !filter.areas() {
             ed.selected_region = None;
+        }
+        if !filter.midpoints() {
             ed.selected_midpoints.clear();
         }
         if !filter.texts() {
@@ -724,12 +789,8 @@ impl DriftApp {
         let picked = !self.editor.selection.is_empty()
             || !self.editor.selected_instances.is_empty()
             || !self.editor.selected_fills.is_empty();
-        if !picked || !self.editor.pick_filter.anything() {
-            if let Some(f) = choice(
-                ui,
-                self.editor.pick_filter,
-                &crate::editor::PickFilter::ALL.map(|f| (f, f.label())),
-            ) {
+        if !picked || !self.editor.pick_filter.is_all() {
+            if let Some(f) = pick_filter_toggles(ui, self.editor.pick_filter) {
                 self.set_pick_filter(f);
             }
             divider(ui);

@@ -543,7 +543,10 @@ fn fills() {
     click_world(&mut h, DVec2::new(40.0, 30.0));
     h.get_by_label("Select").click();
     h.run();
-    click_world(&mut h, DVec2::new(40.0, 30.0));
+    // The whole shape picked (a click inside it, off its handles).
+    h.key_press(Key::Escape);
+    h.run();
+    click_world(&mut h, DVec2::new(25.0, 20.0));
     h.run();
     let map = screen_map(&h);
     let handles = h.state_mut().hatch_handles(&map).expect("handles");

@@ -93,13 +93,15 @@ fn pattern_combo(
         });
 }
 
-/// Edit a fill style. Returns true if it changed.
+/// Edit a fill style. Returns true if it changed. `angle`: with a hatch's Angle row (a hatch
+/// with its own Pattern alignment rows has it there).
 pub(crate) fn fill_style_editor(
     ui: &mut egui::Ui,
     style: &mut FillStyle,
     patterns: &PatternLibrary,
     dark: bool,
     id: &str,
+    angle: bool,
 ) -> bool {
     let before = style.clone();
     let solid = matches!(style.kind, FillKind::Solid);
@@ -111,7 +113,7 @@ pub(crate) fn fill_style_editor(
         }
     }
     ui.add_space(4.0);
-    fill_style_fields(ui, style, patterns, dark, id);
+    fill_style_fields(ui, style, patterns, dark, id, angle);
     *style != before
 }
 
@@ -131,6 +133,7 @@ pub(crate) fn fill_style_editor_or_none(
     patterns: &PatternLibrary,
     dark: bool,
     id: &str,
+    angle: bool,
 ) -> FillEdit {
     let before = style.clone();
     let solid = matches!(style.kind, FillKind::Solid);
@@ -149,7 +152,7 @@ pub(crate) fn fill_style_editor_or_none(
         _ => {}
     }
     ui.add_space(4.0);
-    fill_style_fields(ui, style, patterns, dark, id);
+    fill_style_fields(ui, style, patterns, dark, id, angle);
     if *style != before {
         FillEdit::Changed
     } else {
@@ -165,6 +168,7 @@ fn fill_style_fields(
     patterns: &PatternLibrary,
     dark: bool,
     id: &str,
+    angle: bool,
 ) {
     match &mut style.kind {
         FillKind::Solid => {
@@ -199,14 +203,16 @@ fn fill_style_fields(
                         .prefix("× "),
                 );
             });
-            theme::row(ui, "Angle", |ui| {
-                ui.add(
-                    egui::DragValue::new(&mut h.angle)
-                        .speed(1.0)
-                        .range(-360.0..=360.0)
-                        .suffix("°"),
-                );
-            });
+            if angle {
+                theme::row(ui, "Angle", |ui| {
+                    ui.add(
+                        egui::DragValue::new(&mut h.angle)
+                            .speed(1.0)
+                            .range(-360.0..=360.0)
+                            .suffix("°"),
+                    );
+                });
+            }
             // Drafting patterns keep their size on paper (scaled by the drawing scale); model
             // patterns have a real-world size and scale with the geometry.
             theme::row(ui, "Size", |ui| {
@@ -340,16 +346,15 @@ impl DriftApp {
             self.fill_notices(ui, first);
             theme::section(ui, "Style");
             let mut style = FillStyle::of(&fill);
-            if fills.len() == 1 && matches!(fill.kind, FillKind::Hatch(_)) {
-                ui.label(
-                    egui::RichText::new(
-                        "On the canvas, drag the square handle to move the pattern (it snaps to points) and the round one to turn it.",
-                    )
-                    .small()
-                    .weak(),
-                );
-            }
-            if fill_style_editor(ui, &mut style, &self.hatch_patterns, dark, "selected") {
+            let aligned = fills.len() == 1 && matches!(fill.kind, FillKind::Hatch(_));
+            if fill_style_editor(
+                ui,
+                &mut style,
+                &self.hatch_patterns,
+                dark,
+                "selected",
+                !aligned,
+            ) {
                 self.editor.doc.begin();
                 for id in &fills {
                     if let Some(mut f) = self.editor.doc.fill(*id).cloned() {
@@ -358,6 +363,9 @@ impl DriftApp {
                     }
                 }
                 self.editor.commit("Edit fill");
+            }
+            if aligned {
+                self.pattern_alignment(ui, first);
             }
             theme::section(ui, "Layer");
             let layers: Vec<(drift_core::LayerId, String)> = self
@@ -445,7 +453,7 @@ impl DriftApp {
         );
         theme::section(ui, "New fills");
         let mut style = self.editor.fill_style.clone();
-        if fill_style_editor(ui, &mut style, &self.hatch_patterns, dark, "tool") {
+        if fill_style_editor(ui, &mut style, &self.hatch_patterns, dark, "tool", true) {
             self.editor.fill_style = style;
         }
         ui.add_space(6.0);

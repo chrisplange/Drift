@@ -530,6 +530,7 @@ impl DriftApp {
         let hatch = self.hatch_handles(&map);
         let consumed = typing_note
             || self.text_pointer(ui, &response, &map)
+            || self.align_edge_input(ui, &response, &map, pos)
             || self.hatch_input(ui, &response, &map, hatch.as_ref(), snap)
             || self.note_input(ui, &response, &map, &notes, &dims, &glyphs, pos)
             || self.temp_dim_input(ui, &response, &map, &temps, pos)

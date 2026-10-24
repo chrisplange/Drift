@@ -145,6 +145,8 @@ impl Editor {
             pushed,
             needs_solve,
         });
+        // A hatch whose shape moved as one goes with it.
+        self.carry_hatches();
         ok
     }
 

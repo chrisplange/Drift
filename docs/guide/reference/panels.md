@@ -33,8 +33,8 @@ What's picked, and what you can do with it. Its contents depend on the selection
 | Circles | **Add centre mark** (or **Add N centre marks**). |
 | A dimension | **Driven (reference)**, its **Text** (**Prefix**, **Suffix**, chips, **Under line**, **Show instead**), **Tolerance**, and **Show** (**On the canvas**, **On sheets, in print and export**, and **In views** once the drawing has views). |
 | A note, callout or mark | Its text or label, leader, sheet and direction, and **Show**. |
-| A filled shape (its fill, or its whole outline) | One object: **Stroke** (**Line** or **None**; **Colour**, **Weight**, **Line type**), **Fill** (**None**, **Solid** or **Hatch**, and the style), **Layer**, **Arrange**, **Area** and **Perimeter**, and **Delete**. See [Fills and hatches](../tutorials/06-fills-and-hatches.md#4-edit-a-fill). |
-| An area fill or hatch | Its **Style**, **Layer**, **Arrange** and **Area**. |
+| A filled shape (its fill, or its whole outline) | One object: **Stroke** (**Line** or **None**; **Colour**, **Weight**, **Line type**), **Fill** (**None**, **Solid** or **Hatch**, and the style; a hatch's **Pattern alignment**: origin, angle, **Align to edge…**, **Reset**), **Layer**, **Arrange**, **Area** and **Perimeter**, and **Delete**. See [Fills and hatches](../tutorials/06-fills-and-hatches.md#4-edit-a-fill). |
+| An area fill or hatch | Its **Style** (a hatch's with **Pattern alignment**), **Layer**, **Arrange** and **Area**. |
 | A text | Its words, **Height**, **Angle**, **Font**, **Align**, **Spacing** and **Wrap**, and **Convert to curves**. |
 | Several things, with text or annotations among them | How many of each ("4 lines · 1 dimension · 1 note · 1 text"), and **Show** for the dimensions and annotations. Delete, Move, Rotate, Mirror and Copy act on all of it. |
 | A block copy | Laid out as a group: the block's **Name**, its **Definition** (another block to put in its place, and how many copies), **Edit in place**, **Explode** and **Explode to group**; then **Set base point**, **Select all copies**, **Blender profile**, **Placement** and **Layer**. **Blender profile** writes the block to the drawing's profiles file on save (see [Profiles in Blender](../tutorials/13-profiles-in-blender.md)). |
@@ -75,6 +75,13 @@ Ctrl+L shows or hides it.
 - The magnet switch turns snapping to a layer's geometry off or on. With it off, the
   pointer doesn't snap to that layer (or to block copies on it), but you can still pick
   and edit its geometry. Use it for busy reference layers you're drawing over.
+- **Alt-click** a switch to set every other layer, as in Illustrator, and Alt-click it
+  again to put them back as they were. Each Alt-click is one undo step:
+  - the eye shows this layer alone (and makes it current); **End isolate** also puts the
+    others back;
+  - the lock locks every other layer and leaves this one unlocked (and current), so you
+    can draw on it without touching the rest;
+  - the magnet makes this the only layer the pointer snaps to.
 - Click a row's arrow (**Colours and line settings**) to open it: **Stroke** colour
   (**Auto** is black or white to suit the theme), **Fill** colour (**Same as stroke** by
   default), **Line** weight and type, **Output** (**Printed and exported**), **Select all**,
@@ -84,7 +91,9 @@ Ctrl+L shows or hides it.
   picked to the current layer.
 - Layer **0** always exists and can't be deleted.
 
-Hidden layers aren't drawn, picked or snapped to, but their geometry still solves. Locked
+Hidden layers aren't drawn, picked or snapped to, but their geometry still solves. A
+closed area is picked only when its whole outline can be seen: one outlined (even in part)
+by curves on a hidden layer isn't, though fills keep their areas. Locked
 layers are drawn and can be snapped to and dimensioned against, but not picked; the solver
 holds their geometry still. A hatch or area whose outline is on a locked layer can't be
 moved, turned or scaled either: Drift says the layer is locked.

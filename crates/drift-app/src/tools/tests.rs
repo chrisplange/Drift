@@ -3892,7 +3892,7 @@ fn selection_filters_pick_only_edges_or_only_points() {
     assert_eq!(boxed(&mut ed, &mut tool), l.iter().copied().collect());
     // Edges only: the box takes the four lines; a click on a corner takes a line, not the
     // point; a click inside picks no area.
-    ed.pick_filter = PickFilter::Edges;
+    ed.pick_filter = PickFilter::only(crate::editor::PickKind::Edges);
     let picked = boxed(&mut ed, &mut tool);
     assert_eq!(picked, l.iter().copied().collect());
     ed.selection.clear();
@@ -3901,7 +3901,7 @@ fn selection_filters_pick_only_edges_or_only_points() {
     click(&mut ed, &mut tool, v(5.0, 3.0));
     assert!(ed.selected_region.is_none(), "no areas with a filter on");
     // Points only: the box takes the four corners; a click on a line takes nothing.
-    ed.pick_filter = PickFilter::Points;
+    ed.pick_filter = PickFilter::only(crate::editor::PickKind::Points);
     let picked = boxed(&mut ed, &mut tool);
     assert_eq!(picked, c.iter().copied().collect());
     ed.selection.clear();
@@ -3909,12 +3909,21 @@ fn selection_filters_pick_only_edges_or_only_points() {
     assert!(ed.selection.is_empty());
     click(&mut ed, &mut tool, v(10.0, 6.0));
     assert_eq!(ed.selection, [c[2]].into());
-    // A grouped rectangle gives only what the filter allows.
+    // A grouped rectangle: with Blocks & groups off, a click takes the one line; with it on,
+    // the whole group, as far as the filter allows.
     ed.selection = l.iter().copied().collect();
-    ed.pick_filter = PickFilter::All;
+    ed.pick_filter = PickFilter::ALL;
     ed.make_group();
     ed.selection.clear();
-    ed.pick_filter = PickFilter::Edges;
+    ed.pick_filter = PickFilter::only(crate::editor::PickKind::Edges);
+    click(&mut ed, &mut tool, v(5.0, 0.0));
+    assert_eq!(ed.selection, [l[0]].into());
+    ed.pick_filter = ed.pick_filter.with(crate::editor::PickKind::Blocks, true);
+    click(&mut ed, &mut tool, v(5.0, 0.0));
+    assert_eq!(ed.selection, l.iter().copied().collect());
+    // Blocks & groups alone: a click on a grouped line still takes the group's curves.
+    ed.pick_filter = PickFilter::only(crate::editor::PickKind::Blocks);
+    ed.selection.clear();
     click(&mut ed, &mut tool, v(5.0, 0.0));
     assert_eq!(ed.selection, l.iter().copied().collect());
 }
@@ -5135,14 +5144,14 @@ fn boxes_pick_text_and_hand_annotations_to_the_app() {
     assert!(ed.box_pick.take().unwrap().crossing);
     // Text only: the same window takes the text and no geometry; a click on the line picks
     // nothing.
-    ed.pick_filter = PickFilter::Text;
+    ed.pick_filter = PickFilter::only(crate::editor::PickKind::Text);
     box_select(&mut ed, &mut tool, v(-20.0, -10.0), v(50.0, 30.0), m);
     assert!(ed.selection.is_empty());
     assert_eq!(ed.selected_texts, [text].into());
     click(&mut ed, &mut tool, v(5.0, 0.0));
     assert!(ed.selection.is_empty() && ed.selected_texts.is_empty());
     // Annotations only: no geometry or text, only the box for the app.
-    ed.pick_filter = PickFilter::Annotations;
+    ed.pick_filter = PickFilter::only(crate::editor::PickKind::Annotations);
     box_select(&mut ed, &mut tool, v(-20.0, -10.0), v(50.0, 30.0), m);
     assert!(ed.selection.is_empty() && ed.selected_texts.is_empty());
     assert!(ed.box_pick.is_some());
@@ -5152,10 +5161,10 @@ fn boxes_pick_text_and_hand_annotations_to_the_app() {
         "text isn't picked with Annotations"
     );
     // Edges: a box takes no text; Shift adds to what is picked.
-    ed.pick_filter = PickFilter::All;
+    ed.pick_filter = PickFilter::ALL;
     box_select(&mut ed, &mut tool, v(-20.0, 15.0), v(50.0, 30.0), m);
     assert_eq!(ed.selected_texts, [text].into());
-    ed.pick_filter = PickFilter::Edges;
+    ed.pick_filter = PickFilter::only(crate::editor::PickKind::Edges);
     let shift = Modifiers { shift: true, ..m };
     box_select(&mut ed, &mut tool, v(-20.0, -10.0), v(50.0, 30.0), shift);
     assert!(ed.selection.contains(&line));

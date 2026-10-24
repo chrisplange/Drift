@@ -10,7 +10,7 @@ Esc cancels the step in progress; pressed again, it returns to **Select**.
 
 | Tool | Key | What it does |
 |---|---|---|
-| **Select** | S | Pick, drag and box-select. Its top bar shows the pick filter (**All**, **Edges**, **Points**, **Annotations**, **Text**) or, with something picked, the selection's layer, stroke, fill, **Construction**, **Actions** and **Delete**. G moves the selection, R rotates it. See [Editing](../tutorials/04-editing.md). |
+| **Select** | S | Pick, drag and box-select. Its top bar shows the pick filters (toggles for **Points**, **Edges**, **Fills**, **Areas**, **Blocks**, **Text** and **Annotations**, which combine; Alt-click one for that kind alone; **All**) or, with something picked, the selection's layer, stroke, fill, **Construction**, **Actions** and **Delete**. G moves the selection, R rotates it. See [Editing](../tutorials/04-editing.md). |
 
 ## Draw
 

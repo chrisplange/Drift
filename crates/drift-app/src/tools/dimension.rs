@@ -522,14 +522,14 @@ impl Tool for DimensionTool {
             Input::Hover(p) => {
                 ed.hovered = None;
                 ed.hovered_midpoint = None;
-                match pick_target_with(ed, &p, crate::editor::PickFilter::All) {
+                match pick_target_with(ed, &p, crate::editor::PickFilter::ALL) {
                     Some(Target::Entity(id)) => ed.hovered = Some(id),
                     Some(Target::Midpoint(line)) => ed.hovered_midpoint = Some(line),
                     None => {}
                 }
             }
             Input::Click(p, mods) => {
-                let picked = pick_target_with(ed, &p, crate::editor::PickFilter::All);
+                let picked = pick_target_with(ed, &p, crate::editor::PickFilter::ALL);
                 let step = p.tolerance * BASELINE_STEP;
                 self.step = step;
                 // Continuing a chain / baseline row: in Chain or Baseline mode a click on a

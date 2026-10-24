@@ -1,0 +1,92 @@
+{
+  "format": "drift",
+  "version": 38,
+  "meta": {"title":"Fixture","units":"mm"},
+  "project": {"name":"Fixture project","number":"F-001"},
+  "fonts": {"drawing":"Fixture Sans","embedded":[{"family":"Fixture Sans","regular":{"data":"bm90IGEgcmVhbCBmb250"}}]},
+  "layers": [
+    {"id":"l0","name":"0","weight":0.25,"linetype":"continuous"},
+    {"id":"l1","name":"Walls","color":"#303030","fill":"#d0c0a0","weight":0.5,"linetype":"continuous"},
+    {"id":"l2","name":"Furniture","color":"#2060c0","weight":0.25,"linetype":"continuous"}
+  ],
+  "variables": [
+    {"id":"v3","name":"w","expr":"4200 mm","kind":"length"},
+    {"id":"v4","name":"d","expr":"3000 mm","kind":"length"}
+  ],
+  "entities": [
+    {"type":"point","id":"e1","at":[0.0,0.0]},
+    {"type":"point","id":"e2","at":[4200.0,0.0]},
+    {"type":"point","id":"e3","at":[4200.0,3000.0]},
+    {"type":"point","id":"e4","at":[0.0,3000.0]},
+    {"type":"line","id":"e5","a":"e1","b":"e2","layer":"l1"},
+    {"type":"line","id":"e6","a":"e2","b":"e3","layer":"l1"},
+    {"type":"line","id":"e7","a":"e3","b":"e4","layer":"l1"},
+    {"type":"line","id":"e8","a":"e4","b":"e1","layer":"l1"},
+    {"type":"point","id":"e9","at":[3600.0,2400.0]},
+    {"type":"circle","id":"e10","center":"e9","radius":150.0},
+    {"type":"point","id":"e11","at":[600.0,0.0]},
+    {"type":"point","id":"e12","at":[1500.0,0.0]},
+    {"type":"point","id":"e13","at":[600.0,900.0]},
+    {"type":"arc","id":"e14","center":"e11","start":"e12","end":"e13"},
+    {"type":"line","id":"e15","a":"e11","b":"e12","style":"construction"},
+    {"type":"point","id":"e16","at":[2100.0,1500.0]},
+    {"type":"point","id":"e17","at":[2700.0,1500.0]},
+    {"type":"point","id":"e18","at":[2100.0,1900.0]},
+    {"type":"ellipse","id":"e19","center":"e16","major":"e17","minor":"e18"},
+    {"type":"point","id":"e20","at":[300.0,2600.0]},
+    {"type":"point","id":"e21","at":[900.0,2900.0]},
+    {"type":"point","id":"e22","at":[1500.0,2900.0]},
+    {"type":"point","id":"e23","at":[2100.0,2600.0]},
+    {"type":"bezier","id":"e24","a":"e20","c1":"e21","c2":"e22","b":"e23","layer":"l2"}
+  ],
+  "constraints": [
+    {"type":"fix","id":"c1","point":"e1","at":[0.0,0.0]},
+    {"type":"horizontal","id":"c2","line":"e5"},
+    {"type":"vertical","id":"c3","line":"e6"},
+    {"type":"horizontal","id":"c4","line":"e7"},
+    {"type":"vertical","id":"c5","line":"e8"},
+    {"type":"distance","id":"c6","a":"e1","b":"e2","value":4200.0,"label":[0.0,-400.0],"expr":"w"},
+    {"type":"distance","id":"c7","a":"e2","b":"e3","value":3000.0,"expr":"d"},
+    {"type":"radius","id":"c8","curve":"e10","value":150.0}
+  ],
+  "measurements": [
+    {"type":"distance","id":"m5","a":"e1","b":"e3"}
+  ],
+  "variants": [
+    {"id":"k6","name":"Narrow","values":{"v3":"3600 mm"}}
+  ],
+  "fills": [
+    {"id":"f2","type":"solid","boundary":["e5","e6","e7","e8"],"seed":[2100.0,1500.0],"color":"#d0c0a0","opacity":0.5,"path":"p1"},
+    {"id":"f4","type":"hatch","boundary":["e10"],"seed":[3600.0,2400.0],"pattern":"ANSI31","scale":20.0,"angle":45.0,"weight":0.18,"order":1,"path":"p3"}
+  ],
+  "annotations": [
+    {"type":"note","id":"n9","text":"Oak floor","at":[2500.0,3400.0],"leaders":[{"to":{"at":[2100.0,1500.0]}}]},
+    {"type":"centre_mark","id":"n10","curve":"e10"}
+  ],
+  "views": [
+    {"id":"w12","name":"Plan","scale":50.0,"center":[2100.0,1500.0],"size":[5200.0,4000.0]}
+  ],
+  "sheets": [
+    {"id":"s13","name":"A-101","paper":"A3","viewports":[{"view":"w12","at":[200.0,150.0]}],"title_block":"modern","fields":{}}
+  ],
+  "groups": [
+    {"id":"g5","name":"Column","members":["e9","e10"]}
+  ],
+  "paths": [
+    {"id":"p1","curves":["e5","e6","e7","e8"],"closed":true},
+    {"id":"p3","curves":["e10"],"closed":true}
+  ],
+  "blocks": [
+    {"id":"b6","name":"Chair","items":[{"type":"line","a":[0.0,0.0],"b":[450.0,0.0]},{"type":"line","a":[450.0,0.0],"b":[450.0,450.0]},{"type":"line","a":[450.0,450.0],"b":[0.0,450.0]},{"type":"line","a":[0.0,450.0],"b":[0.0,0.0]}],"fills":[{"type":"solid","seed":[225.0,225.0]}]}
+  ],
+  "instances": [
+    {"id":"i7","block":"b6","at":[1000.0,1000.0]},
+    {"id":"i8","block":"b6","at":[1600.0,1000.0]}
+  ],
+  "underlays": [
+    {"id":"u14","name":"survey.pdf","source":"survey.pdf","at":[0.0,0.0],"scale":1.0,"opacity":0.6,"prims":[{"l":[0.0,0.0,4200.0,0.0]},{"c":[3600.0,2400.0,150.0]}],"images":[{"at":[0.0,3000.0],"across":[100.0,0.0],"down":[0.0,-100.0],"png":"iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAF0lEQVR4nGP5z8DwnxFIsDAy/AdCBgYANV4FBjbky/sAAAAASUVORK5CYII="}]}
+  ],
+  "texts": [
+    {"id":"t11","text":"LIVING","at":[1800.0,1200.0],"height":200.0}
+  ]
+}

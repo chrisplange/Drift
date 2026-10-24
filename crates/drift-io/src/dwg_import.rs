@@ -5,6 +5,12 @@
 //! DXF keeps one mapping from AutoCAD's entities to Drift's: DWG and DXF drawings come in
 //! with the same layers, blocks, hatches, text, dimensions and layouts, and what Drift
 //! can't hold is reported the same way.
+// Reads files from anywhere: bad input is an error or is skipped, never a panic
+// (tests/import_robustness.rs). Tests may unwrap.
+#![cfg_attr(
+    not(test),
+    deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)
+)]
 
 use std::io::Cursor;
 

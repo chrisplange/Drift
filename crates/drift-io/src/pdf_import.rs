@@ -5,6 +5,12 @@
 //! them.
 //! Coordinates are PDF points with the origin at the page's lower-left corner, upright as
 //! the page is shown.
+// Reads files from anywhere: bad input is an error or is skipped, never a panic
+// (tests/import_robustness.rs). Tests may unwrap.
+#![cfg_attr(
+    not(test),
+    deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)
+)]
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;

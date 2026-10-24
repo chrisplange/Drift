@@ -1,6 +1,12 @@
 //! Reading the text of a PDF: what a font's character codes stand for (its `ToUnicode` map,
 //! else its encoding), and how far each one advances, so that the runs a page shows can be
 //! put back together as lines of text.
+// Reads files from anywhere: bad input is an error or is skipped, never a panic
+// (tests/import_robustness.rs). Tests may unwrap.
+#![cfg_attr(
+    not(test),
+    deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)
+)]
 
 use std::collections::HashMap;
 

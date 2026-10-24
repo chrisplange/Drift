@@ -24,6 +24,9 @@ roxmltree = "0.21.1"
 # own files must be published; see deny.toml.
 acadrust = { version = "0.6.5", default-features = false, optional = true }
 
+[dev-dependencies]
+proptest = "1"
+
 [features]
 dwg = ["dep:acadrust"]
 # The browser demo: reading stays, the writers (`.drift`, PDF, SVG, DXF) are left out.

@@ -8,6 +8,12 @@
 //!
 //! An opaque fill hides what was painted before it; [`uncovered`] splits a stroke into what
 //! still shows and what the fill covers.
+// Reads files from anywhere: bad input is an error or is skipped, never a panic
+// (tests/import_robustness.rs). Tests may unwrap.
+#![cfg_attr(
+    not(test),
+    deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)
+)]
 
 use drift_core::DVec2;
 
@@ -358,6 +364,7 @@ fn split(
                 .distance(first.start)
                 < 1e-9
         {
+            #[allow(clippy::expect_used)] // There are more than one.
             let last = runs.pop().expect("runs");
             let first = runs.remove(0);
             let mut joined = last;

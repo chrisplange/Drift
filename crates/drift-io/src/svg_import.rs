@@ -7,6 +7,12 @@
 //! that size. Styles come from presentation attributes, simple `<style>` rules (by element,
 //! class and id) and `style` attributes, inherited through groups. What can't be carried
 //! over (images, clipping, gradients, patterns) is counted or noted.
+// Reads files from anywhere: bad input is an error or is skipped, never a panic
+// (tests/import_robustness.rs). Tests may unwrap.
+#![cfg_attr(
+    not(test),
+    deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)
+)]
 
 use std::collections::HashMap;
 
@@ -25,12 +31,77 @@ const MAX_DEPTH: usize = 24;
 const INKSCAPE: &str = "http://www.inkscape.org/namespaces/inkscape";
 const XLINK: &str = "http://www.w3.org/1999/xlink";
 
+/// Elements nest at most this deep. The XML parser recurses once per level, so a file nested
+/// much deeper would overflow the stack (about 1,000 levels on the app's 1 MB main thread).
+const MAX_NESTING: usize = 256;
+/// The most elements, text runs and attributes a file may have (entities can multiply them).
+const MAX_NODES: u32 = 4_000_000;
+
+/// How deeply the elements of `text` nest, as far as it reads: comments, CDATA, processing
+/// instructions, declarations and quoted attribute values are passed over.
+fn nesting(text: &str) -> usize {
+    let b = text.as_bytes();
+    let (mut depth, mut deepest, mut i) = (0usize, 0usize, 0usize);
+    let skip_to = |from: usize, end: &[u8]| {
+        b.get(from..)
+            .and_then(|rest| rest.windows(end.len()).position(|w| w == end))
+            .map_or(b.len(), |k| from + k + end.len())
+    };
+    while let Some(k) = b
+        .get(i..)
+        .and_then(|rest| rest.iter().position(|&c| c == b'<'))
+    {
+        i += k + 1;
+        let rest = b.get(i..).unwrap_or_default();
+        if rest.starts_with(b"!--") {
+            i = skip_to(i, b"-->");
+        } else if rest.starts_with(b"![CDATA[") {
+            i = skip_to(i, b"]]>");
+        } else if rest.starts_with(b"?") {
+            i = skip_to(i, b"?>");
+        } else if rest.starts_with(b"!") {
+            i = skip_to(i, b">");
+        } else if rest.starts_with(b"/") {
+            depth = depth.saturating_sub(1);
+            i = skip_to(i, b">");
+        } else {
+            // A start tag: to its `>`, past quoted values; `/>` closes it at once.
+            let mut quote = None;
+            let mut closed = false;
+            while let Some(&c) = b.get(i) {
+                i += 1;
+                match (quote, c) {
+                    (Some(q), _) if c == q => quote = None,
+                    (Some(_), _) => {}
+                    (None, b'"' | b'\'') => quote = Some(c),
+                    (None, b'>') => {
+                        closed = b.get(i.wrapping_sub(2)) == Some(&b'/');
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            if !closed {
+                depth += 1;
+                deepest = deepest.max(depth);
+            }
+        }
+    }
+    deepest
+}
+
 /// Read an SVG document. Curves outside any layer go on a layer named `name`.
 pub fn read(text: &str, name: &str) -> Result<Artwork, String> {
+    if nesting(text) > MAX_NESTING {
+        return Err(format!(
+            "not a readable SVG (its elements nest more than {MAX_NESTING} deep)"
+        ));
+    }
     let doc = Document::parse_with_options(
         text,
         ParsingOptions {
             allow_dtd: true,
+            nodes_limit: MAX_NODES,
             ..Default::default()
         },
     )

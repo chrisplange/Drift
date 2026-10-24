@@ -12,6 +12,11 @@ pub(crate) const VIEW_FLAGS: usize = 12;
 pub(crate) const OLDER_RULES: &str =
     "Area and fill rules taken from your settings; save to keep them in the file";
 
+/// Said before a save that would leave out things a newer Drift wrote (see `drift_io::Saved`).
+#[cfg(not(feature = "demo"))]
+pub(crate) const LOSSY_SAVE: &str = "This drawing has things from a newer Drift that this \
+     version doesn't know; saving here may lose them.";
+
 /// Read one of the rules new drawings start with from a saved preference (`key=value`).
 /// False when `key` isn't one of them.
 pub(crate) fn rules_pref(rules: &mut drift_core::DrawingRules, key: &str, value: &str) -> bool {
@@ -427,25 +432,39 @@ impl DriftApp {
     }
 
     #[cfg(not(feature = "demo"))]
-    pub(crate) fn file_bytes(&self) -> Vec<u8> {
+    fn saved(&self) -> drift_io::Saved {
         let mut meta = self.file.meta.clone();
         meta.generator = Some(format!("Drift {}", drift_platform::VERSION));
-        drift_io::save(&self.editor.doc, &meta).into_bytes()
+        drift_io::save_checked(&self.editor.doc, &meta)
     }
 
     #[cfg(not(feature = "demo"))]
     pub(crate) fn save(&mut self) {
-        // Only ever overwrite a sketch file: never an export or an imported drawing.
-        match &self.file.path {
-            Some(path) if is_sketch_file(path) => self.files.save_to(path, &self.file_bytes()),
-            _ => self.save_as(),
-        }
+        self.write_file(false, false);
     }
 
     #[cfg(not(feature = "demo"))]
     pub(crate) fn save_as(&mut self) {
-        self.files
-            .save_as(&self.file.name, DRIFT_FILE, self.file_bytes());
+        self.write_file(true, false);
+    }
+
+    /// Save, or Save As (`as_new`). When that would leave out things from a newer Drift that
+    /// this one doesn't know (a record that held them was deleted), ask first, unless that was
+    /// `confirmed`.
+    #[cfg(not(feature = "demo"))]
+    pub(crate) fn write_file(&mut self, as_new: bool, confirmed: bool) {
+        let saved = self.saved();
+        if saved.loses_newer_data && !confirmed {
+            self.lossy_save = Some(as_new);
+            return;
+        }
+        self.saving_carried = Some(saved.carried);
+        let bytes = saved.text.into_bytes();
+        // Only ever overwrite a sketch file: never an export or an imported drawing.
+        match &self.file.path {
+            Some(path) if !as_new && is_sketch_file(path) => self.files.save_to(path, &bytes),
+            _ => self.files.save_as(&self.file.name, DRIFT_FILE, bytes),
+        }
     }
 
     #[cfg(feature = "demo")]
@@ -652,6 +671,11 @@ impl DriftApp {
                         self.file.path = path;
                     }
                     self.file.clean_revision = Some(self.editor.doc.revision());
+                    // The next save compares with this file.
+                    #[cfg(not(feature = "demo"))]
+                    if let Some(carried) = self.saving_carried.take() {
+                        self.file.meta.carried = carried;
+                    }
                     // Saved from the unsaved-changes prompt: carry on with what was asked.
                     if let Some((action, revision)) = self.after_save.take()
                         && revision == self.editor.doc.revision()

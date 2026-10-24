@@ -18,7 +18,6 @@ fn sans() -> String {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub(crate) struct TextRecord {
     pub(crate) id: String,
     text: String,

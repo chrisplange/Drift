@@ -70,6 +70,55 @@ impl DriftApp {
             || self.renaming.is_some()
             || self.pending_import.is_some()
             || self.dropped.is_some()
+            || self.lossy_save_open()
+    }
+
+    #[cfg(not(feature = "demo"))]
+    fn lossy_save_open(&self) -> bool {
+        self.lossy_save.is_some()
+    }
+
+    #[cfg(feature = "demo")]
+    fn lossy_save_open(&self) -> bool {
+        false
+    }
+
+    /// Saving would leave out things from a newer Drift: ask first. Cancel saves nothing (and
+    /// whatever was to follow the save, such as closing, doesn't happen).
+    #[cfg(not(feature = "demo"))]
+    fn lossy_save_prompt(&mut self, ctx: &egui::Context) {
+        let Some(as_new) = self.lossy_save else {
+            return;
+        };
+        let mut choice = None;
+        let modal = egui::Modal::new(egui::Id::new("lossy_save"))
+            .frame(theme::dialog_frame(&ctx.style_of(ctx.theme())))
+            .show(ctx, |ui| {
+                ui.set_width(380.0);
+                theme::dialog_title(ui, &format!("Save {}?", self.file.name), false);
+                ui.label(app::document::LOSSY_SAVE);
+                ui.label("To keep the file as it is, save to a new file with Save As.");
+                theme::dialog_buttons(ui, |ui| {
+                    if ui.button("Cancel").clicked() {
+                        choice = Some(false);
+                    }
+                    let dark = ui.visuals().dark_mode;
+                    if ui.add(theme::primary_button("Save anyway", dark)).clicked() {
+                        choice = Some(true);
+                    }
+                });
+            });
+        if modal.should_close() && choice.is_none() {
+            choice = Some(false);
+        }
+        if let Some(save) = choice {
+            self.lossy_save = None;
+            if save {
+                self.write_file(as_new, true);
+            } else {
+                self.after_save = None;
+            }
+        }
     }
 
     /// Whether a window is open over the canvas, by its id in [`WINDOWS`].
@@ -244,6 +293,9 @@ impl DriftApp {
                 }
             }
         }
+
+        #[cfg(not(feature = "demo"))]
+        self.lossy_save_prompt(ctx);
 
         let mut open = self.benchmark.is_some();
         let mut close = false;

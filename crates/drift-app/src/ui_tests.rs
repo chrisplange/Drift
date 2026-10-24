@@ -361,15 +361,81 @@ use eframe::Storage as _;
 /// A stored session as a newer Drift would autosave it.
 fn newer_session() -> (MemoryStorage, String) {
     let newer = drift_io::FORMAT_VERSION + 1;
-    let text = drift_io::save(&drift_core::demo::mounting_plate(), &Default::default()).replace(
-        &format!("\"version\": {},", drift_io::FORMAT_VERSION),
-        &format!("\"version\": {newer},"),
-    );
+    let text = drift_io::save(&drift_core::demo::mounting_plate(), &Default::default())
+        .replace(
+            &format!("\"version\": {},", drift_io::FORMAT_VERSION),
+            &format!("\"version\": {newer},"),
+        )
+        // A newer Drift that this one can't read (one it can opens: `newer_files.rs`).
+        .replace(
+            &format!("\"reader\": {},", drift_io::READER_VERSION),
+            &format!("\"reader\": {newer},"),
+        );
     assert!(text.contains(&format!("\"version\": {newer},")));
     let mut storage = MemoryStorage::default();
     storage.set_string(crate::KEY_DOCUMENT, text.clone());
     storage.set_string(crate::KEY_NAME, "Later.drift".into());
     (storage, text)
+}
+
+#[test]
+fn saving_over_things_from_a_newer_drift_asks_first() {
+    let Some(mut h) = harness() else { return };
+    // A file from a newer Drift: a field this build doesn't know on the point e1.
+    let meta = drift_io::Metadata {
+        generator: Some(format!("Drift {}", drift_platform::VERSION)),
+        ..Default::default()
+    };
+    let plain = drift_io::save(&drift_core::demo::mounting_plate(), &meta);
+    let from = r#"{"type":"point","id":"e1","#;
+    assert_eq!(plain.matches(from).count(), 1);
+    let text = plain.replacen(from, r#"{"type":"point","id":"e1","weld":"fillet","#, 1);
+    let dir = scratch_dir("newer-save");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("Newer.drift");
+    std::fs::write(&path, &text).unwrap();
+    let (doc, meta) = drift_io::load(&text).unwrap();
+    assert!(meta.carried.any());
+    h.state_mut()
+        .replace_document(doc, "Newer.drift".into(), Some(path.clone()), meta, true);
+    h.run();
+    // Saved, it keeps the field, and nothing is asked. (Opening solves the drawing, which
+    // can move a point by a rounding error: that record is written anew, the rest as read.)
+    h.state_mut().save();
+    h.run();
+    assert!(h.state().lossy_save.is_none());
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(text.contains(r#"{"type":"point","id":"e1","weld":"fillet","#));
+    // Deleting the point would lose the field: asked first, and Cancel saves nothing.
+    let ed = &mut h.state_mut().editor;
+    ed.doc.begin();
+    ed.doc.delete([drift_core::EntityId(1)]);
+    ed.commit("Delete");
+    h.state_mut().save();
+    h.run();
+    assert!(h.state().lossy_save.is_some());
+    assert!(
+        h.query_by_label_contains("things from a newer Drift that this version doesn't know")
+            .is_some()
+    );
+    save_png("drift_ui_lossy_save.png", &mut h);
+    h.get_by_label("Cancel").click();
+    h.run();
+    assert!(h.state().lossy_save.is_none());
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+    // Save anyway writes it, without the field; the next save doesn't ask again.
+    h.state_mut().save();
+    h.run();
+    h.get_by_label("Save anyway").click();
+    h.run();
+    assert!(h.state().lossy_save.is_none());
+    let saved = std::fs::read_to_string(&path).unwrap();
+    assert!(!saved.contains("weld"));
+    h.state_mut().save();
+    h.run();
+    assert!(h.state().lossy_save.is_none());
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), saved);
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 fn scratch_dir(name: &str) -> std::path::PathBuf {

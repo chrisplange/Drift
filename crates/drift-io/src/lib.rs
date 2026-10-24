@@ -6,7 +6,8 @@
 //! ```json
 //! {
 //!   "format": "drift",
-//!   "version": 41,
+//!   "version": 42,
+//!   "reader": 42,
 //!   "meta": {"title":"Bracket","units":"mm","generator":"Drift 0.1.0"},
 //!   "display": {"length":"architectural","fraction":16},
 //!   "variables": [
@@ -33,6 +34,11 @@
 //!
 //! Numbers use the shortest representation that round-trips exactly, so save → load is
 //! bit-exact. Older versions are upgraded by [`migrate`] before parsing.
+//!
+//! `reader` is the oldest version that reads the file; a file whose `reader` is above this
+//! build's [`FORMAT_VERSION`] is refused. Anything else this build doesn't know (a field or a
+//! table a newer Drift added) is passed over when reading and written back when saving, where
+//! the record that held it still exists (`carry.rs`).
 
 use std::collections::BTreeMap;
 
@@ -44,6 +50,8 @@ use drift_core::{
 use serde::{Deserialize, Serialize};
 
 mod blocks;
+#[cfg(not(feature = "demo"))]
+mod carry;
 pub mod clip;
 mod drafting;
 #[cfg(feature = "dwg")]
@@ -70,7 +78,8 @@ pub mod vector;
 
 /// File extension, without the dot.
 pub const EXTENSION: &str = "drift";
-/// The version this build writes. Files with a higher version are rejected.
+/// The version this build writes. A file with a higher version still opens when its `reader`
+/// (see [`READER_VERSION`]) isn't higher; what this build doesn't know in it is kept.
 ///
 /// History: 1 = entities only (M1); 2 = adds `constraints` (M2); 3 = adds diameter,
 /// horizontal/vertical and point–line distances, and dimension `label` offsets (M3);
@@ -108,8 +117,17 @@ pub const EXTENSION: &str = "drift";
 /// of their layer) and an underlay's `layer` and `order` (where its pictures stack);
 /// 41 = `variants` become `options`, which hold variable values or a whole `sketch` (a Drift
 /// file of its own, leaving out the sections it has the `same` as the drawing), and a block's
-/// fill can have `"path": "shape"` (it filled a shape, which exploding makes again).
-pub const FORMAT_VERSION: u32 = 41;
+/// fill can have `"path": "shape"` (it filled a shape, which exploding makes again);
+/// 42 = adds `reader` (the oldest version that reads the file), and reading passes over what
+/// it doesn't know and keeps it for saving (from here on, additions don't bump the version).
+pub const FORMAT_VERSION: u32 = 42;
+/// The oldest version that reads what this build writes: the last breaking change, written as
+/// a file's `"reader"`. A reader refuses a file only when its `reader` is above the reader's
+/// own [`FORMAT_VERSION`] (a file without one, from before 42, gives its `version`).
+///
+/// History: 42 = files carry `reader` (the strict readers before 42 refused any field they
+/// didn't know).
+pub const READER_VERSION: u32 = 42;
 const FORMAT_TAG: &str = "drift";
 
 /// Document-level properties stored alongside the geometry.
@@ -126,6 +144,25 @@ pub struct Metadata {
     /// they were the app's preferences then, so the app should apply its own.
     #[serde(skip)]
     pub older_rules: bool,
+    /// What the file had that this build doesn't know, written back on saving.
+    #[serde(skip)]
+    pub carried: Carried,
+}
+
+/// What a file had that this build doesn't know (fields and tables from a newer Drift), kept
+/// so that [`save`] writes it back. Empty for a drawing that has none.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Carried(#[cfg(not(feature = "demo"))] Option<std::sync::Arc<carry::Kept>>);
+
+impl Carried {
+    /// The file had things from a newer Drift that this build doesn't know (they are kept
+    /// where they can be: see [`save_checked`]).
+    pub fn any(&self) -> bool {
+        #[cfg(not(feature = "demo"))]
+        return self.0.is_some();
+        #[cfg(feature = "demo")]
+        false
+    }
 }
 
 fn default_units() -> String {
@@ -139,6 +176,7 @@ impl Default for Metadata {
             units: default_units(),
             generator: None,
             older_rules: false,
+            carried: Carried::default(),
         }
     }
 }
@@ -230,7 +268,7 @@ impl From<Style> for LineKind {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
+#[serde(tag = "type", rename_all = "lowercase")]
 enum EntityRecord {
     Point {
         id: String,
@@ -336,7 +374,6 @@ enum EntityRecord {
 /// One constraint, as a flat record: `type` and `id` plus whichever fields that type uses.
 /// Field order is fixed (struct order), so files stay stable and diff cleanly.
 #[derive(Debug, Default, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct ConstraintRecord {
     #[serde(rename = "type")]
     kind: String,
@@ -391,7 +428,6 @@ struct ConstraintRecord {
 /// How a drawing's closed areas and fills behave (v39). Every field is optional (defaults
 /// apply).
 #[derive(Debug, Default, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct RulesRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     areas_by_layer: Option<bool>,
@@ -438,7 +474,6 @@ impl RulesRecord {
 
 /// How lengths and angles are displayed. Every field is optional (defaults apply).
 #[derive(Debug, Default, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct DisplayRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     length: Option<String>,
@@ -509,7 +544,6 @@ impl DisplayRecord {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct LayerRecord {
     id: String,
     name: String,
@@ -590,7 +624,6 @@ impl Look {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct VariableRecord {
     id: String,
     name: String,
@@ -600,7 +633,6 @@ struct VariableRecord {
 
 /// A design option (v41; `variants` before, which held values only).
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct OptionRecord {
     id: String,
     name: String,
@@ -868,14 +900,10 @@ fn parse_constraint(r: ConstraintRecord) -> Result<ParsedConstraint, LoadError> 
     Ok((parse_constraint_id(&r.id)?, constraint, label, r.driven))
 }
 
+/// The whole file. (`format`, `version` and `reader` are checked by `migrate`; anything this
+/// build doesn't know is passed over here and carried through by [`carry`].)
 #[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct FileRecord {
-    // Validated by `migrate` before parsing; declared so `deny_unknown_fields` accepts them.
-    #[allow(dead_code)]
-    format: String,
-    #[allow(dead_code)]
-    version: u32,
     #[serde(default)]
     meta: Metadata,
     #[serde(default)]
@@ -945,7 +973,6 @@ struct FileRecord {
 
 /// A named group of entities.
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct GroupRecord {
     id: String,
     name: String,
@@ -954,7 +981,6 @@ struct GroupRecord {
 
 /// Where a curve stacks among its layer's fills and curves.
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct StackRecord {
     id: String,
     order: i32,
@@ -962,7 +988,6 @@ struct StackRecord {
 
 /// Curves drawn as one shape, in order round it.
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct PathRecord {
     id: String,
     curves: Vec<String>,
@@ -1085,13 +1110,58 @@ fn record(id: EntityId, entity: &Entity) -> EntityRecord {
     }
 }
 
-/// Serialize a document to `.drift` JSON.
+/// Serialize a document to `.drift` JSON, with what this build didn't know in the file it was
+/// read from written back (see [`save_checked`]).
 #[cfg(not(feature = "demo"))]
 pub fn save(doc: &Document, meta: &Metadata) -> String {
+    save_checked(doc, meta).text
+}
+
+/// A saved drawing.
+#[cfg(not(feature = "demo"))]
+#[derive(Debug)]
+pub struct Saved {
+    pub text: String,
+    /// Things from a newer Drift in the file it was read from couldn't be kept: the record
+    /// that held them was deleted, the field cleared, or a list without ids changed length.
+    /// (Records that were only changed keep them.)
+    pub loses_newer_data: bool,
+    /// What is carried from here on, once `text` is written: it goes in the drawing's
+    /// [`Metadata::carried`], so that the next save compares with this file (and doesn't
+    /// warn again about what this one left out).
+    pub carried: Carried,
+}
+
+/// [`save`], also saying whether anything from a newer Drift had to be left out.
+#[cfg(not(feature = "demo"))]
+pub fn save_checked(doc: &Document, meta: &Metadata) -> Saved {
+    let plain = write(doc, meta);
+    match &meta.carried.0 {
+        Some(kept) => {
+            let (text, loses_newer_data) = kept.merge(&plain);
+            let carried = Carried(carry::Kept::find(&text, plain).map(std::sync::Arc::new));
+            Saved {
+                text,
+                loses_newer_data,
+                carried,
+            }
+        }
+        None => Saved {
+            text: plain,
+            loses_newer_data: false,
+            carried: Carried::default(),
+        },
+    }
+}
+
+/// The drawing as this build writes it, without anything carried through.
+#[cfg(not(feature = "demo"))]
+fn write(doc: &Document, meta: &Metadata) -> String {
     let mut out = String::new();
     out.push_str("{\n");
     out.push_str(&format!("  \"format\": \"{FORMAT_TAG}\",\n"));
     out.push_str(&format!("  \"version\": {FORMAT_VERSION},\n"));
+    out.push_str(&format!("  \"reader\": {READER_VERSION},\n"));
     let meta = serde_json::to_string(meta).expect("metadata serializes");
     out.push_str(&format!("  \"meta\": {meta},\n"));
     if doc.units() != Units::default() {
@@ -1222,7 +1292,7 @@ pub fn save(doc: &Document, meta: &Metadata) -> String {
             if let Some(sketch) = &v.sketch {
                 let sections = sections.get_or_insert_with(|| shareable_sections(doc));
                 let mut value: serde_json::Value =
-                    serde_json::from_str(&save(sketch, &Metadata::default()))
+                    serde_json::from_str(&write(sketch, &Metadata::default()))
                         .expect("a saved sketch parses");
                 if let Some(map) = value.as_object_mut() {
                     for key in SHAREABLE {
@@ -1420,8 +1490,25 @@ pub fn load(text: &str) -> Result<(Document, Metadata), LoadError> {
 
 /// Load a file, also saying what had to be left out to open it: relations that had become
 /// meaningless (a point held on a curve it is the end of), which older builds could save.
+///
+/// Fields and tables this build doesn't know are passed over; when the file has any, it is
+/// kept in the [`Metadata`] so that [`save`] writes them back.
 pub fn load_with_notes(text: &str) -> Result<(Document, Metadata, Vec<String>), LoadError> {
-    load_value(serde_json::from_str(text)?)
+    let value: serde_json::Value = serde_json::from_str(text)?;
+    // Older files were written by strict builds, whose fields this one knows.
+    #[cfg(not(feature = "demo"))]
+    let may_carry = value
+        .get("version")
+        .and_then(serde_json::Value::as_u64)
+        .is_some_and(|v| v >= u64::from(FORMAT_VERSION));
+    #[cfg_attr(feature = "demo", allow(unused_mut))]
+    let (doc, mut meta, notes) = load_value(value)?;
+    #[cfg(not(feature = "demo"))]
+    if may_carry {
+        meta.carried =
+            Carried(carry::Kept::find(text, write(&doc, &meta)).map(std::sync::Arc::new));
+    }
+    Ok((doc, meta, notes))
 }
 
 /// [`load_with_notes`] from parsed JSON.
@@ -2063,8 +2150,17 @@ pub fn migrate(value: serde_json::Value) -> Result<serde_json::Value, LoadError>
         .and_then(serde_json::Value::as_u64)
         .ok_or(LoadError::NotADriftFile)?;
     let version = u32::try_from(version).map_err(|_| LoadError::UnsupportedVersion(u32::MAX))?;
-    if version == 0 || version > FORMAT_VERSION {
-        return Err(LoadError::UnsupportedVersion(version));
+    // The oldest version that reads the file (v42); before, the version itself.
+    let reader = match value.get("reader") {
+        None => version,
+        Some(r) => r
+            .as_u64()
+            .and_then(|r| u32::try_from(r).ok())
+            .filter(|r| *r > 0)
+            .ok_or(LoadError::NotADriftFile)?,
+    };
+    if version == 0 || reader > FORMAT_VERSION {
+        return Err(LoadError::UnsupportedVersion(version.max(reader)));
     }
     let mut value = value;
     if version < 2 {
@@ -2193,7 +2289,8 @@ mod tests {
         let text = save(&doc, &Metadata::default());
         let expected = r#"{
   "format": "drift",
-  "version": 41,
+  "version": 42,
+  "reader": 42,
   "meta": {"units":"mm"},
   "entities": [
     {"type":"point","id":"e1","at":[0.0,0.0]},

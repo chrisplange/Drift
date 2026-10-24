@@ -92,8 +92,14 @@ pub fn tools() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "save_drawing",
-            description: "Save the drawing as a .drift file (to `path`, or where it was opened or last saved).",
-            schema: object(json!({ "path": { "type": "string" } }), &[]),
+            description: "Save the drawing as a .drift file (to `path`, or where it was opened or last saved). If the drawing came from a newer Drift and saving would lose some of what that build wrote (things this version doesn't know, on something since deleted), nothing is saved and the error says so: tell the user, and save with `anyway` only if they agree.",
+            schema: object(
+                json!({
+                    "path": { "type": "string" },
+                    "anyway": { "type": "boolean", "description": "Save even though things from a newer Drift will be lost." }
+                }),
+                &[],
+            ),
             read_only: false,
         },
         ToolSpec {

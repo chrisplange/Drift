@@ -151,35 +151,48 @@ JSON: unknown field `x`, expected one of …"*). Again nothing is lost, but this
 Policy rule 3 (bump only when old readers would misread) only becomes true once readers
 tolerate additions; see the proposal below.
 
-**One silent loss: the restored session.** At start the app restores the last session from
-its autosave (`restore_session` in `app/document.rs`). If that autosave was written by a newer build
-(the user tried a newer Drift, then went back), `load` fails and the app only writes
-`could not restore the previous session` to the log. The drawing is not opened, the user is
-not told, and the next autosave (`lib.rs`, `KEY_DOCUMENT`) overwrites the stored text, so unsaved work from the newer
-build is gone. (Saved files are safe; only the unsaved session is lost.)
+**The restored session (fixed 2026-10-24).** At start the app restores the last session
+from its autosave (`restore_session` in `app/document.rs`). Before this fix, if that autosave
+was written by a newer build (the user tried a newer Drift, then went back), the app only
+logged the failure, and the next autosave (`KEY_DOCUMENT` in `lib.rs`) overwrote the stored
+text, so the unsaved work from the newer build was lost. Saved files were always safe.
 
-### Proposed fixes (not made yet)
+Now (`app/recovery.rs`):
 
-1. **Keep the session that can't be restored.** When the restore fails, write the stored text
-   to `Drift/recovered-<time>.drift` in the data folder before anything overwrites it, and say
-   so: *"The last session was saved by a newer Drift (format 42) and can't be opened here. It
-   was kept as recovered-… .drift."* Small, local to `restore`, no format change.
-2. **Let additions through without a bump, safely.** To make rule 3 real:
-   - drop `deny_unknown_fields` on the top level and on records, so a reader passes over
-     what it doesn't know;
-   - keep what it passed over: collect unknown top-level tables and per-record fields as
-     raw JSON (`#[serde(flatten)] extra: serde_json::Map`) and write them back on save, so
-     an older build that edits a newer file doesn't strip the newer build's data from it;
-   - where carrying it through isn't possible (an unknown field on a record the user then
-     deletes or changes), warn before saving: *"This drawing has things from a newer Drift
-     that this version doesn't know; saving here may lose them."*
-   - add `"reader": NN` next to `"version"`: the oldest format that reads the file correctly.
-     A writer sets it to the last breaking version, so files of an additive release still open
-     in the release before; a reader refuses only files whose `reader` is above its own
-     `FORMAT_VERSION`.
+- the stored text is written, byte for byte, to `recovered-<YYYY-MM-DD-HHMMSS>.drift` (UTC)
+  in Drift's data folder before anything else happens. An existing file is never replaced
+  (a second one the same second gets `-2`);
+- a window stays up until it is closed: *"The last session was saved by a newer Drift
+  (format 42) and can't be opened here. It was kept as recovered-….drift in FOLDER. Open it
+  with the Drift that saved it."* Other failures say *"The last session couldn't be opened:
+  REASON."* A **Show the file** button opens Explorer or the Finder at it;
+- if the file can't be written, the window says so, and Drift doesn't autosave over the
+  stored session for the rest of that run;
+- in the browser there is no file: the window says the session couldn't be opened and a new
+  drawing was started. (The browser demo never restores a session.)
 
-   Until that lands, every format change must bump `FORMAT_VERSION` (as now), and the fixture
-   guard makes sure each bump is covered.
+Tests: `a_session_from_a_newer_drift_is_kept_as_a_file_and_said` and
+`a_session_that_cant_be_kept_is_not_autosaved_over` in `drift-app/src/ui_tests.rs`.
+
+### Proposed (not made yet)
+
+**Let additions through without a bump, safely** (tracked separately). To make rule 3 real:
+
+- drop `deny_unknown_fields` on the top level and on records, so a reader passes over
+  what it doesn't know;
+- keep what it passed over: collect unknown top-level tables and per-record fields as
+  raw JSON (`#[serde(flatten)] extra: serde_json::Map`) and write them back on save, so
+  an older build that edits a newer file doesn't strip the newer build's data from it;
+- where carrying it through isn't possible (an unknown field on a record the user then
+  deletes or changes), warn before saving: *"This drawing has things from a newer Drift
+  that this version doesn't know; saving here may lose them."*
+- add `"reader": NN` next to `"version"`: the oldest format that reads the file correctly.
+  A writer sets it to the last breaking version, so files of an additive release still open
+  in the release before; a reader refuses only files whose `reader` is above its own
+  `FORMAT_VERSION`.
+
+Until that lands, every format change must bump `FORMAT_VERSION` (as now), and the fixture
+guard makes sure each bump is covered.
 
 ## 5. Related safeguards
 

@@ -255,6 +255,15 @@ impl DriftApp {
     }
 
     pub(crate) fn restore_session(&mut self, storage: &dyn eframe::Storage) {
+        self.restore_session_keeping_in(storage, drift_platform::crash::data_dir());
+    }
+
+    /// [`Self::restore_session`], keeping a session that can't be opened in `dir`.
+    pub(crate) fn restore_session_keeping_in(
+        &mut self,
+        storage: &dyn eframe::Storage,
+        dir: Option<std::path::PathBuf>,
+    ) {
         if let Some(prefs) = storage.get_string(KEY_VIEW) {
             self.apply_view_prefs(&prefs);
         }
@@ -294,7 +303,7 @@ impl DriftApp {
                 let dirty = storage.get_string(KEY_DIRTY).as_deref() == Some("1");
                 self.replace_document(doc, name, path, meta, !dirty);
             }
-            Err(e) => log::warn!("could not restore the previous session: {e}"),
+            Err(e) => self.hold_session = self.keep_unrestored(&text, &e, dir),
         }
     }
 

@@ -262,6 +262,13 @@ pub struct DriftApp {
     unrestored: Option<app::recovery::Unrestored>,
     /// The stored session couldn't be kept as a file either: it isn't autosaved over.
     hold_session: bool,
+    /// Saving would leave out things from a newer Drift: the prompt asking first is up, for
+    /// Save As (`true`) or Save.
+    #[cfg(not(feature = "demo"))]
+    lossy_save: Option<bool>,
+    /// What the drawing carries from a newer Drift once the save in progress is written.
+    #[cfg(not(feature = "demo"))]
+    saving_carried: Option<drift_io::Carried>,
     /// The start panel over an empty sketch.
     show_start: bool,
     show_about: bool,
@@ -529,6 +536,10 @@ impl DriftApp {
             discard_session: false,
             unrestored: None,
             hold_session: false,
+            #[cfg(not(feature = "demo"))]
+            lossy_save: None,
+            #[cfg(not(feature = "demo"))]
+            saving_carried: None,
             // Tests drive the bare canvas.
             show_start: !cfg!(test),
             show_about: false,

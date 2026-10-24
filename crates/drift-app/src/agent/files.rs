@@ -155,8 +155,16 @@ pub(super) fn save(s: &mut Session, a: &Value) -> Res {
             .ok_or("the drawing has no .drift file yet: give a `path`")?,
     };
     s.meta.generator = Some(format!("Drift {}", drift_platform::VERSION));
-    let text = drift_io::save(&s.editor.doc, &s.meta);
-    std::fs::write(&path, text).map_err(|e| format!("{}: {e}", shown(&path)))?;
+    let saved = drift_io::save_checked(&s.editor.doc, &s.meta);
+    if saved.loses_newer_data && args::opt_bool(a, "anyway")? != Some(true) {
+        return Err(format!(
+            "{} Nothing was saved. Save with \"anyway\": true to save all the same, or to a new \
+             `path` (with \"anyway\": true) to keep this file as it is.",
+            crate::app::document::LOSSY_SAVE
+        ));
+    }
+    std::fs::write(&path, saved.text).map_err(|e| format!("{}: {e}", shown(&path)))?;
+    s.meta.carried = saved.carried;
     // The Blender profiles beside it, as saving in the app writes them.
     let blocks = s.editor.blocks_as_drawn();
     let profiles =

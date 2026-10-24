@@ -31,7 +31,6 @@ fn is_zero_i32(x: &i32) -> bool {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub(crate) enum PrimRecord {
     #[serde(rename = "l")]
     Line([f64; 4]),
@@ -44,7 +43,6 @@ pub(crate) enum PrimRecord {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub(crate) struct UnderlayRecord {
     pub(crate) id: String,
     name: String,
@@ -74,7 +72,6 @@ pub(crate) struct UnderlayRecord {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub(crate) struct ImageRecord {
     at: [f64; 2],
     across: [f64; 2],

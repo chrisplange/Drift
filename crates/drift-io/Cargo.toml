@@ -12,7 +12,8 @@ publish.workspace = true
 drift-core.workspace = true
 drift-draft.workspace = true
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+# `raw_value`: what a newer Drift wrote that this one doesn't know is kept as written (carry.rs).
+serde_json = { version = "1.0", features = ["raw_value"] }
 lopdf = { version = "0.45", default-features = false }
 miniz_oxide = "0.9.1"
 # Reading JPEG images in PDFs, and pictures in .drift files (pure Rust, so the web build has them).

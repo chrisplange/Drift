@@ -62,7 +62,6 @@ fn is_zero(i: &u32) -> bool {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct FileRecord {
     /// The font file, base64.
     data: String,
@@ -72,7 +71,6 @@ struct FileRecord {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct FamilyRecord {
     family: String,
     regular: FileRecord,
@@ -81,7 +79,6 @@ struct FamilyRecord {
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub(crate) struct FontsRecord {
     /// The family annotations and sheets are set in.
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -314,6 +314,38 @@ fn batch_is_one_step_and_all_or_nothing() {
 }
 
 #[test]
+fn saving_over_things_from_a_newer_drift_needs_anyway() {
+    let dir = std::env::temp_dir().join(format!("drift-agent-newer-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut s = Session::new().with_root(dir.clone());
+    // A newer Drift's file, with a field this build doesn't know on the point e1.
+    let plain = drift_io::save(&drift_core::demo::mounting_plate(), &Default::default());
+    let text = plain.replacen(
+        r#"{"type":"point","id":"e1","#,
+        r#"{"type":"point","id":"e1","weld":"fillet","#,
+        1,
+    );
+    assert_ne!(text, plain);
+    let path = dir.join("newer.drift");
+    std::fs::write(&path, &text).unwrap();
+    ok(&mut s, "open_drawing", json!({ "path": "newer.drift" }));
+    // Kept through an edit elsewhere and a save.
+    ok(&mut s, "save_drawing", json!({}));
+    assert!(std::fs::read_to_string(&path).unwrap().contains("weld"));
+    // Deleting the point would lose it: refused, the file untouched.
+    ok(&mut s, "delete", json!({ "ids": ["e1"] }));
+    let before = std::fs::read_to_string(&path).unwrap();
+    let e = err(&mut s, "save_drawing", json!({}));
+    assert!(e.contains("newer Drift") && e.contains("anyway"), "{e}");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
+    ok(&mut s, "save_drawing", json!({ "anyway": true }));
+    assert!(!std::fs::read_to_string(&path).unwrap().contains("weld"));
+    // Nothing more to lose: saved without asking.
+    ok(&mut s, "save_drawing", json!({}));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn files_round_trip_and_stay_in_the_root() {
     let dir = std::env::temp_dir().join(format!("drift-agent-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();

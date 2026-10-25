@@ -97,6 +97,8 @@ as before.
 - **Smooth deep zoom:** zooming far in no longer slows drawing down.
 - The AI server (drift-mcp) now ships with Drift; Preferences shows where it is and copies a
   Claude Desktop config for you.
+- **Drift script** reads plain numbers in the drawing's unit, as typing into Drift does
+  (inches in a feet-and-inches drawing), and every result says which unit that was.
 
 <!--
 PRs since v0.1.0-beta.1.5 (for the release notes' What's Changed):
@@ -123,6 +125,7 @@ User-facing
 - #164 Selection & move batch: hatch alignment, one move path, pick filters, layer Alt-click (Fixes #153, #154, #155, #158; drift-releases#9, #10)
 - #166 Tolerant .drift reader: carry unknown data through, "reader" version (format 42) (Fixes #165)
 - #167 Command registry: palette, menus, keys and shortcut docs from one table
+- #169 Drift script: say which unit plain numbers were read in
 
 Internal / not for the notes
 - #121 #122 packaging (Inno Setup 7, test build versions)

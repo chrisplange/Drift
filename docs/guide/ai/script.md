@@ -44,7 +44,9 @@ A plain number is in the drawing's unit, as when you type it into Drift: millime
 metric drawing, inches in a feet-and-inches drawing (`door d1 36 in bed.south` is a 36"
 door there). The same goes for a plain number added to or taken from a length: `W/2 + 6`
 adds 6 inches in a feet-and-inches drawing. Multiply and divide by plain numbers as usual.
-Write the units whenever a script might run in a drawing with other units.
+Write the units whenever a script might run in a drawing with other units: a script written
+for millimetres, run in a feet-and-inches drawing, comes out 25.4 times bigger. Every result
+says which unit plain numbers were read in (`plain_numbers_in`).
 
 A door or window under 300 mm wide still runs, but the result warns about it, since it is
 most likely a unit slip.

@@ -54,7 +54,7 @@ Parts: line .start .end; rect/room .south .east .north .west (.bottom .right .to
 room with walls also .outer.<side or corner>, .walls; wall .left .right .start .end (.axis when centred); door .start .end (jambs); \
 grid .A .3; circle .center; arc .center .start .end; array [1] … [n] (then .center); polyline [k] .start .end. \
 After an opening, a face is in pieces: bed.south[2]. y is up: north is +y.
-The result lists every name's id, each line's reading, skipped relations, warnings (such as a door only millimetres wide), room areas and the sketch's degrees of freedom. \
+The result lists every name's id, each line's reading, the unit plain numbers were read in (`plain_numbers_in`), skipped relations, warnings (such as a door only millimetres wide), room areas and the sketch's degrees of freedom. \
 Errors give the line, what it was read as, and change nothing.";
 
 /// The tool's arguments.
@@ -114,6 +114,7 @@ pub(super) fn call(s: &mut Session, a: &Value) -> ToolOutput {
                 "names": r.names(),
                 "lines": r.did,
                 "rooms": r.rooms(),
+                "plain_numbers_in": r.unit().symbol(),
             });
             if !r.skipped.is_empty() {
                 v["skipped"] = json!(r.skipped);

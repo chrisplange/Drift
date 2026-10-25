@@ -828,6 +828,7 @@ fn bare_numbers_are_in_the_drawings_units() {
         "the line can still move"
     );
     assert!(v.get("warnings").is_none(), "{v}");
+    assert_eq!(v["plain_numbers_in"], "in");
     let inch = 25.4;
     assert!(
         close(line_len(&s, &id(&v, "d1.start")), 6.0 * inch),
@@ -854,6 +855,7 @@ fn bare_numbers_are_in_the_drawings_units() {
     );
     let w = v["warnings"][0]["warning"].as_str().unwrap_or_default();
     assert_eq!(v["warnings"][0]["line"], 2, "{v}");
+    assert_eq!(v["plain_numbers_in"], "mm");
     assert!(w.contains("d1 is only 36"), "{w}");
     assert!(w.contains("write 36\""), "{w}");
 }

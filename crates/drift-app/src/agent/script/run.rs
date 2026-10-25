@@ -508,7 +508,7 @@ impl<'s> Runner<'s> {
     }
 
     /// The drawing's unit of length: bare numbers are in it, as when typed into Drift.
-    fn unit(&self) -> drift_core::LengthFormat {
+    pub(super) fn unit(&self) -> drift_core::LengthFormat {
         self.doc().units().length
     }
 

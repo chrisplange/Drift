@@ -16,6 +16,8 @@ use crate::tools::{Overlay, ToolKind};
 mod audit;
 /// The sheets and views workflow, step by step.
 mod audit_sheets;
+/// The command registry: palette, menus, repeat-last.
+mod commands;
 /// Screenshots for the user guide.
 mod docs;
 /// Aligning a hatch on a shape: handles, Pattern alignment, Align to edge, Alt-click.
@@ -2426,7 +2428,7 @@ fn layers_colour_weight_and_thin_lines() {
     h.run();
     h.run();
     save_png("drift_ui_layers.png", &mut h);
-    h.key_press(Key::W);
+    h.key_press_modifiers(EguiModifiers::SHIFT | EguiModifiers::ALT, Key::W);
     h.run();
     assert!(h.state().thin_lines);
     save_png("drift_ui_thin_lines.png", &mut h);
@@ -9660,7 +9662,7 @@ fn view_switches_say_so_and_hidden_dimensions_and_relations_come_back_each_start
     h.run();
     assert!(!h.state().show_relations);
     assert!(status(&h).starts_with("Relations hidden"), "{}", status(&h));
-    h.key_press(Key::W);
+    h.key_press_modifiers(EguiModifiers::SHIFT | EguiModifiers::ALT, Key::W);
     h.run();
     h.run();
     assert!(h.state().thin_lines);

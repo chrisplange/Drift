@@ -12,6 +12,7 @@ pub mod blocks;
 mod canvas;
 pub mod checker;
 pub mod clipboard;
+mod commands;
 pub mod curves;
 mod dock;
 #[cfg(test)]
@@ -282,6 +283,10 @@ pub struct DriftApp {
     /// The command palette, while open.
     palette: Option<app::palette::Palette>,
     recent_commands: Vec<app::palette::Command>,
+    /// What Enter or Space with nothing in hand does again.
+    last_command: Option<app::palette::Command>,
+    /// Where the pointer last was on the canvas, for Move and Rotate from a menu.
+    last_pointer: Option<Pointer>,
     backend: String,
     window_title: String,
     /// Where the canvas was laid out last frame.
@@ -549,6 +554,8 @@ impl DriftApp {
             clipboard: None,
             palette: None,
             recent_commands: Vec::new(),
+            last_command: None,
+            last_pointer: None,
             backend,
             window_title: String::new(),
             canvas_rect: egui::Rect::NOTHING,
@@ -775,205 +782,6 @@ fn release_pos(ui: &egui::Ui, button: PointerButton) -> Option<egui::Pos2> {
         })
     })
 }
-
-/// Keyboard shortcuts by section, for Help → Keyboard shortcuts.
-const SHORTCUTS: &[(&str, &[(&str, &str)])] = &[
-    (
-        "Draw",
-        &[
-            ("S / Esc", "Select tool"),
-            ("L", "Line (polyline)"),
-            ("P", "Pen: click for corners, drag for smooth points"),
-            ("R", "Rectangle"),
-            ("K", "Polygon; X switches inscribed / circumscribed"),
-            ("C", "Circle; press again for ellipse, then partial ellipse"),
-            (
-                "A",
-                "Arc: centre-point; press again for 3-point, then tangent arc",
-            ),
-            (
-                "A / L (while drawing)",
-                "Switch between line and tangent arc, continuing from the last point",
-            ),
-            ("U", "Slot; press again for centre and arc slots"),
-            ("V", "Point (a vertex)"),
-            ("I", "Place block: R turns, X mirrors"),
-            (
-                "Shift+T",
-                "Text: click where it starts and type; Enter finishes",
-            ),
-            ("X / Y (while drawing)", "Lock to the X or Y axis"),
-            (
-                "0-9 . - (  (while drawing)",
-                "Type exact values; Tab switches field, Enter applies",
-            ),
-            (
-                "=  (while drawing)",
-                "Start with a variable name or expression, e.g. =width/2",
-            ),
-            (
-                "Units in typed values",
-                "25mm, 2in, 3\", 1'-6 1/2\", 30deg; bare numbers use the display unit",
-            ),
-            ("Enter / right-click", "Finish a polyline"),
-            ("Alt (hold)", "Place without snapping"),
-        ],
-    ),
-    (
-        "Annotate",
-        &[
-            ("D", "Dimension: the kind follows what you click"),
-            (
-                "Click more points (after a horizontal or vertical dimension)",
-                "Chain dimensions along the row; B switches to baseline",
-            ),
-            (
-                "N",
-                "Note: click to place, or click geometry first for a leader; Return finishes",
-            ),
-            ("H", "Fill / hatch: click inside a closed area"),
-            ("Double-click a dimension", "Edit its value"),
-            ("Drag a dimension", "Move its label"),
-        ],
-    ),
-    (
-        "Modify",
-        &[
-            (
-                "T",
-                "Trim: click a piece to remove it, or drag across pieces",
-            ),
-            ("E", "Extend a line or arc end to the next curve"),
-            ("O", "Offset: click a curve (and its chain), then the side"),
-            ("M", "Mirror the selection about a line you click"),
-            ("F", "Fillet; press again for chamfer (type the size)"),
-        ],
-    ),
-    (
-        "Selection",
-        &[
-            (
-                "Click / drag",
-                "Select, or box-select; Shift adds, Ctrl toggles",
-            ),
-            (
-                "Right-click",
-                "Menu for the selection (relations, dimensions, layers) or the view",
-            ),
-            (
-                "Tab",
-                "Select the chain of curves joined end to end with the one under the pointer",
-            ),
-            (
-                "Click inside a fill or hatch",
-                "Select it (inside an empty outline too, with Drawing settings → Closed areas \
-                 and fills → pick only where filled turned off: area, perimeter and centroid)",
-            ),
-            ("Click near a line's middle", "Pick its midpoint"),
-            (
-                "G",
-                "Move: X / Y lock an axis, type dX Tab dY, B picks the base point",
-            ),
-            (
-                "R (with a selection)",
-                "Rotate: type an angle, B picks the pivot, R again rotates by reference",
-            ),
-            ("Shift+D", "Duplicate in place and move the copy"),
-            (
-                "Ctrl+C / Ctrl+X / Ctrl+V",
-                "Copy, cut and paste (under the pointer); works between windows",
-            ),
-            ("Ctrl+Shift+V", "Paste in place"),
-            (
-                "Arrow keys",
-                "Nudge the selection one grid step; ten with Shift",
-            ),
-            ("Double-click text", "Type into it in place"),
-            (
-                "Alt+C",
-                "Toggle construction (with a drawing tool: draw construction geometry)",
-            ),
-            (
-                "Ctrl+G / Ctrl+Shift+G",
-                "Group / ungroup; double-click a group to enter it",
-            ),
-            (
-                "F2",
-                "Rename the selected group, or the block of the selected copies",
-            ),
-            ("Ctrl+A", "Select all"),
-            (
-                "Q",
-                "Relations pie for the selection: hold and flick, or tap and click",
-            ),
-            (
-                "Del",
-                "Delete the selection, or the picked relation / dimension",
-            ),
-            (
-                "Esc / right-click",
-                "Cancel the operation, or clear the selection",
-            ),
-        ],
-    ),
-    (
-        "View",
-        &[
-            ("Shift+F / double middle-click", "Zoom to fit"),
-            ("Shift+Z", "Zoom to the selection"),
-            ("Middle / right drag", "Pan"),
-            (
-                "Scroll / pinch",
-                "Zoom at the cursor (two fingers on a trackpad pan)",
-            ),
-            ("Alt+D / Alt+R", "Show or hide dimensions / relations"),
-            (
-                "Shift+Alt+R",
-                "Automatic relations on or off (also in the status bar)",
-            ),
-            (
-                "Shift+Alt+V",
-                "Show every end point, or only those of hovered and picked curves",
-            ),
-            (
-                "Alt+H",
-                "Show hidden dimensions and notes, faded, to pick and show them again",
-            ),
-            (
-                "Shift+Alt+B",
-                "Show or hide views' crops and names on the canvas",
-            ),
-            ("Shift+G", "Snap to grid"),
-            (
-                "Shift+C",
-                "Colour curves by constraint status, or by their own and their layer's colours",
-            ),
-            ("Ctrl+'", "Show or hide the grid"),
-            ("W", "Thin lines: every line one pixel wide"),
-        ],
-    ),
-    (
-        "Panels and files",
-        &[
-            (
-                "Ctrl+K / Ctrl+Shift+P",
-                "Command palette: any tool, setting, panel or command",
-            ),
-            ("Ctrl+L", "Show or hide the Layers panel"),
-            ("Ctrl+\\", "Hide all panels, and bring them back"),
-            (
-                "Drag a panel's tab",
-                "Onto the canvas to float it, or onto either side to dock it",
-            ),
-            ("Ctrl+Z / Ctrl+Y or Ctrl+Shift+Z", "Undo / redo"),
-            ("Ctrl+S / Ctrl+Shift+S", "Save / save as"),
-            ("Ctrl+N / Ctrl+O", "New / open"),
-            ("Ctrl+,", "Preferences"),
-            ("Ctrl+P", "Print (the sheets as a PDF)"),
-            ("?", "This list"),
-        ],
-    ),
-];
 
 /// Read-only facts about a shape, beyond the values the inspector offers as fields
 /// (lengths, radii, positions and a line's angle).

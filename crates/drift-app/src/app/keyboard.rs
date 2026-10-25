@@ -1,89 +1,30 @@
 //! Shortcuts and typed values for tools.
+//!
+//! Plain commands' keys come from the command registry ([`crate::commands`]) and are
+//! dispatched here in three phases: the Ctrl shortcuts first (even with a text field
+//! focused), then those that act during a grab, then the rest. Keys that mean something
+//! inside a tool stay here and in the tools: Tab, X / Y, G, B and R's modal claims, Esc,
+//! Enter (and Space, to repeat the last command), the sheet preview's keys and Q's pie.
 
+use crate::commands::{self, Command, Guard, Shortcut, Spec};
 use crate::*;
+
+/// Which of the registry's keys a dispatch looks at.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Phase {
+    /// Ctrl shortcuts: before anything else, even with a text field focused.
+    Global,
+    /// Keys that act during a grab or a turn too.
+    Early,
+    /// The rest (with `skip_tools`: R was taken by a turn, so no tool key acts).
+    Late { skip_tools: bool },
+}
 
 impl DriftApp {
     pub(crate) fn shortcuts(&mut self, ctx: &egui::Context) {
-        let cmd = |key| KeyboardShortcut::new(EguiModifiers::COMMAND, key);
-        let cmd_shift =
-            |key| KeyboardShortcut::new(EguiModifiers::COMMAND | EguiModifiers::SHIFT, key);
-        let consume = |shortcut: KeyboardShortcut| ctx.input_mut(|i| i.consume_shortcut(&shortcut));
-
-        // The command palette: ⌘K / Ctrl+K, or Ctrl+Shift+P as in code editors.
-        if consume(cmd(Key::K)) || consume(cmd_shift(Key::P)) {
-            self.open_palette();
+        // Ctrl/⌘ shortcuts (the command palette stops the rest).
+        if self.key_commands(ctx, Phase::Global) {
             return;
-        }
-        if consume(cmd(Key::Comma)) {
-            self.show_settings = !self.show_settings;
-        }
-        // Order matters: check the more specific (Shift) variants first.
-        if consume(cmd_shift(Key::Z)) || consume(cmd(Key::Y)) {
-            self.redo();
-        }
-        if consume(cmd(Key::Z)) {
-            self.undo();
-        }
-        if consume(cmd_shift(Key::S)) {
-            self.save_as();
-        }
-        if consume(cmd(Key::S)) {
-            self.save();
-        }
-        if consume(cmd(Key::O)) {
-            self.request(Pending::Open);
-        }
-        if consume(cmd(Key::N)) {
-            self.request(Pending::New);
-        }
-        // Order matters: Shift first.
-        if consume(cmd_shift(Key::G)) {
-            self.editor.ungroup();
-        }
-        if consume(cmd(Key::G)) {
-            self.editor.make_group();
-        }
-        // Arrange: Ctrl+] and Ctrl+[ one step, with Shift all the way (Shift first).
-        for (keys, how) in [
-            (cmd_shift(Key::CloseBracket), crate::stack::Arrange::ToFront),
-            (cmd_shift(Key::OpenBracket), crate::stack::Arrange::ToBack),
-            (cmd(Key::CloseBracket), crate::stack::Arrange::Forward),
-            (cmd(Key::OpenBracket), crate::stack::Arrange::Backward),
-        ] {
-            if consume(keys) {
-                let now = ctx.input(|i| i.time);
-                self.arrange(how, now);
-            }
-        }
-        if consume(cmd(Key::L)) {
-            self.toggle_panel(crate::dock::Panel::Layers);
-        }
-        // Ctrl/⌘+\: hide every panel for a clear view, and bring them back.
-        if consume(cmd(Key::Backslash)) {
-            self.dock_view.hide_all = !self.dock_view.hide_all;
-        }
-        // Print opens the system's PDF viewer: once per press, not once per key repeat while
-        // the keys are held.
-        let fresh = ctx.input(|i| {
-            i.events.iter().any(|e| {
-                matches!(
-                    e,
-                    egui::Event::Key {
-                        key: Key::P,
-                        pressed: true,
-                        repeat: false,
-                        ..
-                    }
-                )
-            })
-        });
-        if consume(cmd(Key::P)) && fresh {
-            let painter = ctx.layer_painter(egui::LayerId::background());
-            self.print(&painter);
-        }
-        // ⌘' / Ctrl+': show or hide the grid (as in Apple's apps).
-        if consume(cmd(Key::Quote)) {
-            self.show_grid = !self.show_grid;
         }
 
         // Keys belong to a text field while it has the keyboard, and for the frame in which
@@ -131,25 +72,12 @@ impl DriftApp {
             return;
         }
         self.edit_keys(ctx);
-        // ? lists the shortcuts.
-        if ctx.input(|i| {
-            i.events
-                .iter()
-                .any(|e| matches!(e, egui::Event::Text(t) if t == "?"))
-        }) {
-            self.show_shortcuts = !self.show_shortcuts;
-        }
-        if consume(cmd(Key::A)) {
-            self.set_tool(ToolKind::Select);
-            self.editor.select_all();
+        // ? (the shortcuts), Ctrl+A and F2 (rename, which stops the rest).
+        if self.key_commands(ctx, Phase::Early) {
+            return;
         }
         let plain = ctx.input(|i| i.modifiers.is_none());
         let pressed = |key| plain && ctx.input(|i| i.key_pressed(key));
-        // F2 renames the picked group or block, as in most editors.
-        if pressed(Key::F2) && !self.tool.is_busy() && !ctx.egui_wants_keyboard_input() {
-            self.start_rename();
-            return;
-        }
         // Tab selects a chain of connected curves (Revit-style). egui moves keyboard focus on
         // Tab, so take focus back from any button it landed on.
         if pressed(Key::Tab) && !self.tool.is_busy() {
@@ -208,13 +136,6 @@ impl DriftApp {
             self.tool
                 .key(ToolKey::G, self.pointer.as_ref(), &mut self.editor);
         }
-        if ctx.input(|i| i.modifiers.shift_only() && i.key_pressed(Key::G)) {
-            self.grid_snap = !self.grid_snap;
-        }
-        // Shift+C: constraint status colours, or each curve's own / its layer's colour.
-        if ctx.input(|i| i.modifiers.shift_only() && i.key_pressed(Key::C)) {
-            self.status_colors = !self.status_colors;
-        }
         if self.tool.is_modal() {
             // Only Esc and Enter (and the modal keys above) act during a grab.
             if pressed(Key::Escape) {
@@ -226,18 +147,6 @@ impl DriftApp {
             return;
         }
 
-        // Shift+D duplicates the selection in place and grabs the copy (as in Blender).
-        if ctx.input(|i| i.modifiers.shift_only() && i.key_pressed(Key::D)) && !self.tool.is_busy()
-        {
-            if self.tool.kind() != ToolKind::Select {
-                self.set_tool(ToolKind::Select);
-            }
-            if self.editor.duplicate_selection() > 0 {
-                self.tool
-                    .key(ToolKey::G, self.pointer.as_ref(), &mut self.editor);
-            }
-            return;
-        }
         if pressed(Key::Escape) {
             if self.adding_leader.take().is_some()
                 || self.align_edge.take().is_some()
@@ -251,137 +160,174 @@ impl DriftApp {
                 self.set_tool(ToolKind::Select);
             }
         }
-        if pressed(Key::Enter) {
+        // Enter or Space with nothing in hand does the last command again (AutoCAD-style);
+        // otherwise Enter finishes what the tool is doing. (Typed values took Enter already.)
+        let idle = self.tool.kind() == ToolKind::Select && !self.tool.is_busy();
+        let again = idle && (pressed(Key::Enter) || pressed(Key::Space));
+        if !(again && self.repeat_last_command(ctx)) && pressed(Key::Enter) {
             self.tool.handle(Input::Finish, &mut self.editor);
         }
-        if (pressed(Key::Delete) || pressed(Key::Backspace)) && !self.tool.is_busy() {
-            if let Some((id, k)) = self.selected_leader.take()
-                && self.editor.selection.is_empty()
-                && self.editor.selected_texts.is_empty()
-                && self.editor.annotation_picks.is_empty()
-            {
-                // A picked leader goes on its own; its note stays.
-                self.remove_leader(id, k);
-                return;
-            }
-            if self.editor.selection.is_empty()
-                && self.selected_constraint.is_none()
-                && let Some(view) = self.picked_view
-            {
-                // A picked crop: its view goes. One on sheets asks first, in the Sheets tab.
-                if self.editor.doc.sheets_showing(view).is_empty() {
-                    self.delete_view(view);
-                } else {
-                    self.confirm_delete_view = Some(view);
-                    self.show_panel(crate::dock::Panel::Sheets);
+        self.key_commands(
+            ctx,
+            Phase::Late {
+                skip_tools: r_claimed,
+            },
+        );
+    }
+
+    /// Run the registry's commands whose keys were pressed, in `phase`. True if the rest of
+    /// the keys should wait (the palette opened, a rename started, or a late command ran).
+    fn key_commands(&mut self, ctx: &egui::Context, phase: Phase) -> bool {
+        for &(key, spec) in commands::dispatched() {
+            let ours = match phase {
+                Phase::Global => spec.global,
+                Phase::Early => !spec.global && spec.in_grab,
+                Phase::Late { skip_tools } => {
+                    !spec.global
+                        && !spec.in_grab
+                        && !(skip_tools && matches!(spec.command, Command::Tool(_)))
                 }
-                return;
-            }
-            // Everything picked goes together: geometry, text, annotations and dimensions.
-            let picked: Vec<_> = self.selected_constraint.take().into_iter().collect();
-            self.editor.delete_selection_with(&picked);
-        }
-        if pressed(Key::W) {
-            self.thin_lines = !self.thin_lines;
-        }
-        // Shift+F: zoom to fit (F is the fillet tool).
-        if ctx.input(|i| i.modifiers.shift_only() && i.key_pressed(Key::F)) {
-            self.fit_target = Some(self.fit_bounds());
-        }
-        // Alt+D / Alt+R: show or hide dimensions / relations.
-        let alt_only = |key| {
-            ctx.input(|i| {
-                i.modifiers.alt && !i.modifiers.shift && !i.modifiers.command && i.key_pressed(key)
-            })
-        };
-        if alt_only(Key::D) {
-            self.show_dimensions = !self.show_dimensions;
-        }
-        // Shift+Alt+R / Shift+Alt+V: automatic relations, and end points always shown.
-        let shift_alt = |key| {
-            ctx.input(|i| {
-                i.modifiers.alt && i.modifiers.shift && !i.modifiers.command && i.key_pressed(key)
-            })
-        };
-        if shift_alt(Key::R) {
-            self.auto_relations = !self.auto_relations;
-            let now = ctx.input(|i| i.time);
-            let text = if self.auto_relations {
-                "Auto relations on"
-            } else {
-                "Auto relations off: plain geometry, nothing added for you"
             };
-            self.set_status(text.into(), false, now);
+            if !ours || !Self::key_down(ctx, key, spec) {
+                continue;
+            }
+            let busy = self.tool.is_busy();
+            let blocked = match spec.guard {
+                Guard::Any => false,
+                Guard::Idle => busy,
+                Guard::IdleUnfocused => busy || ctx.egui_wants_keyboard_input(),
+            };
+            if blocked {
+                continue;
+            }
+            match spec.command {
+                Command::Tool(kind) => self.tool_key(ctx, kind),
+                command => self.run_command(ctx, command),
+            }
+            let stop = match phase {
+                Phase::Global => spec.command == Command::Palette,
+                Phase::Early => spec.command == Command::Rename,
+                Phase::Late { .. } => true,
+            };
+            if stop {
+                return true;
+            }
         }
-        if shift_alt(Key::V) {
-            self.always_endpoints = !self.always_endpoints;
+        false
+    }
+
+    /// Whether a command's key was pressed this frame. Ctrl shortcuts are used up (egui
+    /// matches them ignoring extra Shift, so the registry tries the longer ones first);
+    /// others must have exactly their modifiers.
+    fn key_down(ctx: &egui::Context, key: Shortcut, spec: &Spec) -> bool {
+        if key.typed {
+            let text = key.text(false);
+            return ctx.input(|i| {
+                i.events
+                    .iter()
+                    .any(|e| matches!(e, egui::Event::Text(t) if *t == text))
+            });
         }
-        // Shift+Alt+B: views' crops and names (their boundaries) on the canvas.
-        if shift_alt(Key::B) {
-            self.show_view_crops = !self.show_view_crops;
+        if key.command {
+            // Print and the like: once per press, not once per key repeat while held.
+            let fresh = ctx.input(|i| {
+                i.events.iter().any(|e| {
+                    matches!(
+                        e,
+                        egui::Event::Key {
+                            key: k,
+                            pressed: true,
+                            repeat: false,
+                            ..
+                        } if *k == key.key
+                    )
+                })
+            });
+            let mut mods = EguiModifiers::COMMAND;
+            if key.shift {
+                mods |= EguiModifiers::SHIFT;
+            }
+            if key.alt {
+                mods |= EguiModifiers::ALT;
+            }
+            let shortcut = KeyboardShortcut::new(mods, key.key);
+            let down = ctx.input_mut(|i| i.consume_shortcut(&shortcut));
+            return down && (fresh || !spec.once);
         }
-        // Alt+C: with a drawing tool, draw construction geometry (or not); else make the
-        // picked curves construction (or not).
-        if alt_only(Key::C) {
+        ctx.input(|i| {
+            let m = i.modifiers;
+            m.shift == key.shift
+                && m.alt == key.alt
+                && !m.command
+                && !m.ctrl
+                && !m.mac_cmd
+                && i.key_pressed(key.key)
+        })
+    }
+
+    /// A tool's key: picks the tool, or steps through its cycle (C: circle, ellipse, partial
+    /// ellipse; A: the arcs; F: fillet, chamfer; U: the kinds of slot).
+    fn tool_key(&mut self, ctx: &egui::Context, mut kind: ToolKind) {
+        let current = self.tool.kind();
+        if kind == ToolKind::Slot && current == ToolKind::Slot {
+            // U again: the next kind of slot.
+            self.editor.slot_mode = self.editor.slot_mode.next();
+            self.tool.cancel(&mut self.editor);
             let now = ctx.input(|i| i.time);
-            self.toggle_construction(now);
+            self.set_status(self.editor.slot_mode.label().to_owned(), false, now);
         }
-        // Alt+H: show (faded) or hide again the dimensions and annotations hidden on the canvas.
-        if alt_only(Key::H) {
-            self.show_hidden_annotations = !self.show_hidden_annotations;
+        if kind == ToolKind::Fillet && current == ToolKind::Fillet {
+            // F again: chamfer (and again, fillet).
+            kind = ToolKind::Chamfer;
         }
-        // Shift+Z: fit the view to the selection.
-        if ctx.input(|i| i.modifiers.shift_only() && i.key_pressed(Key::Z)) {
-            self.zoom_to_selection();
+        if kind == ToolKind::Circle
+            && let Some(i) = ToolKind::CIRCLES.iter().position(|k| *k == current)
+        {
+            // C again: the next of circle, ellipse, partial ellipse.
+            kind = ToolKind::CIRCLES[(i + 1) % ToolKind::CIRCLES.len()];
         }
-        // Shift+T: the text tool (T alone trims).
-        if ctx.input(|i| i.modifiers.shift_only() && i.key_pressed(Key::T)) {
-            self.switch_tool(ToolKind::Text);
+        if kind == ToolKind::Arc {
+            kind = if let Some(i) = ToolKind::ARCS.iter().position(|k| *k == current) {
+                // A again: the next arc type.
+                ToolKind::ARCS[(i + 1) % ToolKind::ARCS.len()]
+            } else if current == ToolKind::Line && self.tool.chain_end().is_some() {
+                // Mid-polyline: continue with a tangent arc (SolidWorks-style).
+                ToolKind::TangentArc
+            } else {
+                ToolKind::Arc
+            };
+        }
+        self.switch_tool(kind);
+    }
+
+    /// Delete what is picked: geometry, text, annotations and dimensions together; or a
+    /// picked leader on its own, or a picked view's crop (asking first if it's on a sheet).
+    pub(crate) fn delete_picked(&mut self) {
+        if let Some((id, k)) = self.selected_leader.take()
+            && self.editor.selection.is_empty()
+            && self.editor.selected_texts.is_empty()
+            && self.editor.annotation_picks.is_empty()
+        {
+            // A picked leader goes on its own; its note stays.
+            self.remove_leader(id, k);
             return;
         }
-        if alt_only(Key::R) {
-            self.show_relations = !self.show_relations;
+        if self.editor.selection.is_empty()
+            && self.selected_constraint.is_none()
+            && let Some(view) = self.picked_view
+        {
+            // A picked crop: its view goes. One on sheets asks first, in the Sheets tab.
+            if self.editor.doc.sheets_showing(view).is_empty() {
+                self.delete_view(view);
+            } else {
+                self.confirm_delete_view = Some(view);
+                self.show_panel(crate::dock::Panel::Sheets);
+            }
+            return;
         }
-        let requested = ToolKind::ALL
-            .into_iter()
-            .filter(|_| !r_claimed)
-            .find(|kind| {
-                kind.shortcut()
-                    .and_then(|c| Key::from_name(&c.to_string()))
-                    .is_some_and(pressed)
-            });
-        if let Some(mut kind) = requested {
-            let current = self.tool.kind();
-            if kind == ToolKind::Slot && current == ToolKind::Slot {
-                // U again: the next kind of slot.
-                self.editor.slot_mode = self.editor.slot_mode.next();
-                self.tool.cancel(&mut self.editor);
-                let now = ctx.input(|i| i.time);
-                self.set_status(self.editor.slot_mode.label().to_owned(), false, now);
-            }
-            if kind == ToolKind::Fillet && current == ToolKind::Fillet {
-                // F again: chamfer (and again, fillet).
-                kind = ToolKind::Chamfer;
-            }
-            if kind == ToolKind::Circle
-                && let Some(i) = ToolKind::CIRCLES.iter().position(|k| *k == current)
-            {
-                // C again: the next of circle, ellipse, partial ellipse.
-                kind = ToolKind::CIRCLES[(i + 1) % ToolKind::CIRCLES.len()];
-            }
-            if kind == ToolKind::Arc {
-                kind = if let Some(i) = ToolKind::ARCS.iter().position(|k| *k == current) {
-                    // A again: the next arc type.
-                    ToolKind::ARCS[(i + 1) % ToolKind::ARCS.len()]
-                } else if current == ToolKind::Line && self.tool.chain_end().is_some() {
-                    // Mid-polyline: continue with a tangent arc (SolidWorks-style).
-                    ToolKind::TangentArc
-                } else {
-                    ToolKind::Arc
-                };
-            }
-            self.switch_tool(kind);
-        }
+        // Everything picked goes together: geometry, text, annotations and dimensions.
+        let picked: Vec<_> = self.selected_constraint.take().into_iter().collect();
+        self.editor.delete_selection_with(&picked);
     }
 
     /// Change tool, continuing a polyline / tangent-arc chain across the switch.
@@ -392,6 +338,10 @@ impl DriftApp {
             && matches!(kind, ToolKind::Line | ToolKind::TangentArc)
         {
             self.tool.continue_from(point, &mut self.editor);
+        }
+        // The last tool picked (however it was picked) is what Enter repeats.
+        if commands::spec(Command::Tool(kind)).is_some_and(|s| s.repeatable) {
+            self.last_command = Some(Command::Tool(kind));
         }
     }
 

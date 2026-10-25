@@ -11,7 +11,7 @@ Everywhere: the command palette (Ctrl+K) finds any command by name, and ? lists 
 |---|---|
 | Temporary dimensions on a picked wall | The same: pick one line and dashed dimensions appear. Click a value to type a new one; the lock makes it permanent; drag the far end's square to measure to something else. [Temporary dimensions](tutorials/05-temporary-dimensions.md). |
 | Tab to cycle and pick chains | Tab highlights the chain of connected curves under the pointer; click picks it. |
-| Thin lines (TL) | W, or the status bar. |
+| Thin lines (TL) | Shift+Alt+W, or the status bar. |
 | Families | Blocks, with a library of US doors, windows, cabinets, fixtures and furniture, named "Family – Type". [Blocks](tutorials/07-blocks.md). No parametric blocks yet: each size is its own block. |
 | Sheets, views, view titles, scales | Views are drawn on the canvas with the **View** tool (a named crop at a scale) and dragged onto sheets from the **Views** list. Reframe a view's crop and every sheet it's on follows. Unlike Revit, a view can go on several sheets. Each placed view has a title and a number. Architectural and engineering scales are there. [Sheets and output](tutorials/10-sheets-and-output.md). |
 | Crop region, Crop Region Visible | A view's crop shows on the canvas with its name, with grips to reframe it. **View → View crops** (Shift+Alt+B) shows or hides them all, a view's **Crop** switch just that one. Crops are rectangles, not rotated, and never print. No separate annotation crop yet: dimensions and notes are cut at the crop. |

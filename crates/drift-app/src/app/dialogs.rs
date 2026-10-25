@@ -339,9 +339,20 @@ impl DriftApp {
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
                         let mut any = false;
-                        for (section, rows) in SHORTCUTS {
-                            let rows: Vec<&(&str, &str)> = rows
-                                .iter()
+                        // The command registry's keys, then the keys tools take.
+                        let sections =
+                            crate::commands::shortcut_sections(cfg!(target_os = "macos"));
+                        for (section, rows) in sections {
+                            let rows: Vec<(String, String)> = rows
+                                .into_iter()
+                                .map(|(keys, title, does)| {
+                                    let action = if title.is_empty() {
+                                        does
+                                    } else {
+                                        format!("{title}: {does}")
+                                    };
+                                    (keys, action)
+                                })
                                 .filter(|(k, a)| {
                                     query.is_empty()
                                         || k.to_lowercase().contains(&query)
@@ -364,10 +375,10 @@ impl DriftApp {
                                             .with_main_wrap(true),
                                         |ui| {
                                             ui.set_min_width(150.0);
-                                            keycaps(ui, keys);
+                                            keycaps(ui, &keys);
                                         },
                                     );
-                                    ui.add(egui::Label::new(*action).wrap());
+                                    ui.add(egui::Label::new(action).wrap());
                                 });
                                 ui.add_space(3.0);
                             }

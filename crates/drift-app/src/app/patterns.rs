@@ -11,6 +11,8 @@ pub(crate) struct PatternUi {
     angle: String,
     cx: String,
     cy: String,
+    /// Open the fold and bring it into view (Modify → Linear / Circular pattern).
+    pub(crate) reveal: bool,
 }
 
 impl Default for PatternUi {
@@ -23,6 +25,7 @@ impl Default for PatternUi {
             angle: "360".into(),
             cx: "0".into(),
             cy: "0".into(),
+            reveal: false,
         }
     }
 }
@@ -40,7 +43,16 @@ impl DriftApp {
             return;
         }
         let mut result = None;
+        let reveal = std::mem::take(&mut self.patterns.reveal);
+        if reveal {
+            // The id `theme::fold` keeps its open state under.
+            let id = ui.make_persistent_id(("fold", "pattern"));
+            ui.data_mut(|d| d.insert_persisted(id, true));
+        }
         crate::theme::fold(ui, "pattern", "Pattern", false, |ui| {
+            if reveal {
+                ui.scroll_to_cursor(Some(egui::Align::Min));
+            }
             let field = |ui: &mut egui::Ui, label: &str, text: &mut String| {
                 ui.label(label);
                 ui.add(egui::TextEdit::singleline(text).desired_width(70.0));

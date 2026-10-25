@@ -420,50 +420,26 @@ impl ToolKind {
         })
     }
 
-    /// The shortcut as shown to the user: the key, or "Shift+T" for the text tool.
+    /// The shortcut as shown to the user: the key, or "Shift+T" for the text tool. A tool in
+    /// a cycle shows the cycle's key. Keys are bound in the command registry.
     pub fn shortcut_label(self) -> Option<String> {
-        match self {
-            ToolKind::Text => Some("Shift+T".to_owned()),
-            _ => self.shortcut().map(String::from),
-        }
+        crate::commands::tool_key(self.cycle_head()).map(|k| k.text(cfg!(target_os = "macos")))
     }
 
+    /// The single key that picks the tool (`None` for Shift+T and tools without a key).
     pub fn shortcut(self) -> Option<char> {
-        Some(match self {
-            ToolKind::Select => 'S',
-            ToolKind::Line => 'L',
-            ToolKind::Pen => 'P',
-            ToolKind::Rectangle => 'R',
-            ToolKind::Polygon => 'K',
-            ToolKind::Slot => 'U',
-            // C selects the circle; pressed again it cycles through the ellipse tools.
-            ToolKind::Circle | ToolKind::Ellipse | ToolKind::EllipseArc => 'C',
-            // A selects the centre arc; pressed again it cycles through the arc tools.
-            ToolKind::Arc | ToolKind::ThreePointArc | ToolKind::TangentArc => 'A',
-            // V for vertex (P is the pen, as in Illustrator).
-            ToolKind::Point => 'V',
-            ToolKind::Block => 'I',
-            ToolKind::Dimension => 'D',
-            ToolKind::Fill => 'H',
-            ToolKind::Note => 'N',
-            ToolKind::Trim => 'T',
-            ToolKind::Extend => 'E',
-            ToolKind::Offset => 'O',
-            ToolKind::Mirror => 'M',
-            // F selects the fillet; pressed again it switches to the chamfer.
-            ToolKind::Fillet | ToolKind::Chamfer => 'F',
-            ToolKind::Split
-            | ToolKind::Section
-            | ToolKind::Elevation
-            | ToolKind::View
-            | ToolKind::Ordinate
-            | ToolKind::Callout
-            | ToolKind::CentreMark
-            | ToolKind::Text
-            | ToolKind::Calibrate
-            | ToolKind::MoveUnderlay
-            | ToolKind::BasePoint => return None,
-        })
+        crate::commands::tool_key(self.cycle_head())?.single()
+    }
+
+    /// The first tool of the cycle a key steps through: the circle for the ellipses, the
+    /// centre arc for the other arcs, the fillet for the chamfer.
+    pub fn cycle_head(self) -> ToolKind {
+        match self {
+            ToolKind::Ellipse | ToolKind::EllipseArc => ToolKind::Circle,
+            ToolKind::ThreePointArc | ToolKind::TangentArc => ToolKind::Arc,
+            ToolKind::Chamfer => ToolKind::Fillet,
+            other => other,
+        }
     }
 
     pub fn create(self) -> Box<dyn Tool> {

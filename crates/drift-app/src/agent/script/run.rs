@@ -91,6 +91,11 @@ pub(super) struct Runner<'s> {
     image: Option<Vec<u8>>,
     /// Each statement's source, by line, for errors that involve earlier lines.
     pub sources: HashMap<usize, String>,
+    /// The inside of each name as it was before a `trim` first cut it, so that a shape
+    /// trimmed open (the first half of a union) can still be trimmed by.
+    trim_areas: HashMap<String, Value>,
+    /// The curves trims cut off a name's curves: they are that name's too.
+    trimmed_into: HashMap<String, Vec<EntityId>>,
 }
 
 fn eid(v: &Value) -> R<EntityId> {
@@ -158,6 +163,10 @@ fn paths_of(st: &Stmt) -> Vec<&Path> {
         }
         Stmt::Label { of, .. } | Stmt::Hatch { of, .. } | Stmt::Fill { of, .. } => out.push(of),
         Stmt::Use { ids, .. } => out.extend(ids),
+        Stmt::Trim { what, by, .. } => {
+            out.push(what);
+            out.push(by);
+        }
         Stmt::Let { .. } | Stmt::Layer { .. } | Stmt::On(_) => {}
     }
     out
@@ -412,6 +421,10 @@ pub(super) fn meant(st: &Stmt) -> String {
             format!("hatch {of} with {}", pattern.as_deref().unwrap_or("ANSI31"))
         }
         Stmt::Fill { of, .. } => format!("fill {of} solid"),
+        Stmt::Trim { what, inside, by } => format!(
+            "remove what of {what} lies {} {by}",
+            if *inside { "inside" } else { "outside" }
+        ),
         Stmt::Use { ids, name } => format!(
             "call {} `{name}`",
             ids.iter()
@@ -446,6 +459,8 @@ impl<'s> Runner<'s> {
             rooms: Vec::new(),
             image: None,
             sources: HashMap::new(),
+            trim_areas: HashMap::new(),
+            trimmed_into: HashMap::new(),
         }
     }
 
@@ -1232,6 +1247,7 @@ impl<'s> Runner<'s> {
                 }
                 self.fill_at(of, base)?;
             }
+            Stmt::Trim { what, inside, by } => self.trim(ln, what, *inside, by)?,
             Stmt::Use { ids: list, name } => {
                 let found: Vec<EntityId> = list
                     .iter()
@@ -1239,6 +1255,104 @@ impl<'s> Runner<'s> {
                     .collect::<R<_>>()?;
                 self.define(name, ln, Obj::Used(found));
             }
+        }
+        Ok(())
+    }
+
+    /// A name's curves as they are now: the ones left of it, and the pieces trims cut off them.
+    fn curves_now(&self, p: &Path) -> R<Vec<EntityId>> {
+        let mut out = self.curves(p)?;
+        if p.parts.is_empty()
+            && let Some(more) = self.trimmed_into.get(&p.root)
+        {
+            out.extend(more);
+        }
+        let doc = self.doc();
+        out.retain(|c| doc.get(*c).is_some_and(|e| !e.kind.is_point()));
+        out.sort_unstable();
+        out.dedup();
+        Ok(out)
+    }
+
+    /// The inside of a shape's curves, as `trim_extend_split` takes it (`inside_of`).
+    fn area_json(&self, curves: &[EntityId]) -> Option<Value> {
+        let area = self.s.editor.closed_area(curves)?;
+        Some(json!(
+            area.loops
+                .iter()
+                .map(|lp| lp.iter().map(|p| json!([p.x, p.y])).collect::<Vec<_>>())
+                .collect::<Vec<_>>()
+        ))
+    }
+
+    /// `trim what inside by`: every piece of `what` on that side of `by`, cut by `by` alone.
+    fn trim(&mut self, ln: usize, what: &Path, inside: bool, by: &Path) -> R<()> {
+        let (a, b) = (self.curves_now(what)?, self.curves_now(by)?);
+        let Some(&first) = a.first() else {
+            return Err(format!("{what} has no curves left to trim"));
+        };
+        if b.is_empty() {
+            return Err(format!("{by} has no curves left to trim by"));
+        }
+        // `by`'s inside as it was before this script first trimmed it, else as it is.
+        let area = match self
+            .trim_areas
+            .get(&by.root)
+            .filter(|_| by.parts.is_empty())
+        {
+            Some(a) => a.clone(),
+            None => self.area_json(&b).ok_or(format!(
+                "{by} isn't closed: trim … inside needs a closed shape"
+            ))?,
+        };
+        // And `what`'s, before it is cut, for a later line that trims by it.
+        if what.parts.is_empty()
+            && !self.trim_areas.contains_key(&what.root)
+            && let Some(own) = self.area_json(&a)
+        {
+            self.trim_areas.insert(what.root.clone(), own);
+        }
+        if by.parts.is_empty() {
+            self.trim_areas
+                .entry(by.root.clone())
+                .or_insert(area.clone());
+        }
+        let ids: Vec<Value> = a[1..].iter().map(|c| s(*c)).collect();
+        let by_ids: Vec<Value> = b.iter().map(|c| s(*c)).collect();
+        let v = self.exec(
+            "trim_extend_split",
+            json!({
+                "id": s(first),
+                "ids": ids,
+                "remove": if inside { "inside" } else { "outside" },
+                "by": by_ids,
+                "inside_of": area,
+            }),
+        )?;
+        let made: Vec<EntityId> = v["made"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(eid)
+            .collect::<R<_>>()?;
+        if what.parts.is_empty() {
+            self.trimmed_into
+                .entry(what.root.clone())
+                .or_default()
+                .extend(made);
+        }
+        if v["trimmed"].as_u64() == Some(0) {
+            let side = if inside { "inside" } else { "outside" };
+            self.warnings.push(json!({
+                "line": ln,
+                "warning": format!("{what} has nothing {side} {by}: nothing was trimmed"),
+            }));
+        }
+        for why in v["skipped"].as_array().into_iter().flatten() {
+            self.warnings.push(json!({
+                "line": ln,
+                "warning": format!("a piece of {what} wasn't trimmed: {}", why.as_str().unwrap_or("")),
+            }));
         }
         Ok(())
     }

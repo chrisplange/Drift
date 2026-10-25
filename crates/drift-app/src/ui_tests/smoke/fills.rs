@@ -152,3 +152,71 @@ fn smoke_fills_arrange_stroke_none_and_print_order() {
         "still bounds its fill"
     );
 }
+
+/// Two overlapping filled squares, both picked, joined by trimming them against each other
+/// (the shapes picked are the only cutting curves): each drag across pieces is one undo
+/// step, and the joined outline keeps one fill, the top one's.
+#[test]
+fn smoke_trim_two_filled_shapes_into_one() {
+    let Some(mut h) = harness() else { return };
+    view(&mut h, DVec2::new(-10.0, -10.0), DVec2::new(70.0, 70.0));
+    // A line across both (clear of the drags below), which mustn't cut them while they are
+    // picked.
+    let (la, lb) = (DVec2::new(30.0, -2.5), DVec2::new(65.0, 50.0));
+    let line = free_line(&mut h, la, lb);
+    let (_, lower) = rectangle(&mut h, DVec2::ZERO, DVec2::new(40.0, 40.0), Fill::Solid);
+    let (_, upper) = rectangle(
+        &mut h,
+        DVec2::new(20.0, 20.0),
+        DVec2::new(60.0, 60.0),
+        Fill::Solid,
+    );
+    let upper = upper.unwrap();
+    click_world(&mut h, DVec2::new(10.0, 10.0));
+    let other = screen(&h, DVec2::new(50.0, 50.0));
+    click_with(&mut h, other, EguiModifiers::SHIFT);
+    assert_eq!(h.state().editor.selection.len(), 8, "both outlines picked");
+    h.key_press(Key::T);
+    h.run();
+    assert!(
+        h.state().tool.hint().contains("against 8 picked curves"),
+        "{}",
+        h.state().tool.hint()
+    );
+    let depth = h.state().editor.history.undo_depth();
+    // Across the inner square's left and right sides, then its top and bottom.
+    drag(&mut h, DVec2::new(15.0, 25.0), DVec2::new(45.0, 25.0), 6);
+    assert_eq!(h.state().editor.history.undo_depth(), depth + 1, "one step");
+    drag(&mut h, DVec2::new(35.0, 45.0), DVec2::new(35.0, 15.0), 6);
+    let ed = &mut h.state_mut().editor;
+    assert_eq!(ed.history.undo_depth(), depth + 2);
+    assert_eq!(ed.doc.fills().count(), 1, "one fill");
+    assert!(ed.doc.fill(upper).is_some(), "the top one's");
+    let area = ed.fill_shapes()[&upper].region.area;
+    assert!((area - 2800.0).abs() < 1e-6, "{area}: the whole outline");
+    assert_eq!(
+        ed.doc.shape(line),
+        Some(drift_core::Shape::Line { a: la, b: lb }),
+        "the line wasn't cut"
+    );
+    save_png("drift_smoke_trim_union.png", &mut h);
+    // Each drag undoes on its own.
+    h.state_mut().undo();
+    assert_eq!(h.state().editor.doc.fills().count(), 2);
+    h.state_mut().undo();
+    let ed = &mut h.state_mut().editor;
+    assert!(lower.is_some_and(|f| !ed.fill_shapes()[&f].lost));
+    assert!(!ed.fill_shapes()[&upper].lost);
+}
+
+/// A loose line, not picked.
+fn free_line(h: &mut Harness<'_, DriftApp>, a: DVec2, b: DVec2) -> EntityId {
+    let ed = &mut h.state_mut().editor;
+    ed.doc.begin();
+    let p = ed.doc.add_point(a);
+    let q = ed.doc.add_point(b);
+    let line = ed.doc.add_line(p, q).unwrap();
+    ed.commit("Line");
+    h.run();
+    line
+}

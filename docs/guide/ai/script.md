@@ -34,13 +34,22 @@ window stays 600 from the corner.
 
 | Written | Means |
 |---|---|
-| `3600`, `3600 mm`, `360 cm`, `3.6 m`, `3.6m` | 3600 mm |
+| `3600 mm`, `360 cm`, `3.6 m`, `3.6m` | 3600 mm |
 | `12'6"`, `12' 6"`, `12'-6"`, `12 ft`, `150"`, `6 1/2"` | feet and inches |
+| `3600`, `36` | a plain number: in the drawing's unit |
 | `30°`, `30 deg` | an angle |
 | `W`, `W/2 + 100`, `1.25 * W`, `(W - 2*T) / 3` | expressions of variables |
 
-A plain number on its own is always millimetres, and so is a plain number added to or taken
-from a length: `W/2 + 100` is `W/2 + 100 mm`. Multiply and divide by plain numbers as usual.
+A plain number is in the drawing's unit, as when you type it into Drift: millimetres in a
+metric drawing, inches in a feet-and-inches drawing (`door d1 36 in bed.south` is a 36"
+door there). The same goes for a plain number added to or taken from a length: `W/2 + 6`
+adds 6 inches in a feet-and-inches drawing. Multiply and divide by plain numbers as usual.
+Write the units whenever a script might run in a drawing with other units: a script written
+for millimetres, run in a feet-and-inches drawing, comes out 25.4 times bigger. Every result
+says which unit plain numbers were read in (`plain_numbers_in`).
+
+A door or window under 300 mm wide still runs, but the result warns about it, since it is
+most likely a unit slip.
 
 A size you write in a statement (`4200 x 3600`, `r 225`, `= 3.6 m`) becomes a driving
 dimension. It keeps its text, so `W/2` stays tied to `W`. Positions (`at 0,0`,
@@ -218,4 +227,5 @@ Nothing was changed.
 | `render` | Attach a picture of the result. |
 
 The result lists every name's id, how each line was read, any relations skipped as already
-true, each room's area, and the sketch's degrees of freedom.
+true, warnings (such as a door only millimetres wide), each room's area, and the sketch's
+degrees of freedom.

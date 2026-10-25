@@ -784,14 +784,20 @@ dim p to grid.A = 1200
 
 #[test]
 fn plain_numbers_added_to_lengths_are_millimetres() {
-    assert_eq!(lex::with_mm("W/2 + 100").as_deref(), Some("W/2 + 100 mm"));
-    assert_eq!(lex::with_mm("2400 + T").as_deref(), Some("2400 mm + T"));
     assert_eq!(
-        lex::with_mm("(W - 200) / 2").as_deref(),
+        lex::with_unit("W/2 + 100", "mm").as_deref(),
+        Some("W/2 + 100 mm")
+    );
+    assert_eq!(
+        lex::with_unit("2400 + T", "mm").as_deref(),
+        Some("2400 mm + T")
+    );
+    assert_eq!(
+        lex::with_unit("(W - 200) / 2", "mm").as_deref(),
         Some("(W - 200 mm) / 2")
     );
-    assert_eq!(lex::with_mm("(W - 2*T) / 3"), None);
-    assert_eq!(lex::with_mm("2 * W"), None);
+    assert_eq!(lex::with_unit("(W - 2*T) / 3", "mm"), None);
+    assert_eq!(lex::with_unit("2 * W", "mm"), None);
     let mut s = Session::new();
     let v = run(
         &mut s,
@@ -805,4 +811,51 @@ rect r W/2 + 100 x D at 0,0 fixed",
     // Still tied to the variables.
     run(&mut s, "let W = 4 m");
     assert!(close(line_len(&s, &id(&v, "r.south")), 2100.0));
+}
+
+#[test]
+fn bare_numbers_are_in_the_drawings_units() {
+    // Feet and inches: a plain number is inches, as when typed into Drift.
+    let mut s = Session::new();
+    ok(&mut s, "new_drawing", json!({ "units": "ft-in" }));
+    let v = run(
+        &mut s,
+        "let T = 6\nroom bed 12' x 10' at 0,0 walls T fixed\ndoor d1 36 in bed.south centred\n\
+         rect r 10 x 20 at 30', 0 fixed\nlet H = 4'\nline l from 50',0 to 60',0 length H/2 + 6",
+    );
+    assert_eq!(
+        v["sketch"]["fully_defined"], false,
+        "the line can still move"
+    );
+    assert!(v.get("warnings").is_none(), "{v}");
+    assert_eq!(v["plain_numbers_in"], "in");
+    let inch = 25.4;
+    assert!(
+        close(line_len(&s, &id(&v, "d1.start")), 6.0 * inch),
+        "6\" walls"
+    );
+    assert!(
+        close(line_len(&s, &id(&v, "bed.south[1]")), 54.0 * inch),
+        "a 36\" door, centred"
+    );
+    assert!(close(line_len(&s, &id(&v, "r.south")), 10.0 * inch));
+    assert!(
+        close(line_len(&s, &id(&v, "l")), 30.0 * inch),
+        "H/2 + 6 is 30\""
+    );
+    // Changing a variable keeps reading plain numbers in inches.
+    run(&mut s, "let T = 8");
+    assert!(close(line_len(&s, &id(&v, "d1.start")), 8.0 * inch));
+
+    // Millimetres: a 36 mm door runs, with a warning.
+    let mut s = Session::new();
+    let v = run(
+        &mut s,
+        "room bed 3 m x 3 m at 0,0 walls 200 fixed\ndoor d1 36 in bed.south",
+    );
+    let w = v["warnings"][0]["warning"].as_str().unwrap_or_default();
+    assert_eq!(v["warnings"][0]["line"], 2, "{v}");
+    assert_eq!(v["plain_numbers_in"], "mm");
+    assert!(w.contains("d1 is only 36"), "{w}");
+    assert!(w.contains("write 36\""), "{w}");
 }

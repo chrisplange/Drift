@@ -133,6 +133,10 @@ object that owns its fill (#129, #133–#135).
 **Done when:** the property suite passes, the open fill bugs reproduce as failing
 fixtures first and then pass, and no call site in `regions.rs` uses its own tolerance.
 
+**Status (2026-10-25):** steps 1, 2 and 6 are done (3a, #142). Step 3 (fingerprints) and
+step 5 (curves) are planned in [trim-and-regions-plan.md](trim-and-regions-plan.md), as 3b
+(§3) and B0 (§2).
+
 ---
 
 ## Order and sizing

@@ -23,7 +23,6 @@ fn yes() -> bool {
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub(crate) struct FieldsRecord {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     title: String,
@@ -46,7 +45,6 @@ pub(crate) struct FieldsRecord {
 
 /// The project the sheets share (v30).
 #[derive(Debug, Default, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub(crate) struct ProjectRecord {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     name: String,
@@ -94,7 +92,6 @@ pub(crate) fn parse_project(r: ProjectRecord) -> Result<Project, LoadError> {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub(crate) struct RevisionRecord {
     rev: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -107,7 +104,6 @@ pub(crate) struct RevisionRecord {
 
 /// A view of the model: a named crop at a scale.
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub(crate) struct ViewRecord {
     pub(crate) id: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -185,7 +181,6 @@ pub(crate) fn parse_view(r: ViewRecord) -> Result<(ViewId, View), LoadError> {
 
 /// A view placed on a sheet.
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct ViewportRecord {
     view: String,
     /// Its middle on the paper (mm).
@@ -199,7 +194,6 @@ struct ViewportRecord {
 /// A view of the sketch on a sheet, as written from v18 to v25 (read only: each becomes a
 /// model view and a viewport).
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct OldViewRecord {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     name: String,
@@ -222,7 +216,6 @@ struct OldViewRecord {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub(crate) struct SheetRecord {
     pub(crate) id: String,
     name: String,

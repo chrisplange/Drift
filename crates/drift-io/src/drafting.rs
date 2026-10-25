@@ -32,7 +32,6 @@ fn parse_color(id: &str, c: &Option<String>) -> Result<Option<Rgb>, LoadError> {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub(crate) struct FillRecord {
     /// (A block's fills have none.)
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -201,7 +200,6 @@ fn parse_fill_body(r: FillRecord) -> Result<Fill, LoadError> {
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub(crate) struct AnchorRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     at: Option<[f64; 2]>,
@@ -214,7 +212,6 @@ pub(crate) struct AnchorRecord {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub(crate) struct LeaderRecord {
     to: AnchorRecord,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -310,7 +307,7 @@ fn parse_leader(id: &str, l: &LeaderRecord) -> Result<Leader, LoadError> {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum AnnotationRecord {
     Note {
         id: String,
@@ -659,7 +656,7 @@ fn parse_view_link(view: Option<&str>) -> Result<Option<drift_core::ViewId>, Loa
 
 /// A dimension's tolerance.
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum ToleranceRecord {
     Symmetric { value: f64 },
     Deviation { upper: f64, lower: f64 },
@@ -713,7 +710,6 @@ pub(crate) fn dim_note(
 
 /// Where a dimension (`c…`) or annotation (`n…`) is shown, when not everywhere.
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub(crate) struct ShownRecord {
     of: String,
     #[serde(default = "yes", skip_serializing_if = "is_yes")]
@@ -784,7 +780,6 @@ pub(crate) fn parse_shown(r: ShownRecord) -> Result<ParsedShown, LoadError> {
 /// only the settings it overrides. `alt_units` and `color` take `"none"` for "none, whatever
 /// the drawing has".
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub(crate) struct StyleRecord {
     of: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -887,7 +882,6 @@ pub(crate) fn parse_override(r: StyleRecord) -> Result<(AnnotationRef, StyleOver
 
 /// The drafting style; written in full when it isn't the default.
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub(crate) struct DraftRecord {
     standard: String,
     text_height: f64,

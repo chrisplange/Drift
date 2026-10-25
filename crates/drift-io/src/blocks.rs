@@ -50,7 +50,6 @@ pub(crate) enum ItemShape {
     },
 }
 
-/// (`flatten` can't be combined with `deny_unknown_fields`, so items accept extra fields.)
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct ItemRecord {
     #[serde(flatten)]
@@ -66,7 +65,6 @@ pub(crate) struct ItemRecord {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub(crate) struct BlockRecord {
     pub(crate) id: String,
     name: String,
@@ -79,7 +77,6 @@ pub(crate) struct BlockRecord {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub(crate) struct InstanceRecord {
     pub(crate) id: String,
     block: String,

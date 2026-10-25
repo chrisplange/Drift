@@ -1,9 +1,11 @@
 //! Every `.drift` format version Drift has written still opens, keeps what it held, and saves
 //! as the current version. See `docs/file-format.md` for the policy these tests guard.
 //!
-//! `tests/fixtures/vNN.drift` is one small drawing as Drift wrote it at format NN. The newest is
-//! made by [`write_current_fixture`]; older ones were written by the Drift builds of their day
-//! (each loaded the next newer fixture, with that version's additions taken out, and saved it).
+//! `tests/fixtures/vNN.drift` is one small drawing as Drift wrote it at format NN, and
+//! `vNN.M.drift` the same drawing after the M-th addition made at NN (additions don't bump the
+//! version from 42 on). The newest is made by [`write_current_fixture`]; those up to v41 were
+//! written by the Drift builds of their day (each loaded the next newer fixture, with that
+//! version's additions taken out, and saved it).
 #![cfg(not(feature = "demo"))]
 
 use std::path::PathBuf;
@@ -12,32 +14,54 @@ use drift_core::{
     Annotation, Constraint, DVec2, Document, DrawingRules, EntityId, Fill, FillKind, Hatch, Kind,
     Layer, LineWeight, Rgb, Variable, Variant,
 };
-use drift_io::{FORMAT_VERSION, Metadata, load_with_notes, save};
+use drift_io::{FORMAT_VERSION, Metadata, READER_VERSION, load_with_notes, save};
 
 fn fixtures_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
 }
 
-/// Every fixture, oldest first, with the version its name gives.
-fn fixtures() -> Vec<(u32, String)> {
-    let mut out: Vec<(u32, String)> = std::fs::read_dir(fixtures_dir())
+/// A fixture: the version and addition its name gives (`v42.1.drift` is `(42, 1)`), its
+/// name and its text.
+struct Fixture {
+    version: u32,
+    addition: u32,
+    name: String,
+    text: String,
+}
+
+/// `vNN.drift` or `vNN.M.drift`, as `(NN, M)`.
+fn parse_name(name: &str) -> Option<(u32, u32)> {
+    let stem = name.strip_prefix('v')?.strip_suffix(".drift")?;
+    match stem.split_once('.') {
+        Some((v, m)) => Some((v.parse().ok()?, m.parse().ok().filter(|m| *m > 0)?)),
+        None => Some((stem.parse().ok()?, 0)),
+    }
+}
+
+/// Every fixture, oldest first.
+fn fixtures() -> Vec<Fixture> {
+    let mut out: Vec<Fixture> = std::fs::read_dir(fixtures_dir())
         .expect("tests/fixtures exists")
         .filter_map(|e| {
             let path = e.ok()?.path();
-            let name = path.file_name()?.to_str()?;
-            let version = name
-                .strip_prefix('v')?
-                .strip_suffix(".drift")?
-                .parse()
-                .ok()?;
-            Some((
+            let name = path.file_name()?.to_str()?.to_owned();
+            let (version, addition) = parse_name(&name)?;
+            let text = std::fs::read_to_string(&path).expect("fixture reads");
+            Some(Fixture {
                 version,
-                std::fs::read_to_string(&path).expect("fixture reads"),
-            ))
+                addition,
+                name,
+                text,
+            })
         })
         .collect();
-    out.sort_by_key(|(v, _)| *v);
+    out.sort_by_key(|f| (f.version, f.addition));
     out
+}
+
+/// The fixture this build's writer must reproduce.
+fn newest() -> Option<Fixture> {
+    fixtures().pop()
 }
 
 #[test]
@@ -46,8 +70,9 @@ fn the_current_format_version_has_a_fixture() {
     assert!(
         path.exists(),
         "FORMAT_VERSION is {FORMAT_VERSION} but there is no {}.\n\
-         Every format bump needs a fixture and a migration test (docs/file-format.md):\n\
-         extend `fixture_drawing` in this file with what the new version adds, then run\n\
+         Every format bump (a breaking change, which also raises READER_VERSION) needs a\n\
+         fixture and a migration test (docs/file-format.md): extend `fixture_drawing` in this\n\
+         file with what the new version changes, then run\n\
          `cargo test -p drift-io --test format_fixtures write_current_fixture -- --ignored`\n\
          and commit the new file. Leave the older fixtures as they are.",
         path.display()
@@ -55,15 +80,40 @@ fn the_current_format_version_has_a_fixture() {
 }
 
 #[test]
+fn the_reader_version_has_a_fixture() {
+    // A breaking change raises `reader`; the drawing as written after it must be kept.
+    let newest = newest().expect("there are fixtures");
+    let value: serde_json::Value = serde_json::from_str(&newest.text).expect("fixture is JSON");
+    assert_eq!(
+        value["reader"], READER_VERSION,
+        "READER_VERSION is {READER_VERSION} but the newest fixture, {}, says {}: a breaking \
+         change bumps FORMAT_VERSION and READER_VERSION together and writes a fixture",
+        newest.name, value["reader"]
+    );
+}
+
+#[test]
 fn every_fixture_says_the_version_its_name_does() {
-    for (version, text) in fixtures() {
-        let value: serde_json::Value = serde_json::from_str(&text).expect("fixture is JSON");
-        assert_eq!(value["format"], "drift", "v{version}");
-        assert_eq!(value["version"], version, "v{version}.drift");
+    for f in fixtures() {
+        let name = &f.name;
+        let value: serde_json::Value = serde_json::from_str(&f.text).expect("fixture is JSON");
+        assert_eq!(value["format"], "drift", "{name}");
+        assert_eq!(value["version"], f.version, "{name}");
         assert!(
-            version <= FORMAT_VERSION,
-            "v{version} is newer than this build"
+            f.version <= FORMAT_VERSION,
+            "{name} is newer than this build"
         );
+        // Files carry `reader` from 42 on, never above their version.
+        match value["reader"].as_u64() {
+            Some(reader) => {
+                assert!(f.version >= 42, "{name} has a reader before 42");
+                assert!(
+                    reader <= u64::from(f.version),
+                    "{name}'s reader is above its version"
+                );
+            }
+            None => assert!(f.version < 42, "{name} has no reader"),
+        }
     }
 }
 
@@ -91,12 +141,20 @@ fn every_fixture_opens_keeps_its_contents_and_saves_as_current() {
         "expected fixtures for several versions, found {}",
         all.len()
     );
-    for (version, text) in all {
-        let at = |what: &str| format!("v{version}: {what}");
+    for Fixture {
+        version,
+        name,
+        text,
+        ..
+    } in all
+    {
+        let at = |what: &str| format!("{name}: {what}");
         let (doc, meta, notes) =
             load_with_notes(&text).unwrap_or_else(|e| panic!("v{version} doesn't open: {e}"));
         assert!(notes.is_empty(), "{}", at(&format!("notes {notes:?}")));
         assert_eq!(meta.title.as_deref(), Some("Fixture"), "{}", at("title"));
+        // This build knows everything a fixture holds: nothing is carried through.
+        assert!(!meta.carried.any(), "{}", at("unknown data"));
 
         assert_eq!(doc.iter().count(), ENTITIES, "{}", at("entities"));
         assert_eq!(doc.constraint_count(), CONSTRAINTS, "{}", at("constraints"));
@@ -197,6 +255,9 @@ fn every_fixture_opens_keeps_its_contents_and_saves_as_current() {
             "{}",
             at("saved version")
         );
+        if version == FORMAT_VERSION {
+            assert_eq!(saved, text.replace("\r\n", "\n"), "{}", at("saved as read"));
+        }
         let (again, again_meta, _) = load_with_notes(&saved).unwrap();
         assert_eq!(again, doc, "{}", at("round trip"));
         assert_eq!(
@@ -208,32 +269,44 @@ fn every_fixture_opens_keeps_its_contents_and_saves_as_current() {
     }
 }
 
+fn fixture_meta() -> Metadata {
+    Metadata {
+        title: Some("Fixture".into()),
+        ..Default::default()
+    }
+}
+
 #[test]
-fn the_current_fixture_is_what_this_build_writes() {
-    let path = fixtures_dir().join(format!("v{FORMAT_VERSION}.drift"));
-    let Ok(text) = std::fs::read_to_string(&path) else {
+fn the_newest_fixture_is_what_this_build_writes() {
+    let Some(newest) = newest().filter(|f| f.version == FORMAT_VERSION) else {
         return; // `the_current_format_version_has_a_fixture` says what to do.
     };
-    let (doc, meta) = drift_io::load(&text).unwrap();
     assert_eq!(
-        save(&doc, &meta),
-        text.replace("\r\n", "\n"),
-        "the current fixture is no longer what Drift writes for the same drawing; if that is \
-         intended (and additive), regenerate it with write_current_fixture"
+        save(&fixture_drawing(), &fixture_meta()),
+        newest.text.replace("\r\n", "\n"),
+        "{} is no longer what Drift writes for the fixture drawing. An addition (a field or table \
+         older builds can pass over) needs a fixture of its own: run write_current_fixture, which \
+         writes v{FORMAT_VERSION}.N.drift beside it. A breaking change bumps FORMAT_VERSION and \
+         READER_VERSION instead. Never edit an existing fixture.",
+        newest.name
     );
 }
 
-/// Writes `tests/fixtures/v{FORMAT_VERSION}.drift`. Run it once per format bump:
+/// Writes the fixture for what this build writes: `v{FORMAT_VERSION}.drift` after a bump, or
+/// `v{FORMAT_VERSION}.N.drift` (the next N) after an addition.
 /// `cargo test -p drift-io --test format_fixtures write_current_fixture -- --ignored`.
 #[test]
-#[ignore = "writes the fixture for the current format version"]
+#[ignore = "writes the fixture for what this build writes"]
 fn write_current_fixture() {
-    let meta = Metadata {
-        title: Some("Fixture".into()),
-        ..Default::default()
+    let text = save(&fixture_drawing(), &fixture_meta());
+    let name = match newest().filter(|f| f.version == FORMAT_VERSION) {
+        None => format!("v{FORMAT_VERSION}.drift"),
+        Some(f) if f.text.replace("\r\n", "\n") == text => {
+            panic!("{} is already what this build writes", f.name)
+        }
+        Some(f) => format!("v{FORMAT_VERSION}.{}.drift", f.addition + 1),
     };
-    let text = save(&fixture_drawing(), &meta);
-    let path = fixtures_dir().join(format!("v{FORMAT_VERSION}.drift"));
+    let path = fixtures_dir().join(name);
     std::fs::write(&path, &text).unwrap();
     // It must open the same.
     let (doc, _) = drift_io::load(&text).unwrap();

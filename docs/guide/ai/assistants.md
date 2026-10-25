@@ -158,7 +158,8 @@ every curve is labelled with its id (`e12`). The assistant can then match what i
 what it lists.
 
 Coordinates are millimetres with y up, whatever the drawing's display units. Angles are in
-degrees, counter-clockwise.
+degrees, counter-clockwise. The exception is Drift script (below): a plain number there is in the
+drawing's display unit, as when you type it into Drift.
 
 ## Drift scripts
 

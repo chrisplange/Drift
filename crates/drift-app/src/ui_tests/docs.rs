@@ -96,6 +96,18 @@ fn docs_screenshots() {
     sheets();
     underlay();
     checker();
+    menus();
+    pick_filters();
+    shapes();
+    importing();
+}
+
+/// The topmost widget with this label: a menu in the menu bar, not a tool or heading of the
+/// same name (the View menu and the View tool share one).
+fn topmost<'a>(h: &'a Harness<'_, DriftApp>, label: &'a str) -> egui_kittest::Node<'a> {
+    h.query_all_by_label(label)
+        .min_by(|a, b| a.rect().top().total_cmp(&b.rect().top()))
+        .unwrap_or_else(|| panic!("no {label} menu"))
 }
 
 fn getting_started() {
@@ -369,9 +381,9 @@ fn parameters() {
         let var = ed.add_variable("width", "100", Kind::Length).unwrap();
         ed.set_dimension_text(width, "width").unwrap();
         ed.set_dimension_text(height, "width / 2").unwrap();
-        ed.save_variant("Wide");
+        ed.save_option("Wide", false);
         ed.set_variable(var, "60").unwrap();
-        ed.save_variant("Narrow");
+        ed.save_option("Narrow", false);
     }
     let options: Vec<_> = h.state().editor.doc.variants().map(|(id, _)| id).collect();
     h.state_mut().params.ghosted = options.into_iter().collect();
@@ -926,4 +938,91 @@ fn checker() {
     h.get_by_label("Check sketch…").click();
     h.run();
     shot("check-sketch.png", &mut h);
+}
+
+fn menus() {
+    // The Draw and Modify menus, open over the example.
+    let mut h = harness().unwrap();
+    open_example(&mut h);
+    for (label, name) in [("Draw", "menu-draw.png"), ("Modify", "menu-modify.png")] {
+        topmost(&h, label).click();
+        h.run();
+        shot(name, &mut h);
+        h.key_press(Key::Escape);
+        h.run();
+    }
+}
+
+fn pick_filters() {
+    // Select picking edges alone: the bar's toggles, and only lines highlight.
+    use crate::editor::{PickFilter, PickKind};
+    let mut h = harness().unwrap();
+    open_example(&mut h);
+    h.state_mut()
+        .set_pick_filter(PickFilter::only(PickKind::Edges));
+    h.run();
+    let (from, to) = (
+        screen(&h, DVec2::new(-10.0, -10.0)),
+        screen(&h, DVec2::new(60.0, 50.0)),
+    );
+    drag(&mut h, from, to);
+    shot("pick-filters.png", &mut h);
+}
+
+fn shapes() {
+    // A filled shape picked as one object: Stroke none, a solid fill.
+    let mut h = harness().unwrap();
+    h.get_by_label("Rectangle").click();
+    h.run();
+    click_world(&mut h, DVec2::new(10.0, 10.0));
+    click_world(&mut h, DVec2::new(70.0, 50.0));
+    h.get_by_label("Fill / hatch").click();
+    h.run();
+    h.query_all_by_label("Solid").next().unwrap().click();
+    h.run();
+    click_world(&mut h, DVec2::new(40.0, 30.0));
+    h.get_by_label("Select").click();
+    h.run();
+    h.key_press(Key::Escape);
+    h.run();
+    click_world(&mut h, DVec2::new(25.0, 20.0));
+    h.run();
+    // (Stroke's None is the upper one; Fill has one too.)
+    topmost(&h, "None").click();
+    h.run();
+    h.hover_at(screen(&h, DVec2::new(90.0, 60.0)));
+    h.run();
+    shot("shape-stroke-fill.png", &mut h);
+}
+
+fn importing() {
+    // A PDF dropped on the window: open it on its own, or bring it in.
+    let mut h = harness().unwrap();
+    open_example(&mut h);
+    h.state_mut().dropped = Some("plan.pdf".into());
+    h.run();
+    shot("drop-dialog.png", &mut h);
+
+    // Then the import dialog: a 1 : 50 plan on A3.
+    let mut h = harness().unwrap();
+    let v = DVec2::new;
+    let mut d = drift_draft::page::Drawing::new(v(420.0, 297.0));
+    let pen = drift_draft::page::Pen::new(0.35);
+    let corners = [
+        v(50.0, 50.0),
+        v(150.0, 50.0),
+        v(150.0, 110.0),
+        v(50.0, 110.0),
+    ];
+    for i in 0..4 {
+        d.push(
+            "0",
+            pen,
+            drift_draft::page::Prim::Line(corners[i], corners[(i + 1) % 4]),
+        );
+    }
+    let bytes = drift_io::pdf::write(&[d], "Plan");
+    h.state_mut().begin_import("plan.pdf", bytes, None, 0.0);
+    h.run();
+    shot("import-dialog.png", &mut h);
 }

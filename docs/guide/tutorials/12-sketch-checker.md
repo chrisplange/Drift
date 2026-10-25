@@ -16,7 +16,7 @@ over from an edit. These are common in imported DXF files.
 ## 1. Open the checker
 
 Choose **Edit → Check sketch…** (or find "Check sketch" in the command palette, Ctrl+K). The
-DXF import report has a **Check sketch…** button too.
+import report has a **Check sketch…** button too.
 
 The window lists every issue it finds, and each is ringed on the canvas while the window is
 open:
@@ -32,7 +32,9 @@ locked geometry are left out.
 ## 2. Set the tolerance
 
 **Gaps up to** sets how far apart ends can be and still count as meant to meet. It's
-0.5 mm to start with, and Drift remembers what you set. Ends further apart are left alone.
+0.5 mm in a new drawing and is saved with the drawing. Ends further apart are left alone.
+It's also under **Check sketch** in **File → Drawing settings…**, where **Use these area and
+fill rules for new drawings** makes it the default for new drawings.
 
 ## 3. Fix
 
@@ -51,7 +53,8 @@ It doesn't extend lines that stop well short of where they should meet. Use **Ex
 or **Trim** (T) for those.
 
 Separately, the status bar warns when curves lie on top of each other (the same line drawn
-twice, for example). Click the **N overlapping** pill to pick the ones on top; Delete then
+twice, for example). Click the **N overlapping** pill (or run **Select overlapping curves** from the command
+palette) to pick the ones on top; Delete then
 removes them and leaves those underneath.
 
 ## What you learned

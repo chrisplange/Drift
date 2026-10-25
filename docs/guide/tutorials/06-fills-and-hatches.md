@@ -86,16 +86,19 @@ or by its whole outline (a group of it, say):
   printed (it shows dashed only while picked or hovered), but it still bounds the fill,
   snaps and keeps its relations.
 - **Fill:** **None**, **Solid** or **Hatch**. For a solid fill: **Colour** and **Opacity**.
-  For a hatch: **Pattern**, **Scale**, **Angle**, **Size** (**Drafting** or **Model**), the
+  For a hatch: **Pattern**, **Scale**, **Angle** (for one picked hatch, under **Pattern
+  alignment** below), **Size** (**Drafting** or **Model**), the
   **Lines** colour and **Weight**, and a **Background** colour. **None** removes the fill
   and leaves the shape, picked by its outline.
 - **Layer** (the outline and the fill move together), **Arrange** (see
   [What draws over what](#what-draws-over-what)), **Area** and **Perimeter**, and
   **Delete** (the whole shape).
 
+![A filled rectangle picked as one shape: Stroke set to None, a solid Fill](../images/shape-stroke-fill.png)
+
 A fill of an area among several shapes' lines (a room among walls, say) is a fill of its
 own: its **Inspector** shows its **Style** (as **Fill** above, without **None**), **Layer**,
-**Arrange**, and **Area**, **Perimeter** and **Centroid**.
+**Arrange**, **Area**, **Perimeter** and **Centroid**, and **Delete**.
 
 When the picked curves include whole filled shapes and more (a group of a shape and other
 lines), the curves' **Inspector** has a **Fill** section for those shapes too.
@@ -121,7 +124,8 @@ box's handles; the pattern still starts where the origin is.
 
 ![A picked hatched shape: the pattern's handles inside it, and Pattern alignment in the Inspector](../images/hatch-handles.png)
 
-The **Inspector**'s **Fill** section has **Pattern alignment** for a picked hatch:
+For one picked hatch, the **Inspector** has **Pattern alignment** (in **Fill** for a shape,
+in **Style** for the hatch of an area among several shapes' lines):
 
 - **Origin**: type X and Y (units, variables and expressions work, as in any field), or
   click a corner or the centre of the small square below them.
@@ -132,10 +136,12 @@ The **Inspector**'s **Fill** section has **Pattern alignment** for a picked hatc
 
 To work on the pattern alone, **Alt-click** or **double-click** inside the shape: that picks
 its fill without its outline, so the transform box is out of the way. In a group,
-double-click once to go into the group (the shape is picked), and again for its fill.
+double-click once to go into the group (the shape is picked), and again for its fill. (A
+single click inside a grouped shape picks the whole group, fills and all.)
 
 Moving or turning a shape carries its pattern with it, so the pattern stays where it was on
-the shape. Each change is one undo step.
+the shape; stretching or mirroring it leaves the pattern where it is. Each change is one
+undo step.
 
 ## Patterns
 
@@ -153,8 +159,9 @@ areas** on the canvas. Pick it and the **Inspector** offers **Fit to its seed's 
 mark). A curve drawn across a fill never changes its area. When an edit cuts the outline
 itself (a side split where another line crosses it, say), the fill is kept whole and marked
 the same way; to have it take the area where it was first clicked instead, choose **Follow
-its seed** in **File → Drawing settings… → Closed areas and fills → When an edit divides a filled
-area** (saved with the drawing).
+where it was first clicked** under **When an edit divides a filled area** in **File →
+Drawing settings… → Closed areas and fills** (the default is **Keep whole and flag**; saved
+with the drawing).
 
 Hatches are clipped exactly to their boundary and stay crisp at any zoom. A hatch too dense
 to see at the current zoom is drawn as a tint.
@@ -167,8 +174,8 @@ reorder). On a layer, each new fill goes over the ones before it, and lines that
 fill stay on top.
 
 To change the order on a layer, pick fills or shapes (click inside a fill, or on any line
-of its outline: the shape moves as one) and choose **Arrange** in the right-click menu or
-the **Inspector**:
+of its outline: the shape moves as one) and choose **Arrange** in the right-click menu, **Modify →
+Arrange**, or the **Inspector** (**To front**, **Forward**, **Backward**, **To back**):
 
 | Command | Shortcut | Moves it |
 |---|---|---|

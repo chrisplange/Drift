@@ -13,36 +13,52 @@ order. So:
 Everything the drawing needs travels inside the file: layers, views, sheets, blocks, fills,
 imported hatch patterns, underlays, title-block logos, and the fonts the drawing uses
 (where the font's licence allows embedding, and under 12 MB). A font that can't be kept is
-used from the computer it's on, and Drift says so.
-
-Snapshots aren't saved in the file.
+used from the computer it's on, and Drift says so. The drawing's options (see
+[Options](../tutorials/03-parameters.md#4-save-options)) are saved in it too.
 
 ## Versions
 
-The file records a format version. This build writes version 41, which keeps the
-drawing's options (see [Options](../tutorials/03-parameters.md#4-save-options)), whole-sketch ones
+The file records a format `version` (this build writes 42) and a `reader`: the oldest
+version of Drift that can read it. Drift opens a file when its `reader` (in a file from
+before version 42, its `version`) isn't above its own version. Otherwise it says the file is
+newer than it supports and leaves it untouched.
+
+From version 42 on, new features don't raise `reader`, so a file from a newer Drift usually
+opens. What this build doesn't know is kept, and written back when you save. If an edit
+means some of it would be lost (you deleted the thing it belonged to, say), saving first
+asks **Save NAME?** with **Cancel** or **Save anyway**. To keep the original as it was, use
+**Save As**.
+
+Version 42 added `reader`. Version 41 keeps the drawing's options, whole-sketch ones
 included; version 40 added where lines and pictures stack among a layer's fills (see
 [What draws over what](../tutorials/06-fills-and-hatches.md#what-draws-over-what)),
 version 39 added the drawing's own rules for closed areas and fills (see
 [Drawing settings](preferences.md#closed-areas-and-fills)), and version 38 shapes drawn as
-one (paths). An older version of Drift can't open a version 41 file. A file from before version 41 opens with its variants as options of values. A file from before version 39 opens with the rules new drawings start with. A file from before version 27, when views came to belong to the
-drawing and sheets to place them, opens with each of its sheets' views made a view of its
-own.
+one (paths). A file from before version 41 opens with its variants as options of values. A
+file from before version 39 opens with the rules new drawings start with. A file from
+before version 27, when views came to belong to the drawing and sheets to place them, opens
+with each of its sheets' views made a view of its own.
 
 - **Older files always open** in newer builds. They're upgraded as they load.
-- **Newer files don't open in older builds.** The older build says the file's version is
-  newer than it supports. During the beta the format changes often, so everyone sharing
-  files should use the same build.
+- **Newer files open** from version 42 on, unless the newer Drift made a breaking change
+  (and raised `reader`). Builds before 42 refuse any file newer than their own version, so
+  a version 42 file doesn't open in them.
 
 Check your build in **Help → About Drift**.
 
 ## Session and autosave
 
 Drift keeps your session (the open sketch, whether or not it's saved) and restores it on the
-next start: every few seconds, and when you quit. In the browser it's kept in the browser's
+next start: every ten seconds, and when you quit. In the browser it's kept in the browser's
 storage for the site.
 
 This is a safety net. Save your work to a file as well.
+
+If the last session can't be opened (it was kept by a newer Drift that this one can't read,
+or it is damaged), Drift first keeps it as `recovered-<date>-<time>.drift` in its data
+folder (`%LOCALAPPDATA%\Drift` on Windows, `~/Library/Application Support/Drift` on macOS)
+and says so in a **Last session not restored** window, with **Show the file**. Open that
+file with the Drift that saved it. A new drawing is started meanwhile.
 
 When you close Drift, start a new sketch or open another with unsaved changes, Drift asks:
 **Save**, **Don't save** or **Cancel**. **Don't save** when quitting also clears the stored
@@ -70,16 +86,15 @@ session, so the next start is fresh.
 | Import | SVG, PDF, Illustrator (`.ai`) | As geometry or an underlay, at a drawing scale (found from its dimensions where it can be) or calibrated: **File → Import…**. See [Part 3](../tutorials/11-underlays-and-dxf.md#part-3-import-svg-pdf-and-illustrator-artwork). A PDF's vector drawing comes in as curves; a scanned PDF, which has none, comes in as its picture (an underlay). |
 | Import | `.pat` | Hatch patterns: **Parameters → Hatch patterns → Import .pat…**. |
 | Import | `.ttf`, `.otf` | Fonts: **Add a font file…** in any font menu. |
-| Import | SVG | A title-block logo: **Sheets → Logo → Choose SVG…**. |
-| Export | PDF | Every sheet, true scale. |
+| Import | SVG | A title-block logo: pick bare paper on a sheet, then **Logo → Choose SVG…** in its **Inspector**. |
+| Export | PDF | Every sheet, true scale; with no sheets, the drawing fitted to A3. |
 | Export | SVG | The current sheet, true scale: a named group per layer (Inkscape layers; Illustrator groups, which **Release to Layers** turns into layers) and joined paths. |
 | Export | DXF (R12) | The model at full size, with layers, line types and blocks. |
 | Export | SVG, PDF (model) | The model, or the selection, at 1 : 1 on a page fitted to it with a 5 mm margin: no sheet, title block or border. A named group per layer and joined paths (SVG). Points, construction and hidden or non-printing layers are left out; **Dimensions and notes** includes them. **File → Export → Model as SVG… / Model as PDF…**. |
-
 | Export | Blender profiles (`.drift-profiles.json`) | The blocks marked as **Blender profile**, for the Drift Profiles add-on: **File → Export → Blender profiles…**. Saving writes them beside the drawing too. See below. |
 
 Exports never replace the `.drift` file: Ctrl+S always saves the sketch. See
-[Sheets and output](../tutorials/10-sheets-and-output.md#5-output).
+[Sheets and output](../tutorials/10-sheets-and-output.md#6-output).
 
 ## The Blender profiles file
 

@@ -33,8 +33,8 @@ The sheet is shown, with its settings in the **Inspector**. The next sheet you m
 The tabs over the canvas are the model and each sheet: click one to show it. On a sheet,
 scroll to zoom, drag with the middle or right button to pan, and press Shift+F to fit the
 sheet. The rail holds what you can do on paper: **Select**, **Add view** and **Back to
-model**. Esc, or the **Model** tab, returns to the model; picking a drawing tool (from a
-menu or the command palette) takes you back to the model with it.
+model**. Esc, or the **Model** tab, returns to the model; picking a drawing tool (from the
+**Draw**, **Modify** or **Annotate** menu, or the command palette) takes you back to the model with it.
 
 Sheets are in the order of their tabs, which is the order they print in. To change it,
 drag a tab (or a row of the **Sheets** list) to where it should go. Right-click a tab or
@@ -54,8 +54,9 @@ Click bare paper on the sheet (or its title block) and the **Inspector** shows t
 - **Sheet:** its **Number** (A-101), **Name** and **Status** (what it's issued for: type
   one, or pick **For review**, **For permit**, **For construction** and so on from the menu
   beside it). Its tab and the Sheets list show the number and name.
-- **Paper:** **Size** (A4 to A0, ANSI A to E) and **Landscape** or **Portrait**.
-- **Colours:** how the sheet prints (see [Colour, greyscale or black & white](#colour-greyscale-or-black--white)).
+- **Paper:** **Size** (A4 to A0, ANSI A to E), **Landscape** or **Portrait**, and
+  **Colour**, **Greyscale** or **Black & white** (see
+  [Colour, greyscale or black & white](#colour-greyscale-or-black--white)).
 - **Title block:** **Modern**, **ISO 7200**, **ASME Y14.1**, **Border only** (the ISO
   border and centring marks, no title block) or **None** (blank paper: nothing printed,
   for boards and sheets placed into a layout program; the drawing area is the paper less a
@@ -63,6 +64,9 @@ Click bare paper on the sheet (or its title block) and the **Inspector** shows t
   **Border only**, so they print as before. Then the fields:
   title, drawn by, checked, company, material and date (**Today** fills it in). The scale,
   the sheet number ("1 / 2") and the revision fill themselves in.
+- **Logo:** **Choose SVG…** puts a logo in the title block. It's kept in the drawing.
+- **Revisions:** **Add revision** adds a row with the next letter, today's date and the
+  author. The latest revision shows in the title block.
 - **Project settings…:** what every sheet shares (see below).
 
 ### The project
@@ -83,14 +87,11 @@ Left empty, the field shows the project's in grey ("· from project").
 
 A drawing from an earlier version of Drift, with the same title (or company) on every
 sheet, opens with it as the project's.
-- **Logo:** **Choose SVG…** puts a logo in the title block. It's kept in the drawing.
-- **Revisions:** **Add revision** adds a row with the next letter, today's date and the
-  author. The latest revision shows in the title block.
 
 ## 3. Draw a view on the canvas
 
 1. Click the **Model** tab (or press Esc) to go back to the model.
-2. Pick the **View** tool (under **Annotate** in the toolbar).
+2. Pick the **View** tool (**Annotate → View**, or under **Annotate** in the toolbar).
 3. Drag a rectangle round the bore, or click two opposite corners.
 
 The new view is called **View 2**, at the scale of the last view made. Its crop shows as a
@@ -213,7 +214,7 @@ to the new paper.
 
 ## 6. Output
 
-From the **Sheets** panel's **Output** section, or **File → Export**:
+From the **Sheets** panel's **Output** section, or **File → Export** (and **File → Print…**):
 
 | Output | What you get |
 |---|---|
@@ -269,12 +270,20 @@ What goes on paper:
   sheets, or of views they aren't in (their **In views**; see
   [Annotation](09-annotation.md)).
 - Drafting hatch patterns are sized for the sheet's scale.
+- What draws over what is as on the canvas: layers in their order, and on each layer its
+  fills and shapes in their **Arrange** order (see
+  [Fills and hatches](06-fills-and-hatches.md)). Text and block copies go on top of their
+  layer.
+- Curves whose stroke is **None** are left out; their fills print.
+- Underlays, and the pictures that came in with them, are left out.
 
 About DXF:
 
 - It's written as DXF R12, which every CAD program reads. Ellipses and pen curves go out
   exactly, as ELLIPSE and SPLINE entities. Those are newer than R12: most programs read
   them, but a strict R12 reader may skip them.
+- R12 has no draw order of its own: Drift writes everything in its stacking order, so a
+  program that draws in file order shows it as Drift does.
 - Blocks go out as blocks (BLOCK and INSERT). Dimensions and notes go out as plain lines and
   text on a layer called **ANNOTATIONS**, so they no longer measure. Fills go out as solid
   triangles.

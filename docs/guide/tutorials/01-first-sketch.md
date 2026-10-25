@@ -14,8 +14,8 @@ Start a new sketch (Ctrl+N, or **New sketch** on the start panel). Check that
 **Auto relations** is on: its switch in the status bar at the bottom (a corner with a square
 mark) is highlighted. It is by default; Shift+Alt+R turns it off and on.
 
-The sketch is in millimetres unless you've changed it. The status bar's units menu (it
-shows **mm**) switches units at any time without moving anything; see
+The sketch is in millimetres unless you chose **Imperial** on the start panel. The status
+bar's units menu (it shows **mm**) switches units at any time without moving anything; see
 [Units](../reference/units.md).
 
 ## Draw a line, locked to the X axis
@@ -122,8 +122,8 @@ Real points (end points, centres) win over these snaps, and they win over midpoi
 quadrants and points along a curve. Turn them off with **Perpendicular & tangent** in the
 status bar, next to the grid snap.
 
-**Angle snap**, in the status bar next to the grid snap, makes lines turn in steps: every
-1°, 5°, 15° or 45°.
+**Angle snap**, in the status bar beside **Perpendicular & tangent**, makes lines turn in
+steps: every 1°, 5°, 15° or 45° (it's also in **Edit → Preferences… → Drawing aids**).
 
 ### Place freely with Alt
 

@@ -144,7 +144,7 @@ away from your open drawings altogether, start it with `--no-link`. If it's star
 | `add_dimensions`, `set_dimension`, `set_variables`, `remove_constraints` | Driving (or reference) dimensions, with values such as `3600`, `"3.6 m"`, `"12'6\""` or expressions of variables like `"W/2"`. |
 | `move_point`, `transform`, `offset`, `trim_extend_split`, `fillet_chamfer`, `delete`, `set_construction` | Editing: move, rotate, scale, mirror, arrays, offset, trim, extend, split, fillets and chamfers. |
 | `layers`, `add_fill`, `add_text` | Layers, solid fills and hatches, and text. |
-| `import_file` | SVG, PDF, Illustrator or DXF, as geometry or as an underlay to trace, at a scale such as `"1:50"`. |
+| `import_file` | DWG, DXF, SVG, PDF or Illustrator, as geometry or as an underlay to trace, at a scale such as `"1:50"`. |
 | `render`, `analyze` | Checking: a picture of the drawing, and its degrees of freedom, conflicts, open ends and closed areas. |
 | `export` | PDF or SVG of the sheets, DXF of model space, or a PNG. |
 | `run_script` | A [Drift script](script.md): rooms, walls, doors, grids, arrays, relations and dimensions written by name, in one call. |
@@ -203,4 +203,8 @@ than giving coordinates. Ask it to render and analyse before it finishes.
   must show that key to connect, so only programs running as you can edit your drawing.
 - The server only edits the drawing it has open, and every change can be undone. Nothing is
   written to disk until the assistant saves or exports, and it only writes the files it is
-  asked to.
+  asked to (and, on saving, the drawing's Blender profiles file when it has profile
+  blocks).
+- A drawing from a newer Drift may hold things this version doesn't know. If saving would
+  lose some of them, `save_drawing` saves nothing and says so; the assistant should ask you
+  before it saves again with `anyway`.

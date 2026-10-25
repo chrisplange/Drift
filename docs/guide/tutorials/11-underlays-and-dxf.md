@@ -84,8 +84,9 @@ included.
    size, as CAD drawings usually are; set it for one drawn at paper size. Click **Import**.
 3. The drawing is added to the open sketch, in its own units (read from the file; a file
    that doesn't say is read in your display unit).
-4. A report window lists what came in, anything left out, and anything read with changes.
-   **Copy this report** copies it, and **Check sketch…** looks for gaps (see
+4. The status bar says what came in. If anything was left out, read with changes or lies
+   far off, a report window lists it: **Copy** copies the report, **Select them** picks
+   what lies far off, and **Check sketch…** looks for gaps (see
    [Checking a sketch](12-sketch-checker.md)).
 
 What comes in:
@@ -110,7 +111,7 @@ DWG files (AutoCAD R14 to 2018) come in the same way: choose **File → Import�
 damaged file is read as far as it can be, and the report says so. Drift doesn't save DWG:
 export DXF instead.
 
-Drift's DXF export is described in [Sheets and output](10-sheets-and-output.md#5-output).
+Drift's DXF export is described in [Sheets and output](10-sheets-and-output.md#6-output).
 
 ## Part 3: import SVG, PDF and Illustrator artwork
 
@@ -123,32 +124,36 @@ earlier aren't read.
 1. Choose **File → Import…** and pick an SVG, PDF or `.ai` file. Or drop one on the window
    and choose **Import into this drawing…**.
 2. In the import dialog, choose the options below.
-3. A report lists what came in and anything left out.
+3. The status bar says what came in; a report opens if anything was left out.
 
 ### The import dialog
 
+![The import dialog for a PDF: New drawing, Editable geometry or Underlay to trace, the scale it was drawn at, and Then calibrate](../images/import-dialog.png)
+
 The same dialog opens for every format. It has:
-   - **New drawing**, **Editable geometry** (in this drawing) or **Underlay to trace**.
-   - The **page** (an **artboard**, for an Illustrator file).
-   - **Drawn at**: the scale the drawing is at on its paper. At 1:50, 1 mm on the paper is
-     50 mm in the sketch. The dialog shows how big that makes it. Where it can, Drift
-     **suggests** a scale and sets it: it reads the drawing's dimensions (`28 1/2"`, `3'-6"`,
-     `3600`) and measures the lines they're written along, and, failing those, reads the
-     scales written on it (`SCALE: 1/4" = 1'-0"`). It says which it used, how many agreed, and
-     how confident it is, and names a second scale when some views look to be at one.
-     Architectural sheets often have views at several scales: check the suggestion is the
-     one for the view you want. A scale you've chosen is never replaced.
-   - **Then calibrate**, if you don't know the scale or want to check it. Once it's in,
-     click two points on it (a wall's ends, say) and type their real distance: the import
-     is scaled to fit, about the first point.
-   - **Bring in images as pictures**, for a PDF or Illustrator file with photos or scans in
-     it (on unless you turn it off): they come in as pictures on an underlay, placed over
-     the fills that came in with them and under their lines, so a picture on a filled
-     background shows. The underlay's **Pictures** setting in the **Layers** panel puts
-     them back beneath the drawing, or on another layer; **Arrange** moves them among that
-     layer's fills.
-   - What to do with **edges of shapes that are filled but not outlined**: construction
-     (they shape the fill and don't print, so it looks as it did) or lines (they print).
+
+- **New drawing**, **Editable geometry** (in this drawing) or **Underlay to trace**.
+- The **page** (an **artboard**, for an Illustrator file).
+- **Drawn at**: the scale the drawing is at on its paper. At 1:50, 1 mm on the paper is
+  50 mm in the sketch. The dialog shows how big that makes it. Where it can, Drift
+  **suggests** a scale and sets it: it reads the drawing's dimensions (`28 1/2"`, `3'-6"`,
+  `3600`) and measures the lines they're written along, and, failing those, reads the
+  scales written on it (`SCALE: 1/4" = 1'-0"`). It says which it used, how many agreed, and
+  how confident it is, and names a second scale when some views look to be at one.
+  Architectural sheets often have views at several scales: check the suggestion is the
+  one for the view you want. A scale you've chosen is never replaced.
+- **Then calibrate**, if you don't know the scale or want to check it. Once it's in,
+  click two points on it (a wall's ends, say) and type their real distance: the import
+  is scaled to fit, about the first point.
+- **Bring in images as pictures**, for a PDF or Illustrator file with photos or scans in
+  it (on unless you turn it off). As geometry or a new drawing, they come in as pictures
+  on an underlay, placed over the fills that came in with them and under their lines, so a
+  picture on a filled background shows. The underlay's **Pictures** setting in the
+  **Layers** panel puts them back beneath the drawing, or on another layer; **Arrange**
+  moves them among that layer's fills. As an underlay to trace, they stay with the
+  underlay, beneath the drawing.
+- What to do with **edges of shapes that are filled but not outlined**: construction
+  (they shape the fill and don't print, so it looks as it did) or lines (they print).
 
 Under **Before you import**, the dialog lists what won't come across as it looks
 (gradients, transparency, images left out, clipping it couldn't apply) and warns about a
@@ -163,13 +168,15 @@ A DWG or DXF has no pages and no suggested scale (it is usually full size, 1 : 1
 Drop a `.drift` file on Drift's window to open it. Drop a DWG, DXF, SVG, PDF or `.ai` file
 and Drift asks where it should go:
 
+![A PDF dropped on the window: Open as new drawing, or Import into this drawing…](../images/drop-dialog.png)
+
 - **Open as new drawing:** a new drawing of its own, with the file's contents as geometry.
   The import dialog follows, set to **New drawing**, for the page, the scale and
   calibrating. If the drawing open now has unsaved changes, Drift asks before it goes.
 - **Import into this drawing…:** the import dialog, set to **Editable geometry**; choose
   **Underlay to trace** there to trace over it instead.
 
-**File → Open…** takes the same files, as new drawings. A file that can't be read leaves
+**File → Open…** takes the same files, as new drawings, through the import dialog. A file that can't be read leaves
 the drawing open now as it is.
 
 What comes in:

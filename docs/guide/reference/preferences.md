@@ -84,7 +84,7 @@ says in the status bar what it just did.
 |---|---|---|
 | **Grid** | Ctrl+' | Yes |
 | **Origin axes** | | Yes |
-| **Snap to grid** (the arrow keys then nudge the selection one grid step) | Shift+G | Yes |
+| **Snap to grid** | Shift+G | Yes |
 | **Thin lines** (every line one pixel wide; never changes the output) | Shift+Alt+W | Yes |
 | **Constraint status colours** (off: each curve's own or its layer's colour) | Shift+C | Yes |
 | **Always show end points** (off: only on hovered or picked curves) | Shift+Alt+V | Yes |
@@ -93,7 +93,7 @@ says in the status bar what it just did.
 | **Relations** | Alt+R | No: shown again at each start |
 | **Curvature combs** | | Yes |
 | **View crops** | Shift+Alt+B | Yes |
-| **Free directions** (Parameters) | | Yes |
+| **Free directions** (Parameters) | | No: hidden again at each start |
 | **Option ghosts** (each option's eye, Parameters) | | No: hidden again at each start |
 
 While dimensions or relations are hidden, the status bar shows **Dims & notes off · Show**

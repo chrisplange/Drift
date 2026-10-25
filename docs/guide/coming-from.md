@@ -34,17 +34,18 @@ lines.
 | Object snaps | End, mid, centre, quadrant, nearest and the origin, always on; perpendicular and tangent while drawing lines (**Perpendicular & tangent** in the status bar). Hold Alt to place without snapping. Intersection isn't a snap yet. |
 | Object snap tracking | Inference lines: hover a point, move away, and a dashed guide shows when you're level with it or above it. |
 | Layers, ByLayer | The same model: colour, line weight and line type by layer unless set on the object. Layer **0** always exists. |
-| Blocks, INSERT, BEDIT, BASE, EXPLODE | **Make** block (then click its base point), **Place block** (I), double-click a copy to edit in place, **Set base point**, **Explode**. Blocks go to and from DXF. |
+| Blocks, INSERT, BEDIT, BASE, EXPLODE | **Make** block (then click its base point), **Place block** (I), double-click a copy to edit in place, **Set base point**, **Explode**. **Make block from group** and **Explode to group** turn groups and blocks into each other. Blocks go to and from DXF. |
 | BHATCH, pick points | **Fill / hatch** (H): click inside an area. Hatches are associative. `.pat` files import. |
 | Paper space layouts and viewports | Sheets and views. A DXF's layouts come in as sheets. |
 | MOVE, ROTATE with base point | G and R with the selection, B to pick the base point or pivot; type values. |
 | COPY | Shift+D, or Ctrl+C / Ctrl+V. |
 | PEDIT join / OVERKILL | **Edit → Check sketch…** joins gaps; the status bar finds overlapping curves. |
-| DWG | **File → Import…** reads DWG (R14 to 2018) as DXF is read. Drift doesn't save DWG: export DXF. |
+| DWG | **File → Import…** reads DWG (R14 to 2018) as DXF is read; **File → Open…** opens one as a new drawing. Drift doesn't save DWG: export DXF. |
 
 What's different: geometry in Drift can carry constraints. With **Auto relations** on, a
 line drawn nearly level becomes exactly horizontal and stays that way. Turn **Auto
-relations** off (top bar) to draw plain, unconstrained geometry, closer to AutoCAD.
+relations** off (its switch in the status bar, or Shift+Alt+R) to draw plain, unconstrained
+geometry, closer to AutoCAD.
 
 ## From SolidWorks
 
@@ -75,7 +76,8 @@ moving and rotating (G, R, X / Y, B), and Revit-style temporary dimensions.
 |---|---|
 | Pen tool | The pen (P) works the same: click for corners, drag for smooth points, Alt breaks a handle, click the first point to close, Enter or Esc ends an open path. Alt-click a point to make it smooth or a corner. |
 | Direct selection of anchors and handles | Handles show on picked or hovered curves; drag anchors and handles directly. |
-| Stroke weight and colour | The top bar's **Stroke** colour, weight and line type; **Fill** colour. |
+| Stroke weight and colour | The top bar's **Stroke** colour, weight and line type; **Fill** colour. A filled shape is one object in the **Inspector**, with a **Stroke** (or none) and a **Fill**. |
+| Arrange (bring to front, send backward) | **Modify → Arrange**: Ctrl+] and Ctrl+[ move a fill or shape one step, with Shift all the way. |
 | Artboards | Sheets, at real paper sizes and true scale. |
 | Align and distribute | Not yet. Use relations (horizontal, vertical, symmetric, equal) instead; they keep things aligned as you edit. |
 | Transform box | Corner and side handles scale and stretch; just outside a corner turns. Shift keeps the shape, Ctrl scales about the middle. |

@@ -9,7 +9,7 @@ you'll hide some annotations on the canvas or leave them off the sheets.
 Time: about 15 minutes.
 
 Open the example (**File → Open example**). The annotation tools are in the **Annotate**
-group of the tool palette.
+group of the tool palette, and in the **Annotate** menu.
 
 ## 1. A note with a leader
 
@@ -40,14 +40,14 @@ Click a leader's line to pick just that leader, and press Delete to remove it. T
 where it is. **Add leader** in the **Inspector** does the same as a **+**: click it, then
 click what the leader points to.
 
-The **Inspector** lists the note's leaders. For each:
+The **Inspector**'s **Leaders** section has a row for each leader, with:
 
-- **End:** **Arrow**, **Open arrow**, **Dot** or **None**.
-- **Shape:** **Straight**, **Bent** (through a bend you can drag), or **Curved** (drag its
-  middle to bow it).
-- **Shoulder:** a short level line into the text, as on Revit and SolidWorks notes; its
-  length is set on the canvas.
-- **×** removes it.
+- its end: **Arrow**, **Open arrow**, **Dot** or **None**;
+- its shape: **Straight**, **Bent** (through a bend you can drag), or **Curved** (drag its
+  middle to bow it);
+- a tick box for a shoulder: a short level line into the text, as on Revit and SolidWorks
+  notes (its length is set on the canvas);
+- **×** to remove it.
 
 ### The text
 
@@ -156,7 +156,7 @@ left off sheets rather than appearing everywhere.
 Shift+click picks several dimensions and notes to change at once. The right-click menu has
 **Hide on canvas** and **Leave off sheets** too.
 
-To bring hidden ones back, press Alt+H (or **View → Hidden annotations**, or click the
+To bring hidden ones back, press Alt+H (or **View → Hidden annotations (faded)**, or click the
 **3 hidden annotations** pill in the status bar). Hidden annotations then show faded, so you can pick
 them and switch them back on. Alt+H again hides them.
 

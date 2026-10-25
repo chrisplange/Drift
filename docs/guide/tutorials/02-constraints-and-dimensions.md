@@ -140,7 +140,8 @@ yourself are never affected.
   **Diameter**, can be typed into. If a dimension drives that size, the dimension changes.
   If not, one is added (with **Auto relations** off, the size just changes).
 
-Alt+D hides or shows all dimensions; Alt+R does the same for relation symbols.
+Alt+D hides or shows all dimensions and notes; Alt+R does the same for relation symbols.
+While they're off, a chip in the status bar says so: click it to show them again.
 
 ## 4. Ask for one dimension too many
 

@@ -10,12 +10,12 @@ Esc cancels the step in progress; pressed again, it returns to **Select**.
 
 | Tool | Key | What it does |
 |---|---|---|
-| **Select** | S | Pick, drag and box-select. Its top bar shows the pick filters (toggles for **Points**, **Edges**, **Fills**, **Areas**, **Blocks**, **Text** and **Annotations**, which combine; Alt-click one for that kind alone; **All**) or, with something picked, the selection's layer, stroke, fill, **Construction**, **Actions** and **Delete**. G moves the selection, R rotates it. See [Editing](../tutorials/04-editing.md). |
+| **Select** | S | Pick, drag and box-select. Its top bar shows the pick filters (toggles for **Points**, **Edges**, **Fills**, **Areas**, **Blocks**, **Text** and **Annotations**, which combine; Alt-click or double-click one for that kind alone; **All**. **Blocks** is short for blocks and groups) or, with something picked, the selection's layer, stroke, fill, **Construction**, **Actions** and **Delete**. G moves the selection, R rotates it. See [Editing](../tutorials/04-editing.md). |
 
 ## Draw
 
-Every drawing tool's top bar starts with **Geometry** / **Construction** (Alt+C). Each
-takes typed values: the first point as X, Tab, Y; then the sizes listed below. Typed sizes
+The line, curve and shape tools' top bars start with **Geometry** / **Construction**
+(Alt+C). Each tool takes typed values: the first point as X, Tab, Y; then the sizes listed below. Typed sizes
 become dimensions when **Auto relations** is on.
 
 | Tool | Key | Steps | Typed values |
@@ -67,10 +67,17 @@ become dimensions when **Auto relations** is on.
 |---|---|---|
 | **Calibrate underlay** | **Layers** panel, **Calibrate…** | Two points on the underlay, then the real distance between them. |
 | **Move underlay** | **Layers** panel, **Move…** | A point on the underlay, then where it goes. |
+| **Base point** | **Blocks** panel, **Make** or **Set base point** | Click the block's base point; Enter keeps the centre. |
 
 ## Commands without a tool
 
-Some actions work on the selection instead of being tools: move (G), rotate (R), duplicate
-(Shift+D), group (Ctrl+G), make block, explode, linear and circular patterns (the
-**Inspector**'s **Pattern** section), clear relations and dimensions, and check sketch
-(**Edit → Check sketch…**). All are in the command palette (Ctrl+K).
+Some actions work on the selection instead of being tools: move (G), rotate (R), scale (the
+transform box's handles), duplicate (Shift+D), group (Ctrl+G), make block, explode, linear
+and circular patterns (the **Inspector**'s **Pattern** section), arrange (Ctrl+] and
+Ctrl+[), clear relations and dimensions, and check sketch (**Edit → Check sketch…**).
+
+Every tool and command is in the **Draw**, **Modify** and **Annotate** menus, with its key,
+and in the command palette (Ctrl+K). With the **Select** tool and nothing in progress, Enter
+or Space repeats the last one.
+
+![The Modify menu: the editing tools, Move, Rotate, Scale, the patterns, and Arrange](../images/menu-modify.png)

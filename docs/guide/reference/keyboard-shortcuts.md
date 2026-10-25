@@ -73,7 +73,7 @@ does the last command or tool again, as in AutoCAD.
 | L | **Line** | Draw connected lines; type a length, X / Y lock an axis |
 | P | **Pen** | Curves: click for corners, drag for smooth points (Alt breaks the handle) |
 | R | **Rectangle** | Two opposite corners, or type the width and height |
-| K | **Polygon** | Regular polygon: centre, then a corner. Tab types sides; X: around the circle |
+| K | **Polygon** | Regular polygon: centre, then a corner. Tab types sides; X: inscribed / circumscribed |
 | C | **Circle** | Centre, then a point on the circle (or type the diameter). C again switches through: circle, ellipse, partial ellipse |
 | A | **Arc** | Centre, start, end. Press A again for other arc types |
 | U | **Slot** | Straight, centre or arc slot (press U again to switch), then width |
@@ -177,7 +177,7 @@ With no key (use the Annotate menu or the command palette): **Ordinate**, **Call
 |---|---|
 | V | Add a view, by its region in the model |
 | Shift+F | Fit the sheet |
-| Delete | Take the picked view off the sheet (it stays in the drawing) |
+| Delete or Backspace | Take the picked view off the sheet (it stays in the drawing) |
 | Esc | Back to the model |
 
 <!-- END commands -->

@@ -69,7 +69,8 @@ room bath 2400 x D right of bed walls 200
 ```
 
 `W x D` is the inside size. `at` is where the inside lower-left corner goes, and `fixed`
-pins it there. `walls T` draws walls of thickness `T` outside the outline. Write
+pins it there. `walls T` (or `walls T outside`) draws walls of thickness `T` outside the
+outline. Write
 `walls T inside` for walls inside the outline, or `walls T centre` for walls centred on it
 (the outline is then drawn as a centre line).
 
@@ -81,7 +82,8 @@ other room's bottom (or left) side. The rooms should overlap along that wall.
 
 ```
 wall w1 from 0,0 to 8 m,0 thick 200            # centred on the line (the default)
-wall w2 from 0,0 to 0,6 m thick 200 left       # on the left of the line, as drawn
+wall w2 from 0,0 to 0,6 m thick 200 left       # left or right of the line, as drawn
+wall w3 from 8 m,0 to 8 m,6 m thick 200 length 6 m fixed   # length as a dimension; pinned
 door d1 900 in bed.south centred
 window w1 1200 in bed.north offset 600 from bed.nw
 opening o1 W/3 in w1.left offset 1 m from grid.B
@@ -101,6 +103,7 @@ grid cols A..E every 6 m length 30 m at 0,0 fixed
 grid rows 1..4 spacing 6 m, 7.5 m, 6 m length 24 m at 0,0
 circle col r 200 at 0,0 fixed
 array cols of col 5 x 6 m, 4 x 6 m        # 5 along x, 4 rows up
+array studs of col 4 x 1 m up             # 4 up the y axis
 array posts of col 4 by 1 m,0             # 4 in all, each moved by (1 m, 0)
 array ring of col 8 around 0,0 angle 180  # 8 spread over 180°
 ```
@@ -150,9 +153,9 @@ dim bed.north ref                          # shows the size; doesn't drive it
 ### Text, fills and hatches
 
 ```
-label bed "Bedroom 1"              # in the middle of the room
-text "N" at 0,12 m height 250 align centre
-hatch bed.walls ANSI31 scale 2     # every stretch of the room's walls
+label bed "Bedroom 1" height 250   # in the middle of the room
+text "N" at 0,12 m height 250 align centre angle 90
+hatch bed.walls ANSI31 scale 2 angle 45   # every stretch of the room's walls
 fill bed #f0f0f0 opacity 0.5
 ```
 

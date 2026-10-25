@@ -5,11 +5,11 @@ use drift_core::LayerId;
 
 use super::*;
 
-const LOCK: &str = "Lock or unlock (locked geometry can be snapped to but not edited) · \
+pub(super) const LOCK: &str = "Lock or unlock (locked geometry can be snapped to but not edited) · \
                     Alt-click: lock every other layer";
 const LOCK_BACK: &str = "Lock or unlock (locked geometry can be snapped to but not edited) · \
                          Alt-click: put the other layers' locks back";
-const SNAP: &str = "Snap to this layer's geometry (off: it can still be picked and edited) · \
+pub(super) const SNAP: &str = "Snap to this layer's geometry (off: it can still be picked and edited) · \
                     Alt-click: snap to this layer only";
 const SNAP_BACK: &str = "Snap to this layer's geometry (off: it can still be picked and \
                          edited) · Alt-click: put the other layers' snapping back";
@@ -25,7 +25,7 @@ fn toggle(h: &Harness<'_, DriftApp>, name: &str, tip: &str) -> Pos2 {
 }
 
 /// Alt-click the toggle labelled `tip` on the row of the layer named `name`.
-fn alt_toggle(h: &mut Harness<'_, DriftApp>, name: &str, tip: &str) {
+pub(super) fn alt_toggle(h: &mut Harness<'_, DriftApp>, name: &str, tip: &str) {
     let at = toggle(h, name, tip);
     alt_click(h, at);
 }

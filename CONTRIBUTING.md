@@ -22,6 +22,10 @@ cargo clippy --target wasm32-unknown-unknown -p drift-web
 cargo test --workspace
 ```
 
+`cargo test --workspace` includes the regression smoke suite, which can be run alone with
+`cargo test -p drift-app smoke_`. A regression found by hand gets a smoke test before its fix
+merges: see [docs/regression-checklist.md](docs/regression-checklist.md).
+
 If you add or update a dependency, also regenerate `THIRD-PARTY-NOTICES.txt` with
 `python scripts/notices.py` (it needs `cargo install cargo-about --locked --features cli`).
 CI checks that it matches `Cargo.lock`.

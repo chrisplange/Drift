@@ -124,7 +124,7 @@ fn drawing() -> Document {
 }
 
 /// Where each colour is first painted in a drawing read back from an export.
-fn first_painted(art: &drift_io::vector::Artwork, colours: &[Rgb]) -> Vec<usize> {
+pub(super) fn first_painted(art: &drift_io::vector::Artwork, colours: &[Rgb]) -> Vec<usize> {
     colours
         .iter()
         .map(|c| {

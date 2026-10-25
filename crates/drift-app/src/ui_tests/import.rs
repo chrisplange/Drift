@@ -5,7 +5,7 @@ use super::*;
 use crate::app::import_ui::ImportAs;
 
 /// A DXF drawing in millimetres: one line from the origin, `length` long along x.
-fn line_dxf(length: f64) -> String {
+pub(super) fn line_dxf(length: f64) -> String {
     format!(
         "0\nSECTION\n2\nHEADER\n9\n$INSUNITS\n70\n4\n0\nENDSEC\n\
          0\nSECTION\n2\nENTITIES\n0\nLINE\n8\n0\n10\n0\n20\n0\n11\n{length}\n21\n0\n\
@@ -14,11 +14,11 @@ fn line_dxf(length: f64) -> String {
 }
 
 /// An SVG page 100 × 100 mm with a 50 mm line across it.
-const LINE_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm"
+pub(super) const LINE_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm"
  viewBox="0 0 100 100"><path d="M10 50 L60 50" stroke="black" fill="none"/></svg>"#;
 
 /// A one-page PDF (200 × 200 pt) with a 2 × 2 RGB picture over its lower half and a line.
-fn pdf_with_picture() -> Vec<u8> {
+pub(super) fn pdf_with_picture() -> Vec<u8> {
     let content = b"q 200 0 0 100 0 0 cm /Im Do Q 1 w 10 150 m 190 150 l S";
     let objects: Vec<Vec<u8>> = vec![
         b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
@@ -89,7 +89,7 @@ impl eframe::egui::DroppedFile for Dropped {
 }
 
 /// Drop a file on the window.
-fn drop_file(h: &mut Harness<'_, DriftApp>, path: &std::path::Path) {
+pub(super) fn drop_file(h: &mut Harness<'_, DriftApp>, path: &std::path::Path) {
     h.input_mut()
         .dropped_files
         .push(std::sync::Arc::new(Dropped(path.to_owned())));
@@ -486,7 +486,7 @@ fn pdf_pictures_come_in_only_when_asked() {
 }
 
 /// A logo of two shapes, as Drawing settings → Logo takes it.
-const LOGO_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 20">
+pub(super) const LOGO_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 20">
   <path fill="#ff6600" d="M0 0h20v20h-20z"/>
   <rect x="26" y="6" width="34" height="8" fill="#111114"/>
 </svg>"##;

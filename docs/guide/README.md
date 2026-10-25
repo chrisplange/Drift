@@ -5,14 +5,15 @@ shape with relations (horizontal, tangent, equal…) and dimensions, as in a Sol
 Change a dimension and the drawing follows. The same drawing then goes onto sheets with a
 title block and out as PDF, SVG or DXF.
 
-It runs on Windows, macOS and Linux, and in the browser.
+It runs on Windows and macOS, and in the browser.
 
 This guide is for **0.1.0-beta.1.5**. It is written for architects, designers and engineers
 who already know a CAD or drawing program (Revit, AutoCAD, SolidWorks, Illustrator,
 Affinity) but have never used Drift.
 
-> **Beta software.** Save often. A file saved by a newer Drift won't open in an older one,
-> so everyone testing together should use the same build.
+> **Beta software.** Save often. A file saved by a newer Drift may not open in an older one
+> (see [Files and compatibility](reference/files.md#versions)), so everyone testing together
+> should use the same build.
 
 ## How the guide is organised
 
@@ -62,7 +63,8 @@ rest stand alone.
 
 - Names of buttons, menus and fields are in **bold**, as they appear in Drift.
 - Keys are written as Ctrl+K, Shift+F, Alt+C. On a Mac, use Cmd for Ctrl and Option for Alt.
-- Menu paths are written **File → Open example**.
+- Menu paths are written **File → Open example**. Every tool and command is also in the
+  command palette (Ctrl+K).
 
 ## Reporting problems
 

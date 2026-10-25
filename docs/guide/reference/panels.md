@@ -34,10 +34,10 @@ What's picked, and what you can do with it. Its contents depend on the selection
 | A dimension | **Driven (reference)**, its **Text** (**Prefix**, **Suffix**, chips, **Under line**, **Show instead**), **Tolerance**, and **Show** (**On the canvas**, **On sheets, in print and export**, and **In views** once the drawing has views). |
 | A note, callout or mark | Its text or label, leader, sheet and direction, and **Show**. |
 | A filled shape (its fill, or its whole outline) | One object: **Stroke** (**Line** or **None**; **Colour**, **Weight**, **Line type**), **Fill** (**None**, **Solid** or **Hatch**, and the style; a hatch's **Pattern alignment**: origin, angle, **Align to edge…**, **Reset**), **Layer**, **Arrange**, **Area** and **Perimeter**, and **Delete**. See [Fills and hatches](../tutorials/06-fills-and-hatches.md#4-edit-a-fill). |
-| An area fill or hatch | Its **Style** (a hatch's with **Pattern alignment**), **Layer**, **Arrange** and **Area**. |
+| An area fill or hatch | Its **Style** (a hatch's with **Pattern alignment**), **Layer**, **Arrange**, **Area**, **Perimeter** and **Centroid**, and **Delete**. |
 | A text | Its words, **Height**, **Angle**, **Font**, **Align**, **Spacing** and **Wrap**, and **Convert to curves**. |
 | Several things, with text or annotations among them | How many of each ("4 lines · 1 dimension · 1 note · 1 text"), and **Show** for the dimensions and annotations. Delete, Move, Rotate, Mirror and Copy act on all of it. |
-| A block copy | Laid out as a group: the block's **Name**, its **Definition** (another block to put in its place, and how many copies), **Edit in place**, **Explode** and **Explode to group**; then **Set base point**, **Select all copies**, **Blender profile**, **Placement** and **Layer**. **Blender profile** writes the block to the drawing's profiles file on save (see [Profiles in Blender](../tutorials/13-profiles-in-blender.md)). |
+| A block copy | Laid out as a group: the block's **Name**, its **Definition** (another block to put in its place, and how many copies), **Edit in place**, **Explode** and **Explode to group**; then **Blender profile**, **Placement**, **Layer**, **Set base point**, **Select all copies** and **Delete**. **Blender profile** writes the block to the drawing's profiles file on save (see [Profiles in Blender](../tutorials/13-profiles-in-blender.md)). |
 | A group | Its **Name**, **Members**, **Edit in place**, **Ungroup** and **Make block** (a block named after it, with its fills). A group is one thing; a block is a thing you reuse (see [Groups and blocks](../tutorials/07-blocks.md#groups-and-blocks)). |
 | A closed area (with area picking on) | **Area**, **Perimeter**, **Centroid** and **Holes**, and **Fill** / **Hatch** buttons. |
 
@@ -85,10 +85,10 @@ Ctrl+L shows or hides it.
 - Click a row's arrow (**Colours and line settings**) to open it: **Stroke** colour
   (**Auto** is black or white to suit the theme), **Fill** colour (**Same as stroke** by
   default), **Line** weight and type, **Output** (**Printed and exported**), **Select all**,
-  **Move here** and **Delete** (its geometry moves to layer 0).
-- Right-click a row to select its curves or move the selection there.
-- **+ New layer** adds a layer and makes it current. **Move selection here** moves what's
-  picked to the current layer.
+  **Move selection here** and **Delete** (its geometry moves to layer 0).
+- Right-click a row to make it current, rename it, isolate it, select its curves, move the
+  selection there, show all layers, or delete it.
+- **New layer** adds a layer, makes it current and lets you type its name.
 - Layer **0** always exists and can't be deleted.
 
 Hidden layers aren't drawn, picked or snapped to, but their geometry still solves. A

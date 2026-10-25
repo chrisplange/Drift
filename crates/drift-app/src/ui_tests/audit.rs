@@ -194,8 +194,12 @@ fn menus(dark: bool) {
     let mut h = themed(dark);
     open_example(&mut h);
     h.state_mut().status = None;
-    for menu in ["File", "Edit", "View", "Help"] {
-        h.get_by_label(menu).click();
+    for menu in ["File", "Edit", "View", "Draw", "Modify", "Annotate", "Help"] {
+        // The menu bar's, not the View tool or the Draw heading of the same name.
+        h.query_all_by_label(menu)
+            .min_by(|a, b| a.rect().top().total_cmp(&b.rect().top()))
+            .unwrap()
+            .click();
         h.run();
         shot(dark, &format!("30-menu-{}", menu.to_lowercase()), &mut h);
         h.key_press(Key::Escape);

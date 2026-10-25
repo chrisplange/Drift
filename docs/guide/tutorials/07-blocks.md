@@ -62,7 +62,7 @@ blocks that have none (Ctrl+Z brings them back).
 ### Base points
 
 Each block is named "Family – Type", and every type of a family has the same base point,
-so replacing a copy with another size (**Block** in the **Inspector**) keeps it in place:
+so replacing a copy with another size (**Definition** in the **Inspector**) keeps it in place:
 
 | Blocks | Base point |
 |---|---|
@@ -87,10 +87,15 @@ The **Inspector** shows the copy, laid out as it shows a group:
   the block has.
 - **Edit in place**, **Explode** (turn the copy back into ordinary, connected geometry) and
   **Explode to group** (the same, as a group named after the block).
-- **Set base point**, **Select all copies** and **Blender profile**.
+- **Blender profile** (see [Profiles in Blender](13-profiles-in-blender.md)).
 - **Placement:** **X**, **Y**, **Angle** (with 0, 90, 180 and 270 buttons), **Scale** and
   **Mirror**.
 - **Layer.**
+- **Set base point**, **Select all copies** and **Delete**.
+
+A click picks a copy while the top bar's **Blocks** pick filter is on (see
+[Pick filters](04-editing.md#pick-filters)). Turn it off and a click picks a line inside a
+copy instead.
 
 Tools snap to copies: to the corners, side middles and centre of each copy's box, its
 insertion point, and the ends, middles and centres of its own curves.

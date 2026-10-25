@@ -48,8 +48,8 @@ the picked geometry is what moves. The distance to the top wall updates.
 It's one undo step, and nothing is left holding the wall at 120. If the wall's own
 relations hold it in place, Drift says so and nothing moves.
 
-Typing the line's length changes its length; for a circle or arc, its size. The far end
-stays put.
+Typing the line's length changes its length: its end moves and its start stays put. For a
+circle or arc, it changes the size.
 
 ## 4. Keep it as a dimension
 

@@ -92,7 +92,7 @@ later never changes a value.
 
 To keep an eye on a distance, length or angle that isn't dimensioned, pick the geometry,
 open **Pin measurement** in the **Inspector**, and pin it. Pinned measurements are listed
-with live values at the bottom of the **Parameters** panel, and update as you edit.
+with live values under **Pinned measurements** in the **Parameters** panel, and update as you edit.
 **Unpin** removes one.
 
 ## What you learned

@@ -1599,7 +1599,7 @@ pub(crate) const OTHER_KEYS: &[(&str, &[(&str, &str)])] = &[
             ("V", "Add a view, by its region in the model"),
             ("Shift+F", "Fit the sheet"),
             (
-                "Delete",
+                "Delete or Backspace",
                 "Take the picked view off the sheet (it stays in the drawing)",
             ),
             ("Esc", "Back to the model"),

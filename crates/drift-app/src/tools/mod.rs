@@ -366,7 +366,7 @@ impl ToolKind {
             }
             ToolKind::Rectangle => "Two opposite corners, or type the width and height",
             ToolKind::Polygon => {
-                "Regular polygon: centre, then a corner. Tab types sides; X: around the circle"
+                "Regular polygon: centre, then a corner. Tab types sides; X: inscribed / circumscribed"
             }
             ToolKind::Slot => "Straight, centre or arc slot (press U again to switch), then width",
             ToolKind::Circle => "Centre, then a point on the circle (or type the diameter)",

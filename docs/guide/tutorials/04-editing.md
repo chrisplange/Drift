@@ -41,7 +41,7 @@ AutoCAD, Rhino or Vectorworks:
 | **Points** | End points, centres and standalone points. With **Edges** off, a box takes every point inside it. |
 | **Edges** | Lines, arcs, circles, ellipses and curves (and the relation symbols on them). |
 | **Fills** | Solid fills and hatches. With **Edges** off, a click inside a shape picks its fill without its outline. |
-| **Areas** | Empty closed areas (to measure or fill them). |
+| **Areas** | Empty closed areas (to measure or fill them), when **Pick an area only where it is filled or hatched** is off in **File → Drawing settings…**. |
 | **Blocks** | Copies of blocks, and groups as a whole. Off, a click on a grouped line picks just that line. |
 | **Text** | Sketch text. |
 | **Annotations** | Dimensions, notes, callouts, centre marks, ordinates, and section and elevation marks. |
@@ -50,6 +50,8 @@ AutoCAD, Rhino or Vectorworks:
 - **All** turns every toggle back on.
 - While a filter is on, the **Select** tool in the toolbar has an orange dot; hover over it
   to see what is picked.
+
+![Select picking edges only: a box takes just the curves inside it, and the Select tool shows the orange dot](../images/pick-filters.png)
 
 The filter applies to clicks, boxes, hover and Select all (Ctrl+A). It isn't saved with the
 drawing. The command palette has each one too (Ctrl+K, "Select fills only", "Select
@@ -228,7 +230,8 @@ sharp corner back, right-click it and choose **Remove fillet** or **Remove chamf
 
 ## Patterns
 
-Pick geometry, then open **Pattern** in the **Inspector**:
+Pick geometry, then open **Pattern** in the **Inspector** (or choose **Modify → Linear
+pattern…** or **Circular pattern…**):
 
 - **Linear:** a **Count** and a spacing (**Spacing X**, **Y**), then **Make linear pattern**.
 - **Circular:** a **Count**, an **Angle** and a centre (**Centre X**, **Y**), then
@@ -260,7 +263,7 @@ Copies keep the relations within the selection. The fields take expressions.
   R again rotates by reference.
 - The transform box scales and stretches; Alt scales the dimensions with it.
 - T, E, F, O and M trim, extend, fillet, offset and mirror; Split and patterns are in the
-  palette and **Inspector**.
+  **Modify** menu, the palette and the **Inspector**.
 
 ## Next
 

@@ -6,7 +6,8 @@ values are shown and how bare numbers you type are read.
 
 Change units with the status bar's units menu (it shows **mm**, **in**, **ft-in** and so on),
 or in **File → Drawing settings… → Units**. New drawings start in
-millimetres.
+millimetres; the start panel's **Metric** / **Imperial** switch starts one in feet and inches
+instead.
 
 ## Length formats
 

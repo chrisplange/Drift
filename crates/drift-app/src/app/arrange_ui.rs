@@ -4,15 +4,11 @@ use crate::stack::Arrange;
 use crate::*;
 
 impl DriftApp {
-    /// The shortcut an Arrange command has, as drawing programs have it: Ctrl+] and Ctrl+[
-    /// one step, with Shift all the way.
+    /// The shortcut an Arrange command has (from the command registry), as drawing programs
+    /// have it: Ctrl+] and Ctrl+[ one step, with Shift all the way.
     pub(crate) fn arrange_keys(how: Arrange) -> String {
-        match how {
-            Arrange::ToFront => app::panels::shortcut("]", true),
-            Arrange::Forward => app::panels::shortcut("]", false),
-            Arrange::Backward => app::panels::shortcut("[", false),
-            Arrange::ToBack => app::panels::shortcut("[", true),
-        }
+        crate::commands::spec(app::palette::Command::Arrange(how))
+            .map_or_else(String::new, |s| s.key_text(cfg!(target_os = "macos")))
     }
 
     /// Move the picked fills and shapes in their layers' stacks, or say why nothing moved.
@@ -30,17 +26,9 @@ impl DriftApp {
     }
 
     /// The canvas menu's Arrange submenu.
-    pub(crate) fn arrange_menu(&mut self, ui: &mut egui::Ui, now: f64) {
+    pub(crate) fn arrange_menu(&mut self, ui: &mut egui::Ui) {
         ui.menu_button("Arrange", |ui| {
-            for how in Arrange::ALL {
-                if ui
-                    .add(egui::Button::new(how.label()).shortcut_text(Self::arrange_keys(how)))
-                    .clicked()
-                {
-                    ui.close();
-                    self.arrange(how, now);
-                }
-            }
+            self.category_menu(ui, crate::commands::Category::Arrange, &[]);
         });
     }
 

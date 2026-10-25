@@ -85,7 +85,7 @@ says in the status bar what it just did.
 | **Grid** | Ctrl+' | Yes |
 | **Origin axes** | | Yes |
 | **Snap to grid** (the arrow keys then nudge the selection one grid step) | Shift+G | Yes |
-| **Thin lines** (every line one pixel wide; never changes the output) | W | Yes |
+| **Thin lines** (every line one pixel wide; never changes the output) | Shift+Alt+W | Yes |
 | **Constraint status colours** (off: each curve's own or its layer's colour) | Shift+C | Yes |
 | **Always show end points** (off: only on hovered or picked curves) | Shift+Alt+V | Yes |
 | **Dimensions and notes** | Alt+D | No: shown again at each start |

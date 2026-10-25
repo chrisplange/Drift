@@ -1,148 +1,12 @@
 //! The command palette (Ctrl/⌘+K): type a few letters of any tool, view setting, panel or
-//! command and press Return. Arrow keys move, Esc closes; recent commands come first.
+//! command and press Return. Arrow keys move, Esc closes; recent commands come first. The
+//! entries are the command registry's ([`crate::commands`]), plus the drawing's options.
 
+use crate::commands::{self, Icon, Spec, registry};
+pub(crate) use crate::commands::{Command, ViewFlag};
 use crate::dock::Panel;
 use crate::icons::{self, Glyph};
 use crate::*;
-
-/// Something the palette can do.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Command {
-    Tool(ToolKind),
-    Arrange(crate::stack::Arrange),
-    Toggle(ViewFlag),
-    Panel(Panel),
-    HideAllPanels,
-    ResetPanels,
-    New,
-    Open,
-    OpenExample,
-    Save,
-    SaveAs,
-    Import,
-    ExportPdf,
-    ExportSvg,
-    ExportDxf,
-    ExportProfiles,
-    ExportModelSvg,
-    ExportModelPdf,
-    Print,
-    Undo,
-    Redo,
-    SelectAll,
-    SelectOverlapping,
-    CheckSketch,
-    HideAnnotations,
-    AnnotationsOffSheets,
-    AlignDimensions,
-    SpaceDimensions,
-    ClearRelations,
-    ClearDimensions,
-    PickFilter(crate::editor::PickFilter),
-    Cut,
-    Copy,
-    Paste,
-    PasteInPlace,
-    Delete,
-    Duplicate,
-    Group,
-    Rename,
-    Ungroup,
-    MakeBlock,
-    Explode,
-    BlockFromGroup,
-    ExplodeToGroup,
-    /// Save the drawing as a new option: the whole sketch, or the values only.
-    SaveOption(bool),
-    ApplyOption(drift_core::VariantId),
-    /// Show or hide an option's ghost.
-    GhostOption(drift_core::VariantId),
-    Construction,
-    ZoomToFit,
-    ZoomToSelection,
-    ZoomLifeSize,
-    SheetPreview,
-    Shortcuts,
-    Preferences,
-    DrawingSettings,
-    About,
-    UserGuide,
-    ReportProblem,
-    Theme(egui::ThemePreference),
-}
-
-/// On/off view settings.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ViewFlag {
-    Grid,
-    Axes,
-    Snap,
-    PerpTangent,
-    Thin,
-    Status,
-    Endpoints,
-    Dimensions,
-    Relations,
-    Hidden,
-    Free,
-    Combs,
-    Crops,
-    AutoRelations,
-}
-
-impl ViewFlag {
-    const ALL: [ViewFlag; 14] = [
-        ViewFlag::Grid,
-        ViewFlag::Axes,
-        ViewFlag::Snap,
-        ViewFlag::PerpTangent,
-        ViewFlag::Thin,
-        ViewFlag::Status,
-        ViewFlag::Endpoints,
-        ViewFlag::Dimensions,
-        ViewFlag::Relations,
-        ViewFlag::Hidden,
-        ViewFlag::Free,
-        ViewFlag::Combs,
-        ViewFlag::Crops,
-        ViewFlag::AutoRelations,
-    ];
-
-    fn label(self) -> &'static str {
-        match self {
-            ViewFlag::Grid => "Grid",
-            ViewFlag::Axes => "Origin axes",
-            ViewFlag::Snap => "Snap to grid",
-            ViewFlag::PerpTangent => "Perpendicular and tangent snaps",
-            ViewFlag::Thin => "Thin lines",
-            ViewFlag::Status => "Constraint status colours",
-            ViewFlag::Endpoints => "Always show end points",
-            ViewFlag::Dimensions => "Dimensions and notes",
-            ViewFlag::Relations => "Relations",
-            ViewFlag::Hidden => "Hidden annotations (faded)",
-            ViewFlag::Free => "Free directions",
-            ViewFlag::Combs => "Curvature combs",
-            ViewFlag::Crops => "View crops",
-            ViewFlag::AutoRelations => "Automatic relations",
-        }
-    }
-
-    fn keys(self) -> String {
-        match self {
-            ViewFlag::Grid => app::panels::shortcut("'", false),
-            ViewFlag::Snap => "Shift+G".into(),
-            ViewFlag::Thin => "W".into(),
-            ViewFlag::Status => "Shift+C".into(),
-            ViewFlag::Dimensions => "Alt+D".into(),
-            ViewFlag::Relations => "Alt+R".into(),
-            ViewFlag::Hidden => "Alt+H".into(),
-            ViewFlag::AutoRelations => "Shift+Alt+R".into(),
-            ViewFlag::Endpoints => "Shift+Alt+V".into(),
-            ViewFlag::Crops => "Shift+Alt+B".into(),
-            _ => String::new(),
-        }
-    }
-}
 
 /// The palette's state while open.
 #[derive(Default)]
@@ -155,48 +19,18 @@ pub(crate) struct Palette {
 }
 
 /// A row in the list.
-struct Entry {
-    command: Command,
-    title: String,
+pub(crate) struct Entry {
+    pub(crate) command: Command,
+    pub(crate) title: String,
     group: &'static str,
     keys: String,
-    /// Extra words to match (a tool's description).
-    words: &'static str,
+    /// The registry's entry (`None` for an option of the drawing).
+    spec: Option<&'static Spec>,
+    /// Whether it can run now; if not, why.
+    enabled: bool,
+    reason: &'static str,
     /// For toggles: whether it's on.
     on: Option<bool>,
-}
-
-/// How well `query` matches `text`: whole-word and prefix matches first, then substrings,
-/// then letters in order. `None` when it doesn't match.
-fn score(query: &str, text: &str) -> Option<i32> {
-    let q = query.to_lowercase();
-    let t = text.to_lowercase();
-    if q.is_empty() {
-        return Some(0);
-    }
-    if t.starts_with(&q) {
-        return Some(1000 - t.len() as i32);
-    }
-    if let Some(at) = t.find(&q) {
-        let word_start = at == 0 || !t.as_bytes()[at - 1].is_ascii_alphanumeric();
-        return Some(if word_start { 800 } else { 500 } - at as i32);
-    }
-    // Letters in order, preferring those that start words.
-    let mut chars = t.char_indices().peekable();
-    let mut total = 0;
-    let mut prev = ' ';
-    for qc in q.chars() {
-        loop {
-            let (_, c) = chars.next()?;
-            let starts = !prev.is_alphanumeric();
-            prev = c;
-            if c == qc {
-                total += if starts { 12 } else { 2 };
-                break;
-            }
-        }
-    }
-    Some(100 + total - t.len() as i32 / 4)
 }
 
 impl DriftApp {
@@ -226,342 +60,121 @@ impl DriftApp {
         }
     }
 
-    /// Everything the palette offers, as things stand.
-    fn palette_entries(&mut self) -> Vec<Entry> {
-        let mut out = Vec::new();
-        let mut add = |command, title: &str, group, keys: String| {
-            out.push(Entry {
-                command,
-                title: title.to_owned(),
-                group,
-                keys,
-                words: "",
-                on: None,
-            });
+    /// For a setting: whether it's on (`None` for a command that isn't a setting).
+    pub(crate) fn command_state(&mut self, command: Command) -> Option<bool> {
+        Some(match command {
+            Command::Toggle(f) => *self.flag(f),
+            Command::Panel(p) => self.layout.is_shown(p) && !self.dock_view.hide_all,
+            Command::HideAllPanels => self.dock_view.hide_all,
+            Command::SheetPreview => self.sheet_preview,
+            _ => return None,
+        })
+    }
+
+    /// A command's title as things stand: the counts of what it clears.
+    fn command_title(&self, spec: &Spec, menu: bool) -> String {
+        let base = if menu { spec.menu } else { spec.title };
+        let count = match spec.command {
+            Command::ClearRelations => self.editor.selection_constraints().0.len(),
+            Command::ClearDimensions => self.editor.selection_constraints().1.len(),
+            _ => 0,
         };
-        let ctrl = |k: &str| app::panels::shortcut(k, false);
-        let ctrl_shift = |k: &str| app::panels::shortcut(k, true);
-        add(Command::New, "New sketch", "File", ctrl("N"));
-        add(Command::Open, "Open…", "File", ctrl("O"));
-        add(Command::OpenExample, "Open example", "File", String::new());
-        add(Command::Save, "Save", "File", ctrl("S"));
-        add(Command::SaveAs, "Save as…", "File", ctrl_shift("S"));
-        add(Command::Import, "Import…", "File", String::new());
-        add(Command::ExportPdf, "Export PDF…", "File", String::new());
-        add(Command::ExportSvg, "Export SVG…", "File", String::new());
-        add(Command::ExportDxf, "Export DXF…", "File", String::new());
-        add(
-            Command::ExportProfiles,
-            "Export Blender profiles…",
-            "File",
-            String::new(),
-        );
-        add(
-            Command::ExportModelSvg,
-            "Export model as SVG…",
-            "File",
-            String::new(),
-        );
-        add(
-            Command::ExportModelPdf,
-            "Export model as PDF…",
-            "File",
-            String::new(),
-        );
-        add(Command::Print, "Print…", "File", ctrl("P"));
-        add(Command::Undo, "Undo", "Edit", ctrl("Z"));
-        add(Command::Redo, "Redo", "Edit", ctrl_shift("Z"));
-        add(Command::SelectAll, "Select all", "Edit", ctrl("A"));
-        add(
-            Command::SelectOverlapping,
-            "Select overlapping curves",
-            "Edit",
-            String::new(),
-        );
-        add(
-            Command::CheckSketch,
-            "Check sketch (gaps, short ends)…",
-            "Edit",
-            String::new(),
-        );
-        let (on_relations, on_dims) = self.editor.selection_constraints();
-        if !on_relations.is_empty() {
-            add(
-                Command::ClearRelations,
-                &format!("Clear relations on the selection ({})", on_relations.len()),
-                "Edit",
-                String::new(),
-            );
+        let history = &self.editor.history;
+        match spec.command {
+            _ if count > 0 => format!("{base} ({count})"),
+            Command::Undo if menu => history
+                .undo_label()
+                .map_or_else(|| base.to_owned(), |l| format!("Undo {l}")),
+            Command::Redo if menu => history
+                .redo_label()
+                .map_or_else(|| base.to_owned(), |l| format!("Redo {l}")),
+            _ => base.to_owned(),
         }
-        if !on_dims.is_empty() {
-            add(
-                Command::ClearDimensions,
-                &format!("Clear dimensions on the selection ({})", on_dims.len()),
-                "Edit",
-                String::new(),
-            );
-        }
-        for kind in crate::editor::PickKind::ALL {
-            add(
-                Command::PickFilter(crate::editor::PickFilter::only(kind)),
-                &format!("Select {} only", kind.label().to_lowercase()),
-                "Edit",
-                String::new(),
-            );
-        }
-        add(
-            Command::PickFilter(crate::editor::PickFilter::ALL),
-            "Select everything (no filter)",
-            "Edit",
-            String::new(),
-        );
-        let (align, space) = self.can_align_dimensions();
-        if align {
-            add(
-                Command::AlignDimensions,
-                "Align picked dimensions",
-                "Edit",
-                String::new(),
-            );
-        }
-        if space {
-            add(
-                Command::SpaceDimensions,
-                "Space picked dimensions evenly",
-                "Edit",
-                String::new(),
-            );
-        }
-        if !self.picked_annotations().is_empty() {
-            add(
-                Command::HideAnnotations,
-                "Hide picked dimensions and notes on the canvas",
-                "Edit",
-                String::new(),
-            );
-            add(
-                Command::AnnotationsOffSheets,
-                "Leave picked dimensions and notes off sheets",
-                "Edit",
-                String::new(),
-            );
-        }
-        add(Command::Cut, "Cut", "Edit", ctrl("X"));
-        add(Command::Copy, "Copy", "Edit", ctrl("C"));
-        add(Command::Paste, "Paste", "Edit", ctrl("V"));
-        add(
-            Command::PasteInPlace,
-            "Paste in place",
-            "Edit",
-            ctrl_shift("V"),
-        );
-        add(Command::Delete, "Delete selection", "Edit", "Del".into());
-        add(Command::Duplicate, "Duplicate", "Edit", "Shift+D".into());
-        add(Command::Group, "Group", "Edit", ctrl("G"));
-        if !self.editor.selection.is_empty() || !self.editor.selected_fills.is_empty() {
-            for how in crate::stack::Arrange::ALL {
-                add(
-                    Command::Arrange(how),
-                    how.label(),
-                    "Edit",
-                    Self::arrange_keys(how),
-                );
+    }
+
+    /// A menu's label for a command.
+    pub(crate) fn menu_label(&self, spec: &Spec) -> String {
+        self.command_title(spec, true)
+    }
+
+    /// Everything the palette offers, as things stand: every command in the registry (the
+    /// tools first, in toolbar order), then the drawing's options.
+    pub(crate) fn palette_entries(&mut self) -> Vec<Entry> {
+        let mac = cfg!(target_os = "macos");
+        let mut out = Vec::new();
+        for spec in registry() {
+            if spec.when.hidden() {
+                continue;
             }
+            let enabled = spec.when.holds(self);
+            out.push(Entry {
+                command: spec.command,
+                title: self.command_title(spec, false),
+                group: spec.category.label(),
+                keys: spec.key_text(mac),
+                spec: Some(spec),
+                enabled,
+                reason: spec.when.reason(),
+                on: self.command_state(spec.command),
+            });
         }
-        add(Command::Ungroup, "Ungroup", "Edit", ctrl_shift("G"));
-        add(
-            Command::Rename,
-            "Rename block or group…",
-            "Edit",
-            "F2".into(),
-        );
-        add(Command::MakeBlock, "Make block", "Edit", String::new());
-        add(
-            Command::Explode,
-            "Explode block copies",
-            "Edit",
-            String::new(),
-        );
-        if self.editor.convertible_group().is_some() {
-            add(
-                Command::BlockFromGroup,
-                "Make block from group",
-                "Edit",
-                String::new(),
-            );
-        }
-        if !self.editor.selected_instances.is_empty() {
-            add(
-                Command::ExplodeToGroup,
-                "Explode block copies to groups",
-                "Edit",
-                String::new(),
-            );
-        }
-        add(
-            Command::SaveOption(false),
-            "Save option (values only)",
-            "Parameters",
-            String::new(),
-        );
-        add(
-            Command::SaveOption(true),
-            "Save option (whole sketch)",
-            "Parameters",
-            String::new(),
-        );
+        let toolbar = |e: &Entry| match e.command {
+            Command::Tool(kind) => ToolKind::ALL.iter().position(|k| *k == kind),
+            _ => None,
+        };
+        out.sort_by_key(|e| toolbar(e).unwrap_or(usize::MAX));
         let options: Vec<_> = self
             .editor
             .doc
             .variants()
             .map(|(id, v)| (id, v.name.clone()))
             .collect();
-        for (id, name) in &options {
-            add(
-                Command::ApplyOption(*id),
-                &format!("Apply option {name}"),
-                "Parameters",
-                String::new(),
-            );
-        }
-        add(
-            Command::Construction,
-            "Toggle construction",
-            "Edit",
-            "Alt+C".into(),
-        );
-        add(Command::ZoomToFit, "Zoom to fit", "View", "Shift+F".into());
-        add(
-            Command::ZoomToSelection,
-            "Zoom to selection",
-            "View",
-            "Shift+Z".into(),
-        );
-        add(
-            Command::ZoomLifeSize,
-            "Zoom to 100% (life size)",
-            "View",
-            String::new(),
-        );
-        add(
-            Command::SheetPreview,
-            "Sheet preview",
-            "View",
-            String::new(),
-        );
-        add(
-            Command::HideAllPanels,
-            "Hide all panels",
-            "Panels",
-            ctrl("\\"),
-        );
-        add(
-            Command::ResetPanels,
-            "Reset panel layout",
-            "Panels",
-            String::new(),
-        );
-        add(Command::Shortcuts, "Keyboard shortcuts", "Help", "?".into());
-        add(Command::Preferences, "Preferences…", "Edit", ctrl(","));
-        add(
-            Command::DrawingSettings,
-            "Drawing settings…",
-            "File",
-            String::new(),
-        );
-        add(Command::UserGuide, "User guide", "Help", String::new());
-        add(
-            Command::ReportProblem,
-            "Report a problem or ask for a feature",
-            "Help",
-            String::new(),
-        );
-        add(Command::About, "About Drift", "Help", String::new());
-        for (pref, label) in [
-            (egui::ThemePreference::Dark, "Dark appearance"),
-            (egui::ThemePreference::Light, "Light appearance"),
-            (
-                egui::ThemePreference::System,
-                "Appearance follows the system",
-            ),
-        ] {
-            add(Command::Theme(pref), label, "View", String::new());
-        }
-        for p in Panel::ALL {
-            let shown = self.layout.is_shown(p) && !self.dock_view.hide_all;
-            out.push(Entry {
-                command: Command::Panel(p),
-                title: format!("{} panel", p.title()),
-                group: "Panels",
-                keys: if p == Panel::Layers {
-                    ctrl("L")
-                } else {
-                    String::new()
-                },
-                words: p.description(),
-                on: Some(shown),
-            });
-        }
-        for (id, v) in self.editor.doc.variants() {
-            out.push(Entry {
-                command: Command::GhostOption(id),
-                title: format!("Ghost of option {}", v.name),
-                group: "Parameters",
-                keys: String::new(),
-                words: "",
-                on: Some(self.params.ghosted.contains(&id)),
-            });
-        }
-        for f in ViewFlag::ALL {
-            let on = *self.flag(f);
-            out.push(Entry {
-                command: Command::Toggle(f),
-                title: f.label().to_owned(),
-                group: "View",
-                keys: f.keys(),
-                words: "",
-                on: Some(on),
-            });
-        }
-        for kind in ToolKind::ALL {
-            if matches!(kind, ToolKind::Calibrate | ToolKind::MoveUnderlay) {
-                continue;
+        for (id, name) in options {
+            let ghosted = self.params.ghosted.contains(&id);
+            for (command, title, on) in [
+                (
+                    Command::ApplyOption(id),
+                    format!("Apply option {name}"),
+                    None,
+                ),
+                (
+                    Command::GhostOption(id),
+                    format!("Ghost of option {name}"),
+                    Some(ghosted),
+                ),
+            ] {
+                out.push(Entry {
+                    command,
+                    title,
+                    group: "Options",
+                    keys: String::new(),
+                    spec: None,
+                    enabled: true,
+                    reason: "",
+                    on,
+                });
             }
-            out.insert(
-                0,
-                Entry {
-                    command: Command::Tool(kind),
-                    title: kind.label().to_owned(),
-                    group: "Tool",
-                    keys: kind.shortcut_label().unwrap_or_default(),
-                    words: kind.description(),
-                    on: None,
-                },
-            );
-        }
-        // Import… is the one way in, for tracing over a drawing too.
-        if let Some(import) = out.iter_mut().find(|e| e.command == Command::Import) {
-            import.words = "underlay trace dwg dxf svg pdf illustrator ai drawing";
         }
         out
     }
 
-    /// Entries matching the query, best first (recent ones first when it's empty).
-    fn palette_matches(&mut self, query: &str) -> Vec<Entry> {
+    /// Entries matching the query, best first (recent ones first when it's empty). What can't
+    /// run now comes after what can.
+    pub(crate) fn palette_matches(&mut self, query: &str) -> Vec<Entry> {
         let mut scored: Vec<(i32, usize, Entry)> = self
             .palette_entries()
             .into_iter()
             .enumerate()
             .filter_map(|(i, e)| {
                 let recent = self.recent_commands.iter().position(|c| *c == e.command);
-                let title = score(query, &e.title);
-                let group = score(query, e.group).map(|s| s / 3);
-                let in_words =
-                    query.len() >= 3 && e.words.to_lowercase().contains(&query.to_lowercase());
-                let words = in_words.then_some(150);
-                let best = title.max(group).max(words)?;
+                let best = match e.spec {
+                    Some(spec) => commands::rank(query, spec),
+                    None => commands::score(query, &e.title)
+                        .max(commands::score(query, e.group).map(|s| s / 3)),
+                }?;
                 let bonus = recent.map_or(0, |r| 400 - 20 * r as i32);
-                Some((best + bonus, i, e))
+                let disabled = if e.enabled { 0 } else { 500 };
+                Some((best + bonus - disabled, i, e))
             })
             .collect();
         // With no query: recent commands, then the tools in toolbar order.
@@ -569,11 +182,11 @@ impl DriftApp {
         scored.into_iter().map(|(_, _, e)| e).collect()
     }
 
-    /// Do a command.
+    /// Do a command (from a menu, the palette, a key or Enter to repeat it).
     pub(crate) fn run_command(&mut self, ctx: &egui::Context, command: Command) {
-        self.recent_commands.retain(|c| *c != command);
-        self.recent_commands.insert(0, command);
-        self.recent_commands.truncate(6);
+        if commands::spec(command).is_some_and(|s| s.repeatable) {
+            self.last_command = Some(command);
+        }
         let painter = ctx.layer_painter(egui::LayerId::background());
         let now = ctx.input(|i| i.time);
         match command {
@@ -581,6 +194,14 @@ impl DriftApp {
             Command::Toggle(f) => {
                 let v = self.flag(f);
                 *v = !*v;
+                if f == ViewFlag::AutoRelations {
+                    let text = if self.auto_relations {
+                        "Auto relations on"
+                    } else {
+                        "Auto relations off: plain geometry, nothing added for you"
+                    };
+                    self.set_status(text.into(), false, now);
+                }
             }
             Command::Panel(p) => self.toggle_panel(p),
             Command::HideAllPanels => self.dock_view.hide_all = !self.dock_view.hide_all,
@@ -591,6 +212,7 @@ impl DriftApp {
             Command::New => self.request(Pending::New),
             Command::Open => self.request(Pending::Open),
             Command::OpenExample => self.request(Pending::Example),
+            Command::ShowStart => self.show_start = true,
             Command::Save => self.save(),
             Command::SaveAs => self.save_as(),
             Command::Import => self.pick_import_file(false),
@@ -631,21 +253,12 @@ impl DriftApp {
             Command::Copy => self.copy(ctx),
             Command::Paste => self.paste_copied(false, now),
             Command::PasteInPlace => self.paste_copied(true, now),
-            Command::Delete => self.editor.delete_selection(),
-            Command::Duplicate => {
-                self.set_tool(ToolKind::Select);
-                if self.editor.duplicate_selection() > 0 {
-                    self.tool
-                        .key(ToolKey::G, self.pointer.as_ref(), &mut self.editor);
-                }
-            }
+            Command::Delete => self.delete_picked(),
+            Command::Duplicate => self.duplicate_and_grab(),
             Command::Group => {
                 self.editor.make_group();
             }
-            Command::Arrange(how) => {
-                let now = ctx.input(|i| i.time);
-                self.arrange(how, now);
-            }
+            Command::Arrange(how) => self.arrange(how, now),
             Command::Rename => self.start_rename(),
             Command::Ungroup => {
                 self.editor.ungroup();
@@ -654,12 +267,25 @@ impl DriftApp {
             Command::Explode => self.editor.explode_selected(),
             Command::BlockFromGroup => {
                 if let Some(g) = self.editor.convertible_group() {
-                    let now = ctx.input(|i| i.time);
                     self.block_from_group(g, now);
                 }
             }
             Command::ExplodeToGroup => {
                 self.editor.explode_to_groups();
+            }
+            Command::Move => self.start_transform(ToolKey::G, now),
+            Command::Rotate => self.start_transform(ToolKey::R, now),
+            Command::Scale => {
+                if self.tool.kind() != ToolKind::Select {
+                    self.set_tool(ToolKind::Select);
+                }
+                let text = "Scale: drag a handle of the selection's box · Shift keeps the \
+                            shape, Ctrl scales about the middle";
+                self.set_status(text.into(), false, now);
+            }
+            Command::Pattern(_) => {
+                self.patterns.reveal = true;
+                self.show_panel(Panel::Inspector);
             }
             Command::SaveOption(whole) => {
                 let n = self.editor.doc.variants().count() + 1;
@@ -668,7 +294,6 @@ impl DriftApp {
             }
             Command::ApplyOption(id) => {
                 if let Err(e) = self.editor.apply_variant(id) {
-                    let now = ctx.input(|i| i.time);
                     self.set_status(format!("Can't apply it: {e}"), true, now);
                 }
             }
@@ -677,7 +302,7 @@ impl DriftApp {
                     self.params.ghosted.insert(id);
                 }
             }
-            Command::Construction => self.editor.toggle_construction(),
+            Command::Construction => self.toggle_construction(now),
             Command::ZoomToFit => self.fit_target = Some(self.fit_bounds()),
             Command::ZoomToSelection => {
                 self.zoom_to_selection();
@@ -690,13 +315,53 @@ impl DriftApp {
                 self.sheet_preview = !self.sheet_preview;
                 self.preview.zoom = 0.0;
             }
+            Command::Palette => self.open_palette(),
             Command::Shortcuts => self.show_shortcuts = true,
             Command::Preferences => self.show_settings = true,
             Command::DrawingSettings => self.show_drawing_settings = true,
             Command::About => self.show_about = true,
             Command::UserGuide => ctx.open_url(egui::OpenUrl::new_tab(crate::links::GUIDE)),
             Command::ReportProblem => ctx.open_url(egui::OpenUrl::new_tab(crate::links::REPORT)),
+            Command::Benchmark => self.benchmark = Some(run_benchmark()),
             Command::Theme(pref) => ctx.set_theme(pref),
+        }
+    }
+
+    /// Enter or Space with nothing in hand: the last command or tool again, if it can run.
+    pub(crate) fn repeat_last_command(&mut self, ctx: &egui::Context) -> bool {
+        let Some(command) = self.last_command else {
+            return false;
+        };
+        if let Some(spec) = commands::spec(command)
+            && !spec.when.holds(self)
+        {
+            let now = ctx.input(|i| i.time);
+            self.set_status(
+                format!("{}: {}", spec.title, spec.when.reason()),
+                false,
+                now,
+            );
+            return true;
+        }
+        self.run_command(ctx, command);
+        true
+    }
+
+    /// Move (G) or rotate (R) what is picked, as the keys do.
+    fn start_transform(&mut self, key: ToolKey, now: f64) {
+        if self.tool.kind() != ToolKind::Select {
+            self.set_tool(ToolKind::Select);
+        }
+        // From a menu or the palette the pointer is off the canvas: start where it last was.
+        let pointer = self.pointer.or(self.last_pointer);
+        if !self.tool.key(key, pointer.as_ref(), &mut self.editor) {
+            let (what, letter) = if key == ToolKey::G {
+                ("Move", "G")
+            } else {
+                ("Rotate", "R")
+            };
+            let text = format!("{what}: point at the canvas and press {letter}");
+            self.set_status(text, false, now);
         }
     }
 
@@ -727,7 +392,7 @@ impl DriftApp {
             state.selected = (state.selected + shown - 1) % shown;
         }
         state.selected = state.selected.min(shown.saturating_sub(1));
-        let mut chosen = (enter && shown > 0).then(|| entries[state.selected].command);
+        let mut chosen = (enter && shown > 0).then_some(state.selected);
         let mut close = false;
 
         let content = ctx.content_rect();
@@ -803,7 +468,11 @@ impl DriftApp {
                                 egui::Sense::click(),
                             );
                             response.widget_info(|| {
-                                egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &e.title)
+                                egui::WidgetInfo::labeled(
+                                    egui::WidgetType::Button,
+                                    e.enabled,
+                                    &e.title,
+                                )
                             });
                             if response.hovered()
                                 && ui.input(|i| i.pointer.delta() != egui::Vec2::ZERO)
@@ -818,16 +487,16 @@ impl DriftApp {
                             } else {
                                 (ui.visuals().text_color(), ui.visuals().weak_text_color())
                             };
+                            // What can't run now is dimmed, and says why on the right.
+                            let fg = if e.enabled { fg } else { weak };
                             let icon = egui::Rect::from_center_size(
                                 egui::pos2(r.left() + 18.0, r.center().y),
                                 egui::Vec2::splat(16.0),
                             );
-                            match e.command {
-                                Command::Tool(kind) => icons::tool(painter, icon, kind, fg),
-                                Command::Panel(p) => {
-                                    icons::glyph(painter, icon, app::dock_ui::glyph(p), fg)
-                                }
-                                _ => {
+                            match e.spec.and_then(|s| s.icon) {
+                                Some(Icon::Tool(kind)) => icons::tool(painter, icon, kind, fg),
+                                Some(Icon::Glyph(g)) => icons::glyph(painter, icon, g, fg),
+                                None => {
                                     if let Some(on) = e.on {
                                         // A check box for settings.
                                         let b = icon.shrink(2.0);
@@ -872,41 +541,34 @@ impl DriftApp {
                                 );
                                 right -= 12.0;
                             }
+                            let group = if e.enabled { e.group } else { e.reason };
                             painter.text(
                                 egui::pos2(right, r.center().y),
                                 egui::Align2::RIGHT_CENTER,
-                                e.group,
+                                group,
                                 egui::FontId::proportional(11.5),
                                 weak,
                             );
                             if response.clicked() {
-                                chosen = Some(e.command);
+                                chosen = Some(k);
                             }
                         }
                     });
             });
-        if let Some(command) = chosen {
-            self.run_command(ctx, command);
+        if let Some(e) = chosen.and_then(|k| entries.get(k)) {
+            if e.enabled {
+                self.recent_commands.retain(|c| *c != e.command);
+                self.recent_commands.insert(0, e.command);
+                self.recent_commands.truncate(6);
+                self.run_command(ctx, e.command);
+            } else {
+                let now = ctx.input(|i| i.time);
+                self.set_status(format!("{}: {}", e.title, e.reason), false, now);
+            }
             return;
         }
         if !close {
             self.palette = Some(state);
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::score;
-
-    #[test]
-    fn prefixes_beat_substrings_beat_scattered_letters() {
-        let prefix = score("rec", "Rectangle").unwrap();
-        let word = score("arc", "3-pt arc").unwrap();
-        let inner = score("ang", "Rectangle").unwrap();
-        let scattered = score("rct", "Rectangle").unwrap();
-        assert!(prefix > word && word > inner && inner > scattered);
-        assert!(score("xyz", "Rectangle").is_none());
-        assert_eq!(score("", "Anything"), Some(0));
     }
 }

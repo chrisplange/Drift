@@ -548,6 +548,9 @@ impl DriftApp {
         if !consumed {
             self.pointer = pos.map(|pos| self.make_pointer(&map, pos, snap));
         }
+        if self.pointer.is_some() {
+            self.last_pointer = self.pointer;
+        }
         if consumed {
             // The annotation took this frame's input.
         } else if let Some(p) = self.pointer {

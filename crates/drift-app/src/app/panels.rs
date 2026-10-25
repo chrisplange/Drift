@@ -1,15 +1,13 @@
 //! Menu bar, toolbar, inspector (properties) and status bar.
 
+use crate::app::palette::{Command, ViewFlag};
+use crate::commands::{self, Category};
 use crate::icons::{self, Glyph};
 use crate::*;
 
 /// A shortcut as the platform writes it: ⌘ / ⇧ on macOS, Ctrl / Shift elsewhere.
 pub(crate) fn shortcut(key: &str, shift: bool) -> String {
-    if cfg!(target_os = "macos") {
-        format!("{}⌘{key}", if shift { "⇧" } else { "" })
-    } else {
-        format!("Ctrl+{}{key}", if shift { "Shift+" } else { "" })
-    }
+    commands::cmd_text(key, shift, cfg!(target_os = "macos"))
 }
 
 /// An inspector's title: the thing's icon on a soft tile, its name, and a line of detail.
@@ -253,29 +251,79 @@ fn status_divider(ui: &mut egui::Ui) {
     );
 }
 
-/// A checkbox-style menu item with a shortcut hint.
-fn toggle_item(ui: &mut egui::Ui, value: &mut bool, label: &str, keys: &str) {
-    if theme::menu_check(ui, *value, label, keys).clicked() {
-        *value = !*value;
-    }
-}
-
 impl DriftApp {
+    /// A menu item for a command of the registry: its label, keys and description; greyed
+    /// out (saying why) when it can't run; a check mark for a setting. Returns true if it
+    /// ran.
+    pub(crate) fn command_item(&mut self, ui: &mut egui::Ui, command: Command) -> bool {
+        let Some(spec) = commands::spec(command) else {
+            return false;
+        };
+        if spec.when.hidden() {
+            return false;
+        }
+        let label = self.menu_label(spec);
+        let keys = spec.key_text(cfg!(target_os = "macos"));
+        let enabled = spec.when.holds(self);
+        let response = match self.command_state(command) {
+            Some(on) => {
+                ui.add_enabled_ui(enabled, |ui| theme::menu_check(ui, on, &label, &keys))
+                    .inner
+            }
+            // (Shortcut text, even empty, becomes part of the button's accessible label.)
+            None if keys.is_empty() => ui.add_enabled(enabled, egui::Button::new(label)),
+            None => ui.add_enabled(enabled, egui::Button::new(label).shortcut_text(keys)),
+        };
+        let response = response
+            .on_hover_text(spec.description)
+            .on_disabled_hover_text(spec.when.reason());
+        if !response.clicked() {
+            return false;
+        }
+        ui.close();
+        let ctx = ui.ctx().clone();
+        self.run_command(&ctx, command);
+        true
+    }
+
+    /// Menu items for commands, in order; `None` is a separator.
+    pub(crate) fn command_items(&mut self, ui: &mut egui::Ui, items: &[Option<Command>]) {
+        for item in items {
+            match item {
+                Some(command) => {
+                    self.command_item(ui, *command);
+                }
+                None => {
+                    ui.separator();
+                }
+            }
+        }
+    }
+
+    /// A category's commands as a menu, in the registry's order, with a separator before
+    /// each command in `breaks`.
+    pub(crate) fn category_menu(
+        &mut self,
+        ui: &mut egui::Ui,
+        category: Category,
+        breaks: &[Command],
+    ) {
+        for spec in commands::registry()
+            .iter()
+            .filter(|s| s.category == category)
+        {
+            if breaks.contains(&spec.command) {
+                ui.separator();
+            }
+            self.command_item(ui, spec.command);
+        }
+    }
+
     pub(crate) fn menu_bar(&mut self, ui: &mut egui::Ui) {
+        use Command as C;
         egui::MenuBar::new().ui(ui, |ui| {
             ui.menu_button("File", |ui| {
-                if ui
-                    .add(egui::Button::new("New").shortcut_text(shortcut("N", false)))
-                    .clicked()
-                {
-                    self.request(Pending::New);
-                }
-                if ui
-                    .add(egui::Button::new("Open…").shortcut_text(shortcut("O", false)))
-                    .clicked()
-                {
-                    self.request(Pending::Open);
-                }
+                self.command_items(ui, &[Some(C::New), Some(C::Open)]);
                 ui.menu_button("Open recent", |ui| {
                     if self.recent.is_empty() {
                         ui.label(egui::RichText::new("No recent sketches").weak());
@@ -305,354 +353,96 @@ impl DriftApp {
                         ui.close();
                     }
                 });
-                if ui.button("Open example").clicked() {
-                    self.request(Pending::Example);
-                }
-                if ui
-                    .button("Show the start panel")
-                    .on_hover_text("New, recent and example drawings, over an empty sketch")
-                    .clicked()
-                {
-                    self.show_start = true;
-                    ui.close();
-                }
-                ui.separator();
-                if ui
-                    .add(egui::Button::new("Save").shortcut_text(shortcut("S", false)))
-                    .clicked()
-                {
-                    self.save();
-                }
-                if ui
-                    .add(egui::Button::new("Save as…").shortcut_text(shortcut("S", true)))
-                    .clicked()
-                {
-                    self.save_as();
-                }
-                ui.separator();
-                if ui
-                    .button("Drawing settings…")
-                    .on_hover_text(
-                        "Units, how areas and fills behave, and drafting style: saved with this \
-                         drawing",
-                    )
-                    .clicked()
-                {
-                    self.show_drawing_settings = true;
-                }
-                ui.separator();
-                if ui
-                    .button("Import…")
-                    .on_hover_text(
-                        "Bring in a DWG, DXF, SVG, PDF or Illustrator drawing: as curves, fills \
-                         and text to edit, or as an underlay to trace over",
-                    )
-                    .clicked()
-                {
-                    self.pick_import_file(false);
-                }
-                let painter = ui.painter().clone();
+                self.command_items(
+                    ui,
+                    &[
+                        Some(C::OpenExample),
+                        Some(C::ShowStart),
+                        None,
+                        Some(C::Save),
+                        Some(C::SaveAs),
+                        None,
+                        Some(C::DrawingSettings),
+                        None,
+                        Some(C::Import),
+                    ],
+                );
                 ui.menu_button("Export", |ui| {
-                    if ui
-                        .button("PDF…")
-                        .on_hover_text("Every sheet at true scale (or the drawing fitted to A3)")
-                        .clicked()
-                    {
-                        self.export_pdf(&painter);
-                    }
-                    if ui
-                        .button("SVG…")
-                        .on_hover_text("The current sheet")
-                        .clicked()
-                    {
-                        self.export_svg(&painter);
-                    }
-                    if ui
-                        .button("DXF…")
-                        .on_hover_text("The model at full size, with layers and line types")
-                        .clicked()
-                    {
-                        self.export_dxf(&painter);
-                    }
+                    self.command_items(
+                        ui,
+                        &[
+                            Some(C::ExportPdf),
+                            Some(C::ExportSvg),
+                            Some(C::ExportDxf),
+                            None,
+                            Some(C::ExportModelSvg),
+                            Some(C::ExportModelPdf),
+                        ],
+                    );
+                    ui.checkbox(&mut self.model_annotations, "Dimensions and notes")
+                        .on_hover_text("Model exports include dimensions and notes");
                     ui.separator();
-                    self.model_export_buttons(ui, &painter);
-                    ui.separator();
-                    if ui
-                        .button("Blender profiles…")
-                        .on_hover_text(
-                            "The blocks marked as Blender profiles, for the Drift Profiles \
-                             add-on (saving writes them beside the drawing too)",
-                        )
-                        .clicked()
-                    {
-                        self.export_profiles();
-                    }
+                    self.command_item(ui, C::ExportProfiles);
                 });
-                if ui
-                    .add(egui::Button::new("Print…").shortcut_text(shortcut("P", false)))
-                    .clicked()
-                {
-                    self.print(&painter);
-                }
+                self.command_item(ui, C::Print);
             });
             ui.menu_button("Edit", |ui| {
-                let undo = match self.editor.history.undo_label() {
-                    Some(label) => format!("Undo {label}"),
-                    None => "Undo".into(),
-                };
-                let redo = match self.editor.history.redo_label() {
-                    Some(label) => format!("Redo {label}"),
-                    None => "Redo".into(),
-                };
-                if ui
-                    .add_enabled(
-                        self.editor.history.can_undo(),
-                        egui::Button::new(undo).shortcut_text(shortcut("Z", false)),
-                    )
-                    .clicked()
-                {
-                    self.undo();
-                }
-                if ui
-                    .add_enabled(
-                        self.editor.history.can_redo(),
-                        egui::Button::new(redo).shortcut_text(shortcut("Z", true)),
-                    )
-                    .clicked()
-                {
-                    self.redo();
-                }
-                ui.separator();
-                let ctx = ui.ctx().clone();
-                let now = ui.input(|i| i.time);
-                let can_copy = !self.editor.selection.is_empty()
-                    || !self.editor.selected_instances.is_empty()
-                    || self.editor.picks_annotations();
-                if ui
-                    .add_enabled(
-                        can_copy,
-                        egui::Button::new("Cut").shortcut_text(shortcut("X", false)),
-                    )
-                    .clicked()
-                {
-                    self.cut(&ctx);
-                }
-                if ui
-                    .add_enabled(
-                        can_copy,
-                        egui::Button::new("Copy").shortcut_text(shortcut("C", false)),
-                    )
-                    .clicked()
-                {
-                    self.copy(&ctx);
-                }
-                if ui
-                    .add_enabled(
-                        self.clipboard.is_some(),
-                        egui::Button::new("Paste").shortcut_text(shortcut("V", false)),
-                    )
-                    .on_hover_text("Under the pointer, or in the middle of the view")
-                    .clicked()
-                {
-                    self.paste_copied(false, now);
-                }
-                if ui
-                    .add_enabled(
-                        self.clipboard.is_some(),
-                        egui::Button::new("Paste in place").shortcut_text(shortcut("V", true)),
-                    )
-                    .on_hover_text("Where it was copied from")
-                    .clicked()
-                {
-                    self.paste_copied(true, now);
-                }
-                ui.separator();
-                if ui
-                    .button("Check sketch…")
-                    .on_hover_text(
-                        "Find ends that nearly meet but don't, ends short of a curve, and \
-                         curves of no length, and fix them",
-                    )
-                    .clicked()
-                {
-                    self.open_sketch_check();
-                    ui.close();
-                }
-                ui.separator();
-                let has_selection = !self.editor.selection.is_empty();
-                if ui
-                    .add_enabled(
-                        has_selection,
-                        egui::Button::new("Delete").shortcut_text(if cfg!(target_os = "macos") {
-                            "⌫"
-                        } else {
-                            "Del"
-                        }),
-                    )
-                    .clicked()
-                {
-                    self.editor.delete_selection();
-                }
-                if ui
-                    .add_enabled(
-                        has_selection,
-                        egui::Button::new("Toggle construction").shortcut_text("Alt+C"),
-                    )
-                    .clicked()
-                {
-                    self.editor.toggle_construction();
-                }
-                if ui
-                    .add_enabled(
-                        self.editor.selection.len() >= 2,
-                        egui::Button::new("Group").shortcut_text(shortcut("G", false)),
-                    )
-                    .clicked()
-                {
-                    self.editor.make_group();
-                }
-                let grouped = self
-                    .editor
-                    .selection
-                    .iter()
-                    .any(|id| self.editor.doc.group_of(*id).is_some());
-                if ui
-                    .add_enabled(
-                        grouped,
-                        egui::Button::new("Ungroup").shortcut_text(shortcut("G", true)),
-                    )
-                    .clicked()
-                {
-                    self.editor.ungroup();
-                }
-                if ui
-                    .add_enabled(
-                        !self.editor.selection.is_empty()
-                            || !self.editor.selected_instances.is_empty(),
-                        egui::Button::new("Duplicate").shortcut_text("Shift+D"),
-                    )
-                    .on_hover_text("Copy the selection in place, then move the copy")
-                    .clicked()
-                {
-                    self.set_tool(ToolKind::Select);
-                    if self.editor.duplicate_selection() > 0 {
-                        self.tool
-                            .key(ToolKey::G, self.pointer.as_ref(), &mut self.editor);
-                    }
-                }
-                if ui
-                    .add_enabled(
-                        !self.editor.selection.is_empty(),
-                        egui::Button::new("Make block"),
-                    )
-                    .on_hover_text("A block from the selection (name it in the Blocks tab)")
-                    .clicked()
-                {
-                    self.start_make_block("");
-                }
-                let group = self.editor.convertible_group();
-                if ui
-                    .add_enabled(group.is_some(), egui::Button::new("Make block from group"))
-                    .on_hover_text("The picked group as a block: named after it, with its fills")
-                    .clicked()
-                    && let Some(g) = group
-                {
-                    let now = ui.input(|i| i.time);
-                    self.block_from_group(g, now);
-                }
-                if ui
-                    .add_enabled(
-                        !self.editor.selected_instances.is_empty(),
-                        egui::Button::new("Explode"),
-                    )
-                    .clicked()
-                {
-                    self.editor.explode_selected();
-                }
-                if ui
-                    .add_enabled(
-                        !self.editor.selected_instances.is_empty(),
-                        egui::Button::new("Explode to group"),
-                    )
-                    .on_hover_text("Turn each picked copy into a group named after its block")
-                    .clicked()
-                {
-                    self.editor.explode_to_groups();
-                }
-                ui.separator();
-                if ui
-                    .add(egui::Button::new("Select all").shortcut_text(shortcut("A", false)))
-                    .clicked()
-                {
-                    self.set_tool(ToolKind::Select);
-                    self.editor.select_all();
-                }
-                ui.separator();
-                if ui
-                    .add(egui::Button::new("Preferences…").shortcut_text(shortcut(",", false)))
-                    .clicked()
-                {
-                    self.show_settings = true;
-                }
+                self.command_items(
+                    ui,
+                    &[
+                        Some(C::Undo),
+                        Some(C::Redo),
+                        None,
+                        Some(C::Cut),
+                        Some(C::Copy),
+                        Some(C::Paste),
+                        Some(C::PasteInPlace),
+                        None,
+                        Some(C::CheckSketch),
+                        None,
+                        Some(C::Delete),
+                        Some(C::Construction),
+                        Some(C::Group),
+                        Some(C::Ungroup),
+                        Some(C::Duplicate),
+                        Some(C::MakeBlock),
+                        Some(C::BlockFromGroup),
+                        Some(C::Explode),
+                        Some(C::ExplodeToGroup),
+                        None,
+                        Some(C::SelectAll),
+                        None,
+                        Some(C::Preferences),
+                    ],
+                );
             });
             ui.menu_button("View", |ui| {
-                if ui
-                    .add(egui::Button::new("Command palette…").shortcut_text(shortcut("K", false)))
-                    .clicked()
-                {
-                    self.open_palette();
-                    ui.close();
-                }
+                self.command_item(ui, C::Palette);
                 ui.menu_button("Panels", |ui| self.panels_menu(ui));
                 ui.separator();
-                if theme::menu_check(ui, self.sheet_preview, "Sheet", "")
-                    .on_hover_text("Show the drawing on its sheet, as it prints")
-                    .clicked()
-                {
-                    if self.current_sheet().is_none() {
-                        self.add_sheet();
-                    }
-                    self.sheet_preview = !self.sheet_preview;
-                    self.preview.zoom = 0.0;
-                    ui.close();
-                }
-                if ui
-                    .add(egui::Button::new("Zoom to fit").shortcut_text("Shift+F"))
-                    .clicked()
-                {
-                    self.fit_target = Some(self.fit_bounds());
-                    ui.close();
-                }
-                ui.separator();
-                toggle_item(ui, &mut self.show_grid, "Grid", &shortcut("'", false));
-                toggle_item(ui, &mut self.show_axes, "Origin axes", "");
-                toggle_item(ui, &mut self.grid_snap, "Snap to grid", "Shift+G");
-                ui.separator();
-                toggle_item(ui, &mut self.thin_lines, "Thin lines", "W");
-                toggle_item(
+                self.command_items(
                     ui,
-                    &mut self.status_colors,
-                    "Constraint status colours",
-                    "Shift+C",
+                    &[
+                        Some(C::SheetPreview),
+                        Some(C::ZoomToFit),
+                        Some(C::ZoomToSelection),
+                        None,
+                        Some(C::Toggle(ViewFlag::Grid)),
+                        Some(C::Toggle(ViewFlag::Axes)),
+                        Some(C::Toggle(ViewFlag::Snap)),
+                        None,
+                        Some(C::Toggle(ViewFlag::Thin)),
+                        Some(C::Toggle(ViewFlag::Status)),
+                        Some(C::Toggle(ViewFlag::Endpoints)),
+                        None,
+                        Some(C::Toggle(ViewFlag::Dimensions)),
+                        Some(C::Toggle(ViewFlag::Hidden)),
+                        Some(C::Toggle(ViewFlag::Relations)),
+                        Some(C::Toggle(ViewFlag::Free)),
+                        Some(C::Toggle(ViewFlag::Combs)),
+                        Some(C::Toggle(ViewFlag::Crops)),
+                    ],
                 );
-                toggle_item(ui, &mut self.always_endpoints, "Always show end points", "");
-                ui.separator();
-                toggle_item(
-                    ui,
-                    &mut self.show_dimensions,
-                    "Dimensions and notes",
-                    "Alt+D",
-                );
-                toggle_item(
-                    ui,
-                    &mut self.show_hidden_annotations,
-                    "Hidden annotations (faded)",
-                    "Alt+H",
-                );
-                toggle_item(ui, &mut self.show_relations, "Relations", "Alt+R");
-                toggle_item(ui, &mut self.params.show_free, "Free directions", "");
-                toggle_item(ui, &mut self.show_combs, "Curvature combs", "");
-                toggle_item(ui, &mut self.show_view_crops, "View crops", "Shift+Alt+B");
                 ui.separator();
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new("Appearance").weak());
@@ -660,25 +450,44 @@ impl DriftApp {
                     theme::appearance(ui);
                 });
             });
+            ui.menu_button("Draw", |ui| {
+                use ToolKind as T;
+                let breaks = [T::Circle, T::Arc, T::Slot].map(C::Tool);
+                self.category_menu(ui, Category::Draw, &breaks);
+            });
+            ui.menu_button("Modify", |ui| {
+                let breaks = [
+                    C::Tool(ToolKind::Mirror),
+                    C::Tool(ToolKind::Trim),
+                    C::Pattern(false),
+                ];
+                self.category_menu(ui, Category::Modify, &breaks);
+                ui.separator();
+                ui.menu_button("Arrange", |ui| {
+                    self.category_menu(ui, Category::Arrange, &[])
+                });
+            });
+            ui.menu_button("Annotate", |ui| {
+                use ToolKind as T;
+                let breaks = [C::Tool(T::Section), C::Tool(T::Fill), C::AlignDimensions];
+                self.category_menu(ui, Category::Annotate, &breaks);
+            });
             ui.menu_button("Help", |ui| {
-                ui.hyperlink_to("User guide", crate::links::GUIDE);
-                ui.hyperlink_to("Report a problem…", crate::links::REPORT)
-                    .on_hover_text("Bug reports and feature requests, on GitHub");
-                ui.separator();
-                if ui.button("Keyboard shortcuts").clicked() {
-                    self.show_shortcuts = true;
-                }
-                // For development: it tells users nothing.
-                #[cfg(debug_assertions)]
-                if ui.button("Run solver benchmark").clicked() {
-                    self.benchmark = Some(run_benchmark());
-                }
-                ui.separator();
+                self.command_items(
+                    ui,
+                    &[
+                        Some(C::UserGuide),
+                        Some(C::ReportProblem),
+                        None,
+                        Some(C::Shortcuts),
+                        // For development: it tells users nothing (hidden in release builds).
+                        Some(C::Benchmark),
+                        None,
+                    ],
+                );
                 #[cfg(not(target_arch = "wasm32"))]
                 self.updates_menu(ui);
-                if ui.button("About Drift").clicked() {
-                    self.show_about = true;
-                }
+                self.command_item(ui, C::About);
                 ui.label(
                     egui::RichText::new(format!(
                         "Drift {} · {}",
@@ -860,27 +669,14 @@ impl DriftApp {
 
     /// The status bar's zoom menu.
     fn zoom_menu(&mut self, ui: &mut egui::Ui) {
-        if ui
-            .add(egui::Button::new("Zoom to fit").shortcut_text("Shift+F"))
-            .clicked()
-        {
-            self.fit_target = Some(self.fit_bounds());
-            ui.close();
-        }
-        let picked = !self.editor.selection.is_empty()
-            || !self.editor.selected_instances.is_empty()
-            || self.editor.picks_annotations();
-        if ui
-            .add_enabled(
-                picked,
-                egui::Button::new("Zoom to selection").shortcut_text("Shift+Z"),
-            )
-            .clicked()
-        {
-            self.zoom_to_selection();
-            ui.close();
-        }
-        ui.separator();
+        self.command_items(
+            ui,
+            &[
+                Some(Command::ZoomToFit),
+                Some(Command::ZoomToSelection),
+                None,
+            ],
+        );
         for percent in [25.0, 50.0, 100.0, 200.0, 400.0] {
             let label = if percent == 100.0 {
                 "100% (life size)".to_owned()
@@ -896,48 +692,14 @@ impl DriftApp {
 
     /// View → Panels: show or hide each panel; hide them all; reset the layout.
     pub(crate) fn panels_menu(&mut self, ui: &mut egui::Ui) {
-        use crate::dock::Panel;
-        for p in Panel::ALL {
-            let shown =
-                !self.dock_view.hide_all && self.layout.place(p) != crate::dock::Place::Hidden;
-            let keys = if p == Panel::Layers {
-                shortcut("L", false)
-            } else {
-                String::new()
-            };
-            if theme::menu_check(ui, shown, p.title(), &keys)
-                .on_hover_text(p.description())
-                .clicked()
-            {
-                if shown {
-                    self.layout.move_to(p, crate::dock::Place::Hidden, None);
-                } else {
-                    self.show_panel(p);
-                }
-                ui.close();
-            }
+        for p in crate::dock::Panel::ALL {
+            self.command_item(ui, Command::Panel(p));
         }
         ui.separator();
-        if theme::menu_check(
+        self.command_items(
             ui,
-            self.dock_view.hide_all,
-            "Hide all panels",
-            &shortcut("\\", false),
-        )
-        .clicked()
-        {
-            self.dock_view.hide_all = !self.dock_view.hide_all;
-            ui.close();
-        }
-        if ui
-            .button("Reset panel layout")
-            .on_hover_text("Every panel back in the right dock")
-            .clicked()
-        {
-            self.layout = Default::default();
-            self.dock_view.hide_all = false;
-            ui.close();
-        }
+            &[Some(Command::HideAllPanels), Some(Command::ResetPanels)],
+        );
     }
 
     /// Several things picked, text or annotations among them: what they are, and where the
@@ -1765,7 +1527,7 @@ impl DriftApp {
                         Glyph::Thin,
                         "Thin lines",
                         &mut self.thin_lines,
-                        "Thin lines (W)",
+                        "Thin lines (Shift+Alt+W)",
                     );
                     toggle(
                         ui,

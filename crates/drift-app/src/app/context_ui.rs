@@ -1,6 +1,7 @@
 //! The context bar under the menu (the active tool and its options, or quick actions for the
 //! selection, as in Affinity's context toolbar) and the canvas's right-click menu.
 
+use crate::app::palette::{Command, ViewFlag};
 use crate::icons::{self, Glyph};
 use crate::tools::SlotMode;
 use crate::*;
@@ -844,57 +845,41 @@ impl DriftApp {
         {
             self.editor.toggle_construction();
         }
-        let item = |ui: &mut egui::Ui, label: &str, keys: &str| {
-            ui.add(egui::Button::new(label).shortcut_text(keys))
-                .clicked()
-        };
         ui.menu_button(egui::RichText::new("Actions").size(12.5), |ui| {
             ui.set_min_width(190.0);
-            if item(ui, "Duplicate", "Shift+D") {
-                ui.close();
-                self.duplicate_and_grab();
+            self.command_items(
+                ui,
+                &[
+                    Some(Command::Duplicate),
+                    Some(Command::Move),
+                    Some(Command::Rotate),
+                ],
+            );
+            if curves {
+                self.command_items(
+                    ui,
+                    &[
+                        Some(Command::Scale),
+                        Some(Command::Tool(ToolKind::Mirror)),
+                        None,
+                    ],
+                );
             }
-            if item(ui, "Move", "G") {
-                ui.close();
-                self.tool
-                    .key(ToolKey::G, self.pointer.as_ref(), &mut self.editor);
+            if curves && self.editor.selection.len() >= 2 {
+                self.command_item(ui, Command::Group);
             }
-            if item(ui, "Rotate", "R") {
-                ui.close();
-                self.tool
-                    .key(ToolKey::R, self.pointer.as_ref(), &mut self.editor);
-            }
-            if curves && item(ui, "Mirror…", "M") {
-                ui.close();
-                self.switch_tool(ToolKind::Mirror);
+            if grouped {
+                self.command_item(ui, Command::Ungroup);
             }
             if curves {
-                ui.separator();
+                self.command_item(ui, Command::MakeBlock);
             }
-            if curves
-                && self.editor.selection.len() >= 2
-                && item(ui, "Group", &app::panels::shortcut("G", false))
-            {
-                ui.close();
-                self.editor.make_group();
-            }
-            if grouped && item(ui, "Ungroup", &app::panels::shortcut("G", true)) {
-                ui.close();
-                self.editor.ungroup();
-            }
-            if curves && item(ui, "Make block", "") {
-                ui.close();
-                self.start_make_block("");
-            }
-            if let Some(g) = self.editor.convertible_group()
-                && item(ui, "Make block from group", "")
-            {
-                ui.close();
-                self.block_from_group(g, ui.input(|i| i.time));
+            if self.editor.convertible_group().is_some() {
+                self.command_item(ui, Command::BlockFromGroup);
             }
         })
         .response
-        .on_hover_text("Duplicate, move, rotate, mirror, group, make a block");
+        .on_hover_text("Duplicate, move, rotate, scale, mirror, group, make a block");
         divider(ui);
         if icons::button(ui, 24.0, false, "Delete", |p, r, c| {
             icons::glyph(p, r, Glyph::Delete, c)
@@ -922,10 +907,6 @@ impl DriftApp {
     pub(crate) fn canvas_menu(&mut self, ui: &mut egui::Ui) {
         let now = ui.input(|i| i.time);
         ui.set_min_width(210.0);
-        let item = |ui: &mut egui::Ui, label: &str, keys: &str| {
-            ui.add(egui::Button::new(label).shortcut_text(keys))
-                .clicked()
-        };
         let n = self.editor.selection.len() + self.editor.selected_instances.len();
         // Picked dimensions and notes: where they show.
         let refs = self.picked_annotations();
@@ -987,121 +968,68 @@ impl DriftApp {
             let (align, space) = self.can_align_dimensions();
             if align || space {
                 ui.separator();
-                if ui
-                    .add_enabled(align, egui::Button::new("Align dimensions"))
-                    .on_hover_text("Put the picked parallel dimensions on the first one's line")
-                    .clicked()
-                {
-                    self.align_picked_dimensions(false, now);
-                    ui.close();
-                }
-                if ui
-                    .add_enabled(space, egui::Button::new("Space dimensions evenly"))
-                    .on_hover_text(
-                        "Space three or more stacked parallel dimensions evenly between the outermost two",
-                    )
-                    .clicked()
-                {
-                    self.align_picked_dimensions(true, now);
-                    ui.close();
-                }
-                ui.separator();
+                self.command_items(
+                    ui,
+                    &[
+                        Some(Command::AlignDimensions),
+                        Some(Command::SpaceDimensions),
+                        None,
+                    ],
+                );
             }
-            if theme::menu_check(
-                ui,
-                self.show_hidden_annotations,
-                "Show hidden annotations",
-                "Alt+H",
-            )
-            .clicked()
-            {
-                self.show_hidden_annotations = !self.show_hidden_annotations;
-            }
-            ui.separator();
+            self.command_items(ui, &[Some(Command::Toggle(ViewFlag::Hidden)), None]);
         }
         if n == 0 {
-            if self.clipboard.is_some()
-                && item(ui, "Paste here", &app::panels::shortcut("V", false))
-            {
-                ui.close();
-                self.paste_copied(false, now);
+            if self.clipboard.is_some() {
+                self.command_item(ui, Command::Paste);
             }
-            if item(ui, "Select all", &app::panels::shortcut("A", false)) {
-                self.editor.select_all();
-                ui.close();
-            }
-            if item(ui, "Zoom to fit", "Shift+F") {
-                self.fit_target = Some(self.fit_bounds());
-                ui.close();
-            }
-            ui.separator();
-            let grid_keys = app::panels::shortcut("'", false);
-            if theme::menu_check(ui, self.show_grid, "Grid", &grid_keys).clicked() {
-                self.show_grid = !self.show_grid;
-            }
-            if theme::menu_check(ui, self.grid_snap, "Snap to grid", "Shift+G").clicked() {
-                self.grid_snap = !self.grid_snap;
-            }
-            if theme::menu_check(ui, self.perp_tangent_snap, "Perpendicular & tangent", "")
-                .clicked()
-            {
-                self.perp_tangent_snap = !self.perp_tangent_snap;
-            }
-            ui.separator();
-            if item(ui, "Command palette…", &app::panels::shortcut("K", false)) {
-                self.open_palette();
-                ui.close();
-            }
+            self.command_items(
+                ui,
+                &[
+                    Some(Command::SelectAll),
+                    Some(Command::ZoomToFit),
+                    None,
+                    Some(Command::Toggle(ViewFlag::Grid)),
+                    Some(Command::Toggle(ViewFlag::Snap)),
+                    Some(Command::Toggle(ViewFlag::PerpTangent)),
+                    None,
+                    Some(Command::Palette),
+                ],
+            );
             return;
         }
         ui.label(egui::RichText::new(format!("{n} selected")).small().weak());
-        let ctx = ui.ctx().clone();
-        if item(ui, "Cut", &app::panels::shortcut("X", false)) {
-            ui.close();
-            self.cut(&ctx);
+        if self.command_item(ui, Command::Cut) {
             return;
         }
-        if item(ui, "Copy", &app::panels::shortcut("C", false)) {
-            ui.close();
-            self.copy(&ctx);
-        }
-        if self.clipboard.is_some() && item(ui, "Paste", &app::panels::shortcut("V", false)) {
-            ui.close();
-            self.paste_copied(false, now);
+        self.command_item(ui, Command::Copy);
+        if self.clipboard.is_some() && self.command_item(ui, Command::Paste) {
             return;
         }
-        if item(ui, "Duplicate", "Shift+D") {
-            ui.close();
-            self.duplicate_and_grab();
-        }
-        if item(ui, "Move", "G") {
-            ui.close();
-            self.tool
-                .key(ToolKey::G, self.pointer.as_ref(), &mut self.editor);
-        }
-        if item(ui, "Rotate", "R") {
-            ui.close();
-            self.tool
-                .key(ToolKey::R, self.pointer.as_ref(), &mut self.editor);
-        }
+        self.command_items(
+            ui,
+            &[
+                Some(Command::Duplicate),
+                Some(Command::Move),
+                Some(Command::Rotate),
+            ],
+        );
         let curves = !self.editor.selection.is_empty();
-        if curves && item(ui, "Mirror…", "M") {
-            ui.close();
-            self.switch_tool(ToolKind::Mirror);
+        if curves {
+            self.command_items(
+                ui,
+                &[Some(Command::Scale), Some(Command::Tool(ToolKind::Mirror))],
+            );
         }
         if self.editor.can_arrange() {
-            self.arrange_menu(ui, now);
+            self.arrange_menu(ui);
         }
         let (on_relations, on_dims) = self.editor.selection_constraints();
-        if !on_relations.is_empty()
-            && item(ui, &format!("Clear relations ({})", on_relations.len()), "")
-        {
-            ui.close();
-            self.clear_selection_constraints(false, now);
+        if !on_relations.is_empty() {
+            self.command_item(ui, Command::ClearRelations);
         }
-        if !on_dims.is_empty() && item(ui, &format!("Clear dimensions ({})", on_dims.len()), "") {
-            ui.close();
-            self.clear_selection_constraints(true, now);
+        if !on_dims.is_empty() {
+            self.command_item(ui, Command::ClearDimensions);
         }
         // Relations and dimensions that fit the selection.
         let relations = self.editor.relation_options();
@@ -1134,15 +1062,11 @@ impl DriftApp {
                 .selection
                 .iter()
                 .any(|id| self.editor.doc.group_of(*id).is_some());
-            if self.editor.selection.len() >= 2
-                && item(ui, "Group", &app::panels::shortcut("G", false))
-            {
-                self.editor.make_group();
-                ui.close();
+            if self.editor.selection.len() >= 2 {
+                self.command_item(ui, Command::Group);
             }
-            if grouped && item(ui, "Ungroup", &app::panels::shortcut("G", true)) {
-                self.editor.ungroup();
-                ui.close();
+            if grouped {
+                self.command_item(ui, Command::Ungroup);
             }
             let cut = (self.editor.selection.len() == 1)
                 .then(|| self.editor.selection.iter().next().copied())
@@ -1157,22 +1081,25 @@ impl DriftApp {
                     }
                 });
             if let Some((id, label)) = cut
-                && item(ui, label, "")
+                && ui.button(label).clicked()
             {
                 ui.close();
                 if let Err(e) = self.editor.remove_corner_cut(id) {
                     self.set_status(format!("{label}: {e}"), true, now);
                 }
             }
-            if item(ui, "Toggle construction", "Alt+C") {
-                self.editor.toggle_construction();
-                ui.close();
-            }
-            if item(ui, "Select chain", "Tab") {
+            self.command_item(ui, Command::Construction);
+            if ui
+                .add(egui::Button::new("Select chain").shortcut_text("Tab"))
+                .clicked()
+            {
                 self.editor.select_chain();
                 ui.close();
             }
-            if item(ui, "Relations…", "Q") {
+            if ui
+                .add(egui::Button::new("Relations…").shortcut_text("Q"))
+                .clicked()
+            {
                 ui.close();
                 self.open_pie(ui.ctx());
             }
@@ -1190,43 +1117,31 @@ impl DriftApp {
                     }
                 }
             });
-            if item(ui, "Make block", "") {
-                self.start_make_block("");
-                ui.close();
-            }
-            if let Some(g) = self.editor.convertible_group()
-                && item(ui, "Make block from group", "")
-            {
-                self.block_from_group(g, now);
-                ui.close();
+            self.command_item(ui, Command::MakeBlock);
+            if self.editor.convertible_group().is_some() {
+                self.command_item(ui, Command::BlockFromGroup);
             }
         }
         if !self.editor.selected_instances.is_empty() {
-            if item(ui, "Explode block", "") {
-                self.editor.explode_selected();
-                ui.close();
-            }
-            if item(ui, "Explode to group", "") {
-                self.editor.explode_to_groups();
-                ui.close();
-            }
+            self.command_items(ui, &[Some(Command::Explode), Some(Command::ExplodeToGroup)]);
         }
         ui.separator();
-        let red = ui.visuals().error_fg_color;
-        if ui
-            .add(
-                egui::Button::new(egui::RichText::new("Delete").color(red)).shortcut_text(
-                    if cfg!(target_os = "macos") {
-                        "⌫"
-                    } else {
-                        "Del"
-                    },
-                ),
-            )
-            .clicked()
-        {
-            self.editor.delete_selection();
-            ui.close();
+        // Delete in red (its label and keys from the registry).
+        if let Some(spec) = crate::commands::spec(Command::Delete) {
+            let red = ui.visuals().error_fg_color;
+            let keys = spec.key_text(cfg!(target_os = "macos"));
+            if ui
+                .add(
+                    egui::Button::new(egui::RichText::new(spec.menu).color(red))
+                        .shortcut_text(keys),
+                )
+                .on_hover_text(spec.description)
+                .clicked()
+            {
+                ui.close();
+                let ctx = ui.ctx().clone();
+                self.run_command(&ctx, Command::Delete);
+            }
         }
     }
 }

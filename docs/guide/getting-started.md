@@ -183,7 +183,12 @@ Ctrl+' hides or shows the grid.
 
 Press Ctrl+K (or Ctrl+Shift+P), or click **Search commands** in the top bar. Type a few
 letters of any tool, view setting, panel or command, and press Enter. Arrow keys move
-through the list and Esc closes it. Commands you've used recently come first.
+through the list and Esc closes it. Commands you've used recently come first. AutoCAD's
+command names and aliases work too (MOVE, RO, TR, OFFSET…); what can't run yet, such as
+**Rotate** with nothing picked, is dimmed and says why.
+
+Every command is also in the menus: **Draw**, **Modify** and **Annotate** have the tools,
+**Move**, **Rotate**, **Scale** and the patterns.
 
 ![The command palette, filtered by "dim"](images/command-palette.png)
 
@@ -199,7 +204,8 @@ The essentials:
 - Each tool has a letter: L line, R rectangle, C circle, A arc, D dimension, T trim, and so
   on. Pressing C, A, U or F again cycles through related tools.
 - Esc cancels what you're doing. Pressed again, it returns to the **Select** tool.
-- Enter or a right-click finishes a polyline.
+- Enter or a right-click finishes a polyline. With nothing in hand, Enter or Space does the
+  last command or tool again.
 - Ctrl+Z undoes and Ctrl+Y (or Ctrl+Shift+Z) redoes. Every edit can be undone, and a drag
   is one step.
 

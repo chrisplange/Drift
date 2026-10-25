@@ -5,32 +5,126 @@ use Cmd for Ctrl and Option for Alt.
 
 Keys aren't configurable yet.
 
-## Tools
+The command palette (Ctrl+K) finds every command by name, and takes AutoCAD's command names
+and aliases too: MOVE or M, ROTATE or RO, SCALE or SC, TRIM or TR, EXTEND or EX, OFFSET or
+O, MIRROR or MI, ARRAY or AR, FILLET or F, CHAMFER or CHA, LINE or L, CIRCLE or C,
+RECTANGLE or REC, DIMENSION or DIM, HATCH or H. Where an alias is also one of Drift's own
+keys, Drift's key comes first: M in the palette is **Mirror**, as the M key is; type MOVE
+for **Move**.
 
-| Key | Tool |
-|---|---|
-| S or Esc | **Select** |
-| L | **Line** (polyline) |
-| P | **Pen**: click for corners, drag for smooth points |
-| R | **Rectangle** (with a selection and the **Select** tool: rotate) |
-| K | **Polygon**; X switches inscribed / circumscribed |
-| C | **Circle**; again for **Ellipse**, then **Partial ellipse** |
-| A | **Arc** (centre point); again for **3-pt arc**, then **Tangent arc** |
-| U | **Slot**; again for centre and arc slots |
-| V | **Point** (a vertex) |
-| Shift+T | **Text** |
-| I | **Place block**: R turns, X mirrors |
-| D | **Dimension** |
-| N | **Note** |
-| H | **Fill / hatch** |
-| T | **Trim** |
-| E | **Extend** |
-| O | **Offset** |
-| M | **Mirror** |
-| F | **Fillet**; again for **Chamfer** |
+With nothing in hand (the **Select** tool, nothing being moved or drawn), Enter or Space
+does the last command or tool again, as in AutoCAD.
 
-**Split**, **Ordinate**, **Callout**, **Centre mark**, **Section mark** and **Elevation
-mark** have no key: use the tool palette or the command palette.
+<!-- BEGIN commands: made from crates/drift-app/src/commands.rs -->
+
+## File
+
+| Key | Command | Does |
+|---|---|---|
+| Ctrl+N | **New sketch** | Start a new, empty drawing |
+| Ctrl+O | **Open…** | Open a Drift sketch, or a drawing to import |
+| Ctrl+S | **Save** | Save the drawing |
+| Ctrl+Shift+S | **Save as…** | Save the drawing under a new name |
+| Ctrl+P | **Print…** | Print the sheets (as a PDF) |
+
+## Edit
+
+| Key | Command | Does |
+|---|---|---|
+| Ctrl+Z | **Undo** | Undo the last change |
+| Ctrl+Shift+Z / Ctrl+Y | **Redo** | Redo what was undone |
+| Ctrl+X | **Cut** | Copy the selection and delete it |
+| Ctrl+C | **Copy** | Copy the selection; works between windows |
+| Ctrl+V | **Paste** | Under the pointer, or in the middle of the view |
+| Ctrl+Shift+V | **Paste in place** | Where it was copied from |
+| Del / Backspace | **Delete selection** | Delete the selection, or the picked relation or dimension |
+| Alt+C | **Toggle construction** | Make the picked curves construction geometry, or geometry again (with a drawing tool: draw construction geometry) |
+| Ctrl+G | **Group** | Group the picked curves; double-click a group to enter it |
+| Ctrl+Shift+G | **Ungroup** | Ungroup the picked groups |
+| Shift+D | **Duplicate** | Copy the selection in place, then move the copy |
+| F2 | **Rename block or group…** | Rename the picked group, or the block of the picked copies |
+| Ctrl+A | **Select all** | Pick everything the selection filter lets through |
+| S | **Select** | Pick, drag and box-select geometry; G moves the selection |
+| Ctrl+, | **Preferences…** | Theme, pointer, drawing aids and updates |
+
+## View
+
+| Key | Command | Does |
+|---|---|---|
+| Ctrl+K / Ctrl+Shift+P | **Command palette…** | Any tool, setting, panel or command, by name |
+| Shift+F | **Zoom to fit** | Fit the view to the drawing (or double middle-click) |
+| Shift+Z | **Zoom to selection** | Fit the view to what is picked |
+| Ctrl+' | **Grid** | Show or hide the grid |
+| Shift+G | **Snap to grid** | Snap to the grid |
+| Shift+Alt+W | **Thin lines** | Thin lines: every line one pixel wide |
+| Shift+C | **Constraint status colours** | Colour curves by constraint status, or by their own and their layer's colours |
+| Shift+Alt+V | **Always show end points** | Show every end point, or only those of hovered and picked curves |
+| Alt+D | **Dimensions and notes** | Show or hide dimensions and notes (shown again at each start) |
+| Alt+H | **Hidden annotations (faded)** | Show hidden dimensions and notes, faded, to pick and show them again |
+| Alt+R | **Relations** | Show or hide relation symbols |
+| Shift+Alt+B | **View crops** | Show or hide views' crops and names on the canvas |
+| Shift+Alt+R | **Automatic relations** | Add relations automatically while drawing, or not |
+| Ctrl+\ | **Hide all panels** | Hide every panel for a clear view, and bring them back |
+
+## Draw
+
+| Key | Command | Does |
+|---|---|---|
+| L | **Line** | Draw connected lines; type a length, X / Y lock an axis |
+| P | **Pen** | Curves: click for corners, drag for smooth points (Alt breaks the handle) |
+| R | **Rectangle** | Two opposite corners, or type the width and height |
+| K | **Polygon** | Regular polygon: centre, then a corner. Tab types sides; X: around the circle |
+| C | **Circle** | Centre, then a point on the circle (or type the diameter). C again switches through: circle, ellipse, partial ellipse |
+| A | **Arc** | Centre, start, end. Press A again for other arc types |
+| U | **Slot** | Straight, centre or arc slot (press U again to switch), then width |
+| V | **Point** | A sketch point, for reference or construction |
+| Shift+T | **Text** | A line of text drawn as outlines, convertible to curves |
+| I | **Place block** | Place copies of a block from the Blocks tab; R turns, X mirrors |
+
+## Modify
+
+| Key | Command | Does |
+|---|---|---|
+| G | **Move** | Move the selection: X / Y lock an axis, type dX Tab dY, B picks the base point |
+| R (with a selection) | **Rotate** | Turn the selection: type an angle, B picks the pivot, R again rotates by reference |
+| M | **Mirror** | Mirror the selection about a line, kept symmetric |
+| O | **Offset** | A parallel copy of a curve and the curves connected to it |
+| T | **Trim** | Remove a piece up to the curves that cut it; drag to trim several |
+| E | **Extend** | Lengthen a line or arc to the next curve |
+| F | **Fillet** | Round the corner where two lines meet. F again switches through: fillet, chamfer |
+
+With no key (use the Modify menu or the command palette): **Scale**, **Split**, **Linear pattern**, **Circular pattern**.
+
+## Annotate
+
+| Key | Command | Does |
+|---|---|---|
+| D | **Dimension** | Click geometry, then place the label: the type follows |
+| N | **Note** | Text, with a leader if you start on geometry |
+| H | **Fill / hatch** | Fill or hatch a closed area: click inside it |
+
+With no key (use the Annotate menu or the command palette): **Ordinate**, **Callout**, **Centre mark**, **Section mark**, **Elevation mark**, **View**, **Align picked dimensions**, **Space picked dimensions evenly**, **Hide picked dimensions and notes on the canvas**, **Leave picked dimensions and notes off sheets**.
+
+## Arrange
+
+| Key | Command | Does |
+|---|---|---|
+| Ctrl+Shift+] | **Bring to front** | Bring the picked fills and shapes to the front of their layer |
+| Ctrl+] | **Bring forward** | Bring the picked fills and shapes forward one step on their layer |
+| Ctrl+[ | **Send backward** | Send the picked fills and shapes backward one step on their layer |
+| Ctrl+Shift+[ | **Send to back** | Send the picked fills and shapes to the back of their layer |
+
+## Layers
+
+| Key | Command | Does |
+|---|---|---|
+| Ctrl+L | **Layers panel** | Layers and underlays |
+
+## Help
+
+| Key | Command | Does |
+|---|---|---|
+| ? | **Keyboard shortcuts** | This list, with a filter |
 
 ## While drawing
 
@@ -44,93 +138,59 @@ mark** have no key: use the tool palette or the command palette.
 | Right-click | Finish a polyline |
 | A / L | In a polyline: switch to a tangent arc, or back to lines, from the last point |
 | Alt (hold) | Place without snapping (also no perpendicular or tangent snaps) |
-| Alt+C | Draw construction geometry, or geometry again |
-| Esc | Stop typing, cancel the step, or (pressed again) go back to **Select** |
+| Esc | Stop typing, cancel the step, or (pressed again) go back to Select |
+
+## Selection
+
+| Key | Does |
+|---|---|
+| Click / drag | Select, or box-select (right: window, left: crossing); Shift adds, Ctrl toggles |
+| Tab | Highlight the chain under the pointer (click to pick it); with nothing under the pointer, widen the selection to whole chains |
+| Click near a line's middle | Pick its midpoint |
+| Arrow keys | Nudge one grid step; Shift+arrow, ten |
+| Q | Relations pie: hold and flick, or tap and click |
+| Double-click text | Type into it in place |
+| Enter or Space | With nothing in hand: the last command or tool again |
+| Esc | Cancel the operation, or clear the selection; with a dialog or window open, close it (and nothing else) |
+| Right-click | In a drawing tool, finish (as Enter does); in Select, the canvas menu; in a move or rotate, cancel |
+
+## Dimensions
+
+| Key | Does |
+|---|---|
+| Shift+click (after a horizontal or vertical dimension) | Chain dimensions along the row; B switches to baseline |
+| Double-click a dimension | Edit its value |
+| Drag a dimension | Move its label |
+
+## Mouse
+
+| Key | Does |
+|---|---|
+| Double middle-click | Zoom to fit |
+| Middle or right drag | Pan |
+| Scroll / pinch | Zoom at the pointer (two fingers on a trackpad pan) |
+| Drag a panel's tab | Onto the canvas to float it, or onto either side to dock it |
+
+## Sheet preview
+
+| Key | Does |
+|---|---|
+| V | Add a view, by its region in the model |
+| Shift+F | Fit the sheet |
+| Delete | Take the picked view off the sheet (it stays in the drawing) |
+| Esc | Back to the model |
+
+<!-- END commands -->
 
 Units work in typed values: `25mm`, `2in`, `3"`, `1'-6 1/2"`, `30deg`. Bare numbers use the
 display unit.
-
-## Dimensions and annotation
-
-| Key or action | Does |
-|---|---|
-| D | **Dimension** tool |
-| Shift+click (after a horizontal or vertical dimension) | Chain dimensions along the row (in **Single** mode) |
-| B (in a row) | Switch between chain and baseline |
-| Double-click a dimension | Edit its value |
-| Drag a dimension | Move its label |
-| N | **Note**; Enter finishes, Shift+Enter adds a line |
-| Alt+D | Show or hide dimensions and notes (shown again at each start; the status bar says while they're hidden) |
-| Alt+R | Show or hide relation symbols (likewise) |
-| Alt+H | Show hidden annotations, faded, to pick them again |
-
-## Selection and editing
-
-| Key or action | Does |
-|---|---|
-| Click / drag | Select, or box-select (right: window, left: crossing); boxes take text, dimensions and annotations too, unless a pick filter leaves them out |
-| Shift+click | Add to the selection |
-| Ctrl+click | Toggle in or out of the selection |
-| Shift+drag | Add a box's contents to the selection |
-| Ctrl+A | Select all |
-| Tab | Highlight the chain under the pointer (click to pick it); with nothing under the pointer, widen the selection to whole chains |
-| Click near a line's middle | Pick its midpoint |
-| G | Move: X / Y lock an axis, type dX Tab dY (or a distance when locked), B picks the base point |
-| R (with a selection) | Rotate: type an angle, B picks the pivot |
-| Shift+D | Duplicate in place and move the copy |
-| Arrow keys | Nudge one grid step; Shift+arrow, ten |
-| Q | Relations pie: hold and flick, or tap and click |
-| Alt+C | Toggle construction on the picked curves |
-| Ctrl+G / Ctrl+Shift+G | Group / ungroup; double-click a group to enter it |
-| Ctrl+] / Ctrl+[ | Bring forward / send backward the picked fills and shapes on their layer |
-| Ctrl+Shift+] / Ctrl+Shift+[ | Bring to front / send to back on their layer |
-| Double-click text | Type into it in place |
-| Ctrl+C / Ctrl+X / Ctrl+V | Copy, cut, paste under the pointer |
-| Ctrl+Shift+V | Paste in place |
-| Delete or Backspace | Delete the selection, or the picked relation or dimension |
-| F2 | Rename the picked group or block |
-| Esc | Cancel the operation, or clear the selection; with a dialog or window open, close it (and nothing else) |
-| Right-click | In a drawing tool, finish (as Enter does); in **Select**, the canvas menu; in a move or rotate, cancel |
 
 In a move or rotate (G, R): click or Enter places, Esc or right-click cancels. While a
 dialog or window is open (Preferences, Drawing settings, Check sketch, an import…), the
 canvas takes no keys: Delete, Ctrl+Z and the tool keys wait until it is closed.
 
-## View
-
-| Key or action | Does |
-|---|---|
-| Shift+F or double middle-click | Zoom to fit |
-| Shift+Z | Zoom to the selection |
-| Middle or right drag | Pan |
-| Scroll / pinch | Zoom at the pointer (two fingers on a trackpad pan) |
-| Shift+G | Snap to the grid |
-| Ctrl+' | Show or hide the grid |
-| Shift+C | Constraint status colours, or curves' own and their layers' colours |
-| W | Thin lines: every line one pixel wide |
-| Shift+Alt+B | Show or hide views' crops and names (**View → View crops**) |
-| Shift+Alt+V | Always show end points, or only on hovered and picked curves |
-| Shift+Alt+R | Add relations automatically while drawing, or not (**Edit → Preferences… → Drawing aids**) |
-
-Each of these says in the status bar what it just did.
-
-In the sheet preview: Shift+F fits the sheet, Delete takes the picked view off the sheet
-(it stays in the drawing), Esc returns to the model.
+The view settings (Shift+G, Shift+C, Shift+Alt+W, Alt+D…) each say in the status bar what they just
+did.
 
 On the canvas, with a view's crop picked: Delete deletes the view (asking first if it's on a
 sheet), Esc lets it go.
-
-## Panels and files
-
-| Key | Does |
-|---|---|
-| Ctrl+K or Ctrl+Shift+P | Command palette |
-| Ctrl+L | Show or hide the **Layers** panel |
-| Ctrl+\ | Hide all panels, and bring them back |
-| Ctrl+Z | Undo |
-| Ctrl+Y or Ctrl+Shift+Z | Redo |
-| Ctrl+S / Ctrl+Shift+S | Save / save as |
-| Ctrl+N / Ctrl+O | New / open |
-| Ctrl+, | Preferences |
-| Ctrl+P | Print (the sheets as a PDF) |
-| ? | The shortcuts list |

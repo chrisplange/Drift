@@ -37,6 +37,9 @@ mod selection_move;
 /// A filled shape as one object in the Inspector: Stroke and Fill.
 #[cfg(not(feature = "demo"))]
 mod shapes;
+/// The regression smoke suite (`cargo test -p drift-app smoke_`): docs/regression-checklist.md.
+#[cfg(not(feature = "demo"))]
+mod smoke;
 /// Print matches the screen: one stacking order for the canvas and the exports.
 #[cfg(not(feature = "demo"))]
 mod stacking;

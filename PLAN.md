@@ -1083,7 +1083,11 @@ written but hasn't run yet (no GitHub repo).*
     m otherwise, plus `$INSUNITS`, `$LUPREC` and `$MEASUREMENT`.
   - LTYPE table (Continuous, Dashed, Hidden, Center, Phantom; `$LTSCALE` = drawing scale) and
     a LAYER table with nearest ACI colours and line types.
-  - LINE / ARC / CIRCLE / POLYLINE / SOLID (fill triangles) / TEXT (`%%c`, `%%d`, `%%p`).
+  - LINE / ARC / CIRCLE / POLYLINE / SOLID (fill triangles) / TEXT (`%%c`, `%%d`, `%%p`,
+    and `\U+XXXX` for other characters outside ASCII).
+  - Only R12 entities: AutoCAD discards an AC1009 file at the first newer one. Ellipses and
+    Béziers go out as POLYLINEs within `CURVE_TOLERANCE` (0.01 mm). `tests/dxf_export_r12.rs`
+    checks it, and `scripts/cad-check.ps1` opens exports in AutoCAD's engine (DWG TrueView).
   - Dimensions and notes are exploded onto an ANNOTATIONS layer.
 - **DXF import (File → Import DXF…, or open a .dxf):**
   - Reads LINE, ARC, CIRCLE, LWPOLYLINE and POLYLINE (with bulge arcs), POINT and the LAYER

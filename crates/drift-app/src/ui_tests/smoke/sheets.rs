@@ -18,10 +18,6 @@ fn a_sheet(h: &mut Harness<'_, DriftApp>) -> drift_core::SheetId {
     h.state().current_sheet().expect("a sheet")
 }
 
-fn painter(h: &Harness<'_, DriftApp>) -> egui::Painter {
-    h.ctx.layer_painter(egui::LayerId::background())
-}
-
 /// What a sheet's page draws outside its frame and title block.
 fn drawn(h: &mut Harness<'_, DriftApp>, page: usize) -> usize {
     let painter = painter(h);

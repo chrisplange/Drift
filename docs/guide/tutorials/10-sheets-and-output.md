@@ -279,9 +279,10 @@ What goes on paper:
 
 About DXF:
 
-- It's written as DXF R12, which every CAD program reads. Ellipses and pen curves go out
-  exactly, as ELLIPSE and SPLINE entities. Those are newer than R12: most programs read
-  them, but a strict R12 reader may skip them.
+- It's written as DXF R12, which every CAD program reads, AutoCAD included. R12 has no
+  ellipses or splines, so ellipses and pen curves go out as polylines that stay within
+  0.01 mm of the curve.
+- Text keeps its accents and symbols (é, ½, m², “quotes”) as the escapes CAD programs read.
 - R12 has no draw order of its own: Drift writes everything in its stacking order, so a
   program that draws in file order shows it as Drift does.
 - Blocks go out as blocks (BLOCK and INSERT). Dimensions and notes go out as plain lines and

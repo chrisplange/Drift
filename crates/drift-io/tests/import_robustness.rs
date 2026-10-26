@@ -582,6 +582,24 @@ fn dxf_corpus() -> Vec<(&'static str, String)> {
             ),
         ),
         (
+            // "By block" all the way round a cycle, placed in a colour: each copy's look is
+            // worked out once, and the cycle stops.
+            "blocks inserting each other by block",
+            dxf_doc(
+                "0\nINSERT\n2\nA\n62\n1\n10\n0\n20\n0\n0\nINSERT\n2\nA\n62\n3\n10\n5\n20\n0\n",
+                "0\nBLOCK\n2\nA\n0\nINSERT\n2\nB\n62\n0\n0\nLINE\n62\n0\n11\n1\n0\nENDBLK\n\
+                 0\nBLOCK\n2\nB\n0\nINSERT\n2\nA\n62\n0\n0\nCIRCLE\n6\nBYBLOCK\n40\n1\n0\nENDBLK\n",
+            ),
+        ),
+        (
+            "an external reference placed by a block",
+            dxf_doc(
+                "0\nINSERT\n2\nA\n41\n-1\n10\n0\n20\n0\n",
+                "0\nBLOCK\n2\nX\n70\n4\n1\nnowhere.dwg\n0\nENDBLK\n\
+                 0\nBLOCK\n2\nA\n0\nINSERT\n2\nX\n0\nLINE\n11\n1\n0\nENDBLK\n",
+            ),
+        ),
+        (
             "deep blocks",
             {
                 let mut blocks = String::new();

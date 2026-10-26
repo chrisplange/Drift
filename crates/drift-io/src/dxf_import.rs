@@ -89,7 +89,13 @@ pub struct DxfLayer {
 /// Blocks inside it are already expanded.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct DxfBlock {
+    /// What its inserts name it by. Unique in the import: a block placed in different
+    /// "by block" colours, line types or weights is one block per look, and those have
+    /// longer names.
     pub name: String,
+    /// The name to show: the file's own, or a dynamic block's real name for its anonymous
+    /// copies (`*U12`).
+    pub label: String,
     pub entities: Vec<DxfEntity>,
     pub texts: Vec<DxfText>,
 }
@@ -1038,6 +1044,29 @@ struct Inherit {
     layer: Option<String>,
     /// The insert's colour: for entities coloured "by block".
     color: Option<Rgb>,
+    /// The insert's line type and weight: for entities whose are "by block".
+    line_type: Option<LineType>,
+    weight: Option<LineWeight>,
+}
+
+impl Inherit {
+    /// A look for "by block" entities to take, besides the default one.
+    fn gives_a_look(&self) -> bool {
+        self.color.is_some() || self.line_type.is_some() || self.weight.is_some()
+    }
+}
+
+/// Whether an entity's colour, line type or weight is "by block".
+fn by_block(raw: &Raw) -> bool {
+    (raw.int(62) == Some(0) && raw.int(420).is_none())
+        || raw.s(6).is_some_and(|t| t.eq_ignore_ascii_case("BYBLOCK"))
+        || raw.int(370) == Some(-2)
+}
+
+/// A block kept for inserts: the block, and the look its "by block" entities take.
+struct Kept {
+    block: String,
+    inherit: Inherit,
 }
 
 #[derive(Default)]
@@ -1056,8 +1085,16 @@ struct Reader<'a> {
     skipped: BTreeMap<String, usize>,
     notes: BTreeSet<&'static str>,
     dimensions: usize,
-    /// Blocks placed by inserts that were kept as inserts.
-    used: BTreeSet<String>,
+    /// Blocks placed by inserts that were kept as inserts, by the name the inserts use.
+    used: BTreeMap<String, Kept>,
+    /// Whether a block has anything "by block" in it (or in blocks it places "by block").
+    by_block: HashMap<String, bool>,
+    /// Dynamic blocks' anonymous copies (`*U12`, upper case) and the dynamic block's name.
+    true_names: HashMap<String, String>,
+    /// External references, by block name (upper case): their name and file.
+    xrefs: HashMap<String, (String, String)>,
+    /// The external references something places.
+    xrefs_used: BTreeSet<String>,
 }
 
 impl<'a> Reader<'a> {
@@ -1101,8 +1138,16 @@ impl<'a> Reader<'a> {
         } else {
             own_color(raw)
         };
-        let line_type = self.line_type(raw);
-        let weight = own_weight(raw);
+        let line_type = if raw.s(6).is_some_and(|t| t.eq_ignore_ascii_case("BYBLOCK")) {
+            inherit.line_type
+        } else {
+            self.line_type(raw)
+        };
+        let weight = if raw.int(370) == Some(-2) {
+            inherit.weight
+        } else {
+            own_weight(raw)
+        };
         // Entities drawn in their own plane are mirrored when that plane faces away.
         let local = |flips: bool| if flips { xf.then(&Xf::FLIP) } else { *xf };
         let push = |sink: &mut Sink, shape: Shape| {
@@ -1503,6 +1548,8 @@ impl<'a> Reader<'a> {
                 let inherit = Inherit {
                     layer: Some(layer),
                     color,
+                    line_type,
+                    weight,
                 };
                 for child in &entities {
                     self.emit(child, &inner, &inherit, depth + 1, false, sink);
@@ -1514,6 +1561,10 @@ impl<'a> Reader<'a> {
                     return;
                 };
                 let key = name.to_ascii_uppercase();
+                if self.xrefs.contains_key(&key) {
+                    self.xrefs_used.insert(key);
+                    return;
+                }
                 let Some(block) = self.blocks.get(&key) else {
                     self.skip("INSERT (block not in the file)");
                     return;
@@ -1524,8 +1575,10 @@ impl<'a> Reader<'a> {
                     return;
                 }
                 let at = raw.p(10).unwrap_or(DVec2::ZERO);
+                // Each scale is 1 where it isn't given: AutoCAD, and so every DWG, leaves a 1
+                // out (a door mirrored as -1, 1 has no 42).
                 let sx = raw.f(41).unwrap_or(1.0);
-                let sy = raw.f(42).unwrap_or(sx);
+                let sy = raw.f(42).unwrap_or(1.0);
                 let angle = raw.f(50).unwrap_or(0.0);
                 let (cols, rows) = (
                     raw.int(70).unwrap_or(1).max(1) as usize,
@@ -1549,8 +1602,34 @@ impl<'a> Reader<'a> {
                     let place = own.then(&Xf::insert(at, angle, sx, sy));
                     let turned = place.a.y.atan2(place.a.x).to_degrees()
                         - if sx < 0.0 { 180.0 } else { 0.0 };
+                    // "By block" entities take this copy's look: a block placed in a look of
+                    // its own is kept once per look.
+                    let look = Inherit {
+                        layer: None,
+                        color,
+                        line_type,
+                        weight,
+                    };
+                    let variant = if look.gives_a_look() && self.uses_by_block(&key, 0) {
+                        format!(
+                            "{name} [{:?} {:?} {:?}]",
+                            look.color.map(|c| c.0),
+                            look.line_type,
+                            look.weight.map(|w| w.0)
+                        )
+                    } else {
+                        name.to_owned()
+                    };
+                    self.used.entry(variant.clone()).or_insert(Kept {
+                        block: key,
+                        inherit: if variant == name {
+                            Inherit::default()
+                        } else {
+                            look
+                        },
+                    });
                     sink.inserts.push(DxfInsert {
-                        block: name.to_owned(),
+                        block: variant,
                         layer: layer.clone(),
                         at: place.t,
                         angle: turned.rem_euclid(360.0),
@@ -1559,7 +1638,6 @@ impl<'a> Reader<'a> {
                         scale: place.b.length() / self.scale,
                         mirror: sx < 0.0,
                     });
-                    self.used.insert(key);
                 } else {
                     if cols * rows > MAX_ARRAY {
                         self.skip("INSERT (array too large)");
@@ -1569,6 +1647,8 @@ impl<'a> Reader<'a> {
                     let inherit = Inherit {
                         layer: Some(layer.clone()),
                         color: color.or(inherit.color),
+                        line_type,
+                        weight,
                     };
                     let turn = Xf::insert(DVec2::ZERO, angle, 1.0, 1.0);
                     for row in 0..rows {
@@ -1587,6 +1667,8 @@ impl<'a> Reader<'a> {
                 let inherit = Inherit {
                     layer: Some(layer),
                     color,
+                    line_type,
+                    weight,
                 };
                 for attrib in raw.kids.iter().filter(|k| k.kind == "ATTRIB") {
                     self.emit(attrib, xf, &inherit, depth + 1, false, sink);
@@ -1596,6 +1678,38 @@ impl<'a> Reader<'a> {
             "VIEWPORT" | "ATTDEF_END" | "SEQEND" | "VERTEX" => {}
             other => self.skip(other),
         }
+    }
+
+    /// Whether block `key` (upper case) has an entity whose colour, line type or weight is
+    /// "by block", directly or in a block it places "by block".
+    fn uses_by_block(&mut self, key: &str, depth: usize) -> bool {
+        if let Some(known) = self.by_block.get(key) {
+            return *known;
+        }
+        // A block that places itself stops here.
+        self.by_block.insert(key.to_owned(), false);
+        let Some(block) = self.blocks.get(key) else {
+            return false;
+        };
+        let mut nested = Vec::new();
+        let mut found = false;
+        for raw in &block.entities {
+            if raw.kind == "INSERT" {
+                if by_block(raw)
+                    && let Some(name) = raw.s(2)
+                {
+                    nested.push(name.to_ascii_uppercase());
+                }
+            } else if by_block(raw) {
+                found = true;
+                break;
+            }
+        }
+        if !found && depth < MAX_DEPTH {
+            found = nested.iter().any(|n| self.uses_by_block(n, depth + 1));
+        }
+        self.by_block.insert(key.to_owned(), found);
+        found
     }
 
     /// Add text given in a record's own coordinates and units.
@@ -1780,6 +1894,11 @@ pub fn read_at(text: &str, default_mm_per_unit: f64, drawn_at: f64) -> Result<Dx
     let mut layer_line_types: HashMap<String, String> = HashMap::new();
     // Block records by handle, for naming layouts.
     let mut records_by_handle: HashMap<String, String> = HashMap::new();
+    // The same, in the file's own case, for naming dynamic blocks.
+    let mut record_names: HashMap<String, String> = HashMap::new();
+    // A dynamic block's anonymous copy (upper case), and the handle of the dynamic block.
+    let mut copy_of: Vec<(String, String)> = Vec::new();
+    let mut xrefs: HashMap<String, (String, String)> = HashMap::new();
     let mut blocks: HashMap<String, RawBlock> = HashMap::new();
     let mut model: Vec<Raw> = Vec::new();
     // Paper space: the active layout's entities, and the other layouts' by block name.
@@ -1852,6 +1971,21 @@ pub fn read_at(text: &str, default_mm_per_unit: f64, drawn_at: f64) -> Result<Dx
                             if let (Some(handle), Some(name)) = (entry.s(5), entry.s(2)) {
                                 records_by_handle
                                     .insert(handle.to_ascii_uppercase(), name.to_ascii_uppercase());
+                                record_names.insert(handle.to_ascii_uppercase(), name.to_owned());
+                                // An anonymous copy of a dynamic block points at the dynamic
+                                // block's record (extended data AcDbBlockRepBTag, then 1005).
+                                if let Some(at) = entry
+                                    .g
+                                    .iter()
+                                    .position(|p| *p == (1001, "AcDbBlockRepBTag"))
+                                    && let Some((_, of)) = entry.g[at + 1..]
+                                        .iter()
+                                        .take_while(|(c, _)| *c != 1001)
+                                        .find(|(c, _)| *c == 1005)
+                                {
+                                    copy_of
+                                        .push((name.to_ascii_uppercase(), of.to_ascii_uppercase()));
+                                }
                             }
                         }
                         _ => {}
@@ -1872,7 +2006,11 @@ pub fn read_at(text: &str, default_mm_per_unit: f64, drawn_at: f64) -> Result<Dx
                     let name = block.s(2).unwrap_or("");
                     let entities: Vec<Raw> = head.collect();
                     let upper = name.to_ascii_uppercase();
-                    if upper.starts_with("*PAPER_SPACE") {
+                    // An external reference (4) or overlay (8): its drawing is another file.
+                    if block.int(70).is_some_and(|f| f & (4 | 8) != 0) && !name.is_empty() {
+                        let path = block.s(1).unwrap_or("").to_owned();
+                        xrefs.insert(upper, (name.to_owned(), path));
+                    } else if upper.starts_with("*PAPER_SPACE") {
                         if !entities.is_empty() {
                             papers.push((upper, entities));
                         }
@@ -1982,6 +2120,10 @@ pub fn read_at(text: &str, default_mm_per_unit: f64, drawn_at: f64) -> Result<Dx
         }
     }
 
+    let true_names = copy_of
+        .into_iter()
+        .filter_map(|(copy, of)| Some((copy, record_names.get(&of)?.clone())))
+        .collect();
     let mut reader = Reader {
         scale: scale * drawn_at,
         blocks,
@@ -1989,7 +2131,11 @@ pub fn read_at(text: &str, default_mm_per_unit: f64, drawn_at: f64) -> Result<Dx
         skipped: BTreeMap::new(),
         notes: BTreeSet::new(),
         dimensions: 0,
-        used: BTreeSet::new(),
+        used: BTreeMap::new(),
+        by_block: HashMap::new(),
+        true_names,
+        xrefs,
+        xrefs_used: BTreeSet::new(),
     };
     let world = Xf::scale(reader.scale);
     let mut sink = Sink::default();
@@ -1999,15 +2145,21 @@ pub fn read_at(text: &str, default_mm_per_unit: f64, drawn_at: f64) -> Result<Dx
 
     // The blocks the kept inserts place, with what is nested in them expanded.
     let mut out_blocks = Vec::new();
-    for key in reader.used.clone() {
-        let Some(block) = reader.blocks.get(&key) else {
+    let kept = std::mem::take(&mut reader.used);
+    for (name, kept) in &kept {
+        let Some(block) = reader.blocks.get(&kept.block) else {
             continue;
         };
-        let (name, base, entities) = (block.name.to_owned(), block.base, block.entities.clone());
+        let label = reader
+            .true_names
+            .get(&kept.block)
+            .cloned()
+            .unwrap_or_else(|| block.name.to_owned());
+        let (base, entities) = (block.base, block.entities.clone());
         let place = world.then(&Xf::translate(-base));
         let mut inner = Sink::default();
         for raw in &entities {
-            reader.emit(raw, &place, &Inherit::default(), 1, false, &mut inner);
+            reader.emit(raw, &place, &kept.inherit, 1, false, &mut inner);
         }
         if !inner.hatches.is_empty() {
             reader
@@ -2015,10 +2167,33 @@ pub fn read_at(text: &str, default_mm_per_unit: f64, drawn_at: f64) -> Result<Dx
                 .insert("Hatches inside blocks were left out (their boundaries are still there).");
         }
         out_blocks.push(DxfBlock {
-            name,
+            name: name.clone(),
+            label,
             entities: inner.entities,
             texts: inner.texts,
         });
+    }
+    let mut xref_note = None;
+    if !reader.xrefs_used.is_empty() {
+        let list: Vec<String> = reader
+            .xrefs_used
+            .iter()
+            .filter_map(|k| reader.xrefs.get(k))
+            .take(6)
+            .map(|(name, path)| {
+                if path.is_empty() {
+                    name.clone()
+                } else {
+                    format!("{name} ({path})")
+                }
+            })
+            .collect();
+        xref_note = Some(format!(
+            "External reference(s) weren't brought in, as their drawings are other files: {}. \
+             Bind them in AutoCAD (XREF, then Bind) and import again, or import those files \
+             on their own.",
+            list.join(", ")
+        ));
     }
 
     // Layouts: their viewports become views; what is drawn on the paper itself is counted.
@@ -2072,6 +2247,7 @@ pub fn read_at(text: &str, default_mm_per_unit: f64, drawn_at: f64) -> Result<Dx
     }
 
     let mut notes: Vec<String> = reader.notes.iter().map(|n| (*n).to_owned()).collect();
+    notes.extend(xref_note);
     if custom_types > 0 {
         notes.push(format!(
             "{custom_types} custom line type(s) were matched to the nearest of Drift's five \
@@ -2579,18 +2755,21 @@ pub fn add_to_document(doc: &mut Document, import: &DxfImport) -> ImportReport {
         ));
     }
 
-    // Copies of blocks: each block is created once (or found by name), then placed. A
-    // block's text is added with each copy (Drift's blocks hold curves only).
+    // Copies of blocks: each block is created once, then placed. A block the drawing already
+    // has by that name is used only if it is the same; otherwise the new one gets a name of
+    // its own ("Door (2)"). A block's text is added with each copy (Drift's blocks hold
+    // curves only).
     let mut block_text = false;
+    let mut made: HashMap<&str, drift_core::BlockId> = HashMap::new();
     for insert in &import.inserts {
         let def = import.blocks.iter().find(|b| b.name == insert.block);
-        let block = match doc.block_named(&insert.block) {
-            Some(b) => b,
+        let block = match made.get(insert.block.as_str()) {
+            Some(b) => *b,
             None => {
                 let Some(def) = def else {
                     continue;
                 };
-                let items = def
+                let items: Vec<drift_core::BlockItem> = def
                     .entities
                     .iter()
                     .filter(|e| !matches!(e.shape, Shape::Point(_)))
@@ -2604,13 +2783,35 @@ pub fn add_to_document(doc: &mut Document, import: &DxfImport) -> ImportReport {
                         },
                     })
                     .collect();
-                report.blocks += 1;
-                doc.add_block(drift_core::Block {
-                    name: def.name.clone(),
-                    items,
-                    fills: Vec::new(),
-                    profile: false,
-                })
+                let label = if def.label.is_empty() {
+                    &def.name
+                } else {
+                    &def.label
+                };
+                let same = doc.block_named(label).filter(|b| {
+                    doc.block(*b)
+                        .is_some_and(|b| b.items == items && b.fills.is_empty())
+                });
+                let id = match same {
+                    Some(b) => b,
+                    None => {
+                        let mut name = label.clone();
+                        let mut n = 2;
+                        while doc.block_named(&name).is_some() {
+                            name = format!("{label} ({n})");
+                            n += 1;
+                        }
+                        report.blocks += 1;
+                        doc.add_block(drift_core::Block {
+                            name,
+                            items,
+                            fills: Vec::new(),
+                            profile: false,
+                        })
+                    }
+                };
+                made.insert(insert.block.as_str(), id);
+                id
             }
         };
         let layer = layer_of(doc, &insert.layer, &mut report);
@@ -3398,10 +3599,16 @@ mod tests {
         assert_eq!(back.skipped.len(), 1, "{:?}", back.skipped);
         // Kept as copies: the plain bolt and the plate.
         assert_eq!(back.inserts.len(), 2);
-        assert_eq!(
-            (back.inserts[0].block.as_str(), back.inserts[0].at),
-            ("BOLT", DVec2::new(100.0, 50.0))
-        );
+        assert_eq!(back.inserts[0].at, DVec2::new(100.0, 50.0));
+        // Its circle is "by block" and the copy is blue: the block it places is the bolt in
+        // blue, shown by the bolt's own name.
+        let bolt = back
+            .blocks
+            .iter()
+            .find(|b| b.name == back.inserts[0].block)
+            .unwrap();
+        assert_eq!(bolt.label, "BOLT");
+        assert_eq!(bolt.entities[0].color, Some(Rgb([0, 0, 255])));
         assert_eq!(back.inserts[1].block, "PLATE");
         assert!((back.inserts[1].angle - 90.0).abs() < 1e-9);
         // The plate's definition: its line from the base point, and both bolts' circles

@@ -83,3 +83,132 @@ fn smoke_import_drop_dialog_choices_and_an_unreadable_drop() {
         let _ = std::fs::remove_file(p);
     }
 }
+
+/// A door block placed twice: as drawn, and mirrored the way AutoCAD writes it (41 = −1 and
+/// no 42, which came in turned 180°).
+fn doors_dxf() -> String {
+    [
+        "0",
+        "SECTION",
+        "2",
+        "HEADER",
+        "9",
+        "$INSUNITS",
+        "70",
+        "4",
+        "0",
+        "ENDSEC", //
+        "0",
+        "SECTION",
+        "2",
+        "BLOCKS",
+        "0",
+        "BLOCK",
+        "2",
+        "DOOR",
+        "10",
+        "0",
+        "20",
+        "0", //
+        "0",
+        "LINE",
+        "8",
+        "0",
+        "10",
+        "0",
+        "20",
+        "0",
+        "11",
+        "0",
+        "21",
+        "900", //
+        "0",
+        "ARC",
+        "8",
+        "0",
+        "10",
+        "0",
+        "20",
+        "0",
+        "40",
+        "900",
+        "50",
+        "0",
+        "51",
+        "90", //
+        "0",
+        "ENDBLK",
+        "0",
+        "ENDSEC", //
+        "0",
+        "SECTION",
+        "2",
+        "ENTITIES", //
+        "0",
+        "INSERT",
+        "8",
+        "DOORS",
+        "2",
+        "DOOR",
+        "10",
+        "0",
+        "20",
+        "0", //
+        "0",
+        "INSERT",
+        "8",
+        "DOORS",
+        "2",
+        "DOOR",
+        "10",
+        "3000",
+        "20",
+        "0",
+        "41",
+        "-1", //
+        "0",
+        "ENDSEC",
+        "0",
+        "EOF",
+    ]
+    .join("\n")
+        + "\n"
+}
+
+/// File → Import… of `path` into the drawing, through the dialog.
+fn import_through_the_dialog(h: &mut Harness<'_, DriftApp>, path: &std::path::PathBuf) {
+    open_menu(h, "File");
+    h.get_by_label("Import…").click();
+    h.run();
+    h.state().files.open_path(path);
+    h.run_steps(3);
+    h.get_by_label("Import").click();
+    h.run_steps(3);
+    assert!(h.state().pending_import.is_none());
+}
+
+#[test]
+fn smoke_import_dxf_mirrored_door_stays_mirrored_and_blocks_stay_their_own() {
+    let Some(mut h) = harness() else { return };
+    let path = temp_file("doors", "doors.dxf", doors_dxf().as_bytes());
+    import_through_the_dialog(&mut h, &path);
+    let doc = &h.state().editor.doc;
+    let copies: Vec<drift_core::Instance> = doc.instances().map(|(_, i)| *i).collect();
+    assert_eq!(copies.len(), 2, "both doors are copies of the block");
+    let mirrored = copies
+        .iter()
+        .find(|i| i.at == DVec2::new(3000.0, 0.0))
+        .expect("the second door");
+    assert!(mirrored.mirror, "mirrored");
+    assert!(
+        mirrored.angle.abs() < 1e-9,
+        "not turned: {}",
+        mirrored.angle
+    );
+    // The same file again: the same DOOR block is used, not a second one.
+    import_through_the_dialog(&mut h, &path);
+    let doc = &h.state().editor.doc;
+    assert_eq!(doc.blocks().count(), 1);
+    assert_eq!(doc.instances().count(), 4);
+    let _ = std::fs::remove_file(&path);
+}

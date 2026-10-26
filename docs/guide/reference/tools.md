@@ -4,6 +4,23 @@ Every tool in the tool palette, with its key. Pressing a tool's key again cycles
 related tools where the table says so. The active tool's options appear in the top bar, and
 its next step is always in the status bar's hint.
 
+The palette goes **Draw**, **Build**, **Modify**, **Annotate**, like the menus. Related tools
+share a place, marked by a small triangle at the icon's corner; right-click it, or hold the
+button down, for the others. The place shows the one used last.
+
+| Place | Also in it |
+|---|---|
+| **Rectangle** | Polygon, Slot |
+| **Circle** | Ellipse, Partial ellipse |
+| **Arc** | 3-pt arc, Tangent arc |
+| **Wall** | Walls from curves |
+| **Trim** | Extend, Split |
+| **Fillet** | Chamfer |
+| **Linear pattern** | Circular pattern |
+| **Dimension** | Ordinate |
+| **Note** | Callout |
+| **Section mark** | Elevation mark, Centre mark |
+
 Esc cancels the step in progress; pressed again, it returns to **Select**.
 
 ## Select
@@ -31,10 +48,20 @@ become dimensions when **Auto relations** is on.
 | **3-pt arc** | A, A | Start, end, then a point on the arc. | Chord length, Tab, angle; then radius. |
 | **Tangent arc** | A, A, A | Starts from the end of a line, arc, partial ellipse or pen curve, tangent to it. Chains like a polyline; L switches to lines. | Radius, Tab, sweep. |
 | **Slot** | U | **Straight** (two end centres, then the width), **Centre** (the middle, then an end centre) or **Arc** (the arc's centre, the two end centres, then the width). U again cycles; also in the top bar. | Length, then width. |
-| **Wall** | W | Click the centreline corner by corner; back in the first corner closes a ring, Enter or Esc ends. Starting or ending anywhere in another wall joins it (in its corner: an L; along it: a T; along the run itself: a T into itself); on another curve, stops against it. The preview shows the join before you click. W again (or A / L mid-run) switches to arcs (the end, then a point it curves through); drag at the next corner to bend the segment; Space flips to the other face; Backspace takes the last segment back. Top bar: **Thickness** (with presets), **Left face** / **Centre** / **Right face**, **Straight** / **Arc**, **Poché**. See [Walls](../tutorials/14-walls.md). | Length, Tab, angle. |
 | **Point** | V | Click to place a point. | X, Tab, Y. |
 | **Text** | Shift+T | Click where the text starts (its baseline), or in an existing text, and type. Enter finishes; Shift+Enter starts a new line. Top bar: **Height**. | — |
-| **Place block** | I | Copies of the block picked in the **Blocks** panel follow the pointer; click to place. R turns the next copy 90°, X mirrors it. | — |
+| **Fill / hatch** | H | Click inside a closed area to fill or hatch it with the style in the top bar. Alt+click a fill to pick up its style. The Rectangle, Polygon, Circle, Ellipse, Slot and Pen tools' bars have a **Fill** switch that fills closed shapes as they are drawn, in the same style. See [Fills and hatches](../tutorials/06-fills-and-hatches.md). | — |
+
+## Build
+
+Walls (and later doors, windows and rooms) and blocks. **Join walls**, **Unjoin walls**
+and **Explode walls** are in the **Build** menu; **Walls from curves** is in the **Wall**
+tool's flyout too.
+
+| Tool | Key | What it does |
+|---|---|---|
+| **Wall** | W | Click the centreline corner by corner; back in the first corner closes a ring, Enter or Esc ends. Starting or ending anywhere in another wall joins it (in its corner: an L; along it: a T; along the run itself: a T into itself); on another curve, stops against it. The preview shows the join before you click. W again (or A / L mid-run) switches to arcs (the end, then a point it curves through); drag at the next corner to bend the segment; Space flips to the other face; Backspace takes the last segment back. Top bar: **Thickness** (with presets), **Left face** / **Centre** / **Right face**, **Straight** / **Arc**, **Poché**. See [Walls](../tutorials/14-walls.md). Typed: Length, Tab, angle. |
+| **Place block** | I | Copies of the block picked in the **Blocks** panel follow the pointer; click to place. R turns the next copy 90°, X mirrors it. |
 
 ## Annotate
 
@@ -48,12 +75,13 @@ become dimensions when **Auto relations** is on.
 | **Section mark** | — | Two clicks for the cutting line, with a lettered flag at each end. X / Y keep it to an axis. |
 | **Elevation mark** | — | Click where it goes, then towards what it looks at. X / Y keep it to an axis; Alt allows any angle. |
 | **View** | — | Drag a rectangle, or click two corners: a view of the model with that crop, at the last view's scale, to place on sheets. It's picked, with its grips, to name and reframe. See [Sheets and output](../tutorials/10-sheets-and-output.md#3-draw-a-view-on-the-canvas). |
-| **Fill / hatch** | H | Click inside a closed area to fill or hatch it with the style in the top bar. Alt+click a fill to pick up its style. The Rectangle, Polygon, Circle, Ellipse, Slot and Pen tools' bars have a **Fill** switch that fills closed shapes as they are drawn, in the same style. See [Fills and hatches](../tutorials/06-fills-and-hatches.md). |
 
 ## Modify
 
 | Tool | Key | What it does |
 |---|---|---|
+| **Move** | G | Moves what is picked (dimmed with nothing picked). From the palette it starts where the pointer last was on the canvas; X / Y lock an axis, type dX Tab dY, B picks the base point. |
+| **Rotate** | R with a selection | Turns what is picked: type an angle, B picks the pivot, R again rotates by reference. |
 | **Trim** | T | Click a piece to remove it, up to the curves that cut it; or drag across pieces to trim several. |
 | **Extend** | E | Click near the end of a line or arc to lengthen it to the next curve. |
 | **Split** | — | Click a curve where it should be cut in two (a circle or ellipse into halves). |
@@ -72,12 +100,12 @@ become dimensions when **Auto relations** is on.
 
 ## Commands without a tool
 
-Some actions work on the selection instead of being tools: move (G), rotate (R), scale (the
-transform box's handles), duplicate (Shift+D), group (Ctrl+G), make block, explode, linear
+Some actions work on the selection instead of being tools: scale (the transform box's
+handles), duplicate (Shift+D), group (Ctrl+G), make block, explode, linear
 and circular patterns (the **Inspector**'s **Pattern** section), arrange (Ctrl+] and
 Ctrl+[), clear relations and dimensions, and check sketch (**Edit → Check sketch…**).
 
-Every tool and command is in the **Draw**, **Modify** and **Annotate** menus, with its key,
+Every tool and command is in the **Draw**, **Build**, **Modify** and **Annotate** menus, with its key,
 and in the command palette (Ctrl+K). With the **Select** tool and nothing in progress, Enter
 or Space repeats the last one.
 

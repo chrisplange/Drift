@@ -260,57 +260,6 @@ impl ToolKind {
         ToolKind::Mirror,
     ];
 
-    /// The toolbar's sections, with their headers (Select stands alone at the top).
-    pub const SECTIONS: [(&'static str, &'static [ToolKind]); 4] = [
-        ("", &[ToolKind::Select]),
-        (
-            "Draw",
-            &[
-                ToolKind::Line,
-                ToolKind::Pen,
-                ToolKind::Rectangle,
-                ToolKind::Polygon,
-                ToolKind::Circle,
-                ToolKind::Ellipse,
-                ToolKind::EllipseArc,
-                ToolKind::Arc,
-                ToolKind::ThreePointArc,
-                ToolKind::TangentArc,
-                ToolKind::Slot,
-                ToolKind::Wall,
-                ToolKind::Point,
-                ToolKind::Text,
-                ToolKind::Block,
-            ],
-        ),
-        (
-            "Annotate",
-            &[
-                ToolKind::Dimension,
-                ToolKind::Ordinate,
-                ToolKind::Note,
-                ToolKind::Callout,
-                ToolKind::CentreMark,
-                ToolKind::Section,
-                ToolKind::Elevation,
-                ToolKind::View,
-                ToolKind::Fill,
-            ],
-        ),
-        (
-            "Modify",
-            &[
-                ToolKind::Trim,
-                ToolKind::Extend,
-                ToolKind::Split,
-                ToolKind::Fillet,
-                ToolKind::Chamfer,
-                ToolKind::Offset,
-                ToolKind::Mirror,
-            ],
-        ),
-    ];
-
     /// The circle tools, in the order pressing C cycles through them.
     pub const CIRCLES: [ToolKind; 3] = [ToolKind::Circle, ToolKind::Ellipse, ToolKind::EllipseArc];
 
@@ -429,9 +378,8 @@ impl ToolKind {
     /// through the cycle.
     pub fn cycle_hint(self) -> Option<String> {
         let key = self.shortcut()?;
-        let cycle: Vec<&str> = Self::SECTIONS
+        let cycle: Vec<&str> = Self::ALL
             .iter()
-            .flat_map(|(_, group)| group.iter())
             .filter(|k| k.shortcut() == Some(key))
             .map(|k| k.label())
             .collect();

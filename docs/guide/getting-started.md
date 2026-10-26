@@ -122,11 +122,14 @@ with rounded corners, a slot, a bore and four bolt holes, fully dimensioned.
 
 The window has six parts:
 
-1. **The menu bar.** **File**, **Edit** and **View**, then **Draw**, **Modify** and
-   **Annotate** with every tool and command and its key, and **Help**.
-2. **The tool palette** (left). **Select** at the top, then **Draw**, **Annotate** and
-   **Modify** tools. Each shows its shortcut letter (in a narrow window, just its icon).
-   Hover over a tool for a description. If the window is short, the list scrolls.
+1. **The menu bar.** **File**, **Edit** and **View**, then **Draw**, **Build**, **Modify**
+   and **Annotate** with every tool and command and its key, and **Help**.
+2. **The tool palette** (left). **Select** at the top, then **Draw**, **Build**, **Modify**
+   and **Annotate**, in the menus' order. Each shows its shortcut letter (in a narrow window,
+   just its icon, two to a row). Hover over a tool for a description. A small triangle at an
+   icon's corner marks a family: **Circle** holds the ellipses, **Arc** the 3-point and
+   tangent arcs, **Trim** Extend and Split, and so on. Right-click it, or hold the button
+   down, for the others; the place then shows the one you used last.
 3. **The top bar.** On the left, the active tool and its options. With **Select** and
    nothing picked, it shows the pick filters: **Points**, **Edges**, **Fills**, **Areas**,
    **Blocks**, **Text** and **Annotations** (see [Pick filters](tutorials/04-editing.md#pick-filters)).

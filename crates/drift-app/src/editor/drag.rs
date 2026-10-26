@@ -184,6 +184,11 @@ impl Editor {
         Some(Rc::new(joins))
     }
 
+    /// The joins the drag in progress keeps (see `drift_geom::walls::Joins`).
+    pub(crate) fn drag_kept_joins(&self) -> Option<Rc<drift_geom::walls::Joins>> {
+        self.drag_session.as_ref().and_then(|s| s.joins.clone())
+    }
+
     /// Whether the drag in progress pushes curves along that couldn't give way any further
     /// (an arc squeezed as small as it goes, a line that would turn round): they move though
     /// nothing relates them to what is dragged.

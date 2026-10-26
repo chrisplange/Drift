@@ -185,6 +185,7 @@ impl Editor {
     }
 
     /// The joins the drag in progress keeps (see `drift_geom::walls::Joins`).
+    #[cfg(test)]
     pub(crate) fn drag_kept_joins(&self) -> Option<Rc<drift_geom::walls::Joins>> {
         self.drag_session.as_ref().and_then(|s| s.joins.clone())
     }

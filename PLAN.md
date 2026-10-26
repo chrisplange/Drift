@@ -977,7 +977,9 @@ written but hasn't run yet (no GitHub repo).*
     - ANSI31–38, STEEL, CONCRETE, EARTH, INSULATION, GLASS, WOOD, GRID, DOTS, SAND.
     - BRICK and BLOCK as model patterns.
   - **Imported patterns:** Parameters → Hatch patterns → Import .pat… stores them in the
-    document, so they travel with the file.
+    document, so they travel with the file. A DXF or DWG hatch brings its own pattern the
+    same way (from the HATCH's definition lines, at model size), unless it is one of the
+    built-ins (`same_pattern` in dxf_import), which is then used at the matching scale.
   - **Hatch lines:** clipped exactly in `f64` against line and arc edges.
     - Arcs are split where they turn back across the scan direction.
     - The even–odd rule is decided just off each scan line, so vertices count once.

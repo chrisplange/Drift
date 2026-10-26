@@ -293,8 +293,16 @@ impl Editor {
         {
             out.insert(Unit::Picture(id));
         }
+        // A picked wall arranges its cluster's poché (the walls joined to it too).
+        let owners = self.wall_owners();
         for id in &self.selection {
             if self.doc.get(*id).is_none_or(|e| e.kind.is_point()) {
+                continue;
+            }
+            if let Some(drift_core::Owner::Centre(w)) = owners.get(*id) {
+                if let Some(f) = self.wall_fill(w) {
+                    out.insert(Unit::Fill(f));
+                }
                 continue;
             }
             let of_fill = stack

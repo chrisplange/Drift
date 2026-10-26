@@ -216,6 +216,13 @@ pub fn tool(painter: &egui::Painter, rect: Rect, kind: ToolKind, color: Color32)
                 .collect();
             p.poly(&pts, true);
         }
+        ToolKind::Wall => {
+            // A wall turning a corner: two faces and an end cap.
+            p.poly(&[(3.0, 4.0), (16.0, 4.0), (16.0, 17.0)], false);
+            p.poly(&[(3.0, 8.5), (11.5, 8.5), (11.5, 17.0)], false);
+            p.line((3.0, 4.0), (3.0, 8.5));
+            p.line((11.5, 17.0), (16.0, 17.0));
+        }
         ToolKind::Slot => {
             p.line((6.5, 6.0), (13.5, 6.0));
             p.line((6.5, 14.0), (13.5, 14.0));

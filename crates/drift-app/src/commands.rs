@@ -75,6 +75,14 @@ pub(crate) enum Command {
     Explode,
     BlockFromGroup,
     ExplodeToGroup,
+    /// Walls along the picked curves.
+    WallsFromCurves,
+    /// The picked walls as plain geometry.
+    ExplodeWalls,
+    /// Two picked walls' nearest ends joined (an L or a T).
+    JoinWalls,
+    /// The picked walls' ends set not to join.
+    UnjoinWalls,
     /// Grab the selection (G).
     Move,
     /// Turn the selection (R with a selection).
@@ -121,6 +129,8 @@ pub(crate) enum ViewFlag {
     Combs,
     Crops,
     AutoRelations,
+    /// Walls' centrelines shown.
+    Centrelines,
 }
 
 /// Where a command belongs: its menu, and its section in the palette and the shortcuts list.
@@ -297,6 +307,8 @@ pub(crate) enum When {
     AlignableDimensions,
     SpaceableDimensions,
     PickedAnnotations,
+    /// Walls picked.
+    Walls,
     /// Only in development builds (and hidden elsewhere).
     Debug,
 }
@@ -325,6 +337,7 @@ impl When {
             When::AlignableDimensions => app.can_align_dimensions().0,
             When::SpaceableDimensions => app.can_align_dimensions().1,
             When::PickedAnnotations => !app.picked_annotations().is_empty(),
+            When::Walls => !app.editor.selected_walls().is_empty(),
             When::Debug => cfg!(debug_assertions),
         }
     }
@@ -349,6 +362,7 @@ impl When {
             When::AlignableDimensions => "Pick two or more parallel dimensions",
             When::SpaceableDimensions => "Pick three or more stacked parallel dimensions",
             When::PickedAnnotations => "Pick some dimensions or notes",
+            When::Walls => "Pick a wall",
         }
     }
 
@@ -874,6 +888,33 @@ fn table() -> Vec<Spec> {
         .when(When::Copies)
         .aliases(&["EXPLODE", "X"]),
         Spec::new(
+            "edit.explode_walls",
+            C::Edit,
+            K::ExplodeWalls,
+            "Explode walls",
+            "Turn the picked walls into plain lines, arcs and fills",
+        )
+        .when(When::Walls)
+        .aliases(&["EXPLODEWALL"]),
+        Spec::new(
+            "edit.join_walls",
+            C::Edit,
+            K::JoinWalls,
+            "Join walls",
+            "Join two picked walls where they come nearest: an L, or a T",
+        )
+        .when(When::Walls)
+        .aliases(&["JOINWALL", "WALLJOIN"]),
+        Spec::new(
+            "edit.unjoin_walls",
+            C::Edit,
+            K::UnjoinWalls,
+            "Unjoin walls",
+            "Stop the picked walls joining where they meet: their ends are capped",
+        )
+        .when(When::Walls)
+        .aliases(&["UNJOINWALL", "DISALLOWJOIN"]),
+        Spec::new(
             "edit.explode_to_group",
             C::Edit,
             K::ExplodeToGroup,
@@ -1159,6 +1200,13 @@ fn table() -> Vec<Spec> {
         )
         .keys(const { &[shift_alt(Key::B)] }),
         Spec::new(
+            "view.wall_centrelines",
+            C::View,
+            K::Toggle(ViewFlag::Centrelines),
+            "Wall centrelines",
+            "Show every wall's centreline (otherwise only a picked or hovered wall's)",
+        ),
+        Spec::new(
             "view.auto_relations",
             C::View,
             K::Toggle(ViewFlag::AutoRelations),
@@ -1262,6 +1310,18 @@ fn table() -> Vec<Spec> {
         tool("draw.three_point_arc", C::Draw, ToolKind::ThreePointArc),
         tool("draw.tangent_arc", C::Draw, ToolKind::TangentArc),
         tool("draw.slot", C::Draw, ToolKind::Slot).keys(const { &[plain(Key::U)] }),
+        tool("draw.wall", C::Draw, ToolKind::Wall)
+            .keys(const { &[plain(Key::W)] })
+            .aliases(&["WALL", "WA"]),
+        Spec::new(
+            "draw.walls_from_curves",
+            C::Draw,
+            K::WallsFromCurves,
+            "Walls from curves",
+            "Walls along the picked lines and arcs, at the Wall tool's settings",
+        )
+        .when(When::Curves)
+        .words("pick lines centreline"),
         tool("draw.point", C::Draw, ToolKind::Point)
             .keys(const { &[plain(Key::V)] })
             .aliases(&["POINT", "PO"]),
@@ -1522,8 +1582,12 @@ pub(crate) const OTHER_KEYS: &[(&str, &[(&str, &str)])] = &[
             ("Right-click", "Finish a polyline"),
             (
                 "A / L",
-                "In a polyline: switch to a tangent arc, or back to lines, from the last point",
+                "In a polyline: switch to a tangent arc, or back to lines, from the last point; \
+                 drawing walls: an arc or a straight segment next",
             ),
+            ("W", "Drawing walls: straight or arc segments"),
+            ("Space", "Drawing walls: the other face (Left ↔ Right)"),
+            ("Backspace", "Drawing walls: take back the last segment"),
             (
                 "Alt (hold)",
                 "Place without snapping (also no perpendicular or tangent snaps)",
@@ -1837,8 +1901,14 @@ mod tests {
                 seen.push((*k, s.id));
             }
         }
-        // W is kept free for the walls tool; thin lines are Shift+Alt+W.
-        assert!(seen.iter().all(|(k, _)| *k != plain(Key::W)), "W is taken");
+        // W is the Wall tool; thin lines are Shift+Alt+W.
+        assert_eq!(
+            seen.iter()
+                .find(|(k, _)| *k == plain(Key::W))
+                .map(|(_, id)| *id),
+            Some("draw.wall"),
+            "W is the Wall tool"
+        );
         assert_eq!(
             spec(Command::Toggle(ViewFlag::Thin)).unwrap().keys,
             &[shift_alt(Key::W)]

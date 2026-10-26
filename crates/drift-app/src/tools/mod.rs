@@ -43,6 +43,9 @@ mod text;
 mod three_point_arc;
 mod underlay;
 pub(crate) mod view;
+mod wall;
+#[cfg(test)]
+mod wall_tests;
 
 pub use self::{
     annotate::{CalloutTool, CentreMarkTool, ElevationTool, NoteTool, OrdinateTool, SectionTool},
@@ -58,6 +61,7 @@ pub use self::{
     text::TextTool,
     underlay::{UnderlayMode, UnderlayTool},
     view::ViewTool,
+    wall::WallTool,
 };
 pub use self::{
     arc::ArcTool, circle::CircleTool, dimension::DimensionTool, ellipse::EllipseTool,
@@ -137,6 +141,16 @@ pub enum ToolKey {
     B,
     /// Rotate the selection.
     R,
+    /// Space: the other side (a wall's face).
+    Space,
+    /// The tool's key pressed again (W: straight or arc walls).
+    Again,
+    /// A mid-run: an arc next.
+    ArcNext,
+    /// L mid-run: a straight segment next.
+    LineNext,
+    /// Backspace: take back the last step.
+    Backspace,
 }
 
 /// A world axis a drawing tool can lock the segment being drawn to (Blender-style X / Y keys).
@@ -178,6 +192,8 @@ pub enum ToolKind {
     ThreePointArc,
     TangentArc,
     Slot,
+    /// Walls: a centreline drawn as a wall of a thickness, joined to the walls it meets.
+    Wall,
     Point,
     Text,
     Block,
@@ -209,7 +225,7 @@ pub enum ToolKind {
 }
 
 impl ToolKind {
-    pub const ALL: [ToolKind; 31] = [
+    pub const ALL: [ToolKind; 32] = [
         ToolKind::Select,
         ToolKind::Line,
         ToolKind::Pen,
@@ -222,6 +238,7 @@ impl ToolKind {
         ToolKind::ThreePointArc,
         ToolKind::TangentArc,
         ToolKind::Slot,
+        ToolKind::Wall,
         ToolKind::Point,
         ToolKind::Text,
         ToolKind::Block,
@@ -260,6 +277,7 @@ impl ToolKind {
                 ToolKind::ThreePointArc,
                 ToolKind::TangentArc,
                 ToolKind::Slot,
+                ToolKind::Wall,
                 ToolKind::Point,
                 ToolKind::Text,
                 ToolKind::Block,
@@ -325,6 +343,7 @@ impl ToolKind {
             ToolKind::Rectangle => "Rectangle",
             ToolKind::Polygon => "Polygon",
             ToolKind::Slot => "Slot",
+            ToolKind::Wall => "Wall",
             ToolKind::Circle => "Circle",
             ToolKind::Ellipse => "Ellipse",
             ToolKind::EllipseArc => "Partial ellipse",
@@ -369,6 +388,10 @@ impl ToolKind {
                 "Regular polygon: centre, then a corner. Tab types sides; X: inscribed / circumscribed"
             }
             ToolKind::Slot => "Straight, centre or arc slot (press U again to switch), then width",
+            ToolKind::Wall => {
+                "Walls along a centreline: they join the walls they meet. W again: arcs; Space: \
+                 the other face"
+            }
             ToolKind::Circle => "Centre, then a point on the circle (or type the diameter)",
             ToolKind::Ellipse => "Centre, one axis end, then the other axis (C again: partial)",
             ToolKind::EllipseArc => "An ellipse's centre and axes, then where it starts and ends",
@@ -450,6 +473,7 @@ impl ToolKind {
             ToolKind::Rectangle => Box::<RectangleTool>::default(),
             ToolKind::Polygon => Box::<PolygonTool>::default(),
             ToolKind::Slot => Box::<SlotTool>::default(),
+            ToolKind::Wall => Box::<WallTool>::default(),
             ToolKind::Circle => Box::<CircleTool>::default(),
             ToolKind::Ellipse => Box::<EllipseTool>::default(),
             ToolKind::EllipseArc => Box::new(EllipseTool::partial()),

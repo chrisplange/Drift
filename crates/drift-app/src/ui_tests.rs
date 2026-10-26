@@ -46,6 +46,9 @@ mod stacking;
 /// The update notice and Preferences → Updates.
 #[cfg(not(target_arch = "wasm32"))]
 mod updates;
+/// The Wall tool: keys, joins, bends, Backspace and undo.
+#[cfg(not(feature = "demo"))]
+mod walls;
 
 fn gpu_available() -> bool {
     let instance = wgpu::Instance::default();

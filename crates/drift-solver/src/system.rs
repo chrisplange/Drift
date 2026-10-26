@@ -244,7 +244,22 @@ impl System {
         radii: &HashMap<EntityId, f64>,
     ) -> Self {
         let held: Vec<Param> = dragged.iter().chain(carried).copied().collect();
-        let keep = |id: EntityId| scope.is_none_or(|s| s.contains(&id));
+        // Walls' faces and corners are generated from their centrelines: never unknowns. A
+        // corner someone's own curve was drawn from is in, pinned where it is.
+        let generated = doc.generated_entities();
+        let pinned: std::collections::HashSet<EntityId> = if generated.is_empty() {
+            Default::default()
+        } else {
+            doc.iter()
+                .filter(|(id, _)| !generated.contains(id) && scope.is_none_or(|s| s.contains(id)))
+                .flat_map(|(_, e)| e.kind.points())
+                .filter(|p| generated.contains(p))
+                .collect()
+        };
+        let keep = |id: EntityId| {
+            (!generated.contains(&id) || pinned.contains(&id))
+                && scope.is_none_or(|s| s.contains(&id))
+        };
         // Relations whose geometry is in scope and still of the kinds they need (a trim or
         // a split can change a curve's kind under one): the rest are left out rather than
         // break the build. [`crate::invalid_constraints`] reports them.
@@ -810,7 +825,11 @@ impl System {
 
         // Geometry on locked layers is pinned where it is (marked with constraint id 0, which
         // is never reported as a conflict).
-        for id in doc.locked_entities().into_iter().filter(|id| keep(*id)) {
+        let mut stay: Vec<EntityId> = doc.locked_entities().into_iter().collect();
+        stay.extend(pinned.iter().copied());
+        stay.sort_unstable();
+        stay.dedup();
+        for id in stay.into_iter().filter(|id| keep(*id)) {
             let pins: Vec<(usize, f64)> = match doc.get(id).map(|e| e.kind) {
                 Some(EntityKind::Point(p)) => vec![(x(id), p.x), (y(id), p.y)],
                 Some(EntityKind::Circle { radius: r, .. }) => {

@@ -143,9 +143,9 @@ fn every_fixture_opens_keeps_its_contents_and_saves_as_current() {
     );
     for Fixture {
         version,
+        addition,
         name,
         text,
-        ..
     } in all
     {
         let at = |what: &str| format!("{name}: {what}");
@@ -156,11 +156,18 @@ fn every_fixture_opens_keeps_its_contents_and_saves_as_current() {
         // This build knows everything a fixture holds: nothing is carried through.
         assert!(!meta.carried.any(), "{}", at("unknown data"));
 
-        assert_eq!(doc.iter().count(), ENTITIES, "{}", at("entities"));
+        // (What walls make and are drawn along is counted apart.)
+        let walls = doc.wall_owners();
+        let plain = doc
+            .iter()
+            .filter(|(id, _)| walls.get(*id).is_none())
+            .count();
+        assert_eq!(plain, ENTITIES, "{}", at("entities"));
         assert_eq!(doc.constraint_count(), CONSTRAINTS, "{}", at("constraints"));
         assert_eq!(doc.layers().count(), LAYERS, "{}", at("layers"));
         assert_eq!(doc.variables().count(), VARIABLES, "{}", at("variables"));
-        assert_eq!(doc.fills().count(), FILLS, "{}", at("fills"));
+        let plain_fills = doc.fills().filter(|(id, _)| !walls.fills.contains_key(id));
+        assert_eq!(plain_fills.count(), FILLS, "{}", at("fills"));
         assert_eq!(
             doc.annotations().count(),
             ANNOTATIONS,
@@ -199,6 +206,7 @@ fn every_fixture_opens_keeps_its_contents_and_saves_as_current() {
         // The hatch kept its pattern and the solid its colour.
         assert!(
             doc.fills()
+                .filter(|(id, _)| !walls.fills.contains_key(id))
                 .any(|(_, f)| matches!(&f.kind, FillKind::Hatch(h) if h.pattern == "ANSI31")),
             "{}",
             at("hatch")
@@ -215,9 +223,41 @@ fn every_fixture_opens_keeps_its_contents_and_saves_as_current() {
 
         // What each version added.
         let paths = if version >= 38 { 2 } else { 0 };
-        assert_eq!(doc.paths().count(), paths, "{}", at("paths"));
-        let fills_on_paths = doc.fills().filter(|(_, f)| f.path.is_some()).count();
+        let plain_paths = doc
+            .paths()
+            .filter(|(id, _)| !walls.paths.contains_key(id) && !walls.centres.contains_key(id))
+            .count();
+        assert_eq!(plain_paths, paths, "{}", at("paths"));
+        let fills_on_paths = doc
+            .fills()
+            .filter(|(id, f)| f.path.is_some() && !walls.fills.contains_key(id))
+            .count();
         assert_eq!(fills_on_paths, paths, "{}", at("fills on paths"));
+        // Walls (42.1): an L, a T, an X and a curve, with their faces and two pochés, and
+        // regenerating them changes nothing.
+        let has_walls = (version, addition) >= (42, 1);
+        assert_eq!(
+            doc.walls().count(),
+            if has_walls { 4 } else { 0 },
+            "{}",
+            at("walls")
+        );
+        assert_eq!(
+            doc.property_dims().count(),
+            usize::from(has_walls),
+            "{}",
+            at("property dimensions")
+        );
+        if has_walls {
+            assert_eq!(walls.fills.len(), 2, "{}", at("pochés"));
+            let mut regenerated = doc.clone();
+            let report = drift_geom::walls::regenerate(&mut regenerated);
+            assert!(
+                !report.changed,
+                "{}",
+                at(&format!("walls regenerate: {report:?}"))
+            );
+        }
         if version >= 39 {
             assert_eq!(doc.rules(), fixture_rules(), "{}", at("rules"));
             assert!(!meta.older_rules, "{}", at("older rules"));
@@ -582,5 +622,72 @@ fn fixture_drawing() -> Document {
     ));
     let before = Variant::sketch("As found", &doc);
     doc.add_variant(before);
+    add_walls(&mut doc, walls);
     doc
+}
+
+/// Walls (42.1): an L, a T, an X, a curved wall and a thickness dimension, on the walls
+/// layer, clear of the rest, with their faces made.
+fn add_walls(doc: &mut Document, layer: drift_core::LayerId) {
+    use drift_core::{LineKind, Path, PropertyDim, PropertyRef, Wall};
+    let p = |doc: &mut Document, x: f64, y: f64| doc.add_point(DVec2::new(8000.0 + x, y));
+    let run = |doc: &mut Document, pts: &[EntityId], t: f64| {
+        let curves: Vec<EntityId> = pts
+            .windows(2)
+            .map(|w| {
+                let l = doc.add_line(w[0], w[1]).unwrap();
+                doc.set_style(l, LineKind::Construction);
+                l
+            })
+            .collect();
+        let path = doc
+            .add_path(Path {
+                curves,
+                closed: false,
+            })
+            .unwrap();
+        doc.add_wall(Wall::new(path, t, layer)).unwrap()
+    };
+    // An L.
+    let (a, b, c) = (
+        p(doc, 0.0, 0.0),
+        p(doc, 4000.0, 0.0),
+        p(doc, 4000.0, 3000.0),
+    );
+    let l = run(doc, &[a, b, c], 200.0);
+    // A T on its first segment.
+    let (d, e) = (p(doc, 2000.0, 0.0), p(doc, 2000.0, 2500.0));
+    let t = run(doc, &[e, d], 100.0);
+    let mut tw = doc.wall(t).unwrap().clone();
+    tw.ends[1].tee = Some((l, 0));
+    doc.set_wall(t, tw).unwrap();
+    // An X across the T's branch.
+    let (f, g) = (p(doc, 1000.0, 1500.0), p(doc, 3000.0, 1500.0));
+    run(doc, &[f, g], 100.0);
+    // A curved wall: a half circle, hatched, justified to its left face.
+    let (h, k, centre) = (
+        p(doc, 6000.0, 0.0),
+        p(doc, 8000.0, 0.0),
+        p(doc, 7000.0, 0.0),
+    );
+    let arc = doc.add_arc(centre, k, h).unwrap();
+    doc.set_style(arc, LineKind::Construction);
+    let path = doc
+        .add_path(Path {
+            curves: vec![arc],
+            closed: false,
+        })
+        .unwrap();
+    let mut curved = Wall::new(path, 150.0, layer);
+    curved.justify = drift_core::Justify::Left;
+    curved.poche = Some(drift_core::FillStyle::default());
+    doc.add_wall(curved).unwrap();
+    doc.add_property_dim(PropertyDim {
+        target: PropertyRef::WallThickness(l),
+        seg: 0,
+        along: 0.25,
+        out: 600.0,
+    })
+    .unwrap();
+    drift_geom::walls::regenerate(doc);
 }

@@ -47,6 +47,8 @@ rest stand alone.
     length.
 13. [Profiles in Blender](tutorials/13-profiles-in-blender.md): mouldings and turned shapes
     drawn in Drift, swept or lathed in Blender, updated when you save.
+14. [Walls](tutorials/14-walls.md): walls along a centreline, joined in L, T and X, curved,
+    and changed from the Inspector.
 
 **Reference.** One page per area, to look things up.
 

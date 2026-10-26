@@ -13,7 +13,7 @@ cargo test -p drift-app smoke_
 ```
 
 Run it before reporting any change, together with the usual checks (format, clippy for native,
-wasm32 and the demo, `cargo test --workspace`). With the test build already compiled, the 24
+wasm32 and the demo, `cargo test --workspace`). With the test build already compiled, the 26
 tests take about 10 seconds run in parallel on an idle machine (82 seconds one at a time, and up
 to a minute and a half when other builds share the GPU and CPU). Compiling the test build after a
 change to `drift-app` takes several minutes more.
@@ -48,6 +48,7 @@ before the fix (check that by turning the fix off locally), and passes with it. 
 | Dimensions and solver | `dimensions.rs` | D on a line, a place, a typed 30; a double-click on the text and 45; one undo step. A mouse drag of one line in a chain moves its ends only: the next line's far end and a line apart stay put (#143). The same drag, undone and done again, ends in exactly the same place. | `cargo test -p drift-app smoke::dimensions` |
 | Commands | `commands.rs` | The palette's best match for move, rotate and scale; Move typed in the palette grabs the picked line. The Draw and Modify menus open with their commands. Enter repeats the last tool. Shift+Alt+W toggles thin lines. Preferences (Ctrl+,) keeps Delete and Ctrl+Z off the drawing, and Esc closes only the dialog. | `cargo test -p drift-app smoke::commands` |
 | Options | `options.rs` | Save current in the Parameters panel as Values only, then as Whole sketch; a click on each applies it (the values; the whole sketch, taking away a line drawn since) and Ctrl+Z undoes it. | `cargo test -p drift-app smoke::options` |
+| Walls | `walls.rs` | W, a room clicked round and closed on its start: one ring, one poché. A wall started on the room's side tees into it (one poché for both). A click in the poché picks the wall; a new thickness re-thickens it and Ctrl+Z puts it back. Saved, closed and opened again: the walls as they were, nothing repaired; Edit → Explode on a picked wall leaves plain lines and a fill. | `cargo test -p drift-app smoke::walls` |
 
 Deeper tests of the same features stay where they were (`ui_tests.rs`, `ui_tests/*.rs`,
 `fill_tests.rs`, `tools/tests.rs`, `drag_props.rs`). The smoke suite is the quick pass over
@@ -69,6 +70,9 @@ touches them:
 - **Windows.** High-DPI displays at 125 %, 150 % and 200 %, and a window moved between monitors
   of different scales.
 - **Drag and drop from the desktop.** A file dragged from Explorer or Finder onto the window.
+- **Walls by eye.** Joins at odd angles, curved walls meeting straight ones, hatched pochés
+  across a cluster, and a wall plan printed to PDF and exported to DXF (faces as lines and
+  arcs, pochés as fills, butt edges and centrelines left out).
 - **AutoCAD.** An exported DXF opens in AutoCAD or the free DWG TrueView. Headless, with
   either installed: `scripts\cad-check.ps1 export.dxf` opens each file in AutoCAD's own engine
   and prints AutoCAD's reason if it refuses one.

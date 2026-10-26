@@ -80,7 +80,10 @@ pub fn copy_into(
     };
     // Everything copied: the picked entities and the points they're defined by.
     let mut sources: BTreeSet<EntityId> = BTreeSet::new();
-    for &id in &picked.curves {
+    // (Walls' faces aren't copied: the walls are, and make them again.)
+    let generated = src.generated_entities();
+    let wall_owners = src.wall_owners();
+    for &id in picked.curves.iter().filter(|id| !generated.contains(id)) {
         if let Some(e) = src.get(id) {
             sources.insert(id);
             sources.extend(e.kind.points());
@@ -170,6 +173,7 @@ pub fn copy_into(
     // Fills and hatches whose whole boundary was copied follow onto the copy.
     let fills: Vec<(FillId, drift_core::Fill)> = src
         .fills()
+        .filter(|(id, _)| !wall_owners.fills.contains_key(id))
         .filter(|(_, f)| !f.boundary.is_empty() && f.boundary.iter().all(|e| map.contains_key(e)))
         .map(|(id, f)| (id, f.clone()))
         .collect();
@@ -177,7 +181,7 @@ pub fn copy_into(
     // fills stay theirs.
     let mut paths = BTreeMap::new();
     for (id, p) in src.paths() {
-        if p.curves.iter().all(|c| map.contains_key(c)) {
+        if !wall_owners.paths.contains_key(&id) && p.curves.iter().all(|c| map.contains_key(c)) {
             let copy = drift_core::Path {
                 curves: p.curves.iter().map(|c| map[c]).collect(),
                 closed: p.closed,
@@ -198,6 +202,32 @@ pub fn copy_into(
         dst.set_fill(copy, fill);
         if picked.fills.contains(&id) {
             out.fills.insert(copy);
+        }
+    }
+    // Walls whose centrelines were copied: copies along the copies (they make their faces
+    // when the copy is committed). Tees on walls copied too point at their copies.
+    let mut walls: BTreeMap<drift_core::WallId, drift_core::WallId> = BTreeMap::new();
+    for (id, w) in src.walls() {
+        let Some(&centre) = paths.get(&w.centre) else {
+            continue;
+        };
+        let mut copy = w.clone();
+        copy.centre = centre;
+        copy.made = Default::default();
+        copy.layer = layer(dst, w.layer);
+        for e in &mut copy.ends {
+            e.against = e.against.and_then(|c| map.get(&c).copied());
+        }
+        if let Ok(new) = dst.add_wall(copy) {
+            walls.insert(id, new);
+        }
+    }
+    for &new in walls.values() {
+        if let Some(mut w) = dst.wall(new).cloned() {
+            for e in &mut w.ends {
+                e.tee = e.tee.and_then(|(h, s)| Some((*walls.get(&h)?, s)));
+            }
+            let _ = dst.set_wall(new, w);
         }
     }
     // Block copies, bringing their blocks along (matched by name) into another document.

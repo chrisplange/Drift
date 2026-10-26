@@ -48,6 +48,11 @@ mod ui_tests;
 pub mod underlays;
 #[cfg(not(target_arch = "wasm32"))]
 mod update;
+pub mod walls;
+#[cfg(test)]
+mod walls_gallery;
+#[cfg(test)]
+mod walls_props;
 
 use std::f64::consts::TAU;
 
@@ -412,6 +417,10 @@ pub struct DriftApp {
     library_category: Option<library::Category>,
     /// Curvature combs on picked curves.
     show_combs: bool,
+    /// Every wall's centreline is shown (View → Wall centrelines).
+    show_wall_centrelines: bool,
+    /// The Inspector's thickness field being typed into, for the walls it was opened on.
+    wall_thickness_text: Option<(Vec<drift_core::WallId>, String)>,
     /// The drawing crosshair's size and weight.
     crosshair: app::crosshair::Crosshair,
     /// Alt-scaling steps the picked geometry through round sizes (rather than any size).
@@ -626,6 +635,8 @@ impl DriftApp {
             block_search: String::new(),
             library_category: Some(library::Category::Doors),
             show_combs: true,
+            show_wall_centrelines: false,
+            wall_thickness_text: None,
             crosshair: Default::default(),
             round_scale: true,
             text_typing: None,

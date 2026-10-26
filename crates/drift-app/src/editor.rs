@@ -439,6 +439,19 @@ pub struct Editor {
     /// Bézier handles and their owners, by document revision.
     pub(crate) handle_cache:
         std::cell::RefCell<Option<(u64, std::rc::Rc<crate::curves::HandleOwners>)>>,
+    /// The Wall tool's thickness (0: by the drawing's units) and the expression it came
+    /// from, which face the centreline is, whether the next segment is an arc, and the
+    /// poché: kept across drawings, as the Fill switch is.
+    pub wall_thickness: f64,
+    pub wall_thickness_expr: Option<String>,
+    pub wall_justify: drift_core::Justify,
+    pub wall_arc: bool,
+    pub wall_poche: crate::walls::PocheSetting,
+    /// Walls' centrelines show (the Wall or Dimension tool is in hand, or View → Wall
+    /// centrelines is on); otherwise only a picked or hovered wall's do.
+    pub show_centrelines: bool,
+    /// Who owns which entity among the walls, by document revision.
+    pub(crate) wall_owner_cache: std::cell::RefCell<Option<(u64, std::rc::Rc<drift_core::Owners>)>>,
 }
 
 impl Editor {
@@ -448,12 +461,20 @@ impl Editor {
             auto_relations: true,
             ..Default::default()
         };
-        // Bring linked dimensions up to date with their expressions (not an undo step).
+        // Bring linked dimensions up to date with their expressions (not an undo step), and
+        // check the walls: a file stores what they made, so nothing should change unless an
+        // older build edited it.
         editor.doc.begin();
         if editor.apply_parameters().is_ok() {
             editor.solve(&[]);
         }
+        let repaired = editor.repair_walls();
         editor.doc.commit("Load");
+        if repaired > 0 {
+            editor.notice = Some(format!(
+                "Walls were repaired: {repaired} faces edited outside the wall were rebuilt"
+            ));
+        }
         editor.sync();
         editor
     }
@@ -468,6 +489,11 @@ impl Editor {
         self.dim_mode = was.dim_mode;
         self.dim_overall = was.dim_overall;
         self.draw_construction = was.draw_construction;
+        self.wall_thickness = was.wall_thickness;
+        self.wall_thickness_expr = was.wall_thickness_expr.clone();
+        self.wall_justify = was.wall_justify;
+        self.wall_arc = was.wall_arc;
+        self.wall_poche = was.wall_poche.clone();
     }
 
     /// Refresh caches after document changes. Cheap when nothing changed.
@@ -570,7 +596,15 @@ impl Editor {
     /// Solve the constraints, then finish the open transaction and record it for undo. If the
     /// edit made the constraints unsatisfiable it is rolled back and `false` returned.
     pub fn commit(&mut self, label: &str) -> bool {
-        let report = self.solve(&[]);
+        // (Free lines alone have nothing to solve: no relations, nothing pinned or round.)
+        let report = if drift_solver::anything_to_solve(&self.doc) {
+            self.solve(&[])
+        } else {
+            SolveReport {
+                converged: true,
+                ..Default::default()
+            }
+        };
         if self.new_conflicts(&report) {
             self.doc.rollback();
             self.notice = Some(format!("{label} undone: it {}", EditError::Conflict));
@@ -580,6 +614,7 @@ impl Editor {
         self.refresh_driven();
         self.adopt_into_open_group();
         self.make_new_curves_construction();
+        self.follow_walls();
         self.follow_paths();
         self.follow_fills();
         self.carry_hatches();
@@ -791,6 +826,11 @@ impl Editor {
         label: &str,
         constraints: &[Constraint],
     ) -> Result<Vec<ConstraintId>, EditError> {
+        // A wall's faces and corners follow the wall: relations on them wait for face
+        // constraints (W2).
+        if constraints.iter().any(|c| self.on_wall_faces(c)) {
+            return Err(EditError::Invalid(FACE_RELATIONS.into()));
+        }
         let before = self.analysis.clone();
         let degenerate_before = drift_solver::degenerate_entities(&self.doc);
         self.doc.begin();
@@ -919,6 +959,16 @@ impl Editor {
         constraint: Constraint,
         placement: Option<DVec2>,
     ) -> Result<ConstraintId, EditError> {
+        // On a wall's faces: a reference dimension (driving ones wait for face constraints).
+        if self.on_wall_faces(&constraint) {
+            let id = self.add_driven_dimension(constraint, placement)?;
+            self.notice = Some(
+                "Dimensions on wall faces are references for now: dimension the centreline to \
+                 drive the wall"
+                    .into(),
+            );
+            return Ok(id);
+        }
         let id = match self.add_constraints(constraint.type_name(), &[constraint]) {
             Ok(ids) => ids[0],
             Err(e @ (EditError::Redundant | EditError::Conflict)) => {
@@ -974,6 +1024,14 @@ impl Editor {
     /// Make a dimension driven (a reference) or driving. Switching to driving keeps the current
     /// measurement and is refused if the dimension would over-define the sketch.
     pub fn set_driven(&mut self, id: ConstraintId, driven: bool) -> Result<(), EditError> {
+        if !driven
+            && self
+                .doc
+                .constraint(id)
+                .is_some_and(|c| self.on_wall_faces(c))
+        {
+            return Err(EditError::Invalid(FACE_RELATIONS.into()));
+        }
         if self.doc.is_driven(id) == driven {
             return Ok(());
         }
@@ -1230,7 +1288,7 @@ impl Editor {
                     .map_err(|e| EditError::Invalid(e.to_string()))?;
             }
         }
-        Ok(())
+        self.apply_wall_thickness()
     }
 
     /// Apply parameters, solve and commit the open transaction, or roll it back.
@@ -2654,11 +2712,13 @@ impl Editor {
         if !(self.draw_construction && self.drawing_curves) {
             return;
         }
+        let generated = self.doc.generated_entities();
         for id in self.doc.created_in_transaction() {
-            if self
-                .doc
-                .get(id)
-                .is_some_and(|e| !e.kind.is_point() && e.style == LineKind::Solid)
+            if !generated.contains(&id)
+                && self
+                    .doc
+                    .get(id)
+                    .is_some_and(|e| !e.kind.is_point() && e.style == LineKind::Solid)
             {
                 self.doc.set_style(id, LineKind::Construction);
             }
@@ -2672,8 +2732,11 @@ impl Editor {
             return;
         }
         let created = self.doc.created_in_transaction();
+        // (Walls' faces belong to their walls, which belong through their centrelines.)
+        let generated = self.doc.generated_entities();
         let new: Vec<EntityId> = created
             .into_iter()
+            .filter(|id| !generated.contains(id))
             .filter(|id| {
                 self.doc
                     .get(*id)
@@ -2688,6 +2751,16 @@ impl Editor {
     /// What picking `id` selects: its whole group, unless that group is open (or the filter
     /// leaves out Blocks & groups: then the one curve).
     pub fn pick_set(&self, id: EntityId) -> BTreeSet<EntityId> {
+        // A wall's face, corner or poché picks the wall: its centreline.
+        if self.doc.has_walls()
+            && self.wall_owners().generated(id)
+            && let Some(w) = self.wall_of(id)
+        {
+            let set = self.wall_pick_set(w);
+            if !set.is_empty() {
+                return set;
+            }
+        }
         let set: BTreeSet<EntityId> = match self.doc.group_of(id) {
             Some(g) if self.open_group != Some(g) && self.pick_filter.blocks() => self
                 .doc
@@ -2703,6 +2776,21 @@ impl Editor {
 
     /// Widen the selection to whole groups (except the open one).
     pub fn expand_groups(&mut self) {
+        // (Walls' faces picked by a box are their walls.)
+        if self.doc.has_walls() {
+            let owners = self.wall_owners();
+            let faces: Vec<EntityId> = self
+                .selection
+                .iter()
+                .copied()
+                .filter(|id| owners.generated(*id))
+                .collect();
+            for f in &faces {
+                self.selection.remove(f);
+            }
+            let walls = self.walls_for_picks(faces);
+            self.selection.extend(walls);
+        }
         let extra: Vec<EntityId> = self
             .selection
             .iter()
@@ -2821,7 +2909,7 @@ impl Editor {
             .copied()
             .filter(|id| self.doc.get(*id).is_some_and(|e| !e.kind.is_point()))
             .collect();
-        if curves.is_empty() {
+        if curves.is_empty() || !self.guard_owned(&curves, crate::walls::Op::Construction) {
             return;
         }
         let make_construction = curves.iter().any(|id| {
@@ -2876,10 +2964,24 @@ impl Editor {
                 .map(|(id, _)| id)
                 .collect();
         }
+        // Walls: by their centrelines (their faces aren't picked on their own).
+        if self.doc.has_walls() {
+            let owners = self.wall_owners();
+            self.selection.retain(|id| !owners.generated(*id));
+            let curves: Vec<EntityId> = self
+                .doc
+                .walls()
+                .filter(|(_, w)| shown(&self.doc, w.layer))
+                .flat_map(|(id, _)| self.wall_curves(id))
+                .collect();
+            self.selection.extend(curves);
+        }
         if filter.fills() {
+            let owners = self.wall_owners();
             self.selected_fills = self
                 .doc
                 .fills()
+                .filter(|(id, _)| !owners.fills.contains_key(id))
                 .filter(|(_, f)| shown(&self.doc, f.layer))
                 .map(|(id, _)| id)
                 .collect();
@@ -2998,6 +3100,9 @@ impl Editor {
         let mut emphasized = Vec::new();
         let hidden = self.hidden_handles();
         let shown_ends = (!self.always_endpoints).then(|| self.touched_points());
+        let (picked_walls, hovered_wall) = self.lit_walls();
+        let wall_owners =
+            (!picked_walls.is_empty() || hovered_wall.is_some()).then(|| self.wall_owners());
         // Layer by layer, in their draw order.
         let ranks = self.doc.layer_ranks();
         let mut entities: Vec<_> = self.doc.iter().collect();
@@ -3051,9 +3156,19 @@ impl Editor {
             if role.is_some_and(|r| r != PointRole::Standalone && r != PointRole::Handle) {
                 item = item.as_vertex();
             }
-            let emphasis = if self.selection.contains(&id) {
+            let wall = wall_owners
+                .as_ref()
+                .and_then(|o| {
+                    o.get(id)
+                        .filter(|o| matches!(o, drift_core::Owner::Wall(_)))
+                })
+                .map(drift_core::Owner::wall);
+            let emphasis = if self.selection.contains(&id)
+                || wall.is_some_and(|w| picked_walls.contains(&w))
+            {
                 Emphasis::Selected
-            } else if self.hovered == Some(id)
+            } else if (wall.is_some() && wall == hovered_wall)
+                || self.hovered == Some(id)
                 || self.highlight.contains(&id)
                 || self.snapped_point == Some(id)
                 || self
@@ -3128,6 +3243,20 @@ impl Editor {
         }
         items.extend(emphasized);
         items
+    }
+}
+
+/// Why a relation or driving dimension on a wall's face is refused (W1).
+const FACE_RELATIONS: &str = "A wall's faces follow the wall: dimension or relate its centreline (face dimensions are \
+     references for now)";
+
+impl Editor {
+    /// Whether a constraint names a wall's generated face or corner.
+    pub(crate) fn on_wall_faces(&self, c: &Constraint) -> bool {
+        self.doc.has_walls() && {
+            let owners = self.wall_owners();
+            c.entities().any(|e| owners.generated(e))
+        }
     }
 }
 

@@ -87,6 +87,7 @@ drawing rules, an option of values and a whole-sketch option) as each format ver
 
 | Fixture | Written by | Shipped in |
 |---|---|---|
+| `v42.1.drift` | `drift-io` with walls (W1) | — |
 | `v42.drift` | `drift-io` with `reader` (tolerant reading) | — |
 | `v41.drift` | `main` (b0a24e4, batch 3) | — |
 | `v40.drift` – `v34.drift` | the last commit at each version | — |
@@ -200,7 +201,7 @@ read these files, pass over the addition, and keep it when they save.
 
 | Fixture | Added |
 |---|---|
-| — | none yet |
+| `v42.1.drift` | `walls` (runs of wall: centreline path, thickness and expression, justification, poché, layer, ends with their joins, and what each made, by key) and `property_dims` (a wall's thickness dimension). The faces, corners, outline paths and pochés walls make are ordinary `entities`, `paths` and `fills`, so an older 42 build shows them as plain geometry and keeps the tables when it saves; opening the file again repairs what it edited (`docs/walls-design.md` §2.6). |
 
 ## 4. What Drift does with a file it doesn't fully know
 

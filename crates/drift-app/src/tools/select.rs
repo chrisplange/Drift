@@ -48,7 +48,10 @@ pub(super) fn pick_target_with(
     if filter.midpoints()
         && let Some(line) = ed
             .index
-            .pick_midpoint(p.raw, MIDPOINT_PICK * p.tolerance, |_| true)
+            // (A wall's faces have no midpoints of their own: a click there picks the wall.)
+            .pick_midpoint(p.raw, MIDPOINT_PICK * p.tolerance, |id| {
+                !hidden.contains(&id) && (!ed.doc.has_walls() || !ed.wall_owners().generated(id))
+            })
     {
         return Some(Target::Midpoint(line));
     }
@@ -860,6 +863,23 @@ impl Tool for SelectTool {
                 } else {
                     None
                 };
+                // Inside a wall's poché: the wall (the nearest, where walls merge).
+                if let Some(w) = fill.and_then(|f| ed.wall_in_fill_at(f, p.raw))
+                    && let Some(&first) = ed.wall_curves(w).first()
+                {
+                    let set = ed.wall_pick_set(w);
+                    if mods.command && ed.selection.contains(&first) {
+                        ed.selection.retain(|e| !set.contains(e));
+                    } else if mods.shift || mods.command {
+                        ed.selection.extend(set);
+                    } else {
+                        ed.selection = set;
+                        ed.selected_fills.clear();
+                        ed.selected_region = None;
+                    }
+                    ed.sync_group_fills();
+                    return;
+                }
                 // Alt-click inside a shape (not in a closed group): its fill alone, to align
                 // its pattern without the transform handles.
                 if mods.alt

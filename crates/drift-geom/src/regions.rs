@@ -189,7 +189,8 @@ impl Loop {
         out
     }
 
-    fn contains(&self, p: DVec2) -> bool {
+    /// Whether the loop winds round `p`.
+    pub fn contains(&self, p: DVec2) -> bool {
         winding(&self.polygon(0.02), p) != 0
     }
 }
@@ -246,6 +247,23 @@ impl Region {
             centroid: (min + max) / 2.0,
             bounds: Bounds { min, max },
         }
+    }
+
+    /// A region from loops known exactly (a wall cluster's outline and the loops inside it),
+    /// without finding regions among curves: `outer` counter-clockwise, `holes` clockwise.
+    pub fn from_loops(outer: Loop, holes: Vec<Loop>) -> Region {
+        let area = outer.signed_area() + holes.iter().map(Loop::signed_area).sum::<f64>();
+        let perimeter = outer.length() + holes.iter().map(Loop::length).sum::<f64>();
+        let mut r = Region {
+            bounds: loop_bounds(&outer),
+            outer,
+            holes,
+            area,
+            perimeter,
+            centroid: DVec2::ZERO,
+        };
+        r.centroid = centroid(&r);
+        r
     }
 
     pub fn contains(&self, p: DVec2) -> bool {

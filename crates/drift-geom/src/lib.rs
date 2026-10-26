@@ -8,6 +8,7 @@ mod primitives;
 mod reference;
 pub mod regions;
 mod snap;
+pub mod walls;
 
 pub use index::{PointRole, SceneIndex};
 pub use primitives::{

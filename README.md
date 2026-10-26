@@ -145,6 +145,11 @@ dimension, render and analyse Drift drawings: see [Drawing with AI assistants](d
 - **Polygons, slots and ellipses:** regular polygons (K; type the sides, inscribed or
   circumscribed), straight / centre / arc slots (U, again to switch) and ellipses and partial
   ellipses (C again from the circle), all built to stay true when dimensioned or dragged.
+- **Walls (W):** click a wall's centreline point by point, or type lengths; W again (or A / L
+  mid-run) for arcs, drag to bend, Space for the other face. Walls join where they meet (L, T,
+  X and more at one point, mitred and cleaned up), end against a column or grid line, close
+  into rooms, and fill as one poché per cluster. Thickness presets in US actual sizes (or
+  metric), a thickness that can come from a variable, and Explode or Walls from curves.
 - **Blocks (furniture and symbols):** make a block from the selection or pick one from the
   library of US doors, windows, kitchen and bath fixtures, furniture and utility items; place copies (I; R turns, X mirrors); double-click a copy to edit the
   block and every copy updates; explode, replace and count copies. DXF blocks and inserts

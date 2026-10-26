@@ -5,8 +5,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
 
 use drift_core::{
-    Bounds, DVec2, EntityId, Fill, FillId, FillKind, Hatch, InstanceId, LayerId, LineWeight,
-    PathId, Rgb, Shape, SketchItem,
+    Bounds, DVec2, EntityId, Fill, FillId, FillKind, InstanceId, LayerId, PathId, Rgb, Shape,
+    SketchItem,
 };
 use drift_draft::{Pattern, Placement};
 use drift_geom::regions::{Region, region_at};
@@ -94,43 +94,9 @@ pub struct CopyFill {
     pub region: Region,
 }
 
-/// How new fills look (the Fill tool's settings), and the editable part of a fill.
-#[derive(Clone, Debug, PartialEq)]
-pub struct FillStyle {
-    pub kind: FillKind,
-    pub color: Option<Rgb>,
-    pub opacity: f64,
-    pub weight: Option<LineWeight>,
-}
-
-impl Default for FillStyle {
-    fn default() -> Self {
-        Self {
-            kind: FillKind::Hatch(Hatch::new("ANSI31")),
-            color: None,
-            opacity: 1.0,
-            weight: None,
-        }
-    }
-}
-
-impl FillStyle {
-    pub fn of(fill: &Fill) -> Self {
-        Self {
-            kind: fill.kind.clone(),
-            color: fill.color,
-            opacity: fill.opacity,
-            weight: fill.weight,
-        }
-    }
-
-    pub fn apply(&self, fill: &mut Fill) {
-        fill.kind = self.kind.clone();
-        fill.color = self.color;
-        fill.opacity = self.opacity;
-        fill.weight = self.weight;
-    }
-}
+/// How new fills look (the Fill tool's settings), and the editable part of a fill: in
+/// drift-core, where walls keep their poché in it too.
+pub use drift_core::FillStyle;
 
 /// The hatch patterns available: the built-in library plus the document's imported ones.
 #[derive(Default)]
@@ -329,13 +295,48 @@ impl Editor {
         {
             return shapes.clone();
         }
-        let regions = self.regions();
-        let ids = self.region_ids();
-        let areas = Areas::new(&regions, &ids);
         let fills: Vec<(FillId, Fill)> = self.doc.fills().map(|(id, f)| (id, f.clone())).collect();
+        let walls = self.doc.has_walls().then(|| self.wall_owners());
+        // The drawing's areas are found only when a fill needs them (not for shapes' fills
+        // and walls' pochés, which know their own).
+        let needs_areas = fills.iter().any(|(id, f)| {
+            f.path.is_none() && !walls.as_ref().is_some_and(|w| w.fills.contains_key(id))
+        });
+        let (regions, ids) = if needs_areas {
+            (self.regions(), self.region_ids())
+        } else {
+            (Rc::new(Vec::new()), Rc::new(Vec::new()))
+        };
+        let areas = Areas::new(&regions, &ids);
         let mut solid = None;
         let mut out = BTreeMap::new();
         for (id, fill) in fills {
+            // A wall cluster's poché: its outline and holes, known exactly (nothing else in
+            // the drawing is looked at).
+            if walls.as_ref().is_some_and(|w| w.fills.contains_key(&id)) {
+                if let Some(region) = self.wall_fill_region(id) {
+                    let mut curves: Vec<EntityId> = region_curves_of(&self.doc, id);
+                    curves.sort_unstable();
+                    let shape = FillShape {
+                        region,
+                        lost: false,
+                        curves,
+                        crossed: false,
+                        parts: 0,
+                    };
+                    self.last_fill_shapes.insert(id, shape.clone());
+                    out.insert(id, shape);
+                } else if let Some(last) = self.last_fill_shapes.get(&id) {
+                    out.insert(
+                        id,
+                        FillShape {
+                            lost: true,
+                            ..last.clone()
+                        },
+                    );
+                }
+                continue;
+            }
             // A shape's fill (of a path) is the area inside that path alone.
             if let Some(pid) = fill.path
                 && let Some(curves) = self.doc.path(pid).map(|p| sorted(&p.curves))
@@ -434,16 +435,28 @@ impl Editor {
         if self.doc.fills().next().is_none() {
             return;
         }
-        let regions = self.regions();
-        let ids = self.region_ids();
-        let areas = Areas::new(&regions, &ids);
         let fills: Vec<(FillId, Fill)> = self.doc.fills().map(|(id, f)| (id, f.clone())).collect();
+        let walls = self.doc.has_walls().then(|| self.wall_owners());
+        // (Shapes' fills and walls' pochés don't need the drawing's areas.)
+        let needs_areas = fills.iter().any(|(id, f)| {
+            f.path.is_none() && !walls.as_ref().is_some_and(|w| w.fills.contains_key(id))
+        });
+        let (regions, ids) = if needs_areas {
+            (self.regions(), self.region_ids())
+        } else {
+            (Rc::new(Vec::new()), Rc::new(Vec::new()))
+        };
+        let areas = Areas::new(&regions, &ids);
         let mut solid = None;
         let mut created: Option<Vec<EntityId>> = None;
         let mut changes = Vec::new();
         // Fills whose outline this edit changed.
         let mut moved: HashSet<FillId> = HashSet::new();
         for (id, fill) in fills {
+            // (Walls keep their pochés themselves.)
+            if walls.as_ref().is_some_and(|w| w.fills.contains_key(&id)) {
+                continue;
+            }
             // A shape's fill keeps to its path: its outline is the path's curves, it is
             // never divided, and its seed stays inside.
             if let Some(pid) = fill.path
@@ -956,6 +969,8 @@ impl Editor {
     /// on shown, unlocked layers.
     pub fn fills_in(&mut self, rect: &Bounds, crossing: bool) -> Vec<FillId> {
         let shapes = self.fill_shapes();
+        // (A wall's poché is picked with its walls.)
+        let walls = self.wall_owners();
         let touched: HashSet<EntityId> = if crossing {
             self.index.select_in_rect(rect, true).into_iter().collect()
         } else {
@@ -963,10 +978,12 @@ impl Editor {
         };
         self.doc
             .fills()
-            .filter(|(_, f)| {
-                self.doc
-                    .layer(f.layer)
-                    .is_some_and(|l| l.visible && !l.locked)
+            .filter(|(id, f)| {
+                !walls.fills.contains_key(id)
+                    && self
+                        .doc
+                        .layer(f.layer)
+                        .is_some_and(|l| l.visible && !l.locked)
             })
             .filter(|(id, f)| {
                 let inside = shapes.get(id).is_some_and(|s| {
@@ -986,6 +1003,10 @@ impl Editor {
     /// shape is picked, moved and copied as one with its fill.
     pub fn shape_outline(&self, fill: FillId) -> Option<Vec<EntityId>> {
         let path = self.doc.fill(fill)?.path?;
+        // (A wall's poché spans its cluster: picking, moving and copying act on the walls.)
+        if self.doc.has_walls() && self.wall_owners().fills.contains_key(&fill) {
+            return None;
+        }
         let path = self.doc.path(path).filter(|p| p.closed)?;
         Some(path.curves.clone())
     }
@@ -1276,9 +1297,11 @@ impl Editor {
         let mut fill = Fill::new(boundary, p, FillKind::Solid);
         self.fill_style.apply(&mut fill);
         // Inside a shape drawn as one (the area is its inside): the fill is the shape's.
+        let walls = self.wall_owners();
         fill.path = self
             .doc
             .paths()
+            .filter(|(id, _)| !walls.paths.contains_key(id) && !walls.centres.contains_key(id))
             .find(|(_, path)| path.closed && sorted(&path.curves) == fill.boundary)
             .map(|(id, _)| id);
         // An area that is already filled isn't filled twice: its fill takes the current style
@@ -1445,8 +1468,14 @@ impl Editor {
             .into_iter()
             .filter(|e| self.doc.get(*e).is_some_and(|en| !en.kind.is_point()))
             .collect();
-        let paths: Vec<(PathId, drift_core::Path)> =
-            self.doc.paths().map(|(id, p)| (id, p.clone())).collect();
+        // (Walls keep their centrelines and outlines themselves.)
+        let walls = self.wall_owners();
+        let paths: Vec<(PathId, drift_core::Path)> = self
+            .doc
+            .paths()
+            .filter(|(id, _)| !walls.paths.contains_key(id) && !walls.centres.contains_key(id))
+            .map(|(id, p)| (id, p.clone()))
+            .collect();
         let mut joined: HashSet<PathId> = HashSet::new();
         let mut changes = Vec::new();
         for (id, path) in &paths {
@@ -1591,6 +1620,34 @@ impl Editor {
         self.doc.set_fill(id, fill);
         self.commit("Edit fill");
     }
+}
+
+/// The curves of a wall poché's region: its outline and its holes' outlines.
+fn region_curves_of(doc: &drift_core::Document, fill: FillId) -> Vec<EntityId> {
+    let Some(f) = doc.fill(fill) else {
+        return Vec::new();
+    };
+    let mut out = f.boundary.clone();
+    for (_, w) in doc.walls() {
+        let Some(key) = w
+            .made
+            .fills
+            .iter()
+            .find(|(_, x)| **x == fill)
+            .map(|(k, _)| *k)
+        else {
+            continue;
+        };
+        for (k, p) in &w.made.outlines {
+            if k.outer == key.outer
+                && k.hole != 0
+                && let Some(path) = doc.path(*p)
+            {
+                out.extend(path.curves.iter().copied());
+            }
+        }
+    }
+    out
 }
 
 /// Tessellate a region (holes excluded) into world-space triangles. Arcs are flattened in
@@ -1897,7 +1954,7 @@ mod tests {
         assert_eq!(ed.doc.fills().count(), 1);
         assert_eq!(ed.history.can_undo(), steps);
         // Another pattern: the existing hatch changes to it.
-        ed.fill_style.kind = FillKind::Hatch(Hatch::new("ANSI37"));
+        ed.fill_style.kind = FillKind::Hatch(drift_core::Hatch::new("ANSI37"));
         assert_eq!(ed.add_fill_at(DVec2::new(5.0, 5.0)).unwrap(), first);
         assert_eq!(ed.doc.fills().count(), 1);
         assert!(matches!(

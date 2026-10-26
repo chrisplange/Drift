@@ -970,3 +970,183 @@ fn perf_document_clone() {
     assert!(clone.0 < 0.05, "cloning took {:.3} ms", clone.0);
     assert_eq!(doc.clone(), doc);
 }
+
+/// A floor of 40 × 25 rooms walled along a grid (about 2,000 wall segments in 67 runs, all
+/// one cluster: the worst case for re-chaining the outline), with 5,000 furniture lines
+/// inside, and the centreline points of the grid.
+pub(crate) fn wall_floor() -> (Document, Vec<Vec<EntityId>>) {
+    use drift_core::{LayerId, LineKind, Path, Wall};
+    let (cols, rows, step) = (40usize, 25usize, 4000.0);
+    let mut doc = Document::new();
+    let grid: Vec<Vec<EntityId>> = (0..=cols)
+        .map(|i| {
+            (0..=rows)
+                .map(|j| doc.add_point(v(i as f64 * step, j as f64 * step)))
+                .collect()
+        })
+        .collect();
+    let run = |doc: &mut Document, pts: Vec<EntityId>| {
+        let curves: Vec<EntityId> = pts
+            .windows(2)
+            .map(|w| {
+                let l = doc.add_line(w[0], w[1]).unwrap();
+                doc.set_style(l, LineKind::Construction);
+                l
+            })
+            .collect();
+        let path = doc
+            .add_path(Path {
+                curves,
+                closed: false,
+            })
+            .unwrap();
+        doc.add_wall(Wall::new(path, 200.0, LayerId::DEFAULT))
+            .unwrap();
+    };
+    for j in 0..=rows {
+        run(&mut doc, grid.iter().map(|col| col[j]).collect());
+    }
+    for col in &grid {
+        run(&mut doc, col.clone());
+    }
+    // Furniture: short lines inside the rooms.
+    let mut rng = Lcg(7);
+    for _ in 0..5000 {
+        let (i, j) = (
+            (rng.next() * cols as f64) as usize,
+            (rng.next() * rows as f64) as usize,
+        );
+        let o = v(i as f64 * step + 500.0, j as f64 * step + 500.0);
+        let a = doc.add_point(o + v(rng.next() * 2500.0, rng.next() * 2500.0));
+        let b = doc.add_point(o + v(rng.next() * 2500.0, rng.next() * 2500.0));
+        let _ = doc.add_line(a, b);
+    }
+    drift_geom::walls::regenerate(&mut doc);
+    (doc, grid)
+}
+
+/// Walls (docs/walls-design.md §9.4): regenerating a whole floor, a commit of one wall
+/// edit, a drag frame of a 4-way node, the cluster's poché, and opening the file.
+#[test]
+#[ignore = "torture test: run with --release --ignored --nocapture"]
+fn perf_walls() {
+    println!();
+    let t = Instant::now();
+    let (doc, grid) = wall_floor();
+    report(
+        "build and make a 2,000-segment floor",
+        (t.elapsed().as_secs_f64() * 1e3, 0.0),
+    );
+    let faces = doc.generated_entities().len();
+    println!(
+        "  {} walls, {} entities ({faces} made by walls)",
+        doc.walls().count(),
+        doc.len()
+    );
+    let mut check = doc.clone();
+    report(
+        "regenerate every wall (nothing changed)",
+        time(5, |_| {
+            let r = drift_geom::walls::regenerate(&mut check);
+            assert!(!r.changed);
+        }),
+    );
+    report(
+        "  of which: read the walls (inputs)",
+        time(5, |_| {
+            let _ = drift_geom::walls::wall_inputs(&doc);
+        }),
+    );
+    let (inputs, _) = drift_geom::walls::wall_inputs(&doc);
+    report(
+        "  of which: generate (nodes, faces, outlines)",
+        time(5, |_| {
+            let _ = drift_geom::walls::generate(&inputs, 0.5);
+        }),
+    );
+    report(
+        "  owners index",
+        time(5, |_| {
+            let _ = doc.wall_owners();
+        }),
+    );
+    let text = drift_io::save(&doc, &drift_io::Metadata::default());
+    report(
+        "open the file (read, check the walls)",
+        time(3, |_| {
+            let (d, _) = drift_io::load(&text).unwrap();
+            let _ = Editor::new(d);
+        }),
+    );
+    let mut ed = Editor::new(doc);
+    ed.auto_relations = false;
+    let node = grid[20][12];
+    let at = ed.doc.point(node).unwrap();
+    // A furniture point, for the same edits without walls.
+    let owners = ed.doc.wall_owners();
+    let loose = ed
+        .doc
+        .iter()
+        .find(|(id, e)| e.kind.is_point() && owners.get(*id).is_none())
+        .map(|(id, _)| id)
+        .unwrap();
+    let loose_at = ed.doc.point(loose).unwrap();
+    let commit = time(10, |k| {
+        ed.doc.begin();
+        let _ = ed.doc.set_point(node, at + v(10.0 * (k % 3) as f64, 0.0));
+        ed.commit("Move a node");
+    });
+    report("commit of one wall edit (move a 4-way node)", commit);
+    let walls_part = time(10, |k| {
+        ed.doc.begin();
+        let _ = ed
+            .doc
+            .set_point(node, at + v(5.0 + 10.0 * (k % 3) as f64, 0.0));
+        ed.follow_walls();
+        ed.doc.rollback();
+    });
+    report("  of which the walls' part", walls_part);
+    let baseline = time(10, |k| {
+        ed.doc.begin();
+        let _ = ed
+            .doc
+            .set_point(loose, loose_at + v(10.0 * (k % 3) as f64, 0.0));
+        ed.commit("Move a point");
+    });
+    report("  the same commit moving a furniture point", baseline);
+    let tx_entities = {
+        ed.doc.begin();
+        let _ = ed.doc.set_point(node, at + v(37.0, 0.0));
+        ed.follow_walls();
+        let tx = ed.doc.commit("Probe");
+        tx.entities().count()
+    };
+    println!("  one node moved: {tx_entities} entities journalled");
+    ed.doc.begin();
+    let frame = time(20, |k| {
+        let _ = ed.drag(&[node], v(1.0 + (k % 4) as f64, 0.0), &[]);
+        ed.sync();
+    });
+    ed.doc.rollback();
+    ed.sync();
+    report("drag frame of a 4-way node (with the walls)", frame);
+    ed.doc.begin();
+    let loose_frame = time(20, |k| {
+        let _ = ed.drag(&[loose], v(1.0 + (k % 4) as f64, 0.0), &[]);
+        ed.sync();
+    });
+    ed.doc.rollback();
+    ed.sync();
+    report("  the same drag frame of a furniture point", loose_frame);
+    println!(
+        "  walls add {:.2} ms to a commit and {:.2} ms to a drag frame",
+        walls_part.0,
+        frame.0 - loose_frame.0
+    );
+    let fill = ed.doc.fills().next().map(|(id, _)| id).unwrap();
+    let poche = time(10, |_| {
+        let _ = ed.wall_fill_region(fill);
+    });
+    report("the cluster's poché region", poche);
+    println!("  budgets: commit 5 ms, drag frame +2 ms, poché 2 ms, open +150 ms");
+}

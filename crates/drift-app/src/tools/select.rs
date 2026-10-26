@@ -84,6 +84,13 @@ pub(super) enum SelectDrag {
         circle: EntityId,
         center: DVec2,
     },
+    /// Dragging an opening along its wall: where the press was along its segment, and where
+    /// its first jamb was then.
+    Opening {
+        id: drift_core::OpeningId,
+        press: f64,
+        from: f64,
+    },
     /// Dragging a transform handle: the geometry scales (a corner) or stretches (a side).
     Scale {
         frame: crate::transform::TransformBox,
@@ -656,6 +663,11 @@ impl Tool for SelectTool {
                 "Drag right for window selection, left for crossing selection".into()
             }
             Some(SelectDrag::Text { .. }) => "Moving text · Esc to cancel".into(),
+            Some(SelectDrag::Opening { .. }) => {
+                "Sliding the opening along its wall (it keeps clear of corners; snaps to \
+                 centred) · Esc to cancel"
+                    .into()
+            }
             Some(SelectDrag::Radius { .. }) => {
                 "Resizing the circle (drag its centre to move it) · Esc to cancel".into()
             }
@@ -722,7 +734,11 @@ impl Tool for SelectTool {
                     Some(SelectDrag::Box { .. }) => None,
                     Some(SelectDrag::Radius { circle, .. }) => Some(*circle),
                     Some(SelectDrag::Fillet { arc }) => Some(*arc),
-                    Some(SelectDrag::Text { .. } | SelectDrag::Scale { .. }) => None,
+                    Some(
+                        SelectDrag::Text { .. }
+                        | SelectDrag::Scale { .. }
+                        | SelectDrag::Opening { .. },
+                    ) => None,
                     None => match pick_target(ed, &p) {
                         Some(Target::Entity(id)) => Some(id),
                         Some(Target::Midpoint(line)) => {
@@ -776,6 +792,11 @@ impl Tool for SelectTool {
                         ed.selection.extend(set);
                         ed.expand_groups();
                     }
+                    return;
+                }
+                // A picked opening's flip arrow: flip it.
+                if let Some((o, flip)) = ed.opening_arrow_at(p.raw, p.tolerance) {
+                    ed.flip_openings(&[o], flip);
                     return;
                 }
                 if let Some(Target::Midpoint(line)) = pick_target(ed, &p) {
@@ -1077,6 +1098,22 @@ impl Tool for SelectTool {
                             let set = ed.pick_set(id);
                             ed.selection.extend(set);
                         }
+                        // An opening slides along its wall.
+                        if let Some(o) = ed.opening_of(id)
+                            && ed.selected_openings().len() == 1
+                            && ed.selection == ed.opening_pick_set(o)
+                            && let Some(op) = ed.doc.opening(o)
+                            && let Some(host) = ed.opening_host(op.wall, op.seg)
+                            && let Some((u0, _)) = ed.opening_span(o)
+                        {
+                            ed.doc.begin();
+                            self.drag = Some(SelectDrag::Opening {
+                                id: o,
+                                press: host.seg.param(p.raw),
+                                from: u0,
+                            });
+                            return;
+                        }
                         // A lone circle grabbed by its edge resizes.
                         if ed.selection.len() == 1
                             && let Some(EntityKind::Circle { center, .. }) =
@@ -1186,6 +1223,23 @@ impl Tool for SelectTool {
             }
             Input::Drag(p) => match &mut self.drag {
                 Some(SelectDrag::Box { current, .. }) => *current = p.raw,
+                Some(SelectDrag::Opening { id, press, from }) => {
+                    let (o, press, from) = (*id, *press, *from);
+                    if let Some(host) = ed
+                        .doc
+                        .opening(o)
+                        .and_then(|op| ed.opening_host(op.wall, op.seg))
+                    {
+                        let mut u0 = from + host.seg.param(p.raw) - press;
+                        // Centred, when near it.
+                        for snap in ed.opening_snaps(o) {
+                            if (u0 - snap).abs() <= 2.0 * p.tolerance {
+                                u0 = snap;
+                            }
+                        }
+                        ed.slide_opening(o, u0);
+                    }
+                }
                 Some(SelectDrag::Scale {
                     frame,
                     points,
@@ -1351,6 +1405,9 @@ impl Tool for SelectTool {
                 Some(SelectDrag::Fillet { .. }) => {
                     ed.commit("Fillet radius");
                 }
+                Some(SelectDrag::Opening { .. }) => {
+                    ed.commit("Move opening");
+                }
                 Some(SelectDrag::Text { .. }) => {
                     ed.commit("Move text");
                 }
@@ -1368,7 +1425,8 @@ impl Tool for SelectTool {
                 SelectDrag::Radius { .. }
                 | SelectDrag::Fillet { .. }
                 | SelectDrag::Text { .. }
-                | SelectDrag::Scale { .. },
+                | SelectDrag::Scale { .. }
+                | SelectDrag::Opening { .. },
             ) => {
                 ed.region_motion = None;
                 ed.doc.rollback();

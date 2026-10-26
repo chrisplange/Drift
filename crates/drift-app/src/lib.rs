@@ -30,6 +30,9 @@ pub(crate) mod links;
 mod mem_tests;
 pub mod modify;
 mod notes;
+pub mod openings;
+#[cfg(test)]
+mod openings_props;
 pub mod output;
 mod overlay;
 mod parameters;
@@ -425,6 +428,8 @@ pub struct DriftApp {
     show_wall_centrelines: bool,
     /// The Inspector's thickness field being typed into, for the walls it was opened on.
     wall_thickness_text: Option<(Vec<drift_core::WallId>, String)>,
+    /// The picked opening's offset (0) or width (1) being typed in the Inspector.
+    opening_text: Option<(drift_core::OpeningId, u8, String)>,
     /// The drawing crosshair's size and weight.
     crosshair: app::crosshair::Crosshair,
     /// Alt-scaling steps the picked geometry through round sizes (rather than any size).
@@ -643,6 +648,7 @@ impl DriftApp {
             show_combs: true,
             show_wall_centrelines: false,
             wall_thickness_text: None,
+            opening_text: None,
             crosshair: Default::default(),
             round_scale: true,
             text_typing: None,

@@ -9719,6 +9719,7 @@ fn drawing_rules_are_the_drawings_and_older_files_get_this_computers() {
         stacked_fills: false,
         follow_divided_fills: true,
         gap_tolerance: 0.75,
+        size_set: None,
     };
     assert_eq!(h.state().new_rules, mine);
     h.state_mut().perform(crate::Pending::New);

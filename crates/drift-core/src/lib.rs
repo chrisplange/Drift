@@ -13,6 +13,7 @@ pub mod expr;
 pub mod fonts;
 pub mod groups;
 pub mod layers;
+pub mod openings;
 pub mod params;
 pub mod paths;
 pub mod rules;
@@ -40,6 +41,9 @@ pub use fonts::{EmbeddedFont, FontFile, FontSet};
 pub use glam::DVec2;
 pub use groups::{Group, GroupId};
 pub use layers::{Appearance, Layer, LayerId, LineType, LineWeight, Rgb};
+pub use openings::{
+    Hand, Opening, OpeningAt, OpeningId, OpeningMade, SegEnd, SizeSetId, Symbol, WallFace,
+};
 pub use paths::{Path, PathId};
 pub use rules::DrawingRules;
 pub use shape::{DofState, Emphasis, LineKind, Shape, SketchItem};

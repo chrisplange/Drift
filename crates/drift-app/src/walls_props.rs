@@ -26,13 +26,13 @@ type Run = (Vec<(usize, usize)>, usize, u8);
 /// A random network: grid size, runs (each a list of grid nodes, consecutive ones
 /// neighbours), and a jitter for each node.
 #[derive(Clone, Debug)]
-struct Network {
-    n: usize,
-    runs: Vec<Run>,
-    jitter: Vec<(f64, f64)>,
+pub(crate) struct Network {
+    pub(crate) n: usize,
+    pub(crate) runs: Vec<Run>,
+    pub(crate) jitter: Vec<(f64, f64)>,
 }
 
-fn network() -> impl Strategy<Value = Network> {
+pub(crate) fn network() -> impl Strategy<Value = Network> {
     (2usize..5).prop_flat_map(|n| {
         let node = (0..n, 0..n);
         let run = (
@@ -83,7 +83,7 @@ fn network() -> impl Strategy<Value = Network> {
 
 /// The network as a drawing: shared grid points, one wall per run (a grid edge already
 /// walled is left out of later runs, so walls don't run along each other), regenerated.
-fn drawing(net: &Network) -> Document {
+pub(crate) fn drawing(net: &Network) -> Document {
     let mut doc = Document::new();
     let mut points: BTreeMap<(usize, usize), EntityId> = BTreeMap::new();
     let mut used: std::collections::BTreeSet<((usize, usize), (usize, usize))> = Default::default();
@@ -122,7 +122,7 @@ fn drawing(net: &Network) -> Document {
     doc
 }
 
-fn config(cases: u32) -> ProptestConfig {
+pub(crate) fn config(cases: u32) -> ProptestConfig {
     ProptestConfig {
         cases,
         failure_persistence: None,

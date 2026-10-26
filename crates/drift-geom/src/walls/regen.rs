@@ -10,7 +10,7 @@ use drift_core::{
     LineType, LoopKey, Made, Part, PathId, Shape, Wall, WallId,
 };
 
-use super::{EndIn, Generated, Seg, WallIn, generate};
+use super::{EndIn, Generated, Seg, WallIn, generate_cut, opening_inputs};
 
 /// What a regeneration did.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -201,7 +201,7 @@ pub fn regenerate(doc: &mut Document) -> Report {
     }
     let (inputs, notes) = wall_inputs(doc);
     report.notices = notes;
-    let g = generate(&inputs, snap(doc));
+    let g = generate_cut(&inputs, &opening_inputs(doc, &inputs), snap(doc));
     report.notices.extend(g.notices.iter().cloned());
     write(doc, &g, &mut report);
     report
@@ -535,7 +535,7 @@ fn pick<T: Copy>(
 /// preview, or a check), without writing anything.
 pub fn shapes(doc: &Document) -> Vec<Shape> {
     let (inputs, _) = wall_inputs(doc);
-    generate(&inputs, snap(doc)).shapes()
+    generate_cut(&inputs, &opening_inputs(doc, &inputs), snap(doc)).shapes()
 }
 
 /// A closed path of lines and arcs as a loop of edges, in its order (each curve run the way
@@ -665,6 +665,7 @@ pub fn regenerate_moved(doc: &mut Document, moved: &BTreeSet<(WallId, u16)>) -> 
         return None;
     }
     let mut g = super::Gen::new(&inputs, snap(doc));
+    g.openings = opening_inputs(doc, &inputs);
     g.make_faces();
     if g.faces.iter().any(Option::is_none) {
         return None;
@@ -702,6 +703,7 @@ pub fn regenerate_moved(doc: &mut Document, moved: &BTreeSet<(WallId, u16)>) -> 
     for n in &around {
         g.solve(n);
     }
+    g.check_openings();
     if !g.out.notices.is_empty() {
         return None;
     }

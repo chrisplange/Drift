@@ -30,81 +30,13 @@ pub enum Op {
 }
 
 /// Thickness presets for the tool bar and Inspector: (label, actual thickness in mm).
+#[derive(Clone, Debug)]
 pub struct Preset {
     pub label: &'static str,
     pub mm: f64,
 }
 
 const INCH: f64 = 25.4;
-
-/// US walls at their actual finished thickness, labelled with the construction they come
-/// from (a "2×4" is 3½″, an "8-inch" block 7⅝″).
-pub const US_PRESETS: &[Preset] = &[
-    Preset {
-        label: "2×4 stud, ½″ gypsum both sides",
-        mm: 4.5 * INCH,
-    },
-    Preset {
-        label: "2×4 stud, ⅝″ gypsum both sides",
-        mm: 4.75 * INCH,
-    },
-    Preset {
-        label: "2×6 stud, ½″ gypsum both sides",
-        mm: 6.5 * INCH,
-    },
-    Preset {
-        label: "2×6 stud, ⅝″ gypsum both sides",
-        mm: 6.75 * INCH,
-    },
-    Preset {
-        label: "6″ CMU",
-        mm: 5.625 * INCH,
-    },
-    Preset {
-        label: "8″ CMU",
-        mm: 7.625 * INCH,
-    },
-    Preset {
-        label: "12″ CMU",
-        mm: 11.625 * INCH,
-    },
-];
-
-/// The generic metric list.
-pub const METRIC_PRESETS: &[Preset] = &[
-    Preset {
-        label: "100 mm",
-        mm: 100.0,
-    },
-    Preset {
-        label: "115 mm",
-        mm: 115.0,
-    },
-    Preset {
-        label: "140 mm",
-        mm: 140.0,
-    },
-    Preset {
-        label: "150 mm",
-        mm: 150.0,
-    },
-    Preset {
-        label: "200 mm",
-        mm: 200.0,
-    },
-    Preset {
-        label: "240 mm",
-        mm: 240.0,
-    },
-    Preset {
-        label: "300 mm",
-        mm: 300.0,
-    },
-    Preset {
-        label: "365 mm",
-        mm: 365.0,
-    },
-];
 
 impl Editor {
     /// Who owns which entity among the walls (cached by document revision).
@@ -140,13 +72,9 @@ impl Editor {
         }
     }
 
-    /// The thickness presets for the drawing's units.
+    /// The thickness presets of the drawing's size set (by its units unless it names one).
     pub fn wall_presets(&self) -> &'static [Preset] {
-        if self.doc.units().length.is_metric() {
-            METRIC_PRESETS
-        } else {
-            US_PRESETS
-        }
+        crate::library::sizes::for_doc(&self.doc).wall_presets()
     }
 
     /// The poché new walls get.
@@ -216,6 +144,7 @@ impl Editor {
         for id in ids {
             match owners.get(id) {
                 Some(Owner::Wall(w)) => out.extend(self.wall_curves(w)),
+                Some(Owner::Opening(o, _)) => out.extend(self.opening_pick_set(o)),
                 _ => out.push(id),
             }
         }
@@ -360,6 +289,17 @@ impl Editor {
     /// wall or its centreline changed otherwise), when every wall is made again.
     fn wall_edit(&self) -> WallEdit {
         let (walls, paths) = self.doc.walls_and_paths_touched_in_transaction();
+        // An opening added, moved or resized: the segments it was and is on are cut again
+        // (only where it is, if its keys stay: sliding it along).
+        let mut cut: BTreeSet<(WallId, u16)> = BTreeSet::new();
+        for o in self.doc.openings_touched_in_transaction() {
+            let before = self.doc.opening_before_transaction(o);
+            let now = self.doc.opening(o).cloned();
+            if before.is_none() || now.is_none() {
+                return WallEdit::Full;
+            }
+            cut.extend(before.iter().chain(&now).map(|x| (x.wall, x.seg)));
+        }
         // A wall's record changed (not just what it made): added, removed, re-thickened…
         for w in walls {
             let strip = |w: Option<Wall>| {
@@ -421,6 +361,7 @@ impl Editor {
             }
             moved.extend(segs.iter().copied());
         }
+        moved.extend(cut);
         if moved.is_empty() {
             WallEdit::None
         } else {
@@ -434,6 +375,8 @@ impl Editor {
     /// and pochés are updated by key. Where only centreline points moved and the joins stay
     /// what they were, only the nodes round the moved segments are worked out again.
     pub(crate) fn follow_walls(&mut self) {
+        // (Openings that went with their walls say so, even when no wall is left.)
+        self.note_gone_openings();
         if !self.doc.has_walls() || !self.doc.in_transaction() {
             return;
         }
@@ -449,31 +392,41 @@ impl Editor {
                 } else {
                     self.wall_edit()
                 };
-                let fast = match edit {
+                let fast = match &edit {
                     WallEdit::Moved(moved) => {
-                        drift_geom::walls::regenerate_moved(&mut self.doc, &moved)
+                        drift_geom::walls::regenerate_moved(&mut self.doc, moved)
                     }
                     WallEdit::None => Some(Default::default()),
                     WallEdit::Full => None,
                 };
                 match fast {
-                    Some(r) => r,
-                    None => {
-                        self.normalize_walls();
-                        drift_geom::walls::regenerate(&mut self.doc)
+                    Some(r) => {
+                        // Openings ride along with the segments that moved.
+                        if let WallEdit::Moved(moved) = &edit {
+                            self.follow_openings(Some(moved));
+                        }
+                        r
                     }
+                    None => self.regenerate_walls(),
                 }
             }
-            WallEdit::Full => {
-                self.normalize_walls();
-                drift_geom::walls::regenerate(&mut self.doc)
-            }
+            WallEdit::Full => self.regenerate_walls(),
         };
         if self.notice.is_none()
             && let Some(n) = report.notices.first()
         {
             self.notice = Some(n.clone());
         }
+    }
+
+    /// Every wall made again after a structural edit: centrelines normalized, openings
+    /// re-seated on what runs where they were, then the walls and the openings' symbols.
+    fn regenerate_walls(&mut self) -> drift_geom::walls::Report {
+        self.normalize_walls();
+        self.reseat_openings();
+        let report = drift_geom::walls::regenerate(&mut self.doc);
+        self.follow_openings(None);
+        report
     }
 
     /// Every wall regenerated, inside the open transaction (opening a file: what an older
@@ -483,7 +436,9 @@ impl Editor {
             return 0;
         }
         self.normalize_walls();
-        drift_geom::walls::regenerate(&mut self.doc).rebuilt
+        let rebuilt = drift_geom::walls::regenerate(&mut self.doc).rebuilt;
+        self.follow_openings(None);
+        rebuilt
     }
 
     /// Centrelines as the edit left them: a centreline curve split, trimmed or filleted takes
@@ -950,6 +905,8 @@ impl Editor {
             return false;
         }
         self.doc.begin();
+        // Their openings' symbols stay as plain lines and arcs too.
+        self.explode_openings(walls);
         let mut centrelines = Vec::new();
         for w in walls {
             centrelines.extend(self.wall_curves(*w));
@@ -1138,6 +1095,7 @@ impl Editor {
             }
             let _ = self.doc.set_wall(new, w);
         }
+        self.copy_openings_onto(&copies);
     }
 
     /// The poché of the cluster a wall is in.

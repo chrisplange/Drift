@@ -49,6 +49,8 @@ rest stand alone.
     drawn in Drift, swept or lathed in Blender, updated when you save.
 14. [Walls](tutorials/14-walls.md): walls along a centreline, joined in L, T and X, curved,
     and changed from the Inspector.
+15. [Doors and windows](tutorials/15-openings.md): openings hosted in walls, in US or metric
+    sizes, slid, flipped and resized.
 
 **Reference.** One page per area, to look things up.
 

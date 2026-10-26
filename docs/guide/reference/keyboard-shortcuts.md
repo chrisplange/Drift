@@ -86,6 +86,7 @@ does the last command or tool again, as in AutoCAD.
 | Key | Command | Does |
 |---|---|---|
 | W | **Wall** | Walls along a centreline: they join the walls they meet. W again: arcs; Space: the other face |
+| Shift+O | **Door / window** | Doors, windows and openings in walls: hover a wall, click to place. Space: the way it opens; type the offset, Tab: width |
 | I | **Place block** | Place copies of a block from the Blocks tab; R turns, X mirrors |
 
 With no key (use the Build menu or the command palette): **Walls from curves**, **Join walls**, **Unjoin walls**, **Explode walls**.

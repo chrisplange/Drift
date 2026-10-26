@@ -205,6 +205,16 @@ impl Editor {
         if !self.selected_instances.is_empty() || self.picks_annotations() {
             return None;
         }
+        // (An opening slides along its wall and flips by its arrows: no box.)
+        if self.doc.has_openings()
+            && !self.selection.is_empty()
+            && self
+                .selection
+                .iter()
+                .all(|id| self.opening_of(*id).is_some())
+        {
+            return None;
+        }
         let region = self.region().filter(|r| {
             let outline = self.region_curves(r);
             self.selection.iter().all(|id| outline.contains(id))

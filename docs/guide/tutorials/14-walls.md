@@ -106,6 +106,6 @@ drive it.
 
 ## What's next
 
-Openings (doors and windows hosted in walls), room tags with live areas, dimensions that
-drive face to face, and making walls from an imported plan's lines are coming in the next
-batches.
+[Doors and windows](15-openings.md) cut into walls. Room tags with live areas, dimensions
+that drive face to face, and making walls from an imported plan's lines are coming in the
+next batches.

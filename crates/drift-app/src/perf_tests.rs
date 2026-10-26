@@ -1152,3 +1152,122 @@ fn perf_walls() {
     report("the cluster's poché region", poche);
     println!("  budgets: commit 5 ms, drag frame +2 ms, poché 2 ms, open +150 ms");
 }
+
+/// Openings (docs/walls-design.md §9.4, W3): the floor of [`wall_floor`] with a door in every
+/// room's lower wall (1,000 openings with their symbols): a commit and a drag frame moving a
+/// 4-way node, sliding an opening (commit and drag frame), and opening the file.
+#[test]
+#[ignore = "torture test: run with --release --ignored --nocapture"]
+fn perf_walls_openings() {
+    use drift_core::{Opening, Symbol};
+    println!();
+    let t = Instant::now();
+    let (mut doc, grid) = wall_floor();
+    // The rows of walls are the first runs: a door centred on each segment of rows 0..25.
+    let rows: Vec<drift_core::WallId> = doc.walls().map(|(id, _)| id).take(25).collect();
+    for w in rows {
+        for k in 0..40u16 {
+            let mut o = Opening::new(w, k, 970.0);
+            o.leaf = 900.0;
+            o.symbol = Symbol::Library {
+                family: "door.single".into(),
+                type_name: "900 × 2040".into(),
+            };
+            doc.add_opening(o).unwrap();
+        }
+    }
+    let mut ed = Editor::new(doc);
+    ed.auto_relations = false;
+    report(
+        "floor with 1,000 doors (walls, cuts, symbols)",
+        (t.elapsed().as_secs_f64() * 1e3, 0.0),
+    );
+    println!(
+        "  {} openings, {} entities ({} made by walls and openings)",
+        ed.doc.openings().count(),
+        ed.doc.len(),
+        ed.doc.generated_entities().len()
+    );
+    let mut check = ed.doc.clone();
+    report(
+        "regenerate every wall with its cuts",
+        time(5, |_| {
+            let r = drift_geom::walls::regenerate(&mut check);
+            assert!(!r.changed);
+        }),
+    );
+    let node = grid[20][12];
+    let at = ed.doc.point(node).unwrap();
+    let owners = ed.doc.wall_owners();
+    let loose = ed
+        .doc
+        .iter()
+        .find(|(id, e)| e.kind.is_point() && owners.get(*id).is_none())
+        .map(|(id, _)| id)
+        .unwrap();
+    let walls_part = time(10, |k| {
+        ed.doc.begin();
+        let _ = ed
+            .doc
+            .set_point(node, at + v(5.0 + 10.0 * (k % 3) as f64, 0.0));
+        ed.follow_walls();
+        ed.doc.rollback();
+    });
+    report("walls' part of a commit (move a 4-way node)", walls_part);
+    ed.sync();
+    ed.doc.begin();
+    let frame = time(20, |k| {
+        let _ = ed.drag(&[node], v(1.0 + (k % 4) as f64, 0.0), &[]);
+        ed.sync();
+    });
+    ed.doc.rollback();
+    ed.sync();
+    report("drag frame of a 4-way node (doors beside it)", frame);
+    ed.doc.begin();
+    let loose_frame = time(20, |k| {
+        let _ = ed.drag(&[loose], v(1.0 + (k % 4) as f64, 0.0), &[]);
+        ed.sync();
+    });
+    ed.doc.rollback();
+    ed.sync();
+    report("  the same drag frame of a furniture point", loose_frame);
+    // Slide the door beside the node along its wall.
+    let door = ed
+        .doc
+        .openings()
+        .find(|(_, o)| o.seg == 20)
+        .map(|(id, _)| id)
+        .unwrap();
+    let (u0, _) = ed.opening_span(door).unwrap();
+    let slide_part = time(10, |k| {
+        ed.doc.begin();
+        let _ = ed.slide_opening(door, u0 + 10.0 * (k % 3) as f64 + 5.0);
+        ed.doc.rollback();
+    });
+    report("walls' part of sliding a door (cut and symbol)", slide_part);
+    ed.sync();
+    ed.doc.begin();
+    let slide_frame = time(20, |k| {
+        let _ = ed.slide_opening(door, u0 + 1.0 + (k % 4) as f64);
+        ed.sync();
+    });
+    ed.doc.rollback();
+    ed.sync();
+    report("drag frame sliding a door", slide_frame);
+    let text = drift_io::save(&ed.doc, &drift_io::Metadata::default());
+    report(
+        "open the file (read, check walls and openings)",
+        time(3, |_| {
+            let (d, _) = drift_io::load(&text).unwrap();
+            let _ = Editor::new(d);
+        }),
+    );
+    println!(
+        "  walls and openings add {:.2} ms to a commit, {:.2} ms to a node's drag frame and \
+         {:.2} ms to a door's slide frame",
+        walls_part.0,
+        frame.0 - loose_frame.0,
+        slide_frame.0 - loose_frame.0
+    );
+    println!("  budgets: commit 5 ms, drag frame +2 ms");
+}

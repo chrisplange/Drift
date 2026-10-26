@@ -23,8 +23,12 @@ use drift_core::{
 
 use crate::regions::{Edge, Loop, Region};
 
+pub mod openings;
 pub mod regen;
+pub use openings::{Frame, OpeningIn, free_spans, opening_inputs, write_symbol};
 pub use regen::{Report, regenerate, regenerate_moved, wall_inputs};
+#[cfg(test)]
+mod openings_tests;
 #[cfg(test)]
 mod tests;
 
@@ -388,6 +392,8 @@ pub struct Generated {
     /// Why something isn't as asked (a wall too tight to make, an outline that doesn't
     /// close, an end that had to be capped).
     pub notices: Vec<String>,
+    /// Openings that don't fit where they are, so aren't cut.
+    pub unfit: BTreeSet<drift_core::OpeningId>,
 }
 
 impl Generated {
@@ -581,18 +587,27 @@ struct Gen<'a> {
     /// thickest wall and the snap) are left out of [`Gen::nodes`]. Every node inside it is
     /// whole; those outside may not be.
     focus: Option<drift_core::Bounds>,
+    /// The openings cut into the walls.
+    openings: Vec<OpeningIn>,
 }
 
 /// Make the faces, end edges and corners of `walls`, and the outline loops of their
 /// clusters. `snap` is how close a wall end must be to another wall to join it in a T, and
 /// how far inside a segment a crossing must be to make an X.
 pub fn generate(walls: &[WallIn], snap: f64) -> Generated {
+    generate_cut(walls, &[], snap)
+}
+
+/// [`generate`], with `openings` cut into the walls (see [`openings`]).
+pub fn generate_cut(walls: &[WallIn], openings: &[OpeningIn], snap: f64) -> Generated {
     let mut g = Gen::new(walls, snap);
+    g.openings = openings.to_vec();
     g.make_faces();
     let nodes = g.nodes();
     for node in &nodes {
         g.solve(node);
     }
+    g.check_openings();
     g.pieces();
     g.drop_empty_edges();
     g.chain();
@@ -619,6 +634,7 @@ impl<'a> Gen<'a> {
             corner_faces: HashMap::new(),
             alias: HashMap::new(),
             focus: None,
+            openings: Vec::new(),
         }
     }
 
@@ -1171,6 +1187,8 @@ impl Gen<'_> {
                 }
             }
         }
+        // Openings' jambs: a node each.
+        self.opening_ends(&mut nodes, &made);
         // Ends leaving a node the same way overlap: they don't join (the later one is
         // capped on its own).
         let mut out: Vec<Node> = Vec::new();
@@ -1348,7 +1366,12 @@ impl Gen<'_> {
         self.corner(kw, e.wall(), qw);
         self.event(e, true, kc);
         self.event(e, false, kw);
-        self.edge(e, Part::Cap(e.key.dir), kc, kw, true);
+        // (An opening's jamb is its own part.)
+        let part = match e.key.at {
+            Station::Jamb(..) => Part::Jamb,
+            _ => Part::Cap(e.key.dir),
+        };
+        self.edge(e, part, kc, kw, true);
     }
 
     /// The corners between consecutive ends (counter-clockwise), for each pair the corner

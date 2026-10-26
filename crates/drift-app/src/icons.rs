@@ -227,6 +227,13 @@ pub fn tool(painter: &egui::Painter, rect: Rect, kind: ToolKind, color: Color32)
             p.line((3.0, 4.0), (3.0, 8.5));
             p.line((11.5, 17.0), (16.0, 17.0));
         }
+        ToolKind::Opening => {
+            // A door in a wall: the wall either side, the leaf and its swing.
+            p.poly(&[(2.0, 3.5), (5.5, 3.5), (5.5, 7.0), (2.0, 7.0)], false);
+            p.poly(&[(18.0, 3.5), (14.5, 3.5), (14.5, 7.0), (18.0, 7.0)], false);
+            p.line((5.5, 7.0), (5.5, 16.0));
+            p.arc(5.5, 7.0, 9.0, 0.0, PI / 2.0);
+        }
         ToolKind::Slot => {
             p.line((6.5, 6.0), (13.5, 6.0));
             p.line((6.5, 14.0), (13.5, 14.0));

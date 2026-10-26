@@ -1,0 +1,92 @@
+{
+  "id": "metric",
+  "name": "Generic metric",
+  "units": "metric",
+  "unit": "mm",
+  "walls": [
+    { "label": "100 mm", "thickness": 100 },
+    { "label": "115 mm", "thickness": 115 },
+    { "label": "140 mm", "thickness": 140 },
+    { "label": "150 mm", "thickness": 150 },
+    { "label": "200 mm", "thickness": 200 },
+    { "label": "240 mm", "thickness": 240 },
+    { "label": "300 mm", "thickness": 300 },
+    { "label": "365 mm", "thickness": 365 }
+  ],
+  "door_groups": [
+    {
+      "family": "door.single",
+      "widths": [700, 800, 900, 1000],
+      "heights": [2040, 2100],
+      "allowance": [70, 35]
+    },
+    {
+      "family": "door.double",
+      "widths": [1200, 1400, 1600, 1800],
+      "heights": [2040, 2100],
+      "allowance": [70, 35]
+    },
+    {
+      "family": "door.french",
+      "widths": [1200, 1400, 1600],
+      "heights": [2040, 2100],
+      "allowance": [70, 35]
+    },
+    {
+      "family": "door.pocket",
+      "widths": [700, 800, 900],
+      "heights": [2040, 2100],
+      "allowance": [70, 35]
+    },
+    {
+      "family": "door.bypass",
+      "widths": [1200, 1500, 1800, 2400],
+      "heights": [2040, 2400],
+      "allowance": [70, 35]
+    },
+    {
+      "family": "door.bifold",
+      "widths": [600, 800, 900, 1200, 1500, 1800],
+      "heights": [2040, 2400],
+      "allowance": [70, 35]
+    },
+    {
+      "family": "door.exterior",
+      "widths": [900, 1000],
+      "heights": [2100],
+      "allowance": [90, 45]
+    },
+    {
+      "family": "opening.cased",
+      "widths": [800, 900, 1200, 1500, 1800],
+      "heights": [2100],
+      "allowance": [0, 0]
+    }
+  ],
+  "window_groups": [
+    {
+      "family": "window.casement",
+      "widths": [600, 900],
+      "heights": [600, 900, 1200, 1500],
+      "allowance": [0, 0]
+    },
+    {
+      "family": "window.casement-pair",
+      "widths": [1200, 1500, 1800],
+      "heights": [900, 1200, 1500],
+      "allowance": [0, 0]
+    },
+    {
+      "family": "window.fixed",
+      "widths": [600, 900, 1200, 1500, 1800, 2100, 2400],
+      "heights": [600, 900, 1200, 1500],
+      "allowance": [0, 0]
+    },
+    {
+      "family": "window.slider",
+      "widths": [1200, 1500, 1800, 2100, 2400],
+      "heights": [900, 1200, 1500],
+      "allowance": [0, 0]
+    }
+  ]
+}

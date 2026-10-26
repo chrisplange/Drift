@@ -638,6 +638,7 @@ pub(crate) const RAIL: &[(Option<Category>, &[Slot])] = {
                     head: tool(T::Wall),
                     more: &[K::WallsFromCurves],
                 },
+                Slot::one(tool(T::Opening)),
                 Slot::one(tool(T::Block)),
             ],
         ),
@@ -1453,6 +1454,10 @@ fn table() -> Vec<Spec> {
         )
         .when(When::Curves)
         .words("pick lines centreline"),
+        tool("build.opening", C::Build, ToolKind::Opening)
+            .keys(const { &[shift(Key::O)] })
+            .aliases(&["DOOR", "DR", "WINDOW", "WN", "OPENING"])
+            .words("door window opening wall swing"),
         tool("build.block", C::Build, ToolKind::Block)
             .keys(const { &[plain(Key::I)] })
             .aliases(&["INSERT", "I"]),

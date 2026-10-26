@@ -703,6 +703,7 @@ impl DriftApp {
             }
             ToolKind::Fill => self.fill_tool_bar(ui),
             ToolKind::Wall => self.wall_tool_bar(ui),
+            ToolKind::Opening => self.opening_tool_bar(ui),
             ToolKind::Pen => {
                 ui.checkbox(&mut self.show_combs, "Curvature combs");
             }

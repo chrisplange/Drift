@@ -2862,9 +2862,7 @@ fn a_hatch_follows_its_corner_moved_in_and_a_side_split() {
     );
     h.run();
     // Split the right side.
-    h.get_by_label("Split").scroll_to_me();
-    h.run();
-    h.get_by_label("Split").click();
+    h.state_mut().switch_tool(ToolKind::Split);
     h.run();
     click_world(&mut h, DVec2::new(120.0, 30.0));
     let ed = &mut h.state_mut().editor;
@@ -2995,17 +2993,17 @@ fn drafting_tools_annotate_the_plate() {
     }
 
     // A centre mark on the bore.
-    h.get_by_label("Centre mark").click();
+    h.state_mut().switch_tool(ToolKind::CentreMark);
     h.run();
     click_world(&mut h, DVec2::new(84.0, 40.0));
     // A hole callout on a bolt hole.
-    h.get_by_label("Callout").click();
+    h.state_mut().switch_tool(ToolKind::Callout);
     h.run();
     let hole = DVec2::new(70.0, 40.0) + DVec2::splat(26.0 / 2f64.sqrt());
     click_world(&mut h, hole + DVec2::new(3.2, 0.0));
     click_world(&mut h, DVec2::new(108.0, 92.0));
     // Ordinates from the bottom-left fillet's end.
-    h.get_by_label("Ordinate").click();
+    h.state_mut().switch_tool(ToolKind::Ordinate);
     h.run();
     click_world(&mut h, DVec2::new(10.0, 0.0));
     click_world(&mut h, DVec2::new(110.0, 0.0));
@@ -4267,6 +4265,9 @@ fn pdf_underlay_calibrate_and_trace() {
 fn polygons_and_slots_from_the_toolbar() {
     let Some(mut h) = harness() else { return };
     let v = DVec2::new;
+    // Polygon is in the Rectangle's flyout.
+    h.get_by_label("Rectangle").click_secondary();
+    h.run();
     h.get_by_label("Polygon").click();
     h.run();
     assert_eq!(h.state().tool.kind(), ToolKind::Polygon);
@@ -5803,7 +5804,7 @@ fn section_and_elevation_marks() {
 
     // An elevation mark: where it goes, then towards what it looks at (as pointed, with
     // angle snapping off).
-    h.get_by_label("Elevation mark").click();
+    h.state_mut().switch_tool(ToolKind::Elevation);
     h.run();
     click_world(&mut h, DVec2::new(130.0, -10.0));
     click_world(&mut h, DVec2::new(110.0, 10.0));
@@ -9718,6 +9719,7 @@ fn drawing_rules_are_the_drawings_and_older_files_get_this_computers() {
         stacked_fills: false,
         follow_divided_fills: true,
         gap_tolerance: 0.75,
+        size_set: None,
     };
     assert_eq!(h.state().new_rules, mine);
     h.state_mut().perform(crate::Pending::New);

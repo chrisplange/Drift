@@ -665,6 +665,20 @@ impl DriftApp {
                     self.switch_tool(k);
                 }
             }
+            ToolKind::Trim | ToolKind::Extend | ToolKind::Split => {
+                if let Some(k) = keyed_choice(
+                    ui,
+                    kind,
+                    &[
+                        (ToolKind::Trim, "Trim"),
+                        (ToolKind::Extend, "Extend"),
+                        (ToolKind::Split, "Split"),
+                    ],
+                    "T trims, E extends; Split has no key",
+                ) {
+                    self.switch_tool(k);
+                }
+            }
             ToolKind::Text => {
                 caption(ui, "Height");
                 let unit = units.length.mm_per_unit();
@@ -689,6 +703,7 @@ impl DriftApp {
             }
             ToolKind::Fill => self.fill_tool_bar(ui),
             ToolKind::Wall => self.wall_tool_bar(ui),
+            ToolKind::Opening => self.opening_tool_bar(ui),
             ToolKind::Pen => {
                 ui.checkbox(&mut self.show_combs, "Curvature combs");
             }

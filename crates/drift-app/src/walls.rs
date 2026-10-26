@@ -30,81 +30,13 @@ pub enum Op {
 }
 
 /// Thickness presets for the tool bar and Inspector: (label, actual thickness in mm).
+#[derive(Clone, Debug)]
 pub struct Preset {
     pub label: &'static str,
     pub mm: f64,
 }
 
 const INCH: f64 = 25.4;
-
-/// US walls at their actual finished thickness, labelled with the construction they come
-/// from (a "2×4" is 3½″, an "8-inch" block 7⅝″).
-pub const US_PRESETS: &[Preset] = &[
-    Preset {
-        label: "2×4 stud, ½″ gypsum both sides",
-        mm: 4.5 * INCH,
-    },
-    Preset {
-        label: "2×4 stud, ⅝″ gypsum both sides",
-        mm: 4.75 * INCH,
-    },
-    Preset {
-        label: "2×6 stud, ½″ gypsum both sides",
-        mm: 6.5 * INCH,
-    },
-    Preset {
-        label: "2×6 stud, ⅝″ gypsum both sides",
-        mm: 6.75 * INCH,
-    },
-    Preset {
-        label: "6″ CMU",
-        mm: 5.625 * INCH,
-    },
-    Preset {
-        label: "8″ CMU",
-        mm: 7.625 * INCH,
-    },
-    Preset {
-        label: "12″ CMU",
-        mm: 11.625 * INCH,
-    },
-];
-
-/// The generic metric list.
-pub const METRIC_PRESETS: &[Preset] = &[
-    Preset {
-        label: "100 mm",
-        mm: 100.0,
-    },
-    Preset {
-        label: "115 mm",
-        mm: 115.0,
-    },
-    Preset {
-        label: "140 mm",
-        mm: 140.0,
-    },
-    Preset {
-        label: "150 mm",
-        mm: 150.0,
-    },
-    Preset {
-        label: "200 mm",
-        mm: 200.0,
-    },
-    Preset {
-        label: "240 mm",
-        mm: 240.0,
-    },
-    Preset {
-        label: "300 mm",
-        mm: 300.0,
-    },
-    Preset {
-        label: "365 mm",
-        mm: 365.0,
-    },
-];
 
 impl Editor {
     /// Who owns which entity among the walls (cached by document revision).
@@ -140,13 +72,9 @@ impl Editor {
         }
     }
 
-    /// The thickness presets for the drawing's units.
+    /// The thickness presets of the drawing's size set (by its units unless it names one).
     pub fn wall_presets(&self) -> &'static [Preset] {
-        if self.doc.units().length.is_metric() {
-            METRIC_PRESETS
-        } else {
-            US_PRESETS
-        }
+        crate::library::sizes::for_doc(&self.doc).wall_presets()
     }
 
     /// The poché new walls get.
@@ -216,6 +144,7 @@ impl Editor {
         for id in ids {
             match owners.get(id) {
                 Some(Owner::Wall(w)) => out.extend(self.wall_curves(w)),
+                Some(Owner::Opening(o, _)) => out.extend(self.opening_pick_set(o)),
                 _ => out.push(id),
             }
         }
@@ -360,6 +289,17 @@ impl Editor {
     /// wall or its centreline changed otherwise), when every wall is made again.
     fn wall_edit(&self) -> WallEdit {
         let (walls, paths) = self.doc.walls_and_paths_touched_in_transaction();
+        // An opening added, moved or resized: the segments it was and is on are cut again
+        // (only where it is, if its keys stay: sliding it along).
+        let mut cut: BTreeSet<(WallId, u16)> = BTreeSet::new();
+        for o in self.doc.openings_touched_in_transaction() {
+            let before = self.doc.opening_before_transaction(o);
+            let now = self.doc.opening(o).cloned();
+            if before.is_none() || now.is_none() {
+                return WallEdit::Full;
+            }
+            cut.extend(before.iter().chain(&now).map(|x| (x.wall, x.seg)));
+        }
         // A wall's record changed (not just what it made): added, removed, re-thickened…
         for w in walls {
             let strip = |w: Option<Wall>| {
@@ -421,6 +361,7 @@ impl Editor {
             }
             moved.extend(segs.iter().copied());
         }
+        moved.extend(cut);
         if moved.is_empty() {
             WallEdit::None
         } else {
@@ -434,6 +375,15 @@ impl Editor {
     /// and pochés are updated by key. Where only centreline points moved and the joins stay
     /// what they were, only the nodes round the moved segments are worked out again.
     pub(crate) fn follow_walls(&mut self) {
+        self.follow_walls_with(None);
+    }
+
+    /// [`follow_walls`](Self::follow_walls), keeping `joins` (a drag's) for the ends that
+    /// aren't live. Without them (a commit), an end left joined to another by where it is
+    /// takes that end's point: made by the Wall tool or a drag, an L moves together after.
+    pub(crate) fn follow_walls_with(&mut self, joins: Option<&drift_geom::walls::Joins>) {
+        // (Openings that went with their walls say so, even when no wall is left.)
+        self.note_gone_openings();
         if !self.doc.has_walls() || !self.doc.in_transaction() {
             return;
         }
@@ -449,31 +399,134 @@ impl Editor {
                 } else {
                     self.wall_edit()
                 };
-                let fast = match edit {
+                let fast = match &edit {
                     WallEdit::Moved(moved) => {
-                        drift_geom::walls::regenerate_moved(&mut self.doc, &moved)
+                        drift_geom::walls::regenerate_moved_with(&mut self.doc, moved, joins)
                     }
                     WallEdit::None => Some(Default::default()),
                     WallEdit::Full => None,
                 };
                 match fast {
-                    Some(r) => r,
-                    None => {
-                        self.normalize_walls();
-                        drift_geom::walls::regenerate(&mut self.doc)
+                    Some(r) => {
+                        // Openings ride along with the segments that moved.
+                        if let WallEdit::Moved(moved) = &edit {
+                            self.follow_openings(Some(moved));
+                        }
+                        r
                     }
+                    None => self.regenerate_walls(joins),
                 }
             }
-            WallEdit::Full => {
-                self.normalize_walls();
-                drift_geom::walls::regenerate(&mut self.doc)
-            }
+            WallEdit::Full => self.regenerate_walls(joins),
+        };
+        let report = if joins.is_none() && self.share_joined_points(&report.aliased) {
+            let r = drift_geom::walls::regenerate(&mut self.doc);
+            self.follow_openings(None);
+            r
+        } else {
+            report
         };
         if self.notice.is_none()
             && let Some(n) = report.notices.first()
         {
             self.notice = Some(n.clone());
         }
+    }
+
+    /// Every wall made again after a structural edit: centrelines normalized, openings
+    /// re-seated on what runs where they were, then the walls (keeping `joins`, a drag's)
+    /// and the openings' symbols.
+    fn regenerate_walls(
+        &mut self,
+        joins: Option<&drift_geom::walls::Joins>,
+    ) -> drift_geom::walls::Report {
+        self.normalize_walls();
+        self.reseat_openings();
+        let report = drift_geom::walls::regenerate_with(&mut self.doc, joins);
+        self.follow_openings(None);
+        report
+    }
+
+    /// Two ends joined by where they are (`aliased`: each point to the one naming its join),
+    /// one of whose points this transaction moved or made, become one point, where their
+    /// straight centrelines cross (when that is near both ends): the faces were made meeting there already, so nothing
+    /// moves but the centrelines' ends, and the walls move together from then on. (Not where
+    /// more than two meet, or a centreline there is curved or runs straight on.) Whether
+    /// any did.
+    fn share_joined_points(&mut self, aliased: &BTreeMap<EntityId, EntityId>) -> bool {
+        let mut groups: BTreeMap<EntityId, Vec<EntityId>> = BTreeMap::new();
+        for (&p, &root) in aliased {
+            if p != root {
+                groups.entry(root).or_insert_with(|| vec![root]).push(p);
+            }
+        }
+        // Each run end's point: its wall, and its segment's line (from the end, inwards).
+        let mut ends: HashMap<EntityId, (WallId, Option<(DVec2, DVec2)>)> = HashMap::new();
+        for (id, wall) in self.doc.walls() {
+            let Ok((segs, points, closed)) = drift_geom::walls::regen::centreline(&self.doc, wall)
+            else {
+                continue;
+            };
+            if closed || segs.is_empty() {
+                continue;
+            }
+            let line = |s: &drift_geom::walls::Seg, start: bool| match *s {
+                drift_geom::walls::Seg::Line { a, b } => Some(if start { (a, b) } else { (b, a) }),
+                drift_geom::walls::Seg::Arc { .. } => None,
+            };
+            ends.insert(points[0], (id, line(&segs[0], true)));
+            ends.insert(
+                points[points.len() - 1],
+                (id, line(&segs[segs.len() - 1], false)),
+            );
+        }
+        let mut any = false;
+        for (_, members) in groups {
+            let &[a, b] = members.as_slice() else {
+                continue;
+            };
+            let touched = |id: EntityId| {
+                self.doc.touched_in_transaction(id)
+                    || self.doc.entity_before_transaction(id).is_none()
+            };
+            if !(touched(a) || touched(b)) || !self.doc.contains(a) || !self.doc.contains(b) {
+                continue;
+            }
+            let (Some(&(wa, Some((pa, qa)))), Some(&(wb, Some((pb, qb))))) =
+                (ends.get(&a), ends.get(&b))
+            else {
+                continue;
+            };
+            let (da, db) = (qa - pa, qb - pb);
+            let den = da.perp_dot(db);
+            if den.abs() <= 1e-9 * da.length() * db.length() {
+                continue;
+            }
+            let x = pa + da * ((pb - pa).perp_dot(db) / den);
+            // (Only a corner where the ends are: not where the lines happen to cross far off.)
+            let thick = |w: WallId| self.doc.wall(w).map_or(0.0, |w| w.thickness);
+            let reach = thick(wa).max(thick(wb)) + drift_geom::walls::regen::snap(&self.doc);
+            if x.distance(pa) > reach || x.distance(pb) > reach {
+                continue;
+            }
+            let _ = self.doc.set_point(a, x);
+            let _ = self.doc.set_point(b, x);
+            if self.doc.merge_points(b, a).is_err() {
+                continue;
+            }
+            any = true;
+            // A run joined to its own start closes.
+            if wa == wb
+                && let Some(w) = self.doc.wall(wa)
+                && let Some(mut path) = self.doc.path(w.centre).cloned()
+                && !path.closed
+            {
+                let centre = w.centre;
+                path.closed = true;
+                let _ = self.doc.set_path(centre, path);
+            }
+        }
+        any
     }
 
     /// Every wall regenerated, inside the open transaction (opening a file: what an older
@@ -483,7 +536,9 @@ impl Editor {
             return 0;
         }
         self.normalize_walls();
-        drift_geom::walls::regenerate(&mut self.doc).rebuilt
+        let rebuilt = drift_geom::walls::regenerate(&mut self.doc).rebuilt;
+        self.follow_openings(None);
+        rebuilt
     }
 
     /// Centrelines as the edit left them: a centreline curve split, trimmed or filleted takes
@@ -597,6 +652,22 @@ impl Editor {
             })
             .map(|(id, w)| (id, w.clone()))
             .collect();
+        // Ends a solve holds on what they meet (walls that relations hold: see
+        // `drift_geom::walls::lower`) are where it put them.
+        let solved: HashSet<EntityId> =
+            self.lowering()
+                .map(|l| {
+                    l.extra
+                        .iter()
+                        .filter_map(|x| match x {
+                            drift_solver::Lowered::Relation(
+                                drift_core::Constraint::PointOnCurve { point, .. },
+                            ) => Some(*point),
+                            _ => None,
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
         for (id, wall) in walls {
             let mut changed = wall.clone();
             for which in 0..2 {
@@ -606,8 +677,9 @@ impl Editor {
                 let Ok(at) = self.doc.point(point) else {
                     continue;
                 };
-                // A point held by relations goes where they say (constrained tees are W2's).
-                let held = self.doc.constraints_on(point).next().is_some();
+                // A point held by relations goes where they say.
+                let held =
+                    self.doc.constraints_on(point).next().is_some() || solved.contains(&point);
                 // An end that wasn't moved itself follows what it meets however far that
                 // went; one pulled away lets go beyond its reach.
                 let pulled = self.doc.touched_in_transaction(point);
@@ -703,11 +775,35 @@ impl Editor {
             ));
         }
         let expr = (!e.references.is_empty()).then(|| e.text.clone());
-        self.edit_walls(walls, "Wall thickness", |w| {
+        let done = self.edit_walls(walls, "Wall thickness", |w| {
             w.thickness = e.value;
             w.thickness_expr = expr.clone();
         });
+        if !done
+            && self.notice.as_deref().is_some_and(|n| n.contains("undone"))
+            && walls.iter().any(|w| self.both_faces_held(*w))
+        {
+            self.notice = Some(
+                "Both faces of that wall are dimensioned, so its thickness can't change: make \
+                 one of those dimensions a reference (or delete it) first"
+                    .into(),
+            );
+        }
         Ok(())
+    }
+
+    /// Whether driving relations hold both faces of a wall (so its thickness is fixed by
+    /// them).
+    fn both_faces_held(&self, w: WallId) -> bool {
+        let Some(wall) = self.doc.wall(w) else {
+            return false;
+        };
+        let held = |part: drift_core::Part| {
+            wall.made.curves.iter().any(|(k, id)| {
+                k.part == part && self.doc.constraints_on(*id).any(|c| !self.doc.is_driven(c))
+            })
+        };
+        held(drift_core::Part::Left) && held(drift_core::Part::Right)
     }
 
     pub fn set_wall_justify(&mut self, walls: &[WallId], j: Justify) -> bool {
@@ -950,6 +1046,8 @@ impl Editor {
             return false;
         }
         self.doc.begin();
+        // Their openings' symbols stay as plain lines and arcs too.
+        self.explode_openings(walls);
         let mut centrelines = Vec::new();
         for w in walls {
             centrelines.extend(self.wall_curves(*w));
@@ -1061,6 +1159,60 @@ impl Editor {
         self.commit("Split wall")
     }
 
+    /// A dimension between the two faces of one straight wall segment is the wall's
+    /// thickness: it is placed as the wall's thickness dimension there, with its label at
+    /// `at` (one undo step; moving the one it has, if it has one), instead of a dimension.
+    /// Whether it was.
+    pub fn thickness_dimension_across(&mut self, c: &drift_core::Constraint, at: DVec2) -> bool {
+        let drift_core::Constraint::PointLineDistance { point, line, .. } = *c else {
+            return false;
+        };
+        if !self.doc.has_walls() {
+            return false;
+        }
+        let face = |id| drift_geom::walls::lower::face_of(&self.doc, id);
+        let (Some((w, seg, _)), Some((w2, seg2, _))) = (face(point), face(line)) else {
+            return false;
+        };
+        if w != w2 || seg != seg2 {
+            return false;
+        }
+        let Some(wall) = self.doc.wall(w) else {
+            return false;
+        };
+        let Ok((segs, ..)) = drift_geom::walls::regen::centreline(&self.doc, wall) else {
+            return false;
+        };
+        let Some(s @ drift_geom::walls::Seg::Line { .. }) = segs.get(usize::from(seg)).copied()
+        else {
+            return false;
+        };
+        let u = s.param(at).clamp(0.0, s.length());
+        let dim = PropertyDim {
+            target: PropertyRef::WallThickness(w),
+            seg,
+            along: if s.length() > 0.0 {
+                u / s.length()
+            } else {
+                0.5
+            },
+            out: s.tangent(u).perp().dot(at - s.at(u)),
+        };
+        let had = self
+            .doc
+            .property_dims()
+            .find(|(_, d)| d.target == PropertyRef::WallThickness(w))
+            .map(|(q, _)| q);
+        self.doc.begin();
+        match had {
+            Some(q) => self.doc.set_property_dim(q, dim),
+            None => {
+                let _ = self.doc.add_property_dim(dim);
+            }
+        }
+        self.commit("Thickness dimension")
+    }
+
     /// Show a wall's thickness as a dimension across its first segment (one undo step).
     pub fn show_wall_thickness(&mut self, w: WallId) -> bool {
         let Some(wall) = self.doc.wall(w) else {
@@ -1138,6 +1290,7 @@ impl Editor {
             }
             let _ = self.doc.set_wall(new, w);
         }
+        self.copy_openings_onto(&copies);
     }
 
     /// The poché of the cluster a wall is in.
@@ -1241,14 +1394,16 @@ impl Editor {
 
     /// The faces of the Wall tool's next segment as they would be made: joined to the run it
     /// continues (`from`, its last corner, if placed), to `to` (a point it ends on), and to
-    /// the walls it starts or ends in, by where it is.
+    /// the walls it starts or ends in, by where it is. With them, the pieces of the walls it
+    /// joins that it would change (a cap opening, a face split by a T), as they would be,
+    /// and those pieces' entities as they are (which the preview stands in for).
     pub fn wall_preview(
         &self,
         seg: drift_geom::walls::Seg,
         offsets: (f64, f64),
         from: Option<EntityId>,
         to: Option<EntityId>,
-    ) -> Vec<Shape> {
+    ) -> (Vec<Shape>, BTreeSet<EntityId>) {
         let me = WallId(u32::MAX);
         let snap = drift_geom::walls::regen::snap(&self.doc);
         let (mut inputs, _) = drift_geom::walls::regen::wall_inputs(&self.doc);
@@ -1292,12 +1447,63 @@ impl Editor {
             cross: true,
             ends: Default::default(),
         });
-        let g = drift_geom::walls::generate(&inputs, snap);
-        g.curves
+        // (With the openings in them, so a host's cut stays cut in the preview.)
+        let openings = drift_geom::walls::opening_inputs(&self.doc, &inputs);
+        let g = drift_geom::walls::generate_cut(&inputs, &openings, snap);
+        let mut shapes: Vec<Shape> = g
+            .curves
             .iter()
             .filter(|((w, _), p)| *w == me && p.stroke)
             .filter_map(|(_, p)| g.shape(p))
-            .collect()
+            .collect();
+        // The walls it joins: their pieces near it that come out otherwise than they are.
+        let joined: BTreeSet<WallId> = g
+            .joined
+            .iter()
+            .filter(|((w, _), _)| *w == me)
+            .flat_map(|(_, met)| met.iter().copied())
+            .chain(
+                g.tees
+                    .iter()
+                    .filter(|((w, _), _)| *w == me)
+                    .filter_map(|(_, t)| t.map(|t| t.0)),
+            )
+            .filter(|w| *w != me)
+            .collect();
+        let mut hidden = BTreeSet::new();
+        let near = |s: &Shape| {
+            let c = s.bounds();
+            c.min.x <= b.max.x + reach
+                && c.max.x >= b.min.x - reach
+                && c.min.y <= b.max.y + reach
+                && c.max.y >= b.min.y - reach
+        };
+        for w in joined {
+            let Some(wall) = self.doc.wall(w) else {
+                continue;
+            };
+            let made: BTreeMap<drift_core::FaceKey, EntityId> = wall.made.curves.clone();
+            let new: BTreeMap<drift_core::FaceKey, (Shape, bool)> = g
+                .curves
+                .iter()
+                .filter(|((x, _), _)| *x == w)
+                .filter_map(|((_, k), p)| Some((*k, (g.shape(p)?, p.stroke))))
+                .collect();
+            for (k, id) in &made {
+                let now = self.doc.shape(*id);
+                let stays = now.is_some() && new.get(k).map(|(s, _)| Some(*s)) == Some(now);
+                if !stays && now.as_ref().is_some_and(near) {
+                    hidden.insert(*id);
+                }
+            }
+            for (k, (s, stroke)) in &new {
+                let same = made.get(k).and_then(|id| self.doc.shape(*id)) == Some(*s);
+                if *stroke && !same && near(s) {
+                    shapes.push(*s);
+                }
+            }
+        }
+        (shapes, hidden)
     }
 }
 

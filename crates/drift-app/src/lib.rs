@@ -30,6 +30,9 @@ pub(crate) mod links;
 mod mem_tests;
 pub mod modify;
 mod notes;
+pub mod openings;
+#[cfg(test)]
+mod openings_props;
 pub mod output;
 mod overlay;
 mod parameters;
@@ -295,6 +298,10 @@ pub struct DriftApp {
     last_command: Option<app::palette::Command>,
     /// Where the pointer last was on the canvas, for Move and Rotate from a menu.
     last_pointer: Option<Pointer>,
+    /// The tool rail's families: the command each shows (the last used), by head.
+    rail_shown: Vec<(app::palette::Command, app::palette::Command)>,
+    /// The tool rail's open flyout.
+    rail_flyout: Option<app::rail::Flyout>,
     backend: String,
     window_title: String,
     /// Where the canvas was laid out last frame.
@@ -318,6 +325,9 @@ pub struct DriftApp {
     /// While a label is dragged: the dimension it snapped level with (a guide, world).
     dim_guide: Option<[DVec2; 2]>,
     dimension_edit: Option<DimensionEdit>,
+    /// A property dimension (a wall's thickness) being typed into: its text, and whether to
+    /// focus it on the next frame.
+    property_edit: Option<(drift_core::PropertyDimId, String, bool)>,
     typing: Option<Typing>,
     /// Points the pointer recently snapped to; new points can align with them.
     inference_points: Vec<DVec2>,
@@ -424,6 +434,8 @@ pub struct DriftApp {
     show_wall_centrelines: bool,
     /// The Inspector's thickness field being typed into, for the walls it was opened on.
     wall_thickness_text: Option<(Vec<drift_core::WallId>, String)>,
+    /// The picked opening's offset (0) or width (1) being typed in the Inspector.
+    opening_text: Option<(drift_core::OpeningId, u8, String)>,
     /// The drawing crosshair's size and weight.
     crosshair: app::crosshair::Crosshair,
     /// Alt-scaling steps the picked geometry through round sizes (rather than any size).
@@ -568,6 +580,8 @@ impl DriftApp {
             recent_commands: Vec::new(),
             last_command: None,
             last_pointer: None,
+            rail_shown: Vec::new(),
+            rail_flyout: None,
             backend,
             window_title: String::new(),
             canvas_rect: egui::Rect::NOTHING,
@@ -583,6 +597,7 @@ impl DriftApp {
             ext_drag: None,
             dim_guide: None,
             dimension_edit: None,
+            property_edit: None,
             typing: None,
             inference_points: Vec::new(),
             params: Default::default(),
@@ -640,6 +655,7 @@ impl DriftApp {
             show_combs: true,
             show_wall_centrelines: false,
             wall_thickness_text: None,
+            opening_text: None,
             crosshair: Default::default(),
             round_scale: true,
             text_typing: None,
@@ -946,7 +962,7 @@ impl eframe::App for DriftApp {
         egui::Panel::left("tools")
             .resizable(false)
             .frame(frame(8, 6))
-            .exact_size(if wide { 168.0 } else { 56.0 })
+            .exact_size(if wide { 168.0 } else { 84.0 })
             .show(ui, |ui| self.toolbar(ui, wide));
         self.begin_docks(wide);
         self.dock(ui, dock::Side::Left);

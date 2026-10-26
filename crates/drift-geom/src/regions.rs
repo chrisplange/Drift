@@ -225,6 +225,59 @@ pub struct Region {
 }
 
 impl Region {
+    /// The region as a copy of a block places it: a region found among the block's curves,
+    /// moved, turned, scaled and mirrored as `copy` places those curves. The same as the
+    /// region found among the placed curves, without finding it again for every copy.
+    pub fn placed(&self, copy: &drift_core::Instance) -> Region {
+        let turn = drift_core::blocks::exact_rotor(copy.angle);
+        let turn = turn.y.atan2(turn.x);
+        let edge = |e: &Edge| match *e {
+            Edge::Line { a, b } => Edge::Line {
+                a: copy.apply(a),
+                b: copy.apply(b),
+            },
+            Edge::Arc {
+                center,
+                radius,
+                start,
+                sweep,
+            } => {
+                // A mirror runs angles the other way round.
+                let (start, sweep) = if copy.mirror {
+                    (std::f64::consts::PI - start, -sweep)
+                } else {
+                    (start, sweep)
+                };
+                Edge::Arc {
+                    center: copy.apply(center),
+                    radius: radius * copy.scale.abs(),
+                    start: start + turn,
+                    sweep,
+                }
+            }
+        };
+        // Mirrored, each loop would run the wrong way round: turn it back.
+        let place = |lp: &Loop| {
+            let mut edges: Vec<Edge> = lp.edges.iter().map(edge).collect();
+            let mut sources = lp.sources.clone();
+            if copy.mirror {
+                edges = edges.iter().rev().map(Edge::reversed).collect();
+                sources.reverse();
+            }
+            Loop { edges, sources }
+        };
+        let outer = place(&self.outer);
+        let bounds = loop_bounds(&outer);
+        Region {
+            holes: self.holes.iter().map(place).collect(),
+            area: self.area * copy.scale * copy.scale,
+            perimeter: self.perimeter * copy.scale.abs(),
+            centroid: copy.apply(self.centroid),
+            bounds,
+            outer,
+        }
+    }
+
     /// An axis-aligned rectangle from `min` to `max`, built directly (for a swatch, say,
     /// without finding regions among curves).
     pub fn rectangle(min: DVec2, max: DVec2) -> Region {
@@ -1243,5 +1296,71 @@ mod tests {
             "{:?}",
             regs.iter().map(|r| r.area).collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn a_region_placed_by_a_copy_is_the_region_among_its_placed_curves() {
+        // A plate with a round bump on top and a hole, as a block's curves.
+        let mut shapes = vec![
+            line(v(0.0, 0.0), v(60.0, 0.0)),
+            line(v(60.0, 0.0), v(60.0, 30.0)),
+            line(v(60.0, 30.0), v(40.0, 30.0)),
+            Shape::Arc {
+                center: v(30.0, 30.0),
+                radius: 10.0,
+                start: 0.0,
+                sweep: PI,
+            },
+            line(v(20.0, 30.0), v(0.0, 30.0)),
+            line(v(0.0, 30.0), v(0.0, 0.0)),
+        ];
+        shapes.extend(rect(5.0, 5.0, 15.0, 15.0));
+        let found = regions(&shapes);
+        let plate = region_at(&found, v(30.0, 5.0)).unwrap().clone();
+        assert!(!plate.holes.is_empty());
+        for (angle, scale, mirror) in [
+            (0.0, 1.0, false),
+            (30.0, 2.0, false),
+            (90.0, 0.5, true),
+            (200.0, 1.5, true),
+        ] {
+            let mut copy =
+                drift_core::Instance::new(drift_core::BlockId::default(), v(1000.0, -40.0));
+            copy.angle = angle;
+            copy.scale = scale;
+            copy.mirror = mirror;
+            let placed_shapes: Vec<Shape> = shapes.iter().map(|s| copy.apply_shape(s)).collect();
+            let again = regions(&placed_shapes);
+            let want = region_at(&again, copy.apply(v(30.0, 5.0))).unwrap();
+            let got = plate.placed(&copy);
+            let what = format!("angle {angle}, scale {scale}, mirror {mirror}");
+            assert!((got.area - want.area).abs() < 1e-6 * want.area, "{what}");
+            assert!(
+                (got.perimeter - want.perimeter).abs() < 1e-6 * want.perimeter,
+                "{what}"
+            );
+            assert!(got.centroid.distance(want.centroid) < 1e-6, "{what}");
+            assert!(got.bounds.min.distance(want.bounds.min) < 1e-6, "{what}");
+            assert!(got.bounds.max.distance(want.bounds.max) < 1e-6, "{what}");
+            // Inside the plate, in its hole, in its bump, beside the bump, outside it.
+            for (p, inside) in [
+                (v(30.0, 5.0), true),
+                (v(10.0, 10.0), false),
+                (v(30.0, 35.0), true),
+                (v(10.0, 35.0), false),
+                (v(50.0, 25.0), true),
+                (v(-5.0, 5.0), false),
+            ] {
+                let w = copy.apply(p);
+                assert_eq!(got.contains(w), inside, "{what} at {p}");
+                assert_eq!(want.contains(w), inside, "{what} at {p} (found)");
+            }
+            // Its outline runs counter-clockwise, as found ones do.
+            let poly = got.outer.polygon(0.05);
+            let signed: f64 = (0..poly.len())
+                .map(|i| poly[i].perp_dot(poly[(i + 1) % poly.len()]))
+                .sum();
+            assert!(signed > 0.0, "{what}");
+        }
     }
 }

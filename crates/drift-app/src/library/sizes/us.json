@@ -1,0 +1,109 @@
+{
+  "id": "us",
+  "name": "US (imperial)",
+  "units": "imperial",
+  "unit": "in",
+  "walls": [
+    { "label": "2×4 stud, ½″ gypsum both sides", "thickness": 4.5 },
+    { "label": "2×4 stud, ⅝″ gypsum both sides", "thickness": 4.75 },
+    { "label": "2×6 stud, ½″ gypsum both sides", "thickness": 6.5 },
+    { "label": "2×6 stud, ⅝″ gypsum both sides", "thickness": 6.75 },
+    { "label": "6″ CMU", "thickness": 5.625 },
+    { "label": "8″ CMU", "thickness": 7.625 },
+    { "label": "12″ CMU", "thickness": 11.625 }
+  ],
+  "door_groups": [
+    {
+      "family": "door.single",
+      "widths": [24, 26, 28, 30, 32, 34, 36, 42, 48],
+      "heights": [80, 84, 96],
+      "allowance": [2, 2.5]
+    },
+    {
+      "family": "door.double",
+      "widths": [48, 52, 56, 60, 64, 68, 72],
+      "heights": [80, 84, 96],
+      "allowance": [2, 2.5]
+    },
+    {
+      "family": "door.french",
+      "widths": [48, 60, 64, 72],
+      "heights": [80, 84, 96],
+      "allowance": [2, 2.5]
+    },
+    {
+      "family": "door.pocket",
+      "widths": [24, 28, 30, 32, 36],
+      "heights": [80, 84, 96],
+      "allowance": [2, 2.5]
+    },
+    {
+      "family": "door.bypass",
+      "widths": [48, 60, 72, 96],
+      "heights": [80, 96],
+      "allowance": [2, 2.5]
+    },
+    {
+      "family": "door.bifold",
+      "widths": [24, 30, 36, 48, 60, 72],
+      "heights": [80, 96],
+      "allowance": [2, 2.5]
+    },
+    {
+      "family": "door.exterior",
+      "widths": [32, 36],
+      "heights": [80, 96],
+      "allowance": [2.5, 2.5]
+    },
+    {
+      "family": "opening.cased",
+      "widths": [30, 36, 48, 60, 72],
+      "heights": [80, 84, 96],
+      "allowance": [0, 0]
+    }
+  ],
+  "window_groups": [
+    {
+      "family": "window.double-hung",
+      "widths": [24, 28, 32, 36, 40],
+      "heights": [36, 48, 54, 60, 72],
+      "allowance": [0, 0],
+      "names": "us"
+    },
+    {
+      "family": "window.single-hung",
+      "widths": [24, 28, 32, 36],
+      "heights": [36, 48, 60],
+      "allowance": [0, 0],
+      "names": "us"
+    },
+    {
+      "family": "window.casement",
+      "widths": [24, 30],
+      "heights": [36, 48, 60],
+      "allowance": [0, 0],
+      "names": "us"
+    },
+    {
+      "family": "window.casement-pair",
+      "widths": [48, 60],
+      "heights": [36, 48, 60],
+      "allowance": [0, 0],
+      "names": "us"
+    },
+    {
+      "family": "window.slider",
+      "widths": [36, 48, 60, 72],
+      "heights": [24, 36, 48],
+      "allowance": [0, 0],
+      "names": "us"
+    },
+    {
+      "family": "window.fixed",
+      "widths": [24, 36, 48, 60, 72],
+      "heights": [24, 36, 48, 60, 72],
+      "allowance": [0, 0],
+      "names": "us"
+    }
+  ]
+}

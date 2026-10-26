@@ -96,7 +96,13 @@ What comes in:
 - Layers, with their colours, line weights, line types and on / off, locked and plot
   settings.
 - Text and paragraph text, as sketch text.
-- Hatches, as live fills.
+- Hatches, as live fills, at their real size.
+  - Each hatch brings its own pattern: AutoCAD's (AR-CONC, AR-BRSTD, EARTH, …) and your
+    office's come in exactly, and are added to the drawing's patterns. Where Drift has the
+    same pattern (ANSI31, say), its own is used.
+  - Hatches inside blocks come in as the block's fills.
+  - Solid fills (and AutoCAD's SOLID shapes, such as dimension arrowheads) come in opaque, or
+    as transparent as the file says. A gradient comes in as a solid fill in its first colour.
 - Blocks and their inserts, as Drift blocks and copies, mirrored ones included (nested,
   arrayed and unevenly scaled ones are expanded into curves).
   - Parts drawn "by block" take each copy's colour, line type and weight. A block placed in

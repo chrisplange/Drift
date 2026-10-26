@@ -61,6 +61,11 @@ as before.
 
 - **One way in.** File → Import… takes SVG, PDF, Illustrator, DXF and DWG, with the same scale
   controls for each, as editable geometry or as an underlay to trace.
+- **Hatches from DWG and DXF come in right.** Patterns come in at their real size; they came
+  in at a size that depended on Drift's drawing scale. Each brings its own pattern, so
+  AutoCAD's and your office's patterns come in exactly instead of as diagonal lines. Hatches
+  inside blocks come in. Solid fills come in opaque (or as transparent as the file says),
+  SOLID shapes such as dimension arrowheads are filled, and gradients take their first colour.
 - **Blocks from DWG and DXF come in right.** Mirrored blocks, such as doors swung the other way,
   were turned 180° instead. Blocks stretched in one direction were stretched in both. Parts
   drawn "by block" now take each copy's colour. A dynamic block is named after itself

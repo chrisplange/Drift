@@ -1,10 +1,11 @@
 # Walls
 
 **What you'll make:** a small room with an interior wall teed into it, a curved wall, a
-wall made from lines you had already drawn, and walls found in an imported plan. Then you'll change a wall's thickness, from a
-preset and from a variable.
+wall made from lines you had already drawn, and walls found in an imported plan. Then you'll
+change a wall's thickness, from a preset and from a variable, and dimension the room's clear
+width between finished faces.
 
-Time: about 15 minutes.
+Time: about 20 minutes.
 
 ## How walls work
 
@@ -39,7 +40,8 @@ centrelines**.
 
 ## 1. Draw a room
 
-1. Press W for the **Wall** tool.
+1. Press W for the **Wall** tool (or pick it from **Build** in the tool palette, or the
+   **Build** menu).
 2. In the top bar, set **Thickness**: the **▾** list has US walls at their actual finished
    thickness (a 2×4 stud wall with ½″ gypsum both sides is 4½″) or, in a metric drawing,
    100 mm to 365 mm. You can type any value too.
@@ -73,7 +75,8 @@ one poché. Move the room's wall later and the T follows.
 ## 4. Walls from lines you already drew
 
 1. Draw a few connected lines (or pick a rectangle's sides with Tab).
-2. Pick them, then choose **Walls from curves** (in the **Draw** menu or the command palette).
+2. Pick them, then choose **Walls from curves** (in the **Build** menu, in the **Wall** tool's
+   flyout: right-click it in the tool palette, or in the command palette).
 
 The lines become the walls' construction centrelines, at the Wall tool's settings.
 
@@ -87,18 +90,20 @@ walls.
 2. Drag a box round the part of the plan you want (or press Ctrl+A for all of it). Picking
    furniture, text or dimensions along with the walls does no harm: only lines and arcs are
    looked at.
-3. Choose **Walls from lines** (in the **Draw** menu or the command palette).
+3. Choose **Walls from lines** (in the **Build** menu, the **Wall** tool's flyout, or the
+   command palette).
 
 It pairs lines that are parallel, a wall's thickness apart (2″ to 18″, 50 mm to 460 mm) and on
 the same layer, wherever they run side by side: they needn't be the same length, and a face
 broken where another wall tees in is matched by its unbroken partner. Each wall is made at
-the thickness it measures, snapped to the nearest of the Wall tool's presets when it's within ⅛″ (3 mm), and
-otherwise rounded to 1⁄16″ (1 mm in a metric drawing). Walls meet where their centrelines
+the thickness it measures, snapped to the nearest of the Wall tool's presets when it's
+within ⅛″ (3 mm), and otherwise rounded to 1⁄16″ (1 mm in a metric drawing). Walls meet where their centrelines
 cross, so L, T and X joins come out clean, and walls that meet two at a corner become one run.
 Concentric arcs become curved walls.
 
-At a door or window, both faces stop and the wall stops with them: the walls end at the jambs,
-and the gap is left open (the door's swing and the window's lines stay as they were drawn).
+At a door or window, both faces stop and the wall stops with them: the walls end at the
+jambs, and the gap is left open (the door's swing and the window's lines stay as they were
+drawn). Walls from lines doesn't make hosted [doors and windows](15-openings.md) yet.
 
 The status bar and the top of the **Inspector** say what it did: "Made 24 walls from 61
 lines; 2 openings left open; 3 line pairs skipped: spacing varies". It skips:
@@ -129,10 +134,11 @@ Click a wall (a face, its fill or its centreline). The **Inspector** shows:
 - **Joins:** whether it joins walls it crosses, and at each end whether it joins at all.
   With two walls picked, **Join** meets their nearest ends (an L where their centrelines
   cross, or a T where one points at the other); **Unjoin** caps the ends where the picked
-  walls meet, so they overlap. Both are in the **Edit** menu too (**Join walls**, **Unjoin
-  walls**).
+  walls meet, so they overlap. Both are in the **Build** menu too (**Join walls**, **Unjoin
+  walls**), with **Explode walls**.
 - **Segments:** each segment's length, with **Split after** to make two walls there.
-- **Show thickness** draws a dimension of its thickness on the canvas.
+- **Show thickness** draws a dimension of its thickness on the canvas. Double-click its value
+  to type a new thickness (or a variable's name); it prints like any other dimension.
 - **Explode** turns the wall into plain lines, arcs and a fill.
 
 Dragging a picked wall's centreline points moves its corners (and the walls joined there).
@@ -140,10 +146,45 @@ Drag a free end into another wall and it joins as you go; drag it out and it let
 Fillet a centreline corner to round the wall. Trim, Extend, Split, Fillet and Chamfer refuse a
 wall's faces: work on its centreline, or Explode it.
 
-Dimensions to a wall's faces are reference dimensions for now: dimension its centreline to
-drive it.
+## 7. Dimension to the faces
+
+Architects dimension finished faces: "3.60 m clear". In Drift a dimension on a wall's face
+drives the wall.
+
+1. Press D for the **Dimension** tool.
+2. Click the inside face of one wall of the room, then the inside face of the wall opposite.
+   A click on a wall gives its **face** (the centreline shows faintly while the tool is in
+   hand; click on it to dimension the centreline instead).
+3. Place the label and type the clear width, for example `3600` or `11'10"`.
+
+The walls move so the faces are that far apart, and each keeps its thickness: the dimension
+holds the face, and the centreline moves. The same works from a point or a line to a face
+(a column's centre to a wall's face, a grid line to a finished face), and relations work on
+faces too: a face **Horizontal**, **Vertical**, **Parallel**, **Perpendicular** or at an
+**Angle** to a line, **Collinear** with a line, a point **On** a face, the **Radius** of a
+curved wall's face, or **Concentric** with it.
+
+Things to know:
+
+- **Change the thickness and the dimensioned face stays put.** Make the wall thicker and its
+  other face (or, for a Centre wall, both its centreline and other face) moves away from the
+  dimension. If both faces of a wall are held by dimensions, its thickness can't change until
+  you make one of them a reference (or delete it): Drift says so rather than moving
+  something else.
+- **Flip the justification and the same face stays held.** A dimension on the left face is on
+  the left face whichever line the centreline is.
+- **Corners follow the joins.** A dimension to a wall's corner (where two faces meet, or a
+  cap's end) can't drive the wall, because the corner moves whenever the joins change. It is
+  added as a reference dimension instead, with a note. Dimension the face, or the centreline.
+- **Ends that run into a wall stay on it.** A wall teed into a dimensioned wall keeps its end
+  on that wall as the dimension moves it.
+- When a wall later tees into a dimensioned face, the face is split there and the dimension
+  stays on the piece under it.
+- While you drag, walls keep the joins they had when the drag began (only an end you drag
+  yourself joins or lets go as it goes), so a dimension never flips an L into a T mid-drag.
+  Joins are worked out again when you let go.
 
 ## What's next
 
-Openings (doors and windows hosted in walls), room tags with live areas, and dimensions that
-drive face to face are coming in the next batches.
+[Doors and windows](15-openings.md) cut into walls. Room tags with live areas are coming in
+the next batches.

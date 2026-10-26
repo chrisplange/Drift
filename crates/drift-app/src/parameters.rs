@@ -500,7 +500,13 @@ impl DriftApp {
             .as_ref()
             .is_none_or(|(r, _)| *r != revision)
         {
-            self.params.free = Some((revision, drift_solver::free_directions(&self.editor.doc)));
+            self.params.free = Some((
+                revision,
+                drift_solver::free_directions_with(
+                    &self.editor.doc,
+                    self.editor.lowering().as_deref(),
+                ),
+            ));
         }
         let Some((_, free)) = &self.params.free else {
             return;

@@ -434,13 +434,19 @@ pub fn danger_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
 
 /// A small, letter-spaced all-caps header (as in macOS sidebars).
 pub fn caps_header(ui: &mut egui::Ui, title: &str) {
+    let color = neutrals(ui.visuals().dark_mode).tertiary;
+    caps_header_in(ui, title, color);
+}
+
+/// [`caps_header`] in a colour (the tool rail's, in the secondary tone for contrast).
+pub fn caps_header_in(ui: &mut egui::Ui, title: &str, color: Color32) {
     let mut job = egui::text::LayoutJob::default();
     job.append(
         &title.to_uppercase(),
         6.0,
         egui::TextFormat {
             font_id: egui::FontId::new(10.0, bold()),
-            color: neutrals(ui.visuals().dark_mode).tertiary,
+            color,
             extra_letter_spacing: 0.9,
             ..Default::default()
         },

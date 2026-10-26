@@ -42,6 +42,11 @@ pub(super) struct DragSession {
     /// Whether what is dragged needs solving at all (see [`DragFrame::needs_solve`]); the
     /// relations don't change during a drag.
     needs_solve: bool,
+    /// Relations on walls' faces as lowered when it started (they don't change either).
+    lowering: Option<Rc<drift_solver::Lowering>>,
+    /// The walls' joins when it started, kept until it ends but for the ends it moves
+    /// itself, so geometry it moves only by solving doesn't flip a join from frame to frame.
+    joins: Option<Rc<drift_geom::walls::Joins>>,
 }
 
 /// What one call of [`Editor::drag`] works with: the same for each step it takes.
@@ -56,6 +61,7 @@ struct DragFrame<'a> {
     /// Relations, rounds or locked geometry in the scope: without them a move goes exactly
     /// where it is put, with no solve.
     needs_solve: bool,
+    lowering: Option<Rc<drift_solver::Lowering>>,
     /// The smooth anchors in the scope: the anchor and its two handles.
     smooth: Vec<(EntityId, EntityId, EntityId)>,
     /// Solves this frame may still run.
@@ -102,13 +108,18 @@ impl Editor {
                     .iter()
                     .all(|&(id, p)| self.doc.point(id).ok() == Some(p))
         });
-        let (start, offset, needs_solve) = match session {
-            Some(s) => (s.start, s.offset, s.needs_solve),
-            None => (
-                self.drag_start(&scope, &now, curves, dragged),
-                DVec2::ZERO,
-                drift_solver::needs_solve(&self.doc, &scope),
-            ),
+        let (start, offset, needs_solve, lowering, joins) = match session {
+            Some(s) => (s.start, s.offset, s.needs_solve, s.lowering, s.joins),
+            None => {
+                let lowering = self.lowering();
+                (
+                    self.drag_start(&scope, &now, curves, dragged),
+                    DVec2::ZERO,
+                    drift_solver::needs_solve_with(&self.doc, &scope, lowering.as_deref()),
+                    lowering,
+                    self.drag_joins(ids),
+                )
+            }
         };
         self.restore_geometry(&start);
         let mut frame = DragFrame {
@@ -118,6 +129,7 @@ impl Editor {
             scope: &scope,
             curves,
             needs_solve,
+            lowering: lowering.clone(),
             smooth: self.smooth_anchors(&scope),
             solves_left: DRAG_SOLVES,
             wandered: 0,
@@ -144,14 +156,38 @@ impl Editor {
             end,
             pushed,
             needs_solve,
+            lowering,
+            joins: joins.clone(),
         });
-        // Walls follow their centrelines as they go, and a hatch whose shape moved as one goes
-        // with it.
+        // Walls follow their centrelines as they go (keeping their joins), and a hatch whose
+        // shape moved as one goes with it.
         if self.doc.has_walls() {
-            self.follow_walls();
+            self.follow_walls_with(joins.as_deref());
         }
         self.carry_hatches();
         ok
+    }
+
+    /// The walls' joins as a drag of `ids` finds them, the ends it moves itself left live.
+    fn drag_joins(&self, ids: &[EntityId]) -> Option<Rc<drift_geom::walls::Joins>> {
+        if !self.doc.has_walls() {
+            return None;
+        }
+        let (inputs, _) = drift_geom::walls::regen::wall_inputs(&self.doc);
+        let mut joins =
+            drift_geom::walls::infer_joins(&inputs, drift_geom::walls::regen::snap(&self.doc));
+        joins.live = self
+            .doc
+            .defining_points(ids.iter().copied())
+            .into_iter()
+            .collect();
+        Some(Rc::new(joins))
+    }
+
+    /// The joins the drag in progress keeps (see `drift_geom::walls::Joins`).
+    #[cfg(test)]
+    pub(crate) fn drag_kept_joins(&self) -> Option<Rc<drift_geom::walls::Joins>> {
+        self.drag_session.as_ref().and_then(|s| s.joins.clone())
     }
 
     /// Whether the drag in progress pushes curves along that couldn't give way any further
@@ -406,6 +442,24 @@ impl Editor {
                 _ => None,
             })
             .collect();
+        // Lines a lowered relation measures a signed offset from (walls' centrelines under
+        // dimensioned faces) keep their way round too: turned, which side is the left face
+        // would swap, and the relation would hold the other face.
+        let lowered_lines: Vec<(EntityId, EntityId, EntityId, DVec2)> = frame
+            .lowering
+            .iter()
+            .flat_map(|l| l.of.values().flatten().chain(&l.extra))
+            .flat_map(drift_solver::Lowered::entities)
+            .filter_map(|line| match self.doc.get(line)?.kind {
+                EntityKind::Line { a, b } => Some((
+                    line,
+                    a,
+                    b,
+                    self.doc.point(b).ok()? - self.doc.point(a).ok()?,
+                )),
+                _ => None,
+            })
+            .collect();
         self.doc.translate(ids.iter().copied(), delta);
         // Translating keeps the arcs it touches circular by putting their ends back on their
         // circles, which can take a moved point off its target (the end of an arc that isn't
@@ -430,6 +484,7 @@ impl Editor {
                 radii: before.radii.clone(),
                 // Lines carried along by a move of curves keep their length the same way.
                 lengths: before.lengths.clone(),
+                lowering: frame.lowering.clone(),
                 ..Default::default()
             },
         );
@@ -437,6 +492,7 @@ impl Editor {
         let conflicts = self.new_conflicts(&report);
         let mut flipped: Vec<EntityId> = carried_lines
             .iter()
+            .chain(&lowered_lines)
             .filter(
                 |&&(_, a, b, was)| match (self.doc.point(a), self.doc.point(b)) {
                     (Ok(a), Ok(b)) => (b - a).dot(was) <= 0.0,

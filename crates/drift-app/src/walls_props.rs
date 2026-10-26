@@ -26,13 +26,13 @@ type Run = (Vec<(usize, usize)>, usize, u8);
 /// A random network: grid size, runs (each a list of grid nodes, consecutive ones
 /// neighbours), and a jitter for each node.
 #[derive(Clone, Debug)]
-struct Network {
-    n: usize,
-    runs: Vec<Run>,
-    jitter: Vec<(f64, f64)>,
+pub(crate) struct Network {
+    pub(crate) n: usize,
+    pub(crate) runs: Vec<Run>,
+    pub(crate) jitter: Vec<(f64, f64)>,
 }
 
-fn network() -> impl Strategy<Value = Network> {
+pub(crate) fn network() -> impl Strategy<Value = Network> {
     (2usize..5).prop_flat_map(|n| {
         let node = (0..n, 0..n);
         let run = (
@@ -83,7 +83,7 @@ fn network() -> impl Strategy<Value = Network> {
 
 /// The network as a drawing: shared grid points, one wall per run (a grid edge already
 /// walled is left out of later runs, so walls don't run along each other), regenerated.
-fn drawing(net: &Network) -> Document {
+pub(crate) fn drawing(net: &Network) -> Document {
     let mut doc = Document::new();
     let mut points: BTreeMap<(usize, usize), EntityId> = BTreeMap::new();
     let mut used: std::collections::BTreeSet<((usize, usize), (usize, usize))> = Default::default();
@@ -122,7 +122,7 @@ fn drawing(net: &Network) -> Document {
     doc
 }
 
-fn config(cases: u32) -> ProptestConfig {
+pub(crate) fn config(cases: u32) -> ProptestConfig {
     ProptestConfig {
         cases,
         failure_persistence: None,
@@ -299,7 +299,9 @@ fn undo_restores(net: Network, edits: Vec<(u8, usize, (f64, f64))>) {
 }
 
 /// Whatever the edits (dragging centreline points, the fast path when joins stay, the full
-/// rebuild when they don't), what the walls made is what making them all again makes.
+/// rebuild when they don't), what the walls made is what making them all again makes: in a
+/// drag frame, with the joins the drag keeps; once it is let go, with the joins worked out
+/// afresh.
 fn edits_match_a_full_rebuild(net: Network, drags: Vec<(usize, (f64, f64))>) {
     let mut ed = Editor::new(drawing(&net));
     ed.auto_relations = false;
@@ -329,8 +331,9 @@ fn edits_match_a_full_rebuild(net: Network, drags: Vec<(usize, (f64, f64))>) {
                 &[],
             );
             let mut full = ed.doc.clone();
+            let kept = ed.drag_kept_joins();
             assert!(
-                !regenerate(&mut full).changed,
+                !drift_geom::walls::regenerate_with(&mut full, kept.as_deref()).changed,
                 "a drag frame left the walls other than a full rebuild makes them"
             );
         }

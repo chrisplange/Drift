@@ -19,6 +19,9 @@ pub struct DrawingRules {
     pub follow_divided_fills: bool,
     /// Ends closer than this (mm) are a gap to Check sketch.
     pub gap_tolerance: f64,
+    /// Which door and window size set (and wall thickness presets) the drawing uses; None:
+    /// by its units (US imperial for imperial drawings, generic metric for metric ones).
+    pub size_set: Option<crate::SizeSetId>,
 }
 
 impl DrawingRules {
@@ -34,6 +37,7 @@ impl Default for DrawingRules {
             stacked_fills: true,
             follow_divided_fills: false,
             gap_tolerance: Self::DEFAULT_GAP_TOLERANCE,
+            size_set: None,
         }
     }
 }

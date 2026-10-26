@@ -49,6 +49,10 @@ pub enum Glyph {
     Reset,
     /// Add a view to a sheet: a frame with a plus at its corner.
     AddView,
+    // Commands on the tool rail.
+    Move,
+    Rotate,
+    Pattern,
 }
 
 /// Maps a 20 × 20 design grid into `rect`.
@@ -222,6 +226,13 @@ pub fn tool(painter: &egui::Painter, rect: Rect, kind: ToolKind, color: Color32)
             p.poly(&[(3.0, 8.5), (11.5, 8.5), (11.5, 17.0)], false);
             p.line((3.0, 4.0), (3.0, 8.5));
             p.line((11.5, 17.0), (16.0, 17.0));
+        }
+        ToolKind::Opening => {
+            // A door in a wall: the wall either side, the leaf and its swing.
+            p.poly(&[(2.0, 3.5), (5.5, 3.5), (5.5, 7.0), (2.0, 7.0)], false);
+            p.poly(&[(18.0, 3.5), (14.5, 3.5), (14.5, 7.0), (18.0, 7.0)], false);
+            p.line((5.5, 7.0), (5.5, 16.0));
+            p.arc(5.5, 7.0, 9.0, 0.0, PI / 2.0);
         }
         ToolKind::Slot => {
             p.line((6.5, 6.0), (13.5, 6.0));
@@ -682,6 +693,37 @@ pub fn glyph(painter: &egui::Painter, rect: Rect, glyph: Glyph, color: Color32) 
             p.line((16.0, 12.5), (16.0, 18.5));
             p.line((13.0, 15.5), (19.0, 15.5));
         }
+        Glyph::Move => {
+            p.line((10.0, 2.5), (10.0, 17.5));
+            p.line((2.5, 10.0), (17.5, 10.0));
+            p.arrow_head((10.0, 2.5), vec2(0.0, -1.0));
+            p.arrow_head((10.0, 17.5), vec2(0.0, 1.0));
+            p.arrow_head((2.5, 10.0), vec2(-1.0, 0.0));
+            p.arrow_head((17.5, 10.0), vec2(1.0, 0.0));
+        }
+        Glyph::Rotate => {
+            // Most of a turn, with its arrow at the end.
+            p.arc(10.0, 10.0, 6.0, -1.2, 5.0);
+            let end = 3.8_f32;
+            p.arrow_head(
+                (10.0 + 6.0 * end.cos(), 10.0 + 6.0 * end.sin()),
+                vec2(end.sin(), -end.cos()),
+            );
+            p.dot(10.0, 10.0, 1.1);
+        }
+        Glyph::Pattern => {
+            // The first copy, then fainter ones in a row.
+            p.poly(&[(2.5, 7.5), (6.5, 7.5), (6.5, 12.5), (2.5, 12.5)], true);
+            let faint = Pen {
+                stroke: Stroke::new(p.stroke.width * 0.8, color.gamma_multiply(0.55)),
+                ..pen(painter, rect, color)
+            };
+            faint.poly(&[(8.0, 7.5), (12.0, 7.5), (12.0, 12.5), (8.0, 12.5)], true);
+            faint.poly(
+                &[(13.5, 7.5), (17.5, 7.5), (17.5, 12.5), (13.5, 12.5)],
+                true,
+            );
+        }
         Glyph::Reset => {
             p.arc(10.0, 10.5, 5.5, -2.4, 4.3);
             p.poly(&[(3.2, 4.2), (4.6, 7.2), (7.8, 6.6)], false);
@@ -704,7 +746,19 @@ pub fn tool_row(
     key: Option<&str>,
     draw: impl FnOnce(&egui::Painter, Rect, Color32),
 ) -> egui::Response {
-    let size = vec2(ui.available_width(), 24.0);
+    tool_row_sized(ui, 24.0, selected, label, key, draw)
+}
+
+/// [`tool_row`] at a height (the rail's rows are shorter in a short window).
+pub fn tool_row_sized(
+    ui: &mut egui::Ui,
+    height: f32,
+    selected: bool,
+    label: &str,
+    key: Option<&str>,
+    draw: impl FnOnce(&egui::Painter, Rect, Color32),
+) -> egui::Response {
+    let size = vec2(ui.available_width(), height);
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
     response.widget_info(|| {
         egui::WidgetInfo::selected(egui::WidgetType::Button, true, selected, label)
@@ -728,11 +782,16 @@ pub fn tool_row(
             ui.visuals().weak_text_color(),
         )
     } else {
-        (None, ui.visuals().text_color(), n.tertiary)
+        (None, ui.visuals().text_color(), n.secondary)
     };
     let painter = ui.painter();
     if let Some(bg) = bg {
         painter.rect_filled(rect, crate::theme::radius::CONTROL, bg);
+    }
+    // The current one also has a bar at its left edge, so it doesn't rest on colour alone.
+    if selected {
+        let bar = Rect::from_min_size(rect.left_top() + vec2(0.0, 4.0), vec2(2.0, height - 8.0));
+        painter.rect_filled(bar, 1.0, accent);
     }
     let icon = Rect::from_center_size(
         egui::pos2(rect.left() + 17.0, rect.center().y),

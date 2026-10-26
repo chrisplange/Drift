@@ -13,7 +13,8 @@
 //!    so a face broken where another wall tees in is bridged by its unbroken partner.
 //! 3. **Gaps.** Collinear strips with a gap between them meet across it when the gap is where
 //!    another wall crosses or tees in from both sides; otherwise the gap is an opening, and the
-//!    strips stay apart, capped at its jambs (walls get openings in W3).
+//!    strips stay apart, capped at its jambs
+//!    (they don't become hosted openings yet).
 //! 4. **Weld.** Each strip end looks for the wall it runs into: it moves to where the
 //!    centrelines cross, and two ends meeting there share one point (an L, or a node of more);
 //!    an end that lands part-way along a wall is a T. The wall generator then joins them the

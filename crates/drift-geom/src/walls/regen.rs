@@ -10,7 +10,7 @@ use drift_core::{
     LineType, LoopKey, Made, Part, PathId, Shape, Wall, WallId,
 };
 
-use super::{EndIn, Generated, Seg, WallIn, generate};
+use super::{EndIn, Generated, Joins, Seg, WallIn, generate_all, opening_inputs};
 
 /// What a regeneration did.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -24,6 +24,8 @@ pub struct Report {
     pub deleted: usize,
     /// Anything at all was written.
     pub changed: bool,
+    /// End points joined by position (see [`Generated::aliased`]).
+    pub aliased: BTreeMap<EntityId, EntityId>,
 }
 
 /// The tolerance walls join within: the drawing's gap tolerance.
@@ -195,20 +197,128 @@ fn kind_of(
 /// delete theirs; each cluster's outline paths and poché fills follow. Walls that can't be
 /// made keep what they had.
 pub fn regenerate(doc: &mut Document) -> Report {
+    regenerate_with(doc, None)
+}
+
+/// [`regenerate`], keeping `joins` (a drag's) for the ends that aren't live.
+pub fn regenerate_with(doc: &mut Document, joins: Option<&Joins>) -> Report {
     let mut report = Report::default();
     if !doc.has_walls() {
         return report;
     }
     let (inputs, notes) = wall_inputs(doc);
     report.notices = notes;
-    let g = generate(&inputs, snap(doc));
+    let g = generate_all(&inputs, &opening_inputs(doc, &inputs), snap(doc), joins);
     report.notices.extend(g.notices.iter().cloned());
+    report.aliased = g.aliased.clone();
     write(doc, &g, &mut report);
     report
 }
 
+/// A relation on a face piece: which face it is on (wall, segment, side) and where along it,
+/// so that it follows onto whichever piece is there after a regeneration (a T arriving
+/// part-way along splits a piece, and the part after it is a new piece).
+struct FaceRef {
+    id: drift_core::ConstraintId,
+    entity: EntityId,
+    wall: WallId,
+    seg: u16,
+    part: Part,
+    /// Where on the face it is: the foot of what it relates the face to, or the piece's
+    /// middle.
+    place: DVec2,
+}
+
+fn face_refs(doc: &Document, walls: &BTreeMap<WallId, Wall>) -> Vec<FaceRef> {
+    let mut faces: HashMap<EntityId, (WallId, drift_core::FaceKey)> = HashMap::new();
+    for (w, wall) in walls {
+        for (k, e) in &wall.made.curves {
+            if matches!(k.part, Part::Left | Part::Right) {
+                faces.insert(*e, (*w, *k));
+            }
+        }
+    }
+    let mut out = Vec::new();
+    if faces.is_empty() {
+        return out;
+    }
+    for (id, c) in doc.constraints() {
+        for entity in c.entities() {
+            let Some(&(wall, key)) = faces.get(&entity) else {
+                continue;
+            };
+            let Some(shape) = doc.shape(entity) else {
+                continue;
+            };
+            let other = c
+                .entities()
+                .find(|e| *e != entity)
+                .and_then(|e| doc.ref_point(e));
+            let place = match other {
+                Some(p) => crate::nearest_point(&shape, p),
+                None => {
+                    let b = shape.bounds();
+                    crate::nearest_point(&shape, (b.min + b.max) / 2.0)
+                }
+            };
+            out.push(FaceRef {
+                id,
+                entity,
+                wall,
+                seg: key.seg,
+                part: key.part,
+                place,
+            });
+        }
+    }
+    out
+}
+
+/// Move relations on face pieces onto the piece of their face nearest where they are, once
+/// the walls' new pieces are known (before the pieces that have gone are deleted). Relations
+/// whose face has gone are left to go with it.
+fn follow_face_refs(
+    doc: &mut Document,
+    refs: &[FaceRef],
+    g: &Generated,
+    new: &BTreeMap<WallId, Made>,
+    report: &mut Report,
+) {
+    for r in refs {
+        let Some(m) = new.get(&r.wall) else {
+            continue;
+        };
+        let best = m
+            .curves
+            .iter()
+            .filter(|(k, _)| k.seg == r.seg && k.part == r.part)
+            .filter_map(|(k, e)| {
+                let shape = g.shape(g.curves.get(&(r.wall, *k))?)?;
+                Some((crate::distance(&shape, r.place), *e))
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)))
+            .map(|(_, e)| e);
+        let Some(to) = best.filter(|e| *e != r.entity) else {
+            if best.is_none() {
+                report.notices.push(format!(
+                    "A relation on wall {}'s face went with the face",
+                    r.wall
+                ));
+            }
+            continue;
+        };
+        if let Some(c) = doc.constraint(r.id).copied() {
+            let moved = c.map_entities(|e| if e == r.entity { to } else { e });
+            if doc.set_constraint(r.id, moved).is_ok() {
+                report.changed = true;
+            }
+        }
+    }
+}
+
 fn write(doc: &mut Document, g: &Generated, report: &mut Report) {
     let walls: BTreeMap<WallId, Wall> = doc.walls().map(|(id, w)| (id, w.clone())).collect();
+    let refs = face_refs(doc, &walls);
     // Walls that made something this time; the others keep what they had.
     let made: BTreeSet<WallId> = g.curves.keys().map(|(w, _)| *w).collect();
     let old_points: HashMap<CornerKey, EntityId> = walls
@@ -467,6 +577,7 @@ fn write(doc: &mut Document, g: &Generated, report: &mut Report) {
             report.changed = true;
         }
     }
+    follow_face_refs(doc, &refs, g, &new, report);
     let kept: HashSet<EntityId> = new.values().flat_map(|m| m.entities()).collect();
     let doomed_curves: HashSet<EntityId> = old_generated
         .iter()
@@ -535,7 +646,7 @@ fn pick<T: Copy>(
 /// preview, or a check), without writing anything.
 pub fn shapes(doc: &Document) -> Vec<Shape> {
     let (inputs, _) = wall_inputs(doc);
-    generate(&inputs, snap(doc)).shapes()
+    generate_all(&inputs, &opening_inputs(doc, &inputs), snap(doc), None).shapes()
 }
 
 /// A closed path of lines and arcs as a loop of edges, in its order (each curve run the way
@@ -656,6 +767,15 @@ pub fn outline_region(
 /// None when the move changed what the walls make (a join appeared or went, a piece came or
 /// went, a corner changed hands): then regenerate everything with [`regenerate`].
 pub fn regenerate_moved(doc: &mut Document, moved: &BTreeSet<(WallId, u16)>) -> Option<Report> {
+    regenerate_moved_with(doc, moved, None)
+}
+
+/// [`regenerate_moved`], keeping `joins` (a drag's) for the ends that aren't live.
+pub fn regenerate_moved_with(
+    doc: &mut Document,
+    moved: &BTreeSet<(WallId, u16)>,
+    joins: Option<&Joins>,
+) -> Option<Report> {
     let mut report = Report::default();
     if moved.is_empty() {
         return Some(report);
@@ -665,6 +785,8 @@ pub fn regenerate_moved(doc: &mut Document, moved: &BTreeSet<(WallId, u16)>) -> 
         return None;
     }
     let mut g = super::Gen::new(&inputs, snap(doc));
+    g.openings = opening_inputs(doc, &inputs);
+    g.frozen = joins;
     g.make_faces();
     if g.faces.iter().any(Option::is_none) {
         return None;
@@ -698,10 +820,12 @@ pub fn regenerate_moved(doc: &mut Document, moved: &BTreeSet<(WallId, u16)>) -> 
     if !g.out.notices.is_empty() {
         return None;
     }
+    report.aliased = g.out.aliased.clone();
     let around: Vec<&super::Node> = nodes.iter().filter(|n| touches(n, &s1)).collect();
     for n in &around {
         g.solve(n);
     }
+    g.check_openings();
     if !g.out.notices.is_empty() {
         return None;
     }

@@ -74,15 +74,22 @@ does the last command or tool again, as in AutoCAD.
 | P | **Pen** | Curves: click for corners, drag for smooth points (Alt breaks the handle) |
 | R | **Rectangle** | Two opposite corners, or type the width and height |
 | K | **Polygon** | Regular polygon: centre, then a corner. Tab types sides; X: inscribed / circumscribed |
+| U | **Slot** | Straight, centre or arc slot (press U again to switch), then width |
 | C | **Circle** | Centre, then a point on the circle (or type the diameter). C again switches through: circle, ellipse, partial ellipse |
 | A | **Arc** | Centre, start, end. Press A again for other arc types |
-| U | **Slot** | Straight, centre or arc slot (press U again to switch), then width |
-| W | **Wall** | Walls along a centreline: they join the walls they meet. W again: arcs; Space: the other face |
 | V | **Point** | A sketch point, for reference or construction |
 | Shift+T | **Text** | A line of text drawn as outlines, convertible to curves |
+| H | **Fill / hatch** | Fill or hatch a closed area: click inside it |
+
+## Build
+
+| Key | Command | Does |
+|---|---|---|
+| W | **Wall** | Walls along a centreline: they join the walls they meet. W again: arcs; Space: the other face |
+| Shift+O | **Door / window** | Doors, windows and openings in walls: hover a wall, click to place. Space: the way it opens; type the offset, Tab: width |
 | I | **Place block** | Place copies of a block from the Blocks tab; R turns, X mirrors |
 
-With no key (use the Draw menu or the command palette): **Walls from curves**, **Walls from lines**.
+With no key (use the Build menu or the command palette): **Walls from curves**, **Walls from lines**, **Join walls**, **Unjoin walls**, **Explode walls**.
 
 ## Modify
 
@@ -104,9 +111,8 @@ With no key (use the Modify menu or the command palette): **Scale**, **Split**, 
 |---|---|---|
 | D | **Dimension** | Click geometry, then place the label: the type follows |
 | N | **Note** | Text, with a leader if you start on geometry |
-| H | **Fill / hatch** | Fill or hatch a closed area: click inside it |
 
-With no key (use the Annotate menu or the command palette): **Ordinate**, **Callout**, **Centre mark**, **Section mark**, **Elevation mark**, **View**, **Align picked dimensions**, **Space picked dimensions evenly**, **Hide picked dimensions and notes on the canvas**, **Leave picked dimensions and notes off sheets**.
+With no key (use the Annotate menu or the command palette): **Ordinate**, **Callout**, **Section mark**, **Elevation mark**, **Centre mark**, **View**, **Align picked dimensions**, **Space picked dimensions evenly**, **Hide picked dimensions and notes on the canvas**, **Leave picked dimensions and notes off sheets**.
 
 ## Arrange
 

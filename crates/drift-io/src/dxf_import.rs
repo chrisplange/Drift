@@ -21,6 +21,7 @@ use drift_core::{
     DVec2, Document, EntityId, Fill, FillKind, Hatch, Layer, LayerId, LineType, LineWeight,
     PaperSize, Rgb, Shape, Sheet, SketchText, TextAlign, TextFont, TitleBlock, View, Viewport,
 };
+use drift_draft::{PatLine, Pattern};
 
 use crate::dxf::{aci_rgb, bulge_arc, parse_line_type, unit_scale};
 
@@ -66,6 +67,11 @@ pub struct DxfHatch {
     pub scale: f64,
     /// Degrees.
     pub angle: f64,
+    /// The pattern's line families at scale 1 and angle 0, in millimetres (at real size:
+    /// model-space hatches), as the file defines them; empty where it doesn't.
+    pub definition: Vec<PatLine>,
+    /// Where the pattern's first family passes through (mm).
+    pub origin: DVec2,
     pub color: Option<Rgb>,
     /// A solid fill's opacity (0–1); `None` is Drift's default.
     pub opacity: Option<f64>,
@@ -98,6 +104,8 @@ pub struct DxfBlock {
     pub label: String,
     pub entities: Vec<DxfEntity>,
     pub texts: Vec<DxfText>,
+    /// Hatches and solid fills, in the block's coordinates.
+    pub hatches: Vec<DxfHatch>,
 }
 
 /// A placed copy of a block (an INSERT scaled evenly; others are expanded into curves).
@@ -1026,6 +1034,121 @@ fn own_color(raw: &Raw) -> Option<Rgb> {
         .and_then(aci_rgb)
 }
 
+/// `v` without the round-off its turning and scaling left: a value within a billionth of
+/// a millionth (of a degree, or of a millimetre) is that millionth, so 44.99999999999999°
+/// is 45° on every platform, and in the Inspector.
+fn tidy(v: f64) -> f64 {
+    let r = (v * 1e6).round() / 1e6;
+    if (v - r).abs() <= 1e-9 * v.abs().max(1.0) {
+        r + 0.0
+    } else {
+        v
+    }
+}
+
+/// An angle in degrees in 0..360, tidied.
+fn tidy_degrees(a: f64) -> f64 {
+    let a = tidy(a.rem_euclid(360.0));
+    if a >= 360.0 { a - 360.0 } else { a }
+}
+
+/// A family with its numbers tidied.
+fn tidy_family(l: &mut PatLine) {
+    l.angle = tidy_degrees(l.angle);
+    l.origin = DVec2::new(tidy(l.origin.x), tidy(l.origin.y));
+    l.delta = DVec2::new(tidy(l.delta.x), tidy(l.delta.y));
+    for d in &mut l.dashes {
+        *d = tidy(*d);
+    }
+}
+
+/// The opacity (0–1) a transparency (group 440, or a layer's AcCmTransparency) gives:
+/// `0x02000000` plus an alpha from 0 (clear) to 255 (opaque). `None` for "by layer" and "by
+/// block".
+fn opacity_of(value: i64) -> Option<f64> {
+    (value & 0x0200_0000 != 0).then(|| (value & 0xFF) as f64 / 255.0)
+}
+
+/// A gradient fill's first colour (true colour 421, else an indexed one 63, after 453).
+fn gradient_color(g: &[(i32, &str)]) -> Option<Rgb> {
+    let start = g.iter().position(|(c, _)| *c == 453)?;
+    for (code, v) in &g[start..] {
+        match code {
+            421 => {
+                let v = v.parse::<i64>().ok()? as u32;
+                return Some(Rgb([(v >> 16) as u8, (v >> 8) as u8, v as u8]));
+            }
+            63 => return v.parse::<i64>().ok().and_then(aci_rgb),
+            _ => {}
+        }
+    }
+    None
+}
+
+/// A hatch's pattern line families as the file defines them (groups 53, 43, 44, 45, 46, 79,
+/// 49 after 78), taken back to scale 1 and angle 0 and into millimetres: the file stores
+/// them scaled by `scale`, turned by `angle` (degrees), with each family's step (45, 46) in
+/// drawing coordinates. Also where the first family passes through, which is where the
+/// pattern starts (mm).
+fn pattern_definition(g: &[(i32, &str)], scale: f64, angle: f64, mm: f64) -> (Vec<PatLine>, DVec2) {
+    let num = |v: &str| v.parse::<f64>().ok().filter(|x| x.is_finite());
+    let Some(start) = g.iter().position(|(c, _)| *c == 78) else {
+        return (Vec::new(), DVec2::ZERO);
+    };
+    let count = num(g[start].1).unwrap_or(0.0).clamp(0.0, 1000.0) as usize;
+    let k = if scale.abs() > 1e-12 {
+        scale.abs()
+    } else {
+        1.0
+    };
+    let mut lines = Vec::new();
+    let mut i = start + 1;
+    // The next value with `code` at `i`, if it is there.
+    let take = |i: &mut usize, code: i32| -> Option<f64> {
+        let (c, v) = g.get(*i)?;
+        (*c == code).then(|| {
+            *i += 1;
+            num(v).unwrap_or(0.0)
+        })
+    };
+    let mut first: Option<DVec2> = None;
+    for _ in 0..count {
+        let (Some(a), Some(bx), Some(by), Some(ox), Some(oy)) = (
+            take(&mut i, 53),
+            take(&mut i, 43),
+            take(&mut i, 44),
+            take(&mut i, 45),
+            take(&mut i, 46),
+        ) else {
+            break;
+        };
+        let n = take(&mut i, 79).unwrap_or(0.0).clamp(0.0, 100.0) as usize;
+        let mut dashes = Vec::with_capacity(n);
+        for _ in 0..n {
+            match take(&mut i, 49) {
+                Some(d) => dashes.push(d / k * mm),
+                None => break,
+            }
+        }
+        let base = DVec2::new(bx, by);
+        let at = *first.get_or_insert(base);
+        // The step, in the family's own frame (along it, across it).
+        let step = DVec2::from_angle(-a.to_radians()).rotate(DVec2::new(ox, oy));
+        lines.push(PatLine {
+            angle: tidy_degrees(a - angle),
+            // From the first family's point, unturned and unscaled.
+            origin: DVec2::from_angle(-angle.to_radians()).rotate(base - at) / k * mm,
+            delta: step / k * mm,
+            dashes,
+        });
+    }
+    // A family that never steps across would be one endless line drawn over and over.
+    if lines.iter().any(|l| l.delta.y.abs() < 1e-9) {
+        return (Vec::new(), DVec2::ZERO);
+    }
+    (lines, first.unwrap_or(DVec2::ZERO) * mm)
+}
+
 /// A line weight from group 370 (hundredths of a millimetre; negative values mean "by
 /// layer", "by block" or "default").
 fn own_weight(raw: &Raw) -> Option<LineWeight> {
@@ -1095,6 +1218,11 @@ struct Reader<'a> {
     xrefs: HashMap<String, (String, String)>,
     /// The external references something places.
     xrefs_used: BTreeSet<String>,
+    /// Layers' transparency as opacity, by name (upper case).
+    layer_opacity: HashMap<String, f64>,
+    /// Hatch patterns the file names without defining them are AutoCAD's own: acad.pat (in
+    /// inches) for imperial drawings, else acadiso.pat (in millimetres).
+    imperial: bool,
 }
 
 impl<'a> Reader<'a> {
@@ -1331,15 +1459,39 @@ impl<'a> Reader<'a> {
                     _ => &[],
                 };
                 let m = local(raw.kind != "3DFACE" && raw.flipped());
-                for k in 0..order.len() {
-                    let (a, b) = (corners[order[k]], corners[order[(k + 1) % order.len()]]);
-                    if a.distance(b) > 1e-12 {
-                        push(sink, m.shape(&Shape::Line { a, b }));
+                let ring: Vec<DVec2> = order.iter().map(|k| corners[*k]).collect();
+                let area = (0..ring.len())
+                    .map(|k| ring[k].perp_dot(ring[(k + 1) % ring.len()]))
+                    .sum::<f64>()
+                    .abs()
+                    / 2.0;
+                let edges: Vec<Shape> = (0..ring.len())
+                    .filter_map(|k| {
+                        let (a, b) = (ring[k], ring[(k + 1) % ring.len()]);
+                        (a.distance(b) > 1e-12).then(|| m.shape(&Shape::Line { a, b }))
+                    })
+                    .collect();
+                let size = ring.iter().map(|p| p.distance(ring[0])).fold(0.0, f64::max);
+                // A SOLID or TRACE is a filled area with no outline of its own; a 3DFACE (or
+                // one with no area) is its edges.
+                if raw.kind != "3DFACE" && area > 1e-9 * size * size && edges.len() >= 3 {
+                    sink.hatches.push(DxfHatch {
+                        layer,
+                        loops: vec![edges],
+                        solid: true,
+                        pattern: "SOLID".into(),
+                        scale: 1.0,
+                        angle: 0.0,
+                        definition: Vec::new(),
+                        origin: DVec2::ZERO,
+                        color,
+                        opacity: Some(self.opacity(raw, own_layer)),
+                        seeds: Vec::new(),
+                    });
+                } else {
+                    for e in edges {
+                        push(sink, e);
                     }
-                }
-                if !order.is_empty() {
-                    self.notes
-                        .insert("Solid-filled shapes (SOLID, TRACE) were read as their outlines.");
                 }
             }
             "LEADER" => {
@@ -1499,11 +1651,12 @@ impl<'a> Reader<'a> {
                     self.skip("HATCH (no boundary)");
                     return;
                 }
-                if raw.int(450) == Some(1) {
+                let gradient = raw.int(450) == Some(1);
+                if gradient {
                     self.notes
-                        .insert("Gradient fills were read as solid fills in their layer's colour.");
+                        .insert("Gradient fills were read as solid fills in their first colour.");
                 }
-                let solid = raw.int(70) == Some(1);
+                let solid = raw.int(70) == Some(1) || gradient;
                 // Seed points come after the pattern, as 98 then 10 / 20 pairs.
                 let mut seeds = Vec::new();
                 if let Some(start) = raw.g.iter().position(|(c, _)| *c == 98) {
@@ -1521,15 +1674,68 @@ impl<'a> Reader<'a> {
                         }
                     }
                 }
+                let pattern = raw.s(2).unwrap_or("").to_owned();
+                let scale = raw.f(41).filter(|s| *s > 0.0).unwrap_or(1.0);
+                let angle = raw.f(52).unwrap_or(0.0);
+                let (mut definition, mut origin) = if solid {
+                    (Vec::new(), DVec2::ZERO)
+                } else {
+                    pattern_definition(&raw.g, scale, angle, 1.0)
+                };
+                // A pattern named but not defined: AutoCAD's own, in its library's unit.
+                if definition.is_empty()
+                    && !solid
+                    && let Some(known) = drift_draft::find(&pattern)
+                {
+                    let unit = if self.imperial { 25.4 } else { 1.0 };
+                    definition = known
+                        .lines
+                        .iter()
+                        .map(|l| PatLine {
+                            angle: l.angle,
+                            origin: l.origin / unit,
+                            delta: l.delta / unit,
+                            dashes: l.dashes.iter().map(|d| d / unit).collect(),
+                        })
+                        .collect();
+                    origin = DVec2::ZERO;
+                }
+                // Into the sketch: millimetres, and turned (or mirrored) as the hatch is. A
+                // mirrored pattern's families run the other way and step the other side.
+                let mm = m.det().abs().sqrt();
+                let mirrored = m.det() < 0.0;
+                for l in &mut definition {
+                    l.origin *= mm;
+                    l.delta *= mm;
+                    for d in &mut l.dashes {
+                        *d *= mm;
+                    }
+                    if mirrored {
+                        l.angle = -l.angle;
+                        l.origin.y = -l.origin.y;
+                        l.delta.y = -l.delta.y;
+                    }
+                    tidy_family(l);
+                }
+                let along = m.vector(DVec2::from_angle(angle.to_radians()));
                 sink.hatches.push(DxfHatch {
                     layer,
                     loops,
                     solid,
-                    pattern: raw.s(2).unwrap_or("").to_owned(),
-                    scale: raw.f(41).filter(|s| *s > 0.0).unwrap_or(1.0),
-                    angle: raw.f(52).unwrap_or(0.0),
-                    color,
-                    opacity: None,
+                    pattern,
+                    scale,
+                    angle: tidy_degrees(along.y.atan2(along.x).to_degrees()),
+                    definition,
+                    origin: {
+                        let o = m.point(origin);
+                        DVec2::new(tidy(o.x), tidy(o.y))
+                    },
+                    color: if gradient {
+                        gradient_color(&raw.g).or(color)
+                    } else {
+                        color
+                    },
+                    opacity: solid.then(|| self.opacity(raw, own_layer)),
                     seeds,
                 });
             }
@@ -1680,6 +1886,14 @@ impl<'a> Reader<'a> {
         }
     }
 
+    /// A fill's opacity: its own transparency, else its layer's, else opaque.
+    fn opacity(&self, raw: &Raw, layer: &str) -> f64 {
+        raw.int(440)
+            .and_then(opacity_of)
+            .or_else(|| self.layer_opacity.get(&layer.to_ascii_uppercase()).copied())
+            .unwrap_or(1.0)
+    }
+
     /// Whether block `key` (upper case) has an entity whose colour, line type or weight is
     /// "by block", directly or in a block it places "by block".
     fn uses_by_block(&mut self, key: &str, depth: usize) -> bool {
@@ -1813,20 +2027,33 @@ impl DxfEntity {
     }
 }
 
+impl DxfHatch {
+    fn scale_by(&mut self, k: f64) {
+        for edge in self.loops.iter_mut().flatten() {
+            *edge = scale_shape(edge, k);
+        }
+        for seed in &mut self.seeds {
+            *seed *= k;
+        }
+        self.origin *= k;
+        for l in &mut self.definition {
+            l.origin *= k;
+            l.delta *= k;
+            for d in &mut l.dashes {
+                *d *= k;
+            }
+        }
+    }
+}
+
 impl DxfImport {
     /// The drawing as [`read_at`] reads it at 1 : `k` times what it was read at, without
-    /// reading the file again. (Hatch patterns and block copies keep their own scales, as
-    /// there.)
+    /// reading the file again. (Block copies keep their own scales, as there.)
     pub fn scaled(mut self, k: f64) -> Self {
         self.entities = self.entities.into_iter().map(|e| e.scaled(k)).collect();
         self.texts = self.texts.into_iter().map(|t| t.scaled(k)).collect();
         for hatch in &mut self.hatches {
-            for edge in hatch.loops.iter_mut().flatten() {
-                *edge = scale_shape(edge, k);
-            }
-            for seed in &mut hatch.seeds {
-                *seed *= k;
-            }
+            hatch.scale_by(k);
         }
         for block in &mut self.blocks {
             block.entities = std::mem::take(&mut block.entities)
@@ -1837,6 +2064,9 @@ impl DxfImport {
                 .into_iter()
                 .map(|t| t.scaled(k))
                 .collect();
+            for hatch in &mut block.hatches {
+                hatch.scale_by(k);
+            }
         }
         for insert in &mut self.inserts {
             insert.at *= k;
@@ -1886,6 +2116,8 @@ pub fn read_at(text: &str, default_mm_per_unit: f64, drawn_at: f64) -> Result<Dx
     }
 
     let mut scale = default_mm_per_unit;
+    let (mut insunits, mut measurement): (Option<i64>, Option<i64>) = (None, None);
+    let mut layer_opacity: HashMap<String, f64> = HashMap::new();
     let mut layers: Vec<DxfLayer> = Vec::new();
     let mut line_types: HashMap<String, LineType> = HashMap::new();
     let mut raw_line_types: Vec<(String, Vec<f64>)> = Vec::new();
@@ -1920,7 +2152,14 @@ pub fn read_at(text: &str, default_mm_per_unit: f64, drawn_at: f64) -> Result<Dx
                     if pairs[i] == (9, "$INSUNITS")
                         && let Some((70, v)) = pairs.get(i + 1).copied()
                     {
-                        scale = unit_scale(v.parse().unwrap_or(0)).unwrap_or(default_mm_per_unit);
+                        let code = v.parse().unwrap_or(0);
+                        scale = unit_scale(code).unwrap_or(default_mm_per_unit);
+                        insunits = Some(code);
+                    }
+                    if pairs[i] == (9, "$MEASUREMENT")
+                        && let Some((70, v)) = pairs.get(i + 1).copied()
+                    {
+                        measurement = v.parse::<i64>().ok();
                     }
                     i += 1;
                 }
@@ -1964,6 +2203,20 @@ pub fn read_at(text: &str, default_mm_per_unit: f64, drawn_at: f64) -> Result<Dx
                                 if let Some(lt) = entry.s(6) {
                                     layer_line_types
                                         .insert(name.to_ascii_uppercase(), lt.to_ascii_uppercase());
+                                }
+                                // Its transparency, in extended data.
+                                if let Some(at) = entry
+                                    .g
+                                    .iter()
+                                    .position(|p| *p == (1001, "AcCmTransparency"))
+                                    && let Some(alpha) = entry.g[at + 1..]
+                                        .iter()
+                                        .take_while(|(c, _)| *c != 1001)
+                                        .find(|(c, _)| *c == 1071)
+                                        .and_then(|(_, v)| v.parse::<i64>().ok())
+                                        .and_then(opacity_of)
+                                {
+                                    layer_opacity.insert(name.to_ascii_uppercase(), alpha);
                                 }
                             }
                         }
@@ -2136,6 +2389,12 @@ pub fn read_at(text: &str, default_mm_per_unit: f64, drawn_at: f64) -> Result<Dx
         true_names,
         xrefs,
         xrefs_used: BTreeSet::new(),
+        layer_opacity,
+        // Without $MEASUREMENT, inches and feet drawings are imperial.
+        imperial: match measurement {
+            Some(m) => m == 0,
+            None => matches!(insunits, Some(1 | 2 | 3 | 8 | 9 | 10)),
+        },
     };
     let world = Xf::scale(reader.scale);
     let mut sink = Sink::default();
@@ -2161,16 +2420,12 @@ pub fn read_at(text: &str, default_mm_per_unit: f64, drawn_at: f64) -> Result<Dx
         for raw in &entities {
             reader.emit(raw, &place, &kept.inherit, 1, false, &mut inner);
         }
-        if !inner.hatches.is_empty() {
-            reader
-                .notes
-                .insert("Hatches inside blocks were left out (their boundaries are still there).");
-        }
         out_blocks.push(DxfBlock {
             name: name.clone(),
             label,
             entities: inner.entities,
             texts: inner.texts,
+            hatches: inner.hatches,
         });
     }
     let mut xref_note = None;
@@ -2446,6 +2701,139 @@ fn interior(hatch: &DxfHatch) -> Option<(DVec2, usize)> {
     best.filter(|(w, _)| *w > 0.0).map(|(_, p)| (p, outer))
 }
 
+/// `k` when the families `def` are `lib`'s at `k` times the size (taken from `lib`'s first
+/// family's point, as `def` is), else `None`.
+fn same_pattern(def: &[PatLine], lib: &[PatLine]) -> Option<f64> {
+    let (first, lib_first) = (def.first()?, lib.first()?);
+    if def.len() != lib.len() || lib_first.delta.y.abs() < 1e-12 {
+        return None;
+    }
+    let k = tidy(first.delta.y / lib_first.delta.y);
+    if !(k.is_finite() && k > 0.0) {
+        return None;
+    }
+    let size = lib.iter().map(|l| l.delta.length()).fold(0.0, f64::max) * k;
+    let near = |a: f64, b: f64| (a - b).abs() <= 1e-6 * size.max(1e-9);
+    let close = |a: DVec2, b: DVec2| near(a.x, b.x) && near(a.y, b.y);
+    let same = def.iter().zip(lib).all(|(d, l)| {
+        let turn = (d.angle - l.angle).rem_euclid(360.0);
+        (turn < 1e-6 || turn > 360.0 - 1e-6)
+            && close(d.origin, (l.origin - lib_first.origin) * k)
+            && close(d.delta, l.delta * k)
+            && d.dashes.len() == l.dashes.len()
+            && d.dashes.iter().zip(&l.dashes).all(|(a, b)| near(*a, b * k))
+    });
+    same.then_some(k)
+}
+
+/// The hatch patterns an import uses: Drift's own where the file's pattern is one of them,
+/// else the file's own definitions, added to the drawing's imported patterns.
+struct Patterns {
+    custom: Vec<Pattern>,
+    changed: bool,
+    /// Patterns the file names but doesn't define, which Drift doesn't have either.
+    unknown: BTreeSet<String>,
+}
+
+impl Patterns {
+    fn new(doc: &Document) -> Self {
+        Self {
+            custom: drift_draft::parse_pat(doc.custom_patterns()).unwrap_or_default(),
+            changed: false,
+            unknown: BTreeSet::new(),
+        }
+    }
+
+    /// What fills `h`.
+    fn kind(&mut self, h: &DxfHatch) -> FillKind {
+        if h.solid {
+            return FillKind::Solid;
+        }
+        if h.definition.is_empty() {
+            // Neither defined in the file nor one of Drift's.
+            self.unknown.insert(h.pattern.clone());
+            let mut hatch = Hatch::new("ANSI31");
+            hatch.scale = h.scale;
+            hatch.angle = h.angle;
+            return FillKind::Hatch(hatch);
+        }
+        let mut hatch = Hatch::new(h.pattern.clone());
+        hatch.scale = h.scale;
+        hatch.angle = h.angle;
+        hatch.origin = h.origin;
+        // The file's sizes are real sizes.
+        hatch.model = true;
+        if let Some(known) = drift_draft::find(&h.pattern)
+            && let Some(k) = same_pattern(&h.definition, &known.lines)
+        {
+            hatch.pattern = known.name.clone();
+            hatch.scale = tidy(h.scale * k);
+            // Drift's pattern starts its first family where the file's does.
+            let first = known.lines.first().map_or(DVec2::ZERO, |l| l.origin);
+            let o = h.origin - DVec2::from_angle(h.angle.to_radians()).rotate(first * hatch.scale);
+            hatch.origin = DVec2::new(tidy(o.x), tidy(o.y));
+            return FillKind::Hatch(hatch);
+        }
+        // The file's own pattern, under its name (or a name of its own where Drift or the
+        // drawing has a different pattern by that name).
+        let base = if h.pattern.trim().is_empty() {
+            "DXF pattern".to_owned()
+        } else if drift_draft::find(&h.pattern).is_some() {
+            format!("{} (from file)", h.pattern)
+        } else {
+            h.pattern.clone()
+        };
+        let mut name = base.clone();
+        let mut n = 2;
+        loop {
+            match self
+                .custom
+                .iter()
+                .find(|p| p.name.eq_ignore_ascii_case(&name))
+            {
+                Some(p)
+                    if same_pattern(&h.definition, &p.lines)
+                        .is_some_and(|k| (k - 1.0).abs() < 1e-6) =>
+                {
+                    break;
+                }
+                Some(_) => {
+                    name = format!("{base} ({n})");
+                    n += 1;
+                }
+                None => {
+                    self.custom.push(Pattern {
+                        name: name.clone(),
+                        description: "From a DXF or DWG file".into(),
+                        model: true,
+                        lines: h.definition.clone(),
+                    });
+                    self.changed = true;
+                    break;
+                }
+            }
+        }
+        hatch.pattern = name;
+        FillKind::Hatch(hatch)
+    }
+
+    /// Store the patterns added in the drawing, and say what couldn't be matched.
+    fn finish(self, doc: &mut Document, report: &mut ImportReport) {
+        if self.changed {
+            doc.set_custom_patterns(drift_draft::to_pat(&self.custom));
+        }
+        if !self.unknown.is_empty() {
+            let names: Vec<&str> = self.unknown.iter().map(String::as_str).take(6).collect();
+            report.notes.push(format!(
+                "Hatch pattern(s) the file names but doesn't define, and Drift doesn't have \
+                 ({}), were drawn as ANSI31: import the .pat file that defines them and pick \
+                 it in the fill's inspector.",
+                names.join(", ")
+            ));
+        }
+    }
+}
+
 /// Add an import to a document (inside the caller's transaction): curves on layers of the
 /// same names, text, hatches as fills on their boundaries, blocks and their copies, and
 /// layouts as sheets. Ends that coincide (within 1e-6 of the drawing's size) share one point,
@@ -2681,7 +3069,7 @@ pub fn add_to_document(doc: &mut Document, import: &DxfImport) -> ImportReport {
 
     // Hatches: their boundaries (shared with the drawing's own curves where they coincide),
     // then a fill on the outer one.
-    let mut unknown_patterns = BTreeSet::new();
+    let mut patterns = Patterns::new(doc);
     for h in &import.hatches {
         let layer = layer_of(doc, &h.layer, &mut report);
         let Some((seed, outer)) = interior(h) else {
@@ -2717,19 +3105,7 @@ pub fn add_to_document(doc: &mut Document, import: &DxfImport) -> ImportReport {
         if boundary.is_empty() {
             continue;
         }
-        let kind = if h.solid {
-            FillKind::Solid
-        } else {
-            let known = drift_draft::find(&h.pattern);
-            if known.is_none() {
-                unknown_patterns.insert(h.pattern.clone());
-            }
-            let mut hatch = Hatch::new(known.map_or("ANSI31", |p| p.name.as_str()));
-            hatch.scale = h.scale;
-            hatch.angle = h.angle;
-            hatch.model = known.is_some_and(|p| p.model);
-            FillKind::Hatch(hatch)
-        };
+        let kind = patterns.kind(h);
         let mut fill = Fill::new(boundary, seed, kind);
         fill.color = h.color;
         if let Some(opacity) = h.opacity {
@@ -2741,18 +3117,6 @@ pub fn add_to_document(doc: &mut Document, import: &DxfImport) -> ImportReport {
             doc.set_fill(id, placed);
         }
         report.fills += 1;
-    }
-    if !unknown_patterns.is_empty() {
-        let names: Vec<&str> = unknown_patterns
-            .iter()
-            .map(String::as_str)
-            .take(6)
-            .collect();
-        report.notes.push(format!(
-            "Hatch pattern(s) Drift doesn't have ({}) were drawn as ANSI31: import the .pat \
-             file that defines them and pick it in the fill's inspector.",
-            names.join(", ")
-        ));
     }
 
     // Copies of blocks: each block is created once, then placed. A block the drawing already
@@ -2769,7 +3133,7 @@ pub fn add_to_document(doc: &mut Document, import: &DxfImport) -> ImportReport {
                 let Some(def) = def else {
                     continue;
                 };
-                let items: Vec<drift_core::BlockItem> = def
+                let mut items: Vec<drift_core::BlockItem> = def
                     .entities
                     .iter()
                     .filter(|e| !matches!(e.shape, Shape::Point(_)))
@@ -2783,6 +3147,38 @@ pub fn add_to_document(doc: &mut Document, import: &DxfImport) -> ImportReport {
                         },
                     })
                     .collect();
+                // Its hatches fill the area of its curves around their seeds: their
+                // boundaries join the curves where they aren't curves already (as
+                // construction, if the import says fill edges are).
+                let mut fills = Vec::new();
+                for h in &def.hatches {
+                    let Some((seed, _)) = interior(h) else {
+                        continue;
+                    };
+                    for shape in h.loops.iter().flatten().filter(|s| finite(s)) {
+                        let key = key_of(shape);
+                        let known = items.iter().any(|it| {
+                            it.shape == *shape || (key.is_some() && key_of(&it.shape) == key)
+                        });
+                        if !known {
+                            items.push(drift_core::BlockItem {
+                                shape: *shape,
+                                style: if import.fill_edges_construction {
+                                    drift_core::LineKind::Construction
+                                } else {
+                                    drift_core::LineKind::Solid
+                                },
+                                appearance: drift_core::Appearance::default(),
+                            });
+                        }
+                    }
+                    let mut fill = Fill::new(Vec::new(), seed, patterns.kind(h));
+                    fill.color = h.color;
+                    if let Some(opacity) = h.opacity {
+                        fill.opacity = opacity.clamp(0.0, 1.0);
+                    }
+                    fills.push(fill);
+                }
                 let label = if def.label.is_empty() {
                     &def.name
                 } else {
@@ -2790,7 +3186,7 @@ pub fn add_to_document(doc: &mut Document, import: &DxfImport) -> ImportReport {
                 };
                 let same = doc.block_named(label).filter(|b| {
                     doc.block(*b)
-                        .is_some_and(|b| b.items == items && b.fills.is_empty())
+                        .is_some_and(|b| b.items == items && b.fills == fills)
                 });
                 let id = match same {
                     Some(b) => b,
@@ -2802,10 +3198,11 @@ pub fn add_to_document(doc: &mut Document, import: &DxfImport) -> ImportReport {
                             n += 1;
                         }
                         report.blocks += 1;
+                        report.fills += fills.len();
                         doc.add_block(drift_core::Block {
                             name,
                             items,
-                            fills: Vec::new(),
+                            fills,
                             profile: false,
                         })
                     }
@@ -2842,6 +3239,7 @@ pub fn add_to_document(doc: &mut Document, import: &DxfImport) -> ImportReport {
             block_text = true;
         }
     }
+    patterns.finish(doc, &mut report);
     if block_text {
         report.notes.push(
             "Text inside blocks was added beside each copy as ordinary text: it doesn't move \
@@ -3317,10 +3715,14 @@ mod tests {
         let back = read(&file, 25.4).unwrap();
         assert_eq!(back.dimensions, 1);
         assert_eq!(back.skipped.get("DIMENSION (no drawn geometry)"), Some(&1));
-        // Two lines and the arrowhead's three sides, all on the dimension's layer and in
-        // its colour ("by block" inside it); the number as text.
-        assert_eq!(back.entities.len(), 5);
+        // Two lines, and the arrowhead (a SOLID) as a solid fill, all on the dimension's
+        // layer and in its colour ("by block" inside it); the number as text.
+        assert_eq!(back.entities.len(), 2);
         assert!(back.entities.iter().all(|e| e.layer == "DIMS"));
+        assert_eq!(back.hatches.len(), 1);
+        let arrow = &back.hatches[0];
+        assert!(arrow.solid && arrow.loops[0].len() == 3 && arrow.layer == "DIMS");
+        assert_eq!(arrow.color, back.entities[0].color);
         assert_eq!(back.texts.len(), 1);
         assert_eq!(
             (back.texts[0].text.as_str(), back.texts[0].layer.as_str()),
@@ -3335,6 +3737,20 @@ mod tests {
         assert!(back.notes.iter().any(|n| n.contains("1 dimension")));
         // Nothing of the dimension's block is left as a block.
         assert!(back.blocks.is_empty() && back.inserts.is_empty());
+    }
+
+    #[test]
+    fn round_off_from_turning_a_hatch_is_tidied() {
+        // What macOS's atan2 made of a 45° hatch, and its neighbours.
+        assert_eq!(tidy_degrees(44.99999999999999), 45.0);
+        assert_eq!(tidy_degrees(359.99999999999994), 0.0);
+        assert_eq!(tidy_degrees(-1e-15), 0.0);
+        assert_eq!(tidy(1.9999999999999998), 2.0);
+        assert_eq!(tidy(3.175000000000001), 3.175);
+        // Real values are left alone.
+        assert_eq!(tidy(44.9999), 44.9999);
+        assert_eq!(tidy(0.3333333333), 0.3333333333);
+        assert_eq!(tidy(12345.678901), 12345.678901);
     }
 
     #[test]
@@ -3396,11 +3812,13 @@ mod tests {
             (41, "2"),
             (77, "0"),
             (78, "1"),
-            (53, "45"),
+            // ANSI31 as AutoCAD writes it at scale 2, turned 45°: its lines (45° in the
+            // pattern) at 90°, 6.35 apart, the step in drawing coordinates.
+            (53, "90"),
             (43, "0"),
             (44, "0"),
-            (45, "-2.2"),
-            (46, "2.2"),
+            (45, "-6.35"),
+            (46, "0"),
             (79, "0"),
             (98, "1"),
             (10, "5"),
@@ -3437,10 +3855,8 @@ mod tests {
         assert!(back.skipped.is_empty(), "{:?}", back.skipped);
         assert_eq!(back.hatches.len(), 2);
         let h = &back.hatches[0];
-        assert_eq!(
-            (h.pattern.as_str(), h.solid, h.scale, h.angle),
-            ("ANSI31", false, 2.0, 45.0)
-        );
+        assert_eq!((h.pattern.as_str(), h.solid), ("ANSI31", false));
+        assert!((h.scale - 2.0).abs() < 1e-9 && (h.angle - 45.0).abs() < 1e-9);
         assert_eq!(h.loops.len(), 2);
         assert_eq!((h.loops[0].len(), h.loops[1].len()), (4, 2));
         assert!(matches!(h.loops[1][0], Shape::Arc { radius, .. } if (radius - 5.0).abs() < 1e-9));
@@ -3474,10 +3890,8 @@ mod tests {
         let FillKind::Hatch(pattern) = &hatch.kind else {
             unreachable!()
         };
-        assert_eq!(
-            (pattern.pattern.as_str(), pattern.scale, pattern.angle),
-            ("ANSI31", 2.0, 45.0)
-        );
+        assert_eq!(pattern.pattern, "ANSI31");
+        assert!((pattern.scale - 2.0).abs() < 1e-9 && (pattern.angle - 45.0).abs() < 1e-9);
         // The solid one found a point inside its triangle by itself.
         let solid = fills.iter().find(|f| f.kind == FillKind::Solid).unwrap();
         assert!(

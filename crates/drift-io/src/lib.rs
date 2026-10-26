@@ -61,6 +61,7 @@ mod dxf_import;
 mod fonts;
 mod icc;
 // The writers (PDF, SVG, DXF and `.drift`) are left out of the browser demo.
+mod openings;
 #[cfg(not(feature = "demo"))]
 pub mod pdf;
 mod pdf_image;
@@ -440,6 +441,10 @@ struct RulesRecord {
     follow_divided: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     gap_tolerance: Option<f64>,
+    /// The door and window size set (an addition at 42: fixture v42.2). Unset: by the
+    /// drawing's units.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    size_set: Option<String>,
 }
 
 impl RulesRecord {
@@ -454,6 +459,7 @@ impl RulesRecord {
             stacked_fills: differs(rules.stacked_fills, d.stacked_fills),
             follow_divided: differs(rules.follow_divided_fills, d.follow_divided_fills),
             gap_tolerance: (rules.gap_tolerance != d.gap_tolerance).then_some(rules.gap_tolerance),
+            size_set: rules.size_set.map(|s| s.to_string()),
         }
     }
 
@@ -469,6 +475,11 @@ impl RulesRecord {
             stacked_fills: self.stacked_fills.unwrap_or(d.stacked_fills),
             follow_divided_fills: self.follow_divided.unwrap_or(d.follow_divided_fills),
             gap_tolerance,
+            // (An id this build can't hold is left unset: the drawing's units choose.)
+            size_set: self
+                .size_set
+                .as_deref()
+                .and_then(drift_core::SizeSetId::new),
         })
     }
 }
@@ -976,6 +987,9 @@ struct FileRecord {
     /// Dimensions showing a wall's thickness (an addition at 42: fixture v42.1).
     #[serde(default)]
     property_dims: Vec<walls::PropertyDimRecord>,
+    /// Doors, windows and openings in walls (an addition at 42: fixture v42.2).
+    #[serde(default)]
+    openings: Vec<openings::OpeningRecord>,
 }
 
 /// A named group of entities.
@@ -1423,6 +1437,13 @@ fn write(doc: &Document, meta: &Metadata) -> String {
                 .expect("property dimension serializes")
         })
         .collect();
+    let opening_lines: Vec<String> = doc
+        .openings()
+        .map(|(id, o)| {
+            serde_json::to_string(&openings::opening_record(doc, id, o))
+                .expect("opening serializes")
+        })
+        .collect();
     let tail = [
         ("measurements", &measurements),
         ("options", &options),
@@ -1442,6 +1463,7 @@ fn write(doc: &Document, meta: &Metadata) -> String {
         // (After the entities, paths and fills they name.)
         ("walls", &wall_lines),
         ("property_dims", &property_dims),
+        ("openings", &opening_lines),
     ];
     let last = tail.iter().rposition(|(_, items)| !items.is_empty());
     push_array(&mut out, "entities", &entities, true);
@@ -1980,6 +2002,7 @@ fn load_value(value: serde_json::Value) -> Result<(Document, Metadata, Vec<Strin
     }
     let wall_notes = walls::insert_all(&mut doc, file.walls, file.property_dims)?;
     notes_out.extend(wall_notes);
+    notes_out.extend(openings::insert_all(&mut doc, file.openings)?);
     for r in file.views {
         let id_text = r.id.clone();
         let (id, mut view) = sheets::parse_view(r)?;
@@ -2268,6 +2291,7 @@ mod tests {
             stacked_fills: false,
             follow_divided_fills: true,
             gap_tolerance: 0.25,
+            size_set: drift_core::SizeSetId::new("din-18101"),
         };
         doc.set_rules(rules);
         let text = save(&doc, &Metadata::default());
@@ -2280,6 +2304,7 @@ mod tests {
         let bad = text.replace("\"gap_tolerance\":0.25", "\"gap_tolerance\":-1.0");
         assert_ne!(bad, text);
         assert!(load(&bad).is_err());
+        assert!(text.contains("\"size_set\":\"din-18101\""), "{text}");
     }
 
     #[test]

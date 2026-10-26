@@ -142,6 +142,8 @@ pub(crate) enum Category {
     Edit,
     View,
     Draw,
+    /// Walls, and later doors, windows and rooms; blocks.
+    Build,
     Modify,
     Annotate,
     Arrange,
@@ -151,11 +153,12 @@ pub(crate) enum Category {
 }
 
 impl Category {
-    pub(crate) const ALL: [Category; 10] = [
+    pub(crate) const ALL: [Category; 11] = [
         Category::File,
         Category::Edit,
         Category::View,
         Category::Draw,
+        Category::Build,
         Category::Modify,
         Category::Annotate,
         Category::Arrange,
@@ -170,6 +173,7 @@ impl Category {
             Category::Edit => "Edit",
             Category::View => "View",
             Category::Draw => "Draw",
+            Category::Build => "Build",
             Category::Modify => "Modify",
             Category::Annotate => "Annotate",
             Category::Arrange => "Arrange",
@@ -438,6 +442,10 @@ impl Spec {
             Command::Tool(kind) => Some(Icon::Tool(kind)),
             Command::Panel(p) => Some(Icon::Glyph(crate::app::dock_ui::glyph(p))),
             Command::Delete => Some(Icon::Glyph(Glyph::Delete)),
+            Command::Move => Some(Icon::Glyph(Glyph::Move)),
+            Command::Rotate => Some(Icon::Glyph(Glyph::Rotate)),
+            Command::Pattern(_) => Some(Icon::Glyph(Glyph::Pattern)),
+            Command::WallsFromCurves | Command::WallsFromLines => Some(Icon::Tool(ToolKind::Wall)),
             _ => None,
         };
         Spec {
@@ -460,7 +468,11 @@ impl Spec {
             when: When::Always,
             repeatable: matches!(
                 category,
-                Category::Draw | Category::Modify | Category::Annotate | Category::Arrange
+                Category::Draw
+                    | Category::Build
+                    | Category::Modify
+                    | Category::Annotate
+                    | Category::Arrange
             ),
         }
     }
@@ -565,6 +577,143 @@ pub(crate) fn registry() -> &'static [Spec] {
 /// the drawing).
 pub(crate) fn spec(command: Command) -> Option<&'static Spec> {
     registry().iter().find(|s| s.command == command)
+}
+
+/// A place on the tool rail: a command, and the commands in its flyout (a family: the circle's
+/// ellipses, Trim's Extend and Split). The slot shows whichever of them was used last.
+pub(crate) struct Slot {
+    pub head: Command,
+    pub more: &'static [Command],
+}
+
+impl Slot {
+    const fn one(head: Command) -> Slot {
+        Slot { head, more: &[] }
+    }
+
+    /// The head, then the flyout.
+    pub(crate) fn commands(&self) -> impl Iterator<Item = Command> + '_ {
+        std::iter::once(self.head).chain(self.more.iter().copied())
+    }
+
+    pub(crate) fn holds(&self, command: Command) -> bool {
+        self.commands().any(|c| c == command)
+    }
+}
+
+/// The tool rail: sections (with their menu's category; Select stands alone at the top), in
+/// the menus' order. Commands left off it are in the menus and the palette only.
+pub(crate) const RAIL: &[(Option<Category>, &[Slot])] = {
+    use Command as K;
+    use ToolKind as T;
+    const fn tool(kind: ToolKind) -> Command {
+        Command::Tool(kind)
+    }
+    &[
+        (None, &[Slot::one(tool(T::Select))]),
+        (
+            Some(Category::Draw),
+            &[
+                Slot::one(tool(T::Line)),
+                Slot::one(tool(T::Pen)),
+                Slot {
+                    head: tool(T::Rectangle),
+                    more: &[tool(T::Polygon), tool(T::Slot)],
+                },
+                Slot {
+                    head: tool(T::Circle),
+                    more: &[tool(T::Ellipse), tool(T::EllipseArc)],
+                },
+                Slot {
+                    head: tool(T::Arc),
+                    more: &[tool(T::ThreePointArc), tool(T::TangentArc)],
+                },
+                Slot::one(tool(T::Point)),
+                Slot::one(tool(T::Text)),
+                Slot::one(tool(T::Fill)),
+            ],
+        ),
+        (
+            Some(Category::Build),
+            &[
+                Slot {
+                    head: tool(T::Wall),
+                    more: &[K::WallsFromCurves, K::WallsFromLines],
+                },
+                Slot::one(tool(T::Opening)),
+                Slot::one(tool(T::Block)),
+            ],
+        ),
+        (
+            Some(Category::Modify),
+            &[
+                Slot::one(K::Move),
+                Slot::one(K::Rotate),
+                Slot::one(tool(T::Mirror)),
+                Slot::one(tool(T::Offset)),
+                Slot {
+                    head: tool(T::Trim),
+                    more: &[tool(T::Extend), tool(T::Split)],
+                },
+                Slot {
+                    head: tool(T::Fillet),
+                    more: &[tool(T::Chamfer)],
+                },
+                Slot {
+                    head: K::Pattern(false),
+                    more: &[K::Pattern(true)],
+                },
+            ],
+        ),
+        (
+            Some(Category::Annotate),
+            &[
+                Slot {
+                    head: tool(T::Dimension),
+                    more: &[tool(T::Ordinate)],
+                },
+                Slot {
+                    head: tool(T::Note),
+                    more: &[tool(T::Callout)],
+                },
+                Slot {
+                    head: tool(T::Section),
+                    more: &[tool(T::Elevation), tool(T::CentreMark)],
+                },
+                Slot::one(tool(T::View)),
+            ],
+        ),
+    ]
+};
+
+/// The rail's slot holding a command.
+pub(crate) fn rail_slot(command: Command) -> Option<&'static Slot> {
+    RAIL.iter()
+        .flat_map(|(_, slots)| slots.iter())
+        .find(|s| s.holds(command))
+}
+
+/// Where a category's menu has separators: round each family of the rail, and between the
+/// rail's commands and the rest. Returns the commands a separator goes before.
+pub(crate) fn menu_breaks(category: Category) -> Vec<Command> {
+    let mut breaks = Vec::new();
+    // The previous command's slot (by address), and whether it was a family.
+    let mut last: Option<Option<*const Slot>> = None;
+    let mut last_family = false;
+    for spec in registry().iter().filter(|s| s.category == category) {
+        let slot = rail_slot(spec.command);
+        let here = slot.map(|s| s as *const Slot);
+        let family = slot.is_some_and(|s| !s.more.is_empty());
+        if let Some(prev) = last
+            && prev != here
+            && (family || last_family || here.is_none() != prev.is_none())
+        {
+            breaks.push(spec.command);
+        }
+        last = Some(here);
+        last_family = family;
+    }
+    breaks
 }
 
 /// The key that picks a tool, for its tooltip and the toolbar (`None` for a tool in a cycle
@@ -889,33 +1038,6 @@ fn table() -> Vec<Spec> {
         .menu("Explode")
         .when(When::Copies)
         .aliases(&["EXPLODE", "X"]),
-        Spec::new(
-            "edit.explode_walls",
-            C::Edit,
-            K::ExplodeWalls,
-            "Explode walls",
-            "Turn the picked walls into plain lines, arcs and fills",
-        )
-        .when(When::Walls)
-        .aliases(&["EXPLODEWALL"]),
-        Spec::new(
-            "edit.join_walls",
-            C::Edit,
-            K::JoinWalls,
-            "Join walls",
-            "Join two picked walls where they come nearest: an L, or a T",
-        )
-        .when(When::Walls)
-        .aliases(&["JOINWALL", "WALLJOIN"]),
-        Spec::new(
-            "edit.unjoin_walls",
-            C::Edit,
-            K::UnjoinWalls,
-            "Unjoin walls",
-            "Stop the picked walls joining where they meet: their ends are capped",
-        )
-        .when(When::Walls)
-        .aliases(&["UNJOINWALL", "DISALLOWJOIN"]),
         Spec::new(
             "edit.explode_to_group",
             C::Edit,
@@ -1301,6 +1423,7 @@ fn table() -> Vec<Spec> {
         tool("draw.polygon", C::Draw, ToolKind::Polygon)
             .keys(const { &[plain(Key::K)] })
             .aliases(&["POLYGON", "POL"]),
+        tool("draw.slot", C::Draw, ToolKind::Slot).keys(const { &[plain(Key::U)] }),
         tool("draw.circle", C::Draw, ToolKind::Circle)
             .keys(const { &[plain(Key::C)] })
             .aliases(&["CIRCLE", "C"]),
@@ -1311,13 +1434,22 @@ fn table() -> Vec<Spec> {
             .aliases(&["ARC", "A"]),
         tool("draw.three_point_arc", C::Draw, ToolKind::ThreePointArc),
         tool("draw.tangent_arc", C::Draw, ToolKind::TangentArc),
-        tool("draw.slot", C::Draw, ToolKind::Slot).keys(const { &[plain(Key::U)] }),
-        tool("draw.wall", C::Draw, ToolKind::Wall)
+        tool("draw.point", C::Draw, ToolKind::Point)
+            .keys(const { &[plain(Key::V)] })
+            .aliases(&["POINT", "PO"]),
+        tool("draw.text", C::Draw, ToolKind::Text)
+            .keys(const { &[shift(Key::T)] })
+            .aliases(&["TEXT", "DT", "MTEXT", "MT"]),
+        tool("draw.fill", C::Draw, ToolKind::Fill)
+            .keys(const { &[plain(Key::H)] })
+            .aliases(&["HATCH", "H", "BHATCH"]),
+        // Build.
+        tool("build.wall", C::Build, ToolKind::Wall)
             .keys(const { &[plain(Key::W)] })
             .aliases(&["WALL", "WA"]),
         Spec::new(
-            "draw.walls_from_curves",
-            C::Draw,
+            "build.walls_from_curves",
+            C::Build,
             K::WallsFromCurves,
             "Walls from curves",
             "Walls along the picked lines and arcs, at the Wall tool's settings",
@@ -1325,23 +1457,48 @@ fn table() -> Vec<Spec> {
         .when(When::Curves)
         .words("pick lines centreline"),
         Spec::new(
-            "draw.walls_from_lines",
-            C::Draw,
+            "build.walls_from_lines",
+            C::Build,
             K::WallsFromLines,
             "Walls from lines",
             "Walls found among the picked lines: pairs of parallel faces, as imported plans draw them",
         )
         .when(When::Curves)
         .words("convert faces import dwg dxf plan pairs"),
-        tool("draw.point", C::Draw, ToolKind::Point)
-            .keys(const { &[plain(Key::V)] })
-            .aliases(&["POINT", "PO"]),
-        tool("draw.text", C::Draw, ToolKind::Text)
-            .keys(const { &[shift(Key::T)] })
-            .aliases(&["TEXT", "DT", "MTEXT", "MT"]),
-        tool("draw.block", C::Draw, ToolKind::Block)
+        tool("build.opening", C::Build, ToolKind::Opening)
+            .keys(const { &[shift(Key::O)] })
+            .aliases(&["DOOR", "DR", "WINDOW", "WN", "OPENING"])
+            .words("door window opening wall swing"),
+        tool("build.block", C::Build, ToolKind::Block)
             .keys(const { &[plain(Key::I)] })
             .aliases(&["INSERT", "I"]),
+        Spec::new(
+            "build.join_walls",
+            C::Build,
+            K::JoinWalls,
+            "Join walls",
+            "Join two picked walls where they come nearest: an L, or a T",
+        )
+        .when(When::Walls)
+        .aliases(&["JOINWALL", "WALLJOIN"]),
+        Spec::new(
+            "build.unjoin_walls",
+            C::Build,
+            K::UnjoinWalls,
+            "Unjoin walls",
+            "Stop the picked walls joining where they meet: their ends are capped",
+        )
+        .when(When::Walls)
+        .aliases(&["UNJOINWALL", "DISALLOWJOIN"]),
+        Spec::new(
+            "build.explode_walls",
+            C::Build,
+            K::ExplodeWalls,
+            "Explode walls",
+            "Turn the picked walls into plain lines, arcs and fills",
+        )
+        .when(When::Walls)
+        .aliases(&["EXPLODEWALL"]),
         // Modify.
         Spec::new(
             "modify.move",
@@ -1422,17 +1579,14 @@ fn table() -> Vec<Spec> {
             .keys(const { &[plain(Key::N)] })
             .aliases(&["LEADER", "LE", "MLEADER", "MLD"]),
         tool("annotate.callout", C::Annotate, ToolKind::Callout),
+        tool("annotate.section", C::Annotate, ToolKind::Section),
+        tool("annotate.elevation", C::Annotate, ToolKind::Elevation),
         tool("annotate.centre_mark", C::Annotate, ToolKind::CentreMark).aliases(&[
             "DIMCENTER",
             "DCE",
             "CENTERMARK",
         ]),
-        tool("annotate.section", C::Annotate, ToolKind::Section),
-        tool("annotate.elevation", C::Annotate, ToolKind::Elevation),
         tool("annotate.view", C::Annotate, ToolKind::View).aliases(&["VIEWBASE", "MVIEW", "MV"]),
-        tool("annotate.fill", C::Annotate, ToolKind::Fill)
-            .keys(const { &[plain(Key::H)] })
-            .aliases(&["HATCH", "H", "BHATCH"]),
         Spec::new(
             "annotate.align_dimensions",
             C::Annotate,
@@ -1741,7 +1895,7 @@ pub(crate) fn docs_tables() -> String {
             .filter(|s| {
                 matches!(
                     s.category,
-                    Category::Draw | Category::Modify | Category::Annotate
+                    Category::Draw | Category::Build | Category::Modify | Category::Annotate
                 )
             })
             .filter(|s| s.key_text(false).is_empty())
@@ -1891,12 +2045,53 @@ mod tests {
             commands.push(s.command);
             assert!(!s.title.is_empty() && !s.description.is_empty(), "{}", s.id);
         }
-        // Every tool on the toolbar is a command.
-        for (_, tools) in ToolKind::SECTIONS {
-            for kind in tools.iter() {
-                assert!(spec(Command::Tool(*kind)).is_some(), "{kind:?}");
+        // Every command on the rail is registered.
+        for (_, slots) in RAIL {
+            for c in slots.iter().flat_map(|s| s.commands()) {
+                assert!(spec(c).is_some(), "{c:?}");
             }
         }
+    }
+
+    /// Every tool is on the rail once; the rail's sections are their menus, in the same
+    /// order; and a menu lists the rail's commands in the rail's order.
+    #[test]
+    fn the_rail_holds_every_tool_once_in_menu_order() {
+        let on_rail: Vec<Command> = RAIL
+            .iter()
+            .flat_map(|(_, slots)| slots.iter().flat_map(|s| s.commands()))
+            .collect();
+        for kind in ToolKind::ALL {
+            let n = on_rail
+                .iter()
+                .filter(|c| **c == Command::Tool(kind))
+                .count();
+            assert_eq!(n, 1, "{kind:?} is on the rail {n} times");
+        }
+        let mut categories = Category::ALL.iter();
+        for (category, slots) in RAIL {
+            let Some(category) = category else { continue };
+            assert!(
+                categories.any(|c| c == category),
+                "{category:?} is out of the menus' order"
+            );
+            let in_menu: Vec<Command> = registry()
+                .iter()
+                .filter(|s| s.category == *category)
+                .map(|s| s.command)
+                .filter(|c| on_rail.contains(c))
+                .collect();
+            let on: Vec<Command> = slots.iter().flat_map(|s| s.commands()).collect();
+            assert_eq!(
+                in_menu, on,
+                "{category:?}: the menu's order isn't the rail's"
+            );
+        }
+        // Select is the Edit menu's.
+        assert_eq!(
+            spec(Command::Tool(ToolKind::Select)).unwrap().category,
+            Category::Edit
+        );
     }
 
     /// No two commands share a key (walls wanting W would fail here while W is thin lines),
@@ -1917,7 +2112,7 @@ mod tests {
             seen.iter()
                 .find(|(k, _)| *k == plain(Key::W))
                 .map(|(_, id)| *id),
-            Some("draw.wall"),
+            Some("build.wall"),
             "W is the Wall tool"
         );
         assert_eq!(

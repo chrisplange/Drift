@@ -977,7 +977,9 @@ written but hasn't run yet (no GitHub repo).*
     - ANSI31–38, STEEL, CONCRETE, EARTH, INSULATION, GLASS, WOOD, GRID, DOTS, SAND.
     - BRICK and BLOCK as model patterns.
   - **Imported patterns:** Parameters → Hatch patterns → Import .pat… stores them in the
-    document, so they travel with the file.
+    document, so they travel with the file. A DXF or DWG hatch brings its own pattern the
+    same way (from the HATCH's definition lines, at model size), unless it is one of the
+    built-ins (`same_pattern` in dxf_import), which is then used at the matching scale.
   - **Hatch lines:** clipped exactly in `f64` against line and arc edges.
     - Arcs are split where they turn back across the scan direction.
     - The even–odd rule is decided just off each scan line, so vertices count once.
@@ -2109,9 +2111,102 @@ contributors can parallelise M6–M9 once the M2–M4 core is stable.
   **Unjoin walls** (ends capped) are commands and Inspector buttons; dragging a free end
   into a wall joins it live. A gallery of 26 join cases (`walls_gallery.rs`) checks each
   makes the outlines, holes and area it should, and renders a picture sheet.
-  Left for later: typing into a thickness dimension on the canvas (it shows; the Inspector
-  sets it), the Dimension tool making one from two faces, a flip arrow and
-  segment grips beyond the centreline's own points, the thickness dimension in print.
+  Left for later: the Dimension tool making a thickness dimension from two faces of one
+  wall, a flip arrow and segment grips beyond the centreline's own points. (Typing into a
+  thickness dimension on the canvas, and the thickness dimension in print: done in W2.)
+- **Walls W2: relations on faces (done, as built).** `docs/walls-design.md` §4.2. Faces stay
+  generated and are never solver unknowns; a relation stays stored on the face (by its
+  entity: it is drawn there) and is **lowered** for the solver onto the face's centreline
+  segment with a signed offset (`drift_geom::walls::lower`, `walls/lower.rs`): direction
+  relations (horizontal, vertical, parallel, perpendicular, angle) to the same on the
+  segment; a point (or a line's midpoint) to a face, or a face to a line or another face,
+  to a signed offset from the segment; point on a face to an offset (an arc face: the
+  concentric circle); radius or diameter of an arc face to the centreline arc's less the
+  offset (refused where that is ≤ 0: too tight); concentric with an arc face to its
+  centreline arc; collinear to parallel plus an offset. Offsets come from the wall's record
+  (thickness and justify), so a thickness edit solved in the same commit keeps a held face
+  and moves the centreline; the side is taken from the geometry when lowering. Anything on
+  a corner or end edge, and other relations on faces, are refused with a notice
+  (`lower_constraint`); a dimension to a corner is added as a reference with "A wall's
+  corner follows its joins". The solver stays generic: `drift_solver::Lowering` (stand-ins
+  per constraint, plus `extra` relations of the geometry), one new residual
+  `Equation::OffsetFrom` (signed distance from a line or a circle), and `connected_with`,
+  `needs_solve_with`, `System::build_in`, `analyze_with`, `unmet_with`,
+  `free_directions_with` read through it; `SolveOptions::lowering`. drift-geom now depends
+  on drift-solver. The editor lowers per document revision (`Editor::lowering`), a drag
+  once at its start. Teed and against ends of walls that relations hold are lowered as
+  point-on-curve extras (they join a drag's scope but alone don't make it solve);
+  `follow_tees` leaves those to the solve.
+  Joins are kept through a drag (`walls/frozen.rs`: `Joins`, `infer_joins`,
+  `generate_with`, `regenerate_with`, `regenerate_moved_with`): a drag takes the joins it
+  found at its start, except for the ends it moves itself (still joining live), so geometry
+  a dimension moves can't flip an L into a T mid-drag; the commit works them out afresh.
+  Relations on face pieces follow their face by (wall, segment, side): when regeneration
+  splits or re-keys pieces (a T arriving part-way along), each is moved onto the piece of
+  its face nearest where it is, before old pieces are deleted (`regen.rs`
+  `follow_face_refs`). An L joined by position becomes a shared point when the Wall tool or
+  a drag made it (`share_joined_points`), so it moves together. The Dimension tool between
+  two faces measures from the face itself, not its corner. Both faces held: a thickness
+  change is undone with "Both faces of that wall are dimensioned…". The Wall tool's
+  preview shows the walls it joins as they would be (the host's cap opening, its face split
+  at a T), hiding their pieces it stands in for (`Tool::preview_hides`). Double-click a
+  thickness dimension's value to type the thickness; thickness dimensions print.
+  Tests: lowering rows (`walls/lower/tests.rs`), gallery face-dimension cases, a
+  `drag_props` property over walls with face dimensions (relations hold every frame, joins
+  of what isn't dragged don't flip, thickness kept, an unrelated wall stays put), and a
+  face-dimension case in `perf_walls`.
+  Left for later: lowering distances measured along a face (horizontal/vertical distances
+  to a face's midpoint), equal/tangent/symmetric on faces, a face held by both a dimension
+  and a T arriving across it ambiguously (it goes to the nearer piece), Alt to pick the
+  centreline under a face in the Dimension tool.
+  **To address: drag cost with a face dimension in a big floor.** In `perf_walls` (2,000
+  segments, one cluster) a drag frame of a node with a face dimension costs about +11.7 ms
+  over a free point (budget +2 ms); the walls' part is fine (~2 ms of a commit, lowering
+  0.6 ms). The whole floor is one solve scope, because `connected` closes over shared
+  centreline points, so each frame builds and solves a system over all of it. Likely the
+  same for any relation on a centreline there (not measured). Fix in the solver: a drag's
+  scope limited to what relations reach from the dragged geometry, free geometry beyond
+  them moved as it is.
+- **Walls W3: openings (done, as built).** Doors, windows and cased openings hosted in walls
+  (`docs/walls-design.md` §6). An `Opening` record in drift-core (`openings.rs`: wall and
+  segment, where along it (centred, or an offset from either end, with an expression),
+  width (with an expression), leaf, height, the symbol's library family and type or a void,
+  hand, facing, layer, and the symbol it made, by key), the `openings` table journalled like
+  walls, and `rules.size_set` (an addition: no format bump, fixture `v42.2`). The cut is the
+  walls' generator's (`drift_geom::walls::openings`): each opening is two stations on its
+  segment, a node of one end each, so the faces piece at keyed `Station::Jamb`s, two
+  `Part::Jamb` edges close the outline, and the poché goes round with no hole-punching;
+  pieces elsewhere keep their keys, and a slide keeps every key. An opening reaching past a
+  corner, a T or another opening isn't cut (a notice says which). Symbols are generated at
+  the host's thickness by the library's families (`library/hosted.rs`: the door and window
+  generators of `doors.rs` and `windows.rs` without their jambs), in the opening's frame
+  (on the face it opens to, at the hinge jamb), written by key as walls write faces.
+  Size sets are data (`library/sizes/us.json`, `metric.json`, read once): US imperial
+  (doors 2′0″–3′0″ by 2″, 3′6″, 4′0″ and pairs, 6′8″, 7′0″, 8′0″; rough opening +2″ ×
+  +2½″; windows named `3050`) and generic metric (leaves 700–1000 mm, frame allowance
+  70 × 35); leaf and opening per type; wall thickness presets come from the set too; a
+  drawing uses its units' set unless its rules name one. The **Door / window** tool
+  (`build.opening` on Shift+O, on the tool rail's Build section): hover a wall, the cut and symbol show centred on the pointer,
+  kept clear of corners; Space steps the four swings; typing sets the offset from the
+  nearer corner, Tab the width. A picked opening (by its symbol or a jamb) slides along
+  its wall when dragged (snapping centred), shows its width and offset, and flips by two
+  canvas arrows; the Inspector types offset and width (lengths or variables), the swing,
+  flip, centre, delete, and the size set. Openings follow their wall as it moves (keeping
+  their place from the nearer end), follow their centreline curve through splits and joins,
+  are re-seated by where they were when their curve is cut or trimmed, go with a deleted
+  wall (with a notice), stay as plain lines when it is exploded, and are copied with it.
+  Edits that only move or slide take the incremental path. Tests: cut unit tests, 14 tool
+  tests, a property test over random networks (each cut takes width × thickness from the
+  poché, every step matches a full rebuild, slides keep ids, undo and save give the drawing
+  back), 5 gallery cases, a smoke test, the fixture. Perf (`perf_walls_openings`, the
+  2,000-segment floor with 1,000 doors, release): the walls' part of a commit 1.4 ms
+  (budget 5 ms), a node's drag frame +1.2 ms and a door's slide frame +1.0 ms (budget
+  +2 ms), regenerating everything 32 ms, opening the file 236 ms (173 ms without the
+  doors).
+  Left for later: national size sets (W3b), re-hosting by dragging onto another wall and
+  user blocks as symbols (W3c), typing into the on-canvas offset and width (the Inspector
+  does it), a mirrored copy keeping its swing's hand and side as they were (it should
+  mirror them), anchors to points and faces other than the segment's ends.
 
 - **Walls W1.5: Walls from lines (done, as built).** `docs/walls-design.md` §3.3 rule 6 and
   §10. `drift_geom::walls::from_lines::find` is a pure function over lines and arcs (each with
@@ -2123,7 +2218,7 @@ contributors can parallelise M6–M9 once the M2–M4 core is stable.
   centreline make one strip, so a face broken where a wall tees in is bridged by its partner;
   (3) collinear strips meet across a gap where another wall crosses or tees in from both
   sides, and any other gap up to 5 m is an opening, left open with the walls ending at its
-  jambs (openings in walls are W3); (4) each strip end moves to where its centreline crosses
+  jambs (they don't become hosted W3 openings yet); (4) each strip end moves to where its centreline crosses
   the wall it runs into, ends meeting there share one point (L, n-way) and an end part-way
   along a wall is a T on its centreline, which the generator's joins then pick up; short
   pieces joined to nothing (under 4 × their thickness) are skipped as furniture or columns;
@@ -2131,8 +2226,8 @@ contributors can parallelise M6–M9 once the M2–M4 core is stable.
   one closed ring). Thicknesses snap to the drawing's presets within ⅛″ / 3 mm, else round
   to 1⁄16″ or 1 mm. It reports the lines each wall used (faces, end caps, stray face pieces,
   an old script wall's centreline), lines covered only in part (kept), skips by reason, and
-  openings. The command (`draw.walls_from_lines`, **Walls from lines**, Draw menu and
-  palette; `crates/drift-app/src/walls_from_lines.rs`) runs on the picked lines, builds
+  openings. The command (`build.walls_from_lines`, **Walls from lines**, Build menu, the
+  Wall tool's flyout and palette; `crates/drift-app/src/walls_from_lines.rs`) runs on the picked lines, builds
   centrelines with shared points and walls at the Wall tool's poché as one undo step, and
   removes, keeps or moves to a hidden "Wall lines" layer the lines used (pref `wlines`,
   default remove). The status bar gives the summary ("Made 24 walls from 61 lines; 3 line

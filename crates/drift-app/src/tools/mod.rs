@@ -26,6 +26,9 @@ mod fill;
 mod fillet_drag_tests;
 mod line;
 mod offset_mirror;
+mod opening;
+#[cfg(test)]
+mod opening_tests;
 mod pen;
 mod place_block;
 mod point;
@@ -54,6 +57,7 @@ pub use self::{
     curve_ops::{ExtendTool, SplitTool, TrimTool},
     fill::FillTool,
     offset_mirror::{MirrorTool, OffsetTool},
+    opening::OpeningTool,
     pen::PenTool,
     place_block::BlockTool,
     polygon::PolygonTool,
@@ -197,6 +201,8 @@ pub enum ToolKind {
     Point,
     Text,
     Block,
+    /// Doors, windows and openings hosted in walls.
+    Opening,
     Dimension,
     Ordinate,
     Note,
@@ -225,7 +231,7 @@ pub enum ToolKind {
 }
 
 impl ToolKind {
-    pub const ALL: [ToolKind; 32] = [
+    pub const ALL: [ToolKind; 33] = [
         ToolKind::Select,
         ToolKind::Line,
         ToolKind::Pen,
@@ -242,6 +248,7 @@ impl ToolKind {
         ToolKind::Point,
         ToolKind::Text,
         ToolKind::Block,
+        ToolKind::Opening,
         ToolKind::Dimension,
         ToolKind::Ordinate,
         ToolKind::Note,
@@ -258,57 +265,6 @@ impl ToolKind {
         ToolKind::Chamfer,
         ToolKind::Offset,
         ToolKind::Mirror,
-    ];
-
-    /// The toolbar's sections, with their headers (Select stands alone at the top).
-    pub const SECTIONS: [(&'static str, &'static [ToolKind]); 4] = [
-        ("", &[ToolKind::Select]),
-        (
-            "Draw",
-            &[
-                ToolKind::Line,
-                ToolKind::Pen,
-                ToolKind::Rectangle,
-                ToolKind::Polygon,
-                ToolKind::Circle,
-                ToolKind::Ellipse,
-                ToolKind::EllipseArc,
-                ToolKind::Arc,
-                ToolKind::ThreePointArc,
-                ToolKind::TangentArc,
-                ToolKind::Slot,
-                ToolKind::Wall,
-                ToolKind::Point,
-                ToolKind::Text,
-                ToolKind::Block,
-            ],
-        ),
-        (
-            "Annotate",
-            &[
-                ToolKind::Dimension,
-                ToolKind::Ordinate,
-                ToolKind::Note,
-                ToolKind::Callout,
-                ToolKind::CentreMark,
-                ToolKind::Section,
-                ToolKind::Elevation,
-                ToolKind::View,
-                ToolKind::Fill,
-            ],
-        ),
-        (
-            "Modify",
-            &[
-                ToolKind::Trim,
-                ToolKind::Extend,
-                ToolKind::Split,
-                ToolKind::Fillet,
-                ToolKind::Chamfer,
-                ToolKind::Offset,
-                ToolKind::Mirror,
-            ],
-        ),
     ];
 
     /// The circle tools, in the order pressing C cycles through them.
@@ -353,6 +309,7 @@ impl ToolKind {
             ToolKind::Point => "Point",
             ToolKind::Text => "Text",
             ToolKind::Block => "Place block",
+            ToolKind::Opening => "Door / window",
             ToolKind::Dimension => "Dimension",
             ToolKind::Fill => "Fill / hatch",
             ToolKind::Ordinate => "Ordinate",
@@ -401,6 +358,10 @@ impl ToolKind {
             ToolKind::Point => "A sketch point, for reference or construction",
             ToolKind::Text => "A line of text drawn as outlines, convertible to curves",
             ToolKind::Block => "Place copies of a block from the Blocks tab; R turns, X mirrors",
+            ToolKind::Opening => {
+                "Doors, windows and openings in walls: hover a wall, click to place. Space: the \
+                 way it opens; type the offset, Tab: width"
+            }
             ToolKind::Dimension => "Click geometry, then place the label: the type follows",
             ToolKind::Fill => "Fill or hatch a closed area: click inside it",
             ToolKind::Ordinate => "X or Y distances from an origin point, in rows",
@@ -429,9 +390,8 @@ impl ToolKind {
     /// through the cycle.
     pub fn cycle_hint(self) -> Option<String> {
         let key = self.shortcut()?;
-        let cycle: Vec<&str> = Self::SECTIONS
+        let cycle: Vec<&str> = Self::ALL
             .iter()
-            .flat_map(|(_, group)| group.iter())
             .filter(|k| k.shortcut() == Some(key))
             .map(|k| k.label())
             .collect();
@@ -483,6 +443,7 @@ impl ToolKind {
             ToolKind::Point => Box::<PointTool>::default(),
             ToolKind::Text => Box::<TextTool>::default(),
             ToolKind::Block => Box::<BlockTool>::default(),
+            ToolKind::Opening => Box::<OpeningTool>::default(),
             ToolKind::Dimension => Box::<DimensionTool>::default(),
             ToolKind::Fill => Box::<FillTool>::default(),
             ToolKind::Ordinate => Box::<OrdinateTool>::default(),
@@ -529,6 +490,11 @@ pub trait Tool {
     /// Previews that need the document (e.g. the piece a trim would remove).
     fn editor_preview(&self, _ed: &Editor) -> Vec<SketchItem> {
         Vec::new()
+    }
+
+    /// Entities the preview stands in for (drawn as they would be, not as they are).
+    fn preview_hides(&self, _ed: &Editor) -> std::collections::BTreeSet<EntityId> {
+        std::collections::BTreeSet::new()
     }
 
     /// A live measurement to show next to the cursor, e.g. a length.

@@ -500,8 +500,10 @@ impl DimText {
 
 #[derive(Clone, Debug)]
 pub struct DimLayout {
-    /// `None` for a dimension that doesn't exist yet (a tool preview).
+    /// `None` for a dimension that doesn't exist yet (a tool preview), or a property's.
     pub id: Option<ConstraintId>,
+    /// The property dimension it draws (a wall's thickness), if it is one.
+    pub property: Option<drift_core::PropertyDimId>,
     pub constraint: Constraint,
     pub label: DimText,
     /// The label's centre.
@@ -1217,6 +1219,7 @@ pub fn layout_dimension(
     let text_rect = rotated_bounds(text_pos, galleys.size, angle).expand2(vec2(3.0, 1.0));
     Some(DimLayout {
         id,
+        property: None,
         constraint: *c,
         label: text,
         text_pos,

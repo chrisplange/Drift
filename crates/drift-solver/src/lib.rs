@@ -12,12 +12,15 @@
 pub mod bench;
 mod equations;
 mod linalg;
+mod lowering;
 mod sparse;
 mod system;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use drift_core::{Constraint, ConstraintId, DVec2, Document, EntityId, EntityKind};
+
+pub use crate::lowering::{Lowered, Lowering};
 
 use crate::linalg::{Matrix, rref};
 use crate::sparse::{Dd, Skyline, qr_rank};
@@ -98,6 +101,8 @@ pub struct SolveOptions {
     /// it. Where the relations change a length anyway, the preference is let go. Ignored for
     /// lines with a dragged end: dragging an end reshapes its line.
     pub lengths: HashMap<EntityId, f64>,
+    /// Relations read in the form they are lowered to (see [`Lowering`]).
+    pub lowering: Option<std::rc::Rc<Lowering>>,
 }
 
 /// How completely an entity's position is determined by constraints.
@@ -180,6 +185,7 @@ pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
         &options.tolerances,
         options.scope.as_deref(),
         &options.radii,
+        options.lowering.as_deref(),
     );
     // Sorted, so the preferences' rows come in the same order every run (a hash map's order
     // would change the floating-point sums, and with them the result's last bits).
@@ -324,11 +330,20 @@ fn land(
 /// equation off by more than `slack`, relative to the size of the coordinates involved (a sine,
 /// for angles).
 pub fn unmet(doc: &Document, slack: f64) -> HashSet<ConstraintId> {
+    unmet_with(doc, slack, None)
+}
+
+/// [`unmet`], reading relations through `lowering`.
+pub fn unmet_with(
+    doc: &Document,
+    slack: f64,
+    lowering: Option<&Lowering>,
+) -> HashSet<ConstraintId> {
     let tol = Tolerances {
         length: slack,
         angle: slack,
     };
-    let sys = System::build(doc, &[], &tol);
+    let sys = System::build(doc, &[], &tol, lowering);
     let values: Vec<f64> = sys.groups.iter().map(|g| g.value).collect();
     let val = |p: usize| values[sys.group_of[p]];
     let mut grad = Vec::new();
@@ -347,17 +362,32 @@ pub fn unmet(doc: &Document, slack: f64) -> HashSet<ConstraintId> {
 
 /// Evaluate constraints and degrees of freedom without changing the document.
 pub fn analyze(doc: &Document) -> SolveReport {
+    analyze_with(doc, None)
+}
+
+/// [`analyze`], reading relations through `lowering`.
+pub fn analyze_with(doc: &Document, lowering: Option<&Lowering>) -> SolveReport {
     let options = SolveOptions {
         analyze: true,
         ..Default::default()
     };
-    let mut sys = System::build(doc, &[], &options.tolerances);
+    let mut sys = System::build(doc, &[], &options.tolerances, lowering);
     run(&mut sys, &options, false)
 }
 
 /// The entities that can move with `seeds`: everything joined to them through shared points
 /// and (non-driven) constraints.
 pub fn connected(doc: &Document, seeds: impl IntoIterator<Item = EntityId>) -> HashSet<EntityId> {
+    connected_with(doc, seeds, None)
+}
+
+/// [`connected`], reading relations through `lowering` (a lowered relation joins what it was
+/// lowered to, and the lowering's extras join theirs).
+pub fn connected_with(
+    doc: &Document,
+    seeds: impl IntoIterator<Item = EntityId>,
+    lowering: Option<&Lowering>,
+) -> HashSet<EntityId> {
     let ids: Vec<EntityId> = doc.iter().map(|(id, _)| id).collect();
     let index: HashMap<EntityId, usize> = ids.iter().enumerate().map(|(i, id)| (*id, i)).collect();
     let mut parent: Vec<usize> = (0..ids.len()).collect();
@@ -381,13 +411,10 @@ pub fn connected(doc: &Document, seeds: impl IntoIterator<Item = EntityId>) -> H
             join(&mut parent, id, p);
         }
     }
-    for (cid, c) in doc.constraints() {
-        if doc.is_driven(cid) {
-            continue;
-        }
-        let mut ents = c.entities();
-        if let Some(first) = ents.next() {
-            for other in ents {
+    for (_, l) in lowering::relations(doc, lowering) {
+        let ents = l.entities();
+        if let Some((&first, rest)) = ents.split_first() {
+            for &other in rest {
                 join(&mut parent, first, other);
             }
         }
@@ -418,8 +445,25 @@ pub fn invalid_constraints(doc: &Document) -> Vec<(drift_core::ConstraintId, Str
 /// lines, circles and Béziers go exactly where they are put, so a drag of them needn't solve
 /// at all.
 pub fn needs_solve(doc: &Document, scope: &HashSet<EntityId>) -> bool {
+    needs_solve_with(doc, scope, None)
+}
+
+/// [`needs_solve`], reading relations through `lowering`. Its extras (relations of the
+/// geometry itself) don't count: alone they move nothing a plain move doesn't.
+pub fn needs_solve_with(
+    doc: &Document,
+    scope: &HashSet<EntityId>,
+    lowering: Option<&Lowering>,
+) -> bool {
     let constrained = doc.constraints().any(|(cid, c)| {
-        !doc.is_driven(cid) && doc.validate(c).is_ok() && c.entities().any(|e| scope.contains(&e))
+        !doc.is_driven(cid)
+            && doc.validate(c).is_ok()
+            && match lowering.and_then(|l| l.of.get(&cid)) {
+                Some(list) => list
+                    .iter()
+                    .any(|l| l.entities().iter().any(|e| scope.contains(e))),
+                None => c.entities().any(|e| scope.contains(&e)),
+            }
     });
     // (A wall's arc faces are generated, not solved.)
     let generated = doc.generated_entities();
@@ -1609,8 +1653,16 @@ const FREEDOM_LIMIT: usize = 400;
 /// constraint Jacobian. Fully defined points are omitted, as are points in very large
 /// components (see [`FREEDOM_LIMIT`]).
 pub fn free_directions(doc: &Document) -> HashMap<EntityId, Freedom> {
+    free_directions_with(doc, None)
+}
+
+/// [`free_directions`], reading relations through `lowering`.
+pub fn free_directions_with(
+    doc: &Document,
+    lowering: Option<&Lowering>,
+) -> HashMap<EntityId, Freedom> {
     let options = SolveOptions::default();
-    let sys = System::build(doc, &[], &options.tolerances);
+    let sys = System::build(doc, &[], &options.tolerances, lowering);
     let (comps, _) = components(&sys, &options.tolerances);
     let values: Vec<f64> = sys.groups.iter().map(|g| g.value).collect();
     // Null-space basis vectors, as group → component, indexed by the groups they touch.

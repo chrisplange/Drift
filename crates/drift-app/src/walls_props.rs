@@ -299,7 +299,9 @@ fn undo_restores(net: Network, edits: Vec<(u8, usize, (f64, f64))>) {
 }
 
 /// Whatever the edits (dragging centreline points, the fast path when joins stay, the full
-/// rebuild when they don't), what the walls made is what making them all again makes.
+/// rebuild when they don't), what the walls made is what making them all again makes: in a
+/// drag frame, with the joins the drag keeps; once it is let go, with the joins worked out
+/// afresh.
 fn edits_match_a_full_rebuild(net: Network, drags: Vec<(usize, (f64, f64))>) {
     let mut ed = Editor::new(drawing(&net));
     ed.auto_relations = false;
@@ -329,8 +331,9 @@ fn edits_match_a_full_rebuild(net: Network, drags: Vec<(usize, (f64, f64))>) {
                 &[],
             );
             let mut full = ed.doc.clone();
+            let kept = ed.drag_kept_joins();
             assert!(
-                !regenerate(&mut full).changed,
+                !drift_geom::walls::regenerate_with(&mut full, kept.as_deref()).changed,
                 "a drag frame left the walls other than a full rebuild makes them"
             );
         }

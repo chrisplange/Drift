@@ -89,16 +89,16 @@ impl DriftApp {
             .collect();
         // Walls' thickness dimensions (drawn as a dimension between the faces).
         if self.show_dimensions {
-            for (_, d) in doc.property_dims() {
+            for (q, d) in doc.property_dims() {
                 if let Some((c, at)) = crate::walls::thickness_dimension(doc, d) {
-                    out.extend(annotations::layout_dimension(
-                        painter,
-                        doc,
-                        None,
-                        &c,
-                        Some(at),
-                        map,
-                    ));
+                    out.extend(
+                        annotations::layout_dimension(painter, doc, None, &c, Some(at), map).map(
+                            |mut l| {
+                                l.property = Some(q);
+                                l
+                            },
+                        ),
+                    );
                 }
             }
         }
@@ -302,6 +302,13 @@ impl DriftApp {
             self.open_dimension_edit(id);
             return true;
         }
+        // A wall's thickness dimension: typing into it sets the thickness.
+        if response.double_clicked_by(PointerButton::Primary)
+            && let Some(q) = at.and_then(|p| dim_at(p).and_then(|d| d.property))
+        {
+            self.open_property_edit(q);
+            return true;
+        }
         if response.clicked_by(PointerButton::Primary) {
             let shift = crate::app::visibility_ui::shift_click(ui);
             if let Some(id) = at.and_then(hit) {
@@ -380,6 +387,73 @@ impl DriftApp {
                 focus: true,
                 extras,
             });
+        }
+    }
+
+    /// Open the in-place editor of a property dimension (a wall's thickness).
+    pub(crate) fn open_property_edit(&mut self, q: drift_core::PropertyDimId) {
+        let Some(d) = self.editor.doc.property_dim(q) else {
+            return;
+        };
+        let w = d.target.wall();
+        let Some(wall) = self.editor.doc.wall(w) else {
+            return;
+        };
+        let text = wall
+            .thickness_expr
+            .clone()
+            .unwrap_or_else(|| self.editor.doc.units().format_length(wall.thickness));
+        self.property_edit = Some((q, text, true));
+    }
+
+    /// The in-place editor of a property dimension: Enter sets the wall's thickness.
+    pub(crate) fn property_editor(&mut self, ctx: &egui::Context, dims: &[DimLayout], now: f64) {
+        let Some((q, mut text, focus)) = self.property_edit.take() else {
+            return;
+        };
+        let Some(at) = dims
+            .iter()
+            .find(|d| d.property == Some(q))
+            .map(|d| d.text_rect.center())
+        else {
+            return;
+        };
+        let field = egui::Id::new("property_edit_field");
+        let area = egui::Area::new(egui::Id::new("property_edit"))
+            .fixed_pos(at - egui::vec2(45.0, 11.0))
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                let response = ui.add(
+                    egui::TextEdit::singleline(&mut text)
+                        .id(field)
+                        .desired_width(90.0)
+                        .horizontal_align(egui::Align::Center),
+                );
+                if focus {
+                    response.request_focus();
+                }
+            });
+        let (enter, escape, outside) = ctx.input(|i| {
+            (
+                i.key_pressed(Key::Enter),
+                i.key_pressed(Key::Escape),
+                i.pointer.any_pressed()
+                    && i.pointer
+                        .interact_pos()
+                        .is_some_and(|p| !area.response.rect.contains(p)),
+            )
+        });
+        if !focus && enter {
+            let wall = self.editor.doc.property_dim(q).map(|d| d.target.wall());
+            if let Some(w) = wall
+                && let Err(e) = self.editor.set_wall_thickness(&[w], &text)
+            {
+                self.set_status(format!("Can't use {text}: {e}"), true, now);
+            }
+            return;
+        }
+        if focus || !(escape || outside) {
+            self.property_edit = Some((q, text, false));
         }
     }
 
@@ -783,6 +857,7 @@ impl DriftApp {
         // everything.
         let mut groups: Vec<DrawContent> = Vec::new();
         let mut images = Vec::new();
+        self.editor.preview_hidden = self.tool.preview_hides(&self.editor);
         let text = self.editor.text_items_tagged(self.status_colors, dark);
         if stacked {
             let stack = self.editor.stack();
@@ -858,6 +933,7 @@ impl DriftApp {
                 }),
         );
         items.extend(self.tool.editor_preview(&self.editor));
+        self.editor.preview_hidden.clear();
         let ppp = f64::from(ui.ctx().pixels_per_point());
         let group_refs: Vec<drift_render::DrawGroup<'_>> = groups
             .iter()
@@ -1025,6 +1101,7 @@ impl DriftApp {
         let ctx = ui.ctx().clone();
         let now = ctx.input(|i| i.time);
         self.dimension_editor(&ctx, &dims, now);
+        self.property_editor(&ctx, &dims, now);
         self.temp_dim_editor(&ctx, &temps, now);
         // The notes as laid out now (a tool may have just placed one).
         let notes = self.layout_notes(&annotation_painter, &map);

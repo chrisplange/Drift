@@ -1150,5 +1150,97 @@ fn perf_walls() {
         let _ = ed.wall_fill_region(fill);
     });
     report("the cluster's poché region", poche);
+    // A clear width between two walls' faces near the node (W2): the solve sees it lowered
+    // onto their centrelines.
+    let owners = ed.doc.wall_owners();
+    let faces: Vec<(EntityId, DVec2, DVec2)> = ed
+        .doc
+        .walls()
+        .flat_map(|(_, w)| {
+            w.made
+                .curves
+                .iter()
+                .filter(|(k, _)| matches!(k.part, drift_core::Part::Left | drift_core::Part::Right))
+                .map(|(_, id)| *id)
+                .collect::<Vec<_>>()
+        })
+        .filter_map(|id| match ed.doc.shape(id)? {
+            drift_core::Shape::Line { a, b } => Some((id, a, b)),
+            _ => None,
+        })
+        .collect();
+    let near = |(_, a, b): &(EntityId, DVec2, DVec2)| ((*a + *b) / 2.0).distance(at);
+    let first = *faces
+        .iter()
+        .min_by(|x, y| near(x).total_cmp(&near(y)))
+        .unwrap();
+    let d0 = (first.2 - first.1).normalize();
+    let mid = (first.1 + first.2) / 2.0;
+    let other = *faces
+        .iter()
+        .filter(|f| owners.wall(f.0) != owners.wall(first.0))
+        .filter(|f| (f.2 - f.1).normalize().perp_dot(d0).abs() < 1e-9)
+        .filter(|f| d0.perp_dot((f.1 + f.2) / 2.0 - mid).abs() > 1.0)
+        .min_by(|x, y| {
+            let off = |f: &(EntityId, DVec2, DVec2)| {
+                d0.perp_dot((f.1 + f.2) / 2.0 - mid).abs()
+                    + 1e-3 * d0.dot((f.1 + f.2) / 2.0 - mid).abs()
+            };
+            off(x).total_cmp(&off(y))
+        })
+        .unwrap();
+    let c = drift_core::Constraint::PointLineDistance {
+        point: first.0,
+        line: other.0,
+        value: 0.0,
+    };
+    let c = c.with_value(drift_solver::measure(&ed.doc, &c).unwrap());
+    let dim = ed.add_dimension(c, None).expect("a face dimension");
+    assert!(!ed.doc.is_driven(dim), "{:?}", ed.notice);
+    let value = c.value().unwrap();
+    let typed = time(6, |k| {
+        let units = ed.doc.units();
+        let text = units.format_length(value + 10.0 * (k % 3) as f64);
+        ed.set_dimension_text(dim, &text).unwrap();
+    });
+    report(
+        "type a clear width between two walls' faces (commit)",
+        typed,
+    );
+    let face_commit = time(10, |k| {
+        ed.doc.begin();
+        let _ = ed.doc.set_point(node, at + v(10.0 * (k % 3) as f64, 0.0));
+        ed.commit("Move a node");
+    });
+    report(
+        "commit of one wall edit, with a face dimension",
+        face_commit,
+    );
+    let face_walls = time(10, |k| {
+        ed.doc.begin();
+        let _ = ed
+            .doc
+            .set_point(node, at + v(5.0 + 10.0 * (k % 3) as f64, 0.0));
+        ed.follow_walls();
+        ed.doc.rollback();
+    });
+    report("  of which the walls' part", face_walls);
+    let lower = time(10, |_| {
+        let _ = drift_geom::walls::lower(&ed.doc);
+    });
+    report("  lowering the face relations", lower);
+    ed.doc.begin();
+    let face_frame = time(20, |k| {
+        let _ = ed.drag(&[node], v(1.0 + (k % 4) as f64, 0.0), &[]);
+        ed.sync();
+    });
+    ed.doc.rollback();
+    ed.sync();
+    report("drag frame of the node, with a face dimension", face_frame);
+    println!(
+        "  with a face dimension: walls add {:.2} ms to a commit and {:.2} ms to a drag frame",
+        face_walls.0,
+        face_frame.0 - loose_frame.0
+    );
     println!("  budgets: commit 5 ms, drag frame +2 ms, poché 2 ms, open +150 ms");
 }

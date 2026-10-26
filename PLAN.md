@@ -2111,9 +2111,62 @@ contributors can parallelise M6–M9 once the M2–M4 core is stable.
   **Unjoin walls** (ends capped) are commands and Inspector buttons; dragging a free end
   into a wall joins it live. A gallery of 26 join cases (`walls_gallery.rs`) checks each
   makes the outlines, holes and area it should, and renders a picture sheet.
-  Left for later: typing into a thickness dimension on the canvas (it shows; the Inspector
-  sets it), the Dimension tool making one from two faces, a flip arrow and
-  segment grips beyond the centreline's own points, the thickness dimension in print.
+  Left for later: the Dimension tool making a thickness dimension from two faces of one
+  wall, a flip arrow and segment grips beyond the centreline's own points. (Typing into a
+  thickness dimension on the canvas, and the thickness dimension in print: done in W2.)
+- **Walls W2: relations on faces (done, as built).** `docs/walls-design.md` §4.2. Faces stay
+  generated and are never solver unknowns; a relation stays stored on the face (by its
+  entity: it is drawn there) and is **lowered** for the solver onto the face's centreline
+  segment with a signed offset (`drift_geom::walls::lower`, `walls/lower.rs`): direction
+  relations (horizontal, vertical, parallel, perpendicular, angle) to the same on the
+  segment; a point (or a line's midpoint) to a face, or a face to a line or another face,
+  to a signed offset from the segment; point on a face to an offset (an arc face: the
+  concentric circle); radius or diameter of an arc face to the centreline arc's less the
+  offset (refused where that is ≤ 0: too tight); concentric with an arc face to its
+  centreline arc; collinear to parallel plus an offset. Offsets come from the wall's record
+  (thickness and justify), so a thickness edit solved in the same commit keeps a held face
+  and moves the centreline; the side is taken from the geometry when lowering. Anything on
+  a corner or end edge, and other relations on faces, are refused with a notice
+  (`lower_constraint`); a dimension to a corner is added as a reference with "A wall's
+  corner follows its joins". The solver stays generic: `drift_solver::Lowering` (stand-ins
+  per constraint, plus `extra` relations of the geometry), one new residual
+  `Equation::OffsetFrom` (signed distance from a line or a circle), and `connected_with`,
+  `needs_solve_with`, `System::build_in`, `analyze_with`, `unmet_with`,
+  `free_directions_with` read through it; `SolveOptions::lowering`. drift-geom now depends
+  on drift-solver. The editor lowers per document revision (`Editor::lowering`), a drag
+  once at its start. Teed and against ends of walls that relations hold are lowered as
+  point-on-curve extras (they join a drag's scope but alone don't make it solve);
+  `follow_tees` leaves those to the solve.
+  Joins are kept through a drag (`walls/frozen.rs`: `Joins`, `infer_joins`,
+  `generate_with`, `regenerate_with`, `regenerate_moved_with`): a drag takes the joins it
+  found at its start, except for the ends it moves itself (still joining live), so geometry
+  a dimension moves can't flip an L into a T mid-drag; the commit works them out afresh.
+  Relations on face pieces follow their face by (wall, segment, side): when regeneration
+  splits or re-keys pieces (a T arriving part-way along), each is moved onto the piece of
+  its face nearest where it is, before old pieces are deleted (`regen.rs`
+  `follow_face_refs`). An L joined by position becomes a shared point when the Wall tool or
+  a drag made it (`share_joined_points`), so it moves together. The Dimension tool between
+  two faces measures from the face itself, not its corner. Both faces held: a thickness
+  change is undone with "Both faces of that wall are dimensioned…". The Wall tool's
+  preview shows the walls it joins as they would be (the host's cap opening, its face split
+  at a T), hiding their pieces it stands in for (`Tool::preview_hides`). Double-click a
+  thickness dimension's value to type the thickness; thickness dimensions print.
+  Tests: lowering rows (`walls/lower/tests.rs`), gallery face-dimension cases, a
+  `drag_props` property over walls with face dimensions (relations hold every frame, joins
+  of what isn't dragged don't flip, thickness kept, an unrelated wall stays put), and a
+  face-dimension case in `perf_walls`.
+  Left for later: lowering distances measured along a face (horizontal/vertical distances
+  to a face's midpoint), equal/tangent/symmetric on faces, a face held by both a dimension
+  and a T arriving across it ambiguously (it goes to the nearer piece), Alt to pick the
+  centreline under a face in the Dimension tool.
+  **To address: drag cost with a face dimension in a big floor.** In `perf_walls` (2,000
+  segments, one cluster) a drag frame of a node with a face dimension costs about +11.7 ms
+  over a free point (budget +2 ms); the walls' part is fine (~2 ms of a commit, lowering
+  0.6 ms). The whole floor is one solve scope, because `connected` closes over shared
+  centreline points, so each frame builds and solves a system over all of it. Likely the
+  same for any relation on a centreline there (not measured). Fix in the solver: a drag's
+  scope limited to what relations reach from the dragged geometry, free geometry beyond
+  them moved as it is.
 
 ## 9. Key risks and mitigations
 

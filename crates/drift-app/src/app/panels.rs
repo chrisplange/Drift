@@ -300,14 +300,10 @@ impl DriftApp {
         }
     }
 
-    /// A category's commands as a menu, in the registry's order, with a separator before
-    /// each command in `breaks`.
-    pub(crate) fn category_menu(
-        &mut self,
-        ui: &mut egui::Ui,
-        category: Category,
-        breaks: &[Command],
-    ) {
+    /// A category's commands as a menu, in the registry's order (the rail's), with
+    /// separators round the rail's families.
+    pub(crate) fn category_menu(&mut self, ui: &mut egui::Ui, category: Category) {
+        let breaks = commands::menu_breaks(category);
         for spec in commands::registry()
             .iter()
             .filter(|s| s.category == category)
@@ -450,28 +446,15 @@ impl DriftApp {
                     theme::appearance(ui);
                 });
             });
-            ui.menu_button("Draw", |ui| {
-                use ToolKind as T;
-                let breaks = [T::Circle, T::Arc, T::Slot].map(C::Tool);
-                self.category_menu(ui, Category::Draw, &breaks);
-            });
+            for category in [Category::Draw, Category::Build] {
+                ui.menu_button(category.label(), |ui| self.category_menu(ui, category));
+            }
             ui.menu_button("Modify", |ui| {
-                let breaks = [
-                    C::Tool(ToolKind::Mirror),
-                    C::Tool(ToolKind::Trim),
-                    C::Pattern(false),
-                ];
-                self.category_menu(ui, Category::Modify, &breaks);
+                self.category_menu(ui, Category::Modify);
                 ui.separator();
-                ui.menu_button("Arrange", |ui| {
-                    self.category_menu(ui, Category::Arrange, &[])
-                });
+                ui.menu_button("Arrange", |ui| self.category_menu(ui, Category::Arrange));
             });
-            ui.menu_button("Annotate", |ui| {
-                use ToolKind as T;
-                let breaks = [C::Tool(T::Section), C::Tool(T::Fill), C::AlignDimensions];
-                self.category_menu(ui, Category::Annotate, &breaks);
-            });
+            ui.menu_button("Annotate", |ui| self.category_menu(ui, Category::Annotate));
             ui.menu_button("Help", |ui| {
                 self.command_items(
                     ui,
@@ -499,100 +482,6 @@ impl DriftApp {
                 );
             });
         });
-    }
-
-    /// The tool palette: icon buttons in groups (draw, annotate, modify), with tooltips that
-    /// name the tool, its shortcut and what it does.
-    pub(crate) fn toolbar(&mut self, ui: &mut egui::Ui, wide: bool) {
-        // On a sheet, the rail holds what can be done on paper.
-        if self.sheet_preview {
-            self.sheet_rail(ui, wide);
-            return;
-        }
-        // A key shared by a cycle of tools (C: circle, ellipse, partial ellipse) is shown on
-        // the first of them only; the tooltips say it switches on.
-        let mut keys_shown = std::collections::HashSet::new();
-        let output = egui::ScrollArea::vertical()
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                if wide {
-                    ui.spacing_mut().item_spacing.y = 0.0;
-                }
-                ui.add_space(4.0);
-                for (i, (title, group)) in ToolKind::SECTIONS.iter().enumerate() {
-                    if wide {
-                        if !title.is_empty() {
-                            ui.add_space(if i > 0 { 7.0 } else { 2.0 });
-                            theme::caps_header(ui, title);
-                            ui.add_space(2.0);
-                        }
-                    } else if i > 0 {
-                        ui.add_space(2.0);
-                        ui.separator();
-                        ui.add_space(2.0);
-                    }
-                    for &kind in *group {
-                        let selected = self.tool.kind() == kind;
-                        let draw = |p: &egui::Painter, r: egui::Rect, c: egui::Color32| {
-                            icons::tool(p, r, kind, c)
-                        };
-                        let response = if wide {
-                            let key = kind
-                                .shortcut_label()
-                                .filter(|k| keys_shown.insert(k.clone()));
-                            icons::tool_row(ui, selected, kind.label(), key.as_deref(), draw)
-                        } else {
-                            icons::button(ui, 38.0, selected, kind.label(), draw)
-                        };
-                        let response = response.on_hover_ui(|ui| {
-                            ui.horizontal(|ui| {
-                                ui.label(egui::RichText::new(kind.label()).family(theme::bold()));
-                                if let Some(c) = kind.shortcut_label() {
-                                    ui.label(egui::RichText::new(c.to_string()).small().weak());
-                                }
-                            });
-                            ui.label(egui::RichText::new(kind.description()).weak());
-                            if let Some(again) = kind.cycle_hint() {
-                                ui.label(egui::RichText::new(again).small().weak());
-                            }
-                        });
-                        // A filter on: a badge on the Select tool, so it isn't forgotten.
-                        let filter = self.editor.pick_filter;
-                        if kind == ToolKind::Select && !filter.is_all() {
-                            let r = response.rect;
-                            let at = egui::pos2(r.right() - 7.0, r.top() + 7.0);
-                            let dark = ui.visuals().dark_mode;
-                            ui.painter()
-                                .circle_filled(at, 4.0, theme::warning_color(dark));
-                            let kinds: Vec<&str> = filter.kinds().map(|k| k.label()).collect();
-                            let tip = if kinds.is_empty() {
-                                "Selection filter on: nothing can be picked".to_owned()
-                            } else {
-                                format!("Selection filter on: picks {}", kinds.join(", "))
-                            };
-                            let badge = ui
-                                .interact(
-                                    egui::Rect::from_center_size(at, egui::vec2(10.0, 10.0)),
-                                    ui.id().with("pick_filter_badge"),
-                                    egui::Sense::hover(),
-                                )
-                                .on_hover_text(tip);
-                            badge.widget_info(|| {
-                                egui::WidgetInfo::labeled(
-                                    egui::WidgetType::Label,
-                                    true,
-                                    "Selection filter on",
-                                )
-                            });
-                        }
-                        if response.clicked() {
-                            self.switch_tool(kind);
-                        }
-                    }
-                }
-                ui.add_space(6.0);
-            });
-        theme::fade_bottom(ui, &output, ui.visuals().panel_fill);
     }
 
     /// Select the curves that lie on top of others (the later-made of each pair).

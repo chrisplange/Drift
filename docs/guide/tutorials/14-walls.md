@@ -39,7 +39,8 @@ centrelines**.
 
 ## 1. Draw a room
 
-1. Press W for the **Wall** tool.
+1. Press W for the **Wall** tool (or pick it from **Build** in the tool palette, or the
+   **Build** menu).
 2. In the top bar, set **Thickness**: the **▾** list has US walls at their actual finished
    thickness (a 2×4 stud wall with ½″ gypsum both sides is 4½″) or, in a metric drawing,
    100 mm to 365 mm. You can type any value too.
@@ -73,7 +74,8 @@ one poché. Move the room's wall later and the T follows.
 ## 4. Walls from lines you already drew
 
 1. Draw a few connected lines (or pick a rectangle's sides with Tab).
-2. Pick them, then choose **Walls from curves** (in the **Draw** menu or the command palette).
+2. Pick them, then choose **Walls from curves** (in the **Build** menu, in the **Wall** tool's
+   flyout: right-click it in the tool palette, or in the command palette).
 
 The lines become the walls' construction centrelines, at the Wall tool's settings.
 
@@ -88,8 +90,8 @@ Click a wall (a face, its fill or its centreline). The **Inspector** shows:
 - **Joins:** whether it joins walls it crosses, and at each end whether it joins at all.
   With two walls picked, **Join** meets their nearest ends (an L where their centrelines
   cross, or a T where one points at the other); **Unjoin** caps the ends where the picked
-  walls meet, so they overlap. Both are in the **Edit** menu too (**Join walls**, **Unjoin
-  walls**).
+  walls meet, so they overlap. Both are in the **Build** menu too (**Join walls**, **Unjoin
+  walls**), with **Explode walls**.
 - **Segments:** each segment's length, with **Split after** to make two walls there.
 - **Show thickness** draws a dimension of its thickness on the canvas. Double-click its value
   to type a new thickness (or a variable's name); it prints like any other dimension.

@@ -321,7 +321,7 @@ crate stays wasm32-compatible). The demo build keeps leaving the writers out.
 
 ## 6. Ranked gaps and the batches to fix them
 
-**Status (2026-10-25):** batches **A** (this PR) and **B** (#175, merged) are done; the rest are open.
+**Status (2026-10-26):** batches **A** (#174) and **B** (#175) are merged; **C** is done on `claude/cad-hatches`; the rest are open.
 
 Ranked by severity × how common it is in architects' files. Size: **S** ≤ 1 day, **M** 2–4
 days, **L** a week or more.

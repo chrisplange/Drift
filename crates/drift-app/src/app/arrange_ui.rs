@@ -28,7 +28,7 @@ impl DriftApp {
     /// The canvas menu's Arrange submenu.
     pub(crate) fn arrange_menu(&mut self, ui: &mut egui::Ui) {
         ui.menu_button("Arrange", |ui| {
-            self.category_menu(ui, crate::commands::Category::Arrange, &[]);
+            self.category_menu(ui, crate::commands::Category::Arrange);
         });
     }
 

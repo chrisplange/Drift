@@ -600,6 +600,26 @@ fn dxf_corpus() -> Vec<(&'static str, String)> {
             ),
         ),
         (
+            // Pattern definitions that step nowhere, claim a million families or dashes, or
+            // aren't numbers; a SOLID with corners missing or all in one place; a gradient
+            // and a transparency that aren't numbers.
+            "broken hatch patterns and solids",
+            dxf_doc(
+                "0\nHATCH\n2\nZERO\n70\n0\n91\n1\n92\n2\n72\n0\n73\n1\n93\n3\n\
+                 10\n0\n20\n0\n10\n10\n20\n0\n10\n0\n20\n10\n97\n0\n75\n0\n76\n1\n52\n0\n41\n0\n\
+                 78\n2\n53\n0\n43\n0\n44\n0\n45\n0\n46\n0\n79\n0\n\
+                 53\nnan\n43\ninf\n44\n0\n45\n1e308\n46\n-1e308\n79\n1000000\n49\n1\n98\n0\n\
+                 0\nHATCH\n2\nHUGE\n70\n0\n91\n1\n92\n2\n72\n0\n73\n1\n93\n3\n\
+                 10\n0\n20\n0\n10\n10\n20\n0\n10\n0\n20\n10\n97\n0\n75\n0\n76\n1\n52\n0\n41\n1e-300\n\
+                 78\n4000000000\n53\n0\n43\n0\n44\n0\n45\n0\n46\n1e-300\n79\n0\n98\n0\n\
+                 0\nSOLID\n10\n0\n20\n0\n\
+                 0\nSOLID\n10\n1\n20\n1\n11\n1\n21\n1\n12\n1\n22\n1\n13\n1\n23\n1\n\
+                 0\nHATCH\n2\nSOLID\n70\n1\n450\n1\n453\n2\n421\nnot a colour\n91\n1\n92\n2\n\
+                 72\n0\n73\n1\n93\n3\n10\n0\n20\n0\n10\n10\n20\n0\n10\n0\n20\n10\n440\n-1\n",
+                "",
+            ),
+        ),
+        (
             "deep blocks",
             {
                 let mut blocks = String::new();

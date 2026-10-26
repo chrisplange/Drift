@@ -430,10 +430,10 @@ fn canvas_states(dark: bool) {
     h.key_press(Key::Enter);
     h.run();
     h.run();
-    h.get_by_label("Centre mark").click();
+    h.state_mut().switch_tool(ToolKind::CentreMark);
     h.run();
     click_world(&mut h, DVec2::new(84.0, 40.0));
-    h.get_by_label("Section mark").click();
+    h.state_mut().switch_tool(ToolKind::Section);
     h.run();
     click_world(&mut h, DVec2::new(0.0, 40.0));
     click_world(&mut h, DVec2::new(120.0, 40.0));

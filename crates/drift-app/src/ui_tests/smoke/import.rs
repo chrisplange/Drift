@@ -212,3 +212,190 @@ fn smoke_import_dxf_mirrored_door_stays_mirrored_and_blocks_stay_their_own() {
     assert_eq!(doc.instances().count(), 4);
     let _ = std::fs::remove_file(&path);
 }
+
+/// An inch drawing with ANSI31 at 16 as AutoCAD writes it (lines 2" apart), a SOLID, and a
+/// block whose square is hatched solid, placed twice.
+fn hatches_dxf() -> String {
+    let square = |x: &str, y: &str, w: &str| -> Vec<String> {
+        let (x0, y0, d): (f64, f64, f64) =
+            (x.parse().unwrap(), y.parse().unwrap(), w.parse().unwrap());
+        [(x0, y0), (x0 + d, y0), (x0 + d, y0 + d), (x0, y0 + d)]
+            .iter()
+            .flat_map(|(a, b)| {
+                [
+                    "10".to_owned(),
+                    a.to_string(),
+                    "20".to_owned(),
+                    b.to_string(),
+                ]
+            })
+            .collect()
+    };
+    let mut lines: Vec<String> = [
+        "0",
+        "SECTION",
+        "2",
+        "HEADER",
+        "9",
+        "$INSUNITS",
+        "70",
+        "1",
+        "0",
+        "ENDSEC", //
+        "0",
+        "SECTION",
+        "2",
+        "BLOCKS",
+        "0",
+        "BLOCK",
+        "2",
+        "TILE",
+        "10",
+        "0",
+        "20",
+        "0", //
+        "0",
+        "LWPOLYLINE",
+        "8",
+        "0",
+        "90",
+        "4",
+        "70",
+        "1",
+    ]
+    .map(String::from)
+    .to_vec();
+    lines.extend(square("0", "0", "10"));
+    lines.extend(
+        [
+            "0", "HATCH", "8", "0", "2", "SOLID", "70", "1", "91", "1", "92", "3", "72", "0", "73",
+            "1", "93", "4",
+        ]
+        .map(String::from),
+    );
+    lines.extend(square("0", "0", "10"));
+    lines.extend(
+        [
+            "97", "0", "75", "0", "76", "1", "98", "0", "0", "ENDBLK", "0", "ENDSEC", //
+            "0", "SECTION", "2", "ENTITIES", //
+            "0", "HATCH", "8", "HATCH", "2", "ANSI31", "70", "0", "91", "1", "92", "3", "72", "0",
+            "73", "1", "93", "4",
+        ]
+        .map(String::from),
+    );
+    lines.extend(square("0", "0", "100"));
+    lines.extend(
+        [
+            "97",
+            "0",
+            "75",
+            "0",
+            "76",
+            "1",
+            "52",
+            "0",
+            "41",
+            "16",
+            "77",
+            "0",
+            "78",
+            "1",
+            "53",
+            "45",
+            "43",
+            "0",
+            "44",
+            "0",
+            "45",
+            "-1.414213562373095",
+            "46",
+            "1.414213562373095",
+            "79",
+            "0",
+            "98",
+            "0", //
+            "0",
+            "SOLID",
+            "8",
+            "POCHE",
+            "10",
+            "200",
+            "20",
+            "0",
+            "11",
+            "250",
+            "21",
+            "0",
+            "12",
+            "200",
+            "22",
+            "50",
+            "13",
+            "250",
+            "23",
+            "50", //
+            "0",
+            "INSERT",
+            "2",
+            "TILE",
+            "10",
+            "400",
+            "20",
+            "0", //
+            "0",
+            "INSERT",
+            "2",
+            "TILE",
+            "10",
+            "450",
+            "20",
+            "0",
+            "50",
+            "45", //
+            "0",
+            "ENDSEC",
+            "0",
+            "EOF",
+        ]
+        .map(String::from),
+    );
+    lines.join("\n") + "\n"
+}
+
+#[test]
+fn smoke_import_dxf_hatches_at_real_size_solids_and_hatched_blocks() {
+    let Some(mut h) = harness() else { return };
+    let path = temp_file("hatches", "hatches.dxf", hatches_dxf().as_bytes());
+    import_through_the_dialog(&mut h, &path);
+    let doc = &h.state().editor.doc;
+    let fills: Vec<drift_core::Fill> = doc.fills().map(|(_, f)| f.clone()).collect();
+    assert_eq!(fills.len(), 2, "the hatch and the SOLID");
+    let hatch = fills
+        .iter()
+        .find_map(|f| match &f.kind {
+            FillKind::Hatch(h) => Some(h.clone()),
+            FillKind::Solid => None,
+        })
+        .expect("the hatch");
+    // ANSI31 at real size: 2" apart, whatever the drawing's scale.
+    assert_eq!(hatch.pattern, "ANSI31");
+    assert!(hatch.model);
+    let spacing = drift_draft::find("ANSI31").unwrap().min_spacing() * hatch.scale;
+    assert!((spacing - 50.8).abs() < 1e-6, "{spacing}");
+    // The SOLID is filled, opaque.
+    let solid = fills.iter().find(|f| f.kind == FillKind::Solid).unwrap();
+    assert!((solid.opacity - 1.0).abs() < 1e-9);
+    // The block's hatch is its own fill, and each copy shows it.
+    let (_, block) = doc.blocks().next().expect("the block");
+    assert_eq!(block.fills.len(), 1);
+    assert_eq!(h.state_mut().editor.copy_fills().len(), 2);
+    // The drawing shows it all.
+    view(
+        &mut h,
+        DVec2::new(-1000.0, -1000.0),
+        DVec2::new(13000.0, 3000.0),
+    );
+    h.run();
+    save_png("drift_smoke_import_hatches.png", &mut h);
+    let _ = std::fs::remove_file(&path);
+}

@@ -23,6 +23,8 @@ mod groups;
 mod import;
 /// Options: values and whole-sketch options, applied and undone.
 mod options;
+/// The tool rail: everything in view, families and their flyouts, Move and Rotate.
+mod rail;
 /// Picking and moving: filters, G from a midpoint, axis locks, hidden areas, layer toggles.
 mod selection;
 /// Sheets: a sheet, its title block and logo, its view, print and export.

@@ -1075,6 +1075,11 @@ impl Editor {
         }
         let editing = self.block_edit.map(|e| e.instance);
         let mut out = Vec::new();
+        // Each block's areas are found among its own curves, once until they change, and
+        // placed for each copy (a drawing from CAD can have hundreds of copies of blocks with
+        // thousands of curves and hatches in them).
+        let areas = &mut self.block_areas;
+        areas.retain(|id, _| self.doc.block(*id).is_some());
         for (id, copy) in self.doc.instances() {
             let Some(block) = self.doc.block(copy.block) else {
                 continue;
@@ -1082,21 +1087,26 @@ impl Editor {
             if Some(id) == editing || block.fills.is_empty() {
                 continue;
             }
-            let shapes: Vec<Shape> = self
-                .doc
-                .instance_items(id)
-                .into_iter()
-                .map(|item| item.shape)
-                .collect();
-            let regions = drift_geom::regions::regions(&shapes);
+            let known = areas
+                .get(&copy.block)
+                .filter(|(items, _)| *items == block.items)
+                .map(|(_, regions)| regions.clone());
+            let regions = match known {
+                Some(regions) => regions,
+                None => {
+                    let shapes: Vec<Shape> = block.items.iter().map(|item| item.shape).collect();
+                    let regions = Rc::new(drift_geom::regions::regions(&shapes));
+                    areas.insert(copy.block, (block.items.clone(), regions.clone()));
+                    regions
+                }
+            };
             for (index, f) in block.fills.iter().enumerate() {
-                let fill = copy.apply_fill(f);
-                if let Some(region) = region_at(&regions, fill.seed) {
+                if let Some(region) = region_at(&regions, f.seed) {
                     out.push(CopyFill {
                         instance: id,
                         index,
-                        region: region.clone(),
-                        fill,
+                        region: region.placed(copy),
+                        fill: copy.apply_fill(f),
                     });
                 }
             }

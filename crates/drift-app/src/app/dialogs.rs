@@ -164,6 +164,13 @@ impl DriftApp {
     /// Esc closes the frontmost open window, and is used up so that it doesn't also cancel
     /// the tool or clear what is picked. (Modal prompts close themselves on Esc.)
     pub(crate) fn close_top_dialog(&mut self, ctx: &egui::Context) {
+        // The tool rail's flyout is frontmost: Esc closes it and leaves the tool alone.
+        if self.rail_flyout.is_some()
+            && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+        {
+            self.rail_flyout = None;
+            return;
+        }
         if self.modal_open() || !WINDOWS.iter().any(|id| self.window_open(id)) {
             return;
         }

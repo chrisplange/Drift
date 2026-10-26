@@ -574,6 +574,8 @@ pub(crate) fn sheet_import(cells: usize, fill_every: usize) -> drift_io::dxf::Dx
                 pattern: "SOLID".into(),
                 scale: 1.0,
                 angle: 0.0,
+                definition: Vec::new(),
+                origin: DVec2::ZERO,
                 color: None,
                 opacity: None,
                 seeds: Vec::new(),

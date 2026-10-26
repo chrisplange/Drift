@@ -389,6 +389,15 @@ pub struct Editor {
     )>,
     /// The fills of copies of blocks, in the world (by document revision).
     pub(crate) copy_fills: Option<(u64, std::rc::Rc<Vec<crate::fills::CopyFill>>)>,
+    /// The areas among each block's curves, with the curves they were found among (kept
+    /// across revisions: a block's curves rarely change).
+    pub(crate) block_areas: std::collections::HashMap<
+        drift_core::BlockId,
+        (
+            Vec<drift_core::BlockItem>,
+            std::rc::Rc<Vec<drift_geom::regions::Region>>,
+        ),
+    >,
     /// What draws over what (by document revision).
     pub(crate) stack: Option<(u64, std::rc::Rc<crate::stack::Stack>)>,
     /// Each fill's last region, kept for when its boundary is lost.

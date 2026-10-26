@@ -859,3 +859,75 @@ fn bare_numbers_are_in_the_drawings_units() {
     assert!(w.contains("d1 is only 36"), "{w}");
     assert!(w.contains("write 36\""), "{w}");
 }
+
+#[test]
+fn trim_parses_what_where_and_by_what() {
+    match stmt("trim slab inside bay") {
+        Stmt::Trim { what, inside, by } => {
+            assert_eq!(
+                (what.root.as_str(), inside, by.root.as_str()),
+                ("slab", true, "bay")
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(matches!(
+        stmt("trim bay outside slab"),
+        Stmt::Trim { inside: false, .. }
+    ));
+    assert!(parse_err("trim slab bay").text().contains("inside"));
+}
+
+/// The areas of the drawing's closed regions, largest first.
+fn region_areas(s: &mut Session) -> Vec<f64> {
+    let mut a: Vec<f64> = s.editor.regions().iter().map(|r| r.area).collect();
+    a.sort_by(|x, y| y.total_cmp(x));
+    a
+}
+
+#[test]
+fn two_trims_make_a_union_a_notch_or_the_overlap() {
+    // A 6 × 4 m slab and a bay of radius 1.2 m centred on its east side.
+    let shapes = "rect slab about 6 m x 4 m at 0,0\ncircle bay r 1.2 m at 6 m,2 m\n";
+    let half = std::f64::consts::PI * 1200.0 * 1200.0 / 2.0;
+    let slab = 6000.0 * 4000.0;
+    for (lines, area) in [
+        ("trim slab inside bay\ntrim bay inside slab", slab + half),
+        ("trim slab inside bay\ntrim bay outside slab", slab - half),
+        ("trim slab outside bay\ntrim bay outside slab", half),
+    ] {
+        let mut s = Session::new();
+        let depth = s.editor.history.undo_depth();
+        let v = run(&mut s, &format!("{shapes}{lines}"));
+        let found = region_areas(&mut s);
+        assert_eq!(found.len(), 1, "{lines}: {found:?} {v}");
+        assert!(
+            (found[0] - area).abs() < 1.0,
+            "{lines}: {found:?} vs {area}"
+        );
+        assert!(v.get("warnings").is_none(), "{v}");
+        assert_eq!(s.editor.history.undo_depth(), depth + 1, "one step");
+    }
+}
+
+#[test]
+fn trim_needs_a_closed_shape_and_warns_when_nothing_goes() {
+    let mut s = Session::new();
+    let e = run_err(
+        &mut s,
+        "rect slab about 6 m x 4 m at 0,0\nline l from 0,0 to 8 m,6 m\ntrim slab inside l",
+    );
+    assert!(
+        e["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("isn't closed"),
+        "{e}"
+    );
+    let v = run(
+        &mut s,
+        "rect slab about 6 m x 4 m at 0,0\ncircle round r 10 m at 3 m,2 m\ntrim slab outside round",
+    );
+    let w = v["warnings"][0]["warning"].as_str().unwrap_or_default();
+    assert!(w.contains("nothing outside round"), "{v}");
+}

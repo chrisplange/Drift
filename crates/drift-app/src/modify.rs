@@ -49,6 +49,107 @@ pub struct Cut {
     pub point: Option<EntityId>,
 }
 
+/// What [`Editor::trim_by`] did.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TrimBy {
+    /// How many pieces went.
+    pub trimmed: usize,
+    /// The new curves trims cut off the far side of trimmed ones (parts of the same shapes).
+    pub made: Vec<EntityId>,
+    /// Why pieces weren't trimmed, each reason once.
+    pub skipped: Vec<String>,
+}
+
+/// The inside of a closed shape to trim by, as closed polygons: a point is inside when one
+/// of them goes round it. Kept as plain points so that it can be remembered from before a
+/// shape was trimmed open, and passed on (a script, the assistant).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Area {
+    pub loops: Vec<Vec<DVec2>>,
+}
+
+impl Area {
+    /// The outlines of `regions` (their holes are inside the outline too).
+    pub fn of(regions: &[drift_geom::regions::Region]) -> Self {
+        Self {
+            loops: regions.iter().map(|r| r.outer.polygon(0.005)).collect(),
+        }
+    }
+
+    pub fn contains(&self, p: DVec2) -> bool {
+        self.loops.iter().any(|lp| {
+            // Crossings of a ray to +x: odd is inside.
+            let mut inside = false;
+            for i in 0..lp.len() {
+                let (a, b) = (lp[i], lp[(i + 1) % lp.len()]);
+                if (a.y > p.y) != (b.y > p.y) && p.x < a.x + (p.y - a.y) / (b.y - a.y) * (b.x - a.x)
+                {
+                    inside = !inside;
+                }
+            }
+            inside
+        })
+    }
+}
+
+/// A circle or a whole ellipse: a curve with no ends.
+fn is_closed(shape: &Shape) -> bool {
+    match *shape {
+        Shape::Circle { .. } => true,
+        Shape::Ellipse { sweep, .. } => sweep >= TAU,
+        _ => false,
+    }
+}
+
+/// The curves a trim or an extend cuts against when only some should (AutoCAD's picked
+/// cutting edges): shapes by their path, so a shape still counts as a whole after a trim has
+/// cut a new piece off one of its sides, and loose curves with the pieces trims made of them.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CuttingSet {
+    pub paths: BTreeSet<drift_core::PathId>,
+    pub curves: BTreeSet<EntityId>,
+}
+
+impl CuttingSet {
+    /// The cutting set of the picked `ids`: None if none of them is a curve.
+    pub fn of(doc: &drift_core::Document, ids: impl IntoIterator<Item = EntityId>) -> Option<Self> {
+        let mut set = Self::default();
+        for id in ids {
+            if !doc.get(id).is_some_and(|e| !e.kind.is_point()) {
+                continue;
+            }
+            match doc.path_of(id) {
+                Some(p) => set.paths.insert(p),
+                None => set.curves.insert(id),
+            };
+        }
+        (!set.paths.is_empty() || !set.curves.is_empty()).then_some(set)
+    }
+
+    /// Whether curve `id` cuts.
+    pub fn contains(&self, doc: &drift_core::Document, id: EntityId) -> bool {
+        self.curves.contains(&id) || doc.path_of(id).is_some_and(|p| self.paths.contains(&p))
+    }
+
+    /// The curves that cut, as the document is now.
+    pub fn members(&self, doc: &drift_core::Document) -> Vec<EntityId> {
+        let mut out: BTreeSet<EntityId> = self
+            .curves
+            .iter()
+            .copied()
+            .filter(|c| doc.contains(*c))
+            .collect();
+        for p in &self.paths {
+            out.extend(
+                doc.path(*p)
+                    .into_iter()
+                    .flat_map(|p| p.curves.iter().copied()),
+            );
+        }
+        out.into_iter().collect()
+    }
+}
+
 /// The parameter of the point of `shape` nearest `p` (fraction along a line, angle from the
 /// start for arcs, angle from +x for circles).
 pub fn param_of(shape: &Shape, p: DVec2) -> f64 {
@@ -497,6 +598,11 @@ impl Editor {
 
     /// Where other curves cut curve `id`, in order along it (its own ends excluded).
     pub fn cuts(&self, id: EntityId) -> Vec<Cut> {
+        self.cuts_against(id, None)
+    }
+
+    /// [`cuts`](Self::cuts), by the curves of `against` only when given.
+    pub fn cuts_against(&self, id: EntityId, against: Option<&CuttingSet>) -> Vec<Cut> {
         let Some(shape) = self.curve_shape(id) else {
             return Vec::new();
         };
@@ -514,7 +620,7 @@ impl Editor {
         bounds.include(bounds.max + DVec2::splat(tol));
         let mut cuts: Vec<Cut> = Vec::new();
         for other in self.index.query(bounds) {
-            if other == id {
+            if other == id || against.is_some_and(|s| !s.contains(&self.doc, other)) {
                 continue;
             }
             let Some(other_shape) = self.curve_shape(other) else {
@@ -571,10 +677,20 @@ impl Editor {
         id: EntityId,
         click: DVec2,
     ) -> Result<(Option<Cut>, Option<Cut>), EditError> {
+        self.trim_span_against(id, click, None)
+    }
+
+    /// [`trim_span`](Self::trim_span), cut by the curves of `against` only when given.
+    pub fn trim_span_against(
+        &self,
+        id: EntityId,
+        click: DVec2,
+        against: Option<&CuttingSet>,
+    ) -> Result<(Option<Cut>, Option<Cut>), EditError> {
         let shape = self
             .curve_shape(id)
             .ok_or_else(|| invalid("pick a curve"))?;
-        let cuts = self.cuts(id);
+        let cuts = self.cuts_against(id, against);
         let tc = param_of(&shape, click);
         let closed = match shape {
             Shape::Circle { .. } => true,
@@ -603,8 +719,18 @@ impl Editor {
 
     /// The shape trimming at `click` would remove, for previews.
     pub fn trim_preview(&self, id: EntityId, click: DVec2) -> Option<Shape> {
+        self.trim_preview_against(id, click, None)
+    }
+
+    /// [`trim_preview`](Self::trim_preview), cut by the curves of `against` only when given.
+    pub fn trim_preview_against(
+        &self,
+        id: EntityId,
+        click: DVec2,
+        against: Option<&CuttingSet>,
+    ) -> Option<Shape> {
         let shape = self.curve_shape(id)?;
-        let (lo, hi) = self.trim_span(id, click).ok()?;
+        let (lo, hi) = self.trim_span_against(id, click, against).ok()?;
         let end = match shape {
             Shape::Line { .. } | Shape::Bezier { .. } => 1.0,
             Shape::Arc { sweep, .. } => sweep,
@@ -620,7 +746,21 @@ impl Editor {
     /// Remove the piece of curve `id` around `click` between the nearest cutting curves (the
     /// whole curve if nothing cuts it).
     pub fn trim_at(&mut self, id: EntityId, click: DVec2) -> Result<(), EditError> {
-        let (lo, hi) = self.trim_span(id, click)?;
+        self.trim_at_against(id, click, None)
+    }
+
+    /// [`trim_at`](Self::trim_at), cut by the curves of `against` only when given. When the
+    /// trimmed curve is one of them, the piece the trim cuts off its far side is too.
+    pub fn trim_at_against(
+        &mut self,
+        id: EntityId,
+        click: DVec2,
+        against: Option<&mut CuttingSet>,
+    ) -> Result<(), EditError> {
+        let (lo, hi) = self.trim_span_against(id, click, against.as_deref())?;
+        let cutting = against
+            .as_deref()
+            .is_some_and(|s| s.contains(&self.doc, id));
         let kind = self.doc.get(id).map(|e| e.kind).expect("checked");
         let doc_err = |e: drift_core::DocumentError| invalid(e.to_string());
         let before = self.constraint_state();
@@ -854,7 +994,196 @@ impl Editor {
             }
             Ok(())
         })();
+        // (The far piece is a new curve: it cuts as the one it came from did.)
+        if cutting
+            && result.is_ok()
+            && let Some(set) = against
+        {
+            for c in self.doc.created_in_transaction() {
+                if self.doc.get(c).is_some_and(|e| !e.kind.is_point()) {
+                    set.curves.insert(c);
+                }
+            }
+        }
         self.finish_reshape(result, "Trim", &before)
+    }
+
+    /// The curves among `ids`, with the rest of the shapes they are in: a path's curves, or,
+    /// for a curve in no path, the closed loop of such curves it is in through shared end
+    /// points (four lines drawn as a rectangle).
+    pub fn shape_curves(&self, ids: &[EntityId]) -> Vec<EntityId> {
+        let mut out: BTreeSet<EntityId> = BTreeSet::new();
+        for &c in ids {
+            if !self.doc.get(c).is_some_and(|e| !e.kind.is_point()) {
+                continue;
+            }
+            match self.doc.path_of(c).and_then(|p| self.doc.path(p)) {
+                Some(p) => out.extend(p.curves.iter().copied()),
+                None => {
+                    let loose = |k: EntityId| self.doc.path_of(k).is_none().then_some(0);
+                    match self.chain_from(c, &loose) {
+                        (chain, true) => out.extend(chain),
+                        _ => {
+                            out.insert(c);
+                        }
+                    }
+                }
+            }
+        }
+        out.into_iter().collect()
+    }
+
+    /// The inside of the closed shape the curves `curves` make, if they make one: what
+    /// [`trim_by`](Self::trim_by) tells inside from outside by.
+    pub fn closed_area(&self, curves: &[EntityId]) -> Option<Area> {
+        let shapes: Vec<Shape> = curves.iter().filter_map(|c| self.curve_shape(*c)).collect();
+        let regions = drift_geom::regions::regions(&shapes);
+        (!regions.is_empty()).then(|| Area::of(&regions))
+    }
+
+    /// Remove the pieces of the curves `what` (and the rest of their shapes) that lie inside
+    /// `area` (the closed shape the curves `by` made, see
+    /// [`closed_area`](Self::closed_area)), or outside, cut only by the curves `by`: a trim
+    /// at each piece, as one undo step. A piece between two cuts lies wholly on one side, so
+    /// its midpoint says which; a piece along the outline stays. The area is given rather
+    /// than found from `by`, so that a shape trimmed open a moment ago (the first half of a
+    /// union) still has its inside.
+    pub fn trim_by(
+        &mut self,
+        what: &[EntityId],
+        by: &[EntityId],
+        area: &Area,
+        inside: bool,
+    ) -> Result<TrimBy, EditError> {
+        let outline: Vec<Shape> = by.iter().filter_map(|c| self.curve_shape(*c)).collect();
+        let mut against = CuttingSet::of(&self.doc, by.iter().copied())
+            .ok_or_else(|| invalid("there is nothing to trim by"))?;
+        // What is trimmed: the curves and the rest of the shapes they are in.
+        let mut todo: BTreeSet<EntityId> = self.shape_curves(what).into_iter().collect();
+        todo.retain(|c| !against.contains(&self.doc, *c));
+        if todo.is_empty() {
+            return Err(invalid("nothing to trim: those are the shape's own curves"));
+        }
+        let before = self.history.recorded();
+        let mut out = TrimBy::default();
+        // Pieces a trim refused, so they aren't tried again.
+        let mut refused: Vec<(EntityId, DVec2)> = Vec::new();
+        for _ in 0..10_000 {
+            let next = todo
+                .iter()
+                .copied()
+                .filter(|c| self.doc.contains(*c))
+                .find_map(|c| {
+                    self.unwanted_piece(c, &against, &outline, area, inside, &refused)
+                        .map(|at| (c, at))
+                });
+            let Some((c, at)) = next else {
+                break;
+            };
+            let curves_before: BTreeSet<EntityId> = self.curve_ids();
+            let whole = self.cuts_against(c, Some(&against)).len() < 2
+                && matches!(self.curve_shape(c), Some(s) if is_closed(&s));
+            let result = if whole {
+                // A circle or whole ellipse no curve of the shape crosses: all of it goes.
+                self.doc.begin();
+                self.delete_curves([c]);
+                if self.commit("Trim") {
+                    Ok(())
+                } else {
+                    Err(EditError::Conflict)
+                }
+            } else {
+                self.trim_at_against(c, at, Some(&mut against))
+            };
+            match result {
+                Ok(()) => {
+                    out.trimmed += 1;
+                    // The pieces trims cut off the far side are new curves of the same shapes.
+                    let made: Vec<EntityId> = self
+                        .curve_ids()
+                        .difference(&curves_before)
+                        .copied()
+                        .collect();
+                    todo.extend(&made);
+                    out.made.extend(made);
+                }
+                Err(e) => {
+                    refused.push((c, at));
+                    let why = e.to_string();
+                    if !out.skipped.contains(&why) {
+                        out.skipped.push(why);
+                    }
+                }
+            }
+        }
+        let n = (self.history.recorded() - before) as usize;
+        if n > 1 {
+            self.history.squash_last(n, "Trim");
+        }
+        out.made.retain(|c| self.doc.contains(*c));
+        Ok(out)
+    }
+
+    /// The curves in the document.
+    fn curve_ids(&self) -> BTreeSet<EntityId> {
+        self.doc
+            .iter()
+            .filter(|(_, e)| !e.kind.is_point())
+            .map(|(id, _)| id)
+            .collect()
+    }
+
+    /// A point on a piece of curve `c` between its cuts by `against` that lies on the side
+    /// to go (inside `area` if `inside`), not along `outline` and not `refused` already.
+    fn unwanted_piece(
+        &self,
+        c: EntityId,
+        against: &CuttingSet,
+        outline: &[Shape],
+        area: &Area,
+        inside: bool,
+        refused: &[(EntityId, DVec2)],
+    ) -> Option<DVec2> {
+        let shape = self.curve_shape(c)?;
+        let tol = self.tol_for(&shape) * 1e3;
+        let cuts: Vec<f64> = self
+            .cuts_against(c, Some(against))
+            .iter()
+            .map(|k| k.t)
+            .collect();
+        // The middle of each piece, as a parameter.
+        let middles: Vec<f64> = if is_closed(&shape) {
+            if cuts.len() < 2 {
+                vec![std::f64::consts::PI]
+            } else {
+                (0..cuts.len())
+                    .map(|i| {
+                        let (t0, mut t1) = (cuts[i], cuts[(i + 1) % cuts.len()]);
+                        if t1 <= t0 {
+                            t1 += TAU;
+                        }
+                        (t0 + t1) / 2.0
+                    })
+                    .collect()
+            }
+        } else {
+            let end = match shape {
+                Shape::Arc { sweep, .. } | Shape::Ellipse { sweep, .. } => sweep,
+                _ => 1.0,
+            };
+            let mut stops = vec![0.0];
+            stops.extend(cuts);
+            stops.push(end);
+            stops.windows(2).map(|w| (w[0] + w[1]) / 2.0).collect()
+        };
+        middles.into_iter().map(|t| point_at(&shape, t)).find(|&m| {
+            let along = outline.iter().any(|o| drift_geom::distance(o, m) <= tol);
+            !along
+                && area.contains(m) == inside
+                && !refused
+                    .iter()
+                    .any(|(r, at)| *r == c && at.distance(m) <= tol)
+        })
     }
 
     /// Drop the smooth-join relation holding `handle` in line through `end`: the curve no
@@ -970,6 +1299,17 @@ impl Editor {
         id: EntityId,
         click: DVec2,
     ) -> Result<(EntityId, DVec2, EntityId, Option<EntityId>), EditError> {
+        self.extend_target_against(id, click, None)
+    }
+
+    /// [`extend_target`](Self::extend_target), reaching only the curves of `against` when
+    /// given.
+    pub fn extend_target_against(
+        &self,
+        id: EntityId,
+        click: DVec2,
+        against: Option<&CuttingSet>,
+    ) -> Result<(EntityId, DVec2, EntityId, Option<EntityId>), EditError> {
         let shape = self
             .curve_shape(id)
             .ok_or_else(|| invalid("pick a line or arc"))?;
@@ -992,8 +1332,9 @@ impl Editor {
             _ => (0.0, 1.0),
         };
         let mut best: Option<(f64, DVec2, EntityId)> = None;
+        // (Every curve, not the index's near ones: an extension can reach any distance.)
         for (other, _) in self.doc.iter() {
-            if other == id {
+            if other == id || against.is_some_and(|s| !s.contains(&self.doc, other)) {
                 continue;
             }
             let Some(other_shape) = self.curve_shape(other) else {
@@ -1038,7 +1379,17 @@ impl Editor {
 
     /// Extend the end of curve `id` nearest `click` to the next curve it would meet.
     pub fn extend_at(&mut self, id: EntityId, click: DVec2) -> Result<(), EditError> {
-        let (end, at, other, existing) = self.extend_target(id, click)?;
+        self.extend_at_against(id, click, None)
+    }
+
+    /// [`extend_at`](Self::extend_at), reaching only the curves of `against` when given.
+    pub fn extend_at_against(
+        &mut self,
+        id: EntityId,
+        click: DVec2,
+        against: Option<&CuttingSet>,
+    ) -> Result<(), EditError> {
+        let (end, at, other, existing) = self.extend_target_against(id, click, against)?;
         if self.doc.users_of(end).count() > 1 {
             return Err(invalid("that end is connected to other geometry"));
         }
@@ -3386,5 +3737,99 @@ mod tests {
             .count();
         assert_eq!(shared, 1, "the trimmed ends share a point");
         assert_eq!(ed.doc.constraint_count(), 0);
+    }
+
+    /// A 60 × 40 rectangle and a circle of radius 12 centred on its right side.
+    fn slab_and_bay() -> (Editor, Vec<EntityId>, EntityId) {
+        let mut ed = Editor::default();
+        ed.doc.begin();
+        let c =
+            [v(0.0, 0.0), v(60.0, 0.0), v(60.0, 40.0), v(0.0, 40.0)].map(|p| ed.doc.add_point(p));
+        let sides = (0..4)
+            .map(|i| ed.doc.add_line(c[i], c[(i + 1) % 4]).unwrap())
+            .collect();
+        let centre = ed.doc.add_point(v(60.0, 20.0));
+        let bay = ed.doc.add_circle(centre, 12.0).unwrap();
+        ed.commit("Setup");
+        (ed, sides, bay)
+    }
+
+    /// The areas of the closed regions, largest first.
+    fn areas(ed: &mut Editor) -> Vec<f64> {
+        let mut a: Vec<f64> = ed.regions().iter().map(|r| r.area).collect();
+        a.sort_by(|x, y| y.total_cmp(x));
+        a
+    }
+
+    #[test]
+    fn trimming_by_a_shape_makes_a_union_a_notch_or_the_overlap() {
+        let half_disc = std::f64::consts::PI * 144.0 / 2.0;
+        let cases = [
+            (true, true, 2400.0 + half_disc),
+            (true, false, 2400.0 - half_disc),
+            (false, false, half_disc),
+        ];
+        for (slab_inside, bay_inside, area) in cases {
+            let (mut ed, slab, bay) = slab_and_bay();
+            let depth = ed.history.undo_depth();
+            let (slab_area, bay_area) = (
+                ed.closed_area(&slab).unwrap(),
+                ed.closed_area(&[bay]).unwrap(),
+            );
+            let first = ed.trim_by(&slab, &[bay], &bay_area, slab_inside).unwrap();
+            assert_eq!(ed.history.undo_depth(), depth + 1, "one step");
+            assert!(first.trimmed >= 1 && first.skipped.is_empty(), "{first:?}");
+            // The slab as it is now: what is left of its sides and the pieces cut off them.
+            let mut now: Vec<EntityId> = slab
+                .iter()
+                .copied()
+                .filter(|c| ed.doc.contains(*c))
+                .collect();
+            now.extend(&first.made);
+            // (Inside the slab as it was: its outline is open now.)
+            let second = ed.trim_by(&[bay], &now, &slab_area, bay_inside).unwrap();
+            assert!(second.trimmed >= 1, "{second:?}");
+            let found = areas(&mut ed);
+            assert_eq!(found.len(), 1, "{slab_inside} {bay_inside}: {found:?}");
+            assert!((found[0] - area).abs() < 1e-6, "{found:?} vs {area}");
+            assert!(ed.undo() && ed.undo());
+            assert_eq!(
+                areas(&mut ed).len(),
+                3,
+                "back to the rectangle and the circle"
+            );
+        }
+    }
+
+    #[test]
+    fn trimming_by_needs_a_closed_shape_and_something_on_the_side_to_go() {
+        let (mut ed, slab, _) = slab_and_bay();
+        assert!(
+            ed.closed_area(&slab[..2]).is_none(),
+            "two sides aren't closed"
+        );
+        let slab_area = ed.closed_area(&slab).unwrap();
+        assert!(
+            ed.trim_by(&slab, &slab, &slab_area, true).is_err(),
+            "its own curves"
+        );
+        // Nothing of the slab lies outside a circle round all of it.
+        ed.doc.begin();
+        let c = ed.doc.add_point(v(30.0, 20.0));
+        let round = ed.doc.add_circle(c, 100.0).unwrap();
+        ed.commit("Round");
+        let depth = ed.history.undo_depth();
+        let round_area = ed.closed_area(&[round]).unwrap();
+        let none = ed.trim_by(&slab, &[round], &round_area, false).unwrap();
+        assert_eq!(none.trimmed, 0);
+        assert_eq!(ed.history.undo_depth(), depth, "no step");
+        // A circle wholly inside the shape goes whole.
+        ed.doc.begin();
+        let c = ed.doc.add_point(v(20.0, 20.0));
+        let hole = ed.doc.add_circle(c, 5.0).unwrap();
+        ed.commit("Hole");
+        let gone = ed.trim_by(&[hole], &slab, &slab_area, true).unwrap();
+        assert_eq!(gone.trimmed, 1);
+        assert!(!ed.doc.contains(hole));
     }
 }

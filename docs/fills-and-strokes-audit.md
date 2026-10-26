@@ -308,3 +308,9 @@ batch 2 (Arrange, format 40), with print, PDF, SVG and DXF following the canvas'
 fill picks the shape (outline and fill; copies get their own path). Clicking one side of
 the outline still picks that curve alone, and groups don't yet carry area fills for copy
 and pattern.
+
+**Status (2026-10-25), step 4:** Trim and `follow_paths` already combine shapes. Step 4 is
+replaced by [trim-and-regions-plan.md](trim-and-regions-plan.md):
+- the trim fixes and a script verb come first;
+- Divide comes next, after the region rework (§6 there);
+- Add, Subtract, Intersect, Exclude and Shape Builder are deferred (§7 there).

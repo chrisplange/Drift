@@ -622,6 +622,10 @@ impl Checker<'_> {
                     self.expr(st, o)?;
                 }
             }
+            Stmt::Trim { what, by, .. } => {
+                self.path(st, what)?;
+                self.path(st, by)?;
+            }
             Stmt::Use { ids, name } => {
                 for id in ids {
                     if !is_entity_id(&id.root) || !id.parts.is_empty() {

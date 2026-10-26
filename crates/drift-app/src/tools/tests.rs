@@ -1218,6 +1218,220 @@ fn extend_and_split_tools() {
     assert_eq!(lines(&ed.doc), 3);
 }
 
+/// Drag the Trim tool from `from` to `to` in steps of 5 along x.
+fn drag_trim(ed: &mut Editor, tool: &mut TrimTool, from: DVec2, to: DVec2) {
+    let m = Modifiers::default();
+    let start = ptr(ed, tool, from);
+    tool.handle(Input::DragStart(start, m), ed);
+    let steps = ((to.x - from.x) / 5.0).abs().ceil().max(1.0) as usize;
+    for k in 1..=steps {
+        let p = ptr(ed, tool, from.lerp(to, k as f64 / steps as f64));
+        tool.handle(Input::Drag(p), ed);
+    }
+    tool.handle(Input::DragEnd(ptr(ed, tool, to), m), ed);
+}
+
+/// A bar along y = 0 and three uprights crossing it.
+fn bar_and_uprights() -> (Editor, Vec<EntityId>) {
+    modify_fixture(&[
+        (v(0.0, 0.0), v(40.0, 0.0)),
+        (v(10.0, -5.0), v(10.0, 5.0)),
+        (v(20.0, -5.0), v(20.0, 5.0)),
+        (v(30.0, -5.0), v(30.0, 5.0)),
+    ])
+}
+
+#[test]
+fn a_drag_trim_is_one_undo_step() {
+    let (mut ed, ids) = bar_and_uprights();
+    let before = geometry(&ed);
+    let depth = ed.history.undo_depth();
+    let mut tool = TrimTool::default();
+    // It starts on the first upright's lower piece and crosses the other two.
+    drag_trim(&mut ed, &mut tool, v(10.0, -3.0), v(32.0, -3.0));
+    for &id in &ids[1..] {
+        assert_eq!(line_ends(&ed, id).0.y, 0.0, "{id}'s lower piece went");
+    }
+    assert_eq!(ed.history.undo_depth(), depth + 1, "one step");
+    assert!(
+        ed.notice
+            .as_deref()
+            .is_some_and(|n| n.starts_with("Trim: 3 pieces")),
+        "{:?}",
+        ed.notice
+    );
+    assert!(ed.undo());
+    assert_eq!(geometry(&ed), before, "one Ctrl+Z brings every piece back");
+}
+
+#[test]
+fn a_drag_trim_reports_the_pieces_it_skipped() {
+    let (mut ed, ids) = bar_and_uprights();
+    // A circle cut once only (a line ending inside it) can't be trimmed.
+    ed.doc.begin();
+    let c = ed.doc.add_point(v(20.0, -20.0));
+    ed.doc.add_circle(c, 4.0).unwrap();
+    let a = ed.doc.add_point(v(20.0, -30.0));
+    let b = ed.doc.add_point(v(20.0, -21.0));
+    ed.doc.add_line(a, b).unwrap();
+    ed.commit("Circle");
+    let before = geometry(&ed);
+    let depth = ed.history.undo_depth();
+    let mut tool = TrimTool::default();
+    // Across the circle's top, where nothing cuts it but the line's crossing below.
+    drag_trim(&mut ed, &mut tool, v(14.0, -19.0), v(26.0, -19.0));
+    assert_eq!(
+        ed.history.undo_depth(),
+        depth,
+        "nothing was trimmed: no step"
+    );
+    assert_eq!(geometry(&ed), before);
+    assert!(
+        ed.notice
+            .as_deref()
+            .is_some_and(|n| n.contains("2 pieces weren't trimmed") && n.contains("two cutting")),
+        "{:?}",
+        ed.notice
+    );
+    assert_eq!(line_ends(&ed, ids[1]), (v(10.0, -5.0), v(10.0, 5.0)));
+}
+
+/// Every entity as it is (points with their positions).
+fn geometry(ed: &Editor) -> Vec<(EntityId, EntityKind)> {
+    ed.doc.iter().map(|(id, e)| (id, e.kind)).collect()
+}
+
+/// Two overlapping circles and a long line across both.
+fn circles_and_line() -> (Editor, [EntityId; 3]) {
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    let a = ed.doc.add_point(v(0.0, 0.0));
+    let ca = ed.doc.add_circle(a, 10.0).unwrap();
+    let b = ed.doc.add_point(v(12.0, 0.0));
+    let cb = ed.doc.add_circle(b, 10.0).unwrap();
+    let p = ed.doc.add_point(v(-20.0, 0.0));
+    let q = ed.doc.add_point(v(32.0, 0.0));
+    let line = ed.doc.add_line(p, q).unwrap();
+    ed.commit("Setup");
+    (ed, [ca, cb, line])
+}
+
+fn arc_ends(ed: &Editor, id: EntityId) -> [DVec2; 2] {
+    match ed.doc.get(id).map(|e| e.kind) {
+        Some(EntityKind::Arc { start, end, .. }) => {
+            [ed.doc.point(start).unwrap(), ed.doc.point(end).unwrap()]
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+fn near(a: DVec2, b: DVec2) -> bool {
+    a.distance(b) < 1e-6
+}
+
+#[test]
+fn trimming_against_picked_curves_ignores_a_grid_line() {
+    let (mut ed, [ca, cb, line]) = circles_and_line();
+    ed.selection = [ca, cb].into();
+    let mut tool = TrimTool::default();
+    let y = 19f64.sqrt();
+    click(&mut ed, &mut tool, v(9.0, y));
+    assert!(
+        tool.hint().contains("against 2 picked curves"),
+        "{}",
+        tool.hint()
+    );
+    click(&mut ed, &mut tool, v(3.0, y));
+    // Each circle lost its whole arc inside the other, the line across them didn't cut.
+    for id in [ca, cb] {
+        let ends = arc_ends(&ed, id);
+        assert!(
+            ends.iter()
+                .all(|p| near(*p, v(6.0, 8.0)) || near(*p, v(6.0, -8.0))),
+            "{ends:?}"
+        );
+    }
+    assert_eq!(line_ends(&ed, line), (v(-20.0, 0.0), v(32.0, 0.0)));
+    assert_eq!(count(&ed.doc, |k| !k.is_point()), 3, "no extra pieces");
+    // Esc lets go of the picked curves: every curve cuts again.
+    assert!(tool.cancel(&mut ed));
+    assert!(ed.selection.is_empty());
+    assert!(!tool.hint().contains("picked"));
+    assert!(!tool.cancel(&mut ed), "a second Esc leaves the tool");
+}
+
+#[test]
+fn with_nothing_picked_everything_cuts() {
+    let (mut ed, [ca, ..]) = circles_and_line();
+    let mut tool = TrimTool::default();
+    click(&mut ed, &mut tool, v(9.0, 19f64.sqrt()));
+    // Only up to the line: the piece between the other circle and the line went.
+    let ends = arc_ends(&ed, ca);
+    assert!(ends.iter().any(|p| near(*p, v(10.0, 0.0))), "{ends:?}");
+}
+
+#[test]
+fn a_selection_with_no_curves_is_nothing_picked() {
+    let (mut ed, ids) = bar_and_uprights();
+    let point = ed.doc.get(ids[0]).and_then(|e| e.kind.ends()).unwrap()[0];
+    ed.selection = [point].into();
+    let mut tool = TrimTool::default();
+    click(&mut ed, &mut tool, v(15.0, 0.2));
+    assert_eq!(line_ends(&ed, ids[0]), (v(0.0, 0.0), v(10.0, 0.0)));
+    assert!(!tool.hint().contains("picked"));
+}
+
+#[test]
+fn a_trimmed_cutting_line_still_cuts_with_its_far_piece() {
+    let (mut ed, ids) = bar_and_uprights();
+    ed.selection = ids[..3].iter().copied().collect();
+    let mut tool = TrimTool::default();
+    // The bar's middle goes: its far part (20 to 40) is a new curve.
+    click(&mut ed, &mut tool, v(15.0, 0.2));
+    assert_eq!(line_ends(&ed, ids[0]), (v(0.0, 0.0), v(10.0, 0.0)));
+    assert_eq!(
+        ed.selection.len(),
+        4,
+        "the far piece is picked with the rest"
+    );
+    // The second upright is cut by that far piece, not removed whole.
+    click(&mut ed, &mut tool, v(20.2, -3.0));
+    assert_eq!(line_ends(&ed, ids[2]), (v(20.0, 0.0), v(20.0, 5.0)));
+    // The third upright wasn't picked: it doesn't cut the far piece, which goes whole.
+    click(&mut ed, &mut tool, v(35.0, 0.2));
+    assert_eq!(lines(&ed.doc), 4);
+    assert!(
+        ed.doc
+            .iter()
+            .filter_map(|(id, _)| ed.doc.shape(id))
+            .all(|s| !matches!(s, Shape::Line { b, .. } if b == v(40.0, 0.0))),
+        "the far piece is gone"
+    );
+    assert_eq!(line_ends(&ed, ids[3]), (v(30.0, -5.0), v(30.0, 5.0)));
+}
+
+#[test]
+fn extend_reaches_only_a_picked_boundary() {
+    let (mut ed, ids) = modify_fixture(&[
+        (v(0.0, 0.0), v(5.0, 0.0)),
+        (v(10.0, -5.0), v(10.0, 5.0)),
+        (v(20.0, -5.0), v(20.0, 5.0)),
+    ]);
+    ed.selection = [ids[0], ids[2]].into();
+    let mut tool = ExtendTool::default();
+    click(&mut ed, &mut tool, v(4.0, 0.1));
+    assert_eq!(
+        line_ends(&ed, ids[0]).1,
+        v(20.0, 0.0),
+        "past the unpicked line"
+    );
+    assert!(
+        tool.hint().contains("Extending against 2 picked"),
+        "{}",
+        tool.hint()
+    );
+}
+
 /// Two lines meeting at the origin.
 fn corner_fixture() -> Editor {
     let mut ed = Editor::default();

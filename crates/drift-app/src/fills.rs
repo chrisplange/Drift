@@ -1384,7 +1384,7 @@ impl Editor {
     /// Follow curves end to end from `first` (through the end points they share): the
     /// chain through the curves `rank` allows, the lowest rank first at a junction, and
     /// whether it closes. A lone circle or whole ellipse is a closed chain of one.
-    fn chain_from(
+    pub(crate) fn chain_from(
         &self,
         first: EntityId,
         rank: &dyn Fn(EntityId) -> Option<u8>,
@@ -1533,7 +1533,11 @@ impl Editor {
                     closed: true,
                 }
             } else {
-                // Open: its chain, then any of its curves the chain doesn't reach.
+                // Open: its chain through its own curves and new ones only. Another open
+                // path's curves join it only when they close it, so a shape trimmed open
+                // never takes a neighbour's outline (and its fill) before the two meet.
+                let (chain, _) = self.chain_from(first, &|c| rank(c).filter(|r| *r < 2));
+                // Then any of its curves the chain doesn't reach.
                 let mut curves = chain;
                 let rest: Vec<EntityId> = own
                     .iter()

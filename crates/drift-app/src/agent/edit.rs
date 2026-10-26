@@ -13,6 +13,7 @@ use serde_json::{Value, json};
 use super::args::{self, AnyId};
 use super::{Res, Session};
 use crate::fills::FillStyle;
+use crate::modify::{Area, CuttingSet};
 
 fn ids_json(ids: &[EntityId]) -> Value {
     json!(ids.iter().map(|i| args::id(*i)).collect::<Vec<_>>())
@@ -192,11 +193,29 @@ pub(super) fn offset(s: &mut Session, a: &Value) -> Res {
 
 pub(super) fn trim(s: &mut Session, a: &Value) -> Res {
     let id = args::entity_at(&s.editor.doc, a, "id")?;
+    if a.get("remove").is_some() {
+        return trim_by(s, a, id);
+    }
     let at = args::vec2_at(a, "at")?;
+    // Only these curves cut (or are reached), when given.
+    let mut against = match a.get("against") {
+        Some(_) => Some(
+            CuttingSet::of(
+                &s.editor.doc,
+                args::entities_at(&s.editor.doc, a, "against")?,
+            )
+            .ok_or("`against`: none of those is a curve")?,
+        ),
+        None => None,
+    };
     let ed = &mut s.editor;
     match args::opt_str(a, "mode")?.unwrap_or("trim") {
-        "trim" => ed.trim_at(id, at).map_err(|e| e.to_string())?,
-        "extend" => ed.extend_at(id, at).map_err(|e| e.to_string())?,
+        "trim" => ed
+            .trim_at_against(id, at, against.as_mut())
+            .map_err(|e| e.to_string())?,
+        "extend" => ed
+            .extend_at_against(id, at, against.as_ref())
+            .map_err(|e| e.to_string())?,
         "split" => {
             // `split_at` gives the point at the cut; the new piece is the other curve there.
             let point = ed.split_at(id, at).map_err(|e| e.to_string())?;
@@ -212,6 +231,82 @@ pub(super) fn trim(s: &mut Session, a: &Value) -> Res {
         other => return Err(format!("unknown mode `{other}` (trim, extend or split)")),
     }
     Ok(json!({ "done": true }))
+}
+
+/// Whether a side word is `inside` (else `outside`).
+fn side(a: &Value, key: &str) -> Result<Option<bool>, String> {
+    match args::opt_str(a, key)? {
+        None => Ok(None),
+        Some("inside") => Ok(Some(true)),
+        Some("outside") => Ok(Some(false)),
+        Some(other) => Err(format!("`{key}` is inside or outside, not `{other}`")),
+    }
+}
+
+/// Trim the shape of `id` (and `ids`) where it lies inside or outside the closed shape `by`,
+/// cut by that shape alone; with `and_remove`, then the shape `by` where it lies inside or
+/// outside the first shape as it was. Union: inside, inside; notch (the first minus `by`):
+/// inside, outside; overlap: outside, outside.
+fn trim_by(s: &mut Session, a: &Value, id: EntityId) -> Res {
+    let doc = &s.editor.doc;
+    let mut what = vec![id];
+    if a.get("ids").is_some() {
+        what.extend(args::entities_at(doc, a, "ids")?);
+    }
+    let by = args::entities_at(doc, a, "by")?;
+    let first = side(a, "remove")?.ok_or("`remove` is required")?;
+    let then = side(a, "and_remove")?;
+    let ed = &mut s.editor;
+    let (what, by) = (ed.shape_curves(&what), ed.shape_curves(&by));
+    // The inside of `by`: as given (a shape trimmed open since keeps the inside it had), or
+    // as its curves close it now.
+    let by_area = match a.get("inside_of") {
+        Some(_) => Area {
+            loops: args::array(a, "inside_of")?
+                .iter()
+                .map(|lp| {
+                    lp.as_array()
+                        .ok_or("`inside_of`: each is a list of points")?
+                        .iter()
+                        .map(args::vec2)
+                        .collect::<Result<Vec<_>, _>>()
+                })
+                .collect::<Result<_, String>>()?,
+        },
+        None => ed.closed_area(&by).ok_or("`by` isn't a closed shape")?,
+    };
+    // (The first shape's inside as it is now: it may be trimmed open below.)
+    let what_area = match then {
+        Some(_) => Some(
+            ed.closed_area(&what)
+                .ok_or("`id` isn't a closed shape, so `and_remove` can't tell its inside")?,
+        ),
+        None => None,
+    };
+    let done = ed
+        .trim_by(&what, &by, &by_area, first)
+        .map_err(|e| e.to_string())?;
+    let (mut trimmed, mut made, mut skipped) = (done.trimmed, done.made, done.skipped);
+    if let (Some(inside), Some(area)) = (then, what_area) {
+        let mut now: Vec<EntityId> = what
+            .iter()
+            .copied()
+            .filter(|c| ed.doc.contains(*c))
+            .collect();
+        now.extend(&made);
+        let done = ed
+            .trim_by(&by, &now, &area, inside)
+            .map_err(|e| e.to_string())?;
+        trimmed += done.trimmed;
+        made.extend(done.made);
+        for why in done.skipped {
+            if !skipped.contains(&why) {
+                skipped.push(why);
+            }
+        }
+    }
+    made.retain(|c| ed.doc.contains(*c));
+    Ok(json!({ "trimmed": trimmed, "made": ids_json(&made), "skipped": skipped }))
 }
 
 /// The corner point: a point id, or the point at (or nearest to) a coordinate where two

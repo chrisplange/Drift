@@ -295,10 +295,24 @@ mirror {axis line, keep_original (default true)}; linear_array {by, count}; circ
         },
         ToolSpec {
             name: "trim_extend_split",
-            description: "trim: remove the piece of a curve around `at` between its crossings with other curves; extend: lengthen the end nearest `at` to the next curve; split: cut it in two at `at`.",
+            description: "trim: remove the piece of a curve around `at` between its crossings with other curves; extend: lengthen the end nearest `at` to the next curve; split: cut it in two at `at`. \
+`against` (curve ids): only those cut, or are reached by an extend (a curve of a shape stands for the whole shape). \
+`remove: inside|outside` with `by` (curves of a closed shape) and no `at`: remove every piece of the shape of `id` (and `ids`) lying inside or outside that shape, as Trim would piece by piece. \
+`and_remove` then does the same to the shape `by`, against the first shape as it was. Union: remove inside, and_remove inside. The first minus `by`: inside, outside. The overlap: outside, outside. \
+Two filled shapes trimmed into one outline keep one fill, the top one's.",
             schema: object(
-                json!({ "id": id("Curve"), "at": coord(), "mode": { "type": "string", "enum": ["trim", "extend", "split"] } }),
-                &["id", "at"],
+                json!({
+                    "id": id("Curve"),
+                    "at": coord(),
+                    "mode": { "type": "string", "enum": ["trim", "extend", "split"] },
+                    "against": { "type": "array", "items": { "type": "string" }, "description": "Curve ids: only these cut (trim) or are reached (extend)" },
+                    "remove": { "type": "string", "enum": ["inside", "outside"], "description": "Trim the shape of `id` where it lies inside or outside `by` (no `at`)" },
+                    "by": { "type": "array", "items": { "type": "string" }, "description": "Curve ids of the closed shape to trim by" },
+                    "ids": { "type": "array", "items": { "type": "string" }, "description": "More curves trimmed with `id`" },
+                    "and_remove": { "type": "string", "enum": ["inside", "outside"], "description": "Then trim `by` where it lies inside or outside the first shape as it was" },
+                    "inside_of": { "type": "array", "items": { "type": "array", "items": coord() }, "description": "The inside of `by` as closed polygons, when `by` is no longer closed (trimmed open by an earlier call)" }
+                }),
+                &["id"],
             ),
             read_only: false,
         },

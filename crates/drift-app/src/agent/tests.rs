@@ -723,3 +723,82 @@ fn underlays_are_drawn_at_the_scale_given_whatever_the_format() {
     assert!((long - 5000.0).abs() < 1e-6, "{long}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn trimming_against_given_curves_only() {
+    let mut s = Session::new();
+    let made = ok(
+        &mut s,
+        "add_geometry",
+        json!({ "items": [
+            { "type": "line", "from": [0, 0], "to": [40, 0] },
+            { "type": "line", "from": [10, -5], "to": [10, 5] },
+            { "type": "line", "from": [20, -5], "to": [20, 5] },
+        ] }),
+    );
+    let ids: Vec<String> = made["created"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| str_at(c, &["id"]).to_owned())
+        .collect();
+    // Cut by the second upright only: the bar loses all of its first 20 mm.
+    ok(
+        &mut s,
+        "trim_extend_split",
+        json!({ "id": ids[0], "at": [15, 0], "against": [ids[2]] }),
+    );
+    let bar = ok(&mut s, "list_entities", json!({ "ids": [ids[0]] }));
+    assert_eq!(bar["entities"][0]["from"], json!([20.0, 0.0]), "{bar}");
+    assert!(
+        err(
+            &mut s,
+            "trim_extend_split",
+            json!({ "id": ids[1], "at": [10, 3], "against": [] })
+        )
+        .contains("against")
+    );
+}
+
+#[test]
+fn a_union_by_trimming_is_one_call_and_one_step() {
+    let mut s = Session::new();
+    let made = ok(
+        &mut s,
+        "add_geometry",
+        json!({ "items": [
+            { "type": "rectangle", "corner": [0, 0], "width": 60, "height": 40 },
+            { "type": "circle", "center": [60, 20], "radius": 12 },
+        ] }),
+    );
+    let right = str_at(&made["created"][0], &["sides", "right"]).to_owned();
+    let circle = str_at(&made["created"][1], &["id"]).to_owned();
+    let regions = |s: &mut Session| {
+        ok(s, "analyze", json!({}))["regions"]
+            .as_array()
+            .map(Vec::len)
+    };
+    assert_eq!(regions(&mut s), Some(3));
+    let v = ok(
+        &mut s,
+        "trim_extend_split",
+        json!({ "id": right, "remove": "inside", "by": [circle], "and_remove": "inside" }),
+    );
+    assert_eq!(v["trimmed"], 2, "{v}");
+    assert_eq!(regions(&mut s), Some(1), "one outline: {v}");
+    ok(&mut s, "undo", json!({}));
+    assert_eq!(regions(&mut s), Some(3), "one step");
+    // A side of the rectangle stands for all of it, but a lone line bounds nothing.
+    let line = ok(
+        &mut s,
+        "add_geometry",
+        json!({ "items": [{ "type": "line", "from": [-10, -10], "to": [80, -10] }] }),
+    );
+    let line = str_at(&line["created"][0], &["id"]).to_owned();
+    let e = err(
+        &mut s,
+        "trim_extend_split",
+        json!({ "id": circle, "remove": "inside", "by": [line] }),
+    );
+    assert!(e.contains("closed"), "{e}");
+}

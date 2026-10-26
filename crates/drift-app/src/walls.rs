@@ -490,7 +490,7 @@ impl Editor {
 
     /// Two ends joined by where they are (`aliased`: each point to the one naming its join),
     /// one of whose points this transaction moved or made, become one point, where their
-    /// straight centrelines cross: the faces were made meeting there already, so nothing
+    /// straight centrelines cross (when that is near both ends): the faces were made meeting there already, so nothing
     /// moves but the centrelines' ends, and the walls move together from then on. (Not where
     /// more than two meet, or a centreline there is curved or runs straight on.) Whether
     /// any did.
@@ -544,6 +544,12 @@ impl Editor {
                 continue;
             }
             let x = pa + da * ((pb - pa).perp_dot(db) / den);
+            // (Only a corner where the ends are: not where the lines happen to cross far off.)
+            let thick = |w: WallId| self.doc.wall(w).map_or(0.0, |w| w.thickness);
+            let reach = thick(wa).max(thick(wb)) + drift_geom::walls::regen::snap(&self.doc);
+            if x.distance(pa) > reach || x.distance(pb) > reach {
+                continue;
+            }
             let _ = self.doc.set_point(a, x);
             let _ = self.doc.set_point(b, x);
             if self.doc.merge_points(b, a).is_err() {

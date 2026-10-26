@@ -442,6 +442,24 @@ impl Editor {
                 _ => None,
             })
             .collect();
+        // Lines a lowered relation measures a signed offset from (walls' centrelines under
+        // dimensioned faces) keep their way round too: turned, which side is the left face
+        // would swap, and the relation would hold the other face.
+        let lowered_lines: Vec<(EntityId, EntityId, EntityId, DVec2)> = frame
+            .lowering
+            .iter()
+            .flat_map(|l| l.of.values().flatten().chain(&l.extra))
+            .flat_map(drift_solver::Lowered::entities)
+            .filter_map(|line| match self.doc.get(line)?.kind {
+                EntityKind::Line { a, b } => Some((
+                    line,
+                    a,
+                    b,
+                    self.doc.point(b).ok()? - self.doc.point(a).ok()?,
+                )),
+                _ => None,
+            })
+            .collect();
         self.doc.translate(ids.iter().copied(), delta);
         // Translating keeps the arcs it touches circular by putting their ends back on their
         // circles, which can take a moved point off its target (the end of an arc that isn't
@@ -474,6 +492,7 @@ impl Editor {
         let conflicts = self.new_conflicts(&report);
         let mut flipped: Vec<EntityId> = carried_lines
             .iter()
+            .chain(&lowered_lines)
             .filter(
                 |&&(_, a, b, was)| match (self.doc.point(a), self.doc.point(b)) {
                     (Ok(a), Ok(b)) => (b - a).dot(was) <= 0.0,

@@ -1987,3 +1987,16 @@ proptest! {
         face_dimensions_hold(kind, which, DVec2::new(dx, dy), steps)?;
     }
 }
+
+/// From CI: dragging a wall's end along it, in steps, with a clear width held.
+#[test]
+fn face_dimension_holds_dragging_a_wall_end_along_it() {
+    face_dimensions_hold(0, 2, DVec2::new(1420.8408966554066, 0.0), 5).unwrap();
+}
+
+/// From the property: a host dragged until its end comes near the branch's far end, where
+/// their lines cross far off (at the T): the walls aren't welded there at the commit.
+#[test]
+fn face_dimension_holds_when_an_end_passes_near_another() {
+    face_dimensions_hold(1, 3, DVec2::new(777.1960625046115, 1361.8778343154509), 2).unwrap();
+}

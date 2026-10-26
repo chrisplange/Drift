@@ -27,6 +27,11 @@ pub(crate) const DXF_FILE: FileType = FileType {
     extensions: &["dxf"],
 };
 #[cfg(not(feature = "demo"))]
+pub(crate) const DWG_FILE: FileType = FileType {
+    name: "DWG",
+    extensions: &["dwg"],
+};
+#[cfg(not(feature = "demo"))]
 pub(crate) const PROFILES_FILE: FileType = FileType {
     name: "Drift profiles for Blender",
     extensions: &["json"],
@@ -432,19 +437,98 @@ impl DriftApp {
         }
     }
 
-    #[cfg(not(feature = "demo"))]
+    /// The model as DXF R12 text (for tests).
+    #[cfg(all(test, not(feature = "demo")))]
     pub(crate) fn dxf_text(&mut self, painter: &egui::Painter) -> String {
+        let bytes = self
+            .cad_bytes(painter, crate::output::CadFormat::DxfR12)
+            .unwrap_or_default();
+        String::from_utf8(bytes).unwrap_or_default()
+    }
+
+    /// The model at full size as a CAD file (see [`crate::output::cad_file`]).
+    #[cfg(not(feature = "demo"))]
+    pub(crate) fn cad_bytes(
+        &mut self,
+        painter: &egui::Painter,
+        format: crate::output::CadFormat,
+    ) -> Result<Vec<u8>, String> {
         self.hatch_patterns
             .update(self.editor.doc.custom_patterns());
-        let d = crate::output::model_drawing(&mut self.editor, &self.hatch_patterns, painter);
-        drift_io::dxf::write(&d, drift_io::dxf::DxfUnits::of(&self.editor.doc.units()))
+        crate::output::cad_file(&mut self.editor, &self.hatch_patterns, painter, format)
+    }
+
+    /// Export DWG / DXF: first the dialog choosing the format.
+    #[cfg(not(feature = "demo"))]
+    pub(crate) fn export_dxf(&mut self, _: &egui::Painter) {
+        self.cad_dialog = true;
     }
 
     #[cfg(not(feature = "demo"))]
-    pub(crate) fn export_dxf(&mut self, painter: &egui::Painter) {
-        let text = self.dxf_text(painter);
-        let name = format!("{}.dxf", self.file_stem());
-        self.files.export(&name, DXF_FILE, text.into_bytes());
+    fn write_cad(&mut self, painter: &egui::Painter, format: crate::output::CadFormat) {
+        match self.cad_bytes(painter, format) {
+            Ok(bytes) => {
+                let name = format!("{}.{}", self.file_stem(), format.extension());
+                let kind = match format {
+                    crate::output::CadFormat::Dwg => DWG_FILE,
+                    _ => DXF_FILE,
+                };
+                self.files.export(&name, kind, bytes);
+            }
+            Err(e) => self.status_next = Some(format!("Couldn't export: {e}")),
+        }
+    }
+
+    /// The Export DWG / DXF dialog: which format, then the file.
+    #[cfg(not(feature = "demo"))]
+    pub(crate) fn cad_window(&mut self, ctx: &egui::Context) {
+        use crate::output::CadFormat;
+        if !self.cad_dialog {
+            return;
+        }
+        let title = "Export DWG / DXF";
+        let dark = ctx.global_style().visuals.dark_mode;
+        let (mut close, mut go) = (false, false);
+        theme::dialog(ctx, title)
+            .id(egui::Id::new("cad_export"))
+            .show(ctx, |ui| {
+                ui.set_width(380.0);
+                if theme::dialog_title(ui, title, true) {
+                    close = true;
+                }
+                ui.label(
+                    egui::RichText::new(
+                        "The model at full size, in the drawing's units, with its layers.",
+                    )
+                    .weak(),
+                );
+                ui.add_space(6.0);
+                for format in CadFormat::ALL {
+                    #[cfg(not(feature = "dwg"))]
+                    if format != CadFormat::DxfR12 {
+                        continue;
+                    }
+                    ui.radio_value(&mut self.cad_format, format, format.label());
+                    ui.indent(format.extension(), |ui| {
+                        ui.label(egui::RichText::new(format.hint()).small().weak());
+                    });
+                }
+                theme::dialog_buttons(ui, |ui| {
+                    if ui.add(theme::primary_button("Export…", dark)).clicked() {
+                        go = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        close = true;
+                    }
+                });
+            });
+        if go {
+            self.cad_dialog = false;
+            let painter = ctx.layer_painter(egui::LayerId::background());
+            self.write_cad(&painter, self.cad_format);
+        } else if close {
+            self.cad_dialog = false;
+        }
     }
 
     #[cfg(not(feature = "demo"))]
@@ -577,7 +661,7 @@ impl DriftApp {
 
     #[cfg(feature = "demo")]
     pub(crate) fn export_dxf(&mut self, _: &egui::Painter) {
-        self.not_in_demo("Exporting a DXF");
+        self.not_in_demo("Exporting DWG or DXF");
     }
 
     #[cfg(feature = "demo")]
@@ -1128,8 +1212,8 @@ impl DriftApp {
                 self.export_svg(&painter);
             }
             if ui
-                .button("DXF…")
-                .on_hover_text("The model at full size, with its layers and line types")
+                .button("DWG / DXF…")
+                .on_hover_text("The model at full size, with its layers, for CAD")
                 .clicked()
             {
                 self.export_dxf(&painter);

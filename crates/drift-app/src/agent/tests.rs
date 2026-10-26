@@ -369,6 +369,19 @@ fn files_round_trip_and_stay_in_the_root() {
         assert!(bytes.starts_with(magic), "{file}");
     }
     ok(&mut s, "export", json!({ "path": "room.dxf" }));
+    ok(&mut s, "export", json!({ "path": "room.dwg" }));
+    ok(
+        &mut s,
+        "export",
+        json!({ "path": "room-r12.dxf", "format": "dxf-r12" }),
+    );
+    assert!(
+        std::fs::read(dir.join("room.dwg"))
+            .unwrap()
+            .starts_with(b"AC1032")
+    );
+    let text = |f: &str| std::fs::read_to_string(dir.join(f)).unwrap();
+    assert!(text("room.dxf").contains("AC1032") && text("room-r12.dxf").contains("AC1009"));
     let mut t = Session::new().with_root(dir.clone());
     let info = ok(&mut t, "open_drawing", json!({ "path": "room.drift" }));
     assert_eq!(info["entities"]["line"], 4, "{info}");

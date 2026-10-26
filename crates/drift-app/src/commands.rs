@@ -826,11 +826,13 @@ fn table() -> Vec<Spec> {
             "file.export_dxf",
             C::File,
             K::ExportDxf,
-            "Export DXF…",
-            "The model at full size, with layers and line types",
+            "Export DWG / DXF…",
+            "The model at full size, with its layers, blocks, fills and hatches: DWG or DXF \
+             for AutoCAD 2018 and later, or DXF R12 for laser cutters and older software",
         )
-        .menu("DXF…")
-        .aliases(&["DXFOUT", "EXPORT"]),
+        .menu("DWG / DXF…")
+        .aliases(&["DXFOUT", "DWGOUT", "EXPORT"])
+        .words("dwg dxf autocad cad r12 r2018"),
         Spec::new(
             "file.export_model_svg",
             C::File,

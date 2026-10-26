@@ -86,7 +86,7 @@ pub(crate) fn aci_rgb(index: i64) -> Option<Rgb> {
 }
 
 #[cfg(not(feature = "demo"))]
-fn line_type_name(t: LineType) -> &'static str {
+pub(crate) fn line_type_name(t: LineType) -> &'static str {
     match t {
         LineType::Continuous => "CONTINUOUS",
         LineType::Dashed => "DASHED",
@@ -109,8 +109,11 @@ pub(crate) fn parse_line_type(name: &str) -> LineType {
 }
 
 #[cfg(not(feature = "demo"))]
-/// A layer name DXF accepts.
+/// A layer or block name R12 accepts: letters, digits, `_`, `-` and `$`, at most 31 of them.
+/// A longer name keeps its start and ends in a hash of the whole, so names that start alike
+/// stay apart.
 fn layer_name(name: &str) -> String {
+    const MAX: usize = 31;
     let s: String = name
         .chars()
         .map(|c| {
@@ -121,7 +124,17 @@ fn layer_name(name: &str) -> String {
             }
         })
         .collect();
-    if s.is_empty() { "0".into() } else { s }
+    if s.is_empty() {
+        return "0".into();
+    }
+    if s.len() <= MAX {
+        return s;
+    }
+    // FNV-1a: the same everywhere, run to run.
+    let hash = name.bytes().fold(0x811c_9dc5_u32, |h, b| {
+        (h ^ u32::from(b)).wrapping_mul(0x0100_0193)
+    });
+    format!("{}_{:05X}", &s[..MAX - 6], hash & 0xF_FFFF)
 }
 
 /// Text as an R12 TEXT string: `%%c`, `%%d` and `%%p` for Ø, ° and ±, `\U+XXXX` for other
@@ -567,6 +580,16 @@ fn write_item(
                 o.num(50, angle.rem_euclid(360.0));
             }
         }
+        // (R12 has no HATCH: what it is drawn with.)
+        Prim::Hatch(h) => {
+            for prim in h.prims(drift_draft::page::HATCH_LIMIT) {
+                let part = drift_draft::page::Item {
+                    prim,
+                    ..item.clone()
+                };
+                write_item(o, &part, layers, tol);
+            }
+        }
     }
 }
 
@@ -889,6 +912,17 @@ mod tests {
             }
         );
         assert_eq!(DxfUnits::of(&Units::default()), DxfUnits::MM);
+    }
+
+    #[test]
+    fn long_names_fit_in_r12() {
+        // AutoCAD refuses an R12 file with a block or layer name over 31 characters.
+        let front = layer_name("Bar shelving - horizontal standard - front");
+        let back = layer_name("Bar shelving - horizontal standard - back");
+        assert!(front.len() <= 31 && back.len() <= 31, "{front} {back}");
+        assert_ne!(front, back);
+        assert!(front.starts_with("BAR_SHELVING_-_HORIZONTA"));
+        assert_eq!(layer_name("Walls new"), "WALLS_NEW");
     }
 
     #[test]

@@ -88,7 +88,12 @@ as before.
 
 - **Export the model at 1 : 1** as SVG or PDF (File → Export), with or without dimensions and
   notes.
-- **DXF export opens in AutoCAD.** A drawing with an ellipse or a pen curve made a DXF that
+- **Export DWG.** File → Export → DWG / DXF… writes DWG or DXF for AutoCAD 2018 and later,
+  and it comes out as a drawing, not a picture of one: true ellipses and curves, layers with
+  their names, true colours, line types and weights, blocks with their fills, solid fills and
+  hatches as real hatches (with their patterns, scale and angle), and text in any script.
+  DXF R12 stays in the same dialog for laser cutters, CNC and older software.
+- **DXF R12 opens in AutoCAD.** A drawing with an ellipse or a pen curve made a DXF that
   AutoCAD refused outright; those curves now go out as polylines within 0.01 mm of the curve.
   Accents and symbols in text (é, ½, m²) no longer turn into question marks.
 - **Title block None** gives blank paper; the old None is now **Border only**.

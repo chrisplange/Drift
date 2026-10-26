@@ -1660,51 +1660,7 @@ fn region_curves_of(doc: &drift_core::Document, fill: FillId) -> Vec<EntityId> {
     out
 }
 
-/// Tessellate a region (holes excluded) into world-space triangles. Arcs are flattened in
-/// steps of at most `max_angle` radians.
-pub fn tessellate(region: &Region, max_angle: f64) -> Option<(Vec<DVec2>, Vec<u32>)> {
-    use lyon_tessellation::math::point;
-    use lyon_tessellation::path::Path;
-    use lyon_tessellation::{
-        BuffersBuilder, FillOptions, FillRule, FillTessellator, FillVertex, VertexBuffers,
-    };
-
-    // Tessellate relative to the region's centroid: lyon works in f32.
-    let origin = region.centroid;
-    let mut builder = Path::builder();
-    for lp in std::iter::once(&region.outer).chain(&region.holes) {
-        let poly = lp.polygon(max_angle);
-        let Some(first) = poly.first() else {
-            continue;
-        };
-        let to = |p: DVec2| {
-            let d = p - origin;
-            point(d.x as f32, d.y as f32)
-        };
-        builder.begin(to(*first));
-        for p in &poly[1..] {
-            builder.line_to(to(*p));
-        }
-        builder.close();
-    }
-    let path = builder.build();
-    let mut buffers: VertexBuffers<lyon_tessellation::math::Point, u32> = VertexBuffers::new();
-    FillTessellator::new()
-        .tessellate_path(
-            &path,
-            &FillOptions::default()
-                .with_fill_rule(FillRule::EvenOdd)
-                .with_tolerance(1e-4),
-            &mut BuffersBuilder::new(&mut buffers, |v: FillVertex| v.position()),
-        )
-        .ok()?;
-    let vertices = buffers
-        .vertices
-        .iter()
-        .map(|v| origin + DVec2::new(f64::from(v.x), f64::from(v.y)))
-        .collect();
-    Some((vertices, buffers.indices))
-}
+pub use drift_draft::tessellate;
 
 /// A tessellated fill: world vertices and triangle indices.
 type Mesh = Rc<(Vec<DVec2>, Vec<u32>)>;

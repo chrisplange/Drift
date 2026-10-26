@@ -1091,6 +1091,32 @@ written but hasn't run yet (no GitHub repo).*
     Béziers go out as POLYLINEs within `CURVE_TOLERANCE` (0.01 mm). `tests/dxf_export_r12.rs`
     checks it, and `scripts/cad-check.ps1` opens exports in AutoCAD's engine (DWG TrueView).
   - Dimensions and notes are exploded onto an ANNOTATIONS layer.
+  - Kept as **File → Export → DWG / DXF… → DXF R12** (laser, CNC, older software).
+- **DWG and DXF R2018 export (`drift-io::cad`, batch I1 of `docs/cad-interop-audit.md`):**
+  - One mapping, two formats: `CadWriter` adds a `Drawing` (layers, line types, text styles,
+    blocks, entities, one function per kind) to acadrust's `CadDocument`, which writes DWG
+    or ASCII DXF, both AC1032. Behind drift-io's `dwg` feature, left out of the demo.
+    `document_mut` lets other objects (walls, W7) add their own entities first.
+  - The app's `output::cad_drawing` is model space for CAD: fills and hatches stay areas
+    (`Prim::Hatch`, a `HatchPrim` with the exact region and the pattern as placed), and a
+    block's fills go in its definition rather than on each copy. Other writers draw a
+    `Prim::Hatch` as fill triangles or hatch lines (`HatchPrim::prims`).
+  - LINE, ARC, CIRCLE, ELLIPSE (the longer axis as major), SPLINE (a run of joined Bézier
+    curves as one exact cubic, knots of full multiplicity at the joins), LWPOLYLINE, HATCH
+    (solid with transparency 440, or the pattern's families written scaled and turned as
+    AutoCAD stores them, loops as bulged polylines, holes as inner loops), TEXT (UTF-8, a
+    STYLE per font), BLOCK and INSERT (mirrored as a negative X scale).
+  - Layers keep their names (only `<>/\":;?*|=,` and the backquote become `_`), with true
+    colour (black is colour 7), line type and the nearest standard line weight; entities
+    carry only what differs from their layer.
+  - Tests: `crates/drift-io/tests/cad_export_r2018.rs` (DXF and DWG round trips through
+    Drift's import, mm and inches; `DRIFT_CAD_OUT=<dir>` keeps the files for
+    `scripts/cad-check.ps1`), smoke `smoke_files_dwg_export_keeps_fills_hatches_and_blocks`.
+    The files open in AutoCAD 2024's engine (DWG TrueView).
+  - The agent's `export` writes `dwg`, `dxf` (R2018) and `dxf-r12`.
+  - Not done (batch I2): DIMENSION entities with dimstyles, GROUPs, SORTENTSTABLE, sheets as
+    layouts; layer off/frozen/locked flags; text as MTEXT with its wrap. A paper-sized
+    hatch in a scaled copy of a block scales with the copy.
 - **DXF import (File → Import DXF…, or open a .dxf):**
   - Reads LINE, ARC, CIRCLE, LWPOLYLINE and POLYLINE (with bulge arcs), POINT and the LAYER
     table, scaled by `$INSUNITS`. Files that don't give their units are read in the
@@ -1658,11 +1684,8 @@ zooms to fit; F is Fillet (again for Chamfer).
   - Not done: associative dimensions (re-creating Drift dimensions from DXF ones); what is
     drawn on a layout itself (title blocks, notes); text inside blocks moving with the
     block; wrapping MTEXT to its width; text styles and fonts; MLEADER, TOLERANCE, images,
-    3D solids, tables; solid fills of SOLID / TRACE (read as outlines); binary DXF. Export
-    is still R12 (AC1009): text, layers, blocks and curves go out, but hatches as solid
-    triangles and no dimensions or layouts. Ellipses and pen curves are written exactly,
-    as ELLIPSE and SPLINE entities, which R12 itself doesn't define: most programs read
-    them, but a strict R12 reader may skip them.
+    3D solids, tables; solid fills of SOLID / TRACE (read as outlines); binary DXF. (Export:
+    see DWG and DXF R2018 export above.)
   - To try a real file without the app: `DRIFT_DXF=path cargo test -p drift-io probe --
     --ignored --nocapture` prints what came in, what was skipped and the notes.
 - **Fonts, second version (done): fonts kept in drawings, and one font for a drawing's

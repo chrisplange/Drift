@@ -186,3 +186,88 @@ fn smoke_files_dxf_export_opens_in_autocad_and_comes_back() {
     );
     let _ = std::fs::remove_file(&path);
 }
+
+/// File → Export → DWG / DXF… offers DWG and DXF for AutoCAD 2018 and DXF R12; the DWG
+/// comes back with its fills, hatches, ellipse and a mirrored copy of a block whose hatch is
+/// in the block.
+#[test]
+fn smoke_files_dwg_export_keeps_fills_hatches_and_blocks() {
+    use crate::output::CadFormat;
+    let Some(mut h) = harness() else { return };
+    view(&mut h, DVec2::new(-80.0, -60.0), DVec2::new(140.0, 80.0));
+    rectangle(&mut h, DVec2::ZERO, DVec2::new(40.0, 30.0), Fill::Solid);
+    let (sides, hatch) = rectangle(
+        &mut h,
+        DVec2::new(60.0, 0.0),
+        DVec2::new(100.0, 30.0),
+        Fill::Hatch,
+    );
+    let v = DVec2::new;
+    let ed = &mut h.state_mut().editor;
+    ed.selection.extend(sides);
+    ed.selected_fills.extend(hatch);
+    let copy = ed.make_block("Panel").unwrap();
+    let mut mirrored = *ed.doc.instance(copy).unwrap();
+    mirrored.mirror = true;
+    ed.doc.begin();
+    ed.doc.set_instance(copy, mirrored).unwrap();
+    let [c, m, n] = [v(-50.0, 0.0), v(-20.0, 10.0), v(-55.0, 15.0)].map(|p| ed.doc.add_point(p));
+    ed.doc.add_ellipse(c, m, n).unwrap();
+    ed.commit("Shapes");
+    h.run();
+    let block_fills = |h: &Harness<'_, DriftApp>| -> usize {
+        h.state()
+            .editor
+            .doc
+            .blocks()
+            .map(|(_, b)| b.fills.len())
+            .sum()
+    };
+    assert_eq!(block_fills(&h), 1, "the hatch went into the block");
+    // The dialog offers the three, DWG first; Cancel closes it.
+    open_menu(&mut h, "File");
+    h.get_by_label_contains("Export").click();
+    h.run();
+    h.get_by_label("DWG / DXF…").click();
+    h.run();
+    assert!(h.state().cad_dialog);
+    assert_eq!(h.state().cad_format, CadFormat::Dwg);
+    h.get_by_label(CadFormat::DxfR12.label()).click();
+    h.run();
+    assert_eq!(h.state().cad_format, CadFormat::DxfR12);
+    h.get_by_label(CadFormat::Dwg.label()).click();
+    h.run();
+    h.get_by_label("Cancel").click();
+    h.run();
+    assert!(!h.state().cad_dialog);
+    // The DWG, imported back with File → Import….
+    let painter = painter(&h);
+    let dwg = h.state_mut().cad_bytes(&painter, CadFormat::Dwg).unwrap();
+    assert!(dwg.starts_with(b"AC1032"));
+    let doc = &h.state().editor.doc;
+    let fills_before = doc.fills().count();
+    let copies_before = doc.instances().count();
+    let path = temp_file("dwg-export", "export.dwg", &dwg);
+    open_menu(&mut h, "File");
+    h.get_by_label("Import…").click();
+    h.run();
+    h.state().files.open_path(&path);
+    h.run_steps(3);
+    h.get_by_label("Import").click();
+    h.run_steps(3);
+    let doc = &h.state().editor.doc;
+    assert_eq!(doc.fills().count(), fills_before + 1, "the solid fill");
+    assert_eq!(doc.instances().count(), copies_before + 1, "the copy");
+    assert_eq!(block_fills(&h), 2, "the hatch, in its block");
+    let doc = &h.state().editor.doc;
+    assert!(
+        doc.instances().filter(|(_, c)| c.mirror).count() == 2,
+        "still mirrored"
+    );
+    let ellipses = doc
+        .iter()
+        .filter(|(id, _)| matches!(doc.shape(*id), Some(drift_core::Shape::Ellipse { .. })))
+        .count();
+    assert_eq!(ellipses, 2, "a true ellipse");
+    let _ = std::fs::remove_file(&path);
+}

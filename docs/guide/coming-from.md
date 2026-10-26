@@ -40,7 +40,7 @@ lines.
 | MOVE, ROTATE with base point | G and R with the selection, B to pick the base point or pivot; type values. |
 | COPY | Shift+D, or Ctrl+C / Ctrl+V. |
 | PEDIT join / OVERKILL | **Edit → Check sketch…** joins gaps; the status bar finds overlapping curves. |
-| DWG | **File → Import…** reads DWG (R14 to 2018) as DXF is read; **File → Open…** opens one as a new drawing. Drift doesn't save DWG: export DXF. |
+| DWG | **File → Import…** reads DWG (R14 to 2018) as DXF is read; **File → Open…** opens one as a new drawing. **File → Export → DWG / DXF…** writes DWG or DXF for AutoCAD 2018 and later (or DXF R12). |
 
 What's different: geometry in Drift can carry constraints. With **Auto relations** on, a
 line drawn nearly level becomes exactly horizontal and stays that way. Turn **Auto

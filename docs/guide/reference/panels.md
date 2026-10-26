@@ -113,7 +113,7 @@ geometry itself (in the **Inspector**, or the top bar's **Stroke** menus).
   use **Place on sheet**, **Zoom to view** or **Delete view**. The picked view's **Show**
   switches (**Dimensions**, **Notes**, **Construction**, **Crop**) apply wherever it's
   placed.
-- **Output:** **PDF…**, **SVG…**, **DXF…** and **Print…**. With several sheets, **PDF…** and
+- **Output:** **PDF…**, **SVG…**, **DWG / DXF…** and **Print…**. With several sheets, **PDF…** and
   **Print…** ask which sheets to include. Under **Model at 1 : 1**: **Model as SVG…**,
   **Model as PDF…** and **Dimensions and notes** (the model, or the selection, with no
   sheet).

@@ -10,7 +10,7 @@ use drift_core::{
     View, Viewport,
 };
 use drift_draft::Placement;
-use drift_draft::page::{Align, CAP_HEIGHT, Drawing, Item, LayerInfo, Pen, Prim};
+use drift_draft::page::{Align, CAP_HEIGHT, Drawing, HatchPrim, Item, LayerInfo, Pen, Prim};
 use drift_render::Camera;
 use eframe::egui::{self, Color32, Pos2};
 
@@ -46,6 +46,9 @@ struct Space<'a> {
     clip: Option<Bounds>,
     /// Copies of blocks as block definitions and inserts (DXF), rather than their curves.
     inserts: bool,
+    /// For CAD formats with hatches of their own (DWG and DXF R2018): fills and hatches as
+    /// areas ([`Prim::Hatch`]), and copies' fills in their blocks. Model space only.
+    cad: bool,
     /// Whether dimensions, and notes and callouts, are drawn (a sheet can leave them out).
     dimensions: bool,
     notes: bool,
@@ -217,7 +220,7 @@ fn curve(ed: &Editor, s: &Space, fill_edges: &BTreeSet<EntityId>, id: EntityId, 
 /// The sketch's curves as printed (see [`curve`]), layer by layer in their draw order,
 /// then its text and the copies of blocks: all over every fill, as when fills don't cover
 /// what is beneath them.
-fn geometry(ed: &Editor, s: &Space, d: &mut Drawing) {
+fn geometry(ed: &Editor, patterns: &PatternLibrary, s: &Space, d: &mut Drawing) {
     declare_layers(ed, d);
     let ranks = ed.doc.layer_ranks();
     let mut entities: Vec<_> = ed.doc.iter().collect();
@@ -227,7 +230,7 @@ fn geometry(ed: &Editor, s: &Space, d: &mut Drawing) {
         curve(ed, s, &edges, id, d);
     }
     texts(ed, s, None, d);
-    copies(ed, s, None, &mut BTreeSet::new(), d);
+    copies(ed, patterns, s, None, &mut BTreeSet::new(), d);
 }
 
 /// Sketch text (all of it, or `on` one layer): as text, line by line in its own font, each
@@ -276,6 +279,7 @@ fn texts(ed: &Editor, s: &Space, on: Option<LayerId>, d: &mut Drawing) {
 /// definitions and inserts (DXF; `defined` are the blocks defined so far).
 fn copies(
     ed: &Editor,
+    patterns: &PatternLibrary,
     s: &Space,
     on: Option<LayerId>,
     defined: &mut BTreeSet<drift_core::BlockId>,
@@ -303,22 +307,29 @@ fn copies(
                     k: 1.0,
                     ..*s
                 };
-                let items = block
-                    .items
-                    .iter()
-                    .filter(|it| {
-                        it.style != LineKind::Construction && stroked(it.appearance, layer)
-                    })
-                    .filter_map(|it| {
-                        let prim = shape_prim(&local, &it.shape)?;
-                        Some(item(
-                            "0",
-                            pen_for(it.style, it.appearance, layer),
-                            prim,
-                            None,
-                        ))
-                    })
-                    .collect();
+                // For CAD, the block's fills first, under its curves.
+                let mut items = if s.cad {
+                    block_fills(ed, patterns, &local, block, copy.layer)
+                } else {
+                    Vec::new()
+                };
+                items.extend(
+                    block
+                        .items
+                        .iter()
+                        .filter(|it| {
+                            it.style != LineKind::Construction && stroked(it.appearance, layer)
+                        })
+                        .filter_map(|it| {
+                            let prim = shape_prim(&local, &it.shape)?;
+                            Some(item(
+                                "0",
+                                pen_for(it.style, it.appearance, layer),
+                                prim,
+                                None,
+                            ))
+                        }),
+                );
                 d.blocks.push(drift_draft::page::BlockDef {
                     name: block.name.clone(),
                     items,
@@ -374,7 +385,8 @@ fn stacked(ed: &mut Editor, patterns: &PatternLibrary, s: &Space, d: &mut Drawin
                 }
             }
             Some(FillRef::Copy(instance, index)) => {
-                if s.only.is_none_or(|o| o.instances.contains(&instance))
+                if !(s.cad && s.inserts)
+                    && s.only.is_none_or(|o| o.instances.contains(&instance))
                     && let Some(c) = copy_fills
                         .iter()
                         .find(|c| c.instance == instance && c.index == index)
@@ -391,7 +403,7 @@ fn stacked(ed: &mut Editor, patterns: &PatternLibrary, s: &Space, d: &mut Drawin
             && stack.tops.get(&layer) == Some(&k)
         {
             texts(ed, s, Some(layer), d);
-            copies(ed, s, Some(layer), &mut defined, d);
+            copies(ed, patterns, s, Some(layer), &mut defined, d);
         }
     }
 }
@@ -484,6 +496,7 @@ fn fills(ed: &mut Editor, patterns: &PatternLibrary, s: &Space, d: &mut Drawing)
         .chain(
             copies
                 .iter()
+                .filter(|_| !(s.cad && s.inserts))
                 .filter(|c| s.only.is_none_or(|o| o.instances.contains(&c.instance)))
                 .map(|c| (&c.fill, &c.region)),
         );
@@ -507,6 +520,10 @@ fn fill(
     }
     let layer_name = layer.as_ref().map_or("0".to_owned(), |l| l.name.clone());
     let own = fill.color.or(layer.as_ref().and_then(|l| l.fill_colour()));
+    if s.cad {
+        cad_fill(patterns, s, fill, region, own, &layer_name, d);
+        return;
+    }
     let rings: Vec<Vec<DVec2>> = std::iter::once(&region.outer)
         .chain(&region.holes)
         .map(|lp| lp.polygon(0.02).into_iter().map(|p| s.at(p)).collect())
@@ -566,6 +583,88 @@ fn fill(
             }
         }
     }
+}
+
+/// A fill or hatch for CAD: kept as an area, its true colour and opacity (not faded on
+/// paper), a hatch over its background colour if it has one. A pattern Drift doesn't have
+/// is a light solid fill, as on paper.
+fn cad_fill(
+    patterns: &PatternLibrary,
+    s: &Space,
+    fill: &drift_core::Fill,
+    region: &drift_geom::regions::Region,
+    own: Option<Rgb>,
+    layer: &str,
+    d: &mut Drawing,
+) {
+    let mut area = |pen: Pen, pattern, opacity| {
+        let prim = Prim::Hatch(Box::new(HatchPrim {
+            region: region.clone(),
+            pattern,
+            opacity,
+        }));
+        d.items.push(item(layer, pen, prim, s.clip));
+    };
+    match &fill.kind {
+        FillKind::Solid => area(
+            Pen::new(0.0).with_color(own.unwrap_or(Rgb([0x80, 0x88, 0x94]))),
+            None,
+            fill.opacity,
+        ),
+        FillKind::Hatch(h) => {
+            if let Some(bg) = h.background {
+                area(Pen::new(0.0).with_color(bg), None, 1.0);
+            }
+            let color = own.unwrap_or(Pen::BLACK);
+            match patterns.get(&h.pattern) {
+                Some(pattern) => {
+                    let placement = Placement {
+                        scale: h.scale * if h.model { 1.0 } else { s.n },
+                        angle: h.angle,
+                        origin: h.origin,
+                    };
+                    let width = fill.weight.map_or(HAIRLINE, |w| w.mm().max(HAIRLINE));
+                    area(
+                        Pen::new(width).with_color(color),
+                        Some((pattern.clone(), placement)),
+                        1.0,
+                    );
+                }
+                None => area(Pen::new(0.0).with_color(color), None, 0.25),
+            }
+        }
+    }
+}
+
+/// A block's fills in its own coordinates, as a copy on `layer` draws them (for CAD, where
+/// they go in the block's definition): each fills the area of the block's curves around its
+/// seed. On layer 0, as the block's curves are, so they take the copy's layer.
+fn block_fills(
+    ed: &Editor,
+    patterns: &PatternLibrary,
+    s: &Space,
+    block: &drift_core::Block,
+    layer: LayerId,
+) -> Vec<Item> {
+    if block.fills.is_empty() {
+        return Vec::new();
+    }
+    let shapes: Vec<Shape> = block.items.iter().map(|it| it.shape).collect();
+    let areas = drift_geom::regions::regions(&shapes);
+    let mut d = Drawing::new(DVec2::ZERO);
+    for f in &block.fills {
+        if let Some(region) = drift_geom::regions::region_at(&areas, f.seed) {
+            let f = drift_core::Fill { layer, ..f.clone() };
+            fill(ed, patterns, s, &f, region, &mut d);
+        }
+    }
+    d.items
+        .into_iter()
+        .map(|it| Item {
+            layer: "0".into(),
+            ..it
+        })
+        .collect()
 }
 
 /// Centre marks and centre lines.
@@ -774,7 +873,7 @@ fn view(
         stacked(ed, patterns, s, d);
     } else {
         fills(ed, patterns, s, d);
-        geometry(ed, s, d);
+        geometry(ed, patterns, s, d);
     }
     centre_lines(ed, s, d);
     annotations(ed, painter, s, d);
@@ -822,6 +921,7 @@ pub fn sheet_drawing(
             n: v.scale,
             clip: Some(frame),
             inserts: false,
+            cad: false,
             dimensions: v.dimensions,
             notes: v.notes,
             construction: v.construction,
@@ -867,6 +967,107 @@ pub fn model_drawing(
         n,
         clip: None,
         inserts: true,
+        cad: false,
+        dimensions: true,
+        notes: true,
+        construction: false,
+        hidden: &ALL_LAYERS,
+        view: None,
+        only: None,
+    };
+    view(ed, patterns, painter, &space, &mut d);
+    let b = d.bounds();
+    if !b.is_empty() {
+        d.size = b.max - b.min;
+    }
+    d
+}
+
+/// The CAD formats the model exports to.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CadFormat {
+    /// DWG R2018: AutoCAD 2018 and later, and the programs that read it.
+    #[default]
+    Dwg,
+    /// DXF R2018: the same drawing as the DWG, as text.
+    Dxf,
+    /// DXF R12, which every program reads: laser cutters, CNC, older software.
+    DxfR12,
+}
+
+impl CadFormat {
+    pub const ALL: [CadFormat; 3] = [CadFormat::Dwg, CadFormat::Dxf, CadFormat::DxfR12];
+
+    pub fn extension(self) -> &'static str {
+        match self {
+            CadFormat::Dwg => "dwg",
+            CadFormat::Dxf | CadFormat::DxfR12 => "dxf",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            CadFormat::Dwg => "DWG (AutoCAD 2018 and later)",
+            CadFormat::Dxf => "DXF (AutoCAD 2018)",
+            CadFormat::DxfR12 => "DXF R12 (laser, CNC, older software)",
+        }
+    }
+
+    /// What the format keeps.
+    pub fn hint(self) -> &'static str {
+        match self {
+            CadFormat::Dwg => {
+                "For AutoCAD, BricsCAD, DraftSight and the like: true curves, layers, blocks, \
+                 fills and hatches, true colours and line weights"
+            }
+            CadFormat::Dxf => "The same drawing as the DWG, for programs that read DXF but not DWG",
+            CadFormat::DxfR12 => {
+                "Lines, arcs and polylines only, which every program reads: curves as fine \
+                 polylines, fills as solid triangles, hatches as lines"
+            }
+        }
+    }
+}
+
+/// The model at full size as a CAD file, in the document's units (`patterns` up to date
+/// with the document's own).
+#[cfg(not(feature = "demo"))]
+pub fn cad_file(
+    ed: &mut Editor,
+    patterns: &PatternLibrary,
+    painter: &egui::Painter,
+    format: CadFormat,
+) -> Result<Vec<u8>, String> {
+    let units = drift_io::dxf::DxfUnits::of(&ed.doc.units());
+    match format {
+        CadFormat::DxfR12 => {
+            let d = model_drawing(ed, patterns, painter);
+            Ok(drift_io::dxf::write(&d, units).into_bytes())
+        }
+        #[cfg(feature = "dwg")]
+        CadFormat::Dwg => drift_io::cad::write_dwg(&cad_drawing(ed, patterns, painter), units),
+        #[cfg(feature = "dwg")]
+        CadFormat::Dxf => drift_io::cad::write_dxf(&cad_drawing(ed, patterns, painter), units),
+        #[cfg(not(feature = "dwg"))]
+        _ => Err("this build of Drift writes DXF R12 only".into()),
+    }
+}
+
+/// Model space at full size for CAD (DWG and DXF R2018), as [`model_drawing`] for DXF R12
+/// but with fills and hatches kept as areas and blocks' fills in their blocks.
+#[cfg(all(feature = "dwg", not(feature = "demo")))]
+pub fn cad_drawing(ed: &mut Editor, patterns: &PatternLibrary, painter: &egui::Painter) -> Drawing {
+    let n = ed.doc.draft_style().scale;
+    let mut d = Drawing::new(DVec2::ZERO);
+    d.line_type_scale = n;
+    let space = Space {
+        world: DVec2::ZERO,
+        page: DVec2::ZERO,
+        k: 1.0,
+        n,
+        clip: None,
+        inserts: true,
+        cad: true,
         dimensions: true,
         notes: true,
         construction: false,
@@ -907,6 +1108,7 @@ pub fn model_page(
         n,
         clip: None,
         inserts: false,
+        cad: false,
         dimensions: annotate,
         notes: annotate,
         construction: false,
@@ -943,6 +1145,7 @@ pub fn view_drawing(
         n: scale,
         clip: None,
         inserts: false,
+        cad: false,
         dimensions,
         notes: true,
         construction: false,
@@ -1068,7 +1271,7 @@ pub fn paint_drawing(
     to_screen: impl Fn(DVec2) -> Pos2,
     px: f32,
 ) {
-    let d = &d.exploded();
+    let d = &d.exploded().without_hatches();
     // A painter per window the items are seen through (kept while the window is the same).
     let mut window: Option<(Bounds, egui::Painter)> = None;
     for it in &d.items {
@@ -1271,7 +1474,7 @@ pub fn paint_drawing(
                 let pos = to_screen(*at) - rot * egui::vec2(shift, ascent);
                 p.add(egui::epaint::TextShape::new(pos, galley, color).with_angle(screen_angle));
             }
-            Prim::Insert { .. } => {}
+            Prim::Insert { .. } | Prim::Hatch(_) => {}
         }
     }
 }

@@ -82,14 +82,15 @@ session, so the next start is fresh.
 
 | | Format | Notes |
 |---|---|---|
-| Import | DXF (ASCII), DWG | As geometry or an underlay, at a drawing scale or calibrated: **File → Import…**. DWG is read for AutoCAD R14 to 2018 and comes in the same way as DXF. See [Underlays and DXF import](../tutorials/11-underlays-and-dxf.md). Binary DXF isn't read, and Drift doesn't save DWG: export DXF. |
+| Import | DXF (ASCII), DWG | As geometry or an underlay, at a drawing scale or calibrated: **File → Import…**. DWG is read for AutoCAD R14 to 2018 and comes in the same way as DXF. See [Underlays and DXF import](../tutorials/11-underlays-and-dxf.md). Binary DXF isn't read. |
 | Import | SVG, PDF, Illustrator (`.ai`) | As geometry or an underlay, at a drawing scale (found from its dimensions where it can be) or calibrated: **File → Import…**. See [Part 3](../tutorials/11-underlays-and-dxf.md#part-3-import-svg-pdf-and-illustrator-artwork). A PDF's vector drawing comes in as curves; a scanned PDF, which has none, comes in as its picture (an underlay). |
 | Import | `.pat` | Hatch patterns: **Parameters → Hatch patterns → Import .pat…**. |
 | Import | `.ttf`, `.otf` | Fonts: **Add a font file…** in any font menu. |
 | Import | SVG | A title-block logo: pick bare paper on a sheet, then **Logo → Choose SVG…** in its **Inspector**. |
 | Export | PDF | Every sheet, true scale; with no sheets, the drawing fitted to A3. |
 | Export | SVG | The current sheet, true scale: a named group per layer (Inkscape layers; Illustrator groups, which **Release to Layers** turns into layers) and joined paths. |
-| Export | DXF (R12) | The model at full size, with layers, line types and blocks. |
+| Export | DWG, DXF (AutoCAD 2018) | The model at full size: true curves, layers in true colour with line types and weights, blocks, fills and hatches (with their patterns), text in any script. **File → Export → DWG / DXF…**. See [About DWG and DXF](../tutorials/10-sheets-and-output.md#about-dwg-and-dxf). |
+| Export | DXF (R12) | The same dialog: the model at full size as lines, arcs and polylines only, with layers, line types and blocks, for laser cutters, CNC and older software. |
 | Export | SVG, PDF (model) | The model, or the selection, at 1 : 1 on a page fitted to it with a 5 mm margin: no sheet, title block or border. A named group per layer and joined paths (SVG). Points, construction and hidden or non-printing layers are left out; **Dimensions and notes** includes them. **File → Export → Model as SVG… / Model as PDF…**. |
 | Export | Blender profiles (`.drift-profiles.json`) | The blocks marked as **Blender profile**, for the Drift Profiles add-on: **File → Export → Blender profiles…**. Saving writes them beside the drawing too. See below. |
 

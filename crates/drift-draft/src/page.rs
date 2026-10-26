@@ -105,7 +105,100 @@ pub enum Prim {
         style: TextStyle,
         font: Option<drift_core::TextFont>,
     },
+    /// A fill or hatch kept whole, for formats with hatches of their own (DXF and DWG
+    /// R2018): see [`HatchPrim`]. Only drawings made for them have these.
+    Hatch(Box<HatchPrim>),
 }
+
+/// A fill or hatch as an area, not as what it is drawn with: its exact boundary (lines and
+/// arcs, holes included) and, for a hatch, its pattern as placed. The pen's colour is its
+/// colour, the pen's width its hatch lines' weight. Outputs without hatches draw it as
+/// [`HatchPrim::prims`] gives it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HatchPrim {
+    pub region: drift_geom::regions::Region,
+    /// The pattern and where it lies (its scale is the hatch's on the page, drawing scale
+    /// included); `None` is a solid fill.
+    pub pattern: Option<(crate::Pattern, crate::Placement)>,
+    /// A solid fill's opacity (0–1).
+    pub opacity: f64,
+}
+
+impl HatchPrim {
+    /// The area as other prims: a solid fill as a `Fill`, a hatch as its lines (at most
+    /// `limit`, else a light solid fill in its place).
+    pub fn prims(&self, limit: usize) -> Vec<Prim> {
+        let solid = || {
+            let triangles = crate::tessellate(&self.region, 0.02)
+                .map(|(v, idx)| {
+                    idx.as_chunks::<3>()
+                        .0
+                        .iter()
+                        .map(|t| t.map(|i| v[i as usize]))
+                        .collect()
+                })
+                .unwrap_or_default();
+            Prim::Fill {
+                rings: std::iter::once(&self.region.outer)
+                    .chain(&self.region.holes)
+                    .map(|lp| lp.polygon(0.02))
+                    .collect(),
+                triangles,
+                mask: false,
+            }
+        };
+        let Some((pattern, placement)) = &self.pattern else {
+            return vec![solid()];
+        };
+        let hatching = crate::hatch(&self.region, pattern, placement, None, limit);
+        if hatching.truncated {
+            return vec![solid()];
+        }
+        hatching
+            .segments
+            .into_iter()
+            .map(|[a, b]| Prim::Line(a, b))
+            .collect()
+    }
+
+    /// Placed as a copy of a block places what is in it (see [`Transform`]).
+    fn placed(&self, t: &Transform) -> HatchPrim {
+        let copy = drift_core::Instance {
+            angle: t.angle.to_degrees(),
+            scale: t.scale,
+            mirror: t.mirror,
+            ..drift_core::Instance::new(Default::default(), t.at)
+        };
+        let pattern = self.pattern.as_ref().map(|(pattern, placement)| {
+            let mut pattern = pattern.clone();
+            let mut angle = placement.angle + t.angle.to_degrees();
+            if t.mirror {
+                // Mirroring across y is mirroring across x and a half turn: each family
+                // runs the other way and steps the other side.
+                for l in &mut pattern.lines {
+                    l.angle = -l.angle;
+                    l.origin.y = -l.origin.y;
+                    l.delta.y = -l.delta.y;
+                }
+                angle = 180.0 - placement.angle + t.angle.to_degrees();
+            }
+            let placement = crate::Placement {
+                scale: placement.scale * t.scale,
+                angle,
+                origin: t.p(placement.origin),
+            };
+            (pattern, placement)
+        });
+        HatchPrim {
+            region: self.region.placed(&copy),
+            pattern,
+            opacity: self.opacity,
+        }
+    }
+}
+
+/// The most hatch lines drawn for one [`HatchPrim`] by outputs without hatches.
+pub const HATCH_LIMIT: usize = 400_000;
 
 /// How far italic text leans: the tangent of its slant (about 12°).
 pub const ITALIC_SLANT: f64 = 0.21;
@@ -351,6 +444,16 @@ impl Drawing {
                     *height *= f;
                 }
                 Prim::Insert { at, .. } => *at *= f,
+                Prim::Hatch(h) => {
+                    let t = Transform {
+                        at: DVec2::ZERO,
+                        rotor: DVec2::X,
+                        angle: 0.0,
+                        scale: f,
+                        mirror: false,
+                    };
+                    **h = h.placed(&t);
+                }
             }
         }
         d
@@ -368,7 +471,11 @@ impl Drawing {
             .iter_mut()
             .chain(self.blocks.iter_mut().flat_map(|b| b.items.iter_mut()));
         for item in items {
-            let fill = matches!(item.prim, Prim::Fill { .. });
+            let fill = match &item.prim {
+                Prim::Fill { .. } => true,
+                Prim::Hatch(h) => h.pattern.is_none(),
+                _ => false,
+            };
             item.pen.color = colours.map(item.pen.color, fill);
         }
         for layer in &mut self.layers {
@@ -426,6 +533,32 @@ impl Drawing {
         d
     }
 
+    /// The drawing with every [`Prim::Hatch`] drawn as other prims (see [`HatchPrim::prims`]).
+    pub fn without_hatches(&self) -> Drawing {
+        let expand = |items: &[Item]| -> Vec<Item> {
+            items
+                .iter()
+                .flat_map(|item| match &item.prim {
+                    Prim::Hatch(h) => h
+                        .prims(HATCH_LIMIT)
+                        .into_iter()
+                        .map(|prim| Item {
+                            prim,
+                            ..item.clone()
+                        })
+                        .collect(),
+                    _ => vec![item.clone()],
+                })
+                .collect()
+        };
+        let mut d = self.clone();
+        d.items = expand(&self.items);
+        for b in &mut d.blocks {
+            b.items = expand(&b.items);
+        }
+        d
+    }
+
     /// Ensure a layer is listed (first definition wins).
     pub fn layer(&mut self, info: LayerInfo) {
         if !self.layers.iter().any(|l| l.name == info.name) {
@@ -480,6 +613,13 @@ impl Drawing {
                     let w = line_width_in(text, *height, *style, font.as_ref());
                     b.include(*at - DVec2::new(w, *height * 0.3));
                     b.include(*at + DVec2::new(w, *height * 1.2));
+                }
+                Prim::Hatch(h) => {
+                    let r = h.region.bounds;
+                    if !r.is_empty() {
+                        b.include(r.min);
+                        b.include(r.max);
+                    }
                 }
                 Prim::Insert { .. } => {}
             }
@@ -630,6 +770,7 @@ impl Transform {
                 font: font.clone(),
             },
             Prim::Insert { .. } => prim.clone(),
+            Prim::Hatch(h) => Prim::Hatch(Box::new(h.placed(self))),
         }
     }
 }

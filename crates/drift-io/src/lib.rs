@@ -54,6 +54,9 @@ mod blocks;
 mod carry;
 pub mod clip;
 mod drafting;
+// DWG and DXF R2018 export (the writers are left out of the demo).
+#[cfg(all(feature = "dwg", not(feature = "demo")))]
+pub mod cad;
 #[cfg(feature = "dwg")]
 pub mod dwg_import;
 pub mod dxf;

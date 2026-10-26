@@ -397,6 +397,11 @@ pub struct DriftApp {
     /// The output dialog choosing the sheets for a PDF or print, while open.
     #[cfg(not(feature = "demo"))]
     output_dialog: Option<app::sheets_ui::Output>,
+    /// The Export DWG / DXF dialog is open, and the format it has chosen (for this session).
+    #[cfg(not(feature = "demo"))]
+    cad_dialog: bool,
+    #[cfg(not(feature = "demo"))]
+    cad_format: output::CadFormat,
     /// The model view picked in the Views list or on the canvas (its crop shows grips).
     picked_view: Option<drift_core::ViewId>,
     /// A view placed on sheets that Delete was pressed for, waiting for a yes.
@@ -637,6 +642,10 @@ impl DriftApp {
             model_annotations: true,
             #[cfg(not(feature = "demo"))]
             output_dialog: None,
+            #[cfg(not(feature = "demo"))]
+            cad_dialog: false,
+            #[cfg(not(feature = "demo"))]
+            cad_format: Default::default(),
             picked_view: None,
             confirm_delete_view: None,
             renaming: None,

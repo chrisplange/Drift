@@ -7374,17 +7374,34 @@ fn tab_highlights_a_chain_and_a_click_picks_it() {
     assert!(h.state().editor.chain_preview.is_none());
 }
 
-/// Export a drawing's sheets to PDF and SVG, for looking at by hand:
+/// Export a drawing's sheets to PDF and SVG, and its model to DWG and DXF (2018 and R12),
+/// for looking at by hand and opening in AutoCAD (`scripts/cad-check.ps1`):
 /// `DRIFT_FILE=path DRIFT_OUT=dir cargo test -p drift-app probe_export -- --ignored`.
+/// A DWG or DXF is imported into a new drawing first.
 #[test]
 #[ignore]
 fn probe_export() {
+    use crate::output::CadFormat;
     let (Ok(path), Ok(out)) = (std::env::var("DRIFT_FILE"), std::env::var("DRIFT_OUT")) else {
         return;
     };
     let Some(mut h) = harness() else { return };
-    let text = std::fs::read_to_string(&path).unwrap();
-    let (doc, meta) = drift_io::load(&text).unwrap();
+    let lower = path.to_ascii_lowercase();
+    let (doc, meta) = if lower.ends_with(".dwg") || lower.ends_with(".dxf") {
+        let bytes = std::fs::read(&path).unwrap();
+        let import = if lower.ends_with(".dwg") {
+            drift_io::dwg_import::read(&bytes, 1.0).unwrap()
+        } else {
+            drift_io::dxf::read(&drift_io::dxf::decode(&bytes), 1.0).unwrap()
+        };
+        let mut doc = drift_core::Document::new();
+        doc.begin();
+        drift_io::dxf::add_to_document(&mut doc, &import);
+        doc.commit("Import");
+        (doc, Default::default())
+    } else {
+        drift_io::load(&std::fs::read_to_string(&path).unwrap()).unwrap()
+    };
     h.state_mut()
         .replace_document(doc, "probe".into(), None, meta, true);
     h.run();
@@ -7394,6 +7411,17 @@ fn probe_export() {
         egui::LayerId::background(),
         h.state().canvas_rect,
     );
+    let out_dir = std::path::Path::new(&out);
+    for (format, name) in [
+        (CadFormat::Dwg, "probe.dwg"),
+        (CadFormat::Dxf, "probe-2018.dxf"),
+        (CadFormat::DxfR12, "probe-r12.dxf"),
+    ] {
+        let t = std::time::Instant::now();
+        let bytes = h.state_mut().cad_bytes(&painter, format).unwrap();
+        eprintln!("{name}: {} bytes in {:?}", bytes.len(), t.elapsed());
+        std::fs::write(out_dir.join(name), bytes).unwrap();
+    }
     let pages = h.state_mut().pages(&painter);
     let out = std::path::Path::new(&out);
     std::fs::write(out.join("probe.pdf"), drift_io::pdf::write(&pages, "probe")).unwrap();

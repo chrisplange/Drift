@@ -344,6 +344,7 @@ mod web {
             Some("pdf") => "application/pdf",
             Some("svg") => "image/svg+xml",
             Some("dxf") => "application/dxf",
+            Some("dwg") => "image/vnd.dwg",
             _ => "application/json",
         }
     }

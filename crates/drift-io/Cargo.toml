@@ -11,6 +11,8 @@ publish.workspace = true
 [dependencies]
 drift-core.workspace = true
 drift-draft.workspace = true
+# Fill and hatch boundaries (regions), for DWG and DXF R2018 export.
+drift-geom.workspace = true
 serde = { version = "1.0", features = ["derive"] }
 # `raw_value`: what a newer Drift wrote that this one doesn't know is kept as written (carry.rs).
 # `float_roundtrip`: numbers read back bit for bit (walls' corners are checked exactly on opening).
@@ -28,8 +30,6 @@ acadrust = { version = "0.6.5", default-features = false, optional = true }
 
 [dev-dependencies]
 proptest = "1"
-# The fixture drawing makes its walls' faces (tests/format_fixtures.rs).
-drift-geom.workspace = true
 
 [features]
 dwg = ["dep:acadrust"]

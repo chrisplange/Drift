@@ -78,7 +78,7 @@ fn file_menu_saves_exports_and_prints_show_the_note() {
         (&["Save as…"], "Saving"),
         (&["Export", "PDF…"], "Exporting a PDF"),
         (&["Export", "SVG…"], "Exporting an SVG"),
-        (&["Export", "DXF…"], "Exporting a DXF"),
+        (&["Export", "DWG / DXF…"], "Exporting DWG or DXF"),
         (&["Export", "Model as SVG…"], "Exporting an SVG"),
         (&["Export", "Model as PDF…"], "Exporting a PDF"),
         (

@@ -121,10 +121,10 @@ notes), MLEADER, TOLERANCE, images, 3D solids, tables, and binary DXF.
 
 DWG files (AutoCAD R14 to 2018) come in the same way: choose **File → Import…** and pick a
 `.dwg`, or drop it on the window. Drift reads it as it reads DXF, with the same report. A
-damaged file is read as far as it can be, and the report says so. Drift doesn't save DWG:
-export DXF instead.
+damaged file is read as far as it can be, and the report says so.
 
-Drift's DXF export is described in [Sheets and output](10-sheets-and-output.md#6-output).
+Drift's DWG and DXF export is described in
+[Sheets and output](10-sheets-and-output.md#about-dwg-and-dxf).
 
 ## Part 3: import SVG, PDF and Illustrator artwork
 

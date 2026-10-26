@@ -10,5 +10,5 @@ pub mod page;
 pub mod pattern;
 pub mod sheet;
 
-pub use hatch::{Hatching, Placement, hatch};
+pub use hatch::{Hatching, Placement, hatch, tessellate};
 pub use pattern::{PatLine, Pattern, builtin, find, parse_pat, to_pat};

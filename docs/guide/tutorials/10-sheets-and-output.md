@@ -220,7 +220,7 @@ From the **Sheets** panel's **Output** section, or **File → Export** (and **Fi
 |---|---|
 | **PDF…** | The sheets you choose, one page each, at true scale and true line weights. With several sheets, a dialog lists them: tick the ones to export (**All**, or **This sheet**). Each keeps its number in the set (a reissued A-102 still reads 2 / 5). Without any sheets, the drawing fitted to A3. Text stays selectable. |
 | **SVG…** | The current sheet, at true scale, in millimetres. |
-| **DXF…** | The model at full size (not the sheets), with its layers and line types, in the drawing's units. |
+| **DWG / DXF…** | The model at full size (not the sheets), in the drawing's units, for CAD. A dialog asks which format: **DWG** or **DXF** for AutoCAD 2018 and later (the default), or **DXF R12** for laser cutters, CNC and older software. See [About DWG and DXF](#about-dwg-and-dxf). |
 | **Model as SVG…** | The model at 1 : 1 in millimetres, with no paper, title block or border: the page fits the drawing with 5 mm all round. A named group per layer, and outlines as single joined paths, ready for Illustrator, Affinity, Inkscape, laser software or Blender. |
 | **Model as PDF…** | The same, as a one-page PDF at true size. |
 | **Print…** (Ctrl+P) | Asks which sheets as **PDF…** does, writes the PDF and opens it in your system's PDF viewer (a new tab in the browser), to print from there. |
@@ -255,15 +255,15 @@ PDF, SVG and print come out the same:
 | **Greyscale** | Every colour becomes its grey (by how light it is). Light fills stay light and dark ones dark. |
 | **Black & white** | Like a CAD monochrome plot style. Lines, text and hatch lines print black. Solid fills print as their grey, so a dark fill doesn't hide the lines on it. White stays white: the masks behind dimension text, and lettering knocked out of a dark box (the Modern title block's sheet number). |
 
-A new sheet starts in **Colour**. The choice is saved with the sheet. It doesn't change DXF,
-which is the model, not a sheet: DXF keeps the layer and item colours.
+A new sheet starts in **Colour**. The choice is saved with the sheet. It doesn't change DWG
+or DXF, which are the model, not a sheet: they keep the layer and item colours.
 
 What goes on paper:
 
 - Points, hidden layers and layers whose print flag is off are left out, and so are the
   layers a view leaves out (its **Layers**).
 - Construction geometry is left out, except in views whose **Show** has **Construction**
-  ticked. DXF never has it: DXF is the model, not a sheet.
+  ticked. DWG and DXF never have it: they are the model, not a sheet.
 - Views' crops and names on the canvas are left out. Only the sheet's frames (with
   **Border**) and titles print.
 - Dimensions and notes are left out where a view's **Show** says so, where they're set off
@@ -277,19 +277,41 @@ What goes on paper:
 - Curves whose stroke is **None** are left out; their fills print.
 - Underlays, and the pictures that came in with them, are left out.
 
-About DXF:
+### About DWG and DXF
 
-- It's written as DXF R12, which every CAD program reads, AutoCAD included. R12 has no
-  ellipses or splines, so ellipses and pen curves go out as polylines that stay within
-  0.01 mm of the curve.
+**File → Export → DWG / DXF…** (or **DWG / DXF…** in the Output section) asks which format:
+
+| Format | For |
+|---|---|
+| **DWG (AutoCAD 2018 and later)** | AutoCAD, AutoCAD LT, BricsCAD, DraftSight and the programs that read DWG. The default. |
+| **DXF (AutoCAD 2018)** | The same drawing as the DWG, as text, for programs that read DXF but not DWG. |
+| **DXF R12 (laser, CNC, older software)** | Lines, arcs and polylines only, which every program reads. |
+
+DWG and DXF for AutoCAD 2018 keep the drawing as a drawing:
+
+- Lines, arcs, circles and ellipses stay true curves. A pen curve is one exact spline.
+- Layers keep their names, colours (true colours, not the nearest of AutoCAD's 255), line
+  types and line weights. A curve's own colour, line type or weight goes with it.
+- Fills and hatches are hatches: a solid fill in its colour and transparency, with its holes;
+  a hatch with its pattern (each line family written into the file, so every program draws
+  it as Drift does), scale and angle, over its background colour if it has one.
+- Blocks are blocks, with their fills and hatches inside; a mirrored copy stays mirrored.
+- Text keeps every character as it is, in a text style per font (Drift's own fonts as Arial
+  and Courier New, a system font by its name).
+- Dimensions and notes go out as the lines, arrows and text they are drawn with, on a layer
+  called **ANNOTATIONS**, so they no longer measure.
+- Everything is written in its stacking order, bottom first.
+
+DXF R12 has no ellipses, splines or hatches:
+
+- Ellipses and pen curves go out as polylines that stay within 0.01 mm of the curve.
+- Fills go out as solid triangles, and hatches as their lines.
 - Text keeps its accents and symbols (é, ½, m², “quotes”) as the escapes CAD programs read.
-- R12 has no draw order of its own: Drift writes everything in its stacking order, so a
-  program that draws in file order shows it as Drift does.
-- Blocks go out as blocks (BLOCK and INSERT). Dimensions and notes go out as plain lines and
-  text on a layer called **ANNOTATIONS**, so they no longer measure. Fills go out as solid
-  triangles.
-- To bring DXF in, see [Underlays and DXF import](11-underlays-and-dxf.md). A DXF's
-  layouts come in as sheets, and each of their viewports as a view.
+- Colours are the nearest of AutoCAD's, and line weights are left out.
+- Blocks go out as blocks (BLOCK and INSERT).
+
+To bring DWG and DXF in, see [Underlays and DXF import](11-underlays-and-dxf.md). A
+drawing's layouts come in as sheets, and each of their viewports as a view.
 
 ## What you learned
 
@@ -300,7 +322,7 @@ About DXF:
 - Views go on sheets from the **Views** list. Reframing a view changes every sheet it's on,
   and one view can be on several sheets.
 - **New sheet** lays the drawing out on paper with a title block, at a fitting scale.
-- PDF prints every sheet; SVG the current one; DXF the model at full size.
+- PDF prints every sheet; SVG the current one; DWG and DXF the model at full size.
 - **Model as SVG…** and **Model as PDF…** export the model, or the selection, at 1 : 1 with
   no sheet.
 - Each sheet prints in colour, greyscale or black & white, as its preview shows.

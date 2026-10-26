@@ -310,6 +310,15 @@ fn item_ops(
             text.extend_from_slice(b" Tj\nET\n");
         }
         Prim::Insert { .. } => {}
+        Prim::Hatch(h) => {
+            for prim in h.prims(drift_draft::page::HATCH_LIMIT) {
+                let part = Item {
+                    prim,
+                    ..item.clone()
+                };
+                item_ops(out, text, &part, lts, None);
+            }
+        }
     }
 }
 

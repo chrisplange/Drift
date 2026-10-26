@@ -350,18 +350,26 @@ pub(super) fn export(s: &mut Session, a: &Value) -> Res {
                 .ok_or(format!("there are {} sheet(s)", pages.len()))?;
             drift_io::svg::write(page).into_bytes()
         }
-        "dxf" => {
+        "dwg" | "dxf" | "dxf-r12" => {
+            use crate::output::CadFormat;
+            let cad = match format.as_str() {
+                "dwg" => CadFormat::Dwg,
+                "dxf" => CadFormat::Dxf,
+                _ => CadFormat::DxfR12,
+            };
             s.patterns.update(s.editor.doc.custom_patterns());
-            let d = crate::output::model_drawing(&mut s.editor, &s.patterns, &painter);
-            drift_io::dxf::write(&d, drift_io::dxf::DxfUnits::of(&s.editor.doc.units()))
-                .into_bytes()
+            crate::output::cad_file(&mut s.editor, &s.patterns, &painter, cad)?
         }
         "png" => {
             let mut image = None;
             super::render::render(s, a, &mut image)?;
             image.ok_or("nothing to draw")?
         }
-        other => return Err(format!("can't export .{other} (pdf, svg, dxf or png)")),
+        other => {
+            return Err(format!(
+                "can't export .{other} (pdf, svg, dwg, dxf, dxf-r12 or png)"
+            ));
+        }
     };
     std::fs::write(&path, &bytes).map_err(|e| format!("{}: {e}", shown(&path)))?;
     Ok(json!({ "exported": shown(&path), "bytes": bytes.len() }))

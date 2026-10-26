@@ -2167,6 +2167,46 @@ contributors can parallelise M6–M9 once the M2–M4 core is stable.
   same for any relation on a centreline there (not measured). Fix in the solver: a drag's
   scope limited to what relations reach from the dragged geometry, free geometry beyond
   them moved as it is.
+- **Walls W3: openings (done, as built).** Doors, windows and cased openings hosted in walls
+  (`docs/walls-design.md` §6). An `Opening` record in drift-core (`openings.rs`: wall and
+  segment, where along it (centred, or an offset from either end, with an expression),
+  width (with an expression), leaf, height, the symbol's library family and type or a void,
+  hand, facing, layer, and the symbol it made, by key), the `openings` table journalled like
+  walls, and `rules.size_set` (an addition: no format bump, fixture `v42.2`). The cut is the
+  walls' generator's (`drift_geom::walls::openings`): each opening is two stations on its
+  segment, a node of one end each, so the faces piece at keyed `Station::Jamb`s, two
+  `Part::Jamb` edges close the outline, and the poché goes round with no hole-punching;
+  pieces elsewhere keep their keys, and a slide keeps every key. An opening reaching past a
+  corner, a T or another opening isn't cut (a notice says which). Symbols are generated at
+  the host's thickness by the library's families (`library/hosted.rs`: the door and window
+  generators of `doors.rs` and `windows.rs` without their jambs), in the opening's frame
+  (on the face it opens to, at the hinge jamb), written by key as walls write faces.
+  Size sets are data (`library/sizes/us.json`, `metric.json`, read once): US imperial
+  (doors 2′0″–3′0″ by 2″, 3′6″, 4′0″ and pairs, 6′8″, 7′0″, 8′0″; rough opening +2″ ×
+  +2½″; windows named `3050`) and generic metric (leaves 700–1000 mm, frame allowance
+  70 × 35); leaf and opening per type; wall thickness presets come from the set too; a
+  drawing uses its units' set unless its rules name one. The **Door / window** tool
+  (`build.opening` on Shift+O, on the tool rail's Build section): hover a wall, the cut and symbol show centred on the pointer,
+  kept clear of corners; Space steps the four swings; typing sets the offset from the
+  nearer corner, Tab the width. A picked opening (by its symbol or a jamb) slides along
+  its wall when dragged (snapping centred), shows its width and offset, and flips by two
+  canvas arrows; the Inspector types offset and width (lengths or variables), the swing,
+  flip, centre, delete, and the size set. Openings follow their wall as it moves (keeping
+  their place from the nearer end), follow their centreline curve through splits and joins,
+  are re-seated by where they were when their curve is cut or trimmed, go with a deleted
+  wall (with a notice), stay as plain lines when it is exploded, and are copied with it.
+  Edits that only move or slide take the incremental path. Tests: cut unit tests, 14 tool
+  tests, a property test over random networks (each cut takes width × thickness from the
+  poché, every step matches a full rebuild, slides keep ids, undo and save give the drawing
+  back), 5 gallery cases, a smoke test, the fixture. Perf (`perf_walls_openings`, the
+  2,000-segment floor with 1,000 doors, release): the walls' part of a commit 1.4 ms
+  (budget 5 ms), a node's drag frame +1.2 ms and a door's slide frame +1.0 ms (budget
+  +2 ms), regenerating everything 32 ms, opening the file 236 ms (173 ms without the
+  doors).
+  Left for later: national size sets (W3b), re-hosting by dragging onto another wall and
+  user blocks as symbols (W3c), typing into the on-canvas offset and width (the Inspector
+  does it), a mirrored copy keeping its swing's hand and side as they were (it should
+  mirror them), anchors to points and faces other than the segment's ends.
 
 ## 9. Key risks and mitigations
 

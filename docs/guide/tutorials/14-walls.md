@@ -142,5 +142,5 @@ Things to know:
 
 ## What's next
 
-Openings (doors and windows hosted in walls), room tags with live areas, and making walls
-from an imported plan's lines are coming in the next batches.
+[Doors and windows](15-openings.md) cut into walls. Room tags with live areas, and making
+walls from an imported plan's lines are coming in the next batches.

@@ -17,6 +17,7 @@ use crate::drafting::{
 };
 use crate::groups::{Group, GroupId};
 use crate::layers::{Appearance, Layer, LayerId};
+use crate::openings::{Opening, OpeningId};
 use crate::paths::{Path, PathId};
 use crate::sheets::{PlacedView, Sheet, SheetId, View, ViewId};
 use crate::texts::{SketchText, TextId};
@@ -387,6 +388,7 @@ enum Key {
     Text(TextId),
     Wall(WallId),
     PropertyDim(PropertyDimId),
+    Opening(OpeningId),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -425,6 +427,7 @@ enum Record {
     Text(SketchText),
     Wall(Wall),
     PropertyDim(PropertyDim),
+    Opening(Opening),
 }
 
 /// One undoable step: the before and after state of everything it touched.
@@ -510,13 +513,15 @@ pub struct Document {
     walls: Shared<BTreeMap<WallId, Wall>>,
     /// Dimensions that show a wall's property (its thickness).
     property_dims: Shared<BTreeMap<PropertyDimId, PropertyDim>>,
+    /// Doors, windows and openings in walls, and what their symbols made.
+    openings: Shared<BTreeMap<OpeningId, Opening>>,
     next_id: u32,
     next_constraint_id: u32,
     /// Next id for variables, variants and measurements (one counter, ids never reused).
     next_param_id: u32,
     /// Next id for fills and annotations (one counter, ids never reused).
     next_drafting_id: u32,
-    /// Next id for walls and property dimensions (one counter, ids never reused).
+    /// Next id for walls, property dimensions and openings (one counter, ids never reused).
     next_wall_id: u32,
     /// Incremented on every change, so caches (spatial index, autosave) can tell when to refresh.
     revision: u64,
@@ -564,6 +569,7 @@ impl PartialEq for Document {
             && self.texts == other.texts
             && self.walls == other.walls
             && self.property_dims == other.property_dims
+            && self.openings == other.openings
     }
 }
 
@@ -604,6 +610,7 @@ impl Default for Document {
             texts: BTreeMap::new().into(),
             walls: BTreeMap::new().into(),
             property_dims: BTreeMap::new().into(),
+            openings: BTreeMap::new().into(),
             // Ids start at 1; `e0` and `c0` are not valid ids in `.drift` files.
             next_id: 1,
             next_constraint_id: 1,
@@ -921,6 +928,31 @@ impl Document {
         (walls, paths)
     }
 
+    /// The openings the open transaction added, changed or removed (sorted).
+    pub fn openings_touched_in_transaction(&self) -> Vec<OpeningId> {
+        let Some(journal) = &self.journal else {
+            return Vec::new();
+        };
+        let mut out: Vec<OpeningId> = journal
+            .keys()
+            .filter_map(|k| match k {
+                Key::Opening(id) => Some(*id),
+                _ => None,
+            })
+            .collect();
+        out.sort_unstable();
+        out
+    }
+
+    /// Opening `id` as it was when the open transaction began.
+    pub fn opening_before_transaction(&self, id: OpeningId) -> Option<Opening> {
+        match self.journal.as_ref().and_then(|j| j.get(&Key::Opening(id))) {
+            Some(Some(Record::Opening(o))) => Some(o.clone()),
+            Some(_) => None,
+            None => self.openings.get(&id).cloned(),
+        }
+    }
+
     /// Wall `id` as it was when the open transaction began (see
     /// [`entity_before_transaction`](Self::entity_before_transaction)).
     pub fn wall_before_transaction(&self, id: WallId) -> Option<Wall> {
@@ -928,6 +960,15 @@ impl Document {
             Some(Some(Record::Wall(w))) => Some(w.clone()),
             Some(_) => None,
             None => self.walls.get(&id).cloned(),
+        }
+    }
+
+    /// Path `id` as it was when the open transaction began.
+    pub fn path_before_transaction(&self, id: PathId) -> Option<Path> {
+        match self.journal.as_ref().and_then(|j| j.get(&Key::Path(id))) {
+            Some(Some(Record::Path(p))) => Some(p.clone()),
+            Some(_) => None,
+            None => self.paths.get(&id).cloned(),
         }
     }
 
@@ -1052,6 +1093,7 @@ impl Document {
                 .get(&id)
                 .copied()
                 .map(Record::PropertyDim),
+            Key::Opening(id) => self.openings.get(&id).cloned().map(Record::Opening),
         }
     }
 
@@ -1246,6 +1288,12 @@ impl Document {
             }
             (Key::PropertyDim(id), _) => {
                 self.property_dims.remove(&id);
+            }
+            (Key::Opening(id), Some(Record::Opening(o))) => {
+                self.openings.insert(id, o);
+            }
+            (Key::Opening(id), _) => {
+                self.openings.remove(&id);
             }
         }
     }
@@ -1788,7 +1836,7 @@ impl Document {
     /// Walls whose centreline is gone go, with what they made (and come back with it on
     /// undo); tees on them let go, and ends against deleted curves cap.
     fn prune_walls(&mut self) {
-        if self.walls.is_empty() {
+        if self.walls.is_empty() && self.openings.is_empty() {
             return;
         }
         let gone: Vec<WallId> = self
@@ -1798,6 +1846,19 @@ impl Document {
             .map(|(id, _)| *id)
             .collect();
         let mut made: Vec<EntityId> = Vec::new();
+        // Openings in walls that go, go with them (their symbols too).
+        let orphans: Vec<OpeningId> = self
+            .openings
+            .iter()
+            .filter(|(_, o)| gone.contains(&o.wall) || !self.walls.contains_key(&o.wall))
+            .map(|(id, _)| *id)
+            .collect();
+        for o in orphans {
+            if let Some(op) = self.openings.get(&o) {
+                made.extend(op.made.entities());
+            }
+            self.remove_opening(o);
+        }
         for id in &gone {
             if let Some(w) = self.walls.get(id).cloned() {
                 made.extend(w.made.entities());
@@ -2601,6 +2662,7 @@ impl Document {
         keys.extend(self.texts.keys().map(|id| Key::Text(*id)));
         keys.extend(self.walls.keys().map(|id| Key::Wall(*id)));
         keys.extend(self.property_dims.keys().map(|id| Key::PropertyDim(*id)));
+        keys.extend(self.openings.keys().map(|id| Key::Opening(*id)));
         keys
     }
 
@@ -2806,6 +2868,25 @@ impl Document {
             self.touch_key(Key::Wall(id));
             self.walls.insert(id, w);
         }
+        // Openings' offset and width expressions.
+        let openings: Vec<(OpeningId, Opening)> = self
+            .openings
+            .iter()
+            .filter_map(|(id, o)| {
+                let mut o2 = o.clone();
+                if let Some(e) = &mut o2.width_expr {
+                    *e = rename(e);
+                }
+                if let crate::OpeningAt::From { expr: Some(e), .. } = &mut o2.at {
+                    *e = rename(e);
+                }
+                (o2 != *o).then_some((*id, o2))
+            })
+            .collect();
+        for (id, o) in openings {
+            self.touch_key(Key::Opening(id));
+            self.openings.insert(id, o);
+        }
         let variants: Vec<_> = self.variants.keys().copied().collect();
         for k in variants {
             let mut variant = self.variants[&k].clone();
@@ -2845,6 +2926,15 @@ impl Document {
                 .iter()
                 .filter(|(_, w)| w.thickness_expr.as_deref().is_some_and(uses))
                 .map(|(w, _)| format!("wall {w}")),
+        );
+        users.extend(
+            self.openings
+                .iter()
+                .filter(|(_, o)| {
+                    o.width_expr.as_deref().is_some_and(uses)
+                        || matches!(&o.at, crate::OpeningAt::From { expr: Some(e), .. } if uses(e))
+                })
+                .map(|(o, _)| format!("opening {o}")),
         );
         users
     }
@@ -3717,15 +3807,108 @@ impl Document {
                 }
             }
         }
+        for (&id, o) in self.openings.iter() {
+            for e in o.made.entities() {
+                out.of.insert(e, Owner::Opening(id, o.wall));
+            }
+            // Its jambs (the wall's edges across its cut) pick it too.
+            if let Some(w) = self.walls.get(&o.wall) {
+                for (k, e) in &w.made.curves {
+                    if k.part == crate::Part::Jamb
+                        && matches!(k.from, crate::Station::Jamb(x, _) if x == id)
+                    {
+                        out.of.insert(*e, Owner::Opening(id, o.wall));
+                    }
+                }
+            }
+        }
         out
     }
 
-    /// The entities walls generated: never solver unknowns.
+    /// The entities walls (and the openings in them) generated: never solver unknowns.
     pub fn generated_entities(&self) -> std::collections::HashSet<EntityId> {
         self.walls
             .values()
             .flat_map(|w| w.made.entities())
+            .chain(self.openings.values().flat_map(|o| o.made.entities()))
             .collect()
+    }
+
+    // ----- Openings ------------------------------------------------------------------------
+
+    pub fn openings(&self) -> impl Iterator<Item = (OpeningId, &Opening)> {
+        self.openings.iter().map(|(id, o)| (*id, o))
+    }
+
+    pub fn opening(&self, id: OpeningId) -> Option<&Opening> {
+        self.openings.get(&id)
+    }
+
+    pub fn has_openings(&self) -> bool {
+        !self.openings.is_empty()
+    }
+
+    /// The openings in wall `w`.
+    pub fn openings_in(&self, w: WallId) -> impl Iterator<Item = (OpeningId, &Opening)> {
+        self.openings().filter(move |(_, o)| o.wall == w)
+    }
+
+    fn check_opening(&self, o: &Opening) -> Result<(), DocumentError> {
+        if !self.walls.contains_key(&o.wall) {
+            return Err(DocumentError::Degenerate("opening without its wall"));
+        }
+        if !(o.width > 0.0 && o.width.is_finite() && o.leaf.is_finite() && o.height.is_finite()) {
+            return Err(DocumentError::InvalidValue);
+        }
+        if let crate::OpeningAt::From { offset, .. } = o.at
+            && !offset.is_finite()
+        {
+            return Err(DocumentError::InvalidValue);
+        }
+        if let Some(l) = o.layer
+            && self.layer(l).is_none()
+        {
+            return Err(DocumentError::MissingLayer(l));
+        }
+        Ok(())
+    }
+
+    /// Add an opening to a wall. Its cut and symbol are made by the walls' regeneration.
+    pub fn add_opening(&mut self, o: Opening) -> Result<OpeningId, DocumentError> {
+        self.check_opening(&o)?;
+        let id = OpeningId(self.next_wall());
+        self.touch_key(Key::Opening(id));
+        self.openings.insert(id, o);
+        Ok(id)
+    }
+
+    /// Insert an opening with a known id (loading a file).
+    pub fn insert_opening(&mut self, id: OpeningId, o: Opening) -> Result<(), DocumentError> {
+        self.check_opening(&o)?;
+        self.next_wall_id = self.next_wall_id.max(id.0 + 1);
+        self.touch_key(Key::Opening(id));
+        self.openings.insert(id, o);
+        Ok(())
+    }
+
+    /// Replace an opening's record (where it is, its size and swing, or what it made).
+    pub fn set_opening(&mut self, id: OpeningId, o: Opening) -> Result<(), DocumentError> {
+        if !self.openings.contains_key(&id) || self.openings.get(&id) == Some(&o) {
+            return Ok(());
+        }
+        self.check_opening(&o)?;
+        self.touch_key(Key::Opening(id));
+        self.openings.insert(id, o);
+        Ok(())
+    }
+
+    /// Remove an opening's record. What its symbol made stays, as plain geometry (callers
+    /// delete it, or regenerating does).
+    pub fn remove_opening(&mut self, id: OpeningId) {
+        if self.openings.contains_key(&id) {
+            self.touch_key(Key::Opening(id));
+            self.openings.remove(&id);
+        }
     }
 
     pub fn property_dims(&self) -> impl Iterator<Item = (PropertyDimId, &PropertyDim)> {

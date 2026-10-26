@@ -9,8 +9,8 @@ const INTERIOR_WALL: f64 = 4.5;
 /// A typical exterior wall: 2×6 studs, sheathing and drywall.
 const EXTERIOR_WALL: f64 = 6.5;
 /// Leaf thickness of interior and exterior doors.
-const INTERIOR_LEAF: f64 = 1.375;
-const EXTERIOR_LEAF: f64 = 1.75;
+pub(super) const INTERIOR_LEAF: f64 = 1.375;
+pub(super) const EXTERIOR_LEAF: f64 = 1.75;
 
 /// The jambs: short lines across the wall at each end of the opening.
 fn jambs(s: &mut Sketch, x0: f64, x1: f64, wall: f64) {
@@ -21,7 +21,7 @@ fn jambs(s: &mut Sketch, x0: f64, x1: f64, wall: f64) {
 
 /// A leaf hinged at `(hx, 0)`, `width` long and `thick`, opened `swing` degrees into the
 /// room, with its swing as a thin arc. `left`: hinged on the left, closing towards +X.
-fn leaf(s: &mut Sketch, hx: f64, width: f64, thick: f64, swing: f64, left: bool) {
+pub(super) fn leaf(s: &mut Sketch, hx: f64, width: f64, thick: f64, swing: f64, left: bool) {
     let a = swing.to_radians();
     let sign = if left { 1.0 } else { -1.0 };
     // Along the open leaf, and across it towards the opening.
@@ -66,6 +66,12 @@ pub fn double_door(width: f64, wall: f64, swing: f64) -> Sketch {
 pub fn pocket_door(width: f64, wall: f64) -> Sketch {
     let mut s = Sketch::new();
     jambs(&mut s, 0.0, width, wall);
+    pocket(&mut s, width, wall);
+    s
+}
+
+/// A pocket door's leaf and pocket, without its jambs.
+pub(super) fn pocket(s: &mut Sketch, width: f64, wall: f64) {
     let (y0, y1) = (
         wall / 2.0 - INTERIOR_LEAF / 2.0,
         wall / 2.0 + INTERIOR_LEAF / 2.0,
@@ -78,23 +84,33 @@ pub fn pocket_door(width: f64, wall: f64) -> Sketch {
         (-width - 1.0, y0 - 0.5),
         (0.0, y0 - 0.5),
     ]);
-    s
 }
 
 /// Bypass (sliding) closet doors: two leaves on two tracks, overlapping in the middle.
 pub fn bypass_door(width: f64, wall: f64) -> Sketch {
     let mut s = Sketch::new();
     jambs(&mut s, 0.0, width, wall);
+    bypass(&mut s, width, wall);
+    s
+}
+
+/// Bypass doors' leaves, without their jambs.
+pub(super) fn bypass(s: &mut Sketch, width: f64, wall: f64) {
     let mid = wall / 2.0;
     s.rect(0.0, mid, width / 2.0 + 1.0, mid + INTERIOR_LEAF);
     s.rect(width / 2.0 - 1.0, mid - INTERIOR_LEAF, width, mid);
-    s
 }
 
 /// Bifold doors: two panels folding out from each jamb (one pair below 48").
 pub fn bifold_door(width: f64, wall: f64) -> Sketch {
     let mut s = Sketch::new();
     jambs(&mut s, 0.0, width, wall);
+    bifold(&mut s, width);
+    s
+}
+
+/// Bifold doors' panels, without their jambs.
+pub(super) fn bifold(s: &mut Sketch, width: f64) {
     let pairs = if width >= 48.0 { 2 } else { 1 };
     let span = width / pairs as f64;
     let panel = span / 2.0;
@@ -111,17 +127,21 @@ pub fn bifold_door(width: f64, wall: f64) -> Sketch {
         let fold = ((from + to) / 2.0, -panel * a.sin());
         s.polyline(&[(from, 0.0), fold, (to, 0.0)]);
     }
-    s
 }
 
 /// A cased opening: jambs, and the head above as hidden lines.
 pub fn cased_opening(width: f64, wall: f64) -> Sketch {
     let mut s = Sketch::new();
     jambs(&mut s, 0.0, width, wall);
-    s.pen(Pen::Hidden);
-    s.line((0.0, 0.0), (width, 0.0));
-    s.line((0.0, wall), (width, wall));
+    head(&mut s, 0.0, width, wall);
     s
+}
+
+/// The head above an opening, as hidden lines on both faces.
+pub(super) fn head(s: &mut Sketch, x0: f64, x1: f64, wall: f64) {
+    s.pen(Pen::Hidden);
+    s.line((x0, 0.0), (x1, 0.0));
+    s.line((x0, wall), (x1, wall));
 }
 
 /// An exterior door with its threshold, and `sidelights` fixed glass panels each

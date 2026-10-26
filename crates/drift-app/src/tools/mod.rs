@@ -26,6 +26,9 @@ mod fill;
 mod fillet_drag_tests;
 mod line;
 mod offset_mirror;
+mod opening;
+#[cfg(test)]
+mod opening_tests;
 mod pen;
 mod place_block;
 mod point;
@@ -54,6 +57,7 @@ pub use self::{
     curve_ops::{ExtendTool, SplitTool, TrimTool},
     fill::FillTool,
     offset_mirror::{MirrorTool, OffsetTool},
+    opening::OpeningTool,
     pen::PenTool,
     place_block::BlockTool,
     polygon::PolygonTool,
@@ -197,6 +201,8 @@ pub enum ToolKind {
     Point,
     Text,
     Block,
+    /// Doors, windows and openings hosted in walls.
+    Opening,
     Dimension,
     Ordinate,
     Note,
@@ -225,7 +231,7 @@ pub enum ToolKind {
 }
 
 impl ToolKind {
-    pub const ALL: [ToolKind; 32] = [
+    pub const ALL: [ToolKind; 33] = [
         ToolKind::Select,
         ToolKind::Line,
         ToolKind::Pen,
@@ -242,6 +248,7 @@ impl ToolKind {
         ToolKind::Point,
         ToolKind::Text,
         ToolKind::Block,
+        ToolKind::Opening,
         ToolKind::Dimension,
         ToolKind::Ordinate,
         ToolKind::Note,
@@ -302,6 +309,7 @@ impl ToolKind {
             ToolKind::Point => "Point",
             ToolKind::Text => "Text",
             ToolKind::Block => "Place block",
+            ToolKind::Opening => "Door / window",
             ToolKind::Dimension => "Dimension",
             ToolKind::Fill => "Fill / hatch",
             ToolKind::Ordinate => "Ordinate",
@@ -350,6 +358,10 @@ impl ToolKind {
             ToolKind::Point => "A sketch point, for reference or construction",
             ToolKind::Text => "A line of text drawn as outlines, convertible to curves",
             ToolKind::Block => "Place copies of a block from the Blocks tab; R turns, X mirrors",
+            ToolKind::Opening => {
+                "Doors, windows and openings in walls: hover a wall, click to place. Space: the \
+                 way it opens; type the offset, Tab: width"
+            }
             ToolKind::Dimension => "Click geometry, then place the label: the type follows",
             ToolKind::Fill => "Fill or hatch a closed area: click inside it",
             ToolKind::Ordinate => "X or Y distances from an origin point, in rows",
@@ -431,6 +443,7 @@ impl ToolKind {
             ToolKind::Point => Box::<PointTool>::default(),
             ToolKind::Text => Box::<TextTool>::default(),
             ToolKind::Block => Box::<BlockTool>::default(),
+            ToolKind::Opening => Box::<OpeningTool>::default(),
             ToolKind::Dimension => Box::<DimensionTool>::default(),
             ToolKind::Fill => Box::<FillTool>::default(),
             ToolKind::Ordinate => Box::<OrdinateTool>::default(),

@@ -27,7 +27,9 @@
 mod bath;
 mod doors;
 mod furniture;
+pub mod hosted;
 mod kitchen;
+pub mod sizes;
 mod utility;
 mod windows;
 

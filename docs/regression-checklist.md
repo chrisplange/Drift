@@ -50,6 +50,7 @@ before the fix (check that by turning the fix off locally), and passes with it. 
 | Tool rail | `rail.rs` | Every place on the rail in view without scrolling at 1280 × 800, 1280 × 700 and in a 720 × 800 window (two columns of icons). Right-click Trim: its flyout; Extend picks the tool and Trim's place shows Extend; the top bar switches back to Trim. Holding the Circle button opens its flyout and letting go over Ellipse picks it; C picks the circle again and the place follows. Esc closes a flyout and keeps the tool. Move and Rotate on the rail do nothing with nothing picked, and grab or turn a picked line. Wall sits in Build above Place block; W picks it; its flyout has Walls from curves; the Build menu has Wall, Walls from curves, Place block, Join walls, Unjoin walls and Explode walls. | `cargo test -p drift-app smoke::rail` |
 | Options | `options.rs` | Save current in the Parameters panel as Values only, then as Whole sketch; a click on each applies it (the values; the whole sketch, taking away a line drawn since) and Ctrl+Z undoes it. | `cargo test -p drift-app smoke::options` |
 | Walls | `walls.rs` | W, a room clicked round and closed on its start: one ring, one poché. A wall started on the room's side tees into it (one poché for both). A click in the poché picks the wall; a new thickness re-thickens it and Ctrl+Z puts it back. Saved, closed and opened again: the walls as they were, nothing repaired; Edit → Explode on a picked wall leaves plain lines and a fill. | `cargo test -p drift-app smoke::walls` |
+| Openings | `openings.rs` | Shift+O, a door placed in a room's wall (Space steps its swing first): the poché opens by its width × the wall's thickness. A click on its jamb picks the door, Delete takes it out and the wall closes up; Ctrl+Z brings it back. Saved and opened again: as it was, nothing repaired. | `cargo test -p drift-app smoke::openings` |
 
 Deeper tests of the same features stay where they were (`ui_tests.rs`, `ui_tests/*.rs`,
 `fill_tests.rs`, `tools/tests.rs`, `drag_props.rs`). The smoke suite is the quick pass over
@@ -74,6 +75,10 @@ touches them:
 - **Walls by eye.** Joins at odd angles, curved walls meeting straight ones, hatched pochés
   across a cluster, and a wall plan printed to PDF and exported to DXF (faces as lines and
   arcs, pochés as fills, butt edges and centrelines left out).
+- **Doors and windows by eye.** Each family of the US and metric size sets in a 4½″ and a
+  6½″ wall (the symbol sits on the face it opens to, the leaf centred between its frames),
+  the four swings by Space and by the flip arrows, an opening slid up to a corner and a T
+  (it stops clear), and a plan with doors printed to PDF and exported to DXF.
 - **AutoCAD.** An exported DXF opens in AutoCAD or the free DWG TrueView. Headless, with
   either installed: `scripts\cad-check.ps1 export.dxf` opens each file in AutoCAD's own engine
   and prints AutoCAD's reason if it refuses one.

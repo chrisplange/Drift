@@ -230,6 +230,18 @@ pub fn copy_into(
             let _ = dst.set_wall(new, w);
         }
     }
+    // Their openings: copies in the copies (they make their symbols when committed).
+    let openings: Vec<drift_core::Opening> = src
+        .openings()
+        .filter(|(_, o)| walls.contains_key(&o.wall))
+        .map(|(_, o)| o.clone())
+        .collect();
+    for mut o in openings {
+        o.wall = walls[&o.wall];
+        o.made = Default::default();
+        o.layer = o.layer.map(|l| layer(dst, l));
+        let _ = dst.add_opening(o);
+    }
     // Block copies, bringing their blocks along (matched by name) into another document.
     let mut blocks: BTreeMap<BlockId, BlockId> = BTreeMap::new();
     for &id in &picked.instances {

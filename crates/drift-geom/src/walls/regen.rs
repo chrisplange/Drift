@@ -10,7 +10,7 @@ use drift_core::{
     LineType, LoopKey, Made, Part, PathId, Shape, Wall, WallId,
 };
 
-use super::{EndIn, Generated, Joins, Seg, WallIn, generate_with};
+use super::{EndIn, Generated, Joins, Seg, WallIn, generate_all, opening_inputs};
 
 /// What a regeneration did.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -208,7 +208,7 @@ pub fn regenerate_with(doc: &mut Document, joins: Option<&Joins>) -> Report {
     }
     let (inputs, notes) = wall_inputs(doc);
     report.notices = notes;
-    let g = generate_with(&inputs, snap(doc), joins);
+    let g = generate_all(&inputs, &opening_inputs(doc, &inputs), snap(doc), joins);
     report.notices.extend(g.notices.iter().cloned());
     report.aliased = g.aliased.clone();
     write(doc, &g, &mut report);
@@ -646,7 +646,7 @@ fn pick<T: Copy>(
 /// preview, or a check), without writing anything.
 pub fn shapes(doc: &Document) -> Vec<Shape> {
     let (inputs, _) = wall_inputs(doc);
-    generate_with(&inputs, snap(doc), None).shapes()
+    generate_all(&inputs, &opening_inputs(doc, &inputs), snap(doc), None).shapes()
 }
 
 /// A closed path of lines and arcs as a loop of edges, in its order (each curve run the way
@@ -785,6 +785,7 @@ pub fn regenerate_moved_with(
         return None;
     }
     let mut g = super::Gen::new(&inputs, snap(doc));
+    g.openings = opening_inputs(doc, &inputs);
     g.frozen = joins;
     g.make_faces();
     if g.faces.iter().any(Option::is_none) {
@@ -824,6 +825,7 @@ pub fn regenerate_moved_with(
     for n in &around {
         g.solve(n);
     }
+    g.check_openings();
     if !g.out.notices.is_empty() {
         return None;
     }

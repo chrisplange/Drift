@@ -87,6 +87,21 @@ impl DriftApp {
                 annotations::layout_dimension(painter, doc, Some(id), c, doc.placement(id), map)
             })
             .collect();
+        // A picked opening's width and offset.
+        if self.tool.kind() == ToolKind::Select {
+            for o in self.editor.selected_openings() {
+                for (c, at) in self.editor.opening_dimensions(o) {
+                    out.extend(annotations::layout_dimension(
+                        painter,
+                        doc,
+                        None,
+                        &c,
+                        Some(at),
+                        map,
+                    ));
+                }
+            }
+        }
         // Walls' thickness dimensions (drawn as a dimension between the faces).
         if self.show_dimensions {
             for (q, d) in doc.property_dims() {
@@ -1048,6 +1063,7 @@ impl DriftApp {
         self.paint_check_markers(&painter, &map);
         if self.pie.is_none() {
             self.paint_transform_box(&painter, &map, &colors, ui.visuals().dark_mode);
+            self.paint_opening_arrows(&painter, &map, &colors);
         }
         if let Some(region) = self.editor.region() {
             overlay::region_fill(&painter, &map, &region, colors.window.gamma_multiply(0.22));

@@ -1,13 +1,16 @@
 //! The gallery of wall joins: the standard ways walls meet, drawn the way people draw them
-//! (on the mark, a little short, a little past, off the centreline, near a free end), each
-//! checked for what it should make: one outline or several, its holes, its area, and no
-//! notices. `walls_gallery_pictures` (ignored) renders them all onto one sheet to look at:
+//! (on the mark, a little short, a little past, off the centreline, near a free end), and
+//! openings in them (near a corner, either side of a T, in a T's branch, in an arc wall,
+//! through a room), each checked for what it should make: one outline or several, its holes,
+//! its area, and no notices. `walls_gallery_pictures` (ignored) renders them all onto one sheet to look at:
 //! `cargo test -p drift-app walls_gallery_pictures -- --ignored`, then
 //! `target/tmp/wall-gallery.png` (cases left to right, top to bottom, in the order below).
 
 use std::collections::HashMap;
 
-use drift_core::{DVec2, Document, EntityId, FillStyle, LayerId, LineKind, Path, Wall};
+use drift_core::{
+    DVec2, Document, EntityId, FillStyle, LayerId, LineKind, Opening, OpeningAt, Path, Symbol, Wall,
+};
 use drift_geom::walls::{Seg, generate, regen, regenerate};
 
 const T: f64 = 200.0;
@@ -51,6 +54,9 @@ struct Case {
     outers: usize,
     holes: usize,
     area: Option<f64>,
+    /// Openings: (run, segment, first jamb along it, width) — doors, drawn with their
+    /// symbols in the pictures.
+    openings: Vec<(usize, u16, f64, f64)>,
 }
 
 fn case(
@@ -67,6 +73,7 @@ fn case(
         outers,
         holes,
         area,
+        openings: Vec::new(),
     }
 }
 
@@ -355,6 +362,70 @@ fn cases() -> Vec<Case> {
             0,
             None,
         ),
+        // Openings (W3).
+        Case {
+            share: true,
+            openings: vec![(0, 0, 1950.0, 900.0)],
+            ..case(
+                "Door near an L's corner (the stub to its free end apart)",
+                vec![run(&[v(0.0, 0.0), v(3000.0, 0.0), v(3000.0, 2000.0)])],
+                2,
+                0,
+                Some(5000.0 * T - 900.0 * T),
+            )
+        },
+        Case {
+            openings: vec![(0, 0, 300.0, 900.0), (0, 0, 1800.0, 900.0)],
+            ..case(
+                "Doors either side of a T",
+                vec![host(), run(&[v(1500.0, 0.0), v(1500.0, 2000.0)])],
+                3,
+                0,
+                Some(3000.0 * T + 1900.0 * T - 1800.0 * T),
+            )
+        },
+        Case {
+            openings: vec![(1, 0, 200.0, 800.0)],
+            ..case(
+                "Door in a T's branch, near its host",
+                vec![host(), run(&[v(1500.0, 0.0), v(1500.0, 2000.0)])],
+                2,
+                0,
+                Some(3000.0 * T + 1900.0 * T - 800.0 * T),
+            )
+        },
+        Case {
+            openings: vec![(0, 0, 1200.0, 900.0)],
+            ..case(
+                "Door in an arc wall",
+                vec![Run {
+                    through: Some(v(1500.0, 800.0)),
+                    ..run(&[v(0.0, 0.0), v(3000.0, 0.0)])
+                }],
+                2,
+                0,
+                None,
+            )
+        },
+        Case {
+            share: true,
+            openings: vec![(0, 0, 1550.0, 900.0)],
+            ..case(
+                "Door through a room's wall",
+                vec![Run {
+                    closed: true,
+                    ..run(&[
+                        v(0.0, 0.0),
+                        v(4000.0, 0.0),
+                        v(4000.0, 3000.0),
+                        v(0.0, 3000.0),
+                    ])
+                }],
+                1,
+                0,
+                Some((4200.0 * 3200.0 - 3800.0 * 2800.0) - 900.0 * T),
+            )
+        },
     ]
 }
 
@@ -371,6 +442,7 @@ fn drawing(c: &Case) -> (Document, Vec<String>) {
             doc.add_point(p)
         }
     };
+    let mut walls = Vec::new();
     for r in &c.runs {
         let pts: Vec<EntityId> = r.pts.iter().map(|p| point(&mut doc, *p)).collect();
         let n = if r.closed { pts.len() } else { pts.len() - 1 };
@@ -409,7 +481,17 @@ fn drawing(c: &Case) -> (Document, Vec<String>) {
         }
         w.ends[0].join = r.join[0];
         w.ends[1].join = r.join[1];
-        doc.add_wall(w).unwrap();
+        walls.push(doc.add_wall(w).unwrap());
+    }
+    for &(run, seg, u0, width) in &c.openings {
+        let mut o = Opening::new(walls[run], seg, width);
+        o.at = OpeningAt::from_start(u0);
+        o.leaf = width - 50.0;
+        o.symbol = Symbol::Library {
+            family: "door.single".into(),
+            type_name: String::new(),
+        };
+        doc.add_opening(o).unwrap();
     }
     let report = regenerate(&mut doc);
     (doc, report.notices)
@@ -421,7 +503,8 @@ fn walls_gallery_joins_make_what_they_should() {
     for (i, c) in cases().iter().enumerate() {
         let (doc, notices) = drawing(c);
         let (inputs, _) = regen::wall_inputs(&doc);
-        let g = generate(&inputs, regen::snap(&doc));
+        let openings = drift_geom::walls::opening_inputs(&doc, &inputs);
+        let g = drift_geom::walls::generate_cut(&inputs, &openings, regen::snap(&doc));
         let outers = g.loops.iter().filter(|l| l.key.hole == 0).count();
         let holes = g.loops.len() - outers;
         let area: f64 = g.regions().iter().map(|(_, _, r)| r.area).sum();
@@ -468,7 +551,8 @@ fn walls_gallery_pictures() {
     for (i, c) in all.iter().enumerate() {
         let (doc, _) = drawing(c);
         let mut s = crate::agent::Session::new();
-        s.editor.doc = doc;
+        // (Through an editor: the openings draw their symbols.)
+        s.editor = crate::editor::Editor::new(doc);
         s.editor.sync();
         let out = s.call(
             "render",

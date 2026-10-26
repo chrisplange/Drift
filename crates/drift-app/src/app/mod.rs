@@ -22,6 +22,7 @@ mod keyboard;
 pub(crate) mod link_ui;
 pub(crate) mod mark_views;
 pub(crate) mod note_ui;
+pub(crate) mod opening_ui;
 pub(crate) mod palette;
 pub(crate) mod panels;
 pub(crate) mod patterns;

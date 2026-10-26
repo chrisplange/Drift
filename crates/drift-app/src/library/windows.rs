@@ -12,6 +12,14 @@ fn frame(width: f64, wall: f64) -> Sketch {
     let mut s = Sketch::new();
     s.line((0.0, 0.0), (0.0, wall));
     s.line((width, 0.0), (width, wall));
+    body(&mut s, width, wall);
+    s
+}
+
+/// A window without its jambs: the stool line, the exterior face and the sill (a wall's
+/// opening draws the jambs).
+pub(super) fn body(s: &mut Sketch, width: f64, wall: f64) {
+    s.pen(Pen::Normal);
     s.line((0.0, 0.0), (width, 0.0));
     s.line((0.0, wall), (width, wall));
     s.polyline(&[
@@ -20,29 +28,41 @@ fn frame(width: f64, wall: f64) -> Sketch {
         (width + 1.0, wall + 1.5),
         (width + 1.0, wall),
     ]);
-    s
 }
 
 /// A fixed (picture) window: one pane of glass.
 pub fn fixed_window(width: f64, wall: f64) -> Sketch {
     let mut s = frame(width, wall);
+    fixed_glass(&mut s, width, wall);
+    s
+}
+
+pub(super) fn fixed_glass(s: &mut Sketch, width: f64, wall: f64) {
     s.pen(Pen::Thin);
     s.line((0.0, wall / 2.0), (width, wall / 2.0));
-    s
 }
 
 /// A single or double hung window: two sashes, one behind the other.
 pub fn hung_window(width: f64, wall: f64) -> Sketch {
     let mut s = frame(width, wall);
+    hung_sashes(&mut s, width, wall);
+    s
+}
+
+pub(super) fn hung_sashes(s: &mut Sketch, width: f64, wall: f64) {
     s.pen(Pen::Thin);
     s.line((0.0, wall / 2.0 - 0.75), (width, wall / 2.0 - 0.75));
     s.line((0.0, wall / 2.0 + 0.75), (width, wall / 2.0 + 0.75));
-    s
 }
 
 /// A horizontal slider: two sashes overlapping in the middle.
 pub fn slider_window(width: f64, wall: f64) -> Sketch {
     let mut s = frame(width, wall);
+    slider_sashes(&mut s, width, wall);
+    s
+}
+
+pub(super) fn slider_sashes(s: &mut Sketch, width: f64, wall: f64) {
     s.pen(Pen::Thin);
     s.line(
         (0.0, wall / 2.0 + 0.75),
@@ -52,13 +72,17 @@ pub fn slider_window(width: f64, wall: f64) -> Sketch {
         (width / 2.0 - 1.0, wall / 2.0 - 0.75),
         (width, wall / 2.0 - 0.75),
     );
-    s
 }
 
 /// Casement sashes (one, or a pair meeting in the middle), shown opened 30° outwards with
 /// their swing.
 pub fn casement_window(width: f64, wall: f64, sashes: usize) -> Sketch {
     let mut s = frame(width, wall);
+    casement_sashes(&mut s, width, wall, sashes);
+    s
+}
+
+pub(super) fn casement_sashes(s: &mut Sketch, width: f64, wall: f64, sashes: usize) {
     let y = wall / 2.0;
     s.pen(Pen::Thin);
     s.line((0.0, y), (width, y));
@@ -76,7 +100,6 @@ pub fn casement_window(width: f64, wall: f64, sashes: usize) -> Sketch {
             s.arc((hinge, y), sash, 150.0, 30.0);
         }
     }
-    s
 }
 
 pub fn entries() -> Vec<Entry> {

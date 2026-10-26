@@ -5,9 +5,11 @@
 //!
 //! What a wall made is written by key (`docs/walls-design.md` §2.3), as strings:
 //!
-//! - a station: `start`, `end`, `tee:w3` or `x:w3.2.0` (that wall's segment 2, crossing 0);
+//! - a station: `start`, `end`, `tee:w3`, `x:w3.2.0` (that wall's segment 2, crossing 0) or
+//!   `jamb:o2.1` (opening o2's far jamb; an addition with openings, fixture `v42.2`);
 //! - a face key: its part, segment and station, `L0@start` or `R1@tee:w4`; end edges are
-//!   `C` (cap), `B` (butt), `S` (step), `V` (bevel) and `M` (seam), with `>` for the end at a
+//!   `C` (cap), `B` (butt), `S` (step), `V` (bevel), `M` (seam) and `J` (an opening's jamb,
+//!   with no direction: `J0@jamb:o2.0`), with `>` for the end at a
 //!   segment's start or a station's far side and `<` for the other, and a seam's side, `+` or
 //!   `-`: `C>0@start`, `M<+2@end`;
 //! - an end: `w1.0@start>`;
@@ -145,6 +147,7 @@ fn station(s: Station) -> String {
         Station::Tee(w, 0) => format!("tee:{w}"),
         Station::Tee(w, e) => format!("tee:{w}.{e}"),
         Station::Cross(w, seg, n) => format!("x:{w}.{seg}.{n}"),
+        Station::Jamb(o, k) => format!("jamb:{o}.{k}"),
     }
 }
 
@@ -173,6 +176,7 @@ fn part(p: Part) -> String {
                 Turn::Cw => '-',
             }
         ),
+        Part::Jamb => "J".into(),
     }
 }
 
@@ -218,6 +222,12 @@ fn parse_station(s: &str) -> Result<Station, LoadError> {
             if let Some(t) = s.strip_prefix("tee:") {
                 let (w, e) = t.split_once('.').unwrap_or((t, "0"));
                 Station::Tee(parse_wall_id(w)?, e.parse().map_err(|_| bad(s))?)
+            } else if let Some(j) = s.strip_prefix("jamb:") {
+                let (o, k) = j.split_once('.').ok_or_else(|| bad(s))?;
+                Station::Jamb(
+                    drift_core::OpeningId(parse_prefixed(o, 'o')?),
+                    k.parse().map_err(|_| bad(s))?,
+                )
             } else if let Some(x) = s.strip_prefix("x:") {
                 let mut it = x.split('.');
                 let (w, seg, n) = (
@@ -255,6 +265,7 @@ pub(crate) fn parse_face_key(s: &str) -> Result<FaceKey, LoadError> {
     let rest: String = chars.collect();
     let (part, seg) = match letter {
         'L' => (Part::Left, rest.as_str()),
+        'J' => (Part::Jamb, rest.as_str()),
         'R' => (Part::Right, rest.as_str()),
         'C' | 'B' | 'S' | 'V' | 'M' => {
             let mut r = rest.chars();
@@ -648,6 +659,16 @@ mod tests {
                 part: Part::Cap(Dir::Fwd),
                 from: Station::Tee(WallId(9), 1),
             },
+            FaceKey {
+                seg: 2,
+                part: Part::Jamb,
+                from: Station::Jamb(drift_core::OpeningId(7), 1),
+            },
+            FaceKey {
+                seg: 2,
+                part: Part::Right,
+                from: Station::Jamb(drift_core::OpeningId(7), 1),
+            },
         ];
         for f in faces {
             assert_eq!(parse_face_key(&face_key(f)).unwrap(), f, "{}", face_key(f));
@@ -671,6 +692,8 @@ mod tests {
             );
         }
         assert_eq!(face_key(faces[0]), "L0@start");
+        assert_eq!(face_key(faces[3]), "J2@jamb:o7.1");
+        assert!(parse_face_key("J2@jamb:o7").is_err());
         assert!(parse_face_key("Q0@start").is_err());
         assert!(parse_corner_key("pair:w1.0@start>").is_err());
     }

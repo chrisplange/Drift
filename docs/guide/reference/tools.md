@@ -54,13 +54,14 @@ become dimensions when **Auto relations** is on.
 
 ## Build
 
-Walls (and later doors, windows and rooms) and blocks. **Join walls**, **Unjoin walls**
+Walls, doors and windows (and later rooms), and blocks. **Join walls**, **Unjoin walls**
 and **Explode walls** are in the **Build** menu; **Walls from curves** is in the **Wall**
 tool's flyout too.
 
 | Tool | Key | What it does |
 |---|---|---|
 | **Wall** | W | Click the centreline corner by corner; back in the first corner closes a ring, Enter or Esc ends. Starting or ending anywhere in another wall joins it (in its corner: an L; along it: a T; along the run itself: a T into itself); on another curve, stops against it. The preview shows the join before you click. W again (or A / L mid-run) switches to arcs (the end, then a point it curves through); drag at the next corner to bend the segment; Space flips to the other face; Backspace takes the last segment back. Top bar: **Thickness** (with presets), **Left face** / **Centre** / **Right face**, **Straight** / **Arc**, **Poché**. See [Walls](../tutorials/14-walls.md). Typed: Length, Tab, angle. |
+| **Door / window** | Shift+O | Hover a wall: the door, window or cased opening shows cut into it, centred on the pointer and kept clear of the corners; click to place (the tool stays in hand). Space steps through the four ways it opens (hinge left or right, into the room or out). A picked opening slides along its wall when dragged, and flips by its two arrows. Top bar: the drawing's **size set** (US imperial or generic metric), the **family** and **type** (named by its leaf; the wall is cut to its rough opening), the **Opening** width (any width will do), and the way it opens. See [Doors and windows](../tutorials/15-openings.md). Typed: offset from the nearer corner, Tab, width. |
 | **Place block** | I | Copies of the block picked in the **Blocks** panel follow the pointer; click to place. R turns the next copy 90°, X mirrors it. |
 
 ## Annotate

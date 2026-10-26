@@ -459,6 +459,8 @@ pub struct Editor {
     pub wall_justify: drift_core::Justify,
     pub wall_arc: bool,
     pub wall_poche: crate::walls::PocheSetting,
+    /// The Opening tool bar's family, type, sizes and swing.
+    pub opening: crate::openings::OpeningSettings,
     /// Walls' centrelines show (the Wall or Dimension tool is in hand, or View → Wall
     /// centrelines is on); otherwise only a picked or hovered wall's do.
     pub show_centrelines: bool,
@@ -500,6 +502,7 @@ impl Editor {
     /// Take the preferences kept on an editor (how new shapes are filled, what is picked,
     /// how the dimension tool goes on) from the one this replaces, for a newly opened drawing.
     pub fn keep_prefs_from(&mut self, was: &Editor) {
+        self.opening = was.opening.clone();
         self.pick_any_area = was.pick_any_area;
         self.fill_new_shapes = was.fill_new_shapes;
         self.fill_style = was.fill_style.clone();
@@ -1345,7 +1348,8 @@ impl Editor {
                     .map_err(|e| EditError::Invalid(e.to_string()))?;
             }
         }
-        self.apply_wall_thickness()
+        self.apply_wall_thickness()?;
+        self.apply_opening_sizes()
     }
 
     /// Apply parameters, solve and commit the open transaction, or roll it back.
@@ -2411,7 +2415,21 @@ impl Editor {
         for id in std::mem::take(&mut self.selected_fills) {
             self.doc.remove_fill(id);
         }
-        let curves: Vec<EntityId> = self.selection.iter().copied().collect();
+        // Picked openings go (their walls close up), not their walls.
+        let mut kept_out: BTreeSet<EntityId> = BTreeSet::new();
+        for o in self.selected_openings() {
+            kept_out.extend(self.opening_pick_set(o));
+            if let Some(op) = self.doc.opening(o).cloned() {
+                self.doc.remove_opening(o);
+                self.doc.delete(op.made.entities().collect::<Vec<_>>());
+            }
+        }
+        let curves: Vec<EntityId> = self
+            .selection
+            .iter()
+            .copied()
+            .filter(|id| !kept_out.contains(id) && self.doc.contains(*id))
+            .collect();
         self.delete_curves(curves);
         self.commit("Delete");
     }
@@ -2810,6 +2828,13 @@ impl Editor {
     /// What picking `id` selects: its whole group, unless that group is open (or the filter
     /// leaves out Blocks & groups: then the one curve).
     pub fn pick_set(&self, id: EntityId) -> BTreeSet<EntityId> {
+        // An opening's symbol or jamb picks the opening.
+        if let Some(o) = self.opening_of(id) {
+            let set = self.opening_pick_set(o);
+            if !set.is_empty() {
+                return set;
+            }
+        }
         // A wall's face, corner or poché picks the wall: its centreline.
         if self.doc.has_walls()
             && self.wall_owners().generated(id)

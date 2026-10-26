@@ -248,8 +248,11 @@ fn every_fixture_opens_keeps_its_contents_and_saves_as_current() {
             "{}",
             at("property dimensions")
         );
+        // (From 42.2 the door and the cased opening cut the L and the curve in two.)
+        let has_openings = (version, addition) >= (42, 2);
         if has_walls {
-            assert_eq!(walls.fills.len(), 2, "{}", at("pochés"));
+            let poches = if has_openings { 4 } else { 2 };
+            assert_eq!(walls.fills.len(), poches, "{}", at("pochés"));
             let mut regenerated = doc.clone();
             let report = drift_geom::walls::regenerate(&mut regenerated);
             assert!(
@@ -258,8 +261,30 @@ fn every_fixture_opens_keeps_its_contents_and_saves_as_current() {
                 at(&format!("walls regenerate: {report:?}"))
             );
         }
+        // Openings (42.2): a door in the L, a cased opening in the curved wall, and a size
+        // set picked for the drawing.
+        assert_eq!(
+            doc.openings().count(),
+            if has_openings { 2 } else { 0 },
+            "{}",
+            at("openings")
+        );
+        if has_openings {
+            let door = doc.openings().next().unwrap().1;
+            assert!(!door.made.is_empty(), "{}", at("the door's symbol"));
+            let jambs = doc
+                .walls()
+                .flat_map(|(_, w)| w.made.curves.keys())
+                .filter(|k| k.part == drift_core::Part::Jamb)
+                .count();
+            assert_eq!(jambs, 4, "{}", at("jambs"));
+        }
         if version >= 39 {
-            assert_eq!(doc.rules(), fixture_rules(), "{}", at("rules"));
+            let mut rules = fixture_rules();
+            if !has_openings {
+                rules.size_set = None;
+            }
+            assert_eq!(doc.rules(), rules, "{}", at("rules"));
             assert!(!meta.older_rules, "{}", at("older rules"));
         } else {
             assert_eq!(doc.rules(), DrawingRules::default(), "{}", at("rules"));
@@ -360,6 +385,7 @@ fn fixture_rules() -> DrawingRules {
         stacked_fills: true,
         follow_divided_fills: true,
         gap_tolerance: 0.25,
+        size_set: drift_core::SizeSetId::new("us"),
     }
 }
 
@@ -689,5 +715,60 @@ fn add_walls(doc: &mut Document, layer: drift_core::LayerId) {
         out: 600.0,
     })
     .unwrap();
+    let curved = doc.walls().map(|(id, _)| id).max().unwrap();
+    add_openings(doc, l, curved);
     drift_geom::walls::regenerate(doc);
+}
+
+/// Openings (42.2): a door in the L's second segment, centred, with a leaf and a swing as its
+/// symbol; a cased opening (a plain cut) in the curved wall, 800 from its end.
+fn add_openings(doc: &mut Document, l: drift_core::WallId, curved: drift_core::WallId) {
+    use drift_core::{Hand, Opening, OpeningAt, SegEnd, Shape, Symbol, WallFace};
+    let inch = 25.4;
+    let mut door = Opening::new(l, 1, 38.0 * inch);
+    door.leaf = 36.0 * inch;
+    door.height = 82.5 * inch;
+    door.symbol = Symbol::Library {
+        family: "door.single".into(),
+        type_name: "3′0″ × 6′8″".into(),
+    };
+    door.hand = Hand::Right;
+    door.facing = WallFace::Left;
+    let d = doc.add_opening(door.clone()).unwrap();
+    let mut cased = Opening::new(curved, 0, 900.0);
+    cased.at = OpeningAt::From {
+        end: SegEnd::End,
+        offset: 800.0,
+        expr: None,
+    };
+    doc.add_opening(cased).unwrap();
+    // The door's symbol: its leaf and swing, in its frame.
+    let wall = doc.wall(l).unwrap().clone();
+    let (segs, ..) = drift_geom::walls::regen::centreline(doc, &wall).unwrap();
+    let frame = drift_geom::walls::Frame::of(
+        &segs[1],
+        wall.offsets(),
+        door.span_on(segs[1].length()),
+        door.hand,
+        door.facing,
+    )
+    .unwrap();
+    let f = inch;
+    let leaf = 36.0 * inch;
+    let items: Vec<(Shape, drift_core::Appearance)> = [
+        Shape::Line {
+            a: DVec2::new(f, 0.0),
+            b: DVec2::new(f, -leaf),
+        },
+        Shape::Arc {
+            center: DVec2::new(f, 0.0),
+            radius: leaf,
+            start: -std::f64::consts::FRAC_PI_2,
+            sweep: std::f64::consts::FRAC_PI_2,
+        },
+    ]
+    .iter()
+    .filter_map(|s| Some((frame.shape(s)?, drift_core::Appearance::default())))
+    .collect();
+    drift_geom::walls::write_symbol(doc, d, &items, wall.layer);
 }

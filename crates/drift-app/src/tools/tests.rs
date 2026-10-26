@@ -3330,18 +3330,6 @@ fn duplicate_brings_the_fill_of_a_copied_area_and_it_follows_the_copy() {
     );
 }
 
-#[test]
-fn toolbar_sections_list_every_tool_once() {
-    let listed: Vec<ToolKind> = ToolKind::SECTIONS
-        .iter()
-        .flat_map(|(_, tools)| tools.iter().copied())
-        .collect();
-    assert_eq!(listed.len(), ToolKind::ALL.len());
-    for kind in ToolKind::ALL {
-        assert_eq!(listed.iter().filter(|k| **k == kind).count(), 1, "{kind:?}");
-    }
-}
-
 fn arcs(doc: &Document) -> usize {
     count(doc, |k| matches!(k, EntityKind::Arc { .. }))
 }

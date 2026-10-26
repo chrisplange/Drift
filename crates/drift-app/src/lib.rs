@@ -292,6 +292,10 @@ pub struct DriftApp {
     last_command: Option<app::palette::Command>,
     /// Where the pointer last was on the canvas, for Move and Rotate from a menu.
     last_pointer: Option<Pointer>,
+    /// The tool rail's families: the command each shows (the last used), by head.
+    rail_shown: Vec<(app::palette::Command, app::palette::Command)>,
+    /// The tool rail's open flyout.
+    rail_flyout: Option<app::rail::Flyout>,
     backend: String,
     window_title: String,
     /// Where the canvas was laid out last frame.
@@ -565,6 +569,8 @@ impl DriftApp {
             recent_commands: Vec::new(),
             last_command: None,
             last_pointer: None,
+            rail_shown: Vec::new(),
+            rail_flyout: None,
             backend,
             window_title: String::new(),
             canvas_rect: egui::Rect::NOTHING,
@@ -943,7 +949,7 @@ impl eframe::App for DriftApp {
         egui::Panel::left("tools")
             .resizable(false)
             .frame(frame(8, 6))
-            .exact_size(if wide { 168.0 } else { 56.0 })
+            .exact_size(if wide { 168.0 } else { 84.0 })
             .show(ui, |ui| self.toolbar(ui, wide));
         self.begin_docks(wide);
         self.dock(ui, dock::Side::Left);

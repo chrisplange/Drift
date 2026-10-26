@@ -191,7 +191,8 @@ in; turn that off with **Edit → Preferences… → Drawing aids → Round size
 - **Trim** (T): click a piece of a curve to remove it, up to the curves that cross it. Or
   drag across several pieces: the drag leaves a trail and trims everything it crosses.
 - **Extend** (E): click near the end of a line or arc to lengthen it to the next curve.
-- **Split** (in the tool palette; no key): click a curve where it should be cut in two. A
+- **Split** (no key: right-click **Trim** in the tool palette, or use the top bar's
+  **Trim** / **Extend** / **Split** switch): click a curve where it should be cut in two. A
   circle or ellipse becomes two halves.
 
 These work on lines, arcs, circles, ellipses and pen curves. With **Auto relations** on,

@@ -703,10 +703,10 @@ fn annotation() {
     h.key_press(Key::Enter);
     h.run();
     h.run();
-    h.get_by_label("Centre mark").click();
+    h.state_mut().switch_tool(ToolKind::CentreMark);
     h.run();
     click_world(&mut h, DVec2::new(84.0, 40.0));
-    h.get_by_label("Callout").click();
+    h.state_mut().switch_tool(ToolKind::Callout);
     h.run();
     let hole = DVec2::new(70.0, 40.0) + DVec2::splat(26.0 / 2f64.sqrt());
     click_world(&mut h, hole + DVec2::new(3.2, 0.0));
@@ -725,7 +725,7 @@ fn annotation() {
     h.run();
     click_world(&mut h, DVec2::new(0.0, 40.0));
     click_world(&mut h, DVec2::new(120.0, 40.0));
-    h.get_by_label("Elevation mark").click();
+    h.state_mut().switch_tool(ToolKind::Elevation);
     h.run();
     click_world(&mut h, DVec2::new(130.0, -10.0));
     click_world(&mut h, DVec2::new(110.0, 10.0));

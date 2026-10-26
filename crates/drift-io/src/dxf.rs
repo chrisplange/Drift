@@ -2,10 +2,11 @@
 //! Reading any ASCII DXF is in `dxf_import` (re-exported here).
 //!
 //! Output keeps layers (colour and line type) and line types; R12 has no line weights, so
-//! they are dropped. Fills become SOLID triangles. Ellipses and Bézier curves are written
-//! exactly as ELLIPSE and SPLINE entities, which are newer than R12: most readers take
-//! them in an AC1009 file, but a strict R12 reader may skip them. Text uses DXF's `%%c` / `%%d` / `%%p`
-//! codes for Ø, ° and ±.
+//! they are dropped. Fills become SOLID triangles. Only R12's own entities are written:
+//! AutoCAD discards a whole AC1009 file at the first newer one (ELLIPSE, SPLINE), so
+//! ellipses and Bézier curves are written as polylines that stay within [`CURVE_TOLERANCE`]
+//! of the curve. Text uses DXF's `%%c` / `%%d` / `%%p` codes for Ø, ° and ±, and `\U+XXXX`
+//! for any other character outside ASCII.
 //!
 //! R12 has no draw order of its own: entities are written in the drawing's order (fills
 //! stacked as on screen), which programs that draw in file order show as Drift does; others
@@ -123,19 +124,105 @@ fn layer_name(name: &str) -> String {
     if s.is_empty() { "0".into() } else { s }
 }
 
+/// Text as an R12 TEXT string: `%%c`, `%%d` and `%%p` for Ø, ° and ±, `\U+XXXX` for other
+/// characters outside ASCII (AutoCAD and other readers decode it in every version), and `%%%`
+/// for a percent sign that would otherwise start a code.
 #[cfg(not(feature = "demo"))]
 fn dxf_text(s: &str) -> String {
-    s.chars()
-        .map(|c| match c {
-            'Ø' | 'ø' => "%%c".to_owned(),
-            '°' => "%%d".to_owned(),
-            '±' => "%%p".to_owned(),
-            '−' | '–' => "-".to_owned(),
-            '×' => "x".to_owned(),
-            c if c.is_ascii() && !c.is_ascii_control() => c.to_string(),
-            _ => "?".to_owned(),
+    let mut out = String::new();
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            'Ø' => out.push_str("%%c"),
+            '°' => out.push_str("%%d"),
+            '±' => out.push_str("%%p"),
+            '%' if chars.peek() == Some(&'%') => out.push_str("%%%"),
+            c if c.is_ascii_control() => {}
+            c if c.is_ascii() => out.push(c),
+            // Beyond what the four-digit escape can name (emoji and the like).
+            c if u32::from(c) > 0xFFFF => out.push('?'),
+            c => {
+                let _ = write!(out, "\\U+{:04X}", u32::from(c));
+            }
+        }
+    }
+    out
+}
+
+/// How far (in mm) the polylines written for ellipses and Bézier curves may stray from them.
+pub const CURVE_TOLERANCE: f64 = 0.01;
+
+/// The most segments written for one curve.
+#[cfg(not(feature = "demo"))]
+const MAX_CURVE_SEGMENTS: usize = 4096;
+
+/// Points along part of an ellipse, no further than `tol` from it.
+#[cfg(not(feature = "demo"))]
+fn ellipse_points(
+    center: DVec2,
+    major: DVec2,
+    minor: f64,
+    start: f64,
+    sweep: f64,
+    tol: f64,
+) -> Vec<DVec2> {
+    let (a, b) = (major.length().max(minor), major.length().min(minor));
+    // The sharpest bend is at the ends of the long axis, with radius a² / b. A chord across
+    // `step` of a circle that size strays `tol` from it.
+    let r = if b > 0.0 { a * a / b } else { a };
+    let step = if r > tol {
+        2.0 * (1.0 - tol / r).acos()
+    } else {
+        TAU / 8.0
+    };
+    let n = ((sweep.abs() / step.max(1e-9)).ceil() as usize).clamp(8, MAX_CURVE_SEGMENTS);
+    (0..=n)
+        .map(|k| {
+            drift_core::shape::ellipse_point(
+                center,
+                major,
+                minor,
+                start + sweep * k as f64 / n as f64,
+            )
         })
         .collect()
+}
+
+/// Points along a cubic Bézier, no further than `tol` from it.
+#[cfg(not(feature = "demo"))]
+fn bezier_points(p: &[DVec2; 4], tol: f64) -> Vec<DVec2> {
+    // The curve lies within its control polygon: with the handles near the chord, so is it.
+    fn flat(p: &[DVec2; 4], tol: f64) -> bool {
+        let chord = p[3] - p[0];
+        let len = chord.length();
+        let off = |q: DVec2| {
+            if len > 1e-12 {
+                (q - p[0]).perp_dot(chord).abs() / len
+            } else {
+                q.distance(p[0])
+            }
+        };
+        off(p[1]).max(off(p[2])) <= tol
+    }
+    fn walk(p: &[DVec2; 4], tol: f64, depth: u32, out: &mut Vec<DVec2>) {
+        // 2¹² pieces at most.
+        if depth >= 12 || flat(p, tol) {
+            out.push(p[3]);
+            return;
+        }
+        let (ab, bc, cd) = (
+            (p[0] + p[1]) * 0.5,
+            (p[1] + p[2]) * 0.5,
+            (p[2] + p[3]) * 0.5,
+        );
+        let (abc, bcd) = ((ab + bc) * 0.5, (bc + cd) * 0.5);
+        let m = (abc + bcd) * 0.5;
+        walk(&[p[0], ab, abc, m], tol, depth + 1, out);
+        walk(&[m, bcd, cd, p[3]], tol, depth + 1, out);
+    }
+    let mut out = vec![p[0]];
+    walk(p, tol, 0, &mut out);
+    out
 }
 
 #[cfg(not(feature = "demo"))]
@@ -216,6 +303,8 @@ impl DxfUnits {
 #[cfg(not(feature = "demo"))]
 pub fn write(d: &Drawing, units: DxfUnits) -> String {
     let d = &d.scaled(1.0 / units.mm_per_unit);
+    // The curve tolerance in drawing units.
+    let tol = CURVE_TOLERANCE / units.mm_per_unit;
     let mut o = Out(String::new());
     let b = d.bounds();
     let (min, max) = if b.is_empty() {
@@ -312,7 +401,7 @@ pub fn write(d: &Drawing, units: DxfUnits) -> String {
             o.point(10, DVec2::ZERO);
             o.pair(3, &name);
             for item in &b.items {
-                write_item(&mut o, item, &layers);
+                write_item(&mut o, item, &layers, tol);
             }
             o.pair(0, "ENDBLK");
             o.pair(8, "0");
@@ -322,11 +411,26 @@ pub fn write(d: &Drawing, units: DxfUnits) -> String {
     o.pair(0, "SECTION");
     o.pair(2, "ENTITIES");
     for item in &d.items {
-        write_item(&mut o, item, &layers);
+        write_item(&mut o, item, &layers, tol);
     }
     o.pair(0, "ENDSEC");
     o.pair(0, "EOF");
     o.0
+}
+
+/// The rest of a POLYLINE whose head is written: its vertices and SEQEND.
+#[cfg(not(feature = "demo"))]
+fn vertices(o: &mut Out, layer: &str, points: &[DVec2], closed: bool) {
+    o.pair(66, 1);
+    o.point(10, DVec2::ZERO);
+    o.pair(70, u8::from(closed));
+    for p in points {
+        o.pair(0, "VERTEX");
+        o.pair(8, layer);
+        o.point(10, *p);
+    }
+    o.pair(0, "SEQEND");
+    o.pair(8, layer);
 }
 
 #[cfg(not(feature = "demo"))]
@@ -335,6 +439,7 @@ fn write_item(
     o: &mut Out,
     item: &drift_draft::page::Item,
     layers: &BTreeMap<String, (u8, LineType)>,
+    tol: f64,
 ) {
     let layer = layer_name(&item.layer);
     let (layer_color, layer_type) = layers
@@ -360,16 +465,7 @@ fn write_item(
         }
         Prim::Polyline { points, closed } => {
             head(o, "POLYLINE");
-            o.pair(66, 1);
-            o.point(10, DVec2::ZERO);
-            o.pair(70, u8::from(*closed));
-            for p in points {
-                o.pair(0, "VERTEX");
-                o.pair(8, &layer);
-                o.point(10, *p);
-            }
-            o.pair(0, "SEQEND");
-            o.pair(8, &layer);
+            vertices(o, &layer, points, *closed);
         }
         Prim::Circle { center, radius } => {
             head(o, "CIRCLE");
@@ -395,44 +491,19 @@ fn write_item(
             start,
             sweep,
         } => {
-            // DXF wants the longer axis first (ratio ≤ 1): swap them if needed, which shifts
-            // parametric angles by a quarter turn.
-            let (axis, ratio, shift) = if *minor <= major.length() {
-                (*major, minor / major.length(), 0.0)
-            } else {
-                (
-                    major.perp().normalize() * *minor,
-                    major.length() / minor,
-                    std::f64::consts::FRAC_PI_2,
-                )
-            };
-            head(o, "ELLIPSE");
-            o.point(10, *center);
-            o.point(11, axis);
-            o.num(40, ratio);
-            let t0 = start - shift;
-            o.num(41, t0.rem_euclid(TAU));
-            let t1 = if *sweep >= TAU - 1e-12 {
-                t0.rem_euclid(TAU) + TAU
-            } else {
-                (t0 + sweep).rem_euclid(TAU)
-            };
-            o.num(42, t1);
+            // R12 has no ELLIPSE: a polyline close to it (closed for a whole one).
+            let whole = *sweep >= TAU - 1e-12;
+            let mut points = ellipse_points(*center, *major, *minor, *start, *sweep, tol);
+            if whole {
+                points.pop();
+            }
+            head(o, "POLYLINE");
+            vertices(o, &layer, &points, whole);
         }
         Prim::Bezier { p } => {
-            // A degree-3 spline with a clamped knot vector is exactly this Bézier.
-            head(o, "SPLINE");
-            o.pair(70, 8);
-            o.pair(71, 3);
-            o.pair(72, 8);
-            o.pair(73, 4);
-            o.pair(74, 0);
-            for k in [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0] {
-                o.num(40, k);
-            }
-            for q in p {
-                o.point(10, *q);
-            }
+            // R12 has no SPLINE: a polyline close to it.
+            head(o, "POLYLINE");
+            vertices(o, &layer, &bezier_points(p, tol), false);
         }
         Prim::Fill {
             triangles, mask, ..
@@ -889,78 +960,5 @@ mod tests {
             _ => false,
         }));
         assert!(doc.layers().any(|(_, l)| l.name == "FURNITURE"));
-    }
-
-    #[test]
-    fn ellipses_round_trip_as_ellipse_entities() {
-        let mut d = Drawing::new(DVec2::new(200.0, 100.0));
-        let cases = [
-            // A whole one, turned.
-            (DVec2::new(20.0, 10.0), 4.0, 0.0, TAU),
-            // Part of one whose second axis is the longer: written with the axes swapped.
-            (DVec2::new(0.0, 5.0), 12.0, 0.5, 2.0),
-        ];
-        for (major, minor, start, sweep) in cases {
-            d.push(
-                "Ellipses",
-                Pen::new(0.25),
-                Prim::Ellipse {
-                    center: DVec2::new(50.0, 40.0),
-                    major,
-                    minor,
-                    start,
-                    sweep,
-                },
-            );
-        }
-        let text = write(&d, DxfUnits::MM);
-        assert_eq!(
-            text.matches(
-                "
-ELLIPSE
-"
-            )
-            .count(),
-            2,
-            "{text}"
-        );
-        let back = read(&text, 1.0).unwrap();
-        assert_eq!(back.entities.len(), 2);
-        for ((major, minor, start, sweep), e) in cases.iter().zip(&back.entities) {
-            let Shape::Ellipse {
-                major: m2,
-                minor: n2,
-                start: s2,
-                sweep: w2,
-                ..
-            } = e.shape
-            else {
-                panic!("{:?}", e.shape)
-            };
-            // The same curve: compare points along it.
-            for k in 0..=8 {
-                let f = k as f64 / 8.0;
-                let a = drift_core::shape::ellipse_point(
-                    DVec2::ZERO,
-                    *major,
-                    *minor,
-                    start + sweep * f,
-                );
-                let b = drift_core::shape::ellipse_point(DVec2::ZERO, m2, n2, s2 + w2 * f);
-                // DXF numbers carry six decimals.
-                assert!(a.distance(b) < 1e-4, "{a} vs {b}");
-            }
-        }
-        // Into a document: an ellipse and an elliptical arc.
-        let mut doc = Document::new();
-        doc.begin();
-        add_to_document(&mut doc, &back);
-        doc.commit("Import");
-        let kinds: Vec<_> = doc
-            .iter()
-            .filter(|(_, e)| !e.kind.is_point())
-            .map(|(_, e)| e.kind.type_name())
-            .collect();
-        assert_eq!(kinds, ["Ellipse", "Elliptical arc"]);
     }
 }

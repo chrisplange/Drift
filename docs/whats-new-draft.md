@@ -83,6 +83,9 @@ as before.
 
 - **Export the model at 1 : 1** as SVG or PDF (File → Export), with or without dimensions and
   notes.
+- **DXF export opens in AutoCAD.** A drawing with an ellipse or a pen curve made a DXF that
+  AutoCAD refused outright; those curves now go out as polylines within 0.01 mm of the curve.
+  Accents and symbols in text (é, ½, m²) no longer turn into question marks.
 - **Title block None** gives blank paper; the old None is now **Border only**.
 - **Dimensions** start their extension lines past the geometry they run along, with grips to
   set a start by hand. Radius dimensions on arcs always point at the arc.

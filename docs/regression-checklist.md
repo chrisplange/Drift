@@ -13,7 +13,7 @@ cargo test -p drift-app smoke_
 ```
 
 Run it before reporting any change, together with the usual checks (format, clippy for native,
-wasm32 and the demo, `cargo test --workspace`). With the test build already compiled, the 23
+wasm32 and the demo, `cargo test --workspace`). With the test build already compiled, the 24
 tests take about 10 seconds run in parallel on an idle machine (82 seconds one at a time, and up
 to a minute and a half when other builds share the GPU and CPU). Compiling the test build after a
 change to `drift-app` takes several minutes more.
@@ -44,7 +44,7 @@ before the fix (check that by turning the fix off locally), and passes with it. 
 | Groups and blocks | `groups.rs` | Two filled shapes picked (click, Shift-click) and grouped with Ctrl+G. A click in a fill picks the whole group with both fills (#159); G, X, 40, Enter moves it all, fills included; a double-click enters the group with that shape picked. Make block from the Inspector keeps the fills; Explode to group brings both shapes back. | `cargo test -p drift-app smoke::groups` |
 | Selection and move | `selection.rs` | Each selection filter alone (Alt-click), badge on; Fills alone picks a fill without its outline; Fills plus Edges together; All. G with a line picked by its midpoint, X, a typed 12 (#154). X pressed during a mouse drag locks it to the axis (#155). An area whose outline is on a hidden layer can't be picked (#153). Alt-click on a layer's lock and snap (drift-releases#10). | `cargo test -p drift-app smoke::selection` |
 | Import | `import.rs` | File → Import… with an SVG, a PDF and a DXF (synthetic files) through the import dialog. A dropped DXF offers Open as new drawing, Import into this drawing… and Cancel; Cancel brings nothing in, Import does. A dropped `.drift` and a `.pdf` that can't be read leave the drawing, its name and the recent files as they were. A DXF with a door block placed as drawn and mirrored as AutoCAD writes it (X scale −1, no Y scale) comes in as two copies, the second mirrored, not turned 180°; imported again, it reuses the same block. | `cargo test -p drift-app smoke::import` |
-| Files | `files.rs` | Ctrl+S to the drawing's file, Ctrl+N, then File → Open recent: the same drawing, not marked unsaved. An autosaved session from a newer Drift is kept byte for byte as a file of its own, said in a window, and not autosaved over. A file with a field and a table this Drift doesn't know opens by drop and, after an edit, Ctrl+S writes them back without asking (#165). | `cargo test -p drift-app smoke::files` |
+| Files | `files.rs` | Ctrl+S to the drawing's file, Ctrl+N, then File → Open recent: the same drawing, not marked unsaved. An autosaved session from a newer Drift is kept byte for byte as a file of its own, said in a window, and not autosaved over. A file with a field and a table this Drift doesn't know opens by drop and, after an edit, Ctrl+S writes them back without asking (#165). A drawing with a solid-filled rectangle, an ellipse, a pen curve and text with accents exports a DXF with only R12 entities (AutoCAD discarded the file at an ELLIPSE or SPLINE) and plain-ASCII text escapes, and File → Import… brings it back with the text unchanged. | `cargo test -p drift-app smoke::files` |
 | Dimensions and solver | `dimensions.rs` | D on a line, a place, a typed 30; a double-click on the text and 45; one undo step. A mouse drag of one line in a chain moves its ends only: the next line's far end and a line apart stay put (#143). The same drag, undone and done again, ends in exactly the same place. | `cargo test -p drift-app smoke::dimensions` |
 | Commands | `commands.rs` | The palette's best match for move, rotate and scale; Move typed in the palette grabs the picked line. The Draw and Modify menus open with their commands. Enter repeats the last tool. Shift+Alt+W toggles thin lines. Preferences (Ctrl+,) keeps Delete and Ctrl+Z off the drawing, and Esc closes only the dialog. | `cargo test -p drift-app smoke::commands` |
 | Options | `options.rs` | Save current in the Parameters panel as Values only, then as Whole sketch; a click on each applies it (the values; the whole sketch, taking away a line drawn since) and Ctrl+Z undoes it. | `cargo test -p drift-app smoke::options` |
@@ -69,5 +69,8 @@ touches them:
 - **Windows.** High-DPI displays at 125 %, 150 % and 200 %, and a window moved between monitors
   of different scales.
 - **Drag and drop from the desktop.** A file dragged from Explorer or Finder onto the window.
+- **AutoCAD.** An exported DXF opens in AutoCAD or the free DWG TrueView. Headless, with
+  either installed: `scripts\cad-check.ps1 export.dxf` opens each file in AutoCAD's own engine
+  and prints AutoCAD's reason if it refuses one.
 - **The installed build.** The installer, the update notice, and opening a `.drift` file by
   double-clicking it.

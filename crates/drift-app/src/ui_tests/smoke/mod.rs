@@ -37,6 +37,11 @@ fn view(h: &mut Harness<'_, DriftApp>, min: DVec2, max: DVec2) {
     h.run();
 }
 
+/// A painter for the output functions (PDF, SVG, DXF), which measure text with it.
+fn painter(h: &Harness<'_, DriftApp>) -> egui::Painter {
+    h.ctx.layer_painter(egui::LayerId::background())
+}
+
 /// The entities added since `before` was taken (from [`ids`]).
 fn added(h: &Harness<'_, DriftApp>, before: &[EntityId]) -> Vec<EntityId> {
     ids(h)

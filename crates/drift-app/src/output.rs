@@ -640,6 +640,19 @@ fn annotations(ed: &Editor, painter: &egui::Painter, s: &Space, d: &mut Drawing)
             annotations::paint_dimension(&recorder, &layout, AnnotationState::Normal, &colors);
         }
     }
+    // Walls' thickness dimensions, as on screen.
+    for (_, q) in doc.property_dims().filter(|_| s.dimensions) {
+        let Some((c, at)) = crate::walls::thickness_dimension(doc, q) else {
+            continue;
+        };
+        if s.leaves_out(doc, &c.entities().collect::<Vec<_>>()) {
+            continue;
+        }
+        if let Some(layout) = annotations::layout_dimension(painter, doc, None, &c, Some(at), &map)
+        {
+            annotations::paint_dimension(&recorder, &layout, AnnotationState::Normal, &colors);
+        }
+    }
     for layout in notes::layout_annotations(painter, doc, &map) {
         let style = annotations::DimStyle::of(
             &doc.draft_style_for(drift_core::AnnotationRef::Annotation(layout.id)),

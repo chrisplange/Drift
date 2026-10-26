@@ -1746,3 +1746,257 @@ fn drag_keeps_a_tangency_at_a_midpoint() {
     let run = drag(&mut built, &ids, offset, 1).unwrap();
     assert!(run.committed && run.refused == 0);
 }
+
+// ----- Walls and dimensions on their faces (W2) ----------------------------------------------
+
+/// A scene of walls with dimensions on their faces, as the gallery's T and L (and two walls
+/// apart): what to drag, and a wall nothing relates to.
+struct WallScene {
+    ed: Editor,
+    /// Centreline points to drag.
+    points: Vec<EntityId>,
+    /// A free wall away from the rest: it never moves.
+    lone: Vec<EntityId>,
+}
+
+/// A run of wall along `pts`, 200 thick, in the open transaction.
+fn wall_run(
+    ed: &mut Editor,
+    pts: &[DVec2],
+    share: Option<EntityId>,
+) -> (drift_core::WallId, Vec<EntityId>) {
+    let ids: Vec<EntityId> = pts
+        .iter()
+        .enumerate()
+        .map(|(i, p)| match share.filter(|_| i == 0) {
+            Some(s) => s,
+            None => ed.doc.add_point(*p),
+        })
+        .collect();
+    let curves: Vec<EntityId> = ids
+        .windows(2)
+        .map(|w| {
+            let c = ed.doc.add_line(w[0], w[1]).unwrap();
+            ed.doc.set_style(c, drift_core::LineKind::Construction);
+            c
+        })
+        .collect();
+    let path = ed
+        .doc
+        .add_path(drift_core::Path {
+            curves,
+            closed: false,
+        })
+        .unwrap();
+    let w = ed
+        .doc
+        .add_wall(drift_core::Wall::new(
+            path,
+            200.0,
+            drift_core::LayerId::DEFAULT,
+        ))
+        .unwrap();
+    (w, ids)
+}
+
+/// The face piece of wall `w`'s segment `seg` (left or right) nearest `near`.
+fn wall_face(ed: &Editor, w: drift_core::WallId, seg: u16, left: bool, near: DVec2) -> EntityId {
+    let part = if left {
+        drift_core::Part::Left
+    } else {
+        drift_core::Part::Right
+    };
+    ed.doc
+        .wall(w)
+        .unwrap()
+        .made
+        .curves
+        .iter()
+        .filter(|(k, _)| k.seg == seg && k.part == part)
+        .map(|(_, id)| *id)
+        .min_by(|a, b| {
+            let d = |id: &EntityId| drift_geom::distance(&ed.doc.shape(*id).unwrap(), near);
+            d(a).total_cmp(&d(b))
+        })
+        .unwrap()
+}
+
+/// A face dimension at its current value, driving.
+fn face_dimension(ed: &mut Editor, point: EntityId, line: EntityId) {
+    let c = Constraint::PointLineDistance {
+        point,
+        line,
+        value: 0.0,
+    };
+    let c = c.with_value(drift_solver::measure(&ed.doc, &c).unwrap());
+    let id = ed.add_dimension(c, None).expect("a face dimension");
+    assert!(!ed.doc.is_driven(id), "{:?}", ed.notice);
+}
+
+fn wall_scene(kind: u8) -> WallScene {
+    let mut ed = Editor::new(drift_core::Document::new());
+    let v = DVec2::new;
+    ed.doc.begin();
+    let (lone_wall, lone) = wall_run(&mut ed, &[v(20000.0, 0.0), v(24000.0, 0.0)], None);
+    let _ = lone_wall;
+    let mark = ed.doc.add_point(v(-1000.0, 1000.0));
+    let scene = match kind % 3 {
+        // Two walls apart, a clear width between their faces.
+        0 => {
+            let (a, pa) = wall_run(&mut ed, &[v(0.0, 0.0), v(4000.0, 0.0)], None);
+            let (b, pb) = wall_run(&mut ed, &[v(0.0, 3000.0), v(4000.0, 3000.0)], None);
+            ed.commit("Walls");
+            let (fa, fb) = (
+                wall_face(&ed, a, 0, true, v(2000.0, 0.0)),
+                wall_face(&ed, b, 0, false, v(2000.0, 3000.0)),
+            );
+            face_dimension(&mut ed, fa, fb);
+            // (A clear width is between parallel faces.)
+            let centre = |w| ed.doc.path(ed.doc.wall(w).unwrap().centre).unwrap().curves[0];
+            let parallel = Constraint::Parallel {
+                a: centre(a),
+                b: centre(b),
+            };
+            ed.add_constraints("Parallel", &[parallel]).unwrap();
+            [pa, pb].concat()
+        }
+        // A T: the branch's face from a mark.
+        1 => {
+            let (_, ph) = wall_run(&mut ed, &[v(0.0, 0.0), v(3000.0, 0.0)], None);
+            let (b, pb) = wall_run(&mut ed, &[v(1500.0, 2000.0), v(1500.0, 0.0)], None);
+            ed.commit("Walls");
+            let f = wall_face(&ed, b, 0, false, v(1400.0, 1000.0));
+            face_dimension(&mut ed, mark, f);
+            [ph, pb[..1].to_vec()].concat()
+        }
+        // An L: its inside face from a mark.
+        _ => {
+            let (w, p) = wall_run(
+                &mut ed,
+                &[v(0.0, 0.0), v(3000.0, 0.0), v(3000.0, 2000.0)],
+                None,
+            );
+            ed.commit("Walls");
+            let f = wall_face(&ed, w, 1, true, v(2900.0, 1000.0));
+            face_dimension(&mut ed, mark, f);
+            p
+        }
+    };
+    let fix = Constraint::Fix {
+        point: mark,
+        at: ed.doc.point(mark).unwrap(),
+    };
+    ed.add_constraints("Fix", &[fix]).unwrap();
+    WallScene {
+        ed,
+        points: scene,
+        lone,
+    }
+}
+
+/// Through a drag of a wall's centreline point in steps, and its commit: every driving
+/// dimension on a face holds, each wall keeps its thickness, the joins of what isn't dragged
+/// stay what they were until the commit, and a wall nothing relates to stays put.
+fn face_dimensions_hold(
+    kind: u8,
+    which: usize,
+    offset: DVec2,
+    steps: u32,
+) -> Result<(), TestCaseError> {
+    let mut s = wall_scene(kind);
+    let ed = &mut s.ed;
+    let p = s.points[which % s.points.len()];
+    let lone_at: Vec<DVec2> = s.lone.iter().map(|q| ed.doc.point(*q).unwrap()).collect();
+    let thick: Vec<f64> = ed.doc.walls().map(|(_, w)| w.thickness).collect();
+    // Each run end's point and the wall it tees into.
+    let ends = |ed: &Editor| -> Vec<(EntityId, Option<drift_core::WallId>)> {
+        ed.doc
+            .walls()
+            .flat_map(|(_, w)| {
+                let (_, pts, _) = drift_geom::walls::regen::centreline(&ed.doc, w).unwrap();
+                [
+                    (pts[0], w.ends[0].tee.map(|t| t.0)),
+                    (pts[pts.len() - 1], w.ends[1].tee.map(|t| t.0)),
+                ]
+            })
+            .collect()
+    };
+    let tees = ends(ed);
+    let dragged = Param::point(p).to_vec();
+    let unmet = |ed: &Editor| drift_solver::unmet_with(&ed.doc, SLACK, ed.lowering().as_deref());
+    prop_assert!(unmet(ed).is_empty(), "holds to begin with");
+    ed.doc.begin();
+    for k in 1..=steps {
+        let to = offset * (f64::from(k) / f64::from(steps));
+        let ok = ed.drag(&[p], to, &dragged);
+        prop_assert!(
+            unmet(ed).is_empty(),
+            "step {k} (moved: {ok}): {:?}",
+            unmet(ed)
+        );
+        // (The dragged end itself may join something as it goes.)
+        for (was, is) in tees.iter().zip(ends(ed)) {
+            prop_assert!(was.0 == p || *was == is, "a join flipped at step {k}");
+        }
+    }
+    ed.commit("Drag");
+    prop_assert!(unmet(ed).is_empty(), "after the commit");
+    let thick_now: Vec<f64> = ed.doc.walls().map(|(_, w)| w.thickness).collect();
+    prop_assert_eq!(thick, thick_now);
+    for (q, at) in s.lone.iter().zip(lone_at) {
+        prop_assert_eq!(ed.doc.point(*q).unwrap(), at, "the lone wall stayed");
+    }
+    // Every dimension measures its value on the regenerated faces.
+    for (id, c) in ed.doc.constraints() {
+        if c.is_dimension() && !ed.doc.is_driven(id) {
+            let m = drift_solver::measure(&ed.doc, c).unwrap();
+            let want = c.value().unwrap();
+            prop_assert!((m - want).abs() <= 1e-6 * want.max(1.0), "{m} for {want}");
+        }
+    }
+    Ok(())
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: LIGHT, ..ProptestConfig::default() })]
+
+    #[test]
+    fn face_dimensions_hold_through_drags(
+        kind in 0u8..3,
+        which in 0usize..8,
+        dx in -1500.0f64..1500.0,
+        dy in -1500.0f64..1500.0,
+        steps in 1u32..6,
+    ) {
+        face_dimensions_hold(kind, which, DVec2::new(dx, dy), steps)?;
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: HEAVY / 10, ..ProptestConfig::default() })]
+
+    #[test]
+    #[ignore = "heavy: run with --ignored"]
+    fn face_dimensions_hold_through_drags_heavy(
+        kind in 0u8..3,
+        which in 0usize..8,
+        dx in -1500.0f64..1500.0,
+        dy in -1500.0f64..1500.0,
+        steps in 1u32..6,
+    ) {
+        face_dimensions_hold(kind, which, DVec2::new(dx, dy), steps)?;
+    }
+}
+
+/// From CI: dragging a wall's end along it, in steps, with a clear width held.
+#[test]
+fn face_dimension_holds_dragging_a_wall_end_along_it() {
+    face_dimensions_hold(0, 2, DVec2::new(1420.8408966554066, 0.0), 5).unwrap();
+}
+
+/// From the property: a host dragged until its end comes near the branch's far end, where
+/// their lines cross far off (at the T): the walls aren't welded there at the commit.
+#[test]
+fn face_dimension_holds_when_an_end_passes_near_another() {
+    face_dimensions_hold(1, 3, DVec2::new(777.1960625046115, 1361.8778343154509), 2).unwrap();
+}

@@ -294,6 +294,9 @@ pub struct Editor {
     pub far_off: Vec<EntityId>,
     /// Entities to emphasise because a related constraint is hovered or selected.
     pub highlight: BTreeSet<EntityId>,
+    /// Entities the tool's preview stands in for this frame (a wall's pieces the Wall
+    /// tool's next segment would change): not drawn.
+    pub preview_hidden: BTreeSet<EntityId>,
     /// A dimension just created by a tool, whose value the UI should let the user type.
     pub pending_edit: Option<ConstraintId>,
     /// A dimension refused because it would over-define the sketch, with its label placement:
@@ -463,7 +466,13 @@ pub struct Editor {
     pub show_centrelines: bool,
     /// Who owns which entity among the walls, by document revision.
     pub(crate) wall_owner_cache: std::cell::RefCell<Option<(u64, std::rc::Rc<drift_core::Owners>)>>,
+    /// Relations on walls' faces as the solver sees them, by document revision.
+    pub(crate) lowering_cache: std::cell::RefCell<LoweringCache>,
 }
+
+/// Walls' face relations lowered onto their centrelines (None: there are none), and the
+/// revision they were lowered at.
+pub(crate) type LoweringCache = Option<(u64, Option<std::rc::Rc<drift_solver::Lowering>>)>;
 
 impl Editor {
     pub fn new(doc: Document) -> Self {
@@ -512,7 +521,7 @@ impl Editor {
     pub fn sync(&mut self) {
         self.index.update(&self.doc);
         if self.analyzed != Some(self.doc.revision()) && !self.doc.in_transaction() {
-            self.analysis = drift_solver::analyze(&self.doc);
+            self.analysis = drift_solver::analyze_with(&self.doc, self.lowering().as_deref());
             self.analyzed = Some(self.doc.revision());
         }
         if self.evaluated != Some(self.doc.revision()) {
@@ -558,7 +567,11 @@ impl Editor {
         {
             return scope.clone();
         }
-        let scope = std::rc::Rc::new(drift_solver::connected(&self.doc, ids.iter().copied()));
+        let scope = std::rc::Rc::new(drift_solver::connected_with(
+            &self.doc,
+            ids.iter().copied(),
+            self.lowering().as_deref(),
+        ));
         *self.drag_scope.borrow_mut() = Some((ids.to_vec(), structure, scope.clone()));
         scope
     }
@@ -568,24 +581,47 @@ impl Editor {
         dragged: &[Param],
         scope: std::rc::Rc<std::collections::HashSet<EntityId>>,
     ) -> SolveReport {
+        let lowering = self.lowering();
         drift_solver::solve(
             &mut self.doc,
             &SolveOptions {
                 dragged: dragged.to_vec(),
                 scope: Some(scope),
+                lowering,
                 ..Default::default()
             },
         )
     }
 
     pub(crate) fn solve(&mut self, dragged: &[Param]) -> SolveReport {
+        let lowering = self.lowering();
         drift_solver::solve(
             &mut self.doc,
             &SolveOptions {
                 dragged: dragged.to_vec(),
+                lowering,
                 ..Default::default()
             },
         )
+    }
+
+    /// Relations on walls' faces lowered onto their centrelines, for the solver (None when
+    /// no relation names a wall's generated geometry). Worked out again whenever the
+    /// document changes, so a thickness edit in the same transaction is seen.
+    pub(crate) fn lowering(&self) -> Option<std::rc::Rc<drift_solver::Lowering>> {
+        if !self.doc.has_walls() {
+            return None;
+        }
+        let revision = self.doc.revision();
+        if let Some((r, l)) = &*self.lowering_cache.borrow()
+            && *r == revision
+        {
+            return l.clone();
+        }
+        let l = drift_geom::walls::lower(&self.doc);
+        let l = (!l.is_empty()).then(|| std::rc::Rc::new(l));
+        *self.lowering_cache.borrow_mut() = Some((revision, l.clone()));
+        l
     }
 
     /// True if the edit collapsed geometry that wasn't collapsed before.
@@ -838,10 +874,10 @@ impl Editor {
         label: &str,
         constraints: &[Constraint],
     ) -> Result<Vec<ConstraintId>, EditError> {
-        // A wall's faces and corners follow the wall: relations on them wait for face
-        // constraints (W2).
-        if constraints.iter().any(|c| self.on_wall_faces(c)) {
-            return Err(EditError::Invalid(FACE_RELATIONS.into()));
+        // A wall's faces hold relations that can be lowered onto its centreline; its
+        // corners follow its joins.
+        if let Some(why) = constraints.iter().find_map(|c| self.refused_on_walls(c)) {
+            return Err(EditError::Invalid(why));
         }
         let before = self.analysis.clone();
         let degenerate_before = drift_solver::degenerate_entities(&self.doc);
@@ -899,6 +935,21 @@ impl Editor {
                 _ => {}
             }
         }
+        // (Relations on walls' faces take up the change on the centrelines they lower to.)
+        let lowering = self.lowering();
+        let mut named = named;
+        if let Some(l) = &lowering {
+            for id in ids {
+                for e in
+                    l.of.get(id)
+                        .into_iter()
+                        .flatten()
+                        .flat_map(|x| x.entities())
+                {
+                    named.insert(e);
+                }
+            }
+        }
         let focus = self.params_of(named);
         let report = drift_solver::solve(
             &mut self.doc,
@@ -907,6 +958,7 @@ impl Editor {
                 focus,
                 directions,
                 radii,
+                lowering,
                 ..Default::default()
             },
         );
@@ -971,14 +1023,10 @@ impl Editor {
         constraint: Constraint,
         placement: Option<DVec2>,
     ) -> Result<ConstraintId, EditError> {
-        // On a wall's faces: a reference dimension (driving ones wait for face constraints).
-        if self.on_wall_faces(&constraint) {
+        // On a wall's corner (or a face, where it can't hold it): a reference dimension.
+        if let Some(why) = self.refused_on_walls(&constraint) {
             let id = self.add_driven_dimension(constraint, placement)?;
-            self.notice = Some(
-                "Dimensions on wall faces are references for now: dimension the centreline to \
-                 drive the wall"
-                    .into(),
-            );
+            self.notice = Some(format!("{why} (it is a reference dimension)"));
             return Ok(id);
         }
         let id = match self.add_constraints(constraint.type_name(), &[constraint]) {
@@ -1037,12 +1085,12 @@ impl Editor {
     /// measurement and is refused if the dimension would over-define the sketch.
     pub fn set_driven(&mut self, id: ConstraintId, driven: bool) -> Result<(), EditError> {
         if !driven
-            && self
+            && let Some(why) = self
                 .doc
                 .constraint(id)
-                .is_some_and(|c| self.on_wall_faces(c))
+                .and_then(|c| self.refused_on_walls(c))
         {
-            return Err(EditError::Invalid(FACE_RELATIONS.into()));
+            return Err(EditError::Invalid(why));
         }
         if self.doc.is_driven(id) == driven {
             return Ok(());
@@ -1877,10 +1925,12 @@ impl Editor {
             .iter()
             .all(|c| self.doc.add_constraint(*c).is_ok());
         let bad = !added || {
+            let lowering = self.lowering();
             let report = drift_solver::solve(
                 &mut self.doc,
                 &SolveOptions {
                     analyze: true,
+                    lowering,
                     ..Default::default()
                 },
             );
@@ -3132,7 +3182,8 @@ impl Editor {
     pub fn items_tagged(&self, status_colors: bool, dark: bool) -> Vec<TaggedItem> {
         let mut items = Vec::with_capacity(self.doc.len());
         let mut emphasized = Vec::new();
-        let hidden = self.hidden_handles();
+        let mut hidden = self.hidden_handles();
+        hidden.extend(self.preview_hidden.iter().copied());
         let shown_ends = (!self.always_endpoints).then(|| self.touched_points());
         let (picked_walls, hovered_wall) = self.lit_walls();
         let wall_owners =
@@ -3280,10 +3331,6 @@ impl Editor {
     }
 }
 
-/// Why a relation or driving dimension on a wall's face is refused (W1).
-const FACE_RELATIONS: &str = "A wall's faces follow the wall: dimension or relate its centreline (face dimensions are \
-     references for now)";
-
 impl Editor {
     /// Whether a constraint names a wall's generated face or corner.
     pub(crate) fn on_wall_faces(&self, c: &Constraint) -> bool {
@@ -3291,6 +3338,16 @@ impl Editor {
             let owners = self.wall_owners();
             c.entities().any(|e| owners.generated(e))
         }
+    }
+
+    /// Why a relation (or driving dimension) on walls' generated geometry can't hold it: on
+    /// a corner or an end edge, or of a kind a face can't take (see
+    /// `drift_geom::walls::lower`). None when it can, or names none.
+    pub(crate) fn refused_on_walls(&self, c: &Constraint) -> Option<String> {
+        if !self.on_wall_faces(c) {
+            return None;
+        }
+        drift_geom::walls::lower::lower_constraint(&self.doc, c)?.err()
     }
 }
 

@@ -1218,6 +1218,7 @@ name = "drift-geom"
 version = "0.1.0-beta.1.5"
 dependencies = [
  "drift-core",
+ "drift-solver",
  "proptest",
  "rstar",
 ]

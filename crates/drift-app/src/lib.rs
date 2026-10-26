@@ -322,6 +322,9 @@ pub struct DriftApp {
     /// While a label is dragged: the dimension it snapped level with (a guide, world).
     dim_guide: Option<[DVec2; 2]>,
     dimension_edit: Option<DimensionEdit>,
+    /// A property dimension (a wall's thickness) being typed into: its text, and whether to
+    /// focus it on the next frame.
+    property_edit: Option<(drift_core::PropertyDimId, String, bool)>,
     typing: Option<Typing>,
     /// Points the pointer recently snapped to; new points can align with them.
     inference_points: Vec<DVec2>,
@@ -591,6 +594,7 @@ impl DriftApp {
             ext_drag: None,
             dim_guide: None,
             dimension_edit: None,
+            property_edit: None,
             typing: None,
             inference_points: Vec::new(),
             params: Default::default(),

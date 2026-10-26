@@ -10,6 +10,8 @@ publish.workspace = true
 
 [dependencies]
 drift-core.workspace = true
+# Walls' face relations are lowered to the solver's vocabulary (walls/lower.rs).
+drift-solver.workspace = true
 rstar = "0.13"
 
 [dev-dependencies]

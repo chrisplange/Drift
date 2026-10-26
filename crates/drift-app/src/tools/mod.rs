@@ -492,6 +492,11 @@ pub trait Tool {
         Vec::new()
     }
 
+    /// Entities the preview stands in for (drawn as they would be, not as they are).
+    fn preview_hides(&self, _ed: &Editor) -> std::collections::BTreeSet<EntityId> {
+        std::collections::BTreeSet::new()
+    }
+
     /// A live measurement to show next to the cursor, e.g. a length.
     fn measurement(&self, _pointer: &Pointer) -> Option<String> {
         None

@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use drift_core::{
     DVec2, Document, EntityId, FillStyle, LayerId, LineKind, Opening, OpeningAt, Path, Symbol, Wall,
 };
-use drift_geom::walls::{Seg, regen, regenerate};
+use drift_geom::walls::{Seg, generate, regen, regenerate};
 
 const T: f64 = 200.0;
 
@@ -580,4 +580,383 @@ fn walls_gallery_pictures() {
         println!("{:2}. {}", i + 1, c.name);
     }
     sheet.save_png(dir.join("../wall-gallery.png")).unwrap();
+}
+
+// ----- Dimensions on faces (W2) -------------------------------------------------------------
+
+/// The editor on a case's drawing.
+fn editor_of(c: &Case) -> crate::editor::Editor {
+    let (doc, _) = drawing(c);
+    let mut ed = crate::editor::Editor::new(doc);
+    ed.sync();
+    ed
+}
+
+/// The `n`th wall drawn.
+fn nth(ed: &crate::editor::Editor, n: usize) -> drift_core::WallId {
+    ed.doc.walls().map(|(id, _)| id).nth(n).unwrap()
+}
+
+/// The piece of a wall's face on segment `seg` nearest `near`.
+fn face(
+    ed: &crate::editor::Editor,
+    w: drift_core::WallId,
+    seg: u16,
+    left: bool,
+    near: DVec2,
+) -> EntityId {
+    let part = if left {
+        drift_core::Part::Left
+    } else {
+        drift_core::Part::Right
+    };
+    ed.doc
+        .wall(w)
+        .unwrap()
+        .made
+        .curves
+        .iter()
+        .filter(|(k, _)| k.seg == seg && k.part == part)
+        .map(|(_, id)| *id)
+        .min_by(|a, b| {
+            let d = |id: &EntityId| drift_geom::distance(&ed.doc.shape(*id).unwrap(), near);
+            d(a).total_cmp(&d(b))
+        })
+        .unwrap()
+}
+
+fn centre_points(ed: &crate::editor::Editor, w: drift_core::WallId) -> Vec<EntityId> {
+    regen::centreline(&ed.doc, ed.doc.wall(w).unwrap())
+        .unwrap()
+        .1
+}
+
+fn centre_curves(ed: &crate::editor::Editor, w: drift_core::WallId) -> Vec<EntityId> {
+    ed.doc
+        .path(ed.doc.wall(w).unwrap().centre)
+        .unwrap()
+        .curves
+        .clone()
+}
+
+fn fix_all(ed: &mut crate::editor::Editor, points: &[EntityId]) {
+    let fixes: Vec<drift_core::Constraint> = points
+        .iter()
+        .map(|p| drift_core::Constraint::Fix {
+            point: *p,
+            at: ed.doc.point(*p).unwrap(),
+        })
+        .collect();
+    ed.add_constraints("Fix", &fixes).unwrap();
+}
+
+/// A driving dimension, added as the Dimension tool does, then typed.
+fn dimension(
+    ed: &mut crate::editor::Editor,
+    c: drift_core::Constraint,
+    value: &str,
+) -> drift_core::ConstraintId {
+    let c = c.with_value(drift_solver::measure(&ed.doc, &c).unwrap());
+    let id = ed.add_dimension(c, None).expect("added");
+    assert!(
+        !ed.doc.is_driven(id),
+        "a face dimension drives: {:?}",
+        ed.notice
+    );
+    ed.set_dimension_text(id, value).expect("typed");
+    id
+}
+
+/// Whether a dimension measures its value now (faces regenerated).
+fn holds(ed: &crate::editor::Editor, id: drift_core::ConstraintId) -> bool {
+    let c = ed.doc.constraint(id).unwrap();
+    let m = drift_solver::measure(&ed.doc, c).unwrap();
+    (m - c.value().unwrap()).abs() < 1e-6 * c.value().unwrap().max(1.0)
+}
+
+fn outlines(ed: &crate::editor::Editor) -> usize {
+    let (inputs, _) = regen::wall_inputs(&ed.doc);
+    generate(&inputs, regen::snap(&ed.doc))
+        .loops
+        .iter()
+        .filter(|l| l.key.hole == 0)
+        .count()
+}
+
+#[test]
+fn walls_gallery_a_clear_width_between_faces() {
+    let mut ed = editor_of(&case(
+        "Two walls apart",
+        vec![
+            run(&[v(0.0, 0.0), v(4000.0, 0.0)]),
+            run(&[v(0.0, 3000.0), v(4000.0, 3000.0)]),
+        ],
+        2,
+        0,
+        None,
+    ));
+    let (a, b) = (nth(&ed, 0), nth(&ed, 1));
+    let pa = centre_points(&ed, a);
+    fix_all(&mut ed, &pa);
+    let cb = centre_curves(&ed, b)[0];
+    ed.add_constraints(
+        "Horizontal",
+        &[drift_core::Constraint::Horizontal { line: cb }],
+    )
+    .unwrap();
+    let c = drift_core::Constraint::PointLineDistance {
+        point: face(&ed, a, 0, true, v(2000.0, 0.0)),
+        line: face(&ed, b, 0, false, v(2000.0, 3000.0)),
+        value: 0.0,
+    };
+    let id = dimension(&mut ed, c, "3600");
+    assert!(holds(&ed, id));
+    let pb = centre_points(&ed, b);
+    assert!((ed.doc.point(pb[0]).unwrap().y - 3800.0).abs() < 1e-6);
+    assert_eq!(
+        ed.doc.wall(b).unwrap().thickness,
+        T,
+        "the thickness is the wall's"
+    );
+    // A thicker wall b: its held face stays, its centreline moves.
+    assert!(ed.set_wall_thickness(&[b], "300").is_ok());
+    assert!(holds(&ed, id), "{:?}", ed.notice);
+    assert!((ed.doc.point(pb[0]).unwrap().y - 3850.0).abs() < 1e-6);
+    // Undo takes it back, in one step.
+    assert!(ed.history.undo(&mut ed.doc));
+    ed.sync();
+    assert!((ed.doc.point(pb[0]).unwrap().y - 3800.0).abs() < 1e-6);
+}
+
+#[test]
+fn walls_gallery_a_dimension_across_a_wall_is_its_thickness() {
+    let mut ed = editor_of(&case(
+        "A wall",
+        vec![run(&[v(0.0, 0.0), v(4000.0, 0.0)])],
+        1,
+        0,
+        None,
+    ));
+    let w = nth(&ed, 0);
+    let c = drift_core::Constraint::PointLineDistance {
+        point: face(&ed, w, 0, true, v(2000.0, 0.0)),
+        line: face(&ed, w, 0, false, v(2000.0, 0.0)),
+        value: T,
+    };
+    // Not a driving dimension (it would only ever conflict with a thickness change)...
+    assert!(ed.refused_on_walls(&c).is_some());
+    // ...but the Dimension tool places the wall's thickness dimension there.
+    assert!(ed.thickness_dimension_across(&c, v(1000.0, 400.0)));
+    let dims: Vec<_> = ed.doc.property_dims().map(|(_, d)| *d).collect();
+    assert_eq!(dims.len(), 1);
+    assert!((dims[0].along - 0.25).abs() < 1e-9);
+    assert!((dims[0].out - 400.0).abs() < 1e-9);
+    // Typed into, it sets the thickness.
+    assert!(ed.set_wall_thickness(&[w], "300").is_ok());
+    assert_eq!(ed.doc.wall(w).unwrap().thickness, 300.0);
+}
+
+#[test]
+fn walls_gallery_a_face_dimension_on_a_t_keeps_the_t() {
+    let mut ed = editor_of(&case(
+        "T with a dimensioned branch",
+        vec![
+            run(&[v(0.0, 0.0), v(3000.0, 0.0)]),
+            run(&[v(1500.0, 2000.0), v(1500.0, 0.0)]),
+        ],
+        1,
+        0,
+        None,
+    ));
+    let (host, branch) = (nth(&ed, 0), nth(&ed, 1));
+    assert_eq!(
+        ed.doc.wall(branch).unwrap().ends[1].tee.map(|t| t.0),
+        Some(host)
+    );
+    let ph = centre_points(&ed, host);
+    fix_all(&mut ed, &ph);
+    let cb = centre_curves(&ed, branch)[0];
+    ed.add_constraints("Vertical", &[drift_core::Constraint::Vertical { line: cb }])
+        .unwrap();
+    // From the host's start to the branch's face towards it: 1200.
+    let f = face(&ed, branch, 0, false, v(1300.0, 1000.0));
+    let f = if drift_geom::distance(&ed.doc.shape(f).unwrap(), v(1400.0, 1000.0)) < 1.0 {
+        f
+    } else {
+        face(&ed, branch, 0, true, v(1300.0, 1000.0))
+    };
+    let c = drift_core::Constraint::PointLineDistance {
+        point: ph[0],
+        line: f,
+        value: 0.0,
+    };
+    let id = dimension(&mut ed, c, "1200");
+    assert!(holds(&ed, id));
+    let pb = centre_points(&ed, branch);
+    assert!((ed.doc.point(pb[0]).unwrap().x - 1300.0).abs() < 1e-6);
+    assert!(
+        ed.doc.point(pb[1]).unwrap().y.abs() < 1e-6,
+        "its foot is on the host"
+    );
+    assert_eq!(
+        ed.doc.wall(branch).unwrap().ends[1].tee.map(|t| t.0),
+        Some(host)
+    );
+    assert_eq!(outlines(&ed), 1, "still a T");
+    // Dragging the branch's top: the dimension holds as it goes, the T stays a T.
+    ed.doc.begin();
+    let dragged = [drift_solver::Param::X(pb[0]), drift_solver::Param::Y(pb[0])];
+    for k in 1..=10 {
+        let to = v(30.0 * f64::from(k), 25.0 * f64::from(k));
+        assert!(ed.drag(&[pb[0]], to, &dragged));
+        assert!(holds(&ed, id), "frame {k}");
+        assert_eq!(outlines(&ed), 1, "frame {k}");
+    }
+    ed.commit("Drag");
+    assert!(holds(&ed, id));
+    assert_eq!(
+        ed.doc.wall(branch).unwrap().ends[1].tee.map(|t| t.0),
+        Some(host)
+    );
+}
+
+#[test]
+fn walls_gallery_a_face_dimension_on_an_l() {
+    let mut ed = editor_of(&Case {
+        share: true,
+        ..case(
+            "L with a dimensioned leg",
+            vec![run(&[v(0.0, 0.0), v(3000.0, 0.0), v(3000.0, 2000.0)])],
+            1,
+            0,
+            None,
+        )
+    });
+    let w = nth(&ed, 0);
+    let p = centre_points(&ed, w);
+    fix_all(&mut ed, &p[..1]);
+    let curves = centre_curves(&ed, w);
+    ed.add_constraints(
+        "Level and plumb",
+        &[
+            drift_core::Constraint::Horizontal { line: curves[0] },
+            drift_core::Constraint::Vertical { line: curves[1] },
+        ],
+    )
+    .unwrap();
+    let mark = ed.doc.add_point(v(0.0, 1000.0));
+    ed.sync();
+    fix_all(&mut ed, &[mark]);
+    // The second leg's inside face (on the left, turning left) from the mark: 2500.
+    let inside = face(&ed, w, 1, true, v(2900.0, 1000.0));
+    let c = drift_core::Constraint::PointLineDistance {
+        point: mark,
+        line: inside,
+        value: 0.0,
+    };
+    let id = dimension(&mut ed, c, "2500");
+    assert!(holds(&ed, id));
+    assert!((ed.doc.point(p[1]).unwrap().x - 2600.0).abs() < 1e-6);
+    assert_eq!(outlines(&ed), 1);
+}
+
+#[test]
+fn walls_gallery_corner_dimensions_are_references() {
+    let mut ed = editor_of(&case(
+        "A wall",
+        vec![run(&[v(0.0, 0.0), v(3000.0, 0.0)])],
+        1,
+        0,
+        None,
+    ));
+    let w = nth(&ed, 0);
+    let corners: Vec<EntityId> = ed
+        .doc
+        .wall(w)
+        .unwrap()
+        .made
+        .points
+        .values()
+        .copied()
+        .collect();
+    let c = drift_core::Constraint::Distance {
+        a: corners[0],
+        b: corners[1],
+        value: 0.0,
+    };
+    let c = c.with_value(drift_solver::measure(&ed.doc, &c).unwrap());
+    let id = ed.add_dimension(c, None).expect("added as a reference");
+    assert!(ed.doc.is_driven(id));
+    assert!(
+        ed.notice
+            .as_deref()
+            .is_some_and(|n| n.contains("corner follows its joins")),
+        "{:?}",
+        ed.notice
+    );
+    // And can't be made driving.
+    assert!(ed.set_driven(id, false).is_err());
+}
+
+#[test]
+fn walls_gallery_a_t_arriving_keeps_a_face_dimension_on_its_piece() {
+    let mut ed = editor_of(&case(
+        "A host, dimensioned at its right end",
+        vec![run(&[v(0.0, 0.0), v(3000.0, 0.0)])],
+        1,
+        0,
+        None,
+    ));
+    let host = nth(&ed, 0);
+    let mark = ed.doc.add_point(v(2500.0, 1000.0));
+    ed.sync();
+    fix_all(&mut ed, &[mark]);
+    let upper = face(&ed, host, 0, true, v(2500.0, 100.0));
+    let c = drift_core::Constraint::PointLineDistance {
+        point: mark,
+        line: upper,
+        value: 0.0,
+    };
+    let id = dimension(&mut ed, c, "800");
+    // A branch tees in at x = 1000, left of the dimension: the face splits.
+    ed.doc.begin();
+    let a = ed.doc.add_point(v(1000.0, 1500.0));
+    let b = ed.doc.add_point(v(1000.0, 50.0));
+    let line = ed.doc.add_line(a, b).unwrap();
+    ed.doc.set_style(line, LineKind::Construction);
+    let path = ed
+        .doc
+        .add_path(Path {
+            curves: vec![line],
+            closed: false,
+        })
+        .unwrap();
+    ed.doc
+        .add_wall(Wall::new(path, T, LayerId::DEFAULT))
+        .unwrap();
+    assert!(ed.commit("Wall"));
+    assert_eq!(outlines(&ed), 1, "a T");
+    let pieces = ed
+        .doc
+        .wall(host)
+        .unwrap()
+        .made
+        .curves
+        .iter()
+        .filter(|(k, _)| k.seg == 0 && k.part == drift_core::Part::Left)
+        .count();
+    assert_eq!(pieces, 2, "the upper face is in two");
+    let on = ed
+        .doc
+        .constraint(id)
+        .unwrap()
+        .entities()
+        .find(|e| *e != mark)
+        .unwrap();
+    assert_eq!(
+        on,
+        face(&ed, host, 0, true, v(2500.0, 300.0)),
+        "on the piece under it"
+    );
+    assert!(holds(&ed, id));
 }

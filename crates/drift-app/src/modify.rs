@@ -1210,7 +1210,7 @@ impl Editor {
     fn constraint_state(&self) -> ConstraintState {
         ConstraintState {
             all: self.doc.constraints().map(|(id, _)| id).collect(),
-            unmet: drift_solver::unmet(&self.doc, UNMET),
+            unmet: drift_solver::unmet_with(&self.doc, UNMET, self.lowering().as_deref()),
         }
     }
 
@@ -1227,12 +1227,13 @@ impl Editor {
     ) -> Result<(), EditError> {
         let mut freed: Vec<&'static str> = Vec::new();
         let result = result.and_then(|()| {
-            let broken: Vec<(ConstraintId, Constraint)> = drift_solver::unmet(&self.doc, UNMET)
-                .into_iter()
-                .filter(|id| before.all.contains(id) && !before.unmet.contains(id))
-                .filter(|id| !self.doc.is_driven(*id))
-                .filter_map(|id| Some((id, *self.doc.constraint(id)?)))
-                .collect();
+            let broken: Vec<(ConstraintId, Constraint)> =
+                drift_solver::unmet_with(&self.doc, UNMET, self.lowering().as_deref())
+                    .into_iter()
+                    .filter(|id| before.all.contains(id) && !before.unmet.contains(id))
+                    .filter(|id| !self.doc.is_driven(*id))
+                    .filter_map(|id| Some((id, *self.doc.constraint(id)?)))
+                    .collect();
             if let Some((_, c)) = broken
                 .iter()
                 .find(|(_, c)| c.is_dimension() || matches!(c, Constraint::Fix { .. }))

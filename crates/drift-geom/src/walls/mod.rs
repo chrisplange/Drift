@@ -23,10 +23,16 @@ use drift_core::{
 
 use crate::regions::{Edge, Loop, Region};
 
+mod frozen;
+pub mod lower;
 pub mod openings;
 pub mod regen;
+pub use frozen::{Joins, infer_joins};
+pub use lower::lower;
 pub use openings::{Frame, OpeningIn, free_spans, opening_inputs, write_symbol};
-pub use regen::{Report, regenerate, regenerate_moved, wall_inputs};
+pub use regen::{
+    Report, regenerate, regenerate_moved, regenerate_moved_with, regenerate_with, wall_inputs,
+};
 #[cfg(test)]
 mod openings_tests;
 #[cfg(test)]
@@ -389,6 +395,9 @@ pub struct Generated {
     /// Each end of an open run that joins something: the walls it meets there (its own,
     /// where a run closes on itself).
     pub joined: BTreeMap<(WallId, u8), BTreeSet<WallId>>,
+    /// End points joined to others by where they are, with no shared point (an L found by
+    /// position): each to the point that names its join.
+    pub aliased: BTreeMap<EntityId, EntityId>,
     /// Why something isn't as asked (a wall too tight to make, an outline that doesn't
     /// close, an end that had to be capped).
     pub notices: Vec<String>,
@@ -589,19 +598,38 @@ struct Gen<'a> {
     focus: Option<drift_core::Bounds>,
     /// The openings cut into the walls.
     openings: Vec<OpeningIn>,
+    /// Joins kept from before (a drag's), for the ends that aren't live (see [`Joins`]).
+    frozen: Option<&'a Joins>,
 }
 
 /// Make the faces, end edges and corners of `walls`, and the outline loops of their
 /// clusters. `snap` is how close a wall end must be to another wall to join it in a T, and
 /// how far inside a segment a crossing must be to make an X.
 pub fn generate(walls: &[WallIn], snap: f64) -> Generated {
-    generate_cut(walls, &[], snap)
+    generate_all(walls, &[], snap, None)
+}
+
+/// [`generate`], keeping `joins` (a drag's) for the ends that aren't live.
+pub fn generate_with(walls: &[WallIn], snap: f64, joins: Option<&Joins>) -> Generated {
+    generate_all(walls, &[], snap, joins)
 }
 
 /// [`generate`], with `openings` cut into the walls (see [`openings`]).
 pub fn generate_cut(walls: &[WallIn], openings: &[OpeningIn], snap: f64) -> Generated {
+    generate_all(walls, openings, snap, None)
+}
+
+/// [`generate`], with `openings` cut into the walls and keeping `joins` (a drag's) for the
+/// ends that aren't live.
+pub fn generate_all(
+    walls: &[WallIn],
+    openings: &[OpeningIn],
+    snap: f64,
+    joins: Option<&Joins>,
+) -> Generated {
     let mut g = Gen::new(walls, snap);
     g.openings = openings.to_vec();
+    g.frozen = joins;
     g.make_faces();
     let nodes = g.nodes();
     for node in &nodes {
@@ -635,6 +663,7 @@ impl<'a> Gen<'a> {
             alias: HashMap::new(),
             focus: None,
             openings: Vec::new(),
+            frozen: None,
         }
     }
 
@@ -1046,7 +1075,7 @@ impl Gen<'_> {
     fn nodes(&mut self) -> Vec<Node> {
         let made: Vec<bool> = self.faces.iter().map(Option::is_some).collect();
         // Where free ends land: on another wall's end (an L) or part-way along it (a T).
-        let (tees, alias, at_point, free) = self.joins(&made);
+        let (tees, alias, at_point, free) = self.joins_kept(&made);
         for (w, e) in free {
             let tee = tees
                 .get(&(w, e))

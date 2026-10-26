@@ -151,8 +151,11 @@ impl DimensionTool {
             // Two lines: the angle between them, or, if they run alongside each other, the
             // distance between them (from the first line's start to the second line).
             (.., Some((l1, a1, _)), Some((l2, ..))) if l1 != l2 => {
+                // (From a wall's face itself, not its corner: a corner follows the joins, and
+                // the face is what the dimension is to hold.)
+                let face = ed.doc.has_walls() && ed.wall_owners().generated(l1);
                 if alongside(ed, l1, l2) {
-                    Some(DimBase::PointLine(a1, l2))
+                    Some(DimBase::PointLine(if face { l1 } else { a1 }, l2))
                 } else {
                     Some(DimBase::Angle(l1, l2))
                 }
@@ -203,6 +206,10 @@ impl DimensionTool {
         let Some(c) = Self::dimension(ed, base, at) else {
             return;
         };
+        // Across one wall, face to face: its thickness dimension.
+        if ed.thickness_dimension_across(&c, at) {
+            return;
+        }
         let offset = crate::annotations::dimension_anchor(&ed.doc, &c)
             .map(|anchor| crate::annotations::centred_offset(&ed.doc, &c, at - anchor));
         match ed.add_dimension(c, offset) {

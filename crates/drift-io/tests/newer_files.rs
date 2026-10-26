@@ -110,8 +110,8 @@ fn newer_file(version: u32) -> String {
     t = edit(
         &t,
         "  \"constraints\": [\n",
-        "  \"walls\": [\n    {\"id\":\"w1\",\"from\":\"e1\",\"to\":\"e2\"},\n    \
-         {\"id\":\"w2\",\"from\":\"e2\",\"to\":\"e3\"}\n  ],\n  \"constraints\": [\n",
+        "  \"stairs\": [\n    {\"id\":\"s1\",\"from\":\"e1\",\"to\":\"e2\"},\n    \
+         {\"id\":\"s2\",\"from\":\"e2\",\"to\":\"e3\"}\n  ],\n  \"constraints\": [\n",
     );
     t
 }
@@ -220,7 +220,7 @@ fn deleting_a_record_with_unknown_fields_warns_and_keeps_the_rest() {
     // Everything else from the newer build is still there.
     for kept in [
         r#""wall_types": {"brick":{"width":215.0}},"#,
-        r#"{"id":"w1","from":"e1","to":"e2"}"#,
+        r#"{"id":"s1","from":"e1","to":"e2"}"#,
         r#""pen":7"#,
         r#""thickness":200.0"#,
         r#""cut":true"#,

@@ -22,6 +22,7 @@ pub mod sheets;
 pub mod texts;
 pub mod underlays;
 pub mod units;
+pub mod walls;
 
 pub use blocks::{Block, BlockId, BlockItem, Instance, InstanceId};
 pub use bounds::{Bounds, FAR_MM};
@@ -32,8 +33,8 @@ pub use document::{
 };
 pub use drafting::{
     Anchor, Annotation, AnnotationId, AnnotationRef, ArrowStyle, DimNote, DraftStyle, Fill, FillId,
-    FillKind, Hatch, Leader, LeaderEnd, LeaderShape, NoteFrame, NoteStyle, OrdinateAxis, Shown,
-    Standard, StyleOverride, Tolerance,
+    FillKind, FillStyle, Hatch, Leader, LeaderEnd, LeaderShape, NoteFrame, NoteStyle, OrdinateAxis,
+    Shown, Standard, StyleOverride, Tolerance,
 };
 pub use fonts::{EmbeddedFont, FontFile, FontSet};
 pub use glam::DVec2;
@@ -50,3 +51,7 @@ pub use sheets::{
 pub use texts::{SketchText, TextAlign, TextFont, TextId};
 pub use underlays::{RefPrim, Underlay, UnderlayId, UnderlayImage};
 pub use units::{Kind, LengthFormat, Quantity, Units};
+pub use walls::{
+    CornerKey, Dir, EndKey, FaceKey, Justify, LoopKey, Made, Owner, Owners, Part, PropertyDim,
+    PropertyDimId, PropertyRef, Station, Turn, Wall, WallEnd, WallId,
+};

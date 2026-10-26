@@ -235,8 +235,11 @@ impl Editor {
         options: SnapOptions,
         exclude: impl Fn(EntityId) -> bool,
     ) -> Option<Snap> {
-        let snap =
-            self.snap_sketch_and_underlays(p, options, |id| exclude(id) || !self.snappable(id));
+        // (Walls' hidden centrelines aren't snapped to.)
+        let hidden = self.hidden_centrelines();
+        let snap = self.snap_sketch_and_underlays(p, options, |id| {
+            exclude(id) || hidden.contains(&id) || !self.snappable(id)
+        });
         let Some(block) = self.block_snap(p, options.tolerance) else {
             return snap;
         };

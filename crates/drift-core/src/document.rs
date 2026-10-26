@@ -22,6 +22,7 @@ use crate::sheets::{PlacedView, Sheet, SheetId, View, ViewId};
 use crate::texts::{SketchText, TextId};
 use crate::underlays::{Underlay, UnderlayId};
 use crate::units::{Kind, Units};
+use crate::walls::{Owner, Owners, PropertyDim, PropertyDimId, Wall, WallId};
 use crate::{Constraint, ConstraintId, LineKind, Shape};
 
 /// Stable identifier of an entity within a document. Never reused.
@@ -384,6 +385,8 @@ enum Key {
     Instance(InstanceId),
     Underlay(UnderlayId),
     Text(TextId),
+    Wall(WallId),
+    PropertyDim(PropertyDimId),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -420,6 +423,8 @@ enum Record {
     Instance(Instance),
     Underlay(Underlay),
     Text(SketchText),
+    Wall(Wall),
+    PropertyDim(PropertyDim),
 }
 
 /// One undoable step: the before and after state of everything it touched.
@@ -501,12 +506,18 @@ pub struct Document {
     instances: Shared<BTreeMap<InstanceId, Instance>>,
     underlays: Shared<BTreeMap<UnderlayId, Underlay>>,
     texts: Shared<BTreeMap<TextId, SketchText>>,
+    /// Runs of wall, and the entities, paths and fills they made.
+    walls: Shared<BTreeMap<WallId, Wall>>,
+    /// Dimensions that show a wall's property (its thickness).
+    property_dims: Shared<BTreeMap<PropertyDimId, PropertyDim>>,
     next_id: u32,
     next_constraint_id: u32,
     /// Next id for variables, variants and measurements (one counter, ids never reused).
     next_param_id: u32,
     /// Next id for fills and annotations (one counter, ids never reused).
     next_drafting_id: u32,
+    /// Next id for walls and property dimensions (one counter, ids never reused).
+    next_wall_id: u32,
     /// Incremented on every change, so caches (spatial index, autosave) can tell when to refresh.
     revision: u64,
     /// Pre-images of everything touched by the open transaction.
@@ -551,6 +562,8 @@ impl PartialEq for Document {
             && self.instances == other.instances
             && self.underlays == other.underlays
             && self.texts == other.texts
+            && self.walls == other.walls
+            && self.property_dims == other.property_dims
     }
 }
 
@@ -589,11 +602,14 @@ impl Default for Document {
             instances: BTreeMap::new().into(),
             underlays: BTreeMap::new().into(),
             texts: BTreeMap::new().into(),
+            walls: BTreeMap::new().into(),
+            property_dims: BTreeMap::new().into(),
             // Ids start at 1; `e0` and `c0` are not valid ids in `.drift` files.
             next_id: 1,
             next_constraint_id: 1,
             next_param_id: 1,
             next_drafting_id: 1,
+            next_wall_id: 1,
             revision: 0,
             journal: None,
             transaction_serial: 0,
@@ -862,6 +878,59 @@ impl Document {
         }
     }
 
+    /// True if the open transaction touched entity `id` (moved, reshaped, restyled, added or
+    /// deleted it).
+    pub fn touched_in_transaction(&self, id: EntityId) -> bool {
+        self.journal
+            .as_ref()
+            .is_some_and(|j| j.contains_key(&Key::Entity(id)))
+    }
+
+    /// The entities the open transaction touched (sorted).
+    pub fn entities_touched_in_transaction(&self) -> Vec<EntityId> {
+        let Some(journal) = &self.journal else {
+            return Vec::new();
+        };
+        let mut ids: Vec<EntityId> = journal
+            .keys()
+            .filter_map(|k| match k {
+                Key::Entity(id) => Some(*id),
+                _ => None,
+            })
+            .collect();
+        ids.sort_unstable();
+        ids
+    }
+
+    /// The walls the open transaction added, changed or removed, and the paths it touched
+    /// (sorted).
+    pub fn walls_and_paths_touched_in_transaction(&self) -> (Vec<WallId>, Vec<PathId>) {
+        let Some(journal) = &self.journal else {
+            return (Vec::new(), Vec::new());
+        };
+        let (mut walls, mut paths) = (Vec::new(), Vec::new());
+        for k in journal.keys() {
+            match k {
+                Key::Wall(id) => walls.push(*id),
+                Key::Path(id) => paths.push(*id),
+                _ => {}
+            }
+        }
+        walls.sort_unstable();
+        paths.sort_unstable();
+        (walls, paths)
+    }
+
+    /// Wall `id` as it was when the open transaction began (see
+    /// [`entity_before_transaction`](Self::entity_before_transaction)).
+    pub fn wall_before_transaction(&self, id: WallId) -> Option<Wall> {
+        match self.journal.as_ref().and_then(|j| j.get(&Key::Wall(id))) {
+            Some(Some(Record::Wall(w))) => Some(w.clone()),
+            Some(_) => None,
+            None => self.walls.get(&id).cloned(),
+        }
+    }
+
     /// True if path `id` was added in the open transaction.
     pub fn path_created_in_transaction(&self, id: PathId) -> bool {
         self.journal
@@ -977,6 +1046,12 @@ impl Document {
             Key::Instance(id) => self.instances.get(&id).copied().map(Record::Instance),
             Key::Underlay(id) => self.underlays.get(&id).cloned().map(Record::Underlay),
             Key::Text(id) => self.texts.get(&id).cloned().map(Record::Text),
+            Key::Wall(id) => self.walls.get(&id).cloned().map(Record::Wall),
+            Key::PropertyDim(id) => self
+                .property_dims
+                .get(&id)
+                .copied()
+                .map(Record::PropertyDim),
         }
     }
 
@@ -1159,6 +1234,18 @@ impl Document {
             }
             (Key::Instance(id), _) => {
                 self.instances.remove(&id);
+            }
+            (Key::Wall(id), Some(Record::Wall(w))) => {
+                self.walls.insert(id, w);
+            }
+            (Key::Wall(id), _) => {
+                self.walls.remove(&id);
+            }
+            (Key::PropertyDim(id), Some(Record::PropertyDim(d))) => {
+                self.property_dims.insert(id, d);
+            }
+            (Key::PropertyDim(id), _) => {
+                self.property_dims.remove(&id);
             }
         }
     }
@@ -1428,6 +1515,64 @@ impl Document {
         Ok(())
     }
 
+    /// [`set_entity_kind`](Self::set_entity_kind) without moving an arc's end onto the
+    /// circle through its start: for geometry generated exactly (a wall's faces), whose
+    /// corners other curves share.
+    pub fn set_entity_kind_exact(
+        &mut self,
+        id: EntityId,
+        kind: EntityKind,
+    ) -> Result<(), DocumentError> {
+        if !matches!(kind, EntityKind::Arc { .. }) {
+            return self.set_entity_kind(id, kind);
+        }
+        let EntityKind::Arc { center, start, end } = kind else {
+            unreachable!()
+        };
+        let current = self.entities.get(&id).ok_or(DocumentError::Missing(id))?;
+        if current.kind.is_point() {
+            return Err(DocumentError::WrongKind {
+                id,
+                expected: "a curve",
+            });
+        }
+        let (c, s, e) = (self.point(center)?, self.point(start)?, self.point(end)?);
+        if start == end || center == start || center == end || s == c || e == c || s == e {
+            return Err(DocumentError::Degenerate("arc"));
+        }
+        if self.entities[&id].kind != kind {
+            self.touch(id);
+            if let Some(e) = self.entities.get_mut(&id) {
+                e.kind = kind;
+            }
+            let stale: Vec<ConstraintId> = self
+                .constraints
+                .iter()
+                .filter(|(_, c)| c.entities().any(|e| e == id) && self.validate(c).is_err())
+                .map(|(cid, _)| *cid)
+                .collect();
+            for cid in stale {
+                self.remove_constraint(cid);
+            }
+        }
+        Ok(())
+    }
+
+    /// [`add_arc`](Self::add_arc) without moving its end onto the circle through its start
+    /// (see [`set_entity_kind_exact`](Self::set_entity_kind_exact)).
+    pub fn add_arc_exact(
+        &mut self,
+        center: EntityId,
+        start: EntityId,
+        end: EntityId,
+    ) -> Result<EntityId, DocumentError> {
+        let (c, s, e) = (self.point(center)?, self.point(start)?, self.point(end)?);
+        if start == end || center == start || center == end || s == c || e == c || s == e {
+            return Err(DocumentError::Degenerate("arc"));
+        }
+        Ok(self.insert(Entity::new(EntityKind::Arc { center, start, end })))
+    }
+
     /// Remove points no curve uses and no constraint refers to beyond themselves (cleanup
     /// after trimming moves a curve's end to a new point).
     pub fn remove_if_orphaned(&mut self, point: EntityId) {
@@ -1637,6 +1782,66 @@ impl Document {
         self.drop_dangling_annotations();
         self.prune_groups();
         self.prune_paths();
+        self.prune_walls();
+    }
+
+    /// Walls whose centreline is gone go, with what they made (and come back with it on
+    /// undo); tees on them let go, and ends against deleted curves cap.
+    fn prune_walls(&mut self) {
+        if self.walls.is_empty() {
+            return;
+        }
+        let gone: Vec<WallId> = self
+            .walls
+            .iter()
+            .filter(|(_, w)| !self.paths.contains_key(&w.centre))
+            .map(|(id, _)| *id)
+            .collect();
+        let mut made: Vec<EntityId> = Vec::new();
+        for id in &gone {
+            if let Some(w) = self.walls.get(id).cloned() {
+                made.extend(w.made.entities());
+                // The cluster's outlines and pochés it held go (they span the other walls
+                // too, whose faces stay): regenerating makes them again under the next lead.
+                for f in w.made.fills.values() {
+                    self.remove_fill(*f);
+                }
+                for p in w.made.outlines.values() {
+                    self.remove_path(*p);
+                }
+            }
+            self.remove_wall(*id);
+        }
+        let stale: Vec<(WallId, Wall)> = self
+            .walls
+            .iter()
+            .filter_map(|(id, w)| {
+                let mut w2 = w.clone();
+                for end in &mut w2.ends {
+                    if end
+                        .tee
+                        .is_some_and(|(host, _)| !self.walls.contains_key(&host))
+                    {
+                        end.tee = None;
+                    }
+                    if end.against.is_some_and(|c| !self.entities.contains_key(&c)) {
+                        end.against = None;
+                    }
+                }
+                (w2 != *w).then_some((*id, w2))
+            })
+            .collect();
+        for (id, w) in stale {
+            self.touch_key(Key::Wall(id));
+            self.walls.insert(id, w);
+        }
+        let made: Vec<EntityId> = made
+            .into_iter()
+            .filter(|e| self.entities.contains_key(e))
+            .collect();
+        if !made.is_empty() {
+            self.delete(made);
+        }
     }
 
     /// Drop deleted curves from paths (a path missing one is open), remove paths left with
@@ -2394,6 +2599,8 @@ impl Document {
         keys.extend(self.instances.keys().map(|id| Key::Instance(*id)));
         keys.extend(self.underlays.keys().map(|id| Key::Underlay(*id)));
         keys.extend(self.texts.keys().map(|id| Key::Text(*id)));
+        keys.extend(self.walls.keys().map(|id| Key::Wall(*id)));
+        keys.extend(self.property_dims.keys().map(|id| Key::PropertyDim(*id)));
         keys
     }
 
@@ -2423,6 +2630,7 @@ impl Document {
         self.next_constraint_id = self.next_constraint_id.max(other.next_constraint_id);
         self.next_param_id = self.next_param_id.max(other.next_param_id);
         self.next_drafting_id = self.next_drafting_id.max(other.next_drafting_id);
+        self.next_wall_id = self.next_wall_id.max(other.next_wall_id);
     }
 
     /// A copy of the drawing for a whole-sketch option: everything but its options (and no
@@ -2580,6 +2788,24 @@ impl Document {
             self.touch_key(Key::Expression(c));
             self.expressions.insert(c, e);
         }
+        // Walls' thickness expressions.
+        let walls: Vec<(WallId, Wall)> = self
+            .walls
+            .iter()
+            .filter_map(|(id, w)| {
+                let e = w.thickness_expr.as_deref()?;
+                let renamed = rename(e);
+                (renamed != e).then(|| {
+                    let mut w = w.clone();
+                    w.thickness_expr = Some(renamed);
+                    (*id, w)
+                })
+            })
+            .collect();
+        for (id, w) in walls {
+            self.touch_key(Key::Wall(id));
+            self.walls.insert(id, w);
+        }
         let variants: Vec<_> = self.variants.keys().copied().collect();
         for k in variants {
             let mut variant = self.variants[&k].clone();
@@ -2613,6 +2839,12 @@ impl Document {
                 .iter()
                 .filter(|(_, e)| uses(e))
                 .map(|(c, _)| format!("dimension {c}")),
+        );
+        users.extend(
+            self.walls
+                .iter()
+                .filter(|(_, w)| w.thickness_expr.as_deref().is_some_and(uses))
+                .map(|(w, _)| format!("wall {w}")),
         );
         users
     }
@@ -3365,6 +3597,182 @@ impl Document {
             self.touch_key(Key::Path(id));
             self.paths.remove(&id);
             self.unbind_fills(id);
+        }
+    }
+
+    // ----- Walls ---------------------------------------------------------------------------
+
+    pub fn walls(&self) -> impl Iterator<Item = (WallId, &Wall)> {
+        self.walls.iter().map(|(id, w)| (*id, w))
+    }
+
+    pub fn wall(&self, id: WallId) -> Option<&Wall> {
+        self.walls.get(&id)
+    }
+
+    pub fn has_walls(&self) -> bool {
+        !self.walls.is_empty()
+    }
+
+    fn check_wall(&self, wall: &Wall) -> Result<(), DocumentError> {
+        if !self.paths.contains_key(&wall.centre) {
+            return Err(DocumentError::BadName(
+                "a wall's centreline must be a path".into(),
+            ));
+        }
+        if self.layer(wall.layer).is_none() {
+            return Err(DocumentError::MissingLayer(wall.layer));
+        }
+        if !(wall.thickness > 0.0 && wall.thickness.is_finite()) {
+            return Err(DocumentError::InvalidValue);
+        }
+        Ok(())
+    }
+
+    fn next_wall(&mut self) -> u32 {
+        let id = self.next_wall_id;
+        self.next_wall_id += 1;
+        id
+    }
+
+    /// Add a wall along an existing path. Its faces are made by the walls' regeneration
+    /// (`drift_geom::walls`), not here.
+    pub fn add_wall(&mut self, wall: Wall) -> Result<WallId, DocumentError> {
+        self.check_wall(&wall)?;
+        let id = WallId(self.next_wall());
+        self.touch_key(Key::Wall(id));
+        self.walls.insert(id, wall);
+        Ok(id)
+    }
+
+    /// Insert a wall with a known id (loading a file).
+    pub fn insert_wall(&mut self, id: WallId, wall: Wall) -> Result<(), DocumentError> {
+        self.check_wall(&wall)?;
+        self.next_wall_id = self.next_wall_id.max(id.0 + 1);
+        self.touch_key(Key::Wall(id));
+        self.walls.insert(id, wall);
+        Ok(())
+    }
+
+    /// Replace a wall's record (its settings, joins or what it made).
+    pub fn set_wall(&mut self, id: WallId, wall: Wall) -> Result<(), DocumentError> {
+        if !self.walls.contains_key(&id) || self.walls.get(&id) == Some(&wall) {
+            return Ok(());
+        }
+        self.check_wall(&wall)?;
+        self.touch_key(Key::Wall(id));
+        self.walls.insert(id, wall);
+        Ok(())
+    }
+
+    /// Remove a wall's record, and its property dimensions. What it made stays, as plain
+    /// geometry (Explode), unless the caller deletes it.
+    pub fn remove_wall(&mut self, id: WallId) {
+        if self.walls.contains_key(&id) {
+            self.touch_key(Key::Wall(id));
+            self.walls.remove(&id);
+        }
+        let dims: Vec<PropertyDimId> = self
+            .property_dims
+            .iter()
+            .filter(|(_, d)| d.target.wall() == id)
+            .map(|(d, _)| *d)
+            .collect();
+        for d in dims {
+            self.remove_property_dim(d);
+        }
+    }
+
+    /// The wall whose centreline is `path`.
+    pub fn wall_of_path(&self, path: PathId) -> Option<WallId> {
+        self.walls
+            .iter()
+            .find(|(_, w)| w.centre == path)
+            .map(|(id, _)| *id)
+    }
+
+    /// Who owns which entity, path and fill among the walls' (built afresh: callers that ask
+    /// often cache it by revision).
+    pub fn wall_owners(&self) -> Owners {
+        let mut out = Owners::default();
+        for (&id, w) in self.walls.iter() {
+            for e in w.made.entities() {
+                out.of.insert(e, Owner::Wall(id));
+            }
+            for p in w.made.outlines.values() {
+                out.paths.insert(*p, id);
+            }
+            for f in w.made.fills.values() {
+                out.fills.insert(*f, id);
+            }
+            out.centres.insert(w.centre, id);
+            if let Some(path) = self.paths.get(&w.centre) {
+                for c in &path.curves {
+                    out.of.insert(*c, Owner::Centre(id));
+                    if let Some(e) = self.entities.get(c) {
+                        for p in e.kind.points() {
+                            out.of.entry(p).or_insert(Owner::Centre(id));
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// The entities walls generated: never solver unknowns.
+    pub fn generated_entities(&self) -> std::collections::HashSet<EntityId> {
+        self.walls
+            .values()
+            .flat_map(|w| w.made.entities())
+            .collect()
+    }
+
+    pub fn property_dims(&self) -> impl Iterator<Item = (PropertyDimId, &PropertyDim)> {
+        self.property_dims.iter().map(|(id, d)| (*id, d))
+    }
+
+    pub fn property_dim(&self, id: PropertyDimId) -> Option<&PropertyDim> {
+        self.property_dims.get(&id)
+    }
+
+    pub fn add_property_dim(&mut self, dim: PropertyDim) -> Result<PropertyDimId, DocumentError> {
+        let id = PropertyDimId(self.next_wall());
+        self.insert_property_dim(id, dim)?;
+        Ok(id)
+    }
+
+    /// Insert a property dimension with a known id (loading a file).
+    pub fn insert_property_dim(
+        &mut self,
+        id: PropertyDimId,
+        dim: PropertyDim,
+    ) -> Result<(), DocumentError> {
+        if !self.walls.contains_key(&dim.target.wall()) {
+            return Err(DocumentError::BadName(
+                "a property dimension needs its wall".into(),
+            ));
+        }
+        if !(dim.along.is_finite() && dim.out.is_finite()) {
+            return Err(DocumentError::InvalidValue);
+        }
+        self.next_wall_id = self.next_wall_id.max(id.0 + 1);
+        self.touch_key(Key::PropertyDim(id));
+        self.property_dims.insert(id, dim);
+        Ok(())
+    }
+
+    pub fn set_property_dim(&mut self, id: PropertyDimId, dim: PropertyDim) {
+        if self.property_dims.contains_key(&id) && self.property_dims.get(&id) != Some(&dim) {
+            self.touch_key(Key::PropertyDim(id));
+            self.property_dims.insert(id, dim);
+        }
+    }
+
+    pub fn remove_property_dim(&mut self, id: PropertyDimId) {
+        if self.property_dims.contains_key(&id) {
+            self.touch_key(Key::PropertyDim(id));
+            self.property_dims.remove(&id);
         }
     }
 

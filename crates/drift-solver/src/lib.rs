@@ -421,15 +421,44 @@ pub fn needs_solve(doc: &Document, scope: &HashSet<EntityId>) -> bool {
     let constrained = doc.constraints().any(|(cid, c)| {
         !doc.is_driven(cid) && doc.validate(c).is_ok() && c.entities().any(|e| scope.contains(&e))
     });
-    let shaped = scope.iter().any(|&id| {
-        matches!(
-            doc.get(id).map(|e| e.kind),
-            Some(
-                EntityKind::Arc { .. } | EntityKind::Ellipse { .. } | EntityKind::EllipseArc { .. }
+    // (A wall's arc faces are generated, not solved.)
+    let generated = doc.generated_entities();
+    let shaped = scope
+        .iter()
+        .filter(|id| !generated.contains(id))
+        .any(|&id| {
+            matches!(
+                doc.get(id).map(|e| e.kind),
+                Some(
+                    EntityKind::Arc { .. }
+                        | EntityKind::Ellipse { .. }
+                        | EntityKind::EllipseArc { .. }
+                )
             )
-        )
-    });
+        });
     constrained || shaped || doc.locked_entities().iter().any(|id| scope.contains(id))
+}
+
+/// Whether solving the whole drawing can do anything (see [`needs_solve`]): it holds a
+/// relation or dimension, geometry on a locked layer, or a curve that keeps a shape of its
+/// own. A drawing of free lines (a plan of walls with no relations) has nothing to solve.
+pub fn anything_to_solve(doc: &Document) -> bool {
+    if doc
+        .constraints()
+        .any(|(cid, c)| !doc.is_driven(cid) && doc.validate(c).is_ok())
+    {
+        return true;
+    }
+    if doc.layers().any(|(_, l)| l.locked) && !doc.locked_entities().is_empty() {
+        return true;
+    }
+    let generated = doc.generated_entities();
+    doc.iter().any(|(id, e)| {
+        matches!(
+            e.kind,
+            EntityKind::Arc { .. } | EntityKind::Ellipse { .. } | EntityKind::EllipseArc { .. }
+        ) && !generated.contains(&id)
+    })
 }
 
 /// Entities whose geometry has collapsed: zero-length lines, zero-radius circles and arcs.

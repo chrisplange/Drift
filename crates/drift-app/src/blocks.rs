@@ -224,12 +224,21 @@ impl Editor {
                 .copied()
                 .filter(|id| self.doc.get(*id).is_some_and(|e| !e.kind.is_point())),
         );
-        let ids: Vec<EntityId> = self
+        // Walls go in exploded: their faces (and poché), not their centrelines.
+        let walls = self.selected_walls();
+        let centrelines: std::collections::BTreeSet<EntityId> =
+            walls.iter().flat_map(|w| self.wall_curves(*w)).collect();
+        let mut ids: Vec<EntityId> = self
             .selection
             .iter()
             .copied()
-            .filter(|id| !referenced.contains(id))
+            .filter(|id| !referenced.contains(id) && !centrelines.contains(id))
             .collect();
+        for w in &walls {
+            if let Some(wall) = self.doc.wall(*w) {
+                ids.extend(wall.made.curves.values().copied());
+            }
+        }
         let mut bounds = Bounds::EMPTY;
         for id in &ids {
             if let Some(s) = self.doc.shape(*id) {
@@ -266,6 +275,11 @@ impl Editor {
         label: &str,
     ) -> Result<InstanceId, String> {
         let (ids, bounds, name) = self.block_source(name)?;
+        let centrelines: Vec<EntityId> = self
+            .selected_walls()
+            .into_iter()
+            .flat_map(|w| self.wall_curves(w))
+            .collect();
         let base = base.unwrap_or_else(|| bounds.center());
         let place = Instance::new(BlockId(0), base);
         let items: Vec<BlockItem> = ids
@@ -296,6 +310,8 @@ impl Editor {
             self.doc.remove_fill(f);
         }
         self.doc.delete(ids);
+        // (The walls go with their centrelines.)
+        self.doc.delete(centrelines);
         let id = self
             .doc
             .add_instance(Instance::new(block, base))
@@ -661,6 +677,9 @@ impl Editor {
     pub fn explode_selected(&mut self) {
         let copies: Vec<InstanceId> = self.selected_instances.iter().copied().collect();
         if copies.is_empty() {
+            // (Picked walls explode into plain geometry.)
+            let walls: Vec<drift_core::WallId> = self.selected_walls().into_iter().collect();
+            self.explode_walls(&walls);
             return;
         }
         self.doc.begin();

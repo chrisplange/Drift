@@ -145,7 +145,11 @@ impl Editor {
             pushed,
             needs_solve,
         });
-        // A hatch whose shape moved as one goes with it.
+        // Walls follow their centrelines as they go, and a hatch whose shape moved as one goes
+        // with it.
+        if self.doc.has_walls() {
+            self.follow_walls();
+        }
         self.carry_hatches();
         ok
     }

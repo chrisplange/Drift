@@ -56,6 +56,7 @@ impl DriftApp {
             ViewFlag::Free => &mut self.params.show_free,
             ViewFlag::Combs => &mut self.show_combs,
             ViewFlag::Crops => &mut self.show_view_crops,
+            ViewFlag::Centrelines => &mut self.show_wall_centrelines,
             ViewFlag::AutoRelations => &mut self.auto_relations,
         }
     }
@@ -272,6 +273,29 @@ impl DriftApp {
             }
             Command::ExplodeToGroup => {
                 self.editor.explode_to_groups();
+            }
+            Command::WallsFromCurves => {
+                let picked: Vec<_> = self.editor.selection.iter().copied().collect();
+                match self.editor.walls_from_curves(&picked) {
+                    Ok(made) => {
+                        let n = made.len();
+                        let what = if n == 1 { "a wall" } else { "walls" };
+                        self.set_status(format!("Made {what} along the curves"), false, now);
+                    }
+                    Err(why) => self.editor.notice = Some(why),
+                }
+            }
+            Command::ExplodeWalls => {
+                let walls: Vec<_> = self.editor.selected_walls().into_iter().collect();
+                self.editor.explode_walls(&walls);
+            }
+            Command::JoinWalls => {
+                let walls: Vec<_> = self.editor.selected_walls().into_iter().collect();
+                self.editor.join_walls(&walls);
+            }
+            Command::UnjoinWalls => {
+                let walls: Vec<_> = self.editor.selected_walls().into_iter().collect();
+                self.editor.unjoin_walls(&walls);
             }
             Command::Move => self.start_transform(ToolKey::G, now),
             Command::Rotate => self.start_transform(ToolKey::R, now),

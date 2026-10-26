@@ -191,6 +191,9 @@ impl DriftApp {
             ("dfollow", rules.follow_divided_fills),
             // The tool bars' Fill switch, as it was last left.
             ("newfill", self.editor.fill_new_shapes),
+            // The Wall tool's poché switch, as it was last left.
+            ("wpoche", self.editor.wall_poche.on),
+            ("wcentre", self.show_wall_centrelines),
             ("tdims", self.show_temp_dims),
             ("ai", self.ai_link),
         ];
@@ -201,6 +204,16 @@ impl DriftApp {
         prefs.push(format!("wheel={}", self.wheel.mode.key()));
         prefs.push(format!("asnap={}", self.angle_snap.unwrap_or(0.0)));
         prefs.push(format!("gaptol={}", rules.gap_tolerance));
+        // The Wall tool's thickness (0: by the drawing's units) and justification.
+        prefs.push(format!("wthick={}", self.editor.wall_thickness));
+        prefs.push(format!(
+            "wjust={}",
+            match self.editor.wall_justify {
+                drift_core::Justify::Centre => "c",
+                drift_core::Justify::Left => "l",
+                drift_core::Justify::Right => "r",
+            }
+        ));
         prefs.extend(self.crosshair.prefs());
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -249,6 +262,23 @@ impl DriftApp {
                 "rscale" => self.round_scale = on,
                 "hidden" => self.show_hidden_annotations = on,
                 "newfill" => self.editor.fill_new_shapes = on,
+                "wpoche" => self.editor.wall_poche.on = on,
+                "wcentre" => self.show_wall_centrelines = on,
+                "wthick" => {
+                    if let Ok(t) = value.parse::<f64>()
+                        && t.is_finite()
+                        && t >= 0.0
+                    {
+                        self.editor.wall_thickness = t;
+                    }
+                }
+                "wjust" => {
+                    self.editor.wall_justify = match value {
+                        "l" => drift_core::Justify::Left,
+                        "r" => drift_core::Justify::Right,
+                        _ => drift_core::Justify::Centre,
+                    };
+                }
                 "tdims" => self.show_temp_dims = on,
                 "ai" => self.ai_link = on,
                 #[cfg(not(target_arch = "wasm32"))]

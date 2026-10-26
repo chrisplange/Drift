@@ -1229,6 +1229,7 @@ dependencies = [
  "acadrust",
  "drift-core",
  "drift-draft",
+ "drift-geom",
  "kurbo",
  "lopdf",
  "miniz_oxide 0.9.1",

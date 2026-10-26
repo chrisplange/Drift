@@ -64,11 +64,15 @@ impl Editor {
     /// Handles not showing (they're neither drawn nor picked).
     pub fn hidden_handles(&self) -> BTreeSet<EntityId> {
         let shown = self.curves_showing_handles();
-        self.handle_owners()
+        let mut hidden: BTreeSet<EntityId> = self
+            .handle_owners()
             .iter()
             .filter(|(_, (curve, _))| !shown.contains(curve))
             .map(|(h, _)| *h)
-            .collect()
+            .collect();
+        // (And walls' centrelines, unless shown.)
+        hidden.extend(self.hidden_centrelines());
+        hidden
     }
 
     /// Whether an entity can be picked: not on a locked layer, and not a hidden handle.

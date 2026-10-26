@@ -27,6 +27,8 @@ mod options;
 mod selection;
 /// Sheets: a sheet, its title block and logo, its view, print and export.
 mod sheets;
+/// Walls: a room and a T, picking and re-thickening, explode, save and open.
+mod walls;
 
 /// Show the drawing from `min` to `max`, with grid snapping off (pointer positions are exact).
 fn view(h: &mut Harness<'_, DriftApp>, min: DVec2, max: DVec2) {

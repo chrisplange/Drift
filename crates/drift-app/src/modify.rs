@@ -620,6 +620,7 @@ impl Editor {
     /// Remove the piece of curve `id` around `click` between the nearest cutting curves (the
     /// whole curve if nothing cuts it).
     pub fn trim_at(&mut self, id: EntityId, click: DVec2) -> Result<(), EditError> {
+        self.refuse_owned(&[id], crate::walls::Op::Cut)?;
         let (lo, hi) = self.trim_span(id, click)?;
         let kind = self.doc.get(id).map(|e| e.kind).expect("checked");
         let doc_err = |e: drift_core::DocumentError| invalid(e.to_string());
@@ -1038,6 +1039,7 @@ impl Editor {
 
     /// Extend the end of curve `id` nearest `click` to the next curve it would meet.
     pub fn extend_at(&mut self, id: EntityId, click: DVec2) -> Result<(), EditError> {
+        self.refuse_owned(&[id], crate::walls::Op::Cut)?;
         let (end, at, other, existing) = self.extend_target(id, click)?;
         if self.doc.users_of(end).count() > 1 {
             return Err(invalid("that end is connected to other geometry"));
@@ -1067,6 +1069,7 @@ impl Editor {
     /// and pen curves join smoothly. A circle or whole ellipse, which has no ends, is cut
     /// into two halves: at the point and opposite it. Returns the point at the cut.
     pub fn split_at(&mut self, id: EntityId, at: DVec2) -> Result<EntityId, EditError> {
+        self.refuse_owned(&[id], crate::walls::Op::Cut)?;
         let shape = self
             .curve_shape(id)
             .ok_or_else(|| invalid("pick a curve"))?;
@@ -1320,6 +1323,7 @@ impl Editor {
 
     /// Round the corner at point `p` with an arc of radius `r`, tangent to both curves.
     pub fn fillet(&mut self, p: EntityId, r: f64) -> Result<EntityId, EditError> {
+        self.refuse_owned(&[p], crate::walls::Op::Round)?;
         let [(l1, a1), (l2, a2)] = self.fillet_corner(p)?;
         let at = self.doc.point(p).unwrap_or_default();
         let (t1, t2, c, ccw) = fillet_geometry(at, [a1, a2], r)?;
@@ -1678,6 +1682,7 @@ impl Editor {
 
     /// Cut the corner at point `p` with a line, `d1` / `d2` along the two lines.
     pub fn chamfer(&mut self, p: EntityId, d1: f64, d2: f64) -> Result<EntityId, EditError> {
+        self.refuse_owned(&[p], crate::walls::Op::Round)?;
         let [(l1, _), (l2, _)] = self.corner(p)?;
         let Some(Shape::Line { a, b }) = self.chamfer_preview(p, d1, d2) else {
             return Err(invalid(
@@ -2241,6 +2246,7 @@ impl Editor {
                 created.push(new);
             }
             self.copy_fills_onto(|e| images.get(&e).copied(), reflect);
+            self.copy_walls_onto(&|e| images.get(&e).copied());
             copied = self.copy_riders(
                 riders,
                 &|e| images.get(&e).or_else(|| map.get(&e)).copied(),
@@ -2348,6 +2354,7 @@ impl Editor {
                     }
                 }
                 self.copy_fills_onto(|e| map.get(&e).copied(), |p| transform(k, p));
+                self.copy_walls_onto(&|e| map.get(&e).copied());
             }
             Ok(())
         })();

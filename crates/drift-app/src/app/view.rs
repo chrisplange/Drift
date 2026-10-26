@@ -78,14 +78,31 @@ impl DriftApp {
         map: &ScreenMap,
     ) -> Vec<DimLayout> {
         let doc = &self.editor.doc;
-        doc.constraints()
+        let mut out: Vec<DimLayout> = doc
+            .constraints()
             .filter(|(id, c)| {
                 c.is_dimension() && self.on_canvas(drift_core::AnnotationRef::Dimension(*id))
             })
             .filter_map(|(id, c)| {
                 annotations::layout_dimension(painter, doc, Some(id), c, doc.placement(id), map)
             })
-            .collect()
+            .collect();
+        // Walls' thickness dimensions (drawn as a dimension between the faces).
+        if self.show_dimensions {
+            for (_, d) in doc.property_dims() {
+                if let Some((c, at)) = crate::walls::thickness_dimension(doc, d) {
+                    out.extend(annotations::layout_dimension(
+                        painter,
+                        doc,
+                        None,
+                        &c,
+                        Some(at),
+                        map,
+                    ));
+                }
+            }
+        }
+        out
     }
 
     /// The dimensions and annotations in a selection box just made (as they are drawn).
@@ -472,6 +489,9 @@ impl DriftApp {
             ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
         self.canvas_rect = rect;
         self.editor.drawing_curves = self.tool.kind().draws_curves();
+        // The Wall and Dimension tools snap to walls' centrelines: they show (faintly).
+        self.editor.show_centrelines = self.show_wall_centrelines
+            || matches!(self.tool.kind(), ToolKind::Wall | ToolKind::Dimension);
         let view_size = DVec2::new(f64::from(rect.width()), f64::from(rect.height()));
         self.editor.update_underlays();
         // A point the pointer snaps to lights up like a hovered one (as in Illustrator).
@@ -510,7 +530,17 @@ impl DriftApp {
             Vec::new()
         };
         let glyphs = if self.show_relations {
-            annotations::layout_glyphs(&self.editor.doc, &map)
+            let mut glyphs = annotations::layout_glyphs(&self.editor.doc, &map);
+            // (Not on walls' centrelines unless the wall is picked.)
+            if self.editor.doc.has_walls() {
+                let hidden = self.editor.unpicked_centrelines();
+                let doc = &self.editor.doc;
+                glyphs.retain(|g| {
+                    doc.constraint(g.id)
+                        .is_none_or(|c| !c.entities().any(|e| hidden.contains(&e)))
+                });
+            }
+            glyphs
         } else {
             Vec::new()
         };

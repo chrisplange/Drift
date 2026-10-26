@@ -493,10 +493,19 @@ impl DriftApp {
 
     /// Solid or hatch, and the colour or pattern, of the current fill style.
     fn fill_style_bar(&mut self, ui: &mut egui::Ui) {
+        let mut style = self.editor.fill_style.clone();
+        self.style_bar(ui, &mut style, "bar");
+        if style != self.editor.fill_style {
+            self.editor.fill_style = style;
+        }
+    }
+
+    /// Solid or hatch, and the colour or pattern, of a fill style (`salt` keeps its
+    /// pattern list's id apart from others on screen).
+    pub(crate) fn style_bar(&mut self, ui: &mut egui::Ui, style: &mut FillStyle, salt: &str) {
         let dark = ui.visuals().dark_mode;
         self.hatch_patterns
             .update(self.editor.doc.custom_patterns());
-        let mut style = self.editor.fill_style.clone();
         let solid = matches!(style.kind, FillKind::Solid);
         if let Some(choice) =
             app::context_ui::choice(ui, solid, &[(true, "Solid"), (false, "Hatch")])
@@ -519,11 +528,8 @@ impl DriftApp {
                     self.hatch_patterns.get(&h.pattern),
                     egui::vec2(34.0, 20.0),
                 );
-                pattern_combo(ui, h, &self.hatch_patterns, "bar", 120.0);
+                pattern_combo(ui, h, &self.hatch_patterns, salt, 120.0);
             }
-        }
-        if style != self.editor.fill_style {
-            self.editor.fill_style = style;
         }
     }
 

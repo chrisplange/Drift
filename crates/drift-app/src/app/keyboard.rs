@@ -122,6 +122,9 @@ impl DriftApp {
         claimed(Key::B, ToolKey::B);
         // R rotates a selection (with the select tool); otherwise it's the rectangle tool.
         let r_claimed = claimed(Key::R, ToolKey::R);
+        // Drawing walls: Space flips to the other face, Backspace takes a segment back.
+        claimed(Key::Space, ToolKey::Space);
+        claimed(Key::Backspace, ToolKey::Backspace);
         // G with another tool in hand moves what is picked: the select tool takes over.
         let picked = !self.editor.selection.is_empty()
             || !self.editor.selected_instances.is_empty()
@@ -269,6 +272,27 @@ impl DriftApp {
     /// ellipse; A: the arcs; F: fillet, chamfer; U: the kinds of slot).
     fn tool_key(&mut self, ctx: &egui::Context, mut kind: ToolKind) {
         let current = self.tool.kind();
+        if current == ToolKind::Wall {
+            // W again: straight or arc walls; A / L mid-run: an arc or a straight segment
+            // next. The run goes on.
+            let key = match kind {
+                ToolKind::Wall => Some(ToolKey::Again),
+                ToolKind::Arc if self.tool.is_busy() => Some(ToolKey::ArcNext),
+                ToolKind::Line if self.tool.is_busy() => Some(ToolKey::LineNext),
+                _ => None,
+            };
+            if let Some(key) = key {
+                self.tool.key(key, self.pointer.as_ref(), &mut self.editor);
+                let now = ctx.input(|i| i.time);
+                let what = if self.editor.wall_arc {
+                    "Arc walls: click the end, then a point the wall curves through"
+                } else {
+                    "Straight walls"
+                };
+                self.set_status(what.to_owned(), false, now);
+                return;
+            }
+        }
         if kind == ToolKind::Slot && current == ToolKind::Slot {
             // U again: the next kind of slot.
             self.editor.slot_mode = self.editor.slot_mode.next();

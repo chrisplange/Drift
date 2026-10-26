@@ -77,9 +77,12 @@ does the last command or tool again, as in AutoCAD.
 | C | **Circle** | Centre, then a point on the circle (or type the diameter). C again switches through: circle, ellipse, partial ellipse |
 | A | **Arc** | Centre, start, end. Press A again for other arc types |
 | U | **Slot** | Straight, centre or arc slot (press U again to switch), then width |
+| W | **Wall** | Walls along a centreline: they join the walls they meet. W again: arcs; Space: the other face |
 | V | **Point** | A sketch point, for reference or construction |
 | Shift+T | **Text** | A line of text drawn as outlines, convertible to curves |
 | I | **Place block** | Place copies of a block from the Blocks tab; R turns, X mirrors |
+
+With no key (use the Draw menu or the command palette): **Walls from curves**.
 
 ## Modify
 
@@ -136,7 +139,10 @@ With no key (use the Annotate menu or the command palette): **Ordinate**, **Call
 | Tab | Next field (length → angle, width → height…) |
 | Enter | Apply the typed values; with nothing typed, finish a polyline |
 | Right-click | Finish a polyline |
-| A / L | In a polyline: switch to a tangent arc, or back to lines, from the last point |
+| A / L | In a polyline: switch to a tangent arc, or back to lines, from the last point; drawing walls: an arc or a straight segment next |
+| W | Drawing walls: straight or arc segments |
+| Space | Drawing walls: the other face (Left ↔ Right) |
+| Backspace | Drawing walls: take back the last segment |
 | Alt (hold) | Place without snapping (also no perpendicular or tangent snaps) |
 | Esc | Stop typing, cancel the step, or (pressed again) go back to Select |
 

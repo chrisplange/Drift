@@ -103,6 +103,53 @@ impl Fill {
     }
 }
 
+/// How new fills look (the Fill tool's settings), and the editable part of a fill: also a
+/// wall's poché.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FillStyle {
+    pub kind: FillKind,
+    pub color: Option<Rgb>,
+    pub opacity: f64,
+    pub weight: Option<LineWeight>,
+}
+
+impl Default for FillStyle {
+    fn default() -> Self {
+        Self {
+            kind: FillKind::Hatch(Hatch::new("ANSI31")),
+            color: None,
+            opacity: 1.0,
+            weight: None,
+        }
+    }
+}
+
+impl FillStyle {
+    /// Solid, in the layer's colour, opaque: a wall's poché unless set otherwise.
+    pub fn solid() -> Self {
+        Self {
+            kind: FillKind::Solid,
+            ..Self::default()
+        }
+    }
+
+    pub fn of(fill: &Fill) -> Self {
+        Self {
+            kind: fill.kind.clone(),
+            color: fill.color,
+            opacity: fill.opacity,
+            weight: fill.weight,
+        }
+    }
+
+    pub fn apply(&self, fill: &mut Fill) {
+        fill.kind = self.kind.clone();
+        fill.color = self.color;
+        fill.opacity = self.opacity;
+        fill.weight = self.weight;
+    }
+}
+
 /// Stable identifier of an annotation (note, centre mark, callout, ordinate dimension).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AnnotationId(pub u32);

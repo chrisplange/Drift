@@ -13,7 +13,8 @@ drift-core.workspace = true
 drift-draft.workspace = true
 serde = { version = "1.0", features = ["derive"] }
 # `raw_value`: what a newer Drift wrote that this one doesn't know is kept as written (carry.rs).
-serde_json = { version = "1.0", features = ["raw_value"] }
+# `float_roundtrip`: numbers read back bit for bit (walls' corners are checked exactly on opening).
+serde_json = { version = "1.0", features = ["raw_value", "float_roundtrip"] }
 lopdf = { version = "0.45", default-features = false }
 miniz_oxide = "0.9.1"
 # Reading JPEG images in PDFs, and pictures in .drift files (pure Rust, so the web build has them).
@@ -27,6 +28,8 @@ acadrust = { version = "0.6.5", default-features = false, optional = true }
 
 [dev-dependencies]
 proptest = "1"
+# The fixture drawing makes its walls' faces (tests/format_fixtures.rs).
+drift-geom.workspace = true
 
 [features]
 dwg = ["dep:acadrust"]

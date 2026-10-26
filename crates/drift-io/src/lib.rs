@@ -75,6 +75,7 @@ pub mod svg_import;
 mod texts;
 mod underlays;
 pub mod vector;
+mod walls;
 
 /// File extension, without the dot.
 pub const EXTENSION: &str = "drift";
@@ -969,6 +970,12 @@ struct FileRecord {
     underlays: Vec<underlays::UnderlayRecord>,
     #[serde(default)]
     texts: Vec<texts::TextRecord>,
+    /// Runs of wall and what they made (an addition at 42: fixture v42.1).
+    #[serde(default)]
+    walls: Vec<walls::WallRecord>,
+    /// Dimensions showing a wall's thickness (an addition at 42: fixture v42.1).
+    #[serde(default)]
+    property_dims: Vec<walls::PropertyDimRecord>,
 }
 
 /// A named group of entities.
@@ -1403,6 +1410,19 @@ fn write(doc: &Document, meta: &Metadata) -> String {
         .texts()
         .map(|(id, t)| serde_json::to_string(&texts::text_record(id, t)).expect("text serializes"))
         .collect();
+    let wall_lines: Vec<String> = doc
+        .walls()
+        .map(|(id, w)| {
+            serde_json::to_string(&walls::wall_record(doc, id, w)).expect("wall serializes")
+        })
+        .collect();
+    let property_dims: Vec<String> = doc
+        .property_dims()
+        .map(|(id, d)| {
+            serde_json::to_string(&walls::property_dim_record(id, d))
+                .expect("property dimension serializes")
+        })
+        .collect();
     let tail = [
         ("measurements", &measurements),
         ("options", &options),
@@ -1419,6 +1439,9 @@ fn write(doc: &Document, meta: &Metadata) -> String {
         ("instances", &instances),
         ("underlays", &underlay_lines),
         ("texts", &text_lines),
+        // (After the entities, paths and fills they name.)
+        ("walls", &wall_lines),
+        ("property_dims", &property_dims),
     ];
     let last = tail.iter().rposition(|(_, items)| !items.is_empty());
     push_array(&mut out, "entities", &entities, true);
@@ -1955,6 +1978,8 @@ fn load_value(value: serde_json::Value) -> Result<(Document, Metadata, Vec<Strin
         )
         .map_err(LoadError::Document)?;
     }
+    let wall_notes = walls::insert_all(&mut doc, file.walls, file.property_dims)?;
+    notes_out.extend(wall_notes);
     for r in file.views {
         let id_text = r.id.clone();
         let (id, mut view) = sheets::parse_view(r)?;

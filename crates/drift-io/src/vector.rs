@@ -271,6 +271,8 @@ pub fn to_import(art: &Artwork, options: &ImportOptions) -> DxfImport {
                     pattern: "SOLID".into(),
                     scale: 1.0,
                     angle: 0.0,
+                    definition: Vec::new(),
+                    origin: DVec2::ZERO,
                     color: Some(color),
                     opacity: Some(p.fill_opacity),
                     seeds: Vec::new(),

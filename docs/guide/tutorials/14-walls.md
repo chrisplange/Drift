@@ -1,7 +1,7 @@
 # Walls
 
-**What you'll make:** a small room with an interior wall teed into it, a curved wall, and a
-wall made from lines you had already drawn. Then you'll change a wall's thickness, from a
+**What you'll make:** a small room with an interior wall teed into it, a curved wall, a
+wall made from lines you had already drawn, and walls found in an imported plan. Then you'll change a wall's thickness, from a
 preset and from a variable.
 
 Time: about 15 minutes.
@@ -77,7 +77,48 @@ one poché. Move the room's wall later and the T follows.
 
 The lines become the walls' construction centrelines, at the Wall tool's settings.
 
-## 5. Change a wall
+## 5. Walls from an imported plan's lines
+
+A plan from AutoCAD or another CAD program (DWG, DXF or PDF) draws each wall as its two face
+lines, broken at every door and window. **Walls from lines** finds those pairs and makes them
+walls.
+
+1. Import the plan (**File → Import…**).
+2. Drag a box round the part of the plan you want (or press Ctrl+A for all of it). Picking
+   furniture, text or dimensions along with the walls does no harm: only lines and arcs are
+   looked at.
+3. Choose **Walls from lines** (in the **Draw** menu or the command palette).
+
+It pairs lines that are parallel, a wall's thickness apart (2″ to 18″, 50 mm to 460 mm) and on
+the same layer, wherever they run side by side: they needn't be the same length, and a face
+broken where another wall tees in is matched by its unbroken partner. Each wall is made at
+the thickness it measures, snapped to the nearest of the Wall tool's presets when it's within ⅛″ (3 mm), and
+otherwise rounded to 1⁄16″ (1 mm in a metric drawing). Walls meet where their centrelines
+cross, so L, T and X joins come out clean, and walls that meet two at a corner become one run.
+Concentric arcs become curved walls.
+
+At a door or window, both faces stop and the wall stops with them: the walls end at the jambs,
+and the gap is left open (the door's swing and the window's lines stay as they were drawn).
+
+The status bar and the top of the **Inspector** say what it did: "Made 24 walls from 61
+lines; 2 openings left open; 3 line pairs skipped: spacing varies". It skips:
+
+- **Spacing varies:** two lines that taper apart, so they aren't a wall's faces.
+- **Evenly spaced lines:** lines with partners on both sides at the same distance, as in a
+  hatch or a grid of tiles.
+- **Too short to stand alone:** a short piece joined to nothing, such as a shelf, a counter
+  or a column.
+
+Click **Pick** beside any of these to pick its lines and look at them. Lines the walls cover
+only in part (a face that carries on as something else) are made into walls and kept.
+
+The lines that became walls are **Removed** by default: the walls' faces lie where they were,
+and **Undo** brings them back (the whole command is one step). In the Inspector's **Lines
+used** list you can choose **Kept** (left over the walls) or **Moved to a hidden layer**
+("Wall lines") instead; changing it does the command again that way, and Drift remembers the
+choice. It also tidies walls an older Drift script drew as lines, centrelines included.
+
+## 6. Change a wall
 
 Click a wall (a face, its fill or its centreline). The **Inspector** shows:
 
@@ -104,6 +145,5 @@ drive it.
 
 ## What's next
 
-Openings (doors and windows hosted in walls), room tags with live areas, dimensions that
-drive face to face, and making walls from an imported plan's lines are coming in the next
-batches.
+Openings (doors and windows hosted in walls), room tags with live areas, and dimensions that
+drive face to face are coming in the next batches.

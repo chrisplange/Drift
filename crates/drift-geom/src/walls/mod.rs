@@ -23,6 +23,7 @@ use drift_core::{
 
 use crate::regions::{Edge, Loop, Region};
 
+pub mod from_lines;
 pub mod regen;
 pub use regen::{Report, regenerate, regenerate_moved, wall_inputs};
 #[cfg(test)]

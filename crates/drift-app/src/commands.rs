@@ -77,6 +77,8 @@ pub(crate) enum Command {
     ExplodeToGroup,
     /// Walls along the picked curves.
     WallsFromCurves,
+    /// Walls found among the picked lines (pairs of faces).
+    WallsFromLines,
     /// The picked walls as plain geometry.
     ExplodeWalls,
     /// Two picked walls' nearest ends joined (an L or a T).
@@ -1322,6 +1324,15 @@ fn table() -> Vec<Spec> {
         )
         .when(When::Curves)
         .words("pick lines centreline"),
+        Spec::new(
+            "draw.walls_from_lines",
+            C::Draw,
+            K::WallsFromLines,
+            "Walls from lines",
+            "Walls found among the picked lines: pairs of parallel faces, as imported plans draw them",
+        )
+        .when(When::Curves)
+        .words("convert faces import dwg dxf plan pairs"),
         tool("draw.point", C::Draw, ToolKind::Point)
             .keys(const { &[plain(Key::V)] })
             .aliases(&["POINT", "PO"]),

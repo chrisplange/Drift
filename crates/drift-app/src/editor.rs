@@ -447,6 +447,9 @@ pub struct Editor {
     pub wall_justify: drift_core::Justify,
     pub wall_arc: bool,
     pub wall_poche: crate::walls::PocheSetting,
+    /// What Walls from lines does with the lines it uses, and what it did last.
+    pub wall_lines: crate::walls_from_lines::UsedLines,
+    pub from_lines: Option<crate::walls_from_lines::FromLinesReport>,
     /// Walls' centrelines show (the Wall or Dimension tool is in hand, or View → Wall
     /// centrelines is on); otherwise only a picked or hovered wall's do.
     pub show_centrelines: bool,
@@ -494,6 +497,7 @@ impl Editor {
         self.wall_justify = was.wall_justify;
         self.wall_arc = was.wall_arc;
         self.wall_poche = was.wall_poche.clone();
+        self.wall_lines = was.wall_lines;
     }
 
     /// Refresh caches after document changes. Cheap when nothing changed.

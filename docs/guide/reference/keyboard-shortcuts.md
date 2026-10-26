@@ -82,7 +82,7 @@ does the last command or tool again, as in AutoCAD.
 | Shift+T | **Text** | A line of text drawn as outlines, convertible to curves |
 | I | **Place block** | Place copies of a block from the Blocks tab; R turns, X mirrors |
 
-With no key (use the Draw menu or the command palette): **Walls from curves**.
+With no key (use the Draw menu or the command palette): **Walls from curves**, **Walls from lines**.
 
 ## Modify
 

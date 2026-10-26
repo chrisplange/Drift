@@ -214,6 +214,7 @@ impl DriftApp {
                 drift_core::Justify::Right => "r",
             }
         ));
+        prefs.push(format!("wlines={}", self.editor.wall_lines.key()));
         prefs.extend(self.crosshair.prefs());
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -278,6 +279,11 @@ impl DriftApp {
                         "r" => drift_core::Justify::Right,
                         _ => drift_core::Justify::Centre,
                     };
+                }
+                "wlines" => {
+                    if let Some(u) = crate::walls_from_lines::UsedLines::from_key(value) {
+                        self.editor.wall_lines = u;
+                    }
                 }
                 "tdims" => self.show_temp_dims = on,
                 "ai" => self.ai_link = on,

@@ -49,6 +49,9 @@ pub mod underlays;
 #[cfg(not(target_arch = "wasm32"))]
 mod update;
 pub mod walls;
+pub mod walls_from_lines;
+#[cfg(test)]
+mod walls_from_lines_gallery;
 #[cfg(test)]
 mod walls_gallery;
 #[cfg(test)]

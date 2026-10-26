@@ -218,6 +218,7 @@ fn smoke_rail_walls_in_build() {
     for item in [
         "Wall",
         "Walls from curves",
+        "Walls from lines",
         "Place block",
         "Join walls",
         "Unjoin walls",

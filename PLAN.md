@@ -2208,6 +2208,46 @@ contributors can parallelise M6–M9 once the M2–M4 core is stable.
   does it), a mirrored copy keeping its swing's hand and side as they were (it should
   mirror them), anchors to points and faces other than the segment's ends.
 
+- **Walls W1.5: Walls from lines (done, as built).** `docs/walls-design.md` §3.3 rule 6 and
+  §10. `drift_geom::walls::from_lines::find` is a pure function over lines and arcs (each with
+  a group, the layer): (1) pair near-parallel lines (or concentric arcs) of one group a wall's
+  thickness apart (50–460 mm) over their overlap, whatever their lengths, each line keeping
+  its nearest partners on one side and a pair counting only when both keep each other; lines
+  with partners at the same distance on both sides are a pattern (a hatch), and a pair whose
+  spacing changes along it is skipped; (2) pairs sharing a line that agree on thickness and
+  centreline make one strip, so a face broken where a wall tees in is bridged by its partner;
+  (3) collinear strips meet across a gap where another wall crosses or tees in from both
+  sides, and any other gap up to 5 m is an opening, left open with the walls ending at its
+  jambs (they don't become hosted W3 openings yet); (4) each strip end moves to where its centreline crosses
+  the wall it runs into, ends meeting there share one point (L, n-way) and an end part-way
+  along a wall is a T on its centreline, which the generator's joins then pick up; short
+  pieces joined to nothing (under 4 × their thickness) are skipped as furniture or columns;
+  (5) strips meeting two at a point, of one thickness and group, chain into runs (a room is
+  one closed ring). Thicknesses snap to the drawing's presets within ⅛″ / 3 mm, else round
+  to 1⁄16″ or 1 mm. It reports the lines each wall used (faces, end caps, stray face pieces,
+  an old script wall's centreline), lines covered only in part (kept), skips by reason, and
+  openings. The command (`build.walls_from_lines`, **Walls from lines**, Build menu, the
+  Wall tool's flyout and palette; `crates/drift-app/src/walls_from_lines.rs`) runs on the picked lines, builds
+  centrelines with shared points and walls at the Wall tool's poché as one undo step, and
+  removes, keeps or moves to a hidden "Wall lines" layer the lines used (pref `wlines`,
+  default remove). The status bar gives the summary ("Made 24 walls from 61 lines; 3 line
+  pairs skipped: spacing varies") and the Inspector's report (while the drawing is
+  unchanged) lists skips with **Pick** buttons and the **Lines used** choice, which redoes the
+  command that way. Tests: 24 unit tests (parallel, skewed, taper, unequal, pieces,
+  openings, L, L of two thicknesses, T, X, ring, arcs, arc to line, table, shelf, hatch,
+  side-by-side walls, layers, script centreline, a solid centreline, specks on a face, a
+  grid of rooms, survey coordinates), editor tests (undo,
+  keep / layer, walls refused, exploded walls round-trip, old script walls, a DXF exported
+  and imported again), the before-and-after gallery `walls_from_lines_gallery.rs` (11 cases,
+  counts and areas; `walls_from_lines_pictures` renders the sheet), an ignored run over the
+  private samples (`DRIFT_PRIVATE_SAMPLES`), and `perf_walls_from_lines` (a 30 × 30 grid of
+  rooms exploded into lines). No format change.
+  Perf (release): the 30 × 30 grid (3,604 lines) is found in 15 ms and the whole command
+  takes about 90 ms; a 2,700-curve DWG plan 10 ms to find (114 walls), 70 ms in all; a
+  73,000-curve PDF plan 265 ms to find, 1.5 s in all (mostly the drawing's fills following
+  the lines removed). Imported quirks it copes with: centrelines drawn solid, duplicate and
+  fill-triangle edges (DXF SOLIDs come in as lines), and specks on faces.
+
 ## 9. Key risks and mitigations
 
 | Risk | Mitigation |

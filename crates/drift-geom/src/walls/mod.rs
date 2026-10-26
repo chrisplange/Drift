@@ -23,6 +23,7 @@ use drift_core::{
 
 use crate::regions::{Edge, Loop, Region};
 
+pub mod from_lines;
 mod frozen;
 pub mod lower;
 pub mod openings;

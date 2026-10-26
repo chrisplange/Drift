@@ -43,4 +43,5 @@ pub(crate) mod view;
 pub(crate) mod view_align;
 pub(crate) mod views_ui;
 pub(crate) mod visibility_ui;
+pub(crate) mod wall_lines_ui;
 pub(crate) mod wall_ui;

@@ -77,6 +77,8 @@ pub(crate) enum Command {
     ExplodeToGroup,
     /// Walls along the picked curves.
     WallsFromCurves,
+    /// Walls found among the picked lines (pairs of faces).
+    WallsFromLines,
     /// The picked walls as plain geometry.
     ExplodeWalls,
     /// Two picked walls' nearest ends joined (an L or a T).
@@ -443,7 +445,7 @@ impl Spec {
             Command::Move => Some(Icon::Glyph(Glyph::Move)),
             Command::Rotate => Some(Icon::Glyph(Glyph::Rotate)),
             Command::Pattern(_) => Some(Icon::Glyph(Glyph::Pattern)),
-            Command::WallsFromCurves => Some(Icon::Tool(ToolKind::Wall)),
+            Command::WallsFromCurves | Command::WallsFromLines => Some(Icon::Tool(ToolKind::Wall)),
             _ => None,
         };
         Spec {
@@ -636,7 +638,7 @@ pub(crate) const RAIL: &[(Option<Category>, &[Slot])] = {
             &[
                 Slot {
                     head: tool(T::Wall),
-                    more: &[K::WallsFromCurves],
+                    more: &[K::WallsFromCurves, K::WallsFromLines],
                 },
                 Slot::one(tool(T::Opening)),
                 Slot::one(tool(T::Block)),
@@ -1454,6 +1456,15 @@ fn table() -> Vec<Spec> {
         )
         .when(When::Curves)
         .words("pick lines centreline"),
+        Spec::new(
+            "build.walls_from_lines",
+            C::Build,
+            K::WallsFromLines,
+            "Walls from lines",
+            "Walls found among the picked lines: pairs of parallel faces, as imported plans draw them",
+        )
+        .when(When::Curves)
+        .words("convert faces import dwg dxf plan pairs"),
         tool("build.opening", C::Build, ToolKind::Opening)
             .keys(const { &[shift(Key::O)] })
             .aliases(&["DOOR", "DR", "WINDOW", "WN", "OPENING"])

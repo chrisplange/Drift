@@ -285,6 +285,13 @@ impl DriftApp {
                     Err(why) => self.editor.notice = Some(why),
                 }
             }
+            Command::WallsFromLines => {
+                let picked: Vec<_> = self.editor.selection.iter().copied().collect();
+                match self.editor.walls_from_lines(&picked) {
+                    Ok(report) => self.set_status(report.summary(), false, now),
+                    Err(why) => self.editor.notice = Some(why),
+                }
+            }
             Command::ExplodeWalls => {
                 let walls: Vec<_> = self.editor.selected_walls().into_iter().collect();
                 self.editor.explode_walls(&walls);

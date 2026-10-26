@@ -660,6 +660,7 @@ impl DriftApp {
             return;
         }
         self.block_edit_banner(ui);
+        self.walls_from_lines_report(ui);
         if self.fill_tool_inspector(ui)
             || self.opening_inspector(ui)
             || self.wall_inspector(ui)

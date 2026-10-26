@@ -13,7 +13,7 @@ button down, for the others. The place shows the one used last.
 | **Rectangle** | Polygon, Slot |
 | **Circle** | Ellipse, Partial ellipse |
 | **Arc** | 3-pt arc, Tangent arc |
-| **Wall** | Walls from curves |
+| **Wall** | Walls from curves, Walls from lines |
 | **Trim** | Extend, Split |
 | **Fillet** | Chamfer |
 | **Linear pattern** | Circular pattern |
@@ -55,8 +55,9 @@ become dimensions when **Auto relations** is on.
 ## Build
 
 Walls, doors and windows (and later rooms), and blocks. **Join walls**, **Unjoin walls**
-and **Explode walls** are in the **Build** menu; **Walls from curves** is in the **Wall**
-tool's flyout too.
+and **Explode walls** are in the **Build** menu; **Walls from curves** and
+**Walls from lines** (walls found in an imported plan's pairs of face lines) are in the
+**Wall** tool's flyout too.
 
 | Tool | Key | What it does |
 |---|---|---|

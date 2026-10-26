@@ -89,7 +89,7 @@ does the last command or tool again, as in AutoCAD.
 | Shift+O | **Door / window** | Doors, windows and openings in walls: hover a wall, click to place. Space: the way it opens; type the offset, Tab: width |
 | I | **Place block** | Place copies of a block from the Blocks tab; R turns, X mirrors |
 
-With no key (use the Build menu or the command palette): **Walls from curves**, **Join walls**, **Unjoin walls**, **Explode walls**.
+With no key (use the Build menu or the command palette): **Walls from curves**, **Walls from lines**, **Join walls**, **Unjoin walls**, **Explode walls**.
 
 ## Modify
 

@@ -109,6 +109,8 @@ struct PageDrawing {
     covered_count: usize,
     /// How each layer starts out (hidden, locked, not printed), by name.
     layers: BTreeMap<String, LayerFlags>,
+    /// The layers in the order the page first draws on them: bottom first.
+    layer_order: Vec<String>,
     skipped_text: usize,
     /// Its pictures; how many images couldn't be read, by why; and how many pictures are
     /// clipped in the file (they come in whole).
@@ -253,13 +255,15 @@ pub fn read_artwork(bytes: &[u8], number: u32, name: &str) -> Result<Artwork, St
         size: page.size * mm,
         ..Default::default()
     };
-    // The file's layers in its order, with how they start out.
-    for (layer, flags) in &page.layers {
+    // The file's layers in the order it draws them (the last on top, as in Drift), with
+    // how they start out.
+    for layer in &page.layer_order {
         if page.paths.iter().any(|p| p.layer.as_deref() == Some(layer))
             || page.texts.iter().any(|t| t.layer.as_deref() == Some(layer))
         {
             art.layer(layer);
-            art.layer_flags.insert(layer.clone(), *flags);
+            let flags = page.layers.get(layer).copied().unwrap_or_default();
+            art.layer_flags.insert(layer.clone(), flags);
         }
     }
     let hidden = art.layer_flags.values().filter(|f| !f.visible).count();
@@ -465,6 +469,7 @@ fn read_drawing(bytes: &[u8], number: u32) -> Result<PageDrawing, String> {
         covered_count: 0,
         fonts: HashMap::new(),
         segments: 0,
+        layer_order: Vec::new(),
         skipped_text: 0,
         pictures: Vec::new(),
         unread: BTreeMap::new(),
@@ -512,6 +517,7 @@ fn read_drawing(bytes: &[u8], number: u32) -> Result<PageDrawing, String> {
         covered: reader.covered,
         covered_count: reader.covered_count,
         layers: layer_states(&doc),
+        layer_order: reader.layer_order,
         skipped_text: reader.skipped_text,
         pictures: reader.pictures,
         unread: reader.unread,
@@ -751,6 +757,8 @@ struct Reader<'a> {
     /// Fonts read so far, by where their dictionaries are.
     fonts: HashMap<usize, Rc<Font>>,
     segments: usize,
+    /// The layers in the order the page first draws on them.
+    layer_order: Vec<String>,
     skipped_text: usize,
     pictures: Vec<UnderlayImage>,
     unread: BTreeMap<&'static str, usize>,
@@ -1101,6 +1109,15 @@ impl<'a> Reader<'a> {
         });
     }
 
+    /// Note a layer the first time the page draws on it.
+    fn enter_layer(&mut self, layer: &Option<String>) {
+        if let Some(name) = layer
+            && !self.layer_order.contains(name)
+        {
+            self.layer_order.push(name.clone());
+        }
+    }
+
     /// The name of the layer an optional-content tag stands for.
     fn layer_name(&self, resources: &[&'a Dictionary], props: &Object) -> Option<String> {
         let dict = match props {
@@ -1249,6 +1266,7 @@ impl<'a> Reader<'a> {
                         && o.first().and_then(|t| t.as_name().ok()) == Some(b"OC".as_slice()))
                     .then(|| o.get(1).and_then(|p| self.layer_name(resources, p)))
                     .flatten();
+                    self.enter_layer(&layer);
                     layers.push(layer);
                 }
                 "EMC" => {
@@ -1522,6 +1540,7 @@ impl<'a> Reader<'a> {
                         .and_then(|(_, oc)| self.layer_name(resources, oc));
                     let mut inner = gs.clone();
                     inner.ctm = matrix.then(&gs.ctm);
+                    self.enter_layer(&layer);
                     layers.push(layer);
                     let result = self.run(&data, inner, &res, layers, depth + 1);
                     layers.pop();
@@ -1916,6 +1935,68 @@ mod tests {
         // Saved without its PDF copy: said so.
         let err = read_artwork(&illustrator_page(true), 1, "plan").unwrap_err();
         assert!(err.contains("Create PDF Compatible File"), "{err}");
+    }
+
+    /// Layers come in the order the page draws them (the last on top), not by name; a
+    /// ligature its encoding names `f_i` reads as "fi".
+    #[test]
+    fn layers_keep_the_files_order_and_ligatures_read_as_letters() {
+        use lopdf::{Stream, dictionary};
+        let mut doc = Document::with_version("1.6");
+        let pages = doc.new_object_id();
+        let encoding = doc.add_object(dictionary! {
+            "Type" => "Encoding", "BaseEncoding" => "WinAnsiEncoding",
+            "Differences" => vec![31.into(), Object::Name(b"f_i".to_vec())],
+        });
+        let font = doc.add_object(dictionary! {
+            "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "ABCDEF+MyriadPro-Regular",
+            "Encoding" => encoding,
+        });
+        let ocg = |doc: &mut Document, name: &str| {
+            doc.add_object(dictionary! {
+                "Type" => "OCG", "Name" => Object::string_literal(name),
+            })
+        };
+        let (walls, notes, marks) = (
+            ocg(&mut doc, "Walls"),
+            ocg(&mut doc, "Notes"),
+            ocg(&mut doc, "Annotations"),
+        );
+        let content = b"/OC /W BDC 1 w 10 10 m 50 10 l S EMC \
+            /OC /N BDC BT /F1 10 Tf 100 700 Td (\x1frst floor) Tj ET EMC \
+            /OC /A BDC 1 w 10 20 m 50 20 l S EMC";
+        let contents = doc.add_object(Stream::new(dictionary! {}, content.to_vec()));
+        let page = doc.add_object(dictionary! {
+            "Type" => "Page", "Parent" => pages,
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            "Contents" => contents,
+            "Resources" => dictionary! {
+                "Font" => dictionary! { "F1" => font },
+                "Properties" => dictionary! { "W" => walls, "N" => notes, "A" => marks },
+            },
+        });
+        doc.objects.insert(
+            pages,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages", "Kids" => vec![page.into()], "Count" => 1,
+            }),
+        );
+        let catalog = doc.add_object(dictionary! {
+            "Type" => "Catalog", "Pages" => pages,
+            "OCProperties" => dictionary! {
+                "OCGs" => vec![marks.into(), notes.into(), walls.into()],
+                "D" => dictionary! { "Order" => vec![marks.into(), notes.into(), walls.into()] },
+            },
+        });
+        doc.trailer.set("Root", catalog);
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).unwrap();
+
+        let art = read_artwork(&bytes, 1, "plan").unwrap();
+        assert_eq!(art.layers, ["Walls", "Notes", "Annotations"]);
+        assert_eq!(art.texts.len(), 1, "{:?}", art.texts);
+        assert_eq!(art.texts[0].text, "first floor");
+        assert_eq!(art.texts[0].layer, "Notes");
     }
 
     #[test]

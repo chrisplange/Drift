@@ -168,6 +168,44 @@ hatch bed.walls ANSI31 scale 2 angle 45   # every stretch of the room's walls
 fill bed #f0f0f0 opacity 0.5
 ```
 
+### Trimming one shape by another
+
+```
+trim slab inside bay      # remove the pieces of slab that lie inside bay
+trim bay outside slab     # remove the pieces of bay that lie outside slab
+```
+
+`inside` and `outside` say **what goes**. The second shape must be closed. Only its curves
+cut the first, so a line drawn across both doesn't add pieces. It works as the Trim tool
+does, piece by piece, so the pieces left keep their ids and relations. Two shapes trimmed
+into one outline keep one fill, the top one's.
+
+Two lines give the usual combinations:
+
+| Want | Lines |
+|---|---|
+| Union | `trim A inside B`, then `trim B inside A` |
+| Notch (A minus B) | `trim A inside B`, then `trim B outside A` |
+| Overlap only | `trim A outside B`, then `trim B outside A` |
+| A hole | nothing to trim: draw B inside A (a shape inside another is a hole in its fill) |
+
+The second line works even though the first left A open: "inside A" means inside A as it
+was before this script first trimmed it. After a trim, a name stands for what is left of
+it, including the pieces trims cut off its sides.
+
+- A piece held by a dimension that would no longer hold isn't trimmed. You get a warning,
+  and the rest goes ahead. A `rect`'s sizes are measured between its corners, so they don't
+  stop a trim.
+- If nothing lies on that side, that's a warning, not an error.
+
+```
+rect slab about 6 m x 4 m at 0,0
+circle bay r 1.2 m at 6 m,2 m
+trim slab inside bay
+trim bay inside slab
+fill slab #f0f0f0
+```
+
 ### Existing geometry
 
 ```

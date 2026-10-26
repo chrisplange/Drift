@@ -61,6 +61,11 @@ as before.
 
 - **One way in.** File → Import… takes SVG, PDF, Illustrator, DXF and DWG, with the same scale
   controls for each, as editable geometry or as an underlay to trace.
+- **Blocks from DWG and DXF come in right.** Mirrored blocks, such as doors swung the other way,
+  were turned 180° instead. Blocks stretched in one direction were stretched in both. Parts
+  drawn "by block" now take each copy's colour. A dynamic block is named after itself
+  instead of `*U12`. A block of the same name already in the drawing is only reused when it's
+  the same. External references are named in the import report instead of vanishing.
 - **Dropping a file** on the window asks whether to open it as a new drawing or import it into
   the one you have open.
 
@@ -78,6 +83,9 @@ as before.
 
 - **Export the model at 1 : 1** as SVG or PDF (File → Export), with or without dimensions and
   notes.
+- **DXF export opens in AutoCAD.** A drawing with an ellipse or a pen curve made a DXF that
+  AutoCAD refused outright; those curves now go out as polylines within 0.01 mm of the curve.
+  Accents and symbols in text (é, ½, m²) no longer turn into question marks.
 - **Title block None** gives blank paper; the old None is now **Border only**.
 - **Dimensions** start their extension lines past the geometry they run along, with grips to
   set a start by hand. Radius dimensions on arcs always point at the arc.

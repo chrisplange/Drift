@@ -1063,6 +1063,73 @@ fn trimming_two_paths_into_one_outline_joins_them() {
     assert_eq!(ed.doc.fills().count(), 2);
 }
 
+/// Two filled squares overlapping at a corner, trimmed into each other one inner side at a
+/// time. A square trimmed open doesn't take the other's sides into its path before the two
+/// meet (which left the other's fill without its shape, and two fills stacked on the joined
+/// outline): when they meet, one path holds both, with the top fill.
+#[test]
+fn squares_trimmed_open_one_side_at_a_time_join_with_the_top_fill() {
+    let mut ed = Editor::default();
+    ed.fill_new_shapes = true;
+    let shape = |ed: &mut Editor, corners: &[DVec2]| {
+        let (_, sides) = polygon(ed, corners);
+        ed.doc.begin();
+        let path = ed.add_shape(&sides).unwrap();
+        ed.commit("Shape");
+        let fill = ed
+            .doc
+            .fills()
+            .find(|(_, f)| f.path == Some(path))
+            .unwrap()
+            .0;
+        (path, fill)
+    };
+    let (pa, fa) = shape(
+        &mut ed,
+        &[v(0.0, 0.0), v(40.0, 0.0), v(40.0, 40.0), v(0.0, 40.0)],
+    );
+    let (pb, fb) = shape(
+        &mut ed,
+        &[v(20.0, 20.0), v(60.0, 20.0), v(60.0, 60.0), v(20.0, 60.0)],
+    );
+    let side_at = |ed: &Editor, p: DVec2| {
+        ed.doc
+            .iter()
+            .find(|(id, _)| {
+                ed.doc.shape(*id).is_some_and(|s| {
+                    !matches!(s, drift_core::Shape::Point(_)) && drift_geom::distance(&s, p) < 1e-9
+                })
+            })
+            .map(|(id, _)| id)
+            .unwrap()
+    };
+    // A's right, B's left, A's top, B's bottom: each trim cuts only against the other square.
+    for at in [v(40.0, 30.0), v(20.0, 30.0), v(30.0, 40.0), v(30.0, 20.0)] {
+        let id = side_at(&ed, at);
+        ed.trim_at(id, at).unwrap();
+        // Until they meet, each keeps its own path and fill.
+        if ed.doc.paths().count() == 2 {
+            assert!(ed.doc.fill(fa).unwrap().path == Some(pa));
+            assert!(ed.doc.fill(fb).unwrap().path == Some(pb));
+            assert_eq!(
+                ed.doc.path(pa).unwrap().curves.len(),
+                4,
+                "A has only its own sides"
+            );
+        }
+    }
+    let paths: Vec<_> = ed.doc.paths().map(|(id, p)| (id, p.clone())).collect();
+    assert_eq!(paths.len(), 1, "{paths:?}");
+    assert!(paths[0].1.closed);
+    assert_eq!(ed.doc.fills().count(), 1, "one fill on the joined outline");
+    assert_eq!(
+        ed.doc.fill(fb).unwrap().path,
+        Some(paths[0].0),
+        "the top one's"
+    );
+    assert!(close(found(&mut ed, fb).0, 2800.0));
+}
+
 /// A click with the Fill tool inside a shape drawn as one makes the fill the shape's: a
 /// line across it leaves it whole, and re-picking its boundary makes it an area fill again.
 #[test]

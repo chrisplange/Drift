@@ -292,6 +292,12 @@ pub(super) enum Stmt {
         ids: Vec<Path>,
         name: String,
     },
+    /// `trim slab inside bay`: remove what of `what` lies inside (or outside) `by`.
+    Trim {
+        what: Path,
+        inside: bool,
+        by: Path,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -405,6 +411,7 @@ pub(super) const STATEMENTS: &[&str] = &[
     "hatch",
     "fill",
     "use",
+    "trim",
 ];
 
 type R<T> = Result<T, ScriptError>;
@@ -1411,6 +1418,19 @@ fn statement(line: &Line) -> R<Statement> {
                 }
             }
             Stmt::Fill { of, color, opacity }
+        }
+        "trim" => {
+            let what = p.path("what to trim, like `slab`")?;
+            let inside = if p.eat("inside") {
+                true
+            } else if p.eat("outside") {
+                false
+            } else {
+                return Err(p.expected("`inside` or `outside`, as in: trim slab inside bay"));
+            };
+            let by = p.path("the closed shape to trim by, like `bay`")?;
+            p.done("write it as: trim slab inside bay (or outside)")?;
+            Stmt::Trim { what, inside, by }
         }
         "use" => {
             let ids = p.paths("an id like `e12`")?;

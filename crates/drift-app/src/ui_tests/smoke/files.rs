@@ -111,3 +111,78 @@ fn smoke_files_unknown_fields_are_saved_back() {
     assert!(saved.contains(r#""datum":"OD""#), "the unknown table");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The record types (group 0) in a DXF file.
+fn dxf_kinds(dxf: &str) -> Vec<&str> {
+    let lines: Vec<&str> = dxf.lines().map(str::trim).collect();
+    lines
+        .chunks(2)
+        .filter(|p| p.len() == 2 && p[0] == "0")
+        .map(|p| p[1])
+        .collect()
+}
+
+#[test]
+fn smoke_files_dxf_export_opens_in_autocad_and_comes_back() {
+    let Some(mut h) = harness() else { return };
+    view(&mut h, DVec2::new(-100.0, -60.0), DVec2::new(120.0, 80.0));
+    rectangle(&mut h, DVec2::ZERO, DVec2::new(40.0, 30.0), Fill::Solid);
+    // An ellipse, a pen curve and text outside ASCII: AutoCAD discarded the whole R12 file
+    // at the first ELLIPSE or SPLINE, and the text came out as question marks.
+    let v = DVec2::new;
+    let ed = &mut h.state_mut().editor;
+    ed.doc.begin();
+    let [c, m, n] = [v(-50.0, 0.0), v(-20.0, 10.0), v(-55.0, 15.0)].map(|p| ed.doc.add_point(p));
+    ed.doc.add_ellipse(c, m, n).unwrap();
+    let p = [
+        v(10.0, -40.0),
+        v(10.0, -10.0),
+        v(60.0, -5.0),
+        v(70.0, -40.0),
+    ]
+    .map(|q| ed.doc.add_point(q));
+    ed.doc.add_bezier(p[0], p[1], p[2], p[3]).unwrap();
+    ed.doc.add_text(drift_core::SketchText::new(
+        "Café ½ – 2 m²",
+        v(0.0, 50.0),
+        5.0,
+    ));
+    ed.commit("Shapes");
+    h.run();
+    let painter = painter(&h);
+    let dxf = h.state_mut().dxf_text(&painter);
+    assert!(dxf.contains("AC1009"));
+    let newer: Vec<&str> = dxf_kinds(&dxf)
+        .into_iter()
+        .filter(|k| matches!(*k, "ELLIPSE" | "SPLINE" | "LWPOLYLINE" | "MTEXT" | "HATCH"))
+        .collect();
+    assert!(newer.is_empty(), "entities R12 doesn't have: {newer:?}");
+    assert!(dxf.is_ascii() && !dxf.contains('?'));
+    // Imported back with File → Import…, the text reads the same and the curves arrive.
+    let curves_before = curves(&h, &ids(&h)).len();
+    let path = temp_file("dxf-export", "export.dxf", dxf.as_bytes());
+    open_menu(&mut h, "File");
+    h.get_by_label("Import…").click();
+    h.run();
+    h.state().files.open_path(&path);
+    h.run_steps(3);
+    h.get_by_label("Import").click();
+    h.run_steps(3);
+    let texts: Vec<String> = h
+        .state()
+        .editor
+        .doc
+        .texts()
+        .map(|(_, t)| t.text.clone())
+        .collect();
+    assert_eq!(
+        texts.iter().filter(|t| *t == "Café ½ – 2 m²").count(),
+        2,
+        "{texts:?}"
+    );
+    assert!(
+        curves(&h, &ids(&h)).len() > curves_before + 6,
+        "the curves came back"
+    );
+    let _ = std::fs::remove_file(&path);
+}

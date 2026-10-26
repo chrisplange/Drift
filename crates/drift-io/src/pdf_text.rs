@@ -19,8 +19,9 @@ pub(crate) struct Font {
     pub two_byte: bool,
     /// Code → text, from the font's `ToUnicode` map.
     pub unicode: HashMap<u32, String>,
-    /// Code → text from a simple font's encoding, when it has no map.
-    pub encoding: Option<Box<[Option<char>; 256]>>,
+    /// Code → text from a simple font's encoding, for codes its map doesn't have (a
+    /// ligature such as `fi` reads as two letters).
+    pub encoding: Option<Vec<Option<String>>>,
     /// Code → advance, in thousandths of the font size.
     pub widths: HashMap<u32, f64>,
     pub default_width: f64,
@@ -70,9 +71,7 @@ impl Font {
                     }
                 }
             }
-            if font.unicode.is_empty() {
-                font.encoding = Some(Box::new(encoding(doc, dict)));
-            }
+            font.encoding = Some(encoding(doc, dict));
         }
         font
     }
@@ -97,9 +96,9 @@ impl Font {
             return t.clone();
         }
         if let Some(enc) = &self.encoding
-            && let Some(Some(c)) = enc.get(code as usize)
+            && let Some(Some(t)) = enc.get(code as usize)
         {
-            return c.to_string();
+            return t.clone();
         }
         String::new()
     }
@@ -269,8 +268,8 @@ fn parse_cmap(text: &str) -> HashMap<u32, String> {
 
 /// A simple font's encoding: its base (WinAnsi unless it says otherwise) with its
 /// `Differences`.
-fn encoding(doc: &Document, dict: &Dictionary) -> [Option<char>; 256] {
-    let mut table = win_ansi();
+fn encoding(doc: &Document, dict: &Dictionary) -> Vec<Option<String>> {
+    let mut table: Vec<Option<String>> = win_ansi().iter().map(|c| c.map(String::from)).collect();
     let enc = dict
         .get(b"Encoding")
         .ok()
@@ -286,7 +285,7 @@ fn encoding(doc: &Document, dict: &Dictionary) -> [Option<char>; 256] {
                 Object::Integer(c) => code = (*c).clamp(0, 255) as usize,
                 Object::Name(n) => {
                     if code < 256 {
-                        table[code] = glyph_char(&String::from_utf8_lossy(n));
+                        table[code] = glyph_text(&String::from_utf8_lossy(n));
                     }
                     code += 1;
                 }
@@ -338,6 +337,21 @@ fn win_ansi() -> [Option<char>; 256] {
     }
     t[0x7f] = None;
     t
+}
+
+/// The text a glyph name stands for: one character, or a ligature's letters. Ligatures are
+/// named by their parts (`f_i`, `f_f_l`, `T_h`) or the old way (`fi`, `ffl`).
+fn glyph_text(name: &str) -> Option<String> {
+    // A suffix (`fi.alt`, `a.sc`) names a variant of the same text.
+    let name = name.split('.').next().filter(|n| !n.is_empty())?;
+    match name {
+        "ff" | "fi" | "fl" | "ffi" | "ffl" => return Some(name.to_owned()),
+        _ => {}
+    }
+    if name.contains('_') {
+        return name.split('_').map(glyph_char).collect();
+    }
+    glyph_char(name).map(String::from)
 }
 
 /// The character a glyph name stands for (the common ones, and `uniXXXX`).
@@ -444,6 +458,12 @@ mod tests {
         assert_eq!(glyph_char("quoteright"), Some('\u{2019}'));
         assert_eq!(glyph_char("uni00D8"), Some('Ø'));
         assert_eq!(glyph_char("g123"), None);
+        // Ligatures read as their letters, however they're named.
+        assert_eq!(glyph_text("f_i").as_deref(), Some("fi"));
+        assert_eq!(glyph_text("f_f_l").as_deref(), Some("ffl"));
+        assert_eq!(glyph_text("fl").as_deref(), Some("fl"));
+        assert_eq!(glyph_text("T_h.alt").as_deref(), Some("Th"));
+        assert_eq!(glyph_text("f_g123"), None);
         assert_eq!(win_ansi()[0x92], Some('\u{2019}'));
         assert_eq!(win_ansi()[b'A' as usize], Some('A'));
     }

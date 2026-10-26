@@ -49,6 +49,7 @@ Positions are rough (`0,0` or `(W, 0)`) or a named point (`bed.ne`); the solver 
   dim bed.south = 3.6 m | dim a to b = 1200 [horizontal|vertical] | dim r c = 225 | dim d c = 450 | dim angle a b = 30° | dim x ref
   label bed \"Bedroom 1\" [height 250]   |   text \"N\" at 0,12 m [height 250] [align centre] [angle 90]
   hatch bed.walls ANSI31 [scale 2] [angle 45]   |   fill bed #f0f0f0 [opacity 0.5]
+  trim slab inside bay   |   trim bay outside slab    (removes what lies inside/outside the closed shape, cut by it alone; union: trim A inside B, trim B inside A; notch A minus B: trim A inside B, trim B outside A; overlap: outside, outside)
   use e12 as north_wall    (existing geometry; raw ids like e12 also work wherever a name does)
 Parts: line .start .end; rect/room .south .east .north .west (.bottom .right .top .left), .sw .se .ne .nw, .width .depth, .inside; \
 room with walls also .outer.<side or corner>, .walls; wall .left .right .start .end (.axis when centred); door .start .end (jambs); \

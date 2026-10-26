@@ -97,8 +97,15 @@ What comes in:
   settings.
 - Text and paragraph text, as sketch text.
 - Hatches, as live fills.
-- Blocks and their inserts, as Drift blocks and copies (nested, arrayed and unevenly scaled
-  ones are expanded into curves).
+- Blocks and their inserts, as Drift blocks and copies, mirrored ones included (nested,
+  arrayed and unevenly scaled ones are expanded into curves).
+  - Parts drawn "by block" take each copy's colour, line type and weight. A block placed in
+    several colours becomes one block per colour.
+  - A dynamic block's copies are named after the dynamic block, not `*U12`.
+  - If the drawing already has a block of the same name, it's used only when it's the same.
+    Otherwise the new block gets a name of its own, such as **Door (2)**.
+  - External references (xrefs) are other files, so they don't come in. The report names
+    each one and where it is: bind them in AutoCAD first, or import those files too.
 - Dimensions, as the lines and text they're drawn with. They look the same but no longer
   measure.
 - Paper-space layouts, as sheets, with their viewports as views.

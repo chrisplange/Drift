@@ -1034,6 +1034,34 @@ fn own_color(raw: &Raw) -> Option<Rgb> {
         .and_then(aci_rgb)
 }
 
+/// `v` without the round-off its turning and scaling left: a value within a billionth of
+/// a millionth (of a degree, or of a millimetre) is that millionth, so 44.99999999999999°
+/// is 45° on every platform, and in the Inspector.
+fn tidy(v: f64) -> f64 {
+    let r = (v * 1e6).round() / 1e6;
+    if (v - r).abs() <= 1e-9 * v.abs().max(1.0) {
+        r + 0.0
+    } else {
+        v
+    }
+}
+
+/// An angle in degrees in 0..360, tidied.
+fn tidy_degrees(a: f64) -> f64 {
+    let a = tidy(a.rem_euclid(360.0));
+    if a >= 360.0 { a - 360.0 } else { a }
+}
+
+/// A family with its numbers tidied.
+fn tidy_family(l: &mut PatLine) {
+    l.angle = tidy_degrees(l.angle);
+    l.origin = DVec2::new(tidy(l.origin.x), tidy(l.origin.y));
+    l.delta = DVec2::new(tidy(l.delta.x), tidy(l.delta.y));
+    for d in &mut l.dashes {
+        *d = tidy(*d);
+    }
+}
+
 /// The opacity (0–1) a transparency (group 440, or a layer's AcCmTransparency) gives:
 /// `0x02000000` plus an alpha from 0 (clear) to 255 (opaque). `None` for "by layer" and "by
 /// block".
@@ -1107,7 +1135,7 @@ fn pattern_definition(g: &[(i32, &str)], scale: f64, angle: f64, mm: f64) -> (Ve
         // The step, in the family's own frame (along it, across it).
         let step = DVec2::from_angle(-a.to_radians()).rotate(DVec2::new(ox, oy));
         lines.push(PatLine {
-            angle: (a - angle).rem_euclid(360.0),
+            angle: tidy_degrees(a - angle),
             // From the first family's point, unturned and unscaled.
             origin: DVec2::from_angle(-angle.to_radians()).rotate(base - at) / k * mm,
             delta: step / k * mm,
@@ -1683,10 +1711,11 @@ impl<'a> Reader<'a> {
                         *d *= mm;
                     }
                     if mirrored {
-                        l.angle = (-l.angle).rem_euclid(360.0);
+                        l.angle = -l.angle;
                         l.origin.y = -l.origin.y;
                         l.delta.y = -l.delta.y;
                     }
+                    tidy_family(l);
                 }
                 let along = m.vector(DVec2::from_angle(angle.to_radians()));
                 sink.hatches.push(DxfHatch {
@@ -1695,9 +1724,12 @@ impl<'a> Reader<'a> {
                     solid,
                     pattern,
                     scale,
-                    angle: along.y.atan2(along.x).to_degrees().rem_euclid(360.0),
+                    angle: tidy_degrees(along.y.atan2(along.x).to_degrees()),
                     definition,
-                    origin: m.point(origin),
+                    origin: {
+                        let o = m.point(origin);
+                        DVec2::new(tidy(o.x), tidy(o.y))
+                    },
                     color: if gradient {
                         gradient_color(&raw.g).or(color)
                     } else {
@@ -2676,7 +2708,7 @@ fn same_pattern(def: &[PatLine], lib: &[PatLine]) -> Option<f64> {
     if def.len() != lib.len() || lib_first.delta.y.abs() < 1e-12 {
         return None;
     }
-    let k = first.delta.y / lib_first.delta.y;
+    let k = tidy(first.delta.y / lib_first.delta.y);
     if !(k.is_finite() && k > 0.0) {
         return None;
     }
@@ -2735,11 +2767,11 @@ impl Patterns {
             && let Some(k) = same_pattern(&h.definition, &known.lines)
         {
             hatch.pattern = known.name.clone();
-            hatch.scale = h.scale * k;
+            hatch.scale = tidy(h.scale * k);
             // Drift's pattern starts its first family where the file's does.
             let first = known.lines.first().map_or(DVec2::ZERO, |l| l.origin);
-            hatch.origin =
-                h.origin - DVec2::from_angle(h.angle.to_radians()).rotate(first * hatch.scale);
+            let o = h.origin - DVec2::from_angle(h.angle.to_radians()).rotate(first * hatch.scale);
+            hatch.origin = DVec2::new(tidy(o.x), tidy(o.y));
             return FillKind::Hatch(hatch);
         }
         // The file's own pattern, under its name (or a name of its own where Drift or the
@@ -3708,6 +3740,20 @@ mod tests {
     }
 
     #[test]
+    fn round_off_from_turning_a_hatch_is_tidied() {
+        // What macOS's atan2 made of a 45° hatch, and its neighbours.
+        assert_eq!(tidy_degrees(44.99999999999999), 45.0);
+        assert_eq!(tidy_degrees(359.99999999999994), 0.0);
+        assert_eq!(tidy_degrees(-1e-15), 0.0);
+        assert_eq!(tidy(1.9999999999999998), 2.0);
+        assert_eq!(tidy(3.175000000000001), 3.175);
+        // Real values are left alone.
+        assert_eq!(tidy(44.9999), 44.9999);
+        assert_eq!(tidy(0.3333333333), 0.3333333333);
+        assert_eq!(tidy(12345.678901), 12345.678901);
+    }
+
+    #[test]
     fn hatches_become_fills_on_their_boundaries() {
         let file = entities(&[
             // The outline the hatch was drawn on.
@@ -3809,10 +3855,8 @@ mod tests {
         assert!(back.skipped.is_empty(), "{:?}", back.skipped);
         assert_eq!(back.hatches.len(), 2);
         let h = &back.hatches[0];
-        assert_eq!(
-            (h.pattern.as_str(), h.solid, h.scale, h.angle),
-            ("ANSI31", false, 2.0, 45.0)
-        );
+        assert_eq!((h.pattern.as_str(), h.solid), ("ANSI31", false));
+        assert!((h.scale - 2.0).abs() < 1e-9 && (h.angle - 45.0).abs() < 1e-9);
         assert_eq!(h.loops.len(), 2);
         assert_eq!((h.loops[0].len(), h.loops[1].len()), (4, 2));
         assert!(matches!(h.loops[1][0], Shape::Arc { radius, .. } if (radius - 5.0).abs() < 1e-9));
@@ -3846,10 +3890,8 @@ mod tests {
         let FillKind::Hatch(pattern) = &hatch.kind else {
             unreachable!()
         };
-        assert_eq!(
-            (pattern.pattern.as_str(), pattern.scale, pattern.angle),
-            ("ANSI31", 2.0, 45.0)
-        );
+        assert_eq!(pattern.pattern, "ANSI31");
+        assert!((pattern.scale - 2.0).abs() < 1e-9 && (pattern.angle - 45.0).abs() < 1e-9);
         // The solid one found a point inside its triangle by itself.
         let solid = fills.iter().find(|f| f.kind == FillKind::Solid).unwrap();
         assert!(

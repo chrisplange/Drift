@@ -49,8 +49,26 @@ impl Length {
     }
 }
 
+/// What an [`Equation::OffsetFrom`] measures from.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Offset {
+    /// The line through `[ax, ay, bx, by]`.
+    Line([usize; 4]),
+    /// The circle round `center` of `radius`.
+    Circle { center: [usize; 2], radius: Length },
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Equation {
+    /// The signed distance of a point from a line or a circle is `value`: to the left of the
+    /// line `a → b` (as [`PointLine`](Equation::PointLine) with sign 1), or outside the circle
+    /// (`|p − c| − r`). How a relation on a curve offset from another (a wall's face, from its
+    /// centreline) is held on that other curve, on the side it is on.
+    OffsetFrom {
+        point: [usize; 2],
+        from: Offset,
+        value: f64,
+    },
     /// `length − value = 0`
     LengthValue { length: Length, value: f64 },
     /// `a − b = 0`
@@ -179,6 +197,17 @@ impl Equation {
                 a.iter().chain(b).chain(axis).copied().collect()
             }
             Equation::PointLine { point, line, .. } => point.iter().chain(line).copied().collect(),
+            Equation::OffsetFrom { point, from, .. } => {
+                let mut v = point.to_vec();
+                match from {
+                    Offset::Line(line) => v.extend(line),
+                    Offset::Circle { center, radius } => {
+                        v.extend(center);
+                        v.extend(radius.params());
+                    }
+                }
+                v
+            }
             Equation::OnEllipse {
                 point,
                 center,
@@ -441,6 +470,13 @@ impl Equation {
                 sign,
                 value,
             } => point_line(val, point, line, sign, grad) - value,
+            Equation::OffsetFrom { point, from, value } => match from {
+                Offset::Line(line) => point_line(val, point, line, 1.0, grad) - value,
+                Offset::Circle { center, radius } => {
+                    let out = Length::Points([center[0], center[1], point[0], point[1]]);
+                    out.eval(val, 1.0, grad) - radius.eval(val, -1.0, grad) - value
+                }
+            },
             Equation::Angle {
                 l1,
                 l2,
@@ -612,6 +648,27 @@ mod tests {
                 line: line1,
                 sign: -1.0,
                 value: 3.0,
+            },
+            Equation::OffsetFrom {
+                point: [6, 7],
+                from: Offset::Line(line1),
+                value: -0.5,
+            },
+            Equation::OffsetFrom {
+                point: [6, 7],
+                from: Offset::Circle {
+                    center: [0, 1],
+                    radius: Length::Param(8),
+                },
+                value: 0.25,
+            },
+            Equation::OffsetFrom {
+                point: [6, 7],
+                from: Offset::Circle {
+                    center: [0, 1],
+                    radius: Length::Points([0, 1, 2, 3]),
+                },
+                value: -1.0,
             },
             Equation::OnEllipse {
                 point: [0, 1],

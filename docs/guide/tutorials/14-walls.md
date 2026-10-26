@@ -2,9 +2,9 @@
 
 **What you'll make:** a small room with an interior wall teed into it, a curved wall, and a
 wall made from lines you had already drawn. Then you'll change a wall's thickness, from a
-preset and from a variable.
+preset and from a variable, and dimension the room's clear width between finished faces.
 
-Time: about 15 minutes.
+Time: about 20 minutes.
 
 ## How walls work
 
@@ -91,7 +91,8 @@ Click a wall (a face, its fill or its centreline). The **Inspector** shows:
   walls meet, so they overlap. Both are in the **Edit** menu too (**Join walls**, **Unjoin
   walls**).
 - **Segments:** each segment's length, with **Split after** to make two walls there.
-- **Show thickness** draws a dimension of its thickness on the canvas.
+- **Show thickness** draws a dimension of its thickness on the canvas. Double-click its value
+  to type a new thickness (or a variable's name); it prints like any other dimension.
 - **Explode** turns the wall into plain lines, arcs and a fill.
 
 Dragging a picked wall's centreline points moves its corners (and the walls joined there).
@@ -99,11 +100,45 @@ Drag a free end into another wall and it joins as you go; drag it out and it let
 Fillet a centreline corner to round the wall. Trim, Extend, Split, Fillet and Chamfer refuse a
 wall's faces: work on its centreline, or Explode it.
 
-Dimensions to a wall's faces are reference dimensions for now: dimension its centreline to
-drive it.
+## 6. Dimension to the faces
+
+Architects dimension finished faces: "3.60 m clear". In Drift a dimension on a wall's face
+drives the wall.
+
+1. Press D for the **Dimension** tool.
+2. Click the inside face of one wall of the room, then the inside face of the wall opposite.
+   A click on a wall gives its **face** (the centreline shows faintly while the tool is in
+   hand; click on it to dimension the centreline instead).
+3. Place the label and type the clear width, for example `3600` or `11'10"`.
+
+The walls move so the faces are that far apart, and each keeps its thickness: the dimension
+holds the face, and the centreline moves. The same works from a point or a line to a face
+(a column's centre to a wall's face, a grid line to a finished face), and relations work on
+faces too: a face **Horizontal**, **Vertical**, **Parallel**, **Perpendicular** or at an
+**Angle** to a line, **Collinear** with a line, a point **On** a face, the **Radius** of a
+curved wall's face, or **Concentric** with it.
+
+Things to know:
+
+- **Change the thickness and the dimensioned face stays put.** Make the wall thicker and its
+  other face (or, for a Centre wall, both its centreline and other face) moves away from the
+  dimension. If both faces of a wall are held by dimensions, its thickness can't change until
+  you make one of them a reference (or delete it): Drift says so rather than moving
+  something else.
+- **Flip the justification and the same face stays held.** A dimension on the left face is on
+  the left face whichever line the centreline is.
+- **Corners follow the joins.** A dimension to a wall's corner (where two faces meet, or a
+  cap's end) can't drive the wall, because the corner moves whenever the joins change. It is
+  added as a reference dimension instead, with a note. Dimension the face, or the centreline.
+- **Ends that run into a wall stay on it.** A wall teed into a dimensioned wall keeps its end
+  on that wall as the dimension moves it.
+- When a wall later tees into a dimensioned face, the face is split there and the dimension
+  stays on the piece under it.
+- While you drag, walls keep the joins they had when the drag began (only an end you drag
+  yourself joins or lets go as it goes), so a dimension never flips an L into a T mid-drag.
+  Joins are worked out again when you let go.
 
 ## What's next
 
-Openings (doors and windows hosted in walls), room tags with live areas, dimensions that
-drive face to face, and making walls from an imported plan's lines are coming in the next
-batches.
+Openings (doors and windows hosted in walls), room tags with live areas, and making walls
+from an imported plan's lines are coming in the next batches.

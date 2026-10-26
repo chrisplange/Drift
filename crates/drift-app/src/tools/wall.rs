@@ -364,6 +364,30 @@ impl WallTool {
         true
     }
 
+    /// The next segment's faces as they would be made, and the pieces of the walls it joins
+    /// that the preview stands in for (see `Editor::wall_preview`).
+    fn next_preview(
+        &self,
+        ed: &Editor,
+    ) -> Option<(Vec<Shape>, std::collections::BTreeSet<EntityId>)> {
+        if self.corners.is_empty() {
+            return None;
+        }
+        let segs = self.preview_segs(self.hover.as_ref());
+        let next = *segs.get(self.segs.len())?;
+        let from = self.corners.last().and_then(|c| c.existing);
+        let to = match &self.bend {
+            Some((to, ..)) => to.existing,
+            None => self
+                .hover
+                .as_ref()
+                .and_then(Pointer::snapped_point)
+                .filter(|p| !ed.wall_owners().generated(*p)),
+        };
+        let offsets = ed.wall_justify.offsets(ed.wall_thickness_now());
+        Some(ed.wall_preview(next, offsets, from, to))
+    }
+
     /// The faces of the run so far with the next segment to the pointer, for the preview.
     fn preview_segs(&self, p: Option<&Pointer>) -> Vec<Seg> {
         let mut segs = self.segs.clone();
@@ -534,28 +558,13 @@ impl Tool for WallTool {
         if self.corners.is_empty() {
             return Vec::new();
         }
-        let offsets = ed.wall_justify.offsets(ed.wall_thickness_now());
         let segs = self.preview_segs(self.hover.as_ref());
         // The next segment, joined to the run it continues and to what it lands on (the
-        // placed segments are walls already).
-        let mut out: Vec<SketchItem> = match segs.get(self.segs.len()) {
-            Some(next) => {
-                let from = self.corners.last().and_then(|c| c.existing);
-                let to = match &self.bend {
-                    Some((to, ..)) => to.existing,
-                    None => self
-                        .hover
-                        .as_ref()
-                        .and_then(Pointer::snapped_point)
-                        .filter(|p| !ed.wall_owners().generated(*p)),
-                };
-                ed.wall_preview(*next, offsets, from, to)
-                    .into_iter()
-                    .map(preview)
-                    .collect()
-            }
-            None => Vec::new(),
-        };
+        // placed segments are walls already), and the walls it joins as they would be.
+        let mut out: Vec<SketchItem> = self
+            .next_preview(ed)
+            .map(|(shapes, _)| shapes.into_iter().map(preview).collect())
+            .unwrap_or_default();
         // The centreline, faintly.
         out.extend(segs.iter().map(|s| {
             SketchItem::new(s.shape())
@@ -567,6 +576,10 @@ impl Tool for WallTool {
             out.push(preview_vertex(end.pos));
         }
         out
+    }
+
+    fn preview_hides(&self, ed: &Editor) -> std::collections::BTreeSet<EntityId> {
+        self.next_preview(ed).map(|(_, h)| h).unwrap_or_default()
     }
 
     fn measurement(&self, p: &Pointer) -> Option<String> {

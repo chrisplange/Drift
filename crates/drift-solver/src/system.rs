@@ -10,8 +10,13 @@ use std::collections::{HashMap, HashSet};
 
 use drift_core::{Constraint, ConstraintId, DVec2, Document, EntityId, EntityKind};
 
-use crate::equations::{Equation, Length};
+use crate::equations::{Equation, Length, Offset};
+use crate::lowering::{Lowered, Lowering};
 use crate::{Param, Tolerances};
+
+/// The stand-in id of a lowering's extras while the system is built (their rows report as
+/// no relation's).
+const EXTRA: ConstraintId = ConstraintId(u32::MAX);
 
 #[derive(Clone, Debug)]
 pub struct Group {
@@ -228,13 +233,19 @@ fn center_of(doc: &Document, curve: EntityId) -> Option<DVec2> {
 }
 
 impl System {
-    pub fn build(doc: &Document, dragged: &[Param], tol: &Tolerances) -> Self {
-        Self::build_in(doc, dragged, &[], tol, None, &HashMap::new())
+    pub fn build(
+        doc: &Document,
+        dragged: &[Param],
+        tol: &Tolerances,
+        lowering: Option<&Lowering>,
+    ) -> Self {
+        Self::build_in(doc, dragged, &[], tol, None, &HashMap::new(), lowering)
     }
 
     /// Build the system for the entities in `scope` only (everything if `None`). The scope
     /// must be closed under shared points and constraints (see [`crate::connected`]).
     /// `dragged` and `carried` are the parameters held where they are, in that order of rank.
+    /// Relations are read through `lowering` where one is given.
     pub fn build_in(
         doc: &Document,
         dragged: &[Param],
@@ -242,7 +253,13 @@ impl System {
         tol: &Tolerances,
         scope: Option<&std::collections::HashSet<EntityId>>,
         radii: &HashMap<EntityId, f64>,
+        lowering: Option<&Lowering>,
     ) -> Self {
+        // The driving relations as lowered, with the extras under a stand-in id.
+        let rels: Vec<(ConstraintId, Lowered)> = crate::lowering::relations(doc, lowering)
+            .into_iter()
+            .map(|(id, l)| (id.unwrap_or(EXTRA), l))
+            .collect();
         let held: Vec<Param> = dragged.iter().chain(carried).copied().collect();
         // Walls' faces and corners are generated from their centrelines: never unknowns. A
         // corner someone's own curve was drawn from is in, pinned where it is.
@@ -264,6 +281,39 @@ impl System {
         // a split can change a curve's kind under one): the rest are left out rather than
         // break the build. [`crate::invalid_constraints`] reports them.
         let usable = |c: &Constraint| c.entities().all(keep) && doc.validate(c).is_ok();
+        let usable_offset = |point: EntityId, curve: EntityId| {
+            keep(point)
+                && keep(curve)
+                && matches!(
+                    doc.get(point).map(|e| e.kind),
+                    Some(EntityKind::Point(_) | EntityKind::Line { .. })
+                )
+                && matches!(
+                    doc.get(curve).map(|e| e.kind),
+                    Some(
+                        EntityKind::Line { .. }
+                            | EntityKind::Arc { .. }
+                            | EntityKind::Circle { .. }
+                    )
+                )
+        };
+        let relations = || {
+            rels.iter().filter_map(|(id, l)| match l {
+                Lowered::Relation(c) if usable(c) => Some((*id, *c)),
+                _ => None,
+            })
+        };
+        let offsets: Vec<(ConstraintId, EntityId, EntityId, f64)> = rels
+            .iter()
+            .filter_map(|(id, l)| match *l {
+                Lowered::OffsetFrom {
+                    point,
+                    curve,
+                    offset,
+                } if usable_offset(point, curve) => Some((*id, point, curve, offset)),
+                _ => None,
+            })
+            .collect();
         // ---- Parameters ----
         let mut params = Vec::new();
         let mut values = Vec::new();
@@ -294,7 +344,7 @@ impl System {
         // Lines that dimensions measure to the midpoint of get a hidden midpoint: two unknowns
         // tied to the line's ends by two equations, so they add no freedom.
         let mut midpoint_lines = Vec::new();
-        for (_, c) in doc.constraints().filter(|(_, c)| usable(c)) {
+        for (_, c) in relations() {
             for (id, slot) in c.slots() {
                 if slot == drift_core::Slot::PointOrMidpoint
                     && let Some(EntityKind::Line { .. }) = doc.get(id).map(|e| e.kind)
@@ -302,6 +352,13 @@ impl System {
                 {
                     midpoint_lines.push(id);
                 }
+            }
+        }
+        for &(_, point, ..) in &offsets {
+            if let Some(EntityKind::Line { .. }) = doc.get(point).map(|e| e.kind)
+                && !midpoint_lines.contains(&point)
+            {
+                midpoint_lines.push(point);
             }
         }
         for &line in &midpoint_lines {
@@ -375,10 +432,8 @@ impl System {
         // whose ends are joined that way share that end as much as curves sharing a point.
         let joined_ends: Vec<usize> = {
             let mut joined = UnionFind::new(params.len());
-            for (cid, c) in doc.constraints().filter(|(_, c)| usable(c)) {
-                if let Constraint::Coincident { a, b } = *c
-                    && !doc.is_driven(cid)
-                {
+            for (_, c) in relations() {
+                if let Constraint::Coincident { a, b } = c {
                     joined.union(x(a), x(b));
                 }
             }
@@ -390,10 +445,8 @@ impl System {
             _ => unreachable!("validated constraint refers to a circle or arc"),
         };
         // Points held on curves, for tangencies touching at an end held that way.
-        let on_curve: HashSet<(EntityId, EntityId)> = doc
-            .constraints()
-            .filter(|(cid, c)| usable(c) && !doc.is_driven(*cid))
-            .filter_map(|(_, c)| match *c {
+        let on_curve: HashSet<(EntityId, EntityId)> = relations()
+            .filter_map(|(_, c)| match c {
                 Constraint::PointOnCurve { point, curve } => Some((point, curve)),
                 // A line's midpoint is on it too: a tangency touching there takes its form
                 // from the relation, not from where the point happens to be (#148).
@@ -401,11 +454,9 @@ impl System {
                 _ => None,
             })
             .collect();
-        for (cid, constraint) in doc.constraints().filter(|(_, c)| usable(c)) {
-            if doc.is_driven(cid) {
-                // Driven (reference) dimensions only report; they don't constrain.
-                continue;
-            }
+        // (Driven (reference) dimensions only report; they aren't among the relations.)
+        for (cid, constraint) in relations() {
+            let constraint = &constraint;
             let rows_before = rows.len();
             let mut joined = 0;
             let mut equalities = Vec::new();
@@ -873,6 +924,33 @@ impl System {
                 redundant.push(cid);
             }
         }
+
+        // Signed offsets from a line or a circle (lowered relations).
+        for &(cid, p, curve, offset) in &offsets {
+            let from = match doc.get(curve).map(|e| e.kind) {
+                Some(EntityKind::Line { .. }) => Offset::Line(line(curve)),
+                _ => Offset::Circle {
+                    center: point(center(curve)),
+                    radius: radius(curve),
+                },
+            };
+            rows.push(Row {
+                equation: Equation::OffsetFrom {
+                    point: point(p),
+                    from,
+                    value: offset,
+                },
+                source: Some(cid),
+            });
+        }
+        // (The geometry's own relations report as no one's.)
+        for row in &mut rows {
+            if row.source == Some(EXTRA) {
+                row.source = None;
+            }
+        }
+        conflicts.retain(|c| *c != EXTRA);
+        redundant.retain(|c| *c != EXTRA);
 
         for &l in &midpoint_lines {
             let [ax, ay, bx, by] = line(l);

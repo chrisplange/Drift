@@ -1,66 +1,7 @@
 //! Select: pick, box-select, drag, and the Blender-style modal move (G).
 
+use super::picking::{Pick, Purpose, Target, target_at};
 use super::*;
-
-/// What the select tool would pick under the pointer: points first, then line midpoints,
-/// then curves.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Target {
-    Entity(EntityId),
-    Midpoint(EntityId),
-}
-
-impl Target {
-    /// The id a dimension uses for this pick when it's a point-like reference: a point, or a
-    /// line standing for its midpoint.
-    pub(super) fn point_ref(self, ed: &Editor) -> Option<EntityId> {
-        match self {
-            Target::Midpoint(line) => Some(line),
-            Target::Entity(id) => ed.doc.get(id).filter(|e| e.kind.is_point()).map(|_| id),
-        }
-    }
-}
-
-/// Midpoints are picked within this fraction of the normal pick radius.
-pub(super) const MIDPOINT_PICK: f64 = 0.6;
-
-pub(super) fn pick_target(ed: &Editor, p: &Pointer) -> Option<Target> {
-    pick_target_with(ed, p, ed.pick_filter)
-}
-
-/// What the pointer is on, as `filter` lets it pick.
-pub(super) fn pick_target_with(
-    ed: &Editor,
-    p: &Pointer,
-    filter: crate::editor::PickFilter,
-) -> Option<Target> {
-    let hidden = ed.hidden_handles();
-    let is_point = |id: EntityId| {
-        !hidden.contains(&id)
-            && filter.allows(&ed.doc, id)
-            && ed.doc.get(id).is_some_and(|e| e.kind.is_point())
-    };
-    if let Some(id) = ed.index.pick(p.raw, p.tolerance, is_point) {
-        return Some(Target::Entity(id));
-    }
-    // A tighter radius than for picking, so clicking near (not on) the middle of a line still
-    // picks the line. (Only with points and edges both on: a midpoint is a bit of each.)
-    if filter.midpoints()
-        && let Some(line) = ed
-            .index
-            // (A wall's faces have no midpoints of their own: a click there picks the wall.)
-            .pick_midpoint(p.raw, MIDPOINT_PICK * p.tolerance, |id| {
-                !hidden.contains(&id) && (!ed.doc.has_walls() || !ed.wall_owners().generated(id))
-            })
-    {
-        return Some(Target::Midpoint(line));
-    }
-    ed.index
-        .pick(p.raw, p.tolerance, |id| {
-            !hidden.contains(&id) && filter.allows(&ed.doc, id)
-        })
-        .map(Target::Entity)
-}
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum SelectDrag {
@@ -729,44 +670,20 @@ impl Tool for SelectTool {
         }
         match input {
             Input::Hover(p) => {
-                ed.hovered_midpoint = None;
+                let target = match self.drag {
+                    None => target_at(ed, &p, Purpose::Hover),
+                    Some(_) => None,
+                };
                 ed.hovered = match &self.drag {
-                    Some(SelectDrag::Box { .. }) => None,
                     Some(SelectDrag::Radius { circle, .. }) => Some(*circle),
                     Some(SelectDrag::Fillet { arc }) => Some(*arc),
-                    Some(
-                        SelectDrag::Text { .. }
-                        | SelectDrag::Scale { .. }
-                        | SelectDrag::Opening { .. },
-                    ) => None,
-                    None => match pick_target(ed, &p) {
-                        Some(Target::Entity(id)) => Some(id),
-                        Some(Target::Midpoint(line)) => {
-                            ed.hovered_midpoint = Some(line);
-                            None
-                        }
-                        None => None,
-                    },
+                    _ => target.and_then(Pick::entity),
                 };
-                let free =
-                    ed.hovered.is_none() && ed.hovered_midpoint.is_none() && self.drag.is_none();
-                let filter = ed.pick_filter;
-                ed.hovered_text = if free && filter.texts() {
-                    ed.text_at(p.raw, p.tolerance)
-                } else {
-                    None
-                };
-                ed.hovered_instance = if free && filter.blocks() && ed.hovered_text.is_none() {
-                    ed.instance_at(p.raw, p.tolerance)
-                } else {
-                    None
-                };
+                ed.hovered_midpoint = target.and_then(Pick::midpoint);
+                ed.hovered_text = target.and_then(Pick::text);
+                ed.hovered_instance = target.and_then(Pick::copy);
                 // Inside a fill (and not on a curve or a copy of a block): the fill.
-                ed.hovered_fill = if free && filter.fills() && ed.hovered_instance.is_none() {
-                    ed.fill_at(p.raw)
-                } else {
-                    None
-                };
+                ed.hovered_fill = target.and_then(Pick::fill);
                 // A chain highlighted by Tab lasts while the pointer stays on it.
                 if let Some((_, set)) = &ed.chain_preview
                     && !ed.hovered.is_some_and(|h| set.contains(&h))
@@ -799,7 +716,8 @@ impl Tool for SelectTool {
                     ed.flip_openings(&[o], flip);
                     return;
                 }
-                if let Some(Target::Midpoint(line)) = pick_target(ed, &p) {
+                let target = target_at(ed, &p, Purpose::Click);
+                if let Some(line) = target.and_then(Pick::midpoint) {
                     if mods.command {
                         if !ed.selected_midpoints.remove(&line) {
                             ed.selected_midpoints.insert(line);
@@ -820,17 +738,10 @@ impl Tool for SelectTool {
                     ed.selected_annotation = None;
                     ed.annotation_picks.clear();
                 }
-                let hit = {
-                    let hidden = ed.hidden_handles();
-                    ed.index
-                        .pick(p.raw, p.tolerance, |id| ed.pickable(id, &hidden))
-                };
+                let hit = target.and_then(Pick::entity);
                 let filter = ed.pick_filter;
                 // Sketch text (anywhere in its box): Shift adds it, Ctrl adds or takes it away.
-                if hit.is_none()
-                    && ed.pick_filter.texts()
-                    && let Some(t) = ed.text_at(p.raw, p.tolerance)
-                {
+                if let Some(t) = target.and_then(Pick::text) {
                     if mods.command {
                         if !ed.selected_texts.remove(&t) {
                             ed.selected_texts.insert(t);
@@ -850,12 +761,7 @@ impl Tool for SelectTool {
                     ed.selected_texts.clear();
                 }
                 // A copy of a block (on its curves, or inside it).
-                let copy = if hit.is_none() && filter.blocks() {
-                    ed.instance_at(p.raw, p.tolerance)
-                } else {
-                    None
-                };
-                if let Some(c) = copy {
+                if let Some(c) = target.and_then(Pick::copy) {
                     if ed.open_group.is_some() {
                         ed.close_open_group();
                     }
@@ -879,13 +785,9 @@ impl Tool for SelectTool {
                 // Clicking inside a fill (not on a curve) picks the fill: a shape's fill picks
                 // the shape, its outline with it (so Duplicate, Copy, Move and Delete act on
                 // all of it). Inside another closed area, the region.
-                let fill = if hit.is_none() && filter.fills() {
-                    ed.fill_at(p.raw)
-                } else {
-                    None
-                };
+                let fill = target.and_then(Pick::fill);
                 // Inside a wall's poché: the wall (the nearest, where walls merge).
-                if let Some(w) = fill.and_then(|f| ed.wall_in_fill_at(f, p.raw))
+                if let Some(Pick::Wall(w, _)) = target
                     && let Some(&first) = ed.wall_curves(w).first()
                 {
                     let set = ed.wall_pick_set(w);
@@ -1024,69 +926,48 @@ impl Tool for SelectTool {
                 ed.sync_group_fills();
             }
             // Double-click a group's member to edit inside the group.
-            Input::DoubleClick(p) => {
+            Input::DoubleClick(p) => match target_at(ed, &p, Purpose::DoubleClick) {
                 // Sketch text: type into it where it stands.
-                if ed
-                    .index
-                    .pick(p.raw, p.tolerance, |id| !ed.is_locked(id))
-                    .is_none()
-                    && let Some(t) = ed.text_at(p.raw, p.tolerance)
-                {
+                Some(Pick::Text(t)) => {
                     ed.selected_texts = [t].into();
                     ed.editing_text = Some(t);
                     ed.text_caret_at = Some(p.raw);
-                    return;
                 }
-                if ed
-                    .index
-                    .pick(p.raw, p.tolerance, |id| !ed.is_locked(id))
-                    .is_none()
-                    && let Some(c) = ed.instance_at(p.raw, p.tolerance)
-                {
-                    ed.edit_block(c);
-                    return;
-                }
-                if let Some(id) = {
-                    let hidden = ed.hidden_handles();
-                    ed.index
-                        .pick(p.raw, p.tolerance, |id| ed.pickable(id, &hidden))
-                } {
+                Some(Pick::Copy(c)) => ed.edit_block(c),
+                Some(Pick::Geometry(Target::Entity(id))) => {
                     if let Some(g) = ed.doc.group_of(id)
                         && ed.open_group != Some(g)
                     {
                         ed.open_group = Some(g);
                         ed.selection = [id].into();
                     }
-                    return;
                 }
                 // Inside a grouped shape's fill: into the group, with that shape picked. Inside
                 // a shape of its own (or of the open group): its fill alone.
-                if ed.pick_filter.fills()
-                    && let Some(f) = ed.fill_at(p.raw)
-                    && let Some(outline) = ed.shape_outline(f)
-                {
-                    match ed.fill_group(f) {
-                        Some(g) => {
-                            ed.open_group = Some(g);
-                            ed.selected_fills = [f].into();
-                            ed.selection = outline.into_iter().collect();
-                            ed.selected_region = None;
+                Some(Pick::Wall(_, f) | Pick::Fill(f)) => {
+                    if let Some(outline) = ed.shape_outline(f) {
+                        match ed.fill_group(f) {
+                            Some(g) => {
+                                ed.open_group = Some(g);
+                                ed.selected_fills = [f].into();
+                                ed.selection = outline.into_iter().collect();
+                                ed.selected_region = None;
+                            }
+                            None => ed.pick_fill_alone(f),
                         }
-                        None => ed.pick_fill_alone(f),
                     }
                 }
-            }
+                // (No midpoints for a double-click.)
+                Some(Pick::Geometry(Target::Midpoint(_))) | None => {}
+            },
             Input::Finish => {}
             Input::DragStart(p, mods) => {
                 if self.start_handle_drag(&p, ed) {
                     return;
                 }
-                let hidden = ed.hidden_handles();
-                let hit = ed
-                    .index
-                    .pick(p.raw, p.tolerance, |id| ed.pickable(id, &hidden));
-                match hit {
-                    Some(id) => {
+                let target = target_at(ed, &p, Purpose::DragStart);
+                match target {
+                    Some(Pick::Geometry(Target::Entity(id))) => {
                         if !ed.selection.contains(&id) {
                             if !mods.shift && !mods.command {
                                 ed.selection.clear();
@@ -1140,8 +1021,7 @@ impl Tool for SelectTool {
                     }
                     // Sketch text: drag it by its body (and the rest of what is picked with
                     // it).
-                    None if ed.pick_filter.texts() && ed.text_at(p.raw, p.tolerance).is_some() => {
-                        let id = ed.text_at(p.raw, p.tolerance).expect("checked");
+                    Some(Pick::Text(id)) => {
                         if !ed.selected_texts.contains(&id) {
                             if !mods.shift && !mods.command {
                                 ed.selection.clear();
@@ -1174,10 +1054,7 @@ impl Tool for SelectTool {
                     }
                     // A copy of a block: drag it (and the rest of the selection) by its
                     // insertion point.
-                    None if ed.pick_filter.blocks()
-                        && ed.instance_at(p.raw, p.tolerance).is_some() =>
-                    {
-                        let c = ed.instance_at(p.raw, p.tolerance).expect("checked");
+                    Some(Pick::Copy(c)) => {
                         if !ed.selected_instances.contains(&c) {
                             if !mods.shift && !mods.command {
                                 ed.selection.clear();
@@ -1192,13 +1069,13 @@ impl Tool for SelectTool {
                         ed.doc.begin();
                         self.grab = Some(grab);
                     }
-                    None if ed.pick_filter.areas() && self.start_region_drag(&p, ed) => {}
-                    None => {
+                    _ if ed.pick_filter.areas() && self.start_region_drag(&p, ed) => {}
+                    // (No midpoints for a drag start: one from a line's middle moves the line.)
+                    _ => {
                         // Dragging inside a picked fill moves its area; elsewhere, box-select.
-                        let picked_fill = ed.pick_filter.fills()
-                            && ed
-                                .fill_at(p.raw)
-                                .is_some_and(|f| ed.selected_fills.contains(&f));
+                        let picked_fill = target
+                            .and_then(Pick::fill)
+                            .is_some_and(|f| ed.selected_fills.contains(&f));
                         match picked_fill.then(|| ed.selected_fill_curves()).flatten() {
                             Some((ids, _)) if ed.refuse_locked(&ids) => {}
                             Some((ids, centre)) => {

@@ -1,14 +1,15 @@
 //! Tools that act on the curve under the pointer: Trim (click or drag across pieces), Extend
 //! (to the next curve) and Split (at a point).
 
+use super::picking::{Rule, entity_at};
 use super::*;
 use crate::editor::EditError;
 use crate::modify::CuttingSet;
 
 /// The line, arc or circle under the pointer.
 pub(super) fn curve_under(ed: &Editor, p: &Pointer) -> Option<EntityId> {
-    ed.index.pick(p.raw, p.tolerance, |id| {
-        ed.doc.get(id).is_some_and(|e| !e.kind.is_point()) && !ed.is_locked(id)
+    entity_at(ed, p.raw, p.tolerance, Rule::UNLOCKED, |id| {
+        ed.doc.get(id).is_some_and(|e| !e.kind.is_point())
     })
 }
 

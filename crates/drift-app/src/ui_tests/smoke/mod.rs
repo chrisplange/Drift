@@ -25,6 +25,8 @@ mod import;
 mod openings;
 /// Options: values and whole-sketch options, applied and undone.
 mod options;
+/// Picking where things overlap: hover, click, double-click and drag start alike.
+mod picking;
 /// The tool rail: everything in view, families and their flyouts, Move and Rotate.
 mod rail;
 /// Picking and moving: filters, G from a midpoint, axis locks, hidden areas, layer toggles.

@@ -38,7 +38,8 @@ pub const FACE_REFUSED: &str = "That relation can't hold a wall's face: dimensio
      centreline";
 
 /// Why a dimension across a wall's own two faces doesn't drive it.
-pub const ACROSS: &str = "Across a wall is its thickness: type into its thickness dimension, or      set it in the Inspector";
+pub const ACROSS: &str = "Across a wall is its thickness: type into its thickness dimension, or \
+     set it in the Inspector";
 
 /// Why a radius on a curved wall's face can't be met.
 pub const TOO_TIGHT: &str = "That radius is too tight for the wall's thickness";

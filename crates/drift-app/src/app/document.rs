@@ -224,6 +224,7 @@ impl DriftApp {
             }
         ));
         prefs.push(format!("wlines={}", self.editor.wall_lines.key()));
+        prefs.push(format!("fillalone={}", self.editor.fill_alone_picks));
         prefs.extend(self.crosshair.prefs());
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -295,6 +296,11 @@ impl DriftApp {
                     }
                 }
                 "tdims" => self.show_temp_dims = on,
+                "fillalone" => {
+                    if let Ok(n) = value.parse() {
+                        self.editor.fill_alone_picks = n;
+                    }
+                }
                 "ai" => self.ai_link = on,
                 #[cfg(not(target_arch = "wasm32"))]
                 "upchk" => self.updates.auto_check = on,

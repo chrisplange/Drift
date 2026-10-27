@@ -88,6 +88,9 @@ const SCROLL_ZOOM_SPEED: f64 = 0.0015;
 const FIT_MARGIN: f64 = 40.0;
 /// Pick and snap radius, in logical points.
 const PICK_RADIUS: f64 = 8.0;
+/// A picked shape's status line says how to edit its fill on its own until its fill has
+/// been picked alone this many times.
+const FILL_ALONE_HINTS: u32 = 3;
 /// Below this window width the properties panel is hidden and the toolbar is compact.
 const WIDE_LAYOUT: f32 = 760.0;
 /// What an empty document shows.

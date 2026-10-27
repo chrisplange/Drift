@@ -130,6 +130,50 @@ fn rectangle(
     (sides, new_fill)
 }
 
+/// A right-click at a screen position.
+fn right_click(h: &mut Harness<'_, DriftApp>, pos: Pos2) {
+    h.hover_at(pos);
+    h.run();
+    for pressed in [true, false] {
+        h.event(Event::PointerButton {
+            pos,
+            button: PointerButton::Secondary,
+            pressed,
+            modifiers: EguiModifiers::NONE,
+        });
+        h.run();
+    }
+}
+
+/// A circle drawn with the Circle tool (unfilled), from its centre to a point on it; back
+/// to Select with nothing picked. Returns it.
+fn circle(h: &mut Harness<'_, DriftApp>, centre: DVec2, radius: f64) -> EntityId {
+    h.state_mut().editor.fill_new_shapes = false;
+    let before = ids(h);
+    h.key_press(Key::C);
+    h.run();
+    click_world(h, centre);
+    click_world(h, centre + DVec2::new(radius, 0.0));
+    for _ in 0..2 {
+        h.key_press(Key::Escape);
+        h.run();
+    }
+    let new = curves(h, &added(h, &before));
+    assert_eq!(new.len(), 1, "a circle drawn");
+    h.state_mut().editor.selection.clear();
+    h.run();
+    new[0]
+}
+
+/// The status bar's message (what the app said last), or "".
+fn status(h: &Harness<'_, DriftApp>) -> String {
+    h.state()
+        .status
+        .as_ref()
+        .map(|s| s.text.clone())
+        .unwrap_or_default()
+}
+
 /// Press and release at `pos` with `mods` held.
 fn click_with(h: &mut Harness<'_, DriftApp>, pos: Pos2, mods: EguiModifiers) {
     h.hover_at(pos);

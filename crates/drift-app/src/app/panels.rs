@@ -1484,7 +1484,9 @@ impl DriftApp {
                         Glyph::PerpTangent,
                         "Perpendicular & tangent",
                         &mut self.perp_tangent_snap,
-                        "Perpendicular & tangent: lines snap square onto lines, circles and arcs,                          or tangent to circles and arcs, and follow guides square to a line or                          along an arc from the end you draw on from",
+                        "Perpendicular & tangent: lines snap square onto lines, circles and arcs, \
+                         or tangent to circles and arcs, and follow guides square to a line or \
+                         along an arc from the end you draw on from",
                     );
                     toggle(
                         ui,
@@ -1500,8 +1502,23 @@ impl DriftApp {
         });
         // The hint, in whatever space is left between the readout and the right cluster (as
         // wide as it actually is, so the hint never lies over its controls).
+        let selecting = self.tool.kind() == ToolKind::Select && !self.tool.is_busy();
+        // How to get at a picked shape's fill on its own, until it has been done a few times
+        // (#223).
+        let tool_hint = if selecting
+            && self.editor.fill_alone_picks < crate::FILL_ALONE_HINTS
+            && self.editor.picked_shape_fill().is_some()
+        {
+            format!(
+                "Double-click inside to edit its fill on its own · {}",
+                self.tool.hint()
+            )
+        } else {
+            self.tool.hint()
+        };
         let hint = if self.align_edge.is_some() {
-            "Align to edge: click one of the shape's edges (the pattern runs along it from its              start) · Esc cancels"
+            "Align to edge: click one of the shape's edges (the pattern runs along it from its \
+             start) · Esc cancels"
                 .to_owned()
         } else if self.add_view_on.is_some() && !self.tool.is_busy() {
             "Drag a rectangle round what the new view shows · Esc cancels".to_owned()
@@ -1509,19 +1526,15 @@ impl DriftApp {
             "Drag a view to move it · Alt-drag the drawing inside it · its handles crop it · Esc \
              returns to the model"
                 .to_owned()
-        } else if let Some(f) = self
-            .editor
-            .hovered_fill
-            .filter(|_| self.tool.kind() == ToolKind::Select && !self.tool.is_busy())
-        {
+        } else if let Some(f) = self.editor.hovered_fill.filter(|_| selecting) {
             // What the fill under the pointer is: a shape, or an area fill and why (#202).
             let kind = match self.editor.fill_kind(f) {
                 Ok(()) => "Shape".to_owned(),
                 Err(why) => format!("Area fill: {}", why.reason()),
             };
-            format!("{kind} · {}", self.tool.hint())
+            format!("{kind} · {tool_hint}")
         } else {
-            self.tool.hint()
+            tool_hint
         };
         let rect = ui.min_rect();
         let left = rect.left() + 256.0;

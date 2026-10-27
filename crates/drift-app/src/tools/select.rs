@@ -1128,8 +1128,9 @@ impl Tool for SelectTool {
                     // dimensions too (each as far as the stretch runs along it).
                     let dims = p.alt;
                     let anchor = frame.anchor(handle.0, handle.1, p.command);
+                    let keep_shape = p.shift || frame.uniform;
                     let mut scale =
-                        crate::transform::scale_for(*handle, anchor, *press, p.raw, p.shift);
+                        crate::transform::scale_for(*handle, anchor, *press, p.raw, keep_shape);
                     if dims && p.round_scale {
                         // Round sizes, in steps that suit the zoom (as fillets are sized).
                         let step = super::corners::round_step(
@@ -1137,7 +1138,8 @@ impl Tool for SelectTool {
                             p.units.length.is_metric(),
                         );
                         let size = frame.bounds.max - frame.bounds.min;
-                        scale = crate::transform::round_scale(scale, *handle, size, step, p.shift);
+                        scale =
+                            crate::transform::round_scale(scale, *handle, size, step, keep_shape);
                     }
                     let wanted = Some((anchor, scale, dims));
                     if wanted != *applied {
@@ -1271,7 +1273,28 @@ impl Tool for SelectTool {
                             if let Some(seed) = &mut ed.selected_region {
                                 *seed = anchor + (*seed - anchor) * scale;
                             }
-                            ed.commit("Scale");
+                            // Dimensions held it all at its size: say so, and how to scale
+                            // them with it, rather than seem to do nothing.
+                            let held = !dims
+                                && ed.bounds_of(&frame.ids).is_some_and(|after| {
+                                    let (was, now) = (
+                                        frame.bounds.max - frame.bounds.min,
+                                        after.max - after.min,
+                                    );
+                                    let same = |a: f64, b: f64| (a - b).abs() <= 1e-6 * a.max(1.0);
+                                    (scale.x == 1.0 || same(was.x, now.x))
+                                        && (scale.y == 1.0 || same(was.y, now.y))
+                                });
+                            if held {
+                                ed.doc.rollback();
+                                ed.notice = Some(
+                                    "Its size is held by a dimension: hold Alt while you scale \
+                                     to change the dimension too, or edit its value"
+                                        .into(),
+                                );
+                            } else {
+                                ed.commit("Scale");
+                            }
                         } else {
                             ed.doc.rollback();
                             ed.notice = Some("Can't scale that far".into());

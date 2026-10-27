@@ -456,3 +456,135 @@ fn smoke_import_dxf_block_curves_keep_their_own_layers_look() {
     );
     let _ = std::fs::remove_file(&path);
 }
+
+/// A 400 × 300 pt PDF with a dimension: its line and ticks, its value `1200` above it in
+/// Helvetica (not embedded), and a label turned a quarter anticlockwise, `NORTH WALL`, in an
+/// embedded TrueType font (Drift's own sans).
+fn dimensioned_pdf() -> Vec<u8> {
+    let content: &[u8] = b"0.5 w 50 100 m 250 100 l S 50 95 m 50 105 l S 250 95 m 250 105 l S \
+        BT /F1 10 Tf 1 0 0 1 135 104 Tm (1200) Tj ET \
+        BT /F2 12 Tf 0 1 -1 0 340 60 Tm (NORTH WALL) Tj ET";
+    let font = drift_draft::outline::builtin_font(false);
+    let objects: Vec<Vec<u8>> = vec![
+        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 400 300] \
+          /Resources << /Font << /F1 5 0 R /F2 6 0 R >> >> /Contents 4 0 R >>"
+            .to_vec(),
+        [
+            format!("<< /Length {} >>\nstream\n", content.len()).as_bytes(),
+            content,
+            b"\nendstream",
+        ]
+        .concat(),
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_vec(),
+        b"<< /Type /Font /Subtype /TrueType /BaseFont /DriftSans /FontDescriptor 7 0 R >>".to_vec(),
+        b"<< /Type /FontDescriptor /FontName /DriftSans /Flags 32 /FontFile2 8 0 R >>".to_vec(),
+        [
+            format!(
+                "<< /Length {} /Length1 {} >>\nstream\n",
+                font.len(),
+                font.len()
+            )
+            .as_bytes(),
+            &font[..],
+            b"\nendstream",
+        ]
+        .concat(),
+    ];
+    let mut pdf = b"%PDF-1.4\n".to_vec();
+    let mut offsets = Vec::new();
+    for (i, body) in objects.iter().enumerate() {
+        offsets.push(pdf.len());
+        pdf.extend_from_slice(format!("{} 0 obj\n", i + 1).as_bytes());
+        pdf.extend_from_slice(body);
+        pdf.extend_from_slice(b"\nendobj\n");
+    }
+    let xref = pdf.len();
+    pdf.extend_from_slice(
+        format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes(),
+    );
+    for o in offsets {
+        pdf.extend_from_slice(format!("{o:010} 00000 n \n").as_bytes());
+    }
+    pdf.extend_from_slice(
+        format!(
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n",
+            objects.len() + 1
+        )
+        .as_bytes(),
+    );
+    pdf
+}
+
+/// #205: a PDF underlay shows its text, where the page has it and at its angle, drawn with
+/// the underlay but not snapped to.
+#[test]
+fn smoke_import_pdf_underlay_shows_its_text() {
+    let Some(mut h) = harness() else { return };
+    let path = temp_file("underlay-text", "dimensioned.pdf", &dimensioned_pdf());
+    open_menu(&mut h, "File");
+    h.get_by_label("Import…").click();
+    h.run();
+    h.state().files.open_path(&path);
+    h.run_steps(3);
+    h.get_by_label("Underlay to trace").click();
+    h.run();
+    h.get_by_label("Import").click();
+    h.run_steps(3);
+    assert!(h.state().pending_import.is_none());
+    let _ = std::fs::remove_file(&path);
+    let ed = &h.state().editor;
+    let (id, u) = ed.doc.underlays().next().expect("the underlay");
+    assert_eq!(u.prims.len(), 3, "the dimension line and its ticks");
+    assert!(!u.glyphs.is_empty(), "its text");
+    // In the underlay's own space (points on the page).
+    let rings: Vec<Vec<DVec2>> = u
+        .glyphs
+        .iter()
+        .map(|g| match g {
+            drift_core::RefPrim::Polyline(r) => r.clone(),
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    let bounds = |pick: &dyn Fn(DVec2) -> bool| {
+        rings.iter().filter(|r| pick(r[0])).flatten().fold(
+            (DVec2::splat(f64::INFINITY), DVec2::splat(f64::NEG_INFINITY)),
+            |(lo, hi), p| (lo.min(*p), hi.max(*p)),
+        )
+    };
+    // The value: on its baseline just above the line, about 7 pt tall, four figures wide.
+    let (lo, hi) = bounds(&|p| p.x < 300.0);
+    assert!(
+        (lo.y - 104.0).abs() < 0.5 && (110.0..112.0).contains(&hi.y),
+        "{lo} {hi}"
+    );
+    assert!(
+        (lo.x - 135.0).abs() < 1.5 && (150.0..156.0).contains(&hi.x),
+        "{lo} {hi}"
+    );
+    // The label reads upwards from (340, 60): its capitals stand to the left of the
+    // baseline, and it runs far up the page.
+    let (lo, hi) = bounds(&|p| p.x > 300.0);
+    assert!(hi.x < 340.5 && lo.x > 340.0 - 10.0, "{lo} {hi}");
+    assert!(hi.x - lo.x > 7.0, "capitals about 8.5 pt tall: {lo} {hi}");
+    assert!((lo.y - 60.0).abs() < 1.5 && hi.y > 110.0, "{lo} {hi}");
+    // Nothing was left out, and the canvas draws the letters with the underlay's curves.
+    let report = h
+        .state()
+        .status
+        .as_ref()
+        .map(|s| s.text.clone())
+        .unwrap_or_default();
+    assert!(!report.contains("text run"), "{report}");
+    let view = u.bounds();
+    let drawn = ed.underlay_items(view, false).len();
+    assert!(drawn > u.curve_count() + 20, "{drawn}");
+    // Its letters aren't snapped to: a corner of the label's N.
+    let corner = u.to_world(rings.iter().find(|r| r[0].x > 300.0).unwrap()[0]);
+    assert!(ed.underlay_snap(corner, 0.5).is_none(), "{corner}");
+    // They save and open again.
+    let text = drift_io::save(&ed.doc, &drift_io::Metadata::default());
+    let (opened, _) = drift_io::load(&text).unwrap();
+    assert_eq!(opened.underlay(id).unwrap().glyphs, u.glyphs);
+}

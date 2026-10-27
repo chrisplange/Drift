@@ -742,6 +742,55 @@ pub fn underlay_prims(import: &DxfImport) -> Vec<drift_core::RefPrim> {
     out
 }
 
+/// A DXF or DWG drawing's text (its blocks' text too, at each copy) as letter outlines for
+/// an underlay, set in Drift's font as an import sets it.
+pub fn underlay_glyphs(import: &DxfImport) -> Vec<drift_core::RefPrim> {
+    let mut texts = import.texts.clone();
+    for insert in &import.inserts {
+        let Some(block) = import.blocks.iter().find(|b| b.name == insert.block) else {
+            continue;
+        };
+        let mut copy = drift_core::Instance::new(drift_core::BlockId::default(), insert.at);
+        copy.angle = insert.angle;
+        copy.scale = insert.scale;
+        copy.mirror = insert.mirror;
+        texts.extend(block.texts.iter().map(|t| DxfText {
+            at: copy.apply(t.at),
+            height: t.height * insert.scale,
+            angle: t.angle + insert.angle,
+            wrap: t.wrap.map(|w| w * insert.scale),
+            ..t.clone()
+        }));
+    }
+    text_glyphs(&texts)
+}
+
+/// Texts as the closed outlines of their letters, in Drift's own font.
+pub(crate) fn text_glyphs(texts: &[DxfText]) -> Vec<drift_core::RefPrim> {
+    let font = drift_core::TextFont::default();
+    let mut out = Vec::new();
+    for t in texts.iter().filter(|t| !t.text.trim().is_empty()) {
+        let contours = drift_draft::outline::Paragraph {
+            text: &t.text,
+            font: &font,
+            height: t.height,
+            at: t.at,
+            angle: t.angle,
+            align: t.align,
+            spacing: t.spacing.unwrap_or(drift_core::SketchText::SPACING),
+            wrap: t.wrap,
+        }
+        .contours();
+        out.extend(
+            drift_draft::outline::contour_rings(&contours)
+                .into_iter()
+                .filter(|r| r.len() > 2)
+                .map(drift_core::RefPrim::Polyline),
+        );
+    }
+    out
+}
+
 /// Millimetres per drawing unit from `$INSUNITS` (`None` for unitless files).
 pub(crate) fn unit_scale(code: i64) -> Option<f64> {
     Some(match code {

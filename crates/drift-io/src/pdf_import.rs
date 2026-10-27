@@ -35,7 +35,9 @@ pub struct PdfPage {
     pub prims: Vec<RefPrim>,
     /// Its pictures (scans, photos, markup), in points.
     pub images: Vec<UnderlayImage>,
-    /// Text runs, and images that couldn't be read, that were skipped.
+    /// Its text, as the outlines of its letters (closed polylines), in points.
+    pub glyphs: Vec<RefPrim>,
+    /// Text runs that couldn't be drawn, and images that couldn't be read, that were skipped.
     pub skipped_text: usize,
     pub skipped_images: usize,
 }
@@ -104,6 +106,8 @@ struct PageDrawing {
     size: DVec2,
     paths: Vec<PdfPath>,
     texts: Vec<PdfText>,
+    /// What its text runs show, letter by letter (when reading it to trace over).
+    glyph_runs: Vec<GlyphRun>,
     /// Strokes (and text runs) that opaque fills painted later hide, and how many there were.
     covered: Vec<PdfPath>,
     covered_count: usize,
@@ -139,6 +143,27 @@ struct PdfText {
     color: Rgb,
     layer: Option<String>,
 }
+
+/// A text run as shown, to draw its letters: each code with the matrix from its letter's
+/// space (ems of the font size) to the upright page, or (Type 3) the letters drawn already.
+struct GlyphRun {
+    font: Rc<Font>,
+    glyphs: Vec<(u32, Matrix)>,
+    drawn: Vec<Vec<DVec2>>,
+    start: DVec2,
+    end: DVec2,
+    /// An opaque fill painted later hides it.
+    hidden: bool,
+}
+
+/// A Type 3 font's glyph procedures by code, and the resources they draw with.
+struct Type3<'a> {
+    procs: Vec<Option<&'a lopdf::Stream>>,
+    resources: Option<&'a Dictionary>,
+}
+
+/// Letter outlines past this many points are left out (they'd be too heavy to show).
+const MAX_GLYPH_POINTS: usize = 2_000_000;
 
 /// The layer what opaque fills hide comes in on (hidden).
 const COVERED: &str = "Covered by fills";
@@ -193,7 +218,7 @@ impl PdfPath {
 
 /// Read the curves of page `number` (1-based), as outlines to trace over.
 pub fn read_page(bytes: &[u8], number: u32) -> Result<PdfPage, String> {
-    let page = read_drawing(bytes, number)?;
+    let page = read_drawing(bytes, number, true)?;
     refuse_stand_in(&page)?;
     let mut prims = Vec::new();
     for path in &page.paths {
@@ -215,15 +240,46 @@ pub fn read_page(bytes: &[u8], number: u32) -> Result<PdfPage, String> {
             add_prim(&mut prims, points);
         }
     }
+    let (glyphs, lost) = glyph_outlines(&page.glyph_runs);
     Ok(PdfPage {
         number: page.number,
         pages: page.pages,
         size: page.size,
         prims,
         images: page.pictures,
-        skipped_text: page.skipped_text + page.texts.len(),
+        glyphs,
+        skipped_text: lost,
         skipped_images: page.unread.values().sum(),
     })
+}
+
+/// The letters of the runs that show, as closed polylines on the page, and how many runs
+/// had letters that couldn't be drawn.
+fn glyph_outlines(runs: &[GlyphRun]) -> (Vec<RefPrim>, usize) {
+    let mut out = Vec::new();
+    let (mut points, mut lost) = (0, 0);
+    for run in runs.iter().filter(|r| !r.hidden) {
+        let mut missing = false;
+        let mut rings: Vec<Vec<DVec2>> = Vec::new();
+        for (code, m) in &run.glyphs {
+            match run.font.outline(*code) {
+                Some(o) => rings.extend(o.iter().map(|r| r.iter().map(|p| m.apply(*p)).collect())),
+                None => missing |= run.font.unreadable || !run.font.text(*code).trim().is_empty(),
+            }
+        }
+        rings.extend(run.drawn.iter().cloned());
+        lost += usize::from(missing);
+        for ring in rings {
+            points += ring.len();
+            if points > MAX_GLYPH_POINTS {
+                return (out, lost + 1);
+            }
+            if ring.len() >= 2 {
+                out.push(RefPrim::Polyline(ring));
+            }
+        }
+    }
+    (out, lost)
 }
 
 /// An Illustrator file saved without its PDF copy has only a page saying so.
@@ -248,7 +304,7 @@ fn refuse_stand_in(page: &PageDrawing) -> Result<(), String> {
 /// (in millimetres on the paper), on the PDF's layers where it has them, otherwise on one
 /// named `name`.
 pub fn read_artwork(bytes: &[u8], number: u32, name: &str) -> Result<Artwork, String> {
-    let page = read_drawing(bytes, number)?;
+    let page = read_drawing(bytes, number, false)?;
     refuse_stand_in(&page)?;
     let mm = drift_core::underlays::MM_PER_POINT;
     let mut art = Artwork {
@@ -402,7 +458,8 @@ pub fn read_artwork(bytes: &[u8], number: u32, name: &str) -> Result<Artwork, St
     Ok(art)
 }
 
-fn read_drawing(bytes: &[u8], number: u32) -> Result<PageDrawing, String> {
+/// The page as drawn; with `outline_text`, with its text runs' letters too.
+fn read_drawing(bytes: &[u8], number: u32, outline_text: bool) -> Result<PageDrawing, String> {
     let doc = Document::load_mem(bytes).map_err(|e| format!("not a readable PDF ({e})"))?;
     if doc.is_encrypted() {
         return Err("the PDF is encrypted".into());
@@ -465,6 +522,10 @@ fn read_drawing(bytes: &[u8], number: u32) -> Result<PageDrawing, String> {
         profiles: HashMap::new(),
         paths: Vec::new(),
         texts: Vec::new(),
+        glyph_runs: Vec::new(),
+        outline_text,
+        in_glyph: false,
+        type3: HashMap::new(),
         covered: Vec::new(),
         covered_count: 0,
         fonts: HashMap::new(),
@@ -514,6 +575,7 @@ fn read_drawing(bytes: &[u8], number: u32) -> Result<PageDrawing, String> {
         size,
         paths: reader.paths,
         texts: merge_runs(reader.texts),
+        glyph_runs: reader.glyph_runs,
         covered: reader.covered,
         covered_count: reader.covered_count,
         layers: layer_states(&doc),
@@ -752,6 +814,13 @@ struct Reader<'a> {
     profiles: HashMap<usize, Option<Rc<CmykProfile>>>,
     paths: Vec<PdfPath>,
     texts: Vec<PdfText>,
+    glyph_runs: Vec<GlyphRun>,
+    /// Keep text runs' letters (`glyph_runs`), to draw them.
+    outline_text: bool,
+    /// A Type 3 letter is being drawn (its fills hide nothing).
+    in_glyph: bool,
+    /// Type 3 fonts' glyph procedures, by where the fonts are (`Rc` pointers).
+    type3: HashMap<usize, Type3<'a>>,
     covered: Vec<PdfPath>,
     covered_count: usize,
     /// Fonts read so far, by where their dictionaries are.
@@ -800,6 +869,26 @@ impl<'a> Reader<'a> {
         }
         let font = Rc::new(Font::read(self.doc, dict));
         self.fonts.insert(key, font.clone());
+        if font.type3.is_some() {
+            let doc = self.doc;
+            let procs = dict
+                .get_deref(b"CharProcs", doc)
+                .and_then(Object::as_dict)
+                .ok();
+            let procs = crate::pdf_glyphs::differences(doc, dict)
+                .into_iter()
+                .map(|name| {
+                    let o = procs?.get(name?.as_bytes()).ok()?;
+                    doc.dereference(o).ok()?.1.as_stream().ok()
+                })
+                .collect();
+            let resources = dict
+                .get_deref(b"Resources", doc)
+                .and_then(Object::as_dict)
+                .ok();
+            self.type3
+                .insert(Rc::as_ptr(&font) as usize, Type3 { procs, resources });
+        }
         Some(font)
     }
 
@@ -907,6 +996,11 @@ impl<'a> Reader<'a> {
             let n = replace.len();
             self.paths.splice(i..=i, replace);
             i += n;
+        }
+        for r in &mut self.glyph_runs {
+            if [r.start, r.end].iter().all(|p| cover.covers(*p, 0.01)) {
+                r.hidden = true;
+            }
         }
         for t in &mut self.texts {
             let hidden = [t.start, t.end].iter().all(|p| cover.covers(*p, 0.01));
@@ -1036,7 +1130,15 @@ impl<'a> Reader<'a> {
 
     /// Show strings (with `TJ`'s spacing between them), moving the text matrix past them,
     /// and keep what they read as one run.
-    fn show(&mut self, gs: &State, tm: &mut Matrix, parts: &[&Object], layer: Option<String>) {
+    fn show(
+        &mut self,
+        gs: &State,
+        tm: &mut Matrix,
+        parts: &[&Object],
+        layer: Option<String>,
+        resources: &[&'a Dictionary],
+        depth: usize,
+    ) {
         let t = &gs.text;
         let Some(font) = t.font.clone() else {
             return;
@@ -1047,12 +1149,36 @@ impl<'a> Reader<'a> {
                 .then(&gs.ctm)
         };
         let start = to_page(tm).apply(DVec2::ZERO);
+        // Its letters, to draw (modes 3 and 7 paint nothing; a clip may hide the run).
+        let outline = self.outline_text
+            && !self.in_glyph
+            && !matches!(t.mode, 3 | 7)
+            && (gs.fill_alpha > 0.0 || matches!(t.mode, 1 | 2 | 5 | 6))
+            && gs.clips.iter().all(|c| c.contains(start));
+        // From a letter's space (ems of the font size) to text space.
+        let em = Matrix([t.size * t.scale, 0.0, 0.0, t.size, 0.0, t.rise]);
+        let mut glyphs = Vec::new();
+        let mut drawn = Vec::new();
         let mut text = String::new();
         let mut unreadable = false;
         for part in parts {
             match part {
                 Object::String(bytes, _) => {
                     for code in font.codes(bytes) {
+                        if outline {
+                            let m = em.then(tm).then(&gs.ctm);
+                            match font.type3 {
+                                Some(fm) => drawn.extend(self.type3_glyph(
+                                    &font,
+                                    code,
+                                    Matrix(fm).then(&m),
+                                    gs,
+                                    resources,
+                                    depth,
+                                )),
+                                None => glyphs.push((code, m)),
+                            }
+                        }
                         let s = font.text(code);
                         if s.is_empty() && code != 0 {
                             unreadable = true;
@@ -1081,6 +1207,16 @@ impl<'a> Reader<'a> {
                 }
             }
         }
+        if !glyphs.is_empty() || !drawn.is_empty() {
+            self.glyph_runs.push(GlyphRun {
+                font: font.clone(),
+                glyphs,
+                drawn,
+                start,
+                end: to_page(tm).apply(DVec2::ZERO),
+                hidden: false,
+            });
+        }
         if unreadable && font.unreadable {
             self.skipped_text += 1;
             return;
@@ -1107,6 +1243,62 @@ impl<'a> Reader<'a> {
             color: gs.fill,
             layer,
         });
+    }
+
+    /// Draw a Type 3 letter (its procedure, painted with `to_page` from its glyph space) and
+    /// hand back what it painted, as polylines on the page: closed for fills, open for
+    /// strokes. Its paint doesn't stay on the page as curves of its own.
+    fn type3_glyph(
+        &mut self,
+        font: &Rc<Font>,
+        code: u32,
+        to_page: Matrix,
+        gs: &State,
+        resources: &[&'a Dictionary],
+        depth: usize,
+    ) -> Vec<Vec<DVec2>> {
+        let Some(t3) = self.type3.get(&(Rc::as_ptr(font) as usize)) else {
+            return Vec::new();
+        };
+        let Some(stream) = t3.procs.get(code as usize).copied().flatten() else {
+            return Vec::new();
+        };
+        if depth >= MAX_DEPTH {
+            return Vec::new();
+        }
+        let mut res: Vec<&'a Dictionary> = t3.resources.into_iter().collect();
+        res.extend_from_slice(resources);
+        let data = stream
+            .decompressed_content()
+            .unwrap_or_else(|_| stream.content.clone());
+        let mut inner = gs.clone();
+        inner.ctm = to_page;
+        inner.text = TextState::default();
+        let before = self.paths.len();
+        self.in_glyph = true;
+        // A letter that can't be drawn is left out.
+        let _ = self.run(&data, inner, &res, &mut Vec::new(), depth + 1);
+        self.in_glyph = false;
+        let mut out = Vec::new();
+        for path in self.paths.drain(before.min(self.paths.len())..) {
+            let close = path.fill.is_some();
+            for s in &path.subpaths {
+                let mut points = vec![s.start];
+                let mut from = s.start;
+                for seg in &s.segs {
+                    match *seg {
+                        Seg::Line(p) => points.push(p),
+                        Seg::Cubic(c1, c2, p) => flatten_cubic(from, c1, c2, p, &mut points),
+                    }
+                    from = seg.end();
+                }
+                if (close || s.closed) && points.len() > 2 && points.first() != points.last() {
+                    points.push(s.start);
+                }
+                out.push(points);
+            }
+        }
+        out
     }
 
     /// Note a layer the first time the page draws on it.
@@ -1383,6 +1575,7 @@ impl<'a> Reader<'a> {
                         let fill = fills.then_some(gs.fill);
                         // An opaque fill hides what was painted before it, under it.
                         if fills
+                            && !self.in_glyph
                             && gs.fill_alpha >= 1.0
                             && gs.normal_blend
                             && !gs.soft_mask
@@ -1483,7 +1676,7 @@ impl<'a> Reader<'a> {
                         None => continue,
                     };
                     let layer = layers.iter().rev().find_map(Clone::clone);
-                    self.show(&gs, &mut tm, &parts, layer);
+                    self.show(&gs, &mut tm, &parts, layer, resources, depth);
                 }
                 "BI" => match o.first() {
                     Some(Object::Stream(inline)) => {
@@ -2460,5 +2653,86 @@ mod tests {
             .filter(|p| matches!(p, RefPrim::Line(a, b) if (a.y - 50.0).abs() < 1e-6 && (b.y - 50.0).abs() < 1e-6))
             .count();
         assert_eq!(lines_at_50, 2);
+    }
+
+    #[test]
+    fn text_traces_as_the_outlines_of_its_letters() {
+        use lopdf::{Stream, dictionary};
+        // Upright and mirrored runs in Helvetica (not embedded: Drift's own letters stand
+        // in), an invisible run, one an opaque fill paints over, and a Type 3 letter: a
+        // square.
+        let content = b"BT /F1 10 Tf 1 0 0 1 100 700 Tm (AB) Tj ET \
+            BT /F1 10 Tf -1 0 0 1 300 700 Tm (AB) Tj ET \
+            BT /F1 10 Tf 3 Tr 1 0 0 1 100 600 Tm (HIDDEN) Tj ET \
+            BT /F1 10 Tf 0 Tr 1 0 0 1 100 500 Tm (UNDER) Tj ET \
+            1 1 1 rg 90 490 100 30 re f \
+            BT /T3 10 Tf 1 0 0 1 100 400 Tm (a) Tj ET";
+        let bytes = one_page_with(content, dictionary! {}, |doc, res| {
+            let square = doc.add_object(Stream::new(
+                dictionary! {},
+                b"1000 0 0 0 1000 1000 d1 0 0 1000 1000 re f".to_vec(),
+            ));
+            res.set(
+                "Font",
+                dictionary! {
+                    "F1" => dictionary! {
+                        "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica",
+                    },
+                    "T3" => dictionary! {
+                        "Type" => "Font", "Subtype" => "Type3",
+                        "FontBBox" => vec![0.into(), 0.into(), 1000.into(), 1000.into()],
+                        "FontMatrix" => vec![
+                            0.001.into(), 0.into(), 0.into(), 0.001.into(), 0.into(), 0.into(),
+                        ],
+                        "Encoding" => dictionary! {
+                            "Differences" => vec![97.into(), Object::Name(b"sq".to_vec())],
+                        },
+                        "CharProcs" => dictionary! { "sq" => square },
+                        "FirstChar" => 97, "LastChar" => 97, "Widths" => vec![1000.into()],
+                    },
+                },
+            );
+        });
+        let page = read_page(&bytes, 1).unwrap();
+        assert_eq!(page.skipped_text, 0);
+        let rings: Vec<&Vec<DVec2>> = page
+            .glyphs
+            .iter()
+            .map(|g| match g {
+                RefPrim::Polyline(r) => r,
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        assert!(rings.iter().all(|r| r.first() == r.last()), "closed rings");
+        let bounds = |pick: &dyn Fn(DVec2) -> bool| {
+            rings
+                .iter()
+                .filter(|r| pick(r[0]))
+                .flat_map(|r| r.iter())
+                .fold(
+                    (DVec2::splat(f64::INFINITY), DVec2::splat(f64::NEG_INFINITY)),
+                    |(lo, hi), p| (lo.min(*p), hi.max(*p)),
+                )
+        };
+        // Upright: from its start rightwards, capitals about 7 pt tall on the baseline.
+        let (lo, hi) = bounds(&|p| p.y > 650.0 && p.x < 200.0);
+        assert!((lo.x - 100.0).abs() < 1.0 && hi.x < 111.0, "{lo} {hi}");
+        assert!(
+            (lo.y - 700.0).abs() < 0.5 && (706.0..708.0).contains(&hi.y),
+            "{lo} {hi}"
+        );
+        // Mirrored: from its start leftwards.
+        let (lo, hi) = bounds(&|p| p.y > 650.0 && p.x > 200.0);
+        assert!((hi.x - 300.0).abs() < 1.0 && lo.x > 289.0, "{lo} {hi}");
+        // Nothing for the invisible run, or for the one a fill hides.
+        assert!(rings.iter().all(|r| !(480.0..620.0).contains(&r[0].y)));
+        // The Type 3 square, 10 pt.
+        let (lo, hi) = bounds(&|p| p.y < 450.0);
+        assert!(lo.distance(DVec2::new(100.0, 400.0)) < 1e-6, "{lo}");
+        assert!(hi.distance(DVec2::new(110.0, 410.0)) < 1e-6, "{hi}");
+        // Reading the page to edit leaves its letters as text (the square isn't a path).
+        let art = read_artwork(&bytes, 1, "plan").unwrap();
+        assert_eq!(art.paths.len(), 1, "only the white fill");
+        assert!(art.texts.iter().any(|t| t.text == "AB"));
     }
 }

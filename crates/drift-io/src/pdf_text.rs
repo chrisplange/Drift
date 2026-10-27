@@ -9,8 +9,11 @@
 )]
 
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use lopdf::{Dictionary, Document, Object};
+
+use crate::pdf_glyphs::Glyphs;
 
 /// What is known of a font: how its codes read and how wide they are.
 #[derive(Clone, Debug, Default)]
@@ -27,6 +30,10 @@ pub(crate) struct Font {
     pub default_width: f64,
     /// A composite font without a map: its codes are glyph numbers, which can't be read.
     pub unreadable: bool,
+    /// What draws its letters (`None` for a Type 3 font, which draws them itself).
+    pub glyphs: Option<Rc<Glyphs>>,
+    /// A Type 3 font's matrix, from its glyphs' space to text space.
+    pub type3: Option<[f64; 6]>,
 }
 
 impl Font {
@@ -53,7 +60,7 @@ impl Font {
                 .and_then(|a| a.as_array().ok().and_then(|a| a.first().cloned()))
                 .and_then(|d| deref(&d))
                 .and_then(|d| d.as_dict().ok().cloned());
-            if let Some(d) = descendant {
+            if let Some(d) = &descendant {
                 if let Some(dw) = d.get(b"DW").ok().and_then(num) {
                     font.default_width = dw;
                 }
@@ -62,6 +69,7 @@ impl Font {
                 }
             }
             font.unreadable = font.unicode.is_empty();
+            font.glyphs = Some(Rc::new(Glyphs::read(doc, dict, descendant.as_ref())));
         } else {
             let first = dict.get(b"FirstChar").ok().and_then(num).unwrap_or(0.0) as u32;
             if let Some(Object::Array(w)) = dict.get(b"Widths").ok().and_then(deref) {
@@ -72,6 +80,23 @@ impl Font {
                 }
             }
             font.encoding = Some(encoding(doc, dict));
+            if subtype == Some(b"Type3".as_slice()) {
+                let matrix: Vec<f64> = match dict.get(b"FontMatrix").ok().and_then(deref) {
+                    Some(Object::Array(m)) => m.iter().filter_map(num).collect(),
+                    _ => Vec::new(),
+                };
+                let matrix = <[f64; 6]>::try_from(matrix)
+                    .ok()
+                    .filter(|m| m.iter().all(|v| v.is_finite()) && m[0] != 0.0)
+                    .unwrap_or([0.001, 0.0, 0.0, 0.001, 0.0, 0.0]);
+                // Its widths are in its glyphs' space: as thousandths of text space here.
+                for w in font.widths.values_mut() {
+                    *w *= matrix[0] * 1000.0;
+                }
+                font.type3 = Some(matrix);
+            } else {
+                font.glyphs = Some(Rc::new(Glyphs::read(doc, dict, None)));
+            }
         }
         font
     }
@@ -341,7 +366,7 @@ fn win_ansi() -> [Option<char>; 256] {
 
 /// The text a glyph name stands for: one character, or a ligature's letters. Ligatures are
 /// named by their parts (`f_i`, `f_f_l`, `T_h`) or the old way (`fi`, `ffl`).
-fn glyph_text(name: &str) -> Option<String> {
+pub(crate) fn glyph_text(name: &str) -> Option<String> {
     // A suffix (`fi.alt`, `a.sc`) names a variant of the same text.
     let name = name.split('.').next().filter(|n| !n.is_empty())?;
     match name {

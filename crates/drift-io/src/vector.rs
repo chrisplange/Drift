@@ -320,6 +320,26 @@ pub fn outlines(art: &Artwork) -> Vec<drift_core::RefPrim> {
     out
 }
 
+/// The artwork's text as letter outlines to trace over (paper mm), in Drift's own font.
+pub fn text_outlines(art: &Artwork) -> Vec<drift_core::RefPrim> {
+    let texts: Vec<DxfText> = art
+        .texts
+        .iter()
+        .map(|t| DxfText {
+            layer: t.layer.clone(),
+            text: t.text.clone(),
+            at: t.at,
+            height: t.size * drift_draft::page::CAP_HEIGHT,
+            angle: t.angle,
+            color: t.color,
+            align: t.align,
+            spacing: None,
+            wrap: None,
+        })
+        .collect();
+    crate::dxf::text_glyphs(&texts)
+}
+
 /// The scale a drawing seems to be at, found from its dimensions or, failing those, from
 /// the scales written on it.
 #[derive(Clone, Copy, Debug, PartialEq)]

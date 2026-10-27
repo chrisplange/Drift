@@ -150,6 +150,19 @@ enum Pending {
     /// Close the window and install the downloaded update.
     #[cfg(not(target_arch = "wasm32"))]
     Update,
+    /// Show the drawing waiting in `opened`: it was read after the document changed while
+    /// its file picker was open.
+    Opened,
+}
+
+/// A drawing that was read from a file, waiting to replace the document.
+struct OpenedDrawing {
+    doc: Document,
+    name: String,
+    path: Option<FilePath>,
+    meta: Metadata,
+    /// What the status line says once it's shown.
+    status: (String, bool),
 }
 
 /// A dimension value being edited in place on the canvas.
@@ -262,6 +275,11 @@ pub struct DriftApp {
     /// What to do once the save in progress has finished (Save in the unsaved-changes
     /// prompt), and the document revision it was asked at.
     after_save: Option<(Pending, u64)>,
+    /// The document revision when a file was asked for (File → Open, a recent file): one
+    /// that arrives after the document has changed since asks before replacing it.
+    opening_revision: Option<u64>,
+    /// A drawing that was read, waiting for the unsaved-changes prompt ([`Pending::Opened`]).
+    opened: Option<Box<OpenedDrawing>>,
     /// Closing was confirmed (or nothing was unsaved): let the window close.
     quit_confirmed: bool,
     quit_sent: bool,
@@ -278,9 +296,11 @@ pub struct DriftApp {
     /// Save As (`true`) or Save.
     #[cfg(not(feature = "demo"))]
     lossy_save: Option<bool>,
-    /// What the drawing carries from a newer Drift once the save in progress is written.
+    /// What the drawing carries from a newer Drift once the save in progress is written, and
+    /// the document revision that was written: edits made while Save As's picker was open
+    /// aren't in the file, so they stay unsaved.
     #[cfg(not(feature = "demo"))]
-    saving_carried: Option<drift_io::Carried>,
+    saving: Option<(drift_io::Carried, u64)>,
     /// The start panel over an empty sketch.
     show_start: bool,
     show_about: bool,
@@ -564,6 +584,8 @@ impl DriftApp {
             dock_view: Default::default(),
             recent: Vec::new(),
             after_save: None,
+            opening_revision: None,
+            opened: None,
             quit_confirmed: false,
             quit_sent: false,
             live_profiles: None,
@@ -573,7 +595,7 @@ impl DriftApp {
             #[cfg(not(feature = "demo"))]
             lossy_save: None,
             #[cfg(not(feature = "demo"))]
-            saving_carried: None,
+            saving: None,
             // Tests drive the bare canvas.
             show_start: !cfg!(test),
             show_about: false,

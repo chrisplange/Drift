@@ -9,6 +9,7 @@ pub mod fonts;
 pub mod memory;
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// Drift's version: the crate version, or the one a build was given in `DRIFT_VERSION`.
@@ -62,6 +63,17 @@ type Waker = Arc<dyn Fn() + Send + Sync>;
 pub struct Files {
     events: Arc<Mutex<Vec<FileEvent>>>,
     wake: Waker,
+    /// How many file pickers are open.
+    pickers: Arc<AtomicUsize>,
+}
+
+/// An open file picker: counted by [`Files::picker_open`] until it is dropped.
+pub struct Picker(Arc<AtomicUsize>);
+
+impl Drop for Picker {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Relaxed);
+    }
 }
 
 impl Files {
@@ -69,7 +81,27 @@ impl Files {
         Self {
             events: Arc::default(),
             wake: Arc::new(wake),
+            pickers: Arc::default(),
         }
+    }
+
+    /// Whether a file picker is open. Its answer replaces or saves the document, so the app
+    /// treats it as a modal dialog: the drawing can't change underneath it.
+    pub fn picker_open(&self) -> bool {
+        self.pickers.load(Ordering::Relaxed) > 0
+    }
+
+    /// Count a file picker as open until the returned [`Picker`] is dropped. The dialogs here
+    /// do this themselves; tests use it to stand in for one.
+    pub fn picker(&self) -> Picker {
+        self.pickers.fetch_add(1, Ordering::Relaxed);
+        Picker(self.pickers.clone())
+    }
+
+    /// Hand the app `event` as if a dialog had sent it (tests).
+    #[doc(hidden)]
+    pub fn deliver(&self, event: FileEvent) {
+        self.post(event);
     }
 
     /// Events that arrived since the last call.
@@ -89,7 +121,9 @@ impl Files {
     #[cfg(not(all(target_arch = "wasm32", feature = "demo")))]
     pub fn open(&self, file_type: FileType) {
         let this = self.clone();
+        let picker = self.picker();
         spawn(async move {
+            let _picker = picker;
             let dialog =
                 rfd::AsyncFileDialog::new().add_filter(file_type.name, file_type.extensions);
             let Some(handle) = dialog.pick_file().await else {
@@ -114,7 +148,9 @@ impl Files {
     #[cfg(all(target_arch = "wasm32", feature = "demo"))]
     pub fn open(&self, file_type: FileType) {
         let this = self.clone();
+        let picker = self.picker();
         spawn(async move {
+            let _picker = picker;
             match web_pick::pick(file_type.extensions).await {
                 Some((name, contents)) => this.post(FileEvent::Opened {
                     name,
@@ -161,7 +197,9 @@ impl Files {
         {
             let this = self.clone();
             let name = suggested_name.to_owned();
+            let picker = self.picker();
             spawn(async move {
+                let _picker = picker;
                 let dialog = rfd::AsyncFileDialog::new()
                     .add_filter(file_type.name, file_type.extensions)
                     .set_file_name(&name);
@@ -187,7 +225,9 @@ impl Files {
         {
             let this = self.clone();
             let name = suggested_name.to_owned();
+            let picker = self.picker();
             spawn(async move {
+                let _picker = picker;
                 let dialog = rfd::AsyncFileDialog::new()
                     .add_filter(file_type.name, file_type.extensions)
                     .set_file_name(&name);

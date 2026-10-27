@@ -399,3 +399,79 @@ fn smoke_files_dashed_line_comes_in_alike_from_svg_and_dxf() {
         assert_eq!(weight, LineWeight(30), "{name}");
     }
 }
+
+/// An edit from outside the canvas (the AI link, say), which a file picker doesn't stop.
+fn edit_from_link(h: &mut Harness<'_, DriftApp>) {
+    let ed = &mut h.state_mut().editor;
+    ed.doc.begin();
+    ed.doc.add_point(DVec2::new(5.0, 5.0));
+    ed.commit("Point");
+}
+
+/// Save As: the picker holds the canvas like a modal dialog, and an edit made while it is
+/// open isn't in the file, so it stays unsaved (#218).
+#[test]
+fn smoke_files_edits_during_save_as_stay_unsaved() {
+    let Some(mut h) = harness() else { return };
+    view(&mut h, DVec2::new(-10.0, -10.0), DVec2::new(60.0, 40.0));
+    rectangle(&mut h, DVec2::ZERO, DVec2::new(40.0, 30.0), Fill::No);
+    // Save As: the drawing as it is now goes to the picker (a stand-in here).
+    let picker = h.state().files.picker();
+    h.state_mut().save_as();
+    h.run();
+    assert!(h.query_by_label("Waiting for the file dialog").is_some());
+    // The canvas waits: a click on a side picks nothing.
+    click_world(&mut h, DVec2::new(20.0, 0.0));
+    assert!(
+        h.state().editor.selection.is_empty(),
+        "the canvas is blocked"
+    );
+    edit_from_link(&mut h);
+    // The picker answers: written as it was when Save As was chosen.
+    let path = scratch_dir("smoke-save-as").join("Saved.drift");
+    h.state().files.deliver(drift_platform::FileEvent::Saved {
+        name: "Saved.drift".into(),
+        path: Some(path.clone()),
+    });
+    drop(picker);
+    h.run_steps(2);
+    let app = h.state();
+    assert_eq!(app.file.path.as_deref(), Some(path.as_path()));
+    assert!(app.is_dirty(), "the point added meanwhile isn't saved");
+    assert!(h.query_by_label("Waiting for the file dialog").is_none());
+}
+
+/// Open: an edit made while the picker is open isn't dropped without asking (#218).
+#[test]
+fn smoke_files_edits_during_open_are_asked_about() {
+    let Some(mut h) = harness() else { return };
+    view(&mut h, DVec2::new(-10.0, -10.0), DVec2::new(60.0, 40.0));
+    rectangle(&mut h, DVec2::ZERO, DVec2::new(40.0, 30.0), Fill::No);
+    let saved = h.state().editor.doc.revision();
+    h.state_mut().file.clean_revision = Some(saved);
+    // File → Open with nothing unsaved: straight to the picker (a stand-in here).
+    let picker = h.state().files.picker();
+    h.state_mut().request(crate::Pending::Open);
+    h.run();
+    assert!(h.state().pending.is_none());
+    edit_from_link(&mut h);
+    let other = h.state().new_document();
+    let text = drift_io::save(&other, &drift_io::Metadata::default());
+    h.state().files.deliver(drift_platform::FileEvent::Opened {
+        name: "Other.drift".into(),
+        path: None,
+        contents: text.into_bytes(),
+    });
+    drop(picker);
+    h.run_steps(2);
+    // Asked first; the drawing is still there.
+    assert_eq!(h.state().pending, Some(crate::Pending::Opened));
+    assert_ne!(h.state().file.name, "Other.drift");
+    assert!(!h.state().editor.doc.is_empty());
+    h.get_by_label("Don't save").click();
+    h.run_steps(2);
+    let app = h.state();
+    assert_eq!(app.file.name, "Other.drift");
+    assert!(app.editor.doc.is_empty());
+    assert!(!app.is_dirty());
+}

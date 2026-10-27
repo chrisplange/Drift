@@ -435,15 +435,28 @@ impl DriftApp {
                 let doc = self.new_document();
                 self.replace_document(doc, UNTITLED.into(), None, Metadata::default(), true);
             }
-            Pending::Open => self.files.open(app::import_ui::OPEN_FILE),
+            Pending::Open => {
+                self.opening_revision = Some(self.editor.doc.revision());
+                // (Tests hand over their files themselves: no system dialog.)
+                #[cfg(not(test))]
+                self.files.open(app::import_ui::OPEN_FILE);
+            }
             Pending::Recent(i) => {
                 if let Some(path) = self.recent.get(i).cloned() {
+                    self.opening_revision = Some(self.editor.doc.revision());
                     self.files.open_path(&path);
                 }
             }
             Pending::OpenPath => {
                 if let Some(path) = self.open_path.take() {
+                    self.opening_revision = Some(self.editor.doc.revision());
                     self.files.open_path(&path);
+                }
+            }
+            Pending::Opened => {
+                if let Some(o) = self.opened.take() {
+                    self.status_next = Some(o.status.0.clone());
+                    self.show_opened(*o);
                 }
             }
             Pending::ImportNew => {
@@ -494,11 +507,15 @@ impl DriftApp {
             self.lossy_save = Some(as_new);
             return;
         }
-        self.saving_carried = Some(saved.carried);
+        self.saving = Some((saved.carried, self.editor.doc.revision()));
         let bytes = saved.text.into_bytes();
         // Only ever overwrite a sketch file: never an export or an imported drawing.
         match &self.file.path {
             Some(path) if !as_new && is_sketch_file(path) => self.files.save_to(path, &bytes),
+            // (Tests hand over the saved event themselves: no system dialog.)
+            #[cfg(test)]
+            _ => drop((DRIFT_FILE, bytes)),
+            #[cfg(not(test))]
             _ => self.files.save_as(&self.file.name, DRIFT_FILE, bytes),
         }
     }
@@ -678,11 +695,25 @@ impl DriftApp {
                                     dropped.join(", ")
                                 )
                             };
-                            self.set_status(status, !dropped.is_empty(), now);
-                            if let Some(p) = &path {
-                                self.remember(p.clone());
+                            let opened = OpenedDrawing {
+                                doc,
+                                name,
+                                path,
+                                meta,
+                                status: (status, !dropped.is_empty()),
+                            };
+                            // The document changed after the file was asked for (an edit
+                            // from the AI link while the picker was open, say): ask again
+                            // before those changes go.
+                            let asked_at = self.opening_revision.take();
+                            if self.is_dirty() && asked_at != Some(self.editor.doc.revision()) {
+                                self.opened = Some(Box::new(opened));
+                                self.pending = Some(Pending::Opened);
+                            } else {
+                                let (status, warn) = opened.status.clone();
+                                self.set_status(status, warn, now);
+                                self.show_opened(opened);
                             }
-                            self.replace_document(doc, name, path, meta, true);
                         }
                         Err(e) => self.set_status(format!("Could not open {name}: {e}"), true, now),
                     }
@@ -706,12 +737,17 @@ impl DriftApp {
                     if path.is_some() {
                         self.file.path = path;
                     }
-                    self.file.clean_revision = Some(self.editor.doc.revision());
-                    // The next save compares with this file.
+                    // What was written: edits made while Save As's picker was open stay
+                    // unsaved.
+                    #[cfg_attr(feature = "demo", allow(unused_mut))]
+                    let mut written = self.editor.doc.revision();
                     #[cfg(not(feature = "demo"))]
-                    if let Some(carried) = self.saving_carried.take() {
+                    if let Some((carried, revision)) = self.saving.take() {
+                        // The next save compares with this file.
                         self.file.meta.carried = carried;
+                        written = revision;
                     }
+                    self.file.clean_revision = Some(written);
                     // Saved from the unsaved-changes prompt: carry on with what was asked.
                     if let Some((action, revision)) = self.after_save.take()
                         && revision == self.editor.doc.revision()
@@ -737,6 +773,14 @@ impl DriftApp {
                 }
             }
         }
+    }
+
+    /// Make a drawing that was read the document.
+    fn show_opened(&mut self, o: OpenedDrawing) {
+        if let Some(p) = &o.path {
+            self.remember(p.clone());
+        }
+        self.replace_document(o.doc, o.name, o.path, o.meta, true);
     }
 
     /// Add the patterns in a `.pat` file to the document (replacing same-named ones).

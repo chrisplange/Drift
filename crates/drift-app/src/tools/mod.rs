@@ -242,9 +242,9 @@ impl ToolKind {
         ToolKind::Circle,
         ToolKind::Ellipse,
         ToolKind::EllipseArc,
-        ToolKind::Arc,
         ToolKind::ThreePointArc,
         ToolKind::TangentArc,
+        ToolKind::Arc,
         ToolKind::Slot,
         ToolKind::Wall,
         ToolKind::Point,
@@ -291,7 +291,7 @@ impl ToolKind {
     }
 
     /// The arc tools, in the order pressing A cycles through them.
-    pub const ARCS: [ToolKind; 3] = [ToolKind::Arc, ToolKind::ThreePointArc, ToolKind::TangentArc];
+    pub const ARCS: [ToolKind; 3] = [ToolKind::ThreePointArc, ToolKind::TangentArc, ToolKind::Arc];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -305,8 +305,8 @@ impl ToolKind {
             ToolKind::Circle => "Circle",
             ToolKind::Ellipse => "Ellipse",
             ToolKind::EllipseArc => "Partial ellipse",
-            ToolKind::Arc => "Arc",
-            ToolKind::ThreePointArc => "3-pt arc",
+            ToolKind::Arc => "Centre arc",
+            ToolKind::ThreePointArc => "3-point arc",
             ToolKind::TangentArc => "Tangent arc",
             ToolKind::Point => "Point",
             ToolKind::Text => "Text",
@@ -354,8 +354,10 @@ impl ToolKind {
             ToolKind::Circle => "Centre, then a point on the circle (or type the diameter)",
             ToolKind::Ellipse => "Centre, one axis end, then the other axis (C again: partial)",
             ToolKind::EllipseArc => "An ellipse's centre and axes, then where it starts and ends",
-            ToolKind::Arc => "Centre, start, end. Press A again for other arc types",
-            ToolKind::ThreePointArc => "Start, end, then a point on the arc",
+            ToolKind::Arc => "Centre, start, then end",
+            ToolKind::ThreePointArc => {
+                "Start, end, then a point on the arc. Press A again for other arc types"
+            }
             ToolKind::TangentArc => "Continues tangent from the end of a line, arc or curve",
             ToolKind::Point => "A sketch point, for reference or construction",
             ToolKind::Text => "A line of text drawn as outlines, convertible to curves",
@@ -417,11 +419,11 @@ impl ToolKind {
     }
 
     /// The first tool of the cycle a key steps through: the circle for the ellipses, the
-    /// centre arc for the other arcs, the fillet for the chamfer.
+    /// 3-point arc for the other arcs, the fillet for the chamfer.
     pub fn cycle_head(self) -> ToolKind {
         match self {
             ToolKind::Ellipse | ToolKind::EllipseArc => ToolKind::Circle,
-            ToolKind::ThreePointArc | ToolKind::TangentArc => ToolKind::Arc,
+            ToolKind::TangentArc | ToolKind::Arc => ToolKind::ThreePointArc,
             ToolKind::Chamfer => ToolKind::Fillet,
             other => other,
         }

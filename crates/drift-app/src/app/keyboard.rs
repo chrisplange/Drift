@@ -277,7 +277,7 @@ impl DriftApp {
             // next. The run goes on.
             let key = match kind {
                 ToolKind::Wall => Some(ToolKey::Again),
-                ToolKind::Arc if self.tool.is_busy() => Some(ToolKey::ArcNext),
+                ToolKind::ThreePointArc if self.tool.is_busy() => Some(ToolKey::ArcNext),
                 ToolKind::Line if self.tool.is_busy() => Some(ToolKey::LineNext),
                 _ => None,
             };
@@ -310,7 +310,7 @@ impl DriftApp {
             // C again: the next of circle, ellipse, partial ellipse.
             kind = ToolKind::CIRCLES[(i + 1) % ToolKind::CIRCLES.len()];
         }
-        if kind == ToolKind::Arc {
+        if kind == ToolKind::ThreePointArc {
             kind = if let Some(i) = ToolKind::ARCS.iter().position(|k| *k == current) {
                 // A again: the next arc type.
                 ToolKind::ARCS[(i + 1) % ToolKind::ARCS.len()]
@@ -318,7 +318,7 @@ impl DriftApp {
                 // Mid-polyline: continue with a tangent arc (SolidWorks-style).
                 ToolKind::TangentArc
             } else {
-                ToolKind::Arc
+                ToolKind::ThreePointArc
             };
         }
         self.switch_tool(kind);
@@ -340,18 +340,23 @@ impl DriftApp {
             && self.selected_constraint.is_none()
             && let Some(view) = self.picked_view
         {
-            // A picked crop: its view goes. One on sheets asks first, in the Sheets tab.
-            if self.editor.doc.sheets_showing(view).is_empty() {
-                self.delete_view(view);
-            } else {
-                self.confirm_delete_view = Some(view);
-                self.show_panel(crate::dock::Panel::Sheets);
-            }
+            self.delete_picked_view(view);
             return;
         }
         // Everything picked goes together: geometry, text, annotations and dimensions.
         let picked: Vec<_> = self.selected_constraint.take().into_iter().collect();
         self.editor.delete_selection_with(&picked);
+    }
+
+    /// A picked view goes, from the model and its sheets. One on sheets asks first, in the
+    /// Sheets tab.
+    pub(crate) fn delete_picked_view(&mut self, view: drift_core::ViewId) {
+        if self.editor.doc.sheets_showing(view).is_empty() {
+            self.delete_view(view);
+        } else {
+            self.confirm_delete_view = Some(view);
+            self.show_panel(crate::dock::Panel::Sheets);
+        }
     }
 
     /// Change tool, continuing a polyline / tangent-arc chain across the switch.

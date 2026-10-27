@@ -97,3 +97,66 @@ fn smoke_sheet_logo_chosen_as_svg_is_the_logo() {
     save_png("drift_smoke_sheet_logo.png", &mut h);
     let _ = std::fs::remove_file(&path);
 }
+
+/// A right-click at a screen position.
+fn right_click(h: &mut Harness<'_, DriftApp>, pos: Pos2) {
+    h.hover_at(pos);
+    h.run();
+    for pressed in [true, false] {
+        h.event(Event::PointerButton {
+            pos,
+            button: PointerButton::Secondary,
+            pressed,
+            modifiers: EguiModifiers::NONE,
+        });
+        h.run();
+    }
+}
+
+/// #208: right-click on a picked view offers its actions. In the model: Delete view…, which
+/// asks first (it is on a sheet) and is one undo step; on the sheet: Remove from sheet.
+#[test]
+fn smoke_sheet_view_right_click_menu() {
+    let Some(mut h) = harness() else { return };
+    let sheet = a_sheet(&mut h);
+    let (view, _) = h.state().editor.doc.views().next().expect("a view");
+    let view_count = |h: &Harness<'_, DriftApp>| h.state().editor.doc.views().count();
+
+    // On the sheet: right-click the view, Remove from sheet; it stays in the model.
+    h.state_mut().show_sheet(Some(sheet));
+    h.run();
+    let centre = h.state().canvas_rect.center();
+    right_click(&mut h, centre);
+    // (The Inspector has a Remove from sheet button too: the menu's is by the pointer.)
+    h.get_all_by_label("Remove from sheet")
+        .min_by_key(|n| (n.rect().left_top() - centre).length() as i32)
+        .unwrap()
+        .click();
+    h.run();
+    assert!(placed(&h, sheet).is_empty(), "off the sheet");
+    assert_eq!(view_count(&h), 1, "still in the model");
+    h.state_mut().undo();
+    h.run();
+    assert_eq!(placed(&h, sheet).len(), 1, "undo puts it back");
+
+    // In the model: pick the view's crop, right-click, Delete view…, and confirm.
+    h.state_mut().sheet_preview = false;
+    h.state_mut().zoom_to_view(view);
+    h.run();
+    h.run();
+    assert_eq!(h.state().picked_view, Some(view));
+    let corner = h.state().canvas_rect.left_top() + egui::vec2(40.0, 40.0);
+    right_click(&mut h, corner);
+    save_png("drift_smoke_view_menu.png", &mut h);
+    h.get_by_label("Delete view…").click();
+    h.run();
+    assert_eq!(view_count(&h), 1, "on a sheet, it asks first");
+    h.get_by_label("Delete it").click();
+    h.run();
+    assert_eq!(view_count(&h), 0, "the view is gone");
+    assert!(placed(&h, sheet).is_empty(), "and off its sheet");
+    h.state_mut().undo();
+    h.run();
+    assert_eq!(view_count(&h), 1, "one undo brings it back");
+    assert_eq!(placed(&h, sheet).len(), 1, "on its sheet");
+}

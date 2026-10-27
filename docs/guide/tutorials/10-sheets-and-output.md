@@ -133,7 +133,10 @@ and the sheets it's on (or **not placed**).
   one to pick it in the model.
 - **Delete view** deletes it. If it's on sheets, Drift asks first, and deleting takes it
   off them all. Marks that pointed at it are unlinked in the same step. Undo brings it all
-  back.
+  back. With a view's crop picked on the canvas, the Delete key, **Edit → Delete view…** and
+  the right-click menu's **Delete view…** do the same.
+- On a sheet, right-click a view for **Remove from sheet** (it stays in the model, for
+  placing again) and **Delete view…**.
 
 ## 5. Put the view on the sheet
 

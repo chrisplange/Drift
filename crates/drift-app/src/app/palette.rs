@@ -255,6 +255,17 @@ impl DriftApp {
             Command::Paste => self.paste_copied(false, now),
             Command::PasteInPlace => self.paste_copied(true, now),
             Command::Delete => self.delete_picked(),
+            Command::DeleteView => {
+                if let Some(view) = self.picked_view {
+                    self.delete_picked_view(view);
+                }
+            }
+            Command::RemoveFromSheet => {
+                if let Some(id) = self.current_sheet() {
+                    self.remove_viewport(id);
+                    self.sheet_pick = crate::app::sheet_editor::SheetPick::Paper;
+                }
+            }
             Command::Duplicate => self.duplicate_and_grab(),
             Command::Group => {
                 self.editor.make_group();

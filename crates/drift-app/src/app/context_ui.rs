@@ -609,9 +609,9 @@ impl DriftApp {
                     ui,
                     kind,
                     &[
-                        (ToolKind::Arc, "Centre"),
                         (ToolKind::ThreePointArc, "3-point"),
                         (ToolKind::TangentArc, "Tangent"),
+                        (ToolKind::Arc, "Centre"),
                     ],
                     "A again switches to the next",
                 ) {
@@ -924,6 +924,16 @@ impl DriftApp {
         let now = ui.input(|i| i.time);
         ui.set_min_width(210.0);
         let n = self.editor.selection.len() + self.editor.selected_instances.len();
+        // A picked view: its actions first.
+        if commands::When::PickedView.holds(self) {
+            let name = self
+                .picked_view
+                .and_then(|v| self.editor.doc.view(v))
+                .map(|v| v.name.clone())
+                .unwrap_or_default();
+            ui.label(egui::RichText::new(name).small().weak());
+            self.command_items(ui, &[Some(Command::DeleteView), None]);
+        }
         // Picked dimensions and notes: where they show.
         let refs = self.picked_annotations();
         if n == 0 && !refs.is_empty() {

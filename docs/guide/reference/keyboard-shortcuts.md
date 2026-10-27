@@ -76,7 +76,7 @@ does the last command or tool again, as in AutoCAD.
 | K | **Polygon** | Regular polygon: centre, then a corner. Tab types sides; X: inscribed / circumscribed |
 | U | **Slot** | Straight, centre or arc slot (press U again to switch), then width |
 | C | **Circle** | Centre, then a point on the circle (or type the diameter). C again switches through: circle, ellipse, partial ellipse |
-| A | **Arc** | Centre, start, end. Press A again for other arc types |
+| A | **3-point arc** | Start, end, then a point on the arc. Press A again for other arc types |
 | V | **Point** | A sketch point, for reference or construction |
 | Shift+T | **Text** | A line of text drawn as outlines, convertible to curves |
 | H | **Fill / hatch** | Fill or hatch a closed area: click inside it |

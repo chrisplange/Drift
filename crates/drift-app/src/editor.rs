@@ -320,7 +320,7 @@ pub struct Editor {
     /// A variable being scrubbed with a slider: its expression before the scrub started.
     scrubbing: Option<(VariableId, String)>,
     /// Closed regions of the solid curves, as of a document revision.
-    regions: Option<(u64, std::rc::Rc<Vec<drift_geom::regions::Region>>)>,
+    pub(crate) regions: Option<(u64, std::rc::Rc<Vec<drift_geom::regions::Region>>)>,
     /// A point inside the selected region (regions are recomputed, so they're picked by a
     /// point rather than an id).
     pub selected_region: Option<DVec2>,
@@ -409,6 +409,9 @@ pub struct Editor {
     /// Whether each fill was last found kept whole across curves that cross it, so an edit
     /// that newly divides its area can be told from one that leaves it as it was.
     pub(crate) fill_crossed: std::collections::HashMap<drift_core::FillId, bool>,
+    /// The curves round the holes of each shape's fill, as last found (sorted): what tells
+    /// an edit that cut a hole's outline open from one that moved a hole (#201).
+    pub(crate) shape_holes: std::collections::HashMap<drift_core::FillId, Vec<EntityId>>,
     /// What edits did to fills beyond following their outlines, until taken (by the
     /// assistant's results; the app clears it).
     pub fill_changes: Vec<crate::fills::FillChange>,

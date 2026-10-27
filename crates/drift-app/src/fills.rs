@@ -51,6 +51,9 @@ pub enum FillChange {
     /// The edit brought it onto the same area as `into` (drawn on top), which kept it: it
     /// went.
     Merged { id: FillId, into: FillId },
+    /// The edit cut its shape's outline open and what is left bounds no area around it: it
+    /// keeps its last shape until the outline closes again.
+    Opened { id: FillId },
 }
 
 /// The areas among `regions` that make up `whole` (a fill kept whole across curves that
@@ -313,7 +316,7 @@ impl Editor {
         // The drawing's areas are found only when a fill needs them (not for shapes' fills
         // and walls' pochés, which know their own).
         let needs_areas = fills.iter().any(|(id, f)| {
-            f.path.is_none()
+            (!self.on_closed_path(f) || self.took_an_area(f))
                 && !walls.as_ref().is_some_and(|w| w.fills.contains_key(id))
                 && !kept.contains_key(id)
         });
@@ -352,18 +355,44 @@ impl Editor {
                 }
                 continue;
             }
-            // A shape's fill (of a path) is the area inside that path alone.
+            // A shape's fill (of a path) is the area inside that path alone; or, after an
+            // edit cut the path or a hole of it open, the area following the edit gave it
+            // (#201), while that area lasts.
             if let Some(pid) = fill.path
                 && let Some(curves) = self.doc.path(pid).map(|p| sorted(&p.curves))
             {
-                if let Some(region) = self.path_region(pid) {
-                    let shape = FillShape {
-                        region,
+                let took = sorted(&fill.boundary) != curves;
+                let area = || {
+                    areas
+                        .exact(&fill)
+                        .filter(|r| outline_of(r, &ids) == fill.boundary)
+                };
+                let shape = if let Some(shape) = kept.remove(&id) {
+                    Some(shape)
+                } else if let Some(r) = took.then(area).flatten() {
+                    Some(FillShape {
+                        curves: curves_of(&fill, r, &ids),
+                        region: r.clone(),
                         lost: false,
-                        curves,
                         crossed: false,
                         parts: 0,
-                    };
+                    })
+                } else {
+                    self.path_region_and_holes(pid).map(|(region, holes)| {
+                        // (Its holes as of the last edit, not part-way through one.)
+                        if !self.doc.in_transaction() {
+                            self.shape_holes.insert(id, holes);
+                        }
+                        FillShape {
+                            region,
+                            lost: false,
+                            curves,
+                            crossed: false,
+                            parts: 0,
+                        }
+                    })
+                };
+                if let Some(shape) = shape {
                     self.fill_crossed.insert(id, false);
                     self.last_fill_shapes.insert(id, shape.clone());
                     out.insert(id, shape);
@@ -470,7 +499,11 @@ impl Editor {
         cache
             .shapes
             .iter()
-            .filter(|(id, _)| self.doc.fill(**id).is_some_and(|f| f.path.is_none()))
+            .filter(|(id, _)| {
+                self.doc
+                    .fill(**id)
+                    .is_some_and(|f| !self.on_closed_path(f) || self.took_an_area(f))
+            })
             .filter(|(_, s)| !moved(&s.curves))
             .map(|(id, s)| (*id, s.clone()))
             .collect()
@@ -486,7 +519,9 @@ impl Editor {
     /// [`follow_divided_fills`](drift_core::DrawingRules::follow_divided_fills), takes the area around its
     /// seed. One that was already kept whole across curves stays so. When the edit deleted
     /// or reshaped curves of its outline and no area has what is left of it, the fill takes
-    /// the area around its seed (#120, #101), or goes if there is none. What happened beyond
+    /// the area around its seed (#120, #101), or goes if there is none. A shape's fill whose
+    /// outline, or a hole's, the edit cut open takes the area around it that what is left of
+    /// its outline still bounds (#201), or keeps its last shape. What happened beyond
     /// following an outline is noted in [`fill_changes`](Editor::fill_changes) and the
     /// notice.
     pub(crate) fn follow_fills(&mut self) {
@@ -495,9 +530,24 @@ impl Editor {
         }
         let fills: Vec<(FillId, Fill)> = self.doc.fills().map(|(id, f)| (id, f.clone())).collect();
         let walls = self.doc.has_walls().then(|| self.wall_owners());
-        // (Shapes' fills and walls' pochés don't need the drawing's areas.)
+        // The inside of each closed shape's outline, with its holes, and whether the edit
+        // cut one of them open.
+        let insides: HashMap<FillId, (Region, Vec<EntityId>, bool)> = fills
+            .iter()
+            .filter(|(id, _)| !walls.as_ref().is_some_and(|w| w.fills.contains_key(id)))
+            .filter_map(|(id, f)| {
+                let (region, holes) = self.path_region_and_holes(f.path?)?;
+                let opened = self.shape_hole_opened(*id, &region, &holes);
+                Some((*id, (region, holes, opened)))
+            })
+            .collect();
+        // (Closed shapes' fills, unless they took an area or the edit cut a hole of theirs
+        // open, and walls' pochés don't need the drawing's areas.)
         let needs_areas = fills.iter().any(|(id, f)| {
-            f.path.is_none() && !walls.as_ref().is_some_and(|w| w.fills.contains_key(id))
+            !walls.as_ref().is_some_and(|w| w.fills.contains_key(id))
+                && (!self.on_closed_path(f)
+                    || self.took_an_area(f)
+                    || insides.get(id).is_some_and(|(_, _, opened)| *opened))
         });
         let (regions, ids) = if needs_areas {
             (self.regions(), self.region_ids())
@@ -521,10 +571,78 @@ impl Editor {
                 && let Some(curves) = self.doc.path(pid).map(|p| sorted(&p.curves))
             {
                 let mut followed = fill.clone();
-                followed.boundary = curves;
                 followed.divided = false;
-                if let Some(region) = self.path_region(pid) {
-                    followed.seed = crate::editor::interior_point(&region, fill.seed);
+                let took = sorted(&fill.boundary) != curves;
+                let inside = insides.get(&id);
+                // When the edit cut its outline open, or a hole's (the inside of the outline
+                // would take the hole in), it takes the area around it that what is left of
+                // its outline still bounds (a ring trimmed through, #201); once it has, that
+                // area while it lasts. Otherwise the inside of its outline.
+                let area = match inside {
+                    None | Some((_, _, true)) => {
+                        self.open_shape_area(id, &fill, &curves, &regions, &ids)
+                    }
+                    // (Not once the edit closed the outline again: two shapes trimmed into
+                    // one fill the whole of it.)
+                    Some(_)
+                        if took
+                            && self
+                                .doc
+                                .path_before_transaction(pid)
+                                .is_some_and(|p| p.closed) =>
+                    {
+                        areas
+                            .exact(&fill)
+                            .filter(|r| outline_of(r, &ids) == fill.boundary)
+                    }
+                    Some(_) => None,
+                };
+                if let Some((_, holes, _)) = inside {
+                    self.shape_holes.insert(id, holes.clone());
+                }
+                // What it shows now, kept for the next edit whether or not a frame is drawn
+                // in between (the assistant's edits).
+                let mut shown = None;
+                if let Some(r) = area {
+                    followed.boundary = outline_of(r, &ids);
+                    followed.seed = crate::editor::interior_point(r, fill.seed);
+                    if followed.boundary != fill.boundary {
+                        changes.push(FillChange::Refound {
+                            id,
+                            before: self.last_fill_shapes.get(&id).map(|s| s.region.area),
+                            after: r.area,
+                        });
+                    }
+                    shown = Some(FillShape {
+                        curves: curves_of(&followed, r, &ids),
+                        region: r.clone(),
+                        lost: false,
+                        crossed: false,
+                        parts: 0,
+                    });
+                } else if let Some((region, _, _)) = inside {
+                    followed.boundary = curves.clone();
+                    followed.seed = crate::editor::interior_point(region, fill.seed);
+                    shown = Some(FillShape {
+                        region: region.clone(),
+                        lost: false,
+                        curves,
+                        crossed: false,
+                        parts: 0,
+                    });
+                } else if took
+                    || self
+                        .doc
+                        .path_before_transaction(pid)
+                        .is_some_and(|p| p.closed)
+                {
+                    // Cut open, or the area it took is gone: it keeps its last shape, and
+                    // says so.
+                    followed.boundary = curves;
+                    changes.push(FillChange::Opened { id });
+                }
+                if let Some(shown) = shown {
+                    self.last_fill_shapes.insert(id, shown);
                 }
                 self.doc.set_fill(id, followed);
                 self.fill_crossed.insert(id, false);
@@ -551,6 +669,27 @@ impl Editor {
             // Whether it was kept whole across curves before this edit (unknown for a fill
             // not looked at since it was made or opened).
             let was_crossed = self.fill_crossed.get(&id).copied();
+            // The curves round its holes before this edit, and whether the edit cut one of
+            // them open and the area `curves` bounds took that hole in: the hole's area was
+            // never the fill's (#201).
+            let holes: Vec<EntityId> = self
+                .last_fill_shapes
+                .get(&id)
+                .map(|s| {
+                    s.curves
+                        .iter()
+                        .copied()
+                        .filter(|c| fill.boundary.binary_search(c).is_err())
+                        .collect()
+                })
+                .unwrap_or_default();
+            let floods_hole = |curves: &[EntityId]| {
+                holes.iter().any(|c| {
+                    self.doc.reshaped_in_transaction(*c)
+                        && self.doc.contains(*c)
+                        && curves.binary_search(c).is_err()
+                })
+            };
             let mut followed = fill.clone();
             let mut crossed = false;
             let region = if let Some(r) = areas.exact(&fill) {
@@ -559,6 +698,7 @@ impl Editor {
                 r.clone()
             } else if let Some((whole, outline)) = self
                 .uncrossed_region(&fill, solid.get_or_insert_with(|| self.solid_curves()))
+                .filter(|s| !floods_hole(&s.curves))
                 .map(|s| (s.region, None))
                 .or_else(|| {
                     reshaped
@@ -774,11 +914,92 @@ impl Editor {
                 "{} was removed: it came to cover the same area as {into}",
                 what(*id)
             ),
+            FillChange::Opened { id } => format!(
+                "{} keeps its last shape: its outline was cut open and bounds no area",
+                what(*id)
+            ),
         };
         match changes.len() {
             1 => first,
             n => format!("{first} (and {} more fill changes)", n - 1),
         }
+    }
+
+    /// Whether `fill` is a closed shape's own: its area is the inside of the shape's outline
+    /// alone, found without the drawing's areas.
+    fn on_closed_path(&self, fill: &Fill) -> bool {
+        fill.path
+            .and_then(|p| self.doc.path(p))
+            .is_some_and(|p| p.closed)
+    }
+
+    /// Whether `fill`, a shape's, took an area other than the inside of its shape's outline
+    /// (see [`follow_fills`](Self::follow_fills)): its outline isn't its path's.
+    fn took_an_area(&self, fill: &Fill) -> bool {
+        fill.path
+            .and_then(|p| self.doc.path(p))
+            .is_some_and(|p| sorted(&p.curves) != sorted(&fill.boundary))
+    }
+
+    /// Whether the open edit cut open the outline of a hole in shape fill `id`: a curve that
+    /// was round one of its holes when last found ([`shape_holes`](Editor::shape_holes)) was
+    /// reshaped (trimmed, split) and is round none of `holes` now, the holes of the inside of
+    /// its outline, `inside`. A hole moved, even across the outline, isn't cut open. With
+    /// none found yet (a drawing just opened, no frame drawn), a whole circle or ellipse
+    /// inside it that the edit made an arc of.
+    fn shape_hole_opened(&self, id: FillId, inside: &Region, holes: &[EntityId]) -> bool {
+        let opened = |c: &EntityId| {
+            self.doc.reshaped_in_transaction(*c)
+                && self.doc.contains(*c)
+                && holes.binary_search(c).is_err()
+        };
+        if let Some(before) = self.shape_holes.get(&id) {
+            return before.iter().any(opened);
+        }
+        let b = inside.bounds;
+        self.doc
+            .entities_touched_in_transaction()
+            .into_iter()
+            .filter(opened)
+            .filter(|e| {
+                self.doc
+                    .entity_before_transaction(*e)
+                    .is_some_and(|was| !was.kind.is_point() && was.kind.ends().is_none())
+            })
+            .filter_map(|e| self.doc.shape(e))
+            .map(|s| s.bounds())
+            .any(|s| {
+                s.min.x >= b.min.x && s.min.y >= b.min.y && s.max.x <= b.max.x && s.max.y <= b.max.y
+            })
+    }
+
+    /// The area a shape's fill takes when an edit cut the shape's outline (`curves`, sorted)
+    /// or a hole's open: the one around its seed, else around a point inside its last shape,
+    /// if that area's outline still has some of the shape's curves.
+    fn open_shape_area<'r>(
+        &self,
+        id: FillId,
+        fill: &Fill,
+        curves: &[EntityId],
+        regions: &'r [Region],
+        ids: &[EntityId],
+    ) -> Option<&'r Region> {
+        let near = self
+            .last_fill_shapes
+            .get(&id)
+            .map(|s| crate::editor::interior_point(&s.region, s.region.centroid));
+        let bounded_by_it = |r: &&Region| {
+            r.outer
+                .curves()
+                .into_iter()
+                .any(|i| curves.binary_search(&ids[i]).is_ok())
+        };
+        region_at(regions, fill.seed)
+            .filter(bounded_by_it)
+            .or_else(|| {
+                near.and_then(|p| region_at(regions, p))
+                    .filter(bounded_by_it)
+            })
     }
 
     /// Fit a fill flagged as covering several areas to the one around its seed (one undo
@@ -1065,7 +1286,13 @@ impl Editor {
         if self.doc.has_walls() && self.wall_owners().fills.contains_key(&fill) {
             return None;
         }
-        let path = self.doc.path(path).filter(|p| p.closed)?;
+        // (Nor one whose fill took an area its outline doesn't bound alone, #201: that fill
+        // picks, moves and copies as an area's does.)
+        let boundary = sorted(&self.doc.fill(fill)?.boundary);
+        let path = self
+            .doc
+            .path(path)
+            .filter(|p| p.closed && sorted(&p.curves) == boundary)?;
         Some(path.curves.clone())
     }
 
@@ -1445,6 +1672,11 @@ impl Editor {
     /// is ignored), with the shapes lying inside it left out as holes, as an area's are.
     /// A path that crosses itself bounds several areas: the biggest. None for an open path.
     pub(crate) fn path_region(&self, id: PathId) -> Option<Region> {
+        self.path_region_and_holes(id).map(|(r, _)| r)
+    }
+
+    /// [`path_region`](Self::path_region), with the curves round its holes (sorted).
+    fn path_region_and_holes(&self, id: PathId) -> Option<(Region, Vec<EntityId>)> {
         let path = self.doc.path(id)?;
         if !path.closed {
             return None;
@@ -1459,7 +1691,13 @@ impl Editor {
                 .map(|&i| &regions[i])
                 .max_by(|a, b| a.area.total_cmp(&b.area))
         {
-            return Some(r.clone());
+            let holes = sorted(
+                &r.holes
+                    .iter()
+                    .flat_map(|lp| lp.sources.iter().filter_map(|&i| ids.get(i).copied()))
+                    .collect::<Vec<_>>(),
+            );
+            return Some((r.clone(), holes));
         }
         // Crossing itself (no area has all its curves as outline): the biggest it bounds.
         let shapes: Vec<Shape> = path
@@ -1470,6 +1708,7 @@ impl Editor {
         drift_geom::regions::regions(&shapes)
             .into_iter()
             .max_by(|a, b| a.area.total_cmp(&b.area))
+            .map(|r| (r, Vec::new()))
     }
 
     /// Follow curves end to end from `first` (through the end points they share): the

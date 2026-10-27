@@ -948,7 +948,7 @@ fn deleting_the_wall_between_two_filled_rooms_leaves_one_fill() {
 
 /// A rectangle recorded as a shape (a path) with its fill: a line across it and a circle
 /// inside it change nothing (no hole, no division); a split side and a fillet go into the
-/// path; a deleted side opens it, so the fill keeps its last area until undone.
+/// path; a deleted side opens it, so the fill takes the area left around it until undone.
 #[test]
 fn a_paths_fill_follows_its_own_outline_alone() {
     let mut ed = Editor::default();
@@ -995,19 +995,28 @@ fn a_paths_fill_follows_its_own_outline_alone() {
         sorted(now.curves.clone()),
         ed.doc.fill(id).unwrap().boundary
     );
-    // Deleting a side opens the path: the fill keeps its last area, and both come back.
+    // Deleting a side opens the path: the fill takes the area what is left of it and the
+    // line across still close around its seed (#201), and both come back.
     ed.doc.begin();
     ed.doc.delete([sides[3]]);
     ed.commit("Delete");
     assert!(!ed.doc.path(path).unwrap().closed);
-    assert!(ed.fill_shapes()[&id].lost);
+    assert!(
+        close(found(&mut ed, id).0, 400.0 - CORNER_ROUND),
+        "the right half"
+    );
+    assert_eq!(
+        ed.doc.fill(id).unwrap().path,
+        Some(path),
+        "still the shape's"
+    );
     assert!(ed.undo());
     assert!(ed.doc.path(path).unwrap().closed);
     assert!(close(found(&mut ed, id).0, 800.0 - hole - CORNER_ROUND));
 }
 
 /// Two circles drawn as shapes with their fills, overlapping, trimmed into each other: the
-/// first trim opens its path (its fill waits); the second closes one path of both arcs,
+/// first trim opens its path (its fill takes what is left closed around it); the second closes one path of both arcs,
 /// with one fill, the topmost's.
 #[test]
 fn trimming_two_paths_into_one_outline_joins_them() {
@@ -1035,7 +1044,11 @@ fn trimming_two_paths_into_one_outline_joins_them() {
     assert!(close(found(&mut ed, fb).0, disc));
     ed.trim_at(ca, v(-800.0, 600.0)).unwrap();
     assert!(!ed.doc.path(pa).unwrap().closed);
-    assert!(ed.fill_shapes()[&fa].lost);
+    // Its fill takes what its arc and the other circle close around it (#201): its disc
+    // less the lens the other covers.
+    let lens = 2.0 * 150.0f64.powi(2) * (130.0f64 / 150.0).acos()
+        - 130.0 * (4.0 * 150.0f64.powi(2) - 260.0f64.powi(2)).sqrt();
+    assert!(close(found(&mut ed, fa).0, disc - lens));
     assert!(close(found(&mut ed, fb).0, disc));
     ed.notice = None;
     ed.trim_at(cb, v(-800.0, 600.0)).unwrap();
@@ -1669,4 +1682,276 @@ fn click_fills_keep_their_areas_during_a_drag_and_refind_them_after() {
     assert!(close(found(&mut ed, plate_fill).0, 800.0));
     assert!(ed.redo());
     assert!(close(found(&mut ed, plate_fill).0, 950.0));
+}
+
+/// #201: a ring (a circle inside another, lower, not concentric) filled with the Fill tool,
+/// and two lines down across its bottom. Returns the fill and the outer and inner circles.
+fn filled_ring_and_two_lines(ed: &mut Editor, shapes: bool) -> (FillId, EntityId, EntityId) {
+    ed.doc.begin();
+    let o = ed.doc.add_point(v(0.0, 0.0));
+    let outer = ed.doc.add_circle(o, 30.0).unwrap();
+    let i = ed.doc.add_point(v(0.0, -8.0));
+    let inner = ed.doc.add_circle(i, 15.0).unwrap();
+    if shapes {
+        // Drawn with the Circle tool: each is a shape.
+        ed.add_shape(&[outer]);
+        ed.add_shape(&[inner]);
+    }
+    ed.commit("Circles");
+    let id = ed.add_fill_at(v(0.0, 25.0)).unwrap();
+    assert_eq!(ed.doc.fill(id).unwrap().path.is_some(), shapes);
+    ed.doc.begin();
+    for x in [-5.0, 5.0] {
+        let a = ed.doc.add_point(v(x, -40.0));
+        let b = ed.doc.add_point(v(x, -10.0));
+        ed.doc.add_line(a, b).unwrap();
+    }
+    ed.commit("Lines");
+    assert!(
+        close(found(ed, id).0, RING),
+        "the whole ring, across the lines"
+    );
+    (id, outer, inner)
+}
+
+const RING: f64 = PI * (30.0 * 30.0 - 15.0 * 15.0);
+/// The ring less the slot between the lines.
+const CUT_RING: f64 = 2049.1438;
+
+/// The fill covers the ring but not the slot between the lines nor the inner circle's disc.
+fn is_cut_ring(ed: &mut Editor, id: FillId) {
+    let (area, _) = found(ed, id);
+    assert!(close(area, CUT_RING), "{area}: the ring less the slot");
+    let region = ed.fill_shapes()[&id].region.clone();
+    assert!(region.contains(v(0.0, 25.0)) && region.contains(v(-20.0, -10.0)));
+    assert!(!region.contains(v(0.0, -26.0)), "the slot cut out is empty");
+    assert!(!region.contains(v(0.0, -8.0)), "the inner disc is empty");
+}
+
+/// #201: trimming the ring's two circles between the lines (in either order, as a drag
+/// across them does) leaves a fill cut like the ring, never a disc. Whether the circles are
+/// shapes or loose curves.
+#[test]
+fn trimming_a_slot_out_of_a_filled_ring_cuts_the_fill_too() {
+    for shapes in [false, true] {
+        for inner_first in [false, true] {
+            let mut ed = Editor::new(Document::new());
+            let (id, outer, inner) = filled_ring_and_two_lines(&mut ed, shapes);
+            let trims = [(outer, v(0.0, -30.0)), (inner, v(0.0, -23.0))];
+            let order = if inner_first {
+                [trims[1], trims[0]]
+            } else {
+                trims
+            };
+            for (curve, at) in order {
+                ed.trim_at(curve, at).unwrap();
+            }
+            assert!(
+                matches!(ed.doc.shape(outer), Some(drift_core::Shape::Arc { .. }))
+                    && matches!(ed.doc.shape(inner), Some(drift_core::Shape::Arc { .. }))
+            );
+            is_cut_ring(&mut ed, id);
+            assert!(
+                seed_inside(&mut ed, id),
+                "shapes {shapes}, inner first {inner_first}"
+            );
+            // Both trims undo and redo with it.
+            ed.undo();
+            ed.undo();
+            assert!(close(found(&mut ed, id).0, RING));
+            ed.redo();
+            ed.redo();
+            is_cut_ring(&mut ed, id);
+        }
+    }
+}
+
+/// #201: a fill whose hole is trimmed open doesn't take the hole in: it takes the part of
+/// its area still apart from the hole, whether it is an area's fill or a shape's. A shape's
+/// keeps that area through later edits while it lasts, and fills its own outline again once
+/// it is gone.
+#[test]
+fn a_hole_trimmed_open_stays_out_of_its_fill() {
+    for shapes in [false, true] {
+        let mut ed = Editor::new(Document::new());
+        let (id, outer, inner) = filled_ring_and_two_lines(&mut ed, shapes);
+        ed.notice = None;
+        ed.trim_at(inner, v(0.0, -23.0)).unwrap();
+        is_cut_ring(&mut ed, id);
+        if !shapes {
+            continue;
+        }
+        assert!(
+            ed.notice
+                .as_deref()
+                .is_some_and(|n| n.contains("area around its seed")),
+            "{:?}",
+            ed.notice
+        );
+        // An unrelated edit: it keeps the area.
+        ed.doc.begin();
+        let p = ed.doc.add_point(v(50.0, 50.0));
+        let q = ed.doc.add_point(v(60.0, 50.0));
+        ed.doc.add_line(p, q).unwrap();
+        ed.commit("Line");
+        is_cut_ring(&mut ed, id);
+        // Undone, it is the ring again, the inside of its own outline.
+        ed.undo();
+        ed.undo();
+        assert!(close(found(&mut ed, id).0, RING));
+        assert_eq!(ed.doc.fill(id).unwrap().boundary, vec![outer]);
+    }
+}
+
+/// A shape trimmed open with no area left around its fill keeps its last shape, and the
+/// notice says so.
+#[test]
+fn a_shape_cut_open_with_no_area_left_keeps_its_fill_and_says_so() {
+    let mut ed = Editor::new(Document::new());
+    let (_, sides) = plate(&mut ed);
+    ed.doc.begin();
+    ed.fill_new_shapes = true;
+    let id = ed.fill_new_shape(&sides).unwrap();
+    ed.commit("Rectangle");
+    assert!(close(found(&mut ed, id).0, 800.0));
+    ed.notice = None;
+    // Nothing cuts the side: the whole of it goes.
+    ed.trim_at(sides[1], v(40.0, 10.0)).unwrap();
+    assert!(!ed.doc.contains(sides[1]));
+    let shape = ed.fill_shapes()[&id].clone();
+    assert!(
+        shape.lost && close(shape.region.area, 800.0),
+        "its last shape"
+    );
+    assert_eq!(
+        ed.fill_changes,
+        vec![crate::fills::FillChange::Opened { id }]
+    );
+    assert!(
+        ed.notice
+            .as_deref()
+            .is_some_and(|n| n.contains("keeps its last shape")),
+        "{:?}",
+        ed.notice
+    );
+}
+
+/// #201, with nothing drawn between edits (the assistant's edits, or the first edit after a
+/// drawing is opened): a shape fill's hole trimmed open still stays out of it.
+#[test]
+fn a_hole_trimmed_open_stays_out_with_no_frame_drawn() {
+    let mut ed = Editor::new(Document::new());
+    let (id, _, inner) = filled_ring_and_two_lines(&mut ed, true);
+    // As just opened: nothing known of its holes or its last shape.
+    ed.shape_holes.clear();
+    ed.last_fill_shapes.clear();
+    ed.trim_at(inner, v(0.0, -23.0)).unwrap();
+    is_cut_ring(&mut ed, id);
+}
+
+/// A rectangle drawn as a shape, filled, with a circle drawn as a shape inside it (a hole),
+/// and a line far off. Returns the fill, the circle's centre and the line.
+fn plate_with_a_hole(ed: &mut Editor) -> (FillId, EntityId, EntityId) {
+    let (_, sides) = plate(ed);
+    ed.fill_new_shapes = true;
+    ed.doc.begin();
+    let id = ed.fill_new_shape(&sides).unwrap();
+    ed.commit("Rectangle");
+    ed.fill_new_shapes = false;
+    ed.doc.begin();
+    let c = ed.doc.add_point(v(30.0, 10.0));
+    let circle = ed.doc.add_circle(c, 5.0).unwrap();
+    ed.add_shape(&[circle]);
+    let a = ed.doc.add_point(v(500.0, 0.0));
+    let b = ed.doc.add_point(v(520.0, 0.0));
+    let line = ed.doc.add_line(a, b).unwrap();
+    ed.commit("Hole and line");
+    assert!(close(found(ed, id).0, 800.0 - PI * 25.0));
+    (id, c, line)
+}
+
+/// Review of #201: an edit far from a shape with a hole doesn't make the commit find the
+/// drawing's areas (a drawing of shapes alone never needs them).
+#[test]
+fn an_edit_far_from_a_shape_with_a_hole_finds_no_areas() {
+    let mut ed = Editor::new(Document::new());
+    let (_, _, line) = plate_with_a_hole(&mut ed);
+    ed.regions = None;
+    // Split the far line: an edit that reshapes a curve.
+    ed.split_at(line, v(510.0, 0.0)).unwrap();
+    assert!(ed.regions.is_none(), "the drawing's areas were found");
+}
+
+/// Review of #201: a hole moved across its shape's outline isn't cut open: the shape's fill
+/// stays the inside of its own outline, whatever crosses it.
+#[test]
+fn a_hole_moved_across_the_outline_leaves_the_shapes_fill_whole() {
+    let mut ed = Editor::new(Document::new());
+    let (id, c, _) = plate_with_a_hole(&mut ed);
+    ed.fill_changes.clear();
+    ed.doc.begin();
+    ed.doc.translate([c], v(10.0, 0.0));
+    ed.commit("Move");
+    assert!(close(found(&mut ed, id).0, 800.0), "the whole rectangle");
+    assert!(ed.fill_changes.is_empty(), "{:?}", ed.fill_changes);
+    assert!(ed.shape_outline(id).is_some(), "still a shape");
+}
+
+/// Review of #201: once the cut ring's area is gone too (the lines deleted), the fill keeps
+/// its last shape and the notice says so.
+#[test]
+fn a_cut_rings_area_gone_keeps_its_last_shape_and_says_so() {
+    let mut ed = Editor::new(Document::new());
+    let (id, outer, inner) = filled_ring_and_two_lines(&mut ed, true);
+    ed.trim_at(outer, v(0.0, -30.0)).unwrap();
+    ed.trim_at(inner, v(0.0, -23.0)).unwrap();
+    is_cut_ring(&mut ed, id);
+    let lines: Vec<EntityId> = ed
+        .doc
+        .iter()
+        .filter(|(_, e)| matches!(e.kind, EntityKind::Line { .. }))
+        .map(|(e, _)| e)
+        .collect();
+    assert_eq!(lines.len(), 2);
+    ed.fill_changes.clear();
+    ed.notice = None;
+    ed.doc.begin();
+    ed.doc.delete(lines);
+    ed.commit("Delete");
+    let shape = ed.fill_shapes()[&id].clone();
+    assert!(
+        shape.lost && close(shape.region.area, CUT_RING),
+        "its last shape"
+    );
+    assert_eq!(
+        ed.fill_changes,
+        vec![crate::fills::FillChange::Opened { id }]
+    );
+    assert!(
+        ed.notice
+            .as_deref()
+            .is_some_and(|n| n.contains("keeps its last shape")),
+        "{:?}",
+        ed.notice
+    );
+    // Another edit doesn't say it again.
+    ed.fill_changes.clear();
+    ed.doc.begin();
+    let p = ed.doc.add_point(v(80.0, 80.0));
+    let q = ed.doc.add_point(v(90.0, 80.0));
+    ed.doc.add_line(p, q).unwrap();
+    ed.commit("Line");
+    assert!(ed.fill_changes.is_empty(), "{:?}", ed.fill_changes);
+}
+
+/// Review of #201: a shape whose fill took an area (a hole of it trimmed open) picks,
+/// moves and copies as an area fill: it isn't half a shape.
+#[test]
+fn a_shape_fill_that_took_an_area_is_not_a_shape() {
+    let mut ed = Editor::new(Document::new());
+    let (id, outer, inner) = filled_ring_and_two_lines(&mut ed, true);
+    assert_eq!(ed.shape_outline(id), Some(vec![outer]));
+    ed.trim_at(inner, v(0.0, -23.0)).unwrap();
+    is_cut_ring(&mut ed, id);
+    assert_eq!(ed.shape_outline(id), None);
 }

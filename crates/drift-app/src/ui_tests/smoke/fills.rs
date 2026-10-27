@@ -220,3 +220,123 @@ fn free_line(h: &mut Harness<'_, DriftApp>, a: DVec2, b: DVec2) -> EntityId {
     h.run();
     line
 }
+
+/// #201: a ring filled with the Fill tool (two circles drawn with the Circle tool, the inner
+/// one lower), two lines down across its bottom, and a trim dragged down between them across
+/// both circles. The fill is cut like the ring: the slot is empty and the inner disc stays
+/// a hole. (It was the outer circle's fill, which kept its last shape, a solid disc.)
+#[test]
+fn smoke_fills_trimming_a_slot_out_of_a_filled_ring() {
+    let Some(mut h) = harness() else { return };
+    view(&mut h, DVec2::new(-45.0, -50.0), DVec2::new(45.0, 40.0));
+    h.state_mut().editor.fill_new_shapes = false;
+    let before = ids(&h);
+    h.key_press(Key::C);
+    h.run();
+    for (centre, rim) in [
+        (DVec2::ZERO, DVec2::new(30.0, 0.0)),
+        (DVec2::new(0.0, -8.0), DVec2::new(15.0, -8.0)),
+    ] {
+        click_world(&mut h, centre);
+        click_world(&mut h, rim);
+    }
+    for _ in 0..2 {
+        h.key_press(Key::Escape);
+        h.run();
+    }
+    let circles = curves(&h, &added(&h, &before));
+    assert_eq!(circles.len(), 2, "two circles drawn");
+    let radius = |h: &Harness<'_, DriftApp>, c: EntityId| match h.state().editor.doc.shape(c) {
+        Some(drift_core::Shape::Circle { radius, .. } | drift_core::Shape::Arc { radius, .. }) => {
+            radius
+        }
+        other => panic!("{other:?}"),
+    };
+    let (outer, inner) = if radius(&h, circles[0]) > radius(&h, circles[1]) {
+        (circles[0], circles[1])
+    } else {
+        (circles[1], circles[0])
+    };
+    let (r_out, r_in) = (radius(&h, outer), radius(&h, inner));
+    assert!(
+        (r_out - 30.0).abs() < 0.5 && (r_in - 15.0).abs() < 0.5,
+        "{r_out} {r_in}"
+    );
+    // The Fill tool, inside the ring.
+    h.key_press(Key::H);
+    h.run();
+    click_world(&mut h, DVec2::new(0.0, 25.0));
+    h.key_press(Key::Escape);
+    h.run();
+    let fill = h
+        .state()
+        .editor
+        .doc
+        .fills()
+        .map(|(id, _)| id)
+        .next()
+        .expect("filled");
+    assert!(
+        h.state().editor.doc.fill(fill).unwrap().path.is_some(),
+        "the outer circle's fill"
+    );
+    // Solid red, to see where it is on screen.
+    let ed = &mut h.state_mut().editor;
+    let mut solid = ed.doc.fill(fill).unwrap().clone();
+    solid.kind = FillKind::Solid;
+    ed.update_fill(fill, solid);
+    paint(&mut h, fill, RED);
+    for x in [-5.0, 5.0] {
+        free_line(&mut h, DVec2::new(x, -40.0), DVec2::new(x, -10.0));
+    }
+    let ring = std::f64::consts::PI * (r_out * r_out - r_in * r_in);
+    let area = h.state_mut().editor.fill_shapes()[&fill].region.area;
+    assert!((area - ring).abs() < 1e-6, "{area}: the whole ring");
+    // Trim, dragged down between the lines across both circles: one step.
+    h.key_press(Key::T);
+    h.run();
+    let depth = h.state().editor.history.undo_depth();
+    drag(&mut h, DVec2::new(0.0, -15.0), DVec2::new(0.0, -36.0), 6);
+    h.key_press(Key::Escape);
+    h.run();
+    assert_eq!(h.state().editor.history.undo_depth(), depth + 1, "one step");
+    let ed = &mut h.state_mut().editor;
+    for c in [outer, inner] {
+        assert!(
+            matches!(ed.doc.shape(c), Some(drift_core::Shape::Arc { .. })),
+            "both circles trimmed"
+        );
+    }
+    let shape = ed.fill_shapes()[&fill].clone();
+    assert!(!shape.lost, "the fill found its area");
+    let (slot, disc, ring_top) = (
+        DVec2::new(0.0, -26.0),
+        DVec2::new(0.0, -8.0),
+        DVec2::new(0.0, 25.0),
+    );
+    // The ring less the slot between the lines: the drawing's area there.
+    let regions = ed.regions();
+    let cut = drift_geom::regions::region_at(&regions, ring_top).expect("an area");
+    assert!(cut.area < ring - 50.0);
+    assert!(
+        (shape.region.area - cut.area).abs() < 1e-6,
+        "{} {}",
+        shape.region.area,
+        cut.area
+    );
+    assert!(shape.region.contains(ring_top));
+    assert!(!shape.region.contains(slot), "the slot cut out is empty");
+    assert!(!shape.region.contains(disc), "the inner disc is a hole");
+    // And on screen (not picked, so not tinted).
+    ed.selection.clear();
+    ed.selected_fills.clear();
+    h.run();
+    save_png("drift_smoke_trim_ring.png", &mut h);
+    assert!(
+        near(pixel(&mut h, ring_top), RED),
+        "{:?}",
+        pixel(&mut h, ring_top)
+    );
+    assert!(!near(pixel(&mut h, slot), RED), "{:?}", pixel(&mut h, slot));
+    assert!(!near(pixel(&mut h, disc), RED), "{:?}", pixel(&mut h, disc));
+}

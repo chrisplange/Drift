@@ -13,8 +13,10 @@ A fill or hatch fills a **closed area**: a region bounded by solid curves. Holes
 (islands) are left out. Fills are associative: when the geometry changes, the fill
 follows. If curves of its outline are deleted, it takes the area its seed is in now (the
 point where it was first clicked), and a notice says so; with no area left there, it goes.
-If its boundary breaks some other way (a gap opened), the fill keeps its last shape and the
-**Inspector** offers **Re-pick boundary**. When an edit brings two fills onto one area (two
+If an edit cuts open the outline of one of its holes, the hole stays out of it: the fill keeps
+to the part of its area that is still closed off from the hole. If its boundary breaks some
+other way (a gap opened), the fill keeps its last shape and the **Inspector** offers
+**Re-pick boundary**. When an edit brings two fills onto one area (two
 filled shapes trimmed into one outline, the wall between two filled rooms deleted), the one
 drawn on top keeps the area and the other is removed; a notice says so, and undo brings it
 back.
@@ -59,10 +61,16 @@ A shape drawn with one of those tools (or a pen path closed on its first point) 
 as one shape, whether or not it is filled. Its fill is the area inside its own outline,
 whatever else crosses it or lies inside it, and it stays whole through splits, fillets and
 chamfers of its sides. A fill clicked inside such a shape with the Fill tool is the shape's
-too. Deleting or trimming away a side opens the shape: its fill keeps its last area until
-the ends meet again. Trimming two shapes into each other joins them into one shape with one
-fill (the one drawn on top). Shapes lying inside a shape are left out of its fill as holes,
-as they are of any area's; a shape with a fill of its own covers what is beneath it anyway.
+too. Deleting or trimming away a side opens the shape: its fill then takes the area that what
+is left of the shape, with the curves around it, still closes around the fill (a filled ring
+trimmed through between two lines becomes a cut ring, with the cut-out part left empty), and
+a notice gives the new area. If nothing closes around it, the fill keeps its last area until
+the ends meet again, and the notice says so. Trimming open the outline of a hole in a shape
+works the same way: the hole is never filled (moving a hole, even across the outline, changes
+nothing). While its fill covers such an area, the shape picks, moves and copies as an area
+fill does. Trimming two shapes into each other joins them into one shape with one fill (the
+one drawn on top). Shapes lying inside a shape are left out of its fill as holes, as they are
+of any area's; a shape with a fill of its own covers what is beneath it anyway.
 
 ## 3. Copy a style with the eyedropper
 

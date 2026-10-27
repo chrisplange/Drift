@@ -6,8 +6,8 @@
 //! ```json
 //! {
 //!   "format": "drift",
-//!   "version": 42,
-//!   "reader": 42,
+//!   "version": 43,
+//!   "reader": 43,
 //!   "meta": {"title":"Bracket","units":"mm","generator":"Drift 0.1.0"},
 //!   "display": {"length":"architectural","fraction":16},
 //!   "variables": [
@@ -124,15 +124,18 @@ pub const EXTENSION: &str = "drift";
 /// file of its own, leaving out the sections it has the `same` as the drawing), and a block's
 /// fill can have `"path": "shape"` (it filled a shape, which exploding makes again);
 /// 42 = adds `reader` (the oldest version that reads the file), and reading passes over what
-/// it doesn't know and keeps it for saving (from here on, additions don't bump the version).
-pub const FORMAT_VERSION: u32 = 42;
+/// it doesn't know and keeps it for saving (from here on, additions don't bump the version);
+/// 43 = adds `fix_x` and `fix_y` relations (a point's x or y alone held where it is, by Fix on
+/// geometry something else already partly holds).
+pub const FORMAT_VERSION: u32 = 43;
 /// The oldest version that reads what this build writes: the last breaking change, written as
 /// a file's `"reader"`. A reader refuses a file only when its `reader` is above the reader's
 /// own [`FORMAT_VERSION`] (a file without one, from before 42, gives its `version`).
 ///
 /// History: 42 = files carry `reader` (the strict readers before 42 refused any field they
-/// didn't know).
-pub const READER_VERSION: u32 = 42;
+/// didn't know); 43 = `fix_x` and `fix_y` relations (a 42 reader refuses a relation type it
+/// doesn't know).
+pub const READER_VERSION: u32 = 43;
 const FORMAT_TAG: &str = "drift";
 
 /// Document-level properties stored alongside the geometry.
@@ -772,6 +775,14 @@ fn constraint_record(
             (r.point, r.at) = (s(point), Some(at.to_array()));
             "fix"
         }
+        Constraint::FixX { point, x } => {
+            (r.point, r.value) = (s(point), Some(x));
+            "fix_x"
+        }
+        Constraint::FixY { point, y } => {
+            (r.point, r.value) = (s(point), Some(y));
+            "fix_y"
+        }
         Constraint::FixRadius { curve, radius } => {
             (r.curve, r.radius) = (s(curve), Some(radius));
             "fix_radius"
@@ -868,6 +879,14 @@ fn parse_constraint(r: ConstraintRecord) -> Result<ParsedConstraint, LoadError> 
         "fix" => Constraint::Fix {
             point: entity(&r.point, "point")?,
             at: DVec2::from(r.at.ok_or_else(|| missing("at"))?),
+        },
+        "fix_x" => Constraint::FixX {
+            point: entity(&r.point, "point")?,
+            x: number(r.value, "value")?,
+        },
+        "fix_y" => Constraint::FixY {
+            point: entity(&r.point, "point")?,
+            y: number(r.value, "value")?,
         },
         "fix_radius" => Constraint::FixRadius {
             curve: entity(&r.curve, "curve")?,
@@ -2228,6 +2247,7 @@ pub fn migrate(value: serde_json::Value) -> Result<serde_json::Value, LoadError>
     // defaults, and `Metadata::older_rules` tells the app to apply its own.
     // v2 → v26 only added optional fields, sections and constraint types: nothing to convert
     // here (a sheet's own views, from before v27, are made model views as the file is read).
+    // v42 → v43 added the `fix_x` and `fix_y` relation types: nothing to convert.
     value["version"] = FORMAT_VERSION.into();
     Ok(value)
 }
@@ -2342,8 +2362,8 @@ mod tests {
         let text = save(&doc, &Metadata::default());
         let expected = r#"{
   "format": "drift",
-  "version": 42,
-  "reader": 42,
+  "version": 43,
+  "reader": 43,
   "meta": {"units":"mm"},
   "entities": [
     {"type":"point","id":"e1","at":[0.0,0.0]},

@@ -7,11 +7,12 @@ use std::collections::BTreeSet;
 use std::f64::consts::{PI, TAU};
 
 use drift_core::{
-    Bounds, Constraint, DVec2, Emphasis, EntityId, EntityKind, Shape, SketchItem, arc_shape,
+    Bounds, Constraint, ConstraintId, DVec2, Emphasis, EntityId, EntityKind, Shape, SketchItem,
+    arc_shape,
 };
 use drift_solver::Param;
 
-use crate::editor::{Anchor, Editor, Guide, GuideKind, Pointer};
+use crate::editor::{Anchor, EditError, Editor, Guide, GuideKind, Pointer};
 
 mod annotate;
 mod arc;
@@ -603,9 +604,13 @@ fn exact(p: &Pointer, at: DVec2) -> Pointer {
 
 /// Add a relation if automatic relations are on; failures (e.g. redundancy) are ignored and
 /// the commit's solve decides whether the whole step is acceptable.
-fn auto_relation(ed: &mut Editor, relation: Option<GuideKind>, line: EntityId) {
+fn auto_relation(
+    ed: &mut Editor,
+    relation: Option<GuideKind>,
+    line: EntityId,
+) -> Option<ConstraintId> {
     if !ed.auto_relations {
-        return;
+        return None;
     }
     let constraint = match relation {
         Some(GuideKind::Horizontal) => Constraint::Horizontal { line },
@@ -619,12 +624,47 @@ fn auto_relation(ed: &mut Editor, relation: Option<GuideKind>, line: EntityId) {
                     curve: line,
                 }
             }
-            _ => return,
+            _ => return None,
         },
         Some(GuideKind::Tangent(curve)) => Constraint::Tangent { a: line, b: curve },
-        _ => return,
+        _ => return None,
     };
-    let _ = ed.doc.add_constraint(constraint);
+    ed.doc.add_constraint(constraint).ok()
+}
+
+/// [`auto_relation`] for a segment that ends on an existing point (closing a loop, say): its
+/// two ends may already be held, so the relation is checked first. Left out, with a notice
+/// saying so, if the relations already there imply it or it would conflict with them; the
+/// segment is drawn either way (#204). Call inside the segment's transaction.
+fn auto_relation_onto_point(ed: &mut Editor, relation: Option<GuideKind>, line: EntityId) {
+    let Some(id) = auto_relation(ed, relation, line) else {
+        return;
+    };
+    // Solved on a copy: a side drawn a hair off level only meets its relation once solved.
+    let mut solved = ed.doc.clone();
+    let report = drift_solver::solve(
+        &mut solved,
+        &drift_solver::SolveOptions {
+            analyze: true,
+            lowering: ed.lowering(),
+            ..Default::default()
+        },
+    );
+    let why = if ed.new_conflicts(&report) {
+        EditError::Conflict
+    } else if report
+        .redundant
+        .iter()
+        .any(|c| !ed.analysis().redundant.contains(c))
+        || report.dependent_equations > ed.analysis().dependent_equations
+    {
+        EditError::Redundant
+    } else {
+        return;
+    };
+    let name = ed.doc.constraint(id).map_or("Relation", |c| c.type_name());
+    ed.doc.remove_constraint(id);
+    ed.notice = Some(format!("{name} not added: {why}"));
 }
 
 /// Unit vector at `degrees`, exact for multiples of 90° (where `cos`/`sin` would leave ~1e-16

@@ -39,7 +39,10 @@ fn tag(c: &Constraint) -> Option<&'static str> {
         Constraint::PointOnCurve { .. } => "ON",
         Constraint::Symmetric { .. } => "SYM",
         Constraint::Midpoint { .. } => "M",
-        Constraint::Fix { .. } | Constraint::FixRadius { .. } => "FIX",
+        Constraint::Fix { .. }
+        | Constraint::FixX { .. }
+        | Constraint::FixY { .. }
+        | Constraint::FixRadius { .. } => "FIX",
         Constraint::Smooth { .. } => "G1",
         _ => return None,
     })

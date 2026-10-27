@@ -203,6 +203,14 @@ pub fn snap_marker(painter: &egui::Painter, map: &ScreenMap, snap: &Snap, color:
     }
 }
 
+/// Where a click lands when an axis lock has moved it off the hovered snap target: a ring
+/// with a dot.
+pub fn landing_marker(painter: &egui::Painter, map: &ScreenMap, at: DVec2, color: Color32) {
+    let c = map.to_screen(at);
+    painter.circle_stroke(c, 5.0, Stroke::new(1.5, color));
+    painter.circle_filled(c, 2.0, color);
+}
+
 /// Window selection draws a solid blue box; crossing selection a dashed green one.
 pub fn selection_box(
     painter: &egui::Painter,

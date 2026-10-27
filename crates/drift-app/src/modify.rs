@@ -1236,7 +1236,7 @@ impl Editor {
                     .collect();
             if let Some((_, c)) = broken
                 .iter()
-                .find(|(_, c)| c.is_dimension() || matches!(c, Constraint::Fix { .. }))
+                .find(|(_, c)| c.is_dimension() || c.is_point_fix())
             {
                 return Err(invalid(format!(
                     "a {} holds it as it is",
@@ -2633,7 +2633,7 @@ impl Editor {
             .doc
             .constraints()
             .filter(|(_, c)| c.entities().all(|e| members.contains(&e)))
-            .filter(|(_, c)| !matches!(c, Constraint::Fix { .. }))
+            .filter(|(_, c)| !c.is_point_fix())
             .filter(|(_, c)| keep_orientation || !c.is_orientation_dependent())
             .map(|(id, c)| (id, *c))
             .collect();

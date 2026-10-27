@@ -66,7 +66,11 @@ impl LineTool {
         // A locked segment is drawn exactly along its axis either way; it is only kept there
         // by a relation when automatic relations are on.
         let relation = self.lock.map(Axis::relation).or(relation);
-        auto_relation(ed, relation, line);
+        if anchor.existing == Some(b) {
+            auto_relation_onto_point(ed, relation, line);
+        } else {
+            auto_relation(ed, relation, line);
+        }
         if let Some(value) = length {
             ed.add_typed_dimension(0, Constraint::Distance { a, b, value });
         }
@@ -261,14 +265,19 @@ impl Tool for LineTool {
     }
 }
 
-/// Put the pointer on a perpendicular or tangent guide through `from` when it is near one (and
-/// no exact snap decides where it goes). Square to a horizontal or vertical line is left to
-/// the horizontal / vertical guides, whose relations hold the same. True if a guide applied.
+/// Put the pointer on a perpendicular or tangent guide through `from` when it is near one.
+/// An exact snap still decides where it goes: a snapped point near the guide only gets the
+/// guide's relation (#204). Square to a horizontal or vertical line is left to the horizontal
+/// / vertical guides, whose relations hold the same. True if a guide applied.
 pub(super) fn follow_guides(from: DVec2, guides: &[(GuideKind, DVec2)], p: &mut Pointer) -> bool {
-    if !p.perp_tangent || p.exact_snap().is_some() {
+    if !p.perp_tangent {
         return false;
     }
-    let target = p.snap.map_or(p.raw, |grid| grid.at);
+    let snapped = p.exact_snap();
+    if snapped.is_some_and(|s| !infers_direction(s.kind)) {
+        return false;
+    }
+    let target = p.snap.map_or(p.raw, |s| s.at);
     let d = target - from;
     let tol = p.tolerance;
     let mut best: Option<(f64, DVec2, GuideKind)> = None;
@@ -288,11 +297,21 @@ pub(super) fn follow_guides(from: DVec2, guides: &[(GuideKind, DVec2)], p: &mut 
         return false;
     };
     p.guide = Some(Guide {
-        at,
+        at: snapped.map_or(at, |s| s.at),
         kind,
         from: [Some(from), None],
     });
     true
+}
+
+/// Whether a segment ending on an exact snap of this kind takes the direction relation it
+/// comes out with (horizontal, vertical, square or tangent). A perpendicular or tangent snap
+/// carries its own relation.
+fn infers_direction(kind: drift_geom::SnapKind) -> bool {
+    !matches!(
+        kind,
+        drift_geom::SnapKind::Perpendicular | drift_geom::SnapKind::Tangent
+    )
 }
 
 /// Steer the pointer for a segment from `from`: along a locked axis (X / Y), else in the
@@ -306,10 +325,13 @@ pub(super) fn steer(from: DVec2, lock: Option<Axis>, p: &mut Pointer) {
         let u = axis.dir();
         let target = p.pos();
         let at = from + u * (target - from).dot(u);
-        let reference = p.snap.map(|s| s.at).filter(|q| *q != at);
+        let reference = p.snap.filter(|s| s.at != at);
         if reference.is_some() {
+            // Marked on the canvas with where the click lands (#200).
+            p.overridden = reference.filter(|s| s.kind != drift_geom::SnapKind::Grid);
             p.snap = None;
         }
+        let reference = reference.map(|s| s.at);
         p.guide = Some(Guide {
             at,
             kind: axis.relation(),
@@ -317,7 +339,25 @@ pub(super) fn steer(from: DVec2, lock: Option<Axis>, p: &mut Pointer) {
         });
         return;
     }
-    if p.exact_snap().is_some() {
+    if let Some(snap) = p.exact_snap() {
+        // The snap decides where the segment ends. One that comes out level or plumb on it
+        // keeps its Horizontal / Vertical relation, as it would off the snap (#204).
+        let d = snap.at - from;
+        let tol = p.tolerance;
+        let kind = if d.y.abs() <= tol && d.x.abs() > tol {
+            GuideKind::Horizontal
+        } else if d.x.abs() <= tol && d.y.abs() > tol {
+            GuideKind::Vertical
+        } else {
+            return;
+        };
+        if infers_direction(snap.kind) {
+            p.guide = Some(Guide {
+                at: snap.at,
+                kind,
+                from: [Some(from), None],
+            });
+        }
         return;
     }
     // Angle snapping: the segment turns in steps, and is as long as the pointer is far

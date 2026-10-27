@@ -130,6 +130,8 @@ pub(super) fn describe_constraint(doc: &Document, id: ConstraintId) -> Value {
         Constraint::Smooth { point, a, b } => vec![("point", e(point)), ("a", e(a)), ("b", e(b))],
         Constraint::Midpoint { point, line } => vec![("point", e(point)), ("line", e(line))],
         Constraint::Fix { point, at } => vec![("point", e(point)), ("at", pt(at))],
+        Constraint::FixX { point, x } => vec![("point", e(point)), ("x", num(x))],
+        Constraint::FixY { point, y } => vec![("point", e(point)), ("y", num(y))],
         Constraint::FixRadius { curve, radius } => {
             vec![("curve", e(curve)), ("radius", num(radius))]
         }
@@ -177,7 +179,10 @@ pub(super) fn type_name(c: &Constraint) -> &'static str {
         Constraint::Symmetric { .. } => "symmetric",
         Constraint::Smooth { .. } => "smooth",
         Constraint::Midpoint { .. } => "midpoint",
-        Constraint::Fix { .. } | Constraint::FixRadius { .. } => "fix",
+        Constraint::Fix { .. }
+        | Constraint::FixX { .. }
+        | Constraint::FixY { .. }
+        | Constraint::FixRadius { .. } => "fix",
         Constraint::Distance { .. } => "distance",
         Constraint::PointLineDistance { .. } => "point_line",
         Constraint::Radius { .. } => "radius",

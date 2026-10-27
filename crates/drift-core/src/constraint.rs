@@ -129,6 +129,16 @@ pub enum Constraint {
         point: EntityId,
         at: DVec2,
     },
+    /// A point's x locked (what Fix leaves of a point whose y something else holds).
+    FixX {
+        point: EntityId,
+        x: f64,
+    },
+    /// A point's y locked (what Fix leaves of a point whose x something else holds).
+    FixY {
+        point: EntityId,
+        y: f64,
+    },
     /// A circle's or arc's radius locked (used when fixing circular geometry).
     FixRadius {
         curve: EntityId,
@@ -211,7 +221,9 @@ impl Constraint {
             | Constraint::Perpendicular { a, b }
             | Constraint::Angle { a, b, .. } => vec![(a, Line), (b, Line)],
             Constraint::Equal { a, b } => vec![(a, LineOrCircular), (b, LineOrCircular)],
-            Constraint::Fix { point, .. } => vec![(point, Point)],
+            Constraint::Fix { point, .. }
+            | Constraint::FixX { point, .. }
+            | Constraint::FixY { point, .. } => vec![(point, Point)],
             Constraint::FixRadius { curve, .. }
             | Constraint::Radius { curve, .. }
             | Constraint::Diameter { curve, .. } => vec![(curve, Circular)],
@@ -239,7 +251,10 @@ impl Constraint {
             Constraint::Parallel { .. } => "Parallel",
             Constraint::Perpendicular { .. } => "Perpendicular",
             Constraint::Equal { .. } => "Equal",
-            Constraint::Fix { .. } | Constraint::FixRadius { .. } => "Fix",
+            Constraint::Fix { .. }
+            | Constraint::FixX { .. }
+            | Constraint::FixY { .. }
+            | Constraint::FixRadius { .. } => "Fix",
             Constraint::Distance { .. } | Constraint::PointLineDistance { .. } => "Distance",
             Constraint::Radius { .. } => "Radius",
             Constraint::Diameter { .. } => "Diameter",
@@ -302,6 +317,7 @@ impl Constraint {
             | Constraint::PointLineDistance { value, .. } => value.is_finite() && value > 0.0,
             Constraint::Angle { degrees, .. } => degrees.is_finite(),
             Constraint::Fix { at, .. } => at.is_finite(),
+            Constraint::FixX { x: v, .. } | Constraint::FixY { y: v, .. } => v.is_finite(),
             Constraint::FixRadius { radius, .. } => radius.is_finite() && radius > 0.0,
             _ => true,
         }
@@ -347,6 +363,8 @@ impl Constraint {
                 point: f(point),
                 at,
             },
+            FixX { point, x } => FixX { point: f(point), x },
+            FixY { point, y } => FixY { point: f(point), y },
             FixRadius { curve, radius } => FixRadius {
                 curve: f(curve),
                 radius,
@@ -399,6 +417,16 @@ impl Constraint {
                 | Constraint::HorizontalDistance { .. }
                 | Constraint::VerticalDistance { .. }
                 | Constraint::Fix { .. }
+                | Constraint::FixX { .. }
+                | Constraint::FixY { .. }
+        )
+    }
+
+    /// True for a pin of a point where it is: Fix, or its x or y alone.
+    pub fn is_point_fix(&self) -> bool {
+        matches!(
+            self,
+            Constraint::Fix { .. } | Constraint::FixX { .. } | Constraint::FixY { .. }
         )
     }
 
@@ -419,6 +447,8 @@ impl Constraint {
                 swap(b);
             }
             Constraint::Fix { point, .. }
+            | Constraint::FixX { point, .. }
+            | Constraint::FixY { point, .. }
             | Constraint::PointLineDistance { point, .. }
             | Constraint::Midpoint { point, .. }
             | Constraint::PointOnCurve { point, .. } => swap(point),

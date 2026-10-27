@@ -92,6 +92,14 @@ you place it.
 The rectangle turns white and the status bar says **Fully defined**. A ground symbol marks
 the fixed point.
 
+Fix works on any picked geometry (a line, an arc, a circle, several things) and pins it where
+it is, adding only what still lets it move: one end of a line fully, then whatever is left of
+the other, perhaps just its x or y, or nothing if the line's length and direction already
+place it. Fix never over-defines a sketch. If nothing is left to pin, it says the geometry is
+already fully defined; if pinning it would contradict a relation or dimension (the sketch isn't
+solved as it stands), it names that relation. Once the geometry is pinned, **Fix** shows as on
+in the relations pie, and choosing it there again takes the pins off.
+
 ## Adding relations
 
 There are three ways to add a relation to what you've picked. Each offers only the

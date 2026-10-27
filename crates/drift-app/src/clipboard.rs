@@ -141,7 +141,7 @@ pub fn copy_into(
     let map = &out.entities;
     let constraints: Vec<(ConstraintId, Constraint)> = src
         .constraints()
-        .filter(|(_, c)| !matches!(c, Constraint::Fix { .. }))
+        .filter(|(_, c)| !c.is_point_fix())
         .filter(|(_, c)| c.entities().all(|e| map.contains_key(&e)))
         .map(|(id, c)| (id, *c))
         .collect();

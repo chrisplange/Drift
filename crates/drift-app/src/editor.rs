@@ -40,6 +40,8 @@ pub enum EditError {
     Degenerate,
     /// The selection doesn't fit the constraint, or a value is invalid.
     Invalid(String),
+    /// Fix found nothing left to pin: what was picked ("this line is", …) can't move already.
+    FullyDefined(String),
 }
 
 impl std::fmt::Display for EditError {
@@ -49,6 +51,7 @@ impl std::fmt::Display for EditError {
             EditError::Redundant => write!(f, "already implied by existing constraints"),
             EditError::Degenerate => write!(f, "would collapse geometry to zero size"),
             EditError::Invalid(why) => write!(f, "{why}"),
+            EditError::FullyDefined(what) => write!(f, "{what} already fully defined"),
         }
     }
 }
@@ -114,6 +117,9 @@ pub struct Pointer {
     pub angle_step: Option<f64>,
     /// Perpendicular and tangent guides from the end a line is drawn on from.
     pub perp_tangent: bool,
+    /// A snap target an axis lock moved the point off: the point goes in line with it on the
+    /// axis instead. Kept so the canvas can mark both it and where the click lands.
+    pub overridden: Option<Snap>,
 }
 
 impl Pointer {
@@ -131,6 +137,7 @@ impl Pointer {
             round_scale: true,
             angle_step: None,
             perp_tangent: false,
+            overridden: None,
         }
     }
 
@@ -170,22 +177,25 @@ impl Pointer {
         }
     }
 
-    /// The automatic relation implied by a perpendicular or tangent snap, else by the guide
-    /// (not when another exact snap decides the position).
+    /// The automatic relation implied by a perpendicular or tangent snap, else by the guide.
+    /// With another exact snap deciding the position, a tool sets a guide only when the
+    /// segment comes out level, plumb, square or tangent on the snapped point (#204).
     pub fn auto_relation(&self) -> Option<GuideKind> {
         if let Some(snap) = self.exact_snap() {
-            return match (snap.kind, snap.entity) {
+            match (snap.kind, snap.entity) {
                 (drift_geom::SnapKind::Perpendicular, Some(curve)) => {
-                    Some(GuideKind::Perpendicular(curve))
+                    return Some(GuideKind::Perpendicular(curve));
                 }
-                (drift_geom::SnapKind::Tangent, Some(curve)) => Some(GuideKind::Tangent(curve)),
-                _ => None,
-            };
+                (drift_geom::SnapKind::Tangent, Some(curve)) => {
+                    return Some(GuideKind::Tangent(curve));
+                }
+                _ => {}
+            }
         }
         self.guide
+            .filter(|g| self.exact_snap().is_none_or(|s| s.at == g.at))
             .map(|g| g.kind)
             .filter(|k| *k != GuideKind::Aligned)
-            .filter(|_| self.exact_snap().is_none())
     }
 
     /// The existing point entity under the pointer, if it snapped to one.
@@ -828,6 +838,17 @@ impl Editor {
                         },
                     );
                 }
+                // A point held by its x or y alone keeps that, where it lands.
+                Constraint::FixX { point, .. } | Constraint::FixY { point, .. } => {
+                    if let Ok(at) = self.doc.point(point) {
+                        let at = turn(at);
+                        let pin = match c {
+                            Constraint::FixX { .. } => Constraint::FixX { point, x: at.x },
+                            _ => Constraint::FixY { point, y: at.y },
+                        };
+                        let _ = self.doc.set_constraint(id, pin);
+                    }
+                }
                 _ => {}
             }
         }
@@ -888,6 +909,10 @@ impl Editor {
         if let Some(why) = constraints.iter().find_map(|c| self.refused_on_walls(c)) {
             return Err(EditError::Invalid(why));
         }
+        // Fix where it is (a fix that moves geometry, from a script say, is solved as below).
+        if !constraints.is_empty() && constraints.iter().all(|c| self.fixes_in_place(c)) {
+            return self.add_fixes(label, constraints);
+        }
         let before = self.analysis.clone();
         let degenerate_before = drift_solver::degenerate_entities(&self.doc);
         self.doc.begin();
@@ -905,6 +930,138 @@ impl Editor {
         }
         self.check_new_constraints(label, &ids, &before, &degenerate_before)?;
         Ok(ids)
+    }
+
+    /// Fix geometry where it is (one undoable step), pinning only what is still free (#203):
+    /// each point fully if nothing holds it yet, else just its x or y if one is still free,
+    /// and each radius not yet set. A pin the relations and dimensions already there imply is
+    /// left out, so Fix never over-defines. Refused, saying so, if nothing is left to pin, or
+    /// if a pin conflicts (naming what it conflicts with).
+    fn add_fixes(
+        &mut self,
+        label: &str,
+        fixes: &[Constraint],
+    ) -> Result<Vec<ConstraintId>, EditError> {
+        let lowering = self.lowering();
+        let analyze = |doc: &Document| drift_solver::analyze_with(doc, lowering.as_deref());
+        // Measured against the drawing as it is now (inside a script's batch it may have
+        // changed since the last sync).
+        let base = analyze(&self.doc);
+        let dependent = base.dependent_equations;
+        // (A pin merged with one already there may show either as the redundant one.)
+        let new_redundant =
+            |r: &SolveReport| r.redundant.iter().any(|c| !base.redundant.contains(c));
+        let new_conflicts = |r: &SolveReport| {
+            !r.converged && r.conflicts.iter().any(|c| !base.conflicts.contains(c))
+        };
+        self.doc.begin();
+        // Usually nothing holds what is fixed yet: all of it is kept, in one go.
+        let ids: Vec<ConstraintId> = fixes
+            .iter()
+            .filter_map(|c| self.doc.add_constraint(*c).ok())
+            .collect();
+        let report = analyze(&self.doc);
+        if ids.len() == fixes.len()
+            && !new_conflicts(&report)
+            && report.dependent_equations == dependent
+            && !new_redundant(&report)
+        {
+            self.commit(label);
+            return Ok(ids);
+        }
+        self.doc.rollback();
+        // Else one pin at a time, keeping those that hold something new.
+        self.doc.begin();
+        let mut kept = Vec::new();
+        let mut conflict = None;
+        for c in fixes {
+            let tries = match *c {
+                Constraint::Fix { point, at } => vec![
+                    *c,
+                    Constraint::FixX { point, x: at.x },
+                    Constraint::FixY { point, y: at.y },
+                ],
+                other => vec![other],
+            };
+            for (i, pin) in tries.into_iter().enumerate() {
+                let Ok(id) = self.doc.add_constraint(pin) else {
+                    continue;
+                };
+                let report = analyze(&self.doc);
+                if new_conflicts(&report) {
+                    conflict = conflict.or_else(|| {
+                        report
+                            .conflicts
+                            .iter()
+                            .find(|c| **c != id && !kept.contains(*c))
+                            .copied()
+                    });
+                    self.doc.remove_constraint(id);
+                } else if new_redundant(&report) || report.dependent_equations > dependent {
+                    self.doc.remove_constraint(id);
+                } else {
+                    kept.push(id);
+                    if i == 0 {
+                        // The whole point: its x and y alone are not tried.
+                        break;
+                    }
+                }
+            }
+        }
+        if let Some(other) = conflict {
+            self.doc.rollback();
+            self.sync();
+            let what = self
+                .doc
+                .constraint(other)
+                .map_or("a relation".to_owned(), |c| {
+                    let kind = if c.is_dimension() {
+                        "dimension"
+                    } else {
+                        "relation"
+                    };
+                    format!("the {} {kind}", c.type_name())
+                });
+            return Err(EditError::Invalid(format!("it conflicts with {what}")));
+        }
+        if kept.is_empty() {
+            self.doc.rollback();
+            self.sync();
+            return Err(EditError::FullyDefined(self.fixed_name()));
+        }
+        self.commit(label);
+        Ok(kept)
+    }
+
+    /// Whether `c` pins a point or a radius where it already is.
+    fn fixes_in_place(&self, c: &Constraint) -> bool {
+        let same = |a: f64, b: f64| (a - b).abs() <= 1e-9 * a.abs().max(b.abs()).max(1.0);
+        let at = |point| self.doc.point(point).ok();
+        match *c {
+            Constraint::Fix { point, at: to } => {
+                at(point).is_some_and(|p| same(p.x, to.x) && same(p.y, to.y))
+            }
+            Constraint::FixX { point, x } => at(point).is_some_and(|p| same(p.x, x)),
+            Constraint::FixY { point, y } => at(point).is_some_and(|p| same(p.y, y)),
+            Constraint::FixRadius { curve, radius } => {
+                drift_solver::radius_of(&self.doc, curve).is_some_and(|r| same(r, radius))
+            }
+            _ => false,
+        }
+    }
+
+    /// What is being fixed, for messages: "this line is", "these 3 are", ….
+    pub(crate) fn fixed_name(&self) -> String {
+        let curves: Vec<EntityKind> = self
+            .selection
+            .iter()
+            .filter_map(|id| self.doc.get(*id).map(|e| e.kind))
+            .collect();
+        match curves.as_slice() {
+            [one] => format!("this {} is", one.type_name().to_lowercase()),
+            [] => "it is".to_owned(),
+            many => format!("these {} are", many.len()),
+        }
     }
 
     /// Solve after constraints `ids` were made active in the open transaction, and commit it,
@@ -1021,7 +1178,7 @@ impl Editor {
         ids.iter().all(|id| {
             self.doc
                 .constraint(*id)
-                .is_some_and(|c| !c.is_dimension() && !matches!(c, Constraint::Fix { .. }))
+                .is_some_and(|c| !c.is_dimension() && !c.is_point_fix())
         })
     }
 
@@ -1853,8 +2010,41 @@ impl Editor {
         })
     }
 
-    /// The relations of `option` that are already on the sketch.
+    /// Whether `option` is Fix: pins of points and radii where they are.
+    pub fn is_fix_option(option: &ConstraintOption) -> bool {
+        !option.constraints.is_empty()
+            && option
+                .constraints
+                .iter()
+                .all(|c| c.is_point_fix() || matches!(c, Constraint::FixRadius { .. }))
+    }
+
+    /// The pins (a point's Fix, or its x or y alone; a radius's) on what `fix` pins.
+    fn pins_on(&self, fix: &Constraint) -> impl Iterator<Item = ConstraintId> + '_ {
+        let target = fix.entities().next();
+        target.into_iter().flat_map(move |e| {
+            self.doc.constraints_on(e).filter(move |id| {
+                self.doc.constraint(*id).is_some_and(|c| {
+                    (c.is_point_fix() || matches!(c, Constraint::FixRadius { .. }))
+                        && c.entities().next() == Some(e)
+                })
+            })
+        })
+    }
+
+    /// The relations of `option` that are already on the sketch. For Fix, every pin on what
+    /// it pins (Fix may have pinned only a point's x or y, or left a point others hold).
     pub fn existing_relations(&self, option: &ConstraintOption) -> Vec<ConstraintId> {
+        if Self::is_fix_option(option) {
+            let mut ids: Vec<ConstraintId> = option
+                .constraints
+                .iter()
+                .flat_map(|c| self.pins_on(c))
+                .collect();
+            ids.sort_unstable();
+            ids.dedup();
+            return ids;
+        }
         option
             .constraints
             .iter()
@@ -1862,8 +2052,23 @@ impl Editor {
             .collect()
     }
 
-    /// The relations of `option` that aren't on the sketch yet.
+    /// The relations of `option` that aren't on the sketch yet. For Fix, the pins of what is
+    /// neither pinned nor already held fully by other relations and dimensions (#203).
     pub fn missing_relations(&self, option: &ConstraintOption) -> Vec<Constraint> {
+        if Self::is_fix_option(option) {
+            return option
+                .constraints
+                .iter()
+                .filter(|c| {
+                    self.pins_on(c).next().is_none()
+                        && c.entities().next().is_none_or(|e| {
+                            self.analysis.definitions.get(&e)
+                                != Some(&drift_solver::Definition::Full)
+                        })
+                })
+                .copied()
+                .collect();
+        }
         option
             .constraints
             .iter()
@@ -1872,9 +2077,12 @@ impl Editor {
             .collect()
     }
 
-    /// Whether everything `option` would add is already there.
+    /// Whether everything `option` would add is already there (Fix: something picked is
+    /// pinned, and nothing is left free).
     pub fn has_relations(&self, option: &ConstraintOption) -> bool {
-        !option.constraints.is_empty() && self.missing_relations(option).is_empty()
+        !option.constraints.is_empty()
+            && self.missing_relations(option).is_empty()
+            && (!Self::is_fix_option(option) || !self.existing_relations(option).is_empty())
     }
 
     /// Take relations off (one undo step).
@@ -3501,7 +3709,22 @@ mod tests {
                 },
             ],
         )
-        .unwrap_err(); // fixing both ends of a dimensioned line is redundant
+        .unwrap(); // pins only what the length leaves free (#203)
+        let pins: Vec<Constraint> = ed
+            .doc
+            .constraints()
+            .filter(|(_, c)| c.is_point_fix())
+            .map(|(_, c)| *c)
+            .collect();
+        assert!(
+            matches!(
+                pins.as_slice(),
+                [Constraint::Fix { point, .. }, Constraint::FixX { point: other, .. } | Constraint::FixY { point: other, .. }]
+                    if *point == a && *other == b
+            ),
+            "{pins:?}"
+        );
+        assert_eq!(ed.analysis().dof, Some(0));
         assert!(ed.set_dimension(ids[0], -3.0).is_err());
         assert!((length(&ed, a, b) - 25.0).abs() < 1e-9);
     }

@@ -105,9 +105,9 @@ pub(super) fn relations(s: &mut Session, a: &Value) -> Res {
         match s.editor.add_constraints(c.type_name(), &[c]) {
             Ok(ids) => added.extend(ids.iter().map(|id| json!(id.to_string()))),
             // Already true: nothing to add, and no harm in asking.
-            Err(EditError::Redundant) => skipped.push(json!({
-                "index": i, "reason": "already implied by existing constraints"
-            })),
+            Err(e @ (EditError::Redundant | EditError::FullyDefined(_))) => {
+                skipped.push(json!({ "index": i, "reason": e.to_string() }))
+            }
             Err(e) => {
                 return Err(format!(
                     "relations[{i}] ({}): {e}",

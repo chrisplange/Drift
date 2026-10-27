@@ -1476,7 +1476,9 @@ pub fn layout_glyphs(doc: &Document, map: &ScreenMap) -> Vec<GlyphLayout> {
                     place(e, base, id, kind, &mut out);
                 }
             }
-            Constraint::Fix { point, .. } => place(point, point_base(point), id, Fix, &mut out),
+            Constraint::Fix { point, .. }
+            | Constraint::FixX { point, .. }
+            | Constraint::FixY { point, .. } => place(point, point_base(point), id, Fix, &mut out),
             Constraint::FixRadius { curve, .. } => {
                 let base = center_of(doc, curve)
                     .map(|w| (map.to_screen(w) + vec2(12.0, 12.0), vec2(1.0, 0.0)));

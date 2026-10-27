@@ -475,3 +475,31 @@ fn smoke_files_edits_during_open_are_asked_about() {
     assert!(app.editor.doc.is_empty());
     assert!(!app.is_dirty());
 }
+
+/// A drawing holding a value that isn't a number isn't saved: the file would never open
+/// again. The status line names the point (#215).
+#[test]
+fn smoke_files_non_finite_is_not_saved() {
+    let Some(mut h) = harness() else { return };
+    let dir = scratch_dir("smoke-non-finite");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("Broken.drift");
+    std::fs::write(&path, b"the good version").unwrap();
+    h.state_mut().file.path = Some(path.clone());
+    let ed = &mut h.state_mut().editor;
+    ed.doc.begin();
+    let bad = ed.doc.add_point(DVec2::new(f64::NAN, 0.0));
+    ed.commit("Point");
+    h.key_press_modifiers(EguiModifiers::COMMAND, Key::S);
+    h.run_steps(3);
+    assert_eq!(std::fs::read(&path).unwrap(), b"the good version");
+    let status = h.state().status.as_ref().map(|s| s.text.clone());
+    assert!(
+        status
+            .as_deref()
+            .is_some_and(|s| s.starts_with("Not saved") && s.contains(&bad.to_string())),
+        "{status:?}"
+    );
+    assert!(h.state().is_dirty());
+    let _ = std::fs::remove_dir_all(&dir);
+}

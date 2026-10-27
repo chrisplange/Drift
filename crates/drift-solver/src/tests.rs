@@ -1180,3 +1180,95 @@ fn move_curves(
         .fold(0.0, f64::max);
     (report, off)
 }
+
+/// A line of zero length (its ends dragged together) under each relation and dimension that
+/// divides by a length: the solve may fail, but nothing that isn't a number is ever written
+/// back (#215).
+#[test]
+fn zero_length_line_never_writes_non_finite() {
+    let all_finite = |doc: &Document| doc.first_non_finite().is_none();
+    // A relation on the zero-length line, given it, another line, a circle and a point.
+    type Relation = fn(EntityId, EntityId, EntityId, EntityId) -> Constraint;
+    let relations: Vec<Relation> = vec![
+        |z, _, _, _| Constraint::Horizontal { line: z },
+        |z, _, _, _| Constraint::Vertical { line: z },
+        |z, o, _, _| Constraint::Parallel { a: z, b: o },
+        |z, o, _, _| Constraint::Perpendicular { a: z, b: o },
+        |z, o, _, _| Constraint::Equal { a: z, b: o },
+        |z, o, _, _| Constraint::Collinear { a: z, b: o },
+        |z, _, c, _| Constraint::Tangent { a: z, b: c },
+        |z, _, _, x| Constraint::PointOnCurve { point: x, curve: z },
+        |z, _, _, x| Constraint::Midpoint { point: x, line: z },
+        |z, _, _, x| Constraint::PointLineDistance {
+            point: x,
+            line: z,
+            value: 3.0,
+        },
+        |z, o, _, _| Constraint::Angle {
+            a: z,
+            b: o,
+            degrees: 30.0,
+        },
+        |z, o, _, _| Constraint::Angle {
+            a: o,
+            b: z,
+            degrees: 60.0,
+        },
+        |z, _, _, _| Constraint::Distance {
+            a: z,
+            b: z,
+            value: 5.0,
+        },
+    ];
+    for (i, relation) in relations.iter().enumerate() {
+        let mut doc = Document::new();
+        let (p, q) = (doc.add_point(v(0.0, 0.0)), doc.add_point(v(10.0, 1.0)));
+        let z = doc.add_line(p, q).unwrap();
+        let (r, s) = (doc.add_point(v(0.0, 20.0)), doc.add_point(v(12.0, 25.0)));
+        let o = doc.add_line(r, s).unwrap();
+        let center = doc.add_point(v(30.0, 0.0));
+        let c = doc.add_circle(center, 4.0).unwrap();
+        let x = doc.add_point(v(5.0, 7.0));
+        // Symmetric about the line as well, for the axis equations.
+        let (m, n) = (doc.add_point(v(-3.0, 4.0)), doc.add_point(v(4.0, -3.0)));
+        let _ = doc.add_constraint(Constraint::Symmetric {
+            a: m,
+            b: n,
+            axis: z,
+        });
+        if doc.add_constraint(relation(z, o, c, x)).is_err() {
+            continue;
+        }
+        // Its ends together, as a drag can leave them.
+        doc.set_point(q, v(0.0, 0.0)).unwrap();
+        solved(&mut doc);
+        assert!(
+            all_finite(&doc),
+            "relation {i}: a solve wrote a non-finite value"
+        );
+        // And dragged there, with the relations kept.
+        doc.set_point(q, v(10.0, 1.0)).unwrap();
+        solved(&mut doc);
+        doc.set_point(q, v(0.0, 0.0)).unwrap();
+        solve(
+            &mut doc,
+            &SolveOptions {
+                dragged: Param::point(q).to_vec(),
+                ..Default::default()
+            },
+        );
+        assert!(
+            all_finite(&doc),
+            "relation {i}: a drag wrote a non-finite value"
+        );
+    }
+}
+
+#[test]
+fn set_point_refuses_non_finite() {
+    let mut doc = Document::new();
+    let p = doc.add_point(v(1.0, 2.0));
+    assert!(doc.set_point(p, v(f64::NAN, 0.0)).is_err());
+    assert!(doc.set_point(p, v(0.0, f64::INFINITY)).is_err());
+    assert_eq!(doc.point(p).unwrap(), v(1.0, 2.0));
+}

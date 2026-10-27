@@ -92,6 +92,15 @@ impl Picking {
     }
 }
 
+/// Why a drawing holding a value that isn't a number wasn't saved.
+#[cfg(not(feature = "demo"))]
+pub(crate) fn not_saved_non_finite(id: drift_core::EntityId) -> String {
+    format!(
+        "Not saved: {id} has a position that isn't a number, and the file couldn't be opened \
+         again. Undo the last change, or delete {id}, then save"
+    )
+}
+
 /// Whether a path names a sketch (by its extension).
 fn is_sketch_file(path: &std::path::Path) -> bool {
     path.extension()
@@ -502,6 +511,12 @@ impl DriftApp {
     /// `confirmed`.
     #[cfg(not(feature = "demo"))]
     pub(crate) fn write_file(&mut self, as_new: bool, confirmed: bool) {
+        // A value that isn't a number would make the file unreadable: write nothing.
+        if let Some(id) = self.editor.doc.first_non_finite() {
+            self.editor.notice = Some(not_saved_non_finite(id));
+            self.after_save = None;
+            return;
+        }
         let saved = self.saved();
         if saved.loses_newer_data && !confirmed {
             self.lossy_save = Some(as_new);

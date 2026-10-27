@@ -146,6 +146,10 @@ impl Document {
 
     pub fn set_point(&mut self, id: EntityId, at: DVec2) -> Result<(), DocumentError> {
         self.point(id)?;
+        // A NaN saved is written as `null`, and the file then won't open.
+        if !at.is_finite() {
+            return Err(DocumentError::InvalidValue);
+        }
         self.touch_moved(id);
         let entity = Entity {
             kind: EntityKind::Point(at),

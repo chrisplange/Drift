@@ -2,6 +2,9 @@
 //! - an insert's Y scale is 1 where the file leaves it out (AutoCAD, ODA and acadrust do, so
 //!   a door mirrored as −1, 1 came in turned 180°);
 //! - "by block" colours, line types and weights take each copy's own;
+//! - a block's curves on layers of their own (not 0) keep those layers' look, whatever layer
+//!   the copy is on (they took the copy's: grey lines in a copy on a green layer came in
+//!   green);
 //! - a block keeps to its own drawing: one of the same name already in the drawing is used
 //!   only if it is the same;
 //! - a dynamic block's copies are named after it, not `*U12`;
@@ -396,6 +399,145 @@ fn an_external_reference_is_named_in_a_note() {
         back.notes
     );
     assert_eq!(back.entities.len(), 1, "the rest still comes in");
+}
+
+/// A layer table entry: name, colour index, line type and weight (hundredths of a mm).
+fn layer(
+    name: &'static str,
+    color: &'static str,
+    line_type: &'static str,
+    weight: &'static str,
+) -> Vec<(i32, &'static str)> {
+    vec![
+        (0, "LAYER"),
+        (2, name),
+        (70, "0"),
+        (62, color),
+        (6, line_type),
+        (370, weight),
+    ]
+}
+
+/// A line in a block, on `layer`, with these extra codes, from (0, y) to (100, y).
+fn line_on(
+    layer: &'static str,
+    y: &'static str,
+    extra: &[(i32, &'static str)],
+) -> Vec<(i32, &'static str)> {
+    let mut out = vec![(0, "LINE"), (8, layer)];
+    out.extend_from_slice(extra);
+    out.extend_from_slice(&[(10, "0"), (20, y), (11, "100"), (21, y)]);
+    out
+}
+
+#[test]
+fn block_curves_on_their_own_layers_keep_those_layers_look() {
+    let mut all = vec![
+        (0, "SECTION"),
+        (2, "HEADER"),
+        (9, "$INSUNITS"),
+        (70, "4"),
+        (0, "ENDSEC"),
+        (0, "SECTION"),
+        (2, "TABLES"),
+        (0, "TABLE"),
+        (2, "LTYPE"),
+        (0, "LTYPE"),
+        (2, "DASHED"),
+        (70, "0"),
+        (72, "65"),
+        (73, "2"),
+        (40, "6"),
+        (49, "4"),
+        (49, "-2"),
+        (0, "ENDTAB"),
+        (0, "TABLE"),
+        (2, "LAYER"),
+    ];
+    all.extend(layer("0", "7", "CONTINUOUS", "-3"));
+    all.extend(layer("Green", "3", "CONTINUOUS", "25"));
+    all.extend(layer("Grey", "8", "CONTINUOUS", "-3"));
+    all.extend(layer("White", "7", "CONTINUOUS", "-3"));
+    all.extend(layer("Dash", "1", "DASHED", "50"));
+    all.extend([
+        (0, "ENDTAB"),
+        (0, "ENDSEC"),
+        (0, "SECTION"),
+        (2, "BLOCKS"),
+        (0, "BLOCK"),
+        (2, "B"),
+        (10, "0"),
+        (20, "0"),
+    ]);
+    all.extend(line_on("Grey", "0", &[]));
+    all.extend(line_on("White", "10", &[]));
+    all.extend(line_on("0", "20", &[]));
+    // "By block" on a layer of its own: still the copy's.
+    all.extend(line_on(
+        "Grey",
+        "30",
+        &[(62, "0"), (6, "BYBLOCK"), (370, "-2")],
+    ));
+    all.extend(line_on("Dash", "40", &[]));
+    // Its own colour wins over its layer's.
+    all.extend(line_on("Grey", "50", &[(62, "5")]));
+    all.extend([
+        (0, "ENDBLK"),
+        (0, "ENDSEC"),
+        (0, "SECTION"),
+        (2, "ENTITIES"),
+        (0, "INSERT"),
+        (8, "Green"),
+        (2, "B"),
+        (10, "0"),
+        (20, "0"),
+        (0, "ENDSEC"),
+        (0, "EOF"),
+    ]);
+    let back = read(&dxf(&all), 1.0).unwrap();
+    assert_eq!(back.blocks.len(), 1);
+    let look = |y: f64| {
+        let e = back.blocks[0]
+            .entities
+            .iter()
+            .find(|e| matches!(e.shape, Shape::Line { a, .. } if (a.y - y).abs() < 1e-9))
+            .unwrap_or_else(|| panic!("the line at {y}"));
+        (e.color, e.line_type, e.weight)
+    };
+    let grey = Rgb([128, 128, 128]);
+    assert_eq!(
+        look(0.0),
+        (Some(grey), Some(LineType::Continuous), None),
+        "on Grey"
+    );
+    // Colour 7 (white on a dark screen, black on paper) is black, the theme's foreground.
+    assert_eq!(look(10.0).0, Some(Rgb([0, 0, 0])), "on White");
+    assert_eq!(look(20.0), (None, None, None), "on 0: the copy's");
+    assert_eq!(look(30.0), (None, None, None), "by block: the copy's");
+    assert_eq!(
+        look(40.0),
+        (
+            Some(Rgb([255, 0, 0])),
+            Some(LineType::Dashed),
+            Some(drift_core::LineWeight(50))
+        ),
+        "on Dash"
+    );
+    assert_eq!(look(50.0).0, Some(Rgb([0, 0, 255])), "its own colour");
+    // In the drawing: the copy on Green, the grey line still grey.
+    let mut doc = Document::new();
+    import(&mut doc, &back);
+    let (_, copy) = doc.instances().next().unwrap();
+    assert_eq!(doc.layer(copy.layer).unwrap().name, "Green");
+    let block = doc.block(copy.block).unwrap();
+    assert_eq!(
+        block
+            .items
+            .iter()
+            .filter(|it| it.appearance.color == Some(grey))
+            .count(),
+        1
+    );
 }
 
 /// A DWG saved by acadrust (which leaves the Y scale out when it is 1, as AutoCAD does) with

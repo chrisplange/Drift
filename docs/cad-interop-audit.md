@@ -178,7 +178,7 @@ at how often architects' AutoCAD files have it.
 |---|---|---|---|---|
 | Layer colour (ACI and true colour), off, frozen, locked, no-plot | All read. | — | — | — |
 | Entity colour (ACI, true colour 420), ByLayer | Read. | Colour books (430) fall back to 420, which is right. | — | — |
-| Line weights (370, layer and entity) | Nearest Drift weight. | — | — | — |
+| Line weights (370, layer and entity) | Nearest AutoCAD weight (`LineWeight::nearest_cad`, as for PDF and SVG). | — | — | — |
 | **Line type scale** (`$LTSCALE`, `$CELTSCALE`, entity 48) | Ignored. | Dashes come out at Drift's density, not the drawing's: dense or near-continuous in inch drawings with LTSCALE 48. Fix: carry `$LTSCALE` into the document's line type scale, and entity 48 where Drift can hold it. | Medium | Very common |
 | Line types beyond five | Matched to the nearest of Drift's five, with a note. The note also counts the standard ones every new drawing has (DASHED2, DOT, BORDER, DIVIDE), so it shows on almost every file. | DASHDOT, DOT, BORDER, DIVIDE and complex line types (text or shapes in them) are approximated. Real custom line types need core support (L, later). Fix now: don't count types no entity or layer uses. | Low | Very common (the note) |
 | Entity visibility (60) | Ignored: invisible entities are drawn. | Fix: skip them. | Low | Rare |

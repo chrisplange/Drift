@@ -13,6 +13,17 @@ pub struct Pen {
     /// Line width in mm (on paper).
     pub width: f64,
     pub line_type: LineType,
+    /// For an item in a block definition: what it takes from the copy that places it.
+    pub by_block: ByBlock,
+}
+
+/// The parts of a block item's pen that are its copy's (CAD's "by block"): the pen's own
+/// value is only the look of one copy, for formats that don't keep blocks.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ByBlock {
+    pub color: bool,
+    pub width: bool,
+    pub line_type: bool,
 }
 
 impl Pen {
@@ -23,6 +34,22 @@ impl Pen {
             color: Self::BLACK,
             width,
             line_type: LineType::Continuous,
+            by_block: ByBlock::default(),
+        }
+    }
+
+    /// A block item's pen as placed by a copy drawn with `copy`.
+    pub fn in_copy(self, copy: Pen) -> Pen {
+        let b = self.by_block;
+        Pen {
+            color: if b.color { copy.color } else { self.color },
+            width: if b.width { copy.width } else { self.width },
+            line_type: if b.line_type {
+                copy.line_type
+            } else {
+                self.line_type
+            },
+            by_block: ByBlock::default(),
         }
     }
 
@@ -85,7 +112,8 @@ pub enum Prim {
         mask: bool,
     },
     /// A copy of a block defined in [`Drawing::blocks`]: its items mirrored (x → −x) if
-    /// `mirror`, scaled, turned by `angle` degrees and moved to `at`.
+    /// `mirror`, scaled, turned by `angle` degrees and moved to `at`. Its pen is the copy's
+    /// look, which the block's "by block" items take ([`Pen::in_copy`]).
     Insert {
         block: String,
         at: DVec2,
@@ -520,7 +548,7 @@ impl Drawing {
                             } else {
                                 inner.layer.clone()
                             },
-                            pen: inner.pen,
+                            pen: inner.pen.in_copy(item.pen),
                             prim: t.prim(&inner.prim),
                             clip: item.clip,
                         });

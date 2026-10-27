@@ -1006,20 +1006,8 @@ fn classify_line_type(name: &str, pattern: &[f64]) -> LineType {
     if known != LineType::Continuous || pattern.is_empty() {
         return known;
     }
-    let dashes: Vec<f64> = pattern.iter().copied().filter(|d| *d > 0.0).collect();
-    let dots = pattern.iter().filter(|d| **d == 0.0).count();
-    if dashes.is_empty() && dots == 0 {
-        return LineType::Continuous;
-    }
-    // A long dash with shorter marks between: one mark is a centre line, more a phantom.
-    let longest = dashes.iter().copied().fold(0.0, f64::max);
-    let short = dashes.iter().filter(|d| **d < longest * 0.5).count() + dots;
-    match short {
-        0 if longest <= 3.5 => LineType::Hidden,
-        0 => LineType::Dashed,
-        1 => LineType::Center,
-        _ => LineType::Phantom,
-    }
+    // The marks are the dashes and dots (gaps are negative), as PDF / SVG dashes are read.
+    LineType::of_marks(pattern)
 }
 
 /// An entity's own colour: a true colour (420), else an indexed one (62). `None` for
@@ -1154,7 +1142,7 @@ fn pattern_definition(g: &[(i32, &str)], scale: f64, angle: f64, mm: f64) -> (Ve
 fn own_weight(raw: &Raw) -> Option<LineWeight> {
     raw.int(370)
         .filter(|w| *w >= 0)
-        .map(|w| LineWeight::nearest(w as f64 / 100.0))
+        .map(|w| LineWeight::nearest_cad(w as f64 / 100.0))
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1170,6 +1158,10 @@ struct Inherit {
     /// The insert's line type and weight: for entities whose are "by block".
     line_type: Option<LineType>,
     weight: Option<LineWeight>,
+    /// In a block kept for copies: an entity on a layer of its own (not 0) shows that
+    /// layer's look where it is "by layer", as AutoCAD draws it, since a block's items have
+    /// no layer in Drift (left "by layer", they would take the copy's).
+    own_layers: bool,
 }
 
 impl Inherit {
@@ -1220,6 +1212,10 @@ struct Reader<'a> {
     xrefs_used: BTreeSet<String>,
     /// Layers' transparency as opacity, by name (upper case).
     layer_opacity: HashMap<String, f64>,
+    /// Layers' colour, line type and weight, by name (upper case): for entities in kept
+    /// blocks on layers of their own (see [`Inherit::own_layers`]). Colour 7 is black,
+    /// which Drift shows as the theme's foreground and exports as 7.
+    layer_looks: HashMap<String, (Rgb, LineType, Option<LineWeight>)>,
     /// Hatch patterns the file names without defining them are AutoCAD's own: acad.pat (in
     /// inches) for imperial drawings, else acadiso.pat (in millimetres).
     imperial: bool,
@@ -1260,21 +1256,27 @@ impl<'a> Reader<'a> {
             (Some(outer), "0") => outer.clone(),
             _ => own_layer.to_owned(),
         };
+        // "By layer" in a kept block, on a layer other than 0: that layer's look.
+        let layer_look = if inherit.own_layers && layer != "0" {
+            self.layer_looks.get(&layer.to_ascii_uppercase()).copied()
+        } else {
+            None
+        };
         // Colour 0 is "by block": the insert's.
         let color = if raw.int(62) == Some(0) && raw.int(420).is_none() {
             inherit.color
         } else {
-            own_color(raw)
+            own_color(raw).or(layer_look.map(|l| l.0))
         };
         let line_type = if raw.s(6).is_some_and(|t| t.eq_ignore_ascii_case("BYBLOCK")) {
             inherit.line_type
         } else {
-            self.line_type(raw)
+            self.line_type(raw).or(layer_look.map(|l| l.1))
         };
         let weight = if raw.int(370) == Some(-2) {
             inherit.weight
         } else {
-            own_weight(raw)
+            own_weight(raw).or(layer_look.and_then(|l| l.2))
         };
         // Entities drawn in their own plane are mirrored when that plane faces away.
         let local = |flips: bool| if flips { xf.then(&Xf::FLIP) } else { *xf };
@@ -1756,6 +1758,7 @@ impl<'a> Reader<'a> {
                     color,
                     line_type,
                     weight,
+                    own_layers: inherit.own_layers,
                 };
                 for child in &entities {
                     self.emit(child, &inner, &inherit, depth + 1, false, sink);
@@ -1815,6 +1818,7 @@ impl<'a> Reader<'a> {
                         color,
                         line_type,
                         weight,
+                        own_layers: false,
                     };
                     let variant = if look.gives_a_look() && self.uses_by_block(&key, 0) {
                         format!(
@@ -1855,6 +1859,7 @@ impl<'a> Reader<'a> {
                         color: color.or(inherit.color),
                         line_type,
                         weight,
+                        own_layers: inherit.own_layers,
                     };
                     let turn = Xf::insert(DVec2::ZERO, angle, 1.0, 1.0);
                     for row in 0..rows {
@@ -1875,6 +1880,7 @@ impl<'a> Reader<'a> {
                     color,
                     line_type,
                     weight,
+                    own_layers: inherit.own_layers,
                 };
                 for attrib in raw.kids.iter().filter(|k| k.kind == "ATTRIB") {
                     self.emit(attrib, xf, &inherit, depth + 1, false, sink);
@@ -2373,6 +2379,15 @@ pub fn read_at(text: &str, default_mm_per_unit: f64, drawn_at: f64) -> Result<Dx
         }
     }
 
+    let layer_looks = layers
+        .iter()
+        .map(|l| {
+            (
+                l.name.to_ascii_uppercase(),
+                (l.color.unwrap_or(Rgb([0, 0, 0])), l.line_type, l.weight),
+            )
+        })
+        .collect();
     let true_names = copy_of
         .into_iter()
         .filter_map(|(copy, of)| Some((copy, record_names.get(&of)?.clone())))
@@ -2390,6 +2405,7 @@ pub fn read_at(text: &str, default_mm_per_unit: f64, drawn_at: f64) -> Result<Dx
         xrefs,
         xrefs_used: BTreeSet::new(),
         layer_opacity,
+        layer_looks,
         // Without $MEASUREMENT, inches and feet drawings are imperial.
         imperial: match measurement {
             Some(m) => m == 0,
@@ -2416,9 +2432,13 @@ pub fn read_at(text: &str, default_mm_per_unit: f64, drawn_at: f64) -> Result<Dx
             .unwrap_or_else(|| block.name.to_owned());
         let (base, entities) = (block.base, block.entities.clone());
         let place = world.then(&Xf::translate(-base));
+        let inherit = Inherit {
+            own_layers: true,
+            ..kept.inherit.clone()
+        };
         let mut inner = Sink::default();
         for raw in &entities {
-            reader.emit(raw, &place, &kept.inherit, 1, false, &mut inner);
+            reader.emit(raw, &place, &inherit, 1, false, &mut inner);
         }
         out_blocks.push(DxfBlock {
             name: name.clone(),

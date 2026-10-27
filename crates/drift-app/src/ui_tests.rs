@@ -2178,10 +2178,10 @@ fn a_cycles_arc_tools_and_switches_mid_polyline() {
     let Some(mut h) = harness() else { return };
     let v = DVec2::new;
     for expected in [
-        ToolKind::Arc,
         ToolKind::ThreePointArc,
         ToolKind::TangentArc,
         ToolKind::Arc,
+        ToolKind::ThreePointArc,
     ] {
         h.key_press(Key::A);
         h.run();
@@ -9615,8 +9615,8 @@ fn tangent_arcs_and_lines_start_on_a_partial_ellipse_and_a_pen_curve() {
             .expect("ends there")
     };
 
-    // The reported case: the tangent arc tool on the ellipse's end (A three times).
-    for _ in 0..3 {
+    // The reported case: the tangent arc tool on the ellipse's end (A twice).
+    for _ in 0..2 {
         h.key_press(Key::A);
         h.run();
     }

@@ -27,8 +27,8 @@ dimension, render and analyse Drift drawings: see [Drawing with AI assistants](d
 
 ## What works today
 
-- **Drawing tools:** polyline (L), rectangle (R), circle (C), arcs (A: centre-point; press A
-  again for 3-point, then tangent arc) and point (V). While drawing a polyline, A continues with
+- **Drawing tools:** polyline (L), rectangle (R), circle (C), arcs (A: 3-point; press A
+  again for tangent, then centre-point arc) and point (V). While drawing a polyline, A continues with
   a tangent arc from the last point and L switches back to lines.
   Click point by point, or press, drag and release. Or type exact values while drawing:
   X/Y for the first point, then length/angle, width/height, diameter, radius or sweep (Tab

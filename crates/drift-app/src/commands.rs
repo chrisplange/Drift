@@ -67,6 +67,8 @@ pub(crate) enum Command {
     Paste,
     PasteInPlace,
     Delete,
+    DeleteView,
+    RemoveFromSheet,
     Duplicate,
     Group,
     Rename,
@@ -317,6 +319,10 @@ pub(crate) enum When {
     PickedAnnotations,
     /// Walls picked.
     Walls,
+    /// A view picked: its crop in the model (nothing else picked), or on the sheet shown.
+    PickedView,
+    /// A view picked on the sheet shown.
+    ViewOnSheet,
     /// An area fill picked whose outline's corners touch but aren't joined.
     JoinableCorners,
     /// Only in development builds (and hidden elsewhere).
@@ -348,6 +354,22 @@ impl When {
             When::SpaceableDimensions => app.can_align_dimensions().1,
             When::PickedAnnotations => !app.picked_annotations().is_empty(),
             When::Walls => !app.editor.selected_walls().is_empty(),
+            When::PickedView => {
+                app.picked_view.is_some_and(|v| ed.doc.view(v).is_some())
+                    && if app.sheet_preview {
+                        When::ViewOnSheet.holds(app)
+                    } else {
+                        !selection && app.selected_constraint.is_none()
+                    }
+            }
+            When::ViewOnSheet => {
+                app.sheet_preview
+                    && app.sheet_pick == crate::app::sheet_editor::SheetPick::View
+                    && app
+                        .current_sheet()
+                        .and_then(|id| app.editor.doc.sheet(id))
+                        .is_some_and(|s| !s.viewports.is_empty())
+            }
             When::JoinableCorners => app.editor.joinable_fill().is_some(),
             When::Debug => cfg!(debug_assertions),
         }
@@ -374,6 +396,8 @@ impl When {
             When::SpaceableDimensions => "Pick three or more stacked parallel dimensions",
             When::PickedAnnotations => "Pick some dimensions or notes",
             When::Walls => "Pick a wall",
+            When::PickedView => "Pick a view's crop, or a view on a sheet",
+            When::ViewOnSheet => "Pick a view on a sheet",
             When::JoinableCorners => "Pick an area fill whose corners aren't joined",
         }
     }
@@ -631,8 +655,8 @@ pub(crate) const RAIL: &[(Option<Category>, &[Slot])] = {
                     more: &[tool(T::Ellipse), tool(T::EllipseArc)],
                 },
                 Slot {
-                    head: tool(T::Arc),
-                    more: &[tool(T::ThreePointArc), tool(T::TangentArc)],
+                    head: tool(T::ThreePointArc),
+                    more: &[tool(T::TangentArc), tool(T::Arc)],
                 },
                 Slot::one(tool(T::Point)),
                 Slot::one(tool(T::Text)),
@@ -965,6 +989,26 @@ fn table() -> Vec<Spec> {
         .guard(Guard::Idle)
         .when(When::Picked)
         .aliases(&["ERASE", "E"]),
+        Spec::new(
+            "edit.delete_view",
+            C::Edit,
+            K::DeleteView,
+            "Delete view…",
+            "Delete the picked view from the model, and so from every sheet it is on (asking \
+             first if it is on one)",
+        )
+        .guard(Guard::Idle)
+        .when(When::PickedView),
+        Spec::new(
+            "edit.remove_from_sheet",
+            C::Edit,
+            K::RemoveFromSheet,
+            "Remove view from sheet",
+            "Take the picked view off this sheet; it stays in the model, for placing again",
+        )
+        .menu("Remove from sheet")
+        .guard(Guard::Idle)
+        .when(When::ViewOnSheet),
         Spec::new(
             "edit.construction",
             C::Edit,
@@ -1437,11 +1481,11 @@ fn table() -> Vec<Spec> {
             .aliases(&["CIRCLE", "C"]),
         tool("draw.ellipse", C::Draw, ToolKind::Ellipse).aliases(&["ELLIPSE", "EL"]),
         tool("draw.partial_ellipse", C::Draw, ToolKind::EllipseArc),
-        tool("draw.arc", C::Draw, ToolKind::Arc)
+        tool("draw.three_point_arc", C::Draw, ToolKind::ThreePointArc)
             .keys(const { &[plain(Key::A)] })
             .aliases(&["ARC", "A"]),
-        tool("draw.three_point_arc", C::Draw, ToolKind::ThreePointArc),
         tool("draw.tangent_arc", C::Draw, ToolKind::TangentArc),
+        tool("draw.arc", C::Draw, ToolKind::Arc),
         tool("draw.point", C::Draw, ToolKind::Point)
             .keys(const { &[plain(Key::V)] })
             .aliases(&["POINT", "PO"]),

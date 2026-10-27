@@ -1,6 +1,7 @@
 //! The tool rail: every place on it in view at 1280 × 800 and in a narrow window; a family's
 //! flyout by right-click and by holding the button down; the family then shows the tool
-//! picked, by key too; Move and Rotate on the rail act on the selection.
+//! picked, by key too; the arcs' order; no tooltip covers an open flyout; Move and Rotate on
+//! the rail act on the selection.
 
 use crate::commands::{self, Command, RAIL};
 
@@ -130,17 +131,125 @@ fn smoke_rail_flyouts_and_families() {
     );
 
     // Esc closes a flyout without picking anything.
-    let arc = on_rail(&h, "Arc").expect("Arc on the rail");
-    h.get_all_by_label("Arc")
+    // The arcs lead with the 3-point arc, then Tangent, then Centre (#206).
+    let arc = on_rail(&h, "3-point arc").expect("3-point arc heads the arcs");
+    h.get_all_by_label("3-point arc")
         .find(|n| n.rect() == arc)
         .unwrap()
         .click_secondary();
     h.run();
     assert!(h.state().rail_flyout.is_some());
+    let flyout: Vec<f32> = ["3-point arc", "Tangent arc", "Centre arc"]
+        .iter()
+        .map(|l| {
+            h.get_all_by_label(l)
+                .map(|n| n.rect())
+                .find(|r| r.left() > arc.right())
+                .unwrap_or_else(|| panic!("{l} in the flyout"))
+                .top()
+        })
+        .collect();
+    assert!(flyout.is_sorted(), "the arcs' flyout order: {flyout:?}");
     h.key_press(Key::Escape);
     h.run();
     assert!(h.state().rail_flyout.is_none(), "Esc closes the flyout");
     assert_eq!(h.state().tool.kind(), ToolKind::Circle);
+    // A is the 3-point arc, and A again steps to Tangent, then Centre.
+    for expected in [ToolKind::ThreePointArc, ToolKind::TangentArc, ToolKind::Arc] {
+        h.key_press(Key::A);
+        h.run();
+        assert_eq!(h.state().tool.kind(), expected);
+    }
+    assert!(on_rail(&h, "Centre arc").is_some(), "the family shows it");
+}
+
+/// The tooltips on screen.
+fn tooltips(h: &Harness<'_, DriftApp>) -> Vec<egui::Rect> {
+    h.ctx.memory(|m| {
+        m.areas()
+            .visible_layer_ids()
+            .into_iter()
+            .filter(|l| l.order == egui::Order::Tooltip)
+            .filter_map(|l| m.area_rect(l.id))
+            .collect()
+    })
+}
+
+/// The open flyout's rect.
+fn flyout_rect(h: &Harness<'_, DriftApp>) -> egui::Rect {
+    assert!(h.state().rail_flyout.is_some(), "the flyout is open");
+    h.ctx
+        .memory(|m| m.area_rect(egui::Id::new("rail_flyout")))
+        .expect("the flyout's area")
+}
+
+/// Wait long enough for a tooltip to show (the pointer still).
+fn rest(h: &mut Harness<'_, DriftApp>) {
+    for _ in 0..6 {
+        h.step();
+    }
+    h.run();
+}
+
+fn assert_clear_of_flyout(h: &Harness<'_, DriftApp>, what: &str) {
+    let flyout = flyout_rect(h);
+    for tip in tooltips(h) {
+        assert!(
+            !tip.shrink(0.5).intersects(flyout),
+            "{what}: a tooltip {tip:?} covers the flyout {flyout:?}"
+        );
+    }
+}
+
+#[test]
+fn smoke_rail_tooltips_clear_of_the_flyout() {
+    let Some(mut h) = harness() else { return };
+    let rect = on_rail(&h, "Rectangle").expect("Rectangle on the rail");
+    // Resting on the row shows its tooltip.
+    h.hover_at(rect.center());
+    rest(&mut h);
+    assert!(!tooltips(&h).is_empty(), "the row has a tooltip");
+    h.hover_at(egui::pos2(640.0, 400.0));
+    rest(&mut h);
+
+    // Held open, the pointer still on the row: no tooltip over the flyout.
+    h.hover_at(rect.center());
+    h.run();
+    button(&h, rect.center(), true);
+    for _ in 0..12 {
+        h.step();
+    }
+    h.run();
+    assert_clear_of_flyout(&h, "held");
+    button(&h, rect.center(), false);
+    h.run();
+    h.key_press(Key::Escape);
+    h.run();
+    assert!(h.state().rail_flyout.is_none());
+
+    // Right-clicked, the pointer moving a little on the row: still none.
+    h.get_all_by_label("Rectangle")
+        .find(|n| n.rect() == rect)
+        .unwrap()
+        .click_secondary();
+    h.run();
+    h.hover_at(rect.center() + egui::vec2(2.0, 1.0));
+    rest(&mut h);
+    assert_clear_of_flyout(&h, "right-clicked");
+
+    // A flyout row's tooltip shows, beside the flyout.
+    let polygon = h
+        .get_all_by_label("Polygon")
+        .map(|n| n.rect())
+        .find(|r| r.left() > rect.right())
+        .expect("Polygon in the flyout");
+    h.hover_at(polygon.center());
+    rest(&mut h);
+    assert!(!tooltips(&h).is_empty(), "the flyout's row has a tooltip");
+    assert_clear_of_flyout(&h, "a flyout row");
+    save_png("drift_smoke_rail_flyout_tooltip.png", &mut h);
+    h.key_press(Key::Escape);
+    h.run();
 }
 
 #[test]

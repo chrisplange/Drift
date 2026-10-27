@@ -106,7 +106,7 @@ fixed on one level, say), the relation is left out and the status bar says so.
 With an axis locked (X or Y), the point goes on the axis, however near another point the pointer
 is. Hovering a point off the axis marks it with its usual marker, dimmed, and rings the spot on
 the axis in line with it where the click will land (the label says **In line with endpoint**).
-The centre-point **Arc** does the same for its end, which always lies on its circle: a point
+The **Centre arc** does the same for its end, which always lies on its circle: a point
 off the circle is marked, and the ring shows where the arc will end, toward it (**Toward
 endpoint**).
 

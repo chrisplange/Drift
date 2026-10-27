@@ -1345,6 +1345,19 @@ impl DriftApp {
         let views = self.editor.doc.placed_views(&sheet);
         self.view_input(ui, &response, rect, id, &sheet, &views);
         self.view_drop(ui, &response, rect, id);
+        // Right-click on a view: what can be done with it.
+        if self.sheet_pick == crate::app::sheet_editor::SheetPick::View {
+            response.context_menu(|ui| {
+                ui.set_min_width(210.0);
+                self.command_items(
+                    ui,
+                    &[
+                        Some(crate::commands::Command::RemoveFromSheet),
+                        Some(crate::commands::Command::DeleteView),
+                    ],
+                );
+            });
+        }
 
         let zoom = self.preview.zoom;
         let to_screen = |p: DVec2| self.paper_to_preview(rect, p);
@@ -1528,7 +1541,8 @@ impl DriftApp {
                     ViewGrip::Resize(..) => "Resize view",
                 });
             }
-        } else if response.clicked_by(PointerButton::Primary)
+        } else if (response.clicked_by(PointerButton::Primary)
+            || response.clicked_by(PointerButton::Secondary))
             && let Some(pos) = response.interact_pointer_pos()
         {
             // A view, or the paper around the views: picked, and shown in the Inspector. A
@@ -1550,7 +1564,9 @@ impl DriftApp {
                 }
                 None => self.sheet_pick = crate::app::sheet_editor::SheetPick::Paper,
             }
-            self.show_panel(crate::dock::Panel::Inspector);
+            if response.clicked_by(PointerButton::Primary) {
+                self.show_panel(crate::dock::Panel::Inspector);
+            }
         }
         if response.hovered() {
             let grip = self.view_drag.as_ref().map(|d| d.grip).or_else(|| {

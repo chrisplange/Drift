@@ -161,12 +161,6 @@ impl DriftApp {
                 None => icons::button(ui, TILE, selected, label, draw),
             })
             .inner;
-        let response = response
-            .on_hover_ui(|ui| self.rail_tooltip(ui, slot, command))
-            .on_disabled_hover_ui(|ui| {
-                self.rail_tooltip(ui, slot, command);
-                ui.label(egui::RichText::new(spec.when.reason()).small().weak());
-            });
         if command == Command::Tool(ToolKind::Select) {
             self.pick_filter_badge(ui, &response);
         }
@@ -196,6 +190,17 @@ impl DriftApp {
                 self.rail_flyout = Some(open(true));
             }
         }
+        // No row's tooltip while a flyout is open: it would draw over the flyout's rows.
+        let response = if self.rail_flyout.is_none() {
+            response
+                .on_hover_ui(|ui| self.rail_tooltip(ui, slot, command))
+                .on_disabled_hover_ui(|ui| {
+                    self.rail_tooltip(ui, slot, command);
+                    ui.label(egui::RichText::new(spec.when.reason()).small().weak());
+                })
+        } else {
+            response
+        };
         if !response.clicked() || !enabled {
             return None;
         }
@@ -286,6 +291,7 @@ impl DriftApp {
         let mac = cfg!(target_os = "macos");
         let mut picked = None;
         let mut rows = Vec::new();
+        let mut tips = Vec::new();
         let area = egui::Area::new(egui::Id::new("rail_flyout"))
             .fixed_pos(flyout.at)
             .order(egui::Order::Foreground)
@@ -310,18 +316,41 @@ impl DriftApp {
                                     |p, r, c| draw_icon(p, r, icon, c),
                                 )
                             })
-                            .inner
-                            .on_hover_text(spec.description)
-                            .on_disabled_hover_text(spec.when.reason());
+                            .inner;
                         if response.clicked() {
                             picked = Some(command);
                         }
                         if enabled {
                             rows.push((response.rect, command));
                         }
+                        let tip = if enabled {
+                            spec.description
+                        } else {
+                            spec.when.reason()
+                        };
+                        tips.push((response, tip));
                     }
                 });
             });
+        // A row's tooltip goes beside the flyout (left of it if there's no room on the
+        // right), so it never covers the other rows.
+        let frame = area.response.rect;
+        for (response, tip) in &tips {
+            let beside = egui::Rect::from_x_y_ranges(frame.x_range(), response.rect.y_range());
+            let mut tooltip = if response.enabled() {
+                egui::Tooltip::for_enabled(response)
+            } else {
+                egui::Tooltip::for_disabled(response)
+            };
+            tooltip.popup = tooltip
+                .popup
+                .anchor(beside)
+                .align(egui::RectAlign::RIGHT_START)
+                .align_alternatives(&[egui::RectAlign::RIGHT_START, egui::RectAlign::LEFT_START]);
+            tooltip.show(|ui| {
+                ui.label(*tip);
+            });
+        }
         let (pointer, released, pressed, escape) = ctx.input(|i| {
             (
                 i.pointer.interact_pos(),

@@ -1614,3 +1614,59 @@ fn a_duplicated_group_brings_its_fills() {
     let areas = fill_areas(&mut ed);
     assert_eq!(areas.len(), 4, "{areas:?}");
 }
+
+/// During a drag a click-fill keeps the area found before unless the drag moves its own
+/// outline (finding the drawing's areas each frame is too slow on big drawings); it's found
+/// again at the commit, and undo and redo bring back the right areas.
+#[test]
+fn click_fills_keep_their_areas_during_a_drag_and_refind_them_after() {
+    let mut ed = Editor::default();
+    let (p, _) = plate(&mut ed);
+    let (q, _) = polygon(
+        &mut ed,
+        &[v(100.0, 0.0), v(120.0, 0.0), v(120.0, 10.0), v(100.0, 10.0)],
+    );
+    let plate_fill = ed.add_fill_at(v(2.0, 2.0)).unwrap();
+    let other = ed.add_fill_at(v(110.0, 5.0)).unwrap();
+    assert!(close(found(&mut ed, plate_fill).0, 800.0));
+    assert!(close(found(&mut ed, other).0, 200.0));
+
+    // Drag the plate's corner (5 a frame): the plate's fill follows each frame, the other
+    // is kept.
+    ed.doc.begin();
+    for k in 1..=3 {
+        assert!(ed.drag(&[p[2]], v(5.0, 0.0), &[]));
+        ed.sync();
+        let shapes = ed.fill_shapes();
+        let grown = 800.0 + 0.5 * 5.0 * k as f64 * 20.0;
+        assert!(close(shapes[&plate_fill].region.area, grown), "frame {k}");
+        assert!(close(shapes[&other].region.area, 200.0));
+    }
+    // A curve added in the drag's transaction is a change of structure: the other fill is
+    // found again (cut in two by the new line, it keeps its whole area).
+    let a = ed.doc.add_point(v(110.0, -5.0));
+    let b = ed.doc.add_point(v(110.0, 15.0));
+    ed.doc.add_line(a, b).unwrap();
+    assert!(close(found(&mut ed, other).0, 200.0));
+    assert!(ed.commit("Drag"));
+    assert!(close(found(&mut ed, plate_fill).0, 950.0));
+    assert!(close(found(&mut ed, other).0, 200.0));
+
+    // Drag the other outline's corner (outside the plate): only its fill changes.
+    ed.doc.begin();
+    assert!(ed.drag(&[q[2]], v(0.0, 10.0), &[]));
+    ed.sync();
+    assert!(close(found(&mut ed, plate_fill).0, 950.0));
+    assert!(ed.commit("Drag"));
+    let moved = found(&mut ed, other).0;
+    assert!(
+        moved > 200.0 + 1.0,
+        "the other fill follows its outline: {moved}"
+    );
+    assert!(ed.undo());
+    assert!(close(found(&mut ed, other).0, 200.0));
+    assert!(ed.undo());
+    assert!(close(found(&mut ed, plate_fill).0, 800.0));
+    assert!(ed.redo());
+    assert!(close(found(&mut ed, plate_fill).0, 950.0));
+}

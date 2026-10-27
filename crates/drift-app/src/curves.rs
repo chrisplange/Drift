@@ -13,20 +13,38 @@ use crate::editor::Editor;
 /// Handle point → (its curve, the anchor it belongs to).
 pub type HandleOwners = HashMap<EntityId, (EntityId, EntityId)>;
 
+/// Every Bézier with its anchors and handles (a, c1, c2, b).
+type Beziers = Rc<Vec<(EntityId, [EntityId; 4])>>;
+
+/// [`Editor::handle_owners`] and the Béziers, for one structure of the document.
+pub(crate) struct HandleCache {
+    structure: u64,
+    owners: Rc<HandleOwners>,
+    beziers: Beziers,
+}
+
 impl Editor {
-    /// Every Bézier handle point, with its curve and anchor (cached per document revision).
+    /// Every Bézier handle point, with its curve and anchor (cached while the document's
+    /// structure is unchanged).
     pub fn handle_owners(&self) -> Rc<HandleOwners> {
-        let revision = self.doc.revision();
-        if let Some((r, map)) = &*self.handle_cache.borrow()
-            && *r == revision
+        self.handles().0
+    }
+
+    /// The handle owners and every Bézier.
+    fn handles(&self) -> (Rc<HandleOwners>, Beziers) {
+        let structure = self.doc.structure();
+        if let Some(cache) = &*self.handle_cache.borrow()
+            && cache.structure == structure
         {
-            return map.clone();
+            return (cache.owners.clone(), cache.beziers.clone());
         }
         let mut map = HandleOwners::new();
+        let mut beziers = Vec::new();
         for (id, e) in self.doc.iter() {
             if let EntityKind::Bezier { a, c1, c2, b } = e.kind {
                 map.insert(c1, (id, a));
                 map.insert(c2, (id, b));
+                beziers.push((id, [a, c1, c2, b]));
             }
         }
         // A point that is also an end of some curve isn't (only) a handle.
@@ -37,9 +55,13 @@ impl Editor {
             .flatten()
             .collect();
         map.retain(|h, _| !ends.contains(h));
-        let map = Rc::new(map);
-        *self.handle_cache.borrow_mut() = Some((revision, map.clone()));
-        map
+        let (map, beziers) = (Rc::new(map), Rc::new(beziers));
+        *self.handle_cache.borrow_mut() = Some(HandleCache {
+            structure,
+            owners: map.clone(),
+            beziers: beziers.clone(),
+        });
+        (map, beziers)
     }
 
     /// The curves whose handles show: picked or hovered, or with a picked or hovered anchor
@@ -48,16 +70,12 @@ impl Editor {
         let touched = |id: &EntityId| {
             self.selection.contains(id) || self.hovered == Some(*id) || self.highlight.contains(id)
         };
-        self.doc
+        // (Only the Béziers are looked at: none in most drawings.)
+        self.handles()
+            .1
             .iter()
-            .filter_map(|(id, e)| match e.kind {
-                EntityKind::Bezier { a, c1, c2, b }
-                    if touched(&id) || [a, c1, c2, b].iter().any(touched) =>
-                {
-                    Some(id)
-                }
-                _ => None,
-            })
+            .filter(|(id, points)| touched(id) || points.iter().any(touched))
+            .map(|(id, _)| *id)
             .collect()
     }
 

@@ -282,6 +282,15 @@ fn outline_of(region: &Region, ids: &[EntityId]) -> Vec<EntityId> {
     c
 }
 
+/// [`Editor::fill_shapes`] as last found, and what it was found for.
+pub(crate) struct FillShapesCache {
+    revision: u64,
+    structure: u64,
+    /// The transaction it was found in, if any.
+    serial: Option<u64>,
+    shapes: Rc<BTreeMap<FillId, FillShape>>,
+}
+
 /// The sketch's solid curves with their bounds, in document order: what
 /// [`Editor::uncrossed_region`] finds a crossed fill's area among.
 type SolidCurves = Vec<(EntityId, Shape, Bounds)>;
@@ -290,17 +299,23 @@ impl Editor {
     /// Every fill's region, as of the current document revision.
     pub fn fill_shapes(&mut self) -> Rc<BTreeMap<FillId, FillShape>> {
         let revision = self.doc.revision();
-        if let Some((r, shapes)) = &self.fill_shapes
-            && *r == revision
+        if let Some(cache) = &self.fill_shapes
+            && cache.revision == revision
         {
-            return shapes.clone();
+            return cache.shapes.clone();
         }
         let fills: Vec<(FillId, Fill)> = self.doc.fills().map(|(id, f)| (id, f.clone())).collect();
         let walls = self.doc.has_walls().then(|| self.wall_owners());
+        // During a drag the revision changes every frame. A click-fill none of whose curves
+        // moved keeps the area found before (finding the drawing's areas takes far longer
+        // than a frame); every area is found again once the transaction ends.
+        let mut kept = self.kept_fill_shapes();
         // The drawing's areas are found only when a fill needs them (not for shapes' fills
         // and walls' pochés, which know their own).
         let needs_areas = fills.iter().any(|(id, f)| {
-            f.path.is_none() && !walls.as_ref().is_some_and(|w| w.fills.contains_key(id))
+            f.path.is_none()
+                && !walls.as_ref().is_some_and(|w| w.fills.contains_key(id))
+                && !kept.contains_key(id)
         });
         let (regions, ids) = if needs_areas {
             (self.regions(), self.region_ids())
@@ -364,6 +379,10 @@ impl Editor {
                 }
                 continue;
             }
+            if let Some(shape) = kept.remove(&id) {
+                out.insert(id, shape);
+                continue;
+            }
             // A curve drawn across a fill cuts its outline into pieces: the fill keeps its
             // whole area, found again without the curves that cross it.
             let uncrossed = if areas.exact(&fill).is_none() {
@@ -414,8 +433,47 @@ impl Editor {
             }
         }
         let out = Rc::new(out);
-        self.fill_shapes = Some((revision, out.clone()));
+        self.fill_shapes = Some(FillShapesCache {
+            revision,
+            structure: self.doc.structure(),
+            serial: self
+                .doc
+                .in_transaction()
+                .then(|| self.doc.transaction_serial()),
+            shapes: out.clone(),
+        });
         out
+    }
+
+    /// The click-fills' shapes from the last [`fill_shapes`](Self::fill_shapes) that still
+    /// hold inside the open transaction: found in it or just before it began, with nothing
+    /// added, removed or restyled since and none of the fill's curves moved.
+    fn kept_fill_shapes(&self) -> BTreeMap<FillId, FillShape> {
+        let Some(cache) = &self.fill_shapes else {
+            return BTreeMap::new();
+        };
+        let current = self.doc.in_transaction()
+            && cache.structure == self.doc.structure()
+            && (cache.serial == Some(self.doc.transaction_serial())
+                || (cache.serial.is_none() && cache.revision == self.doc.revision_at_begin()));
+        if !current {
+            return BTreeMap::new();
+        }
+        let moved = |curves: &[EntityId]| {
+            curves.iter().any(|c| self.doc.touched_in_transaction(*c))
+                || self
+                    .doc
+                    .defining_points(curves.iter().copied())
+                    .iter()
+                    .any(|p| self.doc.touched_in_transaction(*p))
+        };
+        cache
+            .shapes
+            .iter()
+            .filter(|(id, _)| self.doc.fill(**id).is_some_and(|f| f.path.is_none()))
+            .filter(|(_, s)| !moved(&s.curves))
+            .map(|(id, s)| (*id, s.clone()))
+            .collect()
     }
 
     /// Keep each fill on its area as an edit changes it, inside the edit's open transaction

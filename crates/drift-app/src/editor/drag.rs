@@ -162,7 +162,14 @@ impl Editor {
         // Walls follow their centrelines as they go (keeping their joins), and a hatch whose
         // shape moved as one goes with it.
         if self.doc.has_walls() {
+            let before = self.doc.revision();
             self.follow_walls_with(joins.as_deref());
+            // (The faces they made again are out of the scope: the index is told of them too,
+            // or it would look over the whole drawing for what changed.)
+            if self.doc.revision() != before {
+                self.index
+                    .update_moved(&self.doc, self.doc.entities_touched_in_transaction());
+            }
         }
         self.carry_hatches();
         ok

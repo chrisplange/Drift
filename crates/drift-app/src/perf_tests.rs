@@ -1363,3 +1363,81 @@ fn perf_walls_openings() {
     );
     println!("  budgets: commit 5 ms, drag frame +2 ms");
 }
+
+/// Drag frames on big drawings (sweep items A1, A2): a frame is the drag, the editor's sync
+/// and the fills' shapes, as the canvas asks for them. The tree of the spatial index waits
+/// for the end of the drag, and click-fills away from the drag keep their areas.
+#[test]
+#[ignore = "torture test: run with --release --ignored --nocapture"]
+fn perf_drag_frames() {
+    println!();
+    let frame = |ed: &mut Editor, point: EntityId| {
+        ed.doc.begin();
+        let r = time(20, |k| {
+            let _ = ed.drag(&[point], v(1.0 + (k % 4) as f64, 0.0), &[]);
+            ed.sync();
+            let _ = ed.fill_shapes();
+        });
+        ed.doc.rollback();
+        ed.sync();
+        r
+    };
+
+    // A1: the wall floor (26,000 entities), dragging a furniture point.
+    let (doc, grid) = wall_floor();
+    let mut ed = Editor::new(doc);
+    ed.auto_relations = false;
+    let owners = ed.doc.wall_owners();
+    let loose = ed
+        .doc
+        .iter()
+        .find(|(id, e)| e.kind.is_point() && owners.get(*id).is_none())
+        .map(|(id, _)| id)
+        .unwrap();
+    let floor = frame(&mut ed, loose);
+    report("wall floor: drag frame of a furniture point", floor);
+    let node = frame(&mut ed, grid[20][12]);
+    report("wall floor: drag frame of a 4-way node", node);
+    // Picking right after the drag finds the point where it was let go.
+    let at = ed.doc.point(loose).unwrap();
+    ed.doc.begin();
+    let _ = ed.drag(&[loose], v(300.0, 0.0), &[]);
+    ed.sync();
+    assert_eq!(
+        ed.index.pick(at + v(300.0, 0.0), 1.0, |_| true),
+        Some(loose)
+    );
+    assert!(ed.commit("Drag"));
+    assert_eq!(
+        ed.index.pick(at + v(300.0, 0.0), 1.0, |_| true),
+        Some(loose)
+    );
+    assert_ne!(ed.index.pick(at, 1.0, |_| true), Some(loose));
+
+    // A2: 10,000 curves, without and with one click-fill away from the dragged point.
+    let (doc, _) = torture_sketch();
+    let mut ed = Editor::new(doc);
+    let far = ed
+        .doc
+        .iter()
+        .find(|(id, e)| e.kind.is_point() && ed.doc.point(*id).unwrap().x > 300.0)
+        .map(|(id, _)| id)
+        .unwrap();
+    let bare = frame(&mut ed, far);
+    report("10k curves: drag frame, no fills", bare);
+    let fill = ed.add_fill_at(v(10.0, 7.0)).unwrap();
+    let _ = ed.fill_shapes();
+    let filled = frame(&mut ed, far);
+    report("10k curves: drag frame, one click-fill", filled);
+    assert!(!ed.fill_shapes()[&fill].lost);
+
+    println!("  budgets: wall floor frame 3 ms (a node 6 ms); a click-fill adds under 5 ms");
+    assert!(floor.0 < 3.0, "wall floor drag frame {:.2} ms", floor.0);
+    assert!(node.0 < 6.0, "wall node drag frame {:.2} ms", node.0);
+    assert!(
+        filled.0 < bare.0 + 5.0,
+        "a click-fill makes a drag frame {:.2} ms (without: {:.2} ms)",
+        filled.0,
+        bare.0
+    );
+}

@@ -1,7 +1,7 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use drift_core::{Bounds, DVec2, Document, EntityId, EntityKind, Shape};
-use rstar::{AABB, RTree, RTreeObject};
+use rstar::{AABB, Envelope, RTree, RTreeObject};
 
 use crate::primitives::{distance, shape_intersects_rect, shape_within_rect};
 
@@ -45,8 +45,10 @@ pub struct SceneIndex {
     shapes: HashMap<EntityId, Shape>,
     /// What each entity was at the last update (a change means roles need working out).
     kinds: HashMap<EntityId, EntityKind>,
-    /// Shapes moved (during a drag) without the tree following; rebuilt on the next update.
-    tree_stale: bool,
+    /// Shapes moved during a drag whose places in the tree are out of date. Searches test
+    /// them one by one; the tree is rebuilt once the transaction ends. (Ordered, so results
+    /// don't depend on hash order.)
+    moved: BTreeSet<EntityId>,
     roles: HashMap<EntityId, PointRole>,
 }
 
@@ -57,7 +59,7 @@ impl Default for SceneIndex {
             tree: RTree::new(),
             shapes: HashMap::new(),
             kinds: HashMap::new(),
-            tree_stale: false,
+            moved: BTreeSet::new(),
             roles: HashMap::new(),
         }
     }
@@ -72,9 +74,13 @@ impl SceneIndex {
 
     /// Bring the index up to date with the document. Shapes are compared in place, point
     /// roles are worked out again only when the sketch's structure changed, and the tree is
-    /// rebuilt only when something moved.
+    /// rebuilt only when something moved. Shapes moved by [`update_moved`](Self::update_moved)
+    /// wait for the tree until the document's transaction ends.
     pub fn update(&mut self, doc: &Document) {
-        if self.revision == Some(doc.revision()) && !self.tree_stale {
+        if self.revision == Some(doc.revision()) {
+            if !self.moved.is_empty() && !doc.in_transaction() {
+                self.rebuild_tree();
+            }
             return;
         }
         self.revision = Some(doc.revision());
@@ -115,6 +121,7 @@ impl SceneIndex {
                 .collect();
             for (id, _) in &removed {
                 self.shapes.remove(id);
+                self.moved.remove(id);
             }
         }
         if structure_changed {
@@ -176,34 +183,55 @@ impl SceneIndex {
         }
         // The tree is rebuilt in one go when anything moved: bulk loading is fast (about
         // 6 ms for 28,000 entries) and rstar 0.13 can panic on removes mixed with inserts.
-        if !changed.is_empty() || !removed.is_empty() || self.tree_stale {
-            self.tree_stale = false;
-            let entries = self
-                .shapes
-                .iter()
-                .map(|(id, shape)| Entry {
-                    id: *id,
-                    envelope: envelope(shape),
-                })
-                .collect();
-            self.tree = RTree::bulk_load(entries);
+        if !changed.is_empty() || !removed.is_empty() || !self.moved.is_empty() {
+            // Within a transaction (a drag), geometry that only changed shape (walls' faces
+            // following a dragged node, say) waits for the end of it like moved geometry;
+            // anything added or removed rebuilds now, taking the moved shapes with it.
+            let added = changed.iter().any(|(_, old)| old.is_none());
+            if doc.in_transaction() && !added && removed.is_empty() {
+                self.moved.extend(changed.iter().map(|(id, _)| *id));
+                return;
+            }
+            self.rebuild_tree();
         }
     }
 
-    /// During a drag: refresh just the shapes of `ids` (all that can have moved), leaving the
-    /// tree as it was until the next [`update`](Self::update). Searches near the moving
-    /// geometry may miss it meanwhile; it's excluded from snapping while it moves anyway.
+    fn rebuild_tree(&mut self) {
+        self.moved.clear();
+        let entries = self
+            .shapes
+            .iter()
+            .map(|(id, shape)| Entry {
+                id: *id,
+                envelope: envelope(shape),
+            })
+            .collect();
+        self.tree = RTree::bulk_load(entries);
+    }
+
+    /// During a drag: refresh just the shapes of `ids` (all that can have moved). The tree
+    /// keeps their old places until the transaction ends (rebuilding it costs more than the
+    /// drag); meanwhile searches test the moved shapes one by one, so they're found where
+    /// they are now. An id that was added or deleted leaves the index for the next
+    /// [`update`](Self::update) to bring up to date.
     pub fn update_moved(&mut self, doc: &Document, ids: impl IntoIterator<Item = EntityId>) {
+        let mut known = true;
         for id in ids {
-            if let Some(shape) = doc.shape(id)
-                && let Some(old) = self.shapes.get_mut(&id)
-                && *old != shape
-            {
-                *old = shape;
-                self.tree_stale = true;
+            let shape = doc.shape(id).filter(|_| doc.is_visible(id));
+            match (shape, self.shapes.get_mut(&id)) {
+                (Some(shape), Some(old)) => {
+                    if *old != shape {
+                        *old = shape;
+                        self.moved.insert(id);
+                    }
+                }
+                (None, None) => {}
+                _ => known = false,
             }
         }
-        self.revision = Some(doc.revision());
+        if known {
+            self.revision = Some(doc.revision());
+        }
     }
 
     fn mark_center(&mut self, id: EntityId) {
@@ -224,9 +252,18 @@ impl SceneIndex {
     /// Entities whose bounding boxes intersect `rect`.
     pub fn query(&self, rect: Bounds) -> impl Iterator<Item = EntityId> + '_ {
         let envelope = AABB::from_corners(rect.min.to_array(), rect.max.to_array());
+        // Moved shapes are left out of the tree's answer (their places there are old) and
+        // tested where they are now.
+        let moved = self.moved.iter().copied().filter(move |id| {
+            self.shapes
+                .get(id)
+                .is_some_and(|s| self::envelope(s).intersects(&envelope))
+        });
         self.tree
             .locate_in_envelope_intersecting(envelope)
             .map(|e| e.id)
+            .filter(|id| !self.moved.contains(id))
+            .chain(moved)
     }
 
     /// Entities within `tolerance` of `p`, with their distances.
@@ -346,6 +383,39 @@ mod tests {
         index.update(&doc);
         assert_eq!(index.pick(v(1.0, 1.0), 0.1, |_| true), None);
         assert_eq!(index.pick(v(5.0, 5.0), 0.1, |_| true), Some(p));
+    }
+
+    #[test]
+    fn moves_in_a_transaction_are_found_before_the_rebuild() {
+        let mut doc = Document::new();
+        let p = doc.add_point(v(1.0, 1.0));
+        let q = doc.add_point(v(-3.0, -3.0));
+        let mut index = SceneIndex::build(&doc);
+        doc.begin();
+        doc.set_point(p, v(5.0, 5.0)).unwrap();
+        index.update_moved(&doc, [p]);
+        index.update(&doc);
+        assert!(!index.moved.is_empty(), "no rebuild while the drag goes on");
+        assert_eq!(index.pick(v(1.0, 1.0), 0.1, |_| true), None);
+        assert_eq!(index.pick(v(5.0, 5.0), 0.1, |_| true), Some(p));
+        assert_eq!(index.pick(v(-3.0, -3.0), 0.1, |_| true), Some(q));
+        // A change the index finds itself (not told of) waits too, unless it adds something.
+        doc.set_point(q, v(-8.0, -8.0)).unwrap();
+        index.update(&doc);
+        assert!(index.moved.contains(&q));
+        assert_eq!(index.pick(v(-8.0, -8.0), 0.1, |_| true), Some(q));
+        let r = doc.add_point(v(30.0, 30.0));
+        index.update(&doc);
+        assert!(index.moved.is_empty(), "an addition rebuilds the tree");
+        assert_eq!(index.pick(v(30.0, 30.0), 0.1, |_| true), Some(r));
+        assert_eq!(index.pick(v(5.0, 5.0), 0.1, |_| true), Some(p));
+        doc.set_point(p, v(6.0, 6.0)).unwrap();
+        index.update_moved(&doc, [p]);
+        doc.commit("move");
+        index.update(&doc);
+        assert!(index.moved.is_empty(), "rebuilt once the transaction ends");
+        assert_eq!(index.pick(v(6.0, 6.0), 0.1, |_| true), Some(p));
+        assert_eq!(index.pick(v(1.0, 1.0), 0.1, |_| true), None);
     }
 
     #[test]

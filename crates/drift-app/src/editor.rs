@@ -261,11 +261,11 @@ impl Anchor {
     }
 }
 
-/// A drag's cached scope: the dragged ids, the entity and constraint counts it was worked out
-/// for, and the connected entities.
+/// A drag's cached scope: the dragged ids, the document structure it was worked out for, and
+/// the connected entities.
 type DragScope = (
     Vec<EntityId>,
-    (usize, usize),
+    u64,
     std::rc::Rc<std::collections::HashSet<EntityId>>,
 );
 
@@ -383,10 +383,7 @@ pub struct Editor {
     pub base_point_done: bool,
     /// The block the Place block tool places.
     pub place_block: Option<drift_core::BlockId>,
-    pub(crate) fill_shapes: Option<(
-        u64,
-        std::rc::Rc<std::collections::BTreeMap<drift_core::FillId, crate::fills::FillShape>>,
-    )>,
+    pub(crate) fill_shapes: Option<crate::fills::FillShapesCache>,
     /// The fills of copies of blocks, in the world (by document revision).
     pub(crate) copy_fills: Option<(u64, std::rc::Rc<Vec<crate::fills::CopyFill>>)>,
     /// The areas among each block's curves, with the curves they were found among (kept
@@ -557,7 +554,7 @@ impl Editor {
         &self,
         ids: &[EntityId],
     ) -> std::rc::Rc<std::collections::HashSet<EntityId>> {
-        let structure = (self.doc.len(), self.doc.constraints().count());
+        let structure = self.doc.structure();
         if let Some((key, s, scope)) = &*self.drag_scope.borrow()
             && key == ids
             && *s == structure

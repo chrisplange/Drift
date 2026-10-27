@@ -525,11 +525,15 @@ pub struct Document {
     next_wall_id: u32,
     /// Incremented on every change, so caches (spatial index, autosave) can tell when to refresh.
     revision: u64,
+    /// Changed by every change except geometry moving: see [`structure`](Self::structure).
+    structure: u64,
     /// Pre-images of everything touched by the open transaction.
     journal: Option<HashMap<Key, Option<Record>>>,
     /// Counts transactions begun, so work spanning calls (a drag) can tell it is still in the
     /// same one (not part of the content).
     transaction_serial: u64,
+    /// The revision when the open (or last) transaction began.
+    begun_at: u64,
     /// Leader targets as of the last [`remember_leader_targets`](Self::remember_leader_targets)
     /// (not part of the content).
     last_anchor_pos: HashMap<AnnotationId, DVec2>,
@@ -618,10 +622,29 @@ impl Default for Document {
             next_drafting_id: 1,
             next_wall_id: 1,
             revision: 0,
+            structure: next_structure(),
             journal: None,
             transaction_serial: 0,
+            begun_at: 0,
             last_anchor_pos: HashMap::new(),
         }
+    }
+}
+
+/// A fresh [`Document::structure`] value (one counter for every document, so a cache keyed
+/// on it can't mistake one drawing for another).
+fn next_structure() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
+/// True if `a` and `b` are the same entity on the same points, differing at most in a
+/// circle's radius or a point's place.
+fn same_points(a: &EntityKind, b: &EntityKind) -> bool {
+    match (a, b) {
+        (EntityKind::Point(_), EntityKind::Point(_)) => true,
+        (EntityKind::Circle { center: c, .. }, EntityKind::Circle { center: d, .. }) => c == d,
+        _ => a == b,
     }
 }
 
@@ -695,6 +718,15 @@ impl Document {
 
     pub fn revision(&self) -> u64 {
         self.revision
+    }
+
+    /// Changes with every edit except geometry moving (points placed, circles resized, a
+    /// dimension's label dragged): adding, removing or rewiring entities, restyling them,
+    /// relations, layers, groups, fills, walls, undo and redo. Caches of the drawing's
+    /// make-up key on it, so they stay warm through a drag, when the revision changes every
+    /// frame. Values are never reused, not even by another document.
+    pub fn structure(&self) -> u64 {
+        self.structure
     }
 
     pub fn len(&self) -> usize {
@@ -857,7 +889,14 @@ impl Document {
         if self.journal.is_none() {
             self.journal = Some(HashMap::new());
             self.transaction_serial += 1;
+            self.begun_at = self.revision;
         }
+    }
+
+    /// The revision when the open (or last) transaction began: what a cache made then was
+    /// made of, before any of the transaction's changes.
+    pub fn revision_at_begin(&self) -> u64 {
+        self.begun_at
     }
 
     /// Which transaction is open (or was last): a new number for each [`begin`](Self::begin)
@@ -1046,6 +1085,7 @@ impl Document {
                 self.restore(key, before);
             }
             self.revision += 1;
+            self.structure = next_structure();
         }
     }
 
@@ -1098,6 +1138,14 @@ impl Document {
     }
 
     fn touch_key(&mut self, key: Key) {
+        if !matches!(key, Key::Placement(_)) {
+            self.structure = next_structure();
+        }
+        self.record_touch(key);
+    }
+
+    /// Note a change to `key` for the open transaction without changing the structure.
+    fn record_touch(&mut self, key: Key) {
         if self.journal.is_some() {
             let current = self.record(key);
             if let Some(journal) = &mut self.journal {
@@ -1109,6 +1157,11 @@ impl Document {
 
     fn touch(&mut self, id: EntityId) {
         self.touch_key(Key::Entity(id));
+    }
+
+    /// [`touch`](Self::touch) for geometry that only moves: same entity, same points.
+    fn touch_moved(&mut self, id: EntityId) {
+        self.record_touch(Key::Entity(id));
     }
 
     fn touch_constraint(&mut self, id: ConstraintId) {
@@ -1310,6 +1363,7 @@ impl Document {
             );
         }
         self.revision += 1;
+        self.structure = next_structure();
     }
 
     // ----- Edits -----------------------------------------------------------------------------
@@ -1457,7 +1511,7 @@ impl Document {
 
     pub fn set_point(&mut self, id: EntityId, at: DVec2) -> Result<(), DocumentError> {
         self.point(id)?;
-        self.touch(id);
+        self.touch_moved(id);
         let entity = Entity {
             kind: EntityKind::Point(at),
             ..self.entities[&id]
@@ -1473,7 +1527,7 @@ impl Document {
                 if !(radius > 0.0 && radius.is_finite()) {
                     return Err(DocumentError::Degenerate("circle"));
                 }
-                self.touch(id);
+                self.touch_moved(id);
                 if let Some(e) = self.entities.get_mut(&id) {
                     e.kind = EntityKind::Circle { center, radius };
                 }
@@ -1541,7 +1595,11 @@ impl Document {
             EntityKind::Point(_) => {}
         }
         if self.entities[&id].kind != kind {
-            self.touch(id);
+            if same_points(&self.entities[&id].kind, &kind) {
+                self.touch_moved(id);
+            } else {
+                self.touch(id);
+            }
             if let Some(e) = self.entities.get_mut(&id) {
                 e.kind = kind;
             }
@@ -1589,7 +1647,11 @@ impl Document {
             return Err(DocumentError::Degenerate("arc"));
         }
         if self.entities[&id].kind != kind {
-            self.touch(id);
+            if same_points(&self.entities[&id].kind, &kind) {
+                self.touch_moved(id);
+            } else {
+                self.touch(id);
+            }
             if let Some(e) = self.entities.get_mut(&id) {
                 e.kind = kind;
             }
@@ -4737,6 +4799,36 @@ mod tests {
         assert!(history.undo(&mut doc));
         assert_eq!(doc.custom_patterns(), "");
         assert!(copy.custom_patterns().starts_with("*A"));
+    }
+
+    #[test]
+    fn structure_survives_moves_but_not_edits() {
+        let mut doc = Document::new();
+        let (p, l) = square(&mut doc);
+        let c = doc.add_point(v(50.0, 50.0));
+        let circle = doc.add_circle(c, 3.0).unwrap();
+        let s = doc.structure();
+        doc.begin();
+        doc.translate([l[0]], v(5.0, 5.0));
+        doc.set_point(p[2], v(1.0, 2.0)).unwrap();
+        doc.set_radius(circle, 4.0).unwrap();
+        doc.set_entity_kind(
+            circle,
+            EntityKind::Circle {
+                center: c,
+                radius: 5.0,
+            },
+        )
+        .unwrap();
+        assert_eq!(doc.structure(), s, "moving geometry keeps the structure");
+        doc.set_style(l[1], LineKind::Construction);
+        let restyled = doc.structure();
+        assert_ne!(restyled, s);
+        doc.delete([l[2]]);
+        assert_ne!(doc.structure(), restyled);
+        doc.rollback();
+        assert_ne!(doc.structure(), s, "a rollback is a change too");
+        assert_ne!(Document::new().structure(), Document::new().structure());
     }
 
     #[test]

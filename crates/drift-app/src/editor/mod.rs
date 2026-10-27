@@ -177,6 +177,10 @@ pub struct Editor {
     /// Closed shapes the drawing tools make (rectangles, polygons, circles, ellipses, slots,
     /// closed pen paths) are filled as they are drawn, in [`fill_style`](Self::fill_style).
     pub fill_new_shapes: bool,
+    /// How many times a shape's fill has been picked on its own (by a double-click,
+    /// Alt-click or the menu's Edit fill): the status line says how until it has been a few
+    /// times (kept with the view preferences).
+    pub fill_alone_picks: u32,
     pub selected_annotation: Option<drift_core::AnnotationId>,
     /// Dimensions and annotations picked besides the primary ones (the app's picked
     /// dimension and `selected_annotation`): added with Shift, or by a box.
@@ -333,6 +337,7 @@ impl Editor {
         self.opening = was.opening.clone();
         self.pick_any_area = was.pick_any_area;
         self.fill_new_shapes = was.fill_new_shapes;
+        self.fill_alone_picks = was.fill_alone_picks;
         self.fill_style = was.fill_style.clone();
         self.pick_filter = was.pick_filter;
         self.dim_mode = was.dim_mode;

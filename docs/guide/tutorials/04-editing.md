@@ -163,8 +163,9 @@ plate's holes) can't be turned. Without a selection, R is the Rectangle tool.
 
 ## Scale with the transform handles
 
-Pick two or more curves (or a picked area) with the **Select** tool. A box with handles
-appears round them.
+Pick two or more curves, one closed curve (a circle or an ellipse), or a picked area with
+the **Select** tool. A box with handles appears round them. One open curve (a line or an
+arc) has no box: drag its own grips instead.
 
 ![A picked rectangle with its transform box: corner and side handles](../images/transform-handles.png)
 
@@ -186,10 +187,21 @@ new, scaled value. The width and height then step through round sizes, finer as 
 in; turn that off with **Edit → Preferences… → Drawing aids → Round sizes when scaling with dimensions
 (Alt)**. Each scale is one undo step.
 
+One picked circle:
+
+- Its box sits a little further out, so its edge still resizes it: drag the edge to change
+  the radius, or a handle to scale.
+- Every handle scales it evenly, so it stays a circle. A side handle grows it both ways.
+- If its radius or diameter is dimensioned, the box leaves it as it is, and the status bar
+  says so. Hold Alt to scale the dimension with it, or type a new value in the dimension.
+  The same goes for anything else whose size is held by its dimensions.
+
 ## Trim, extend and split
 
 - **Trim** (T): click a piece of a curve to remove it, up to the curves that cross it. Or
   drag across several pieces: the drag leaves a trail and trims everything it crosses.
+  A whole circle or ellipse must be crossed in two places to trim a piece of it. Hovering
+  one crossed only once rings the one crossing; use Delete to remove it all.
 - **Extend** (E): click near the end of a line or arc to lengthen it to the next curve.
 - **Split** (no key: right-click **Trim** in the tool palette, or use the top bar's
   **Trim** / **Extend** / **Split** switch): click a curve where it should be cut in two. A

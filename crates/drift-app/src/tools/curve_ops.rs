@@ -119,6 +119,8 @@ impl DragTrim {
 #[derive(Default)]
 pub struct TrimTool {
     hover: Option<(EntityId, DVec2)>,
+    /// The pick tolerance at the last hover, to size the marks on a curve's crossings.
+    tolerance: f64,
     dragging: bool,
     /// Where the drag has been, to show what it passed through.
     trail: Vec<DVec2>,
@@ -236,6 +238,7 @@ impl Tool for TrimTool {
             Input::Hover(p) => {
                 // The removal preview is the highlight; the whole curve isn't hovered.
                 self.hover = curve_under(ed, &p).map(|id| (id, p.raw));
+                self.tolerance = p.tolerance;
             }
             Input::Click(p, _) => {
                 if let Some(id) = curve_under(ed, &p) {
@@ -297,10 +300,26 @@ impl Tool for TrimTool {
     }
 
     fn editor_preview(&self, ed: &Editor) -> Vec<SketchItem> {
-        self.hover
-            .and_then(|(id, at)| ed.trim_preview_against(id, at, self.edges.against.as_ref()))
-            .map(|shape| vec![SketchItem::new(shape).with_emphasis(Emphasis::Remove)])
+        let Some((id, at)) = self.hover else {
+            return Vec::new();
+        };
+        let against = self.edges.against.as_ref();
+        if let Some(shape) = ed.trim_preview_against(id, at, against) {
+            return vec![SketchItem::new(shape).with_emphasis(Emphasis::Remove)];
+        }
+        // A whole circle crossed only once can't be trimmed: ring the one crossing, so it
+        // is plain why.
+        ed.too_few_crossings(id, against)
             .unwrap_or_default()
+            .into_iter()
+            .map(|center| {
+                SketchItem::new(Shape::Circle {
+                    center,
+                    radius: self.tolerance.max(1e-6),
+                })
+                .with_emphasis(Emphasis::Preview)
+            })
+            .collect()
     }
 }
 

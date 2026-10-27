@@ -241,7 +241,8 @@ impl DriftApp {
                 if ui
                     .button("Make")
                     .on_hover_text(
-                        "Make a block from the selection; a copy takes its place. Then click                          its base point, or press Enter for the centre",
+                        "Make a block from the selection; a copy takes its place. Then click \
+                         its base point, or press Enter for the centre",
                     )
                     .clicked()
                 {

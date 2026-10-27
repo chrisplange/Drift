@@ -40,12 +40,18 @@ pub struct TransformBox {
     pub ids: Vec<EntityId>,
     /// Their bounds.
     pub bounds: Bounds,
+    /// Around one closed curve: it sits further out, clear of the curve's own grips (a
+    /// circle's edge resizes it, a path's points move).
+    pub lone: bool,
+    /// Scales keep the shape (one circle: a stretch would leave it as it was).
+    pub uniform: bool,
 }
 
 impl TransformBox {
     /// The box drawn, `pad` outside the geometry (so its handles don't sit on the
     /// geometry's own points, which can still be dragged).
     pub fn padded(&self, pad: f64) -> Bounds {
+        let pad = if self.lone { 2.0 * pad } else { pad };
         Bounds {
             min: self.bounds.min - DVec2::splat(pad),
             max: self.bounds.max + DVec2::splat(pad),
@@ -198,9 +204,10 @@ pub fn scale_for(
 }
 
 impl Editor {
-    /// The box for transform handles: around a picked area's outline, or around two or
-    /// more picked curves. None for a lone curve (it has handles of its own) and while
-    /// copies of blocks or text are picked with them (they don't scale).
+    /// The box for transform handles: around a picked area's outline, around one picked
+    /// closed curve (a circle, an ellipse, a path closed on itself), or around two or more
+    /// picked curves. None for a lone open curve (a line or an arc has handles of its own)
+    /// and while copies of blocks or text are picked with them (they don't scale).
     pub fn transform_box(&mut self) -> Option<TransformBox> {
         if !self.selected_instances.is_empty() || self.picks_annotations() {
             return None;
@@ -219,9 +226,9 @@ impl Editor {
             let outline = self.region_curves(r);
             self.selection.iter().all(|id| outline.contains(id))
         });
-        let ids: Vec<EntityId> = match region {
+        let ids: Vec<EntityId> = match &region {
             // (No handles on a locked outline.)
-            Some(r) => Some(self.region_curves(&r))
+            Some(r) => Some(self.region_curves(r))
                 .filter(|ids| !ids.iter().any(|id| self.is_locked(*id)))?,
             None => {
                 let curves: Vec<EntityId> = self
@@ -230,7 +237,15 @@ impl Editor {
                     .copied()
                     .filter(|id| self.doc.get(*id).is_some_and(|e| !e.kind.is_point()))
                     .collect();
-                if curves.len() < 2 || curves.len() != self.selection.len() {
+                let closed = || {
+                    self.doc
+                        .shape(curves[0])
+                        .is_some_and(|s| s.is_closed() || self.closed_bezier(curves[0]))
+                };
+                if curves.is_empty()
+                    || curves.len() != self.selection.len()
+                    || (curves.len() == 1 && !closed())
+                {
                     return None;
                 }
                 curves
@@ -248,7 +263,26 @@ impl Editor {
             }
         }
         let size = bounds.max - bounds.min;
-        (!bounds.is_empty() && size.max_element() > 1e-9).then_some(TransformBox { ids, bounds })
+        let lone = region.is_none() && ids.len() == 1;
+        let uniform = ids.len() == 1
+            && matches!(
+                self.doc.get(ids[0]).map(|e| e.kind),
+                Some(EntityKind::Circle { .. })
+            );
+        (!bounds.is_empty() && size.max_element() > 1e-9).then_some(TransformBox {
+            ids,
+            bounds,
+            lone,
+            uniform,
+        })
+    }
+
+    /// Whether a curve is a Bézier that ends where it starts (a path closed on itself).
+    fn closed_bezier(&self, id: EntityId) -> bool {
+        matches!(
+            self.doc.get(id).map(|e| e.kind),
+            Some(EntityKind::Bezier { a, b, .. }) if a == b
+        )
     }
 
     /// Scale geometry about `anchor` by `scale` along each axis, inside an open transaction.
@@ -422,6 +456,47 @@ mod tests {
         assert!(ed.transform_box().is_some());
         let corner = ed.doc.get(l[0]).unwrap().kind.points().next().unwrap();
         ed.selection.insert(corner);
+        assert!(ed.transform_box().is_none());
+    }
+
+    #[test]
+    fn a_lone_closed_curve_has_a_box_and_a_lone_open_one_none() {
+        let mut ed = Editor::default();
+        ed.doc.begin();
+        let o = ed.doc.add_point(v(0.0, 0.0));
+        let circle = ed.doc.add_circle(o, 2.0).unwrap();
+        let p = [v(10.0, 0.0), v(14.0, 0.0), v(10.0, 2.0)].map(|p| ed.doc.add_point(p));
+        let ellipse = ed.doc.add_ellipse(p[0], p[1], p[2]).unwrap();
+        let q = [v(20.0, 0.0), v(22.0, 0.0), v(20.0, 2.0)].map(|p| ed.doc.add_point(p));
+        let arc = ed.doc.add_arc(q[0], q[1], q[2]).unwrap();
+        ed.commit("Setup");
+        // A circle: a box set further out, clear of its edge, that keeps it round.
+        ed.selection = [circle].into();
+        let b = ed.transform_box().expect("a circle has a box");
+        assert!(b.lone && b.uniform);
+        assert_eq!(b.padded(1.0).max, v(4.0, 4.0));
+        assert_eq!(
+            b.handle_at(v(4.0, 4.0), 0.75, 1.0),
+            Some(Handle::Scale { x: 1, y: 1 })
+        );
+        // Its edge, within a pick of it, is clear of the middle handles.
+        assert_eq!(b.handle_at(v(0.0, 2.9), 0.75, 1.0), None);
+        // A closed ellipse: a box that may stretch it.
+        ed.selection = [ellipse].into();
+        let b = ed.transform_box().expect("an ellipse has a box");
+        assert!(b.lone && !b.uniform);
+        // An arc is open: its own grips.
+        ed.selection = [arc].into();
+        assert!(ed.transform_box().is_none());
+        // On a locked layer: none.
+        ed.doc.begin();
+        let layer = ed.doc.add_layer(drift_core::Layer {
+            locked: true,
+            ..drift_core::Layer::new("Locked")
+        });
+        ed.doc.set_entity_layer(circle, layer).unwrap();
+        ed.commit("Lock");
+        ed.selection = [circle].into();
         assert!(ed.transform_box().is_none());
     }
 

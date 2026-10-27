@@ -589,3 +589,70 @@ fn smoke_fills_rooms_sharing_a_wall_stay_area_fills_and_say_why() {
         "the status line"
     );
 }
+
+/// #223: a picked filled shape's status line says a double-click inside edits its fill on
+/// its own, and its right-click menu's Edit fill does it (as does the palette). Once the fill
+/// has been picked alone a few times, the hint goes.
+#[test]
+fn smoke_fills_picked_shape_says_how_to_edit_its_fill() {
+    let Some(mut h) = harness() else { return };
+    view(&mut h, DVec2::new(-10.0, -10.0), DVec2::new(60.0, 50.0));
+    let (sides, fill) = rectangle(&mut h, DVec2::ZERO, DVec2::new(40.0, 30.0), Fill::Solid);
+    let fill = fill.unwrap();
+    h.state_mut().editor.fill_alone_picks = 0;
+    const HINT: &str = "Double-click inside to edit its fill on its own";
+    let inside = DVec2::new(20.0, 15.0);
+    let whole = |h: &Harness<'_, DriftApp>| {
+        let ed = &h.state().editor;
+        ed.selection == sides.iter().copied().collect() && ed.selected_fills == [fill].into()
+    };
+    let alone = |h: &Harness<'_, DriftApp>| {
+        let ed = &h.state().editor;
+        ed.selection.is_empty() && ed.selected_fills == [fill].into()
+    };
+    // Picked whole: the hint.
+    click_world(&mut h, inside);
+    assert!(whole(&h));
+    assert!(h.query_by_label_contains(HINT).is_some(), "the hint");
+
+    // Right-click, Edit fill: the fill alone, and no hint for it.
+    let pos = screen(&h, inside);
+    right_click(&mut h, pos);
+    h.get_by_label("Edit fill").click();
+    h.run();
+    assert!(alone(&h));
+    assert!(h.query_by_label_contains(HINT).is_none());
+    assert_eq!(h.state().editor.fill_alone_picks, 1);
+
+    // One side picked isn't the shape: no hint. The palette's Edit fill picks the fill alone
+    // too.
+    // (Off its middle, which would pick its midpoint.)
+    click_world(&mut h, DVec2::new(10.0, 0.0));
+    assert_eq!(h.state().editor.selection.len(), 1, "one side");
+    assert!(
+        h.query_by_label_contains(HINT).is_none(),
+        "one side isn't the shape"
+    );
+    // (Esc first: the side's temporary dimensions lie across the shape.)
+    h.key_press(Key::Escape);
+    h.run();
+    click_world(&mut h, inside);
+    assert!(whole(&h));
+    palette(&mut h, "Edit fill");
+    assert!(alone(&h));
+
+    // A double-click inside is the third time: no more hints.
+    click_world(&mut h, inside);
+    assert!(whole(&h));
+    assert!(h.query_by_label_contains(HINT).is_some());
+    let pos = screen(&h, inside);
+    double_click(&mut h, pos);
+    assert!(alone(&h));
+    assert_eq!(h.state().editor.fill_alone_picks, 3);
+    click_world(&mut h, inside);
+    assert!(whole(&h));
+    assert!(h.query_by_label_contains(HINT).is_none(), "learnt");
+    // Kept with the view preferences.
+    let prefs = h.state().view_prefs();
+    assert!(prefs.contains("fillalone=3"), "{prefs}");
+}

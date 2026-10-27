@@ -1047,6 +1047,10 @@ impl DriftApp {
                 &[Some(Command::Scale), Some(Command::Tool(ToolKind::Mirror))],
             );
         }
+        // A filled shape: its fill on its own, as a double-click inside picks it (#223).
+        if commands::When::FilledShape.holds(self) {
+            self.command_item(ui, Command::EditFill);
+        }
         if self.editor.can_arrange() {
             self.arrange_menu(ui);
         }

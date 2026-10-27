@@ -87,6 +87,8 @@ pub(crate) enum Command {
     JoinWalls,
     /// The picked area fill's corners that touch but aren't one point, joined (#202).
     JoinCorners,
+    /// The picked shape's fill picked on its own, as a double-click inside it does (#223).
+    EditFill,
     /// The picked walls' ends set not to join.
     UnjoinWalls,
     /// Grab the selection (G).
@@ -326,6 +328,8 @@ pub(crate) enum When {
     ViewOnSheet,
     /// An area fill picked whose outline's corners touch but aren't joined.
     JoinableCorners,
+    /// A shape with a fill picked whole (its fill can be picked on its own).
+    FilledShape,
     /// Only in development builds (and hidden elsewhere).
     Debug,
     /// Only on the desktop (hidden in the browser).
@@ -374,6 +378,7 @@ impl When {
                         .is_some_and(|s| !s.viewports.is_empty())
             }
             When::JoinableCorners => app.editor.joinable_fill().is_some(),
+            When::FilledShape => app.editor.picked_shape_fill().is_some(),
             When::Desktop => cfg!(not(target_arch = "wasm32")),
             When::Debug => cfg!(debug_assertions),
         }
@@ -403,6 +408,7 @@ impl When {
             When::PickedView => "Pick a view's crop, or a view on a sheet",
             When::ViewOnSheet => "Pick a view on a sheet",
             When::JoinableCorners => "Pick an area fill whose corners aren't joined",
+            When::FilledShape => "Pick a shape that has a fill",
         }
     }
 
@@ -1058,6 +1064,17 @@ fn table() -> Vec<Spec> {
         .when(When::Grouped)
         .aliases(&["UNGROUP"]),
         Spec::new(
+            "edit.edit_fill",
+            C::Edit,
+            K::EditFill,
+            "Edit fill",
+            "Pick the picked shape's fill on its own, to restyle or move it apart from its \
+             outline (a double-click inside the shape does the same)",
+        )
+        .guard(Guard::Idle)
+        .when(When::FilledShape)
+        .words("fill hatch inside alone pick"),
+        Spec::new(
             "edit.duplicate",
             C::Edit,
             K::Duplicate,
@@ -1606,7 +1623,8 @@ fn table() -> Vec<Spec> {
             C::Modify,
             K::JoinCorners,
             "Join corners",
-            "Join the picked area fill's corners that touch but aren't one point: its outline              then makes a shape",
+            "Join the picked area fill's corners that touch but aren't one point: its outline \
+             then makes a shape",
         )
         .when(When::JoinableCorners)
         .words("weld close shape corners ends"),

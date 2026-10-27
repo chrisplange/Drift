@@ -359,12 +359,42 @@ impl Editor {
     /// Pick a shape's fill alone (its outline let go): its hatch's handles show without the
     /// transform box's.
     pub fn pick_fill_alone(&mut self, fill: drift_core::FillId) {
+        self.fill_alone_picks = self.fill_alone_picks.saturating_add(1);
         self.selected_fills = [fill].into();
         self.selection.clear();
         self.selected_midpoints.clear();
         self.selected_region = None;
         self.selected_instances.clear();
         self.selected_texts.clear();
+    }
+
+    /// The fill of the shape picked whole (its outline, with or without its fill), when its
+    /// fill can be picked on its own from here: a double-click inside, Alt-click or the
+    /// menu's Edit fill. None inside a closed group (a double-click goes into the group
+    /// first) and for anything else picked.
+    pub fn picked_shape_fill(&self) -> Option<drift_core::FillId> {
+        let first = *self.selection.first()?;
+        if self.selected_fills.len() > 1
+            || !self.selected_instances.is_empty()
+            || !self.selected_texts.is_empty()
+        {
+            return None;
+        }
+        let fill = match self.selected_fills.first() {
+            Some(f) => *f,
+            None => {
+                let path = self.doc.path_of(first)?;
+                self.doc
+                    .fills()
+                    .find(|(_, f)| f.path == Some(path))
+                    .map(|(id, _)| id)?
+            }
+        };
+        let outline = self.shape_outline(fill)?;
+        (outline.len() == self.selection.len()
+            && outline.iter().all(|c| self.selection.contains(c))
+            && self.fill_group(fill).is_none())
+        .then_some(fill)
     }
 
     /// The group the selection is exactly, if any.

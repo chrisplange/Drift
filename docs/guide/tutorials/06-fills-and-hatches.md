@@ -154,7 +154,10 @@ in **Style** for the hatch of an area among several shapes' lines):
 - **Reset** puts the origin back on the drawing's origin and the angle at 0°.
 
 To work on the pattern alone, **Alt-click** or **double-click** inside the shape: that picks
-its fill without its outline, so the transform box is out of the way. In a group,
+its fill without its outline, so the transform box is out of the way. Or right-click the
+picked shape and choose **Edit fill** (also in the **Edit** menu and the command palette).
+While a filled shape is picked, the status bar reminds you how, until you have done it a
+few times. In a group,
 double-click once to go into the group (the shape is picked), and again for its fill. (A
 single click inside a grouped shape picks the whole group, fills and all.)
 

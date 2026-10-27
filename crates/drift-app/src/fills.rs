@@ -1027,7 +1027,8 @@ impl Editor {
                 what(*id)
             ),
             FillChange::Opened { id } => format!(
-                "{} keeps its shape, closed straight across the gap: its outline was cut open                  and bounds no area",
+                "{} keeps its shape, closed straight across the gap: its outline was cut open \
+                 and bounds no area",
                 what(*id)
             ),
         };

@@ -30,30 +30,14 @@ use drift_core::{DVec2, LineType, Rgb, TextFont};
 use drift_draft::page::{Align, BlockDef, Drawing, HatchPrim, Item, Prim, dash_pattern};
 use drift_geom::regions::{Edge, Loop};
 
-use crate::dxf::{DxfUnits, line_type_name};
+use crate::dxf::{DxfUnits, line_type_name, unique_name};
 
 /// The version written: AutoCAD 2018 and later, and every program that reads it.
 pub const VERSION: DxfVersion = DxfVersion::AC1032;
 
-/// The line weights AutoCAD offers (hundredths of a millimetre).
-const WEIGHTS: [i16; 24] = [
-    0, 5, 9, 13, 15, 18, 20, 25, 30, 35, 40, 50, 53, 60, 70, 80, 90, 100, 106, 120, 140, 158, 200,
-    211,
-];
-
-/// The line weight AutoCAD offers nearest to `mm`.
+/// The line weight AutoCAD offers nearest to `mm` (the rule weights are read by, too).
 fn weight(mm: f64) -> LineWeight {
-    let w = (mm * 100.0).round();
-    let nearest = WEIGHTS
-        .iter()
-        .min_by(|a, b| {
-            (f64::from(**a) - w)
-                .abs()
-                .total_cmp(&(f64::from(**b) - w).abs())
-        })
-        .copied()
-        .unwrap_or(0);
-    LineWeight::Value(nearest)
+    LineWeight::Value(drift_core::LineWeight::nearest_cad(mm).0 as i16)
 }
 
 /// A colour as CAD has it: Drift's black is AutoCAD's colour 7 (black on white paper, white
@@ -261,17 +245,9 @@ impl CadWriter {
         }
     }
 
-    /// A unique name (ignoring case) for `name` among `taken`.
+    /// A unique name (ignoring case) for `name` among `taken`: "Name (2)" for a second.
     fn unique(name: &str, taken: &BTreeMap<String, String>) -> String {
-        let base = cad_name(name);
-        let clash = |n: &str| taken.values().any(|t| t.eq_ignore_ascii_case(n));
-        if !clash(&base) {
-            return base;
-        }
-        (2..)
-            .map(|k| format!("{base} ({k})"))
-            .find(|n| !clash(n))
-            .unwrap_or(base)
+        unique_name(cad_name(name), taken, |base, k| format!("{base} ({k})"))
     }
 
     /// Add a layer, unless one of the name is there (the first look wins).
@@ -383,23 +359,29 @@ impl CadWriter {
                 line_type: LineType::Continuous,
             },
         );
-        // In a block, everything is said: "by layer" there would be the copy's layer, and
-        // a block's items carry their own look.
-        let look = self
-            .layers
-            .get(&layer)
-            .copied()
-            .filter(|_| owner == self.doc.header.model_space_block_handle);
+        // In a block, everything is said: what an item takes from its copy is "by block",
+        // the rest its own ("by layer" there would be layer 0's look for the copy's).
+        let in_block = owner != self.doc.header.model_space_block_handle;
+        let look = self.layers.get(&layer).copied().filter(|_| !in_block);
+        let by_block = item.pen.by_block;
         let c = entity.common_mut();
         c.owner_handle = owner;
-        if look.is_none_or(|l| l.color != item.pen.color) {
+        if in_block && by_block.color {
+            c.color = Color::ByBlock;
+        } else if look.is_none_or(|l| l.color != item.pen.color) {
             c.color = color(item.pen.color);
         }
         if stroke {
-            if look.is_none_or(|l| l.line_type != item.pen.line_type) {
+            if in_block && by_block.line_type {
+                c.linetype = "ByBlock".into();
+            } else if look.is_none_or(|l| l.line_type != item.pen.line_type) {
                 c.linetype = Self::line_type(item.pen.line_type);
             }
-            if look.is_none_or(|l| l.width.is_nan() || (l.width - item.pen.width).abs() > 1e-9) {
+            if in_block && by_block.width {
+                c.line_weight = LineWeight::ByBlock;
+            } else if look
+                .is_none_or(|l| l.width.is_nan() || (l.width - item.pen.width).abs() > 1e-9)
+            {
                 c.line_weight = weight(item.pen.width);
             }
         }

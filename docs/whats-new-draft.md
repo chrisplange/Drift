@@ -92,7 +92,14 @@ as before.
   and it comes out as a drawing, not a picture of one: true ellipses and curves, layers with
   their names, true colours, line types and weights, blocks with their fills, solid fills and
   hatches as real hatches (with their patterns, scale and angle), and text in any script.
-  DXF R12 stays in the same dialog for laser cutters, CNC and older software.
+  DXF R12 stays in the same dialog for laser cutters, CNC and older software. A block placed
+  on several layers shows each copy in its own layer's colour, weight and line type.
+- **Dashes and weights come in alike from every file.** A dashed line imports as the same
+  line type from DXF, DWG, PDF and SVG, and weights keep AutoCAD's values (0.30 mm stays
+  0.30 mm). R12 layers whose names differ only in case or punctuation stay apart.
+- **Blocks from DWG and DXF keep their layers' colours.** Lines inside a block that sit on a
+  layer of their own show that layer's colour, weight and line type, as in AutoCAD; they took
+  the colour of the layer the copy was on.
 - **DXF R12 opens in AutoCAD.** A drawing with an ellipse or a pen curve made a DXF that
   AutoCAD refused outright; those curves now go out as polylines within 0.01 mm of the curve.
   Accents and symbols in text (é, ½, m²) no longer turn into question marks.

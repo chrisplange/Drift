@@ -74,6 +74,47 @@ impl LineWeight {
             .min_by(|a, b| (a.mm() - mm).abs().total_cmp(&(b.mm() - mm).abs()))
             .unwrap_or_default()
     }
+
+    /// The weights AutoCAD offers (the ISO series among them), plus the hairline.
+    pub const CAD: [LineWeight; 24] = [
+        LineWeight(0),
+        LineWeight(5),
+        LineWeight(9),
+        LineWeight(13),
+        LineWeight(15),
+        LineWeight(18),
+        LineWeight(20),
+        LineWeight(25),
+        LineWeight(30),
+        LineWeight(35),
+        LineWeight(40),
+        LineWeight(50),
+        LineWeight(53),
+        LineWeight(60),
+        LineWeight(70),
+        LineWeight(80),
+        LineWeight(90),
+        LineWeight(100),
+        LineWeight(106),
+        LineWeight(120),
+        LineWeight(140),
+        LineWeight(158),
+        LineWeight(200),
+        LineWeight(211),
+    ];
+
+    /// The nearest of AutoCAD's weights to a width in mm (a hairline for none): the one rule
+    /// for weights that come in from other files (DXF, DWG, PDF, SVG) and go out to DWG.
+    /// A CAD file's 0.30 mm stays 0.30 mm, and a PDF's 0.8 pt (0.28 mm) becomes it too.
+    pub fn nearest_cad(mm: f64) -> LineWeight {
+        if !mm.is_finite() || mm <= 0.0 {
+            return Self::HAIRLINE;
+        }
+        Self::CAD
+            .into_iter()
+            .min_by(|a, b| (a.mm() - mm).abs().total_cmp(&(b.mm() - mm).abs()))
+            .unwrap_or_default()
+    }
 }
 
 /// A line's dash pattern (ISO 128 types).
@@ -130,6 +171,28 @@ impl LineType {
             .into_iter()
             .chain([LineType::None])
             .find(|t| t.name() == s)
+    }
+
+    /// The nearest type to a dash pattern's marks: its dashes' lengths in mm, 0 for a dot
+    /// (the gaps don't count). What's drawn decides, however the pattern is written:
+    /// equal dashes are dashed (hidden when 3.5 mm or shorter, or only dots); a long dash
+    /// with one shorter mark is a centre line, with more a phantom. No marks: continuous.
+    /// DXF / DWG line types and PDF / SVG dash arrays both come in by this.
+    pub fn of_marks(marks: &[f64]) -> LineType {
+        let marks: Vec<f64> = marks.iter().copied().filter(|m| *m >= 0.0).collect();
+        if marks.is_empty() {
+            return LineType::Continuous;
+        }
+        let longest = marks.iter().copied().fold(0.0, f64::max);
+        if longest <= 0.0 {
+            return LineType::Hidden;
+        }
+        match marks.iter().filter(|m| **m < longest * 0.5).count() {
+            0 if longest <= 3.5 => LineType::Hidden,
+            0 => LineType::Dashed,
+            1 => LineType::Center,
+            _ => LineType::Phantom,
+        }
     }
 
     /// Whether a curve of this type is drawn and printed (see [`LineType::None`]).
@@ -196,5 +259,32 @@ pub struct Appearance {
 impl Appearance {
     pub fn is_by_layer(&self) -> bool {
         *self == Appearance::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn imported_weights_snap_to_cad_weights() {
+        assert_eq!(LineWeight::nearest_cad(0.30), LineWeight(30));
+        // 0.8 pt, a common PDF width.
+        assert_eq!(LineWeight::nearest_cad(0.8 * 25.4 / 72.0), LineWeight(30));
+        assert_eq!(LineWeight::nearest_cad(0.0), LineWeight::HAIRLINE);
+        assert_eq!(LineWeight::nearest_cad(f64::NAN), LineWeight::HAIRLINE);
+        assert_eq!(LineWeight::nearest_cad(9.0), LineWeight(211));
+        assert!(LineWeight::ISO.iter().all(|w| LineWeight::CAD.contains(w)));
+    }
+
+    #[test]
+    fn line_types_by_their_marks() {
+        assert_eq!(LineType::of_marks(&[]), LineType::Continuous);
+        assert_eq!(LineType::of_marks(&[6.0, 6.0]), LineType::Dashed);
+        assert_eq!(LineType::of_marks(&[2.0]), LineType::Hidden);
+        assert_eq!(LineType::of_marks(&[0.0]), LineType::Hidden);
+        assert_eq!(LineType::of_marks(&[12.0, 1.5]), LineType::Center);
+        assert_eq!(LineType::of_marks(&[12.0, 0.0]), LineType::Center);
+        assert_eq!(LineType::of_marks(&[12.0, 1.5, 1.5]), LineType::Phantom);
     }
 }

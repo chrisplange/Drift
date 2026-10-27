@@ -307,7 +307,9 @@ fn copies(
                     k: 1.0,
                     ..*s
                 };
-                // For CAD, the block's fills first, under its curves.
+                // For CAD, the block's fills first, under its curves. What an item takes
+                // from its layer is "by block", so each copy shows its own layer's look (the
+                // pens here are this first copy's, for formats that explode copies).
                 let mut items = if s.cad {
                     block_fills(ed, patterns, &local, block, copy.layer)
                 } else {
@@ -318,16 +320,16 @@ fn copies(
                         .items
                         .iter()
                         .filter(|it| {
-                            it.style != LineKind::Construction && stroked(it.appearance, layer)
+                            (it.style != LineKind::Construction || s.construction)
+                                && it.appearance.line_type.is_none_or(LineType::is_stroked)
                         })
                         .filter_map(|it| {
                             let prim = shape_prim(&local, &it.shape)?;
-                            Some(item(
-                                "0",
-                                pen_for(it.style, it.appearance, layer),
-                                prim,
-                                None,
-                            ))
+                            let pen = Pen {
+                                by_block: by_block(it.style, it.appearance),
+                                ..pen_for(it.style, it.appearance, layer)
+                            };
+                            Some(item("0", pen, prim, None))
                         }),
                 );
                 d.blocks.push(drift_draft::page::BlockDef {
@@ -337,7 +339,7 @@ fn copies(
             }
             d.items.push(item(
                 &layer.name,
-                Pen::new(HAIRLINE),
+                pen_for(LineKind::Solid, Default::default(), layer),
                 Prim::Insert {
                     block: block.name.clone(),
                     at: s.at(copy.at),
@@ -433,6 +435,17 @@ fn pen_for(style: LineKind, look: drift_core::Appearance, layer: &drift_core::La
         )
     };
     Pen::new(width).with_color(color).with_type(line_type)
+}
+
+/// What a block item's pen takes from its copy: whatever [`pen_for`] would take from the
+/// layer (construction curves keep their own look; centre-style ones their type and width).
+fn by_block(style: LineKind, look: drift_core::Appearance) -> drift_draft::page::ByBlock {
+    let solid = style == LineKind::Solid;
+    drift_draft::page::ByBlock {
+        color: style != LineKind::Construction && look.color.is_none(),
+        width: solid && look.weight.is_none(),
+        line_type: solid && look.line_type.is_none(),
+    }
 }
 
 /// A curve on the page (points don't print).
@@ -651,20 +664,24 @@ fn block_fills(
     }
     let shapes: Vec<Shape> = block.items.iter().map(|it| it.shape).collect();
     let areas = drift_geom::regions::regions(&shapes);
-    let mut d = Drawing::new(DVec2::ZERO);
+    // A fill in its layer's colour takes its copy's ("by block"), when the layer has no
+    // fill colour of its own.
+    let follows = ed.doc.layer(layer).is_some_and(|l| l.fill_color.is_none());
+    let mut out = Vec::new();
     for f in &block.fills {
         if let Some(region) = drift_geom::regions::region_at(&areas, f.seed) {
+            let mut d = Drawing::new(DVec2::ZERO);
+            let by_block = follows && f.color.is_none();
             let f = drift_core::Fill { layer, ..f.clone() };
             fill(ed, patterns, s, &f, region, &mut d);
+            out.extend(d.items.into_iter().map(|mut it| {
+                it.layer = "0".into();
+                it.pen.by_block.color = by_block;
+                it
+            }));
         }
     }
-    d.items
-        .into_iter()
-        .map(|it| Item {
-            layer: "0".into(),
-            ..it
-        })
-        .collect()
+    out
 }
 
 /// Centre marks and centre lines.

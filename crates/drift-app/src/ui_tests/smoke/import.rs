@@ -399,3 +399,60 @@ fn smoke_import_dxf_hatches_at_real_size_solids_and_hatched_blocks() {
     save_png("drift_smoke_import_hatches.png", &mut h);
     let _ = std::fs::remove_file(&path);
 }
+
+/// A block placed on a green layer whose square is on a grey layer of its own, and whose
+/// cross is on layer 0.
+fn layered_block_dxf() -> String {
+    let line = |layer: &str, a: (i32, i32), b: (i32, i32)| {
+        format!(
+            "0\nLINE\n8\n{layer}\n10\n{}\n20\n{}\n11\n{}\n21\n{}\n",
+            a.0, a.1, b.0, b.1
+        )
+    };
+    let layer = |name: &str, color: i32| {
+        format!("0\nLAYER\n2\n{name}\n70\n0\n62\n{color}\n6\nCONTINUOUS\n")
+    };
+    let mut s = String::from("0\nSECTION\n2\nHEADER\n9\n$INSUNITS\n70\n4\n0\nENDSEC\n");
+    s += "0\nSECTION\n2\nTABLES\n0\nTABLE\n2\nLAYER\n";
+    s += &(layer("0", 7) + &layer("Green", 3) + &layer("Grey", 8));
+    s += "0\nENDTAB\n0\nENDSEC\n0\nSECTION\n2\nBLOCKS\n0\nBLOCK\n2\nBOX\n10\n0\n20\n0\n";
+    for (a, b) in [
+        ((0, 0), (100, 0)),
+        ((100, 0), (100, 100)),
+        ((100, 100), (0, 100)),
+        ((0, 100), (0, 0)),
+    ] {
+        s += &line("Grey", a, b);
+    }
+    s += &line("0", (0, 0), (100, 100));
+    s += "0\nENDBLK\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n";
+    s += "0\nINSERT\n8\nGreen\n2\nBOX\n10\n0\n20\n0\n0\nENDSEC\n0\nEOF\n";
+    s
+}
+
+/// A block's curves on a layer of their own keep that layer's colour, whatever layer the
+/// copy is on (grey lines in a copy on a green layer came in green); on layer 0 they take
+/// the copy's.
+#[test]
+fn smoke_import_dxf_block_curves_keep_their_own_layers_look() {
+    let Some(mut h) = harness() else { return };
+    let path = temp_file("layered-block", "box.dxf", layered_block_dxf().as_bytes());
+    import_through_the_dialog(&mut h, &path);
+    let doc = &h.state().editor.doc;
+    let (_, copy) = doc.instances().next().expect("the copy");
+    assert_eq!(doc.layer(copy.layer).unwrap().name, "Green");
+    let block = doc.block(copy.block).unwrap();
+    let grey = Some(drift_core::Rgb([128, 128, 128]));
+    let colours: Vec<_> = block.items.iter().map(|it| it.appearance.color).collect();
+    assert_eq!(
+        colours.iter().filter(|c| **c == grey).count(),
+        4,
+        "{colours:?}"
+    );
+    assert_eq!(
+        colours.iter().filter(|c| c.is_none()).count(),
+        1,
+        "{colours:?}"
+    );
+    let _ = std::fs::remove_file(&path);
+}

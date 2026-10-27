@@ -137,6 +137,83 @@ fn layer_name(name: &str) -> String {
     format!("{}_{:05X}", &s[..MAX - 6], hash & 0xF_FFFF)
 }
 
+/// A name unique (ignoring case) among the names in `taken` (Drift's names to those
+/// written), for one written as `base`: `base` itself, else the first free one of
+/// `numbered(base, 2)`, `numbered(base, 3)`, ... Both CAD writers name layers and blocks so,
+/// each with its own `base` and `numbered` rule.
+#[cfg(not(feature = "demo"))]
+pub(crate) fn unique_name(
+    base: String,
+    taken: &BTreeMap<String, String>,
+    numbered: impl Fn(&str, usize) -> String,
+) -> String {
+    let clash = |n: &str| taken.values().any(|t| t.eq_ignore_ascii_case(n));
+    if !clash(&base) {
+        return base;
+    }
+    (2..)
+        .map(|k| numbered(&base, k))
+        .find(|n| !clash(n))
+        .unwrap_or(base)
+}
+
+/// An R12 name for the `k`th Drift name that comes out as `base`: `BASE_2`, `BASE_3`, ...,
+/// still at most 31 characters.
+#[cfg(not(feature = "demo"))]
+fn numbered(base: &str, k: usize) -> String {
+    let suffix = format!("_{k}");
+    let keep = 31usize.saturating_sub(suffix.len()).min(base.len());
+    format!("{}{suffix}", &base[..keep])
+}
+
+/// The names an R12 file gives a drawing's layers and blocks (by Drift name), and each
+/// written layer's colour and line type.
+#[cfg(not(feature = "demo"))]
+#[derive(Default)]
+struct Names {
+    layers: BTreeMap<String, String>,
+    blocks: BTreeMap<String, String>,
+    looks: BTreeMap<String, (u8, LineType)>,
+}
+
+#[cfg(not(feature = "demo"))]
+impl Names {
+    /// Add a layer unless one of the name is there (the first look wins). Layer 0 stays 0.
+    fn layer(&mut self, name: &str, look: (u8, LineType)) {
+        if self.layers.contains_key(name) {
+            return;
+        }
+        let written = if name == "0" {
+            "0".to_owned()
+        } else {
+            unique_name(layer_name(name), &self.layers, numbered)
+        };
+        self.layers.insert(name.to_owned(), written.clone());
+        self.looks.entry(written).or_insert(look);
+    }
+
+    fn block(&mut self, name: &str) {
+        if !self.blocks.contains_key(name) {
+            let written = unique_name(layer_name(name), &self.blocks, numbered);
+            self.blocks.insert(name.to_owned(), written);
+        }
+    }
+
+    fn layer_of(&self, name: &str) -> String {
+        self.layers
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| layer_name(name))
+    }
+
+    fn block_of(&self, name: &str) -> String {
+        self.blocks
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| layer_name(name))
+    }
+}
+
 /// Text as an R12 TEXT string: `%%c`, `%%d` and `%%p` for Ø, ° and ±, `\U+XXXX` for other
 /// characters outside ASCII (AutoCAD and other readers decode it in every version), and `%%%`
 /// for a percent sign that would otherwise start a code.
@@ -371,27 +448,27 @@ pub fn write(d: &Drawing, units: DxfUnits) -> String {
         }
     }
     o.pair(0, "ENDTAB");
-    // Layers: those declared, then any others the items use.
-    let mut layers: BTreeMap<String, (u8, LineType)> = BTreeMap::new();
+    // Layers: those declared, then any others the items use, each under a name of its own
+    // (R12's names are upper case, so "Walls new" and "walls_new" need telling apart).
+    let mut names = Names::default();
     for l in &d.layers {
-        layers.insert(layer_name(&l.name), (aci(l.color), l.line_type));
+        names.layer(&l.name, (aci(l.color), l.line_type));
     }
     for item in d
         .items
         .iter()
         .chain(d.blocks.iter().flat_map(|b| b.items.iter()))
     {
-        layers
-            .entry(layer_name(&item.layer))
-            .or_insert((aci(item.pen.color), LineType::Continuous));
+        names.layer(&item.layer, (aci(item.pen.color), LineType::Continuous));
     }
-    layers
-        .entry("0".into())
-        .or_insert((7, LineType::Continuous));
+    names.layer("0", (7, LineType::Continuous));
+    for b in &d.blocks {
+        names.block(&b.name);
+    }
     o.pair(0, "TABLE");
     o.pair(2, "LAYER");
-    o.pair(70, layers.len());
-    for (name, (color, t)) in &layers {
+    o.pair(70, names.looks.len());
+    for (name, (color, t)) in &names.looks {
         o.pair(0, "LAYER");
         o.pair(2, name);
         o.pair(70, 0);
@@ -406,7 +483,7 @@ pub fn write(d: &Drawing, units: DxfUnits) -> String {
         o.pair(0, "SECTION");
         o.pair(2, "BLOCKS");
         for b in &d.blocks {
-            let name = layer_name(&b.name);
+            let name = names.block_of(&b.name);
             o.pair(0, "BLOCK");
             o.pair(8, "0");
             o.pair(2, &name);
@@ -414,7 +491,7 @@ pub fn write(d: &Drawing, units: DxfUnits) -> String {
             o.point(10, DVec2::ZERO);
             o.pair(3, &name);
             for item in &b.items {
-                write_item(&mut o, item, &layers, tol);
+                write_item(&mut o, item, &names, true, tol);
             }
             o.pair(0, "ENDBLK");
             o.pair(8, "0");
@@ -424,7 +501,7 @@ pub fn write(d: &Drawing, units: DxfUnits) -> String {
     o.pair(0, "SECTION");
     o.pair(2, "ENTITIES");
     for item in &d.items {
-        write_item(&mut o, item, &layers, tol);
+        write_item(&mut o, item, &names, false, tol);
     }
     o.pair(0, "ENDSEC");
     o.pair(0, "EOF");
@@ -447,26 +524,35 @@ fn vertices(o: &mut Out, layer: &str, points: &[DVec2], closed: bool) {
 }
 
 #[cfg(not(feature = "demo"))]
-/// One entity (an `Insert` becomes an INSERT of its block).
+/// One entity (an `Insert` becomes an INSERT of its block). In a block (`in_block`) an
+/// item's colour and line type are its own or "by block", never its layer's: by layer
+/// there would be layer 0's look for the copy's.
 fn write_item(
     o: &mut Out,
     item: &drift_draft::page::Item,
-    layers: &BTreeMap<String, (u8, LineType)>,
+    names: &Names,
+    in_block: bool,
     tol: f64,
 ) {
-    let layer = layer_name(&item.layer);
-    let (layer_color, layer_type) = layers
+    let layer = names.layer_of(&item.layer);
+    let (layer_color, layer_type) = names
+        .looks
         .get(&layer)
         .copied()
         .unwrap_or((7, LineType::Continuous));
+    let by_block = item.pen.by_block;
     let head = |o: &mut Out, kind: &str| {
         o.pair(0, kind);
         o.pair(8, &layer);
         let c = aci(item.pen.color);
-        if c != layer_color {
+        if in_block && by_block.color {
+            o.pair(62, 0);
+        } else if in_block || c != layer_color {
             o.pair(62, c);
         }
-        if item.pen.line_type != layer_type {
+        if in_block && by_block.line_type {
+            o.pair(6, "BYBLOCK");
+        } else if in_block || item.pen.line_type != layer_type {
             o.pair(6, line_type_name(item.pen.line_type));
         }
     };
@@ -570,7 +656,7 @@ fn write_item(
             mirror,
         } => {
             head(o, "INSERT");
-            o.pair(2, layer_name(block));
+            o.pair(2, names.block_of(block));
             o.point(10, *at);
             // A mirrored copy is a negative X scale (mirroring before rotating).
             o.num(41, if *mirror { -*scale } else { *scale });
@@ -587,7 +673,7 @@ fn write_item(
                     prim,
                     ..item.clone()
                 };
-                write_item(o, &part, layers, tol);
+                write_item(o, &part, names, in_block, tol);
             }
         }
     }

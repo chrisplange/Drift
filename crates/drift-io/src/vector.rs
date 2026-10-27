@@ -645,35 +645,27 @@ fn scale_subpath(s: &Subpath, k: f64) -> Subpath {
     }
 }
 
-/// A stroke's width as a line weight (hundredths of a millimetre; 0 is a hairline).
+/// A stroke's width as a line weight: the nearest AutoCAD weight, as from DXF and DWG.
 fn weight_of(width: f64) -> LineWeight {
-    if width.is_nan() || width <= 0.0 || !width.is_finite() {
-        return LineWeight::HAIRLINE;
-    }
-    LineWeight((width * 100.0).round().clamp(1.0, f64::from(u16::MAX)) as u16)
+    LineWeight::nearest_cad(width)
 }
 
-/// The line type a dash pattern looks most like (none for a solid line).
+/// The line type a dash array (on, off, on, off, ... in mm) looks most like, by the same
+/// rule as DXF line types (none for a solid line).
 fn line_type_of(dashes: &[f64]) -> Option<LineType> {
     let dashes: Vec<f64> = dashes.iter().copied().filter(|d| *d >= 0.0).collect();
+    // All gaps, or nothing on: solid.
     if dashes.iter().all(|d| *d <= 0.0) {
         return None;
     }
-    // An odd list repeats to make it even.
-    let n = if dashes.len() % 2 == 1 {
-        dashes.len() * 2
+    // An odd list repeats to make it even; the marks are its even entries.
+    let dashes = if dashes.len() % 2 == 1 {
+        [&dashes[..], &dashes[..]].concat()
     } else {
-        dashes.len()
+        dashes
     };
-    Some(if n >= 6 {
-        LineType::Phantom
-    } else if n >= 4 {
-        LineType::Center
-    } else if dashes[0] >= 3.0 {
-        LineType::Dashed
-    } else {
-        LineType::Hidden
-    })
+    let marks: Vec<f64> = dashes.iter().step_by(2).copied().collect();
+    Some(LineType::of_marks(&marks)).filter(|t| *t != LineType::Continuous)
 }
 
 /// The fill of a path as islands: each loop that isn't inside another (or is inside an even

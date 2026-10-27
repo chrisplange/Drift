@@ -271,3 +271,131 @@ fn smoke_files_dwg_export_keeps_fills_hatches_and_blocks() {
     assert_eq!(ellipses, 2, "a true ellipse");
     let _ = std::fs::remove_file(&path);
 }
+
+/// File → Import… of `name` with `contents`, as the system's file dialog would hand it over.
+fn import_from_menu(h: &mut Harness<'_, DriftApp>, test: &str, name: &str, contents: &[u8]) {
+    let path = temp_file(test, name, contents);
+    open_menu(h, "File");
+    h.get_by_label("Import…").click();
+    h.run();
+    h.state().files.open_path(&path);
+    h.run_steps(3);
+    h.get_by_label("Import").click();
+    h.run_steps(3);
+    let _ = std::fs::remove_file(&path);
+}
+
+/// A block with copies on two layers exports as one block whose copies each show their own
+/// layer's look (DWG and R12), and R12 keeps "Walls new" and "walls_new" two layers. Each
+/// export is imported into a new drawing (into the same one, R12's upper-case WALLS_NEW
+/// would join the drawing's "walls_new", as names are matched ignoring case).
+#[test]
+fn smoke_files_cad_export_block_copies_keep_their_own_layer_look() {
+    use crate::output::CadFormat;
+    use drift_core::{Layer, LineType, LineWeight, Rgb};
+    let Some(mut h) = harness() else { return };
+    view(&mut h, DVec2::new(-20.0, -20.0), DVec2::new(140.0, 60.0));
+    let (sides, _) = rectangle(&mut h, DVec2::ZERO, DVec2::new(20.0, 20.0), Fill::No);
+    let (red, blue) = (Rgb([255, 0, 0]), Rgb([0, 0, 255]));
+    let ed = &mut h.state_mut().editor;
+    ed.selection.extend(sides);
+    let copy = ed.make_block("Square").unwrap();
+    ed.doc.begin();
+    let walls = ed.doc.add_layer(Layer {
+        color: Some(red),
+        weight: LineWeight(50),
+        ..Layer::new("Walls new")
+    });
+    let hidden = ed.doc.add_layer(Layer {
+        color: Some(blue),
+        weight: LineWeight(18),
+        line_type: LineType::Dashed,
+        ..Layer::new("walls_new")
+    });
+    let mut first = *ed.doc.instance(copy).unwrap();
+    first.layer = walls;
+    ed.doc.set_instance(copy, first).unwrap();
+    let mut second = first;
+    second.at += DVec2::new(100.0, 0.0);
+    second.layer = hidden;
+    // (A new copy goes on the layer in use; then it is moved.)
+    let second_id = ed.doc.add_instance(second).unwrap();
+    ed.doc.set_instance(second_id, second).unwrap();
+    ed.commit("Copies on two layers");
+    h.run();
+    let painter = painter(&h);
+    let files = [CadFormat::Dwg, CadFormat::DxfR12]
+        .map(|f| (f, h.state_mut().cad_bytes(&painter, f).unwrap()));
+    for (format, bytes) in files {
+        let name = if format == CadFormat::Dwg {
+            "copies.dwg"
+        } else {
+            "copies.dxf"
+        };
+        let doc = h.state().new_document();
+        h.state_mut()
+            .replace_document(doc, "new".into(), None, Default::default(), true);
+        h.run();
+        import_from_menu(&mut h, "cad-copies", name, &bytes);
+        let doc = &h.state().editor.doc;
+        let copies: Vec<_> = doc.instances().map(|(_, c)| *c).collect();
+        assert_eq!(copies.len(), 2, "{name}: both copies");
+        assert_eq!(
+            copies[0].block, copies[1].block,
+            "{name}: one block, not one per look"
+        );
+        assert_eq!(doc.blocks().count(), 1, "{name}");
+        let mut colours: Vec<_> = copies
+            .iter()
+            .map(|c| doc.layer(c.layer).and_then(|l| l.color))
+            .collect();
+        colours.sort_unstable_by_key(|c| c.map(|c| c.0));
+        assert_eq!(
+            colours,
+            [Some(blue), Some(red)],
+            "{name}: each on its own layer"
+        );
+        let block = doc.block(copies[0].block).unwrap();
+        assert!(
+            block.items.iter().all(|it| it.appearance.is_by_layer()),
+            "{name}: the block's sides take their copy's look"
+        );
+    }
+}
+
+/// Equal dashes and a 0.30 mm line come in alike from SVG and DXF: dashed, 0.30 mm.
+#[test]
+fn smoke_files_dashed_line_comes_in_alike_from_svg_and_dxf() {
+    use drift_core::{LineType, LineWeight};
+    let Some(mut h) = harness() else { return };
+    let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm"
+ viewBox="0 0 100 100"><path d="M10 50 L60 50" stroke="black" fill="none"
+ stroke-width="0.3" stroke-dasharray="6 2 6 2"/></svg>"#;
+    let dxf = [
+        "0", "SECTION", "2", "TABLES", "0", "TABLE", "2", "LTYPE", "0", "LTYPE", "2", "EVEN", "70",
+        "0", "3", "Even", "72", "65", "73", "4", "40", "16", "49", "6", "49", "-2", "49", "6",
+        "49", "-2", "0", "ENDTAB", "0", "ENDSEC", "0", "SECTION", "2", "ENTITIES", "0", "LINE",
+        "8", "L", "6", "EVEN", "370", "30", "10", "0", "20", "0", "30", "0", "11", "50", "21", "0",
+        "31", "0", "0", "ENDSEC", "0", "EOF",
+    ]
+    .join("\n");
+    for (name, contents) in [
+        ("dashed.svg", svg.as_bytes()),
+        ("dashed.dxf", dxf.as_bytes()),
+    ] {
+        let before = ids(&h);
+        import_from_menu(&mut h, "dashes", name, contents);
+        let doc = &h.state().editor.doc;
+        let new: Vec<_> = curves(&h, &ids(&h))
+            .into_iter()
+            .filter(|id| !before.contains(id))
+            .collect();
+        assert_eq!(new.len(), 1, "{name}: the line");
+        let e = doc.get(new[0]).unwrap();
+        let layer = doc.layer(e.layer).unwrap();
+        let line_type = e.appearance.line_type.unwrap_or(layer.line_type);
+        let weight = e.appearance.weight.unwrap_or(layer.weight);
+        assert_eq!(line_type, LineType::Dashed, "{name}");
+        assert_eq!(weight, LineWeight(30), "{name}");
+    }
+}

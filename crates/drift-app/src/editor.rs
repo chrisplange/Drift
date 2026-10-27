@@ -261,6 +261,10 @@ impl Anchor {
     }
 }
 
+/// Each copy of a block's extent in the world.
+pub(crate) type InstanceBounds =
+    std::rc::Rc<std::collections::HashMap<drift_core::InstanceId, Bounds>>;
+
 /// A drag's cached scope: the dragged ids, the document structure it was worked out for, and
 /// the connected entities.
 type DragScope = (
@@ -384,6 +388,8 @@ pub struct Editor {
     /// The block the Place block tool places.
     pub place_block: Option<drift_core::BlockId>,
     pub(crate) fill_shapes: Option<crate::fills::FillShapesCache>,
+    /// Each copy of a block's extent in the world, by document structure.
+    pub(crate) instance_bounds_cache: std::cell::RefCell<Option<(u64, InstanceBounds)>>,
     /// The fills of copies of blocks, in the world (by document revision).
     pub(crate) copy_fills: Option<(u64, std::rc::Rc<Vec<crate::fills::CopyFill>>)>,
     /// The areas among each block's curves, with the curves they were found among (kept
@@ -445,9 +451,8 @@ pub struct Editor {
     pub text_caret_at: Option<DVec2>,
     /// Cap height for new text (0: the default).
     pub text_height: f64,
-    /// Bézier handles and their owners, by document revision.
-    pub(crate) handle_cache:
-        std::cell::RefCell<Option<(u64, std::rc::Rc<crate::curves::HandleOwners>)>>,
+    /// Bézier handles and their owners, by document structure.
+    pub(crate) handle_cache: std::cell::RefCell<Option<crate::curves::HandleCache>>,
     /// The Wall tool's thickness (0: by the drawing's units) and the expression it came
     /// from, which face the centreline is, whether the next segment is an arc, and the
     /// poché: kept across drawings, as the Fill switch is.
@@ -3189,21 +3194,33 @@ impl Editor {
         let (picked_walls, hovered_wall) = self.lit_walls();
         let wall_owners =
             (!picked_walls.is_empty() || hovered_wall.is_some()).then(|| self.wall_owners());
-        // Layer by layer, in their draw order.
+        // Layer by layer, in their draw order: one pass into each layer's list (sorting every
+        // entity each frame showed on big drawings with many layers).
         let ranks = self.doc.layer_ranks();
-        let mut entities: Vec<_> = self.doc.iter().collect();
-        entities.sort_by_key(|(_, e)| ranks.get(&e.layer).copied().unwrap_or(0));
-        for (id, entity) in entities {
+        let mut by_rank: Vec<Vec<(EntityId, &drift_core::Entity)>> =
+            vec![Vec::new(); ranks.len().max(1)];
+        let mut last: Option<(drift_core::LayerId, usize)> = None;
+        for (id, e) in self.doc.iter() {
+            let rank = match last {
+                Some((l, r)) if l == e.layer => r,
+                _ => {
+                    let r = ranks.get(&e.layer).copied().unwrap_or(0);
+                    last = Some((e.layer, r));
+                    r
+                }
+            };
+            by_rank[rank].push((id, e));
+        }
+        let mut layer_of: Option<(drift_core::LayerId, &drift_core::Layer)> = None;
+        for (id, entity) in by_rank.into_iter().flatten() {
             if hidden.contains(&id) {
                 continue;
             }
+            let role = self.index.role(id);
             // End and centre points of untouched curves stay out of the way.
             if let Some(shown) = &shown_ends
                 && entity.kind.is_point()
-                && matches!(
-                    self.index.role(id),
-                    Some(PointRole::Endpoint | PointRole::Center)
-                )
+                && matches!(role, Some(PointRole::Endpoint | PointRole::Center))
                 && !shown.contains(&id)
             {
                 continue;
@@ -3217,7 +3234,14 @@ impl Editor {
                 Some(Definition::Over) => DofState::Over,
                 None => DofState::Unknown,
             };
-            let layer = self.doc.layer_of(id);
+            let layer = match layer_of {
+                Some((l, layer)) if l == entity.layer => layer,
+                _ => {
+                    let layer = self.doc.layer_of(id);
+                    layer_of = Some((entity.layer, layer));
+                    layer
+                }
+            };
             let look = entity.appearance;
             let color = if status_colors {
                 None
@@ -3237,7 +3261,6 @@ impl Editor {
                     look.weight.unwrap_or(layer.weight).0,
                     look.line_type.unwrap_or(layer.line_type),
                 );
-            let role = self.index.role(id);
             // End and centre points are small markers; handles and lone points full size.
             if role.is_some_and(|r| r != PointRole::Standalone && r != PointRole::Handle) {
                 item = item.as_vertex();

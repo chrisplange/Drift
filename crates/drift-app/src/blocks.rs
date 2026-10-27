@@ -41,14 +41,30 @@ fn shifted(by: DVec2) -> Instance {
 }
 
 impl Editor {
-    /// A copy's extent in the world.
+    /// A copy's extent in the world (worked out for every copy at once, and kept while the
+    /// document's structure is unchanged: hover and snapping ask for them all each move).
     pub fn instance_bounds(&self, id: InstanceId) -> Bounds {
-        let mut b = Bounds::EMPTY;
-        for item in self.doc.instance_items(id) {
-            let s = item.shape.bounds();
-            b.include(s.min);
-            b.include(s.max);
+        let structure = self.doc.structure();
+        if let Some((s, all)) = &*self.instance_bounds_cache.borrow()
+            && *s == structure
+        {
+            return all.get(&id).copied().unwrap_or(Bounds::EMPTY);
         }
+        let all: std::collections::HashMap<InstanceId, Bounds> = self
+            .doc
+            .instances()
+            .map(|(i, _)| {
+                let mut b = Bounds::EMPTY;
+                for item in self.doc.instance_items(i) {
+                    let s = item.shape.bounds();
+                    b.include(s.min);
+                    b.include(s.max);
+                }
+                (i, b)
+            })
+            .collect();
+        let b = all.get(&id).copied().unwrap_or(Bounds::EMPTY);
+        *self.instance_bounds_cache.borrow_mut() = Some((structure, std::rc::Rc::new(all)));
         b
     }
 
@@ -164,11 +180,22 @@ impl Editor {
             })
             .map(|(id, i)| (id, *i))
             .collect();
+        // (A copy's curves are looked at only when `p` is near its box.)
+        let near_box = |id: InstanceId| {
+            let b = self.instance_bounds(id);
+            !b.is_empty()
+                && p.x >= b.min.x - tol
+                && p.x <= b.max.x + tol
+                && p.y >= b.min.y - tol
+                && p.y <= b.max.y + tol
+        };
         let on_edge = candidates.iter().rev().find(|(id, _)| {
-            self.doc
-                .instance_items(*id)
-                .iter()
-                .any(|item| drift_geom::distance(&item.shape, p) <= tol)
+            near_box(*id)
+                && self
+                    .doc
+                    .instance_items(*id)
+                    .iter()
+                    .any(|item| drift_geom::distance(&item.shape, p) <= tol)
         });
         if let Some((id, _)) = on_edge {
             return Some(*id);

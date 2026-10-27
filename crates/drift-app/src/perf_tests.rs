@@ -1441,3 +1441,99 @@ fn perf_drag_frames() {
         bare.0
     );
 }
+
+/// Per-frame item lists and block-copy hover (sweep items A4, A3): the sketch's items no
+/// longer sort every entity each frame, and hover tests only the copies whose box is near.
+#[test]
+#[ignore = "torture test: run with --release --ignored --nocapture"]
+fn perf_items_and_copy_hover() {
+    use drift_core::blocks::{Block, BlockItem, Instance};
+    println!();
+    // A4: 10,000 curves, nothing picked and 1,000 picked.
+    let (doc, _) = torture_sketch();
+    let mut ed = Editor::new(doc);
+    let items = time(20, |_| {
+        let _ = ed.items_styled(true, true);
+    });
+    report("10k curves: sketch items (per frame)", items);
+    ed.selection = ed
+        .doc
+        .iter()
+        .filter(|(_, e)| !e.kind.is_point())
+        .map(|(id, _)| id)
+        .take(1000)
+        .collect();
+    let picked = time(20, |_| {
+        let _ = ed.items_styled(true, true);
+    });
+    report("10k curves: items with 1,000 picked", picked);
+    ed.selection.clear();
+    // The same entities spread over 12 layers (as imports come in).
+    let layers: Vec<drift_core::LayerId> = (0..12)
+        .map(|k| {
+            ed.doc
+                .add_layer(drift_core::Layer::new(format!("Layer {k}")))
+        })
+        .collect();
+    let all: Vec<EntityId> = ed.doc.iter().map(|(id, _)| id).collect();
+    for (k, id) in all.into_iter().enumerate() {
+        ed.doc.set_entity_layer(id, layers[k % 12]).unwrap();
+    }
+    ed.sync();
+    let layered = time(20, |_| {
+        let _ = ed.items_styled(true, true);
+    });
+    report("10k curves on 12 layers: sketch items", layered);
+    let handles = time(100, |_| {
+        let _ = ed.hidden_handles();
+    });
+    report("10k curves: hidden handles", handles);
+
+    // A3: 120 copies of a 400-line block, hovering at random spots.
+    let mut doc = Document::new();
+    let lines: Vec<BlockItem> = (0..400)
+        .map(|k| {
+            let (x, y) = ((k % 20) as f64 * 50.0, (k / 20) as f64 * 50.0);
+            BlockItem {
+                shape: drift_core::Shape::Line {
+                    a: v(x, y),
+                    b: v(x + 40.0, y + 10.0),
+                },
+                style: drift_core::LineKind::Solid,
+                appearance: Default::default(),
+            }
+        })
+        .collect();
+    let block = doc.add_block(Block {
+        name: "Desk".into(),
+        items: lines,
+        ..Default::default()
+    });
+    for k in 0..120 {
+        let at = v((k % 12) as f64 * 1500.0, (k / 12) as f64 * 1500.0);
+        doc.add_instance(Instance::new(block, at)).unwrap();
+    }
+    let ed = Editor::new(doc);
+    let mut rng = Lcg(11);
+    let spots: Vec<DVec2> = (0..500)
+        .map(|_| v(rng.next() * 18000.0, rng.next() * 15000.0))
+        .collect();
+    let hover = time(500, |i| {
+        let _ = ed.instance_at(spots[i], 2.0);
+    });
+    report("120 block copies: hover (instance_at)", hover);
+    // Still finds a copy by its curve, and by its box.
+    let first = ed.doc.instances().next().map(|(id, _)| id).unwrap();
+    assert_eq!(ed.instance_at(v(20.0, 5.0), 1.0), Some(first));
+    assert_eq!(ed.instance_at(v(45.0, 30.0), 1.0), Some(first));
+    assert_eq!(ed.instance_at(v(1200.0, 1200.0), 1.0), None);
+
+    println!(
+        "  budgets: items 3 ms, on 12 layers 4.5 ms, with 1,000 picked 4 ms, handles 0.3 ms,          copy hover 0.5 ms"
+    );
+    assert!(items.0 < 3.0, "sketch items {:.2} ms", items.0);
+    assert!(picked.0 < 4.0, "items with 1,000 picked {:.2} ms", picked.0);
+    assert!(layered.0 < 4.5, "items on 12 layers {:.2} ms", layered.0);
+    assert!(handles.0 < 0.3, "hidden handles {:.3} ms", handles.0);
+    assert!(hover.0 < 0.5, "copy hover {:.2} ms", hover.0);
+}

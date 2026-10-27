@@ -6,9 +6,12 @@
 
 pub mod crash;
 pub mod fonts;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod log_file;
 pub mod memory;
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// Drift's version: the crate version, or the one a build was given in `DRIFT_VERSION`.
@@ -62,6 +65,17 @@ type Waker = Arc<dyn Fn() + Send + Sync>;
 pub struct Files {
     events: Arc<Mutex<Vec<FileEvent>>>,
     wake: Waker,
+    /// How many file pickers are open.
+    pickers: Arc<AtomicUsize>,
+}
+
+/// An open file picker: counted by [`Files::picker_open`] until it is dropped.
+pub struct Picker(Arc<AtomicUsize>);
+
+impl Drop for Picker {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Relaxed);
+    }
 }
 
 impl Files {
@@ -69,7 +83,27 @@ impl Files {
         Self {
             events: Arc::default(),
             wake: Arc::new(wake),
+            pickers: Arc::default(),
         }
+    }
+
+    /// Whether a file picker is open. Its answer replaces or saves the document, so the app
+    /// treats it as a modal dialog: the drawing can't change underneath it.
+    pub fn picker_open(&self) -> bool {
+        self.pickers.load(Ordering::Relaxed) > 0
+    }
+
+    /// Count a file picker as open until the returned [`Picker`] is dropped. The dialogs here
+    /// do this themselves; tests use it to stand in for one.
+    pub fn picker(&self) -> Picker {
+        self.pickers.fetch_add(1, Ordering::Relaxed);
+        Picker(self.pickers.clone())
+    }
+
+    /// Hand the app `event` as if a dialog had sent it (tests).
+    #[doc(hidden)]
+    pub fn deliver(&self, event: FileEvent) {
+        self.post(event);
     }
 
     /// Events that arrived since the last call.
@@ -89,7 +123,9 @@ impl Files {
     #[cfg(not(all(target_arch = "wasm32", feature = "demo")))]
     pub fn open(&self, file_type: FileType) {
         let this = self.clone();
+        let picker = self.picker();
         spawn(async move {
+            let _picker = picker;
             let dialog =
                 rfd::AsyncFileDialog::new().add_filter(file_type.name, file_type.extensions);
             let Some(handle) = dialog.pick_file().await else {
@@ -114,7 +150,9 @@ impl Files {
     #[cfg(all(target_arch = "wasm32", feature = "demo"))]
     pub fn open(&self, file_type: FileType) {
         let this = self.clone();
+        let picker = self.picker();
         spawn(async move {
+            let _picker = picker;
             match web_pick::pick(file_type.extensions).await {
                 Some((name, contents)) => this.post(FileEvent::Opened {
                     name,
@@ -141,7 +179,7 @@ impl Files {
                     path: Some(path.clone()),
                     contents,
                 },
-                Err(e) => FileEvent::Failed(format!("could not open {}: {e}", path.display())),
+                Err(e) => FileEvent::Failed(format!("could not open {name}: {e}")),
             });
         }
         #[cfg(target_arch = "wasm32")]
@@ -161,13 +199,15 @@ impl Files {
         {
             let this = self.clone();
             let name = suggested_name.to_owned();
+            let picker = self.picker();
             spawn(async move {
+                let _picker = picker;
                 let dialog = rfd::AsyncFileDialog::new()
                     .add_filter(file_type.name, file_type.extensions)
                     .set_file_name(&name);
                 if let Some(handle) = dialog.save_file().await {
                     let path = handle.path().to_owned();
-                    this.post(write_native(path, &contents));
+                    this.post(write_native(path, &contents, Backup::Keep));
                 }
             });
         }
@@ -187,13 +227,15 @@ impl Files {
         {
             let this = self.clone();
             let name = suggested_name.to_owned();
+            let picker = self.picker();
             spawn(async move {
+                let _picker = picker;
                 let dialog = rfd::AsyncFileDialog::new()
                     .add_filter(file_type.name, file_type.extensions)
                     .set_file_name(&name);
                 if let Some(handle) = dialog.save_file().await {
                     let path = handle.path().to_owned();
-                    this.post(match write_native(path, &contents) {
+                    this.post(match write_native(path, &contents, Backup::None) {
                         FileEvent::Saved { name, .. } => FileEvent::Exported { name },
                         other => other,
                     });
@@ -224,7 +266,7 @@ impl Files {
     #[cfg(not(feature = "demo"))]
     pub fn save_to(&self, path: &FilePath, contents: &[u8]) {
         #[cfg(not(target_arch = "wasm32"))]
-        self.post(write_native(path.clone(), contents));
+        self.post(write_native(path.clone(), contents, Backup::Keep));
         #[cfg(target_arch = "wasm32")]
         {
             let _ = (path, contents);
@@ -236,18 +278,107 @@ impl Files {
 }
 
 #[cfg(all(not(target_arch = "wasm32"), not(feature = "demo")))]
-fn write_native(path: PathBuf, contents: &[u8]) -> FileEvent {
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    match std::fs::write(&path, contents) {
-        Ok(()) => FileEvent::Saved {
-            name,
-            path: Some(path),
-        },
-        Err(e) => FileEvent::Failed(format!("could not save {}: {e}", path.display())),
+fn write_native(path: PathBuf, contents: &[u8], backup: Backup) -> FileEvent {
+    let name = file_name(&path);
+    let started = std::time::Instant::now();
+    match write_atomic(&path, contents, backup) {
+        Ok(()) => {
+            log::info!(
+                "saved {name}: {} KB in {} ms",
+                contents.len() / 1024,
+                started.elapsed().as_millis()
+            );
+            FileEvent::Saved {
+                name,
+                path: Some(path),
+            }
+        }
+        Err(e) => FileEvent::Failed(format!(
+            "could not save {name}: {e}. The file on disk is unchanged."
+        )),
     }
+}
+
+/// Whether [`write_atomic`] keeps the file it replaces as `<name>.bak`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Backup {
+    /// Keep the previous version beside it (drawings).
+    Keep,
+    /// Don't (exports and other files that can be made again).
+    None,
+}
+
+/// Write `contents` to `path` so that a crash, power cut, full disk or locked file can never
+/// leave a cut-off file there: the bytes go to a temporary file in the same folder, which is
+/// flushed to disk and then renamed over `path`. If anything fails, `path` is untouched. With
+/// [`Backup::Keep`] the version it replaces is copied to `<name>.bak` first.
+#[cfg(not(feature = "demo"))]
+pub fn write_atomic(
+    path: &std::path::Path,
+    contents: &[u8],
+    backup: Backup,
+) -> std::io::Result<()> {
+    replace_with(path, backup, |file| {
+        use std::io::Write as _;
+        file.write_all(contents)
+    })
+}
+
+/// [`write_atomic`] with the writing step given, so tests can make it fail partway.
+#[cfg(not(feature = "demo"))]
+fn replace_with(
+    path: &std::path::Path,
+    backup: Backup,
+    write: impl FnOnce(&mut std::fs::File) -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    let temp = sibling(path, &format!(".{}.tmp", std::process::id()));
+    let written = (|| {
+        let mut file = std::fs::File::create(&temp)?;
+        write(&mut file)?;
+        file.sync_all()
+    })();
+    if let Err(e) = written {
+        let _ = std::fs::remove_file(&temp);
+        return Err(e);
+    }
+    if backup == Backup::Keep && path.is_file() {
+        // A copy, not a rename: `path` must exist at every moment. A backup that can't be made
+        // doesn't stop the save.
+        if let Err(e) = std::fs::copy(path, sibling(path, ".bak")) {
+            log::warn!("could not keep a backup of {}: {e}", file_name(path));
+        }
+    }
+    // Something holding the old file open (a virus scanner, a file indexer) can block the
+    // rename on Windows for a moment.
+    let mut tries = 0;
+    loop {
+        match std::fs::rename(&temp, path) {
+            Ok(()) => return Ok(()),
+            Err(_) if tries < 5 => {
+                tries += 1;
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            Err(e) => {
+                let _ = std::fs::remove_file(&temp);
+                return Err(e);
+            }
+        }
+    }
+}
+
+/// `path` with `suffix` added to its file name: `plan.drift` + `.bak` = `plan.drift.bak`.
+#[cfg(not(feature = "demo"))]
+fn sibling(path: &std::path::Path, suffix: &str) -> PathBuf {
+    let mut name = path.as_os_str().to_owned();
+    name.push(suffix);
+    PathBuf::from(name)
+}
+
+/// A path's file name, for messages and logs (never the folders above it).
+pub fn file_name(path: &std::path::Path) -> String {
+    path.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 #[cfg(all(not(target_arch = "wasm32"), not(feature = "demo")))]
@@ -384,5 +515,62 @@ mod web {
         anchor.click();
         web_sys::Url::revoke_object_url(&url)?;
         Ok(())
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32"), not(feature = "demo")))]
+mod tests {
+    use super::*;
+
+    fn folder(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("drift-atomic-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_failed_save_leaves_the_original_untouched() {
+        let dir = folder("fail");
+        let path = dir.join("plan.drift");
+        std::fs::write(&path, b"the good version").unwrap();
+        let failed = replace_with(&path, Backup::Keep, |file| {
+            use std::io::Write as _;
+            file.write_all(b"half of the new")?;
+            Err(std::io::Error::other("disk full"))
+        });
+        assert!(failed.is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"the good version");
+        // No temporary file is left behind, and no backup was made for a save that failed.
+        let names: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names, ["plan.drift"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_save_keeps_the_previous_version_as_bak() {
+        let dir = folder("bak");
+        let path = dir.join("plan.drift");
+        write_atomic(&path, b"first", Backup::Keep).unwrap();
+        assert!(
+            !dir.join("plan.drift.bak").exists(),
+            "nothing to back up yet"
+        );
+        write_atomic(&path, b"second", Backup::Keep).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"second");
+        assert_eq!(std::fs::read(dir.join("plan.drift.bak")).unwrap(), b"first");
+        write_atomic(&path, b"third", Backup::Keep).unwrap();
+        assert_eq!(
+            std::fs::read(dir.join("plan.drift.bak")).unwrap(),
+            b"second"
+        );
+        let export = dir.join("plan.pdf");
+        write_atomic(&export, b"a", Backup::None).unwrap();
+        write_atomic(&export, b"b", Backup::None).unwrap();
+        assert!(!dir.join("plan.pdf.bak").exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

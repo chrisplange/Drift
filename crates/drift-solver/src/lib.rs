@@ -280,7 +280,11 @@ pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
     if report.converged {
         report = land(&mut sys, options, &targets, report);
     }
-    write_back(doc, &sys);
+    // A result that isn't a number (a degenerate configuration the equations divide by) is
+    // never written: the drawing stays as it was and the solve counts as failed.
+    if !write_back(doc, &sys) {
+        report.converged = false;
+    }
     report
 }
 
@@ -1775,7 +1779,12 @@ pub fn free_directions_with(
     out
 }
 
-fn write_back(doc: &mut Document, sys: &System) {
+/// Write the solved values into the document, unless any of them isn't finite: then write
+/// nothing and return false.
+fn write_back(doc: &mut Document, sys: &System) -> bool {
+    if (0..sys.params.len()).any(|i| !sys.value(i).is_finite()) {
+        return false;
+    }
     let mut points: HashMap<EntityId, DVec2> = HashMap::new();
     for (i, param) in sys.params.iter().enumerate() {
         let v = sys.value(i);
@@ -1799,6 +1808,7 @@ fn write_back(doc: &mut Document, sys: &System) {
             let _ = doc.set_point(id, at);
         }
     }
+    true
 }
 
 #[cfg(test)]

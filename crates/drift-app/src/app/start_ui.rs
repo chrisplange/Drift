@@ -294,18 +294,103 @@ impl DriftApp {
         }
     }
 
+    /// Version and system details, for bug reports (About shows them).
+    fn details(&self) -> String {
+        format!(
+            "Drift {VERSION}\nRenderer: {}\nSystem: {}\nMemory: {} MB in use",
+            renderer_name(&self.backend),
+            system_name(),
+            self.memory.0 / (1024 * 1024)
+        )
+    }
+
+    /// A problem report to paste into an email or message: the details and the end of the log
+    /// (which holds file names, never drawing contents).
+    fn report_text(&self) -> String {
+        #[cfg(not(target_arch = "wasm32"))]
+        let log = drift_platform::log_file::tail(REPORT_LOG_BYTES);
+        #[cfg(target_arch = "wasm32")]
+        let log = String::new();
+        let mut text = format!(
+            "What happened, and what did you expect?\n\n\n--- About ---\n{}\n",
+            self.details()
+        );
+        if !log.is_empty() {
+            text.push_str(&format!("\n--- The end of Drift's log ---\n{log}"));
+        }
+        text
+    }
+
+    /// Help → Report a problem: a report to send by email (or paste anywhere), with the details
+    /// and the end of the log; or GitHub, for those with an account.
+    pub(crate) fn report_window(&mut self, ctx: &egui::Context) {
+        if !self.show_report {
+            return;
+        }
+        let mut open = true;
+        let mut close = false;
+        let mut copied = false;
+        theme::dialog(ctx, "Report a problem")
+            .open(&mut open)
+            .show(ctx, |ui| {
+                ui.set_width(380.0);
+                close = theme::dialog_title(ui, "Report a problem", true);
+                ui.add(
+                    egui::Label::new(
+                        "Copy the report and paste it into an email or message to whoever gave \
+                         you Drift, with what happened. It has Drift's version, your system and \
+                         the end of Drift's log: file names, never what is in your drawings.",
+                    )
+                    .wrap(),
+                );
+                ui.add_space(8.0);
+                ui.horizontal_wrapped(|ui| {
+                    let dark = ui.visuals().dark_mode;
+                    if ui.add(theme::primary_button("Copy report", dark)).clicked() {
+                        ui.ctx().copy_text(self.report_text());
+                        copied = true;
+                    }
+                    if ui
+                        .button("Email…")
+                        .on_hover_text("A new email with the report in it")
+                        .clicked()
+                    {
+                        ui.ctx()
+                            .open_url(egui::OpenUrl::new_tab(mailto(&self.report_text())));
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    if ui
+                        .button("Show logs folder")
+                        .on_hover_text("To attach the whole log, or crash.log")
+                        .clicked()
+                    {
+                        show_logs_folder();
+                    }
+                    ui.hyperlink_to("On GitHub…", crate::links::REPORT)
+                        .on_hover_text("Bug reports and feature requests, with a GitHub account");
+                });
+            });
+        if close {
+            open = false;
+        }
+        if copied {
+            let now = ctx.input(|i| i.time);
+            self.set_status(
+                "Copied the report: paste it into an email or message".into(),
+                false,
+                now,
+            );
+        }
+        self.show_report = open;
+    }
+
     /// Help → About Drift: version and system details, for bug reports.
     pub(crate) fn about_window(&mut self, ctx: &egui::Context) {
         if !self.show_about {
             return;
         }
         let mut open = true;
-        let details = format!(
-            "Drift {VERSION}\nRenderer: {}\nSystem: {}\nMemory: {} MB in use",
-            renderer_name(&self.backend),
-            system_name(),
-            self.memory.0 / (1024 * 1024)
-        );
+        let details = self.details();
         let mut copied = false;
         let mut close = false;
         theme::dialog(ctx, "About Drift")
@@ -736,5 +821,73 @@ impl PrefsPage {
             #[cfg(not(target_arch = "wasm32"))]
             PrefsPage::Updates => "Updates & Labs",
         }
+    }
+}
+
+/// How much of the log's end goes in a problem report.
+#[cfg(not(target_arch = "wasm32"))]
+const REPORT_LOG_BYTES: usize = 6 * 1024;
+
+/// A `mailto:` link for a new email holding `body` (cut short to what mail programs take, at a
+/// line), to whoever the tester sends it to.
+fn mailto(body: &str) -> String {
+    const MAX: usize = 1800;
+    let body = if body.len() > MAX {
+        let mut end = MAX;
+        while !body.is_char_boundary(end) {
+            end -= 1;
+        }
+        let cut = &body[..end];
+        &cut[..cut.rfind('\n').unwrap_or(cut.len())]
+    } else {
+        body
+    };
+    let encode = |s: &str| -> String {
+        s.bytes()
+            .map(|b| match b {
+                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                    (b as char).to_string()
+                }
+                _ => format!("%{b:02X}"),
+            })
+            .collect()
+    };
+    format!(
+        "mailto:{}?subject={}&body={}",
+        crate::links::REPORT_EMAIL,
+        encode(&format!("Drift {VERSION}: a problem")),
+        encode(body)
+    )
+}
+
+/// Show Drift's data folder, where `drift.log` and `crash.log` are, in Explorer or the Finder.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn show_logs_folder() {
+    let Some(log) = drift_platform::log_file::path() else {
+        return;
+    };
+    if let Some(dir) = log.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if log.exists() {
+        crate::app::recovery::reveal(&log);
+    } else if let Some(dir) = log.parent() {
+        crate::app::recovery::reveal(dir);
+    }
+}
+
+#[cfg(test)]
+mod report_tests {
+    use super::*;
+
+    #[test]
+    fn the_report_email_is_a_short_encoded_link() {
+        let long = format!("line one & two\n{}", "x ".repeat(2000));
+        let link = mailto(&long);
+        assert!(link.starts_with("mailto:"), "{link}");
+        // Cut short at a line: the long one goes.
+        assert!(link.ends_with("body=line%20one%20%26%20two"), "{link}");
+        assert!(!link.contains(' ') && !link.contains('\n'));
+        assert!(link.len() < 6000);
     }
 }

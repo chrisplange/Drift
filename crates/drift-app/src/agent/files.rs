@@ -154,6 +154,9 @@ pub(super) fn save(s: &mut Session, a: &Value) -> Res {
             .filter(|p| extension(p) == "drift")
             .ok_or("the drawing has no .drift file yet: give a `path`")?,
     };
+    if let Some(id) = s.editor.doc.first_non_finite() {
+        return Err(crate::app::document::not_saved_non_finite(id));
+    }
     s.meta.generator = Some(format!("Drift {}", drift_platform::VERSION));
     let saved = drift_io::save_checked(&s.editor.doc, &s.meta);
     if saved.loses_newer_data && args::opt_bool(a, "anyway")? != Some(true) {
@@ -163,7 +166,8 @@ pub(super) fn save(s: &mut Session, a: &Value) -> Res {
             crate::app::document::LOSSY_SAVE
         ));
     }
-    std::fs::write(&path, saved.text).map_err(|e| format!("{}: {e}", shown(&path)))?;
+    drift_platform::write_atomic(&path, saved.text.as_bytes(), drift_platform::Backup::Keep)
+        .map_err(|e| format!("{}: {e}", shown(&path)))?;
     s.meta.carried = saved.carried;
     // The Blender profiles beside it, as saving in the app writes them.
     let blocks = s.editor.blocks_as_drawn();
@@ -371,6 +375,7 @@ pub(super) fn export(s: &mut Session, a: &Value) -> Res {
             ));
         }
     };
-    std::fs::write(&path, &bytes).map_err(|e| format!("{}: {e}", shown(&path)))?;
+    drift_platform::write_atomic(&path, &bytes, drift_platform::Backup::None)
+        .map_err(|e| format!("{}: {e}", shown(&path)))?;
     Ok(json!({ "exported": shown(&path), "bytes": bytes.len() }))
 }

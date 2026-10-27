@@ -250,7 +250,8 @@ fit, the grid and snap switches, and the command palette.
 - Ctrl+N starts a new sketch and Ctrl+O opens one.
 - Drift asks before closing, or before replacing the sketch, when there are unsaved changes.
 - The session is saved automatically every ten seconds and when you quit, and restored when
-  you start Drift again. That's a safety net, not a substitute for saving. If it can't be
+  you start Drift again; each window keeps its own. That's a safety net, not a substitute for
+  saving. If it can't be
   restored, Drift keeps it as a file and says where (see
   [Files and compatibility](reference/files.md#session-and-autosave)).
 - Exporting a PDF, SVG or DXF never replaces your `.drift` file. Ctrl+S always writes the
@@ -263,8 +264,12 @@ fit, the grid and snap switches, and the command palette.
 
 ## If something goes wrong
 
-- **Help → About Drift → Copy details** copies the version, renderer and system for a bug
-  report.
+- **Help → Report a problem…** copies a report (the version, renderer, system and the end of
+  Drift's log) to paste into an email or message. **Help → Show logs folder** shows the logs.
+- A save never leaves a half-written file: if it fails, the file on disk is unchanged. The
+  version a save replaces is kept beside it as `<name>.drift.bak`.
+- If reading an imported file hits a bug in Drift, the import is cancelled and the drawing is
+  left as it was.
 - Drift watches its own memory use. It warns at 3 GB and closes itself at 8 GB, so a fault
   can't freeze the computer. Your sketch is restored the next time it starts.
 

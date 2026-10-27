@@ -175,7 +175,7 @@ impl DriftApp {
                 u.phase = Phase::Ready(plan);
                 u.show = true;
                 if std::mem::take(&mut u.install_when_ready) {
-                    self.request(Pending::Update);
+                    self.request_update();
                 }
             }
             Msg::Prepared(Err(e)) => {
@@ -253,10 +253,40 @@ impl DriftApp {
 
     /// Close Drift and install the downloaded update (once unsaved work has been dealt with).
     pub(crate) fn install_update_and_quit(&mut self) {
+        // (Another window may have opened while the unsaved-changes prompt was up.)
+        if self.other_windows_block_update() {
+            self.discard_session = false;
+            return;
+        }
         if let Phase::Ready(plan) = &self.updates.phase {
             self.updates.on_exit = Some(plan.clone());
             self.quit_confirmed = true;
         }
+    }
+
+    /// Install the downloaded update (asking first about unsaved changes), unless other Drift
+    /// windows are open.
+    pub(crate) fn request_update(&mut self) {
+        if !self.other_windows_block_update() {
+            self.request(Pending::Update);
+        }
+    }
+
+    /// Other Drift windows are open: the installer can't close them, and would give up without
+    /// a word (no update, no restart). Says to close them first.
+    fn other_windows_block_update(&mut self) -> bool {
+        #[cfg(not(feature = "demo"))]
+        {
+            let n = self.other_windows();
+            if n > 0 {
+                self.editor.notice = Some(format!(
+                    "Close your other Drift window{} first ({n} open), then install the update",
+                    if n == 1 { "" } else { "s" }
+                ));
+                return true;
+            }
+        }
+        false
     }
 
     /// Help menu items.
@@ -268,7 +298,7 @@ impl DriftApp {
                 .button(format!("Restart to update to {}", r.version))
                 .clicked()
             {
-                self.request(Pending::Update);
+                self.request_update();
             }
             return;
         }
@@ -407,7 +437,7 @@ impl DriftApp {
                 u.install_when_ready = true;
                 self.start_download(ctx);
             }
-            NoticeAction::Install => self.request(Pending::Update),
+            NoticeAction::Install => self.request_update(),
             NoticeAction::Page => {
                 let url = if release.page.is_empty() {
                     update::DOWNLOAD_PAGE

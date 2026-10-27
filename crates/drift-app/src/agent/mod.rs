@@ -179,6 +179,31 @@ impl Session {
 
     /// Run tool `name` with `args` (a JSON object).
     pub fn call(&mut self, name: &str, args: &Value) -> ToolOutput {
+        // A bug in a tool must not close the window (or the server) and lose the drawing:
+        // what the call had begun is undone, and the assistant told.
+        match drift_platform::crash::catch(|| self.call_unguarded(name, args)) {
+            Ok(out) => out,
+            Err(message) => {
+                if self.editor.doc.in_transaction() {
+                    self.editor.doc.rollback();
+                }
+                self.editor.sync();
+                ToolOutput {
+                    json: json!({
+                        "error": format!(
+                            "{name} hit a bug in Drift and was undone ({message}); the drawing \
+                             is as it was before the call"
+                        )
+                    }),
+                    image: None,
+                    is_error: true,
+                }
+            }
+        }
+    }
+
+    /// [`Session::call`], unguarded.
+    fn call_unguarded(&mut self, name: &str, args: &Value) -> ToolOutput {
         let mut image = None;
         let empty = json!({});
         let args = if args.is_null() { &empty } else { args };
@@ -205,6 +230,13 @@ impl Session {
         }
         let step = |label: &str| format!("Assistant: {label}");
         match name {
+            // Tests: a tool with a bug, part way through an edit.
+            #[cfg(test)]
+            "__panic" => {
+                self.editor.doc.begin();
+                self.editor.doc.add_point(drift_core::DVec2::new(1.0, 2.0));
+                panic!("a tool's bug (injected)");
+            }
             // Files and the session.
             "new_drawing" => files::new_drawing(self, a),
             "open_drawing" => files::open(self, a),

@@ -72,6 +72,8 @@ rest stand alone.
 
 ## Reporting problems
 
-Use [GitHub issues](https://github.com/chrisplange/drift-releases/issues). **Help → About Drift**
-has a **Copy details** button with the version and system information to paste into a
-report.
+**Help → Report a problem…** has **Copy report** and **Email…**: a report with the version,
+system details and the end of Drift's log, to paste into an email or message, with no account
+needed. **Help → Show logs folder** opens the folder with `drift.log` and `crash.log`, to
+attach. [GitHub issues](https://github.com/chrisplange/drift-releases/issues) work too, for
+those with an account.

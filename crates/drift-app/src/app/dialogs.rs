@@ -72,6 +72,7 @@ impl DriftApp {
             || self.pending_import.is_some()
             || self.dropped.is_some()
             || self.lossy_save_open()
+            || self.files.picker_open()
     }
 
     #[cfg(not(feature = "demo"))]
@@ -192,12 +193,31 @@ impl DriftApp {
         }
     }
 
+    /// While the system's file picker is open, the drawing waits for it: its answer opens a
+    /// file over the document or saves it, so nothing may change underneath. (The picker has
+    /// no parent window, so it can end up behind Drift's.)
+    fn picker_notice(&self, ctx: &egui::Context) {
+        if !self.files.picker_open() {
+            return;
+        }
+        egui::Modal::new(egui::Id::new("file picker"))
+            .frame(theme::dialog_frame(&ctx.style_of(ctx.theme())))
+            .show(ctx, |ui| {
+                ui.set_width(320.0);
+                theme::dialog_title(ui, "Waiting for the file dialog", false);
+                ui.label("Choose a file in the file dialog, or cancel it, to go on drawing.");
+            });
+    }
+
     pub(crate) fn dialogs(&mut self, ctx: &egui::Context) {
         self.drop_dialog(ctx);
         self.import_dialog(ctx);
         self.start_panel(ctx);
         self.about_window(ctx);
+        self.report_window(ctx);
         self.unrestored_window(ctx);
+        #[cfg(all(not(target_arch = "wasm32"), not(feature = "demo")))]
+        self.left_behind_window(ctx);
         self.licences_window(ctx);
         self.settings_window(ctx);
         self.drawing_settings_window(ctx);
@@ -213,6 +233,7 @@ impl DriftApp {
         self.sketch_check_window(ctx);
         #[cfg(not(target_arch = "wasm32"))]
         self.update_notice(ctx);
+        self.picker_notice(ctx);
         if let Some((constraint, placement)) = self.editor.pending_driven {
             let mut choice = None;
             let modal = egui::Modal::new(egui::Id::new("driven"))
@@ -303,7 +324,10 @@ impl DriftApp {
                         }
                         self.perform(action);
                     }
-                    Choice::Cancel => self.import_new = None,
+                    Choice::Cancel => {
+                        self.import_new = None;
+                        self.opened = None;
+                    }
                 }
             }
         }

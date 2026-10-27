@@ -330,6 +330,20 @@ impl Document {
     }
 
     /// All entities in id order.
+    /// The first point with a position, or circle with a radius, that isn't a finite number:
+    /// saved, it would make the file unreadable. Nothing should ever store one; this is the
+    /// last check before a save.
+    pub fn first_non_finite(&self) -> Option<EntityId> {
+        self.iter().find_map(|(id, e)| {
+            let finite = match e.kind {
+                EntityKind::Point(p) => p.is_finite(),
+                EntityKind::Circle { radius, .. } => radius.is_finite(),
+                _ => true,
+            };
+            (!finite).then_some(id)
+        })
+    }
+
     pub fn iter(&self) -> impl Iterator<Item = (EntityId, &Entity)> {
         self.entities.iter().map(|(id, e)| (*id, e))
     }

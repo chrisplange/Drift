@@ -92,6 +92,15 @@ impl Picking {
     }
 }
 
+/// Why a drawing holding a value that isn't a number wasn't saved.
+#[cfg(not(feature = "demo"))]
+pub(crate) fn not_saved_non_finite(id: drift_core::EntityId) -> String {
+    format!(
+        "Not saved: {id} has a position that isn't a number, and the file couldn't be opened \
+         again. Undo the last change, or delete {id}, then save"
+    )
+}
+
 /// Whether a path names a sketch (by its extension).
 fn is_sketch_file(path: &std::path::Path) -> bool {
     path.extension()
@@ -318,6 +327,45 @@ impl DriftApp {
                 .take(MAX_RECENT)
                 .collect();
         }
+        // This window's session file: one left behind is taken over.
+        #[cfg(all(not(target_arch = "wasm32"), not(feature = "demo")))]
+        if let Some(sessions) = self.session_files.dir.clone() {
+            let opening = self.session_files.opening.clone();
+            match app::session::Slot::claim(&sessions, opening.is_none(), opening.as_deref()) {
+                Ok(claimed) => {
+                    self.session_files.slot = Some(claimed.slot);
+                    if !self.session_files.restoring {
+                        self.session_files.left_behind = claimed.others;
+                    }
+                    if let Some(kept) = claimed.restored {
+                        // The file the window was opened for, as it was left unsaved: it isn't
+                        // opened again over it.
+                        if claimed.same_file {
+                            self.session_files.took_over = opening;
+                        }
+                        let name = kept.name.clone();
+                        let path = kept.path.map(|p| p.to_string_lossy().into_owned());
+                        self.restore_text(&kept.text, Some(kept.name), path, kept.dirty, dir);
+                        // Said, so a drawing taken over doesn't appear unexplained (unless
+                        // a note about the last run already says so).
+                        if self.unrestored.is_none()
+                            && self.editor.notice.is_none()
+                            && self.status_next.is_none()
+                        {
+                            self.status_next =
+                                Some(format!("Restored {name} from your last session"));
+                        }
+                        return;
+                    }
+                    // Sessions there, none left behind: a new drawing. (None at all: the last
+                    // session may be in eframe's storage, from a Drift before session files.)
+                    if !claimed.first {
+                        return;
+                    }
+                }
+                Err(e) => log::error!("no session file ({e}): the session goes in the settings"),
+            }
+        }
         // The demo starts afresh each time (and never kept a drawing to restore).
         let Some(text) = storage
             .get_string(KEY_DOCUMENT)
@@ -325,13 +373,29 @@ impl DriftApp {
         else {
             return;
         };
-        match drift_io::load(&text) {
+        let dirty = storage.get_string(KEY_DIRTY).as_deref() == Some("1");
+        self.restore_text(
+            &text,
+            storage.get_string(KEY_NAME),
+            storage.get_string(KEY_PATH),
+            dirty,
+            dir,
+        );
+    }
+
+    /// Restore a kept session's drawing `text`, named `name`, from `path`.
+    fn restore_text(
+        &mut self,
+        text: &str,
+        name: Option<String>,
+        path: Option<String>,
+        dirty: bool,
+        dir: Option<std::path::PathBuf>,
+    ) {
+        match drift_io::load(text) {
             Ok((doc, meta)) => {
-                let name = storage
-                    .get_string(KEY_NAME)
-                    .unwrap_or_else(|| UNTITLED.into());
-                let path = storage
-                    .get_string(KEY_PATH)
+                let name = name.unwrap_or_else(|| UNTITLED.into());
+                let path = path
                     .filter(|p| !p.is_empty() && cfg!(not(target_arch = "wasm32")))
                     .map(FilePath::from)
                     .filter(|p| is_sketch_file(p));
@@ -342,10 +406,9 @@ impl DriftApp {
                     let stem = name.rsplit_once('.').map_or(name.as_str(), |(s, _)| s);
                     format!("{stem}.drift")
                 };
-                let dirty = storage.get_string(KEY_DIRTY).as_deref() == Some("1");
                 self.replace_document(doc, name, path, meta, !dirty);
             }
-            Err(e) => self.hold_session = self.keep_unrestored(&text, &e, dir),
+            Err(e) => self.hold_session = self.keep_unrestored(text, &e, dir),
         }
     }
 
@@ -381,6 +444,11 @@ impl DriftApp {
     /// drawing Import takes asks first whether to open it as a new drawing or import it
     /// into this one. A sketch joins the recent files once it has been read.
     pub fn open_file(&mut self, path: FilePath) {
+        // The window was opened for this file and took over its unsaved session instead.
+        #[cfg(all(not(target_arch = "wasm32"), not(feature = "demo")))]
+        if self.session_files.take_over_opening(&path) {
+            return;
+        }
         if is_sketch_file(&path) {
             self.open_path = Some(path);
             self.request(Pending::OpenPath);
@@ -435,15 +503,28 @@ impl DriftApp {
                 let doc = self.new_document();
                 self.replace_document(doc, UNTITLED.into(), None, Metadata::default(), true);
             }
-            Pending::Open => self.files.open(app::import_ui::OPEN_FILE),
+            Pending::Open => {
+                self.opening_revision = Some(self.editor.doc.revision());
+                // (Tests hand over their files themselves: no system dialog.)
+                #[cfg(not(test))]
+                self.files.open(app::import_ui::OPEN_FILE);
+            }
             Pending::Recent(i) => {
                 if let Some(path) = self.recent.get(i).cloned() {
+                    self.opening_revision = Some(self.editor.doc.revision());
                     self.files.open_path(&path);
                 }
             }
             Pending::OpenPath => {
                 if let Some(path) = self.open_path.take() {
+                    self.opening_revision = Some(self.editor.doc.revision());
                     self.files.open_path(&path);
+                }
+            }
+            Pending::Opened => {
+                if let Some(o) = self.opened.take() {
+                    self.status_next = Some(o.status.0.clone());
+                    self.show_opened(*o);
                 }
             }
             Pending::ImportNew => {
@@ -489,16 +570,26 @@ impl DriftApp {
     /// `confirmed`.
     #[cfg(not(feature = "demo"))]
     pub(crate) fn write_file(&mut self, as_new: bool, confirmed: bool) {
+        // A value that isn't a number would make the file unreadable: write nothing.
+        if let Some(id) = self.editor.doc.first_non_finite() {
+            self.editor.notice = Some(not_saved_non_finite(id));
+            self.after_save = None;
+            return;
+        }
         let saved = self.saved();
         if saved.loses_newer_data && !confirmed {
             self.lossy_save = Some(as_new);
             return;
         }
-        self.saving_carried = Some(saved.carried);
+        self.saving = Some((saved.carried, self.editor.doc.revision()));
         let bytes = saved.text.into_bytes();
         // Only ever overwrite a sketch file: never an export or an imported drawing.
         match &self.file.path {
             Some(path) if !as_new && is_sketch_file(path) => self.files.save_to(path, &bytes),
+            // (Tests hand over the saved event themselves: no system dialog.)
+            #[cfg(test)]
+            _ => drop((DRIFT_FILE, bytes)),
+            #[cfg(not(test))]
             _ => self.files.save_as(&self.file.name, DRIFT_FILE, bytes),
         }
     }
@@ -666,8 +757,14 @@ impl DriftApp {
                         continue;
                     }
                     let text = String::from_utf8_lossy(&contents);
+                    let started = web_time::Instant::now();
                     match drift_io::load_with_notes(&text) {
                         Ok((doc, meta, dropped)) => {
+                            log::info!(
+                                "opened {name}: {} KB in {} ms",
+                                contents.len() / 1024,
+                                started.elapsed().as_millis()
+                            );
                             let status = if dropped.is_empty() {
                                 format!("Opened {name}")
                             } else {
@@ -678,11 +775,25 @@ impl DriftApp {
                                     dropped.join(", ")
                                 )
                             };
-                            self.set_status(status, !dropped.is_empty(), now);
-                            if let Some(p) = &path {
-                                self.remember(p.clone());
+                            let opened = OpenedDrawing {
+                                doc,
+                                name,
+                                path,
+                                meta,
+                                status: (status, !dropped.is_empty()),
+                            };
+                            // The document changed after the file was asked for (an edit
+                            // from the AI link while the picker was open, say): ask again
+                            // before those changes go.
+                            let asked_at = self.opening_revision.take();
+                            if self.is_dirty() && asked_at != Some(self.editor.doc.revision()) {
+                                self.opened = Some(Box::new(opened));
+                                self.pending = Some(Pending::Opened);
+                            } else {
+                                let (status, warn) = opened.status.clone();
+                                self.set_status(status, warn, now);
+                                self.show_opened(opened);
                             }
-                            self.replace_document(doc, name, path, meta, true);
                         }
                         Err(e) => self.set_status(format!("Could not open {name}: {e}"), true, now),
                     }
@@ -706,12 +817,17 @@ impl DriftApp {
                     if path.is_some() {
                         self.file.path = path;
                     }
-                    self.file.clean_revision = Some(self.editor.doc.revision());
-                    // The next save compares with this file.
+                    // What was written: edits made while Save As's picker was open stay
+                    // unsaved.
+                    #[cfg_attr(feature = "demo", allow(unused_mut))]
+                    let mut written = self.editor.doc.revision();
                     #[cfg(not(feature = "demo"))]
-                    if let Some(carried) = self.saving_carried.take() {
+                    if let Some((carried, revision)) = self.saving.take() {
+                        // The next save compares with this file.
                         self.file.meta.carried = carried;
+                        written = revision;
                     }
+                    self.file.clean_revision = Some(written);
                     // Saved from the unsaved-changes prompt: carry on with what was asked.
                     if let Some((action, revision)) = self.after_save.take()
                         && revision == self.editor.doc.revision()
@@ -737,6 +853,14 @@ impl DriftApp {
                 }
             }
         }
+    }
+
+    /// Make a drawing that was read the document.
+    fn show_opened(&mut self, o: OpenedDrawing) {
+        if let Some(p) = &o.path {
+            self.remember(p.clone());
+        }
+        self.replace_document(o.doc, o.name, o.path, o.meta, true);
     }
 
     /// Add the patterns in a `.pat` file to the document (replacing same-named ones).

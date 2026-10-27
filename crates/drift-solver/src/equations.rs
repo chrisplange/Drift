@@ -14,6 +14,11 @@ pub enum Length {
     Param(usize),
 }
 
+/// The least a length (or a squared length) is taken to be where an equation divides by it:
+/// its square, or the product of two, is still a normal number (1e-300). With 1e-300 itself
+/// the square underflowed to 0 and a zero-length line gave 0/0.
+const TINY: f64 = 1e-150;
+
 impl Length {
     fn eval(&self, val: &impl Fn(usize) -> f64, sign: f64, grad: &mut Vec<(usize, f64)>) -> f64 {
         match *self {
@@ -356,8 +361,8 @@ impl Equation {
                 // As `Angle` with line 1 = v and line 2 = n: sin of the angle from the
                 // normal (cross) or from the tangent (dot).
                 let (cs, sn) = if normal { (1.0, 0.0) } else { (0.0, -1.0) };
-                let len1sq = v.length_squared().max(1e-300);
-                let len2sq = n.length_squared().max(1e-300);
+                let len1sq = v.length_squared().max(TINY);
+                let len2sq = n.length_squared().max(TINY);
                 let norm = (len1sq * len2sq).sqrt();
                 let r = (v.perp_dot(n) * cs - v.dot(n) * sn) / norm;
                 let gv =
@@ -413,7 +418,7 @@ impl Equation {
             } => {
                 let w = (val(bx) - val(ax), val(by) - val(ay));
                 let d = (val(qx) - val(px), val(qy) - val(py));
-                let len = d.0.hypot(d.1).max(1e-300);
+                let len = d.0.hypot(d.1).max(TINY);
                 let r = (w.0 * d.0 + w.1 * d.1) / len;
                 let gd = (
                     w.0 / len - r * d.0 / (len * len),
@@ -441,7 +446,7 @@ impl Equation {
                     0.5 * (val(ax) + val(bx)) - val(px),
                     0.5 * (val(ay) + val(by)) - val(py),
                 );
-                let len = d.0.hypot(d.1).max(1e-300);
+                let len = d.0.hypot(d.1).max(TINY);
                 let r = (d.0 * q.1 - d.1 * q.0) / len;
                 let gq = (-d.1 / len, d.0 / len);
                 let gd = (
@@ -485,8 +490,8 @@ impl Equation {
             } => {
                 let d1 = (val(l1[2]) - val(l1[0]), val(l1[3]) - val(l1[1]));
                 let d2 = (val(l2[2]) - val(l2[0]), val(l2[3]) - val(l2[1]));
-                let len1sq = (d1.0 * d1.0 + d1.1 * d1.1).max(1e-300);
-                let len2sq = (d2.0 * d2.0 + d2.1 * d2.1).max(1e-300);
+                let len1sq = (d1.0 * d1.0 + d1.1 * d1.1).max(TINY);
+                let len2sq = (d2.0 * d2.0 + d2.1 * d2.1).max(TINY);
                 let norm = (len1sq * len2sq).sqrt();
                 let cross = d1.0 * d2.1 - d1.1 * d2.0;
                 let dot = d1.0 * d2.0 + d1.1 * d2.1;
@@ -526,7 +531,7 @@ fn point_line(
 ) -> f64 {
     let d = (val(bx) - val(ax), val(by) - val(ay));
     let w = (val(px) - val(ax), val(py) - val(ay));
-    let len = d.0.hypot(d.1).max(1e-300);
+    let len = d.0.hypot(d.1).max(TINY);
     let cross = d.0 * w.1 - d.1 * w.0;
     let f = cross / len;
     // ∂f/∂d and ∂f/∂w; then a = −(d + w) terms, b = d terms, p = w terms.
@@ -781,5 +786,42 @@ mod tests {
         // Undirected: 210° is the same pair of lines.
         assert!(at(210f64.to_radians()).abs() < 1e-14);
         assert!((at(0.0) - 0.5).abs() < 1e-15);
+    }
+
+    /// A zero-length line: the guards keep every residual and gradient a number (#215).
+    #[test]
+    fn zero_length_line_stays_finite() {
+        // Line 1 from (0, 0) to (0, 0); line 2 and a point elsewhere.
+        let x = [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 4.0, 3.0, 2.0, 5.0];
+        let val = |i: usize| x[i];
+        let equations = [
+            Equation::angle([0, 1, 2, 3], [4, 5, 6, 7], 0.5),
+            Equation::angle([4, 5, 6, 7], [0, 1, 2, 3], 0.5),
+            Equation::PointLine {
+                point: [8, 9],
+                line: [0, 1, 2, 3],
+                sign: 1.0,
+                value: 1.0,
+            },
+            Equation::SymmetricPerpendicular {
+                a: [4, 5],
+                b: [8, 9],
+                axis: [0, 1, 2, 3],
+            },
+            Equation::SymmetricMidpoint {
+                a: [4, 5],
+                b: [8, 9],
+                axis: [0, 1, 2, 3],
+            },
+        ];
+        for (i, e) in equations.iter().enumerate() {
+            let mut grad = Vec::new();
+            let r = e.eval(&val, &mut grad);
+            assert!(r.is_finite(), "equation {i}: residual {r}");
+            assert!(
+                grad.iter().all(|(_, g)| g.is_finite()),
+                "equation {i}: {grad:?}"
+            );
+        }
     }
 }

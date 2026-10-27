@@ -49,8 +49,27 @@ Check your build in **Help → About Drift**.
 ## Session and autosave
 
 Drift keeps your session (the open sketch, whether or not it's saved) and restores it on the
-next start: every ten seconds, and when you quit. In the browser it's kept in the browser's
-storage for the site.
+next start: every ten seconds when something changed, and when you quit. Each window keeps
+its own, in the `sessions` folder of Drift's data folder. A new window takes over the most
+recent session that a closed window left, and the status line says **Restored … from your
+last session**. A window opened for a file (double-clicked) takes over only that file's
+session, if one was left with unsaved changes, so you get those changes rather than the file
+as last saved. If other windows left drawings with unsaved changes (after a crash, say), or
+sessions that can't be read, a **Drawings left open** window offers **Open them** (each in a
+window of its own), **Later** (asks again next time) or **Delete them** (asks once to be
+sure). In the browser the session is kept in the browser's storage for the site.
+
+To install an update, close your other Drift windows first: the installer can't close them,
+so with another window open Drift says so instead of starting it.
+
+Saving writes a new file next to the old one and then swaps it in, so a crash, full disk or
+locked file can never leave a half-written drawing; the version it replaced is kept as
+`<name>.drift.bak`. Drift won't save a drawing holding a position that isn't a number (it
+couldn't be opened again): the status line names the point, to undo or delete.
+
+Drift's log, `drift.log`, is in its data folder beside `crash.log` (**Help → Show logs
+folder**). It records opens, saves, imports and failures, with file names only, never what is
+in a drawing, and is kept to 1 MB (the one before is `drift.log.1`).
 
 This is a safety net. Save your work to a file as well.
 

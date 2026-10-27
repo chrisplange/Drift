@@ -150,6 +150,19 @@ enum Pending {
     /// Close the window and install the downloaded update.
     #[cfg(not(target_arch = "wasm32"))]
     Update,
+    /// Show the drawing waiting in `opened`: it was read after the document changed while
+    /// its file picker was open.
+    Opened,
+}
+
+/// A drawing that was read from a file, waiting to replace the document.
+struct OpenedDrawing {
+    doc: Document,
+    name: String,
+    path: Option<FilePath>,
+    meta: Metadata,
+    /// What the status line says once it's shown.
+    status: (String, bool),
 }
 
 /// A dimension value being edited in place on the canvas.
@@ -262,6 +275,11 @@ pub struct DriftApp {
     /// What to do once the save in progress has finished (Save in the unsaved-changes
     /// prompt), and the document revision it was asked at.
     after_save: Option<(Pending, u64)>,
+    /// The document revision when a file was asked for (File → Open, a recent file): one
+    /// that arrives after the document has changed since asks before replacing it.
+    opening_revision: Option<u64>,
+    /// A drawing that was read, waiting for the unsaved-changes prompt ([`Pending::Opened`]).
+    opened: Option<Box<OpenedDrawing>>,
     /// Closing was confirmed (or nothing was unsaved): let the window close.
     quit_confirmed: bool,
     quit_sent: bool,
@@ -274,16 +292,23 @@ pub struct DriftApp {
     unrestored: Option<app::recovery::Unrestored>,
     /// The stored session couldn't be kept as a file either: it isn't autosaved over.
     hold_session: bool,
+    /// This window's autosaved session file.
+    #[cfg(all(not(target_arch = "wasm32"), not(feature = "demo")))]
+    session_files: app::session::SessionFiles,
     /// Saving would leave out things from a newer Drift: the prompt asking first is up, for
     /// Save As (`true`) or Save.
     #[cfg(not(feature = "demo"))]
     lossy_save: Option<bool>,
-    /// What the drawing carries from a newer Drift once the save in progress is written.
+    /// What the drawing carries from a newer Drift once the save in progress is written, and
+    /// the document revision that was written: edits made while Save As's picker was open
+    /// aren't in the file, so they stay unsaved.
     #[cfg(not(feature = "demo"))]
-    saving_carried: Option<drift_io::Carried>,
+    saving: Option<(drift_io::Carried, u64)>,
     /// The start panel over an empty sketch.
     show_start: bool,
     show_about: bool,
+    /// Help → Report a problem: the window with the report to send.
+    show_report: bool,
     /// About → Licences: the third-party notices.
     show_licences: bool,
     show_settings: bool,
@@ -513,6 +538,13 @@ pub fn install_crash_log() {
     drift_platform::crash::install_hook();
 }
 
+/// Where the logger writes: the console, when there is one, and `drift.log` in Drift's data
+/// folder (see `drift_platform::log_file`).
+#[cfg(not(target_arch = "wasm32"))]
+pub fn log_writer() -> drift_platform::log_file::Writer {
+    drift_platform::log_file::Writer::new()
+}
+
 impl DriftApp {
     /// Maximise the window once its first frame is drawn. A window created maximised is
     /// shown by Windows straight away, before anything is drawn in it (and then hidden again
@@ -564,19 +596,24 @@ impl DriftApp {
             dock_view: Default::default(),
             recent: Vec::new(),
             after_save: None,
+            opening_revision: None,
+            opened: None,
             quit_confirmed: false,
             quit_sent: false,
             live_profiles: None,
             discard_session: false,
             unrestored: None,
             hold_session: false,
+            #[cfg(all(not(target_arch = "wasm32"), not(feature = "demo")))]
+            session_files: Default::default(),
             #[cfg(not(feature = "demo"))]
             lossy_save: None,
             #[cfg(not(feature = "demo"))]
-            saving_carried: None,
+            saving: None,
             // Tests drive the bare canvas.
             show_start: !cfg!(test),
             show_about: false,
+            show_report: false,
             show_licences: false,
             show_settings: false,
             show_drawing_settings: false,
@@ -695,6 +732,7 @@ impl DriftApp {
             #[cfg(feature = "demo")]
             demo: Default::default(),
         };
+        log::info!("Drift {} started", drift_platform::VERSION);
         if let Some(mb) = drift_platform::memory::take_stop_note() {
             app.editor.notice = Some(format!(
                 "Drift stopped itself last time: it was using {:.1} GB of memory. Your last autosave has been restored.",
@@ -711,6 +749,18 @@ impl DriftApp {
         theme::install_fonts(&cc.egui_ctx);
         fonts::reset_screen();
         theme::apply(&cc.egui_ctx);
+        // Each window autosaves to a session file of its own.
+        #[cfg(all(not(target_arch = "wasm32"), not(feature = "demo"), not(test)))]
+        {
+            app.session_files.dir = drift_platform::crash::data_dir().map(|d| d.join("sessions"));
+            // A window opened for a file (double-clicked) takes over only a session of that
+            // file: the newest left behind is offered to the next window.
+            app.session_files.opening = std::env::args_os()
+                .nth(1)
+                .map(std::path::PathBuf::from)
+                .filter(|p| p.is_file());
+            app.session_files.restoring = std::env::var_os(app::session::RESTORING).is_some();
+        }
         // A soak test starts from an empty sketch.
         if let Some(storage) = cc.storage
             && app.soak.is_none()
@@ -722,9 +772,40 @@ impl DriftApp {
 }
 
 impl DriftApp {
-    /// Keep the drawing in eframe's storage, to restore next time.
+    /// Keep the drawing for next time: in this window's session file, or (without one, or if
+    /// it can't be written) in eframe's storage.
     #[cfg(not(feature = "demo"))]
-    fn save_document(&self, storage: &mut dyn eframe::Storage) {
+    fn save_document(&mut self, storage: &mut dyn eframe::Storage) {
+        // A value that isn't a number would make the session unreadable: keep the last one.
+        if let Some(id) = self.editor.doc.first_non_finite() {
+            log::warn!("autosave skipped: {id} has a position that isn't a number");
+            return;
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        let dirty = self.is_dirty();
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(slot) = &mut self.session_files.slot {
+            let stamp = app::session::Stamp {
+                revision: self.editor.doc.revision(),
+                name: self.file.name.clone(),
+                path: self.file.path.clone(),
+                dirty,
+            };
+            let (doc, file_meta) = (&self.editor.doc, &self.file.meta);
+            let text = || {
+                let mut meta = file_meta.clone();
+                meta.generator = Some(format!("Drift {}", drift_platform::VERSION));
+                drift_io::save(doc, &meta)
+            };
+            match slot.write(stamp, text) {
+                Ok(_) => {
+                    // (A session from a Drift before session files isn't restored again.)
+                    storage.set_string(KEY_DOCUMENT, String::new());
+                    return;
+                }
+                Err(e) => log::error!("autosave to the session file failed: {e}"),
+            }
+        }
         let mut meta = self.file.meta.clone();
         meta.generator = Some(format!("Drift {}", drift_platform::VERSION));
         storage.set_string(KEY_DOCUMENT, drift_io::save(&self.editor.doc, &meta));
@@ -1017,6 +1098,10 @@ impl eframe::App for DriftApp {
         } else if self.discard_session {
             // "Don't save" on quitting: start fresh next time.
             storage.set_string(KEY_DOCUMENT, String::new());
+            #[cfg(all(not(target_arch = "wasm32"), not(feature = "demo")))]
+            if let Some(slot) = &mut self.session_files.slot {
+                slot.discard();
+            }
         } else {
             // The demo keeps nothing: a drawing in the browser's storage could be read out.
             #[cfg(not(feature = "demo"))]

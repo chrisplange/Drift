@@ -99,7 +99,7 @@ impl PendingImport {
     fn art(&mut self) -> &Result<Artwork, String> {
         if self.art.as_ref().is_none_or(|(page, _)| *page != self.page) {
             let stem = self.stem().to_owned();
-            let read = match &self.source {
+            let read = reading(|| match &self.source {
                 ImportSource::Svg(text) => drift_io::svg_import::read(text, &stem),
                 ImportSource::Pdf(bytes) => {
                     drift_io::pdf_import::read_artwork(bytes, self.page, &stem)
@@ -107,7 +107,7 @@ impl PendingImport {
                 ImportSource::Dxf(_) | ImportSource::Dwg(_) => {
                     Err("a CAD drawing has no artwork".into())
                 }
-            };
+            });
             self.art = Some((self.page, read));
         }
         &self.art.as_ref().expect("read").1
@@ -115,13 +115,13 @@ impl PendingImport {
 
     /// A DXF or DWG drawing read at 1 : `drawn_at`.
     fn read_cad(&self, drawn_at: f64) -> Result<DxfImport, String> {
-        match &self.source {
+        reading(|| match &self.source {
             ImportSource::Dxf(text) => drift_io::dxf::read_at(text, self.unit_mm, drawn_at),
             ImportSource::Dwg(bytes) => {
                 crate::underlays::read_dwg_at(bytes, self.unit_mm, drawn_at)
             }
             ImportSource::Svg(_) | ImportSource::Pdf(_) => Err("not a CAD drawing".into()),
-        }
+        })
     }
 
     /// The DXF or DWG drawing at full size, read the first time it is asked for.
@@ -153,6 +153,29 @@ impl PendingImport {
         }
         self.guess.and_then(|(_, g)| g)
     }
+}
+
+/// What an import says when reading the file hit a bug in Drift (a panic, caught).
+const CANT_READ: &str = "the file uses something Drift can't read yet (the details are in \
+                         Drift's log)";
+
+/// Read an imported file with `read`, a panic in it (a bug, not the file's fault) becoming
+/// an error like any other: the window stays open and the drawing as it was.
+fn reading<T>(read: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    drift_platform::crash::catch(|| {
+        #[cfg(test)]
+        if PANIC_IN_READER.get() {
+            panic!("a reader's bug (injected)");
+        }
+        read()
+    })
+    .unwrap_or_else(|_| Err(CANT_READ.into()))
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Tests: make the next file read panic, as a bug in a reader would.
+    pub(crate) static PANIC_IN_READER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Whether a file name is one Import takes.
@@ -188,6 +211,23 @@ impl DriftApp {
         as_: Option<ImportAs>,
         now: f64,
     ) {
+        if drift_platform::crash::catch(|| self.read_import(name, bytes, as_, now)).is_err() {
+            self.import_failed(name, now);
+        }
+    }
+
+    /// A panic while importing `name` was caught: undo what it had begun, and say so.
+    fn import_failed(&mut self, name: &str, now: f64) {
+        if self.editor.doc.in_transaction() {
+            self.editor.doc.rollback();
+        }
+        self.pending_import = None;
+        self.editor.sync();
+        self.set_status(format!("Could not import {name}: {CANT_READ}"), true, now);
+    }
+
+    /// [`DriftApp::begin_import`], unguarded.
+    fn read_import(&mut self, name: &str, bytes: Vec<u8>, as_: Option<ImportAs>, now: f64) {
         let lower = name.to_ascii_lowercase();
         let illustrator = lower.ends_with(".ai");
         if illustrator && !bytes.starts_with(b"%PDF") {
@@ -471,6 +511,14 @@ impl DriftApp {
 
     /// Bring the chosen page in, as the dialog says.
     pub(crate) fn finish_import(&mut self, pending: &mut PendingImport, now: f64) {
+        if drift_platform::crash::catch(|| self.bring_in(pending, now)).is_err() {
+            let name = pending.name.clone();
+            self.import_failed(&name, now);
+        }
+    }
+
+    /// [`DriftApp::finish_import`], unguarded.
+    fn bring_in(&mut self, pending: &mut PendingImport, now: f64) {
         let name = pending.name.clone();
         let scale = pending.scale;
         if pending.underlay() {

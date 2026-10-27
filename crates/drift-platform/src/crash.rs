@@ -5,7 +5,32 @@
 //!
 //! Native only; in the browser eframe already reports panics to the console.
 
+use std::cell::Cell;
 use std::path::PathBuf;
+
+thread_local! {
+    /// Inside [`catch`]: a panic is logged, but Drift goes on, so no note for the next start.
+    static CATCHING: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Run `f`, turning a panic in it into an error (the panic's message) instead of ending the
+/// app. For work that reads what Drift doesn't control (an imported file, an assistant's
+/// call): a bug there must not close the window and lose the drawing. The panic is still
+/// written to [`log_path`].
+pub fn catch<T>(f: impl FnOnce() -> T) -> Result<T, String> {
+    let outer = CATCHING.replace(true);
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+    CATCHING.set(outer);
+    result.map_err(|payload| {
+        let message = payload
+            .downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "(no message)".into());
+        log::error!("caught a panic, and carried on: {message}");
+        message
+    })
+}
 
 /// Drift's folder in the user's own application data: `%LOCALAPPDATA%\Drift` on Windows,
 /// `~/Library/Application Support/Drift` on macOS, `$XDG_STATE_HOME/Drift` (or
@@ -79,11 +104,20 @@ fn write_report(info: &std::panic::PanicHookInfo<'_>) -> std::io::Result<()> {
         .create(true)
         .append(true)
         .open(&log)?;
+    let caught = CATCHING.get();
     writeln!(
         file,
-        "=== Drift {} panicked (unix time {when}) ===\nthread: {thread}\nat: {location}\nmessage: {message}\nbacktrace:\n{backtrace}\n",
+        "=== Drift {} panicked{} (unix time {when}) ===\nthread: {thread}\nat: {location}\nmessage: {message}\nbacktrace:\n{backtrace}\n",
         crate::VERSION,
+        if caught {
+            ", caught and carried on"
+        } else {
+            ""
+        },
     )?;
+    if caught {
+        return Ok(());
+    }
     std::fs::write(&note, &message)
 }
 

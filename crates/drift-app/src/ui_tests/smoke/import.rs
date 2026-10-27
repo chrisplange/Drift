@@ -588,3 +588,32 @@ fn smoke_import_pdf_underlay_shows_its_text() {
     let (opened, _) = drift_io::load(&text).unwrap();
     assert_eq!(opened.underlay(id).unwrap().glyphs, u.glyphs);
 }
+
+/// A bug in a reader (a panic) while importing: the window stays, the drawing and its undo
+/// history are as they were, and the status line says the file couldn't be read (#216).
+#[test]
+fn smoke_import_reader_panic_keeps_the_drawing() {
+    let Some(mut h) = harness() else { return };
+    view(&mut h, DVec2::new(-10.0, -10.0), DVec2::new(60.0, 40.0));
+    rectangle(&mut h, DVec2::ZERO, DVec2::new(40.0, 30.0), Fill::No);
+    let drawn = positions(&h);
+    let svg = br#"<svg xmlns="http://www.w3.org/2000/svg" width="10mm" height="10mm"><path d="M0 0 L10 10"/></svg>"#;
+    crate::app::import_ui::PANIC_IN_READER.set(true);
+
+    h.state_mut().import_now("bug.svg", svg.to_vec(), 0.0);
+    crate::app::import_ui::PANIC_IN_READER.set(false);
+    h.run_steps(2);
+    assert_eq!(positions(&h), drawn, "the drawing is unchanged");
+    assert!(h.state().pending_import.is_none());
+    let status = h
+        .state()
+        .status
+        .as_ref()
+        .map(|s| s.text.clone())
+        .unwrap_or_default();
+    assert!(status.starts_with("Could not import bug.svg"), "{status}");
+    // The rectangle is still one undo away.
+    h.key_press_modifiers(EguiModifiers::COMMAND, Key::Z);
+    h.run_steps(2);
+    assert!(h.state().editor.doc.is_empty());
+}

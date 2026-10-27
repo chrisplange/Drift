@@ -821,3 +821,23 @@ fn a_union_by_trimming_is_one_call_and_one_step() {
     );
     assert!(e.contains("closed"), "{e}");
 }
+
+/// A tool that panics part way through an edit: the session survives, the edit is undone,
+/// and the undo history is as it was (#216).
+#[test]
+fn a_panicking_tool_is_undone_and_reported() {
+    let mut s = Session::new();
+    rough_room(&mut s);
+    let before = s.editor.doc.clone();
+    let revision = s.editor.doc.revision();
+    let e = err(&mut s, "__panic", json!({}));
+    assert!(e.contains("bug in Drift"), "{e}");
+    assert!(!s.editor.doc.in_transaction());
+    assert_eq!(s.editor.doc.iter().count(), before.iter().count());
+    assert!(s.editor.doc.revision() >= revision);
+    // The room is still one undo step away.
+    ok(&mut s, "undo", json!({}));
+    assert!(s.editor.doc.is_empty());
+    ok(&mut s, "redo", json!({}));
+    assert_eq!(s.editor.doc.iter().count(), before.iter().count());
+}

@@ -30,6 +30,7 @@ mod opening;
 #[cfg(test)]
 mod opening_tests;
 mod pen;
+mod picking;
 mod place_block;
 mod point;
 mod polygon;
@@ -76,8 +77,8 @@ pub use self::{
 /// The geometry under the pointer that a temporary dimension's far end can measure to: a
 /// point, or a line (picked at its middle, the line).
 pub(crate) fn reference_at(ed: &Editor, p: &Pointer) -> Option<EntityId> {
-    select::pick_target_with(ed, p, crate::editor::PickFilter::ALL).map(|t| match t {
-        select::Target::Entity(id) | select::Target::Midpoint(id) => id,
+    picking::pick_target_with(ed, p, crate::editor::PickFilter::ALL).map(|t| match t {
+        picking::Target::Entity(id) | picking::Target::Midpoint(id) => id,
     })
 }
 

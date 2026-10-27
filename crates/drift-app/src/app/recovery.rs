@@ -95,7 +95,7 @@ pub(crate) fn keep(dir: &Path, text: &str, secs: u64) -> std::io::Result<PathBuf
 
 /// Show `path` in Explorer or the Finder (its folder elsewhere).
 #[cfg(not(target_arch = "wasm32"))]
-fn reveal(path: &Path) {
+pub(crate) fn reveal(path: &Path) {
     use std::process::Command;
     #[cfg(windows)]
     let _ = {

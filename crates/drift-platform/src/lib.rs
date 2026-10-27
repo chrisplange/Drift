@@ -6,6 +6,8 @@
 
 pub mod crash;
 pub mod fonts;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod log_file;
 pub mod memory;
 
 use std::path::PathBuf;
@@ -177,7 +179,7 @@ impl Files {
                     path: Some(path.clone()),
                     contents,
                 },
-                Err(e) => FileEvent::Failed(format!("could not open {}: {e}", path.display())),
+                Err(e) => FileEvent::Failed(format!("could not open {name}: {e}")),
             });
         }
         #[cfg(target_arch = "wasm32")]
@@ -278,14 +280,21 @@ impl Files {
 #[cfg(all(not(target_arch = "wasm32"), not(feature = "demo")))]
 fn write_native(path: PathBuf, contents: &[u8], backup: Backup) -> FileEvent {
     let name = file_name(&path);
+    let started = std::time::Instant::now();
     match write_atomic(&path, contents, backup) {
-        Ok(()) => FileEvent::Saved {
-            name,
-            path: Some(path),
-        },
+        Ok(()) => {
+            log::info!(
+                "saved {name}: {} KB in {} ms",
+                contents.len() / 1024,
+                started.elapsed().as_millis()
+            );
+            FileEvent::Saved {
+                name,
+                path: Some(path),
+            }
+        }
         Err(e) => FileEvent::Failed(format!(
-            "could not save {}: {e}. The file on disk is unchanged.",
-            path.display()
+            "could not save {name}: {e}. The file on disk is unchanged."
         )),
     }
 }

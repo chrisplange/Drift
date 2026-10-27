@@ -114,6 +114,7 @@ pub(crate) enum Command {
     About,
     UserGuide,
     ReportProblem,
+    ShowLogs,
     Benchmark,
     Theme(eframe::egui::ThemePreference),
 }
@@ -327,6 +328,8 @@ pub(crate) enum When {
     JoinableCorners,
     /// Only in development builds (and hidden elsewhere).
     Debug,
+    /// Only on the desktop (hidden in the browser).
+    Desktop,
 }
 
 impl When {
@@ -371,6 +374,7 @@ impl When {
                         .is_some_and(|s| !s.viewports.is_empty())
             }
             When::JoinableCorners => app.editor.joinable_fill().is_some(),
+            When::Desktop => cfg!(not(target_arch = "wasm32")),
             When::Debug => cfg!(debug_assertions),
         }
     }
@@ -378,7 +382,7 @@ impl When {
     /// Why it can't run, for the palette and repeat-last.
     pub(crate) fn reason(self) -> &'static str {
         match self {
-            When::Always | When::Debug => "",
+            When::Always | When::Debug | When::Desktop => "",
             When::Picked | When::Selection => "Pick something first",
             When::Curves => "Pick some curves first",
             When::ConstructionTarget => "Pick some curves, or take a drawing tool",
@@ -404,7 +408,8 @@ impl When {
 
     /// Not offered at all in this build.
     pub(crate) fn hidden(self) -> bool {
-        self == When::Debug && !cfg!(debug_assertions)
+        (self == When::Debug && !cfg!(debug_assertions))
+            || (self == When::Desktop && cfg!(target_arch = "wasm32"))
     }
 }
 
@@ -1770,9 +1775,17 @@ fn table() -> Vec<Spec> {
             C::Help,
             K::ReportProblem,
             "Report a problem or ask for a feature",
-            "Bug reports and feature requests, on GitHub",
+            "A report to send by email, with Drift's log, or on GitHub",
         )
         .menu("Report a problem…"),
+        Spec::new(
+            "help.logs",
+            C::Help,
+            K::ShowLogs,
+            "Show logs folder",
+            "Drift's log and crash log, to send with a report",
+        )
+        .when(When::Desktop),
         Spec::new(
             "help.shortcuts",
             C::Help,

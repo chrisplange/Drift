@@ -307,6 +307,8 @@ pub struct DriftApp {
     /// The start panel over an empty sketch.
     show_start: bool,
     show_about: bool,
+    /// Help → Report a problem: the window with the report to send.
+    show_report: bool,
     /// About → Licences: the third-party notices.
     show_licences: bool,
     show_settings: bool,
@@ -536,6 +538,13 @@ pub fn install_crash_log() {
     drift_platform::crash::install_hook();
 }
 
+/// Where the logger writes: the console, when there is one, and `drift.log` in Drift's data
+/// folder (see `drift_platform::log_file`).
+#[cfg(not(target_arch = "wasm32"))]
+pub fn log_writer() -> drift_platform::log_file::Writer {
+    drift_platform::log_file::Writer::new()
+}
+
 impl DriftApp {
     /// Maximise the window once its first frame is drawn. A window created maximised is
     /// shown by Windows straight away, before anything is drawn in it (and then hidden again
@@ -604,6 +613,7 @@ impl DriftApp {
             // Tests drive the bare canvas.
             show_start: !cfg!(test),
             show_about: false,
+            show_report: false,
             show_licences: false,
             show_settings: false,
             show_drawing_settings: false,
@@ -722,6 +732,7 @@ impl DriftApp {
             #[cfg(feature = "demo")]
             demo: Default::default(),
         };
+        log::info!("Drift {} started", drift_platform::VERSION);
         if let Some(mb) = drift_platform::memory::take_stop_note() {
             app.editor.notice = Some(format!(
                 "Drift stopped itself last time: it was using {:.1} GB of memory. Your last autosave has been restored.",

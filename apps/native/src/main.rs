@@ -10,7 +10,10 @@ use eframe::egui;
 static START_MAXIMIZED: AtomicBool = AtomicBool::new(false);
 
 fn main() -> eframe::Result {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    // To the console and to drift.log (the release app has no console).
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .target(env_logger::Target::Pipe(Box::new(drift_app::log_writer())))
+        .init();
 
     drift_app::install_crash_log();
     drift_app::start_memory_guard();

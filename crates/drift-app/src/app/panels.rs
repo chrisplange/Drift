@@ -461,6 +461,7 @@ impl DriftApp {
                     &[
                         Some(C::UserGuide),
                         Some(C::ReportProblem),
+                        Some(C::ShowLogs),
                         None,
                         Some(C::Shortcuts),
                         // For development: it tells users nothing (hidden in release builds).

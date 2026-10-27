@@ -757,8 +757,14 @@ impl DriftApp {
                         continue;
                     }
                     let text = String::from_utf8_lossy(&contents);
+                    let started = web_time::Instant::now();
                     match drift_io::load_with_notes(&text) {
                         Ok((doc, meta, dropped)) => {
+                            log::info!(
+                                "opened {name}: {} KB in {} ms",
+                                contents.len() / 1024,
+                                started.elapsed().as_millis()
+                            );
                             let status = if dropped.is_empty() {
                                 format!("Opened {name}")
                             } else {

@@ -511,9 +511,16 @@ impl DriftApp {
 
     /// Bring the chosen page in, as the dialog says.
     pub(crate) fn finish_import(&mut self, pending: &mut PendingImport, now: f64) {
+        let started = web_time::Instant::now();
         if drift_platform::crash::catch(|| self.bring_in(pending, now)).is_err() {
             let name = pending.name.clone();
             self.import_failed(&name, now);
+        } else {
+            log::info!(
+                "import of {} took {} ms",
+                pending.name,
+                started.elapsed().as_millis()
+            );
         }
     }
 

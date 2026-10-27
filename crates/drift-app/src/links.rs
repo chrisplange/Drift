@@ -17,5 +17,9 @@ pub(crate) const GUIDE: &str = site!("/guide/");
 pub(crate) const DOWNLOAD: &str = site!("/download/");
 /// Drift's licence, in plain words, with the agreement.
 pub(crate) const LICENCE: &str = site!("/licence/");
+/// Who a problem report's email goes to. Empty: the tester fills it in (whoever gave them
+/// Drift).
+pub(crate) const REPORT_EMAIL: &str = "";
+
 /// Where to report a problem or ask for a feature.
 pub(crate) const REPORT: &str = "https://github.com/chrisplange/drift-releases/issues/new/choose";

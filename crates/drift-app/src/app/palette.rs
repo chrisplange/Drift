@@ -370,7 +370,11 @@ impl DriftApp {
             Command::DrawingSettings => self.show_drawing_settings = true,
             Command::About => self.show_about = true,
             Command::UserGuide => ctx.open_url(egui::OpenUrl::new_tab(crate::links::GUIDE)),
-            Command::ReportProblem => ctx.open_url(egui::OpenUrl::new_tab(crate::links::REPORT)),
+            Command::ReportProblem => self.show_report = true,
+            Command::ShowLogs => {
+                #[cfg(not(target_arch = "wasm32"))]
+                crate::app::start_ui::show_logs_folder();
+            }
             Command::Benchmark => self.benchmark = Some(run_benchmark()),
             Command::Theme(pref) => ctx.set_theme(pref),
         }

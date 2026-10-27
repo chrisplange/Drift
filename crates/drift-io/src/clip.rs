@@ -16,6 +16,7 @@
 )]
 
 use drift_core::DVec2;
+use drift_core::polygon::area;
 
 use crate::vector::{Seg, Subpath};
 
@@ -129,18 +130,14 @@ impl Clip {
         })
     }
 
+    /// Even-odd over all the rings together, so a point inside a hole is outside.
     pub fn contains(&self, p: DVec2) -> bool {
-        let mut odd = false;
-        for ring in &self.rings {
-            for i in 0..ring.len() {
-                let (a, b) = (ring[i], ring[(i + 1) % ring.len()]);
-                if (a.y > p.y) != (b.y > p.y) && p.x < a.x + (p.y - a.y) / (b.y - a.y) * (b.x - a.x)
-                {
-                    odd = !odd;
-                }
-            }
-        }
-        odd
+        let inside = self
+            .rings
+            .iter()
+            .filter(|ring| drift_core::polygon::contains(ring, p))
+            .count();
+        inside % 2 == 1
     }
 
     /// How far a point is from the region's outline.
@@ -249,13 +246,6 @@ fn piece(from: DVec2, seg: &Seg, t0: f64, t1: f64) -> (DVec2, Seg) {
             (q[0], Seg::Cubic(q[1], q[2], q[3]))
         }
     }
-}
-
-fn area(ring: &[DVec2]) -> f64 {
-    (0..ring.len())
-        .map(|i| ring[i].perp_dot(ring[(i + 1) % ring.len()]))
-        .sum::<f64>()
-        / 2.0
 }
 
 fn is_convex(ring: &[DVec2]) -> bool {

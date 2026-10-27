@@ -385,7 +385,8 @@ pub fn written_scale(s: &str) -> Option<f64> {
         None => s.split_once(':')?,
     };
     let n = if imperial {
-        written_length(real, 25.4)? / written_length(paper, 25.4)?
+        written_length(real, drift_core::units::MM_PER_INCH)?
+            / written_length(paper, drift_core::units::MM_PER_INCH)?
     } else {
         let number = |t: &str| t.trim().replace(',', "").parse::<f64>().ok();
         number(real)? / number(paper)?
@@ -705,16 +706,7 @@ fn fill_islands(subpaths: &[Subpath]) -> Vec<Vec<Vec<Shape>>> {
         .filter(|(shapes, _)| !shapes.is_empty())
         .collect();
     // How many other loops each one is inside.
-    let inside = |p: DVec2, poly: &[DVec2]| {
-        let mut odd = false;
-        for i in 0..poly.len() {
-            let (a, b) = (poly[i], poly[(i + 1) % poly.len()]);
-            if (a.y > p.y) != (b.y > p.y) && p.x < a.x + (p.y - a.y) / (b.y - a.y) * (b.x - a.x) {
-                odd = !odd;
-            }
-        }
-        odd
-    };
+    let inside = |p: DVec2, poly: &[DVec2]| drift_core::polygon::contains(poly, p);
     let probe = |poly: &[DVec2]| {
         // A point of the loop just off its first corner, along the way it goes.
         poly.first().copied().unwrap_or_default()

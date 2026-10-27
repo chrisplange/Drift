@@ -509,7 +509,7 @@ impl DriftApp {
 
     /// Zoom so that 100% is life size on a 96 dpi screen, about the middle of the canvas.
     pub(crate) fn zoom_to_percent(&mut self, percent: f64) {
-        let target = percent / 100.0 * 96.0 / 25.4;
+        let target = percent / 100.0 * 96.0 / drift_core::units::MM_PER_INCH;
         self.fit_target = None;
         // The view's origin is the canvas centre.
         self.camera.zoom_at(DVec2::ZERO, target / self.camera.scale);
@@ -1245,7 +1245,7 @@ impl DriftApp {
                     // One control height across the bar.
                     ui.spacing_mut().interact_size.y = 22.0;
                     // Zoom as a percentage of real size on a 96 dpi screen.
-                    let zoom = self.camera.scale * 25.4 / 96.0 * 100.0;
+                    let zoom = self.camera.scale * drift_core::units::MM_PER_INCH / 96.0 * 100.0;
                     let button = ui
                         .add(
                             egui::Button::new(

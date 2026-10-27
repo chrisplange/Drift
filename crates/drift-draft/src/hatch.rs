@@ -189,23 +189,7 @@ fn emit(
 
 /// The `u` range of the line `base + u·d` inside `b`.
 fn clip_to(b: Bounds, base: DVec2, d: DVec2) -> Option<(f64, f64)> {
-    let mut lo = f64::NEG_INFINITY;
-    let mut hi = f64::INFINITY;
-    for (p, dir, min, max) in [
-        (base.x, d.x, b.min.x, b.max.x),
-        (base.y, d.y, b.min.y, b.max.y),
-    ] {
-        if dir.abs() < 1e-15 {
-            if p < min || p > max {
-                return None;
-            }
-        } else {
-            let (t0, t1) = ((min - p) / dir, (max - p) / dir);
-            lo = lo.max(t0.min(t1));
-            hi = hi.min(t0.max(t1));
-        }
-    }
-    (hi > lo).then_some((lo, hi))
+    b.clip_line(base, d).filter(|(lo, hi)| hi > lo)
 }
 
 /// Crossings of the scan line `v = c` (in the frame of `o`, `d`, `n`) with an edge, as `u`

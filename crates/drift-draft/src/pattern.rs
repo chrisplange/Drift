@@ -55,7 +55,7 @@ pub fn parse_pat(text: &str) -> Result<Vec<Pattern>, String> {
         if let Some(comment) = line.strip_prefix(';') {
             let c = comment.trim().to_ascii_uppercase().replace(' ', "");
             if c.starts_with("%UNITS=INCH") {
-                units = 25.4;
+                units = drift_core::units::MM_PER_INCH;
             } else if c.starts_with("%UNITS=MM") {
                 units = 1.0;
             } else if c.starts_with("%TYPE=MODEL") {

@@ -79,7 +79,7 @@ impl Seg {
     /// The arc through three points, from `a` to `b` through `through` (None if they are in
     /// a line).
     pub fn arc_through(a: DVec2, through: DVec2, b: DVec2) -> Option<Seg> {
-        let (center, radius) = circle_through(a, through, b)?;
+        let (center, radius) = drift_core::shape::circle_through(a, through, b)?;
         let ccw = (through - a).perp_dot(b - through) > 0.0;
         Some(Seg::Arc {
             center,
@@ -97,12 +97,11 @@ impl Seg {
             Seg::Arc {
                 center, a, b, ccw, ..
             } => {
-                let (sa, sb) = (angle(a - center), angle(b - center));
-                let mut s = if ccw { sb - sa } else { sa - sb }.rem_euclid(TAU);
-                if s <= 0.0 {
-                    s = TAU;
+                let (s, e) = if ccw { (a, b) } else { (b, a) };
+                match drift_core::arc_shape(center, s, e) {
+                    Shape::Arc { sweep, .. } => sweep,
+                    _ => 0.0,
                 }
-                s
             }
         }
     }
@@ -201,16 +200,15 @@ impl Seg {
                 ccw,
             } => {
                 let (s, e) = if ccw { (a, b) } else { (b, a) };
-                let start = angle(s - center);
-                let mut sweep = (angle(e - center) - start).rem_euclid(TAU);
-                if sweep <= 0.0 {
-                    sweep = TAU;
-                }
-                Shape::Arc {
-                    center,
-                    radius,
-                    start,
-                    sweep,
+                // The stored radius, not the start's distance (they can differ by an ulp).
+                match drift_core::arc_shape(center, s, e) {
+                    Shape::Arc { start, sweep, .. } => Shape::Arc {
+                        center,
+                        radius,
+                        start,
+                        sweep,
+                    },
+                    other => other,
                 }
             }
         }
@@ -223,20 +221,6 @@ impl Seg {
 
 fn angle(v: DVec2) -> f64 {
     v.y.atan2(v.x)
-}
-
-/// The circle through three points: centre and radius.
-pub fn circle_through(a: DVec2, b: DVec2, c: DVec2) -> Option<(DVec2, f64)> {
-    let d = 2.0 * (a.x * (b.y - c.y) + b.x * (c.y - a.y) + c.x * (a.y - b.y));
-    if d.abs() < 1e-12 * (1.0 + a.length_squared() + b.length_squared() + c.length_squared()) {
-        return None;
-    }
-    let (a2, b2, c2) = (a.length_squared(), b.length_squared(), c.length_squared());
-    let center = DVec2::new(
-        (a2 * (b.y - c.y) + b2 * (c.y - a.y) + c2 * (a.y - b.y)) / d,
-        (a2 * (c.x - b.x) + b2 * (a.x - c.x) + c2 * (b.x - a.x)) / d,
-    );
-    Some((center, center.distance(a)))
 }
 
 /// A face as the whole line or circle it lies on.
@@ -430,11 +414,9 @@ impl Generated {
             None => Edge::Line { a, b },
             Some((c, ccw)) => {
                 let c = self.point(c)?;
-                let start = angle(a - c);
-                let mut sweep = (angle(b - c) - start).rem_euclid(TAU);
-                if sweep <= 0.0 {
-                    sweep = TAU;
-                }
+                let Shape::Arc { start, sweep, .. } = drift_core::arc_shape(c, a, b) else {
+                    return None;
+                };
                 Edge::Arc {
                     center: c,
                     radius: a.distance(c),

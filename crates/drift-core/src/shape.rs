@@ -280,7 +280,53 @@ pub fn ellipse_angle(center: DVec2, major: DVec2, minor: f64, p: DVec2) -> f64 {
     (y / minor.max(1e-300)).atan2(x / a.max(1e-300))
 }
 
+/// The circle through three points: centre and radius, or `None` when they are (nearly)
+/// collinear. Worked relative to `a`, so it holds far from the origin.
+pub fn circle_through(a: DVec2, b: DVec2, c: DVec2) -> Option<(DVec2, f64)> {
+    let (u, v) = (b - a, c - a);
+    let d = 2.0 * u.perp_dot(v);
+    if d == 0.0 || d.abs() <= 1e-12 * u.length() * v.length() {
+        return None;
+    }
+    let (uu, vv) = (u.length_squared(), v.length_squared());
+    let center = a + DVec2::new(v.y * uu - u.y * vv, u.x * vv - v.x * uu) / d;
+    Some((center, center.distance(a)))
+}
+
 impl Shape {
+    /// The point at parameter `t`: a fraction along a line (its ends exactly at 0 and 1), an
+    /// angle from the start of an arc or ellipse, an angle from +x on a circle, a Bézier's
+    /// parameter.
+    pub fn point_at(&self, t: f64) -> DVec2 {
+        match *self {
+            Shape::Line { a, b } => {
+                if t == 0.0 {
+                    a
+                } else if t == 1.0 {
+                    b
+                } else {
+                    a + (b - a) * t
+                }
+            }
+            Shape::Circle { center, radius } => center + radius * DVec2::from_angle(t),
+            Shape::Arc {
+                center,
+                radius,
+                start,
+                ..
+            } => center + radius * DVec2::from_angle(start + t),
+            Shape::Ellipse {
+                center,
+                major,
+                minor,
+                start,
+                ..
+            } => ellipse_point(center, major, minor, start + t),
+            Shape::Bezier { p } => bezier_point(&p, t),
+            Shape::Point(p) => p,
+        }
+    }
+
     pub fn bounds(&self) -> Bounds {
         match *self {
             Shape::Point(p) => Bounds::from_point(p),
@@ -361,7 +407,8 @@ fn ellipse_bounds(center: DVec2, major: DVec2, minor: f64, start: f64, sweep: f6
     bounds
 }
 
-fn arc_bounds(center: DVec2, radius: f64, start: f64, sweep: f64) -> Bounds {
+/// The box round an arc: its ends and every axis extreme inside the sweep.
+pub fn arc_bounds(center: DVec2, radius: f64, start: f64, sweep: f64) -> Bounds {
     if sweep.abs() >= TAU {
         return Bounds::from_center_half_size(center, DVec2::splat(radius));
     }
@@ -477,6 +524,29 @@ mod tests {
 
     fn assert_close(a: DVec2, b: DVec2) {
         assert!((a - b).length() < 1e-12, "{a} != {b}");
+    }
+
+    #[test]
+    fn a_lines_ends_are_exact_at_0_and_1() {
+        let (a, b) = (DVec2::new(0.1, 0.2), DVec2::new(1e6 + 0.3, -7.7));
+        let line = Shape::Line { a, b };
+        assert_eq!(line.point_at(0.0), a);
+        assert_eq!(line.point_at(1.0), b);
+        assert_close(line.point_at(0.5), (a + b) * 0.5);
+    }
+
+    #[test]
+    fn circle_through_holds_far_from_the_origin_and_refuses_a_line() {
+        let far = DVec2::new(1e6, -1e6);
+        let (c, r) = circle_through(
+            far + DVec2::new(1.0, 0.0),
+            far + DVec2::new(0.0, 1.0),
+            far + DVec2::new(-1.0, 0.0),
+        )
+        .expect("a circle");
+        assert!(c.distance(far) < 1e-6, "{c}");
+        assert!((r - 1.0).abs() < 1e-6, "{r}");
+        assert!(circle_through(far, far + DVec2::X, far + 2.0 * DVec2::X).is_none());
     }
 
     #[test]

@@ -906,7 +906,7 @@ mod tests {
         let report = ed.import_svg_underlay("plan.svg", &art, 1.0).unwrap();
         let u = ed.doc.underlay(report.id).unwrap();
         let b = glyph_bounds(u);
-        let mm = 25.4 / 96.0;
+        let mm = drift_core::units::MM_PER_INCH / 96.0;
         assert!(b.min.distance(v(10.0, 20.0) * mm) < 0.5, "{b:?}");
         assert!(b.max.x > 30.0 * mm && b.max.y < 30.0 * mm, "{b:?}");
     }

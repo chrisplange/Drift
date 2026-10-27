@@ -28,7 +28,8 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::f64::consts::{PI, TAU};
 
-use drift_core::{DVec2, EntityId};
+use drift_core::polygon::UnionFind;
+use drift_core::{Bounds, DVec2, EntityId, Shape};
 use rstar::{AABB, RTree, RTreeObject};
 
 use super::Seg;
@@ -287,11 +288,12 @@ impl Piece {
                 ccw,
             } => {
                 let (s, e) = if ccw { (a, b) } else { (b, a) };
-                let lo = (s - center).to_angle();
-                let mut sweep = ((e - center).to_angle() - lo).rem_euclid(TAU);
-                if sweep <= 0.0 {
-                    sweep = TAU;
-                }
+                let Shape::Arc {
+                    start: lo, sweep, ..
+                } = drift_core::arc_shape(center, s, e)
+                else {
+                    return None;
+                };
                 (radius > 0.0).then_some(Piece {
                     carrier: Carrier::Circle {
                         c: center,
@@ -313,24 +315,18 @@ impl Piece {
     }
 
     fn bounds(&self) -> AABB<[f64; 2]> {
-        let mut pts: Vec<DVec2> = self.ends().to_vec();
+        let [a, b] = self.ends();
+        let mut box_ = Bounds::from_point(a);
+        box_.include(b);
         if let Carrier::Circle { c, r } = self.carrier {
-            // The quadrant points it passes.
-            for k in 0..8 {
-                let a = k as f64 * PI / 2.0;
-                let a = self.lo + (a - self.lo).rem_euclid(TAU);
-                if a <= self.hi {
-                    pts.push(c + DVec2::from_angle(a) * r);
-                }
-            }
+            box_ = box_.union(drift_core::shape::arc_bounds(
+                c,
+                r,
+                self.lo,
+                self.hi - self.lo,
+            ));
         }
-        let min = pts
-            .iter()
-            .fold(DVec2::splat(f64::INFINITY), |m, p| m.min(*p));
-        let max = pts
-            .iter()
-            .fold(DVec2::splat(f64::NEG_INFINITY), |m, p| m.max(*p));
-        AABB::from_corners(min.to_array(), max.to_array())
+        AABB::from_corners(box_.min.to_array(), box_.max.to_array())
     }
 }
 
@@ -386,31 +382,6 @@ struct Pair {
 impl Pair {
     fn length(&self) -> f64 {
         self.centre.length()
-    }
-}
-
-/// Union-find over indices.
-struct Sets(Vec<usize>);
-
-impl Sets {
-    fn new(n: usize) -> Self {
-        Sets((0..n).collect())
-    }
-
-    fn find(&mut self, mut a: usize) -> usize {
-        while self.0[a] != a {
-            self.0[a] = self.0[self.0[a]];
-            a = self.0[a];
-        }
-        a
-    }
-
-    fn join(&mut self, a: usize, b: usize) {
-        let (a, b) = (self.find(a), self.find(b));
-        if a != b {
-            let (lo, hi) = if a < b { (a, b) } else { (b, a) };
-            self.0[hi] = lo;
-        }
     }
 }
 
@@ -561,7 +532,7 @@ pub fn find(lines: &[LineIn], s: &Settings) -> Found {
     }
     let keeps = |n: usize, k: usize, sd: i8| kept[&n][side(sd)].contains(&k);
     let mut good: Vec<usize> = Vec::new();
-    let mut pattern = Sets::new(lines.len());
+    let mut pattern = UnionFind::new(lines.len());
     let mut in_pattern: BTreeSet<usize> = BTreeSet::new();
     let mut varying: Vec<usize> = Vec::new();
     for (k, p) in pairs.iter().enumerate() {
@@ -602,7 +573,7 @@ pub fn find(lines: &[LineIn], s: &Settings) -> Found {
     }
 
     // 2. Strips: pairs sharing a line that agree.
-    let mut sets = Sets::new(pairs.len());
+    let mut sets = UnionFind::new(pairs.len());
     let mut of_line: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
     for &k in &good {
         of_line.entry(pairs[k].i).or_default().push(k);
@@ -961,7 +932,7 @@ fn close_gaps(
             })
             .collect(),
     );
-    let mut sets = Sets::new(strips.len());
+    let mut sets = UnionFind::new(strips.len());
     // (a, b, gap, where along a): b after a along a's carrier.
     let mut gaps: Vec<(usize, usize, f64, f64)> = Vec::new();
     for (a, sa) in strips.iter().enumerate() {
@@ -1165,7 +1136,7 @@ fn weld(
     // Ends meeting at a corner share a node.
     let ends: Vec<(usize, usize)> = (0..strips.len()).flat_map(|n| [(n, 0), (n, 1)]).collect();
     let slot = |e: (usize, usize)| e.0 * 2 + e.1;
-    let mut sets = Sets::new(ends.len());
+    let mut sets = UnionFind::new(ends.len());
     for (&e, (_, hit)) in &hits {
         if let Hit::L(c, kc, _) = hit {
             sets.join(slot(e), slot((*c, *kc)));

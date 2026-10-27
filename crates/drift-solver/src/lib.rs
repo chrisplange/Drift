@@ -18,6 +18,7 @@ mod system;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
+use drift_core::polygon::UnionFind;
 use drift_core::{Constraint, ConstraintId, DVec2, Document, EntityId, EntityKind};
 
 pub use crate::lowering::{Lowered, Lowering};
@@ -390,20 +391,10 @@ pub fn connected_with(
 ) -> HashSet<EntityId> {
     let ids: Vec<EntityId> = doc.iter().map(|(id, _)| id).collect();
     let index: HashMap<EntityId, usize> = ids.iter().enumerate().map(|(i, id)| (*id, i)).collect();
-    let mut parent: Vec<usize> = (0..ids.len()).collect();
-    fn find(parent: &mut [usize], mut i: usize) -> usize {
-        while parent[i] != i {
-            parent[i] = parent[parent[i]];
-            i = parent[i];
-        }
-        i
-    }
-    let join = |parent: &mut Vec<usize>, a: EntityId, b: EntityId| {
+    let mut parent = UnionFind::new(ids.len());
+    let join = |parent: &mut UnionFind, a: EntityId, b: EntityId| {
         if let (Some(&i), Some(&j)) = (index.get(&a), index.get(&b)) {
-            let (ri, rj) = (find(parent, i), find(parent, j));
-            if ri != rj {
-                parent[ri.max(rj)] = ri.min(rj);
-            }
+            parent.join(i, j);
         }
     };
     for (id, e) in doc.iter() {
@@ -422,10 +413,10 @@ pub fn connected_with(
     let roots: HashSet<usize> = seeds
         .into_iter()
         .filter_map(|id| index.get(&id).copied())
-        .map(|i| find(&mut parent, i))
+        .map(|i| parent.find(i))
         .collect();
     (0..ids.len())
-        .filter(|&i| roots.contains(&find(&mut parent, i)))
+        .filter(|&i| roots.contains(&parent.find(i)))
         .map(|i| ids[i])
         .collect()
 }
@@ -795,14 +786,7 @@ struct Component {
 /// unknowns form their own (constant) components.
 fn components(sys: &System, tol: &Tolerances) -> (Vec<Component>, Vec<usize>) {
     let n = sys.groups.len();
-    let mut parent: Vec<usize> = (0..n).collect();
-    fn find(parent: &mut [usize], mut i: usize) -> usize {
-        while parent[i] != i {
-            parent[i] = parent[parent[i]];
-            i = parent[i];
-        }
-        i
-    }
+    let mut parent = UnionFind::new(n);
     let mut constant_rows = Vec::new();
     let mut row_groups = Vec::with_capacity(sys.rows.len());
     for (r, row) in sys.rows.iter().enumerate() {
@@ -819,10 +803,7 @@ fn components(sys: &System, tol: &Tolerances) -> (Vec<Component>, Vec<usize>) {
             constant_rows.push(r);
         }
         for w in free.windows(2) {
-            let (a, b) = (find(&mut parent, w[0]), find(&mut parent, w[1]));
-            if a != b {
-                parent[a.max(b)] = a.min(b);
-            }
+            parent.join(w[0], w[1]);
         }
         row_groups.push(free);
     }
@@ -843,10 +824,7 @@ fn components(sys: &System, tol: &Tolerances) -> (Vec<Component>, Vec<usize>) {
             .filter(|g| !sys.groups[*g].fixed)
             .collect();
         for w in free.windows(2) {
-            let (a, b) = (find(&mut parent, w[0]), find(&mut parent, w[1]));
-            if a != b {
-                parent[a.max(b)] = a.min(b);
-            }
+            parent.join(w[0], w[1]);
         }
         if let Some(&g) = free.first()
             && off.abs() > tol.length * scale(k)
@@ -856,16 +834,14 @@ fn components(sys: &System, tol: &Tolerances) -> (Vec<Component>, Vec<usize>) {
     }
     let mut by_root: BTreeMap<usize, Component> = BTreeMap::new();
     for g in soft_roots {
-        by_root
-            .entry(find(&mut parent, g))
-            .or_insert_with(|| Component {
-                unknowns: Vec::new(),
-                rows: Vec::new(),
-            });
+        by_root.entry(parent.find(g)).or_insert_with(|| Component {
+            unknowns: Vec::new(),
+            rows: Vec::new(),
+        });
     }
     for (r, free) in row_groups.iter().enumerate() {
         if let Some(&g) = free.first() {
-            let root = find(&mut parent, g);
+            let root = parent.find(g);
             by_root
                 .entry(root)
                 .or_insert_with(|| Component {
@@ -878,7 +854,7 @@ fn components(sys: &System, tol: &Tolerances) -> (Vec<Component>, Vec<usize>) {
     }
     for g in 0..n {
         if !sys.groups[g].fixed
-            && let Some(c) = by_root.get_mut(&find(&mut parent, g))
+            && let Some(c) = by_root.get_mut(&parent.find(g))
         {
             c.unknowns.push(g);
         }

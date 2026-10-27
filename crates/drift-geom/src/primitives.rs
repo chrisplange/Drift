@@ -265,30 +265,64 @@ pub fn shape_intersects_rect(shape: &Shape, rect: &Bounds) -> bool {
     }
 }
 
-/// Liang–Barsky: does segment `a`→`b` pass through the rectangle?
+/// Does segment `a`→`b` pass through the rectangle?
 fn segment_crosses_rect(a: DVec2, b: DVec2, rect: &Bounds) -> bool {
-    let d = b - a;
-    let (mut t0, mut t1) = (0.0f64, 1.0f64);
-    for (p, q) in [
-        (-d.x, a.x - rect.min.x),
-        (d.x, rect.max.x - a.x),
-        (-d.y, a.y - rect.min.y),
-        (d.y, rect.max.y - a.y),
-    ] {
-        if p == 0.0 {
-            if q < 0.0 {
-                return false;
-            }
-        } else {
-            let t = q / p;
-            if p < 0.0 {
-                t0 = t0.max(t);
+    rect.clip_segment(a, b).is_some()
+}
+
+/// The parameter of the point of `shape` nearest `p` (a fraction along a line, an angle from
+/// the start for arcs and ellipses, an angle from +x for circles): the inverse of
+/// [`Shape::point_at`]. A line of no length answers 0.
+pub fn param_of(shape: &Shape, p: DVec2) -> f64 {
+    match *shape {
+        Shape::Line { a, b } => {
+            let d = b - a;
+            if d.length_squared() > 0.0 {
+                ((p - a).dot(d) / d.length_squared()).clamp(0.0, 1.0)
             } else {
-                t1 = t1.min(t);
+                0.0
             }
         }
+        Shape::Circle { center, .. } => {
+            let r = p - center;
+            r.y.atan2(r.x).rem_euclid(TAU)
+        }
+        Shape::Arc {
+            center,
+            start,
+            sweep,
+            ..
+        } => {
+            let r = p - center;
+            let t = (r.y.atan2(r.x) - start).rem_euclid(TAU);
+            if t <= sweep {
+                t
+            } else if t - sweep < TAU - t {
+                sweep
+            } else {
+                0.0
+            }
+        }
+        Shape::Ellipse {
+            center,
+            major,
+            minor,
+            start,
+            sweep,
+        } => {
+            let t =
+                (drift_core::shape::ellipse_angle(center, major, minor, p) - start).rem_euclid(TAU);
+            if sweep >= TAU || t <= sweep {
+                t
+            } else if t - sweep < TAU - t {
+                sweep
+            } else {
+                0.0
+            }
+        }
+        Shape::Bezier { p: q } => nearest_on_bezier(&q, p).1,
+        Shape::Point(_) => 0.0,
     }
-    t0 <= t1
 }
 
 #[cfg(test)]

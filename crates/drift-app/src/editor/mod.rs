@@ -26,14 +26,15 @@ mod solve;
 mod tests;
 mod variables;
 
+use drift_core::blocks::exact_rotor;
+pub use drift_core::blocks::is_quarter_turn;
 pub use filter::{DimMode, PickFilter, PickKind};
 pub use items::TaggedItem;
 pub(crate) use items::contrast;
 pub use options::ConstraintOption;
 pub use pointer::{Anchor, Guide, GuideKind, Pointer};
-use regions::exact_rotor;
+pub use regions::RegionMotion;
 pub(crate) use regions::interior_point;
-pub use regions::{RegionMotion, is_quarter_turn};
 
 /// Where some geometry is, to put it back after a drag step that went wrong
 /// ([`Editor::drag`]), and what the drag keeps.

@@ -192,14 +192,14 @@ impl HatchPrim {
     /// Placed as a copy of a block places what is in it (see [`Transform`]).
     fn placed(&self, t: &Transform) -> HatchPrim {
         let copy = drift_core::Instance {
-            angle: t.angle.to_degrees(),
+            angle: t.angle,
             scale: t.scale,
             mirror: t.mirror,
             ..drift_core::Instance::new(Default::default(), t.at)
         };
         let pattern = self.pattern.as_ref().map(|(pattern, placement)| {
             let mut pattern = pattern.clone();
-            let mut angle = placement.angle + t.angle.to_degrees();
+            let mut angle = placement.angle + t.angle;
             if t.mirror {
                 // Mirroring across y is mirroring across x and a half turn: each family
                 // runs the other way and steps the other side.
@@ -208,12 +208,12 @@ impl HatchPrim {
                     l.origin.y = -l.origin.y;
                     l.delta.y = -l.delta.y;
                 }
-                angle = 180.0 - placement.angle + t.angle.to_degrees();
+                angle = 180.0 - placement.angle + t.angle;
             }
             let placement = crate::Placement {
                 scale: placement.scale * t.scale,
                 angle,
-                origin: t.p(placement.origin),
+                origin: t.apply(placement.origin),
             };
             (pattern, placement)
         });
@@ -475,7 +475,6 @@ impl Drawing {
                 Prim::Hatch(h) => {
                     let t = Transform {
                         at: DVec2::ZERO,
-                        rotor: DVec2::X,
                         angle: 0.0,
                         scale: f,
                         mirror: false,
@@ -536,8 +535,7 @@ impl Drawing {
                     };
                     let t = Transform {
                         at: *at,
-                        rotor: DVec2::from_angle(angle.to_radians()),
-                        angle: angle.to_radians(),
+                        angle: *angle,
                         scale: *scale,
                         mirror: *mirror,
                     };
@@ -549,7 +547,7 @@ impl Drawing {
                                 inner.layer.clone()
                             },
                             pen: inner.pen.in_copy(item.pen),
-                            prim: t.prim(&inner.prim),
+                            prim: placed_prim(&t, &inner.prim),
                             clip: item.clip,
                         });
                     }
@@ -678,13 +676,12 @@ impl Drawing {
         let by = DVec2::splat(margin) - b.min;
         let t = Transform {
             at: by,
-            rotor: DVec2::X,
             angle: 0.0,
             scale: 1.0,
             mirror: false,
         };
         for item in &mut d.items {
-            item.prim = t.prim(&item.prim);
+            item.prim = placed_prim(&t, &item.prim);
             item.clip = item.clip.map(|c| Bounds {
                 min: c.min + by,
                 max: c.max + by,
@@ -695,111 +692,95 @@ impl Drawing {
     }
 }
 
-/// Mirror, scale, rotate and move (an `Insert`'s placement).
-struct Transform {
-    at: DVec2,
-    rotor: DVec2,
-    angle: f64,
-    scale: f64,
-    mirror: bool,
-}
+/// An `Insert`'s placement: mirror, scale, rotate and move, as a block copy places
+/// what is in it (quarter turns exact, so exported inserts match the canvas).
+type Transform = drift_core::Placement;
 
-impl Transform {
-    fn p(&self, p: DVec2) -> DVec2 {
-        let p = if self.mirror {
-            DVec2::new(-p.x, p.y)
-        } else {
-            p
-        };
-        self.at + self.rotor.rotate(p * self.scale)
-    }
-
-    fn prim(&self, prim: &Prim) -> Prim {
-        match prim {
-            Prim::Line(a, b) => Prim::Line(self.p(*a), self.p(*b)),
-            Prim::Polyline { points, closed } => Prim::Polyline {
-                points: points.iter().map(|q| self.p(*q)).collect(),
-                closed: *closed,
-            },
-            Prim::Circle { center, radius } => Prim::Circle {
-                center: self.p(*center),
-                radius: radius * self.scale,
-            },
+/// `prim` as `t` places it.
+fn placed_prim(t: &Transform, prim: &Prim) -> Prim {
+    match prim {
+        Prim::Line(a, b) => Prim::Line(t.apply(*a), t.apply(*b)),
+        Prim::Polyline { points, closed } => Prim::Polyline {
+            points: points.iter().map(|q| t.apply(*q)).collect(),
+            closed: *closed,
+        },
+        Prim::Circle { center, radius } => Prim::Circle {
+            center: t.apply(*center),
+            radius: radius * t.scale,
+        },
+        Prim::Arc {
+            center,
+            radius,
+            start,
+            sweep,
+        } => {
+            let start = if t.mirror {
+                std::f64::consts::PI - (start + sweep)
+            } else {
+                *start
+            };
             Prim::Arc {
-                center,
-                radius,
-                start,
-                sweep,
-            } => {
-                let start = if self.mirror {
-                    std::f64::consts::PI - (start + sweep)
-                } else {
-                    *start
-                };
-                Prim::Arc {
-                    center: self.p(*center),
-                    radius: radius * self.scale,
-                    start: start + self.angle,
-                    sweep: *sweep,
-                }
+                center: t.apply(*center),
+                radius: radius * t.scale,
+                start: start + t.radians(),
+                sweep: *sweep,
             }
-            Prim::Ellipse {
-                center,
-                major,
-                minor,
-                start,
-                sweep,
-            } => {
-                // Mirroring reverses the direction: parametric angle t becomes −t.
-                let start = if self.mirror {
-                    -(start + sweep)
-                } else {
-                    *start
-                };
-                let c = self.p(*center);
-                Prim::Ellipse {
-                    center: c,
-                    major: self.p(*center + *major) - c,
-                    minor: minor * self.scale,
-                    start,
-                    sweep: *sweep,
-                }
-            }
-            Prim::Bezier { p } => Prim::Bezier {
-                p: p.map(|q| self.p(q)),
-            },
-            Prim::Fill {
-                rings,
-                triangles,
-                mask,
-            } => Prim::Fill {
-                rings: rings
-                    .iter()
-                    .map(|r| r.iter().map(|q| self.p(*q)).collect())
-                    .collect(),
-                triangles: triangles.iter().map(|t| t.map(|q| self.p(q))).collect(),
-                mask: *mask,
-            },
-            Prim::Text {
-                at,
-                height,
-                angle,
-                align,
-                text,
-                style,
-                font,
-            } => Prim::Text {
-                at: self.p(*at),
-                height: height * self.scale,
-                angle: angle + self.angle,
-                align: *align,
-                text: text.clone(),
-                style: *style,
-                font: font.clone(),
-            },
-            Prim::Insert { .. } => prim.clone(),
-            Prim::Hatch(h) => Prim::Hatch(Box::new(h.placed(self))),
         }
+        Prim::Ellipse {
+            center,
+            major,
+            minor,
+            start,
+            sweep,
+        } => {
+            // Mirroring reverses the direction: parametric angle t becomes −t.
+            let start = if t.mirror { -(start + sweep) } else { *start };
+            let c = t.apply(*center);
+            Prim::Ellipse {
+                center: c,
+                major: t.apply(*center + *major) - c,
+                minor: minor * t.scale,
+                start,
+                sweep: *sweep,
+            }
+        }
+        Prim::Bezier { p } => Prim::Bezier {
+            p: p.map(|q| t.apply(q)),
+        },
+        Prim::Fill {
+            rings,
+            triangles,
+            mask,
+        } => Prim::Fill {
+            rings: rings
+                .iter()
+                .map(|r| r.iter().map(|q| t.apply(*q)).collect())
+                .collect(),
+            triangles: triangles
+                .iter()
+                .map(|tri| tri.map(|q| t.apply(q)))
+                .collect(),
+            mask: *mask,
+        },
+        Prim::Text {
+            at,
+            height,
+            angle,
+            align,
+            text,
+            style,
+            font,
+        } => Prim::Text {
+            at: t.apply(*at),
+            height: height * t.scale,
+            angle: angle + t.radians(),
+            align: *align,
+            text: text.clone(),
+            style: *style,
+            font: font.clone(),
+        },
+        Prim::Insert { .. } => prim.clone(),
+        Prim::Hatch(h) => Prim::Hatch(Box::new(h.placed(t))),
     }
 }
 

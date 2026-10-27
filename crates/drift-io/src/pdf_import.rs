@@ -47,32 +47,8 @@ const MAX_SEGMENTS: usize = 1_000_000;
 /// Form XObjects nest at most this deep.
 const MAX_DEPTH: usize = 12;
 
-/// An affine transform `[a b c d e f]`, as in PDF: x' = a x + c y + e, y' = b x + d y + f.
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct Matrix([f64; 6]);
-
-impl Matrix {
-    const IDENTITY: Matrix = Matrix([1.0, 0.0, 0.0, 1.0, 0.0, 0.0]);
-
-    fn apply(&self, p: DVec2) -> DVec2 {
-        let [a, b, c, d, e, f] = self.0;
-        DVec2::new(a * p.x + c * p.y + e, b * p.x + d * p.y + f)
-    }
-
-    /// `self` applied first, then `then`.
-    fn then(&self, then: &Matrix) -> Matrix {
-        let [a, b, c, d, e, f] = self.0;
-        let [a2, b2, c2, d2, e2, f2] = then.0;
-        Matrix([
-            a * a2 + b * c2,
-            a * b2 + b * d2,
-            c * a2 + d * c2,
-            c * b2 + d * d2,
-            e * a2 + f * c2 + e2,
-            e * b2 + f * d2 + f2,
-        ])
-    }
-}
+/// An affine transform `[a b c d e f]`, as in PDF.
+use drift_core::Affine2 as Matrix;
 
 fn num(o: &Object) -> Option<f64> {
     match o {

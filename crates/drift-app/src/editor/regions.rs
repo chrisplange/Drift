@@ -197,27 +197,6 @@ impl Editor {
     }
 }
 
-/// A unit rotor for `degrees`, exact for multiples of 90°.
-pub(super) fn exact_rotor(degrees: f64) -> DVec2 {
-    let quarter = degrees / 90.0;
-    if (quarter - quarter.round()).abs() <= 1e-12 {
-        match (quarter.round() as i64).rem_euclid(4) {
-            0 => DVec2::X,
-            1 => DVec2::Y,
-            2 => -DVec2::X,
-            _ => -DVec2::Y,
-        }
-    } else {
-        DVec2::from_angle(degrees.to_radians())
-    }
-}
-
-/// Whether a turn is a whole number of quarter turns.
-pub fn is_quarter_turn(degrees: f64) -> bool {
-    let q = degrees / 90.0;
-    (q - q.round()).abs() <= 1e-9
-}
-
 /// How a move or a turn in progress has carried the geometry so far.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum RegionMotion {
@@ -238,9 +217,7 @@ impl RegionMotion {
     pub fn apply(self, p: DVec2) -> DVec2 {
         match self {
             Self::Move(offset) => p + offset,
-            Self::Turn { pivot, degrees } => {
-                pivot + DVec2::from_angle(degrees.to_radians()).rotate(p - pivot)
-            }
+            Self::Turn { pivot, degrees } => pivot + exact_rotor(degrees).rotate(p - pivot),
             Self::Scale { anchor, scale } => anchor + (p - anchor) * scale,
             Self::At(at) => at,
         }

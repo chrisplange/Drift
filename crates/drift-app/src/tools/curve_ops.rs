@@ -402,8 +402,8 @@ impl Tool for SplitTool {
         let place = |p: &Pointer, ed: &Editor| {
             let id = curve_under(ed, p)?;
             let shape = ed.doc.shape(id)?;
-            let t = crate::modify::param_of(&shape, p.pos());
-            Some((id, crate::modify::point_at(&shape, t)))
+            let t = drift_geom::param_of(&shape, p.pos());
+            Some((id, shape.point_at(t)))
         };
         match input {
             Input::Hover(p) => {

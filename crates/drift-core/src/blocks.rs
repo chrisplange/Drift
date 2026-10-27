@@ -84,6 +84,127 @@ pub fn exact_rotor(degrees: f64) -> DVec2 {
     }
 }
 
+/// Whether a turn is a whole number of quarter turns.
+pub fn is_quarter_turn(degrees: f64) -> bool {
+    let q = degrees / 90.0;
+    (q - q.round()).abs() <= 1e-9
+}
+
+/// How a shape is placed: mirrored across its own vertical axis, scaled, turned, then moved.
+/// The one rule for block copies, exported inserts and placed regions, with quarter turns
+/// exact (see [`exact_rotor`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Placement {
+    /// Where the origin lands.
+    pub at: DVec2,
+    /// Rotation in degrees, counter-clockwise.
+    pub angle: f64,
+    pub scale: f64,
+    /// Mirrored across the vertical axis (before rotating).
+    pub mirror: bool,
+}
+
+impl Placement {
+    pub const IDENTITY: Placement = Placement {
+        at: DVec2::ZERO,
+        angle: 0.0,
+        scale: 1.0,
+        mirror: false,
+    };
+
+    pub fn rotor(&self) -> DVec2 {
+        exact_rotor(self.angle)
+    }
+
+    /// The turn in radians (as arc and text angles are kept).
+    pub fn radians(&self) -> f64 {
+        self.angle.to_radians()
+    }
+
+    /// A local point in the world.
+    pub fn apply(&self, p: DVec2) -> DVec2 {
+        let p = if self.mirror {
+            DVec2::new(-p.x, p.y)
+        } else {
+            p
+        };
+        self.at + self.rotor().rotate(p * self.scale)
+    }
+
+    /// A world point in local coordinates.
+    pub fn invert(&self, w: DVec2) -> DVec2 {
+        let r = self.rotor();
+        let p = DVec2::new(r.x, -r.y).rotate(w - self.at) / self.scale;
+        if self.mirror {
+            DVec2::new(-p.x, p.y)
+        } else {
+            p
+        }
+    }
+
+    /// The start angle of a placed arc: mirroring reverses it (φ becomes π − φ), and the
+    /// turn is added. Its sweep is unchanged.
+    pub fn arc_start(&self, start: f64, sweep: f64) -> f64 {
+        let start = if self.mirror {
+            std::f64::consts::PI - (start + sweep)
+        } else {
+            start
+        };
+        start + self.radians()
+    }
+
+    /// The start of a placed ellipse's parameter range: mirroring reverses the direction
+    /// (t becomes −t); the turn is in the placed major axis.
+    pub fn ellipse_start(&self, start: f64, sweep: f64) -> f64 {
+        if self.mirror { -(start + sweep) } else { start }
+    }
+
+    /// A local shape in the world.
+    pub fn shape(&self, s: &Shape) -> Shape {
+        match *s {
+            Shape::Point(p) => Shape::Point(self.apply(p)),
+            Shape::Line { a, b } => Shape::Line {
+                a: self.apply(a),
+                b: self.apply(b),
+            },
+            Shape::Circle { center, radius } => Shape::Circle {
+                center: self.apply(center),
+                radius: radius * self.scale,
+            },
+            Shape::Arc {
+                center,
+                radius,
+                start,
+                sweep,
+            } => Shape::Arc {
+                center: self.apply(center),
+                radius: radius * self.scale,
+                start: self.arc_start(start, sweep),
+                sweep,
+            },
+            Shape::Ellipse {
+                center,
+                major,
+                minor,
+                start,
+                sweep,
+            } => {
+                let c = self.apply(center);
+                Shape::Ellipse {
+                    center: c,
+                    major: self.apply(center + major) - c,
+                    minor: minor * self.scale,
+                    start: self.ellipse_start(start, sweep),
+                    sweep,
+                }
+            }
+            Shape::Bezier { p } => Shape::Bezier {
+                p: p.map(|q| self.apply(q)),
+            },
+        }
+    }
+}
+
 /// A placed copy of a block.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Instance {
@@ -110,84 +231,29 @@ impl Instance {
         }
     }
 
-    fn rotor(&self) -> DVec2 {
-        exact_rotor(self.angle)
+    /// How the copy places the block's geometry.
+    pub fn placement(&self) -> Placement {
+        Placement {
+            at: self.at,
+            angle: self.angle,
+            scale: self.scale,
+            mirror: self.mirror,
+        }
     }
 
     /// A block-coordinate point in the world.
     pub fn apply(&self, p: DVec2) -> DVec2 {
-        let p = if self.mirror {
-            DVec2::new(-p.x, p.y)
-        } else {
-            p
-        };
-        self.at + self.rotor().rotate(p * self.scale)
+        self.placement().apply(p)
     }
 
     /// A world point in block coordinates.
     pub fn invert(&self, w: DVec2) -> DVec2 {
-        let r = self.rotor();
-        let p = DVec2::new(r.x, -r.y).rotate(w - self.at) / self.scale;
-        if self.mirror {
-            DVec2::new(-p.x, p.y)
-        } else {
-            p
-        }
+        self.placement().invert(w)
     }
 
     /// A block-coordinate shape in the world.
     pub fn apply_shape(&self, s: &Shape) -> Shape {
-        match *s {
-            Shape::Point(p) => Shape::Point(self.apply(p)),
-            Shape::Line { a, b } => Shape::Line {
-                a: self.apply(a),
-                b: self.apply(b),
-            },
-            Shape::Circle { center, radius } => Shape::Circle {
-                center: self.apply(center),
-                radius: radius * self.scale,
-            },
-            Shape::Arc {
-                center,
-                radius,
-                start,
-                sweep,
-            } => {
-                // Mirroring reverses the arc: angle φ becomes π − φ.
-                let start = if self.mirror {
-                    std::f64::consts::PI - (start + sweep)
-                } else {
-                    start
-                };
-                Shape::Arc {
-                    center: self.apply(center),
-                    radius: radius * self.scale,
-                    start: start + self.angle.to_radians(),
-                    sweep,
-                }
-            }
-            Shape::Ellipse {
-                center,
-                major,
-                minor,
-                start,
-                sweep,
-            } => {
-                // Mirroring reverses the direction: parametric angle t becomes −t.
-                let start = if self.mirror { -(start + sweep) } else { start };
-                let c = self.apply(center);
-                Shape::Ellipse {
-                    center: c,
-                    major: self.apply(center + major) - c,
-                    minor: minor * self.scale,
-                    start,
-                    sweep,
-                }
-            }
-            Shape::Bezier { p } => Shape::Bezier {
-                p: p.map(|q| self.apply(q)),
-            },
-        }
+        self.placement().shape(s)
     }
 
     /// A block's fill in the world, on the copy's layer: its seed and its hatch go with the
@@ -290,6 +356,39 @@ impl Instance {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn quarter_turns_place_exactly_and_mirrored_arcs_reverse() {
+        let p = Placement {
+            at: DVec2::new(10.0, 20.0),
+            angle: 90.0,
+            scale: 2.0,
+            mirror: false,
+        };
+        assert_eq!(p.apply(DVec2::new(1.0, 0.0)), DVec2::new(10.0, 22.0));
+        assert_eq!(p.apply(DVec2::new(0.0, 1.0)), DVec2::new(8.0, 20.0));
+        assert_eq!(
+            p.invert(p.apply(DVec2::new(3.0, -4.0))),
+            DVec2::new(3.0, -4.0)
+        );
+        assert!(is_quarter_turn(270.0) && !is_quarter_turn(45.0));
+        let m = Placement {
+            mirror: true,
+            ..Placement::IDENTITY
+        };
+        let arc = Shape::Arc {
+            center: DVec2::ZERO,
+            radius: 1.0,
+            start: 0.0,
+            sweep: std::f64::consts::FRAC_PI_2,
+        };
+        // A quarter arc from +x to +y, mirrored across y, runs from +y to −x.
+        let Shape::Arc { start, sweep, .. } = m.shape(&arc) else {
+            panic!("an arc")
+        };
+        assert!((start - std::f64::consts::FRAC_PI_2).abs() < 1e-12);
+        assert_eq!(sweep, std::f64::consts::FRAC_PI_2);
+    }
 
     fn close(a: DVec2, b: DVec2) -> bool {
         a.distance(b) < 1e-9

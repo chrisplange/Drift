@@ -2484,8 +2484,7 @@ impl<'s> Runner<'s> {
             .filter_map(|name| match self.objs.get(name) {
                 Some(Obj::Rect { corners, .. }) => {
                     let pts: Vec<DVec2> = corners.iter().map(|c| self.at(*c)).collect();
-                    let twice: f64 = (0..4).map(|i| pts[i].perp_dot(pts[(i + 1) % 4])).sum();
-                    let area = twice.abs() / 2.0;
+                    let area = drift_core::polygon::area(&pts).abs();
                     Some(json!({ "room": name, "area_m2": crate::agent::args::num(area / 1e6) }))
                 }
                 _ => None,

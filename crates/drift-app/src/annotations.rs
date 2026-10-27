@@ -441,7 +441,7 @@ impl DimShape {
 }
 
 /// Logical points per millimetre on paper (96 dpi), for drafting sizes on screen.
-pub const PT_PER_MM: f32 = 96.0 / 25.4;
+pub const PT_PER_MM: f32 = (96.0 / drift_core::units::MM_PER_INCH) as f32;
 
 /// Dimension drawing sizes on screen, from the document's drafting style.
 #[derive(Clone, Copy, Debug, PartialEq)]

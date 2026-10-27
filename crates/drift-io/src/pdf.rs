@@ -37,7 +37,7 @@ impl Fonts {
     }
 }
 
-const PT_PER_MM: f64 = 72.0 / 25.4;
+const PT_PER_MM: f64 = 72.0 / drift_core::units::MM_PER_INCH;
 
 fn n(v: f64) -> String {
     let s = format!("{v:.3}");

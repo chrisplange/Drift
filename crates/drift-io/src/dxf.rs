@@ -794,7 +794,7 @@ pub(crate) fn text_glyphs(texts: &[DxfText]) -> Vec<drift_core::RefPrim> {
 /// Millimetres per drawing unit from `$INSUNITS` (`None` for unitless files).
 pub(crate) fn unit_scale(code: i64) -> Option<f64> {
     Some(match code {
-        1 => 25.4,
+        1 => drift_core::units::MM_PER_INCH,
         2 => 304.8,
         4 => 1.0,
         5 => 10.0,

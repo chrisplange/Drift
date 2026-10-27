@@ -67,6 +67,65 @@ impl Bounds {
             && self.min.y <= other.max.y
             && self.max.y >= other.min.y
     }
+
+    /// The `t` range of the line `base + t·d` inside the box (Liang–Barsky), or `None` when
+    /// it misses. A line along an edge counts as inside.
+    pub fn clip_line(&self, base: DVec2, d: DVec2) -> Option<(f64, f64)> {
+        let (mut t0, mut t1) = (f64::NEG_INFINITY, f64::INFINITY);
+        for (p, q) in [
+            (-d.x, base.x - self.min.x),
+            (d.x, self.max.x - base.x),
+            (-d.y, base.y - self.min.y),
+            (d.y, self.max.y - base.y),
+        ] {
+            if p == 0.0 {
+                if q < 0.0 {
+                    return None;
+                }
+            } else {
+                let t = q / p;
+                if p < 0.0 {
+                    t0 = t0.max(t);
+                } else {
+                    t1 = t1.min(t);
+                }
+            }
+        }
+        (t0 <= t1).then_some((t0, t1))
+    }
+
+    /// The parameter range of the segment `a`→`b` (0 at `a`, 1 at `b`) inside the box, or
+    /// `None` when it misses.
+    pub fn clip_segment(&self, a: DVec2, b: DVec2) -> Option<(f64, f64)> {
+        let (t0, t1) = self.clip_line(a, b - a)?;
+        let (t0, t1) = (t0.max(0.0), t1.min(1.0));
+        (t0 <= t1).then_some((t0, t1))
+    }
+}
+
+#[cfg(test)]
+mod clip_tests {
+    use super::*;
+
+    #[test]
+    fn segments_clip_to_the_box() {
+        let b = Bounds::from_center_half_size(DVec2::ZERO, DVec2::splat(1.0));
+        let v = DVec2::new;
+        assert_eq!(b.clip_segment(v(-0.5, 0.0), v(0.5, 0.0)), Some((0.0, 1.0)));
+        assert_eq!(
+            b.clip_segment(v(-2.0, 0.0), v(2.0, 0.0)),
+            Some((0.25, 0.75))
+        );
+        assert_eq!(b.clip_segment(v(-2.0, 2.0), v(2.0, 2.0)), None);
+        // Along the top edge: inside.
+        assert_eq!(
+            b.clip_segment(v(-2.0, 1.0), v(2.0, 1.0)),
+            Some((0.25, 0.75))
+        );
+        // A whole line is unbounded until the box bounds it.
+        assert_eq!(b.clip_line(v(0.0, 0.0), v(1.0, 0.0)), Some((-1.0, 1.0)));
+        assert_eq!(b.clip_line(v(5.0, 0.0), v(0.0, 1.0)), None);
+    }
 }
 
 impl FromIterator<Bounds> for Bounds {

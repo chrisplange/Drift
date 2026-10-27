@@ -36,7 +36,7 @@ pub struct Preset {
     pub mm: f64,
 }
 
-const INCH: f64 = 25.4;
+const INCH: f64 = drift_core::units::MM_PER_INCH;
 
 impl Editor {
     /// Who owns which entity among the walls (cached by document revision).

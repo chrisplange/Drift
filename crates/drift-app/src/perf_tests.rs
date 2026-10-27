@@ -366,18 +366,12 @@ fn perf_app_frames() {
     use eframe::egui::{self, Pos2};
     use egui_kittest::Harness;
 
-    let instance = eframe::egui_wgpu::wgpu::Instance::default();
-    if pollster::block_on(
-        instance.request_adapter(&eframe::egui_wgpu::wgpu::RequestAdapterOptions::default()),
-    )
-    .is_err()
-    {
-        eprintln!("no GPU adapter; skipping");
+    if !crate::test_gpu::available() {
         return;
     }
     let mut h = Harness::builder()
         .with_size([1920.0, 1080.0])
-        .wgpu()
+        .wgpu_setup(crate::test_gpu::setup())
         .build_eframe(|cc| crate::DriftApp::new(cc));
     h.run();
     let (doc, curves) = torture_sketch();
@@ -854,19 +848,13 @@ fn zoom_drawing() -> (Document, drift_io::Metadata) {
 fn perf_zoom_frame_cost() {
     use egui_kittest::Harness;
 
-    let instance = eframe::egui_wgpu::wgpu::Instance::default();
-    if pollster::block_on(
-        instance.request_adapter(&eframe::egui_wgpu::wgpu::RequestAdapterOptions::default()),
-    )
-    .is_err()
-    {
-        eprintln!("no GPU adapter; skipping");
+    if !crate::test_gpu::available() {
         return;
     }
     let (doc, meta) = zoom_drawing();
     let mut h = Harness::builder()
         .with_size([1600.0, 1000.0])
-        .wgpu()
+        .wgpu_setup(crate::test_gpu::setup())
         .build_eframe(|cc| crate::DriftApp::new(cc));
     h.run();
     h.state_mut()

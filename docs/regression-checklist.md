@@ -19,9 +19,16 @@ to a minute and a half when other builds share the GPU and CPU). Compiling the t
 change to `drift-app` takes several minutes more.
 
 CI runs it on every pull request, as part of `cargo test --workspace` on Linux, Windows and
-macOS. Like every UI test, a smoke test is **skipped (and reported as passing) when the
-computer has no graphics adapter**: the log then says `no GPU adapter available; skipping UI
-test`. Linux CI installs a software Vulkan driver (lavapipe) so the tests really run there.
+macOS. The first UI test to run prints the adapter they render on, for example `UI tests render
+on Microsoft Basic Render Driver (Dx12, Cpu)`: the tests prefer a software adapter (WARP on
+Windows, lavapipe on Linux, which CI installs), so they look the same on every computer. On
+macOS they render with Metal.
+
+Like every UI test, a smoke test is **skipped (and reported as passing) when the computer has no
+graphics adapter**: the run then says `No graphics adapter: UI tests are SKIPPED, not run`. CI
+sets `DRIFT_REQUIRE_GPU=1`, which fails them instead, so a runner without an adapter can't pass
+by skipping. Set it locally to be sure the suite really ran. `DRIFT_GPU_FALLBACK=1` limits the
+tests to software adapters.
 
 The tests live in [`crates/drift-app/src/ui_tests/smoke/`](../crates/drift-app/src/ui_tests/smoke/),
 one file per area. Run one area by its file name, for example

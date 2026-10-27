@@ -7,21 +7,20 @@
 
 use drift_app::DriftApp;
 use eframe::egui::{self, Event, Key, Modifiers};
-use eframe::egui_wgpu::wgpu;
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT as _, Queryable as _};
 
+/// The graphics adapter, shared with the app's own UI tests.
+#[path = "../src/test_gpu.rs"]
+mod test_gpu;
+
 fn harness() -> Option<Harness<'static, DriftApp>> {
-    let instance = wgpu::Instance::default();
-    let adapter =
-        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()));
-    if adapter.is_err() {
-        eprintln!("no GPU adapter available; skipping UI test");
+    if !test_gpu::available() {
         return None;
     }
     let mut h = Harness::builder()
         .with_size([1280.0, 800.0])
-        .wgpu()
+        .wgpu_setup(test_gpu::setup())
         .build_eframe(|cc| DriftApp::new(cc));
     h.run();
     // Something to save: the example drawing, from the start panel.

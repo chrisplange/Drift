@@ -11,7 +11,7 @@ fn harness_at(w: f32, h: f32) -> Option<Harness<'static, DriftApp>> {
     harness()?;
     let mut harness = Harness::builder()
         .with_size([w, h])
-        .wgpu()
+        .wgpu_setup(crate::test_gpu::setup())
         .build_eframe(|cc| DriftApp::new(cc));
     harness.run();
     Some(harness)

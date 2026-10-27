@@ -337,12 +337,29 @@ impl DriftApp {
             let fill = self.editor.doc.fill(first).cloned().expect("exists");
             let shapes = self.editor.fill_shapes();
             let shape = shapes.get(&first).cloned();
+            // Not a shape's (those have the shape inspector): an area fill, and why (#202).
+            let kind = (fills.len() == 1).then(|| self.editor.fill_kind(first));
             let title = match (&fill.kind, fills.len()) {
-                (FillKind::Solid, 1) => "Fill".to_owned(),
-                (FillKind::Hatch(_), 1) => "Hatch".to_owned(),
+                (FillKind::Solid, 1) => "Area fill".to_owned(),
+                (FillKind::Hatch(_), 1) => "Area hatch".to_owned(),
                 (_, n) => format!("{n} fills"),
             };
-            app::panels::title(ui, Some(ToolKind::Fill), &title, "");
+            let why = match &kind {
+                Some(Err(why)) => format!("Not a shape: {}", why.reason()),
+                _ => String::new(),
+            };
+            app::panels::title(ui, Some(ToolKind::Fill), &title, &why);
+            if let Some(Err(crate::fills::NotAShape::Corners(_))) = kind
+                && ui
+                    .button("Join corners")
+                    .on_hover_text("Join the corners that touch but aren't one point: a shape")
+                    .clicked()
+            {
+                // (The registry's command, as in the palette and the Modify menu.)
+                let ctx = ui.ctx().clone();
+                self.run_command(&ctx, crate::commands::Command::JoinCorners);
+                return true;
+            }
             self.fill_notices(ui, first);
             theme::section(ui, "Style");
             let mut style = FillStyle::of(&fill);

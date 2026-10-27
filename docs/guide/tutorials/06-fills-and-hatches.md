@@ -58,19 +58,30 @@ Fill tool's, so the eyedropper and the **Inspector**'s **New fills** section set
 ## Shapes
 
 A shape drawn with one of those tools (or a pen path closed on its first point) is recorded
-as one shape, whether or not it is filled. Its fill is the area inside its own outline,
-whatever else crosses it or lies inside it, and it stays whole through splits, fillets and
-chamfers of its sides. A fill clicked inside such a shape with the Fill tool is the shape's
-too. Deleting or trimming away a side opens the shape: its fill then takes the area that what
-is left of the shape, with the curves around it, still closes around the fill (a filled ring
-trimmed through between two lines becomes a cut ring, with the cut-out part left empty), and
-a notice gives the new area. If nothing closes around it, the fill keeps its last area until
-the ends meet again, and the notice says so. Trimming open the outline of a hole in a shape
-works the same way: the hole is never filled (moving a hole, even across the outline, changes
-nothing). While its fill covers such an area, the shape picks, moves and copies as an area
-fill does. Trimming two shapes into each other joins them into one shape with one fill (the
-one drawn on top). Shapes lying inside a shape are left out of its fill as holes, as they are
-of any area's; a shape with a fill of its own covers what is beneath it anyway.
+as one shape, whether or not it is filled. So is an outline you draw from separate lines and
+arcs, as soon as you fill it: when its curves meet end to end at shared points and close, and
+none of them is a wall's, part of another shape or round another fill, the fill makes it a
+shape. A shape's fill is the area inside its own outline, whatever else crosses it or lies
+inside it, and it stays whole through splits, fillets and chamfers of its sides. A click in it
+picks it with its outline, and Shift+D, Delete and moves take it whole.
+
+Anything else is an **area fill**: rooms sharing a wall, lines that cross or run on past their
+corners. The **Inspector** says which you have: **Shape**, or **Area fill** with the reason
+("Not a shape: its lines also bound another fill"), and so does the status line when the
+pointer is over a fill. When the only thing in the way is corners drawn up to each other but
+not joined (imported drawings often have them), the Inspector offers **Join corners** (also
+in the **Modify** menu and the command palette), which makes it a shape. Opening a drawing
+or importing one changes nothing: its fills become shapes only when you edit them.
+
+Deleting or trimming away a side opens the shape: its fill becomes an area fill of the area
+that what is left, with the curves around it, still closes (a filled ring trimmed through
+between two lines becomes a cut ring, with the cut-out part left empty), and a notice gives the
+new area. If nothing closes around it, the fill stays the shape's, drawn as its outline closed
+straight across the gap, until the ends meet again, and the notice says so. Trimming open the outline of a hole works the same way: the hole is
+never filled (moving a hole, even across the outline, changes nothing). Trimming two shapes
+into each other joins them into one shape with one fill (the one drawn on top). Shapes lying
+inside a shape are left out of its fill as holes, as they are of any area's; a shape with a
+fill of its own covers what is beneath it anyway.
 
 ## 3. Copy a style with the eyedropper
 

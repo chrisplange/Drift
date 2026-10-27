@@ -200,9 +200,11 @@ fn smoke_trim_two_filled_shapes_into_one() {
         "the line wasn't cut"
     );
     save_png("drift_smoke_trim_union.png", &mut h);
-    // Each drag undoes on its own.
+    // Each drag undoes on its own. (The first already left one area for both fills, so
+    // one fill: the top one's.)
     h.state_mut().undo();
-    assert_eq!(h.state().editor.doc.fills().count(), 2);
+    assert_eq!(h.state().editor.doc.fills().count(), 1);
+    assert!(h.state().editor.doc.fill(upper).is_some());
     h.state_mut().undo();
     let ed = &mut h.state_mut().editor;
     assert!(lower.is_some_and(|f| !ed.fill_shapes()[&f].lost));
@@ -339,4 +341,251 @@ fn smoke_fills_trimming_a_slot_out_of_a_filled_ring() {
     );
     assert!(!near(pixel(&mut h, slot), RED), "{:?}", pixel(&mut h, slot));
     assert!(!near(pixel(&mut h, disc), RED), "{:?}", pixel(&mut h, disc));
+    // Saved and opened again: the same cut ring, an area fill.
+    let cut_area = cut.area;
+    let text = drift_io::save(&h.state().editor.doc, &Default::default());
+    let (doc, _) = drift_io::load(&text).expect("opens");
+    h.state_mut()
+        .replace_document(doc, "ring".into(), None, Default::default(), true);
+    h.run();
+    let ed = &mut h.state_mut().editor;
+    assert!(ed.doc.fill(fill).unwrap().path.is_none(), "an area fill");
+    let reopened = ed.fill_shapes()[&fill].clone();
+    assert!(!reopened.lost);
+    assert!((reopened.region.area - cut_area).abs() < 1e-6);
+    assert!(!reopened.region.contains(slot) && !reopened.region.contains(disc));
+}
+
+/// #202: a rectangle drawn from four lines and filled with H is a shape, as one drawn with
+/// R is: the Inspector and the status line say "Shape", a click in it picks it with its
+/// outline, Shift+D copies it with its fill, Delete takes it all and Ctrl+Z brings it back.
+#[test]
+fn smoke_fills_a_filled_outline_of_lines_is_a_shape() {
+    let Some(mut h) = harness() else { return };
+    view(&mut h, DVec2::new(-10.0, -10.0), DVec2::new(110.0, 60.0));
+    let corners = [
+        DVec2::new(0.0, 0.0),
+        DVec2::new(40.0, 0.0),
+        DVec2::new(40.0, 30.0),
+        DVec2::new(0.0, 30.0),
+    ];
+    let sides = {
+        let ed = &mut h.state_mut().editor;
+        ed.doc.begin();
+        let p: Vec<EntityId> = corners.iter().map(|c| ed.doc.add_point(*c)).collect();
+        let sides: Vec<EntityId> = (0..4)
+            .map(|i| ed.doc.add_line(p[i], p[(i + 1) % 4]).unwrap())
+            .collect();
+        ed.commit("Lines");
+        sides
+    };
+    h.run();
+    h.key_press(Key::H);
+    h.run();
+    click_world(&mut h, DVec2::new(10.0, 10.0));
+    h.key_press(Key::Escape);
+    h.run();
+    let fill = h
+        .state()
+        .editor
+        .doc
+        .fills()
+        .map(|(id, _)| id)
+        .next()
+        .expect("filled");
+    assert!(h.state().editor.shape_outline(fill).is_some(), "a shape");
+    // Hovered: the status line says so.
+    let inside = screen(&h, DVec2::new(10.0, 10.0));
+    h.hover_at(inside);
+    h.run();
+    h.run();
+    assert!(
+        h.query_all_by_label_contains("Shape · ").next().is_some(),
+        "the status line"
+    );
+    // A click picks it with its outline; the Inspector shows a shape.
+    click_world(&mut h, DVec2::new(10.0, 10.0));
+    {
+        let ed = &h.state().editor;
+        assert_eq!(ed.selected_fills, [fill].into());
+        assert!(
+            sides.iter().all(|s| ed.selection.contains(s)),
+            "with its outline"
+        );
+    }
+    assert!(
+        h.query_all_by_label("Stroke").next().is_some(),
+        "the shape's Inspector"
+    );
+    // Shift+D: a copy, with its fill.
+    h.key_press_modifiers(EguiModifiers::SHIFT, Key::D);
+    h.run();
+    h.key_press(Key::Escape);
+    h.run();
+    assert_eq!(
+        h.state().editor.doc.fills().count(),
+        2,
+        "copied with its fill"
+    );
+    h.state_mut().undo();
+    h.run();
+    assert_eq!(h.state().editor.doc.fills().count(), 1);
+    // Delete: the fill and its outline go; Ctrl+Z brings them back.
+    click_world(&mut h, DVec2::new(10.0, 10.0));
+    h.key_press(Key::Delete);
+    h.run();
+    {
+        let ed = &h.state().editor;
+        assert_eq!(ed.doc.fills().count(), 0);
+        assert!(
+            sides.iter().all(|s| !ed.doc.contains(*s)),
+            "with its outline"
+        );
+    }
+    h.state_mut().undo();
+    h.run();
+    assert_eq!(h.state().editor.doc.fills().count(), 1);
+    assert!(sides.iter().all(|s| h.state().editor.doc.contains(*s)));
+}
+
+/// #202: corners drawn up to each other but not joined leave an area fill; the Inspector
+/// says why and offers Join corners, which makes it a shape.
+#[test]
+fn smoke_fills_join_corners_makes_a_shape() {
+    let Some(mut h) = harness() else { return };
+    view(&mut h, DVec2::new(-10.0, -10.0), DVec2::new(110.0, 60.0));
+    {
+        let ed = &mut h.state_mut().editor;
+        let corners = [
+            DVec2::new(0.0, 0.0),
+            DVec2::new(40.0, 0.0),
+            DVec2::new(40.0, 30.0),
+            DVec2::new(0.0, 30.0),
+        ];
+        ed.doc.begin();
+        for i in 0..4 {
+            let a = ed.doc.add_point(corners[i]);
+            let b = ed.doc.add_point(corners[(i + 1) % 4]);
+            ed.doc.add_line(a, b).unwrap();
+        }
+        ed.commit("Lines");
+    }
+    h.run();
+    h.key_press(Key::H);
+    h.run();
+    click_world(&mut h, DVec2::new(10.0, 10.0));
+    h.key_press(Key::Escape);
+    h.run();
+    let fill = h
+        .state()
+        .editor
+        .doc
+        .fills()
+        .map(|(id, _)| id)
+        .next()
+        .expect("filled");
+    assert!(
+        h.state().editor.shape_outline(fill).is_none(),
+        "an area fill"
+    );
+    click_world(&mut h, DVec2::new(10.0, 10.0));
+    assert_eq!(h.state().editor.selected_fills, [fill].into());
+    assert!(
+        h.query_all_by_label_contains("Not a shape:")
+            .next()
+            .is_some()
+    );
+    h.get_by_label("Join corners").click();
+    h.run();
+    assert!(
+        h.state().editor.shape_outline(fill).is_some(),
+        "a shape now"
+    );
+    save_png("drift_smoke_join_corners.png", &mut h);
+    // Undone, and the same from the command palette (it is in the Modify menu too).
+    h.state_mut().undo();
+    h.run();
+    assert!(h.state().editor.shape_outline(fill).is_none());
+    h.state_mut().editor.selected_fills = [fill].into();
+    h.run();
+    palette(&mut h, "Join corners");
+    assert!(
+        h.state().editor.shape_outline(fill).is_some(),
+        "from the palette"
+    );
+}
+
+/// #202: two rooms sharing a wall stay area fills, and the Inspector and the status line
+/// say why.
+#[test]
+fn smoke_fills_rooms_sharing_a_wall_stay_area_fills_and_say_why() {
+    let Some(mut h) = harness() else { return };
+    view(&mut h, DVec2::new(-10.0, -10.0), DVec2::new(110.0, 60.0));
+    {
+        let ed = &mut h.state_mut().editor;
+        let at = [
+            DVec2::new(0.0, 0.0),
+            DVec2::new(40.0, 0.0),
+            DVec2::new(80.0, 0.0),
+            DVec2::new(80.0, 40.0),
+            DVec2::new(40.0, 40.0),
+            DVec2::new(0.0, 40.0),
+        ];
+        ed.doc.begin();
+        let p: Vec<EntityId> = at.iter().map(|c| ed.doc.add_point(*c)).collect();
+        for i in 0..6 {
+            ed.doc.add_line(p[i], p[(i + 1) % 6]).unwrap();
+        }
+        // The wall between them, from corner to corner.
+        ed.doc.add_line(p[1], p[4]).unwrap();
+        ed.commit("Rooms");
+    }
+    h.run();
+    h.key_press(Key::H);
+    h.run();
+    click_world(&mut h, DVec2::new(10.0, 10.0));
+    let first = h
+        .state()
+        .editor
+        .doc
+        .fills()
+        .map(|(id, _)| id)
+        .next()
+        .unwrap();
+    // Filled first, with nothing else round its lines: a shape.
+    assert!(h.state().editor.shape_outline(first).is_some());
+    click_world(&mut h, DVec2::new(70.0, 10.0));
+    h.key_press(Key::Escape);
+    h.run();
+    let ed = &h.state().editor;
+    assert_eq!(ed.doc.fills().count(), 2);
+    let second = ed
+        .doc
+        .fills()
+        .map(|(id, _)| id)
+        .find(|f| *f != first)
+        .unwrap();
+    // The second room's wall is the first's shape's side: an area fill, and the first
+    // stays a shape (order matters; the Inspector says which is which).
+    assert!(ed.shape_outline(second).is_none(), "an area fill");
+    assert!(ed.shape_outline(first).is_some(), "still a shape");
+    click_world(&mut h, DVec2::new(70.0, 10.0));
+    assert_eq!(h.state().editor.selected_fills, [second].into());
+    assert!(h.query_all_by_label_contains("Area").next().is_some());
+    assert!(
+        h.query_all_by_label_contains("Not a shape:")
+            .next()
+            .is_some(),
+        "the reason"
+    );
+    let inside = screen(&h, DVec2::new(70.0, 10.0));
+    h.hover_at(inside);
+    h.run();
+    h.run();
+    assert!(
+        h.query_all_by_label_contains("Area fill: ")
+            .next()
+            .is_some(),
+        "the status line"
+    );
 }

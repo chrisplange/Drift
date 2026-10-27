@@ -46,6 +46,25 @@ fn close(a: f64, b: f64) -> bool {
     (a - b).abs() < 1e-3 * b.abs().max(1.0)
 }
 
+/// A fill of the area around `p` as an import or a drawing made before #202 brings it: an
+/// area fill, even where its outline would make a shape. Picked, as the Fill tool's is.
+fn area_fill_at(ed: &mut Editor, p: DVec2) -> FillId {
+    let regions = ed.regions();
+    let ids = ed.region_ids();
+    let r = drift_geom::regions::region_at(&regions, p).expect("an area");
+    let mut boundary: Vec<EntityId> = r.outer.curves().into_iter().map(|i| ids[i]).collect();
+    boundary.sort_unstable();
+    boundary.dedup();
+    let mut fill = drift_core::Fill::new(boundary, p, drift_core::FillKind::Solid);
+    ed.fill_style.apply(&mut fill);
+    ed.doc.begin();
+    let id = ed.doc.add_fill(fill);
+    assert!(ed.commit_import("Fill"));
+    assert!(ed.doc.fill(id).unwrap().path.is_none());
+    ed.selected_fills = [id].into();
+    id
+}
+
 /// The area of a polygon of corner points.
 fn shoelace(ed: &Editor, corners: &[EntityId]) -> f64 {
     let p: Vec<DVec2> = corners.iter().map(|c| ed.doc.point(*c).unwrap()).collect();
@@ -121,12 +140,19 @@ fn a_split_outline_stays_the_fills_outline() {
     assert!(close(found(&mut ed, id).0, 800.0));
     let boundary = ed.doc.fill(id).unwrap().boundary.clone();
     assert_eq!(boundary.len(), 5, "both pieces bound it");
-    // Deleting the new piece opens the outline: the fill goes, as for any outline curve.
+    // A closed chain of free lines: a shape (#202). Deleting the new piece opens it, with
+    // nothing closed round the fill: it keeps its shape closed across the gap, and says so.
+    assert!(ed.shape_outline(id).is_some());
     let piece = *boundary.iter().find(|e| !sides.contains(e)).unwrap();
+    ed.fill_changes.clear();
     ed.doc.begin();
     ed.doc.delete([piece]);
     ed.commit("Delete");
-    assert!(ed.doc.fill(id).is_none());
+    assert!(ed.fill_shapes()[&id].lost);
+    assert_eq!(
+        ed.fill_changes,
+        vec![crate::fills::FillChange::Opened { id }]
+    );
 }
 
 #[test]
@@ -495,7 +521,7 @@ fn large_import_commits_quickly() {
     ed.doc.begin();
     drift_io::dxf::add_to_document(&mut ed.doc, &import);
     let t = std::time::Instant::now();
-    assert!(ed.commit("Import"));
+    assert!(ed.commit_import("Import"));
     let shapes = ed.fill_shapes();
     let took = t.elapsed();
     assert_eq!(shapes.len(), 450);
@@ -599,7 +625,7 @@ fn deleting_the_small_square_leaves_the_big_hatch_whole() {
 fn deleting_part_of_an_outline_with_no_area_left_drops_the_fill() {
     let mut ed = Editor::new(Document::new());
     let (_, sides) = plate(&mut ed);
-    let id = ed.add_fill_at(v(5.0, 5.0)).unwrap();
+    let id = area_fill_at(&mut ed, v(5.0, 5.0));
     ed.selected_fills.clear();
     ed.selection = [sides[1]].into();
     ed.delete_selection_with(&[]);
@@ -715,7 +741,7 @@ fn a_line_drawn_across_a_fill_is_flagged_and_kept_whole() {
         let mut ed = Editor::new(Document::new());
         ed.change_rules(|r| r.follow_divided_fills = follow);
         let (_, sides) = plate(&mut ed);
-        let id = ed.add_fill_at(v(5.0, 5.0)).unwrap();
+        let id = area_fill_at(&mut ed, v(5.0, 5.0));
         // A line right across it, past both sides.
         ed.doc.begin();
         let a = ed.doc.add_point(v(10.0, -5.0));
@@ -761,19 +787,23 @@ fn deleting_part_of_a_fills_outline_says_what_became_of_it() {
             .as_deref()
             .is_some_and(|n| n.contains("around its seed"))
     );
-    // A side of the big square: no area is left, and it goes.
+    // The big square's sides alone now bound it, a closed chain of free lines: it is that
+    // square's shape (#202). A side deleted: nothing closes round it, so it keeps its last
+    // shape, and says so.
+    assert!(ed.shape_outline(l_shape).is_some());
     ed.fill_changes.clear();
     ed.selection = [big[0]].into();
     ed.delete_selection_with(&[]);
-    assert!(ed.doc.fill(l_shape).is_none());
+    assert!(ed.fill_shapes()[&l_shape].lost);
     assert_eq!(
         ed.fill_changes,
-        vec![crate::fills::FillChange::Dropped { id: l_shape }]
+        vec![crate::fills::FillChange::Opened { id: l_shape }]
     );
 }
 
 /// Two filled circles touching, then a third circle drawn across both: each fill keeps its
-/// whole disc (and is flagged as divided), rather than shrinking to a part.
+/// whole disc, rather than shrinking to a part (filled lone circles are shapes, #202, so it
+/// isn't flagged either).
 #[test]
 fn a_circle_drawn_across_two_filled_circles_leaves_them_whole() {
     for gap in [0.0, 20.0] {
@@ -804,14 +834,15 @@ fn a_circle_drawn_across_two_filled_circles_leaves_them_whole() {
             close(area_b, disc),
             "gap {gap}: fill b now covers {area_b}, not {disc}"
         );
-        assert!(ed.doc.fill(fa).unwrap().divided);
+        // (Shapes, #202: a curve across a shape never changes or flags its fill.)
+        assert!(!ed.doc.fill(fa).unwrap().divided);
         assert_eq!(ed.doc.fill(fa).unwrap().boundary.len(), 1);
     }
 }
 
 /// Two overlapping filled circles, trimmed to a peanut, then a circle drawn across the
-/// peanut: the fill keeps the whole peanut (marked as covering two areas), whichever way
-/// the divided-fill preference is set. With "Follow where it was first clicked", both fills shrank to the
+/// peanut: the fill keeps the whole peanut (a shape, #202), whichever way the divided-fill
+/// preference is set. With "Follow where it was first clicked", both fills shrank to the
 /// part around their seeds (2026-10-21).
 #[test]
 fn a_circle_drawn_across_a_trimmed_peanut_leaves_its_fills_whole() {
@@ -850,13 +881,12 @@ fn a_circle_drawn_across_a_trimmed_peanut_leaves_its_fills_whole() {
             close(area, peanut),
             "follow {follow} seeds {seeds:?}: fill {f} went from {peanut} to {area}"
         );
+        // The peanut is a shape (#202): the circle across neither changes nor flags it.
         let fill = ed.doc.fill(f).unwrap();
-        assert!(fill.divided, "marked as covering two areas");
+        assert!(!fill.divided);
+        assert!(fill.path.is_some());
         assert_eq!(fill.boundary.len(), 2, "its outline is still the two arcs");
-        assert_eq!(
-            ed.fill_changes,
-            vec![crate::fills::FillChange::Divided { id: fb, parts: 2 }]
-        );
+        assert!(ed.fill_changes.is_empty(), "{:?}", ed.fill_changes);
     }
 }
 
@@ -1007,8 +1037,8 @@ fn a_paths_fill_follows_its_own_outline_alone() {
     );
     assert_eq!(
         ed.doc.fill(id).unwrap().path,
-        Some(path),
-        "still the shape's"
+        None,
+        "an area fill now (#202)"
     );
     assert!(ed.undo());
     assert!(ed.doc.path(path).unwrap().closed);
@@ -1120,10 +1150,10 @@ fn squares_trimmed_open_one_side_at_a_time_join_with_the_top_fill() {
     for at in [v(40.0, 30.0), v(20.0, 30.0), v(30.0, 40.0), v(30.0, 20.0)] {
         let id = side_at(&ed, at);
         ed.trim_at(id, at).unwrap();
-        // Until they meet, each keeps its own path and fill.
+        // Until they meet, each path keeps its own sides (the fills of the shapes cut
+        // open fill the area closed round them, and come onto one: the top one's).
         if ed.doc.paths().count() == 2 {
-            assert!(ed.doc.fill(fa).unwrap().path == Some(pa));
-            assert!(ed.doc.fill(fb).unwrap().path == Some(pb));
+            let _ = (pa, pb, fa);
             assert_eq!(
                 ed.doc.path(pa).unwrap().curves.len(),
                 4,
@@ -1265,7 +1295,7 @@ fn a_rectangle_drawn_twice_keeps_its_fill_when_either_copy_goes() {
         let square = [v(0.0, 0.0), v(100.0, 0.0), v(100.0, 100.0), v(0.0, 100.0)];
         let (_, first) = polygon(&mut ed, &square);
         let (_, second) = polygon(&mut ed, &square);
-        let id = ed.add_fill_at(v(50.0, 50.0)).unwrap();
+        let id = area_fill_at(&mut ed, v(50.0, 50.0));
         assert!(close(found(&mut ed, id).0, 10_000.0));
         // Delete one copy: the other still encloses the seed.
         let (gone, kept) = if keep_first {
@@ -1399,13 +1429,12 @@ fn a_moved_hatch_stays_on_its_square_through_later_edits() {
     ed.selection = [sides[1]].into();
     ed.selected_fills.clear();
     ed.delete_selection_with(&[]);
-    assert_eq!(
-        ed.doc.fills().count(),
-        fills - 1,
-        "the open square's fill goes"
-    );
+    // (A shape: cut open with nothing closed round it, it keeps its shape, closed across the gap.)
+    assert_eq!(ed.doc.fills().count(), fills);
+    let shape = ed.fill_shapes()[&id].clone();
+    assert!(shape.lost);
     assert!(
-        ed.doc.fill(id).is_none(),
+        (shape.region.centroid - v(550.0, 50.0)).length() < 1e-6,
         "the fill jumped to the square at its old place"
     );
 }
@@ -1414,7 +1443,7 @@ fn a_moved_hatch_stays_on_its_square_through_later_edits() {
 fn undoing_a_line_across_a_fill_clears_its_mark() {
     let mut ed = Editor::new(Document::new());
     plate(&mut ed);
-    let id = ed.add_fill_at(v(5.0, 5.0)).unwrap();
+    let id = area_fill_at(&mut ed, v(5.0, 5.0));
     ed.doc.begin();
     let a = ed.doc.add_point(v(10.0, -5.0));
     let b = ed.doc.add_point(v(10.0, 25.0));
@@ -1699,7 +1728,8 @@ fn filled_ring_and_two_lines(ed: &mut Editor, shapes: bool) -> (FillId, EntityId
     }
     ed.commit("Circles");
     let id = ed.add_fill_at(v(0.0, 25.0)).unwrap();
-    assert_eq!(ed.doc.fill(id).unwrap().path.is_some(), shapes);
+    // A lone circle is a shape whether drawn as one or not (#202).
+    assert!(ed.doc.fill(id).unwrap().path.is_some());
     ed.doc.begin();
     for x in [-5.0, 5.0] {
         let a = ed.doc.add_point(v(x, -40.0));
@@ -1803,8 +1833,8 @@ fn a_hole_trimmed_open_stays_out_of_its_fill() {
     }
 }
 
-/// A shape trimmed open with no area left around its fill keeps its last shape, and the
-/// notice says so.
+/// A shape trimmed open with no area left around its fill keeps its shape, closed straight
+/// across the gap, and the notice says so; saved and opened again, it shows the same.
 #[test]
 fn a_shape_cut_open_with_no_area_left_keeps_its_fill_and_says_so() {
     let mut ed = Editor::new(Document::new());
@@ -1830,9 +1860,18 @@ fn a_shape_cut_open_with_no_area_left_keeps_its_fill_and_says_so() {
     assert!(
         ed.notice
             .as_deref()
-            .is_some_and(|n| n.contains("keeps its last shape")),
+            .is_some_and(|n| n.contains("keeps its shape")),
         "{:?}",
         ed.notice
+    );
+    // Saved and opened again: found from the file alone, the same.
+    let text = drift_io::save(&ed.doc, &Default::default());
+    let (doc, _) = drift_io::load(&text).unwrap();
+    let mut opened = Editor::new(doc);
+    let again = opened.fill_shapes()[&id].clone();
+    assert!(
+        again.lost && close(again.region.area, 800.0),
+        "after reopening"
     );
 }
 
@@ -1897,10 +1936,10 @@ fn a_hole_moved_across_the_outline_leaves_the_shapes_fill_whole() {
     assert!(ed.shape_outline(id).is_some(), "still a shape");
 }
 
-/// Review of #201: once the cut ring's area is gone too (the lines deleted), the fill keeps
-/// its last shape and the notice says so.
+/// Review of #201: the cut ring is an area fill (#202); once its area is gone too (the lines
+/// deleted), it goes as an area fill does, and the notice says so.
 #[test]
-fn a_cut_rings_area_gone_keeps_its_last_shape_and_says_so() {
+fn a_cut_rings_area_gone_drops_it_and_says_so() {
     let mut ed = Editor::new(Document::new());
     let (id, outer, inner) = filled_ring_and_two_lines(&mut ed, true);
     ed.trim_at(outer, v(0.0, -30.0)).unwrap();
@@ -1918,19 +1957,18 @@ fn a_cut_rings_area_gone_keeps_its_last_shape_and_says_so() {
     ed.doc.begin();
     ed.doc.delete(lines);
     ed.commit("Delete");
-    let shape = ed.fill_shapes()[&id].clone();
     assert!(
-        shape.lost && close(shape.region.area, CUT_RING),
-        "its last shape"
+        ed.doc.fill(id).is_none(),
+        "an area fill with no area left goes"
     );
     assert_eq!(
         ed.fill_changes,
-        vec![crate::fills::FillChange::Opened { id }]
+        vec![crate::fills::FillChange::Dropped { id }]
     );
     assert!(
         ed.notice
             .as_deref()
-            .is_some_and(|n| n.contains("keeps its last shape")),
+            .is_some_and(|n| n.contains("no area is left")),
         "{:?}",
         ed.notice
     );
@@ -1954,4 +1992,282 @@ fn a_shape_fill_that_took_an_area_is_not_a_shape() {
     ed.trim_at(inner, v(0.0, -23.0)).unwrap();
     is_cut_ring(&mut ed, id);
     assert_eq!(ed.shape_outline(id), None);
+}
+
+/// #202: a fill made in a closed chain of free lines makes it a shape (A′): its outline is
+/// a path, it picks as one, and a line drawn across it leaves it whole.
+#[test]
+fn a_fill_in_a_loop_of_free_lines_makes_a_shape() {
+    let mut ed = Editor::new(Document::new());
+    let (_, sides) = plate(&mut ed);
+    let id = ed.add_fill_at(v(5.0, 5.0)).unwrap();
+    let path = ed.doc.fill(id).unwrap().path.expect("a shape");
+    assert_eq!(
+        sorted(ed.doc.path(path).unwrap().curves.clone()),
+        sorted(sides.clone())
+    );
+    assert!(ed.doc.path(path).unwrap().closed);
+    assert_eq!(ed.fill_kind(id), Ok(()));
+    assert_eq!(sorted(ed.shape_outline(id).unwrap()), sorted(sides));
+    ed.doc.begin();
+    let a = ed.doc.add_point(v(10.0, -5.0));
+    let b = ed.doc.add_point(v(10.0, 25.0));
+    ed.doc.add_line(a, b).unwrap();
+    ed.commit("Line");
+    assert!(close(found(&mut ed, id).0, 800.0));
+    assert!(!ed.doc.fill(id).unwrap().divided);
+}
+
+/// #202: outlines that can't be shapes stay area fills, and say why: rooms sharing a wall,
+/// lines running past the corners, and corners drawn up to each other but not joined (Join
+/// corners makes that one a shape).
+#[test]
+fn area_fills_say_why_they_are_not_shapes() {
+    // Two rooms sharing a wall.
+    let mut ed = Editor::new(Document::new());
+    let (p, _) = polygon(
+        &mut ed,
+        &[v(0.0, 0.0), v(80.0, 0.0), v(80.0, 40.0), v(0.0, 40.0)],
+    );
+    ed.doc.begin();
+    let m0 = ed.doc.add_point(v(40.0, 0.0));
+    let m1 = ed.doc.add_point(v(40.0, 40.0));
+    ed.doc.add_line(m0, m1).unwrap();
+    ed.commit("Wall");
+    let _ = p;
+    let left = ed.add_fill_at(v(10.0, 10.0)).unwrap();
+    let right = ed.add_fill_at(v(70.0, 10.0)).unwrap();
+    for f in [left, right] {
+        assert!(ed.doc.fill(f).unwrap().path.is_none());
+        assert!(matches!(
+            ed.fill_kind(f),
+            Err(crate::fills::NotAShape::Crossing | crate::fills::NotAShape::Shared(_))
+        ));
+    }
+    // Lines past the corners.
+    let mut ed = Editor::new(Document::new());
+    ed.doc.begin();
+    for (a, b) in [
+        (v(-5.0, 0.0), v(45.0, 0.0)),
+        (v(-5.0, 20.0), v(45.0, 20.0)),
+        (v(0.0, -5.0), v(0.0, 25.0)),
+        (v(40.0, -5.0), v(40.0, 25.0)),
+    ] {
+        let a = ed.doc.add_point(a);
+        let b = ed.doc.add_point(b);
+        ed.doc.add_line(a, b).unwrap();
+    }
+    ed.commit("Lines");
+    let id = ed.add_fill_at(v(5.0, 5.0)).unwrap();
+    assert_eq!(ed.fill_kind(id), Err(crate::fills::NotAShape::Crossing));
+    assert!(
+        ed.fill_kind(id)
+            .unwrap_err()
+            .reason()
+            .contains("lines run past it")
+    );
+    // Corners drawn up to each other, each line with its own end points.
+    let mut ed = Editor::new(Document::new());
+    let corners = [v(0.0, 0.0), v(40.0, 0.0), v(40.0, 20.0), v(0.0, 20.0)];
+    ed.doc.begin();
+    let lines: Vec<EntityId> = (0..4)
+        .map(|i| {
+            let a = ed.doc.add_point(corners[i]);
+            let b = ed.doc.add_point(corners[(i + 1) % 4]);
+            ed.doc.add_line(a, b).unwrap()
+        })
+        .collect();
+    ed.commit("Lines");
+    let id = ed.add_fill_at(v(5.0, 5.0)).unwrap();
+    let Err(crate::fills::NotAShape::Corners(pairs)) = ed.fill_kind(id) else {
+        panic!("{:?}", ed.fill_kind(id));
+    };
+    assert_eq!(pairs.len(), 4);
+    assert_eq!(ed.join_corners(id), Ok(4));
+    assert_eq!(ed.fill_kind(id), Ok(()), "a shape now");
+    assert_eq!(sorted(ed.shape_outline(id).unwrap()), sorted(lines.clone()));
+    assert!(close(found(&mut ed, id).0, 800.0));
+    // One undo step.
+    assert!(ed.undo());
+    assert!(matches!(
+        ed.fill_kind(id),
+        Err(crate::fills::NotAShape::Corners(_))
+    ));
+}
+
+/// #202: opening a drawing makes no shapes: an area fill whose outline would make one stays
+/// an area fill, says so, and becomes a shape when an edit touches it.
+#[test]
+fn opening_a_drawing_makes_no_shapes() {
+    let mut doc = Document::new();
+    let p =
+        [(0.0, 0.0), (40.0, 0.0), (40.0, 20.0), (0.0, 20.0)].map(|(x, y)| doc.add_point(v(x, y)));
+    let mut sides: Vec<EntityId> = (0..4)
+        .map(|i| doc.add_line(p[i], p[(i + 1) % 4]).unwrap())
+        .collect();
+    sides.sort_unstable();
+    let id = doc.add_fill(drift_core::Fill::new(
+        sides.clone(),
+        v(5.0, 5.0),
+        drift_core::FillKind::Solid,
+    ));
+    let text = drift_io::save(&doc, &Default::default());
+    let (doc, _) = drift_io::load(&text).unwrap();
+    let mut ed = Editor::new(doc);
+    assert!(close(found(&mut ed, id).0, 800.0));
+    assert!(ed.doc.fill(id).unwrap().path.is_none());
+    assert_eq!(ed.fill_kind(id), Err(crate::fills::NotAShape::NotEdited));
+    // Moved: an edit touched it.
+    ed.doc.begin();
+    ed.doc.translate(sides.clone(), v(10.0, 0.0));
+    ed.commit("Move");
+    assert!(ed.doc.fill(id).unwrap().path.is_some());
+    assert_eq!(ed.fill_kind(id), Ok(()));
+}
+
+/// #201 with #202: the cut ring is an area fill, saved and opened again as it was (no state
+/// of its own beyond the file).
+#[test]
+fn a_cut_ring_saves_and_opens_as_it_was() {
+    let mut ed = Editor::new(Document::new());
+    let (id, outer, inner) = filled_ring_and_two_lines(&mut ed, true);
+    ed.trim_at(outer, v(0.0, -30.0)).unwrap();
+    ed.trim_at(inner, v(0.0, -23.0)).unwrap();
+    is_cut_ring(&mut ed, id);
+    assert!(ed.doc.fill(id).unwrap().path.is_none());
+    let text = drift_io::save(&ed.doc, &Default::default());
+    let (doc, _) = drift_io::load(&text).unwrap();
+    let mut opened = Editor::new(doc);
+    is_cut_ring(&mut opened, id);
+    let (was, now) = (ed.doc.fill(id).unwrap(), opened.doc.fill(id).unwrap());
+    assert_eq!(
+        (&now.boundary, now.seed, now.path),
+        (&was.boundary, was.seed, was.path)
+    );
+}
+
+/// Review of the #202 rework: a hole trimmed open, undone, and trimmed again with no frame
+/// drawn in between (the assistant's undo then trim) still makes the cut ring, not the disc.
+#[test]
+fn a_hole_trimmed_again_after_undo_with_no_frame_drawn() {
+    let mut ed = Editor::new(Document::new());
+    let (id, _, inner) = filled_ring_and_two_lines(&mut ed, true);
+    ed.trim_at(inner, v(0.0, -23.0)).unwrap();
+    is_cut_ring(&mut ed, id);
+    assert!(ed.undo());
+    assert!(ed.doc.fill(id).unwrap().path.is_some());
+    ed.trim_at(inner, v(0.0, -23.0)).unwrap();
+    assert!(ed.doc.fill(id).unwrap().path.is_none());
+    is_cut_ring(&mut ed, id);
+}
+
+/// Review of the #202 rework: a shape cut open keeps its own fill when its outline closes
+/// again; an area fill of part of it (a strip beside a line across it) stays that strip.
+#[test]
+fn a_shape_closed_again_keeps_its_own_fill() {
+    let mut ed = Editor::new(Document::new());
+    ed.fill_new_shapes = true;
+    let (corners, sides) = polygon(
+        &mut ed,
+        &[v(0.0, 0.0), v(40.0, 0.0), v(40.0, 40.0), v(0.0, 40.0)],
+    );
+    ed.doc.begin();
+    let path = ed.add_shape(&sides).unwrap();
+    ed.commit("Shape");
+    let own = ed
+        .doc
+        .fills()
+        .find(|(_, f)| f.path == Some(path))
+        .unwrap()
+        .0;
+    ed.doc.begin();
+    let a = ed.doc.add_point(v(15.0, -5.0));
+    let b = ed.doc.add_point(v(15.0, 45.0));
+    ed.doc.add_line(a, b).unwrap();
+    ed.commit("Across");
+    let strip = area_fill_at(&mut ed, v(5.0, 5.0));
+    assert!(close(found(&mut ed, strip).0, 600.0));
+    ed.doc.begin();
+    ed.doc.delete([sides[1]]);
+    ed.commit("Delete");
+    ed.doc.begin();
+    ed.doc.add_line(corners[1], corners[2]).unwrap();
+    ed.commit("Close");
+    assert_eq!(ed.doc.fill(own).unwrap().path, Some(path), "its own fill");
+    assert!(close(found(&mut ed, own).0, 1600.0));
+    assert!(ed.doc.fill(strip).unwrap().path.is_none());
+    assert!(
+        close(found(&mut ed, strip).0, 600.0),
+        "the strip stays a strip"
+    );
+}
+
+/// Review of the #202 rework: restyling an area fill from an older drawing doesn't make it a
+/// shape (only edits to its outline do).
+#[test]
+fn restyling_an_old_area_fill_leaves_it_an_area_fill() {
+    let mut ed = Editor::new(Document::new());
+    plate(&mut ed);
+    let id = area_fill_at(&mut ed, v(5.0, 5.0));
+    let mut fill = ed.doc.fill(id).unwrap().clone();
+    fill.opacity = 0.5;
+    ed.update_fill(id, fill);
+    assert!(ed.doc.fill(id).unwrap().path.is_none());
+    assert_eq!(ed.fill_kind(id), Err(crate::fills::NotAShape::NotEdited));
+}
+
+/// Review of the #202 rework: a drawing of 1000 filled rectangles, all moved at once (which
+/// makes them all shapes), commits in moments, and so do later edits: shapes the edit didn't
+/// touch aren't found again, and nothing is found over the whole drawing per shape.
+#[test]
+fn many_filled_rectangles_made_shapes_commit_quickly() {
+    let mut doc = Document::new();
+    for k in 0..1000 {
+        let (x0, y0) = ((k % 40) as f64 * 50.0, (k / 40) as f64 * 50.0);
+        let p = [
+            (x0, y0),
+            (x0 + 40.0, y0),
+            (x0 + 40.0, y0 + 20.0),
+            (x0, y0 + 20.0),
+        ]
+        .map(|(x, y)| doc.add_point(v(x, y)));
+        let mut sides: Vec<EntityId> = (0..4)
+            .map(|i| doc.add_line(p[i], p[(i + 1) % 4]).unwrap())
+            .collect();
+        sides.sort_unstable();
+        doc.add_fill(drift_core::Fill::new(
+            sides,
+            v(x0 + 5.0, y0 + 5.0),
+            drift_core::FillKind::Solid,
+        ));
+    }
+    let mut ed = Editor::new(doc);
+    let _ = ed.fill_shapes();
+    let curves: Vec<EntityId> = ed
+        .doc
+        .iter()
+        .filter(|(_, e)| !e.kind.is_point())
+        .map(|(id, _)| id)
+        .collect();
+    let t = std::time::Instant::now();
+    ed.doc.begin();
+    ed.doc.translate(curves, v(1.0, 0.0));
+    assert!(ed.commit("Move all"));
+    let moved = t.elapsed();
+    assert_eq!(
+        ed.doc.fills().filter(|(_, f)| f.path.is_some()).count(),
+        1000
+    );
+    let _ = ed.fill_shapes();
+    let t = std::time::Instant::now();
+    ed.doc.begin();
+    let p = ed.doc.add_point(v(-1000.0, -1000.0));
+    let q = ed.doc.add_point(v(-900.0, -1000.0));
+    ed.doc.add_line(p, q).unwrap();
+    assert!(ed.commit("Line"));
+    let small = t.elapsed();
+    println!("1000 rectangles: moved {moved:?}, a later edit {small:?}");
+    // (Debug build; it took 8 s and 3.7 s before.)
+    assert!(moved < std::time::Duration::from_secs(4), "{moved:?}");
+    assert!(small < std::time::Duration::from_secs(2), "{small:?}");
 }

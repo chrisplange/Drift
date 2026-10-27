@@ -422,6 +422,10 @@ pub struct Editor {
     /// The curves round the holes of each shape's fill, as last found (sorted): what tells
     /// an edit that cut a hole's outline open from one that moved a hole (#201).
     pub(crate) shape_holes: std::collections::HashMap<drift_core::FillId, Vec<EntityId>>,
+    /// An import is being committed: its area fills don't become shapes (#202).
+    pub(crate) importing: bool,
+    /// The last [`fill_kind`](Editor::fill_kind) found: (revision, fill, kind).
+    pub(crate) fill_kind_cache: std::cell::RefCell<Option<crate::fills::FillKindFound>>,
     /// What edits did to fills beyond following their outlines, until taken (by the
     /// assistant's results; the app clears it).
     pub fill_changes: Vec<crate::fills::FillChange>,
@@ -662,6 +666,15 @@ impl Editor {
 
     /// Solve the constraints, then finish the open transaction and record it for undo. If the
     /// edit made the constraints unsatisfiable it is rolled back and `false` returned.
+    /// [`commit`](Self::commit) an import: its fills come in as they were drawn, area fills
+    /// staying area fills (a CAD hatch is a boundary hatch), as when a drawing is opened.
+    pub fn commit_import(&mut self, label: &str) -> bool {
+        self.importing = true;
+        let done = self.commit(label);
+        self.importing = false;
+        done
+    }
+
     pub fn commit(&mut self, label: &str) -> bool {
         // (Free lines alone have nothing to solve: no relations, nothing pinned or round.)
         let report = if drift_solver::anything_to_solve(&self.doc) {
@@ -2580,8 +2593,9 @@ impl Editor {
     pub fn undo(&mut self) -> bool {
         let done = self.history.undo(&mut self.doc);
         // (Fills are back as they were: whether each was kept whole across curves is found
-        // again when it is next looked at.)
+        // again when it is next looked at, and shapes' areas and holes now.)
         self.fill_crossed.clear();
+        self.refresh_shape_fills();
         self.sync();
         done
     }
@@ -2589,8 +2603,9 @@ impl Editor {
     pub fn redo(&mut self) -> bool {
         let done = self.history.redo(&mut self.doc);
         // (Fills are back as they were: whether each was kept whole across curves is found
-        // again when it is next looked at.)
+        // again when it is next looked at, and shapes' areas and holes now.)
         self.fill_crossed.clear();
+        self.refresh_shape_fills();
         self.sync();
         done
     }

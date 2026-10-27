@@ -1508,6 +1508,17 @@ impl DriftApp {
             "Drag a view to move it · Alt-drag the drawing inside it · its handles crop it · Esc \
              returns to the model"
                 .to_owned()
+        } else if let Some(f) = self
+            .editor
+            .hovered_fill
+            .filter(|_| self.tool.kind() == ToolKind::Select && !self.tool.is_busy())
+        {
+            // What the fill under the pointer is: a shape, or an area fill and why (#202).
+            let kind = match self.editor.fill_kind(f) {
+                Ok(()) => "Shape".to_owned(),
+                Err(why) => format!("Area fill: {}", why.reason()),
+            };
+            format!("{kind} · {}", self.tool.hint())
         } else {
             self.tool.hint()
         };

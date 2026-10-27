@@ -103,7 +103,7 @@ With no key (use the Build menu or the command palette): **Walls from curves**, 
 | E | **Extend** | Lengthen a line or arc to the next curve |
 | F | **Fillet** | Round the corner where two lines meet. F again switches through: fillet, chamfer |
 
-With no key (use the Modify menu or the command palette): **Scale**, **Split**, **Linear pattern**, **Circular pattern**.
+With no key (use the Modify menu or the command palette): **Scale**, **Join corners**, **Split**, **Linear pattern**, **Circular pattern**.
 
 ## Annotate
 

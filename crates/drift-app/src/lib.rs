@@ -292,6 +292,9 @@ pub struct DriftApp {
     unrestored: Option<app::recovery::Unrestored>,
     /// The stored session couldn't be kept as a file either: it isn't autosaved over.
     hold_session: bool,
+    /// This window's autosaved session file.
+    #[cfg(all(not(target_arch = "wasm32"), not(feature = "demo")))]
+    session_files: app::session::SessionFiles,
     /// Saving would leave out things from a newer Drift: the prompt asking first is up, for
     /// Save As (`true`) or Save.
     #[cfg(not(feature = "demo"))]
@@ -592,6 +595,8 @@ impl DriftApp {
             discard_session: false,
             unrestored: None,
             hold_session: false,
+            #[cfg(all(not(target_arch = "wasm32"), not(feature = "demo")))]
+            session_files: Default::default(),
             #[cfg(not(feature = "demo"))]
             lossy_save: None,
             #[cfg(not(feature = "demo"))]
@@ -733,6 +738,18 @@ impl DriftApp {
         theme::install_fonts(&cc.egui_ctx);
         fonts::reset_screen();
         theme::apply(&cc.egui_ctx);
+        // Each window autosaves to a session file of its own.
+        #[cfg(all(not(target_arch = "wasm32"), not(feature = "demo"), not(test)))]
+        {
+            app.session_files.dir = drift_platform::crash::data_dir().map(|d| d.join("sessions"));
+            // A window opened for a file (double-clicked) takes over only a session of that
+            // file: the newest left behind is offered to the next window.
+            app.session_files.opening = std::env::args_os()
+                .nth(1)
+                .map(std::path::PathBuf::from)
+                .filter(|p| p.is_file());
+            app.session_files.restoring = std::env::var_os(app::session::RESTORING).is_some();
+        }
         // A soak test starts from an empty sketch.
         if let Some(storage) = cc.storage
             && app.soak.is_none()
@@ -744,9 +761,40 @@ impl DriftApp {
 }
 
 impl DriftApp {
-    /// Keep the drawing in eframe's storage, to restore next time.
+    /// Keep the drawing for next time: in this window's session file, or (without one, or if
+    /// it can't be written) in eframe's storage.
     #[cfg(not(feature = "demo"))]
-    fn save_document(&self, storage: &mut dyn eframe::Storage) {
+    fn save_document(&mut self, storage: &mut dyn eframe::Storage) {
+        // A value that isn't a number would make the session unreadable: keep the last one.
+        if let Some(id) = self.editor.doc.first_non_finite() {
+            log::warn!("autosave skipped: {id} has a position that isn't a number");
+            return;
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        let dirty = self.is_dirty();
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(slot) = &mut self.session_files.slot {
+            let stamp = app::session::Stamp {
+                revision: self.editor.doc.revision(),
+                name: self.file.name.clone(),
+                path: self.file.path.clone(),
+                dirty,
+            };
+            let (doc, file_meta) = (&self.editor.doc, &self.file.meta);
+            let text = || {
+                let mut meta = file_meta.clone();
+                meta.generator = Some(format!("Drift {}", drift_platform::VERSION));
+                drift_io::save(doc, &meta)
+            };
+            match slot.write(stamp, text) {
+                Ok(_) => {
+                    // (A session from a Drift before session files isn't restored again.)
+                    storage.set_string(KEY_DOCUMENT, String::new());
+                    return;
+                }
+                Err(e) => log::error!("autosave to the session file failed: {e}"),
+            }
+        }
         let mut meta = self.file.meta.clone();
         meta.generator = Some(format!("Drift {}", drift_platform::VERSION));
         storage.set_string(KEY_DOCUMENT, drift_io::save(&self.editor.doc, &meta));
@@ -1039,6 +1087,10 @@ impl eframe::App for DriftApp {
         } else if self.discard_session {
             // "Don't save" on quitting: start fresh next time.
             storage.set_string(KEY_DOCUMENT, String::new());
+            #[cfg(all(not(target_arch = "wasm32"), not(feature = "demo")))]
+            if let Some(slot) = &mut self.session_files.slot {
+                slot.discard();
+            }
         } else {
             // The demo keeps nothing: a drawing in the browser's storage could be read out.
             #[cfg(not(feature = "demo"))]

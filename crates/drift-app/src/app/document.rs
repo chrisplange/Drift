@@ -327,6 +327,45 @@ impl DriftApp {
                 .take(MAX_RECENT)
                 .collect();
         }
+        // This window's session file: one left behind is taken over.
+        #[cfg(all(not(target_arch = "wasm32"), not(feature = "demo")))]
+        if let Some(sessions) = self.session_files.dir.clone() {
+            let opening = self.session_files.opening.clone();
+            match app::session::Slot::claim(&sessions, opening.is_none(), opening.as_deref()) {
+                Ok(claimed) => {
+                    self.session_files.slot = Some(claimed.slot);
+                    if !self.session_files.restoring {
+                        self.session_files.left_behind = claimed.others;
+                    }
+                    if let Some(kept) = claimed.restored {
+                        // The file the window was opened for, as it was left unsaved: it isn't
+                        // opened again over it.
+                        if claimed.same_file {
+                            self.session_files.took_over = opening;
+                        }
+                        let name = kept.name.clone();
+                        let path = kept.path.map(|p| p.to_string_lossy().into_owned());
+                        self.restore_text(&kept.text, Some(kept.name), path, kept.dirty, dir);
+                        // Said, so a drawing taken over doesn't appear unexplained (unless
+                        // a note about the last run already says so).
+                        if self.unrestored.is_none()
+                            && self.editor.notice.is_none()
+                            && self.status_next.is_none()
+                        {
+                            self.status_next =
+                                Some(format!("Restored {name} from your last session"));
+                        }
+                        return;
+                    }
+                    // Sessions there, none left behind: a new drawing. (None at all: the last
+                    // session may be in eframe's storage, from a Drift before session files.)
+                    if !claimed.first {
+                        return;
+                    }
+                }
+                Err(e) => log::error!("no session file ({e}): the session goes in the settings"),
+            }
+        }
         // The demo starts afresh each time (and never kept a drawing to restore).
         let Some(text) = storage
             .get_string(KEY_DOCUMENT)
@@ -334,13 +373,29 @@ impl DriftApp {
         else {
             return;
         };
-        match drift_io::load(&text) {
+        let dirty = storage.get_string(KEY_DIRTY).as_deref() == Some("1");
+        self.restore_text(
+            &text,
+            storage.get_string(KEY_NAME),
+            storage.get_string(KEY_PATH),
+            dirty,
+            dir,
+        );
+    }
+
+    /// Restore a kept session's drawing `text`, named `name`, from `path`.
+    fn restore_text(
+        &mut self,
+        text: &str,
+        name: Option<String>,
+        path: Option<String>,
+        dirty: bool,
+        dir: Option<std::path::PathBuf>,
+    ) {
+        match drift_io::load(text) {
             Ok((doc, meta)) => {
-                let name = storage
-                    .get_string(KEY_NAME)
-                    .unwrap_or_else(|| UNTITLED.into());
-                let path = storage
-                    .get_string(KEY_PATH)
+                let name = name.unwrap_or_else(|| UNTITLED.into());
+                let path = path
                     .filter(|p| !p.is_empty() && cfg!(not(target_arch = "wasm32")))
                     .map(FilePath::from)
                     .filter(|p| is_sketch_file(p));
@@ -351,10 +406,9 @@ impl DriftApp {
                     let stem = name.rsplit_once('.').map_or(name.as_str(), |(s, _)| s);
                     format!("{stem}.drift")
                 };
-                let dirty = storage.get_string(KEY_DIRTY).as_deref() == Some("1");
                 self.replace_document(doc, name, path, meta, !dirty);
             }
-            Err(e) => self.hold_session = self.keep_unrestored(&text, &e, dir),
+            Err(e) => self.hold_session = self.keep_unrestored(text, &e, dir),
         }
     }
 
@@ -390,6 +444,11 @@ impl DriftApp {
     /// drawing Import takes asks first whether to open it as a new drawing or import it
     /// into this one. A sketch joins the recent files once it has been read.
     pub fn open_file(&mut self, path: FilePath) {
+        // The window was opened for this file and took over its unsaved session instead.
+        #[cfg(all(not(target_arch = "wasm32"), not(feature = "demo")))]
+        if self.session_files.take_over_opening(&path) {
+            return;
+        }
         if is_sketch_file(&path) {
             self.open_path = Some(path);
             self.request(Pending::OpenPath);

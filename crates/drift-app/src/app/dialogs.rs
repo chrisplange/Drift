@@ -215,6 +215,8 @@ impl DriftApp {
         self.start_panel(ctx);
         self.about_window(ctx);
         self.unrestored_window(ctx);
+        #[cfg(all(not(target_arch = "wasm32"), not(feature = "demo")))]
+        self.left_behind_window(ctx);
         self.licences_window(ctx);
         self.settings_window(ctx);
         self.drawing_settings_window(ctx);

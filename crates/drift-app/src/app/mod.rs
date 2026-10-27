@@ -30,6 +30,8 @@ pub(crate) mod pie;
 pub(crate) mod rail;
 pub(crate) mod recovery;
 pub(crate) mod rename_ui;
+#[cfg(all(not(target_arch = "wasm32"), not(feature = "demo")))]
+pub(crate) mod session;
 pub(crate) mod shape_ui;
 pub(crate) mod sheet_editor;
 pub(crate) mod sheets_ui;

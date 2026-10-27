@@ -503,3 +503,222 @@ fn smoke_files_non_finite_is_not_saved() {
     assert!(h.state().is_dirty());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Each window autosaves to a session file of its own, not the settings all windows share: a
+/// second window doesn't get the first's drawing, and once both have gone the next takes over
+/// the newer session and offers the other (#217).
+#[test]
+fn smoke_files_each_window_keeps_its_own_session() {
+    let Some(mut first) = harness() else { return };
+    let Some(mut second) = harness() else { return };
+    let dir = scratch_dir("smoke-sessions");
+    let mut storage = MemoryStorage::default();
+    first.state_mut().session_files.dir = Some(dir.clone());
+    first.state_mut().restore_session(&storage);
+    view(&mut first, DVec2::new(-10.0, -10.0), DVec2::new(60.0, 40.0));
+    rectangle(&mut first, DVec2::ZERO, DVec2::new(40.0, 30.0), Fill::No);
+    eframe::App::save(first.state_mut(), &mut storage);
+    assert_eq!(storage.get_string(crate::KEY_DOCUMENT).as_deref(), Some(""));
+    second.state_mut().session_files.dir = Some(dir.clone());
+    second.state_mut().restore_session(&storage);
+    assert!(
+        second.state().editor.doc.is_empty(),
+        "the first window's drawing stays its own"
+    );
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    edit_from_link(&mut second);
+    eframe::App::save(second.state_mut(), &mut storage);
+    let newer = second.state().editor.doc.clone();
+    // Both windows go: the system lets go of their sessions' locks (here, by hand).
+    for h in [&mut first, &mut second] {
+        h.state_mut().session_files.slot = None;
+    }
+    drop((first, second));
+    let Some(mut next) = harness() else { return };
+    next.state_mut().session_files.dir = Some(dir.clone());
+    next.state_mut().restore_session(&storage);
+    next.run();
+    assert_eq!(next.state().editor.doc, newer);
+    assert!(next.state().is_dirty(), "unsaved work stays marked unsaved");
+    // Said, so the drawing doesn't appear unexplained.
+    let status = next.state().status.as_ref().map(|s| s.text.clone());
+    assert_eq!(
+        status.as_deref(),
+        Some("Restored Untitled.drift from your last session")
+    );
+    assert_eq!(next.state().session_files.left_behind.len(), 1);
+    assert!(next.query_by_label("Drawings left open").is_some());
+    next.get_by_label("Later").click();
+    next.run();
+    assert!(next.query_by_label("Drawings left open").is_none());
+    next.state_mut().session_files.slot = None;
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Sessions left behind by windows that have gone, as a crash leaves them: each with unsaved
+/// changes, the drawing named `name` (of the file `path`) holding one point.
+fn leave_sessions(dir: &std::path::Path, drawings: &[(&str, Option<&std::path::Path>)]) {
+    for (i, (name, path)) in drawings.iter().enumerate() {
+        let mut claimed = crate::app::session::Slot::claim(dir, false, None).unwrap();
+        let mut doc = drift_core::Document::new();
+        doc.add_point(DVec2::new(i as f64, 0.0));
+        let stamp = crate::app::session::Stamp {
+            revision: 1,
+            name: (*name).into(),
+            path: path.map(std::path::Path::to_path_buf),
+            dirty: true,
+        };
+        claimed
+            .slot
+            .write(stamp, || {
+                drift_io::save(&doc, &drift_io::Metadata::default())
+            })
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+fn sessions_in(dir: &std::path::Path) -> usize {
+    std::fs::read_dir(dir)
+        .unwrap()
+        .filter(|e| {
+            e.as_ref()
+                .unwrap()
+                .path()
+                .extension()
+                .is_some_and(|x| x == "session")
+        })
+        .count()
+}
+
+/// A window opened for a session left behind (Open them) takes one over and offers no others;
+/// Delete them in the next asks once, then deletes the rest (#217).
+#[test]
+fn smoke_files_sessions_left_behind_are_opened_or_deleted() {
+    let dir = scratch_dir("smoke-left");
+    leave_sessions(
+        &dir,
+        &[("A.drift", None), ("B.drift", None), ("C.drift", None)],
+    );
+    let storage = MemoryStorage::default();
+    let Some(mut opened) = harness() else { return };
+    opened.state_mut().session_files.dir = Some(dir.clone());
+    opened.state_mut().session_files.restoring = true;
+    opened.state_mut().restore_session(&storage);
+    opened.run();
+    assert_eq!(opened.state().file.name, "C.drift", "the newest");
+    assert!(opened.state().session_files.left_behind.is_empty());
+    assert!(opened.query_by_label("Drawings left open").is_none());
+    let Some(mut next) = harness() else { return };
+    next.state_mut().session_files.dir = Some(dir.clone());
+    next.state_mut().restore_session(&storage);
+    next.run();
+    assert_eq!(next.state().file.name, "B.drift");
+    assert_eq!(next.state().session_files.left_behind.len(), 1);
+    next.get_by_label("Delete them").click();
+    next.run();
+    assert!(
+        next.query_by_label_contains("This can't be undone")
+            .is_some()
+    );
+    next.get_by_label("Cancel").click();
+    next.run();
+    assert_eq!(sessions_in(&dir), 3, "nothing deleted yet");
+    next.get_by_label("Delete them").click();
+    next.run();
+    next.get_by_label("Delete").click();
+    next.run();
+    assert!(next.query_by_label("Drawings left open").is_none());
+    assert_eq!(sessions_in(&dir), 2, "A's gone; the two taken over stay");
+    for h in [&mut opened, &mut next] {
+        h.state_mut().session_files.slot = None;
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Double-clicking a file whose unsaved session was left behind takes that session over, with
+/// its changes, rather than opening the file beside an offer of them (#217).
+#[test]
+fn smoke_files_opening_a_file_takes_over_its_session() {
+    let dir = scratch_dir("smoke-same-file");
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("Plan.drift");
+    std::fs::write(
+        &file,
+        drift_io::save(&drift_core::Document::new(), &drift_io::Metadata::default()),
+    )
+    .unwrap();
+    let sessions = dir.join("sessions");
+    leave_sessions(
+        &sessions,
+        &[("Plan.drift", Some(&file)), ("Other.drift", None)],
+    );
+    let Some(mut h) = harness() else { return };
+    h.state_mut().session_files.dir = Some(sessions.clone());
+    h.state_mut().session_files.opening = Some(file.clone());
+    h.state_mut().restore_session(&MemoryStorage::default());
+    h.state_mut().open_file(file.clone());
+    h.run_steps(2);
+    let app = h.state();
+    assert_eq!(app.file.name, "Plan.drift");
+    assert!(
+        app.is_dirty() && !app.editor.doc.is_empty(),
+        "the unsaved changes"
+    );
+    assert!(app.pending.is_none(), "not opened again over them");
+    assert_eq!(app.session_files.left_behind.len(), 1, "Other is offered");
+    h.state_mut().session_files.slot = None;
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The first start with session files: the session kept in the shared settings by a Drift
+/// before them is restored, then autosaved to this window's file, and not restored again.
+#[test]
+fn smoke_files_session_moves_from_the_settings_on_first_start() {
+    let Some(mut old) = harness() else { return };
+    edit_from_link(&mut old);
+    let mut storage = MemoryStorage::default();
+    eframe::App::save(old.state_mut(), &mut storage);
+    let drawn = old.state().editor.doc.clone();
+    assert!(!storage.get_string(crate::KEY_DOCUMENT).unwrap().is_empty());
+    let dir = scratch_dir("smoke-migrate");
+    let Some(mut h) = harness() else { return };
+    h.state_mut().session_files.dir = Some(dir.clone());
+    h.state_mut().restore_session(&storage);
+    assert_eq!(h.state().editor.doc, drawn);
+    eframe::App::save(h.state_mut(), &mut storage);
+    assert_eq!(storage.get_string(crate::KEY_DOCUMENT).as_deref(), Some(""));
+    assert_eq!(sessions_in(&dir), 1);
+    h.state_mut().session_files.slot = None;
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Installing an update with another Drift window open: the installer couldn't close it, so
+/// it isn't started, and the user is told to close the other window first (#217).
+#[test]
+fn smoke_files_update_waits_for_other_windows() {
+    let dir = scratch_dir("smoke-update-guard");
+    let Some(mut h) = harness() else { return };
+    h.state_mut().session_files.dir = Some(dir.clone());
+    h.state_mut().restore_session(&MemoryStorage::default());
+    edit_from_link(&mut h);
+    let other = crate::app::session::Slot::claim(&dir, false, None).unwrap();
+    h.state_mut().request_update();
+    h.run();
+    assert!(h.state().pending.is_none(), "not started");
+    let status = h.state().status.as_ref().map(|s| s.text.clone());
+    assert_eq!(
+        status.as_deref(),
+        Some("Close your other Drift window first (1 open), then install the update")
+    );
+    drop(other);
+    h.state_mut().request_update();
+    assert_eq!(
+        h.state().pending,
+        Some(crate::Pending::Update),
+        "asks about unsaved changes"
+    );
+    h.state_mut().pending = None;
+    h.state_mut().session_files.slot = None;
+    let _ = std::fs::remove_dir_all(&dir);
+}

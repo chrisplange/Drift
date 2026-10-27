@@ -3,6 +3,7 @@
 //! pointer to size it in steps and click to apply, as Blender's bevel does. The size can be
 //! typed at any time and is kept for the next corner.
 
+use super::picking::{Rule, entity_at};
 use super::*;
 
 /// The corner point under the pointer, if two lines meet there (or, for a fillet, two lines
@@ -22,7 +23,7 @@ fn corner_under(ed: &Editor, p: &Pointer, arcs: bool) -> Option<EntityId> {
         .and_then(|id| ed.doc.point(id).ok())
         .unwrap_or(p.raw);
     p.snapped_point().filter(|id| is_corner(*id)).or_else(|| {
-        ed.index.pick(at, p.tolerance, |id| {
+        entity_at(ed, at, p.tolerance, Rule::ANY, |id| {
             ed.doc.get(id).is_some_and(|e| e.kind.is_point()) && is_corner(id)
         })
     })
@@ -43,7 +44,7 @@ fn no_corner_notice(ed: &Editor, p: &Pointer, arcs: bool) -> String {
         )
     };
     let point = p.snapped_point().or_else(|| {
-        ed.index.pick(p.raw, p.tolerance, |id| {
+        entity_at(ed, p.raw, p.tolerance, Rule::ANY, |id| {
             ed.doc.get(id).is_some_and(|e| e.kind.is_point())
         })
     });

@@ -1835,7 +1835,7 @@ fn typed_sizes_leave_no_dimension_when_automatic_relations_are_off() {
 #[test]
 fn two_lines_dimension_by_distance_when_they_run_alongside() {
     use crate::tools::dimension::DimBase;
-    use crate::tools::select::Target;
+    use crate::tools::picking::Target;
     let mut ed = Editor::default();
     ed.doc.begin();
     let line = |ed: &mut Editor, a: DVec2, b: DVec2| {

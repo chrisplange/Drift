@@ -1,6 +1,6 @@
 //! Smart Dimension: the dimension type follows the picks and the label position.
 
-use super::select::{Target, pick_target_with};
+use super::picking::{Target, pick_target_with};
 use super::*;
 
 /// What a dimension measures, before its exact type is chosen by where the label goes.

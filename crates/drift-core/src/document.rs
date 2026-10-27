@@ -146,15 +146,6 @@ impl EntityKind {
         self.ends()?.into_iter().find(|p| theirs.contains(p))
     }
 
-    /// Lines, circles and arcs; ellipses and elliptical arcs are curves too, but most modify
-    /// tools don't handle them yet.
-    pub fn is_ellipse(&self) -> bool {
-        matches!(
-            self,
-            EntityKind::Ellipse { .. } | EntityKind::EllipseArc { .. }
-        )
-    }
-
     /// Use point `to` wherever the entity uses `from`.
     pub fn replace_point(&mut self, from: EntityId, to: EntityId) {
         let swap = |id: &mut EntityId| {
@@ -651,13 +642,6 @@ fn same_points(a: &EntityKind, b: &EntityKind) -> bool {
 impl Document {
     pub fn new() -> Self {
         Self::default()
-    }
-
-    /// Rebuild a document from stored entities (e.g. when loading a file). Validates references.
-    pub fn from_entities(
-        entities: impl IntoIterator<Item = (EntityId, Entity)>,
-    ) -> Result<Self, DocumentError> {
-        Self::from_parts(entities, [])
     }
 
     /// Rebuild a document from stored entities and constraints. Validates references.
@@ -2730,6 +2714,7 @@ impl Document {
 
     /// Make this document's content equal to `other`'s, as journalled changes (so it can be
     /// undone).
+    #[cfg(test)]
     pub fn restore_from(&mut self, other: &Document) {
         self.restore_parts(other, true);
     }
@@ -3835,14 +3820,6 @@ impl Document {
         }
     }
 
-    /// The wall whose centreline is `path`.
-    pub fn wall_of_path(&self, path: PathId) -> Option<WallId> {
-        self.walls
-            .iter()
-            .find(|(_, w)| w.centre == path)
-            .map(|(id, _)| *id)
-    }
-
     /// Who owns which entity, path and fill among the walls' (built afresh: callers that ask
     /// often cache it by revision).
     pub fn wall_owners(&self) -> Owners {
@@ -3908,11 +3885,6 @@ impl Document {
 
     pub fn has_openings(&self) -> bool {
         !self.openings.is_empty()
-    }
-
-    /// The openings in wall `w`.
-    pub fn openings_in(&self, w: WallId) -> impl Iterator<Item = (OpeningId, &Opening)> {
-        self.openings().filter(move |(_, o)| o.wall == w)
     }
 
     fn check_opening(&self, o: &Opening) -> Result<(), DocumentError> {
@@ -4499,11 +4471,6 @@ impl History {
     /// How many steps can be undone.
     pub fn undo_depth(&self) -> usize {
         self.undo.len()
-    }
-
-    /// How many steps can be redone.
-    pub fn redo_depth(&self) -> usize {
-        self.redo.len()
     }
 
     /// Fold the last `n` undo steps into one labelled `label`, so several edits undo

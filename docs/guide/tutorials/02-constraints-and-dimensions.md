@@ -142,7 +142,7 @@ yourself are never affected.
 - **Change its value:** double-click the label and type. Any expression works: `60 + 15`,
   `2in`, or a variable name (see [Parameters](03-parameters.md)).
 - **Move its label:** drag it.
-- **Pick it:** click the label. The **Inspector** shows its text, tolerance and display
+- **Pick it:** click the label. The **Inspector** shows its text and display
   settings (see [Annotation](09-annotation.md)). Delete removes it.
 - **Sizes in the Inspector:** a picked line's **Length**, or a circle's **Radius** and
   **Diameter**, can be typed into. If a dimension drives that size, the dimension changes.

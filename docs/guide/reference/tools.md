@@ -17,8 +17,6 @@ button down, for the others. The place shows the one used last.
 | **Trim** | Extend, Split |
 | **Fillet** | Chamfer |
 | **Linear pattern** | Circular pattern |
-| **Dimension** | Ordinate |
-| **Note** | Callout |
 | **Section mark** | Elevation mark, Centre mark |
 
 Esc cancels the step in progress; pressed again, it returns to **Select**.
@@ -70,9 +68,7 @@ and **Explode walls** are in the **Build** menu; **Walls from curves** and
 | Tool | Key | What it does |
 |---|---|---|
 | **Dimension** | D | Click geometry, then place the label; the kind follows what you clicked and where the label goes. Top bar: **Single** / **Chain** / **Baseline**, **Overall**, **Show dimensions**, **Show relations**. See [Constraints and dimensions](../tutorials/02-constraints-and-dimensions.md). |
-| **Ordinate** | — | Click the origin point, then points; each gets its X distance in a row. Y / X switch the coordinate. |
 | **Note** | N | Click for a note, or click geometry first for a leader to it. Type; Enter finishes, Shift+Enter adds a line. |
-| **Callout** | — | Click a hole for `4× Ø6 THRU`, or a chamfer line for `2 × 45°`, then where the text goes. |
 | **Centre mark** | — | Click a circle or arc for a centre mark; then another circle, arc or point for a centre line between them. Two lines give a centre line midway. |
 | **Section mark** | — | Two clicks for the cutting line, with a lettered flag at each end. X / Y keep it to an axis. |
 | **Elevation mark** | — | Click where it goes, then towards what it looks at. X / Y keep it to an axis; Alt allows any angle. |

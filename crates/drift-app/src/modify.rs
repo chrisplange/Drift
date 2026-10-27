@@ -670,17 +670,8 @@ impl Editor {
     }
 
     /// The piece of curve `id` that trimming at `click` would remove: (start, end)
-    /// parameters, or `None` to remove the whole curve. Errors explain why it can't be
-    /// trimmed there.
-    pub fn trim_span(
-        &self,
-        id: EntityId,
-        click: DVec2,
-    ) -> Result<(Option<Cut>, Option<Cut>), EditError> {
-        self.trim_span_against(id, click, None)
-    }
-
-    /// [`trim_span`](Self::trim_span), cut by the curves of `against` only when given.
+    /// parameters, or `None` to remove the whole curve, cut by the curves of `against` only
+    /// when given. Errors explain why it can't be trimmed there.
     pub fn trim_span_against(
         &self,
         id: EntityId,
@@ -717,12 +708,8 @@ impl Editor {
         Ok((lo, hi))
     }
 
-    /// The shape trimming at `click` would remove, for previews.
-    pub fn trim_preview(&self, id: EntityId, click: DVec2) -> Option<Shape> {
-        self.trim_preview_against(id, click, None)
-    }
-
-    /// [`trim_preview`](Self::trim_preview), cut by the curves of `against` only when given.
+    /// The shape trimming at `click` would remove, for previews, cut by the curves of
+    /// `against` only when given.
     pub fn trim_preview_against(
         &self,
         id: EntityId,
@@ -745,12 +732,14 @@ impl Editor {
 
     /// Remove the piece of curve `id` around `click` between the nearest cutting curves (the
     /// whole curve if nothing cuts it).
+    #[cfg(test)]
     pub fn trim_at(&mut self, id: EntityId, click: DVec2) -> Result<(), EditError> {
         self.trim_at_against(id, click, None)
     }
 
-    /// [`trim_at`](Self::trim_at), cut by the curves of `against` only when given. When the
-    /// trimmed curve is one of them, the piece the trim cuts off its far side is too.
+    /// Remove the piece of curve `id` around `click` between the nearest cutting curves (the
+    /// whole curve if nothing cuts it), cut by the curves of `against` only when given. When
+    /// the trimmed curve is one of them, the piece the trim cuts off its far side is too.
     pub fn trim_at_against(
         &mut self,
         id: EntityId,
@@ -1295,17 +1284,8 @@ impl Editor {
     }
 
     /// Where extending the end of curve `id` nearest `click` would reach: (end point, the
-    /// hit, the curve it meets, an existing end point there).
-    pub fn extend_target(
-        &self,
-        id: EntityId,
-        click: DVec2,
-    ) -> Result<(EntityId, DVec2, EntityId, Option<EntityId>), EditError> {
-        self.extend_target_against(id, click, None)
-    }
-
-    /// [`extend_target`](Self::extend_target), reaching only the curves of `against` when
-    /// given.
+    /// hit, the curve it meets, an existing end point there), reaching only the curves of
+    /// `against` when given.
     pub fn extend_target_against(
         &self,
         id: EntityId,
@@ -1380,11 +1360,13 @@ impl Editor {
     }
 
     /// Extend the end of curve `id` nearest `click` to the next curve it would meet.
+    #[cfg(test)]
     pub fn extend_at(&mut self, id: EntityId, click: DVec2) -> Result<(), EditError> {
         self.extend_at_against(id, click, None)
     }
 
-    /// [`extend_at`](Self::extend_at), reaching only the curves of `against` when given.
+    /// Extend the end of curve `id` nearest `click` to the next curve it would meet, reaching
+    /// only the curves of `against` when given.
     pub fn extend_at_against(
         &mut self,
         id: EntityId,

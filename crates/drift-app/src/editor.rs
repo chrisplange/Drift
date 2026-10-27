@@ -1795,6 +1795,7 @@ impl Editor {
     }
 
     /// Save the current variable values as a new option.
+    #[cfg(test)]
     pub fn save_variant(&mut self, name: &str) -> VariantId {
         self.save_option(name, false)
     }

@@ -98,6 +98,7 @@ impl Editor {
     }
 
     /// Outlines of the visible texts, coloured by their own or their layer's colour.
+    #[cfg(test)]
     pub fn text_items(&self, status_colors: bool, dark: bool) -> Vec<SketchItem> {
         self.text_items_tagged(status_colors, dark)
             .into_iter()

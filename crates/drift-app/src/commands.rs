@@ -626,6 +626,17 @@ impl Slot {
         std::iter::once(self.head).chain(self.more.iter().copied())
     }
 
+    /// [`commands`](Self::commands) without those this build doesn't offer.
+    pub(crate) fn offered(&self) -> impl Iterator<Item = Command> + '_ {
+        self.commands()
+            .filter(|c| spec(*c).is_none_or(|s| !s.when.hidden()))
+    }
+
+    /// Whether it has a flyout in this build.
+    pub(crate) fn is_family(&self) -> bool {
+        self.offered().nth(1).is_some()
+    }
+
     pub(crate) fn holds(&self, command: Command) -> bool {
         self.commands().any(|c| c == command)
     }
@@ -733,7 +744,7 @@ pub(crate) fn menu_breaks(category: Category) -> Vec<Command> {
     for spec in registry().iter().filter(|s| s.category == category) {
         let slot = rail_slot(spec.command);
         let here = slot.map(|s| s as *const Slot);
-        let family = slot.is_some_and(|s| !s.more.is_empty());
+        let family = slot.is_some_and(|s| s.is_family());
         if let Some(prev) = last
             && prev != here
             && (family || last_family || here.is_none() != prev.is_none())
@@ -1635,11 +1646,15 @@ fn table() -> Vec<Spec> {
         tool("annotate.dimension", C::Annotate, ToolKind::Dimension)
             .keys(const { &[plain(Key::D)] })
             .aliases(&["DIMENSION", "DIM", "DLI", "DAL", "DRA", "DDI", "DAN"]),
-        tool("annotate.ordinate", C::Annotate, ToolKind::Ordinate).aliases(&["DIMORDINATE", "DOR"]),
+        // Ordinate dimensions and callouts are kept out of release builds until they're wanted
+        // again (files holding them still open and save them).
+        tool("annotate.ordinate", C::Annotate, ToolKind::Ordinate)
+            .aliases(&["DIMORDINATE", "DOR"])
+            .when(When::Debug),
         tool("annotate.note", C::Annotate, ToolKind::Note)
             .keys(const { &[plain(Key::N)] })
             .aliases(&["LEADER", "LE", "MLEADER", "MLD"]),
-        tool("annotate.callout", C::Annotate, ToolKind::Callout),
+        tool("annotate.callout", C::Annotate, ToolKind::Callout).when(When::Debug),
         tool("annotate.section", C::Annotate, ToolKind::Section),
         tool("annotate.elevation", C::Annotate, ToolKind::Elevation),
         tool("annotate.centre_mark", C::Annotate, ToolKind::CentreMark).aliases(&[
@@ -1952,7 +1967,8 @@ pub(crate) fn docs_tables() -> String {
         // The tools and commands with no key of their own, in the menus and the palette.
         let keyless: Vec<String> = registry()
             .iter()
-            .filter(|s| s.category.label() == section && !s.when.hidden())
+            // The guide describes release builds, so what only debug builds offer is left out.
+            .filter(|s| s.category.label() == section && s.when != When::Debug)
             .filter(|s| {
                 matches!(
                     s.category,

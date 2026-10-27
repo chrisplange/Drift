@@ -1244,20 +1244,6 @@ pub fn sheet_view(b: Bounds, sheet: &Sheet, imperial: bool) -> (View, Viewport) 
     )
 }
 
-/// The crop of a new view of `b` (world mm) at 1 : `scale`: `b` with a margin, no bigger
-/// than will fit on `sheet`.
-pub fn view_crop(b: Bounds, sheet: &Sheet, scale: f64) -> Bounds {
-    let area = drift_draft::sheet::view_area(sheet);
-    let size = (b.size() / scale + DVec2::splat(10.0))
-        .max(DVec2::splat(20.0))
-        .min(area.size())
-        * scale;
-    Bounds {
-        min: b.center() - size * 0.5,
-        max: b.center() + size * 0.5,
-    }
-}
-
 /// Where on `sheet` a frame of `size` (paper mm) goes, among the views already there
 /// (`placed`): to the right of them, top-aligned with the drawing area, if it fits, else in
 /// the middle.

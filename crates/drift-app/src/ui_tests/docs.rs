@@ -691,7 +691,7 @@ fn construction() {
 }
 
 fn annotation() {
-    // A note with a leader, a centre mark and a hole callout on the plate.
+    // A note with a leader and a centre mark on the plate.
     let mut h = harness().unwrap();
     open_example(&mut h);
     h.get_by_label("Note").click();
@@ -706,11 +706,6 @@ fn annotation() {
     h.state_mut().switch_tool(ToolKind::CentreMark);
     h.run();
     click_world(&mut h, DVec2::new(84.0, 40.0));
-    h.state_mut().switch_tool(ToolKind::Callout);
-    h.run();
-    let hole = DVec2::new(70.0, 40.0) + DVec2::splat(26.0 / 2f64.sqrt());
-    click_world(&mut h, hole + DVec2::new(3.2, 0.0));
-    click_world(&mut h, DVec2::new(108.0, 92.0));
     h.key_press(Key::Escape);
     h.run();
     h.get_by_label("Select").click();

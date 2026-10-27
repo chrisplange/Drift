@@ -394,7 +394,7 @@ impl Editor {
     }
 
     /// Copy the selection as clipboard text and delete it.
-    #[cfg(not(feature = "demo"))]
+    #[cfg(all(test, not(feature = "demo")))]
     pub fn cut_selection(&mut self) -> Option<String> {
         let text = self.copy_selection()?;
         self.delete_selection();

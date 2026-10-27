@@ -158,15 +158,6 @@ impl Editor {
             .map(|c| &c.index)
     }
 
-    /// The visible underlays' curves within `view`, faded towards the background.
-    /// The visible underlays' pictures, for the canvas.
-    pub fn underlay_images(&self) -> Vec<drift_render::CanvasImage> {
-        self.underlay_pictures()
-            .into_iter()
-            .map(|(_, i)| i)
-            .collect()
-    }
-
     /// The pictures of visible underlays, each with its underlay.
     pub fn underlay_pictures(&self) -> Vec<(UnderlayId, drift_render::CanvasImage)> {
         let mut out = Vec::new();

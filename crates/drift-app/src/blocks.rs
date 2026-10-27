@@ -233,11 +233,12 @@ impl Editor {
 
     /// Make a block from the selection and put a copy where the geometry was (the selection
     /// becomes that copy). The base point is the centre of the selection.
+    #[cfg(test)]
     pub fn make_block(&mut self, name: &str) -> Result<InstanceId, String> {
         self.make_block_at(name, None)
     }
 
-    /// Whether [`make_block`](Self::make_block) would work: something is picked and the
+    /// Whether [`make_block_at`](Self::make_block_at) would work: something is picked and the
     /// name is free.
     pub fn check_make_block(&self, name: &str) -> Result<(), String> {
         self.block_source(name).map(|_| ())

@@ -1652,6 +1652,7 @@ const FREEDOM_LIMIT: usize = 400;
 /// The directions in which each under-defined point can move, from the null space of the
 /// constraint Jacobian. Fully defined points are omitted, as are points in very large
 /// components (see [`FREEDOM_LIMIT`]).
+#[cfg(test)]
 pub fn free_directions(doc: &Document) -> HashMap<EntityId, Freedom> {
     free_directions_with(doc, None)
 }

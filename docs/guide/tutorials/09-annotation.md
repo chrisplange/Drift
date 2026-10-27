@@ -1,10 +1,10 @@
 # Annotation
 
 **What you'll make:** the example plate, annotated for the workshop: a note with a leader, a
-centre mark, a hole callout, section and elevation marks, and a dimension marked TYP. Then
-you'll hide some annotations on the canvas or leave them off the sheets.
+centre mark, section and elevation marks, and a dimension marked TYP. Then you'll hide some
+annotations on the canvas or leave them off the sheets.
 
-![The plate with a note (DEBURR ALL EDGES) and a hole callout (4× Ø6.4 THRU)](../images/annotate-notes.png)
+![The plate with a note (DEBURR ALL EDGES) and a centre mark on the bore](../images/annotate-notes.png)
 
 Time: about 15 minutes.
 
@@ -67,24 +67,7 @@ Click two lines to get a centre line midway between them. Esc stops.
 To mark several circles at once, pick them with **Select** and click **Add centre marks**
 in the **Inspector**.
 
-## 3. A hole callout
-
-1. Click **Callout** in the tool palette.
-2. Click one of the bolt holes.
-3. Click where the text goes.
-
-Drift counts the holes of the same size: the callout reads **4× Ø6.4 THRU**. Pick it to
-change the suffix to **TAP**, **CBORE** or **CSK**. Click a chamfer's line instead to get
-`2 × 45°` (or `2 × 3` for unequal legs).
-
-## 4. Ordinate dimensions
-
-1. Click **Ordinate** in the tool palette.
-2. Click the point to measure from. It reads 0.
-3. Click more points. Each gets its X distance from the origin point, lined up in a row.
-4. Press Y to measure Y distances instead (X to go back). Esc finishes.
-
-## 5. Section and elevation marks
+## 3. Section and elevation marks
 
 1. Click **Section mark**, then click where the cutting line starts and where it ends.
    Press X or Y before the second click to keep it along an axis. Each end gets a flag
@@ -117,7 +100,7 @@ follows.
 - Until the view is placed on a sheet the flag reads `– / –`. Delete the view and the mark
   goes back to its own label and sheet.
 
-## 6. Dimension text
+## 4. Dimension text
 
 Double-click a dimension's value. Under the value field are:
 
@@ -133,12 +116,10 @@ Pick a dimension (click its value once) for more in the **Inspector**:
 - **Under line:** a second line of text under the dimension line, such as
   `TO FACE OF STUD`.
 - **Show instead:** text shown in place of the value, such as `EQ`. The dimension still
-  holds its value; only the text changes. (Tolerances and dual units aren't shown with it.)
-- **Tolerance:** **None**, **Symmetric** (±), **Deviation** (stacked + and −), **Limits**
-  (stacked) or **Fit** (such as `H7`).
+  holds its value; only the text changes. (Dual units aren't shown with it.)
 - **Driven (reference)**, as in [Constraints and dimensions](02-constraints-and-dimensions.md).
 
-## 7. Hide annotations, on the canvas or on sheets
+## 5. Hide annotations, on the canvas or on sheets
 
 Every dimension and annotation has two switches, in the **Inspector**'s **Show** section:
 
@@ -182,7 +163,7 @@ scale.
 
 ### One dimension or note in its own style
 
-Pick a dimension (or several, or a callout, mark or note) and open the Inspector's
+Pick a dimension (or several, or a mark or note) and open the Inspector's
 **Drafting style** section. Each row shows what it is drawn with. Change one, say
 **Arrows** to **Tick** for a detail, and that setting becomes the object's own: its label
 turns blue and a reset arrow appears beside it. Everything you leave alone keeps following
@@ -196,8 +177,8 @@ the drawing, so a later change to the drawing's style still reaches it.
 
 ## What you learned
 
-- N places notes (with a leader if you start on geometry); **Callout**, **Centre mark**,
-  **Ordinate**, **Section mark** and **Elevation mark** are in the **Annotate** group.
+- N places notes (with a leader if you start on geometry); **Centre mark**, **Section mark**
+  and **Elevation mark** are in the **Annotate** group.
 - Double-click a dimension for before / after text and chips like TYP and EQ.
 - Each annotation can be off the canvas or off the sheets; Alt+H shows hidden ones.
 - The drafting style is the drawing's (**File → Drawing settings…**); a picked dimension or

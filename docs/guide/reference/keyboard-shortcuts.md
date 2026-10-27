@@ -112,7 +112,7 @@ With no key (use the Modify menu or the command palette): **Scale**, **Join corn
 | D | **Dimension** | Click geometry, then place the label: the type follows |
 | N | **Note** | Text, with a leader if you start on geometry |
 
-With no key (use the Annotate menu or the command palette): **Ordinate**, **Callout**, **Section mark**, **Elevation mark**, **Centre mark**, **View**, **Align picked dimensions**, **Space picked dimensions evenly**, **Hide picked dimensions and notes on the canvas**, **Leave picked dimensions and notes off sheets**.
+With no key (use the Annotate menu or the command palette): **Section mark**, **Elevation mark**, **Centre mark**, **View**, **Align picked dimensions**, **Space picked dimensions evenly**, **Hide picked dimensions and notes on the canvas**, **Leave picked dimensions and notes off sheets**.
 
 ## Arrange
 

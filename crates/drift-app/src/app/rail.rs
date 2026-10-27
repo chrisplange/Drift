@@ -95,7 +95,7 @@ impl DriftApp {
             self.run_command(&ctx, command);
             // A family shows what was picked from it (a command as much as a tool).
             if let Some(slot) = commands::rail_slot(command)
-                && !slot.more.is_empty()
+                && slot.is_family()
             {
                 self.show_in_family(slot.head, command);
             }
@@ -107,7 +107,7 @@ impl DriftApp {
     fn note_family_tool(&mut self) {
         let current = Command::Tool(self.tool.kind());
         if let Some(slot) = commands::rail_slot(current)
-            && !slot.more.is_empty()
+            && slot.is_family()
         {
             self.show_in_family(slot.head, current);
         }
@@ -133,7 +133,7 @@ impl DriftApp {
     fn rail_place(&mut self, ui: &mut egui::Ui, slot: &Slot, row: Option<f32>) -> Option<Command> {
         let command = self.rail_shows(slot);
         let spec = commands::spec(command)?;
-        let family = !slot.more.is_empty();
+        let family = slot.is_family();
         let selected = command == Command::Tool(self.tool.kind());
         let enabled = spec.when.holds(self);
         let label = spec.title.trim_end_matches('…');
@@ -239,9 +239,9 @@ impl DriftApp {
         {
             ui.label(egui::RichText::new(again).small().weak());
         }
-        if !slot.more.is_empty() {
+        if slot.is_family() {
             let others: Vec<&str> = slot
-                .commands()
+                .offered()
                 .filter(|c| *c != command)
                 .filter_map(commands::spec)
                 .map(|s| s.title.trim_end_matches('…'))
@@ -299,7 +299,7 @@ impl DriftApp {
                 egui::Frame::menu(ui.style()).show(ui, |ui| {
                     ui.set_width(190.0);
                     ui.spacing_mut().item_spacing.y = 0.0;
-                    for command in slot.commands() {
+                    for command in slot.offered() {
                         let Some(spec) = commands::spec(command) else {
                             continue;
                         };

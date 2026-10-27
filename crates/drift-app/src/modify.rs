@@ -14,6 +14,24 @@ fn invalid(msg: impl Into<String>) -> EditError {
     EditError::Invalid(msg.into())
 }
 
+/// Why a whole circle or ellipse crossed in `crossings` places (fewer than two) can't be
+/// trimmed, and what to do instead.
+fn closed_trim_refusal(shape: &Shape, crossings: usize) -> String {
+    let what = match shape {
+        Shape::Circle { .. } => "a circle",
+        _ => "an ellipse",
+    };
+    let found = match crossings {
+        0 => "nothing crosses it here".to_string(),
+        1 => "it's crossed in 1 here".to_string(),
+        n => format!("it's crossed in {n} here"),
+    };
+    format!(
+        "{what} must be crossed in two places to trim a piece; {found}. \
+         Use Delete to remove it all"
+    )
+}
+
 /// How far off a constraint may be and still count as met, relative to the coordinates' size.
 const UNMET: f64 = 1e-7;
 
@@ -575,6 +593,23 @@ impl Editor {
         p
     }
 
+    /// Where a whole circle or ellipse is crossed when it is crossed in fewer than the two
+    /// places a trim needs (none or one), cut by the curves of `against` only when given:
+    /// for the Trim tool to show why it can't trim it. None when it can, or isn't closed.
+    pub fn too_few_crossings(
+        &self,
+        id: EntityId,
+        against: Option<&CuttingSet>,
+    ) -> Option<Vec<DVec2>> {
+        let closed = match self.curve_shape(id)? {
+            Shape::Circle { .. } => true,
+            Shape::Ellipse { sweep, .. } => sweep >= TAU,
+            _ => false,
+        };
+        let cuts = self.cuts_against(id, against);
+        (closed && cuts.len() < 2).then(|| cuts.iter().map(|c| c.at).collect())
+    }
+
     /// The piece of curve `id` that trimming at `click` would remove: (start, end)
     /// parameters, or `None` to remove the whole curve, cut by the curves of `against` only
     /// when given. Errors explain why it can't be trimmed there.
@@ -596,9 +631,7 @@ impl Editor {
         };
         if closed {
             if cuts.len() < 2 {
-                return Err(invalid(
-                    "a circle or ellipse needs two cutting curves to trim",
-                ));
+                return Err(invalid(closed_trim_refusal(&shape, cuts.len())));
             }
             let lo = cuts
                 .iter()

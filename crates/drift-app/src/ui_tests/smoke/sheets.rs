@@ -98,21 +98,6 @@ fn smoke_sheet_logo_chosen_as_svg_is_the_logo() {
     let _ = std::fs::remove_file(&path);
 }
 
-/// A right-click at a screen position.
-fn right_click(h: &mut Harness<'_, DriftApp>, pos: Pos2) {
-    h.hover_at(pos);
-    h.run();
-    for pressed in [true, false] {
-        h.event(Event::PointerButton {
-            pos,
-            button: PointerButton::Secondary,
-            pressed,
-            modifiers: EguiModifiers::NONE,
-        });
-        h.run();
-    }
-}
-
 /// #208: right-click on a picked view offers its actions. In the model: Delete view…, which
 /// asks first (it is on a sheet) and is one undo step; on the sheet: Remove from sheet.
 #[test]

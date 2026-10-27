@@ -154,3 +154,51 @@ fn smoke_drawing_snap_markers_show_with_an_axis_lock() {
     );
     save_png("drift_smoke_arc_snap_off_circle.png", &mut h);
 }
+
+/// #222: trimming a circle that one line ends inside (crossed once) is refused with what is
+/// wrong and what to do: it must be crossed in two places, it's crossed in 1, use Delete.
+/// Hovering it rings the one crossing; nothing changes.
+#[test]
+fn smoke_drawing_trimming_a_circle_crossed_once_says_why() {
+    let Some(mut h) = harness() else { return };
+    let v = DVec2::new;
+    view(&mut h, v(-40.0, -40.0), v(40.0, 40.0));
+    let c = circle(&mut h, DVec2::ZERO, 10.0);
+    {
+        let ed = &mut h.state_mut().editor;
+        ed.doc.begin();
+        let a = ed.doc.add_point(v(0.0, -30.0));
+        let b = ed.doc.add_point(v(0.0, -4.0));
+        ed.doc.add_line(a, b).unwrap();
+        ed.commit("Line");
+    }
+    h.run();
+    let before = positions(&h);
+    let depth = h.state().editor.history.undo_depth();
+    h.key_press(Key::T);
+    h.run();
+    hover_world(&mut h, v(0.0, 10.0));
+    let rings: Vec<DVec2> = h
+        .state()
+        .tool
+        .editor_preview(&h.state().editor)
+        .iter()
+        .filter_map(|item| match item.shape {
+            drift_core::Shape::Circle { center, .. } => Some(center),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(rings.len(), 1, "the one crossing ringed");
+    assert!(rings[0].distance(v(0.0, -10.0)) < 1e-6, "{rings:?}");
+    click_world(&mut h, v(0.0, 10.0));
+    let said = status(&h);
+    assert!(
+        said.contains(
+            "a circle must be crossed in two places to trim a piece; it's crossed in 1 here"
+        ) && said.contains("Use Delete to remove it all"),
+        "{said}"
+    );
+    assert!(h.state().editor.doc.contains(c));
+    assert_eq!(positions(&h), before, "nothing changed");
+    assert_eq!(h.state().editor.history.undo_depth(), depth, "no step");
+}

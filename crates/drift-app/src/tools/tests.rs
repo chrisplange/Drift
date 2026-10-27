@@ -1289,7 +1289,8 @@ fn a_drag_trim_reports_the_pieces_it_skipped() {
     assert!(
         ed.notice
             .as_deref()
-            .is_some_and(|n| n.contains("2 pieces weren't trimmed") && n.contains("two cutting")),
+            .is_some_and(|n| n.contains("2 pieces weren't trimmed")
+                && n.contains("crossed in two places to trim a piece; it's crossed in 1 here")),
         "{:?}",
         ed.notice
     );

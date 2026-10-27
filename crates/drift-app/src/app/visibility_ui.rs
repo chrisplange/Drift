@@ -213,7 +213,8 @@ impl DriftApp {
                 })
                 .response
                 .on_hover_text(
-                    "The views it is drawn in on sheets: every view, or only some (a note for                      the detail alone). It is always on the canvas",
+                    "The views it is drawn in on sheets: every view, or only some (a note for \
+                     the detail alone). It is always on the canvas",
                 );
         });
         let Some(change) = change else { return };

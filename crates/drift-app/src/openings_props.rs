@@ -129,7 +129,8 @@ fn place(ed: &mut Editor, tries: &Tries) -> Vec<OpeningId> {
         let cut = before_area - after_area;
         assert!(
             (cut - width * t).abs() <= 1e-6 * before_area.max(1.0),
-            "an opening {width} wide in a wall {t} thick took {cut} out of the poché ({:?},              of {before_area}; {:?})",
+            "an opening {width} wide in a wall {t} thick took {cut} out of the poché ({:?}, \
+             of {before_area}; {:?})",
             ed.notice,
             ed.doc
                 .opening(o)

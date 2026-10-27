@@ -315,14 +315,8 @@ pub fn chamfer_text(doc: &Document, line: EntityId) -> Option<String> {
     let legs = match (neighbour(a, pa), neighbour(b, pb)) {
         (Some(ua), Some(ub)) => {
             // Extend both neighbours backwards to their crossing (the cut-off corner).
-            let denom = ua.perp_dot(ub);
-            if denom.abs() < 1e-12 * ua.length() * ub.length() {
-                None
-            } else {
-                let t = (pb - pa).perp_dot(ub) / denom;
-                let corner = pa + ua * t;
-                Some((corner.distance(pa), corner.distance(pb)))
-            }
+            drift_geom::intersect::line_line(pa, ua, pb, ub)
+                .map(|x| (x.at.distance(pa), x.at.distance(pb)))
         }
         _ => None,
     };

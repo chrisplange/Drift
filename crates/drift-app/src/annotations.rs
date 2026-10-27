@@ -267,13 +267,10 @@ pub(crate) fn foot(doc: &Document, q: DVec2, line: EntityId) -> Option<DVec2> {
 fn angle_vertex(doc: &Document, l1: EntityId, l2: EntityId) -> Option<DVec2> {
     let (a1, b1) = line_points(doc, l1)?;
     let (a2, b2) = line_points(doc, l2)?;
-    let (d1, d2) = (b1 - a1, b2 - a2);
-    let denom = d1.perp_dot(d2);
-    if denom.abs() < 1e-12 * d1.length() * d2.length() {
-        return Some((a1 + b1 + a2 + b2) * 0.25);
-    }
-    let t = (a2 - a1).perp_dot(d2) / denom;
-    Some(a1 + d1 * t)
+    Some(
+        drift_geom::intersect::line_line(a1, b1 - a1, a2, b2 - a2)
+            .map_or((a1 + b1 + a2 + b2) * 0.25, |x| x.at),
+    )
 }
 
 /// Unit direction along a line from `vertex` (where it meets the other line of an angle)

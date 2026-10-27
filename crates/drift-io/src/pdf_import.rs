@@ -1859,10 +1859,7 @@ fn flatten_cubic(p0: DVec2, p1: DVec2, p2: DVec2, p3: DVec2, out: &mut Vec<DVec2
     let n = (span.sqrt() * 2.0).ceil().clamp(2.0, 64.0) as usize;
     for i in 1..=n {
         let t = i as f64 / n as f64;
-        let u = 1.0 - t;
-        out.push(
-            p0 * (u * u * u) + p1 * (3.0 * u * u * t) + p2 * (3.0 * u * t * t) + p3 * (t * t * t),
-        );
+        out.push(drift_core::shape::bezier_point(&[p0, p1, p2, p3], t));
     }
 }
 

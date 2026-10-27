@@ -321,41 +321,29 @@ enum Path {
     Circle(DVec2, f64),
 }
 
-/// Where two paths cross (touching counts once).
+/// Where two paths cross (touching counts once), by [`intersect`]'s rules.
 fn crossings(a: Path, b: Path) -> Vec<DVec2> {
-    fn line_circle(p: DVec2, d: DVec2, c: DVec2, r: f64) -> Vec<DVec2> {
-        let f = p + d * (c - p).dot(d);
-        let h2 = r * r - f.distance_squared(c);
-        if h2 < -1e-9 * r * r {
-            Vec::new()
-        } else if h2 <= 0.0 {
-            vec![f]
-        } else {
-            let h = h2.sqrt();
-            vec![f - d * h, f + d * h]
-        }
-    }
+    let size = |p: Path| match p {
+        Path::Line(p, _) => p.abs().max_element(),
+        Path::Circle(c, r) => c.abs().max_element() + r.abs(),
+    };
+    let tol = intersect::tolerance(size(a).max(size(b)));
     match (a, b) {
-        (Path::Line(p1, d1), Path::Line(p2, d2)) => {
-            let cross = d1.perp_dot(d2);
-            if cross.abs() < 1e-12 {
-                Vec::new()
-            } else {
-                vec![p1 + d1 * ((p2 - p1).perp_dot(d2) / cross)]
-            }
-        }
+        (Path::Line(p1, d1), Path::Line(p2, d2)) => intersect::line_line(p1, d1, p2, d2)
+            .map(|x| x.at)
+            .into_iter()
+            .collect(),
         (Path::Line(p, d), Path::Circle(c, r)) | (Path::Circle(c, r), Path::Line(p, d)) => {
-            line_circle(p, d, c, r)
+            intersect::line_circle(p, d, c, r, tol)
+                .into_iter()
+                .map(|h| h.0)
+                .collect()
         }
         (Path::Circle(c1, r1), Path::Circle(c2, r2)) => {
-            let d = c1.distance(c2);
-            if d < 1e-12 {
-                return Vec::new();
-            }
-            let u = (c2 - c1) / d;
-            let a = (r1 * r1 - r2 * r2 + d * d) / (2.0 * d);
-            // Where the circles cross is where the line through the chord meets the first.
-            line_circle(c1 + u * a, u.perp(), c1, r1)
+            intersect::circle_circle(c1, r1, c2, r2, tol)
+                .into_iter()
+                .map(|h| h.0)
+                .collect()
         }
     }
 }
@@ -1638,14 +1626,10 @@ impl Editor {
             return None;
         }
         let (u1, u2) = ((far1 - t1) / l1, (far2 - t2) / l2);
-        let cross = u1.perp_dot(u2);
-        if cross.abs() < 1e-9 {
-            return None;
-        }
         // Where the two lines meet, behind both ends of the cut.
-        let k = (t2 - t1).perp_dot(u2) / cross;
-        let corner = t1 + u1 * k;
-        let legs = [-k, (t2 - corner).dot(u2)];
+        let x = intersect::line_line(t1, u1, t2, u2)?;
+        let corner = x.at;
+        let legs = [-x.t[0], -x.t[1]];
         if legs[0] <= 1e-9 || legs[1] <= 1e-9 {
             return None;
         }

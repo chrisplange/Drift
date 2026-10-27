@@ -843,13 +843,7 @@ fn circular(p0: DVec2, c1: DVec2, c2: DVec2, p3: DVec2) -> Option<(DVec2, f64, f
         return None;
     }
     // The centre is on the normals at both ends.
-    let (n0, n1) = (t0.perp(), t1.perp());
-    let cross = n0.perp_dot(n1);
-    if cross.abs() < 1e-12 * n0.length() * n1.length() {
-        return None;
-    }
-    let s = (p3 - p0).perp_dot(n1) / cross;
-    let center = p0 + n0 * s;
+    let center = drift_geom::intersect::line_line(p0, t0.perp(), p3, t1.perp())?.at;
     let radius = center.distance(p0);
     if radius.is_nan() || radius <= 1e-9 || !radius.is_finite() {
         return None;

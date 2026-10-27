@@ -311,11 +311,7 @@ fn item_ops(
         }
         Prim::Insert { .. } => {}
         Prim::Hatch(h) => {
-            for prim in h.prims(drift_draft::page::HATCH_LIMIT) {
-                let part = Item {
-                    prim,
-                    ..item.clone()
-                };
+            for part in item.hatch_parts(h) {
                 item_ops(out, text, &part, lts, None);
             }
         }

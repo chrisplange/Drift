@@ -230,10 +230,7 @@ impl Clip {
 fn point(from: DVec2, seg: &Seg, t: f64) -> DVec2 {
     match *seg {
         Seg::Line(to) => from + (to - from) * t,
-        Seg::Cubic(c1, c2, p) => {
-            let u = 1.0 - t;
-            from * (u * u * u) + c1 * (3.0 * u * u * t) + c2 * (3.0 * u * t * t) + p * (t * t * t)
-        }
+        Seg::Cubic(c1, c2, p) => drift_core::shape::bezier_point(&[from, c1, c2, p], t),
     }
 }
 

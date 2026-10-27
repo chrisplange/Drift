@@ -27,10 +27,11 @@ use acadrust::{
     TextStyle, Transparency, Vector2, Vector3,
 };
 use drift_core::{DVec2, LineType, Rgb, TextFont};
-use drift_draft::page::{Align, BlockDef, Drawing, HatchPrim, Item, Prim, dash_pattern};
+use drift_draft::page::{Align, BlockDef, Drawing, HatchPrim, Item, Prim};
 use drift_geom::regions::{Edge, Loop};
 
-use crate::dxf::{DxfUnits, line_type_name, unique_name};
+use crate::dxf::DxfUnits;
+use crate::style::{self, LayerTable, text_value, unique_name};
 
 /// The version written: AutoCAD 2018 and later, and every program that reads it.
 pub const VERSION: DxfVersion = DxfVersion::AC1032;
@@ -69,27 +70,36 @@ pub fn cad_name(name: &str) -> String {
     if s.is_empty() { "0".into() } else { s }
 }
 
-/// Text for TEXT: `%%` would start a control code (`%%c` is Ø), so a percent sign before
-/// another is written `%%%`. Other characters go as they are (R2018 files are UTF-8).
-fn text_value(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars().peekable();
-    while let Some(c) = chars.next() {
-        match c {
-            '%' if chars.peek() == Some(&'%') => out.push_str("%%%"),
-            c if c.is_control() => {}
-            c => out.push(c),
-        }
-    }
-    out
-}
-
 fn v2(p: DVec2) -> Vector2 {
     Vector2::new(p.x, p.y)
 }
 
 fn v3(p: DVec2) -> Vector3 {
     Vector3::new(p.x, p.y, 0.0)
+}
+
+/// The `k`th name for a layer or block whose name comes out as `base`: "Name (2)", ...
+fn numbered(base: &str, k: usize) -> String {
+    format!("{base} ({k})")
+}
+
+/// Add (or set) layer `written` in the document, in `look`.
+fn cad_layer(doc: &mut CadDocument, written: &str, look: Look) {
+    let layer = match doc.layers.get_mut(written) {
+        Some(l) => l,
+        None => {
+            let _ = doc.layers.add(Layer::new(written.to_owned()));
+            match doc.layers.get_mut(written) {
+                Some(l) => l,
+                None => return,
+            }
+        }
+    };
+    layer.color = color(look.color);
+    layer.line_type = CadWriter::line_type(look.line_type);
+    layer.line_weight = weight(look.width);
+    // AutoCAD refuses a drawing whose Defpoints layer plots.
+    layer.is_plottable = !written.eq_ignore_ascii_case("Defpoints");
 }
 
 /// How a layer looks, for leaving out what its items share with it.
@@ -103,10 +113,10 @@ struct Look {
 /// Builds a DWG / DXF R2018 document from drawings. See the module notes.
 pub struct CadWriter {
     doc: CadDocument,
-    /// By the name written.
-    layers: BTreeMap<String, Look>,
-    /// Drift names to the names written (which are unique ignoring case, as CAD needs).
-    layer_names: BTreeMap<String, String>,
+    /// Drift names to the names written (which are unique ignoring case, as CAD needs), and
+    /// each layer's look.
+    layers: LayerTable<Look>,
+    /// Drift names to the names written.
     block_names: BTreeMap<String, String>,
     /// Text style by font (`None`: the drawing's font).
     styles: Vec<(Option<TextFont>, String)>,
@@ -123,8 +133,7 @@ impl CadWriter {
         h.measurement = units.measurement as i16;
         let mut w = CadWriter {
             doc,
-            layers: BTreeMap::new(),
-            layer_names: BTreeMap::new(),
+            layers: LayerTable::new(cad_name, numbered),
             block_names: BTreeMap::new(),
             styles: Vec::new(),
         };
@@ -155,23 +164,18 @@ impl CadWriter {
 
     /// Drift's line types (lengths in mm on paper, scaled by `$LTSCALE`, as in R12).
     fn line_types(&mut self) {
-        for t in [
-            LineType::Dashed,
-            LineType::Hidden,
-            LineType::Center,
-            LineType::Phantom,
-        ] {
-            let pattern = dash_pattern(t);
-            let mut lt = CadLineType::new(line_type_name(t));
-            lt.description = t.label().to_owned();
-            for (k, v) in pattern.iter().enumerate() {
+        // (CAD documents have Continuous already.)
+        for t in style::line_types().filter(|t| t.kind != LineType::Continuous) {
+            let mut lt = CadLineType::new(t.name);
+            lt.description = t.description.to_owned();
+            for (k, v) in t.pattern.iter().enumerate() {
                 lt.add_element(if k % 2 == 0 {
                     LineTypeElement::dash(*v)
                 } else {
                     LineTypeElement::space(*v)
                 });
             }
-            lt.pattern_length = pattern.iter().sum();
+            lt.pattern_length = t.length();
             let _ = self.doc.line_types.add(lt);
         }
     }
@@ -180,7 +184,7 @@ impl CadWriter {
     fn line_type(t: LineType) -> String {
         match t {
             LineType::Continuous | LineType::None => "Continuous".into(),
-            t => line_type_name(t).into(),
+            t => crate::dxf::line_type_name(t).into(),
         }
     }
 
@@ -204,79 +208,48 @@ impl CadWriter {
 
     /// The drawing's layers, then any others its items use (in their first item's look).
     fn add_layers(&mut self, d: &Drawing) {
-        for l in &d.layers {
-            self.layer(
-                &l.name,
-                Look {
-                    color: l.color,
-                    width: l.width,
-                    line_type: l.line_type,
-                },
-            );
-        }
+        let doc = &mut self.doc;
+        self.layers.add_declared(
+            d,
+            |l| Look {
+                color: l.color,
+                width: l.width,
+                line_type: l.line_type,
+            },
+            |written, look| cad_layer(doc, written, look),
+        );
         // Layer 0 (blocks' items are on it, to take their copy's layer) keeps AutoCAD's own
         // look unless the drawing has a layer 0 of its own.
-        if !self.layer_names.contains_key("0") {
-            self.layer_names.insert("0".into(), "0".into());
-            self.layers.insert(
-                "0".into(),
-                Look {
-                    color: Rgb([0, 0, 0]),
-                    width: f64::NAN,
-                    line_type: LineType::Continuous,
-                },
-            );
-        }
-        for item in d
-            .items
-            .iter()
-            .chain(d.blocks.iter().flat_map(|b| b.items.iter()))
-        {
-            if !self.layer_names.contains_key(&item.layer) {
-                self.layer(
-                    &item.layer,
-                    Look {
-                        color: item.pen.color,
-                        width: item.pen.width,
-                        line_type: LineType::Continuous,
-                    },
-                );
-            }
-        }
+        self.layers.add(
+            "0",
+            Look {
+                color: Rgb([0, 0, 0]),
+                width: f64::NAN,
+                line_type: LineType::Continuous,
+            },
+        );
+        self.layers.add_used(
+            d,
+            |item| Look {
+                color: item.pen.color,
+                width: item.pen.width,
+                line_type: LineType::Continuous,
+            },
+            |written, look| cad_layer(doc, written, look),
+        );
     }
 
     /// A unique name (ignoring case) for `name` among `taken`: "Name (2)" for a second.
     fn unique(name: &str, taken: &BTreeMap<String, String>) -> String {
-        unique_name(cad_name(name), taken, |base, k| format!("{base} ({k})"))
+        unique_name(cad_name(name), taken, numbered)
     }
 
     /// Add a layer, unless one of the name is there (the first look wins).
     fn layer(&mut self, name: &str, look: Look) -> String {
-        if let Some(n) = self.layer_names.get(name) {
-            return n.clone();
+        let (written, new) = self.layers.add(name, look);
+        if new {
+            cad_layer(&mut self.doc, &written, look);
         }
-        let written = if name == "0" {
-            "0".to_owned()
-        } else {
-            Self::unique(name, &self.layer_names)
-        };
-        self.layer_names.insert(name.to_owned(), written.clone());
-        self.layers.insert(written.clone(), look);
-        let layer = match self.doc.layers.get_mut(&written) {
-            Some(l) => l,
-            None => {
-                let _ = self.doc.layers.add(Layer::new(written.clone()));
-                match self.doc.layers.get_mut(&written) {
-                    Some(l) => l,
-                    None => return written,
-                }
-            }
-        };
-        layer.color = color(look.color);
-        layer.line_type = Self::line_type(look.line_type);
-        layer.line_weight = weight(look.width);
-        // AutoCAD refuses a drawing whose Defpoints layer plots.
-        layer.is_plottable = !written.eq_ignore_ascii_case("Defpoints");
         written
     }
 
@@ -362,7 +335,7 @@ impl CadWriter {
         // In a block, everything is said: what an item takes from its copy is "by block",
         // the rest its own ("by layer" there would be layer 0's look for the copy's).
         let in_block = owner != self.doc.header.model_space_block_handle;
-        let look = self.layers.get(&layer).copied().filter(|_| !in_block);
+        let look = self.layers.looks.get(&layer).copied().filter(|_| !in_block);
         let by_block = item.pen.by_block;
         let c = entity.common_mut();
         c.owner_handle = owner;
@@ -490,7 +463,7 @@ impl CadWriter {
                 style,
                 font,
             } => {
-                let value = text_value(text);
+                let value = text_value(text, false);
                 if value.trim().is_empty() {
                     return;
                 }
@@ -680,8 +653,6 @@ mod tests {
         assert_eq!(weight(0.13), LineWeight::Value(13));
         assert_eq!(weight(0.36), LineWeight::Value(35));
         assert_eq!(weight(3.0), LineWeight::Value(211));
-        assert_eq!(text_value("50%%c"), "50%%%%c");
-        assert_eq!(text_value("Ø10 ±0.1 €"), "Ø10 ±0.1 €");
         assert_eq!(color(Rgb([0, 0, 0])), Color::Index(7));
         assert_eq!(color(Rgb([1, 2, 3])), Color::Rgb { r: 1, g: 2, b: 3 });
     }

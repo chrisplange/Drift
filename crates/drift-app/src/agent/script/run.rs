@@ -1893,14 +1893,12 @@ impl<'s> Runner<'s> {
                     Target::Point(p) => self.at(p),
                     Target::Line(_, a, b) => {
                         let (qa, qb) = (self.at(a), self.at(b));
-                        let n = (qb - qa).normalize_or_zero();
-                        let denom = u.perp_dot(n);
-                        if denom.abs() < 1e-9 {
+                        let Some(x) = drift_geom::intersect::line_line(p0, u, qa, qb - qa) else {
                             return Err(format!(
                                 "{from} runs along {host}, so a distance from it says nothing about where the opening is"
                             ));
-                        }
-                        p0 + u * ((qa - p0).perp_dot(n) / denom)
+                        };
+                        x.at
                     }
                     t => {
                         return Err(format!(

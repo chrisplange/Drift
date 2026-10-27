@@ -588,11 +588,7 @@ fn item_svg(
         }
         Prim::Insert { .. } => {}
         Prim::Hatch(hatch) => {
-            for prim in hatch.prims(drift_draft::page::HATCH_LIMIT) {
-                let part = Item {
-                    prim,
-                    ..item.clone()
-                };
+            for part in item.hatch_parts(hatch) {
                 item_svg(out, &part, h, lts, font);
             }
         }

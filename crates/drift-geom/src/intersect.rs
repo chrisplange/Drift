@@ -10,7 +10,12 @@
 //! - **Tangency:** a line or circle that touches a circle within tolerance gives one hit,
 //!   flagged `tangent`, at the exact touch point, never two nearly identical hits.
 //! - **Overlap:** parallel lines and concentric circles give no hits, even when they overlap
-//!   (overlapping curves don't cut each other).
+//!   (overlapping curves don't cut each other). Lines are parallel when the sine of the
+//!   angle between them is at most [`PARALLEL_SINE`], a scale-free test.
+//!
+//! [`line_line`], [`line_circle`] and [`circle_circle`] are the one place whole lines and
+//! circles are crossed: use them rather than solving a crossing inline, so every tool
+//! agrees on what is parallel and what touches.
 
 use std::f64::consts::TAU;
 
@@ -180,13 +185,15 @@ fn intersect_with(a: &Shape, a_ext: bool, b: &Shape, b_ext: bool) -> Vec<Hit> {
     };
     let tol = tolerance(scale_of(a).max(scale_of(b)));
     let raw: Vec<(DVec2, bool)> = match (ca, cb) {
-        (Curve::Line { a: p, b: q, .. }, Curve::Line { a: r, b: s, .. }) => line_line(p, q, r, s)
-            .into_iter()
-            .map(|x| (x, false))
-            .collect(),
+        (Curve::Line { a: p, b: q, .. }, Curve::Line { a: r, b: s, .. }) => {
+            line_line(p, q - p, r, s - r)
+                .into_iter()
+                .map(|x| (x.at, false))
+                .collect()
+        }
         (Curve::Line { a: p, b: q, .. }, Curve::Circle { center, radius, .. })
         | (Curve::Circle { center, radius, .. }, Curve::Line { a: p, b: q, .. }) => {
-            line_circle(p, q, center, radius, tol)
+            line_circle(p, q - p, center, radius, tol)
         }
         (
             Curve::Circle {
@@ -533,24 +540,50 @@ fn polish(a: &Para, b: &Para, mut t: f64, mut u: f64, tol: f64) -> Option<(f64, 
     Some((t, u, tangent))
 }
 
-/// Intersection of the infinite lines through `p`→`q` and `r`→`s`; none if parallel.
-fn line_line(p: DVec2, q: DVec2, r: DVec2, s: DVec2) -> Option<DVec2> {
-    let d1 = q - p;
-    let d2 = s - r;
-    let cross = d1.perp_dot(d2);
-    if cross.abs() <= 1e-12 * d1.length() * d2.length() {
-        return None;
-    }
-    let t = (r - p).perp_dot(d2) / cross;
-    Some(p + d1 * t)
+/// Where two infinite lines cross: the point, and how far along each line it is.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LineCross {
+    pub at: DVec2,
+    /// Multiples of each line's direction from its base point: `at = p + d * t[0]` and
+    /// `at = r + e * t[1]` for [`line_line`]`(p, d, r, e)`.
+    pub t: [f64; 2],
 }
 
-/// Intersections of the infinite line through `p`→`q` with a circle. A line within `tol` of
-/// touching gives one tangent hit.
-fn line_circle(p: DVec2, q: DVec2, center: DVec2, radius: f64, tol: f64) -> Vec<(DVec2, bool)> {
-    let d = q - p;
+/// The sine of the angle between two directions at or under which lines along them count as
+/// parallel. It is a ratio, so the rule is the same at any coordinates or lengths.
+pub const PARALLEL_SINE: f64 = 1e-12;
+
+/// Where the infinite line through `p` along `d` crosses the one through `r` along `e`. The
+/// directions need not be unit length (or the same length).
+///
+/// **Parallel rule (scale-free):** none when `|d × e| <= PARALLEL_SINE · |d| · |e|`, i.e.
+/// the sine of the angle between the lines is at most 1e-12, whatever the coordinates or
+/// the directions' lengths. Lines that are parallel (overlapping or not) never cross. A
+/// zero direction gives none.
+pub fn line_line(p: DVec2, d: DVec2, r: DVec2, e: DVec2) -> Option<LineCross> {
+    let cross = d.perp_dot(e);
+    if cross.abs() <= PARALLEL_SINE * d.length() * e.length() {
+        return None;
+    }
+    let w = r - p;
+    let t = [w.perp_dot(e) / cross, w.perp_dot(d) / cross];
+    Some(LineCross {
+        at: p + d * t[0],
+        t,
+    })
+}
+
+/// Where the infinite line through `p` along `d` (any non-zero length) crosses a circle,
+/// each with whether it is a tangent touch.
+///
+/// **Tangent band:** with `h` the distance from the centre to the line, `|h - radius| <=
+/// tol` gives exactly one hit, the foot of the perpendicular from the centre, flagged
+/// tangent (never two nearly identical hits, never none for a line that grazes the circle
+/// within `tol`). Past the band outside the circle there are none; inside it, two. Use
+/// [`tolerance`] of the coordinates involved for `tol`.
+pub fn line_circle(p: DVec2, d: DVec2, center: DVec2, radius: f64, tol: f64) -> Vec<(DVec2, bool)> {
     let len = d.length();
-    if len == 0.0 {
+    if len == 0.0 || !len.is_finite() {
         return Vec::new();
     }
     let u = d / len;
@@ -568,9 +601,13 @@ fn line_circle(p: DVec2, q: DVec2, center: DVec2, radius: f64, tol: f64) -> Vec<
     vec![(foot - u * half, false), (foot + u * half, false)]
 }
 
-/// Intersections of two circles. Circles within `tol` of touching give one tangent hit;
-/// concentric circles give none.
-fn circle_circle(c1: DVec2, r1: f64, c2: DVec2, r2: f64, tol: f64) -> Vec<(DVec2, bool)> {
+/// Where two circles cross, each with whether it is a tangent touch.
+///
+/// **Tangent band:** centres whose distance is within `tol` of `r1 + r2` (touching outside)
+/// or of `|r1 - r2|` (touching inside) give exactly one hit at the touch point, flagged
+/// tangent. Concentric circles (centres within `tol`) give none, even when they coincide.
+/// Use [`tolerance`] of the coordinates involved for `tol`.
+pub fn circle_circle(c1: DVec2, r1: f64, c2: DVec2, r2: f64, tol: f64) -> Vec<(DVec2, bool)> {
     let v = c2 - c1;
     let d = v.length();
     if d <= tol {
@@ -988,5 +1025,62 @@ mod tests {
             &circle(v(0.0, 0.0), 5.0),
             &circle(v(0.0, 0.0), 6.0)
         ));
+    }
+
+    #[test]
+    fn line_line_parallel_is_scale_free() {
+        // Parallel (and just off parallel by a rounding error) at tiny and huge coordinates,
+        // with short and long directions: never a crossing.
+        for s in [1e-6, 1.0, 1e9] {
+            let (p, r) = (v(3.0, 1.0) * s, v(-2.0, 4.0) * s);
+            let d = v(1.0, 2.0) * s;
+            assert_eq!(line_line(p, d, r, d), None, "scale {s}");
+            assert_eq!(line_line(p, d, r, d * -7.5), None, "scale {s}");
+            // A sine of 1e-13: under the cut-off at every scale.
+            let tilted = d + d.perp() * 1e-13;
+            assert_eq!(line_line(p, d, r, tilted), None, "scale {s}");
+            // A clear angle crosses at every scale, at the same place relative to it.
+            let x = line_line(p, d, r, v(1.0, 0.0) * s).expect("crosses");
+            assert!(
+                x.at.distance(v(4.5, 4.0) * s) <= 1e-9 * s.max(1.0),
+                "scale {s}"
+            );
+            assert!(x.at.distance(p + d * x.t[0]) <= 1e-9 * s.max(1.0));
+            assert!(x.at.distance(r + v(1.0, 0.0) * s * x.t[1]) <= 1e-9 * s.max(1.0));
+        }
+        // A zero direction gives none.
+        assert_eq!(
+            line_line(v(0.0, 0.0), DVec2::ZERO, v(1.0, 0.0), v(0.0, 1.0)),
+            None
+        );
+    }
+
+    #[test]
+    fn line_grazing_circle_within_band_touches_once() {
+        let tol = tolerance(10.0);
+        for off in [-0.5 * tol, 0.0, 0.5 * tol] {
+            // The line y = 5 + off against the circle of radius 5 round the origin.
+            let hits = line_circle(v(-20.0, 5.0 + off), v(3.0, 0.0), v(0.0, 0.0), 5.0, tol);
+            assert_eq!(hits.len(), 1, "offset {off}");
+            assert!(hits[0].1, "tangent");
+            assert!(hits[0].0.distance(v(0.0, 5.0 + off)) <= 1e-12);
+        }
+    }
+
+    #[test]
+    fn line_just_outside_tangent_band_misses() {
+        let tol = tolerance(10.0);
+        let hits = line_circle(
+            v(-20.0, 5.0 + 2.0 * tol),
+            v(1.0, 0.0),
+            v(0.0, 0.0),
+            5.0,
+            tol,
+        );
+        assert!(hits.is_empty());
+        // And just inside the circle past the band: two crossings, neither tangent.
+        let hits = line_circle(v(-20.0, 5.0 - 1e-3), v(1.0, 0.0), v(0.0, 0.0), 5.0, tol);
+        assert_eq!(hits.len(), 2);
+        assert!(hits.iter().all(|h| !h.1));
     }
 }

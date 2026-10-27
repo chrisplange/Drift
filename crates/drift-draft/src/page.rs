@@ -4,6 +4,8 @@
 //!
 //! The SVG, PDF and DXF writers in `drift-io` read this, so every output shows the same thing.
 
+use std::borrow::Cow;
+
 use drift_core::{Bounds, DVec2, LineType, Rgb, SheetColours};
 
 /// How an item is stroked.
@@ -285,6 +287,35 @@ pub struct Item {
     pub clip: Option<Bounds>,
 }
 
+impl Item {
+    /// A hatch item (`h` is its hatch) as outputs without hatches draw it: the prims
+    /// [`HatchPrim::prims`] gives (at most [`HATCH_LIMIT`] lines), each on the item's layer
+    /// with its pen and clip. Only these are made: the hatch's area and pattern aren't copied
+    /// for each line.
+    pub fn hatch_parts(&self, h: &HatchPrim) -> impl Iterator<Item = Item> + '_ {
+        h.prims(HATCH_LIMIT).into_iter().map(|prim| Item {
+            layer: self.layer.clone(),
+            pen: self.pen,
+            prim,
+            clip: self.clip,
+        })
+    }
+}
+
+/// `items` as outputs without hatches draw them: each hatch as its
+/// [parts](Item::hatch_parts), everything else as it is (borrowed).
+pub fn without_hatches(items: &[Item]) -> impl Iterator<Item = Cow<'_, Item>> {
+    items.iter().flat_map(|item| {
+        let (whole, parts) = match &item.prim {
+            Prim::Hatch(h) => (None, Some(item.hatch_parts(h))),
+            _ => (Some(Cow::Borrowed(item)), None),
+        };
+        whole
+            .into_iter()
+            .chain(parts.into_iter().flatten().map(Cow::Owned))
+    })
+}
+
 /// Layer properties for formats that keep layers (DXF).
 #[derive(Clone, Debug, PartialEq)]
 pub struct LayerInfo {
@@ -426,8 +457,12 @@ impl Drawing {
     }
 
     /// The drawing with every length multiplied by `f` (about the origin): coordinates, radii,
-    /// text heights, the clip and the line type scale. Pen widths stay paper millimetres.
-    pub fn scaled(&self, f: f64) -> Drawing {
+    /// text heights, the clip and the line type scale. Pen widths stay paper millimetres. At
+    /// `f` 1 that is the drawing itself (borrowed).
+    pub fn scaled(&self, f: f64) -> Cow<'_, Drawing> {
+        if f == 1.0 {
+            return Cow::Borrowed(self);
+        }
         let mut d = self.clone();
         d.size *= f;
         d.line_type_scale *= f;
@@ -483,7 +518,7 @@ impl Drawing {
                 }
             }
         }
-        d
+        Cow::Owned(d)
     }
 
     /// Recolour everything for a sheet's colour choice: strokes and text (lines, hatch lines,
@@ -510,17 +545,23 @@ impl Drawing {
         }
     }
 
-    /// The drawing with every `Insert` replaced by its block's items, transformed.
-    pub fn exploded(&self) -> Drawing {
+    /// The drawing with every `Insert` replaced by its block's items, transformed: the
+    /// drawing itself (borrowed) when it has none.
+    pub fn exploded(&self) -> Cow<'_, Drawing> {
         if !self
             .items
             .iter()
             .any(|i| matches!(i.prim, Prim::Insert { .. }))
         {
-            return self.clone();
+            return Cow::Borrowed(self);
         }
-        let mut d = self.clone();
-        d.items.clear();
+        let mut d = Drawing {
+            items: Vec::new(),
+            blocks: Vec::new(),
+            layers: self.layers.clone(),
+            font: self.font.clone(),
+            ..*self
+        };
         for item in &self.items {
             match &item.prim {
                 Prim::Insert {
@@ -555,34 +596,7 @@ impl Drawing {
                 _ => d.items.push(item.clone()),
             }
         }
-        d.blocks.clear();
-        d
-    }
-
-    /// The drawing with every [`Prim::Hatch`] drawn as other prims (see [`HatchPrim::prims`]).
-    pub fn without_hatches(&self) -> Drawing {
-        let expand = |items: &[Item]| -> Vec<Item> {
-            items
-                .iter()
-                .flat_map(|item| match &item.prim {
-                    Prim::Hatch(h) => h
-                        .prims(HATCH_LIMIT)
-                        .into_iter()
-                        .map(|prim| Item {
-                            prim,
-                            ..item.clone()
-                        })
-                        .collect(),
-                    _ => vec![item.clone()],
-                })
-                .collect()
-        };
-        let mut d = self.clone();
-        d.items = expand(&self.items);
-        for b in &mut d.blocks {
-            b.items = expand(&b.items);
-        }
-        d
+        Cow::Owned(d)
     }
 
     /// Ensure a layer is listed (first definition wins).
@@ -667,7 +681,7 @@ impl Drawing {
     /// The drawing with its blocks exploded, moved so that what is drawn, with `margin` mm
     /// all round, fills the page from (0, 0): model space on a page fitted to it.
     pub fn fitted(&self, margin: f64) -> Drawing {
-        let mut d = self.exploded();
+        let mut d = self.exploded().into_owned();
         let b = d.bounds();
         if b.is_empty() {
             d.size = DVec2::ZERO;

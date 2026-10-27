@@ -231,29 +231,34 @@ enum Curve {
 }
 
 impl Curve {
-    /// Where two faces cross (none for parallel lines or concentric circles).
+    /// Where two faces cross (none for parallel lines or concentric circles; a touch counts
+    /// once). The rules are [`crate::intersect`]'s.
     fn cross(&self, other: &Curve) -> Vec<DVec2> {
+        use crate::intersect::{circle_circle, line_circle, line_line, tolerance};
+        let tol = tolerance(self.scale().max(other.scale()));
         match (*self, *other) {
             (Curve::Line { p, d }, Curve::Line { p: q, d: e }) => {
-                let den = d.perp_dot(e);
-                if den.abs() <= 1e-12 {
-                    return Vec::new();
-                }
-                vec![p + d * ((q - p).perp_dot(e) / den)]
+                line_line(p, d, q, e).map(|x| x.at).into_iter().collect()
             }
             (Curve::Line { p, d }, Curve::Circle { c, r })
-            | (Curve::Circle { c, r }, Curve::Line { p, d }) => line_circle(p, d, c, r),
+            | (Curve::Circle { c, r }, Curve::Line { p, d }) => line_circle(p, d, c, r, tol)
+                .into_iter()
+                .map(|h| h.0)
+                .collect(),
             (Curve::Circle { c: c1, r: r1 }, Curve::Circle { c: c2, r: r2 }) => {
-                let dist = c1.distance(c2);
-                if dist <= 1e-12 * (1.0 + r1 + r2) || dist > r1 + r2 || dist < (r1 - r2).abs() {
-                    return Vec::new();
-                }
-                let x = (dist * dist + r1 * r1 - r2 * r2) / (2.0 * dist);
-                let h = (r1 * r1 - x * x).max(0.0).sqrt();
-                let u = (c2 - c1) / dist;
-                let m = c1 + u * x;
-                vec![m + u.perp() * h, m - u.perp() * h]
+                circle_circle(c1, r1, c2, r2, tol)
+                    .into_iter()
+                    .map(|h| h.0)
+                    .collect()
             }
+        }
+    }
+
+    /// The size of the coordinates it involves, for tolerances.
+    fn scale(&self) -> f64 {
+        match *self {
+            Curve::Line { p, .. } => p.abs().max_element(),
+            Curve::Circle { c, r } => c.abs().max_element() + r.abs(),
         }
     }
 
@@ -273,19 +278,6 @@ impl Curve {
             },
         }
     }
-}
-
-/// Where the line through `p` along unit `d` crosses the circle.
-fn line_circle(p: DVec2, d: DVec2, c: DVec2, r: f64) -> Vec<DVec2> {
-    let f = p - c;
-    let b = f.dot(d);
-    let cc = f.dot(f) - r * r;
-    let disc = b * b - cc;
-    if disc < 0.0 {
-        return Vec::new();
-    }
-    let s = disc.sqrt();
-    vec![p + d * (-b - s), p + d * (-b + s)]
 }
 
 fn nearest(points: Vec<DVec2>, to: DVec2) -> Option<DVec2> {

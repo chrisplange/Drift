@@ -225,37 +225,29 @@ impl Carrier {
         }
     }
 
-    /// Where two carriers cross.
+    /// Where two carriers cross (none for parallel lines or concentric circles; a touch
+    /// counts once). The rules are [`crate::intersect`]'s.
     fn cross(&self, other: &Carrier) -> Vec<DVec2> {
+        use crate::intersect::{circle_circle, line_circle, line_line, tolerance};
+        let size = |c: &Carrier| match *c {
+            Carrier::Line { p, .. } => p.abs().max_element(),
+            Carrier::Circle { c, r } => c.abs().max_element() + r.abs(),
+        };
+        let tol = tolerance(size(self).max(size(other)));
         match (*self, *other) {
             (Carrier::Line { p, d }, Carrier::Line { p: q, d: e }) => {
-                let den = d.perp_dot(e);
-                if den.abs() <= 1e-9 {
-                    return Vec::new();
-                }
-                vec![p + d * ((q - p).perp_dot(e) / den)]
+                line_line(p, d, q, e).map(|x| x.at).into_iter().collect()
             }
             (Carrier::Line { p, d }, Carrier::Circle { c, r })
-            | (Carrier::Circle { c, r }, Carrier::Line { p, d }) => {
-                let f = p - c;
-                let b = f.dot(d);
-                let disc = b * b - (f.dot(f) - r * r);
-                if disc < 0.0 {
-                    return Vec::new();
-                }
-                let s = disc.sqrt();
-                vec![p + d * (-b - s), p + d * (-b + s)]
-            }
+            | (Carrier::Circle { c, r }, Carrier::Line { p, d }) => line_circle(p, d, c, r, tol)
+                .into_iter()
+                .map(|h| h.0)
+                .collect(),
             (Carrier::Circle { c: c1, r: r1 }, Carrier::Circle { c: c2, r: r2 }) => {
-                let dist = c1.distance(c2);
-                if dist <= 1e-9 || dist > r1 + r2 || dist < (r1 - r2).abs() {
-                    return Vec::new();
-                }
-                let x = (dist * dist + r1 * r1 - r2 * r2) / (2.0 * dist);
-                let h = (r1 * r1 - x * x).max(0.0).sqrt();
-                let u = (c2 - c1) / dist;
-                let m = c1 + u * x;
-                vec![m + u.perp() * h, m - u.perp() * h]
+                circle_circle(c1, r1, c2, r2, tol)
+                    .into_iter()
+                    .map(|h| h.0)
+                    .collect()
             }
         }
     }

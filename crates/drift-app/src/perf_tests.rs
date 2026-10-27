@@ -1529,7 +1529,7 @@ fn perf_items_and_copy_hover() {
     assert_eq!(ed.instance_at(v(1200.0, 1200.0), 1.0), None);
 
     println!(
-        "  budgets: items 3 ms, on 12 layers 4.5 ms, with 1,000 picked 4 ms, handles 0.3 ms,          copy hover 0.5 ms"
+        "  budgets: items 3 ms, on 12 layers 4.5 ms, with 1,000 picked 4 ms, handles 0.3 ms, copy hover 0.5 ms"
     );
     assert!(items.0 < 3.0, "sketch items {:.2} ms", items.0);
     assert!(picked.0 < 4.0, "items with 1,000 picked {:.2} ms", picked.0);

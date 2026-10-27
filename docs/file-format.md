@@ -87,6 +87,7 @@ drawing rules, an option of values and a whole-sketch option) as each format ver
 
 | Fixture | Written by | Shipped in |
 |---|---|---|
+| `v43.1.drift` | `drift-io` with an underlay's `glyphs` (#205) | — |
 | `v43.drift` | `drift-io` with `fix_x` and `fix_y` (#203) | — |
 | `v42.2.drift` | `drift-io` with openings (W3) | — |
 | `v42.1.drift` | `drift-io` with walls (W1) | — |
@@ -206,6 +207,7 @@ read these files, pass over the addition, and keep it when they save.
 |---|---|
 | `v42.1.drift` | `walls` (runs of wall: centreline path, thickness and expression, justification, poché, layer, ends with their joins, and what each made, by key) and `property_dims` (a wall's thickness dimension). The faces, corners, outline paths and pochés walls make are ordinary `entities`, `paths` and `fills`, so an older 42 build shows them as plain geometry and keeps the tables when it saves; opening the file again repairs what it edited (`docs/walls-design.md` §2.6). |
 | `v42.2.drift` | `openings` (doors, windows and cased openings in walls: the wall and segment, `from` and `offset` (or centred), width and its expression, leaf, height, the symbol's library family and type, hand, facing, layer, and the symbol's `curves` and `points` by key) and `rules.size_set` (the drawing's door and window size set; unset: by its units). The cut is the wall's own faces (keyed by the new station spelling `jamb:o2.0` and part `J`), and the symbol is ordinary entities, so an older 42 build shows both as plain geometry. A 42 build from before openings that has walls refuses a `walls` table naming a jamb key (no released build reads walls). |
+| `v43.1.drift` | An underlay's `glyphs`: its text as the closed outlines of its letters, in the underlay's own coordinates like `prims` (#205). Drawn with the underlay's curves, not snapped to. An older 43 build passes over it (the underlay shows without its text) and keeps it when it saves. |
 
 ## 4. What Drift does with a file it doesn't fully know
 

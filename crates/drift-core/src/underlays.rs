@@ -90,6 +90,9 @@ pub struct Underlay {
     pub prims: Arc<Vec<RefPrim>>,
     /// Its pictures, drawn beneath its curves.
     pub images: Arc<Vec<UnderlayImage>>,
+    /// Its text, as the outlines of its letters (closed polylines), drawn with its curves
+    /// but not snapped to or counted among them.
+    pub glyphs: Arc<Vec<RefPrim>>,
     /// Where the underlay's origin lands in the sketch.
     pub at: DVec2,
     /// Sketch units (mm) per underlay unit.
@@ -122,6 +125,7 @@ impl Underlay {
             source: source.into(),
             prims: Arc::new(prims),
             images: Arc::new(Vec::new()),
+            glyphs: Arc::new(Vec::new()),
             at: DVec2::ZERO,
             scale: 1.0,
             angle: 0.0,
@@ -152,9 +156,18 @@ impl Underlay {
 
     /// Its curves in the sketch, as shapes (polylines become their segments).
     pub fn shapes(&self) -> Vec<Shape> {
+        self.shapes_of(&self.prims)
+    }
+
+    /// The outlines of its text in the sketch, as line segments.
+    pub fn glyph_shapes(&self) -> Vec<Shape> {
+        self.shapes_of(&self.glyphs)
+    }
+
+    fn shapes_of(&self, prims: &[RefPrim]) -> Vec<Shape> {
         let turn = self.angle.to_radians();
         let mut out = Vec::new();
-        for prim in self.prims.iter() {
+        for prim in prims {
             match prim {
                 RefPrim::Line(a, b) => out.push(Shape::Line {
                     a: self.to_world(*a),
@@ -186,13 +199,13 @@ impl Underlay {
         out
     }
 
-    /// Bounds of its curves and images in its own coordinates.
+    /// Bounds of its curves, text and images in its own coordinates.
     pub fn local_bounds(&self) -> Bounds {
         let mut b = Bounds::EMPTY;
         for image in self.images.iter() {
             image.corners().into_iter().for_each(|p| b.include(p));
         }
-        for prim in self.prims.iter() {
+        for prim in self.prims.iter().chain(self.glyphs.iter()) {
             match prim {
                 RefPrim::Line(p, q) => {
                     b.include(*p);

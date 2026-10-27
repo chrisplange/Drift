@@ -69,6 +69,9 @@ pub(crate) struct UnderlayRecord {
     prims: Vec<PrimRecord>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     images: Vec<ImageRecord>,
+    /// Its text as letter outlines (v43.1).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    glyphs: Vec<PrimRecord>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -161,9 +164,8 @@ fn unbase64(text: &str) -> Option<Vec<u8>> {
 }
 
 #[cfg(not(feature = "demo"))]
-pub(crate) fn underlay_record(id: UnderlayId, u: &Underlay) -> UnderlayRecord {
-    let prims = u
-        .prims
+fn prim_records(prims: &[RefPrim]) -> Vec<PrimRecord> {
+    prims
         .iter()
         .map(|p| match p {
             RefPrim::Line(a, b) => PrimRecord::Line([a.x, a.y, b.x, b.y]),
@@ -184,7 +186,11 @@ pub(crate) fn underlay_record(id: UnderlayId, u: &Underlay) -> UnderlayRecord {
                 sweep.to_degrees(),
             ]),
         })
-        .collect();
+        .collect()
+}
+
+#[cfg(not(feature = "demo"))]
+pub(crate) fn underlay_record(id: UnderlayId, u: &Underlay) -> UnderlayRecord {
     UnderlayRecord {
         id: id.to_string(),
         name: u.name.clone(),
@@ -199,7 +205,7 @@ pub(crate) fn underlay_record(id: UnderlayId, u: &Underlay) -> UnderlayRecord {
         locked: u.locked,
         layer: u.layer.map(|l| l.to_string()),
         order: u.order,
-        prims,
+        prims: prim_records(&u.prims),
         images: u
             .images
             .iter()
@@ -210,31 +216,21 @@ pub(crate) fn underlay_record(id: UnderlayId, u: &Underlay) -> UnderlayRecord {
                 png: base64(&encode_png(i)),
             })
             .collect(),
+        glyphs: prim_records(&u.glyphs),
     }
 }
 
-pub(crate) fn parse_underlay(r: UnderlayRecord) -> Result<(UnderlayId, Underlay), LoadError> {
-    let id = UnderlayId(parse_prefixed(&r.id, 'u')?);
-    let bad = |field: &'static str| LoadError::MissingField {
-        id: r.id.clone(),
-        field,
-    };
-    if !(r.scale > 0.0 && r.scale.is_finite()) {
-        return Err(bad("scale"));
-    }
-    let color = match &r.color {
-        Some(c) => Some(Rgb::parse(c).ok_or_else(|| bad("color"))?),
-        None => None,
-    };
-    let mut prims = Vec::with_capacity(r.prims.len());
-    for p in &r.prims {
+/// Curves as written, or `None` if one is malformed.
+fn parse_prims(records: &[PrimRecord]) -> Option<Vec<RefPrim>> {
+    let mut prims = Vec::with_capacity(records.len());
+    for p in records {
         prims.push(match p {
             PrimRecord::Line([x1, y1, x2, y2]) => {
                 RefPrim::Line(DVec2::new(*x1, *y1), DVec2::new(*x2, *y2))
             }
             PrimRecord::Polyline(xy) => {
                 if xy.len() % 2 != 0 || xy.len() < 4 {
-                    return Err(bad("prims"));
+                    return None;
                 }
                 RefPrim::Polyline(xy.chunks(2).map(|c| DVec2::new(c[0], c[1])).collect())
             }
@@ -250,6 +246,24 @@ pub(crate) fn parse_underlay(r: UnderlayRecord) -> Result<(UnderlayId, Underlay)
             },
         });
     }
+    Some(prims)
+}
+
+pub(crate) fn parse_underlay(r: UnderlayRecord) -> Result<(UnderlayId, Underlay), LoadError> {
+    let id = UnderlayId(parse_prefixed(&r.id, 'u')?);
+    let bad = |field: &'static str| LoadError::MissingField {
+        id: r.id.clone(),
+        field,
+    };
+    if !(r.scale > 0.0 && r.scale.is_finite()) {
+        return Err(bad("scale"));
+    }
+    let color = match &r.color {
+        Some(c) => Some(Rgb::parse(c).ok_or_else(|| bad("color"))?),
+        None => None,
+    };
+    let prims = parse_prims(&r.prims).ok_or_else(|| bad("prims"))?;
+    let glyphs = parse_prims(&r.glyphs).ok_or_else(|| bad("glyphs"))?;
     let mut images = Vec::with_capacity(r.images.len());
     for i in &r.images {
         let (width, height, rgba) = unbase64(&i.png)
@@ -271,6 +285,7 @@ pub(crate) fn parse_underlay(r: UnderlayRecord) -> Result<(UnderlayId, Underlay)
             source: r.source,
             prims: Arc::new(prims),
             images: Arc::new(images),
+            glyphs: Arc::new(glyphs),
             at: DVec2::from_array(r.at),
             scale: r.scale,
             angle: r.angle,

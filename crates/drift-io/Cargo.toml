@@ -23,6 +23,8 @@ miniz_oxide = "0.9.1"
 zune-jpeg = "0.5.15"
 png = "0.18"
 kurbo = "0.13"
+# Letter outlines of the fonts PDFs embed (TrueType, OpenType, CFF, Type 1), for underlays.
+skrifa = "0.44"
 roxmltree = "0.21.1"
 # DWG import (the `dwg` feature): acadrust reads DWG R12-R2018. MPL-2.0, so changes to its
 # own files must be published; see deny.toml.

@@ -313,6 +313,8 @@ fn every_fixture_opens_keeps_its_contents_and_saves_as_current() {
         );
         let images = if version >= 33 { 1 } else { 0 };
         assert_eq!(underlay.images.len(), images, "{}", at("underlay pictures"));
+        let glyphs = usize::from((version, addition) >= (43, 1));
+        assert_eq!(underlay.glyphs.len(), glyphs, "{}", at("underlay text"));
         let options = if version >= 41 { 2 } else { 1 };
         assert_eq!(doc.variants().count(), options, "{}", at("options"));
         let sketches = doc.variants().filter(|(_, v)| v.is_sketch()).count();
@@ -659,6 +661,13 @@ fn fixture_drawing() -> Document {
         across: DVec2::new(100.0, 0.0),
         down: DVec2::new(0.0, -100.0),
     }]);
+    // Its text, as a letter's outline (#205).
+    underlay.glyphs = std::sync::Arc::new(vec![drift_core::RefPrim::Polyline(vec![
+        DVec2::new(100.0, 100.0),
+        DVec2::new(130.0, 100.0),
+        DVec2::new(115.0, 140.0),
+        DVec2::new(100.0, 100.0),
+    ])]);
     underlay.layer = Some(walls);
     underlay.order = -2;
     doc.add_underlay(underlay);

@@ -906,6 +906,9 @@ impl DriftApp {
             constraints if is_dimension => self.editor.add_constraints(option.label, constraints),
             // Only the relations that aren't there yet (some may already hold).
             _ => match self.editor.missing_relations(option).as_slice() {
+                [] if crate::editor::Editor::is_fix_option(option) => Err(
+                    crate::editor::EditError::FullyDefined(self.editor.fixed_name()),
+                ),
                 [] => Err(crate::editor::EditError::Redundant),
                 missing => self.editor.add_constraints(option.label, missing),
             },

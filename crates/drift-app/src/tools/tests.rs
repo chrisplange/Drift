@@ -5878,3 +5878,66 @@ fn grid_snapped_drag_keeps_a_dimensioned_point_on_its_side() {
         );
     }
 }
+
+fn horizontals(doc: &Document) -> usize {
+    doc.constraints()
+        .filter(|(_, c)| matches!(c, Constraint::Horizontal { .. }))
+        .count()
+}
+
+#[test]
+fn closing_a_loop_a_hair_off_level_makes_the_side_level() {
+    // #204: the end-point snap used to replace the Horizontal the closing side comes out
+    // with; within the snap tolerance it is added, and the solve makes the side level.
+    let mut ed = Editor::default();
+    ed.auto_relations = true;
+    let mut tool = LineTool::default();
+    for at in [v(0.0, 0.0), v(0.0, 10.0), v(20.0, 10.0), v(20.0, 0.3)] {
+        click(&mut ed, &mut tool, at);
+    }
+    let p = ptr(&ed, &tool, v(0.1, 0.1));
+    assert_eq!(p.auto_relation(), Some(GuideKind::Horizontal));
+    click(&mut ed, &mut tool, v(0.1, 0.1));
+    assert!(tool.last.is_none(), "closed");
+    assert_eq!(horizontals(&ed.doc), 2);
+    assert_eq!(ed.notice, None);
+    let ys: Vec<f64> = ed
+        .doc
+        .iter()
+        .filter_map(|(_, e)| match e.kind {
+            EntityKind::Point(p) if p.y < 5.0 => Some(p.y),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(ys.len(), 2);
+    assert!((ys[0] - ys[1]).abs() < 1e-9, "the bottom is level: {ys:?}");
+}
+
+#[test]
+fn a_direction_already_implied_is_left_out_and_said() {
+    // #204: a line between two points fixed on one level would get a Horizontal they already
+    // imply; it is left out, the line is drawn, and the notice says why.
+    let mut ed = Editor::default();
+    ed.auto_relations = true;
+    ed.doc.begin();
+    let a = ed.doc.add_point(v(0.0, 0.0));
+    let b = ed.doc.add_point(v(20.0, 0.0));
+    for (point, at) in [(a, v(0.0, 0.0)), (b, v(20.0, 0.0))] {
+        ed.doc
+            .add_constraint(Constraint::Fix { point, at })
+            .unwrap();
+    }
+    ed.commit("Points");
+    let mut tool = LineTool::default();
+    click(&mut ed, &mut tool, v(0.0, 0.0));
+    let p = ptr(&ed, &tool, v(20.0, 0.0));
+    assert_eq!(p.snapped_point(), Some(b));
+    assert_eq!(p.auto_relation(), Some(GuideKind::Horizontal));
+    click(&mut ed, &mut tool, v(20.0, 0.0));
+    assert_eq!(lines(&ed.doc), 1, "the line is drawn");
+    assert_eq!(horizontals(&ed.doc), 0);
+    assert_eq!(
+        ed.notice.as_deref(),
+        Some("Horizontal not added: already implied by existing constraints")
+    );
+}

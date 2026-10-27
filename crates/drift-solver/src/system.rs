@@ -480,6 +480,12 @@ impl System {
                         pin(&mut fixed, (&mut conflicts, &mut redundant), param, v, cid);
                     }
                 }
+                Constraint::FixX { point: p, x: v } => {
+                    pin(&mut fixed, (&mut conflicts, &mut redundant), x(p), v, cid);
+                }
+                Constraint::FixY { point: p, y: v } => {
+                    pin(&mut fixed, (&mut conflicts, &mut redundant), y(p), v, cid);
+                }
                 Constraint::FixRadius { curve, radius: r } => match radius(curve) {
                     Length::Param(p) => {
                         pin(&mut fixed, (&mut conflicts, &mut redundant), p, r, cid)
@@ -1086,9 +1092,16 @@ impl System {
                 group.value = v;
                 group.fixed = true;
                 let scale = v.abs().max(1.0);
+                // Further pins on parameters held equal (a point's y fixed, its line's other
+                // end's y too, the line level) agree, implied by the first, or conflict.
                 for &(other, cid) in &pins[1..] {
-                    if (other - v).abs() > tol.length * scale && cid.0 != 0 {
+                    if cid.0 == 0 {
+                        continue;
+                    }
+                    if (other - v).abs() > tol.length * scale {
                         conflicts.push(cid);
+                    } else if !redundant.contains(&cid) {
+                        redundant.push(cid);
                     }
                 }
             }

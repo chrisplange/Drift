@@ -269,7 +269,11 @@ impl WallTool {
         };
         ed.doc.set_style(curve, LineKind::Construction);
         if matches!(seg, Seg::Line { .. }) {
-            auto_relation(ed, relation, curve);
+            if closes || to.existing == Some(b) {
+                auto_relation_onto_point(ed, relation, curve);
+            } else {
+                auto_relation(ed, relation, curve);
+            }
         }
         let end = |j: Option<Join>| drift_core::WallEnd {
             join: true,

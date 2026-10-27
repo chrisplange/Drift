@@ -188,6 +188,30 @@ impl Tool for ArcTool {
         had
     }
 
+    fn refine_pointer(&self, p: &mut Pointer) {
+        // The end goes on the circle, along the pointer's direction from the centre. A point
+        // snapped off the circle is marked with where the click lands, as an axis lock does
+        // (the snap marker alone said the arc would end on it).
+        let (Some(center), Some(start), None) = (self.center, self.start, self.typed[0]) else {
+            return;
+        };
+        let Some(snap) = p.exact_snap() else {
+            return;
+        };
+        let radius = start.pos.distance(center.pos);
+        let d = snap.at - center.pos;
+        if (d.length() - radius).abs() <= 1e-9 * radius.max(1.0) || d == DVec2::ZERO {
+            return;
+        }
+        p.overridden = Some(snap);
+        p.snap = None;
+        p.guide = Some(Guide {
+            at: center.pos + d.normalize() * radius,
+            kind: GuideKind::Aligned,
+            from: [Some(snap.at), None],
+        });
+    }
+
     fn fields(&self) -> &'static [&'static str] {
         match (self.center, self.start) {
             (None, _) => XY,

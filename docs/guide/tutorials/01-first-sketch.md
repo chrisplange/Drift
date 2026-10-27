@@ -97,7 +97,18 @@ To join shapes, add a **Coincident** relation, or trim them into each other.
 move away: a dashed guide appears when the pointer is level with it or straight above or
 below it. These guides add no relation.
 
-Lines drawn nearly horizontal or vertical snap straight and get the relation.
+Lines drawn nearly horizontal or vertical snap straight and get the relation. That holds when
+a line ends on a snapped point too: close a loop on its start point with a level side and the
+side gets its **Horizontal** as well as joining the point. The label by the pointer names both
+(**Endpoint · Horizontal**). If the relations already there hold the side level (both its ends
+fixed on one level, say), the relation is left out and the status bar says so.
+
+With an axis locked (X or Y), the point goes on the axis, however near another point the pointer
+is. Hovering a point off the axis marks it with its usual marker, dimmed, and rings the spot on
+the axis in line with it where the click will land (the label says **In line with endpoint**).
+The centre-point **Arc** does the same for its end, which always lies on its circle: a point
+off the circle is marked, and the ring shows where the arc will end, toward it (**Toward
+endpoint**).
 
 ### Perpendicular and tangent
 

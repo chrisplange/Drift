@@ -1130,7 +1130,28 @@ impl DriftApp {
             let mut info = overlay::CursorInfo::default();
             if let Some(snap) = p.snap {
                 overlay::snap_marker(&painter, &map, &snap, colors.snap);
-                info.snap = Some(snap.kind.label().to_owned());
+                let mut label = snap.kind.label().to_owned();
+                // The relation the segment ending here gets too (#204).
+                if let Some(relation) = p
+                    .exact_snap()
+                    .and(p.guide)
+                    .and_then(|g| relation_name(g.kind))
+                    .filter(|_| self.auto_relations)
+                {
+                    label = format!("{label} · {relation}");
+                }
+                info.snap = Some(label);
+            } else if let Some(held) = p.overridden {
+                // An axis lock (or an arc's circle) moved the point off what was hovered:
+                // mark that, and where the click lands, in line with it (#200).
+                overlay::snap_marker(&painter, &map, &held, colors.snap.gamma_multiply(0.55));
+                overlay::landing_marker(&painter, &map, p.pos(), colors.snap);
+                let how = if self.tool.axis_lock().is_some() {
+                    "In line with"
+                } else {
+                    "Toward"
+                };
+                info.snap = Some(format!("{how} {}", held.kind.label().to_lowercase()));
             }
             if let Some(m) = self.tool.measurement(&p) {
                 info.notes.push(m);
@@ -1297,15 +1318,17 @@ impl DriftApp {
             };
             painter.line_segment(ends, egui::Stroke::new(1.5, color.gamma_multiply(0.85)));
         }
-        // Inference guide lines and the automatic relation about to be added.
+        // Inference guide lines and the automatic relation about to be added. On an exact
+        // snap only the relation shows: the snap decides the position (#204).
         if let Some(p) = self.pointer
             && let Some(guide) = p.guide
-            && p.exact_snap().is_none()
         {
             let at = map.to_screen(guide.at);
             let stroke = egui::Stroke::new(1.0, colors.preview.gamma_multiply(0.8));
-            for from in guide.from.iter().flatten() {
-                crate::overlay::dashed(painter, &[map.to_screen(*from), at], stroke, 4.0, 3.0);
+            if p.exact_snap().is_none() {
+                for from in guide.from.iter().flatten() {
+                    crate::overlay::dashed(painter, &[map.to_screen(*from), at], stroke, 4.0, 3.0);
+                }
             }
             let kind = match guide.kind {
                 GuideKind::Horizontal => Some(GlyphKind::Horizontal),
@@ -1579,4 +1602,15 @@ struct DrawContent {
     fills: Vec<drift_render::FillMesh>,
     images: Vec<drift_render::CanvasImage>,
     items: Vec<drift_core::SketchItem>,
+}
+
+/// The automatic relation a guide adds, as the HUD names it.
+fn relation_name(kind: GuideKind) -> Option<&'static str> {
+    match kind {
+        GuideKind::Horizontal => Some("Horizontal"),
+        GuideKind::Vertical => Some("Vertical"),
+        GuideKind::Perpendicular(_) => Some("Perpendicular"),
+        GuideKind::Tangent(_) => Some("Tangent"),
+        GuideKind::Aligned => None,
+    }
 }

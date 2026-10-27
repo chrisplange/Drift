@@ -1,6 +1,6 @@
 # The `.drift` file format: versions and stability
 
-*2026-10-24, against `main` at 6a625ec (format 42, reader 42).*
+*2026-10-24, against `main` at 6a625ec (format 42, reader 42); format 43, reader 43 since 2026-10-27.*
 
 A `.drift` file is UTF-8 JSON with one entity, constraint or record per line, so drawings
 diff and merge cleanly. The reader and writer are in `crates/drift-io/src/lib.rs`; the
@@ -14,8 +14,8 @@ from 38 to 41 in two days in October 2026; this document sets the rules that kee
 ```json
 {
   "format": "drift",
-  "version": 42,
-  "reader": 42,
+  "version": 43,
+  "reader": 43,
   "meta": {"title":"Bracket","units":"mm","generator":"Drift 0.1.0"},
   ...
 }
@@ -87,6 +87,7 @@ drawing rules, an option of values and a whole-sketch option) as each format ver
 
 | Fixture | Written by | Shipped in |
 |---|---|---|
+| `v43.drift` | `drift-io` with `fix_x` and `fix_y` (#203) | — |
 | `v42.2.drift` | `drift-io` with openings (W3) | — |
 | `v42.1.drift` | `drift-io` with walls (W1) | — |
 | `v42.drift` | `drift-io` with `reader` (tolerant reading) | — |
@@ -194,6 +195,7 @@ migration is named, the change was additive and older files read unchanged.
 | 40 | `stack` (where curves stack among their layer's fills) and an underlay's `layer` and `order`. |
 | 41 | `variants` become `options`, holding values or a whole `sketch` (a Drift file of its own, leaving out the sections it has the `same` as the drawing); a block fill's `"path": "shape"`. Migration: `variants` are renamed `options`. |
 | 42 | `reader` (the oldest version that reads the file). Reading passes over what it doesn't know and keeps it for saving (section 4). No migration. Older builds refuse 42 files with "please update Drift" (they were strict, so they couldn't read a `reader` field anyway). |
+| 43 | `fix_x` and `fix_y` relations: a point's x or y alone held where it is (what Fix pins of a point something else partly holds, #203). Breaking (a new relation type), so `reader` is 43 too. No migration. |
 
 ### Additions without a bump (from 42)
 
@@ -212,7 +214,7 @@ read these files, pass over the addition, and keep it when they save.
 **A newer `reader`.** `migrate` refuses a file whose `reader` (or, without one, its
 `version`) is above `FORMAT_VERSION`, and `version` 0 or anything that isn't a number, before
 reading anything else, with `LoadError::UnsupportedVersion`: *"file version 45 is newer than
-this version of Drift supports (42); please update Drift"* (the message names the file's
+this version of Drift supports (43); please update Drift"* (the message names the file's
 `version`). When the user opens such a file (File → Open, a drop, a recent file), the app
 shows *"Could not open NAME: …"* in the status bar and keeps the drawing it had. The file isn't
 touched, so nothing is lost. The same goes for the AI link (`agent/files.rs`) and for pasting

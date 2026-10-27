@@ -13,6 +13,8 @@ use super::*;
 mod commands;
 /// Dimensions and the solver: dimension a line, change it, drag it.
 mod dimensions;
+/// Drawing: closing a loop keeps its relations; snap markers, with an axis lock too.
+mod drawing;
 /// Save, close and open again; the recovered session; extras from a newer Drift.
 mod files;
 /// Fills and hatches: solid and hatched shapes, hatch handles, Arrange, Stroke: none.

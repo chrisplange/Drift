@@ -1,6 +1,8 @@
 //! Dimensions and the solver: dimension a line and change its value; a drag repeated ends
 //! where it ended before; a drag of an under-constrained chain leaves what it doesn't hold
-//! where it was (#143).
+//! where it was (#143); Fix on a partly defined line pins only what is still free (#203).
+
+use drift_core::Constraint;
 
 use super::*;
 
@@ -104,4 +106,88 @@ fn smoke_dimensions_drags_are_repeatable_and_leave_the_rest() {
     assert_eq!(positions(&h), start, "undone");
     let again = pull(&mut h);
     assert_eq!(again, first, "the same drag, the same result");
+}
+
+/// Fix on a level line whose length is dimensioned: accepted (it used to be refused as
+/// "already implied"), it pins only the freedom left (one end; the length and the Horizontal
+/// hold the other), the drawing is then fully defined, and a drag doesn't move it. Fix again
+/// says it is already fully defined (#203).
+#[test]
+fn smoke_dimensions_fix_pins_what_is_still_free() {
+    let Some(mut h) = harness() else { return };
+    let v = DVec2::new;
+    view(&mut h, v(-40.0, -30.0), v(60.0, 40.0));
+    let line = chain(&mut h, &[v(-20.0, 0.0), v(20.0, 0.0)])[0];
+    let (a, b) = ends(&h, line);
+    let ed = &mut h.state_mut().editor;
+    assert!(
+        ed.doc
+            .constraints()
+            .any(|(_, c)| matches!(c, Constraint::Horizontal { .. })),
+        "drawn level"
+    );
+    ed.add_constraints("Length", &[Constraint::Distance { a, b, value: 40.0 }])
+        .unwrap();
+    // Pick the line, Fix.
+    h.key_press(Key::S);
+    h.run();
+    click_world(&mut h, v(-10.0, 0.0));
+    assert_eq!(h.state().editor.selection.len(), 1, "the line picked");
+    let fix = h
+        .state()
+        .editor
+        .relation_options()
+        .into_iter()
+        .find(|o| o.label == "Fix")
+        .expect("Fix offered");
+    h.state_mut().apply_constraint_option(&fix, false, 0.0);
+    h.run();
+    let ed = &h.state().editor;
+    let pins: Vec<Constraint> = ed
+        .doc
+        .constraints()
+        .filter(|(_, c)| c.is_point_fix())
+        .map(|(_, c)| *c)
+        .collect();
+    assert!(
+        matches!(pins.as_slice(), [Constraint::Fix { point, .. }] if *point == a),
+        "one end pinned, nothing more: {pins:?}"
+    );
+    assert_eq!(ed.analysis().dof, Some(0), "fully defined");
+    let before = positions(&h);
+    drag(&mut h, v(-10.0, 0.0), v(0.0, 15.0), 5);
+    h.key_press(Key::Escape);
+    h.run();
+    for ((_, was), (_, now)) in before.iter().zip(positions(&h)) {
+        assert!(
+            was.distance(now) < 1e-9,
+            "a drag doesn't move it: {was} {now}"
+        );
+    }
+    // Fix again: nothing left to pin.
+    h.state_mut().editor.selection = [line].into();
+    let err = h
+        .state_mut()
+        .editor
+        .add_constraints("Fix", &fix.constraints);
+    assert_eq!(
+        err.unwrap_err().to_string(),
+        "this line is already fully defined"
+    );
+    // The relations pie shows Fix on (one end pinned, the other held by the rest), and
+    // choosing it takes the pin off.
+    let slices = h.state().pie_slices();
+    let place = slices
+        .iter()
+        .position(|s| s.label == "Fix")
+        .expect("Fix in the pie");
+    assert!(slices[place].on, "Fix shows as on");
+    h.state_mut().pie_choose(place, 0.0);
+    h.run();
+    let ed = &h.state().editor;
+    assert!(
+        !ed.doc.constraints().any(|(_, c)| c.is_point_fix()),
+        "the pin is off"
+    );
+    assert_eq!(ed.analysis().dof, Some(2), "free to move again");
 }

@@ -163,7 +163,19 @@ fn every_fixture_opens_keeps_its_contents_and_saves_as_current() {
             .filter(|(id, _)| walls.get(*id).is_none())
             .count();
         assert_eq!(plain, ENTITIES, "{}", at("entities"));
-        assert_eq!(doc.constraint_count(), CONSTRAINTS, "{}", at("constraints"));
+        // (From 43 the door's hinge is held by its x and its y apart.)
+        let fixes = if version >= 43 { 2 } else { 0 };
+        assert_eq!(
+            doc.constraint_count(),
+            CONSTRAINTS + fixes,
+            "{}",
+            at("constraints")
+        );
+        let split_fixes = doc
+            .constraints()
+            .filter(|(_, c)| matches!(c, Constraint::FixX { .. } | Constraint::FixY { .. }))
+            .count();
+        assert_eq!(split_fixes, fixes, "{}", at("fix_x and fix_y"));
         assert_eq!(doc.layers().count(), LAYERS, "{}", at("layers"));
         assert_eq!(doc.variables().count(), VARIABLES, "{}", at("variables"));
         let plain_fills = doc.fills().filter(|(id, _)| !walls.fills.contains_key(id));
@@ -513,6 +525,17 @@ fn fixture_drawing() -> Document {
     doc.add_arc(hinge, leaf, open).unwrap();
     let opening = line(&mut doc, hinge, leaf);
     doc.set_style(opening, drift_core::LineKind::Construction);
+    // The hinge held where it is by its x and its y apart (43).
+    doc.add_constraint(Constraint::FixX {
+        point: hinge,
+        x: 600.0,
+    })
+    .unwrap();
+    doc.add_constraint(Constraint::FixY {
+        point: hinge,
+        y: 0.0,
+    })
+    .unwrap();
 
     // A rug (an ellipse) and a curved bench (a Bézier).
     let rug = [(2100.0, 1500.0), (2700.0, 1500.0), (2100.0, 1900.0)]

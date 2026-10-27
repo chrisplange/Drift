@@ -67,6 +67,7 @@ mod icc;
 mod openings;
 #[cfg(not(feature = "demo"))]
 pub mod pdf;
+mod pdf_glyphs;
 mod pdf_image;
 pub mod pdf_import;
 mod pdf_text;

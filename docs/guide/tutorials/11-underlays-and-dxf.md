@@ -33,8 +33,10 @@ The page comes in at that scale, with its lower-left corner on the origin, drawn
 grey behind the sketch. The **Layers** panel opens with the underlay picked.
 
 PDF underlays read the vector drawing: lines, curves, rectangles and filled shapes (as
-their outlines), and its pictures unless you turn off **Bring in images as pictures**. Text
-is skipped. A scanned PDF comes in as its picture.
+their outlines), and its pictures unless you turn off **Bring in images as pictures**. Its
+text shows where the page has it, at its size and angle, drawn as the outlines of its letters
+in the PDF's own font (or Drift's, where the PDF doesn't carry its font). It's there to read,
+not to edit or snap to. A scanned PDF comes in as its picture.
 
 ### 2. Check or correct its scale
 
@@ -53,8 +55,8 @@ If you didn't know the scale, the plan may be the wrong size. Either:
 ### 3. Trace
 
 Draw over it with any tool. Tools snap to the underlay's end points, midpoints, centres,
-quadrants and to points along its curves. Your sketch's own points win when both are
-close.
+quadrants and to points along its curves (not to its text). Your sketch's own points win
+when both are close.
 
 ![A PDF plan calibrated to 1:50 in the Layers panel, its outline traced with the Line tool](../images/underlay.png)
 
@@ -71,7 +73,8 @@ Each underlay in the **Layers** panel has:
 - **Move…**: click a point on the underlay, then where it should go.
 - **Zoom to**, and **×** to delete it.
 - **Convert to geometry**: turn the underlay into lines, arcs and circles on the current
-  layer, with touching ends joined, so you can edit them.
+  layer, with touching ends joined, so you can edit them. Its text and pictures stay
+  behind as an underlay of their own.
 
 Underlays are kept inside the `.drift` file. They never print or export, pictures
 included.

@@ -17,14 +17,17 @@ pub struct UnderlayCache {
 
 struct Cached {
     id: UnderlayId,
-    /// The curves' identity and the placement they were indexed with.
-    key: (usize, [f64; 4]),
+    /// The curves' and text's identity and the placement they were indexed with.
+    key: (usize, usize, [f64; 4]),
     index: RefIndex,
+    /// Its text's outlines, to draw (never snapped to).
+    glyphs: RefIndex,
 }
 
-fn key_of(u: &Underlay) -> (usize, [f64; 4]) {
+fn key_of(u: &Underlay) -> (usize, usize, [f64; 4]) {
     (
         std::sync::Arc::as_ptr(&u.prims) as usize,
+        std::sync::Arc::as_ptr(&u.glyphs) as usize,
         [u.at.x, u.at.y, u.scale, u.angle],
     )
 }
@@ -143,6 +146,7 @@ impl Editor {
                     id,
                     key: key_of(u),
                     index: RefIndex::new(u.shapes()),
+                    glyphs: RefIndex::new(u.glyph_shapes()),
                 });
             }
         }
@@ -150,12 +154,15 @@ impl Editor {
     }
 
     fn cached(&self, id: UnderlayId) -> Option<&RefIndex> {
+        self.cached_entry(id).map(|c| &c.index)
+    }
+
+    fn cached_entry(&self, id: UnderlayId) -> Option<&Cached> {
         let u = self.doc.underlay(id)?;
         self.underlay_cache
             .entries
             .iter()
             .find(|c| c.id == id && c.key == key_of(u))
-            .map(|c| &c.index)
     }
 
     /// The visible underlays' curves within `view`, faded towards the background.
@@ -193,14 +200,16 @@ impl Editor {
             if !u.visible {
                 continue;
             }
-            let Some(index) = self.cached(id) else {
+            let Some(cached) = self.cached_entry(id) else {
                 continue;
             };
             let base = u.color.map_or_else(|| default_color(dark), |c| c.0);
             let color = mix(base, background(dark), u.opacity);
             items.extend(
-                index
+                cached
+                    .index
                     .query(view)
+                    .chain(cached.glyphs.query(view))
                     .map(|s| SketchItem::new(*s).with_look(Some(color), 0, LineType::Continuous)),
             );
         }
@@ -325,11 +334,13 @@ impl Editor {
         scale: f64,
     ) -> Result<UnderlayReport, String> {
         let prims = drift_io::vector::outlines(art);
-        if prims.is_empty() {
+        let glyphs = drift_io::vector::text_outlines(art);
+        if prims.is_empty() && glyphs.is_empty() {
             return Err(format!("{name} has no drawing to trace over"));
         }
         let stem = name.rsplit_once('.').map_or(name, |(s, _)| s);
         let mut u = Underlay::new(stem.to_owned(), name.to_owned(), prims);
+        u.glyphs = std::sync::Arc::new(glyphs);
         u.scale = scale;
         let curves = u.curve_count();
         let skipped: Vec<String> = art
@@ -360,9 +371,9 @@ impl Editor {
         if !images {
             read.images.clear();
         }
-        if read.prims.is_empty() && read.images.is_empty() {
+        if read.prims.is_empty() && read.images.is_empty() && read.glyphs.is_empty() {
             return Err(format!(
-                "page {page} of {name} has nothing Drift can show (no drawing or pictures)"
+                "page {page} of {name} has nothing Drift can show (no drawing, text or pictures)"
             ));
         }
         let stem = name.rsplit_once('.').map_or(name, |(s, _)| s);
@@ -373,15 +384,19 @@ impl Editor {
         };
         let mut u = Underlay::new(title, format!("{name}, page {page}"), read.prims);
         u.images = std::sync::Arc::new(read.images);
+        u.glyphs = std::sync::Arc::new(read.glyphs);
         u.scale = MM_PER_POINT * scale;
         // A scan, with no drawing over it, shows as it is.
-        if u.prims.is_empty() {
+        if u.prims.is_empty() && u.glyphs.is_empty() {
             u.opacity = 1.0;
         }
         let curves = u.curve_count();
         let mut skipped = Vec::new();
         if read.skipped_text > 0 {
-            skipped.push(format!("{} text run(s)", read.skipped_text));
+            skipped.push(format!(
+                "{} text run(s) in a font Drift can't draw",
+                read.skipped_text
+            ));
         }
         if read.skipped_images > 0 {
             skipped.push(format!(
@@ -406,11 +421,13 @@ impl Editor {
         scale: f64,
     ) -> Result<UnderlayReport, String> {
         let prims = drift_io::dxf::underlay_prims(import);
-        if prims.is_empty() {
-            return Err(format!("{name} has no lines, arcs or circles"));
+        let glyphs = drift_io::dxf::underlay_glyphs(import);
+        if prims.is_empty() && glyphs.is_empty() {
+            return Err(format!("{name} has no lines, arcs, circles or text"));
         }
         let stem = name.rsplit_once('.').map_or(name, |(s, _)| s);
         let mut u = Underlay::new(stem, name, prims);
+        u.glyphs = std::sync::Arc::new(glyphs);
         u.scale = scale;
         let curves = u.curve_count();
         let skipped: Vec<String> = import
@@ -611,8 +628,8 @@ impl Editor {
                 created.push(e);
             }
         }
-        // Its pictures stay, as an underlay of their own.
-        if u.images.is_empty() {
+        // Its pictures and text stay, as an underlay of their own.
+        if u.images.is_empty() && u.glyphs.is_empty() {
             self.doc.remove_underlay(id);
         } else {
             self.doc.set_underlay(
@@ -854,6 +871,53 @@ mod tests {
         let report = ed.import_cad_underlay("plan.dxf", &import, 1.0).unwrap();
         assert_eq!(report.curves, 1);
         assert_eq!(ed.doc.underlays().count(), 2);
+    }
+
+    /// The letters' box: lower-left and upper-right corners.
+    fn glyph_bounds(u: &Underlay) -> Bounds {
+        u.glyph_shapes().iter().map(Shape::bounds).collect()
+    }
+
+    #[test]
+    fn dxf_and_svg_underlays_show_their_text() {
+        // A DXF with a 5 mm label at (20, 30), beside its line.
+        let mut d = drift_draft::page::Drawing::new(v(297.0, 210.0));
+        let pen = drift_draft::page::Pen::new(0.35);
+        d.push(
+            "0",
+            pen,
+            drift_draft::page::Prim::Line(v(10.0, 10.0), v(110.0, 10.0)),
+        );
+        d.text(
+            "0",
+            pen,
+            v(20.0, 30.0),
+            5.0,
+            drift_draft::page::Align::Left,
+            "KITCHEN",
+        );
+        let dxf = drift_io::dxf::write(&d, drift_io::dxf::DxfUnits::MM);
+        let import = drift_io::dxf::read(&dxf, 1.0).unwrap();
+        let mut ed = Editor::default();
+        let report = ed.import_cad_underlay("plan.dxf", &import, 1.0).unwrap();
+        // Its letters are drawn, not counted as curves to snap to.
+        assert_eq!(report.curves, 1);
+        let u = ed.doc.underlay(report.id).unwrap();
+        let b = glyph_bounds(u);
+        assert!(b.min.distance(v(20.0, 30.0)) < 1.0, "{b:?}");
+        assert!((b.max.y - 35.0).abs() < 0.5 && b.max.x > 40.0, "{b:?}");
+        // An SVG's text, in paper mm: 10 px type is 10 × 25.4/96 mm, its baseline 20 px up
+        // from the bottom of a 100 px page.
+        let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"
+            viewBox="0 0 100 100"><path d="M10 50 L60 50" stroke="black"/>
+            <text x="10" y="80" font-size="10">HALL</text></svg>"#;
+        let art = drift_io::svg_import::read(svg, "plan.svg").unwrap();
+        let report = ed.import_svg_underlay("plan.svg", &art, 1.0).unwrap();
+        let u = ed.doc.underlay(report.id).unwrap();
+        let b = glyph_bounds(u);
+        let mm = 25.4 / 96.0;
+        assert!(b.min.distance(v(10.0, 20.0) * mm) < 0.5, "{b:?}");
+        assert!(b.max.x > 30.0 * mm && b.max.y < 30.0 * mm, "{b:?}");
     }
 
     #[test]

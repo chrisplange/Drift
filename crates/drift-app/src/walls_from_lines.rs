@@ -153,7 +153,11 @@ impl Editor {
         let settings = Settings::new(
             drift_geom::walls::regen::snap(&self.doc),
             presets,
-            if metric { 1.0 } else { 25.4 / 16.0 },
+            if metric {
+                1.0
+            } else {
+                drift_core::units::MM_PER_INCH / 16.0
+            },
         );
         let found = find(&lines, &settings);
         if found.walls.is_empty() {

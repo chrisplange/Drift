@@ -74,6 +74,9 @@ mod pdf_text;
 #[cfg(not(feature = "demo"))]
 pub mod profiles;
 mod sheets;
+// What the CAD writers share: layer naming, line types, text escaping.
+#[cfg(not(feature = "demo"))]
+mod style;
 #[cfg(not(feature = "demo"))]
 pub mod svg;
 pub mod svg_import;

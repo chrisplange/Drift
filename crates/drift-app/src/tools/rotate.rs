@@ -90,7 +90,7 @@ impl Spin {
 
 /// Turning by `degrees` about `pivot`.
 fn turn(pivot: DVec2, degrees: f64) -> impl Fn(DVec2) -> DVec2 {
-    let rotor = DVec2::from_angle(degrees.to_radians());
+    let rotor = drift_core::blocks::exact_rotor(degrees);
     move |p| pivot + rotor.rotate(p - pivot)
 }
 
@@ -239,7 +239,7 @@ impl SelectTool {
         };
         if ok && let Some(seed) = &mut ed.selected_region {
             // A picked region turns with its outline.
-            let rotor = DVec2::from_angle(angle.to_radians());
+            let rotor = drift_core::blocks::exact_rotor(angle);
             *seed = spin.pivot + rotor.rotate(*seed - spin.pivot);
         }
         if !ok {

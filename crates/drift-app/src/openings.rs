@@ -854,7 +854,7 @@ impl Editor {
                 })
         };
         let at = |p: EntityId| self.doc.point(p).ok();
-        let out_by = frame.thickness * 0.5 + 12.0 * 25.4;
+        let out_by = frame.thickness * 0.5 + 12.0 * drift_core::units::MM_PER_INCH;
         let mut push = |a: EntityId, b: EntityId| {
             let (Some(pa), Some(pb)) = (at(a), at(b)) else {
                 return;

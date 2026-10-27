@@ -20,7 +20,10 @@ use std::fmt::Write as _;
 
 use drift_core::{DVec2, LengthFormat, LineType, Rgb, Shape, Units};
 #[cfg(not(feature = "demo"))]
-use drift_draft::page::{Align, Drawing, Prim, dash_pattern};
+use drift_draft::page::{Align, Drawing, Prim};
+
+#[cfg(not(feature = "demo"))]
+use crate::style::{self, LayerTable, text_value, unique_name};
 
 /// The AutoCAD Color Index entries we map to and from (index, colour).
 const ACI: [(u8, [u8; 3]); 14] = [
@@ -137,26 +140,6 @@ fn layer_name(name: &str) -> String {
     format!("{}_{:05X}", &s[..MAX - 6], hash & 0xF_FFFF)
 }
 
-/// A name unique (ignoring case) among the names in `taken` (Drift's names to those
-/// written), for one written as `base`: `base` itself, else the first free one of
-/// `numbered(base, 2)`, `numbered(base, 3)`, ... Both CAD writers name layers and blocks so,
-/// each with its own `base` and `numbered` rule.
-#[cfg(not(feature = "demo"))]
-pub(crate) fn unique_name(
-    base: String,
-    taken: &BTreeMap<String, String>,
-    numbered: impl Fn(&str, usize) -> String,
-) -> String {
-    let clash = |n: &str| taken.values().any(|t| t.eq_ignore_ascii_case(n));
-    if !clash(&base) {
-        return base;
-    }
-    (2..)
-        .map(|k| numbered(&base, k))
-        .find(|n| !clash(n))
-        .unwrap_or(base)
-}
-
 /// An R12 name for the `k`th Drift name that comes out as `base`: `BASE_2`, `BASE_3`, ...,
 /// still at most 31 characters.
 #[cfg(not(feature = "demo"))]
@@ -169,27 +152,18 @@ fn numbered(base: &str, k: usize) -> String {
 /// The names an R12 file gives a drawing's layers and blocks (by Drift name), and each
 /// written layer's colour and line type.
 #[cfg(not(feature = "demo"))]
-#[derive(Default)]
 struct Names {
-    layers: BTreeMap<String, String>,
+    layers: LayerTable<(u8, LineType)>,
     blocks: BTreeMap<String, String>,
-    looks: BTreeMap<String, (u8, LineType)>,
 }
 
 #[cfg(not(feature = "demo"))]
 impl Names {
-    /// Add a layer unless one of the name is there (the first look wins). Layer 0 stays 0.
-    fn layer(&mut self, name: &str, look: (u8, LineType)) {
-        if self.layers.contains_key(name) {
-            return;
+    fn new() -> Names {
+        Names {
+            layers: LayerTable::new(layer_name, numbered),
+            blocks: BTreeMap::new(),
         }
-        let written = if name == "0" {
-            "0".to_owned()
-        } else {
-            unique_name(layer_name(name), &self.layers, numbered)
-        };
-        self.layers.insert(name.to_owned(), written.clone());
-        self.looks.entry(written).or_insert(look);
     }
 
     fn block(&mut self, name: &str) {
@@ -201,6 +175,7 @@ impl Names {
 
     fn layer_of(&self, name: &str) -> String {
         self.layers
+            .names
             .get(name)
             .cloned()
             .unwrap_or_else(|| layer_name(name))
@@ -212,31 +187,6 @@ impl Names {
             .cloned()
             .unwrap_or_else(|| layer_name(name))
     }
-}
-
-/// Text as an R12 TEXT string: `%%c`, `%%d` and `%%p` for Ø, ° and ±, `\U+XXXX` for other
-/// characters outside ASCII (AutoCAD and other readers decode it in every version), and `%%%`
-/// for a percent sign that would otherwise start a code.
-#[cfg(not(feature = "demo"))]
-fn dxf_text(s: &str) -> String {
-    let mut out = String::new();
-    let mut chars = s.chars().peekable();
-    while let Some(c) = chars.next() {
-        match c {
-            'Ø' => out.push_str("%%c"),
-            '°' => out.push_str("%%d"),
-            '±' => out.push_str("%%p"),
-            '%' if chars.peek() == Some(&'%') => out.push_str("%%%"),
-            c if c.is_ascii_control() => {}
-            c if c.is_ascii() => out.push(c),
-            // Beyond what the four-digit escape can name (emoji and the like).
-            c if u32::from(c) > 0xFFFF => out.push('?'),
-            c => {
-                let _ = write!(out, "\\U+{:04X}", u32::from(c));
-            }
-        }
-    }
-    out
 }
 
 /// How far (in mm) the polylines written for ellipses and Bézier curves may stray from them.
@@ -428,47 +378,37 @@ pub fn write(d: &Drawing, units: DxfUnits) -> String {
     o.pair(0, "TABLE");
     o.pair(2, "LTYPE");
     o.pair(70, 5);
-    for t in [
-        LineType::Continuous,
-        LineType::Dashed,
-        LineType::Hidden,
-        LineType::Center,
-        LineType::Phantom,
-    ] {
-        let pattern = dash_pattern(t);
+    for t in style::line_types() {
         o.pair(0, "LTYPE");
-        o.pair(2, line_type_name(t));
+        o.pair(2, t.name);
         o.pair(70, 0);
-        o.pair(3, t.label());
+        o.pair(3, t.description);
         o.pair(72, 65);
-        o.pair(73, pattern.len());
-        o.num(40, pattern.iter().sum());
-        for (k, v) in pattern.iter().enumerate() {
+        o.pair(73, t.pattern.len());
+        o.num(40, t.length());
+        for (k, v) in t.pattern.iter().enumerate() {
             o.num(49, if k % 2 == 0 { *v } else { -*v });
         }
     }
     o.pair(0, "ENDTAB");
     // Layers: those declared, then any others the items use, each under a name of its own
     // (R12's names are upper case, so "Walls new" and "walls_new" need telling apart).
-    let mut names = Names::default();
-    for l in &d.layers {
-        names.layer(&l.name, (aci(l.color), l.line_type));
-    }
-    for item in d
-        .items
-        .iter()
-        .chain(d.blocks.iter().flat_map(|b| b.items.iter()))
-    {
-        names.layer(&item.layer, (aci(item.pen.color), LineType::Continuous));
-    }
-    names.layer("0", (7, LineType::Continuous));
+    let mut names = Names::new();
+    let layers = &mut names.layers;
+    layers.add_declared(d, |l| (aci(l.color), l.line_type), |_, _| {});
+    layers.add_used(
+        d,
+        |item| (aci(item.pen.color), LineType::Continuous),
+        |_, _| {},
+    );
+    layers.add("0", (7, LineType::Continuous));
     for b in &d.blocks {
         names.block(&b.name);
     }
     o.pair(0, "TABLE");
     o.pair(2, "LAYER");
-    o.pair(70, names.looks.len());
-    for (name, (color, t)) in &names.looks {
+    o.pair(70, names.layers.looks.len());
+    for (name, (color, t)) in &names.layers.looks {
         o.pair(0, "LAYER");
         o.pair(2, name);
         o.pair(70, 0);
@@ -536,6 +476,7 @@ fn write_item(
 ) {
     let layer = names.layer_of(&item.layer);
     let (layer_color, layer_type) = names
+        .layers
         .looks
         .get(&layer)
         .copied()
@@ -630,7 +571,7 @@ fn write_item(
             head(o, "TEXT");
             o.point(10, *at);
             o.num(40, *height);
-            o.pair(1, dxf_text(text));
+            o.pair(1, text_value(text, true));
             if angle.abs() > 1e-9 {
                 o.num(50, angle.to_degrees());
             }
@@ -668,11 +609,7 @@ fn write_item(
         }
         // (R12 has no HATCH: what it is drawn with.)
         Prim::Hatch(h) => {
-            for prim in h.prims(drift_draft::page::HATCH_LIMIT) {
-                let part = drift_draft::page::Item {
-                    prim,
-                    ..item.clone()
-                };
+            for part in item.hatch_parts(h) {
                 write_item(o, &part, names, in_block, tol);
             }
         }
@@ -794,7 +731,7 @@ pub(crate) fn text_glyphs(texts: &[DxfText]) -> Vec<drift_core::RefPrim> {
 /// Millimetres per drawing unit from `$INSUNITS` (`None` for unitless files).
 pub(crate) fn unit_scale(code: i64) -> Option<f64> {
     Some(match code {
-        1 => 25.4,
+        1 => drift_core::units::MM_PER_INCH,
         2 => 304.8,
         4 => 1.0,
         5 => 10.0,

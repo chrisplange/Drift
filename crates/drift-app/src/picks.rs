@@ -238,32 +238,12 @@ fn segment_touches(a: Pos2, b: Pos2, r: Rect) -> bool {
     if r.contains(a) || r.contains(b) {
         return true;
     }
-    // Liang–Barsky: clip the segment to the box.
-    let d = b - a;
-    let (mut t0, mut t1) = (0.0f32, 1.0f32);
-    for (p, q) in [
-        (-d.x, a.x - r.min.x),
-        (d.x, r.max.x - a.x),
-        (-d.y, a.y - r.min.y),
-        (d.y, r.max.y - a.y),
-    ] {
-        if p == 0.0 {
-            if q < 0.0 {
-                return false;
-            }
-        } else {
-            let t = q / p;
-            if p < 0.0 {
-                t0 = t0.max(t);
-            } else {
-                t1 = t1.min(t);
-            }
-            if t0 > t1 {
-                return false;
-            }
-        }
-    }
-    true
+    let f = |p: Pos2| drift_core::DVec2::new(f64::from(p.x), f64::from(p.y));
+    let rect = drift_core::Bounds {
+        min: f(r.min),
+        max: f(r.max),
+    };
+    rect.clip_segment(f(a), f(b)).is_some()
 }
 
 impl Piece {

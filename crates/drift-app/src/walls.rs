@@ -36,7 +36,7 @@ pub struct Preset {
     pub mm: f64,
 }
 
-const INCH: f64 = 25.4;
+const INCH: f64 = drift_core::units::MM_PER_INCH;
 
 impl Editor {
     /// Who owns which entity among the walls (cached by document revision).
@@ -497,12 +497,10 @@ impl Editor {
             else {
                 continue;
             };
-            let (da, db) = (qa - pa, qb - pb);
-            let den = da.perp_dot(db);
-            if den.abs() <= 1e-9 * da.length() * db.length() {
+            let Some(x) = drift_geom::intersect::line_line(pa, qa - pa, pb, qb - pb) else {
                 continue;
-            }
-            let x = pa + da * ((pb - pa).perp_dot(db) / den);
+            };
+            let x = x.at;
             // (Only a corner where the ends are: not where the lines happen to cross far off.)
             let thick = |w: WallId| self.doc.wall(w).map_or(0.0, |w| w.thickness);
             let reach = thick(wa).max(thick(wb)) + drift_geom::walls::regen::snap(&self.doc);
@@ -904,16 +902,15 @@ impl Editor {
                 let (Some(da), Some(db)) = (da, db) else {
                     continue;
                 };
-                let den = da.perp_dot(db);
-                let x = if den.abs() <= 1e-9 {
+                let x = if let Some(x) = drift_geom::intersect::line_line(at_a, da, at_b, db) {
+                    x.at
+                } else {
                     // In line and facing each other: meet half way.
                     let off = (at_b - at_a).perp_dot(da).abs();
                     if off > snap.max(1e-6) || da.dot(db) >= 0.0 || (at_b - at_a).dot(da) < 0.0 {
                         continue;
                     }
                     (at_a + at_b) / 2.0
-                } else {
-                    at_a + da * ((at_b - at_a).perp_dot(db) / den)
                 };
                 // How far each end moves out (negative: back), never past its segment.
                 let (ta, tb) = ((x - at_a).dot(da), (x - at_b).dot(db));

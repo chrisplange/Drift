@@ -4968,11 +4968,7 @@ fn offsets_and_splits_of_ellipses_and_pen_curves_draw() {
     ed.offset(line, 5.0, v(40.0, 40.0)).unwrap();
     ed.offset(line, 4.0, v(40.0, 0.0)).unwrap();
     ed.split_at(ellipse, centre + v(30.0, 10.0)).unwrap();
-    let at = ed
-        .doc
-        .shape(arch)
-        .map(|s| crate::modify::point_at(&s, 0.4))
-        .unwrap();
+    let at = ed.doc.shape(arch).map(|s| s.point_at(0.4)).unwrap();
     ed.split_at(arch, at).unwrap();
     let fit = h.state().fit_bounds();
     h.state_mut().fit_target = Some(fit);

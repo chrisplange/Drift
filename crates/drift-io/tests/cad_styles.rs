@@ -152,7 +152,7 @@ fn a_block_on_two_layers_takes_each_copys_look_in_dwg_and_dxf_2018() {
 
 #[test]
 fn exploded_copies_take_their_own_look() {
-    let d = block_on_two_layers().exploded();
+    let d = block_on_two_layers().exploded().into_owned();
     let pens: Vec<Pen> = d.items.iter().map(|i| i.pen).collect();
     assert_eq!(pens.len(), 8);
     assert!(pens[..4].iter().all(|p| p.color == RED

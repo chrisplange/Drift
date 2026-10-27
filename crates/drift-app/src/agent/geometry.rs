@@ -239,8 +239,9 @@ impl Build<'_> {
                     let p0 = args::vec2_at(item, "start")?;
                     let p1 = args::vec2_at(item, "through")?;
                     let p2 = args::vec2_at(item, "end")?;
-                    let center =
-                        circumcenter(p0, p1, p2).ok_or("the three arc points are in a line")?;
+                    let center = drift_core::shape::circle_through(p0, p1, p2)
+                        .map(|(c, _)| c)
+                        .ok_or("the three arc points are in a line")?;
                     // Arcs run counter-clockwise: one drawn clockwise is the same arc from its end.
                     let ccw = (p1 - p0).perp_dot(p2 - p0) > 0.0;
                     let (from, to) = if ccw {
@@ -296,20 +297,6 @@ impl Build<'_> {
         }
         Ok(Value::Object(out))
     }
-}
-
-/// The centre of the circle through three points.
-fn circumcenter(a: DVec2, b: DVec2, c: DVec2) -> Option<DVec2> {
-    let d = 2.0 * (a.x * (b.y - c.y) + b.x * (c.y - a.y) + c.x * (a.y - b.y));
-    let size = (b - a).length().max((c - a).length());
-    if d.abs() <= 1e-12 * size * size {
-        return None;
-    }
-    let (a2, b2, c2) = (a.length_squared(), b.length_squared(), c.length_squared());
-    Some(DVec2::new(
-        (a2 * (b.y - c.y) + b2 * (c.y - a.y) + c2 * (a.y - b.y)) / d,
-        (a2 * (c.x - b.x) + b2 * (a.x - c.x) + c2 * (b.x - a.x)) / d,
-    ))
 }
 
 pub(super) fn add(s: &mut Session, a: &Value) -> Res {

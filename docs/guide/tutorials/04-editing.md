@@ -44,7 +44,7 @@ AutoCAD, Rhino or Vectorworks:
 | **Areas** | Empty closed areas (to measure or fill them), when **Pick an area only where it is filled or hatched** is off in **File → Drawing settings…**. |
 | **Blocks** | Copies of blocks, and groups as a whole. Off, a click on a grouped line picks just that line. |
 | **Text** | Sketch text. |
-| **Annotations** | Dimensions, notes, callouts, centre marks, ordinates, and section and elevation marks. |
+| **Annotations** | Dimensions, notes, centre marks, and section and elevation marks. |
 
 - **Alt-click** or **double-click** a toggle to pick only that kind.
 - **All** turns every toggle back on.
@@ -74,8 +74,8 @@ and shows where the annotations appear. What you do then acts on all of it:
 
 - **Delete** removes all of it, as one undo step.
 - **Move** (G, dragging, the arrow keys) and **Rotate** (R) take the text and annotations
-  along. A note keeps its leader's tip on the geometry it points at; its text moves. Callouts,
-  centre marks and ordinates follow their geometry, and dimensions always do.
+  along. A note keeps its leader's tip on the geometry it points at; its text moves. Centre
+  marks follow their geometry, and dimensions always do.
 - **Mirror**, **Shift+D** and **Ctrl+C / Ctrl+V** copy them with the geometry. Mirrored text
   still reads forwards, and a mirrored section mark looks the other way. A copied section or
   elevation mark is a new mark, not linked to the original's view.

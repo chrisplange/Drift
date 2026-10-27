@@ -8,7 +8,7 @@ use std::f64::consts::TAU;
 use std::sync::Arc;
 
 use bytemuck::{Pod, Zeroable};
-use drift_core::{DVec2, DofState, Emphasis, LineKind, LineType, Shape, SketchItem};
+use drift_core::{Bounds, DVec2, DofState, Emphasis, LineKind, LineType, Shape, SketchItem};
 
 use crate::{Camera, Palette};
 
@@ -373,7 +373,7 @@ const IMPERIAL_STEPS: [(f64, f64); 9] = [
 pub fn grid_info(camera: &Camera, imperial: bool) -> GridInfo {
     let min = MIN_GRID_SPACING_PT / camera.scale;
     if imperial {
-        const INCH: f64 = 25.4;
+        const INCH: f64 = drift_core::units::MM_PER_INCH;
         if let Some(&(minor, major)) = IMPERIAL_STEPS.iter().find(|(m, _)| m * INCH >= min) {
             return GridInfo {
                 minor: minor * INCH,
@@ -477,7 +477,7 @@ impl Builder<'_> {
         let weighted = if self.viewport.thin_lines {
             0.5 * ppp
         } else if item.weight > 0 {
-            (f64::from(item.weight) / 100.0 * 96.0 / 25.4).max(0.8) * ppp
+            (f64::from(item.weight) / 100.0 * 96.0 / drift_core::units::MM_PER_INCH).max(0.8) * ppp
         } else {
             0.8 * ppp
         };
@@ -799,32 +799,10 @@ pub fn clip_polygon(poly: &[DVec2], half: DVec2) -> Vec<DVec2> {
     out
 }
 
-/// Liang–Barsky clip of segment `a`→`b` against the box `[-half, half]`.
-/// Returns the parameter range that remains visible.
+/// Clip of segment `a`→`b` against the box `[-half, half]`: the parameter range that
+/// remains visible.
 fn clip_segment(a: DVec2, b: DVec2, half: DVec2) -> Option<(f64, f64)> {
-    let d = b - a;
-    let mut t0: f64 = 0.0;
-    let mut t1: f64 = 1.0;
-    for (p, q) in [
-        (-d.x, a.x + half.x),
-        (d.x, half.x - a.x),
-        (-d.y, a.y + half.y),
-        (d.y, half.y - a.y),
-    ] {
-        if p == 0.0 {
-            if q < 0.0 {
-                return None;
-            }
-        } else {
-            let t = q / p;
-            if p < 0.0 {
-                t0 = t0.max(t);
-            } else {
-                t1 = t1.min(t);
-            }
-        }
-    }
-    (t0 <= t1).then_some((t0, t1))
+    Bounds::from_center_half_size(DVec2::ZERO, half).clip_segment(a, b)
 }
 
 fn pattern(dash: [f64; 3], distance: f64) -> [f32; 4] {

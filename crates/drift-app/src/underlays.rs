@@ -165,15 +165,6 @@ impl Editor {
             .find(|c| c.id == id && c.key == key_of(u))
     }
 
-    /// The visible underlays' curves within `view`, faded towards the background.
-    /// The visible underlays' pictures, for the canvas.
-    pub fn underlay_images(&self) -> Vec<drift_render::CanvasImage> {
-        self.underlay_pictures()
-            .into_iter()
-            .map(|(_, i)| i)
-            .collect()
-    }
-
     /// The pictures of visible underlays, each with its underlay.
     pub fn underlay_pictures(&self) -> Vec<(UnderlayId, drift_render::CanvasImage)> {
         let mut out = Vec::new();
@@ -915,7 +906,7 @@ mod tests {
         let report = ed.import_svg_underlay("plan.svg", &art, 1.0).unwrap();
         let u = ed.doc.underlay(report.id).unwrap();
         let b = glyph_bounds(u);
-        let mm = 25.4 / 96.0;
+        let mm = drift_core::units::MM_PER_INCH / 96.0;
         assert!(b.min.distance(v(10.0, 20.0) * mm) < 0.5, "{b:?}");
         assert!(b.max.x > 30.0 * mm && b.max.y < 30.0 * mm, "{b:?}");
     }

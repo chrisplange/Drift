@@ -385,7 +385,8 @@ pub fn written_scale(s: &str) -> Option<f64> {
         None => s.split_once(':')?,
     };
     let n = if imperial {
-        written_length(real, 25.4)? / written_length(paper, 25.4)?
+        written_length(real, drift_core::units::MM_PER_INCH)?
+            / written_length(paper, drift_core::units::MM_PER_INCH)?
     } else {
         let number = |t: &str| t.trim().replace(',', "").parse::<f64>().ok();
         number(real)? / number(paper)?
@@ -705,16 +706,7 @@ fn fill_islands(subpaths: &[Subpath]) -> Vec<Vec<Vec<Shape>>> {
         .filter(|(shapes, _)| !shapes.is_empty())
         .collect();
     // How many other loops each one is inside.
-    let inside = |p: DVec2, poly: &[DVec2]| {
-        let mut odd = false;
-        for i in 0..poly.len() {
-            let (a, b) = (poly[i], poly[(i + 1) % poly.len()]);
-            if (a.y > p.y) != (b.y > p.y) && p.x < a.x + (p.y - a.y) / (b.y - a.y) * (b.x - a.x) {
-                odd = !odd;
-            }
-        }
-        odd
-    };
+    let inside = |p: DVec2, poly: &[DVec2]| drift_core::polygon::contains(poly, p);
     let probe = |poly: &[DVec2]| {
         // A point of the loop just off its first corner, along the way it goes.
         poly.first().copied().unwrap_or_default()
@@ -851,13 +843,7 @@ fn circular(p0: DVec2, c1: DVec2, c2: DVec2, p3: DVec2) -> Option<(DVec2, f64, f
         return None;
     }
     // The centre is on the normals at both ends.
-    let (n0, n1) = (t0.perp(), t1.perp());
-    let cross = n0.perp_dot(n1);
-    if cross.abs() < 1e-12 * n0.length() * n1.length() {
-        return None;
-    }
-    let s = (p3 - p0).perp_dot(n1) / cross;
-    let center = p0 + n0 * s;
+    let center = drift_geom::intersect::line_line(p0, t0.perp(), p3, t1.perp())?.at;
     let radius = center.distance(p0);
     if radius.is_nan() || radius <= 1e-9 || !radius.is_finite() {
         return None;

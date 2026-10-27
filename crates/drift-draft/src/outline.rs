@@ -473,13 +473,7 @@ pub fn contour_rings(contours: &[Vec<Shape>]) -> Vec<Vec<DVec2>> {
                         }
                         for k in 1..=8 {
                             let t = f64::from(k) / 8.0;
-                            let u = 1.0 - t;
-                            ring.push(
-                                p[0] * (u * u * u)
-                                    + p[1] * (3.0 * u * u * t)
-                                    + p[2] * (3.0 * u * t * t)
-                                    + p[3] * (t * t * t),
-                            );
+                            ring.push(drift_core::shape::bezier_point(&p, t));
                         }
                     }
                     _ => {}

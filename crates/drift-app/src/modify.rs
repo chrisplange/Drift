@@ -77,18 +77,9 @@ impl Area {
     }
 
     pub fn contains(&self, p: DVec2) -> bool {
-        self.loops.iter().any(|lp| {
-            // Crossings of a ray to +x: odd is inside.
-            let mut inside = false;
-            for i in 0..lp.len() {
-                let (a, b) = (lp[i], lp[(i + 1) % lp.len()]);
-                if (a.y > p.y) != (b.y > p.y) && p.x < a.x + (p.y - a.y) / (b.y - a.y) * (b.x - a.x)
-                {
-                    inside = !inside;
-                }
-            }
-            inside
-        })
+        self.loops
+            .iter()
+            .any(|lp| drift_core::polygon::contains(lp, p))
     }
 }
 
@@ -150,86 +141,13 @@ impl CuttingSet {
     }
 }
 
-/// The parameter of the point of `shape` nearest `p` (fraction along a line, angle from the
-/// start for arcs, angle from +x for circles).
-pub fn param_of(shape: &Shape, p: DVec2) -> f64 {
-    match *shape {
-        Shape::Line { a, b } => {
-            let d = b - a;
-            ((p - a).dot(d) / d.length_squared()).clamp(0.0, 1.0)
-        }
-        Shape::Circle { center, .. } => {
-            let r = p - center;
-            r.y.atan2(r.x).rem_euclid(TAU)
-        }
-        Shape::Arc {
-            center,
-            start,
-            sweep,
-            ..
-        } => {
-            let r = p - center;
-            let t = (r.y.atan2(r.x) - start).rem_euclid(TAU);
-            if t <= sweep {
-                t
-            } else if t - sweep < TAU - t {
-                sweep
-            } else {
-                0.0
-            }
-        }
-        Shape::Ellipse {
-            center,
-            major,
-            minor,
-            start,
-            sweep,
-        } => {
-            let t =
-                (drift_core::shape::ellipse_angle(center, major, minor, p) - start).rem_euclid(TAU);
-            if sweep >= TAU || t <= sweep {
-                t
-            } else if t - sweep < TAU - t {
-                sweep
-            } else {
-                0.0
-            }
-        }
-        Shape::Bezier { p: q } => drift_geom::nearest_on_bezier(&q, p).1,
-        Shape::Point(_) => 0.0,
-    }
-}
-
-/// The point at parameter `t` of a curve.
-pub fn point_at(shape: &Shape, t: f64) -> DVec2 {
-    match *shape {
-        Shape::Line { a, b } => a + (b - a) * t,
-        Shape::Circle { center, radius } => center + radius * DVec2::from_angle(t),
-        Shape::Arc {
-            center,
-            radius,
-            start,
-            ..
-        } => center + radius * DVec2::from_angle(start + t),
-        Shape::Ellipse {
-            center,
-            major,
-            minor,
-            start,
-            ..
-        } => drift_core::shape::ellipse_point(center, major, minor, start + t),
-        Shape::Bezier { p } => drift_core::shape::bezier_point(&p, t),
-        Shape::Point(p) => p,
-    }
-}
-
 /// The part of `shape` between parameters `t0` < `t1` (circles: counter-clockwise from `t0`
 /// to `t1`, which may wrap), for previews.
 pub fn piece(shape: &Shape, t0: f64, t1: f64) -> Shape {
     match *shape {
         Shape::Line { .. } => Shape::Line {
-            a: point_at(shape, t0),
-            b: point_at(shape, t1),
+            a: shape.point_at(t0),
+            b: shape.point_at(t1),
         },
         Shape::Circle { center, radius } => Shape::Arc {
             center,
@@ -403,41 +321,29 @@ enum Path {
     Circle(DVec2, f64),
 }
 
-/// Where two paths cross (touching counts once).
+/// Where two paths cross (touching counts once), by [`intersect`]'s rules.
 fn crossings(a: Path, b: Path) -> Vec<DVec2> {
-    fn line_circle(p: DVec2, d: DVec2, c: DVec2, r: f64) -> Vec<DVec2> {
-        let f = p + d * (c - p).dot(d);
-        let h2 = r * r - f.distance_squared(c);
-        if h2 < -1e-9 * r * r {
-            Vec::new()
-        } else if h2 <= 0.0 {
-            vec![f]
-        } else {
-            let h = h2.sqrt();
-            vec![f - d * h, f + d * h]
-        }
-    }
+    let size = |p: Path| match p {
+        Path::Line(p, _) => p.abs().max_element(),
+        Path::Circle(c, r) => c.abs().max_element() + r.abs(),
+    };
+    let tol = intersect::tolerance(size(a).max(size(b)));
     match (a, b) {
-        (Path::Line(p1, d1), Path::Line(p2, d2)) => {
-            let cross = d1.perp_dot(d2);
-            if cross.abs() < 1e-12 {
-                Vec::new()
-            } else {
-                vec![p1 + d1 * ((p2 - p1).perp_dot(d2) / cross)]
-            }
-        }
+        (Path::Line(p1, d1), Path::Line(p2, d2)) => intersect::line_line(p1, d1, p2, d2)
+            .map(|x| x.at)
+            .into_iter()
+            .collect(),
         (Path::Line(p, d), Path::Circle(c, r)) | (Path::Circle(c, r), Path::Line(p, d)) => {
-            line_circle(p, d, c, r)
+            intersect::line_circle(p, d, c, r, tol)
+                .into_iter()
+                .map(|h| h.0)
+                .collect()
         }
         (Path::Circle(c1, r1), Path::Circle(c2, r2)) => {
-            let d = c1.distance(c2);
-            if d < 1e-12 {
-                return Vec::new();
-            }
-            let u = (c2 - c1) / d;
-            let a = (r1 * r1 - r2 * r2 + d * d) / (2.0 * d);
-            // Where the circles cross is where the line through the chord meets the first.
-            line_circle(c1 + u * a, u.perp(), c1, r1)
+            intersect::circle_circle(c1, r1, c2, r2, tol)
+                .into_iter()
+                .map(|h| h.0)
+                .collect()
         }
     }
 }
@@ -576,7 +482,7 @@ impl Editor {
                 let tol = self.tol_for(shape) * 1e3;
                 // Curves may be split where others cross them: probe a few points.
                 [0.2, 0.5, 0.8].iter().any(|f| {
-                    let probe = point_at(shape, end * f);
+                    let probe = shape.point_at(end * f);
                     edges.iter().any(|e| drift_geom::distance(e, probe) <= tol)
                 })
             })
@@ -670,17 +576,8 @@ impl Editor {
     }
 
     /// The piece of curve `id` that trimming at `click` would remove: (start, end)
-    /// parameters, or `None` to remove the whole curve. Errors explain why it can't be
-    /// trimmed there.
-    pub fn trim_span(
-        &self,
-        id: EntityId,
-        click: DVec2,
-    ) -> Result<(Option<Cut>, Option<Cut>), EditError> {
-        self.trim_span_against(id, click, None)
-    }
-
-    /// [`trim_span`](Self::trim_span), cut by the curves of `against` only when given.
+    /// parameters, or `None` to remove the whole curve, cut by the curves of `against` only
+    /// when given. Errors explain why it can't be trimmed there.
     pub fn trim_span_against(
         &self,
         id: EntityId,
@@ -691,7 +588,7 @@ impl Editor {
             .curve_shape(id)
             .ok_or_else(|| invalid("pick a curve"))?;
         let cuts = self.cuts_against(id, against);
-        let tc = param_of(&shape, click);
+        let tc = drift_geom::param_of(&shape, click);
         let closed = match shape {
             Shape::Circle { .. } => true,
             Shape::Ellipse { sweep, .. } => sweep >= TAU,
@@ -717,12 +614,8 @@ impl Editor {
         Ok((lo, hi))
     }
 
-    /// The shape trimming at `click` would remove, for previews.
-    pub fn trim_preview(&self, id: EntityId, click: DVec2) -> Option<Shape> {
-        self.trim_preview_against(id, click, None)
-    }
-
-    /// [`trim_preview`](Self::trim_preview), cut by the curves of `against` only when given.
+    /// The shape trimming at `click` would remove, for previews, cut by the curves of
+    /// `against` only when given.
     pub fn trim_preview_against(
         &self,
         id: EntityId,
@@ -745,12 +638,14 @@ impl Editor {
 
     /// Remove the piece of curve `id` around `click` between the nearest cutting curves (the
     /// whole curve if nothing cuts it).
+    #[cfg(test)]
     pub fn trim_at(&mut self, id: EntityId, click: DVec2) -> Result<(), EditError> {
         self.trim_at_against(id, click, None)
     }
 
-    /// [`trim_at`](Self::trim_at), cut by the curves of `against` only when given. When the
-    /// trimmed curve is one of them, the piece the trim cuts off its far side is too.
+    /// Remove the piece of curve `id` around `click` between the nearest cutting curves (the
+    /// whole curve if nothing cuts it), cut by the curves of `against` only when given. When
+    /// the trimmed curve is one of them, the piece the trim cuts off its far side is too.
     pub fn trim_at_against(
         &mut self,
         id: EntityId,
@@ -1177,7 +1072,7 @@ impl Editor {
             stops.push(end);
             stops.windows(2).map(|w| (w[0] + w[1]) / 2.0).collect()
         };
-        middles.into_iter().map(|t| point_at(&shape, t)).find(|&m| {
+        middles.into_iter().map(|t| shape.point_at(t)).find(|&m| {
             let along = outline.iter().any(|o| drift_geom::distance(o, m) <= tol);
             !along
                 && area.contains(m) == inside
@@ -1295,17 +1190,8 @@ impl Editor {
     }
 
     /// Where extending the end of curve `id` nearest `click` would reach: (end point, the
-    /// hit, the curve it meets, an existing end point there).
-    pub fn extend_target(
-        &self,
-        id: EntityId,
-        click: DVec2,
-    ) -> Result<(EntityId, DVec2, EntityId, Option<EntityId>), EditError> {
-        self.extend_target_against(id, click, None)
-    }
-
-    /// [`extend_target`](Self::extend_target), reaching only the curves of `against` when
-    /// given.
+    /// hit, the curve it meets, an existing end point there), reaching only the curves of
+    /// `against` when given.
     pub fn extend_target_against(
         &self,
         id: EntityId,
@@ -1380,11 +1266,13 @@ impl Editor {
     }
 
     /// Extend the end of curve `id` nearest `click` to the next curve it would meet.
+    #[cfg(test)]
     pub fn extend_at(&mut self, id: EntityId, click: DVec2) -> Result<(), EditError> {
         self.extend_at_against(id, click, None)
     }
 
-    /// [`extend_at`](Self::extend_at), reaching only the curves of `against` when given.
+    /// Extend the end of curve `id` nearest `click` to the next curve it would meet, reaching
+    /// only the curves of `against` when given.
     pub fn extend_at_against(
         &mut self,
         id: EntityId,
@@ -1426,8 +1314,8 @@ impl Editor {
             .curve_shape(id)
             .ok_or_else(|| invalid("pick a curve"))?;
         let kind = self.doc.get(id).map(|e| e.kind).expect("checked");
-        let t = param_of(&shape, at);
-        let p = point_at(&shape, t);
+        let t = drift_geom::param_of(&shape, at);
+        let p = shape.point_at(t);
         let tol = self.tol_for(&shape);
         let near_end = kind.ends().into_iter().flatten().any(|e| {
             self.doc
@@ -1470,7 +1358,7 @@ impl Editor {
                 }
                 EntityKind::Circle { center, .. } => {
                     // Two half circles on the one centre.
-                    let far = self.doc.add_point(point_at(&shape, t + TAU / 2.0));
+                    let far = self.doc.add_point(shape.point_at(t + TAU / 2.0));
                     self.doc
                         .set_entity_kind(
                             id,
@@ -1491,7 +1379,7 @@ impl Editor {
                     minor,
                 } => {
                     // Two halves sharing the centre and axes: one ellipse still.
-                    let far = self.doc.add_point(point_at(&shape, t + TAU / 2.0));
+                    let far = self.doc.add_point(shape.point_at(t + TAU / 2.0));
                     self.doc
                         .set_entity_kind(
                             id,
@@ -1627,8 +1515,11 @@ impl Editor {
             } if start != last && (start == end || last == end) => {
                 let (c, s, e) = (pos(center)?, pos(start)?, pos(last)?);
                 let radius = s.distance(c);
-                let angle = |q: DVec2| (q.y - c.y).atan2(q.x - c.x);
-                let sweep = (angle(e) - angle(s)).rem_euclid(TAU);
+                // `arc_shape` makes a zero sweep a whole turn; here it is no arm.
+                let sweep = match arc_shape(c, s, e) {
+                    Shape::Arc { sweep, .. } if sweep < TAU => sweep,
+                    _ => 0.0,
+                };
                 (radius > 0.0 && sweep > 0.0).then_some(Arm {
                     // Stored counter-clockwise from its start.
                     run: Run::Circle {
@@ -1735,14 +1626,10 @@ impl Editor {
             return None;
         }
         let (u1, u2) = ((far1 - t1) / l1, (far2 - t2) / l2);
-        let cross = u1.perp_dot(u2);
-        if cross.abs() < 1e-9 {
-            return None;
-        }
         // Where the two lines meet, behind both ends of the cut.
-        let k = (t2 - t1).perp_dot(u2) / cross;
-        let corner = t1 + u1 * k;
-        let legs = [-k, (t2 - corner).dot(u2)];
+        let x = intersect::line_line(t1, u1, t2, u2)?;
+        let corner = x.at;
+        let legs = [-x.t[0], -x.t[1]];
         if legs[0] <= 1e-9 || legs[1] <= 1e-9 {
             return None;
         }
@@ -2341,9 +2228,9 @@ impl Editor {
             }
             Some((shape @ (Shape::Ellipse { .. } | Shape::Bezier { .. }), forward)) => {
                 // Which side of the curve's direction at its nearest point.
-                let t = param_of(&shape, side);
-                let p = point_at(&shape, t);
-                let along = point_at(&shape, t + 1e-6) - point_at(&shape, t - 1e-6);
+                let t = drift_geom::param_of(&shape, side);
+                let p = shape.point_at(t);
+                let along = shape.point_at(t + 1e-6) - shape.point_at(t - 1e-6);
                 let left = along.perp_dot(side - p) >= 0.0;
                 match shape {
                     // A whole ellipse: outward is positive (and to the right, anticlockwise).
@@ -2766,7 +2653,7 @@ fn piece_end(shape: &Shape, forward: bool, last: bool) -> DVec2 {
     let (s, e) = match *shape {
         Shape::Line { a, b } => (a, b),
         Shape::Arc { .. } | Shape::Ellipse { .. } => {
-            (point_at(shape, 0.0), point_at(shape, sweep_of(shape)))
+            (shape.point_at(0.0), shape.point_at(sweep_of(shape)))
         }
         Shape::Bezier { p } => (p[0], p[3]),
         Shape::Circle { center, radius } => {
@@ -3532,7 +3419,7 @@ mod tests {
         let Some(shape) = ed.doc.shape(half) else {
             panic!()
         };
-        let at = point_at(&shape, TAU / 8.0);
+        let at = shape.point_at(TAU / 8.0);
         ed.split_at(half, at).unwrap();
         let sweeps: Vec<f64> = ed
             .doc

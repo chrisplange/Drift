@@ -41,7 +41,7 @@ use drift_core::{
 };
 
 /// Millimetres in an inch.
-pub const INCH: f64 = 25.4;
+pub const INCH: f64 = drift_core::units::MM_PER_INCH;
 
 /// A category of the library, as the Blocks panel lists them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]

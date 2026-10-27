@@ -2,18 +2,6 @@
 
 use super::*;
 
-/// Centre of the circle through three points, or `None` if they are (nearly) collinear.
-/// Computed relative to `a` to keep precision far from the origin.
-pub(super) fn circumcenter(a: DVec2, b: DVec2, c: DVec2) -> Option<DVec2> {
-    let (b, c) = (b - a, c - a);
-    let d = 2.0 * b.perp_dot(c);
-    if d.abs() <= 1e-12 * b.length() * c.length() || d == 0.0 {
-        return None;
-    }
-    let (bb, cc) = (b.length_squared(), c.length_squared());
-    Some(a + DVec2::new(c.y * bb - b.y * cc, b.x * cc - c.x * bb) / d)
-}
-
 /// Order a start/end pair counter-clockwise for an arc from `s` to `e` that passes `m`'s side
 /// of the chord: (centre, first, last), and whether they were swapped.
 pub(super) fn order_through(
@@ -79,7 +67,12 @@ impl ThreePointArcTool {
                 let center = mid - n * h;
                 Some(order_through(center, s, e, mid + n * (r - h)))
             }
-            None => Some(order_through(circumcenter(s, e, m)?, s, e, m)),
+            None => Some(order_through(
+                drift_core::shape::circle_through(s, e, m)?.0,
+                s,
+                e,
+                m,
+            )),
         }
     }
 

@@ -37,7 +37,7 @@ impl Fonts {
     }
 }
 
-const PT_PER_MM: f64 = 72.0 / 25.4;
+const PT_PER_MM: f64 = 72.0 / drift_core::units::MM_PER_INCH;
 
 fn n(v: f64) -> String {
     let s = format!("{v:.3}");
@@ -311,11 +311,7 @@ fn item_ops(
         }
         Prim::Insert { .. } => {}
         Prim::Hatch(h) => {
-            for prim in h.prims(drift_draft::page::HATCH_LIMIT) {
-                let part = Item {
-                    prim,
-                    ..item.clone()
-                };
+            for part in item.hatch_parts(h) {
                 item_ops(out, text, &part, lts, None);
             }
         }

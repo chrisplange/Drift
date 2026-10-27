@@ -1689,7 +1689,11 @@ impl<'a> Reader<'a> {
                     && !solid
                     && let Some(known) = drift_draft::find(&pattern)
                 {
-                    let unit = if self.imperial { 25.4 } else { 1.0 };
+                    let unit = if self.imperial {
+                        drift_core::units::MM_PER_INCH
+                    } else {
+                        1.0
+                    };
                     definition = known
                         .lines
                         .iter()
@@ -2347,7 +2351,11 @@ pub fn read_at(text: &str, default_mm_per_unit: f64, drawn_at: f64) -> Result<Dx
                         record,
                         paper: size,
                         margin: DVec2::new(plot.f(40).unwrap_or(0.0), plot.f(41).unwrap_or(0.0)),
-                        unit: if plot.int(72) == Some(0) { 25.4 } else { 1.0 },
+                        unit: if plot.int(72) == Some(0) {
+                            drift_core::units::MM_PER_INCH
+                        } else {
+                            1.0
+                        },
                         order: own.int(71).unwrap_or(0),
                     });
                 }
@@ -2676,13 +2684,7 @@ fn interior(hatch: &DxfHatch) -> Option<(DVec2, usize)> {
             points
         })
         .collect();
-    let area = |p: &[DVec2]| -> f64 {
-        (0..p.len())
-            .map(|i| p[i].perp_dot(p[(i + 1) % p.len()]))
-            .sum::<f64>()
-            .abs()
-            / 2.0
-    };
+    let area = |p: &[DVec2]| drift_core::polygon::area(p).abs();
     let outer =
         (0..polygons.len()).max_by(|a, b| area(&polygons[*a]).total_cmp(&area(&polygons[*b])))?;
     // Crossings of a horizontal line with every loop: inside is between odd and even ones.

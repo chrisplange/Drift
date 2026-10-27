@@ -191,24 +191,8 @@ impl Loop {
 
     /// Whether the loop winds round `p`.
     pub fn contains(&self, p: DVec2) -> bool {
-        winding(&self.polygon(0.02), p) != 0
+        drift_core::polygon::winding(&self.polygon(0.02), p) != 0
     }
-}
-
-/// Winding number of a polygon around `p`.
-fn winding(poly: &[DVec2], p: DVec2) -> i32 {
-    let mut w = 0;
-    for i in 0..poly.len() {
-        let (a, b) = (poly[i], poly[(i + 1) % poly.len()]);
-        if a.y <= p.y {
-            if b.y > p.y && (b - a).perp_dot(p - a) > 0.0 {
-                w += 1;
-            }
-        } else if b.y <= p.y && (b - a).perp_dot(p - a) < 0.0 {
-            w -= 1;
-        }
-    }
-    w
 }
 
 /// A closed region: an outer boundary (counter-clockwise) and holes (clockwise).
@@ -381,17 +365,10 @@ impl RegionTolerance {
 /// order. Neither depends on the order the points come in. Returns the vertices and each
 /// point's vertex.
 fn snap_points(points: &[DVec2], snap: f64) -> (Vec<DVec2>, Vec<usize>) {
-    fn root(parent: &mut [usize], mut i: usize) -> usize {
-        while parent[i] != i {
-            parent[i] = parent[parent[i]];
-            i = parent[i];
-        }
-        i
-    }
     let n = points.len();
     let mut order: Vec<usize> = (0..n).collect();
     order.sort_by(|&a, &b| by_position(points[a], points[b]));
-    let mut parent: Vec<usize> = (0..n).collect();
+    let mut parent = drift_core::polygon::UnionFind::new(n);
     // Cells as large as the snap distance: a point's neighbours are in its own cell or the
     // eight around it.
     let cell = snap.max(f64::MIN_POSITIVE);
@@ -405,8 +382,7 @@ fn snap_points(points: &[DVec2], snap: f64) -> (Vec<DVec2>, Vec<usize>) {
             for dy in -1..=1 {
                 for &j in grid.get(&(kx + dx, ky + dy)).into_iter().flatten() {
                     if points[j].distance(p) <= snap {
-                        let (ri, rj) = (root(&mut parent, i), root(&mut parent, j));
-                        parent[ri.max(rj)] = ri.min(rj);
+                        parent.join(i, j);
                     }
                 }
             }
@@ -417,7 +393,7 @@ fn snap_points(points: &[DVec2], snap: f64) -> (Vec<DVec2>, Vec<usize>) {
     let mut verts = Vec::new();
     let mut vertex = vec![0; n];
     for &i in &order {
-        let r = root(&mut parent, i);
+        let r = parent.find(i);
         if id_of_root[r] == usize::MAX {
             id_of_root[r] = verts.len();
             verts.push(points[i]);

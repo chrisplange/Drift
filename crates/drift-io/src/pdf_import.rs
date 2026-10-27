@@ -47,32 +47,8 @@ const MAX_SEGMENTS: usize = 1_000_000;
 /// Form XObjects nest at most this deep.
 const MAX_DEPTH: usize = 12;
 
-/// An affine transform `[a b c d e f]`, as in PDF: x' = a x + c y + e, y' = b x + d y + f.
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct Matrix([f64; 6]);
-
-impl Matrix {
-    const IDENTITY: Matrix = Matrix([1.0, 0.0, 0.0, 1.0, 0.0, 0.0]);
-
-    fn apply(&self, p: DVec2) -> DVec2 {
-        let [a, b, c, d, e, f] = self.0;
-        DVec2::new(a * p.x + c * p.y + e, b * p.x + d * p.y + f)
-    }
-
-    /// `self` applied first, then `then`.
-    fn then(&self, then: &Matrix) -> Matrix {
-        let [a, b, c, d, e, f] = self.0;
-        let [a2, b2, c2, d2, e2, f2] = then.0;
-        Matrix([
-            a * a2 + b * c2,
-            a * b2 + b * d2,
-            c * a2 + d * c2,
-            c * b2 + d * d2,
-            e * a2 + f * c2 + e2,
-            e * b2 + f * d2 + f2,
-        ])
-    }
-}
+/// An affine transform `[a b c d e f]`, as in PDF.
+use drift_core::Affine2 as Matrix;
 
 fn num(o: &Object) -> Option<f64> {
     match o {
@@ -1883,10 +1859,7 @@ fn flatten_cubic(p0: DVec2, p1: DVec2, p2: DVec2, p3: DVec2, out: &mut Vec<DVec2
     let n = (span.sqrt() * 2.0).ceil().clamp(2.0, 64.0) as usize;
     for i in 1..=n {
         let t = i as f64 / n as f64;
-        let u = 1.0 - t;
-        out.push(
-            p0 * (u * u * u) + p1 * (3.0 * u * u * t) + p2 * (3.0 * u * t * t) + p3 * (t * t * t),
-        );
+        out.push(drift_core::shape::bezier_point(&[p0, p1, p2, p3], t));
     }
 }
 

@@ -1,10 +1,10 @@
 //! Example documents.
 
-use std::f64::consts::{FRAC_PI_2, FRAC_PI_4, TAU};
+use std::f64::consts::{FRAC_PI_2, FRAC_PI_4};
 
 use glam::DVec2;
 
-use crate::{Constraint, Document, LineKind, Shape, SketchItem};
+use crate::{Constraint, Document, LineKind, SketchItem};
 
 /// A 120 × 80 mm mounting plate with filleted corners, a central bore, a bolt circle and a
 /// slot, fully defined by relations and dimensions (tangent fillets, symmetric bolt holes, a
@@ -341,29 +341,6 @@ pub fn mounting_plate() -> Document {
         doc.set_placement(id, offset).expect("label on a dimension");
     }
     doc
-}
-
-/// A tiny feature a kilometre from the origin, for checking precision at large coordinates.
-pub fn far_feature() -> Vec<SketchItem> {
-    let far = DVec2::new(1.0e6, 1.0e6);
-    vec![
-        SketchItem::new(Shape::Circle {
-            center: far,
-            radius: 0.5,
-        }),
-        SketchItem::new(Shape::Arc {
-            center: far,
-            radius: 0.25,
-            start: 0.0,
-            sweep: TAU * 0.75,
-        }),
-        SketchItem::new(Shape::Line {
-            a: far - DVec2::new(0.75, 0.0),
-            b: far + DVec2::new(0.75, 0.0),
-        })
-        .with_kind(LineKind::Center),
-        SketchItem::new(Shape::Point(far)),
-    ]
 }
 
 /// Plain shapes of a document, for rendering without interaction state.

@@ -517,16 +517,3 @@ pub fn write_symbol(
     }
     report
 }
-
-/// The opening ids a set of generated keys names (its jambs' pieces), for the walls' own
-/// bookkeeping.
-pub fn openings_cutting(
-    keys: impl IntoIterator<Item = drift_core::FaceKey>,
-) -> BTreeSet<OpeningId> {
-    keys.into_iter()
-        .filter_map(|k| match (k.part, k.from) {
-            (Part::Jamb, Station::Jamb(o, _)) => Some(o),
-            _ => None,
-        })
-        .collect()
-}

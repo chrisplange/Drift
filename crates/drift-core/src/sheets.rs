@@ -50,7 +50,7 @@ impl PaperSize {
 
     /// The long and short sides in mm.
     pub fn sides(self) -> (f64, f64) {
-        const IN: f64 = 25.4;
+        const IN: f64 = crate::units::MM_PER_INCH;
         match self {
             PaperSize::A4 => (297.0, 210.0),
             PaperSize::A3 => (420.0, 297.0),

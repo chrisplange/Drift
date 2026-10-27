@@ -1176,6 +1176,7 @@ dependencies = [
  "drift-render",
  "drift-solver",
  "eframe",
+ "egui-wgpu",
  "egui_kittest",
  "glam",
  "log",
@@ -1192,6 +1193,7 @@ dependencies = [
  "tiny-skia",
  "ureq",
  "web-time",
+ "wgpu",
 ]
 
 [[package]]
@@ -1275,7 +1277,6 @@ version = "0.1.0-beta.1.5"
 dependencies = [
  "bytemuck",
  "drift-core",
- "glam",
  "naga",
  "png",
  "pollster 1.0.1",

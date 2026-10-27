@@ -116,7 +116,7 @@ pub struct Underlay {
 }
 
 /// Sketch units (mm) per PDF point.
-pub const MM_PER_POINT: f64 = 25.4 / 72.0;
+pub const MM_PER_POINT: f64 = crate::units::MM_PER_INCH / 72.0;
 
 impl Underlay {
     pub fn new(name: impl Into<String>, source: impl Into<String>, prims: Vec<RefPrim>) -> Self {

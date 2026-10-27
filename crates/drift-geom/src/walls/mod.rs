@@ -79,7 +79,7 @@ impl Seg {
     /// The arc through three points, from `a` to `b` through `through` (None if they are in
     /// a line).
     pub fn arc_through(a: DVec2, through: DVec2, b: DVec2) -> Option<Seg> {
-        let (center, radius) = circle_through(a, through, b)?;
+        let (center, radius) = drift_core::shape::circle_through(a, through, b)?;
         let ccw = (through - a).perp_dot(b - through) > 0.0;
         Some(Seg::Arc {
             center,
@@ -97,12 +97,11 @@ impl Seg {
             Seg::Arc {
                 center, a, b, ccw, ..
             } => {
-                let (sa, sb) = (angle(a - center), angle(b - center));
-                let mut s = if ccw { sb - sa } else { sa - sb }.rem_euclid(TAU);
-                if s <= 0.0 {
-                    s = TAU;
+                let (s, e) = if ccw { (a, b) } else { (b, a) };
+                match drift_core::arc_shape(center, s, e) {
+                    Shape::Arc { sweep, .. } => sweep,
+                    _ => 0.0,
                 }
-                s
             }
         }
     }
@@ -201,16 +200,15 @@ impl Seg {
                 ccw,
             } => {
                 let (s, e) = if ccw { (a, b) } else { (b, a) };
-                let start = angle(s - center);
-                let mut sweep = (angle(e - center) - start).rem_euclid(TAU);
-                if sweep <= 0.0 {
-                    sweep = TAU;
-                }
-                Shape::Arc {
-                    center,
-                    radius,
-                    start,
-                    sweep,
+                // The stored radius, not the start's distance (they can differ by an ulp).
+                match drift_core::arc_shape(center, s, e) {
+                    Shape::Arc { start, sweep, .. } => Shape::Arc {
+                        center,
+                        radius,
+                        start,
+                        sweep,
+                    },
+                    other => other,
                 }
             }
         }
@@ -225,20 +223,6 @@ fn angle(v: DVec2) -> f64 {
     v.y.atan2(v.x)
 }
 
-/// The circle through three points: centre and radius.
-pub fn circle_through(a: DVec2, b: DVec2, c: DVec2) -> Option<(DVec2, f64)> {
-    let d = 2.0 * (a.x * (b.y - c.y) + b.x * (c.y - a.y) + c.x * (a.y - b.y));
-    if d.abs() < 1e-12 * (1.0 + a.length_squared() + b.length_squared() + c.length_squared()) {
-        return None;
-    }
-    let (a2, b2, c2) = (a.length_squared(), b.length_squared(), c.length_squared());
-    let center = DVec2::new(
-        (a2 * (b.y - c.y) + b2 * (c.y - a.y) + c2 * (a.y - b.y)) / d,
-        (a2 * (c.x - b.x) + b2 * (a.x - c.x) + c2 * (b.x - a.x)) / d,
-    );
-    Some((center, center.distance(a)))
-}
-
 /// A face as the whole line or circle it lies on.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Curve {
@@ -247,29 +231,34 @@ enum Curve {
 }
 
 impl Curve {
-    /// Where two faces cross (none for parallel lines or concentric circles).
+    /// Where two faces cross (none for parallel lines or concentric circles; a touch counts
+    /// once). The rules are [`crate::intersect`]'s.
     fn cross(&self, other: &Curve) -> Vec<DVec2> {
+        use crate::intersect::{circle_circle, line_circle, line_line, tolerance};
+        let tol = tolerance(self.scale().max(other.scale()));
         match (*self, *other) {
             (Curve::Line { p, d }, Curve::Line { p: q, d: e }) => {
-                let den = d.perp_dot(e);
-                if den.abs() <= 1e-12 {
-                    return Vec::new();
-                }
-                vec![p + d * ((q - p).perp_dot(e) / den)]
+                line_line(p, d, q, e).map(|x| x.at).into_iter().collect()
             }
             (Curve::Line { p, d }, Curve::Circle { c, r })
-            | (Curve::Circle { c, r }, Curve::Line { p, d }) => line_circle(p, d, c, r),
+            | (Curve::Circle { c, r }, Curve::Line { p, d }) => line_circle(p, d, c, r, tol)
+                .into_iter()
+                .map(|h| h.0)
+                .collect(),
             (Curve::Circle { c: c1, r: r1 }, Curve::Circle { c: c2, r: r2 }) => {
-                let dist = c1.distance(c2);
-                if dist <= 1e-12 * (1.0 + r1 + r2) || dist > r1 + r2 || dist < (r1 - r2).abs() {
-                    return Vec::new();
-                }
-                let x = (dist * dist + r1 * r1 - r2 * r2) / (2.0 * dist);
-                let h = (r1 * r1 - x * x).max(0.0).sqrt();
-                let u = (c2 - c1) / dist;
-                let m = c1 + u * x;
-                vec![m + u.perp() * h, m - u.perp() * h]
+                circle_circle(c1, r1, c2, r2, tol)
+                    .into_iter()
+                    .map(|h| h.0)
+                    .collect()
             }
+        }
+    }
+
+    /// The size of the coordinates it involves, for tolerances.
+    fn scale(&self) -> f64 {
+        match *self {
+            Curve::Line { p, .. } => p.abs().max_element(),
+            Curve::Circle { c, r } => c.abs().max_element() + r.abs(),
         }
     }
 
@@ -289,19 +278,6 @@ impl Curve {
             },
         }
     }
-}
-
-/// Where the line through `p` along unit `d` crosses the circle.
-fn line_circle(p: DVec2, d: DVec2, c: DVec2, r: f64) -> Vec<DVec2> {
-    let f = p - c;
-    let b = f.dot(d);
-    let cc = f.dot(f) - r * r;
-    let disc = b * b - cc;
-    if disc < 0.0 {
-        return Vec::new();
-    }
-    let s = disc.sqrt();
-    vec![p + d * (-b - s), p + d * (-b + s)]
 }
 
 fn nearest(points: Vec<DVec2>, to: DVec2) -> Option<DVec2> {
@@ -430,11 +406,9 @@ impl Generated {
             None => Edge::Line { a, b },
             Some((c, ccw)) => {
                 let c = self.point(c)?;
-                let start = angle(a - c);
-                let mut sweep = (angle(b - c) - start).rem_euclid(TAU);
-                if sweep <= 0.0 {
-                    sweep = TAU;
-                }
+                let Shape::Arc { start, sweep, .. } = drift_core::arc_shape(c, a, b) else {
+                    return None;
+                };
                 Edge::Arc {
                     center: c,
                     radius: a.distance(c),

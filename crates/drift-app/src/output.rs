@@ -10,7 +10,9 @@ use drift_core::{
     View, Viewport,
 };
 use drift_draft::Placement;
-use drift_draft::page::{Align, CAP_HEIGHT, Drawing, HatchPrim, Item, LayerInfo, Pen, Prim};
+use drift_draft::page::{
+    Align, CAP_HEIGHT, Drawing, HATCH_LIMIT, HatchPrim, Item, LayerInfo, Pen, Prim,
+};
 use drift_render::Camera;
 use eframe::egui::{self, Color32, Pos2};
 
@@ -27,8 +29,6 @@ const THIN: f64 = 0.18;
 const HAIRLINE: f64 = 0.13;
 /// Construction geometry on paper, as on the canvas: a light grey.
 const CONSTRUCTION_GREY: Rgb = Rgb([0x8e, 0x9a, 0xb0]);
-/// Most hatch segments per fill in an export.
-const HATCH_LIMIT: usize = 400_000;
 
 /// No layers left out.
 static ALL_LAYERS: BTreeSet<LayerId> = BTreeSet::new();
@@ -974,6 +974,17 @@ pub fn model_drawing(
     patterns: &PatternLibrary,
     painter: &egui::Painter,
 ) -> Drawing {
+    full_size(ed, patterns, painter, false)
+}
+
+/// Model space at full size, as [`model_drawing`]; for `cad` (DWG and DXF R2018) with fills
+/// and hatches kept as areas and blocks' fills in their blocks.
+fn full_size(
+    ed: &mut Editor,
+    patterns: &PatternLibrary,
+    painter: &egui::Painter,
+    cad: bool,
+) -> Drawing {
     let n = ed.doc.draft_style().scale;
     let mut d = Drawing::new(DVec2::ZERO);
     d.line_type_scale = n;
@@ -984,7 +995,7 @@ pub fn model_drawing(
         n,
         clip: None,
         inserts: true,
-        cad: false,
+        cad,
         dimensions: true,
         notes: true,
         construction: false,
@@ -1074,30 +1085,7 @@ pub fn cad_file(
 /// but with fills and hatches kept as areas and blocks' fills in their blocks.
 #[cfg(all(feature = "dwg", not(feature = "demo")))]
 pub fn cad_drawing(ed: &mut Editor, patterns: &PatternLibrary, painter: &egui::Painter) -> Drawing {
-    let n = ed.doc.draft_style().scale;
-    let mut d = Drawing::new(DVec2::ZERO);
-    d.line_type_scale = n;
-    let space = Space {
-        world: DVec2::ZERO,
-        page: DVec2::ZERO,
-        k: 1.0,
-        n,
-        clip: None,
-        inserts: true,
-        cad: true,
-        dimensions: true,
-        notes: true,
-        construction: false,
-        hidden: &ALL_LAYERS,
-        view: None,
-        only: None,
-    };
-    view(ed, patterns, painter, &space, &mut d);
-    let b = d.bounds();
-    if !b.is_empty() {
-        d.size = b.max - b.min;
-    }
-    d
+    full_size(ed, patterns, painter, true)
 }
 
 /// The margin (mm) round a model export's page.
@@ -1244,20 +1232,6 @@ pub fn sheet_view(b: Bounds, sheet: &Sheet, imperial: bool) -> (View, Viewport) 
     )
 }
 
-/// The crop of a new view of `b` (world mm) at 1 : `scale`: `b` with a margin, no bigger
-/// than will fit on `sheet`.
-pub fn view_crop(b: Bounds, sheet: &Sheet, scale: f64) -> Bounds {
-    let area = drift_draft::sheet::view_area(sheet);
-    let size = (b.size() / scale + DVec2::splat(10.0))
-        .max(DVec2::splat(20.0))
-        .min(area.size())
-        * scale;
-    Bounds {
-        min: b.center() - size * 0.5,
-        max: b.center() + size * 0.5,
-    }
-}
-
 /// Where on `sheet` a frame of `size` (paper mm) goes, among the views already there
 /// (`placed`): to the right of them, top-aligned with the drawing area, if it fits, else in
 /// the middle.
@@ -1288,10 +1262,11 @@ pub fn paint_drawing(
     to_screen: impl Fn(DVec2) -> Pos2,
     px: f32,
 ) {
-    let d = &d.exploded().without_hatches();
+    let d = &d.exploded();
     // A painter per window the items are seen through (kept while the window is the same).
     let mut window: Option<(Bounds, egui::Painter)> = None;
-    for it in &d.items {
+    for it in drift_draft::page::without_hatches(&d.items) {
+        let it = &*it;
         if let Some(c) = it.clip
             && window.as_ref().is_none_or(|(w, _)| *w != c)
         {

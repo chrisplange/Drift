@@ -225,71 +225,75 @@ impl DriftApp {
                 .weak(),
             );
         }
-        theme::section(ui, "Tolerance");
-        let kinds = [
-            Tolerance::None,
-            Tolerance::Symmetric(0.1),
-            Tolerance::Deviation {
-                upper: 0.1,
-                lower: 0.0,
-            },
-            Tolerance::Limits {
-                upper: 0.1,
-                lower: 0.1,
-            },
-            Tolerance::Fit("H7".into()),
-        ];
-        egui::ComboBox::from_id_salt("tolerance_kind")
-            .selected_text(note.tolerance.label())
-            .width(ui.available_width() - 8.0)
-            .show_ui(ui, |ui| {
-                for k in kinds {
-                    let same =
-                        std::mem::discriminant(&k) == std::mem::discriminant(&note.tolerance);
-                    if ui.selectable_label(same, k.label()).clicked() && !same {
-                        note.tolerance = k;
+        // Tolerances are kept out of the way until a dimension has one (set by a script, an
+        // import or an older build).
+        if !matches!(before.tolerance, Tolerance::None) {
+            theme::section(ui, "Tolerance");
+            let kinds = [
+                Tolerance::None,
+                Tolerance::Symmetric(0.1),
+                Tolerance::Deviation {
+                    upper: 0.1,
+                    lower: 0.0,
+                },
+                Tolerance::Limits {
+                    upper: 0.1,
+                    lower: 0.1,
+                },
+                Tolerance::Fit("H7".into()),
+            ];
+            egui::ComboBox::from_id_salt("tolerance_kind")
+                .selected_text(note.tolerance.label())
+                .width(ui.available_width() - 8.0)
+                .show_ui(ui, |ui| {
+                    for k in kinds {
+                        let same =
+                            std::mem::discriminant(&k) == std::mem::discriminant(&note.tolerance);
+                        if ui.selectable_label(same, k.label()).clicked() && !same {
+                            note.tolerance = k;
+                        }
                     }
-                }
-            });
-        let units = self.editor.doc.units();
-        // Tolerances are edited in the display unit (degrees for angles).
-        let scale = if angle {
-            1.0
-        } else {
-            units.length.mm_per_unit()
-        };
-        let unit = if angle { "°" } else { units.length.symbol() };
-        let field = |ui: &mut egui::Ui, label: &str, v: &mut f64| {
-            theme::row(ui, label, |ui| {
-                let mut shown = *v / scale;
-                if ui
-                    .add(
-                        egui::DragValue::new(&mut shown)
-                            .speed(0.001)
-                            .max_decimals(4)
-                            .suffix(format!(" {unit}")),
-                    )
-                    .changed()
-                {
-                    *v = shown * scale;
-                }
-            });
-        };
-        match &mut note.tolerance {
-            Tolerance::None => {}
-            Tolerance::Symmetric(t) => field(ui, "±", t),
-            Tolerance::Deviation { upper, lower } | Tolerance::Limits { upper, lower } => {
-                field(ui, "Upper +", upper);
-                field(ui, "Lower −", lower);
-            }
-            Tolerance::Fit(f) => {
-                theme::row(ui, "Fit", |ui| {
-                    ui.add(
-                        egui::TextEdit::singleline(f)
-                            .hint_text("H7, g6…")
-                            .desired_width(80.0),
-                    );
                 });
+            let units = self.editor.doc.units();
+            // Tolerances are edited in the display unit (degrees for angles).
+            let scale = if angle {
+                1.0
+            } else {
+                units.length.mm_per_unit()
+            };
+            let unit = if angle { "°" } else { units.length.symbol() };
+            let field = |ui: &mut egui::Ui, label: &str, v: &mut f64| {
+                theme::row(ui, label, |ui| {
+                    let mut shown = *v / scale;
+                    if ui
+                        .add(
+                            egui::DragValue::new(&mut shown)
+                                .speed(0.001)
+                                .max_decimals(4)
+                                .suffix(format!(" {unit}")),
+                        )
+                        .changed()
+                    {
+                        *v = shown * scale;
+                    }
+                });
+            };
+            match &mut note.tolerance {
+                Tolerance::None => {}
+                Tolerance::Symmetric(t) => field(ui, "±", t),
+                Tolerance::Deviation { upper, lower } | Tolerance::Limits { upper, lower } => {
+                    field(ui, "Upper +", upper);
+                    field(ui, "Lower −", lower);
+                }
+                Tolerance::Fit(f) => {
+                    theme::row(ui, "Fit", |ui| {
+                        ui.add(
+                            egui::TextEdit::singleline(f)
+                                .hint_text("H7, g6…")
+                                .desired_width(80.0),
+                        );
+                    });
+                }
             }
         }
         if note != before {

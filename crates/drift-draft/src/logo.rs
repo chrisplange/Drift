@@ -48,38 +48,9 @@ pub struct Logo {
     pub shapes: Vec<LogoShape>,
 }
 
-/// A 2 × 3 affine transform: `(a c e; b d f)`.
-#[derive(Clone, Copy, Debug)]
-struct Affine([f64; 6]);
-
-impl Affine {
-    const IDENTITY: Affine = Affine([1.0, 0.0, 0.0, 1.0, 0.0, 0.0]);
-
-    fn apply(&self, p: DVec2) -> DVec2 {
-        let [a, b, c, d, e, f] = self.0;
-        DVec2::new(a * p.x + c * p.y + e, b * p.x + d * p.y + f)
-    }
-
-    /// `self` after `inner` (the inner one is applied to points first).
-    fn then(&self, inner: &Affine) -> Affine {
-        let [a, b, c, d, e, f] = self.0;
-        let [a2, b2, c2, d2, e2, f2] = inner.0;
-        Affine([
-            a * a2 + c * b2,
-            b * a2 + d * b2,
-            a * c2 + c * d2,
-            b * c2 + d * d2,
-            a * e2 + c * f2 + e,
-            b * e2 + d * f2 + f,
-        ])
-    }
-
-    /// How much lengths grow (for stroke widths): the root of the area's growth.
-    fn scale(&self) -> f64 {
-        let [a, b, c, d, ..] = self.0;
-        (a * d - b * c).abs().sqrt()
-    }
-}
+/// A 2 × 3 affine transform: `(a c e; b d f)`. `then` applies its argument second, so
+/// an outer transform goes `inner.then(&outer)`.
+use drift_core::Affine2 as Affine;
 
 /// Numbers in an attribute, separated by spaces or commas (signs and exponents included).
 fn numbers(text: &str) -> Vec<f64> {
@@ -149,15 +120,15 @@ fn transform(text: &str) -> Affine {
                 let (s, c) = get(0, 0.0).to_radians().sin_cos();
                 let turn = Affine([c, s, -s, c, 0.0, 0.0]);
                 let (cx, cy) = (get(1, 0.0), get(2, 0.0));
-                Affine([1.0, 0.0, 0.0, 1.0, cx, cy])
+                Affine([1.0, 0.0, 0.0, 1.0, -cx, -cy])
                     .then(&turn)
-                    .then(&Affine([1.0, 0.0, 0.0, 1.0, -cx, -cy]))
+                    .then(&Affine([1.0, 0.0, 0.0, 1.0, cx, cy]))
             }
             "skewX" => Affine([1.0, 0.0, get(0, 0.0).to_radians().tan(), 1.0, 0.0, 0.0]),
             "skewY" => Affine([1.0, get(0, 0.0).to_radians().tan(), 0.0, 1.0, 0.0, 0.0]),
             _ => Affine::IDENTITY,
         };
-        out = out.then(&step);
+        out = step.then(&out);
         rest = &rest[open + close + 1..];
     }
     out
@@ -599,7 +570,7 @@ fn walk(
     }
     let style = Style::of(node, inherited);
     let matrix = match node.attribute("transform") {
-        Some(t) => parent.then(&transform(t)),
+        Some(t) => transform(t).then(&parent),
         None => parent,
     };
     let subs = outlines(node);

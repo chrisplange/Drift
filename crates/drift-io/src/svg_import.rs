@@ -112,7 +112,7 @@ pub fn read(text: &str, name: &str) -> Result<Artwork, String> {
     }
     let illustrator =
         text.contains("Adobe Illustrator") || text.contains("ns.adobe.com/AdobeIllustrator");
-    let px_mm = 25.4 / if illustrator { 72.0 } else { 96.0 };
+    let px_mm = drift_core::units::MM_PER_INCH / if illustrator { 72.0 } else { 96.0 };
     let view = root.attribute("viewBox").and_then(|v| {
         let n: Vec<f64> = numbers(v);
         (n.len() == 4 && n[2] > 0.0 && n[3] > 0.0).then(|| [n[0], n[1], n[2], n[3]])
@@ -188,9 +188,9 @@ fn paper_mm(s: &str, px_mm: f64) -> Option<f64> {
     let mm = match unit {
         "mm" => v,
         "cm" => v * 10.0,
-        "in" => v * 25.4,
-        "pt" => v * 25.4 / 72.0,
-        "pc" => v * 25.4 / 6.0,
+        "in" => v * drift_core::units::MM_PER_INCH,
+        "pt" => v * drift_core::units::MM_PER_INCH / 72.0,
+        "pc" => v * drift_core::units::MM_PER_INCH / 6.0,
         "" | "px" => v * px_mm,
         _ => return None,
     };
@@ -212,7 +212,7 @@ fn user_length(s: &str, font_size: f64) -> Option<f64> {
     let (v, unit) = length(s)?;
     Some(match unit {
         "" | "px" => v,
-        "mm" => v * 96.0 / 25.4,
+        "mm" => v * 96.0 / drift_core::units::MM_PER_INCH,
         "cm" => v * 96.0 / 2.54,
         "in" => v * 96.0,
         "pt" => v * 96.0 / 72.0,

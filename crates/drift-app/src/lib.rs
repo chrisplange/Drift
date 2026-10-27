@@ -42,6 +42,8 @@ pub mod picks;
 mod soak;
 pub mod stack;
 pub mod temp_dims;
+#[cfg(test)]
+mod test_gpu;
 pub mod texts;
 mod theme;
 pub mod tools;

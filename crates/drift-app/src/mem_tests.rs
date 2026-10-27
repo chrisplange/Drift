@@ -79,18 +79,12 @@ impl Meter {
 type App<'a> = Harness<'a, DriftApp>;
 
 fn harness() -> Option<App<'static>> {
-    let instance = eframe::egui_wgpu::wgpu::Instance::default();
-    if pollster::block_on(
-        instance.request_adapter(&eframe::egui_wgpu::wgpu::RequestAdapterOptions::default()),
-    )
-    .is_err()
-    {
-        eprintln!("no GPU adapter; skipping");
+    if !crate::test_gpu::available() {
         return None;
     }
     let mut h = Harness::builder()
         .with_size([1920.0, 1080.0])
-        .wgpu()
+        .wgpu_setup(crate::test_gpu::setup())
         .build_eframe(|cc| DriftApp::new(cc));
     h.run();
     Some(h)

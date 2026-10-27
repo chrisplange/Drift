@@ -39,6 +39,11 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    env:
+      # The UI and smoke tests fail without a graphics adapter instead of skipping. Each test
+      # log says which adapter they rendered on: lavapipe on Linux, WARP on Windows, Metal on
+      # macOS.
+      DRIFT_REQUIRE_GPU: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

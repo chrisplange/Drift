@@ -1,9 +1,8 @@
 //! End-to-end UI tests: drive the real [`DriftApp`] headlessly with egui_kittest, rendering
-//! through wgpu. Skipped when no graphics adapter is available.
+//! through wgpu. Skipped when no graphics adapter is available, unless `DRIFT_REQUIRE_GPU=1`.
 
 use drift_core::{DVec2, EntityKind};
 use eframe::egui::{self, Event, Key, Modifiers as EguiModifiers, PointerButton, Pos2};
-use eframe::egui_wgpu::wgpu;
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable as _;
 
@@ -50,19 +49,15 @@ mod updates;
 #[cfg(not(feature = "demo"))]
 mod walls;
 
-fn gpu_available() -> bool {
-    let instance = wgpu::Instance::default();
-    pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())).is_ok()
-}
-
+/// The app at 1280 × 800, or `None` (the test skips) without a graphics adapter; with
+/// `DRIFT_REQUIRE_GPU=1` that fails instead ([`crate::test_gpu`]).
 fn harness() -> Option<Harness<'static, DriftApp>> {
-    if !gpu_available() {
-        eprintln!("no GPU adapter available; skipping UI test");
+    if !crate::test_gpu::available() {
         return None;
     }
     let mut harness = Harness::builder()
         .with_size([1280.0, 800.0])
-        .wgpu()
+        .wgpu_setup(crate::test_gpu::setup())
         .build_eframe(|cc| DriftApp::new(cc));
     harness.run();
     Some(harness)

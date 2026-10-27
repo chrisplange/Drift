@@ -114,3 +114,30 @@ fn smoke_walls_save_open_and_explode() {
     assert_eq!(h.state().editor.doc.fills().count(), 1);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// #202: a room's floor filled inside its walls is an area fill, never a shape made of the
+/// walls' faces, and says why.
+#[test]
+fn smoke_walls_a_rooms_floor_fill_is_an_area_fill() {
+    let Some(mut h) = harness() else { return };
+    view(&mut h, DVec2::new(-20.0, -20.0), DVec2::new(160.0, 80.0));
+    room(&mut h);
+    let paths = h.state().editor.doc.paths().count();
+    let fills = h.state().editor.doc.fills().count();
+    h.key_press(Key::H);
+    h.run();
+    click_world(&mut h, DVec2::new(50.0, 30.0));
+    h.key_press(Key::Escape);
+    h.run();
+    let ed = &h.state().editor;
+    assert_eq!(ed.doc.fills().count(), fills + 1, "the floor filled");
+    assert_eq!(ed.doc.paths().count(), paths, "no shape made of wall faces");
+    let floor = ed
+        .doc
+        .fills()
+        .map(|(id, _)| id)
+        .find(|f| !ed.wall_owners().fills.contains_key(f))
+        .expect("the floor");
+    assert!(ed.doc.fill(floor).unwrap().path.is_none());
+    assert_eq!(ed.fill_kind(floor), Err(crate::fills::NotAShape::Walls));
+}

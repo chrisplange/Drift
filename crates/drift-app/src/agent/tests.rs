@@ -623,7 +623,13 @@ fn a_line_drawn_across_a_fill_is_reported() {
     ok(
         &mut s,
         "add_geometry",
-        json!({ "items": [{ "type": "rectangle", "corner": [0, 0], "width": 100, "height": 50 }] }),
+        // Lines running past the corners: an area fill, not a shape (#202).
+        json!({ "items": [
+            { "type": "line", "from": [-5, 0], "to": [105, 0] },
+            { "type": "line", "from": [-5, 50], "to": [105, 50] },
+            { "type": "line", "from": [0, -5], "to": [0, 55] },
+            { "type": "line", "from": [100, -5], "to": [100, 55] },
+        ] }),
     );
     let fill = ok(&mut s, "add_fill", json!({ "at": [10, 10] }));
     let v = ok(

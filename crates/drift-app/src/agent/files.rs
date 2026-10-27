@@ -302,7 +302,7 @@ pub(super) fn import(s: &mut Session, a: &Value) -> Res {
             ed.doc.set_entity_layer(*id, l).map_err(|e| e.to_string())?;
         }
     }
-    if !ed.commit("Import") {
+    if !ed.commit_import("Import") {
         return Err(ed.notice.take().unwrap_or("the import failed".into()));
     }
     let curves = made

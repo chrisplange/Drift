@@ -312,6 +312,11 @@ impl Session {
                     "change": "removed",
                     "note": format!("it came to cover the same area as {into}, which kept it"),
                 }),
+                FillChange::Opened { id } => json!({
+                    "id": id.to_string(),
+                    "change": "kept",
+                    "note": "its shape's outline was cut open and bounds no area: it shows the outline closed straight across the gap until it closes",
+                }),
             })
             .collect()
     }

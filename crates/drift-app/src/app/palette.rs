@@ -296,6 +296,13 @@ impl DriftApp {
                 let walls: Vec<_> = self.editor.selected_walls().into_iter().collect();
                 self.editor.explode_walls(&walls);
             }
+            Command::JoinCorners => {
+                if let Some(f) = self.editor.joinable_fill()
+                    && let Err(why) = self.editor.join_corners(f)
+                {
+                    self.editor.notice = Some(why);
+                }
+            }
             Command::JoinWalls => {
                 let walls: Vec<_> = self.editor.selected_walls().into_iter().collect();
                 self.editor.join_walls(&walls);

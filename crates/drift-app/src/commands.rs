@@ -83,6 +83,8 @@ pub(crate) enum Command {
     ExplodeWalls,
     /// Two picked walls' nearest ends joined (an L or a T).
     JoinWalls,
+    /// The picked area fill's corners that touch but aren't one point, joined (#202).
+    JoinCorners,
     /// The picked walls' ends set not to join.
     UnjoinWalls,
     /// Grab the selection (G).
@@ -315,6 +317,8 @@ pub(crate) enum When {
     PickedAnnotations,
     /// Walls picked.
     Walls,
+    /// An area fill picked whose outline's corners touch but aren't joined.
+    JoinableCorners,
     /// Only in development builds (and hidden elsewhere).
     Debug,
 }
@@ -344,6 +348,7 @@ impl When {
             When::SpaceableDimensions => app.can_align_dimensions().1,
             When::PickedAnnotations => !app.picked_annotations().is_empty(),
             When::Walls => !app.editor.selected_walls().is_empty(),
+            When::JoinableCorners => app.editor.joinable_fill().is_some(),
             When::Debug => cfg!(debug_assertions),
         }
     }
@@ -369,6 +374,7 @@ impl When {
             When::SpaceableDimensions => "Pick three or more stacked parallel dimensions",
             When::PickedAnnotations => "Pick some dimensions or notes",
             When::Walls => "Pick a wall",
+            When::JoinableCorners => "Pick an area fill whose corners aren't joined",
         }
     }
 
@@ -1535,6 +1541,15 @@ fn table() -> Vec<Spec> {
         .when(When::Selection)
         .aliases(&["SCALE", "SC"])
         .words("resize stretch"),
+        Spec::new(
+            "modify.join_corners",
+            C::Modify,
+            K::JoinCorners,
+            "Join corners",
+            "Join the picked area fill's corners that touch but aren't one point: its outline              then makes a shape",
+        )
+        .when(When::JoinableCorners)
+        .words("weld close shape corners ends"),
         tool("modify.mirror", C::Modify, ToolKind::Mirror)
             .keys(const { &[plain(Key::M)] })
             .aliases(&["MIRROR", "MI"]),

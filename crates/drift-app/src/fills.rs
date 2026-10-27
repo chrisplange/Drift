@@ -51,6 +51,100 @@ pub enum FillChange {
     /// The edit brought it onto the same area as `into` (drawn on top), which kept it: it
     /// went.
     Merged { id: FillId, into: FillId },
+    /// The edit cut its shape's outline open and what is left bounds no area around it: it
+    /// keeps its last shape until the outline closes again.
+    Opened { id: FillId },
+}
+
+/// Which fills and shapes each curve is in: what [`Editor::shape_check`] looks things up
+/// in, made once for many checks.
+#[derive(Default)]
+pub(crate) struct CurveUsers {
+    /// The fills whose outline has the curve.
+    fills: HashMap<EntityId, Vec<FillId>>,
+    /// The shape (path) the curve is in.
+    paths: HashMap<EntityId, PathId>,
+    /// The drawing's size (its largest coordinate), as the regions' tolerance is set by.
+    extent: f64,
+}
+
+impl CurveUsers {
+    pub(crate) fn of(doc: &drift_core::Document) -> Self {
+        let mut users = Self::default();
+        for (f, fill) in doc.fills() {
+            for c in &fill.boundary {
+                users.fills.entry(*c).or_default().push(f);
+            }
+        }
+        for (pid, path) in doc.paths() {
+            for c in &path.curves {
+                users.paths.insert(*c, pid);
+            }
+        }
+        users.extent = doc
+            .iter()
+            .filter(|(_, e)| !e.kind.is_point())
+            .filter_map(|(id, _)| doc.shape(id))
+            .map(|s| {
+                let b = s.bounds();
+                b.min.abs().max(b.max.abs()).max_element()
+            })
+            .filter(|e| e.is_finite())
+            .fold(0.0, f64::max);
+        users
+    }
+}
+
+/// Whether an area fill's outline makes a shape (see [`Editor::shape_check`]).
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum ShapeCheck {
+    /// It is the outline of this closed shape.
+    Path(PathId),
+    /// It is this closed chain of free curves, in order round it.
+    Chain(Vec<EntityId>),
+    Not(NotAShape),
+}
+
+/// The last [`Editor::fill_kind`] found: the document revision, the fill, and its kind.
+pub(crate) type FillKindFound = (u64, FillId, Result<(), NotAShape>);
+
+/// Why a fill is an area fill and not a shape (#202).
+#[derive(Clone, Debug, PartialEq)]
+pub enum NotAShape {
+    /// A wall's poché.
+    Wall,
+    /// Bounded by walls (a room's floor).
+    Walls,
+    /// Its shape's outline is cut open.
+    Open,
+    /// Curves of its outline are part of another shape.
+    InAShape,
+    /// This many curves of its outline also bound other fills (rooms sharing a wall).
+    Shared(usize),
+    /// Its outline's corners lie on each other but aren't joined: these end points.
+    Corners(Vec<(EntityId, EntityId)>),
+    /// Its outline runs along curves that cross it or go on past it.
+    Crossing,
+    /// It could be one, but hasn't been edited since it was opened or imported.
+    NotEdited,
+}
+
+impl NotAShape {
+    /// Why, in a few words, for the Inspector and the status line.
+    pub fn reason(&self) -> String {
+        match self {
+            NotAShape::Wall => "a wall's poché".into(),
+            NotAShape::Walls => "bounded by walls".into(),
+            NotAShape::Open => "its shape's outline is cut open".into(),
+            NotAShape::InAShape => "its lines are part of another shape".into(),
+            NotAShape::Shared(1) => "1 line shared with other fills".into(),
+            NotAShape::Shared(n) => format!("{n} lines shared with other fills"),
+            NotAShape::Corners(p) if p.len() == 1 => "a corner not joined".into(),
+            NotAShape::Corners(p) => format!("{} corners not joined", p.len()),
+            NotAShape::Crossing => "lines run past it".into(),
+            NotAShape::NotEdited => "opened or imported as an area: edit it to make a shape".into(),
+        }
+    }
 }
 
 /// The areas among `regions` that make up `whole` (a fill kept whole across curves that
@@ -356,19 +450,44 @@ impl Editor {
             if let Some(pid) = fill.path
                 && let Some(curves) = self.doc.path(pid).map(|p| sorted(&p.curves))
             {
-                if let Some(region) = self.path_region(pid) {
-                    let shape = FillShape {
-                        region,
-                        lost: false,
-                        curves,
-                        crossed: false,
-                        parts: 0,
-                    };
+                let solid = solid.get_or_insert_with(|| self.solid_curves());
+                let shape = self
+                    .path_region_and_holes(pid, solid)
+                    .map(|(region, holes)| {
+                        // (Its holes as of the last edit, not part-way through one.)
+                        if !self.doc.in_transaction() {
+                            self.shape_holes.insert(id, holes);
+                        }
+                        FillShape {
+                            region,
+                            lost: false,
+                            curves,
+                            crossed: false,
+                            parts: 0,
+                        }
+                    });
+                if let Some(shape) = shape {
                     self.fill_crossed.insert(id, false);
                     self.last_fill_shapes.insert(id, shape.clone());
                     out.insert(id, shape);
+                } else if let Some(region) = self.open_path_region(pid) {
+                    // Its path is open with nothing closed round it: it shows its outline
+                    // closed straight across the gap, found from the drawing alone (so the
+                    // same once saved and opened again) until the ends meet.
+                    let curves =
+                        sorted(&self.doc.path(pid).map_or(Vec::new(), |p| p.curves.clone()));
+                    out.insert(
+                        id,
+                        FillShape {
+                            region,
+                            lost: true,
+                            curves,
+                            crossed: false,
+                            parts: 0,
+                        },
+                    );
                 } else if let Some(last) = self.last_fill_shapes.get(&id) {
-                    // Its path is open: the fill keeps its last shape until the ends meet.
+                    // (An outline open in more than one place: its last shape.)
                     out.insert(
                         id,
                         FillShape {
@@ -467,10 +586,18 @@ impl Editor {
                     .iter()
                     .any(|p| self.doc.touched_in_transaction(*p))
         };
+        // (A shape's area also changes with what is drawn or moved inside it: kept only when
+        // nothing near it changed.)
+        let boxes = self.touched_boxes();
         cache
             .shapes
             .iter()
-            .filter(|(id, _)| self.doc.fill(**id).is_some_and(|f| f.path.is_none()))
+            .filter(|(id, s)| {
+                self.doc.fill(**id).is_some_and(|f| {
+                    f.path.is_none()
+                        || (!s.lost && self.shape_untouched(&s.curves, &s.region.bounds, &boxes))
+                })
+            })
             .filter(|(_, s)| !moved(&s.curves))
             .map(|(id, s)| (*id, s.clone()))
             .collect()
@@ -486,7 +613,9 @@ impl Editor {
     /// [`follow_divided_fills`](drift_core::DrawingRules::follow_divided_fills), takes the area around its
     /// seed. One that was already kept whole across curves stays so. When the edit deleted
     /// or reshaped curves of its outline and no area has what is left of it, the fill takes
-    /// the area around its seed (#120, #101), or goes if there is none. What happened beyond
+    /// the area around its seed (#120, #101), or goes if there is none. A shape's fill whose
+    /// outline, or a hole's, the edit cut open takes the area around it that what is left of
+    /// its outline still bounds (#201), or keeps its last shape. What happened beyond
     /// following an outline is noted in [`fill_changes`](Editor::fill_changes) and the
     /// notice.
     pub(crate) fn follow_fills(&mut self) {
@@ -495,9 +624,45 @@ impl Editor {
         }
         let fills: Vec<(FillId, Fill)> = self.doc.fills().map(|(id, f)| (id, f.clone())).collect();
         let walls = self.doc.has_walls().then(|| self.wall_owners());
-        // (Shapes' fills and walls' pochés don't need the drawing's areas.)
-        let needs_areas = fills.iter().any(|(id, f)| {
-            f.path.is_none() && !walls.as_ref().is_some_and(|w| w.fills.contains_key(id))
+        // The inside of each closed shape's outline, with its holes, and whether the edit
+        // cut one of them open.
+        // (A shape the edit left alone, with nothing changed near it, is as last found:
+        // only the others are found again, among the drawing's solid curves found once.)
+        let boxes = self.touched_boxes();
+        let mut shape_solid: Option<SolidCurves> = None;
+        let mut insides: HashMap<FillId, (Region, Vec<EntityId>, bool)> = HashMap::new();
+        for (id, f) in &fills {
+            if walls.as_ref().is_some_and(|w| w.fills.contains_key(id)) {
+                continue;
+            }
+            let Some(path) = f
+                .path
+                .and_then(|pid| self.doc.path(pid))
+                .filter(|p| p.closed)
+            else {
+                continue;
+            };
+            let curves = sorted(&path.curves);
+            if let (Some(last), Some(holes)) =
+                (self.last_fill_shapes.get(id), self.shape_holes.get(id))
+                && !last.lost
+                && last.curves == curves
+                && self.shape_untouched(&curves, &last.region.bounds, &boxes)
+            {
+                insides.insert(*id, (last.region.clone(), holes.clone(), false));
+                continue;
+            }
+            let solid = shape_solid.get_or_insert_with(|| self.solid_curves());
+            if let Some((region, holes)) = self.path_region_and_holes(f.path.unwrap(), solid) {
+                let opened = self.shape_hole_opened(*id, &region, &holes);
+                insides.insert(*id, (region, holes, opened));
+            }
+        }
+        // (Closed shapes' fills, unless the edit cut a hole of theirs open, and walls'
+        // pochés don't need the drawing's areas.)
+        let needs_areas = fills.iter().any(|(id, _)| {
+            !walls.as_ref().is_some_and(|w| w.fills.contains_key(id))
+                && insides.get(id).is_none_or(|(_, _, opened)| *opened)
         });
         let (regions, ids) = if needs_areas {
             (self.regions(), self.region_ids())
@@ -510,6 +675,9 @@ impl Editor {
         let mut changes = Vec::new();
         // Fills whose outline this edit changed.
         let mut moved: HashSet<FillId> = HashSet::new();
+        // Area fills the edit made or touched: they become shapes where their outline makes
+        // one (#202).
+        let mut touched: Vec<FillId> = Vec::new();
         for (id, fill) in fills {
             // (Walls keep their pochés themselves.)
             if walls.as_ref().is_some_and(|w| w.fills.contains_key(&id)) {
@@ -520,11 +688,65 @@ impl Editor {
             if let Some(pid) = fill.path
                 && let Some(curves) = self.doc.path(pid).map(|p| sorted(&p.curves))
             {
+                let inside = insides.get(&id);
+                if let Some((_, holes, _)) = inside {
+                    self.shape_holes.insert(id, holes.clone());
+                }
                 let mut followed = fill.clone();
-                followed.boundary = curves;
                 followed.divided = false;
-                if let Some(region) = self.path_region(pid) {
-                    followed.seed = crate::editor::interior_point(&region, fill.seed);
+                let opened = inside.is_none_or(|(_, _, opened)| *opened);
+                // Its outline, or a hole's, cut open (a ring trimmed through, #201): no
+                // longer a shape, it is the area fill of the area that what is left still
+                // closes around it.
+                if opened && let Some(r) = self.open_shape_area(id, &fill, &curves, &regions, &ids)
+                {
+                    followed.path = None;
+                    followed.boundary = outline_of(r, &ids);
+                    followed.seed = crate::editor::interior_point(r, fill.seed);
+                    changes.push(FillChange::Refound {
+                        id,
+                        before: self.last_fill_shapes.get(&id).map(|s| s.region.area),
+                        after: r.area,
+                    });
+                    self.last_fill_shapes.insert(
+                        id,
+                        FillShape {
+                            curves: curves_of(&followed, r, &ids),
+                            region: r.clone(),
+                            lost: false,
+                            crossed: false,
+                            parts: 0,
+                        },
+                    );
+                    self.doc.set_fill(id, followed);
+                    self.fill_crossed.insert(id, false);
+                    moved.insert(id);
+                    touched.push(id);
+                    continue;
+                }
+                followed.boundary = curves.clone();
+                if let Some((region, _, _)) = inside {
+                    followed.seed = crate::editor::interior_point(region, fill.seed);
+                    // Kept for the next edit whether or not a frame is drawn in between
+                    // (the assistant's edits).
+                    self.last_fill_shapes.insert(
+                        id,
+                        FillShape {
+                            region: region.clone(),
+                            lost: false,
+                            curves,
+                            crossed: false,
+                            parts: 0,
+                        },
+                    );
+                } else if self
+                    .doc
+                    .path_before_transaction(pid)
+                    .is_some_and(|p| p.closed)
+                {
+                    // Cut open with nothing closed around it: it keeps its last shape until
+                    // the ends meet again, and says so.
+                    changes.push(FillChange::Opened { id });
                 }
                 self.doc.set_fill(id, followed);
                 self.fill_crossed.insert(id, false);
@@ -551,6 +773,27 @@ impl Editor {
             // Whether it was kept whole across curves before this edit (unknown for a fill
             // not looked at since it was made or opened).
             let was_crossed = self.fill_crossed.get(&id).copied();
+            // The curves round its holes before this edit, and whether the edit cut one of
+            // them open and the area `curves` bounds took that hole in: the hole's area was
+            // never the fill's (#201).
+            let holes: Vec<EntityId> = self
+                .last_fill_shapes
+                .get(&id)
+                .map(|s| {
+                    s.curves
+                        .iter()
+                        .copied()
+                        .filter(|c| fill.boundary.binary_search(c).is_err())
+                        .collect()
+                })
+                .unwrap_or_default();
+            let floods_hole = |curves: &[EntityId]| {
+                holes.iter().any(|c| {
+                    self.doc.reshaped_in_transaction(*c)
+                        && self.doc.contains(*c)
+                        && curves.binary_search(c).is_err()
+                })
+            };
             let mut followed = fill.clone();
             let mut crossed = false;
             let region = if let Some(r) = areas.exact(&fill) {
@@ -559,6 +802,7 @@ impl Editor {
                 r.clone()
             } else if let Some((whole, outline)) = self
                 .uncrossed_region(&fill, solid.get_or_insert_with(|| self.solid_curves()))
+                .filter(|s| !floods_hole(&s.curves))
                 .map(|s| (s.region, None))
                 .or_else(|| {
                     reshaped
@@ -666,6 +910,13 @@ impl Editor {
             if followed.boundary != fill.boundary {
                 moved.insert(id);
             }
+            if shifted
+                || deleted
+                || followed.boundary != fill.boundary
+                || self.doc.fill_created_in_transaction(id)
+            {
+                touched.push(id);
+            }
             self.doc.set_fill(id, followed);
             self.fill_crossed.insert(id, crossed);
         }
@@ -692,6 +943,7 @@ impl Editor {
                 changes.push(FillChange::Merged { id, into });
             }
         }
+        self.make_shapes(&touched, walls.as_deref(), &mut changes);
         if !changes.is_empty() {
             if self.notice.is_none() {
                 self.notice = Some(self.describe_fill_changes(&changes));
@@ -774,11 +1026,436 @@ impl Editor {
                 "{} was removed: it came to cover the same area as {into}",
                 what(*id)
             ),
+            FillChange::Opened { id } => format!(
+                "{} keeps its shape, closed straight across the gap: its outline was cut open                  and bounds no area",
+                what(*id)
+            ),
         };
         match changes.len() {
             1 => first,
             n => format!("{first} (and {} more fill changes)", n - 1),
         }
+    }
+
+    /// Find each closed shape's fill's area and holes again from the drawing, as after undo
+    /// or redo: what the next edit tells a hole cut open by, and a shape left alone by, is
+    /// then the drawing as it is, whether or not a frame is drawn in between.
+    pub(crate) fn refresh_shape_fills(&mut self) {
+        self.shape_holes.clear();
+        let solid = self.solid_curves();
+        let shapes: Vec<(FillId, PathId, Vec<EntityId>)> = self
+            .doc
+            .fills()
+            .filter_map(|(id, f)| {
+                let pid = f.path?;
+                let path = self.doc.path(pid).filter(|p| p.closed)?;
+                Some((id, pid, sorted(&path.curves)))
+            })
+            .collect();
+        for (id, pid, curves) in shapes {
+            match self.path_region_and_holes(pid, &solid) {
+                Some((region, holes)) => {
+                    self.shape_holes.insert(id, holes);
+                    self.last_fill_shapes.insert(
+                        id,
+                        FillShape {
+                            region,
+                            lost: false,
+                            curves,
+                            crossed: false,
+                            parts: 0,
+                        },
+                    );
+                }
+                None => {
+                    self.last_fill_shapes.remove(&id);
+                }
+            }
+        }
+    }
+
+    /// Whether an area fill's outline (`boundary`, sorted) makes a shape (#202): it is one
+    /// closed shape's outline, or a closed chain of free curves (each meeting the next at a
+    /// shared end point; none a wall's, in another shape or round another fill). Else why
+    /// not.
+    pub(crate) fn shape_check(
+        &self,
+        index: &CurveUsers,
+        id: FillId,
+        boundary: &[EntityId],
+    ) -> ShapeCheck {
+        let Some(&first) = boundary.first() else {
+            return ShapeCheck::Not(NotAShape::Crossing);
+        };
+        if self.doc.has_walls() && boundary.iter().any(|c| self.wall_of(*c).is_some()) {
+            return ShapeCheck::Not(NotAShape::Walls);
+        }
+        if let Some(&pid) = index.paths.get(&first)
+            && let Some(path) = self.doc.path(pid)
+        {
+            return if path.closed && sorted(&path.curves) == boundary {
+                ShapeCheck::Path(pid)
+            } else {
+                ShapeCheck::Not(NotAShape::InAShape)
+            };
+        }
+        if boundary.iter().any(|c| index.paths.contains_key(c)) {
+            return ShapeCheck::Not(NotAShape::InAShape);
+        }
+        let shared = boundary
+            .iter()
+            .filter(|c| {
+                index
+                    .fills
+                    .get(c)
+                    .is_some_and(|fs| fs.iter().any(|f| *f != id))
+            })
+            .count();
+        if shared > 0 {
+            return ShapeCheck::Not(NotAShape::Shared(shared));
+        }
+        if let Some(chain) = self.closed_chain(boundary) {
+            return ShapeCheck::Chain(chain);
+        }
+        // Ends that lie on each other but aren't one point: corners drawn up to each other
+        // and not joined.
+        let mut ends: Vec<EntityId> = boundary
+            .iter()
+            .filter_map(|c| curve_ends(&self.doc, *c))
+            .flatten()
+            .collect();
+        ends.sort_unstable();
+        let mut open: Vec<EntityId> = Vec::new();
+        for chunk in ends.chunk_by(|a, b| a == b) {
+            if chunk.len() == 1 {
+                open.push(chunk[0]);
+            }
+        }
+        let at = |p: EntityId| self.doc.point(p).ok();
+        // (The regions' snap, for the whole drawing: a gap they close is a corner here.)
+        let tol = drift_geom::regions::RegionTolerance::for_extent(index.extent).snap;
+        let mut pairs = Vec::new();
+        let mut left = open.clone();
+        while let Some(a) = left.pop() {
+            let Some(pa) = at(a) else { break };
+            let Some(k) = left
+                .iter()
+                .position(|b| at(*b).is_some_and(|pb| pb.distance(pa) <= tol))
+            else {
+                return ShapeCheck::Not(NotAShape::Crossing);
+            };
+            pairs.push((a, left.swap_remove(k)));
+        }
+        if pairs.is_empty() || !left.is_empty() {
+            ShapeCheck::Not(NotAShape::Crossing)
+        } else {
+            ShapeCheck::Not(NotAShape::Corners(pairs))
+        }
+    }
+
+    /// Area fills that become shapes' fills after an edit, inside its open transaction
+    /// (#202): of `touched` (made or changed by the edit), those whose outline is one closed
+    /// shape, or a closed chain of free curves ([`shape_check`](Self::shape_check)), which
+    /// becomes a shape; and any whose shape's outline the edit closed round it again (two
+    /// shapes trimmed into one, #201). A shape keeps one fill: the one drawn on top. Only
+    /// edits make shapes, never opening a drawing.
+    fn make_shapes(
+        &mut self,
+        touched: &[FillId],
+        walls: Option<&drift_core::walls::Owners>,
+        changes: &mut Vec<FillChange>,
+    ) {
+        if self.importing {
+            return;
+        }
+        let wall_fill = |f: FillId| walls.is_some_and(|w| w.fills.contains_key(&f));
+        // Shapes the edit closed (again): their inside.
+        let closed: Vec<(PathId, Vec<EntityId>, Region)> = self
+            .doc
+            .paths()
+            .filter(|(pid, p)| {
+                p.closed
+                    && !walls
+                        .is_some_and(|w| w.paths.contains_key(pid) || w.centres.contains_key(pid))
+                    && (self.doc.path_created_in_transaction(*pid)
+                        || self
+                            .doc
+                            .path_before_transaction(*pid)
+                            .is_some_and(|b| !b.closed))
+            })
+            .map(|(pid, p)| (pid, sorted(&p.curves)))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .filter_map(|(pid, curves)| Some((pid, curves, self.path_region(pid)?)))
+            .collect();
+        // (Only shapes with no fill of their own take one: a shape cut open keeps its fill,
+        // and an area fill inside it stays its own when it closes again.)
+        let filled: HashSet<PathId> = self.doc.fills().filter_map(|(_, f)| f.path).collect();
+        let closed: Vec<(PathId, Vec<EntityId>, Region)> = closed
+            .into_iter()
+            .filter(|(pid, _, _)| !filled.contains(pid))
+            .collect();
+        let mut candidates: Vec<FillId> = touched.to_vec();
+        if !closed.is_empty() {
+            candidates.extend(self.doc.fills().filter_map(|(f, fill)| {
+                (fill.path.is_none()
+                    && closed.iter().any(|(_, curves, _)| {
+                        fill.boundary
+                            .iter()
+                            .any(|c| curves.binary_search(c).is_ok())
+                    }))
+                .then_some(f)
+            }));
+        }
+        candidates.sort_unstable();
+        candidates.dedup();
+        if candidates.is_empty() {
+            return;
+        }
+        let mut index = CurveUsers::of(&self.doc);
+        for id in candidates {
+            let Some(fill) = self.doc.fill(id).cloned().filter(|f| f.path.is_none()) else {
+                continue;
+            };
+            if wall_fill(id) {
+                continue;
+            }
+            let reclosed = closed
+                .iter()
+                .find(|(_, curves, inside)| {
+                    inside.contains(fill.seed)
+                        && fill
+                            .boundary
+                            .iter()
+                            .any(|c| curves.binary_search(c).is_ok())
+                })
+                .map(|(pid, _, _)| *pid);
+            let path = match reclosed {
+                Some(pid) => pid,
+                None => match self.shape_check(&index, id, &fill.boundary) {
+                    ShapeCheck::Path(pid) => pid,
+                    ShapeCheck::Chain(chain) => {
+                        let Ok(pid) = self.doc.add_path(drift_core::Path {
+                            curves: chain.clone(),
+                            closed: true,
+                        }) else {
+                            continue;
+                        };
+                        for c in chain {
+                            index.paths.insert(c, pid);
+                        }
+                        pid
+                    }
+                    ShapeCheck::Not(_) => continue,
+                },
+            };
+            self.bind_to_shape(id, fill, path, changes);
+        }
+    }
+
+    /// `curves` (sorted) in order round a closed chain, each meeting the next at a shared end
+    /// point and every end shared by exactly two of them; or one whole circle or ellipse.
+    fn closed_chain(&self, curves: &[EntityId]) -> Option<Vec<EntityId>> {
+        let ends: Vec<(EntityId, Option<[EntityId; 2]>)> = curves
+            .iter()
+            .map(|c| (*c, curve_ends(&self.doc, *c)))
+            .collect();
+        if let [(c, None)] = ends[..] {
+            return Some(vec![c]);
+        }
+        let mut at: HashMap<EntityId, Vec<EntityId>> = HashMap::new();
+        for (c, e) in &ends {
+            for p in (*e)? {
+                at.entry(p).or_default().push(*c);
+            }
+        }
+        if at.values().any(|cs| cs.len() != 2) {
+            return None;
+        }
+        let ends: HashMap<EntityId, [EntityId; 2]> = ends
+            .into_iter()
+            .filter_map(|(c, e)| Some((c, e?)))
+            .collect();
+        let first = curves[0];
+        let [start, mut point] = ends[&first];
+        let mut chain = vec![first];
+        let mut prev = first;
+        while point != start {
+            let next = *at[&point].iter().find(|c| **c != prev)?;
+            if chain.len() > curves.len() {
+                return None;
+            }
+            chain.push(next);
+            let [a, b] = ends[&next];
+            point = if a == point { b } else { a };
+            prev = next;
+        }
+        (chain.len() == curves.len()).then_some(chain)
+    }
+
+    /// Make area fill `id` the fill of closed shape `path`, inside the open transaction. A
+    /// shape keeps one fill: if it has one, the one drawn on top stays and the other goes.
+    fn bind_to_shape(
+        &mut self,
+        id: FillId,
+        mut fill: Fill,
+        path: PathId,
+        changes: &mut Vec<FillChange>,
+    ) {
+        let other = self
+            .doc
+            .fills()
+            .find(|(f, o)| *f != id && o.path == Some(path))
+            .map(|(f, _)| f);
+        if let Some(other) = other {
+            let order = self.fills_in_order();
+            let pos = |f: FillId| order.iter().position(|o| *o == f);
+            if pos(other) > pos(id) {
+                self.doc.remove_fill(id);
+                changes.push(FillChange::Merged { id, into: other });
+                return;
+            }
+            self.doc.remove_fill(other);
+            changes.push(FillChange::Merged {
+                id: other,
+                into: id,
+            });
+        }
+        let Some(curves) = self.doc.path(path).map(|p| sorted(&p.curves)) else {
+            return;
+        };
+        fill.path = Some(path);
+        fill.boundary = curves;
+        fill.divided = false;
+        // (Its seed is already inside: its area is the shape's inside.)
+        self.doc.set_fill(id, fill);
+        self.fill_crossed.insert(id, false);
+    }
+
+    /// What kind of filled thing fill `id` is, for the Inspector and the status line: a
+    /// shape, or an area fill and why it isn't a shape.
+    pub fn fill_kind(&self, id: FillId) -> Result<(), NotAShape> {
+        // (Asked every frame by the status line and the Inspector: kept per revision.)
+        let revision = self.doc.revision();
+        if let Some((r, f, kind)) = &*self.fill_kind_cache.borrow()
+            && *r == revision
+            && *f == id
+        {
+            return kind.clone();
+        }
+        let kind = self.find_fill_kind(id);
+        *self.fill_kind_cache.borrow_mut() = Some((revision, id, kind.clone()));
+        kind
+    }
+
+    fn find_fill_kind(&self, id: FillId) -> Result<(), NotAShape> {
+        let fill = self.doc.fill(id).ok_or(NotAShape::Crossing)?;
+        if self.doc.has_walls() && self.wall_owners().fills.contains_key(&id) {
+            return Err(NotAShape::Wall);
+        }
+        if let Some(pid) = fill.path {
+            return match self.doc.path(pid) {
+                Some(p) if p.closed => Ok(()),
+                _ => Err(NotAShape::Open),
+            };
+        }
+        match self.shape_check(&CurveUsers::of(&self.doc), id, &fill.boundary) {
+            ShapeCheck::Not(why) => Err(why),
+            // (Found that way before shapes were made of outlines, and not edited since.)
+            ShapeCheck::Path(_) | ShapeCheck::Chain(_) => Err(NotAShape::NotEdited),
+        }
+    }
+
+    /// The picked fill, if it is the one fill picked and an area fill whose corners touch but
+    /// aren't joined ([`join_corners`](Self::join_corners) applies).
+    pub fn joinable_fill(&self) -> Option<FillId> {
+        let [f] = self.selected_fills.iter().copied().collect::<Vec<_>>()[..] else {
+            return None;
+        };
+        matches!(self.fill_kind(f), Err(NotAShape::Corners(_))).then_some(f)
+    }
+
+    /// Join the corners of fill `id`'s outline that lie on each other but aren't one point
+    /// (one undo step): its outline then makes a shape. Returns how many it joined.
+    pub fn join_corners(&mut self, id: FillId) -> Result<usize, String> {
+        let Err(NotAShape::Corners(pairs)) = self.fill_kind(id) else {
+            return Err("Its outline has no corners to join".into());
+        };
+        self.doc.begin();
+        for (a, b) in &pairs {
+            if let Err(e) = self.doc.merge_points(*a, *b) {
+                self.doc.rollback();
+                return Err(e.to_string());
+            }
+        }
+        if !self.commit("Join corners") {
+            return Err(self
+                .notice
+                .take()
+                .unwrap_or_else(|| "Joining its corners failed".into()));
+        }
+        Ok(pairs.len())
+    }
+
+    /// Whether the open edit cut open the outline of a hole in shape fill `id`: a curve that
+    /// was round one of its holes when last found ([`shape_holes`](Editor::shape_holes)) was
+    /// reshaped (trimmed, split) and is round none of `holes` now, the holes of the inside of
+    /// its outline, `inside`. A hole moved, even across the outline, isn't cut open. With
+    /// none found yet (a drawing just opened, no frame drawn), a whole circle or ellipse
+    /// inside it that the edit made an arc of.
+    fn shape_hole_opened(&self, id: FillId, inside: &Region, holes: &[EntityId]) -> bool {
+        let opened = |c: &EntityId| {
+            self.doc.reshaped_in_transaction(*c)
+                && self.doc.contains(*c)
+                && holes.binary_search(c).is_err()
+        };
+        if let Some(before) = self.shape_holes.get(&id) {
+            return before.iter().any(opened);
+        }
+        let b = inside.bounds;
+        self.doc
+            .entities_touched_in_transaction()
+            .into_iter()
+            .filter(opened)
+            .filter(|e| {
+                self.doc
+                    .entity_before_transaction(*e)
+                    .is_some_and(|was| !was.kind.is_point() && was.kind.ends().is_none())
+            })
+            .filter_map(|e| self.doc.shape(e))
+            .map(|s| s.bounds())
+            .any(|s| {
+                s.min.x >= b.min.x && s.min.y >= b.min.y && s.max.x <= b.max.x && s.max.y <= b.max.y
+            })
+    }
+
+    /// The area a shape's fill takes when an edit cut the shape's outline (`curves`, sorted)
+    /// or a hole's open: the one around its seed, else around a point inside its last shape,
+    /// if that area's outline still has some of the shape's curves.
+    fn open_shape_area<'r>(
+        &self,
+        id: FillId,
+        fill: &Fill,
+        curves: &[EntityId],
+        regions: &'r [Region],
+        ids: &[EntityId],
+    ) -> Option<&'r Region> {
+        let near = self
+            .last_fill_shapes
+            .get(&id)
+            .map(|s| crate::editor::interior_point(&s.region, s.region.centroid));
+        let bounded_by_it = |r: &&Region| {
+            r.outer
+                .curves()
+                .into_iter()
+                .any(|i| curves.binary_search(&ids[i]).is_ok())
+        };
+        region_at(regions, fill.seed)
+            .filter(bounded_by_it)
+            .or_else(|| {
+                near.and_then(|p| region_at(regions, p))
+                    .filter(bounded_by_it)
+            })
     }
 
     /// Fit a fill flagged as covering several areas to the one around its seed (one undo
@@ -1445,21 +2122,109 @@ impl Editor {
     /// is ignored), with the shapes lying inside it left out as holes, as an area's are.
     /// A path that crosses itself bounds several areas: the biggest. None for an open path.
     pub(crate) fn path_region(&self, id: PathId) -> Option<Region> {
+        self.path_region_and_holes(id, &self.solid_curves())
+            .map(|(r, _)| r)
+    }
+
+    /// Where the open edit changed the drawing: the boxes of the points it moved (where
+    /// they were and are), and of the curves it touched or drew. A shape whose area is clear
+    /// of them, and whose own curves and points it didn't touch, is as it was.
+    fn touched_boxes(&self) -> Vec<Bounds> {
+        let mut boxes = Vec::new();
+        for e in self.doc.entities_touched_in_transaction() {
+            if let Ok(p) = self.doc.point(e) {
+                boxes.push(Bounds { min: p, max: p });
+            } else if let Some(shape) = self.doc.shape(e) {
+                boxes.push(shape.bounds());
+            }
+            if let Some(drift_core::Entity {
+                kind: drift_core::EntityKind::Point(p),
+                ..
+            }) = self.doc.entity_before_transaction(e)
+            {
+                boxes.push(Bounds { min: p, max: p });
+            }
+        }
+        boxes
+    }
+
+    /// Whether the open edit left shape `curves` (sorted) and the area `bounds` round them as
+    /// they were (see [`touched_boxes`](Self::touched_boxes)).
+    fn shape_untouched(&self, curves: &[EntityId], bounds: &Bounds, boxes: &[Bounds]) -> bool {
+        let pad = 1e-6
+            * bounds
+                .min
+                .abs()
+                .max(bounds.max.abs())
+                .max_element()
+                .max(1.0);
+        let near = Bounds {
+            min: bounds.min - DVec2::splat(pad),
+            max: bounds.max + DVec2::splat(pad),
+        };
+        !curves.iter().any(|c| self.doc.touched_in_transaction(*c))
+            && !self
+                .doc
+                .defining_points(curves.iter().copied())
+                .iter()
+                .any(|p| self.doc.touched_in_transaction(*p))
+            && !boxes.iter().any(|b| b.intersects(&near))
+    }
+
+    /// The area an open shape's outline bounds closed straight across its two open ends:
+    /// what its fill shows while nothing closes round it. None if the path is closed, or
+    /// open in more than one place.
+    pub(crate) fn open_path_region(&self, id: PathId) -> Option<Region> {
+        let path = self.doc.path(id).filter(|p| !p.closed)?;
+        let mut shapes: Vec<Shape> = Vec::new();
+        let mut ends: HashMap<EntityId, usize> = HashMap::new();
+        for c in &path.curves {
+            shapes.push(self.doc.shape(*c)?);
+            for p in curve_ends(&self.doc, *c).into_iter().flatten() {
+                *ends.entry(p).or_default() += 1;
+            }
+        }
+        let open: Vec<DVec2> = ends
+            .into_iter()
+            .filter(|(_, n)| *n == 1)
+            .filter_map(|(p, _)| self.doc.point(p).ok())
+            .collect();
+        let [a, b] = open[..] else {
+            return None;
+        };
+        shapes.push(Shape::Line { a, b });
+        drift_geom::regions::regions(&shapes)
+            .into_iter()
+            .max_by(|x, y| x.area.total_cmp(&y.area))
+    }
+
+    /// [`path_region`](Self::path_region), with the curves round its holes (sorted).
+    /// `solid` is [`solid_curves`](Self::solid_curves), found once for many paths.
+    fn path_region_and_holes(
+        &self,
+        id: PathId,
+        solid: &SolidCurves,
+    ) -> Option<(Region, Vec<EntityId>)> {
         let path = self.doc.path(id)?;
         if !path.closed {
             return None;
         }
         let outline = sorted(&path.curves);
         // Its curves with the ones inside that don't cross them: the islands are holes.
-        let solid = self.solid_curves();
-        if let Some((regions, ids)) = self.regions_among(&outline, &solid)
+        if let Some((regions, ids)) = self.regions_among(&outline, solid)
             && let Some(candidates) = Areas::new(&regions, &ids).by_outline.get(&outline)
             && let Some(r) = candidates
                 .iter()
                 .map(|&i| &regions[i])
                 .max_by(|a, b| a.area.total_cmp(&b.area))
         {
-            return Some(r.clone());
+            let holes = sorted(
+                &r.holes
+                    .iter()
+                    .flat_map(|lp| lp.sources.iter().filter_map(|&i| ids.get(i).copied()))
+                    .collect::<Vec<_>>(),
+            );
+            return Some((r.clone(), holes));
         }
         // Crossing itself (no area has all its curves as outline): the biggest it bounds.
         let shapes: Vec<Shape> = path
@@ -1470,6 +2235,7 @@ impl Editor {
         drift_geom::regions::regions(&shapes)
             .into_iter()
             .max_by(|a, b| a.area.total_cmp(&b.area))
+            .map(|r| (r, Vec::new()))
     }
 
     /// Follow curves end to end from `first` (through the end points they share): the
@@ -1957,13 +2723,13 @@ mod tests {
         assert!(!shape.lost);
         assert!((shape.region.centroid.x - 120.0).abs() < 1e-6);
 
-        // Delete an edge: there is no area left, so the fill goes with it, and comes back
-        // with it.
+        // Delete an edge: a shape (#202) with nothing closed round it, the fill keeps its
+        // last shape until undone.
+        assert!(ed.shape_outline(id).is_some());
         ed.doc.begin();
         ed.doc.delete([lines[1]]);
         ed.commit("Delete");
-        assert!(ed.doc.fill(id).is_none());
-        assert!(!ed.fill_shapes().contains_key(&id));
+        assert!(ed.fill_shapes()[&id].lost);
         ed.undo();
         assert!(!ed.fill_shapes()[&id].lost);
     }
@@ -1995,6 +2761,15 @@ mod tests {
     fn a_picked_fill_brings_its_boundary_and_holes() {
         let (mut ed, lines) = plate();
         let id = ed.add_fill_at(DVec2::new(5.0, 5.0)).unwrap();
+        // As an import brings it: an area fill (a shape's fill brings its outline alone).
+        let mut fill = ed.doc.fill(id).unwrap().clone();
+        let path = fill.path.take();
+        ed.doc.begin();
+        ed.doc.set_fill(id, fill);
+        if let Some(p) = path {
+            ed.doc.remove_path(p);
+        }
+        assert!(ed.commit_import("Area fill"));
         assert_eq!(ed.selected_fills, [id].into());
         let (curves, centre) = ed.selected_fill_curves().expect("curves");
         // The four edges and the hole's circle.

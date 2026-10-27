@@ -2814,7 +2814,9 @@ fn fill_tool_hatches_and_fills_regions() {
     h.run();
     click_world(&mut h, DVec2::new(100.0, 15.0));
     assert_eq!(h.state().editor.selected_fills.len(), 1);
-    assert!(h.state().editor.selection.is_empty());
+    // (The plate's outline is a closed chain of free curves: the hatch made it a shape,
+    // #202, picked with its outline.)
+    assert!(!h.state().editor.selection.is_empty());
     h.run();
     save_png("drift_ui_hatch_selected.png", &mut h);
     // Delete removes the fill, undo brings it back.

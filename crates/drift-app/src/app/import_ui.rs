@@ -568,7 +568,7 @@ impl DriftApp {
         if let Some(id) = pictures {
             crate::underlays::place_pictures(&mut self.editor.doc, id, &fills_before);
         }
-        self.editor.commit(label);
+        self.editor.commit_import(label);
         let imported = crate::underlays::Imported {
             underlays: pictures.into_iter().collect(),
             entities: self

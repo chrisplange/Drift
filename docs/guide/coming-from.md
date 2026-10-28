@@ -21,8 +21,8 @@ Everywhere: the command palette (Ctrl+K) finds any command by name, and ? lists 
 | Section and elevation marks | **Section mark** and **Elevation mark**, with the sheet number in the flag. They don't create views. |
 | Constraints (padlocks, EQ) | Full sketch relations and driving dimensions, as in SolidWorks (below). |
 
-What's different: Drift is 2D only. There are no walls, rooms or schedules: a wall is two
-lines.
+What's different: Drift is 2D only. Walls are drawn as 2D walls with joins, doors and windows
+([Walls](tutorials/14-walls.md)), but there are no rooms, levels, schedules or wall types.
 
 ## From AutoCAD
 

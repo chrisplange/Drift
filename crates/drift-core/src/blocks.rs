@@ -69,10 +69,11 @@ impl Block {
     }
 }
 
-/// A unit rotor for `degrees`, exact for multiples of 90°.
+/// A unit rotor for `degrees`, exact for multiples of 90° (to within
+/// [`QUARTER_TURN`](crate::tolerance::QUARTER_TURN)).
 pub fn exact_rotor(degrees: f64) -> DVec2 {
     let quarter = degrees / 90.0;
-    if (quarter - quarter.round()).abs() <= 1e-12 {
+    if (quarter - quarter.round()).abs() <= crate::tolerance::QUARTER_TURN {
         match (quarter.round() as i64).rem_euclid(4) {
             0 => DVec2::X,
             1 => DVec2::Y,
@@ -84,10 +85,10 @@ pub fn exact_rotor(degrees: f64) -> DVec2 {
     }
 }
 
-/// Whether a turn is a whole number of quarter turns.
+/// Whether a turn is a whole number of quarter turns: the turns [`exact_rotor`] makes exact.
 pub fn is_quarter_turn(degrees: f64) -> bool {
     let q = degrees / 90.0;
-    (q - q.round()).abs() <= 1e-9
+    (q - q.round()).abs() <= crate::tolerance::QUARTER_TURN
 }
 
 /// How a shape is placed: mirrored across its own vertical axis, scaled, turned, then moved.
@@ -396,6 +397,16 @@ mod tests {
             DVec2::new(3.0, -4.0)
         );
         assert!(is_quarter_turn(270.0) && !is_quarter_turn(45.0));
+        // One rule: a turn a hair off a quarter (typed, or worked out) is one, and exact.
+        for (deg, quarter) in [
+            (90.0 + 5e-8, true),
+            (-180.0 - 5e-8, true),
+            (90.0 + 1e-6, false),
+        ] {
+            assert_eq!(is_quarter_turn(deg), quarter, "{deg}");
+            let r = exact_rotor(deg);
+            assert_eq!(r.x == 0.0 || r.y == 0.0, quarter, "{deg}: {r}");
+        }
         let m = Placement {
             mirror: true,
             ..Placement::IDENTITY

@@ -682,10 +682,10 @@ fn exact_direction(degrees: f64) -> DVec2 {
 
 /// Horizontal/vertical relation implied by a typed angle that is a multiple of 90°.
 fn relation_for_angle(degrees: f64) -> Option<GuideKind> {
-    let quarter = degrees / 90.0;
-    if (quarter - quarter.round()).abs() > 1e-12 {
+    if !drift_core::blocks::is_quarter_turn(degrees) {
         return None;
     }
+    let quarter = degrees / 90.0;
     Some(if (quarter.round() as i64).rem_euclid(2) == 0 {
         GuideKind::Horizontal
     } else {

@@ -4,7 +4,9 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::f64::consts::TAU;
 
-use drift_core::{Constraint, ConstraintId, DVec2, EntityId, EntityKind, Shape, arc_shape};
+use drift_core::{
+    Constraint, ConstraintId, DVec2, EntityId, EntityKind, Shape, arc_shape, tolerance,
+};
 use drift_geom::intersect::{self, intersect, intersect_extended, intersect_unbounded};
 use drift_solver::Param;
 
@@ -34,6 +36,16 @@ fn closed_trim_refusal(shape: &Shape, crossings: usize) -> String {
 
 /// How far off a constraint may be and still count as met, relative to the coordinates' size.
 const UNMET: f64 = 1e-7;
+
+/// A crossing this close to a cutting curve's own end (relative to the coordinates' size, at
+/// least the crossing tolerance) is at that end: as close as a solved end comes.
+const AT_OWN_END: f64 = 1e-7;
+
+/// A step along a curve's parameter, to tell which way it runs at a point.
+const PARAM_STEP: f64 = 1e-6;
+
+/// How closely fitted curves follow a true offset, relative to the curve's size.
+const OFFSET_FIT: f64 = 1e-4;
 
 /// The constraints in a document before an edit, and those it didn't meet already.
 struct ConstraintState {
@@ -174,7 +186,7 @@ pub fn piece(shape: &Shape, t0: f64, t1: f64) -> Shape {
             center,
             radius,
             start: t0,
-            sweep: (t1 - t0).rem_euclid(TAU).max(1e-12),
+            sweep: (t1 - t0).rem_euclid(TAU).max(tolerance::NONE),
         },
         Shape::Arc {
             center,
@@ -199,7 +211,7 @@ pub fn piece(shape: &Shape, t0: f64, t1: f64) -> Shape {
             minor,
             start: start + t0,
             sweep: if sweep >= TAU {
-                (t1 - t0).rem_euclid(TAU).max(1e-12)
+                (t1 - t0).rem_euclid(TAU).max(tolerance::NONE)
             } else {
                 t1 - t0
             },
@@ -381,7 +393,7 @@ pub fn fillet_geometry(
     let curves = if lines { "lines" } else { "curves" };
     let u = [arms[0].dir(corner), arms[1].dir(corner)];
     let alpha = u[0].dot(u[1]).clamp(-1.0, 1.0).acos();
-    if !(1e-6..=std::f64::consts::PI - 1e-6).contains(&alpha) {
+    if !(tolerance::ANGLE..=std::f64::consts::PI - tolerance::ANGLE).contains(&alpha) {
         return Err(invalid(format!(
             "the {curves} are in line: nothing to round"
         )));
@@ -403,7 +415,7 @@ pub fn fillet_geometry(
                 } else {
                     radius - r
                 };
-                (grown > 1e-12).then_some(Path::Circle(center, grown))
+                (grown > tolerance::NONE).then_some(Path::Circle(center, grown))
             }
         }
     };
@@ -421,7 +433,7 @@ pub fn fillet_geometry(
     let t2 = arms[1].foot(corner, c);
     for (arm, t) in arms.iter().zip([t1, t2]) {
         let d = arm.along(corner, t);
-        if !(d > 1e-9 && d < arm.length) {
+        if !(d > tolerance::SAME && d < arm.length) {
             return Err(too_large());
         }
     }
@@ -554,12 +566,12 @@ impl Editor {
                 continue;
             };
             for hit in intersect(&shape, &other_shape) {
-                let near = tol.max(1e-7 * (1.0 + hit.at.length()));
+                let near = tol.max(AT_OWN_END * (1.0 + hit.at.length()));
                 if own_ends.iter().any(|e| e.distance(hit.at) <= near) {
                     continue;
                 }
                 // Numeric hits (ellipses, curves) are a little looser than exact ones.
-                let near = tol.max(1e-7 * (1.0 + hit.at.length()));
+                let near = tol.max(AT_OWN_END * (1.0 + hit.at.length()));
                 let point = self.doc.get(other).and_then(|e| {
                     e.kind
                         .ends()
@@ -1356,7 +1368,7 @@ impl Editor {
         let near_end = kind.ends().into_iter().flatten().any(|e| {
             self.doc
                 .point(e)
-                .is_ok_and(|q| q.distance(p) <= tol.max(1e-6))
+                .is_ok_and(|q| q.distance(p) <= tol.max(tolerance::TINY_MM))
         });
         if near_end {
             return Err(invalid("that's an end already"));
@@ -1667,7 +1679,7 @@ impl Editor {
         let x = intersect::line_line(t1, u1, t2, u2)?;
         let corner = x.at;
         let legs = [-x.t[0], -x.t[1]];
-        if legs[0] <= 1e-9 || legs[1] <= 1e-9 {
+        if legs[0] <= tolerance::SAME || legs[1] <= tolerance::SAME {
             return None;
         }
         Some(ChamferInfo {
@@ -1708,7 +1720,7 @@ impl Editor {
         let held = [(c.ends[0], a), (c.ends[1], b)].iter().all(|(id, at)| {
             self.doc
                 .point(*id)
-                .is_ok_and(|p| p.distance(*at) <= 1e-6 * d1.max(d2).max(1.0))
+                .is_ok_and(|p| p.distance(*at) <= tolerance::NEAR * d1.max(d2).max(1.0))
         });
         let result = if self.new_conflicts(&report) || !held {
             Err(EditError::Conflict)
@@ -1778,7 +1790,7 @@ impl Editor {
             return None;
         }
         // Tangent at both ends (to a tolerance that survives a solve).
-        let tangent = |t: DVec2, a: &Arm| ((t - c) / radius).dot(a.dir(t)).abs() < 1e-6;
+        let tangent = |t: DVec2, a: &Arm| ((t - c) / radius).dot(a.dir(t)).abs() < tolerance::ANGLE;
         if !tangent(t1, &a1) || !tangent(t2, &a2) {
             return None;
         }
@@ -1794,7 +1806,7 @@ impl Editor {
                 Run::Line { .. } => f64::INFINITY,
                 Run::Circle { radius, .. } => TAU * radius,
             };
-            (back > 1e-9 && back + a.length < whole).then_some(Arm {
+            (back > tolerance::SAME && back + a.length < whole).then_some(Arm {
                 run,
                 length: back + a.length,
             })
@@ -1865,7 +1877,7 @@ impl Editor {
         let held = points.iter().all(|(id, at)| {
             self.doc
                 .point(*id)
-                .is_ok_and(|p| p.distance(*at) <= 1e-6 * r.max(1.0))
+                .is_ok_and(|p| p.distance(*at) <= tolerance::NEAR * r.max(1.0))
         });
         let ok = !self.new_conflicts(&report) && held;
         if !ok {
@@ -2082,7 +2094,13 @@ impl Editor {
                 bridge: false,
             };
             // How closely fitted curves follow the true offset.
-            let tol = 1e-4 * shape.bounds().size().max_element().max(d.abs()).max(1e-6);
+            let tol = OFFSET_FIT
+                * shape
+                    .bounds()
+                    .size()
+                    .max_element()
+                    .max(d.abs())
+                    .max(tolerance::TINY_MM);
             let mut curves = |at: &dyn Fn(f64) -> DVec2,
                               span: f64,
                               d: f64,
@@ -2179,7 +2197,7 @@ impl Editor {
             }
             let end_i = piece_end(&pieces[k].shape, pieces[k].forward, true);
             let start_j = piece_end(&pieces[j].shape, pieces[j].forward, false);
-            let tol = self.tol_for(&pieces[k].shape).max(1e-9);
+            let tol = self.tol_for(&pieces[k].shape).max(tolerance::SAME);
             if end_i.distance(start_j) <= tol * 10.0 {
                 k += 1;
                 continue;
@@ -2267,7 +2285,7 @@ impl Editor {
                 // Which side of the curve's direction at its nearest point.
                 let t = drift_geom::param_of(&shape, side);
                 let p = shape.point_at(t);
-                let along = shape.point_at(t + 1e-6) - shape.point_at(t - 1e-6);
+                let along = shape.point_at(t + PARAM_STEP) - shape.point_at(t - PARAM_STEP);
                 let left = along.perp_dot(side - p) >= 0.0;
                 match shape {
                     // A whole ellipse: outward is positive (and to the right, anticlockwise).
@@ -2324,7 +2342,7 @@ impl Editor {
             // Points at each piece's start and end in travel order; pieces that meet share
             // one.
             let n = pieces.len();
-            let same = |a: DVec2, b: DVec2| a.distance(b) <= 1e-9 * b.abs().max_element().max(1.0);
+            let same = |a: DVec2, b: DVec2| a.distance(b) <= tolerance::same(b.abs().max_element());
             let mut starts = Vec::with_capacity(n);
             let mut ends: Vec<(EntityId, DVec2)> = Vec::with_capacity(n);
             for (k, piece) in pieces.iter().enumerate() {
@@ -2418,7 +2436,7 @@ impl Editor {
                         .normalize_or_zero()
                         .dot(radial.normalize_or_zero())
                         .abs()
-                        < 1e-6
+                        < tolerance::ANGLE
                 {
                     self.relate(Constraint::Tangent { a: line, b: arc });
                 }
@@ -2739,7 +2757,7 @@ impl Editor {
         if count < 2 {
             return Err(invalid("the count must be at least 2"));
         }
-        let full = (total_degrees.abs() - 360.0).abs() < 1e-9;
+        let full = (total_degrees.abs() / 90.0 - 4.0).abs() <= tolerance::QUARTER_TURN;
         let step = if full {
             total_degrees / count as f64
         } else {
@@ -2815,10 +2833,10 @@ fn set_piece_end(shape: &mut Shape, forward: bool, last: bool, to: DVec2) {
         // Fitted curves run in travel order: keep the part before (or after) the point.
         Shape::Bezier { p } => {
             let t = drift_geom::nearest_on_bezier(p, to).1;
-            if last && t > 1e-6 {
+            if last && t > PARAM_STEP {
                 *p = drift_core::shape::bezier_piece(p, 0.0, t);
                 p[3] = to;
-            } else if !last && t < 1.0 - 1e-6 {
+            } else if !last && t < 1.0 - PARAM_STEP {
                 *p = drift_core::shape::bezier_piece(p, t, 1.0);
                 p[0] = to;
             }

@@ -390,7 +390,7 @@ pub fn write_symbol(
     for (i, (shape, look)) in items.iter().enumerate() {
         let k = u32::try_from(i).unwrap_or(u32::MAX / 4);
         let kind = match *shape {
-            Shape::Line { a, b } if a.distance(b) > 1e-9 => {
+            Shape::Line { a, b } if a.distance(b) > drift_core::tolerance::SAME => {
                 let (pa, pb) = (
                     place(doc, k * 3, a, &mut report),
                     place(doc, k * 3 + 1, b, &mut report),
@@ -402,7 +402,9 @@ pub fn write_symbol(
                 radius,
                 start,
                 sweep,
-            } if radius > 1e-9 && sweep.abs() > 1e-12 => {
+            } if radius > drift_core::tolerance::SAME
+                && sweep.abs() > drift_core::tolerance::NONE =>
+            {
                 let c = place(doc, k * 3, center, &mut report);
                 let s = place(
                     doc,

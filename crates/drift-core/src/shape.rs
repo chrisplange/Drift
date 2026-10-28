@@ -299,6 +299,22 @@ impl Shape {
         out
     }
 
+    /// The length of the curve: exact for lines, circles and arcs, from chords within
+    /// [`MEASURE_MM`](crate::tolerance::MEASURE_MM) for ellipses and Béziers; 0 for a point.
+    pub fn length(&self) -> f64 {
+        match *self {
+            Shape::Point(_) => 0.0,
+            Shape::Line { a, b } => a.distance(b),
+            Shape::Circle { radius, .. } => TAU * radius.abs(),
+            Shape::Arc { radius, sweep, .. } => (radius * sweep).abs(),
+            Shape::Ellipse { .. } | Shape::Bezier { .. } => self
+                .flatten(crate::tolerance::MEASURE_MM)
+                .windows(2)
+                .map(|w| w[0].distance(w[1]))
+                .sum(),
+        }
+    }
+
     /// [`flatten`](Self::flatten), appended to `out`.
     pub fn flatten_into(&self, tolerance: f64, out: &mut Vec<DVec2>) {
         let along = |out: &mut Vec<DVec2>, n: usize, at: &dyn Fn(f64) -> DVec2| {
@@ -584,6 +600,51 @@ mod tests {
         assert_eq!(line.point_at(0.0), a);
         assert_eq!(line.point_at(1.0), b);
         assert_close(line.point_at(0.5), (a + b) * 0.5);
+    }
+
+    #[test]
+    fn flattening_keeps_to_its_tolerance_and_lengths_are_exact_where_they_can_be() {
+        let arc = Shape::Arc {
+            center: DVec2::new(1e5, -2e5),
+            radius: 100.0,
+            start: 0.3,
+            sweep: 2.0,
+        };
+        for tol in [0.1, 0.005, 1e-4] {
+            let pts = arc.flatten(tol);
+            // Every chord's middle is within the tolerance of the arc, and not much inside it.
+            let sag = pts
+                .windows(2)
+                .map(|w| 100.0 - ((w[0] + w[1]) / 2.0).distance(DVec2::new(1e5, -2e5)))
+                .fold(0.0, f64::max);
+            assert!(sag <= tol && sag > tol / 4.0, "{tol}: {sag}");
+        }
+        // A Bézier's chords too (Wang's bound): against points between the steps.
+        let p = [
+            DVec2::new(0.0, 0.0),
+            DVec2::new(30.0, 60.0),
+            DVec2::new(70.0, -40.0),
+            DVec2::new(100.0, 10.0),
+        ];
+        let b = Shape::Bezier { p };
+        let pts = b.flatten(0.005);
+        let n = pts.len() - 1;
+        for k in 0..n {
+            let mid = bezier_point(&p, (k as f64 + 0.5) / n as f64);
+            let (a, c) = (pts[k], pts[k + 1]);
+            let d = (c - a).perp_dot(mid - a).abs() / a.distance(c);
+            assert!(d <= 0.005, "{k}: {d}");
+        }
+        assert_eq!((pts[0], pts[n]), (p[0], p[3]));
+        // Lengths: exact for arcs, a Bézier's to well under a thousandth.
+        assert_eq!(arc.length(), 200.0);
+        let fine: f64 = (0..=20000)
+            .map(|k| bezier_point(&p, k as f64 / 20000.0))
+            .collect::<Vec<_>>()
+            .windows(2)
+            .map(|w| w[0].distance(w[1]))
+            .sum();
+        assert!((b.length() - fine).abs() < 1e-4, "{} vs {fine}", b.length());
     }
 
     #[test]

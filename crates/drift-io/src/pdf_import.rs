@@ -15,6 +15,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
 
+use drift_core::tolerance;
 use drift_core::{DVec2, RefPrim, Rgb, UnderlayImage};
 use lopdf::{Dictionary, Document, Object};
 
@@ -891,7 +892,7 @@ impl<'a> Reader<'a> {
                 return;
             }
         }
-        if across.perp_dot(down).abs() < 1e-9 {
+        if across.perp_dot(down).abs() < tolerance::SAME {
             return;
         }
         match crate::pdf_image::decode(self.doc, stream, &space, gs.fill, gs.fill_alpha) {
@@ -1841,7 +1842,10 @@ fn add_prim(prims: &mut Vec<RefPrim>, path: Vec<DVec2>) {
         }
         // A ten-thousandth of a point is far below anything drawn; it keeps files small.
         let p = (p * 1e4).round() / 1e4;
-        if points.last().is_none_or(|q| q.distance(p) > 1e-6) {
+        if points
+            .last()
+            .is_none_or(|q| q.distance(p) > tolerance::TINY_MM)
+        {
             points.push(p);
         }
     }

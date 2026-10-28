@@ -38,9 +38,29 @@ pub struct Hit {
     pub tangent: bool,
 }
 
-/// The distance under which two points count as the same, for coordinates around `scale`.
+/// The distance under which two points count as the same, for coordinates around `scale`
+/// ([`drift_core::tolerance::same`]).
 pub fn tolerance(scale: f64) -> f64 {
-    1e-9 * scale.abs().max(1.0)
+    drift_core::tolerance::same(scale)
+}
+
+/// The general crossing search (Newton from sampled guesses, for ellipses and Béziers) and
+/// its knobs: these steer the numerical method, they don't say what counts as the same point
+/// (that is [`tolerance`]).
+mod newton {
+    /// The step of a central difference, as a fraction of the parameter range.
+    pub const DIFF_STEP: f64 = 1e-6;
+    /// Damping of the least-squares step, relative to the tangents' size: a tangent touch
+    /// (where the directions agree) still makes progress.
+    pub const DAMP: f64 = 1e-12;
+    /// Roots found from different starting guesses agree to well within this, relative to
+    /// the size of the coordinates.
+    pub const AGREE: f64 = 1e-7;
+    /// A root is kept within this many times the same-point tolerance.
+    pub const KEEP: f64 = 10.0;
+    /// The curves touch rather than cross where the sine between their directions is at most
+    /// this (looser than [`super::PARALLEL_SINE`]: the directions come from differences).
+    pub const TOUCH_SINE: f64 = 1e-6;
 }
 
 fn scale_of(shape: &Shape) -> f64 {
@@ -340,7 +360,7 @@ impl Para {
 
     /// The derivative with respect to the parameter (by central differences).
     fn tangent(&self, t: f64) -> DVec2 {
-        let h = 1e-6 * (self.hi - self.lo);
+        let h = newton::DIFF_STEP * (self.hi - self.lo);
         (self.at(t + h) - self.at(t - h)) / (2.0 * h)
     }
 
@@ -453,7 +473,7 @@ fn intersect_numeric(a: &Shape, a_ext: bool, b: &Shape, b_ext: bool) -> Vec<Hit>
     let scale = scale_of(a).max(scale_of(b));
     let tol = tolerance(scale);
     // Roots found from different starting guesses agree to well within this.
-    let same = 1e-7 * scale.max(1.0);
+    let same = newton::AGREE * scale.max(1.0);
     let (sa, sb) = (ca.sample(), cb.sample());
     let mut hits: Vec<Hit> = Vec::new();
     for &(t0, t1, p0, p1, sag_a) in &sa {
@@ -517,7 +537,7 @@ fn polish(a: &Para, b: &Para, mut t: f64, mut u: f64, tol: f64) -> Option<(f64, 
         // Least squares with a little damping, so a tangent touch (where the two
         // directions agree) still makes progress.
         let (m00, m01, m11) = (da.dot(da), -da.dot(db), db.dot(db));
-        let damp = 1e-12 * (m00 + m11);
+        let damp = newton::DAMP * (m00 + m11);
         let det = (m00 + damp) * (m11 + damp) - m01 * m01;
         if det.abs() < f64::MIN_POSITIVE {
             break;
@@ -531,12 +551,12 @@ fn polish(a: &Para, b: &Para, mut t: f64, mut u: f64, tol: f64) -> Option<(f64, 
         }
         (t, u) = (nt, nu);
     }
-    if a.at(t).distance(b.at(u)) > tol.max(1e-9) * 10.0 {
+    if a.at(t).distance(b.at(u)) > tol * newton::KEEP {
         return None;
     }
     let (da, db) = (a.tangent(t), b.tangent(u));
     let cross = da.perp_dot(db).abs();
-    let tangent = cross <= 1e-6 * da.length() * db.length();
+    let tangent = cross <= newton::TOUCH_SINE * da.length() * db.length();
     Some((t, u, tangent))
 }
 
@@ -551,7 +571,7 @@ pub struct LineCross {
 
 /// The sine of the angle between two directions at or under which lines along them count as
 /// parallel. It is a ratio, so the rule is the same at any coordinates or lengths.
-pub const PARALLEL_SINE: f64 = 1e-12;
+pub const PARALLEL_SINE: f64 = drift_core::tolerance::PARALLEL_SINE;
 
 /// Where the infinite line through `p` along `d` crosses the one through `r` along `e`. The
 /// directions need not be unit length (or the same length).

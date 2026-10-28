@@ -17,6 +17,7 @@
 
 use drift_core::DVec2;
 use drift_core::polygon::area;
+use drift_core::tolerance;
 
 use crate::vector::{Seg, Subpath};
 
@@ -92,10 +93,10 @@ impl Clip {
                 if ring.len() > 1 && ring.first() == ring.last() {
                     ring.pop();
                 }
-                ring.dedup_by(|a, b| a.distance(*b) < 1e-9);
+                ring.dedup_by(|a, b| a.distance(*b) < tolerance::SAME);
                 ring
             })
-            .filter(|r| r.len() >= 3 && area(r).abs() > 1e-12)
+            .filter(|r| r.len() >= 3 && area(r).abs() > tolerance::NONE)
             .collect();
         if rings.is_empty() {
             return None;
@@ -107,7 +108,7 @@ impl Clip {
                 let r = &rings[0];
                 let upright = (0..4).all(|i| {
                     let d = r[(i + 1) % 4] - r[i];
-                    d.x.abs() < 1e-9 || d.y.abs() < 1e-9
+                    d.x.abs() < tolerance::SAME || d.y.abs() < tolerance::SAME
                 });
                 upright.then(|| {
                     let lo = r.iter().fold(DVec2::splat(f64::MAX), |m, p| m.min(*p));
@@ -126,7 +127,7 @@ impl Clip {
     /// Whether every point is inside, for a rectangle (curves stay within their handles).
     fn holds_all(&self, mut points: impl Iterator<Item = DVec2>) -> bool {
         self.rect.is_some_and(|(lo, hi)| {
-            let eps = 1e-9 * (hi - lo).max_element().max(1.0);
+            let eps = tolerance::same((hi - lo).max_element());
             points.all(|p| {
                 p.x >= lo.x - eps && p.x <= hi.x + eps && p.y >= lo.y - eps && p.y <= hi.y + eps
             })
@@ -148,7 +149,9 @@ impl Clip {
         self.edges()
             .map(|(a, b)| {
                 let d = b - a;
-                let t = ((p - a).dot(d) / d.length_squared().max(1e-24)).clamp(0.0, 1.0);
+                let t = ((p - a).dot(d)
+                    / d.length_squared().max(tolerance::NONE * tolerance::NONE))
+                .clamp(0.0, 1.0);
                 p.distance(a + d * t)
             })
             .fold(f64::INFINITY, f64::min)
@@ -179,15 +182,17 @@ impl Clip {
         for (e0, e1) in self.edges() {
             let d = e1 - e0;
             let len2 = d.length_squared();
-            if len2 < 1e-24 {
+            if len2 < tolerance::NONE * tolerance::NONE {
                 continue;
             }
             // Which side of the edge's line a point is on, and whether it's along the edge.
             let side = |p: DVec2| (p - e0).perp_dot(d);
-            let on_edge = |p: DVec2| (-1e-9..=1.0 + 1e-9).contains(&((p - e0).dot(d) / len2));
+            let on_edge = |p: DVec2| {
+                (-tolerance::SAME..=1.0 + tolerance::SAME).contains(&((p - e0).dot(d) / len2))
+            };
             let at = |t: f64| point(from, seg, t);
             let mut push = |t: f64| {
-                if t > 1e-9 && t < 1.0 - 1e-9 && on_edge(at(t)) {
+                if t > tolerance::SAME && t < 1.0 - tolerance::SAME && on_edge(at(t)) {
                     ts.push(t);
                 }
             };
@@ -225,7 +230,7 @@ impl Clip {
             }
         }
         ts.sort_by(f64::total_cmp);
-        ts.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
+        ts.dedup_by(|a, b| (*a - *b).abs() < tolerance::SAME);
         ts
     }
 }
@@ -254,7 +259,7 @@ fn is_convex(ring: &[DVec2]) -> bool {
     for i in 0..n {
         let (a, b, c) = (ring[i], ring[(i + 1) % n], ring[(i + 2) % n]);
         let turn = (b - a).perp_dot(c - b);
-        if turn.abs() < 1e-12 {
+        if turn.abs() < tolerance::NONE {
             continue;
         }
         if sign == 0.0 {
@@ -297,7 +302,7 @@ fn split(
     let mut segs: Vec<Seg> = s.segs.clone();
     // A closed subpath's closing edge, as a segment of its own.
     let end = segs.last().map_or(s.start, Seg::end);
-    if s.closed && end.distance(s.start) > 1e-9 {
+    if s.closed && end.distance(s.start) > tolerance::SAME {
         segs.push(Seg::Line(s.start));
     }
     for seg in &segs {
@@ -308,7 +313,7 @@ fn split(
         ts.push(1.0);
         for w in ts.windows(2) {
             let (t0, t1) = (w[0], w[1]);
-            if t1 - t0 < 1e-12 {
+            if t1 - t0 < tolerance::NONE {
                 continue;
             }
             let kind = usize::from(!keep(point(from, seg, (t0 + t1) / 2.0)));
@@ -352,7 +357,7 @@ fn split(
                 .last()
                 .map_or(last.start, Seg::end)
                 .distance(first.start)
-                < 1e-9
+                < tolerance::SAME
         {
             #[allow(clippy::expect_used)] // There are more than one.
             let last = runs.pop().expect("runs");
@@ -381,7 +386,7 @@ fn fill_inside(s: &Subpath, clip: &Clip) -> Option<Subpath> {
         } else {
             (edge_ring[(i + 1) % n], edge_ring[i])
         };
-        let inside = |p: DVec2| (b - a).perp_dot(p - a) >= -1e-12;
+        let inside = |p: DVec2| (b - a).perp_dot(p - a) >= -tolerance::NONE;
         let cross = |p: DVec2, q: DVec2| {
             let (sp, sq) = ((b - a).perp_dot(p - a), (b - a).perp_dot(q - a));
             p + (q - p) * (sp / (sp - sq))
@@ -403,8 +408,8 @@ fn fill_inside(s: &Subpath, clip: &Clip) -> Option<Subpath> {
             return None;
         }
     }
-    ring.dedup_by(|a, b| a.distance(*b) < 1e-9);
-    (ring.len() >= 3 && area(&ring).abs() > 1e-12).then(|| Subpath {
+    ring.dedup_by(|a, b| a.distance(*b) < tolerance::SAME);
+    (ring.len() >= 3 && area(&ring).abs() > tolerance::NONE).then(|| Subpath {
         start: ring[0],
         segs: ring[1..].iter().map(|p| Seg::Line(*p)).collect(),
         closed: true,

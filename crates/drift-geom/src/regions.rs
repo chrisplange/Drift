@@ -13,7 +13,7 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::f64::consts::TAU;
 
-use drift_core::tolerance::FLATTEN_MM;
+use drift_core::tolerance::{self, FLATTEN_MM};
 use drift_core::{Bounds, DVec2, Shape};
 
 use crate::intersect::intersect;
@@ -366,18 +366,15 @@ pub struct RegionTolerance {
 }
 
 impl RegionTolerance {
-    /// Tolerances for coordinates up to `extent` in size.
+    /// Tolerances for coordinates up to `extent` in size: [`tolerance::same`] and
+    /// [`tolerance::AREA_NOISE`].
     pub fn for_extent(extent: f64) -> Self {
-        let scale = if extent.is_finite() {
-            extent.abs().max(1.0)
-        } else {
-            1.0
-        };
-        let snap = 1e-9 * scale;
+        let scale = tolerance::scale(extent);
+        let snap = tolerance::same(extent);
         RegionTolerance {
             snap,
             min_edge: snap,
-            min_area: 1e-12 * scale * scale,
+            min_area: tolerance::AREA_NOISE * scale * scale,
         }
     }
 
@@ -956,7 +953,7 @@ fn regions_in(curves: &[Shape], tol: &RegionTolerance, prior: &[Region]) -> Vec<
             let (aa, ac) = key(a);
             let (ba, bc) = key(b);
             // Same direction up to rounding (an angle, not a distance): order by curvature.
-            if (aa - ba).abs() <= 1e-9 {
+            if (aa - ba).abs() <= tolerance::SAME_ANGLE {
                 ac.total_cmp(&bc)
             } else {
                 aa.total_cmp(&ba)
@@ -1546,6 +1543,44 @@ mod tests {
             "{:?}",
             regs.iter().map(|r| r.area).collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn a_vertex_sits_on_a_curve_end_not_on_a_crossing_beside_it() {
+        // Two rectangles sharing their bottom side and part of their left and right sides,
+        // turned, shrunk and moved 9 m off: the sides that lie along each other cross a few
+        // micrometres off their shared corner, inside the snap. The corner stays where the
+        // lines end (it once moved to the crossing, and areas with it).
+        let rects = [(v(6.0, 8.0), v(9.0, 9.0)), (v(6.0, 8.0), v(9.0, 12.0))];
+        let rot = DVec2::from_angle(0.4302038202076902);
+        let (scale, at) = (
+            0.13183159374892753,
+            v(-2821.451703025482, -8510.411688185979),
+        );
+        let f = |p: DVec2| rot.rotate(p * scale) + at;
+        let mut ends = Vec::new();
+        let mut shapes = Vec::new();
+        for (lo, hi) in rects {
+            let c = [lo, v(hi.x, lo.y), hi, v(lo.x, hi.y)].map(f);
+            for k in 0..4 {
+                shapes.push(line(c[k], c[(k + 1) % 4]));
+                ends.push(c[k]);
+            }
+        }
+        let found = regions(&shapes);
+        assert_eq!(found.len(), 2);
+        for r in &found {
+            for e in &r.outer.edges {
+                assert!(ends.contains(&e.start()), "{} is no curve end", e.start());
+            }
+        }
+        let mut areas: Vec<f64> = found.iter().map(|r| r.area).collect();
+        areas.sort_by(f64::total_cmp);
+        for (got, want) in areas.iter().zip([3.0, 9.0]) {
+            // (Rounding at 9 m leaves ~1e-9; the corner at the crossing was off by 1e-6.)
+            let want = want * scale * scale;
+            assert!((got - want).abs() < 1e-8, "{got} vs {want}");
+        }
     }
 
     #[test]

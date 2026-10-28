@@ -350,15 +350,56 @@ pub fn corner_order(doc: &Document, a: EntityId, b: EntityId) -> (EntityId, Enti
 /// through `at` parallel to `out`, and on along lines that carry on from their ends (a wall
 /// drawn in pieces). An extension line from `at` going `out` would run on top of it that far.
 /// 0 when no line does. Construction lines and lines on hidden layers don't count.
+///
+/// Dimensions are laid out every frame, two of these each: the drawing's lines are gathered
+/// once per change to it, and each answer is kept until the drawing changes.
 pub(crate) fn geometry_run(doc: &Document, at: DVec2, out: DVec2) -> f64 {
+    thread_local! {
+        static RUNS: std::cell::RefCell<RunCache> = Default::default();
+    }
+    // (The document's address too: two documents can share a revision.)
+    let key = (
+        std::ptr::from_ref(doc) as usize,
+        doc.structure(),
+        doc.revision(),
+    );
+    RUNS.with_borrow_mut(|cache| {
+        if cache.key != Some(key) {
+            cache.key = Some(key);
+            cache.answers.clear();
+            cache.lines = doc
+                .iter()
+                .filter(|(id, e)| e.style != LineKind::Construction && doc.is_visible(*id))
+                .filter_map(|(_, e)| match e.kind {
+                    EntityKind::Line { a, b } => Some((doc.point(a).ok()?, doc.point(b).ok()?)),
+                    _ => None,
+                })
+                .collect();
+        }
+        let ask = [at.x, at.y, out.x, out.y].map(f64::to_bits);
+        if let Some(&reach) = cache.answers.get(&ask) {
+            return reach;
+        }
+        let reach = run_along(&cache.lines, at, out);
+        cache.answers.insert(ask, reach);
+        reach
+    })
+}
+
+/// [`geometry_run`]'s lines (of the drawing it last looked at) and answers.
+#[derive(Default)]
+struct RunCache {
+    key: Option<(usize, u64, u64)>,
+    lines: Vec<(DVec2, DVec2)>,
+    answers: HashMap<[u64; 4], f64>,
+}
+
+/// [`geometry_run`] among `lines` (every visible, drawn line of the drawing).
+fn run_along(lines: &[(DVec2, DVec2)], at: DVec2, out: DVec2) -> f64 {
     let tol = 1e-6 * (1.0 + at.abs().max_element());
-    let lines: Vec<(DVec2, DVec2)> = doc
+    let lines: Vec<(DVec2, DVec2)> = lines
         .iter()
-        .filter(|(id, e)| e.style != LineKind::Construction && doc.is_visible(*id))
-        .filter_map(|(_, e)| match e.kind {
-            EntityKind::Line { a, b } => Some((doc.point(a).ok()?, doc.point(b).ok()?)),
-            _ => None,
-        })
+        .copied()
         .filter(|(a, b)| {
             let len = (*b - *a).length();
             len > tol && (*b - *a).perp_dot(out).abs() <= 1e-6 * len

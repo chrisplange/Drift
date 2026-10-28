@@ -6,17 +6,22 @@ impl Editor {
     /// The closed regions formed by solid curves (construction and centre lines are
     /// references, not boundaries), recomputed when the document changes.
     pub fn regions(&mut self) -> std::rc::Rc<Vec<drift_geom::regions::Region>> {
-        // (Changing the rules is a change too: it bumps the revision.)
-        let revision = self.doc.revision();
-        if let Some((r, regions)) = &self.regions
-            && *r == revision
+        // They depend on the curves, the rule and the curves fills keep to, and nothing else:
+        // an edit's fills following it (after the areas were found for them) keeps them.
+        let key = RegionsKey {
+            geometry: self.doc.geometry(),
+            by_layer: self.doc.rules().regions_by_layer,
+            edges: self.fill_edges(),
+        };
+        if let Some((k, regions)) = &self.regions
+            && *k == key
         {
             return regions.clone();
         }
-        if self.doc.rules().regions_by_layer {
-            return self.regions_per_layer(revision);
+        if key.by_layer {
+            return self.regions_per_layer(key);
         }
-        let bounding = self.fill_edges();
+        let bounding = &key.edges;
         let (ids, curves): (Vec<EntityId>, Vec<Shape>) = self
             .doc
             .iter()
@@ -26,7 +31,7 @@ impl Editor {
             .filter_map(|(id, _)| Some((id, self.doc.shape(id)?)))
             .unzip();
         let regions = std::rc::Rc::new(drift_geom::regions::regions(&curves));
-        self.regions = Some((revision, regions.clone()));
+        self.regions = Some((key, regions.clone()));
         self.region_ids = std::rc::Rc::new(ids);
         regions
     }
@@ -35,11 +40,11 @@ impl Editor {
     /// isn't closed or cut by curves on another.
     pub(super) fn regions_per_layer(
         &mut self,
-        revision: u64,
+        key: RegionsKey,
     ) -> std::rc::Rc<Vec<drift_geom::regions::Region>> {
         let mut by_layer: std::collections::BTreeMap<drift_core::LayerId, Vec<(EntityId, Shape)>> =
             Default::default();
-        let bounding = self.fill_edges();
+        let bounding = &key.edges;
         for (id, e) in self.doc.iter() {
             if e.kind.is_point() || (e.style != LineKind::Solid && !bounding.contains(&id)) {
                 continue;
@@ -65,7 +70,7 @@ impl Editor {
             }
         }
         let regions = std::rc::Rc::new(all);
-        self.regions = Some((revision, regions.clone()));
+        self.regions = Some((key, regions.clone()));
         self.region_ids = std::rc::Rc::new(ids);
         regions
     }
@@ -195,6 +200,16 @@ impl Editor {
     pub fn regions_need_fill(&self) -> bool {
         self.doc.rules().regions_need_fill && !self.pick_any_area
     }
+}
+
+/// What [`Editor::regions`] were found from.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct RegionsKey {
+    /// [`Document::geometry`](drift_core::Document::geometry).
+    geometry: u64,
+    by_layer: bool,
+    /// [`Editor::fill_edges`].
+    edges: BTreeSet<EntityId>,
 }
 
 /// How a move or a turn in progress has carried the geometry so far.

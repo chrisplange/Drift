@@ -373,8 +373,11 @@ fn snap_points(points: &[DVec2], snap: f64) -> (Vec<DVec2>, Vec<usize>) {
     // eight around it.
     let cell = snap.max(f64::MIN_POSITIVE);
     let key = |p: DVec2| ((p.x / cell).floor() as i64, (p.y / cell).floor() as i64);
-    let mut grid: std::collections::HashMap<(i64, i64), Vec<usize>> =
-        std::collections::HashMap::new();
+    let mut grid: std::collections::HashMap<
+        (i64, i64),
+        Vec<usize>,
+        std::hash::BuildHasherDefault<CellHasher>,
+    > = Default::default();
     for &i in &order {
         let p = points[i];
         let (kx, ky) = key(p);
@@ -401,6 +404,31 @@ fn snap_points(points: &[DVec2], snap: f64) -> (Vec<DVec2>, Vec<usize>) {
         vertex[i] = id_of_root[r];
     }
     (verts, vertex)
+}
+
+/// A quick hash for grid cells (the standard one is made to resist attacks, and dominated
+/// the snap stage on big drawings).
+#[derive(Default)]
+struct CellHasher(u64);
+
+impl std::hash::Hasher for CellHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.write_u64(u64::from(b));
+        }
+    }
+
+    fn write_u64(&mut self, n: u64) {
+        self.0 = (self.0.rotate_left(5) ^ n).wrapping_mul(0x51_7c_c1_b7_27_22_0a_95);
+    }
+
+    fn write_i64(&mut self, n: i64) {
+        self.write_u64(n as u64);
+    }
 }
 
 fn by_position(p: DVec2, q: DVec2) -> Ordering {
@@ -447,11 +475,31 @@ fn split(curves: &[Shape], tol: &RegionTolerance) -> (Vec<DVec2>, Vec<Piece>) {
     let mut cuts: Vec<Vec<(f64, DVec2)>> = vec![Vec::new(); n];
     let bounds: Vec<_> = curves.iter().map(Shape::bounds).collect();
     let keys: Vec<_> = curves.iter().map(curve_key).collect();
-    // Sweep along x: only curves whose x ranges overlap are compared.
+    // Sweep along x: only curves whose x ranges overlap are compared, in this order. (The
+    // pairs come from a tree of the curves' boxes: a long curve would have the sweep look at
+    // every curve in its x range.)
     let mut order: Vec<usize> = (0..n).collect();
     order.sort_by(|&a, &b| bounds[a].min.x.total_cmp(&bounds[b].min.x));
+    let mut place = vec![0; n];
+    for (k, &c) in order.iter().enumerate() {
+        place[c] = k;
+    }
+    let boxes = crate::BoxIndex::new(bounds.iter().copied());
+    let mut later = Vec::new();
     for (k, &first) in order.iter().enumerate() {
-        for &second in &order[k + 1..] {
+        let b = bounds[first];
+        later.clear();
+        later.extend(
+            boxes
+                .near(&Bounds {
+                    min: b.min - DVec2::splat(pad),
+                    max: b.max + DVec2::splat(pad),
+                })
+                .into_iter()
+                .filter(|&c| place[c] > k),
+        );
+        later.sort_unstable_by_key(|&c| place[c]);
+        for &second in &later {
             if bounds[second].min.x > bounds[first].max.x + pad {
                 break;
             }
@@ -523,6 +571,14 @@ fn split(curves: &[Shape], tol: &RegionTolerance) -> (Vec<DVec2>, Vec<Piece>) {
     }
     let points: Vec<DVec2> = stops.iter().flatten().map(|(_, p)| *p).collect();
     let (verts, vertex_of) = snap_points(&points, tol.snap);
+    // The vertices in order of y (then x), for curves that span less in y than in x.
+    let mut by_y: Vec<usize> = (0..verts.len()).collect();
+    by_y.sort_by(|&a, &b| {
+        verts[a]
+            .y
+            .total_cmp(&verts[b].y)
+            .then(verts[a].x.total_cmp(&verts[b].x))
+    });
     let mut next = 0;
     let mut pieces = Vec::new();
     for (source, (shape, s)) in curves.iter().zip(stops).enumerate() {
@@ -536,7 +592,7 @@ fn split(curves: &[Shape], tol: &RegionTolerance) -> (Vec<DVec2>, Vec<Piece>) {
         // Each curve also passes through every vertex within `snap` of it: where another
         // curve ends on it, or crosses a curve lying along it. So curves lying along each
         // other share the same vertices, and the stretch they share becomes one edge.
-        raw.extend(vertices_on(shape, &verts, tol.snap));
+        raw.extend(vertices_on(shape, &verts, &by_y, tol.snap));
         raw.sort_by(|x, y| x.0.total_cmp(&y.0));
         // Stops at one vertex merge. The first is kept, except that the curve's far end
         // replaces a cut snapped onto it.
@@ -615,7 +671,7 @@ fn split(curves: &[Shape], tol: &RegionTolerance) -> (Vec<DVec2>, Vec<Piece>) {
 
 /// The vertices within `snap` of the interior of `curve` (a line, arc or circle), with
 /// their parameters along it.
-fn vertices_on(curve: &Shape, verts: &[DVec2], snap: f64) -> Vec<(f64, usize)> {
+fn vertices_on(curve: &Shape, verts: &[DVec2], by_y: &[usize], snap: f64) -> Vec<(f64, usize)> {
     let b = curve.bounds();
     let mut found = Vec::new();
     if !matches!(
@@ -624,12 +680,29 @@ fn vertices_on(curve: &Shape, verts: &[DVec2], snap: f64) -> Vec<(f64, usize)> {
     ) {
         return found;
     }
-    // Vertices are sorted by x: only those in the curve's x range are looked at.
-    let first = verts.partition_point(|p| p.x < b.min.x - snap);
-    for (i, &p) in verts.iter().enumerate().skip(first) {
-        if p.x > b.max.x + snap {
-            break;
-        }
+    // Vertices are sorted by x, and `by_y` by y: only those in the curve's x range, or its y
+    // range where that holds fewer, are looked at (then in the order of x).
+    let (x0, x1) = (
+        verts.partition_point(|p| p.x < b.min.x - snap),
+        verts.partition_point(|p| p.x <= b.max.x + snap),
+    );
+    let (y0, y1) = (
+        by_y.partition_point(|&i| verts[i].y < b.min.y - snap),
+        by_y.partition_point(|&i| verts[i].y <= b.max.y + snap),
+    );
+    let mut inside: Vec<usize> = if y1.saturating_sub(y0) < x1.saturating_sub(x0) {
+        let mut v: Vec<usize> = by_y[y0..y1.max(y0)].to_vec();
+        v.sort_unstable();
+        v
+    } else {
+        (x0..x1.max(x0)).collect()
+    };
+    inside.retain(|&i| {
+        let p = verts[i];
+        !(p.x < b.min.x - snap || p.x > b.max.x + snap)
+    });
+    for i in inside {
+        let p = verts[i];
         if p.y < b.min.y - snap || p.y > b.max.y + snap {
             continue;
         }
@@ -883,30 +956,42 @@ pub fn regions_with(curves: &[Shape], tol: &RegionTolerance) -> Vec<Region> {
         })
         .collect();
     // Each clockwise boundary is a hole in the smallest region strictly containing it (not
-    // the face it bounds itself, which has the same outline).
+    // the face it bounds itself, which has the same outline). Regions are found by their
+    // bounds in a tree, and each one's outline is flattened once.
+    let pad = tol.snap;
+    let boxes = crate::BoxIndex::new(result.iter().map(|r| r.bounds));
+    let mut polygons: Vec<Option<Vec<DVec2>>> = vec![None; result.len()];
     for b in boundaries {
         let own_area = -b.signed_area();
         let own = loop_bounds(&b);
         let outline = b.polygon(0.05);
-        let host = result
-            .iter()
-            .enumerate()
-            .filter(|(_, r)| r.area > own_area + tol.min_area)
-            // Only regions whose bounds hold this boundary's (cheap) are checked closely.
-            .filter(|(_, r)| {
-                let pad = tol.snap;
-                r.bounds.min.x <= own.min.x + pad
+        let near = Bounds {
+            min: own.min - DVec2::splat(pad),
+            max: own.max + DVec2::splat(pad),
+        };
+        let mut candidates: Vec<usize> = boxes
+            .near(&near)
+            .into_iter()
+            .filter(|&i| {
+                let r = &result[i];
+                r.area > own_area + tol.min_area
+                    // Only regions whose bounds hold this boundary's are checked closely.
+                    && r.bounds.min.x <= own.min.x + pad
                     && r.bounds.min.y <= own.min.y + pad
                     && r.bounds.max.x >= own.max.x - pad
                     && r.bounds.max.y >= own.max.y - pad
             })
-            .filter(|(_, r)| {
-                outline
-                    .iter()
-                    .all(|p| r.outer.contains(*p) || near_outline(&r.outer, *p, tol))
+            .collect();
+        // The smallest first (the first of equals as listed): the first that holds it wins.
+        candidates
+            .sort_unstable_by(|&i, &j| result[i].area.total_cmp(&result[j].area).then(i.cmp(&j)));
+        let host = candidates.into_iter().find(|&i| {
+            let r = &result[i];
+            let poly = polygons[i].get_or_insert_with(|| r.outer.polygon(0.02));
+            outline.iter().all(|p| {
+                drift_core::polygon::winding(poly, *p) != 0 || near_outline(&r.outer, *p, tol)
             })
-            .min_by(|a, b| a.1.area.total_cmp(&b.1.area))
-            .map(|(i, _)| i);
+        });
         if let Some(i) = host {
             let r = &mut result[i];
             r.area -= own_area;
@@ -995,6 +1080,69 @@ pub fn region_at(regions: &[Region], p: DVec2) -> Option<&Region> {
         .iter()
         .filter(|r| r.contains(p))
         .min_by(|a, b| a.area.total_cmp(&b.area))
+}
+
+/// Regions' bounds in a tree, for [`region_at`] many times over the same regions.
+pub struct RegionIndex(crate::BoxIndex);
+
+impl RegionIndex {
+    pub fn new(regions: &[Region]) -> Self {
+        Self(crate::BoxIndex::new(regions.iter().map(|r| r.bounds)))
+    }
+
+    /// [`region_at`] among the `regions` this was made for.
+    pub fn at<'a>(&self, regions: &'a [Region], p: DVec2) -> Option<&'a Region> {
+        self.0
+            .near(&Bounds { min: p, max: p })
+            .into_iter()
+            .map(|i| &regions[i])
+            .filter(|r| r.contains(p))
+            .min_by(|a, b| a.area.total_cmp(&b.area))
+    }
+}
+
+#[cfg(test)]
+mod index_tests {
+    use super::*;
+
+    #[test]
+    fn a_region_index_finds_what_region_at_does() {
+        let mut seed = 3u64;
+        let mut rnd = move || {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (seed >> 11) as f64 / (1u64 << 53) as f64
+        };
+        for _ in 0..100 {
+            // Overlapping rectangles and circles on a coarse grid: shared sides, holes.
+            let mut curves = Vec::new();
+            for _ in 0..(2 + (rnd() * 12.0) as usize) {
+                let a = DVec2::new((rnd() * 20.0).round(), (rnd() * 20.0).round());
+                if rnd() < 0.3 {
+                    curves.push(Shape::Circle {
+                        center: a,
+                        radius: 1.0 + (rnd() * 6.0).round(),
+                    });
+                    continue;
+                }
+                let b = a + DVec2::new(1.0 + (rnd() * 8.0).round(), 1.0 + (rnd() * 8.0).round());
+                let c = [a, DVec2::new(b.x, a.y), b, DVec2::new(a.x, b.y)];
+                for k in 0..4 {
+                    curves.push(Shape::Line {
+                        a: c[k],
+                        b: c[(k + 1) % 4],
+                    });
+                }
+            }
+            let found = regions(&curves);
+            let index = RegionIndex::new(&found);
+            for _ in 0..50 {
+                let p = DVec2::new(rnd() * 30.0 - 2.0, rnd() * 30.0 - 2.0);
+                assert_eq!(index.at(&found, p), region_at(&found, p));
+            }
+        }
+    }
 }
 
 #[cfg(test)]

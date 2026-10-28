@@ -848,14 +848,12 @@ impl DriftApp {
             dark,
         );
         // Geometry (GPU): underlays under everything else.
-        let mut under = self.editor.underlay_items(view, dark);
+        let underlays = self.editor.underlay_items(view, dark);
         let stacked = self.editor.doc.rules().stacked_fills;
         let pictures = self.editor.underlay_pictures();
         // Fills under every curve: their hatch lines go under the sketch too.
         let meshes = if stacked { Vec::new() } else { fills.meshes() };
-        if !stacked {
-            under.extend(fills.lines());
-        }
+        let hatch_lines = if stacked { Vec::new() } else { fills.lines() };
         let mut items = Vec::new();
         if self.show_dimensions {
             items.extend(crate::notes::centre_items(
@@ -874,8 +872,16 @@ impl DriftApp {
         let mut images = Vec::new();
         self.editor.preview_hidden = self.tool.preview_hides(&self.editor);
         let text = self.editor.text_items_tagged(self.status_colors, dark);
-        if stacked {
-            let stack = self.editor.stack();
+        let stack = stacked.then(|| self.editor.stack());
+        // The sketch's items, kept from frame to frame: one list per stack group (or one),
+        // and what is lit up, over everything.
+        let lit =
+            self.sketch_items
+                .prepare(&self.editor, self.status_colors, dark, stack.as_deref());
+        let top = self.sketch_items.top();
+        items.extend_from_slice(&self.sketch_items.lists()[top]);
+        items.extend(lit);
+        if let Some(stack) = &stack {
             let mut fill_groups: std::collections::HashMap<
                 crate::stack::FillRef,
                 crate::fills::FillGroup,
@@ -900,23 +906,19 @@ impl DriftApp {
                 }
                 groups.push(content);
             }
-            for t in self
-                .editor
-                .items_tagged(self.status_colors, dark)
-                .into_iter()
-                .chain(text)
-            {
+            // (Text isn't kept: it goes over the sketch's items in its group, as they would.)
+            for t in text {
                 let at = (t.item.emphasis == drift_core::Emphasis::Normal)
                     .then(|| stack.group_of(t.entity, t.layer))
-                    .flatten();
-                match at.and_then(|k| groups.get_mut(k)) {
-                    Some(g) => g.items.push(t.item),
+                    .flatten()
+                    .filter(|k| *k < groups.len());
+                match at {
+                    Some(k) => self.sketch_items.push(k, t.item),
                     None => items.push(t.item),
                 }
             }
         } else {
             images.extend(pictures.into_iter().map(|(_, image)| image));
-            items.extend(self.editor.items_styled(self.status_colors, dark));
             items.extend(text.into_iter().map(|t| t.item));
         }
         // Bézier handles around picked curves, and their curvature combs.
@@ -950,13 +952,25 @@ impl DriftApp {
         items.extend(self.tool.editor_preview(&self.editor));
         self.editor.preview_hidden.clear();
         let ppp = f64::from(ui.ctx().pixels_per_point());
+        let lists = self.sketch_items.lists();
         let group_refs: Vec<drift_render::DrawGroup<'_>> = groups
             .iter()
-            .map(|g| drift_render::DrawGroup {
+            .enumerate()
+            .map(|(k, g)| drift_render::DrawGroup {
                 fills: &g.fills,
                 images: &g.images,
                 items: &g.items,
+                more: lists
+                    .get(k)
+                    .filter(|_| k + 1 < lists.len())
+                    .map_or(&[], Vec::as_slice),
             })
+            .collect();
+        // Underlays, then hatch lines.
+        let under: Vec<&[drift_core::SketchItem]> = underlays
+            .iter()
+            .map(|run| run.as_slice())
+            .chain([hatch_lines.as_slice()])
             .collect();
         let callback = self.painter.callback(
             rect,
@@ -978,6 +992,7 @@ impl DriftApp {
             },
         );
         ui.painter().add(callback);
+        self.sketch_items.restore();
 
         // Overlays (egui).
         let painter = ui.painter_at(rect);

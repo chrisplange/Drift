@@ -373,6 +373,7 @@ impl Document {
 
     /// Note a change to `key` for the open transaction without changing the structure.
     pub(super) fn record_touch(&mut self, key: Key) {
+        self.note_change(key);
         if self.journal.is_some() {
             let current = self.record(key);
             if let Some(journal) = &mut self.journal {
@@ -395,7 +396,20 @@ impl Document {
         self.touch_key(Key::Constraint(id));
     }
 
+    /// Note a change to `key` for caches that follow entities and layers.
+    fn note_change(&mut self, key: Key) {
+        match key {
+            Key::Entity(id) => {
+                self.geometry = next_structure();
+                self.changes.note(self.revision, Some(id));
+            }
+            Key::Layer(_) => self.changes.note(self.revision, None),
+            _ => {}
+        }
+    }
+
     pub(super) fn restore(&mut self, key: Key, record: Option<Record>) {
+        self.note_change(key);
         match (key, record) {
             (Key::Entity(id), Some(Record::Entity(e))) => {
                 self.entities.insert(id, e);

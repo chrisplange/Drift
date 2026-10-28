@@ -50,6 +50,10 @@ pub struct SceneIndex {
     /// don't depend on hash order.)
     moved: BTreeSet<EntityId>,
     roles: HashMap<EntityId, PointRole>,
+    /// The document indexed ([`Document::lineage`]).
+    lineage: Option<u64>,
+    /// The indexed curves using each point (what a point's move reshapes, and its role).
+    users: HashMap<EntityId, BTreeSet<EntityId>>,
 }
 
 impl Default for SceneIndex {
@@ -61,6 +65,76 @@ impl Default for SceneIndex {
             kinds: HashMap::new(),
             moved: BTreeSet::new(),
             roles: HashMap::new(),
+            lineage: None,
+            users: HashMap::new(),
+        }
+    }
+}
+
+/// The points an entity uses (none for a point), each once.
+fn used_points(kind: &EntityKind) -> BTreeSet<EntityId> {
+    if kind.is_point() {
+        BTreeSet::new()
+    } else {
+        kind.points().collect()
+    }
+}
+
+/// How `kind` (of an indexed entity) bears on point `p`'s role, as the full pass works
+/// roles out: an end overrides anything; a centre or a handle only a lone point.
+fn apply_role(kind: &EntityKind, p: EntityId, role: &mut Option<PointRole>) {
+    let end = |q: EntityId, role: &mut Option<PointRole>| {
+        if q == p {
+            *role = Some(PointRole::Endpoint);
+        }
+    };
+    let weak = |q: EntityId, as_role: PointRole, role: &mut Option<PointRole>| {
+        if q == p && matches!(role, None | Some(PointRole::Standalone)) {
+            *role = Some(as_role);
+        }
+    };
+    match *kind {
+        EntityKind::Point(_) => {}
+        EntityKind::Line { a, b } => {
+            end(a, role);
+            end(b, role);
+        }
+        EntityKind::Circle { center, .. } => weak(center, PointRole::Center, role),
+        EntityKind::Arc {
+            center,
+            start,
+            end: e,
+        } => {
+            weak(center, PointRole::Center, role);
+            end(start, role);
+            end(e, role);
+        }
+        EntityKind::Ellipse {
+            center,
+            major,
+            minor,
+        } => {
+            weak(center, PointRole::Center, role);
+            end(major, role);
+            end(minor, role);
+        }
+        EntityKind::Bezier { a, c1, c2, b } => {
+            end(a, role);
+            end(b, role);
+            weak(c1, PointRole::Handle, role);
+            weak(c2, PointRole::Handle, role);
+        }
+        EntityKind::EllipseArc {
+            center,
+            major,
+            minor,
+            start,
+            end: e,
+        } => {
+            weak(center, PointRole::Center, role);
+            for q in [major, minor, start, e] {
+                end(q, role);
+            }
         }
     }
 }
@@ -78,12 +152,23 @@ impl SceneIndex {
     /// wait for the tree until the document's transaction ends.
     pub fn update(&mut self, doc: &Document) {
         if self.revision == Some(doc.revision()) {
-            if !self.moved.is_empty() && !doc.in_transaction() {
+            if self.moved.len() > self.moved_limit() && !doc.in_transaction() {
                 self.rebuild_tree();
             }
             return;
         }
+        // Since the last update only some entities changed (an edit, an undo): only those
+        // are looked at.
+        if let (Some(revision), Some(lineage)) = (self.revision, self.lineage)
+            && let Some(changes) = doc.changes_since(lineage, revision)
+            && !changes.layers
+        {
+            self.revision = Some(doc.revision());
+            self.update_changed(doc, &changes.entities);
+            return;
+        }
         self.revision = Some(doc.revision());
+        self.lineage = Some(doc.lineage());
 
         let mut structure_changed = false;
         let mut changed: Vec<(EntityId, Option<Shape>)> = Vec::new();
@@ -127,11 +212,15 @@ impl SceneIndex {
         if structure_changed {
             self.kinds.clear();
             self.roles.clear();
+            self.users.clear();
             for (id, entity) in doc.iter() {
                 if !self.shapes.contains_key(&id) {
                     continue;
                 }
                 self.kinds.insert(id, entity.kind);
+                for p in used_points(&entity.kind) {
+                    self.users.entry(p).or_default().insert(id);
+                }
                 match entity.kind {
                     EntityKind::Point(_) => {
                         self.roles.entry(id).or_insert(PointRole::Standalone);
@@ -192,6 +281,96 @@ impl SceneIndex {
                 self.moved.extend(changed.iter().map(|(id, _)| *id));
                 return;
             }
+            self.rebuild_tree();
+        }
+    }
+
+    /// How many shapes may wait outside the tree (tested one by one) before it is rebuilt.
+    fn moved_limit(&self) -> usize {
+        (self.shapes.len() / 64).max(256)
+    }
+
+    /// [`update`](Self::update) for a few `changed` entities (sorted): their shapes, the
+    /// shapes of curves on points among them, and the roles of the points concerned. Shapes
+    /// that changed wait outside the tree, tested one by one (as during a drag), until there
+    /// are many of them.
+    fn update_changed(&mut self, doc: &Document, changed: &[EntityId]) {
+        // Curves on a changed point change shape with it.
+        let mut look: BTreeSet<EntityId> = changed.iter().copied().collect();
+        for id in changed {
+            if let Some(users) = self.users.get(id) {
+                look.extend(users.iter().copied());
+            }
+        }
+        let mut points: BTreeSet<EntityId> = BTreeSet::new();
+        for id in look {
+            let entity = doc
+                .get(id)
+                .filter(|_| doc.is_visible(id))
+                .and_then(|e| Some((e.kind, doc.shape(id)?)));
+            let old_kind = self.kinds.get(&id).copied();
+            let new_kind = entity.map(|(k, _)| k);
+            if old_kind != new_kind {
+                let (before, after) = (
+                    old_kind.as_ref().map(used_points).unwrap_or_default(),
+                    new_kind.as_ref().map(used_points).unwrap_or_default(),
+                );
+                if before != after || old_kind.is_none() != new_kind.is_none() {
+                    for p in before.difference(&after) {
+                        if let Some(u) = self.users.get_mut(p) {
+                            u.remove(&id);
+                            if u.is_empty() {
+                                self.users.remove(p);
+                            }
+                        }
+                    }
+                    for p in after.difference(&before) {
+                        self.users.entry(*p).or_default().insert(id);
+                    }
+                    points.extend(before);
+                    points.extend(after);
+                    points.insert(id);
+                }
+                match new_kind {
+                    Some(k) => self.kinds.insert(id, k),
+                    None => self.kinds.remove(&id),
+                };
+            }
+            match (entity, self.shapes.get_mut(&id)) {
+                (Some((_, shape)), Some(old)) => {
+                    if *old != shape {
+                        *old = shape;
+                        self.moved.insert(id);
+                    }
+                }
+                (Some((_, shape)), None) => {
+                    self.shapes.insert(id, shape);
+                    self.moved.insert(id);
+                }
+                (None, Some(_)) => {
+                    self.shapes.remove(&id);
+                    self.moved.insert(id);
+                }
+                (None, None) => {}
+            }
+        }
+        for p in points {
+            let mut role = self
+                .kinds
+                .get(&p)
+                .filter(|k| k.is_point())
+                .map(|_| PointRole::Standalone);
+            for u in self.users.get(&p).into_iter().flatten() {
+                if let Some(kind) = self.kinds.get(u) {
+                    apply_role(kind, p, &mut role);
+                }
+            }
+            match role {
+                Some(r) => self.roles.insert(p, r),
+                None => self.roles.remove(&p),
+            };
+        }
+        if self.moved.len() > self.moved_limit() && !doc.in_transaction() {
             self.rebuild_tree();
         }
     }
@@ -286,9 +465,13 @@ impl SceneIndex {
     ) -> Option<EntityId> {
         self.near(p, tolerance)
             .filter(|(id, ..)| accept(*id))
-            .min_by(|(_, sa, da), (_, sb, db)| {
+            // (Ties go to the older entity, whatever order the search finds them in.)
+            .min_by(|(ia, sa, da), (ib, sb, db)| {
                 let rank = |s: &Shape| u8::from(!matches!(s, Shape::Point(_)));
-                (rank(sa), da).partial_cmp(&(rank(sb), db)).unwrap()
+                (rank(sa), da)
+                    .partial_cmp(&(rank(sb), db))
+                    .unwrap()
+                    .then(ia.cmp(ib))
             })
             .map(|(id, ..)| id)
     }
@@ -334,6 +517,56 @@ impl SceneIndex {
     }
 }
 
+/// Boxes in a tree, to find the ones near a box quickly. Answers are a little generous
+/// (padded for rounding) and in index order, for the caller to test exactly as it would
+/// without the tree.
+pub struct BoxIndex {
+    /// None when a box isn't finite (every box is then an answer).
+    tree: Option<
+        RTree<rstar::primitives::GeomWithData<rstar::primitives::Rectangle<[f64; 2]>, usize>>,
+    >,
+    len: usize,
+}
+
+impl BoxIndex {
+    pub fn new(boxes: impl ExactSizeIterator<Item = Bounds>) -> Self {
+        let len = boxes.len();
+        let mut finite = true;
+        let entries: Vec<_> = boxes
+            .enumerate()
+            .map(|(i, b)| {
+                finite &= b.min.is_finite() && b.max.is_finite();
+                rstar::primitives::GeomWithData::new(
+                    rstar::primitives::Rectangle::from_corners(b.min.to_array(), b.max.to_array()),
+                    i,
+                )
+            })
+            .collect();
+        Self {
+            tree: finite.then(|| RTree::bulk_load(entries)),
+            len,
+        }
+    }
+
+    /// The boxes that may meet `near` (every one that does), in index order.
+    pub fn near(&self, near: &Bounds) -> Vec<usize> {
+        let tree = match &self.tree {
+            Some(tree) if near.min.is_finite() && near.max.is_finite() => tree,
+            _ => return (0..self.len).collect(),
+        };
+        let pad = DVec2::splat(1e-9 * near.min.abs().max(near.max.abs()).max_element().max(1.0));
+        let mut found: Vec<usize> = tree
+            .locate_in_envelope_intersecting(AABB::from_corners(
+                (near.min - pad).to_array(),
+                (near.max + pad).to_array(),
+            ))
+            .map(|g| g.data)
+            .collect();
+        found.sort_unstable();
+        found
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use drift_core::DVec2;
@@ -342,6 +575,115 @@ mod tests {
 
     fn v(x: f64, y: f64) -> DVec2 {
         DVec2::new(x, y)
+    }
+
+    /// Following a document's changes gives the index a fresh build would: shapes, kinds,
+    /// roles, and what searches find, through random edits, undo, redo and drags.
+    #[test]
+    fn following_changes_matches_a_fresh_build() {
+        use drift_core::{History, Layer};
+        let mut seed = 5u64;
+        let mut rnd = move || {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (seed >> 11) as f64 / (1u64 << 53) as f64
+        };
+        let mut doc = Document::new();
+        let layers: Vec<_> = (0..3)
+            .map(|k| doc.add_layer(Layer::new(format!("L{k}"))))
+            .collect();
+        let mut history = History::default();
+        let mut index = SceneIndex::build(&doc);
+        for step in 0..1500 {
+            let points: Vec<EntityId> = doc
+                .iter()
+                .filter(|(_, e)| e.kind.is_point())
+                .map(|(id, _)| id)
+                .collect();
+            let all: Vec<EntityId> = doc.iter().map(|(id, _)| id).collect();
+            let pick = |list: &[EntityId], r: f64| list[(r * list.len() as f64) as usize];
+            let op = (rnd() * 11.0) as u32;
+            let drag = op == 10 && !points.is_empty();
+            doc.begin();
+            match op {
+                _ if points.len() < 4 || op == 0 => {
+                    doc.add_point(v(rnd() * 100.0, rnd() * 100.0));
+                }
+                1 => {
+                    let (a, b) = (pick(&points, rnd()), pick(&points, rnd()));
+                    let _ = doc.add_line(a, b);
+                }
+                2 => {
+                    let _ = doc.add_circle(pick(&points, rnd()), 1.0 + rnd() * 9.0);
+                }
+                3 => {
+                    let ps: Vec<EntityId> = (0..3).map(|_| pick(&points, rnd())).collect();
+                    let _ = doc.add_arc(ps[0], ps[1], ps[2]);
+                }
+                4 => {
+                    let ps: Vec<EntityId> = (0..4).map(|_| pick(&points, rnd())).collect();
+                    let _ = doc.add_bezier(ps[0], ps[1], ps[2], ps[3]);
+                }
+                5 | 10 => {
+                    let _ = doc.set_point(pick(&points, rnd()), v(rnd() * 100.0, rnd() * 100.0));
+                }
+                6 => doc.delete([pick(&all, rnd())]),
+                7 => {
+                    let _ = doc.set_entity_layer(pick(&all, rnd()), layers[(rnd() * 3.0) as usize]);
+                }
+                8 => {
+                    let l = layers[(rnd() * 3.0) as usize];
+                    let mut layer = doc.layer(l).unwrap().clone();
+                    layer.visible = !layer.visible;
+                    doc.set_layer(l, layer);
+                }
+                _ => {
+                    let curves: Vec<EntityId> = all
+                        .iter()
+                        .copied()
+                        .filter(|id| doc.get(*id).is_some_and(|e| !e.kind.is_point()))
+                        .collect();
+                    if let Some(&c) = curves.first() {
+                        let _ = doc.set_radius(c, 2.0 + rnd() * 5.0);
+                    }
+                }
+            }
+            if drag {
+                // Mid-drag the index follows moves only, then the drag is let go.
+                index.update_moved(&doc, doc.entities_touched_in_transaction());
+                index.update(&doc);
+                doc.rollback();
+            } else {
+                let tx = doc.commit("Edit");
+                history.push(tx);
+            }
+            if rnd() < 0.15 {
+                history.undo(&mut doc);
+            } else if rnd() < 0.1 {
+                history.redo(&mut doc);
+            }
+            index.update(&doc);
+            let fresh = SceneIndex::build(&doc);
+            assert_eq!(index.shapes, fresh.shapes, "shapes, step {step}");
+            assert_eq!(index.kinds, fresh.kinds, "kinds, step {step}");
+            assert_eq!(index.roles, fresh.roles, "roles, step {step}");
+            for _ in 0..4 {
+                let c = v(rnd() * 100.0, rnd() * 100.0);
+                let r = Bounds::from_center_half_size(c, v(rnd() * 30.0, rnd() * 30.0));
+                let found = |i: &SceneIndex| {
+                    let mut f: Vec<EntityId> = i.query(r).collect();
+                    f.sort_unstable();
+                    f
+                };
+                assert_eq!(found(&index), found(&fresh), "query, step {step}");
+                assert_eq!(
+                    index.pick(c, 3.0, |_| true),
+                    fresh.pick(c, 3.0, |_| true),
+                    "pick, step {step}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -399,21 +741,26 @@ mod tests {
         assert_eq!(index.pick(v(1.0, 1.0), 0.1, |_| true), None);
         assert_eq!(index.pick(v(5.0, 5.0), 0.1, |_| true), Some(p));
         assert_eq!(index.pick(v(-3.0, -3.0), 0.1, |_| true), Some(q));
-        // A change the index finds itself (not told of) waits too, unless it adds something.
+        // A change the index finds itself (not told of) waits too, an addition included.
         doc.set_point(q, v(-8.0, -8.0)).unwrap();
         index.update(&doc);
         assert!(index.moved.contains(&q));
         assert_eq!(index.pick(v(-8.0, -8.0), 0.1, |_| true), Some(q));
         let r = doc.add_point(v(30.0, 30.0));
         index.update(&doc);
-        assert!(index.moved.is_empty(), "an addition rebuilds the tree");
+        assert!(
+            index.moved.contains(&r),
+            "an addition waits outside the tree too"
+        );
         assert_eq!(index.pick(v(30.0, 30.0), 0.1, |_| true), Some(r));
         assert_eq!(index.pick(v(5.0, 5.0), 0.1, |_| true), Some(p));
         doc.set_point(p, v(6.0, 6.0)).unwrap();
         index.update_moved(&doc, [p]);
         doc.commit("move");
         index.update(&doc);
-        assert!(index.moved.is_empty(), "rebuilt once the transaction ends");
+        // A few changes go on waiting after the transaction (the tree is rebuilt once
+        // there are many).
+        assert!(index.moved.contains(&p));
         assert_eq!(index.pick(v(6.0, 6.0), 0.1, |_| true), Some(p));
         assert_eq!(index.pick(v(1.0, 1.0), 0.1, |_| true), None);
     }

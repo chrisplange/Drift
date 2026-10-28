@@ -10,7 +10,7 @@ pub mod regions;
 mod snap;
 pub mod walls;
 
-pub use index::{PointRole, SceneIndex};
+pub use index::{BoxIndex, PointRole, SceneIndex};
 pub use primitives::{
     angle_in_sweep, circle_segment_intersections, distance, ellipse_segment_intersections,
     nearest_on_bezier, nearest_on_ellipse, nearest_point, param_of, shape_intersects_rect,

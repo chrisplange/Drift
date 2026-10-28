@@ -244,6 +244,8 @@ struct Areas<'a> {
     by_curve: HashMap<EntityId, Vec<usize>>,
     /// Every curve the regions were found from.
     curves: HashSet<EntityId>,
+    /// The regions' bounds, to find the one around a point.
+    index: drift_geom::regions::RegionIndex,
 }
 
 impl<'a> Areas<'a> {
@@ -266,7 +268,13 @@ impl<'a> Areas<'a> {
             by_outline,
             by_curve,
             curves: ids.iter().copied().collect(),
+            index: drift_geom::regions::RegionIndex::new(regions),
         }
+    }
+
+    /// [`region_at`] among these regions.
+    fn at(&self, p: DVec2) -> Option<&'a Region> {
+        self.index.at(self.regions, p)
     }
 
     /// Of `candidates`, the one around `seed`, else the one whose centre is nearest it.
@@ -297,7 +305,7 @@ impl<'a> Areas<'a> {
             .map(|&i| &regions[i])
             .find(|r| r.contains(fill.seed))
             .or_else(|| {
-                region_at(regions, fill.seed).filter(|r| {
+                self.at(fill.seed).filter(|r| {
                     outline_of(r, ids)
                         .iter()
                         .all(|e| fill.boundary.binary_search(e).is_ok())
@@ -346,7 +354,7 @@ impl<'a> Areas<'a> {
 
     /// The region around `p`, if its outline shares a curve with the fill's.
     fn sharing_at(&self, p: DVec2, fill: &Fill) -> Option<&'a Region> {
-        region_at(self.regions, p).filter(|r| {
+        self.at(p).filter(|r| {
             r.outer
                 .curves()
                 .into_iter()
@@ -386,8 +394,47 @@ pub(crate) struct FillShapesCache {
 }
 
 /// The sketch's solid curves with their bounds, in document order: what
-/// [`Editor::uncrossed_region`] finds a crossed fill's area among.
-type SolidCurves = Vec<(EntityId, Shape, Bounds)>;
+/// [`Editor::uncrossed_region`] finds a crossed fill's area among. With a tree of their
+/// boxes: a big drawing has many crossed fills, each looking for the curves near it.
+pub(crate) struct SolidCurves {
+    curves: Vec<(EntityId, Shape, Bounds)>,
+    /// Their boxes in a tree, made once enough searches would pay for it (a drag frame makes
+    /// these afresh for one search or two).
+    boxes: std::cell::OnceCell<drift_geom::BoxIndex>,
+    searches: std::cell::Cell<usize>,
+}
+
+impl SolidCurves {
+    /// Searches made by looking at every curve before the tree is made.
+    const UNTREED: usize = 8;
+
+    fn new(curves: Vec<(EntityId, Shape, Bounds)>) -> Self {
+        Self {
+            curves,
+            boxes: Default::default(),
+            searches: Default::default(),
+        }
+    }
+
+    /// The curves whose box meets `near`, in document order.
+    fn near(&self, near: &Bounds) -> Vec<&(EntityId, Shape, Bounds)> {
+        self.searches.set(self.searches.get() + 1);
+        if self.searches.get() <= Self::UNTREED {
+            return self
+                .curves
+                .iter()
+                .filter(|(_, _, b)| b.intersects(near))
+                .collect();
+        }
+        self.boxes
+            .get_or_init(|| drift_geom::BoxIndex::new(self.curves.iter().map(|(_, _, b)| *b)))
+            .near(near)
+            .into_iter()
+            .map(|i| &self.curves[i])
+            .filter(|(_, _, b)| b.intersects(near))
+            .collect()
+    }
+}
 
 impl Editor {
     /// Every fill's region, as of the current document revision.
@@ -538,7 +585,7 @@ impl Editor {
                         ..last.clone()
                     },
                 );
-            } else if let Some(r) = region_at(&regions, fill.seed) {
+            } else if let Some(r) = areas.at(fill.seed) {
                 out.insert(
                     id,
                     FillShape {
@@ -629,7 +676,7 @@ impl Editor {
         // (A shape the edit left alone, with nothing changed near it, is as last found:
         // only the others are found again, among the drawing's solid curves found once.)
         let boxes = self.touched_boxes();
-        let mut shape_solid: Option<SolidCurves> = None;
+        let mut shape_solid: Option<Rc<SolidCurves>> = None;
         let mut insides: HashMap<FillId, (Region, Vec<EntityId>, bool)> = HashMap::new();
         for (id, f) in &fills {
             if walls.as_ref().is_some_and(|w| w.fills.contains_key(id)) {
@@ -1865,15 +1912,25 @@ impl Editor {
     }
 
     /// The sketch's solid curves with their bounds, in document order.
-    fn solid_curves(&self) -> SolidCurves {
-        self.doc
-            .iter()
-            .filter(|(_, e)| !e.kind.is_point() && e.style == drift_core::LineKind::Solid)
-            .filter_map(|(id, _)| {
-                let shape = self.doc.shape(id)?;
-                Some((id, shape, shape.bounds()))
-            })
-            .collect()
+    fn solid_curves(&self) -> Rc<SolidCurves> {
+        let geometry = self.doc.geometry();
+        if let Some((g, solid)) = &*self.solid_cache.borrow()
+            && *g == geometry
+        {
+            return solid.clone();
+        }
+        let solid = Rc::new(SolidCurves::new(
+            self.doc
+                .iter()
+                .filter(|(_, e)| !e.kind.is_point() && e.style == drift_core::LineKind::Solid)
+                .filter_map(|(id, _)| {
+                    let shape = self.doc.shape(id)?;
+                    Some((id, shape, shape.bounds()))
+                })
+                .collect(),
+        ));
+        *self.solid_cache.borrow_mut() = Some((geometry, solid.clone()));
+        solid
     }
 
     /// A fill's area among its own outline curves and the curves that don't cross them (so
@@ -1953,8 +2010,8 @@ impl Editor {
         near.min -= DVec2::splat(pad);
         near.max += DVec2::splat(pad);
         let (ids, curves): (Vec<EntityId>, Vec<Shape>) = solid
-            .iter()
-            .filter(|(_, _, bounds)| bounds.intersects(&near))
+            .near(&near)
+            .into_iter()
             .filter(|(id, shape, _)| {
                 outline_ids.binary_search(id).is_ok()
                     || outline

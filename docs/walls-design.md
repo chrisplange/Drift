@@ -16,6 +16,12 @@ with 5 unit tests and 4 tool tests. It draws walls as loose lines held by hidden
 and cuts other walls' faces for T joins. This document keeps its geometry and its feel, and
 replaces its model.
 
+> **Frozen 2026-10-27.** Walls stop at W3 plus Walls from lines (W1.5): bug fixes only.
+> W4 (rooms), W5b (script openings and rooms), W6 (wall types) and W7 (DXF for walls) are
+> **cut, not deferred**: they are the path to BIM, which is a non-goal (PLAN.md §1). W3b, W3c
+> and W5a are not scheduled. The sections below that describe the cut batches (rooms in §7,
+> wall types in §5.3, W5b in §8) are kept as a record of the design, not as plans.
+
 ---
 
 ## 0. Decisions at a glance
@@ -1176,14 +1182,14 @@ solve, frames) must not regress.
 | **W1.5: Make walls from lines** | Pair parallel lines at a wall-like spacing (near-parallel and near-equal spacing within tolerance), matched by overlapping extent rather than equal length, across gaps at openings. Build centrelines and walls, and weld ends (§3.3 rule 6). For imported DWG and DXF plans and old script walls. | **M** | W1 |
 | **W2: constraints on faces** | `walls::lower`, the `OffsetFrom` residual, `connected`/`needs_solve`/`build_in` reading through the lowering, driving dimensions on faces, constrained tee and against ends, drag property tests over walls. **Same release as W1.** | **M** | W1 |
 | **W3: openings** | `Opening` record and `openings` table (addition, fixture `v42.2`), stations, cuts and jambs, generated library symbols at host thickness, data-driven size sets (§6) with **US imperial** (the default) and **generic metric**, leaf and opening per type, `DrawingRules::size_set`, Opening tool, swing cycling and flip arrows, drag along the wall, offset and width `PropertyDim`s. | **M–L** | W1 |
-| **W3b: national size sets** | DIN 18101 (Germany) and BS 4787 (UK) as JSON size sets, each checked against its standard, with their thickness presets. Planned, part of the walls work. More markets are added the same way. | **S** | W3 |
-| **W3c: openings, more** | Re-host by dragging onto another wall; user blocks as opening symbols. | **S–M** | W3 |
-| **W4: rooms** | `Room` record and `rooms` table (addition, fixture `v42.3`), bounding shapes with openings closed at the face plane, "Bounds rooms" and "Doesn't bound rooms" layer marks, tag, Room tool, area units and precision, lost rooms in analyze, room list panel. | **M** | W1 (W3 for closing openings) |
-| **W5a: script walls** | `wall` and `room … walls` → Wall records, names through `FaceKey`, `.walls` / `hatch`, script tests. | **S–M** | W1 |
-| **W5b: script openings and rooms** | `door/window/opening` → Opening, `label` → Room, `rooms()` from §7, list/analyze/delete for `w`, `o` and `r` ids. | **S–M** | W3, W4 |
-| **W6: wall types** | Named types in the drawing (thickness, poché, join priority, hatch origin), type picker on the tool bar, priority replacing "thickest runs through", angled end caps, columns merging into walls by priority. An addition (its own fixture), no bump. | **M** | W1 |
-| **W7: DXF AC1015 for walls** | LWPOLYLINE outlines, HATCH poché, INSERT openings. Part of the audit's DXF 2000+ batch. | **S** on top of that batch | audit batch 6 |
-| Later | Compound walls (bands), curtain walls, columns as a type, gross areas, wall tags, free arcs skipping the solver (solver plan §1). | — | — |
+| **W3b: national size sets** (not scheduled: walls are frozen) | DIN 18101 (Germany) and BS 4787 (UK) as JSON size sets, each checked against its standard, with their thickness presets. Planned, part of the walls work. More markets are added the same way. | **S** | W3 |
+| **W3c: openings, more** (not scheduled: walls are frozen) | Re-host by dragging onto another wall; user blocks as opening symbols. | **S–M** | W3 |
+| ~~**W4: rooms**~~ **Cut 2026-10-27**, not deferred: it's the path to BIM. | `Room` record and `rooms` table (addition, fixture `v42.3`), bounding shapes with openings closed at the face plane, "Bounds rooms" and "Doesn't bound rooms" layer marks, tag, Room tool, area units and precision, lost rooms in analyze, room list panel. | **M** | W1 (W3 for closing openings) |
+| **W5a: script walls** (not scheduled: walls are frozen) | `wall` and `room … walls` → Wall records, names through `FaceKey`, `.walls` / `hatch`, script tests. | **S–M** | W1 |
+| ~~**W5b: script openings and rooms**~~ **Cut 2026-10-27**, not deferred: it's the path to BIM. | `door/window/opening` → Opening, `label` → Room, `rooms()` from §7, list/analyze/delete for `w`, `o` and `r` ids. | **S–M** | W3, W4 |
+| ~~**W6: wall types**~~ **Cut 2026-10-27**, not deferred: it's the path to BIM. | Named types in the drawing (thickness, poché, join priority, hatch origin), type picker on the tool bar, priority replacing "thickest runs through", angled end caps, columns merging into walls by priority. An addition (its own fixture), no bump. | **M** | W1 |
+| ~~**W7: DXF AC1015 for walls**~~ **Cut 2026-10-27**, not deferred: it's the path to BIM. | LWPOLYLINE outlines, HATCH poché, INSERT openings. Part of the audit's DXF 2000+ batch. | **S** on top of that batch | audit batch 6 |
+| Later (not scheduled: walls are frozen) | Compound walls (bands), curtain walls, columns as a type, gross areas, wall tags, free arcs skipping the solver (solver plan §1). | — | — |
 
 W1 is the first batch and can ship alone: architects get walls that draw, join, fill, print
 and stay editable. W2 should follow it into the same release. W2, W3 and W1.5 can run in

@@ -983,11 +983,7 @@ fn property_rows(ui: &mut egui::Ui, shape: &Shape, units: Units) {
             }
         }
         Shape::Bezier { p } => {
-            let length: f64 = drift_core::shape::flatten_bezier(&p, 128)
-                .windows(2)
-                .map(|w| w[0].distance(w[1]))
-                .sum();
-            row(ui, "Length", len(length));
+            row(ui, "Length", len(Shape::Bezier { p }.length()));
         }
     }
 }

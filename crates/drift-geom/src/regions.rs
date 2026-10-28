@@ -13,6 +13,7 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::f64::consts::TAU;
 
+use drift_core::tolerance::{self, FLATTEN_MM};
 use drift_core::{Bounds, DVec2, Shape};
 
 use crate::intersect::intersect;
@@ -109,8 +110,45 @@ impl Edge {
         }
     }
 
-    /// Points along the edge (start included, end excluded), at most `max_angle` apart on arcs.
-    pub fn flatten(&self, max_angle: f64, out: &mut Vec<DVec2>) {
+    /// What the edge adds to its loop's area and first moments (the integrals of x and y
+    /// over the area), by Green's theorem, with `o` as the origin: exact for arcs too.
+    fn moments(&self, o: DVec2) -> (f64, DVec2) {
+        match *self {
+            Edge::Line { a, b } => {
+                let (a, b) = (a - o, b - o);
+                let mx = (b.y - a.y) * (a.x * a.x + a.x * b.x + b.x * b.x) / 6.0;
+                let my = -(b.x - a.x) * (a.y * a.y + a.y * b.y + b.y * b.y) / 6.0;
+                (a.perp_dot(b) / 2.0, DVec2::new(mx, my))
+            }
+            Edge::Arc {
+                center,
+                radius: r,
+                start,
+                sweep,
+            } => {
+                let c = center - o;
+                let (t0, t1) = (start, start + sweep);
+                let (s0, c0, s1, c1) = (t0.sin(), t0.cos(), t1.sin(), t1.cos());
+                let half = ((2.0 * t1).sin() - (2.0 * t0).sin()) / 4.0;
+                let area = 0.5 * (r * c.x * (s1 - s0) - r * c.y * (c1 - c0) + r * r * sweep);
+                let mx = 0.5
+                    * r
+                    * (c.x * c.x * (s1 - s0)
+                        + 2.0 * c.x * r * (sweep / 2.0 + half)
+                        + r * r * ((s1 - s1.powi(3) / 3.0) - (s0 - s0.powi(3) / 3.0)));
+                let my = 0.5
+                    * r
+                    * (c.y * c.y * (c0 - c1)
+                        + 2.0 * c.y * r * (sweep / 2.0 - half)
+                        + r * r * ((c1.powi(3) / 3.0 - c1) - (c0.powi(3) / 3.0 - c0)));
+                (area, DVec2::new(mx, my))
+            }
+        }
+    }
+
+    /// Points along the edge (start included, end excluded), arcs' chords within `tolerance`
+    /// of them.
+    pub fn flatten(&self, tolerance: f64, out: &mut Vec<DVec2>) {
         match *self {
             Edge::Line { a, .. } => out.push(a),
             Edge::Arc {
@@ -119,7 +157,7 @@ impl Edge {
                 start,
                 sweep,
             } => {
-                let n = (sweep.abs() / max_angle).ceil().clamp(1.0, 4096.0) as usize;
+                let n = drift_core::shape::arc_segments(radius, sweep, tolerance);
                 for k in 0..n {
                     let a = start + sweep * k as f64 / n as f64;
                     out.push(center + radius * DVec2::from_angle(a));
@@ -181,18 +219,18 @@ impl Loop {
         self.edges.iter().map(Edge::length).sum()
     }
 
-    /// A polygon through the loop (arcs flattened to `max_angle` steps).
-    pub fn polygon(&self, max_angle: f64) -> Vec<DVec2> {
+    /// A polygon through the loop, arcs' chords within `tolerance` of them.
+    pub fn polygon(&self, tolerance: f64) -> Vec<DVec2> {
         let mut out = Vec::new();
         for e in &self.edges {
-            e.flatten(max_angle, &mut out);
+            e.flatten(tolerance, &mut out);
         }
         out
     }
 
     /// Whether the loop winds round `p`.
     pub fn contains(&self, p: DVec2) -> bool {
-        drift_core::polygon::winding(&self.polygon(0.02), p) != 0
+        drift_core::polygon::winding(&self.polygon(FLATTEN_MM), p) != 0
     }
 }
 
@@ -214,39 +252,35 @@ impl Region {
     /// moved, turned, scaled and mirrored as `copy` places those curves. The same as the
     /// region found among the placed curves, without finding it again for every copy.
     pub fn placed(&self, copy: &drift_core::Instance) -> Region {
-        let turn = drift_core::blocks::exact_rotor(copy.angle);
-        let turn = turn.y.atan2(turn.x);
+        let placement = copy.placement();
+        // Mirrored, each loop would run the wrong way round, so each edge is placed run
+        // backwards (as `Placement` places a mirrored arc) and the loop's order reversed.
         let edge = |e: &Edge| match *e {
+            Edge::Line { a, b } if copy.mirror => Edge::Line {
+                a: placement.apply(b),
+                b: placement.apply(a),
+            },
             Edge::Line { a, b } => Edge::Line {
-                a: copy.apply(a),
-                b: copy.apply(b),
+                a: placement.apply(a),
+                b: placement.apply(b),
             },
             Edge::Arc {
                 center,
                 radius,
                 start,
                 sweep,
-            } => {
-                // A mirror runs angles the other way round.
-                let (start, sweep) = if copy.mirror {
-                    (std::f64::consts::PI - start, -sweep)
-                } else {
-                    (start, sweep)
-                };
-                Edge::Arc {
-                    center: copy.apply(center),
-                    radius: radius * copy.scale.abs(),
-                    start: start + turn,
-                    sweep,
-                }
-            }
+            } => Edge::Arc {
+                center: placement.apply(center),
+                radius: radius * copy.scale.abs(),
+                start: placement.arc_start(start, sweep),
+                sweep,
+            },
         };
-        // Mirrored, each loop would run the wrong way round: turn it back.
         let place = |lp: &Loop| {
             let mut edges: Vec<Edge> = lp.edges.iter().map(edge).collect();
             let mut sources = lp.sources.clone();
             if copy.mirror {
-                edges = edges.iter().rev().map(Edge::reversed).collect();
+                edges.reverse();
                 sources.reverse();
             }
             Loop { edges, sources }
@@ -332,18 +366,15 @@ pub struct RegionTolerance {
 }
 
 impl RegionTolerance {
-    /// Tolerances for coordinates up to `extent` in size.
+    /// Tolerances for coordinates up to `extent` in size: [`tolerance::same`] and
+    /// [`tolerance::AREA_NOISE`].
     pub fn for_extent(extent: f64) -> Self {
-        let scale = if extent.is_finite() {
-            extent.abs().max(1.0)
-        } else {
-            1.0
-        };
-        let snap = 1e-9 * scale;
+        let scale = tolerance::scale(extent);
+        let snap = tolerance::same(extent);
         RegionTolerance {
             snap,
             min_edge: snap,
-            min_area: 1e-12 * scale * scale,
+            min_area: tolerance::AREA_NOISE * scale * scale,
         }
     }
 
@@ -362,10 +393,12 @@ impl RegionTolerance {
 }
 
 /// The snap stage: points within `snap` of each other (transitively) become one vertex,
-/// placed at the lowest of its points (by x, then y), and vertices are numbered in that
-/// order. Neither depends on the order the points come in. Returns the vertices and each
-/// point's vertex.
-fn snap_points(points: &[DVec2], snap: f64) -> (Vec<DVec2>, Vec<usize>) {
+/// placed at the lowest of its `exact` points (curve ends given as data) if it has any, else
+/// at the lowest of the others (crossings and chord points, which carry rounding: a crossing
+/// of two lines that nearly run along each other can sit anywhere within the snap), lowest
+/// by x, then y. Vertices are numbered in order of where they are placed. None of it depends
+/// on the order the points come in. Returns the vertices and each point's vertex.
+fn snap_points(points: &[DVec2], exact: &[bool], snap: f64) -> (Vec<DVec2>, Vec<usize>) {
     let n = points.len();
     let mut order: Vec<usize> = (0..n).collect();
     order.sort_by(|&a, &b| by_position(points[a], points[b]));
@@ -393,17 +426,24 @@ fn snap_points(points: &[DVec2], snap: f64) -> (Vec<DVec2>, Vec<usize>) {
         }
         grid.entry((kx, ky)).or_default().push(i);
     }
-    let mut id_of_root = vec![usize::MAX; n];
-    let mut verts = Vec::new();
-    let mut vertex = vec![0; n];
+    // Each set's point: the first in `order` among its exact points, else its first.
+    let mut chosen = vec![usize::MAX; n];
     for &i in &order {
         let r = parent.find(i);
-        if id_of_root[r] == usize::MAX {
-            id_of_root[r] = verts.len();
-            verts.push(points[i]);
+        let c = chosen[r];
+        if c == usize::MAX || (exact[i] && !exact[c]) {
+            chosen[r] = i;
         }
-        vertex[i] = id_of_root[r];
     }
+    let mut placed: Vec<usize> = (0..n).filter(|&r| chosen[r] != usize::MAX).collect();
+    placed.sort_by(|&a, &b| by_position(points[chosen[a]], points[chosen[b]]));
+    let mut id_of_root = vec![usize::MAX; n];
+    let mut verts = Vec::with_capacity(placed.len());
+    for r in placed {
+        id_of_root[r] = verts.len();
+        verts.push(points[chosen[r]]);
+    }
+    let vertex = (0..n).map(|i| id_of_root[parent.find(i)]).collect();
     (verts, vertex)
 }
 
@@ -571,7 +611,16 @@ fn split(curves: &[Shape], tol: &RegionTolerance) -> (Vec<DVec2>, Vec<Piece>) {
         });
     }
     let points: Vec<DVec2> = stops.iter().flatten().map(|(_, p)| *p).collect();
-    let (verts, vertex_of) = snap_points(&points, tol.snap);
+    // A line's ends are the data itself; every other stop is worked out.
+    let exact: Vec<bool> = curves
+        .iter()
+        .zip(&stops)
+        .flat_map(|(shape, s)| {
+            let line = matches!(shape, Shape::Line { .. });
+            (0..s.len()).map(move |k| line && (k == 0 || k + 1 == s.len()))
+        })
+        .collect();
+    let (verts, vertex_of) = snap_points(&points, &exact, tol.snap);
     // The vertices in order of y (then x), for curves that span less in y than in x.
     let mut by_y: Vec<usize> = (0..verts.len()).collect();
     by_y.sort_by(|&a, &b| {
@@ -904,7 +953,7 @@ fn regions_in(curves: &[Shape], tol: &RegionTolerance, prior: &[Region]) -> Vec<
             let (aa, ac) = key(a);
             let (ba, bc) = key(b);
             // Same direction up to rounding (an angle, not a distance): order by curvature.
-            if (aa - ba).abs() <= 1e-9 {
+            if (aa - ba).abs() <= tolerance::SAME_ANGLE {
                 ac.total_cmp(&bc)
             } else {
                 aa.total_cmp(&ba)
@@ -977,7 +1026,7 @@ fn regions_in(curves: &[Shape], tol: &RegionTolerance, prior: &[Region]) -> Vec<
     for b in boundaries {
         let own_area = -b.signed_area();
         let own = loop_bounds(&b);
-        let outline = b.polygon(0.05);
+        let outline = b.polygon(FLATTEN_MM);
         let near = Bounds {
             min: own.min - DVec2::splat(pad),
             max: own.max + DVec2::splat(pad),
@@ -1000,7 +1049,7 @@ fn regions_in(curves: &[Shape], tol: &RegionTolerance, prior: &[Region]) -> Vec<
             .sort_unstable_by(|&i, &j| result[i].area.total_cmp(&result[j].area).then(i.cmp(&j)));
         let host = candidates.into_iter().find(|&i| {
             let r = &result[i];
-            let poly = polygons[i].get_or_insert_with(|| r.outer.polygon(0.02));
+            let poly = polygons[i].get_or_insert_with(|| r.outer.polygon(FLATTEN_MM));
             outline.iter().all(|p| {
                 drift_core::polygon::winding(poly, *p) != 0 || near_outline(&r.outer, *p, tol)
             })
@@ -1106,24 +1155,26 @@ fn same_loops(a: &Region, b: &Region) -> bool {
         && a.holes.iter().zip(&b.holes).all(|(p, q)| same(p, q))
 }
 
-/// Centroid from finely flattened loops (holes subtract).
+/// Centroid from the loops' edges, exactly (holes subtract).
 fn centroid(r: &Region) -> DVec2 {
-    let mut acc = DVec2::ZERO;
-    let mut area2 = 0.0;
-    for (lp, sign) in std::iter::once((&r.outer, 1.0)).chain(r.holes.iter().map(|h| (h, 1.0))) {
-        let poly = lp.polygon(0.005);
-        let origin = poly[0];
-        for i in 0..poly.len() {
-            let (a, b) = (poly[i] - origin, poly[(i + 1) % poly.len()] - origin);
-            let cross = a.perp_dot(b) * sign;
-            area2 += cross;
-            acc += (a + b + origin * 3.0) * cross;
+    let (mut area, mut moment) = (0.0, DVec2::ZERO);
+    for lp in std::iter::once(&r.outer).chain(&r.holes) {
+        // Worked relative to the loop's start, for precision far from the origin; holes run
+        // clockwise, so they subtract.
+        let o = lp.edges[0].start();
+        let (mut a, mut m) = (0.0, DVec2::ZERO);
+        for e in &lp.edges {
+            let (ea, em) = e.moments(o);
+            a += ea;
+            m += em;
         }
+        area += a;
+        moment += m + o * a;
     }
-    if area2.abs() < 1e-300 {
+    if area.abs() < 1e-300 {
         return r.outer.edges[0].start();
     }
-    acc / (3.0 * area2)
+    moment / area
 }
 
 /// The region containing `p` (the smallest one, if they nest).
@@ -1286,8 +1337,28 @@ mod tests {
         ]);
         assert_eq!(d.len(), 1);
         assert!((d[0].area - PI * 12.5).abs() < 1e-12);
-        // Centroid of a half disc: 4r/3π above the diameter.
-        assert!((d[0].centroid.y - 20.0 / (3.0 * PI)).abs() < 1e-5);
+        // Centroid of a half disc: 4r/3π above the diameter, exactly (not from chords).
+        assert!((d[0].centroid.y - 20.0 / (3.0 * PI)).abs() < 1e-12);
+        assert!(d[0].centroid.x.abs() < 1e-12);
+        // A ring far out: a disc of radius 3 with a hole of radius 1 off its centre.
+        let far = v(5e5, -2e5);
+        let ring = regions(&[
+            Shape::Circle {
+                center: far,
+                radius: 3.0,
+            },
+            Shape::Circle {
+                center: far + v(1.0, 0.0),
+                radius: 1.0,
+            },
+        ]);
+        let ring = region_at(&ring, far + v(-2.0, 0.0)).unwrap();
+        // Moments: 9π·0 − π·1 over 8π.
+        assert!(
+            ring.centroid.distance(far + v(-1.0 / 8.0, 0.0)) < 1e-9,
+            "{}",
+            ring.centroid - far
+        );
     }
 
     #[test]
@@ -1472,6 +1543,110 @@ mod tests {
             "{:?}",
             regs.iter().map(|r| r.area).collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn a_vertex_sits_on_a_curve_end_not_on_a_crossing_beside_it() {
+        // Two rectangles sharing their bottom side and part of their left and right sides,
+        // turned, shrunk and moved 9 m off: the sides that lie along each other cross a few
+        // micrometres off their shared corner, inside the snap. The corner stays where the
+        // lines end (it once moved to the crossing, and areas with it).
+        let rects = [(v(6.0, 8.0), v(9.0, 9.0)), (v(6.0, 8.0), v(9.0, 12.0))];
+        let rot = DVec2::from_angle(0.4302038202076902);
+        let (scale, at) = (
+            0.13183159374892753,
+            v(-2821.451703025482, -8510.411688185979),
+        );
+        let f = |p: DVec2| rot.rotate(p * scale) + at;
+        let mut ends = Vec::new();
+        let mut shapes = Vec::new();
+        for (lo, hi) in rects {
+            let c = [lo, v(hi.x, lo.y), hi, v(lo.x, hi.y)].map(f);
+            for k in 0..4 {
+                shapes.push(line(c[k], c[(k + 1) % 4]));
+                ends.push(c[k]);
+            }
+        }
+        let found = regions(&shapes);
+        assert_eq!(found.len(), 2);
+        for r in &found {
+            for e in &r.outer.edges {
+                assert!(ends.contains(&e.start()), "{} is no curve end", e.start());
+            }
+        }
+        let mut areas: Vec<f64> = found.iter().map(|r| r.area).collect();
+        areas.sort_by(f64::total_cmp);
+        for (got, want) in areas.iter().zip([3.0, 9.0]) {
+            // (Rounding at 9 m leaves ~1e-9; the corner at the crossing was off by 1e-6.)
+            let want = want * scale * scale;
+            assert!((got - want).abs() < 1e-8, "{got} vs {want}");
+        }
+    }
+
+    #[test]
+    fn a_region_placed_by_a_quarter_turn_is_bit_identical_to_its_placed_curves() {
+        // A half disc: a line along the bottom and an arc over the top.
+        let shapes = [
+            line(v(-10.0, 0.0), v(10.0, 0.0)),
+            Shape::Arc {
+                center: v(0.0, 0.0),
+                radius: 10.0,
+                start: 0.0,
+                sweep: PI,
+            },
+        ];
+        let found = regions(&shapes);
+        let disc = region_at(&found, v(0.0, 5.0)).unwrap().clone();
+        for angle in [0.0, 90.0, 180.0, 270.0, -90.0, 450.0] {
+            for mirror in [false, true] {
+                let mut copy =
+                    drift_core::Instance::new(drift_core::BlockId::default(), v(1e5, -3e4));
+                copy.angle = angle;
+                copy.scale = 2.0;
+                copy.mirror = mirror;
+                let what = format!("angle {angle}, mirror {mirror}");
+                let got = disc.placed(&copy);
+                let Some(Edge::Arc {
+                    center,
+                    radius,
+                    start,
+                    sweep,
+                }) = got
+                    .outer
+                    .edges
+                    .iter()
+                    .find(|e| matches!(e, Edge::Arc { .. }))
+                    .copied()
+                else {
+                    panic!("an arc edge ({what})");
+                };
+                // The placed arc curve, as a copy's curves are drawn and exported.
+                let Shape::Arc {
+                    center: c,
+                    radius: r,
+                    start: s,
+                    sweep: w,
+                } = copy.apply_shape(&shapes[1])
+                else {
+                    panic!("an arc ({what})");
+                };
+                assert_eq!((center, radius, start, sweep), (c, r, s, w), "{what}");
+                // Its line ends are the placed points, exactly.
+                let ends: Vec<DVec2> = got
+                    .outer
+                    .edges
+                    .iter()
+                    .filter_map(|e| match *e {
+                        Edge::Line { a, b } => Some([a, b]),
+                        Edge::Arc { .. } => None,
+                    })
+                    .flatten()
+                    .collect();
+                for p in [v(-10.0, 0.0), v(10.0, 0.0)] {
+                    assert!(ends.contains(&copy.apply(p)), "{what}: {ends:?}");
+                }
+            }
+        }
     }
 
     #[test]

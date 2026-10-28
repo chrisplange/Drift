@@ -8,6 +8,7 @@
 //! order their layers are first drawn: the stacking order on screen, as long as each layer's
 //! items are drawn together (a fill's outline on another layer goes in that layer's group).
 
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 
 use drift_core::DVec2;
@@ -83,15 +84,18 @@ pub fn write(d: &Drawing) -> String {
             .and_then(|c| windows.iter().position(|w| *w == c))
             .map_or(0, |k| k + 1)
     };
-    // The layers in the order they are first drawn; each is one group.
-    let mut layers: Vec<&str> = Vec::new();
+    // The layers in the order they are first drawn, each with its items; each is one group.
+    let mut layers: Vec<(&str, Vec<&drift_draft::page::Item>)> = Vec::new();
+    let mut layer_at: HashMap<&str, usize> = HashMap::new();
     for item in &d.items {
-        if !layers.contains(&item.layer.as_str()) {
-            layers.push(&item.layer);
-        }
+        let k = *layer_at.entry(item.layer.as_str()).or_insert_with(|| {
+            layers.push((item.layer.as_str(), Vec::new()));
+            layers.len() - 1
+        });
+        layers[k].1.push(item);
     }
-    let mut ids: Vec<String> = Vec::new();
-    for layer in layers {
+    let mut ids: HashSet<String> = HashSet::new();
+    for (layer, items) in layers {
         let mut id = layer_id(layer);
         let base = id.clone();
         let mut n = 1;
@@ -99,7 +103,7 @@ pub fn write(d: &Drawing) -> String {
             id = format!("{base}_{n}_");
             n += 1;
         }
-        ids.push(id.clone());
+        ids.insert(id.clone());
         let name = escape(layer);
         let _ = writeln!(
             out,
@@ -109,7 +113,7 @@ pub fn write(d: &Drawing) -> String {
         let mut window = 0;
         let mut run: Vec<(DVec2, Vec<Piece>)> = Vec::new();
         let mut run_pen: Option<Pen> = None;
-        for item in d.items.iter().filter(|i| i.layer == layer) {
+        for item in items {
             let w = window_of(item);
             let piece = pieces(&item.prim);
             if run_pen.is_some_and(|p| p != item.pen || w != window || piece.is_none()) {

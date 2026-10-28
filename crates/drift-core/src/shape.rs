@@ -95,40 +95,55 @@ pub fn bezier_curvature(p: &[DVec2; 4], t: f64) -> f64 {
     d1.perp_dot(d2) / (len * len * len)
 }
 
-/// A cubic Bézier as connected points: at least `min_segments`, more for long or bendy ones.
-pub fn flatten_bezier(p: &[DVec2; 4], min_segments: usize) -> Vec<DVec2> {
-    let hull = p[0].distance(p[1]) + p[1].distance(p[2]) + p[2].distance(p[3]);
-    let chord = p[0].distance(p[3]);
-    let bend = (hull - chord) / hull.max(1e-12);
-    let n = (16.0 + 112.0 * bend.sqrt())
-        .max(min_segments as f64)
-        .min(256.0) as usize;
-    (0..=n)
-        .map(|i| bezier_point(p, i as f64 / n as f64))
-        .collect()
+/// The most segments one curve is flattened into, however fine the tolerance.
+pub const MAX_FLATTEN_SEGMENTS: usize = 4096;
+
+/// The largest turn one segment of a flattened arc or ellipse takes (radians), so a curve
+/// too small for the tolerance to matter still comes out round: 16 to a whole turn.
+const MAX_FLATTEN_STEP: f64 = PI / 8.0;
+
+fn clamp_segments(n: f64) -> usize {
+    if n.is_nan() {
+        1
+    } else {
+        n.ceil().clamp(1.0, MAX_FLATTEN_SEGMENTS as f64) as usize
+    }
 }
 
-/// A cubic Bézier as exactly `n` segments (for drawing, sized to the screen).
-pub fn bezier_steps(p: &[DVec2; 4], n: usize) -> Vec<DVec2> {
-    let n = n.max(1);
-    (0..=n)
-        .map(|i| bezier_point(p, i as f64 / n as f64))
-        .collect()
+/// How many segments keep an arc of `radius` over `sweep` within `tolerance` of its chords
+/// (the chord error `r·(1 − cos(step/2))`).
+pub fn arc_segments(radius: f64, sweep: f64, tolerance: f64) -> usize {
+    let r = radius.abs();
+    let step = if r > tolerance {
+        2.0 * (1.0 - tolerance / r).acos()
+    } else {
+        MAX_FLATTEN_STEP
+    };
+    // A tolerance of zero or less, or none at all, flattens as finely as allowed.
+    let step = if step > 0.0 {
+        step.min(MAX_FLATTEN_STEP)
+    } else {
+        0.0
+    };
+    clamp_segments(sweep.abs() / step)
 }
 
-/// An ellipse (or part) as exactly `n` segments (for drawing, sized to the screen).
-pub fn ellipse_steps(
-    center: DVec2,
-    major: DVec2,
-    minor: f64,
-    start: f64,
-    sweep: f64,
-    n: usize,
-) -> Vec<DVec2> {
-    let n = n.max(1);
-    (0..=n)
-        .map(|i| ellipse_point(center, major, minor, start + sweep * i as f64 / n as f64))
-        .collect()
+/// How many segments keep an ellipse (or part) within `tolerance` of its chords: as an arc
+/// of its larger semi-axis, which bounds the chord error of an even step in its angle.
+pub fn ellipse_segments(major: DVec2, minor: f64, sweep: f64, tolerance: f64) -> usize {
+    arc_segments(major.length().max(minor.abs()), sweep, tolerance)
+}
+
+/// How many even steps in `t` keep a cubic Bézier within `tolerance` of its chords (Wang's
+/// bound: `√(¾·M / tolerance)`, `M` the larger second difference of its control points).
+pub fn bezier_segments(p: &[DVec2; 4], tolerance: f64) -> usize {
+    let m = (p[0] - 2.0 * p[1] + p[2])
+        .length()
+        .max((p[1] - 2.0 * p[2] + p[3]).length());
+    if m == 0.0 {
+        return 1;
+    }
+    clamp_segments((0.75 * m / tolerance.max(0.0)).sqrt())
 }
 
 /// The part of a cubic Bézier between `t0` and `t1` (de Casteljau).
@@ -229,25 +244,6 @@ pub fn arc_cubics(
     ellipse_cubics(center, DVec2::X * radius, radius, start, sweep, max_step)
 }
 
-/// An ellipse (or part of one) as connected points, at least `min_segments` segments and
-/// finer for big ones.
-pub fn flatten_ellipse(
-    center: DVec2,
-    major: DVec2,
-    minor: f64,
-    start: f64,
-    sweep: f64,
-    min_segments: usize,
-) -> Vec<DVec2> {
-    let n = ((sweep.abs() / TAU) * 128.0)
-        .ceil()
-        .max(min_segments as f64)
-        .min(4096.0) as usize;
-    (0..=n)
-        .map(|i| ellipse_point(center, major, minor, start + sweep * i as f64 / n as f64))
-        .collect()
-}
-
 /// The points an ellipse entity is made of: its centre, the ends of its two semi-axes, and
 /// (for part of one) its start and end.
 pub fn ellipse_handles(
@@ -294,6 +290,77 @@ pub fn circle_through(a: DVec2, b: DVec2, c: DVec2) -> Option<(DVec2, f64)> {
 }
 
 impl Shape {
+    /// The shape as connected points, each chord within `tolerance` of the curve (see
+    /// [`crate::tolerance`] for the named ones): a line's two ends, a point alone, a circle
+    /// closed (its last point is its first). A Bézier ends exactly on its end points.
+    pub fn flatten(&self, tolerance: f64) -> Vec<DVec2> {
+        let mut out = Vec::new();
+        self.flatten_into(tolerance, &mut out);
+        out
+    }
+
+    /// The length of the curve: exact for lines, circles and arcs, from chords within
+    /// [`MEASURE_MM`](crate::tolerance::MEASURE_MM) for ellipses and Béziers; 0 for a point.
+    pub fn length(&self) -> f64 {
+        match *self {
+            Shape::Point(_) => 0.0,
+            Shape::Line { a, b } => a.distance(b),
+            Shape::Circle { radius, .. } => TAU * radius.abs(),
+            Shape::Arc { radius, sweep, .. } => (radius * sweep).abs(),
+            Shape::Ellipse { .. } | Shape::Bezier { .. } => self
+                .flatten(crate::tolerance::MEASURE_MM)
+                .windows(2)
+                .map(|w| w[0].distance(w[1]))
+                .sum(),
+        }
+    }
+
+    /// [`flatten`](Self::flatten), appended to `out`.
+    pub fn flatten_into(&self, tolerance: f64, out: &mut Vec<DVec2>) {
+        let along = |out: &mut Vec<DVec2>, n: usize, at: &dyn Fn(f64) -> DVec2| {
+            out.extend((0..=n).map(|i| at(i as f64 / n as f64)));
+        };
+        match *self {
+            Shape::Point(p) => out.push(p),
+            Shape::Line { a, b } => out.extend([a, b]),
+            Shape::Circle { center, radius } => {
+                let n = arc_segments(radius, TAU, tolerance);
+                along(out, n, &|f| center + DVec2::from_angle(TAU * f) * radius);
+                // Closed exactly.
+                if let Some(last) = out.last_mut() {
+                    *last = center + DVec2::X * radius;
+                }
+            }
+            Shape::Arc {
+                center,
+                radius,
+                start,
+                sweep,
+            } => {
+                let n = arc_segments(radius, sweep, tolerance);
+                along(out, n, &|f| {
+                    center + DVec2::from_angle(start + sweep * f) * radius
+                });
+            }
+            Shape::Ellipse {
+                center,
+                major,
+                minor,
+                start,
+                sweep,
+            } => {
+                let n = ellipse_segments(major, minor, sweep, tolerance);
+                along(out, n, &|f| {
+                    ellipse_point(center, major, minor, start + sweep * f)
+                });
+            }
+            Shape::Bezier { p } => {
+                let n = bezier_segments(&p, tolerance);
+                along(out, n, &|t| bezier_point(&p, t));
+            }
+        }
+    }
+
     /// The point at parameter `t`: a fraction along a line (its ends exactly at 0 and 1), an
     /// angle from the start of an arc or ellipse, an angle from +x on a circle, a Bézier's
     /// parameter.
@@ -533,6 +600,51 @@ mod tests {
         assert_eq!(line.point_at(0.0), a);
         assert_eq!(line.point_at(1.0), b);
         assert_close(line.point_at(0.5), (a + b) * 0.5);
+    }
+
+    #[test]
+    fn flattening_keeps_to_its_tolerance_and_lengths_are_exact_where_they_can_be() {
+        let arc = Shape::Arc {
+            center: DVec2::new(1e5, -2e5),
+            radius: 100.0,
+            start: 0.3,
+            sweep: 2.0,
+        };
+        for tol in [0.1, 0.005, 1e-4] {
+            let pts = arc.flatten(tol);
+            // Every chord's middle is within the tolerance of the arc, and not much inside it.
+            let sag = pts
+                .windows(2)
+                .map(|w| 100.0 - ((w[0] + w[1]) / 2.0).distance(DVec2::new(1e5, -2e5)))
+                .fold(0.0, f64::max);
+            assert!(sag <= tol && sag > tol / 4.0, "{tol}: {sag}");
+        }
+        // A Bézier's chords too (Wang's bound): against points between the steps.
+        let p = [
+            DVec2::new(0.0, 0.0),
+            DVec2::new(30.0, 60.0),
+            DVec2::new(70.0, -40.0),
+            DVec2::new(100.0, 10.0),
+        ];
+        let b = Shape::Bezier { p };
+        let pts = b.flatten(0.005);
+        let n = pts.len() - 1;
+        for k in 0..n {
+            let mid = bezier_point(&p, (k as f64 + 0.5) / n as f64);
+            let (a, c) = (pts[k], pts[k + 1]);
+            let d = (c - a).perp_dot(mid - a).abs() / a.distance(c);
+            assert!(d <= 0.005, "{k}: {d}");
+        }
+        assert_eq!((pts[0], pts[n]), (p[0], p[3]));
+        // Lengths: exact for arcs, a Bézier's to well under a thousandth.
+        assert_eq!(arc.length(), 200.0);
+        let fine: f64 = (0..=20000)
+            .map(|k| bezier_point(&p, k as f64 / 20000.0))
+            .collect::<Vec<_>>()
+            .windows(2)
+            .map(|w| w[0].distance(w[1]))
+            .sum();
+        assert!((b.length() - fine).abs() < 1e-4, "{} vs {fine}", b.length());
     }
 
     #[test]

@@ -30,7 +30,9 @@ pub struct Report {
 
 /// The tolerance walls join within: the drawing's gap tolerance.
 pub fn snap(doc: &Document) -> f64 {
-    doc.rules().gap_tolerance.max(1e-6)
+    doc.rules()
+        .gap_tolerance
+        .max(drift_core::tolerance::TINY_MM)
 }
 
 /// A wall's centreline as segments in the order and direction it runs, and its points;

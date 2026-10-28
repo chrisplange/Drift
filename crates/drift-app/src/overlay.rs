@@ -62,35 +62,19 @@ pub fn dashes(path: &[Pos2], clip: Rect, stroke: Stroke, dash: f32, gap: f32) ->
     out
 }
 
-/// The part of a segment inside `r`, as parameters along it (Liang–Barsky); `None` when
-/// none of it is, or it has no length.
+/// The part of a segment inside `r`, as parameters along it; `None` when none of it is, or
+/// it has no length.
 fn clip_to_rect(a: Pos2, b: Pos2, r: Rect) -> Option<(f64, f64)> {
-    let (ax, ay) = (f64::from(a.x), f64::from(a.y));
-    let (dx, dy) = (f64::from(b.x) - ax, f64::from(b.y) - ay);
-    if dx == 0.0 && dy == 0.0 {
+    let d = |p: Pos2| DVec2::new(f64::from(p.x), f64::from(p.y));
+    if a == b {
         return None;
     }
-    let (mut t0, mut t1) = (0.0_f64, 1.0_f64);
-    for (p, q) in [
-        (-dx, ax - f64::from(r.min.x)),
-        (dx, f64::from(r.max.x) - ax),
-        (-dy, ay - f64::from(r.min.y)),
-        (dy, f64::from(r.max.y) - ay),
-    ] {
-        if p == 0.0 {
-            if q < 0.0 {
-                return None;
-            }
-        } else {
-            let t = q / p;
-            if p < 0.0 {
-                t0 = t0.max(t);
-            } else {
-                t1 = t1.min(t);
-            }
-        }
+    Bounds {
+        min: d(r.min),
+        max: d(r.max),
     }
-    (t0 < t1).then_some((t0, t1))
+    .clip_segment(d(a), d(b))
+    .filter(|(t0, t1)| t0 < t1)
 }
 
 pub struct OverlayColors {

@@ -16,6 +16,7 @@
 use std::collections::BTreeMap;
 use std::f64::consts::{PI, TAU};
 
+use drift_core::tolerance;
 use drift_core::{DVec2, LineType, LineWeight, Rgb, Shape, TextAlign};
 
 use crate::dxf_import::{DxfEntity, DxfHatch, DxfImport, DxfLayer, DxfText};
@@ -43,6 +44,9 @@ impl Seg {
     }
 }
 
+/// Joined Bézier pieces are one arc when they stay within this of it, relative to its radius.
+const ARC_FIT: f64 = 1e-4;
+
 /// A run of joined curves.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Subpath {
@@ -60,9 +64,12 @@ impl Subpath {
             match *s {
                 Seg::Line(p) => out.push(p),
                 Seg::Cubic(c1, c2, p) => out.extend(
-                    drift_core::shape::flatten_bezier(&[from, c1, c2, p], 8)
-                        .into_iter()
-                        .skip(1),
+                    Shape::Bezier {
+                        p: [from, c1, c2, p],
+                    }
+                    .flatten(drift_core::tolerance::FLATTEN_MM)
+                    .into_iter()
+                    .skip(1),
                 ),
             }
             from = s.end();
@@ -294,6 +301,7 @@ pub fn to_import(art: &Artwork, options: &ImportOptions) -> DxfImport {
             align: t.align,
             spacing: None,
             wrap: None,
+            font: drift_core::TextFont::Sans,
         });
     }
     out
@@ -309,7 +317,7 @@ pub fn outlines(art: &Artwork) -> Vec<drift_core::RefPrim> {
             if (s.closed || p.fill.is_some()) && points.first() != points.last() {
                 points.push(s.start);
             }
-            points.dedup_by(|a, b| a.distance(*b) < 1e-9);
+            points.dedup_by(|a, b| a.distance(*b) < tolerance::SAME);
             match points.len() {
                 0 | 1 => {}
                 2 => out.push(drift_core::RefPrim::Line(points[0], points[1])),
@@ -335,6 +343,7 @@ pub fn text_outlines(art: &Artwork) -> Vec<drift_core::RefPrim> {
             align: t.align,
             spacing: None,
             wrap: None,
+            font: drift_core::TextFont::Sans,
         })
         .collect();
     crate::dxf::text_glyphs(&texts)
@@ -488,7 +497,7 @@ pub fn guess_scale(art: &Artwork, unit_mm: f64) -> Option<ScaleGuess> {
                 .map(move |s| (s, p.layer.as_str()))
         })
         .filter_map(|(s, layer)| match s {
-            Shape::Line { a, b } if a.distance(b) > 1e-6 => Some((a, b, layer)),
+            Shape::Line { a, b } if a.distance(b) > tolerance::TINY_MM => Some((a, b, layer)),
             _ => None,
         })
         .collect();
@@ -521,7 +530,7 @@ pub fn guess_scale(art: &Artwork, unit_mm: f64) -> Option<ScaleGuess> {
         };
         let dir = DVec2::from_angle(t.angle.to_radians());
         let across = dir.perp();
-        let size = t.size.max(1e-6);
+        let size = t.size.max(tolerance::TINY_MM);
         // Where the figure's middle is, roughly (Helvetica averages about half an em).
         let width = 0.5 * size * t.text.chars().count() as f64;
         let middle = match t.align {
@@ -562,7 +571,7 @@ pub fn guess_scale(art: &Artwork, unit_mm: f64) -> Option<ScaleGuess> {
                 for (lo, hi) in group {
                     match joined.last_mut() {
                         Some(last)
-                            if lo <= last.1 + 1e-6
+                            if lo <= last.1 + tolerance::TINY_MM
                                 || (lo - last.1 < width * 2.0 + size * 2.0
                                     && last.1 < 0.0
                                     && lo > 0.0) =>
@@ -698,37 +707,48 @@ fn fill_islands(subpaths: &[Subpath]) -> Vec<Vec<Vec<Shape>>> {
         .map(|s| {
             let mut shapes = shapes_of(s);
             let end = s.segs.last().map_or(s.start, Seg::end);
-            if !s.closed && end.distance(s.start) > 1e-9 {
+            if !s.closed && end.distance(s.start) > tolerance::SAME {
                 shapes.push(Shape::Line { a: end, b: s.start });
             }
             (shapes, s.polygon())
         })
         .filter(|(shapes, _)| !shapes.is_empty())
         .collect();
-    // How many other loops each one is inside.
-    let inside = |p: DVec2, poly: &[DVec2]| drift_core::polygon::contains(poly, p);
-    let probe = |poly: &[DVec2]| {
-        // A point of the loop just off its first corner, along the way it goes.
-        poly.first().copied().unwrap_or_default()
-    };
+    // How many other loops each one is inside (its first corner, tested against the loops
+    // whose bounds hold it).
+    let boxes = drift_geom::BoxIndex::new(loops.iter().map(|(_, poly)| {
+        let mut b = drift_core::Bounds::EMPTY;
+        poly.iter().for_each(|p| b.include(*p));
+        b
+    }));
     let parents: Vec<Vec<usize>> = (0..loops.len())
         .map(|i| {
-            (0..loops.len())
-                .filter(|j| *j != i && inside(probe(&loops[i].1), &loops[*j].1))
+            let Some(&p) = loops[i].1.first() else {
+                return Vec::new();
+            };
+            let mut near = boxes.near(&drift_core::Bounds::from_point(p));
+            near.sort_unstable();
+            near.into_iter()
+                .filter(|&j| j != i && drift_core::polygon::contains(&loops[j].1, p))
                 .collect()
         })
         .collect();
+    // The loops directly inside each: one deeper, and inside it.
+    let mut children: Vec<Vec<usize>> = vec![Vec::new(); loops.len()];
+    for (j, outer) in parents.iter().enumerate() {
+        for &i in outer {
+            if parents[i].len() + 1 == outer.len() {
+                children[i].push(j);
+            }
+        }
+    }
     let mut out = Vec::new();
     for i in 0..loops.len() {
         if parents[i].len() % 2 == 1 {
             continue;
         }
         let mut island = vec![loops[i].0.clone()];
-        for j in 0..loops.len() {
-            if parents[j].len() == parents[i].len() + 1 && parents[j].contains(&i) {
-                island.push(loops[j].0.clone());
-            }
-        }
+        island.extend(children[i].iter().map(|&j| loops[j].0.clone()));
         out.push(island);
     }
     out
@@ -742,7 +762,7 @@ pub fn shapes_of(s: &Subpath) -> Vec<Shape> {
     let mut arc: Option<(DVec2, f64, f64, f64)> = None;
     let flush = |arc: &mut Option<(DVec2, f64, f64, f64)>, out: &mut Vec<Shape>| {
         if let Some((center, radius, start, sweep)) = arc.take() {
-            out.push(if sweep.abs() >= TAU - 1e-6 {
+            out.push(if sweep.abs() >= TAU - tolerance::ANGLE {
                 Shape::Circle { center, radius }
             } else if sweep >= 0.0 {
                 Shape::Arc {
@@ -767,7 +787,7 @@ pub fn shapes_of(s: &Subpath) -> Vec<Shape> {
         match *seg {
             Seg::Line(p) => {
                 flush(&mut arc, &mut out);
-                if p.distance(from) > 1e-9 {
+                if p.distance(from) > tolerance::SAME {
                     out.push(Shape::Line { a: from, b: p });
                 }
             }
@@ -776,7 +796,7 @@ pub fn shapes_of(s: &Subpath) -> Vec<Shape> {
                     // (Files round their coordinates, so the pieces of one circle agree
                     // only to about a ten-thousandth of its radius.)
                     let joins = arc.is_some_and(|(c, r, _, sw)| {
-                        let tol = r.max(radius) * 1e-4 + 1e-9;
+                        let tol = r.max(radius) * ARC_FIT + tolerance::SAME;
                         c.distance(center) <= tol
                             && (r - radius).abs() <= tol
                             && sw.signum() == sweep.signum()
@@ -789,7 +809,7 @@ pub fn shapes_of(s: &Subpath) -> Vec<Shape> {
                     }
                 } else if straight(from, c1, c2, p) {
                     flush(&mut arc, &mut out);
-                    if p.distance(from) > 1e-9 {
+                    if p.distance(from) > tolerance::SAME {
                         out.push(Shape::Line { a: from, b: p });
                     }
                 } else {
@@ -804,7 +824,7 @@ pub fn shapes_of(s: &Subpath) -> Vec<Shape> {
     }
     flush(&mut arc, &mut out);
     // A closed subpath runs back to its start.
-    if s.closed && from.distance(s.start) > 1e-9 {
+    if s.closed && from.distance(s.start) > tolerance::SAME {
         out.push(Shape::Line {
             a: from,
             b: s.start,
@@ -822,13 +842,13 @@ fn cubic_at(p: [DVec2; 4], t: f64) -> DVec2 {
 fn straight(p0: DVec2, c1: DVec2, c2: DVec2, p3: DVec2) -> bool {
     let chord = p3 - p0;
     let len = chord.length();
-    if len < 1e-12 {
-        return c1.distance(p0) < 1e-9 && c2.distance(p0) < 1e-9;
+    if len < tolerance::NONE {
+        return c1.distance(p0) < tolerance::SAME && c2.distance(p0) < tolerance::SAME;
     }
     let d = chord / len;
     let off = |q: DVec2| (q - p0).perp_dot(d).abs();
     let along = |q: DVec2| (q - p0).dot(d);
-    let tol = len * 1e-6 + 1e-9;
+    let tol = len * tolerance::NEAR + tolerance::SAME;
     off(c1) <= tol
         && off(c2) <= tol
         && (-tol..=len + tol).contains(&along(c1))
@@ -839,13 +859,16 @@ fn straight(p0: DVec2, c1: DVec2, c2: DVec2, p3: DVec2) -> bool {
 /// of up to a half turn is): centre, radius, start angle and signed sweep.
 fn circular(p0: DVec2, c1: DVec2, c2: DVec2, p3: DVec2) -> Option<(DVec2, f64, f64, f64)> {
     let (t0, t1) = (c1 - p0, p3 - c2);
-    if t0.length() < 1e-12 || t1.length() < 1e-12 || p0.distance(p3) < 1e-12 {
+    if t0.length() < tolerance::NONE
+        || t1.length() < tolerance::NONE
+        || p0.distance(p3) < tolerance::NONE
+    {
         return None;
     }
     // The centre is on the normals at both ends.
     let center = drift_geom::intersect::line_line(p0, t0.perp(), p3, t1.perp())?.at;
     let radius = center.distance(p0);
-    if radius.is_nan() || radius <= 1e-9 || !radius.is_finite() {
+    if radius.is_nan() || radius <= tolerance::SAME || !radius.is_finite() {
         return None;
     }
     // The approximation strays from the circle by under 0.03% of its radius.
@@ -863,7 +886,7 @@ fn circular(p0: DVec2, c1: DVec2, c2: DVec2, p3: DVec2) -> Option<(DVec2, f64, f
     } else {
         -(a0 - a3).rem_euclid(TAU)
     };
-    if sweep.abs() < 1e-9 || sweep.abs() > PI * 1.0001 {
+    if sweep.abs() < tolerance::SAME_ANGLE || sweep.abs() > PI * 1.0001 {
         return None;
     }
     // Its handles are as long as an arc's are.

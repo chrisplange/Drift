@@ -264,3 +264,51 @@ fn a_symbol_frame_sits_on_the_face_it_opens_to() {
     };
     assert!(center.distance(f.origin) < 1e-9 && (radius - 400.0).abs() < 1e-9);
 }
+
+#[test]
+fn a_symbol_frame_on_a_vertical_wall_places_by_exact_quarter_turns() {
+    let s = Seg::Line {
+        a: v(2500.0, 100.0),
+        b: v(2500.0, 4100.0),
+    };
+    for hand in [Hand::Left, Hand::Right] {
+        for facing in [WallFace::Left, WallFace::Right] {
+            let f = Frame::of(&s, (50.0, -50.0), (300.0, 1100.0), hand, facing).expect("a frame");
+            let what = format!("{hand:?} {facing:?}");
+            assert!(drift_core::blocks::is_quarter_turn(f.place.angle), "{what}");
+            // Its axes are exactly along the wall and across it.
+            assert_eq!(f.x.x, 0.0, "{what}");
+            assert_eq!(f.y.y, 0.0, "{what}");
+            // A symbol's line ends are whole numbers here, and come out so.
+            let Some(Shape::Line { a, b }) = f.shape(&Shape::Line {
+                a: v(0.0, 0.0),
+                b: v(800.0, 100.0),
+            }) else {
+                panic!("a line ({what})");
+            };
+            for p in [a, b] {
+                assert_eq!(p, p.round(), "{what}: {p}");
+            }
+            // An arc's centre is placed exactly, and it runs between its placed ends.
+            let swing = Shape::Arc {
+                center: DVec2::ZERO,
+                radius: 800.0,
+                start: 0.0,
+                sweep: std::f64::consts::FRAC_PI_2,
+            };
+            let Some(arc @ Shape::Arc { center, sweep, .. }) = f.shape(&swing) else {
+                panic!("an arc ({what})");
+            };
+            assert_eq!(center, f.place.apply(DVec2::ZERO), "{what}");
+            assert_eq!(center, center.round(), "{what}");
+            let ends = [arc.point_at(0.0), arc.point_at(sweep)];
+            for local in [v(800.0, 0.0), v(0.0, 800.0)] {
+                let want = f.place.apply(local);
+                assert!(
+                    ends.iter().any(|e| e.distance(want) < 1e-9),
+                    "{what}: {ends:?}"
+                );
+            }
+        }
+    }
+}

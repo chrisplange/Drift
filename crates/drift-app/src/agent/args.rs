@@ -217,32 +217,5 @@ pub(super) fn style_name(style: LineKind) -> &'static str {
 
 /// A curve as connected points, fine enough to measure and draw.
 pub(super) fn polyline(shape: &drift_core::Shape) -> Vec<DVec2> {
-    use drift_core::Shape;
-    let arc = |c: DVec2, r: f64, start: f64, sweep: f64| -> Vec<DVec2> {
-        let n = ((sweep.abs() / std::f64::consts::TAU) * 128.0)
-            .ceil()
-            .max(8.0) as usize;
-        (0..=n)
-            .map(|i| c + DVec2::from_angle(start + sweep * i as f64 / n as f64) * r)
-            .collect()
-    };
-    match *shape {
-        Shape::Point(p) => vec![p],
-        Shape::Line { a, b } => vec![a, b],
-        Shape::Circle { center, radius } => arc(center, radius, 0.0, std::f64::consts::TAU),
-        Shape::Arc {
-            center,
-            radius,
-            start,
-            sweep,
-        } => arc(center, radius, start, sweep),
-        Shape::Ellipse {
-            center,
-            major,
-            minor,
-            start,
-            sweep,
-        } => drift_core::shape::flatten_ellipse(center, major, minor, start, sweep, 16),
-        Shape::Bezier { p } => drift_core::shape::flatten_bezier(&p, 16),
-    }
+    shape.flatten(drift_core::tolerance::FLATTEN_MM)
 }

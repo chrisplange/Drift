@@ -1654,7 +1654,7 @@ impl Editor {
             let Some((pivot, turn, shift)) = self.outline_motion(&fill.boundary) else {
                 continue;
             };
-            let rotor = DVec2::from_angle(turn);
+            let rotor = drift_core::blocks::exact_rotor(turn.to_degrees());
             let FillKind::Hatch(h) = &mut fill.kind else {
                 continue;
             };
@@ -2598,7 +2598,9 @@ impl MeshCache {
         }
         self.meshes
             .entry(id)
-            .or_insert_with(|| Rc::new(tessellate(region, 0.04).unwrap_or_default()))
+            .or_insert_with(|| {
+                Rc::new(tessellate(region, drift_core::tolerance::FLATTEN_MM).unwrap_or_default())
+            })
             .clone()
     }
 }
@@ -2764,7 +2766,7 @@ pub fn fill_graphics(
 
 pub fn region_bounds(region: &Region) -> Bounds {
     let mut b = Bounds::EMPTY;
-    for p in region.outer.polygon(0.1) {
+    for p in region.outer.polygon(drift_core::tolerance::FLATTEN_MM) {
         b.include(p);
     }
     // Flattening can cut inside an arc: pad a little.
@@ -2977,7 +2979,7 @@ mod tests {
                 origin: DVec2::ZERO,
             };
             for region in &drift_geom::regions::regions(&curves) {
-                let _ = tessellate(region, 0.04);
+                let _ = tessellate(region, drift_core::tolerance::FLATTEN_MM);
                 let _ = drift_draft::hatch(region, &pattern, &placement, None, HATCH_SEGMENT_LIMIT);
             }
         }

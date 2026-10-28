@@ -15,8 +15,8 @@ use crate::{Camera, Palette};
 /// Radii above this many pixels are flattened on the CPU (in `f64`) instead of rendered with the
 /// arc SDF, whose `f32` precision degrades for huge radii.
 const MAX_SDF_RADIUS_PX: f64 = 16_384.0;
-/// Maximum deviation of a flattened arc from the true curve, in physical pixels.
-const FLATTEN_TOLERANCE_PX: f64 = 0.1;
+/// Maximum deviation of a flattened curve from the true curve, in physical pixels.
+const FLATTEN_TOLERANCE_PX: f64 = drift_core::tolerance::FLATTEN_PX;
 /// Extra pixels around the canvas for culling and clipping, so strokes aren't cut at the edge.
 const CULL_MARGIN_PX: f64 = 8.0;
 /// Minimum on-screen grid spacing, in logical points.
@@ -615,46 +615,15 @@ impl Builder<'_> {
                     dash,
                 );
             }
-            Shape::Ellipse {
-                center,
-                major,
-                minor,
-                start,
-                sweep,
-            } => {
-                // Flattened in pixel space, finely enough to look smooth at this zoom.
+            Shape::Ellipse { .. } | Shape::Bezier { .. } => {
+                // Flattened to within a tenth of a pixel at this zoom.
                 let b = item.shape.bounds();
                 let (lo, hi) = (self.to_px(b.min), self.to_px(b.max));
                 let mid = (lo + hi) * 0.5;
                 if !self.visible(mid, (hi - lo).abs() * 0.5 + DVec2::splat(half_width)) {
                     return;
                 }
-                let span = (hi - lo).abs();
-                let around = std::f64::consts::PI * (span.x + span.y) * 0.5 * (sweep / TAU);
-                // About one segment per 4 px of curve: smooth, but no more than the screen needs.
-                let n = (around / 4.0).clamp(12.0, 360.0) as usize;
-                let pts = drift_core::shape::ellipse_steps(center, major, minor, start, sweep, n);
-                let mut distance = 0.0;
-                for w in pts.windows(2) {
-                    let (a, b) = (self.to_px(w[0]), self.to_px(w[1]));
-                    self.add_segment(a, b, color, half_width, dash, distance);
-                    distance += a.distance(b);
-                }
-            }
-            Shape::Bezier { p } => {
-                let b = item.shape.bounds();
-                let (lo, hi) = (self.to_px(b.min), self.to_px(b.max));
-                let mid = (lo + hi) * 0.5;
-                if !self.visible(mid, (hi - lo).abs() * 0.5 + DVec2::splat(half_width)) {
-                    return;
-                }
-                // About one segment per 4 px of control polygon (which is longer than the curve).
-                let polygon: f64 = p
-                    .windows(2)
-                    .map(|w| self.to_px(w[0]).distance(self.to_px(w[1])))
-                    .sum();
-                let n = (polygon / 4.0).clamp(4.0, 128.0) as usize;
-                let pts = drift_core::shape::bezier_steps(&p, n);
+                let pts = item.shape.flatten(FLATTEN_TOLERANCE_PX / self.scale_px());
                 let mut distance = 0.0;
                 for w in pts.windows(2) {
                     let (a, b) = (self.to_px(w[0]), self.to_px(w[1]));
@@ -747,14 +716,13 @@ impl Builder<'_> {
         let window_start = (towards_view - half_window - start).rem_euclid(TAU);
         let window_len = 2.0 * half_window;
 
-        let step = 2.0 * (1.0 - FLATTEN_TOLERANCE_PX / r).clamp(-1.0, 1.0).acos();
         for offset in [0.0, -TAU] {
             let lo = (window_start + offset).max(0.0);
             let hi = (window_start + offset + window_len).min(sweep);
             if hi <= lo {
                 continue;
             }
-            let n = ((hi - lo) / step).ceil().clamp(1.0, 4096.0) as usize;
+            let n = drift_core::shape::arc_segments(r, hi - lo, FLATTEN_TOLERANCE_PX);
             let at = |t: f64| {
                 let angle = start + t;
                 c + r * DVec2::new(angle.cos(), -angle.sin())

@@ -616,39 +616,12 @@ fn paint_shape(painter: &egui::Painter, map: &ScreenMap, shape: &Shape, stroke: 
                 stroke,
             );
         }
-        Shape::Arc {
-            center,
-            radius,
-            start,
-            sweep,
-        } => {
-            let r_px = radius * map.camera.scale;
-            let steps = ((sweep.abs() * r_px.sqrt()).ceil() as usize).clamp(8, 256);
-            let points: Vec<Pos2> = (0..=steps)
-                .map(|k| {
-                    let a = start + sweep * k as f64 / steps as f64;
-                    map.to_screen(center + radius * drift_core::DVec2::from_angle(a))
-                })
-                .collect();
-            painter.add(egui::Shape::line(points, stroke));
-        }
-        Shape::Ellipse {
-            center,
-            major,
-            minor,
-            start,
-            sweep,
-        } => {
-            let points = drift_core::shape::flatten_ellipse(center, major, minor, start, sweep, 64)
+        Shape::Arc { .. } | Shape::Ellipse { .. } | Shape::Bezier { .. } => {
+            let tol = drift_core::tolerance::FLATTEN_PX / map.camera.scale;
+            let points = shape
+                .flatten(tol)
                 .into_iter()
                 .map(|p| map.to_screen(p))
-                .collect();
-            painter.add(egui::Shape::line(points, stroke));
-        }
-        Shape::Bezier { p } => {
-            let points = drift_core::shape::flatten_bezier(&p, 32)
-                .into_iter()
-                .map(|q| map.to_screen(q))
                 .collect();
             painter.add(egui::Shape::line(points, stroke));
         }

@@ -838,7 +838,11 @@ fn on_carrier(c: &Carrier, p: &Piece, tol: f64, angle: f64) -> bool {
 /// A strip from pairs: their centres averaged, weighted by length.
 fn strip(pairs: &[Pair], ks: Vec<usize>, lines: &[LineIn]) -> Option<Strip> {
     let first = pairs[*ks.first()?];
-    let weight: f64 = ks.iter().map(|k| pairs[*k].length()).sum::<f64>().max(1e-9);
+    let weight: f64 = ks
+        .iter()
+        .map(|k| pairs[*k].length())
+        .sum::<f64>()
+        .max(drift_core::tolerance::SAME);
     let t = ks
         .iter()
         .map(|k| pairs[*k].t * pairs[*k].length())
@@ -887,7 +891,7 @@ fn strip(pairs: &[Pair], ks: Vec<usize>, lines: &[LineIn]) -> Option<Strip> {
             hi = hi.max(u);
         }
     }
-    if matches!(carrier, Carrier::Circle { .. }) && hi - lo >= TAU - 1e-6 {
+    if matches!(carrier, Carrier::Circle { .. }) && hi - lo >= TAU - drift_core::tolerance::ANGLE {
         // A whole ring: not handled (round rooms come as circles, not arcs).
         return None;
     }

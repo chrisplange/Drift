@@ -436,6 +436,5 @@ pub(super) fn measure(s: &mut Session, a: &Value) -> Res {
 }
 
 fn shape_length(shape: &drift_core::Shape) -> f64 {
-    let pts = args::polyline(shape);
-    pts.windows(2).map(|w| w[0].distance(w[1])).sum()
+    shape.length()
 }

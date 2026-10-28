@@ -154,12 +154,26 @@ pub struct HatchPrim {
     pub opacity: f64,
 }
 
+/// A hatch drawn as a light solid fill (too dense to draw, or its pattern unknown) is this
+/// much of its colour on paper.
+pub const LIGHT_FILL: f64 = 0.25;
+
+/// `c` at `opacity` on white paper.
+pub fn on_paper(c: Rgb, opacity: f64) -> Rgb {
+    let a = opacity.clamp(0.0, 1.0);
+    Rgb(c
+        .0
+        .map(|v| (255.0 - (255.0 - f64::from(v)) * a).round() as u8))
+}
+
 impl HatchPrim {
-    /// The area as other prims: a solid fill as a `Fill`, a hatch as its lines (at most
-    /// `limit`, else a light solid fill in its place).
-    pub fn prims(&self, limit: usize) -> Vec<Prim> {
+    /// The area as other prims, with the colour each is drawn in (`color` is the area's):
+    /// a solid fill as a `Fill` at its opacity on paper, a hatch as its lines (at most
+    /// `limit`, else a light solid fill in its place, [`LIGHT_FILL`] of its colour).
+    pub fn prims(&self, color: Rgb, limit: usize) -> Vec<(Rgb, Prim)> {
         let solid = || {
-            let triangles = crate::tessellate(&self.region, 0.02)
+            let tol = drift_core::tolerance::FLATTEN_MM;
+            let triangles = crate::tessellate(&self.region, tol)
                 .map(|(v, idx)| {
                     idx.as_chunks::<3>()
                         .0
@@ -171,23 +185,23 @@ impl HatchPrim {
             Prim::Fill {
                 rings: std::iter::once(&self.region.outer)
                     .chain(&self.region.holes)
-                    .map(|lp| lp.polygon(0.02))
+                    .map(|lp| lp.polygon(tol))
                     .collect(),
                 triangles,
                 mask: false,
             }
         };
         let Some((pattern, placement)) = &self.pattern else {
-            return vec![solid()];
+            return vec![(on_paper(color, self.opacity), solid())];
         };
         let hatching = crate::hatch(&self.region, pattern, placement, None, limit);
         if hatching.truncated {
-            return vec![solid()];
+            return vec![(on_paper(color, LIGHT_FILL), solid())];
         }
         hatching
             .segments
             .into_iter()
-            .map(|[a, b]| Prim::Line(a, b))
+            .map(|[a, b]| (color, Prim::Line(a, b)))
             .collect()
     }
 
@@ -263,19 +277,44 @@ impl TextStyle {
     }
 }
 
-/// An ellipse prim as connected points (for outputs without ellipses); other prims give none.
+/// An arc, ellipse or Bézier prim as connected points within the output tolerance
+/// ([`drift_core::tolerance::FLATTEN_MM`] on the page), for outputs without those curves;
+/// other prims give none.
 pub fn prim_points(prim: &Prim) -> Vec<DVec2> {
-    match *prim {
+    prim_points_within(prim, drift_core::tolerance::FLATTEN_MM)
+}
+
+/// [`prim_points`] within `tolerance` (page units).
+pub fn prim_points_within(prim: &Prim, tolerance: f64) -> Vec<DVec2> {
+    let shape = match *prim {
+        Prim::Arc {
+            center,
+            radius,
+            start,
+            sweep,
+        } => drift_core::Shape::Arc {
+            center,
+            radius,
+            start,
+            sweep,
+        },
         Prim::Ellipse {
             center,
             major,
             minor,
             start,
             sweep,
-        } => drift_core::shape::flatten_ellipse(center, major, minor, start, sweep, 64),
-        Prim::Bezier { p } => drift_core::shape::flatten_bezier(&p, 32),
-        _ => Vec::new(),
-    }
+        } => drift_core::Shape::Ellipse {
+            center,
+            major,
+            minor,
+            start,
+            sweep,
+        },
+        Prim::Bezier { p } => drift_core::Shape::Bezier { p },
+        _ => return Vec::new(),
+    };
+    shape.flatten(tolerance)
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -293,12 +332,14 @@ impl Item {
     /// with its pen and clip. Only these are made: the hatch's area and pattern aren't copied
     /// for each line.
     pub fn hatch_parts(&self, h: &HatchPrim) -> impl Iterator<Item = Item> + '_ {
-        h.prims(HATCH_LIMIT).into_iter().map(|prim| Item {
-            layer: self.layer.clone(),
-            pen: self.pen,
-            prim,
-            clip: self.clip,
-        })
+        h.prims(self.pen.color, HATCH_LIMIT)
+            .into_iter()
+            .map(|(color, prim)| Item {
+                layer: self.layer.clone(),
+                pen: self.pen.with_color(color),
+                prim,
+                clip: self.clip,
+            })
     }
 }
 
@@ -562,6 +603,11 @@ impl Drawing {
             font: self.font.clone(),
             ..*self
         };
+        let mut by_name: std::collections::HashMap<&str, &BlockDef> =
+            std::collections::HashMap::with_capacity(self.blocks.len());
+        for b in &self.blocks {
+            by_name.entry(b.name.as_str()).or_insert(b);
+        }
         for item in &self.items {
             match &item.prim {
                 Prim::Insert {
@@ -571,7 +617,7 @@ impl Drawing {
                     scale,
                     mirror,
                 } => {
-                    let Some(def) = self.blocks.iter().find(|b| &b.name == block) else {
+                    let Some(def) = by_name.get(block.as_str()) else {
                         continue;
                     };
                     let t = Transform {
@@ -882,6 +928,80 @@ pub fn styled_width(text: &str, height: f64, style: TextStyle) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hatches_drawn_as_light_fills_are_tinted_and_fills_keep_their_opacity() {
+        let square = drift_geom::regions::Region::rectangle(DVec2::ZERO, DVec2::splat(100.0));
+        let ink = Rgb([0, 0, 0]);
+        let parts = |h: HatchPrim| {
+            let item = Item {
+                layer: "0".into(),
+                pen: Pen::new(0.25).with_color(ink),
+                prim: Prim::Hatch(Box::new(h)),
+                clip: None,
+            };
+            let Prim::Hatch(h) = &item.prim else {
+                unreachable!()
+            };
+            item.hatch_parts(h).collect::<Vec<_>>()
+        };
+        // Far too dense to draw: one light fill, a quarter of the ink.
+        let dense = parts(HatchPrim {
+            region: square.clone(),
+            pattern: Some((
+                crate::find("ANSI31").unwrap().clone(),
+                crate::Placement {
+                    scale: 1e-4,
+                    angle: 0.0,
+                    origin: DVec2::ZERO,
+                },
+            )),
+            opacity: 1.0,
+        });
+        assert_eq!(dense.len(), 1);
+        assert!(matches!(dense[0].prim, Prim::Fill { .. }));
+        assert_eq!(dense[0].pen.color, on_paper(ink, LIGHT_FILL));
+        // A solid fill at half opacity, half way to white.
+        let half = parts(HatchPrim {
+            region: square,
+            pattern: None,
+            opacity: 0.5,
+        });
+        assert_eq!(half[0].pen.color, Rgb([128, 128, 128]));
+    }
+
+    #[test]
+    fn a_copy_places_the_first_block_of_its_name() {
+        let mut d = Drawing::new(DVec2::splat(100.0));
+        for x in [1.0, 2.0] {
+            d.blocks.push(BlockDef {
+                name: "B".into(),
+                items: vec![Item {
+                    layer: "0".into(),
+                    pen: Pen::new(0.25),
+                    prim: Prim::Line(DVec2::ZERO, DVec2::new(x, 0.0)),
+                    clip: None,
+                }],
+            });
+        }
+        d.push(
+            "0",
+            Pen::new(0.25),
+            Prim::Insert {
+                block: "B".into(),
+                at: DVec2::ZERO,
+                angle: 0.0,
+                scale: 1.0,
+                mirror: false,
+            },
+        );
+        let e = d.exploded();
+        assert_eq!(e.items.len(), 1);
+        assert_eq!(
+            e.items[0].prim,
+            Prim::Line(DVec2::ZERO, DVec2::new(1.0, 0.0))
+        );
+    }
 
     #[test]
     fn colours_recolour_strokes_fills_blocks_and_layers() {

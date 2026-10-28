@@ -8,6 +8,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use drift_core::polygon::UnionFind;
 use drift_core::{Constraint, ConstraintId, DVec2, Document, EntityId, EntityKind};
 
 use crate::equations::{Equation, Length, Offset};
@@ -97,36 +98,6 @@ impl Shape {
                 Some(([-u.y, u.x, u.y, -u.x], (bx - ax) * u.y - (by - ay) * u.x))
             }
         }
-    }
-}
-
-struct UnionFind {
-    parent: Vec<usize>,
-}
-
-impl UnionFind {
-    fn new(n: usize) -> Self {
-        Self {
-            parent: (0..n).collect(),
-        }
-    }
-
-    fn find(&mut self, mut i: usize) -> usize {
-        while self.parent[i] != i {
-            self.parent[i] = self.parent[self.parent[i]];
-            i = self.parent[i];
-        }
-        i
-    }
-
-    /// Returns false if already joined.
-    fn union(&mut self, a: usize, b: usize) -> bool {
-        let (ra, rb) = (self.find(a), self.find(b));
-        if ra == rb {
-            return false;
-        }
-        self.parent[ra.max(rb)] = ra.min(rb);
-        true
     }
 }
 
@@ -434,7 +405,7 @@ impl System {
             let mut joined = UnionFind::new(params.len());
             for (_, c) in relations() {
                 if let Constraint::Coincident { a, b } = c {
-                    joined.union(x(a), x(b));
+                    joined.join(x(a), x(b));
                 }
             }
             (0..params.len()).map(|i| joined.find(i)).collect()
@@ -870,7 +841,7 @@ impl System {
                 }
             }
             for (p, q) in &equalities {
-                if uf.union(*p, *q) {
+                if uf.join(*p, *q) {
                     joined += 1;
                 }
             }

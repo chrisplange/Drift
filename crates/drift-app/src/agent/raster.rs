@@ -200,37 +200,21 @@ impl Canvas {
 
 /// Points along a primitive's curve, in page mm.
 fn prim_polyline(prim: &Prim) -> Option<(Vec<DVec2>, bool)> {
-    let arc = |c: DVec2, r: f64, start: f64, sweep: f64| -> Vec<DVec2> {
-        let n = ((sweep.abs() / std::f64::consts::TAU) * 96.0)
-            .ceil()
-            .max(6.0) as usize;
-        (0..=n)
-            .map(|i| c + DVec2::from_angle(start + sweep * i as f64 / n as f64) * r)
-            .collect()
-    };
+    let tol = drift_core::tolerance::FLATTEN_MM;
     Some(match prim {
         Prim::Line(a, b) => (vec![*a, *b], false),
         Prim::Polyline { points, closed } => (points.clone(), *closed),
-        Prim::Circle { center, radius } => {
-            (arc(*center, *radius, 0.0, std::f64::consts::TAU), true)
-        }
-        Prim::Arc {
-            center,
-            radius,
-            start,
-            sweep,
-        } => (arc(*center, *radius, *start, *sweep), false),
-        Prim::Ellipse {
-            center,
-            major,
-            minor,
-            start,
-            sweep,
-        } => (
-            drift_core::shape::flatten_ellipse(*center, *major, *minor, *start, *sweep, 24),
-            false,
+        Prim::Circle { center, radius } => (
+            drift_core::Shape::Circle {
+                center: *center,
+                radius: *radius,
+            }
+            .flatten(tol),
+            true,
         ),
-        Prim::Bezier { p } => (drift_core::shape::flatten_bezier(p, 16), false),
+        Prim::Arc { .. } | Prim::Ellipse { .. } | Prim::Bezier { .. } => {
+            (drift_draft::page::prim_points(prim), false)
+        }
         _ => return None,
     })
 }

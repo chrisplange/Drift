@@ -314,13 +314,13 @@ impl Equation {
                 let (dx, dy) = (px - cx, py - cy);
                 let (ex, ey) = (mx - cx, my - cy);
                 let (fx, fy) = (nx - cx, ny - cy);
-                let a = ex.hypot(ey).max(1e-12);
-                let b = fx.hypot(fy).max(1e-12);
+                let a = ex.hypot(ey).max(drift_core::tolerance::NONE);
+                let b = fx.hypot(fy).max(drift_core::tolerance::NONE);
                 let dot = dx * ex + dy * ey;
                 let cross = ex * dy - ey * dx;
                 let u = dot / a;
                 let w = cross / b;
-                let r = u.hypot(w).max(1e-12);
+                let r = u.hypot(w).max(drift_core::tolerance::NONE);
                 // ∂/∂d, ∂/∂M and ∂/∂b of √(u² + w²) − a.
                 let gd = [(u * ex / a - w * ey / b) / r, (u * ey / a + w * ex / b) / r];
                 let gm = [

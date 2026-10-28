@@ -511,7 +511,7 @@ pub fn anything_to_solve(doc: &Document) -> bool {
 /// line), which a sketcher should refuse.
 pub fn degenerate_entities(doc: &Document) -> Vec<EntityId> {
     let point = |id| doc.point(id).ok();
-    let tiny = |len: f64, scale: f64| len <= 1e-9 * scale.max(1.0);
+    let tiny = |len: f64, scale: f64| len <= drift_core::tolerance::same(scale);
     doc.iter()
         .filter(|(_, e)| match e.kind {
             EntityKind::Point(_) => false,

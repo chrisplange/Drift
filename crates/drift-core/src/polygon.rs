@@ -61,12 +61,13 @@ impl UnionFind {
         i
     }
 
-    /// Put `a` and `b` in one set.
-    pub fn join(&mut self, a: usize, b: usize) {
+    /// Put `a` and `b` in one set; false if they already were.
+    pub fn join(&mut self, a: usize, b: usize) -> bool {
         let (a, b) = (self.find(a), self.find(b));
         if a != b {
             self.0[a.max(b)] = a.min(b);
         }
+        a != b
     }
 }
 

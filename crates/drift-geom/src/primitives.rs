@@ -255,7 +255,8 @@ pub fn shape_intersects_rect(shape: &Shape, rect: &Bounds) -> bool {
                         .is_empty()
                 })
         }
-        Shape::Bezier { p } => drift_core::shape::flatten_bezier(&p, 32)
+        Shape::Bezier { .. } => shape
+            .flatten(drift_core::tolerance::FLATTEN_MM)
             .windows(2)
             .any(|w| {
                 point_in_rect(w[0], rect)

@@ -534,3 +534,28 @@ mod regen {
         assert_eq!(doc.fills().count(), 1);
     }
 }
+
+#[test]
+fn an_arc_through_three_points_holds_far_from_the_origin() {
+    // A 2 m radius bow 40 km out: the old absolute cut-off called it a line.
+    let far = DVec2::new(4.0e7, -3.0e7);
+    let (a, m, b) = (
+        far + DVec2::new(-2000.0, 0.0),
+        far + DVec2::new(0.0, 2000.0),
+        far + DVec2::new(2000.0, 0.0),
+    );
+    let Some(Seg::Arc {
+        center,
+        radius,
+        ccw,
+        ..
+    }) = Seg::arc_through(a, m, b)
+    else {
+        panic!("an arc");
+    };
+    assert!(center.distance(far) < 1e-6, "{center}");
+    assert!((radius - 2000.0).abs() < 1e-6, "{radius}");
+    assert!(!ccw);
+    // Three points in a line there are still not an arc.
+    assert!(Seg::arc_through(a, far, b).is_none());
+}

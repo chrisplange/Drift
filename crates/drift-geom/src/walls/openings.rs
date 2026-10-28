@@ -22,7 +22,7 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use drift_core::{
     Appearance, CornerKey, DVec2, Dir, Document, EntityId, EntityKind, Hand, LayerId, LineKind,
-    OpeningId, Part, Shape, Station, WallFace, WallId,
+    OpeningId, Part, Placement, Shape, Station, WallFace, WallId,
 };
 
 use super::{End, Gen, Node, Seg, WallIn};
@@ -254,6 +254,8 @@ pub struct Frame {
     pub y: DVec2,
     pub width: f64,
     pub thickness: f64,
+    /// The same frame as a placement: symbols are placed by the one rule blocks use.
+    pub place: Placement,
 }
 
 impl Frame {
@@ -288,32 +290,34 @@ impl Frame {
         let y = if far < near { -mid } else { mid };
         // (Square to the chord: for a straight wall, `mid` already is.)
         let y = (y - x * y.dot(x)).try_normalize()?;
+        let place = Placement::from_axes(origin, x, x.perp_dot(y) < 0.0);
+        let (x, y) = place.axes();
         Some(Frame {
             origin,
             x,
             y,
             width: origin.distance(other),
             thickness: (offsets.0 - offsets.1).abs(),
+            place,
         })
     }
 
     /// A point of the frame in the drawing.
     pub fn point(&self, p: DVec2) -> DVec2 {
-        self.origin + self.x * p.x + self.y * p.y
+        self.place.apply(p)
     }
 
     /// Whether the frame mirrors (turns counter-clockwise curves clockwise).
     pub fn mirrors(&self) -> bool {
-        self.x.perp_dot(self.y) < 0.0
+        self.place.mirror
     }
 
-    /// A shape of the frame in the drawing (lines and arcs; others are left out).
+    /// A shape of the frame in the drawing (lines and arcs; others are left out). An arc is
+    /// made from its placed centre and ends, as the symbol's arc entity is: its ends land
+    /// exactly where the placement puts them (exactly on the wall's axes for a quarter turn).
     pub fn shape(&self, s: &Shape) -> Option<Shape> {
         Some(match *s {
-            Shape::Line { a, b } => Shape::Line {
-                a: self.point(a),
-                b: self.point(b),
-            },
+            Shape::Line { .. } => self.place.shape(s),
             Shape::Arc {
                 center,
                 radius,
@@ -323,6 +327,7 @@ impl Frame {
                 let at = |t: f64| self.point(center + radius * DVec2::from_angle(t));
                 let (s0, s1) = (at(start), at(start + sweep));
                 let c = self.point(center);
+                // A mirror runs it the other way round.
                 if self.mirrors() {
                     drift_core::arc_shape(c, s1, s0)
                 } else {
@@ -385,7 +390,7 @@ pub fn write_symbol(
     for (i, (shape, look)) in items.iter().enumerate() {
         let k = u32::try_from(i).unwrap_or(u32::MAX / 4);
         let kind = match *shape {
-            Shape::Line { a, b } if a.distance(b) > 1e-9 => {
+            Shape::Line { a, b } if a.distance(b) > drift_core::tolerance::SAME => {
                 let (pa, pb) = (
                     place(doc, k * 3, a, &mut report),
                     place(doc, k * 3 + 1, b, &mut report),
@@ -397,7 +402,9 @@ pub fn write_symbol(
                 radius,
                 start,
                 sweep,
-            } if radius > 1e-9 && sweep.abs() > 1e-12 => {
+            } if radius > drift_core::tolerance::SAME
+                && sweep.abs() > drift_core::tolerance::NONE =>
+            {
                 let c = place(doc, k * 3, center, &mut report);
                 let s = place(
                     doc,

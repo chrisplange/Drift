@@ -44,7 +44,7 @@ mod tests;
 pub const MITRE_LIMIT: f64 = 4.0;
 
 /// Two ends leaving a node this close to opposite directions (radians) run straight on.
-pub const STRAIGHT_ON: f64 = 1e-6;
+pub const STRAIGHT_ON: f64 = drift_core::tolerance::ANGLE;
 
 /// A segment of a centreline, in the direction the wall runs.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -625,7 +625,7 @@ impl<'a> Gen<'a> {
             .flat_map(|s| [s.start(), s.end()])
             .map(|p| p.abs().max_element())
             .fold(1.0, f64::max);
-        let eps = 1e-9 * extent;
+        let eps = drift_core::tolerance::same(extent);
         Gen {
             walls,
             faces: Vec::new(),
@@ -908,7 +908,7 @@ impl Gen<'_> {
         }
         // The ends by grid cell, so each segment looks only at those near it.
         let thickest = self.walls.iter().map(WallIn::thickness).fold(0.0, f64::max);
-        let cell = (4.0 * (thickest + self.snap)).max(1e-6);
+        let cell = (4.0 * (thickest + self.snap)).max(drift_core::tolerance::TINY_MM);
         let cell_of = |p: DVec2| ((p.x / cell).floor() as i64, (p.y / cell).floor() as i64);
         let mut grid: HashMap<(i64, i64), Vec<usize>> = HashMap::new();
         for (n, e) in ends.iter().enumerate() {
@@ -1765,7 +1765,7 @@ impl Gen<'_> {
         for h in (0..all.len()).filter(|&i| all[i].area <= 0.0) {
             let hb = all[h].bounds;
             let probe = all[h].lp.edges[0].start();
-            let pad = 1e-6 * (1.0 + hb.max.abs().max_element());
+            let pad = drift_core::tolerance::NEAR * (1.0 + hb.max.abs().max_element());
             let host = outers
                 .iter()
                 .copied()

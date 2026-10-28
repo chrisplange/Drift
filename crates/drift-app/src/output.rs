@@ -11,7 +11,8 @@ use drift_core::{
 };
 use drift_draft::Placement;
 use drift_draft::page::{
-    Align, CAP_HEIGHT, Drawing, HATCH_LIMIT, HatchPrim, Item, LayerInfo, Pen, Prim,
+    Align, CAP_HEIGHT, Drawing, HATCH_LIMIT, HatchPrim, Item, LIGHT_FILL, LayerInfo, Pen, Prim,
+    on_paper,
 };
 use drift_render::Camera;
 use eframe::egui::{self, Color32, Pos2};
@@ -160,14 +161,6 @@ fn item(layer: &str, pen: Pen, prim: Prim, clip: Option<Bounds>) -> Item {
         prim,
         clip,
     }
-}
-
-/// A colour faded towards white by `opacity`, for printing translucent fills.
-fn on_paper(c: Rgb, opacity: f64) -> Rgb {
-    let a = opacity.clamp(0.0, 1.0);
-    Rgb(c
-        .0
-        .map(|v| (255.0 - (255.0 - f64::from(v)) * a).round() as u8))
 }
 
 /// List the drawing's layers in their draw order (for formats that keep them).
@@ -537,11 +530,13 @@ fn fill(
         cad_fill(patterns, s, fill, region, own, &layer_name, d);
         return;
     }
+    // Within the output's tolerance on the page.
+    let tol = drift_core::tolerance::FLATTEN_MM / s.k;
     let rings: Vec<Vec<DVec2>> = std::iter::once(&region.outer)
         .chain(&region.holes)
-        .map(|lp| lp.polygon(0.02).into_iter().map(|p| s.at(p)).collect())
+        .map(|lp| lp.polygon(tol).into_iter().map(|p| s.at(p)).collect())
         .collect();
-    let triangles: Vec<[DVec2; 3]> = crate::fills::tessellate(region, 0.02)
+    let triangles: Vec<[DVec2; 3]> = crate::fills::tessellate(region, tol)
         .map(|(v, idx)| {
             idx.as_chunks::<3>()
                 .0
@@ -575,7 +570,7 @@ fn fill(
             }
             let color = own.unwrap_or(Pen::BLACK);
             let Some(pattern) = patterns.get(&h.pattern) else {
-                solid(on_paper(color, 0.25), d);
+                solid(on_paper(color, LIGHT_FILL), d);
                 return;
             };
             let placement = Placement {
@@ -585,7 +580,7 @@ fn fill(
             };
             let hatching = drift_draft::hatch(region, pattern, &placement, None, HATCH_LIMIT);
             if hatching.truncated {
-                solid(on_paper(color, 0.25), d);
+                solid(on_paper(color, LIGHT_FILL), d);
                 return;
             }
             let width = fill.weight.map_or(HAIRLINE, |w| w.mm().max(HAIRLINE));
@@ -643,7 +638,7 @@ fn cad_fill(
                         1.0,
                     );
                 }
-                None => area(Pen::new(0.0).with_color(color), None, 0.25),
+                None => area(Pen::new(0.0).with_color(color), None, LIGHT_FILL),
             }
         }
     }
@@ -1313,13 +1308,19 @@ pub fn paint_drawing(
                 p.add(egui::Shape::line(pts, stroke));
             }
         };
+        // Chords within a tenth of a pixel of the curve.
+        let tol = drift_core::tolerance::FLATTEN_PX / f64::from(px);
         let arc_points = |c: DVec2, r: f64, start: f64, sweep: f64| -> Vec<Pos2> {
-            // Fine enough that the chords stay within a tenth of a pixel of the arc.
-            let n =
-                ((sweep.abs() * (r * f64::from(px)).sqrt() * 1.2).ceil() as usize).clamp(12, 512);
-            (0..=n)
-                .map(|k| to_screen(c + DVec2::from_angle(start + sweep * k as f64 / n as f64) * r))
-                .collect()
+            Shape::Arc {
+                center: c,
+                radius: r,
+                start,
+                sweep,
+            }
+            .flatten(tol)
+            .into_iter()
+            .map(&to_screen)
+            .collect()
         };
         match &it.prim {
             Prim::Line(a, b) => line(vec![to_screen(*a), to_screen(*b)], false),
@@ -1341,7 +1342,7 @@ pub fn paint_drawing(
                 sweep,
             } => line(arc_points(*center, *radius, *start, *sweep), false),
             Prim::Ellipse { .. } | Prim::Bezier { .. } => line(
-                drift_draft::page::prim_points(&it.prim)
+                drift_draft::page::prim_points_within(&it.prim, tol)
                     .into_iter()
                     .map(&to_screen)
                     .collect(),

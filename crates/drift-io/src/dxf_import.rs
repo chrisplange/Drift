@@ -17,6 +17,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::f64::consts::TAU;
 
+use drift_core::tolerance;
 use drift_core::{
     DVec2, Document, EntityId, Fill, FillKind, Hatch, Layer, LayerId, LineType, LineWeight,
     PaperSize, Rgb, Shape, Sheet, SketchText, TextAlign, TextFont, TitleBlock, View, Viewport,
@@ -40,6 +41,10 @@ pub struct DxfEntity {
     pub weight: Option<LineWeight>,
 }
 
+/// An ellipse whose parameter range is within this (radians) of none or of a whole turn is a
+/// whole one: files write a whole ellipse a hair short of a turn, or as 0 to 0.
+const WHOLE_ELLIPSE: f64 = 1e-5;
+
 /// Text of one or more lines (`\n` between them): its anchor on the first baseline (at the
 /// start, middle or end of each line, per `align`), cap height, and angle in degrees.
 #[derive(Clone, Debug, PartialEq)]
@@ -55,6 +60,9 @@ pub struct DxfText {
     pub spacing: Option<f64>,
     /// The width lines are wrapped to (mm), for paragraph text that has one.
     pub wrap: Option<f64>,
+    /// Drift's font for its text style: monospaced for a Courier style (as Drift writes
+    /// its own monospaced text), else the sans.
+    pub font: TextFont,
 }
 
 /// A hatch or solid fill: its boundary loops as curves.
@@ -232,8 +240,8 @@ impl Xf {
     /// Whether lengths grow the same in every direction (so circles stay circles).
     fn is_even(&self) -> bool {
         let (la, lb) = (self.a.length(), self.b.length());
-        (la - lb).abs() <= 1e-9 * la.max(lb).max(1e-300)
-            && self.a.dot(self.b).abs() <= 1e-9 * la * lb
+        (la - lb).abs() <= tolerance::SAME * la.max(lb).max(1e-300)
+            && self.a.dot(self.b).abs() <= tolerance::SAME * la * lb
     }
 
     fn shape(&self, s: &Shape) -> Shape {
@@ -288,7 +296,7 @@ impl Xf {
 /// The curve `c + u·cos t + v·sin t` for `t` from `t0` over `sweep` (a whole turn or more is
 /// the whole curve): a circle or arc where it is one, else an ellipse.
 fn conic(c: DVec2, u: DVec2, v: DVec2, t0: f64, sweep: f64) -> Shape {
-    let whole = sweep.abs() >= TAU - 1e-9;
+    let whole = sweep.abs() >= TAU - tolerance::SAME_ANGLE;
     // Turn the parameter so the two vectors are the curve's own axes.
     let phi = 0.5 * (2.0 * u.dot(v)).atan2(u.length_squared() - v.length_squared());
     let (sin, cos) = phi.sin_cos();
@@ -304,7 +312,7 @@ fn conic(c: DVec2, u: DVec2, v: DVec2, t0: f64, sweep: f64) -> Shape {
         (t0 - shift, sweep)
     };
     let (a, b) = (major.length(), minor.length());
-    if (a - b).abs() <= 1e-9 * a.max(1e-300) {
+    if (a - b).abs() <= tolerance::SAME * a.max(1e-300) {
         if whole {
             return Shape::Circle {
                 center: c,
@@ -583,7 +591,11 @@ fn lerp(a: H, b: H, t: f64) -> H {
 }
 
 fn project(h: H) -> DVec2 {
-    let w = if h[2].abs() > 1e-12 { h[2] } else { 1.0 };
+    let w = if h[2].abs() > tolerance::NONE {
+        h[2]
+    } else {
+        1.0
+    };
     DVec2::new(h[0] / w, h[1] / w)
 }
 
@@ -616,9 +628,9 @@ fn bspline(degree: usize, knots: &[f64], points: &[DVec2], weights: &[f64]) -> (
         return (Vec::new(), false);
     }
     let weighted = weights.len() == n
-        && weights
-            .iter()
-            .any(|w| (w - weights[0]).abs() > 1e-9 * weights[0].abs().max(1e-12));
+        && weights.iter().any(|w| {
+            (w - weights[0]).abs() > tolerance::SAME * weights[0].abs().max(tolerance::NONE)
+        });
     let mut pts: Vec<H> = points
         .iter()
         .enumerate()
@@ -649,7 +661,7 @@ fn bspline(degree: usize, knots: &[f64], points: &[DVec2], weights: &[f64]) -> (
     if hi <= lo || !(hi - lo).is_finite() {
         return (Vec::new(), false);
     }
-    let eps = 1e-9 * (hi - lo);
+    let eps = tolerance::SAME * (hi - lo);
     // Every knot of the curve's range to full multiplicity: the control points are then
     // those of its Bézier spans, end to end.
     let mut breaks: Vec<f64> = Vec::new();
@@ -747,8 +759,8 @@ fn bspline(degree: usize, knots: &[f64], points: &[DVec2], weights: &[f64]) -> (
             }
         };
         let degenerate = match shape {
-            Shape::Line { a, b } => a.distance(b) <= 1e-12,
-            Shape::Bezier { p } => p.iter().all(|q| q.distance(p[0]) <= 1e-12),
+            Shape::Line { a, b } => a.distance(b) <= tolerance::NONE,
+            Shape::Bezier { p } => p.iter().all(|q| q.distance(p[0]) <= tolerance::NONE),
             _ => false,
         };
         if !degenerate {
@@ -879,7 +891,7 @@ fn hatch_loops(g: &[(i32, &str)], fitted: &mut bool) -> Vec<Vec<Shape>> {
                         let (a0, a1) = if ccw { (a0, a1) } else { (-a1, -a0) };
                         let start = a0.to_radians();
                         let mut sweep = (a1 - a0).to_radians().rem_euclid(TAU);
-                        if sweep < 1e-9 {
+                        if sweep < tolerance::SAME_ANGLE {
                             sweep = TAU;
                         }
                         shapes.push(conic(
@@ -906,7 +918,7 @@ fn hatch_loops(g: &[(i32, &str)], fitted: &mut bool) -> Vec<Vec<Shape>> {
                         let (a0, a1) = if ccw { (a0, a1) } else { (-a1, -a0) };
                         let major = DVec2::new(mx, my);
                         let mut sweep = (a1 - a0).to_radians().rem_euclid(TAU);
-                        if sweep < 1e-9 {
+                        if sweep < tolerance::SAME_ANGLE {
                             sweep = TAU;
                         }
                         shapes.push(conic(
@@ -985,10 +997,10 @@ pub(crate) fn polyline(verts: &[(DVec2, f64)], closed: bool, push: &mut impl FnM
     for k in 0..segments {
         let (a, bulge) = verts[k];
         let b = verts[(k + 1) % n].0;
-        if a.distance(b) <= 1e-12 {
+        if a.distance(b) <= tolerance::NONE {
             continue;
         }
-        push(if bulge.abs() > 1e-12 {
+        push(if bulge.abs() > tolerance::NONE {
             bulge_arc(a, b, bulge)
         } else {
             Shape::Line { a, b }
@@ -1027,7 +1039,7 @@ fn own_color(raw: &Raw) -> Option<Rgb> {
 /// is 45° on every platform, and in the Inspector.
 fn tidy(v: f64) -> f64 {
     let r = (v * 1e6).round() / 1e6;
-    if (v - r).abs() <= 1e-9 * v.abs().max(1.0) {
+    if (v - r).abs() <= tolerance::same(v) {
         r + 0.0
     } else {
         v
@@ -1084,7 +1096,7 @@ fn pattern_definition(g: &[(i32, &str)], scale: f64, angle: f64, mm: f64) -> (Ve
         return (Vec::new(), DVec2::ZERO);
     };
     let count = num(g[start].1).unwrap_or(0.0).clamp(0.0, 1000.0) as usize;
-    let k = if scale.abs() > 1e-12 {
+    let k = if scale.abs() > tolerance::NONE {
         scale.abs()
     } else {
         1.0
@@ -1131,7 +1143,7 @@ fn pattern_definition(g: &[(i32, &str)], scale: f64, angle: f64, mm: f64) -> (Ve
         });
     }
     // A family that never steps across would be one endless line drawn over and over.
-    if lines.iter().any(|l| l.delta.y.abs() < 1e-9) {
+    if lines.iter().any(|l| l.delta.y.abs() < tolerance::SAME) {
         return (Vec::new(), DVec2::ZERO);
     }
     (lines, first.unwrap_or(DVec2::ZERO) * mm)
@@ -1219,9 +1231,17 @@ struct Reader<'a> {
     /// Hatch patterns the file names without defining them are AutoCAD's own: acad.pat (in
     /// inches) for imperial drawings, else acadiso.pat (in millimetres).
     imperial: bool,
+    /// Drift's font for each text style, by name (upper case).
+    text_fonts: HashMap<String, TextFont>,
 }
 
 impl<'a> Reader<'a> {
+    /// The font of a text's style (group 7, else STANDARD).
+    fn text_font(&self, raw: &Raw) -> TextFont {
+        let style = raw.s(7).unwrap_or("STANDARD").to_ascii_uppercase();
+        self.text_fonts.get(&style).cloned().unwrap_or_default()
+    }
+
     fn skip(&mut self, kind: &str) {
         *self.skipped.entry(kind.to_owned()).or_insert(0) += 1;
     }
@@ -1319,7 +1339,7 @@ impl<'a> Reader<'a> {
                 {
                     let start = a0.to_radians();
                     let mut sweep = (a1.to_radians() - start).rem_euclid(TAU);
-                    if sweep < 1e-12 {
+                    if sweep < tolerance::NONE {
                         sweep = TAU;
                     }
                     push(
@@ -1345,7 +1365,7 @@ impl<'a> Reader<'a> {
                     let t1 = raw.f(42).unwrap_or(TAU);
                     // A whole one may come a hair short of a turn, or as 0 to 0.
                     let mut sweep = (t1 - t0).rem_euclid(TAU);
-                    if !(1e-5..=TAU - 1e-5).contains(&sweep) {
+                    if !(WHOLE_ELLIPSE..=TAU - WHOLE_ELLIPSE).contains(&sweep) {
                         sweep = TAU;
                     }
                     let side = if raw.flipped() { -1.0 } else { 1.0 };
@@ -1470,13 +1490,14 @@ impl<'a> Reader<'a> {
                 let edges: Vec<Shape> = (0..ring.len())
                     .filter_map(|k| {
                         let (a, b) = (ring[k], ring[(k + 1) % ring.len()]);
-                        (a.distance(b) > 1e-12).then(|| m.shape(&Shape::Line { a, b }))
+                        (a.distance(b) > tolerance::NONE).then(|| m.shape(&Shape::Line { a, b }))
                     })
                     .collect();
                 let size = ring.iter().map(|p| p.distance(ring[0])).fold(0.0, f64::max);
                 // A SOLID or TRACE is a filled area with no outline of its own; a 3DFACE (or
                 // one with no area) is its edges.
-                if raw.kind != "3DFACE" && area > 1e-9 * size * size && edges.len() >= 3 {
+                if raw.kind != "3DFACE" && area > tolerance::SAME * size * size && edges.len() >= 3
+                {
                     sink.hatches.push(DxfHatch {
                         layer,
                         loops: vec![edges],
@@ -1531,6 +1552,7 @@ impl<'a> Reader<'a> {
                 if text.trim().is_empty() || height <= 0.0 {
                     return;
                 }
+                let font = self.text_font(raw);
                 let m = local(raw.flipped());
                 let h_align = raw.int(72).unwrap_or(0);
                 // TEXT's vertical alignment is group 73; an attribute's is 74.
@@ -1571,6 +1593,7 @@ impl<'a> Reader<'a> {
                         align,
                         spacing: None,
                         wrap: None,
+                        font,
                     },
                 );
             }
@@ -1596,6 +1619,7 @@ impl<'a> Reader<'a> {
                 let Some(at) = raw.p(10) else {
                     return;
                 };
+                let font = self.text_font(raw);
                 // Its direction: an x axis vector, else an angle.
                 let angle = match raw.p(11) {
                     Some(d) if d.length() > 0.0 => d.y.atan2(d.x).to_degrees(),
@@ -1612,10 +1636,9 @@ impl<'a> Reader<'a> {
                 };
                 // How many lines it makes at its width, to hang the block from its top,
                 // middle or bottom.
-                let count =
-                    drift_draft::outline::paragraph_lines(&text, &TextFont::Sans, height, wrap)
-                        .len()
-                        .max(1) as f64;
+                let count = drift_draft::outline::paragraph_lines(&text, &font, height, wrap)
+                    .len()
+                    .max(1) as f64;
                 let block = height + (count - 1.0) * spacing * height;
                 let top = match (attach - 1) / 3 {
                     0 => 0.0,
@@ -1639,6 +1662,7 @@ impl<'a> Reader<'a> {
                         align,
                         spacing: Some(spacing),
                         wrap,
+                        font,
                     },
                 );
             }
@@ -1800,7 +1824,7 @@ impl<'a> Reader<'a> {
                 let (dc, dr) = (raw.f(44).unwrap_or(0.0), raw.f(45).unwrap_or(0.0));
                 let base = block.base;
                 let own = local(raw.flipped());
-                let even = (sx.abs() - sy.abs()).abs() <= 1e-9 * sx.abs().max(sy.abs())
+                let even = (sx.abs() - sy.abs()).abs() <= tolerance::SAME * sx.abs().max(sy.abs())
                     && sx != 0.0
                     // Only a mirror across the block's own y axis fits an insert.
                     && sy > 0.0;
@@ -1960,6 +1984,17 @@ impl<'a> Reader<'a> {
     }
 }
 
+/// Drift's font for a text style: the monospaced one for a Courier style or Drift's own
+/// monospaced style (as the CAD writers write it), else the sans.
+fn style_font(name: &str, file: &str, family: &str) -> TextFont {
+    let courier = |s: &str| s.to_ascii_lowercase().starts_with("cour");
+    if name.eq_ignore_ascii_case("Drift Mono") || courier(file) || courier(family) {
+        TextFont::Mono
+    } else {
+        TextFont::Sans
+    }
+}
+
 // ---------------------------------------------------------------------------------------------
 // Reading a file
 
@@ -2057,6 +2092,15 @@ impl DxfHatch {
 }
 
 impl DxfImport {
+    /// The block definitions by name: the first of a name, as inserts find them.
+    pub fn blocks_by_name(&self) -> HashMap<&str, &DxfBlock> {
+        let mut by_name = HashMap::with_capacity(self.blocks.len());
+        for b in &self.blocks {
+            by_name.entry(b.name.as_str()).or_insert(b);
+        }
+        by_name
+    }
+
     /// The drawing as [`read_at`] reads it at 1 : `k` times what it was read at, without
     /// reading the file again. (Block copies keep their own scales, as there.)
     pub fn scaled(mut self, k: f64) -> Self {
@@ -2131,6 +2175,7 @@ pub fn read_at(text: &str, default_mm_per_unit: f64, drawn_at: f64) -> Result<Dx
     let mut layers: Vec<DxfLayer> = Vec::new();
     let mut line_types: HashMap<String, LineType> = HashMap::new();
     let mut raw_line_types: Vec<(String, Vec<f64>)> = Vec::new();
+    let mut text_fonts: HashMap<String, TextFont> = HashMap::new();
     let mut custom_types = 0usize;
     // Each layer's line type, by the layer's name.
     let mut layer_line_types: HashMap<String, String> = HashMap::new();
@@ -2186,6 +2231,27 @@ pub fn read_at(text: &str, default_mm_per_unit: f64, drawn_at: f64) -> Result<Dx
                                     .filter_map(|(_, v)| v.parse().ok())
                                     .collect();
                                 raw_line_types.push((name.to_owned(), pattern));
+                            }
+                        }
+                        "STYLE" => {
+                            if let Some(name) = entry.s(2) {
+                                // Its font file, and a TrueType family in extended data.
+                                let file = entry.s(3).unwrap_or("");
+                                let family = entry
+                                    .g
+                                    .iter()
+                                    .position(|p| *p == (1001, "ACAD"))
+                                    .and_then(|at| {
+                                        entry.g[at + 1..]
+                                            .iter()
+                                            .take_while(|(c, _)| *c != 1001)
+                                            .find(|(c, _)| *c == 1000)
+                                    })
+                                    .map_or("", |(_, v)| *v);
+                                text_fonts.insert(
+                                    name.to_ascii_uppercase(),
+                                    style_font(name, file, family),
+                                );
                             }
                         }
                         "LAYER" => {
@@ -2419,6 +2485,7 @@ pub fn read_at(text: &str, default_mm_per_unit: f64, drawn_at: f64) -> Result<Dx
             Some(m) => m == 0,
             None => matches!(insunits, Some(1 | 2 | 3 | 8 | 9 | 10)),
         },
+        text_fonts,
     };
     let world = Xf::scale(reader.scale);
     let mut sink = Sink::default();
@@ -2633,30 +2700,8 @@ fn finite(shape: &Shape) -> bool {
 
 /// Points along a curve, for testing what is inside a hatch.
 fn flatten(shape: &Shape, out: &mut Vec<DVec2>) {
-    match *shape {
-        Shape::Point(_) => {}
-        Shape::Line { a, b } => out.extend([a, b]),
-        Shape::Circle { center, radius } => {
-            out.extend((0..=48).map(|k| center + DVec2::from_angle(k as f64 / 48.0 * TAU) * radius))
-        }
-        Shape::Arc {
-            center,
-            radius,
-            start,
-            sweep,
-        } => out.extend(
-            (0..=24).map(|k| center + DVec2::from_angle(start + sweep * k as f64 / 24.0) * radius),
-        ),
-        Shape::Ellipse {
-            center,
-            major,
-            minor,
-            start,
-            sweep,
-        } => out.extend(drift_core::shape::flatten_ellipse(
-            center, major, minor, start, sweep, 48,
-        )),
-        Shape::Bezier { p } => out.extend(drift_core::shape::flatten_bezier(&p, 16)),
+    if !matches!(shape, Shape::Point(_)) {
+        shape.flatten_into(drift_core::tolerance::FLATTEN_MM, out);
     }
 }
 
@@ -2727,7 +2772,7 @@ fn interior(hatch: &DxfHatch) -> Option<(DVec2, usize)> {
 /// family's point, as `def` is), else `None`.
 fn same_pattern(def: &[PatLine], lib: &[PatLine]) -> Option<f64> {
     let (first, lib_first) = (def.first()?, lib.first()?);
-    if def.len() != lib.len() || lib_first.delta.y.abs() < 1e-12 {
+    if def.len() != lib.len() || lib_first.delta.y.abs() < tolerance::NONE {
         return None;
     }
     let k = tidy(first.delta.y / lib_first.delta.y);
@@ -2735,11 +2780,11 @@ fn same_pattern(def: &[PatLine], lib: &[PatLine]) -> Option<f64> {
         return None;
     }
     let size = lib.iter().map(|l| l.delta.length()).fold(0.0, f64::max) * k;
-    let near = |a: f64, b: f64| (a - b).abs() <= 1e-6 * size.max(1e-9);
+    let near = |a: f64, b: f64| (a - b).abs() <= tolerance::NEAR * size.max(tolerance::SAME);
     let close = |a: DVec2, b: DVec2| near(a.x, b.x) && near(a.y, b.y);
     let same = def.iter().zip(lib).all(|(d, l)| {
         let turn = (d.angle - l.angle).rem_euclid(360.0);
-        (turn < 1e-6 || turn > 360.0 - 1e-6)
+        (turn < tolerance::NEAR || turn > 360.0 - tolerance::NEAR)
             && close(d.origin, (l.origin - lib_first.origin) * k)
             && close(d.delta, l.delta * k)
             && d.dashes.len() == l.dashes.len()
@@ -2815,7 +2860,7 @@ impl Patterns {
             {
                 Some(p)
                     if same_pattern(&h.definition, &p.lines)
-                        .is_some_and(|k| (k - 1.0).abs() < 1e-6) =>
+                        .is_some_and(|k| (k - 1.0).abs() < tolerance::NEAR) =>
                 {
                     break;
                 }
@@ -2892,9 +2937,9 @@ pub fn add_to_document(doc: &mut Document, import: &DxfImport) -> ImportReport {
         extent = extent_of(false);
     }
     let tol = if extent.is_empty() {
-        1e-9
+        tolerance::SAME
     } else {
-        (extent.max - extent.min).max_element().max(1.0) * 1e-6
+        (extent.max - extent.min).max_element().max(1.0) * tolerance::NEAR
     };
     // Layers by name ("0" is the default layer).
     let mut layer_ids: BTreeMap<String, LayerId> = doc
@@ -3078,6 +3123,7 @@ pub fn add_to_document(doc: &mut Document, import: &DxfImport) -> ImportReport {
         text.align = t.align;
         text.spacing = t.spacing.unwrap_or(SketchText::SPACING);
         text.wrap = t.wrap;
+        text.font = t.font.clone();
         let id = doc.add_text(text.clone());
         text.layer = layer;
         text.appearance.color = t.color;
@@ -3147,8 +3193,9 @@ pub fn add_to_document(doc: &mut Document, import: &DxfImport) -> ImportReport {
     // curves only).
     let mut block_text = false;
     let mut made: HashMap<&str, drift_core::BlockId> = HashMap::new();
+    let defs = import.blocks_by_name();
     for insert in &import.inserts {
-        let def = import.blocks.iter().find(|b| b.name == insert.block);
+        let def = defs.get(insert.block.as_str()).copied();
         let block = match made.get(insert.block.as_str()) {
             Some(b) => *b,
             None => {

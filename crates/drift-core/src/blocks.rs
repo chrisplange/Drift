@@ -112,8 +112,32 @@ impl Placement {
         mirror: false,
     };
 
+    /// The placement whose local x axis lands along the unit direction `x` (and y a
+    /// quarter turn on from it, or a quarter turn back when `mirror`), at `at`, unscaled.
+    /// An axis-aligned `x` gives an exact quarter turn.
+    pub fn from_axes(at: DVec2, x: DVec2, mirror: bool) -> Placement {
+        let angle = x.y.atan2(x.x).to_degrees();
+        Placement {
+            at,
+            // Mirroring flips local x; the extra half turn puts it back along `x`.
+            angle: if mirror { angle + 180.0 } else { angle },
+            scale: 1.0,
+            mirror,
+        }
+    }
+
     pub fn rotor(&self) -> DVec2 {
         exact_rotor(self.angle)
+    }
+
+    /// Where local x and y point in the world (unit length times the scale).
+    pub fn axes(&self) -> (DVec2, DVec2) {
+        let r = self.rotor() * self.scale;
+        if self.mirror {
+            (-r, r.perp())
+        } else {
+            (r, r.perp())
+        }
     }
 
     /// The turn in radians (as arc and text angles are kept).
@@ -388,6 +412,32 @@ mod tests {
         };
         assert!((start - std::f64::consts::FRAC_PI_2).abs() < 1e-12);
         assert_eq!(sweep, std::f64::consts::FRAC_PI_2);
+    }
+
+    #[test]
+    fn a_placement_from_axes_turns_quarter_turns_exactly() {
+        let at = DVec2::new(1234.5, -678.25);
+        let p = DVec2::new(3.5, 7.25);
+        // Up the y axis: local x → +y, local y → −x, bit for bit.
+        let up = Placement::from_axes(at, DVec2::Y, false);
+        assert_eq!(up.apply(p), at + DVec2::new(-7.25, 3.5));
+        assert_eq!(up.axes(), (DVec2::Y, -DVec2::X));
+        // Along −x, mirrored (local y runs −x.perp() = +y): x → −x, y → +y.
+        let back = Placement::from_axes(at, -DVec2::X, true);
+        assert_eq!(back.apply(p), at + DVec2::new(-3.5, 7.25));
+        assert_eq!(back.axes(), (-DVec2::X, DVec2::Y));
+        // Every axis direction, either hand, lands its axes exactly.
+        for x in [DVec2::X, DVec2::Y, -DVec2::X, -DVec2::Y] {
+            for mirror in [false, true] {
+                let (ax, ay) = Placement::from_axes(at, x, mirror).axes();
+                assert_eq!(ax, x);
+                assert_eq!(ay, if mirror { -x.perp() } else { x.perp() });
+            }
+        }
+        // Off the axes, it is the rotation to `x`.
+        let d = DVec2::new(3.0, 4.0) / 5.0;
+        let (ax, ay) = Placement::from_axes(at, d, true).axes();
+        assert!(close(ax, d) && close(ay, -d.perp()));
     }
 
     fn close(a: DVec2, b: DVec2) -> bool {

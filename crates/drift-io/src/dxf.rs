@@ -644,16 +644,9 @@ pub fn underlay_prims(import: &DxfImport) -> Vec<drift_core::RefPrim> {
                 start,
                 sweep,
             },
-            Shape::Ellipse {
-                center,
-                major,
-                minor,
-                start,
-                sweep,
-            } => RefPrim::Polyline(drift_core::shape::flatten_ellipse(
-                center, major, minor, start, sweep, 48,
-            )),
-            Shape::Bezier { p } => RefPrim::Polyline(drift_core::shape::flatten_bezier(&p, 24)),
+            Shape::Ellipse { .. } | Shape::Bezier { .. } => {
+                RefPrim::Polyline(s.flatten(drift_core::tolerance::FLATTEN_MM))
+            }
         })
     };
     let mut out: Vec<RefPrim> = import

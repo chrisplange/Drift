@@ -471,10 +471,8 @@ pub fn contour_rings(contours: &[Vec<Shape>]) -> Vec<Vec<DVec2>> {
                         if ring.is_empty() {
                             ring.push(p[0]);
                         }
-                        for k in 1..=8 {
-                            let t = f64::from(k) / 8.0;
-                            ring.push(drift_core::shape::bezier_point(&p, t));
-                        }
+                        let points = piece.flatten(drift_core::tolerance::FLATTEN_MM);
+                        ring.extend(points.into_iter().skip(1));
                     }
                     _ => {}
                 }

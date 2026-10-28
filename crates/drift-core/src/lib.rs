@@ -23,6 +23,7 @@ pub mod shape;
 pub mod shared;
 pub mod sheets;
 pub mod texts;
+pub mod tolerance;
 pub mod underlays;
 pub mod units;
 pub mod walls;

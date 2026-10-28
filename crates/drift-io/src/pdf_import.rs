@@ -1852,15 +1852,15 @@ fn add_prim(prims: &mut Vec<RefPrim>, path: Vec<DVec2>) {
     }
 }
 
-/// Append a cubic Bézier from `p0` (already in `out`) as line segments, finely enough that
-/// it stays within about a hundredth of a point of the curve.
+/// Append a cubic Bézier from `p0` (already in `out`, in points) as line segments, within
+/// the output tolerance of the curve.
 fn flatten_cubic(p0: DVec2, p1: DVec2, p2: DVec2, p3: DVec2, out: &mut Vec<DVec2>) {
-    let span = p0.distance(p1) + p1.distance(p2) + p2.distance(p3);
-    let n = (span.sqrt() * 2.0).ceil().clamp(2.0, 64.0) as usize;
-    for i in 1..=n {
-        let t = i as f64 / n as f64;
-        out.push(drift_core::shape::bezier_point(&[p0, p1, p2, p3], t));
+    let tol = drift_core::tolerance::FLATTEN_MM / drift_core::underlays::MM_PER_POINT;
+    let points = drift_core::Shape::Bezier {
+        p: [p0, p1, p2, p3],
     }
+    .flatten(tol);
+    out.extend(points.into_iter().skip(1));
 }
 
 #[cfg(test)]

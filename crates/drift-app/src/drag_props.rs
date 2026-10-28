@@ -418,17 +418,7 @@ impl Similarity {
     };
 
     fn rotation(&self) -> DVec2 {
-        let quarter = self.turn / 90.0;
-        if quarter == quarter.round() {
-            match (quarter as i64).rem_euclid(4) {
-                0 => DVec2::X,
-                1 => DVec2::Y,
-                2 => -DVec2::X,
-                _ => -DVec2::Y,
-            }
-        } else {
-            DVec2::from_angle(self.turn.to_radians())
-        }
+        drift_core::blocks::exact_rotor(self.turn)
     }
 
     fn vector(&self, v: DVec2) -> DVec2 {

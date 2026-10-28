@@ -677,17 +677,7 @@ fn auto_relation_onto_point(ed: &mut Editor, relation: Option<GuideKind>, line: 
 /// Unit vector at `degrees`, exact for multiples of 90° (where `cos`/`sin` would leave ~1e-16
 /// residue that the solver would then spread onto already-placed points).
 fn exact_direction(degrees: f64) -> DVec2 {
-    let quarter = degrees / 90.0;
-    if (quarter - quarter.round()).abs() <= 1e-12 {
-        match (quarter.round() as i64).rem_euclid(4) {
-            0 => DVec2::X,
-            1 => DVec2::Y,
-            2 => -DVec2::X,
-            _ => -DVec2::Y,
-        }
-    } else {
-        DVec2::from_angle(degrees.to_radians())
-    }
+    drift_core::blocks::exact_rotor(degrees)
 }
 
 /// Horizontal/vertical relation implied by a typed angle that is a multiple of 90°.

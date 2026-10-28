@@ -90,7 +90,10 @@ impl Area {
     /// The outlines of `regions` (their holes are inside the outline too).
     pub fn of(regions: &[drift_geom::regions::Region]) -> Self {
         Self {
-            loops: regions.iter().map(|r| r.outer.polygon(0.005)).collect(),
+            loops: regions
+                .iter()
+                .map(|r| r.outer.polygon(drift_core::tolerance::FLATTEN_MM))
+                .collect(),
         }
     }
 
@@ -1548,9 +1551,10 @@ impl Editor {
             } if start != last && (start == end || last == end) => {
                 let (c, s, e) = (pos(center)?, pos(start)?, pos(last)?);
                 let radius = s.distance(c);
-                // `arc_shape` makes a zero sweep a whole turn; here it is no arm.
+                // Read as `arc_shape` reads it everywhere else: ends that meet make a whole
+                // turn.
                 let sweep = match arc_shape(c, s, e) {
-                    Shape::Arc { sweep, .. } if sweep < TAU => sweep,
+                    Shape::Arc { sweep, .. } => sweep,
                     _ => 0.0,
                 };
                 (radius > 0.0 && sweep > 0.0).then_some(Arm {
@@ -2744,7 +2748,7 @@ impl Editor {
         self.pattern(
             ids,
             count - 1,
-            |k, p| center + DVec2::from_angle((step * k as f64).to_radians()).rotate(p - center),
+            |k, p| center + drift_core::blocks::exact_rotor(step * k as f64).rotate(p - center),
             false,
             "Circular pattern",
         )
@@ -3015,6 +3019,25 @@ mod tests {
         ed.commit("Arc");
         ed.extend_at(arc, v(4.9, 0.5)).unwrap();
         assert!(close(ed.doc.point(s).unwrap(), v(4.0, -3.0)));
+    }
+
+    #[test]
+    fn an_arc_whose_ends_meet_is_a_whole_turn_arm() {
+        // Its own two end points at one place: drawn as a whole circle, so its arm runs the
+        // whole way round, as `arc_shape` reads it (it used to have no arm at all).
+        let (mut ed, _) = with_lines(&[]);
+        ed.doc.begin();
+        let c = ed.doc.add_point(v(0.0, 0.0));
+        let s = ed.doc.add_point(v(5.0, 0.0));
+        let e = ed.doc.add_point(v(0.0, 5.0));
+        let arc = ed.doc.add_arc(c, s, e).unwrap();
+        // (A new arc can't start so; a solve or a drag can bring its ends together.)
+        ed.doc.set_point(e, v(5.0, 0.0)).unwrap();
+        ed.commit("Arc");
+        for end in [s, e] {
+            let arm = ed.arm(arc, end).expect("an arm");
+            assert!((arm.length - 5.0 * TAU).abs() < 1e-9, "{}", arm.length);
+        }
     }
 
     #[test]

@@ -159,7 +159,8 @@ impl HatchPrim {
     /// `limit`, else a light solid fill in its place).
     pub fn prims(&self, limit: usize) -> Vec<Prim> {
         let solid = || {
-            let triangles = crate::tessellate(&self.region, 0.02)
+            let tol = drift_core::tolerance::FLATTEN_MM;
+            let triangles = crate::tessellate(&self.region, tol)
                 .map(|(v, idx)| {
                     idx.as_chunks::<3>()
                         .0
@@ -171,7 +172,7 @@ impl HatchPrim {
             Prim::Fill {
                 rings: std::iter::once(&self.region.outer)
                     .chain(&self.region.holes)
-                    .map(|lp| lp.polygon(0.02))
+                    .map(|lp| lp.polygon(tol))
                     .collect(),
                 triangles,
                 mask: false,
@@ -263,19 +264,44 @@ impl TextStyle {
     }
 }
 
-/// An ellipse prim as connected points (for outputs without ellipses); other prims give none.
+/// An arc, ellipse or Bézier prim as connected points within the output tolerance
+/// ([`drift_core::tolerance::FLATTEN_MM`] on the page), for outputs without those curves;
+/// other prims give none.
 pub fn prim_points(prim: &Prim) -> Vec<DVec2> {
-    match *prim {
+    prim_points_within(prim, drift_core::tolerance::FLATTEN_MM)
+}
+
+/// [`prim_points`] within `tolerance` (page units).
+pub fn prim_points_within(prim: &Prim, tolerance: f64) -> Vec<DVec2> {
+    let shape = match *prim {
+        Prim::Arc {
+            center,
+            radius,
+            start,
+            sweep,
+        } => drift_core::Shape::Arc {
+            center,
+            radius,
+            start,
+            sweep,
+        },
         Prim::Ellipse {
             center,
             major,
             minor,
             start,
             sweep,
-        } => drift_core::shape::flatten_ellipse(center, major, minor, start, sweep, 64),
-        Prim::Bezier { p } => drift_core::shape::flatten_bezier(&p, 32),
-        _ => Vec::new(),
-    }
+        } => drift_core::Shape::Ellipse {
+            center,
+            major,
+            minor,
+            start,
+            sweep,
+        },
+        Prim::Bezier { p } => drift_core::Shape::Bezier { p },
+        _ => return Vec::new(),
+    };
+    shape.flatten(tolerance)
 }
 
 #[derive(Clone, Debug, PartialEq)]

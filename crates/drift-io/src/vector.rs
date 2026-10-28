@@ -60,9 +60,12 @@ impl Subpath {
             match *s {
                 Seg::Line(p) => out.push(p),
                 Seg::Cubic(c1, c2, p) => out.extend(
-                    drift_core::shape::flatten_bezier(&[from, c1, c2, p], 8)
-                        .into_iter()
-                        .skip(1),
+                    Shape::Bezier {
+                        p: [from, c1, c2, p],
+                    }
+                    .flatten(drift_core::tolerance::FLATTEN_MM)
+                    .into_iter()
+                    .skip(1),
                 ),
             }
             from = s.end();

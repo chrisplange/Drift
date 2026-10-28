@@ -53,7 +53,7 @@ pub fn hatch(
     let scale = placement.scale.abs().max(1e-9);
     let rotation = DVec2::from_angle(placement.angle.to_radians());
     let mut bounds = Bounds::EMPTY;
-    for p in region.outer.polygon(0.05) {
+    for p in region.outer.polygon(drift_core::tolerance::FLATTEN_MM) {
         bounds.include(p);
     }
     if bounds.is_empty() {
@@ -257,9 +257,9 @@ fn edge_crossings(e: &Edge, o: DVec2, d: DVec2, n: DVec2, c: f64, side: f64, out
     }
 }
 
-/// Tessellate a region (holes excluded) into world-space triangles. Arcs are flattened in
-/// steps of at most `max_angle` radians.
-pub fn tessellate(region: &Region, max_angle: f64) -> Option<(Vec<DVec2>, Vec<u32>)> {
+/// Tessellate a region (holes excluded) into world-space triangles. Arcs are flattened to
+/// chords within `tolerance` of them.
+pub fn tessellate(region: &Region, tolerance: f64) -> Option<(Vec<DVec2>, Vec<u32>)> {
     use lyon_tessellation::math::point;
     use lyon_tessellation::path::Path;
     use lyon_tessellation::{
@@ -270,7 +270,7 @@ pub fn tessellate(region: &Region, max_angle: f64) -> Option<(Vec<DVec2>, Vec<u3
     let origin = region.centroid;
     let mut builder = Path::builder();
     for lp in std::iter::once(&region.outer).chain(&region.holes) {
-        let poly = lp.polygon(max_angle);
+        let poly = lp.polygon(tolerance);
         let Some(first) = poly.first() else {
             continue;
         };

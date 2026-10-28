@@ -47,41 +47,9 @@ fn paint_block(
             Shape::Circle { center, radius } => {
                 painter.circle_stroke(to(center), (radius * scale) as f32, stroke);
             }
-            Shape::Arc {
-                center,
-                radius,
-                start,
-                sweep,
-            } => {
-                let n = 16;
-                let pts: Vec<egui::Pos2> =
-                    (0..=n)
-                        .map(|k| {
-                            to(center
-                                + DVec2::from_angle(start + sweep * k as f64 / n as f64) * radius)
-                        })
-                        .collect();
-                painter.add(egui::Shape::line(pts, stroke));
-            }
-            Shape::Ellipse {
-                center,
-                major,
-                minor,
-                start,
-                sweep,
-            } => {
-                let pts =
-                    drift_core::shape::flatten_ellipse(center, major, minor, start, sweep, 24)
-                        .into_iter()
-                        .map(to)
-                        .collect();
-                painter.add(egui::Shape::line(pts, stroke));
-            }
-            Shape::Bezier { p } => {
-                let pts = drift_core::shape::flatten_bezier(&p, 16)
-                    .into_iter()
-                    .map(to)
-                    .collect();
+            Shape::Arc { .. } | Shape::Ellipse { .. } | Shape::Bezier { .. } => {
+                let tol = drift_core::tolerance::FLATTEN_PX / scale;
+                let pts = item.shape.flatten(tol).into_iter().map(to).collect();
                 painter.add(egui::Shape::line(pts, stroke));
             }
             Shape::Point(_) => {}

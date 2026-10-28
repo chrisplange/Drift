@@ -1274,7 +1274,7 @@ mod tests {
         let fills_before: Vec<DVec2> = ed
             .copy_fills()
             .iter()
-            .map(|c| c.region.outer.polygon(0.1)[0])
+            .map(|c| c.region.outer.polygon(drift_core::tolerance::FLATTEN_MM)[0])
             .collect();
         let steps = ed.history.undo_label().map(str::to_owned);
         // The far corner of the second copy becomes the base point.
@@ -1308,7 +1308,7 @@ mod tests {
         let fills_after: Vec<DVec2> = ed
             .copy_fills()
             .iter()
-            .map(|c| c.region.outer.polygon(0.1)[0])
+            .map(|c| c.region.outer.polygon(drift_core::tolerance::FLATTEN_MM)[0])
             .collect();
         assert_eq!(fills_before.len(), fills_after.len());
         assert!(

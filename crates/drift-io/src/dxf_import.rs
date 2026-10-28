@@ -2633,30 +2633,8 @@ fn finite(shape: &Shape) -> bool {
 
 /// Points along a curve, for testing what is inside a hatch.
 fn flatten(shape: &Shape, out: &mut Vec<DVec2>) {
-    match *shape {
-        Shape::Point(_) => {}
-        Shape::Line { a, b } => out.extend([a, b]),
-        Shape::Circle { center, radius } => {
-            out.extend((0..=48).map(|k| center + DVec2::from_angle(k as f64 / 48.0 * TAU) * radius))
-        }
-        Shape::Arc {
-            center,
-            radius,
-            start,
-            sweep,
-        } => out.extend(
-            (0..=24).map(|k| center + DVec2::from_angle(start + sweep * k as f64 / 24.0) * radius),
-        ),
-        Shape::Ellipse {
-            center,
-            major,
-            minor,
-            start,
-            sweep,
-        } => out.extend(drift_core::shape::flatten_ellipse(
-            center, major, minor, start, sweep, 48,
-        )),
-        Shape::Bezier { p } => out.extend(drift_core::shape::flatten_bezier(&p, 16)),
+    if !matches!(shape, Shape::Point(_)) {
+        shape.flatten_into(drift_core::tolerance::FLATTEN_MM, out);
     }
 }
 

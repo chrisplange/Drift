@@ -165,10 +165,13 @@ impl Editor {
             let before = self.doc.revision();
             self.follow_walls_with(joins.as_deref());
             // (The faces they made again are out of the scope: the index is told of them too,
-            // or it would look over the whole drawing for what changed.)
+            // or it would look over the whole drawing for what changed. Only their points were
+            // touched, so the index adds the faces on them.)
             if self.doc.revision() != before {
-                self.index
-                    .update_moved(&self.doc, self.doc.entities_touched_in_transaction());
+                self.index.update_moved_with_curves(
+                    &self.doc,
+                    self.doc.entities_touched_in_transaction(),
+                );
             }
         }
         self.carry_hatches();

@@ -171,7 +171,7 @@ impl Editor {
             return None;
         }
         let shape = self.index.shape(id)?;
-        let dof = match self.analysis.definitions.get(&id) {
+        let dof = match self.analysis().definitions.get(&id) {
             Some(Definition::Under) => DofState::Under,
             Some(Definition::Full) => DofState::Full,
             Some(Definition::Over) => DofState::Over,

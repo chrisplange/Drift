@@ -8,7 +8,6 @@
 //! `underlay`); `DRIFT_BIG=synthetic:8000` imports [`big_drawing`] of 8,000 rooms instead.
 
 use std::collections::BTreeSet;
-use std::rc::Rc;
 use std::time::Instant;
 
 use drift_core::{DVec2, Document, EntityId};
@@ -156,6 +155,13 @@ fn perf_big_synthetic() {
     let t = Instant::now();
     assert_eq!(ed.nudge(DVec2::new(1.0, 0.0)), Some(true));
     let edit = ms(t);
+    // (Its fills follow once the areas are found on a thread: as they were until then.)
+    let t = Instant::now();
+    let _ = ed.fill_shapes();
+    let stale = ms(t);
+    let t = Instant::now();
+    ed.settle_areas();
+    let settle = ms(t);
     let found = ed
         .regions
         .as_ref()
@@ -165,10 +171,13 @@ fn perf_big_synthetic() {
     let _ = ed.fill_shapes();
     let next = ms(t);
     assert!(
-        Rc::ptr_eq(&found, &ed.regions.as_ref().unwrap().1),
+        std::sync::Arc::ptr_eq(&found, &ed.regions.as_ref().unwrap().1),
         "the areas were found again after the edit"
     );
-    println!("move one curve: edit {edit:.0} ms, fill shapes after {next:.0} ms");
+    println!(
+        "move one curve: edit {edit:.0} ms, fill shapes while its areas are found \
+         {stale:.1} ms, fills followed {settle:.0} ms, fill shapes after {next:.0} ms"
+    );
 
     // The index follows a few changes without rebuilding.
     let point = ed.doc.iter().find(|(_, e)| e.kind.is_point()).unwrap().0;
@@ -363,7 +372,19 @@ fn perf_big() {
         let e = ms(t);
         let t = Instant::now();
         h.step();
-        println!("{label:<34} edit {e:>6.1} ms, next frame {:>6.1} ms", ms(t));
+        let next = ms(t);
+        // Frames until its fills have followed it (their areas found on a thread).
+        let t = Instant::now();
+        let mut frames = 0;
+        while h.state().editor.areas.pending.is_some() && frames < 2000 {
+            h.step();
+            frames += 1;
+        }
+        let settled = ms(t);
+        println!(
+            "{label:<34} edit {e:>6.1} ms, next frame {next:>6.1} ms, fills followed \
+             {settled:>6.1} ms later ({frames} frames)"
+        );
         h.step();
     };
     edit("move one curve (nudge)", &mut h, &mut |app| {
@@ -382,4 +403,5 @@ fn perf_big() {
         app.editor.delete_selection();
     });
     edit("undo delete", &mut h, &mut |app| assert!(app.editor.undo()));
+    edit("redo delete", &mut h, &mut |app| assert!(app.editor.redo()));
 }

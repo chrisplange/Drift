@@ -10,6 +10,7 @@
 //! inside a region becomes a hole of the smallest region containing it.
 
 use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::f64::consts::TAU;
 
 use drift_core::{Bounds, DVec2, Shape};
@@ -779,6 +780,18 @@ pub fn regions(curves: &[Shape]) -> Vec<Region> {
 
 /// [`regions`] with explicit tolerances.
 pub fn regions_with(curves: &[Shape], tol: &RegionTolerance) -> Vec<Region> {
+    regions_in(curves, tol, &[])
+}
+
+/// [`regions`], taking each centroid from `prior` (an earlier result, for curves since
+/// edited) where a region there has the very same outline and holes: a centroid is found
+/// from finely flattened loops, which takes far longer than finding the region again.
+/// The same result as [`regions`], bit for bit.
+pub fn regions_reusing(curves: &[Shape], prior: &[Region]) -> Vec<Region> {
+    regions_in(curves, &RegionTolerance::for_curves(curves), prior)
+}
+
+fn regions_in(curves: &[Shape], tol: &RegionTolerance, prior: &[Region]) -> Vec<Region> {
     let (verts, pieces) = split(curves, tol);
     // How many pieces each curve was cut into.
     let mut count = vec![0usize; curves.len()];
@@ -999,8 +1012,23 @@ pub fn regions_with(curves: &[Shape], tol: &RegionTolerance) -> Vec<Region> {
             r.holes.push(b);
         }
     }
+    // (Earlier regions by their area and perimeter, to the bit: what a region with the same
+    // loops has.)
+    let mut known: HashMap<(u64, u64), Vec<&Region>> = HashMap::new();
+    for r in prior {
+        known
+            .entry((r.area.to_bits(), r.perimeter.to_bits()))
+            .or_default()
+            .push(r);
+    }
     for r in &mut result {
-        r.centroid = centroid(r);
+        let same = known
+            .get(&(r.area.to_bits(), r.perimeter.to_bits()))
+            .and_then(|list| list.iter().find(|p| same_loops(p, r)));
+        r.centroid = match same {
+            Some(p) => p.centroid,
+            None => centroid(r),
+        };
     }
     result
 }
@@ -1052,6 +1080,30 @@ fn near_outline(lp: &Loop, p: DVec2, tol: &RegionTolerance) -> bool {
     lp.edges
         .iter()
         .any(|e| crate::primitives::distance(&e.shape(), p) <= tol.snap)
+}
+
+/// Whether two regions have the same outline and holes, in the same order, to the bit (so
+/// the same centroid).
+fn same_loops(a: &Region, b: &Region) -> bool {
+    let bits = |e: &Edge| match *e {
+        Edge::Line { a, b } => [0.0, a.x, a.y, b.x, b.y, 0.0].map(f64::to_bits),
+        Edge::Arc {
+            center,
+            radius,
+            start,
+            sweep,
+        } => [1.0, center.x, center.y, radius, start, sweep].map(f64::to_bits),
+    };
+    let same = |p: &Loop, q: &Loop| {
+        p.edges.len() == q.edges.len()
+            && p.edges
+                .iter()
+                .zip(&q.edges)
+                .all(|(e, f)| bits(e) == bits(f))
+    };
+    a.holes.len() == b.holes.len()
+        && same(&a.outer, &b.outer)
+        && a.holes.iter().zip(&b.holes).all(|(p, q)| same(p, q))
 }
 
 /// Centroid from finely flattened loops (holes subtract).

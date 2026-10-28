@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 67a022c623344b6a98cd3a6b221d63508e92018c156313f89cbb3fd47e724bbf # shrinks to steps = [[0, 0, 0, 0, 0], [0, 0, 0, 0, 0], [0, 0, 0, 0, 0], [134, 364, 4103, 771, 3393], [6639, 9444, 8671, 6389, 7511], [15, 3101, 2565, 9184, 4975]], every = 1
+cc 3bd66406cd80c8e8e8915a5b65416f963a4f0430b4e060efab60c41ec2a04b2f # shrinks to steps = [[0, 0, 0, 0, 0], [0, 0, 0, 0, 0], [0, 0, 0, 0, 0], [1660, 0, 1, 9243, 6961], [4663, 3430, 3315, 2396, 6382], [9440, 9336, 5355, 9926, 5894], [193, 5460, 2427, 6523, 8979], [5538, 8053, 487, 7647, 7653], [7719, 3680, 1574, 7948, 8149], [3209, 1248, 9714, 1619, 2363], [5657, 3200, 8286, 7546, 1212], [9101, 524, 5360, 8975, 5567], [2336, 169, 5277, 38, 5896], [3964, 7377, 9292, 3130, 1488], [1077, 468, 7970, 2071, 9221], [6466, 4227, 1118, 1796, 841], [3092, 775, 5945, 8078, 5573], [2898, 1273, 4502, 9236, 5231], [9319, 9070, 9801, 7063, 3744]], every = 2

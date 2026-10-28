@@ -94,7 +94,7 @@ impl Editor {
             && report
                 .conflicts
                 .iter()
-                .any(|c| !self.analysis.conflicts.contains(c))
+                .any(|c| !self.analysis().conflicts.contains(c))
     }
 
     /// Solve the constraints, then finish the open transaction and record it for undo. If the
@@ -109,6 +109,11 @@ impl Editor {
     }
 
     pub fn commit(&mut self, label: &str) -> bool {
+        // An edit begun while the last one's fills were still to follow it: they follow
+        // first, in that edit's own step.
+        if self.areas.pending.is_some() && self.doc.in_transaction() {
+            self.settle_before_open_edit();
+        }
         // (Free lines alone have nothing to solve: no relations, nothing pinned or round.)
         let report = if drift_solver::anything_to_solve(&self.doc) {
             self.solve(&[])
@@ -129,6 +134,19 @@ impl Editor {
         self.make_new_curves_construction();
         self.follow_walls();
         self.follow_paths();
+        // On a big drawing the edit is done before the areas its fills follow are found:
+        // they are found on a thread, and the fills then follow in this edit's step.
+        if self.defer_follow() {
+            let tx = self.doc.commit(label);
+            self.far_off = self.far_off_of(tx.entities());
+            self.history.push(tx);
+            self.areas.pending = Some(regions::PendingFollow {
+                depth: self.history.undo_depth(),
+                recorded: self.history.recorded(),
+            });
+            self.sync();
+            return true;
+        }
         self.follow_fills();
         self.carry_hatches();
         let tx = self.doc.commit(label);
@@ -142,6 +160,7 @@ impl Editor {
         self.far_off = self.far_off_of(tx.entities());
         self.history.push(tx);
         self.sync();
+        self.check_caches();
         true
     }
 
@@ -343,23 +362,127 @@ impl Editor {
         }
     }
 
+    /// Whether the open edit commits before its fills follow it (see
+    /// [`settle_areas`](Self::settle_areas)): on a big drawing (or as `areas.defer` says),
+    /// when it has fills that may follow, and the areas of its curves aren't known yet. Their
+    /// finding is then started on a thread.
+    fn defer_follow(&mut self) -> bool {
+        /// Entities (points and curves) from which a drawing is big.
+        const BIG: usize = 30_000;
+        if cfg!(target_arch = "wasm32")
+            || self.importing
+            || !self.areas.defer.unwrap_or(self.doc.len() >= BIG)
+            || self.doc.fills().all(|(_, f)| f.path.is_some())
+        {
+            return false;
+        }
+        let key = self.regions_key();
+        if self.regions.as_ref().is_some_and(|(k, _)| *k == key) {
+            return false;
+        }
+        let input = self.areas_input(&key);
+        if self.areas.knows(&input) {
+            return false;
+        }
+        let prior = self.regions.as_ref().map(|(_, r)| r.clone());
+        self.areas.start(input, prior);
+        true
+    }
+
+    /// Let the fills of an edit committed before its areas were found follow it now (waiting
+    /// for the areas if need be), in that edit's undo step.
+    ///
+    /// Steps pushed on top of it since (an edit made of several commits) are set aside
+    /// first and made again over its followed fills, each still a step of its own. Where
+    /// steps were squashed or merged into it, its fills follow in the step that holds it.
+    pub fn settle_areas(&mut self) {
+        let Some(pending) = self.areas.pending.take() else {
+            return;
+        };
+        if self.doc.in_transaction() {
+            self.areas.pending = Some(pending);
+            return;
+        }
+        let depth = self.history.undo_depth();
+        let pushed = self.history.recorded().checked_sub(pending.recorded);
+        let later = match depth.checked_sub(pending.depth) {
+            Some(n) if n > 0 && pushed == Some(n as u64) => n,
+            _ => 0,
+        };
+        let mut aside = Vec::new();
+        for _ in 0..later {
+            let Some(tx) = self.history.take_last() else {
+                break;
+            };
+            let mut back = History::default();
+            back.put_back(tx.clone());
+            back.undo(&mut self.doc);
+            aside.push(tx);
+        }
+        if let Some(tx) = self.history.take_last() {
+            self.doc.reopen(&tx);
+            self.follow_fills();
+            self.carry_hatches();
+            let tx = self.doc.commit(tx.label.clone());
+            self.history.put_back(tx);
+        }
+        for tx in aside.into_iter().rev() {
+            self.doc.begin();
+            self.doc.replay(&tx);
+            let tx = self.doc.commit(tx.label.clone());
+            self.history.put_back(tx);
+        }
+        // (The shapes shown meanwhile were the fills' before the edit.)
+        self.fill_shapes = None;
+        self.sync();
+        self.check_caches();
+    }
+
+    /// Once a frame: the fills of an edit committed before its areas were found follow it
+    /// as soon as the areas are in. True while they still wait (draw again soon).
+    pub fn poll_areas(&mut self) -> bool {
+        if self.areas.pending.is_none() {
+            return false;
+        }
+        if self.areas.worker_done() {
+            self.settle_areas();
+        }
+        self.areas.pending.is_some()
+    }
+
+    /// [`settle_areas`](Self::settle_areas) under an edit already begun: the edit is set
+    /// aside, the last one's fills follow it, and the edit is made again over them.
+    fn settle_before_open_edit(&mut self) {
+        let open = self.doc.commit("");
+        let mut aside = History::default();
+        aside.push(open.clone());
+        aside.undo(&mut self.doc);
+        self.settle_areas();
+        self.doc.begin();
+        self.doc.replay(&open);
+    }
+
     pub fn undo(&mut self) -> bool {
+        self.settle_areas();
         let done = self.history.undo(&mut self.doc);
         // (Fills are back as they were: whether each was kept whole across curves is found
         // again when it is next looked at, and shapes' areas and holes now.)
         self.fill_crossed.clear();
         self.refresh_shape_fills();
         self.sync();
+        self.check_caches();
         done
     }
 
     pub fn redo(&mut self) -> bool {
+        self.settle_areas();
         let done = self.history.redo(&mut self.doc);
         // (Fills are back as they were: whether each was kept whole across curves is found
         // again when it is next looked at, and shapes' areas and holes now.)
         self.fill_crossed.clear();
         self.refresh_shape_fills();
         self.sync();
+        self.check_caches();
         done
     }
 

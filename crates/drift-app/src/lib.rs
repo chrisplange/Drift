@@ -8,6 +8,8 @@
 pub mod agent;
 mod annotations;
 mod app;
+#[cfg(test)]
+mod areas_props;
 pub mod blocks;
 mod canvas;
 pub mod checker;
@@ -787,6 +789,8 @@ impl DriftApp {
     /// it can't be written) in eframe's storage.
     #[cfg(not(feature = "demo"))]
     fn save_document(&mut self, storage: &mut dyn eframe::Storage) {
+        // (With the last edit's fills followed: what is kept is a whole drawing.)
+        self.editor.settle_areas();
         // A value that isn't a number would make the session unreadable: keep the last one.
         if let Some(id) = self.editor.doc.first_non_finite() {
             log::warn!("autosave skipped: {id} has a position that isn't a number");
@@ -976,6 +980,27 @@ impl eframe::App for DriftApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
         }
         let now = ctx.input(|i| i.time);
+        // An edit on a big drawing is done before its areas are found; its fills follow it
+        // once they are. Input that may begin another edit (or save, or copy) waits for that.
+        let may_edit = ctx.input(|i| {
+            !i.raw.dropped_files.is_empty()
+                || i.events.iter().any(|e| {
+                    matches!(
+                        e,
+                        egui::Event::PointerButton { .. }
+                            | egui::Event::Key { .. }
+                            | egui::Event::Text(_)
+                            | egui::Event::Paste(_)
+                            | egui::Event::Copy
+                            | egui::Event::Cut
+                    )
+                })
+        });
+        if may_edit {
+            self.editor.settle_areas();
+        } else if self.editor.poll_areas() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(15));
+        }
         let before = self.ui_signature();
         self.handle_file_events(now);
         if let Some(wait) = self.live_profiles(now) {

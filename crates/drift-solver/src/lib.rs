@@ -11,6 +11,7 @@
 
 pub mod bench;
 mod equations;
+mod incremental;
 mod linalg;
 mod lowering;
 mod sparse;
@@ -21,6 +22,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use drift_core::polygon::UnionFind;
 use drift_core::{Constraint, ConstraintId, DVec2, Document, EntityId, EntityKind};
 
+pub use crate::incremental::{AnalysisCache, analyze_cached};
 pub use crate::lowering::{Lowered, Lowering};
 
 use crate::linalg::{Matrix, rref};
@@ -377,7 +379,11 @@ pub fn analyze_with(doc: &Document, lowering: Option<&Lowering>) -> SolveReport 
         ..Default::default()
     };
     let mut sys = System::build(doc, &[], &options.tolerances, lowering);
-    run(&mut sys, &options, false)
+    let mut report = run(&mut sys, &options, false);
+    // (In one order however the relations were found redundant: what an analysis kept
+    // cluster by cluster reports too.)
+    report.redundant.sort();
+    report
 }
 
 /// The entities that can move with `seeds`: everything joined to them through shared points

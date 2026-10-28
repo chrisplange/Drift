@@ -4,7 +4,7 @@
 use std::collections::HashSet;
 
 use drift_core::{DVec2, Shape};
-use drift_geom::regions::{Region, RegionTolerance, regions};
+use drift_geom::regions::{Region, RegionTolerance, regions, regions_reusing};
 use proptest::prelude::*;
 
 const N: i32 = 12;
@@ -213,5 +213,39 @@ proptest! {
             prop_assert_eq!(x.area, y.area);
             prop_assert_eq!(x.centroid, y.centroid);
         }
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(128))]
+
+    /// Centroids taken from an earlier result for the regions an edit left alone: the same
+    /// regions, to the bit, as found afresh.
+    #[test]
+    fn reusing_an_earlier_result_changes_nothing(
+        before in drawing(),
+        edits in prop::collection::vec((0usize..64, 0..N, 0..N, any::<bool>()), 1..5),
+    ) {
+        let prior = regions(&before);
+        let mut after = before.clone();
+        for (k, x, y, delete) in edits {
+            if after.is_empty() {
+                break;
+            }
+            let k = k % after.len();
+            if delete {
+                after.remove(k);
+            } else {
+                let d = v(x.into(), y.into()) * 0.5;
+                after[k] = map_shape(&after[k], &|p| p + d, 1.0, 0.0);
+            }
+        }
+        let fresh = format!("{:?}", regions(&after));
+        prop_assert_eq!(format!("{:?}", regions_reusing(&after, &prior)), fresh.clone());
+        // And reusing a result for the very same curves.
+        prop_assert_eq!(
+            format!("{:?}", regions_reusing(&after, &regions(&after))),
+            fresh
+        );
     }
 }

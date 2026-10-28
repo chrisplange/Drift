@@ -445,6 +445,39 @@ impl Editor {
         {
             return cache.shapes.clone();
         }
+        // The last edit's fills follow it once its areas are found (on a thread): until
+        // then they show as they were before it, unless one is new to the drawing.
+        if self.areas.pending.is_some() {
+            let stale = (!self.doc.in_transaction())
+                .then_some(self.fill_shapes.as_ref())
+                .flatten()
+                .filter(|cache| {
+                    self.doc
+                        .fills()
+                        .all(|(id, _)| cache.shapes.contains_key(&id))
+                })
+                .map(|cache| {
+                    cache
+                        .shapes
+                        .iter()
+                        .filter(|(id, _)| self.doc.fill(**id).is_some())
+                        .map(|(id, s)| (*id, s.clone()))
+                        .collect::<BTreeMap<_, _>>()
+                });
+            if let Some(shapes) = stale {
+                let shapes = Rc::new(shapes);
+                self.fill_shapes = Some(FillShapesCache {
+                    revision,
+                    structure: self.doc.structure(),
+                    serial: None,
+                    shapes: shapes.clone(),
+                });
+                return shapes;
+            }
+            self.settle_areas();
+        }
+        // (Settling changes the fills.)
+        let revision = self.doc.revision();
         let fills: Vec<(FillId, Fill)> = self.doc.fills().map(|(id, f)| (id, f.clone())).collect();
         let walls = self.doc.has_walls().then(|| self.wall_owners());
         // During a drag the revision changes every frame. A click-fill none of whose curves
@@ -461,7 +494,7 @@ impl Editor {
         let (regions, ids) = if needs_areas {
             (self.regions(), self.region_ids())
         } else {
-            (Rc::new(Vec::new()), Rc::new(Vec::new()))
+            (Default::default(), Rc::new(Vec::new()))
         };
         let areas = Areas::new(&regions, &ids);
         let mut solid = None;
@@ -714,7 +747,7 @@ impl Editor {
         let (regions, ids) = if needs_areas {
             (self.regions(), self.region_ids())
         } else {
-            (Rc::new(Vec::new()), Rc::new(Vec::new()))
+            (Default::default(), Rc::new(Vec::new()))
         };
         let areas = Areas::new(&regions, &ids);
         let mut solid = None;

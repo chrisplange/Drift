@@ -1235,8 +1235,16 @@ impl Editor {
 
     /// Copies of walls for copied curves, inside the open transaction: a wall all of whose
     /// centreline curves were copied (`curves` gives each one's copy) gets a copy along them.
-    /// Tees on walls that were copied too point at the copies; others let go.
-    pub(crate) fn copy_walls_onto(&mut self, curves: &dyn Fn(EntityId) -> Option<EntityId>) {
+    /// Tees on walls that were copied too point at the copies; others let go. Fills bounded
+    /// by the walls' faces (a room's floor) are copied onto the copies' faces, placed by
+    /// `place`. A `mirrored` copy is justified to its other face (a reflection swaps left
+    /// and right), so its faces are the mirror images of the original's.
+    pub(crate) fn copy_walls_onto(
+        &mut self,
+        curves: &dyn Fn(EntityId) -> Option<EntityId>,
+        place: &dyn Fn(DVec2) -> DVec2,
+        mirrored: bool,
+    ) {
         let walls: Vec<(WallId, Wall)> = self.doc.walls().map(|(id, w)| (id, w.clone())).collect();
         let mut copies: BTreeMap<WallId, WallId> = BTreeMap::new();
         let mut made: Vec<WallId> = Vec::new();
@@ -1270,6 +1278,13 @@ impl Editor {
             let mut copy = w.clone();
             copy.centre = p;
             copy.made = Default::default();
+            if mirrored {
+                copy.justify = match copy.justify {
+                    Justify::Left => Justify::Right,
+                    Justify::Right => Justify::Left,
+                    Justify::Centre => Justify::Centre,
+                };
+            }
             for e in &mut copy.ends {
                 e.against = e.against.and_then(curves);
             }
@@ -1288,6 +1303,12 @@ impl Editor {
             let _ = self.doc.set_wall(new, w);
         }
         self.copy_openings_onto(&copies);
+        // (The copies' faces are made now, for the floors to be copied onto.)
+        let floors = face_fills(&self.doc, &copies, curves, place);
+        if !floors.is_empty() {
+            self.follow_walls();
+            add_face_fills(&mut self.doc, floors);
+        }
     }
 
     /// The poché of the cluster a wall is in.
@@ -1625,4 +1646,131 @@ impl Default for PocheSetting {
             style: FillStyle::solid(),
         }
     }
+}
+
+/// A fill bounded by walls' faces (a room's floor), to copy with its walls once their copies
+/// have made their faces (see [`face_fills`]).
+pub(crate) struct FaceFill {
+    /// The fill copied.
+    pub source: drift_core::FillId,
+    /// Its copy, placed (its boundary is made by [`add_face_fills`]).
+    pub fill: drift_core::Fill,
+    boundary: Vec<Edge>,
+}
+
+/// One curve of a [`FaceFill`]'s boundary.
+enum Edge {
+    /// Copied: its copy.
+    Curve(EntityId),
+    /// A face of a wall copied: the copy wall, and where its face is to be (start, middle
+    /// and end).
+    Face(WallId, [DVec2; 3]),
+}
+
+/// The fills of `src` bounded by faces of walls that were copied (`walls`: each one's copy),
+/// the rest of their boundary copied too (`curves`), placed by `place`. Pochés aren't among
+/// them: the copied walls make their own.
+pub(crate) fn face_fills(
+    src: &Document,
+    walls: &BTreeMap<WallId, WallId>,
+    curves: &dyn Fn(EntityId) -> Option<EntityId>,
+    place: &dyn Fn(DVec2) -> DVec2,
+) -> Vec<FaceFill> {
+    if walls.is_empty() {
+        return Vec::new();
+    }
+    let owners = src.wall_owners();
+    let mut out = Vec::new();
+    'fills: for (id, f) in src.fills() {
+        if owners.fills.contains_key(&id) || f.boundary.is_empty() || f.path.is_some() {
+            continue;
+        }
+        let mut boundary = Vec::new();
+        for e in &f.boundary {
+            if let Some(c) = curves(*e) {
+                boundary.push(Edge::Curve(c));
+                continue;
+            }
+            let copy = match owners.get(*e) {
+                Some(Owner::Wall(w)) => walls.get(&w).copied(),
+                _ => None,
+            };
+            let (Some(copy), Some(marks)) = (copy, src.shape(*e).as_ref().and_then(marks)) else {
+                continue 'fills;
+            };
+            boundary.push(Edge::Face(copy, marks.map(place)));
+        }
+        if boundary.iter().any(|e| matches!(e, Edge::Face(..))) {
+            out.push(FaceFill {
+                source: id,
+                fill: crate::fills::placed_fill(f.clone(), place),
+                boundary,
+            });
+        }
+    }
+    out
+}
+
+/// Add the fills [`face_fills`] found, once the walls copied have made their faces: each face
+/// in a boundary is the copy wall's face where its image is. A fill whose faces aren't all
+/// found isn't copied. Returns each copy, by the fill it copies.
+pub(crate) fn add_face_fills(
+    dst: &mut Document,
+    fills: Vec<FaceFill>,
+) -> Vec<(drift_core::FillId, drift_core::FillId)> {
+    let mut out = Vec::new();
+    'fills: for FaceFill {
+        source,
+        mut fill,
+        boundary,
+    } in fills
+    {
+        let mut ids = Vec::with_capacity(boundary.len());
+        for edge in boundary {
+            let id = match edge {
+                Edge::Curve(c) => Some(c),
+                Edge::Face(w, at) => dst.wall(w).and_then(|w| {
+                    w.made.curves.values().copied().find(|c| {
+                        dst.shape(*c)
+                            .as_ref()
+                            .and_then(marks)
+                            .is_some_and(|m| same_marks(m, at))
+                    })
+                }),
+            };
+            let Some(id) = id else {
+                continue 'fills;
+            };
+            ids.push(id);
+        }
+        ids.sort_unstable();
+        ids.dedup();
+        fill.boundary = ids;
+        // On the original's layer, just above it.
+        let copy = dst.add_fill(fill.clone());
+        dst.set_fill(copy, fill);
+        out.push((source, copy));
+    }
+    out
+}
+
+/// A face's start, middle and end (faces are lines and arcs).
+fn marks(s: &Shape) -> Option<[DVec2; 3]> {
+    match *s {
+        Shape::Line { a, b } => Some([a, (a + b) * 0.5, b]),
+        Shape::Arc {
+            center,
+            radius,
+            start,
+            sweep,
+        } => Some([0.0, 0.5, 1.0].map(|t| center + radius * DVec2::from_angle(start + sweep * t))),
+        _ => None,
+    }
+}
+
+/// Whether two faces' marks are the same curve's, either way round.
+fn same_marks(a: [DVec2; 3], b: [DVec2; 3]) -> bool {
+    let near = |p: DVec2, q: DVec2| p.distance(q) <= 1e-6 * (1.0 + q.abs().max_element());
+    near(a[1], b[1])
+        && ((near(a[0], b[0]) && near(a[2], b[2])) || (near(a[0], b[2]) && near(a[2], b[0])))
 }

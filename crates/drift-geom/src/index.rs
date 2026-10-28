@@ -413,6 +413,26 @@ impl SceneIndex {
         }
     }
 
+    /// [`update_moved`](Self::update_moved) for `ids` that may be points moved without the
+    /// curves on them (what a wall's regeneration touched: its faces' points, not the faces):
+    /// those curves are refreshed too.
+    pub fn update_moved_with_curves(
+        &mut self,
+        doc: &Document,
+        ids: impl IntoIterator<Item = EntityId>,
+    ) {
+        let mut all: Vec<EntityId> = Vec::new();
+        for id in ids {
+            all.push(id);
+            if let Some(users) = self.users.get(&id) {
+                all.extend(users.iter().copied());
+            }
+        }
+        all.sort_unstable();
+        all.dedup();
+        self.update_moved(doc, all);
+    }
+
     fn mark_center(&mut self, id: EntityId) {
         let role = self.roles.entry(id).or_insert(PointRole::Center);
         if *role == PointRole::Standalone {
@@ -651,8 +671,13 @@ mod tests {
             }
             if drag {
                 // Mid-drag the index follows moves only, then the drag is let go.
-                index.update_moved(&doc, doc.entities_touched_in_transaction());
+                index.update_moved_with_curves(&doc, doc.entities_touched_in_transaction());
                 index.update(&doc);
+                assert_eq!(
+                    index.shapes,
+                    SceneIndex::build(&doc).shapes,
+                    "shapes mid-drag, step {step}"
+                );
                 doc.rollback();
             } else {
                 let tx = doc.commit("Edit");

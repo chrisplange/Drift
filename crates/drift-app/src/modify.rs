@@ -2524,7 +2524,13 @@ impl Editor {
         };
         let on_axis =
             |p: DVec2| (p - pa).perp_dot(u).abs() <= intersect::tolerance(p.abs().max_element());
-        let ids: Vec<EntityId> = ids.iter().copied().filter(|id| *id != axis).collect();
+        // (Walls' faces aren't mirrored: the walls are, and make them again.)
+        let generated = self.doc.generated_entities();
+        let ids: Vec<EntityId> = ids
+            .iter()
+            .copied()
+            .filter(|id| *id != axis && !generated.contains(id))
+            .collect();
         if ids.is_empty() && riders.is_empty() {
             return Err(invalid("select geometry to mirror, then the line"));
         }
@@ -2601,7 +2607,7 @@ impl Editor {
                 created.push(new);
             }
             self.copy_fills_onto(|e| images.get(&e).copied(), reflect);
-            self.copy_walls_onto(&|e| images.get(&e).copied());
+            self.copy_walls_onto(&|e| images.get(&e).copied(), &reflect, true);
             self.copy_groups_onto(|e| images.get(&e).or_else(|| map.get(&e)).copied());
             copied = self.copy_riders(
                 riders,
@@ -2637,6 +2643,14 @@ impl Editor {
         if copies == 0 {
             return Err(invalid("the count must be at least 2"));
         }
+        // (Walls' faces aren't copied: the walls are, and make them again.)
+        let generated = self.doc.generated_entities();
+        let ids: Vec<EntityId> = ids
+            .iter()
+            .copied()
+            .filter(|id| !generated.contains(id))
+            .collect();
+        let ids = ids.as_slice();
         let points = self.doc.defining_points(ids.iter().copied());
         let mut members: BTreeSet<EntityId> = points.clone();
         members.extend(ids.iter().copied());
@@ -2717,7 +2731,7 @@ impl Editor {
                     }
                 }
                 self.copy_fills_onto(|e| map.get(&e).copied(), |p| transform(k, p));
-                self.copy_walls_onto(&|e| map.get(&e).copied());
+                self.copy_walls_onto(&|e| map.get(&e).copied(), &|p| transform(k, p), false);
                 self.copy_groups_onto(|e| map.get(&e).copied());
             }
             Ok(())

@@ -1860,19 +1860,12 @@ impl Editor {
             })
             .map(|(_, f)| f.clone())
             .collect();
-        for mut fill in fills {
+        for fill in fills {
+            let mut fill = placed_fill(fill, &place);
             fill.boundary = fill.boundary.iter().filter_map(|e| curves(*e)).collect();
             fill.boundary.sort_unstable();
             fill.boundary.dedup();
             fill.path = fill.path.and_then(|p| copied_paths.get(&p).copied());
-            fill.seed = place(fill.seed);
-            if let FillKind::Hatch(h) = &mut fill.kind {
-                let along = DVec2::from_angle(h.angle.to_radians());
-                let o = place(h.origin);
-                let turned = place(h.origin + along) - o;
-                h.origin = o;
-                h.angle = turned.to_angle().to_degrees().rem_euclid(360.0);
-            }
             // On the original's layer, just above it.
             let copy = self.doc.add_fill(fill.clone());
             self.doc.set_fill(copy, fill);
@@ -2545,6 +2538,20 @@ impl Editor {
         self.doc.set_fill(id, fill);
         self.commit("Edit fill");
     }
+}
+
+/// `fill` placed as a copy moved by `place` (turned or mirrored): its seed, and a hatch's
+/// origin and angle.
+pub(crate) fn placed_fill(mut fill: Fill, place: impl Fn(DVec2) -> DVec2) -> Fill {
+    fill.seed = place(fill.seed);
+    if let FillKind::Hatch(h) = &mut fill.kind {
+        let along = DVec2::from_angle(h.angle.to_radians());
+        let o = place(h.origin);
+        let turned = place(h.origin + along) - o;
+        h.origin = o;
+        h.angle = turned.to_angle().to_degrees().rem_euclid(360.0);
+    }
+    fill
 }
 
 /// The curves of a wall poché's region: its outline and its holes' outlines.

@@ -306,6 +306,21 @@ pub fn copy_into(
         o.layer = o.layer.map(|l| layer(dst, l));
         let _ = dst.add_opening(o);
     }
+    // Fills bounded by their faces (a room's floor): onto the copies' faces, made now.
+    let floors = crate::walls::face_fills(src, &walls, &|e| map.get(&e).copied(), &|p| p + offset);
+    if !floors.is_empty() {
+        drift_geom::walls::regenerate(dst);
+        let mut placed = Vec::with_capacity(floors.len());
+        for mut f in floors {
+            f.fill.layer = layer(dst, f.fill.layer);
+            placed.push(f);
+        }
+        for (from, copy) in crate::walls::add_face_fills(dst, placed) {
+            if picked.fills.contains(&from) {
+                out.fills.insert(copy);
+            }
+        }
+    }
     // Block copies, bringing their blocks along (matched by name) into another document.
     let mut blocks: BTreeMap<BlockId, BlockId> = BTreeMap::new();
     for &id in &picked.instances {

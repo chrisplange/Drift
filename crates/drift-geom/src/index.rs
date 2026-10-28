@@ -388,28 +388,46 @@ impl SceneIndex {
         self.tree = RTree::bulk_load(entries);
     }
 
-    /// During a drag: refresh just the shapes of `ids` (all that can have moved). The tree
-    /// keeps their old places until the transaction ends (rebuilding it costs more than the
-    /// drag); meanwhile searches test the moved shapes one by one, so they're found where
-    /// they are now. An id that was added or deleted leaves the index for the next
-    /// [`update`](Self::update) to bring up to date.
+    /// During a drag: refresh just the shapes of `ids` (all that can have moved) and of the
+    /// curves on points among them. The tree keeps their old places until the transaction
+    /// ends (rebuilding it costs more than the drag); meanwhile searches test the moved
+    /// shapes one by one, so they're found where they are now. An id that was added or
+    /// deleted leaves the index for the next [`update`](Self::update) to bring up to date.
     pub fn update_moved(&mut self, doc: &Document, ids: impl IntoIterator<Item = EntityId>) {
         let mut known = true;
+        // Curves on a moved point move with it, named or not (a wall's faces, when only the
+        // points it made them of were moved).
+        let mut users: Vec<EntityId> = Vec::new();
         for id in ids {
-            let shape = doc.shape(id).filter(|_| doc.is_visible(id));
-            match (shape, self.shapes.get_mut(&id)) {
-                (Some(shape), Some(old)) => {
-                    if *old != shape {
-                        *old = shape;
-                        self.moved.insert(id);
-                    }
-                }
-                (None, None) => {}
-                _ => known = false,
+            if let Some(u) = self.users.get(&id) {
+                users.extend(u.iter().copied());
             }
+            known &= self.refresh_moved(doc, id);
+        }
+        users.sort_unstable();
+        users.dedup();
+        for id in users {
+            known &= self.refresh_moved(doc, id);
         }
         if known {
             self.revision = Some(doc.revision());
+        }
+    }
+
+    /// One entity's shape for [`update_moved`](Self::update_moved): false if it was added or
+    /// deleted.
+    fn refresh_moved(&mut self, doc: &Document, id: EntityId) -> bool {
+        let shape = doc.shape(id).filter(|_| doc.is_visible(id));
+        match (shape, self.shapes.get_mut(&id)) {
+            (Some(shape), Some(old)) => {
+                if *old != shape {
+                    *old = shape;
+                    self.moved.insert(id);
+                }
+                true
+            }
+            (None, None) => true,
+            _ => false,
         }
     }
 
@@ -653,6 +671,11 @@ mod tests {
                 // Mid-drag the index follows moves only, then the drag is let go.
                 index.update_moved(&doc, doc.entities_touched_in_transaction());
                 index.update(&doc);
+                assert_eq!(
+                    index.shapes,
+                    SceneIndex::build(&doc).shapes,
+                    "shapes mid-drag, step {step}"
+                );
                 doc.rollback();
             } else {
                 let tx = doc.commit("Edit");

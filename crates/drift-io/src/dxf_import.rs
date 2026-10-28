@@ -55,6 +55,9 @@ pub struct DxfText {
     pub spacing: Option<f64>,
     /// The width lines are wrapped to (mm), for paragraph text that has one.
     pub wrap: Option<f64>,
+    /// Drift's font for its text style: monospaced for a Courier style (as Drift writes
+    /// its own monospaced text), else the sans.
+    pub font: TextFont,
 }
 
 /// A hatch or solid fill: its boundary loops as curves.
@@ -1219,9 +1222,17 @@ struct Reader<'a> {
     /// Hatch patterns the file names without defining them are AutoCAD's own: acad.pat (in
     /// inches) for imperial drawings, else acadiso.pat (in millimetres).
     imperial: bool,
+    /// Drift's font for each text style, by name (upper case).
+    text_fonts: HashMap<String, TextFont>,
 }
 
 impl<'a> Reader<'a> {
+    /// The font of a text's style (group 7, else STANDARD).
+    fn text_font(&self, raw: &Raw) -> TextFont {
+        let style = raw.s(7).unwrap_or("STANDARD").to_ascii_uppercase();
+        self.text_fonts.get(&style).cloned().unwrap_or_default()
+    }
+
     fn skip(&mut self, kind: &str) {
         *self.skipped.entry(kind.to_owned()).or_insert(0) += 1;
     }
@@ -1531,6 +1542,7 @@ impl<'a> Reader<'a> {
                 if text.trim().is_empty() || height <= 0.0 {
                     return;
                 }
+                let font = self.text_font(raw);
                 let m = local(raw.flipped());
                 let h_align = raw.int(72).unwrap_or(0);
                 // TEXT's vertical alignment is group 73; an attribute's is 74.
@@ -1571,6 +1583,7 @@ impl<'a> Reader<'a> {
                         align,
                         spacing: None,
                         wrap: None,
+                        font,
                     },
                 );
             }
@@ -1596,6 +1609,7 @@ impl<'a> Reader<'a> {
                 let Some(at) = raw.p(10) else {
                     return;
                 };
+                let font = self.text_font(raw);
                 // Its direction: an x axis vector, else an angle.
                 let angle = match raw.p(11) {
                     Some(d) if d.length() > 0.0 => d.y.atan2(d.x).to_degrees(),
@@ -1612,10 +1626,9 @@ impl<'a> Reader<'a> {
                 };
                 // How many lines it makes at its width, to hang the block from its top,
                 // middle or bottom.
-                let count =
-                    drift_draft::outline::paragraph_lines(&text, &TextFont::Sans, height, wrap)
-                        .len()
-                        .max(1) as f64;
+                let count = drift_draft::outline::paragraph_lines(&text, &font, height, wrap)
+                    .len()
+                    .max(1) as f64;
                 let block = height + (count - 1.0) * spacing * height;
                 let top = match (attach - 1) / 3 {
                     0 => 0.0,
@@ -1639,6 +1652,7 @@ impl<'a> Reader<'a> {
                         align,
                         spacing: Some(spacing),
                         wrap,
+                        font,
                     },
                 );
             }
@@ -1960,6 +1974,17 @@ impl<'a> Reader<'a> {
     }
 }
 
+/// Drift's font for a text style: the monospaced one for a Courier style or Drift's own
+/// monospaced style (as the CAD writers write it), else the sans.
+fn style_font(name: &str, file: &str, family: &str) -> TextFont {
+    let courier = |s: &str| s.to_ascii_lowercase().starts_with("cour");
+    if name.eq_ignore_ascii_case("Drift Mono") || courier(file) || courier(family) {
+        TextFont::Mono
+    } else {
+        TextFont::Sans
+    }
+}
+
 // ---------------------------------------------------------------------------------------------
 // Reading a file
 
@@ -2057,6 +2082,15 @@ impl DxfHatch {
 }
 
 impl DxfImport {
+    /// The block definitions by name: the first of a name, as inserts find them.
+    pub fn blocks_by_name(&self) -> HashMap<&str, &DxfBlock> {
+        let mut by_name = HashMap::with_capacity(self.blocks.len());
+        for b in &self.blocks {
+            by_name.entry(b.name.as_str()).or_insert(b);
+        }
+        by_name
+    }
+
     /// The drawing as [`read_at`] reads it at 1 : `k` times what it was read at, without
     /// reading the file again. (Block copies keep their own scales, as there.)
     pub fn scaled(mut self, k: f64) -> Self {
@@ -2131,6 +2165,7 @@ pub fn read_at(text: &str, default_mm_per_unit: f64, drawn_at: f64) -> Result<Dx
     let mut layers: Vec<DxfLayer> = Vec::new();
     let mut line_types: HashMap<String, LineType> = HashMap::new();
     let mut raw_line_types: Vec<(String, Vec<f64>)> = Vec::new();
+    let mut text_fonts: HashMap<String, TextFont> = HashMap::new();
     let mut custom_types = 0usize;
     // Each layer's line type, by the layer's name.
     let mut layer_line_types: HashMap<String, String> = HashMap::new();
@@ -2186,6 +2221,27 @@ pub fn read_at(text: &str, default_mm_per_unit: f64, drawn_at: f64) -> Result<Dx
                                     .filter_map(|(_, v)| v.parse().ok())
                                     .collect();
                                 raw_line_types.push((name.to_owned(), pattern));
+                            }
+                        }
+                        "STYLE" => {
+                            if let Some(name) = entry.s(2) {
+                                // Its font file, and a TrueType family in extended data.
+                                let file = entry.s(3).unwrap_or("");
+                                let family = entry
+                                    .g
+                                    .iter()
+                                    .position(|p| *p == (1001, "ACAD"))
+                                    .and_then(|at| {
+                                        entry.g[at + 1..]
+                                            .iter()
+                                            .take_while(|(c, _)| *c != 1001)
+                                            .find(|(c, _)| *c == 1000)
+                                    })
+                                    .map_or("", |(_, v)| *v);
+                                text_fonts.insert(
+                                    name.to_ascii_uppercase(),
+                                    style_font(name, file, family),
+                                );
                             }
                         }
                         "LAYER" => {
@@ -2419,6 +2475,7 @@ pub fn read_at(text: &str, default_mm_per_unit: f64, drawn_at: f64) -> Result<Dx
             Some(m) => m == 0,
             None => matches!(insunits, Some(1 | 2 | 3 | 8 | 9 | 10)),
         },
+        text_fonts,
     };
     let world = Xf::scale(reader.scale);
     let mut sink = Sink::default();
@@ -3056,6 +3113,7 @@ pub fn add_to_document(doc: &mut Document, import: &DxfImport) -> ImportReport {
         text.align = t.align;
         text.spacing = t.spacing.unwrap_or(SketchText::SPACING);
         text.wrap = t.wrap;
+        text.font = t.font.clone();
         let id = doc.add_text(text.clone());
         text.layer = layer;
         text.appearance.color = t.color;
@@ -3125,8 +3183,9 @@ pub fn add_to_document(doc: &mut Document, import: &DxfImport) -> ImportReport {
     // curves only).
     let mut block_text = false;
     let mut made: HashMap<&str, drift_core::BlockId> = HashMap::new();
+    let defs = import.blocks_by_name();
     for insert in &import.inserts {
-        let def = import.blocks.iter().find(|b| b.name == insert.block);
+        let def = defs.get(insert.block.as_str()).copied();
         let block = match made.get(insert.block.as_str()) {
             Some(b) => *b,
             None => {

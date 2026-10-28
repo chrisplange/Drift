@@ -297,6 +297,7 @@ pub fn to_import(art: &Artwork, options: &ImportOptions) -> DxfImport {
             align: t.align,
             spacing: None,
             wrap: None,
+            font: drift_core::TextFont::Sans,
         });
     }
     out
@@ -338,6 +339,7 @@ pub fn text_outlines(art: &Artwork) -> Vec<drift_core::RefPrim> {
             align: t.align,
             spacing: None,
             wrap: None,
+            font: drift_core::TextFont::Sans,
         })
         .collect();
     crate::dxf::text_glyphs(&texts)
@@ -708,30 +710,41 @@ fn fill_islands(subpaths: &[Subpath]) -> Vec<Vec<Vec<Shape>>> {
         })
         .filter(|(shapes, _)| !shapes.is_empty())
         .collect();
-    // How many other loops each one is inside.
-    let inside = |p: DVec2, poly: &[DVec2]| drift_core::polygon::contains(poly, p);
-    let probe = |poly: &[DVec2]| {
-        // A point of the loop just off its first corner, along the way it goes.
-        poly.first().copied().unwrap_or_default()
-    };
+    // How many other loops each one is inside (its first corner, tested against the loops
+    // whose bounds hold it).
+    let boxes = drift_geom::BoxIndex::new(loops.iter().map(|(_, poly)| {
+        let mut b = drift_core::Bounds::EMPTY;
+        poly.iter().for_each(|p| b.include(*p));
+        b
+    }));
     let parents: Vec<Vec<usize>> = (0..loops.len())
         .map(|i| {
-            (0..loops.len())
-                .filter(|j| *j != i && inside(probe(&loops[i].1), &loops[*j].1))
+            let Some(&p) = loops[i].1.first() else {
+                return Vec::new();
+            };
+            let mut near = boxes.near(&drift_core::Bounds::from_point(p));
+            near.sort_unstable();
+            near.into_iter()
+                .filter(|&j| j != i && drift_core::polygon::contains(&loops[j].1, p))
                 .collect()
         })
         .collect();
+    // The loops directly inside each: one deeper, and inside it.
+    let mut children: Vec<Vec<usize>> = vec![Vec::new(); loops.len()];
+    for (j, outer) in parents.iter().enumerate() {
+        for &i in outer {
+            if parents[i].len() + 1 == outer.len() {
+                children[i].push(j);
+            }
+        }
+    }
     let mut out = Vec::new();
     for i in 0..loops.len() {
         if parents[i].len() % 2 == 1 {
             continue;
         }
         let mut island = vec![loops[i].0.clone()];
-        for j in 0..loops.len() {
-            if parents[j].len() == parents[i].len() + 1 && parents[j].contains(&i) {
-                island.push(loops[j].0.clone());
-            }
-        }
+        island.extend(children[i].iter().map(|&j| loops[j].0.clone()));
         out.push(island);
     }
     out

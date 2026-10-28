@@ -12,7 +12,7 @@
 
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
-use drift_core::{DVec2, Document, FillKind, LineType, Rgb, Shape, TextAlign, Units};
+use drift_core::{DVec2, Document, FillKind, LineType, Rgb, Shape, TextAlign, TextFont, Units};
 use drift_draft::page::{Align, BlockDef, Drawing, HatchPrim, Item, LayerInfo, Pen, Prim};
 use drift_draft::{Placement, find};
 use drift_geom::regions::regions;
@@ -117,6 +117,20 @@ fn drawing() -> Drawing {
         5.0,
         Align::Center,
         "Ø10 ±0.1 Größe 寸法 50%",
+    );
+    // Monospaced text (Drift's own Mono).
+    d.push(
+        "Notes",
+        Pen::new(0.25),
+        Prim::Text {
+            at: DVec2::new(10.0, 650.0),
+            height: 3.5,
+            angle: 0.0,
+            align: Align::Left,
+            text: "PART-0042".into(),
+            style: drift_draft::page::TextStyle::REGULAR,
+            font: Some(TextFont::Mono),
+        },
     );
     // A solid fill, a square with a round hole, half transparent.
     let square = [
@@ -295,6 +309,16 @@ fn check(back: &DxfImport) {
         "{:?}",
         back.texts
     );
+    // In the font it was written in: Mono stays Mono, the rest is the sans.
+    for t in &back.texts {
+        let want = if t.text == "PART-0042" {
+            TextFont::Mono
+        } else {
+            TextFont::Sans
+        };
+        assert_eq!(t.font, want, "{}", t.text);
+    }
+    assert!(back.texts.iter().any(|t| t.text == "PART-0042"));
     // The block and its mirrored copy.
     let door = back
         .blocks

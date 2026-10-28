@@ -43,16 +43,21 @@ const ACI: [(u8, [u8; 3]); 14] = [
     (253, [130, 130, 130]),
 ];
 
-/// The nearest ACI colour (7 = black / white for black).
+/// The nearest ACI colour of all 255 (7 = black / white for black; the lowest index of
+/// equals, so the primaries keep 1 to 6).
 pub fn aci(c: Rgb) -> u8 {
-    let d = |a: [u8; 3]| -> i32 {
+    static TABLE: std::sync::OnceLock<[[u8; 3]; 255]> = std::sync::OnceLock::new();
+    let table = TABLE.get_or_init(|| {
+        std::array::from_fn(|k| aci_rgb(k as i64 + 1).map_or([0, 0, 0], |rgb| rgb.0))
+    });
+    let d = |a: &[u8; 3]| -> i32 {
         (0..3)
             .map(|i| (i32::from(a[i]) - i32::from(c.0[i])).pow(2))
             .sum()
     };
-    ACI.iter()
-        .min_by_key(|(_, rgb)| d(*rgb))
-        .map_or(7, |(i, _)| *i)
+    (1..=255u8)
+        .min_by_key(|&i| d(&table[usize::from(i) - 1]))
+        .unwrap_or(7)
 }
 
 /// The colour of an AutoCAD Color Index entry (1 to 255). 7 is "black or white by
@@ -654,8 +659,9 @@ pub fn underlay_prims(import: &DxfImport) -> Vec<drift_core::RefPrim> {
         .iter()
         .filter_map(|e| prim(&e.shape))
         .collect();
+    let blocks = import.blocks_by_name();
     for insert in &import.inserts {
-        let Some(block) = import.blocks.iter().find(|b| b.name == insert.block) else {
+        let Some(block) = blocks.get(insert.block.as_str()) else {
             continue;
         };
         let mut copy = drift_core::Instance::new(drift_core::BlockId::default(), insert.at);
@@ -676,8 +682,9 @@ pub fn underlay_prims(import: &DxfImport) -> Vec<drift_core::RefPrim> {
 /// an underlay, set in Drift's font as an import sets it.
 pub fn underlay_glyphs(import: &DxfImport) -> Vec<drift_core::RefPrim> {
     let mut texts = import.texts.clone();
+    let blocks = import.blocks_by_name();
     for insert in &import.inserts {
-        let Some(block) = import.blocks.iter().find(|b| b.name == insert.block) else {
+        let Some(block) = blocks.get(insert.block.as_str()) else {
             continue;
         };
         let mut copy = drift_core::Instance::new(drift_core::BlockId::default(), insert.at);
@@ -697,12 +704,11 @@ pub fn underlay_glyphs(import: &DxfImport) -> Vec<drift_core::RefPrim> {
 
 /// Texts as the closed outlines of their letters, in Drift's own font.
 pub(crate) fn text_glyphs(texts: &[DxfText]) -> Vec<drift_core::RefPrim> {
-    let font = drift_core::TextFont::default();
     let mut out = Vec::new();
     for t in texts.iter().filter(|t| !t.text.trim().is_empty()) {
         let contours = drift_draft::outline::Paragraph {
             text: &t.text,
-            font: &font,
+            font: &t.font,
             height: t.height,
             at: t.at,
             angle: t.angle,
@@ -762,6 +768,33 @@ pub(crate) fn bulge_arc(a: DVec2, b: DVec2, bulge: f64) -> Shape {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn r12_colours_are_the_nearest_of_all_255() {
+        // Every colour of the map comes back as an index of that colour.
+        for k in 1..=255i64 {
+            if let Some(c) = aci_rgb(k) {
+                assert_eq!(aci_rgb(i64::from(aci(c))), Some(c), "{k}");
+            }
+        }
+        // Black is 7, and the primaries keep their low indices.
+        assert_eq!(aci(Rgb([0, 0, 0])), 7);
+        assert_eq!(aci(Rgb([255, 0, 0])), 1);
+        assert_eq!(aci(Rgb([0, 0, 255])), 5);
+        // A dark blue is a dark blue (the 14-entry snap made it 5, full blue).
+        let navy = aci(Rgb([0, 0, 128]));
+        assert_ne!(navy, 5);
+        let back = aci_rgb(i64::from(navy)).unwrap().0;
+        assert!(
+            back[2] > 100 && back[2] < 160 && back[0] < 40,
+            "{navy}: {back:?}"
+        );
+        // White is white, not grey.
+        assert_eq!(
+            aci_rgb(i64::from(aci(Rgb([255, 255, 255])))),
+            Some(Rgb([255; 3]))
+        );
+    }
     use drift_core::Document;
     use drift_draft::page::{LayerInfo, Pen};
 
@@ -812,9 +845,16 @@ mod tests {
                 .map(|w| w[1].parse().unwrap())
                 .collect()
         };
-        // Red (1) layer, blue (5) fill, green (3) text in colour.
+        // Red (1) layer, blue (5) fill, and the text's green (200) as the nearest of all 255
+        // (80 % green, not 3's full green).
         let colour = colours(SheetColours::Colour);
-        assert!(colour.contains(&1) && colour.contains(&5) && colour.contains(&3));
+        assert!(colour.contains(&1) && colour.contains(&5), "{colour:?}");
+        assert!(
+            colour
+                .iter()
+                .any(|&k| aci_rgb(i64::from(k)) == Some(Rgb([0, 204, 0]))),
+            "{colour:?}"
+        );
         // Black & white: the layer and its lines black (7, by background), the fill a grey
         // (the ACI greys are 8, 9 and 250 to 255).
         let mono = colours(SheetColours::BlackWhite);

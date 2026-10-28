@@ -11,7 +11,8 @@ use drift_core::{
 };
 use drift_draft::Placement;
 use drift_draft::page::{
-    Align, CAP_HEIGHT, Drawing, HATCH_LIMIT, HatchPrim, Item, LayerInfo, Pen, Prim,
+    Align, CAP_HEIGHT, Drawing, HATCH_LIMIT, HatchPrim, Item, LIGHT_FILL, LayerInfo, Pen, Prim,
+    on_paper,
 };
 use drift_render::Camera;
 use eframe::egui::{self, Color32, Pos2};
@@ -160,14 +161,6 @@ fn item(layer: &str, pen: Pen, prim: Prim, clip: Option<Bounds>) -> Item {
         prim,
         clip,
     }
-}
-
-/// A colour faded towards white by `opacity`, for printing translucent fills.
-fn on_paper(c: Rgb, opacity: f64) -> Rgb {
-    let a = opacity.clamp(0.0, 1.0);
-    Rgb(c
-        .0
-        .map(|v| (255.0 - (255.0 - f64::from(v)) * a).round() as u8))
 }
 
 /// List the drawing's layers in their draw order (for formats that keep them).
@@ -577,7 +570,7 @@ fn fill(
             }
             let color = own.unwrap_or(Pen::BLACK);
             let Some(pattern) = patterns.get(&h.pattern) else {
-                solid(on_paper(color, 0.25), d);
+                solid(on_paper(color, LIGHT_FILL), d);
                 return;
             };
             let placement = Placement {
@@ -587,7 +580,7 @@ fn fill(
             };
             let hatching = drift_draft::hatch(region, pattern, &placement, None, HATCH_LIMIT);
             if hatching.truncated {
-                solid(on_paper(color, 0.25), d);
+                solid(on_paper(color, LIGHT_FILL), d);
                 return;
             }
             let width = fill.weight.map_or(HAIRLINE, |w| w.mm().max(HAIRLINE));
@@ -645,7 +638,7 @@ fn cad_fill(
                         1.0,
                     );
                 }
-                None => area(Pen::new(0.0).with_color(color), None, 0.25),
+                None => area(Pen::new(0.0).with_color(color), None, LIGHT_FILL),
             }
         }
     }

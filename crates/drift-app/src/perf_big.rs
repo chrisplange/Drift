@@ -383,4 +383,3 @@ fn perf_big() {
     });
     edit("undo delete", &mut h, &mut |app| assert!(app.editor.undo()));
 }
-

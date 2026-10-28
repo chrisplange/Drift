@@ -14,7 +14,7 @@ Project name: **Drift**. Crates use the `drift-` prefix, and documents use the `
   displayed precision, and what you type is what you get. No drift after repeated edits.
 - **SolidWorks-class constraints.** Geometric relations and driving dimensions, live DOF
   feedback (under-defined, fully defined, over-defined), and constraint-preserving drag.
-- **Lightweight.** Single native binary under about 20 MB, WASM bundle under about 6 MB
+- **Lightweight.** Single native binary under 50 MB, WASM bundle under about 6 MB
   compressed, cold start under 300 ms native and under 2 s on the web, idle CPU
   near 0% (redraw only on change).
 - **GPU-accelerated.** 60+ fps pan and zoom with 50k+ entities. Lines, arcs and circles are
@@ -25,7 +25,7 @@ Project name: **Drift**. Crates use the `drift-` prefix, and documents use the `
 
 - **Cross-platform.** One codebase runs natively on Windows, macOS and Linux and in the
   browser (WASM + WebGPU). The web build is a demo and trial (see §6).
-- **Open source.** Developed in the open with a permissive licence (see §2.1).
+- **A paid product.** Closed source under an end-user licence (see §2.1).
 
 **What Drift is for** (this drives prioritisation)
 Rapid, precise 2D drawing of all kinds: details, profiles, plans, elevations and diagrams.
@@ -78,16 +78,17 @@ study and benchmark against.
 
 ### 2.1 Licence
 
-Drift is **FSL-1.1-ALv2** (copyright Christopher Lange): source-available, free for any use but a
-competing product, each version becoming Apache-2.0 two years after release.
-- It is compatible with every dependency above (all permissive; `cargo-deny` checks).
-- Trade-off: we cannot copy or port GPL code (SolveSpace). We can still implement the same
-  *algorithms* from papers and documentation, which are not copyrightable.
+Drift is **closed source and proprietary** (copyright Christopher Lange), to become a paid app
+(decided 2026-10-19). `LICENSE.md` is an end-user licence agreement, still a DRAFT awaiting
+legal review; packaging refuses to release while it says DRAFT. Betas up to 1.5 shipped under
+FSL-1.1-ALv2. Releases, public issues and the roadmap live in `chrisplange/drift-releases`.
+- Every dependency must stay compatible with closed distribution (all permissive or MPL with
+  its file-level duties; `cargo-deny` checks).
+- We cannot copy or port GPL code (SolveSpace). We can still implement the same *algorithms*
+  from papers and documentation, which are not copyrightable.
 
-Repo hygiene from day one: a licence (`LICENSE.md`, FSL-1.1-ALv2), `CONTRIBUTING.md`, a code of
-conduct,
-issue templates, `cargo-deny` in CI for licence and advisory checks, and DCO or a simple
-"contributions under the project licence" policy.
+Repo hygiene: `LICENSE.md`, `CONTRIBUTING.md`, issue templates, and `cargo-deny` in CI for
+licence and advisory checks.
 
 ---
 
@@ -1415,7 +1416,8 @@ zooms to fit; F is Fillet (again for Chamfer).
   - A commit re-solves, re-analyses (23 ms) and re-indexes (20 ms) the whole sketch: about
     60 ms. Undo and redo cost about 38 ms.
   - Regions take 0.24 s per change, when fills or region picking need them.
-  - Next: scope analysis and indexing to what an edit touched.
+  - Next: scope analysis and indexing to what an edit touched. (Done for big drawings in
+    #233; see §11.)
 
 **M10 — Polish and release (ongoing)**
 - **Part 1 (done): panels and the command palette.**
@@ -2304,8 +2306,8 @@ contributors can parallelise M6–M9 once the M2–M4 core is stable.
 
 All major decisions are settled:
 - **Name:** Drift.
-- **Licence:** FSL-1.1-ALv2 (see §2.1).
-- **Distribution:** open source, cross-platform; the browser build is a WebGPU demo and trial (see §6).
+- **Licence:** proprietary end-user licence, in draft (see §2.1).
+- **Distribution:** closed source, paid, cross-platform; the browser build is a WebGPU demo and trial (see §6).
 - **What Drift is for:** rapid, precise 2D drawing of all kinds, framed as technical
   illustration (see §1).
 - **File format:** JSON-based `.drift` files (see §3.5).
@@ -2317,11 +2319,17 @@ title-block template syntax.
 
 ## 11. Immediate next steps
 
-1. **Incremental commits:** re-solve, re-analyse and re-index only what an edit touched
-   (about 60 ms per commit and 38 ms undo/redo today). This is the main speed priority.
+1. **Faster edits on big drawings — done (#233, 2026-10-28).** Measured on a 73k-curve
+   imported PDF, the real cost was about 300 ms for areas plus 80 ms for analysis per edit,
+   not the ~60 ms of a small sketch. Areas now follow in the background (folded into the
+   same undo step), recent results are reused on undo/redo, and analysis re-checks only the
+   touched clusters: move 517 → 67 ms, undo 113 → 41 ms, delete-100 552 → 56 ms. No
+   incremental regions (decided 2026-10-27: six global couplings, high risk of lost fills).
+   Left: the frame after an edit (270–700 ms, canvas items), and the synthetic drawing's
+   whole-sketch solve on commit (~150 ms).
 2. **One model for several open drawings:** decide between the new per-window sessions and
    the planned tabs, and write the decision down before building tabs.
-3. **Binary size:** the goal says under about 20 MB and the build is 44 MB. Propose either a
-   real plan to get there or a revised target.
+3. **Binary size — decided (2026-10-28):** the target is under 50 MB unless big components
+   are added. The 44 MB build meets it; the ~2.3 MB found by the cull survey is optional.
 4. **Parametric blocks.**
 5. **Paper cuts from real projects.**

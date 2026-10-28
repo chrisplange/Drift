@@ -113,10 +113,13 @@ jobs:
       # changing dependencies, and commit the result.
       - run: python3 scripts/notices.py --check
 
-  # The browser builds, checked on every change: the full app, and the demo the website serves
-  # at /app/ (built and deployed by the Website workflow).
+  # The browser builds: the full app, and the demo the website serves at /app/ (built and
+  # deployed by the Website workflow).
+  # Paused 2026-10-28: the wasm clippies (lint) and the demo test (test) still run on every
+  # change, and the Website workflow still builds the demo. Remove `if: false` to turn it back on.
   web:
     name: Web build
+    if: false
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

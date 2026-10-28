@@ -53,6 +53,17 @@ impl RefIndex {
         self.tree.size() == 0
     }
 
+    /// The box round every curve (none without curves).
+    pub fn bounds(&self) -> Option<Bounds> {
+        (!self.is_empty()).then(|| {
+            let e = self.tree.root().envelope();
+            Bounds {
+                min: DVec2::from_array(e.lower()),
+                max: DVec2::from_array(e.upper()),
+            }
+        })
+    }
+
     /// The curves whose bounds meet `rect` (e.g. the visible part of the view).
     pub fn query(&self, rect: Bounds) -> impl Iterator<Item = &Shape> + '_ {
         let envelope = AABB::from_corners(rect.min.to_array(), rect.max.to_array());

@@ -22,6 +22,16 @@ struct Cached {
     index: RefIndex,
     /// Its text's outlines, to draw (never snapped to).
     glyphs: RefIndex,
+    /// Every curve's and glyph's item in one colour, in the order the indexes give them:
+    /// what is drawn while all of it is in view (made once, not each frame).
+    whole: std::cell::RefCell<Option<WholeItems>>,
+}
+
+/// An underlay's items, all of them, in a colour.
+struct WholeItems {
+    color: [u8; 3],
+    curves: std::rc::Rc<Vec<SketchItem>>,
+    glyphs: std::rc::Rc<Vec<SketchItem>>,
 }
 
 fn key_of(u: &Underlay) -> (usize, usize, [f64; 4]) {
@@ -147,6 +157,7 @@ impl Editor {
                     key: key_of(u),
                     index: RefIndex::new(u.shapes()),
                     glyphs: RefIndex::new(u.glyph_shapes()),
+                    whole: Default::default(),
                 });
             }
         }
@@ -185,8 +196,10 @@ impl Editor {
         out
     }
 
-    pub fn underlay_items(&self, view: Bounds, dark: bool) -> Vec<SketchItem> {
-        let mut items = Vec::new();
+    /// The visible underlays' items in view, in runs to draw one after another. An underlay
+    /// wholly in view gives its items as kept (big ones have hundreds of thousands).
+    pub fn underlay_items(&self, view: Bounds, dark: bool) -> Vec<std::rc::Rc<Vec<SketchItem>>> {
+        let mut runs = Vec::new();
         for (id, u) in self.doc.underlays() {
             if !u.visible {
                 continue;
@@ -196,15 +209,49 @@ impl Editor {
             };
             let base = u.color.map_or_else(|| default_color(dark), |c| c.0);
             let color = mix(base, background(dark), u.opacity);
-            items.extend(
+            let item =
+                |s: &Shape| SketchItem::new(*s).with_look(Some(color), 0, LineType::Continuous);
+            // Mostly in view (fitted, or panned a little): all of it, as kept. The canvas
+            // leaves out what is off screen, and the tree gives the items in the same order
+            // whatever the box, so it draws what a query of the view would.
+            let mostly_in_view = |index: &RefIndex| {
+                index.bounds().is_none_or(|b| {
+                    let size = b.max - b.min;
+                    let seen = (view.max.min(b.max) - view.min.max(b.min)).max(DVec2::ZERO);
+                    seen.x * seen.y >= 0.5 * size.x * size.y
+                        && seen.x >= 0.5 * size.x
+                        && seen.y >= 0.5 * size.y
+                })
+            };
+            if mostly_in_view(&cached.index) && mostly_in_view(&cached.glyphs) {
+                let mut whole = cached.whole.borrow_mut();
+                if whole.as_ref().is_none_or(|w| w.color != color) {
+                    let all = |index: &RefIndex| {
+                        let every = index.bounds().unwrap_or(view);
+                        std::rc::Rc::new(index.query(every).map(item).collect())
+                    };
+                    *whole = Some(WholeItems {
+                        color,
+                        curves: all(&cached.index),
+                        glyphs: all(&cached.glyphs),
+                    });
+                }
+                if let Some(w) = &*whole {
+                    runs.push(w.curves.clone());
+                    runs.push(w.glyphs.clone());
+                }
+                continue;
+            }
+            runs.push(std::rc::Rc::new(
                 cached
                     .index
                     .query(view)
                     .chain(cached.glyphs.query(view))
-                    .map(|s| SketchItem::new(*s).with_look(Some(color), 0, LineType::Continuous)),
-            );
+                    .map(item)
+                    .collect(),
+            ));
         }
-        items
+        runs
     }
 
     /// The best snap onto a visible underlay with snapping on.
@@ -773,7 +820,25 @@ mod tests {
             true,
         );
         // The right-hand side, and the diagonal (whose bounds span the view); not the rest.
-        assert_eq!(items.len(), 2);
+        assert_eq!(items.iter().map(|r| r.len()).sum::<usize>(), 2);
+        // Wholly in view, as kept: the same items, in the same order, as a query gives.
+        let whole = Bounds::from_center_half_size(v(50.0, 25.0), v(500.0, 500.0));
+        let kept = ed.underlay_items(whole, true);
+        let u = ed.doc.underlay(id).unwrap().clone();
+        let queried: Vec<Shape> = {
+            let c = ed.cached_entry(id).unwrap();
+            c.index
+                .query(whole)
+                .chain(c.glyphs.query(whole))
+                .copied()
+                .collect()
+        };
+        let drawn: Vec<Shape> = kept
+            .iter()
+            .flat_map(|r| r.iter().map(|i| i.shape))
+            .collect();
+        assert_eq!(drawn, queried);
+        assert!(!drawn.is_empty() && u.visible);
     }
 
     #[test]

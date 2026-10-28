@@ -486,8 +486,18 @@ impl Document {
             self.touch(*id);
             self.entities.remove(id);
         }
+        // (Every point still used, found once: asking each candidate's users is a scan of
+        // the whole drawing per point.)
+        let used: std::collections::HashSet<EntityId> = if orphan_candidates.is_empty() {
+            Default::default()
+        } else {
+            self.entities
+                .values()
+                .flat_map(|e| e.kind.points())
+                .collect()
+        };
         for point in orphan_candidates {
-            if self.contains(point) && self.users_of(point).next().is_none() {
+            if self.contains(point) && !used.contains(&point) {
                 self.touch(point);
                 self.entities.remove(&point);
             }

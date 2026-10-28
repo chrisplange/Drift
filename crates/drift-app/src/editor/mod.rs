@@ -29,11 +29,13 @@ mod variables;
 use drift_core::blocks::exact_rotor;
 pub use drift_core::blocks::is_quarter_turn;
 pub use filter::{DimMode, PickFilter, PickKind};
+pub(crate) use items::ItemLook;
 pub use items::TaggedItem;
 pub(crate) use items::contrast;
 pub use options::ConstraintOption;
 pub use pointer::{Anchor, Guide, GuideKind, Pointer};
 pub use regions::RegionMotion;
+pub(crate) use regions::RegionsKey;
 pub(crate) use regions::interior_point;
 
 /// Where some geometry is, to put it back after a drag step that went wrong
@@ -135,8 +137,8 @@ pub struct Editor {
     active_option: std::cell::Cell<Option<(u64, Option<VariantId>)>>,
     /// A variable being scrubbed with a slider: its expression before the scrub started.
     scrubbing: Option<(VariableId, String)>,
-    /// Closed regions of the solid curves, as of a document revision.
-    pub(crate) regions: Option<(u64, std::rc::Rc<Vec<drift_geom::regions::Region>>)>,
+    /// Closed regions of the solid curves, and what they were found from.
+    pub(crate) regions: Option<(RegionsKey, std::rc::Rc<Vec<drift_geom::regions::Region>>)>,
     /// A point inside the selected region (regions are recomputed, so they're picked by a
     /// point rather than an id).
     pub selected_region: Option<DVec2>,
@@ -208,6 +210,9 @@ pub struct Editor {
     /// The block the Place block tool places.
     pub place_block: Option<drift_core::BlockId>,
     pub(crate) fill_shapes: Option<crate::fills::FillShapesCache>,
+    /// The sketch's solid curves, by [`Document::geometry`](drift_core::Document::geometry).
+    pub(crate) solid_cache:
+        std::cell::RefCell<Option<(u64, std::rc::Rc<crate::fills::SolidCurves>)>>,
     /// Each copy of a block's extent in the world, by document structure.
     pub(crate) instance_bounds_cache: std::cell::RefCell<Option<(u64, InstanceBounds)>>,
     /// The fills of copies of blocks, in the world (by document revision).
@@ -349,6 +354,11 @@ impl Editor {
         self.wall_arc = was.wall_arc;
         self.wall_poche = was.wall_poche.clone();
         self.wall_lines = was.wall_lines;
+    }
+
+    /// The document revision [`analysis`](Self::analysis) is of.
+    pub(crate) fn analyzed(&self) -> Option<u64> {
+        self.analyzed
     }
 
     /// Refresh caches after document changes. Cheap when nothing changed.

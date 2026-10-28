@@ -22,6 +22,7 @@ pub mod editor;
 mod fill_tests;
 pub mod fills;
 pub mod fonts;
+mod frame_items;
 mod icons;
 mod layers_ui;
 pub mod library;
@@ -36,6 +37,8 @@ mod openings_props;
 pub mod output;
 mod overlay;
 mod parameters;
+#[cfg(test)]
+mod perf_big;
 #[cfg(test)]
 mod perf_tests;
 pub mod picks;
@@ -385,6 +388,8 @@ pub struct DriftApp {
     show_axes: bool,
     /// Fill tessellations, kept while the document is unchanged.
     fill_meshes: fills::MeshCache,
+    /// The sketch's items for the canvas, kept from frame to frame.
+    sketch_items: frame_items::ItemsCache,
     /// Built-in and imported hatch patterns.
     hatch_patterns: fills::PatternLibrary,
     /// An annotation label being dragged, and the grab offset (world units).
@@ -660,6 +665,7 @@ impl DriftApp {
             show_grid: true,
             show_axes: true,
             fill_meshes: Default::default(),
+            sketch_items: Default::default(),
             hatch_patterns: Default::default(),
             note_drag: None,
             selected_leader: None,

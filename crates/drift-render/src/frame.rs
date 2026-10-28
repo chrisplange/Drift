@@ -168,6 +168,9 @@ pub struct DrawGroup<'a> {
     pub fills: &'a [FillMesh],
     pub images: &'a [CanvasImage],
     pub items: &'a [SketchItem],
+    /// More curves, drawn over `items` (lists kept from frame to frame needn't be copied
+    /// into one).
+    pub more: &'a [SketchItem],
 }
 
 /// Grid spacing currently shown, in world units.
@@ -244,6 +247,7 @@ impl Frame {
         let arcs = self.arcs.len() as u32;
         let segments = self.segments.len() as u32;
         build_into(self, group.items, camera, viewport, palette);
+        build_into(self, group.more, camera, viewport, palette);
         self.groups.push(GroupRanges {
             fills: fills..self.fills.len() as u32,
             images: images..self.images.len() as u32,

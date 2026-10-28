@@ -578,7 +578,7 @@ fn smoke_import_pdf_underlay_shows_its_text() {
         .unwrap_or_default();
     assert!(!report.contains("text run"), "{report}");
     let view = u.bounds();
-    let drawn = ed.underlay_items(view, false).len();
+    let drawn: usize = ed.underlay_items(view, false).iter().map(|r| r.len()).sum();
     assert!(drawn > u.curve_count() + 20, "{drawn}");
     // Its letters aren't snapped to: a corner of the label's N.
     let corner = u.to_world(rings.iter().find(|r| r[0].x > 300.0).unwrap()[0]);

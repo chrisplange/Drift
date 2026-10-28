@@ -32,8 +32,8 @@ pub use blocks::{Block, BlockId, BlockItem, Instance, InstanceId, Placement};
 pub use bounds::{Bounds, FAR_MM};
 pub use constraint::{Constraint, ConstraintId, Slot};
 pub use document::{
-    Document, DocumentError, Entity, EntityId, EntityKind, History, MeasurementId, Transaction,
-    Variable, VariableId, Variant, VariantId, arc_shape, dimension_kind,
+    Changes, Document, DocumentError, Entity, EntityId, EntityKind, History, MeasurementId,
+    Transaction, Variable, VariableId, Variant, VariantId, arc_shape, dimension_kind,
 };
 pub use drafting::{
     Anchor, Annotation, AnnotationId, AnnotationRef, ArrowStyle, DimNote, DraftStyle, Fill, FillId,

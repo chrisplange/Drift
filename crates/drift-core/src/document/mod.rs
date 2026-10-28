@@ -118,6 +118,8 @@ pub struct Document {
     revision: u64,
     /// Changed by every change except geometry moving: see [`structure`](Self::structure).
     structure: u64,
+    /// Changed by every change to entities: see [`geometry`](Self::geometry).
+    geometry: u64,
     /// Pre-images of everything touched by the open transaction.
     journal: Option<HashMap<Key, Option<Record>>>,
     /// Counts transactions begun, so work spanning calls (a drag) can tell it is still in the
@@ -128,6 +130,60 @@ pub struct Document {
     /// Leader targets as of the last [`remember_leader_targets`](Self::remember_leader_targets)
     /// (not part of the content).
     last_anchor_pos: HashMap<AnnotationId, DVec2>,
+    /// Recent changes, for caches that follow them (see [`changes_since`](Self::changes_since);
+    /// not part of the content).
+    changes: ChangeLog,
+}
+
+/// Which document a [`ChangeLog`] is of: a fresh value for every document, a copy included
+/// (a copy's changes are its own).
+#[derive(Debug, PartialEq, Eq)]
+struct Lineage(u64);
+
+impl Default for Lineage {
+    fn default() -> Self {
+        Self(next_structure())
+    }
+}
+
+impl Clone for Lineage {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+/// What changed, revision by revision: entities by id, and whether layers did.
+#[derive(Clone, Debug, Default)]
+struct ChangeLog {
+    lineage: Lineage,
+    /// (revision the change was made at, entity changed or `None` for a layer).
+    entries: Vec<(u64, Option<EntityId>)>,
+    /// Changes made before this revision have been let go.
+    floor: u64,
+}
+
+impl ChangeLog {
+    /// Entries kept: past this, the older half goes (a cache that far behind starts over).
+    const LIMIT: usize = 1 << 16;
+
+    fn note(&mut self, revision: u64, what: Option<EntityId>) {
+        if self.entries.len() >= Self::LIMIT {
+            let half = self.entries.len() / 2;
+            self.entries.drain(..half);
+            // (Entries at this revision may have gone too: it is no longer whole.)
+            self.floor = self.entries.first().map_or(revision, |e| e.0 + 1);
+        }
+        self.entries.push((revision, what));
+    }
+}
+
+/// The changes to a document since a revision (see [`Document::changes_since`]).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Changes {
+    /// Entities added, removed or changed (sorted, once each).
+    pub entities: Vec<EntityId>,
+    /// Some layer was added, removed or changed (shown, hidden, ...).
+    pub layers: bool,
 }
 
 impl PartialEq for Document {
@@ -214,10 +270,12 @@ impl Default for Document {
             next_wall_id: 1,
             revision: 0,
             structure: next_structure(),
+            geometry: next_structure(),
             journal: None,
             transaction_serial: 0,
             begun_at: 0,
             last_anchor_pos: HashMap::new(),
+            changes: ChangeLog::default(),
         }
     }
 }
@@ -311,6 +369,42 @@ impl Document {
     /// frame. Values are never reused, not even by another document.
     pub fn structure(&self) -> u64 {
         self.structure
+    }
+
+    /// Changes with every change to the sketch's entities (added, removed, moved, restyled,
+    /// put on another layer), undo and redo of one included, and with nothing else (fills,
+    /// relations, layers' settings). Caches made from the curves alone, such as the closed
+    /// areas, key on it, so an edit that changes fills after them doesn't throw them away.
+    /// Values are never reused, not even by another document.
+    pub fn geometry(&self) -> u64 {
+        self.geometry
+    }
+
+    /// Which document this is, for [`changes_since`](Self::changes_since): every document
+    /// has its own, and a copy gets a new one.
+    pub fn lineage(&self) -> u64 {
+        self.changes.lineage.0
+    }
+
+    /// The changes made to this document (of [`lineage`](Self::lineage) `lineage`) since
+    /// it was at `revision`, if they are all still known: what a cache made then needs to
+    /// look at again. None for another document or when it is too far behind.
+    pub fn changes_since(&self, lineage: u64, revision: u64) -> Option<Changes> {
+        if lineage != self.lineage() || revision < self.changes.floor || revision > self.revision {
+            return None;
+        }
+        let entries = &self.changes.entries;
+        let from = entries.partition_point(|(r, _)| *r < revision);
+        let mut out = Changes::default();
+        for (_, what) in &entries[from..] {
+            match what {
+                Some(id) => out.entities.push(*id),
+                None => out.layers = true,
+            }
+        }
+        out.entities.sort_unstable();
+        out.entities.dedup();
+        Some(out)
     }
 
     pub fn len(&self) -> usize {

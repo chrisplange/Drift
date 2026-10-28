@@ -16,7 +16,8 @@ use eframe::egui_wgpu::{self, wgpu};
 /// drawing's [stack](crate::stack)): `images` (pictures beneath the drawing), then `under`,
 /// then `fills`, then each group over the last, then `items` on top.
 pub struct CanvasContent<'a> {
-    pub under: &'a [SketchItem],
+    /// (In runs, drawn one after another.)
+    pub under: &'a [&'a [SketchItem]],
     pub items: &'a [SketchItem],
     pub fills: &'a [FillMesh],
     pub images: &'a [CanvasImage],
@@ -101,7 +102,9 @@ impl CanvasPainter {
             }
             frame.push_group(group(&[], items), camera, viewport, &palette);
         }
-        frame.push_under(under, camera, viewport, &palette);
+        for run in under {
+            frame.push_under(run, camera, viewport, &palette);
+        }
         egui_wgpu::Callback::new_paint_callback(rect, CanvasCallback { frame })
     }
 }

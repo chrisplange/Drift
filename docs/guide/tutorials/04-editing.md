@@ -237,9 +237,17 @@ sharp corner back, right-click it and choose **Remove fillet** or **Remove chamf
 
 - **Offset** (O): click a curve. Its whole connected chain is picked. Click the side to
   offset to, or type the distance and press Enter. Corners rejoin. Offset lines stay
-  parallel to the original, at a dimensioned distance.
+  parallel to the original, and rounded corners stay tangent to them.
+- An offset has **one distance**. It shows as one dimension, on the curve you clicked;
+  double-click it and type a new value to move every side at once, or drag any side of the
+  offset (picked on its own, or with nothing picked). The drag goes in round steps that
+  suit the zoom and the drawing's units (1, 2 or 5 mm and so on, or fractions of an inch),
+  as a fillet's does; hold Alt to place it freely. Each offset keeps its own distance.
 - **Mirror** (M): pick the geometry first with **Select**, press M, and click the line to
   mirror about. The copies are held symmetric to the originals.
+
+A group copied whole, by Mirror, Copy and Paste, Shift+D or a pattern, gives a new group of
+the copies, named after it ("Panel" → "Panel 2"). Part of a group copies as loose objects.
 
 ## Patterns
 

@@ -191,3 +191,110 @@ fn smoke_dimensions_fix_pins_what_is_still_free() {
     );
     assert_eq!(ed.analysis().dof, Some(2), "free to move again");
 }
+
+/// #235: an offset of a rectangle leaves one offset dimension on the canvas, and a new value
+/// typed into it (double-click its text) moves every side; one undo puts it back.
+#[test]
+fn smoke_dimensions_an_offset_has_one_dimension_for_all_its_sides() {
+    let Some(mut h) = harness() else { return };
+    view(&mut h, DVec2::new(-20.0, -20.0), DVec2::new(60.0, 50.0));
+    let (sides, _) = rectangle(&mut h, DVec2::ZERO, DVec2::new(40.0, 30.0), Fill::No);
+    let before = ids(&h);
+    // O, a side, the outside, 2, Enter.
+    palette(&mut h, "Offset");
+    assert_eq!(h.state().tool.kind(), ToolKind::Offset);
+    click_world(&mut h, DVec2::new(20.0, 0.0));
+    h.hover_at(screen(&h, DVec2::new(20.0, -5.0)));
+    h.run();
+    type_text(&mut h, "2");
+    h.key_press(Key::Enter);
+    h.run();
+    let offsets = curves(&h, &added(&h, &before));
+    assert_eq!(offsets.len(), 4, "the offset rectangle");
+    // Each offset side's distance from its original (from its middle).
+    let gaps = |h: &Harness<'_, DriftApp>| -> Vec<f64> {
+        let doc = &h.state().editor.doc;
+        offsets
+            .iter()
+            .map(|o| {
+                let (a, b) = ends(h, *o);
+                let middle = (at(h, a) + at(h, b)) * 0.5;
+                sides
+                    .iter()
+                    .filter_map(|s| doc.shape(*s))
+                    .map(|s| drift_geom::distance(&s, middle))
+                    .fold(f64::INFINITY, f64::min)
+            })
+            .collect()
+    };
+    assert!(
+        gaps(&h).iter().all(|g| (g - 2.0).abs() < 1e-9),
+        "{:?}",
+        gaps(&h)
+    );
+    let painter = egui::Painter::new(
+        h.ctx.clone(),
+        egui::LayerId::background(),
+        h.state().canvas_rect,
+    );
+    let shown = h.state().layout_dimensions(&painter, &screen_map(&h));
+    assert_eq!(shown.len(), 1, "one offset dimension on the canvas");
+    // A new value in it moves all four sides.
+    h.key_press(Key::Escape);
+    h.run();
+    h.key_press(Key::S);
+    h.run();
+    double_click(&mut h, shown[0].text_rect.center());
+    assert!(h.state().dimension_edit.is_some(), "editing the offset");
+    h.key_press_modifiers(EguiModifiers::COMMAND, Key::A);
+    type_text(&mut h, "3");
+    h.key_press(Key::Enter);
+    h.run();
+    assert!(
+        gaps(&h).iter().all(|g| (g - 3.0).abs() < 1e-9),
+        "{:?}",
+        gaps(&h)
+    );
+    undo(&mut h);
+    assert!(
+        gaps(&h).iter().all(|g| (g - 2.0).abs() < 1e-9),
+        "{:?}",
+        gaps(&h)
+    );
+    // A drag of a side changes the offset, in round steps for the zoom: let go 6.3 out, it
+    // lands on a whole step; every side follows and the rectangle stays; one undo puts it
+    // back. With Alt, freely: every side at 6.3.
+    let corner = at(&h, ends(&h, sides[0]).0);
+    h.key_press(Key::Escape);
+    h.run();
+    let from = screen(&h, DVec2::new(20.0, -2.0));
+    let to = screen(&h, DVec2::new(20.0, -6.3));
+    h.event(Event::ModifiersChanged(EguiModifiers::ALT));
+    drag_steps(&mut h, from, to, 6, None);
+    h.event(Event::ModifiersChanged(EguiModifiers::NONE));
+    h.run();
+    assert!(
+        gaps(&h).iter().all(|g| (g - 6.3).abs() < 1e-9),
+        "freely: {:?}",
+        gaps(&h)
+    );
+    assert_eq!(at(&h, ends(&h, sides[0]).0), corner, "the rectangle stays");
+    undo(&mut h);
+    drag_steps(&mut h, from, to, 6, None);
+    let tolerance = h.state().last_pointer.as_ref().unwrap().tolerance;
+    let step = crate::tools::corners::round_step(tolerance * 1.5, true);
+    let expected = (6.3 / step).round() * step;
+    assert!(step >= 0.1, "a step to see at this zoom: {step}");
+    assert!(
+        gaps(&h).iter().all(|g| (g - expected).abs() < 1e-9),
+        "{:?}, step {step}",
+        gaps(&h)
+    );
+    assert_eq!(at(&h, ends(&h, sides[0]).0), corner, "the rectangle stays");
+    undo(&mut h);
+    assert!(
+        gaps(&h).iter().all(|g| (g - 2.0).abs() < 1e-9),
+        "{:?}",
+        gaps(&h)
+    );
+}

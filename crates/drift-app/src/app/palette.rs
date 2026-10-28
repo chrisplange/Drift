@@ -226,6 +226,8 @@ impl DriftApp {
             Command::Print => self.print(&painter),
             Command::Undo => self.undo(),
             Command::Redo => self.redo(),
+            // On a sheet: all its views.
+            Command::SelectAll if self.sheet_preview => self.pick_all_views(),
             Command::SelectAll => {
                 self.set_tool(ToolKind::Select);
                 self.editor.select_all();
@@ -262,7 +264,7 @@ impl DriftApp {
             }
             Command::RemoveFromSheet => {
                 if let Some(id) = self.current_sheet() {
-                    self.remove_viewport(id);
+                    self.remove_picked_views(id);
                     self.sheet_pick = crate::app::sheet_editor::SheetPick::Paper;
                 }
             }

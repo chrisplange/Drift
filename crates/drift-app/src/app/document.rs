@@ -101,6 +101,14 @@ pub(crate) fn not_saved_non_finite(id: drift_core::EntityId) -> String {
     )
 }
 
+/// Files the system asked to open (macOS Finder), waiting for the next frame.
+#[cfg(all(not(target_arch = "wasm32"), not(feature = "demo")))]
+pub(crate) static OPEN_QUEUE: std::sync::Mutex<Vec<FilePath>> = std::sync::Mutex::new(Vec::new());
+
+/// The app's context, to wake it when a file is queued.
+#[cfg(all(not(target_arch = "wasm32"), not(feature = "demo")))]
+pub(crate) static WAKE: std::sync::OnceLock<egui::Context> = std::sync::OnceLock::new();
+
 /// Whether a path names a sketch (by its extension).
 fn is_sketch_file(path: &std::path::Path) -> bool {
     path.extension()
@@ -164,9 +172,7 @@ impl DriftApp {
         let mut editor = Editor::new(doc);
         editor.keep_prefs_from(&self.editor);
         self.editor = editor;
-        // An isolate belongs to the drawing it was made in (and its undo history).
-        self.layer_list.isolated = None;
-        self.layer_list.solos.clear();
+        self.forget_drawing_state();
         self.fit_target = Some(self.fit_bounds());
         self.file = FileState {
             name,
@@ -174,6 +180,74 @@ impl DriftApp {
             meta,
             clean_revision: clean.then_some(revision),
         };
+    }
+
+    /// Forget what was picked, typed into, dragged or shown of the drawing that was open: its
+    /// ids name other things, or nothing, in the next one. Preferences and view switches stay.
+    /// (Everything here belongs to one drawing; a new field of that kind is reset here too.)
+    pub(crate) fn forget_drawing_state(&mut self) {
+        // Dimensions and relations.
+        self.dimension_text.clear();
+        self.focus_dimension = None;
+        self.selected_constraint = None;
+        self.hovered_constraint = None;
+        self.label_drag = None;
+        self.ext_drag = None;
+        self.dim_guide = None;
+        self.dimension_edit = None;
+        self.property_edit = None;
+        self.typing = None;
+        self.inference_points.clear();
+        self.temp_dims = Default::default();
+        // Variables and options being edited; layers being renamed, opened, isolated.
+        self.params = Default::default();
+        self.layer_names.clear();
+        self.expanded_layers.clear();
+        self.layer_drag = None;
+        self.renaming_layer = None;
+        // An isolate belongs to the drawing it was made in (and its undo history).
+        self.layer_list.isolated = None;
+        self.layer_list.solos.clear();
+        // Notes, hatches, text, walls and openings being edited.
+        self.note_drag = None;
+        self.selected_leader = None;
+        self.leader_grip = None;
+        self.adding_leader = None;
+        self.note_edit = None;
+        self.hatch_drag = None;
+        self.hatch_snap = None;
+        self.align_edge = None;
+        self.text_typing = None;
+        self.text_focused = None;
+        self.text_cursor = None;
+        self.text_set_cursor = None;
+        self.text_grip = false;
+        self.text_touched = false;
+        self.wall_thickness_text = None;
+        self.opening_text = None;
+        self.renaming = None;
+        self.sketch_check = None;
+        // Sheets and views: back to the model.
+        self.active_sheet = None;
+        self.sheet_preview = false;
+        self.preview = Default::default();
+        self.view_drag = None;
+        self.view_guides.clear();
+        self.align_with = None;
+        self.sheet_view = 0;
+        self.sheet_pick = Default::default();
+        self.view_set = None;
+        self.view_box = None;
+        self.confirm_delete_set = false;
+        self.add_view_on = None;
+        self.pdf_left_out.clear();
+        self.picked_view = None;
+        self.confirm_delete_view = None;
+        self.crop_drag = None;
+        #[cfg(not(feature = "demo"))]
+        {
+            self.output_dialog = None;
+        }
     }
 
     /// Preferences and view settings as `key=0|1` pairs (unknown keys are ignored when
@@ -444,6 +518,46 @@ impl DriftApp {
         self.recent.retain(|p| *p != path);
         self.recent.insert(0, path);
         self.recent.truncate(MAX_RECENT);
+    }
+
+    /// Files the system asked Drift to open while it runs (see [`crate::queue_open`]).
+    #[cfg(all(not(target_arch = "wasm32"), not(feature = "demo")))]
+    pub(crate) fn open_queued(&mut self) {
+        let queued = std::mem::take(&mut *OPEN_QUEUE.lock().unwrap_or_else(|e| e.into_inner()));
+        for path in self.open_requested(queued) {
+            let started = std::env::current_exe()
+                .and_then(|exe| std::process::Command::new(exe).arg(&path).spawn());
+            if let Err(e) = started {
+                log::error!("could not open a window for {}: {e}", path.display());
+            }
+        }
+    }
+
+    /// Open files the system asked for: the first into this window if it holds a new drawing
+    /// nothing has been done to yet (and nothing is waiting to open in it). Returns the rest,
+    /// to open in windows of their own; one already open here is left out.
+    #[cfg(all(not(target_arch = "wasm32"), not(feature = "demo")))]
+    pub(crate) fn open_requested(&mut self, paths: Vec<FilePath>) -> Vec<FilePath> {
+        let mut untouched = self.file.path.is_none()
+            && self.open_path.is_none()
+            && self.editor.doc.is_empty()
+            && self.editor.history.recorded() == 0
+            && !self.is_dirty();
+        let mut here = self.file.path.clone();
+        let mut elsewhere = Vec::new();
+        for path in paths {
+            if here.as_ref() == Some(&path) || elsewhere.contains(&path) {
+                continue;
+            }
+            if untouched && path.is_file() {
+                untouched = false;
+                here = Some(path.clone());
+                self.open_file(path);
+            } else {
+                elsewhere.push(path);
+            }
+        }
+        elsewhere
     }
 
     /// Open a sketch by its path (the command line, or a file dropped on the window). A

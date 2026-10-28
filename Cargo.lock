@@ -1161,6 +1161,7 @@ dependencies = [
  "drift-app",
  "eframe",
  "env_logger",
+ "objc2 0.6.5",
  "winresource",
 ]
 

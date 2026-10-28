@@ -282,12 +282,24 @@ impl Editor {
         options: SnapOptions,
         exclude: impl Fn(EntityId) -> bool,
     ) -> Option<Snap> {
+        self.snap_excluding(p, options, exclude, |_| false)
+    }
+
+    /// [`snap`](Self::snap), passing over the copies of blocks `exclude_copy` names too
+    /// (those moving with the selection).
+    pub fn snap_excluding(
+        &self,
+        p: DVec2,
+        options: SnapOptions,
+        exclude: impl Fn(EntityId) -> bool,
+        exclude_copy: impl Fn(drift_core::InstanceId) -> bool,
+    ) -> Option<Snap> {
         // (Walls' hidden centrelines aren't snapped to.)
         let hidden = self.hidden_centrelines();
         let snap = self.snap_sketch_and_underlays(p, options, |id| {
             exclude(id) || hidden.contains(&id) || !self.snappable(id)
         });
-        let Some(block) = self.block_snap(p, options.tolerance) else {
+        let Some(block) = self.block_snap(p, options.tolerance, exclude_copy) else {
             return snap;
         };
         match snap {

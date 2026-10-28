@@ -722,3 +722,105 @@ fn smoke_files_update_waits_for_other_windows() {
     h.state_mut().session_files.slot = None;
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Files the system hands over while Drift runs (macOS Finder): the first opens in a new,
+/// untouched window; the rest, and any once this window holds a drawing, go to windows of
+/// their own; one already open here is left alone.
+#[test]
+fn smoke_files_files_handed_over_open_here_only_when_untouched() {
+    let Some(mut h) = harness() else { return };
+    let mut doc = drift_core::Document::new();
+    let (a, b) = (
+        doc.add_point(DVec2::ZERO),
+        doc.add_point(DVec2::new(10.0, 0.0)),
+    );
+    doc.add_line(a, b).unwrap();
+    let text = drift_io::save(&doc, &Default::default());
+    let test = "handed-over";
+    let first = temp_file(test, "First.drift", text.as_bytes());
+    let second = temp_file(test, "Second.drift", text.as_bytes());
+    let elsewhere = h
+        .state_mut()
+        .open_requested(vec![first.clone(), second.clone()]);
+    assert_eq!(
+        elsewhere,
+        std::slice::from_ref(&second),
+        "the second in a window of its own"
+    );
+    h.run_steps(3);
+    assert_eq!(h.state().file.path.as_deref(), Some(first.as_path()));
+    assert!(!h.state().editor.doc.is_empty(), "opened here");
+    assert!(h.state_mut().open_requested(vec![first.clone()]).is_empty());
+    assert_eq!(
+        h.state_mut().open_requested(vec![second.clone()]),
+        std::slice::from_ref(&second)
+    );
+    let _ = std::fs::remove_dir_all(first.parent().unwrap());
+}
+
+/// Opening drawing B forgets what was picked, typed and shown of drawing A: ids in A name
+/// other things (or nothing) in B.
+#[test]
+fn smoke_files_opening_another_drawing_forgets_the_last_ones_picks() {
+    let Some(mut h) = harness() else { return };
+    view(&mut h, DVec2::new(-10.0, -10.0), DVec2::new(60.0, 40.0));
+    let (sides, _) = rectangle(&mut h, DVec2::ZERO, DVec2::new(40.0, 30.0), Fill::No);
+    // Drawing B, saved: one line with a length dimension (ids like A's).
+    let mut doc = drift_core::Document::new();
+    let (a, b) = (
+        doc.add_point(DVec2::ZERO),
+        doc.add_point(DVec2::new(10.0, 0.0)),
+    );
+    doc.add_line(a, b).unwrap();
+    doc.add_constraint(drift_core::Constraint::Distance { a, b, value: 10.0 })
+        .unwrap();
+    let path = temp_file(
+        "forgets",
+        "B.drift",
+        drift_io::save(&doc, &Default::default()).as_bytes(),
+    );
+    // A's state, live: a sheet shown with a view picked, a dimension picked and being typed,
+    // temporary dimensions on a side, a layer being renamed.
+    let (p, q) = ends(&h, sides[0]);
+    {
+        let app = h.state_mut();
+        let dim = app
+            .editor
+            .doc
+            .add_constraint(drift_core::Constraint::Distance {
+                a: p,
+                b: q,
+                value: 40.0,
+            })
+            .ok();
+        assert!(dim.is_some());
+        app.selected_constraint = dim;
+        app.dimension_text
+            .insert(drift_core::ConstraintId(1), "123".into());
+        app.picked_view = Some(drift_core::ViewId(1));
+        app.active_sheet = Some(drift_core::SheetId(1));
+        app.sheet_preview = true;
+        app.sheet_view = 3;
+        app.temp_dims.subject = Some(sides[0]);
+        app.layer_names
+            .insert(drift_core::LayerId::DEFAULT, "Renaming".into());
+        app.text_typing = Some(drift_core::TextId(1));
+        app.inference_points.push(DVec2::new(5.0, 5.0));
+    }
+    h.state_mut().file.clean_revision = Some(h.state().editor.doc.revision());
+    h.state_mut().open_file(path.clone());
+    h.run_steps(3);
+    let app = h.state();
+    assert_eq!(app.file.path.as_deref(), Some(path.as_path()), "B is open");
+    assert_eq!(app.selected_constraint, None);
+    assert!(app.dimension_text.is_empty());
+    assert_eq!(app.picked_view, None);
+    assert_eq!(app.active_sheet, None);
+    assert!(!app.sheet_preview, "back to the model");
+    assert_eq!(app.sheet_view, 0);
+    assert_eq!(app.temp_dims.subject, None);
+    assert!(app.layer_names.is_empty());
+    assert_eq!(app.text_typing, None);
+    assert!(app.inference_points.is_empty());
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}

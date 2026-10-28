@@ -423,6 +423,13 @@ pub struct DriftApp {
     sheet_view: usize,
     /// What is picked on the sheet shown: a view, or the sheet itself.
     sheet_pick: app::sheet_editor::SheetPick,
+    /// Several views picked on a sheet (by index; `sheet_view` is one of them). See
+    /// [`DriftApp::picked_views`].
+    view_set: Option<(drift_core::SheetId, std::collections::BTreeSet<usize>)>,
+    /// A box being dragged on the sheet to pick views by (screen corners).
+    view_box: Option<(egui::Pos2, egui::Pos2)>,
+    /// Delete was pressed with several views picked on a sheet: waiting for a yes.
+    confirm_delete_set: bool,
     /// Add view from a sheet in progress: the sheet the view drawn next goes on.
     add_view_on: Option<drift_core::SheetId>,
     /// A message to show in the next frame (from code that doesn't know the time).
@@ -548,6 +555,21 @@ pub fn start_memory_guard() {
 /// release app has no console to print them to. Call once from the native entry point.
 pub fn install_crash_log() {
     drift_platform::crash::install_hook();
+}
+
+/// Open a file the system handed the running app (macOS sends files opened from Finder as an
+/// event, not on the command line): on the next frame, into this window if it holds a new
+/// drawing nothing has been done to, else in a window of its own. Any thread.
+#[cfg(all(not(target_arch = "wasm32"), not(feature = "demo")))]
+pub fn queue_open(path: std::path::PathBuf) {
+    log::info!("asked to open {}", path.display());
+    app::document::OPEN_QUEUE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push(path);
+    if let Some(ctx) = app::document::WAKE.get() {
+        ctx.request_repaint();
+    }
 }
 
 /// Where the logger writes: the console, when there is one, and `drift.log` in Drift's data
@@ -685,6 +707,9 @@ impl DriftApp {
             view_guides: Vec::new(),
             align_with: None,
             sheet_view: 0,
+            view_set: None,
+            view_box: None,
+            confirm_delete_set: false,
             sheet_pick: Default::default(),
             add_view_on: None,
             status_next: None,
@@ -1029,6 +1054,11 @@ impl eframe::App for DriftApp {
             self.set_status(text, false, now);
         }
         self.check_memory(now);
+        #[cfg(all(not(target_arch = "wasm32"), not(feature = "demo")))]
+        {
+            let _ = app::document::WAKE.set(ctx.clone());
+            self.open_queued();
+        }
         #[cfg(not(target_arch = "wasm32"))]
         self.updates_tick(&ctx, now);
         #[cfg(all(not(target_arch = "wasm32"), not(feature = "demo")))]

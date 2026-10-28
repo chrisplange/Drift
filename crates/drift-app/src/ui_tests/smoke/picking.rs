@@ -84,11 +84,6 @@ fn double_click_at(h: &mut Harness<'_, DriftApp>, p: DVec2) {
     double_click(h, pos);
 }
 
-fn undo(h: &mut Harness<'_, DriftApp>) {
-    h.key_press_modifiers(EguiModifiers::COMMAND, Key::Z);
-    h.run();
-}
-
 /// A line from `a` to `b` on the current layer. Returns it.
 fn line(h: &mut Harness<'_, DriftApp>, a: DVec2, b: DVec2) -> EntityId {
     let ed = &mut h.state_mut().editor;

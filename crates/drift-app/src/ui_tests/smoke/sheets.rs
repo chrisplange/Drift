@@ -11,6 +11,7 @@ fn a_sheet(h: &mut Harness<'_, DriftApp>) -> drift_core::SheetId {
     h.state_mut().show_panel(Panel::Sheets);
     h.run();
     h.get_by_label("New sheet").click();
+    whole_view(h);
     h.run();
     h.run();
     h.state_mut().show_panel(Panel::Inspector);
@@ -144,4 +145,117 @@ fn smoke_sheet_view_right_click_menu() {
     h.run();
     assert_eq!(view_count(&h), 1, "one undo brings it back");
     assert_eq!(placed(&h, sheet).len(), 1, "on its sheet");
+}
+
+/// #228: views on a sheet picked together (Shift-click, a box, Select all) move together,
+/// keeping their places relative to each other, in one undo step; arrows nudge them all.
+#[test]
+fn smoke_sheet_several_views_move_together() {
+    let Some(mut h) = harness() else { return };
+    let id = a_sheet(&mut h);
+    // Two small views of a corner of the rectangle, side by side.
+    for (name, at) in [
+        ("A", DVec2::new(90.0, 200.0)),
+        ("B", DVec2::new(170.0, 200.0)),
+    ] {
+        let view = {
+            let ed = &mut h.state_mut().editor;
+            ed.doc.begin();
+            let crop = drift_core::Bounds {
+                min: DVec2::ZERO,
+                max: DVec2::new(40.0, 30.0),
+            };
+            let v = ed.doc.add_view(drift_core::View::new(name, crop, 1.0));
+            ed.commit("View");
+            v
+        };
+        h.state_mut().place_view(id, view, Some(at));
+    }
+    h.state_mut().show_sheet(Some(id));
+    h.run();
+    h.run();
+    let first = placed(&h, id);
+    assert_eq!(first.len(), 3);
+    let on_screen = |h: &Harness<'_, DriftApp>, i: usize| {
+        let app = h.state();
+        let at = placed(h, id)[i].frame.at;
+        app.paper_to_preview(app.canvas_rect, at)
+    };
+    // A click on A, Shift-click on B: both picked.
+    let a = on_screen(&h, 1);
+    click_with(&mut h, a, EguiModifiers::NONE);
+    let b = on_screen(&h, 2);
+    click_with(&mut h, b, EguiModifiers::SHIFT);
+    let picked = |h: &Harness<'_, DriftApp>| {
+        let app = h.state();
+        app.picked_views(app.editor.doc.sheet(id).unwrap())
+    };
+    assert_eq!(picked(&h), [1, 2].into());
+    assert!(
+        h.query_by_label("2 views").is_some(),
+        "the Inspector says so"
+    );
+    // A drag of A takes B along (Ctrl: no lining up, so the offset is the pointer's).
+    let to = a + egui::vec2(-40.0, 30.0);
+    h.event(Event::ModifiersChanged(EguiModifiers::COMMAND));
+    drag_steps(&mut h, a, to, 6, None);
+    h.event(Event::ModifiersChanged(EguiModifiers::NONE));
+    h.run();
+    let now = placed(&h, id);
+    let moved = now[1].frame.at - first[1].frame.at;
+    assert!(moved.length() > 5.0, "A moved: {moved:?}");
+    assert!(
+        (now[2].frame.at - first[2].frame.at - moved).length() < 1e-9,
+        "B moved as far"
+    );
+    assert_eq!(now[0].frame, first[0].frame, "the other view stays");
+    assert_eq!(picked(&h), [1, 2].into(), "still both picked");
+    // The arrow keys nudge both.
+    h.key_press(Key::ArrowRight);
+    h.run();
+    let nudged = placed(&h, id);
+    for i in [1, 2] {
+        assert_eq!(nudged[i].frame.at, now[i].frame.at + DVec2::X);
+    }
+    // One undo for the nudge, one for the drag.
+    undo(&mut h);
+    undo(&mut h);
+    assert_eq!(placed(&h, id), first);
+    // A box from the paper's corner round both picks them; Select all picks every view.
+    h.key_press(Key::Escape);
+    h.run();
+    assert!(picked(&h).is_empty());
+    let (a, b) = (on_screen(&h, 1), on_screen(&h, 2));
+    let rect = h.state().canvas_rect;
+    let from = egui::pos2(a.x - 60.0, a.y - 60.0).max(rect.min + egui::vec2(4.0, 4.0));
+    drag_steps(&mut h, from, b + egui::vec2(60.0, 60.0), 4, None);
+    assert_eq!(picked(&h), [1, 2].into(), "the box");
+    h.key_press_modifiers(EguiModifiers::COMMAND, Key::A);
+    h.run();
+    assert_eq!(picked(&h), [0, 1, 2].into(), "Select all");
+}
+
+/// A new sheet starts empty: no view is made or placed. The Inspector offers one for the whole
+/// drawing, and one undo takes it off again.
+#[test]
+fn smoke_sheet_a_new_sheet_is_empty() {
+    let Some(mut h) = harness() else { return };
+    view(&mut h, DVec2::new(-10.0, -10.0), DVec2::new(130.0, 90.0));
+    rectangle(&mut h, DVec2::ZERO, DVec2::new(120.0, 80.0), Fill::Solid);
+    h.state_mut().show_panel(Panel::Sheets);
+    h.run();
+    h.get_by_label("New sheet").click();
+    h.run();
+    h.run();
+    let id = h.state().current_sheet().expect("a sheet");
+    assert!(placed(&h, id).is_empty(), "nothing on it");
+    assert_eq!(h.state().editor.doc.views().count(), 0, "no view made");
+    h.state_mut().show_panel(Panel::Inspector);
+    h.run();
+    h.get_by_label("Add a view of the whole drawing").click();
+    h.run();
+    h.run();
+    assert_eq!(placed(&h, id).len(), 1);
+    undo(&mut h);
+    assert!(placed(&h, id).is_empty());
 }

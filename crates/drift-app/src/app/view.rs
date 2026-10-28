@@ -29,7 +29,12 @@ impl DriftApp {
             };
             let ed = &self.editor;
             let tool = &self.tool;
-            pointer.snap = ed.snap(raw, options, |id| tool.snap_excludes(ed, id));
+            pointer.snap = ed.snap_excluding(
+                raw,
+                options,
+                |id| tool.snap_excludes(ed, id),
+                |copy| tool.snap_excludes_copy(copy),
+            );
             // Inference lines apply unless an exact snap decides the position; with grid
             // snapping they start from the grid point, so both coordinates stay on the grid.
             if pointer.exact_snap().is_none() {

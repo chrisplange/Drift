@@ -623,6 +623,18 @@ fn the_line(h: &Harness<'_, DriftApp>) -> (DVec2, DVec2) {
 }
 
 /// Layout of the first dimension, as the canvas draws it.
+/// A view of the whole drawing on the current sheet (a new sheet starts empty), as the
+/// Inspector's "Add a view of the whole drawing" adds, the paper still picked.
+fn whole_view(h: &mut Harness<'_, DriftApp>) {
+    h.run();
+    let app = h.state_mut();
+    let sheet = app.current_sheet().expect("a sheet");
+    app.add_whole_view(sheet);
+    // (With the paper picked, as a new sheet shows it.)
+    app.sheet_pick = crate::app::sheet_editor::SheetPick::Paper;
+    h.run();
+}
+
 fn first_dimension(h: &Harness<'_, DriftApp>) -> crate::annotations::DimLayout {
     let app = h.state();
     let painter = egui::Painter::new(h.ctx.clone(), egui::LayerId::background(), app.canvas_rect);
@@ -3298,6 +3310,7 @@ fn a_sheet_prints_in_greyscale_or_black_and_white() {
     h.state_mut().show_panel(Panel::Sheets);
     h.run();
     h.get_by_label("New sheet").click();
+    whole_view(&mut h);
     h.run();
     h.run();
     let id = h.state().current_sheet().expect("a sheet");
@@ -3750,6 +3763,7 @@ fn sheets_preview_and_export() {
     h.state_mut().show_panel(Panel::Sheets);
     h.run();
     h.get_by_label("New sheet").click();
+    whole_view(&mut h);
     h.run();
     h.run();
     let id = h.state().current_sheet().expect("a sheet");
@@ -4982,6 +4996,7 @@ fn modern_sheet_layout() {
     h.get_by_label("Open example").click();
     h.run();
     h.state_mut().add_sheet();
+    whole_view(&mut h);
     let id = h.state().current_sheet().expect("a sheet");
     let mut sheet = h.state().editor.doc.sheet(id).cloned().unwrap();
     assert_eq!(sheet.title_block, drift_core::TitleBlock::Modern);
@@ -5556,6 +5571,7 @@ fn a_sheet_holds_several_views() {
     h.state_mut().show_panel(Panel::Sheets);
     h.run();
     h.get_by_label("New sheet").click();
+    whole_view(&mut h);
     h.run();
     h.run();
     let id = h.state().current_sheet().expect("a sheet");
@@ -7600,6 +7616,7 @@ fn views_line_up_on_the_sheet() {
     h.state_mut().show_panel(Panel::Sheets);
     h.run();
     h.get_by_label("New sheet").click();
+    whole_view(&mut h);
     h.run();
     h.run();
     let id = h.state().current_sheet().expect("a sheet");
@@ -8199,6 +8216,7 @@ fn views_are_drawn_on_the_canvas_and_placed_on_sheets() {
     h.state_mut().show_panel(Panel::Sheets);
     h.run();
     h.get_by_label("New sheet").click();
+    whole_view(&mut h);
     h.run();
     h.run();
     let sheet = h.state().current_sheet().expect("a sheet");
@@ -8219,6 +8237,7 @@ fn views_are_drawn_on_the_canvas_and_placed_on_sheets() {
     assert!(near(on[1].frame.size, crop.size() / on[1].scale));
     // And on a second sheet: one view on two sheets.
     h.state_mut().add_sheet();
+    whole_view(&mut h);
     let other = h.state().current_sheet().unwrap();
     assert_ne!(other, sheet);
     h.state_mut().place_view(other, id, None);
@@ -8381,6 +8400,7 @@ fn sheets_are_tabs_with_their_own_tools_and_inspector() {
     // The tabs over the canvas: the model, and + for a sheet.
     assert!(h.query_by_label("Model").is_some());
     h.get_by_label("Add a sheet").click();
+    whole_view(&mut h);
     h.run();
     h.run();
     let first = h.state().current_sheet().expect("a sheet");
@@ -8396,6 +8416,7 @@ fn sheets_are_tabs_with_their_own_tools_and_inspector() {
     assert!(h.query_by_label("Number").is_some());
     // The next one counts on.
     h.get_by_label("Add a sheet").click();
+    whole_view(&mut h);
     h.run();
     h.run();
     let second = h.state().current_sheet().unwrap();
@@ -8492,6 +8513,7 @@ fn place_on_sheet_finds_free_paper() {
     h.get_by_label("Open example").click();
     h.run();
     h.get_by_label("Add a sheet").click();
+    whole_view(&mut h);
     h.run();
     h.run();
     let sheet = h.state().current_sheet().expect("a sheet");
@@ -8552,6 +8574,7 @@ fn a_view_leaves_out_the_layers_it_hides() {
         layer
     };
     h.get_by_label("Add a sheet").click();
+    whole_view(&mut h);
     h.run();
     h.run();
     let sheet = h.state().current_sheet().expect("a sheet");
@@ -8624,6 +8647,7 @@ fn a_view_can_show_construction_geometry() {
     h.get_by_label("Open example").click();
     h.run();
     h.get_by_label("Add a sheet").click();
+    whole_view(&mut h);
     h.run();
     h.run();
     let sheet = h.state().current_sheet().expect("a sheet");
@@ -8692,6 +8716,7 @@ fn sheets_reorder_duplicate_and_choose_for_pdf() {
     h.run();
     for _ in 0..2 {
         h.get_by_label("Add a sheet").click();
+        whole_view(&mut h);
         h.run();
         h.run();
     }
@@ -8914,6 +8939,7 @@ fn a_section_mark_makes_its_view_and_reads_its_number() {
     h.state_mut().show_panel(Panel::Sheets);
     h.run();
     h.get_by_label("New sheet").click();
+    whole_view(&mut h);
     h.run();
     h.run();
     let sheet = h.state().current_sheet().expect("a sheet");
@@ -9207,6 +9233,7 @@ fn an_annotation_can_be_drawn_in_some_views_only() {
     h.get_by_label("Open example").click();
     h.run();
     h.get_by_label("Add a sheet").click();
+    whole_view(&mut h);
     h.run();
     h.run();
     let sheet = h.state().current_sheet().unwrap();

@@ -32,5 +32,47 @@
     <string>NSApplication</string>
     <key>NSSupportsAutomaticGraphicsSwitching</key>
     <true/>
+    <!-- .drift files: Drift opens them (Finder sends them as an open-documents event, which
+         apps/native/src/macos.rs handles). The type is Drift's own, and is JSON text. -->
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>Drift drawing</string>
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
+            <key>LSHandlerRank</key>
+            <string>Owner</string>
+            <key>CFBundleTypeIconFile</key>
+            <string>Drift</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>com.drift-cad.drift.drawing</string>
+            </array>
+        </dict>
+    </array>
+    <key>UTExportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>com.drift-cad.drift.drawing</string>
+            <key>UTTypeDescription</key>
+            <string>Drift drawing</string>
+            <key>UTTypeIconFile</key>
+            <string>Drift</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.json</string>
+                <string>public.data</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>drift</string>
+                </array>
+            </dict>
+        </dict>
+    </array>
 </dict>
 </plist>

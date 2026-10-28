@@ -204,6 +204,8 @@ impl Session {
 
     /// [`Session::call`], unguarded.
     fn call_unguarded(&mut self, name: &str, args: &Value) -> ToolOutput {
+        // (Every call sees the last edit with its fills followed.)
+        self.editor.settle_areas();
         let mut image = None;
         let empty = json!({});
         let args = if args.is_null() { &empty } else { args };

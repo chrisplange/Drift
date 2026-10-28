@@ -34,9 +34,9 @@ pub use items::TaggedItem;
 pub(crate) use items::contrast;
 pub use options::ConstraintOption;
 pub use pointer::{Anchor, Guide, GuideKind, Pointer};
-pub use regions::RegionMotion;
 pub(crate) use regions::RegionsKey;
 pub(crate) use regions::interior_point;
+pub use regions::{RegionMotion, Regions};
 
 /// Where some geometry is, to put it back after a drag step that went wrong
 /// ([`Editor::drag`]), and what the drag keeps.
@@ -106,8 +106,9 @@ pub struct Editor {
     /// The line whose midpoint is under the pointer.
     pub hovered_midpoint: Option<EntityId>,
     pub index: SceneIndex,
-    /// Degrees-of-freedom analysis of the document at `analyzed`.
-    analysis: SolveReport,
+    /// Degrees-of-freedom analysis of the document at `analyzed`, kept cluster by cluster
+    /// so an edit analyses again only what it changed.
+    analysis_cache: drift_solver::AnalysisCache,
     analyzed: Option<u64>,
     /// A message for the UI explaining a refused edit.
     pub notice: Option<String>,
@@ -138,7 +139,9 @@ pub struct Editor {
     /// A variable being scrubbed with a slider: its expression before the scrub started.
     scrubbing: Option<(VariableId, String)>,
     /// Closed regions of the solid curves, and what they were found from.
-    pub(crate) regions: Option<(RegionsKey, std::rc::Rc<Vec<drift_geom::regions::Region>>)>,
+    pub(crate) regions: Option<(RegionsKey, Regions)>,
+    /// Areas found lately, and the thread finding an edit's.
+    pub(crate) areas: regions::AreasState,
     /// A point inside the selected region (regions are recomputed, so they're picked by a
     /// point rather than an id).
     pub selected_region: Option<DVec2>,
@@ -365,7 +368,8 @@ impl Editor {
     pub fn sync(&mut self) {
         self.index.update(&self.doc);
         if self.analyzed != Some(self.doc.revision()) && !self.doc.in_transaction() {
-            self.analysis = drift_solver::analyze_with(&self.doc, self.lowering().as_deref());
+            let lowering = self.lowering();
+            drift_solver::analyze_cached(&self.doc, lowering.as_deref(), &mut self.analysis_cache);
             self.analyzed = Some(self.doc.revision());
         }
         if self.evaluated != Some(self.doc.revision()) {
@@ -389,6 +393,6 @@ impl Editor {
 
     /// The degrees-of-freedom analysis of the document as of the last [`sync`](Self::sync).
     pub fn analysis(&self) -> &SolveReport {
-        &self.analysis
+        self.analysis_cache.report()
     }
 }

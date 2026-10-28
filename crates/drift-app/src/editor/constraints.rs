@@ -19,7 +19,7 @@ impl Editor {
         if !constraints.is_empty() && constraints.iter().all(|c| self.fixes_in_place(c)) {
             return self.add_fixes(label, constraints);
         }
-        let before = self.analysis.clone();
+        let before = self.analysis().clone();
         let degenerate_before = drift_solver::degenerate_entities(&self.doc);
         self.doc.begin();
         let mut ids = Vec::new();
@@ -382,7 +382,7 @@ impl Editor {
             self.commit(label);
             return Ok(());
         }
-        let before = self.analysis.clone();
+        let before = self.analysis().clone();
         let degenerate_before = drift_solver::degenerate_entities(&self.doc);
         self.doc.begin();
         if let Err(e) = self.doc.set_driven(id, false) {
@@ -600,7 +600,7 @@ impl Editor {
                 .filter(|c| {
                     self.pins_on(c).next().is_none()
                         && c.entities().next().is_none_or(|e| {
-                            self.analysis.definitions.get(&e)
+                            self.analysis().definitions.get(&e)
                                 != Some(&drift_solver::Definition::Full)
                         })
                 })

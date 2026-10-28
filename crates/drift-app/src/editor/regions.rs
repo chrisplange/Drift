@@ -1,78 +1,81 @@
 //! Closed areas (regions) of the sketch, and how a move or turn in progress carries them.
 
 use super::*;
+use drift_geom::regions::Region;
 
 impl Editor {
     /// The closed regions formed by solid curves (construction and centre lines are
     /// references, not boundaries), recomputed when the document changes.
-    pub fn regions(&mut self) -> std::rc::Rc<Vec<drift_geom::regions::Region>> {
+    pub fn regions(&mut self) -> Regions {
         // They depend on the curves, the rule and the curves fills keep to, and nothing else:
         // an edit's fills following it (after the areas were found for them) keeps them.
-        let key = RegionsKey {
-            geometry: self.doc.geometry(),
-            by_layer: self.doc.rules().regions_by_layer,
-            edges: self.fill_edges(),
-        };
+        let key = self.regions_key();
         if let Some((k, regions)) = &self.regions
             && *k == key
         {
             return regions.clone();
         }
-        if key.by_layer {
-            return self.regions_per_layer(key);
+        let input = self.areas_input(&key);
+        let prior = self.regions.as_ref().map(|(_, r)| r.clone());
+        let check = check_on().then(|| input.find(&[]));
+        let (ids, regions) = self.areas.found(input, prior.as_ref());
+        if let Some((fresh_ids, fresh)) = check {
+            assert!(
+                *ids == fresh_ids && format!("{regions:?}") == format!("{fresh:?}"),
+                "the areas as kept differ from the areas found afresh"
+            );
         }
+        self.regions = Some((key, regions.clone()));
+        self.region_ids = ids;
+        regions
+    }
+
+    pub(super) fn regions_key(&self) -> RegionsKey {
+        RegionsKey {
+            geometry: self.doc.geometry(),
+            by_layer: self.doc.rules().regions_by_layer,
+            edges: self.fill_edges(),
+        }
+    }
+
+    /// The curves [`regions`](Self::regions) are found among, as of now.
+    pub(super) fn areas_input(&self, key: &RegionsKey) -> AreasInput {
         let bounding = &key.edges;
-        let (ids, curves): (Vec<EntityId>, Vec<Shape>) = self
+        let curves = self
             .doc
             .iter()
             .filter(|(id, e)| {
                 !e.kind.is_point() && (e.style == LineKind::Solid || bounding.contains(id))
             })
-            .filter_map(|(id, _)| Some((id, self.doc.shape(id)?)))
-            .unzip();
-        let regions = std::rc::Rc::new(drift_geom::regions::regions(&curves));
-        self.regions = Some((key, regions.clone()));
-        self.region_ids = std::rc::Rc::new(ids);
-        regions
+            .filter_map(|(id, e)| Some((id, self.doc.shape(id)?, e.layer)))
+            .collect();
+        AreasInput {
+            by_layer: key.by_layer,
+            curves,
+        }
     }
 
-    /// Closed areas found from each layer's curves on their own: an outline on one layer
-    /// isn't closed or cut by curves on another.
-    pub(super) fn regions_per_layer(
-        &mut self,
-        key: RegionsKey,
-    ) -> std::rc::Rc<Vec<drift_geom::regions::Region>> {
-        let mut by_layer: std::collections::BTreeMap<drift_core::LayerId, Vec<(EntityId, Shape)>> =
-            Default::default();
-        let bounding = &key.edges;
-        for (id, e) in self.doc.iter() {
-            if e.kind.is_point() || (e.style != LineKind::Solid && !bounding.contains(&id)) {
-                continue;
-            }
-            if let Some(shape) = self.doc.shape(id) {
-                by_layer.entry(e.layer).or_default().push((id, shape));
-            }
+    /// With `DRIFT_CHECK_REGIONS` set (a debugging aid), the analysis as kept (cluster by
+    /// cluster) is checked against the drawing analysed afresh, and any difference panics;
+    /// so are the areas, each time they are found (remembered, from a thread, with
+    /// centroids reused). Slow on a big drawing.
+    pub(crate) fn check_caches(&mut self) {
+        if !check_on() || self.areas.pending.is_some() || self.doc.in_transaction() {
+            return;
         }
-        let mut ids = Vec::new();
-        let mut all = Vec::new();
-        for (_, curves) in by_layer {
-            let offset = ids.len();
-            let shapes: Vec<Shape> = curves.iter().map(|(_, s)| *s).collect();
-            ids.extend(curves.iter().map(|(id, _)| *id));
-            for mut r in drift_geom::regions::regions(&shapes) {
-                // Curve indices into this layer's curves become indices into all of them.
-                for l in std::iter::once(&mut r.outer).chain(&mut r.holes) {
-                    for s in &mut l.sources {
-                        *s += offset;
-                    }
-                }
-                all.push(r);
-            }
-        }
-        let regions = std::rc::Rc::new(all);
-        self.regions = Some((key, regions.clone()));
-        self.region_ids = std::rc::Rc::new(ids);
-        regions
+        let mut full = drift_solver::analyze_with(&self.doc, self.lowering().as_deref());
+        full.redundant.sort();
+        let a = &self.analysis();
+        assert!(
+            self.analyzed == Some(self.doc.revision())
+                && a.converged == full.converged
+                && a.dof == full.dof
+                && a.dependent_equations == full.dependent_equations
+                && a.conflicts == full.conflicts
+                && a.redundant == full.redundant
+                && a.definitions == full.definitions,
+            "the analysis kept differs from the drawing's analysed afresh"
+        );
     }
 
     /// Construction curves that shape fills: an imported fill's edges, which don't print.
@@ -199,6 +202,174 @@ impl Editor {
     /// assistant is picking).
     pub fn regions_need_fill(&self) -> bool {
         self.doc.rules().regions_need_fill && !self.pick_any_area
+    }
+}
+
+/// Whether `DRIFT_CHECK_REGIONS` is set (see [`Editor::check_caches`]).
+fn check_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("DRIFT_CHECK_REGIONS").is_some())
+}
+
+/// [`Editor::regions`]: shared with the thread that finds them.
+pub type Regions = std::sync::Arc<Vec<drift_geom::regions::Region>>;
+
+/// The curves areas are found among: each with its shape and layer, in document order,
+/// and whether each layer's are taken on their own.
+pub(crate) struct AreasInput {
+    by_layer: bool,
+    curves: Vec<(EntityId, Shape, drift_core::LayerId)>,
+}
+
+impl AreasInput {
+    /// The same curves, to the bit.
+    fn same(&self, other: &AreasInput) -> bool {
+        self.by_layer == other.by_layer
+            && self.curves.len() == other.curves.len()
+            && self
+                .curves
+                .iter()
+                .zip(&other.curves)
+                .all(|(a, b)| a.0 == b.0 && a.2 == b.2 && drift_geom::same_shape(&a.1, &b.1))
+    }
+
+    /// The closed areas among these curves (`prior`: an earlier result, for its centroids),
+    /// and the entity of each curve index in their loops.
+    fn find(&self, prior: &[Region]) -> (Vec<EntityId>, Vec<Region>) {
+        if !self.by_layer {
+            let shapes: Vec<Shape> = self.curves.iter().map(|c| c.1).collect();
+            let ids = self.curves.iter().map(|c| c.0).collect();
+            return (ids, drift_geom::regions::regions_reusing(&shapes, prior));
+        }
+        // Each layer's curves on their own: an outline on one layer isn't closed or cut by
+        // curves on another.
+        let mut by_layer: std::collections::BTreeMap<drift_core::LayerId, Vec<(EntityId, Shape)>> =
+            Default::default();
+        for &(id, shape, layer) in &self.curves {
+            by_layer.entry(layer).or_default().push((id, shape));
+        }
+        let mut ids = Vec::new();
+        let mut all = Vec::new();
+        for (_, curves) in by_layer {
+            let offset = ids.len();
+            let shapes: Vec<Shape> = curves.iter().map(|(_, s)| *s).collect();
+            ids.extend(curves.iter().map(|(id, _)| *id));
+            for mut r in drift_geom::regions::regions_reusing(&shapes, prior) {
+                // Curve indices into this layer's curves become indices into all of them.
+                for l in std::iter::once(&mut r.outer).chain(&mut r.holes) {
+                    for s in &mut l.sources {
+                        *s += offset;
+                    }
+                }
+                all.push(r);
+            }
+        }
+        (ids, all)
+    }
+}
+
+type Found = (std::rc::Rc<Vec<EntityId>>, Regions);
+
+/// Areas found lately, by the curves they were found among (undo and redo go back to
+/// curves whose areas were found moments ago), and the thread finding the areas of an
+/// edit's curves while the edit's fills wait to follow them.
+#[derive(Default)]
+pub(crate) struct AreasState {
+    /// Most recent first.
+    memo: std::collections::VecDeque<(std::sync::Arc<AreasInput>, Found)>,
+    #[cfg(not(target_arch = "wasm32"))]
+    worker: Option<(std::sync::Arc<AreasInput>, Worker)>,
+    /// An edit committed before its fills followed it (see [`Editor::commit`]).
+    pub(crate) pending: Option<PendingFollow>,
+    /// Whether big edits find their areas off the edit path: `None` decides by the
+    /// drawing's size.
+    pub(crate) defer: Option<bool>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+type Worker = std::thread::JoinHandle<(Vec<EntityId>, Vec<Region>)>;
+
+/// An edit committed with its fills still to follow (they then join its undo step).
+pub(crate) struct PendingFollow {
+    /// The history as the commit left it: the step to amend is still the last one.
+    pub(crate) depth: usize,
+    pub(crate) recorded: u64,
+}
+
+impl AreasState {
+    /// How many results are kept: the current curves', and the last few before them.
+    const MEMO: usize = 3;
+
+    fn remember(&mut self, input: std::sync::Arc<AreasInput>, found: Found) {
+        self.memo.retain(|(i, _)| !i.same(&input));
+        self.memo.push_front((input, found));
+        self.memo.truncate(Self::MEMO);
+    }
+
+    /// Whether the areas among `input` are known (found before).
+    pub(crate) fn knows(&self, input: &AreasInput) -> bool {
+        self.memo.iter().any(|(i, _)| i.same(input))
+    }
+
+    /// The areas among `input`: as found before, from the thread finding them, or found
+    /// now (`prior`: the last areas found, for their centroids).
+    fn found(&mut self, input: AreasInput, prior: Option<&Regions>) -> Found {
+        if let Some(k) = self.memo.iter().position(|(i, _)| i.same(&input)) {
+            let hit = self.memo.remove(k).unwrap();
+            let out = hit.1.clone();
+            self.memo.push_front(hit);
+            return out;
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.worker.as_ref().is_some_and(|(i, _)| i.same(&input)) {
+            let (input, handle) = self.worker.take().unwrap();
+            if let Ok((ids, regions)) = handle.join() {
+                let out = (std::rc::Rc::new(ids), std::sync::Arc::new(regions));
+                self.remember(input, out.clone());
+                return out;
+            }
+        }
+        let (ids, regions) = input.find(prior.map_or(&[][..], |r| &r[..]));
+        let out = (std::rc::Rc::new(ids), std::sync::Arc::new(regions));
+        self.remember(std::sync::Arc::new(input), out.clone());
+        out
+    }
+
+    /// Start finding the areas among `input` on a thread (`prior`: the last areas found,
+    /// for their centroids). On the web, where there are no threads, they are found when
+    /// asked for.
+    pub(crate) fn start(&mut self, input: AreasInput, prior: Option<Regions>) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let input = std::sync::Arc::new(input);
+            let work = input.clone();
+            let handle = std::thread::Builder::new()
+                .name("areas".into())
+                .spawn(move || work.find(prior.as_deref().map_or(&[][..], |r| &r[..])));
+            match handle {
+                Ok(handle) => self.worker = Some((input, handle)),
+                Err(e) => log::warn!("couldn't start finding areas on a thread: {e}"),
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        let _ = (input, prior);
+    }
+
+    /// Whether no thread is at work any more (its areas, when it is done, are kept with
+    /// the others).
+    pub(crate) fn worker_done(&mut self) -> bool {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if self.worker.as_ref().is_some_and(|(_, h)| h.is_finished()) {
+                let (input, handle) = self.worker.take().unwrap();
+                if let Ok((ids, regions)) = handle.join() {
+                    self.remember(input, (std::rc::Rc::new(ids), std::sync::Arc::new(regions)));
+                }
+            }
+            self.worker.is_none()
+        }
+        #[cfg(target_arch = "wasm32")]
+        true
     }
 }
 

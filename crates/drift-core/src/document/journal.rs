@@ -305,6 +305,29 @@ impl Document {
         }
     }
 
+    /// Open a transaction again on `tx`, the one just committed, as if it were still open:
+    /// the document must be as `tx` left it. What is changed now and then committed comes
+    /// out as one step with it (an edit's fills followed after it was committed).
+    pub fn reopen(&mut self, tx: &Transaction) {
+        debug_assert!(self.journal.is_none(), "a transaction is open");
+        self.begin();
+        if let Some(journal) = &mut self.journal {
+            for (key, before, _) in &tx.changes {
+                journal.insert(*key, before.clone());
+            }
+        }
+    }
+
+    /// Make `tx`'s changes again inside the open transaction, over the document as it is now:
+    /// each is recorded as a change from what it finds.
+    pub fn replay(&mut self, tx: &Transaction) {
+        for (key, _, after) in &tx.changes {
+            self.record_touch(*key);
+            self.restore(*key, after.clone());
+        }
+        self.structure = next_structure();
+    }
+
     /// Abandon the open transaction, restoring every touched entity.
     pub fn rollback(&mut self) {
         if let Some(journal) = self.journal.take() {
@@ -705,6 +728,18 @@ impl History {
                 self.recorded += 1;
             }
         }
+    }
+
+    /// Take the most recent undo step off the stack without undoing it, to amend it (see
+    /// [`Document::reopen`]) and [`put_back`](Self::put_back).
+    pub fn take_last(&mut self) -> Option<Transaction> {
+        self.undo.pop()
+    }
+
+    /// Put back the step [`take_last`](Self::take_last) took: still the same one step, with
+    /// the redo stack as it was.
+    pub fn put_back(&mut self, tx: Transaction) {
+        self.undo.push(tx);
     }
 
     pub fn can_undo(&self) -> bool {

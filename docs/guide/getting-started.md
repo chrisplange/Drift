@@ -30,9 +30,11 @@ The first time, macOS Gatekeeper may refuse to open it. Right-click (or Control-
 **Drift** in Applications and choose **Open**, then **Open** again. On recent macOS versions
 you may need **System Settings → Privacy & Security → Open Anyway** instead.
 
-Double-clicking a `.drift` file doesn't open it in Drift on macOS yet. Use **File → Open…**,
-or drop the file on Drift's window. (Drop a DWG, DXF, SVG, PDF or Illustrator file and Drift
-asks whether to open it as a new drawing or import it into the one that's open.)
+Double-click a `.drift` file in Finder to open it in Drift, or use **File → Open…**, or drop
+the file on Drift's window. A file opened from Finder while Drift is open goes into the
+window if it holds a new drawing you haven't touched, else into a window of its own. (Drop a
+DWG, DXF, SVG, PDF or Illustrator file and Drift asks whether to open it as a new drawing or
+import it into the one that's open.)
 
 ### Linux
 

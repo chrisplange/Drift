@@ -51,19 +51,49 @@ impl DriftApp {
                 self.start_add_view(id);
                 return;
             }
+            // Esc lets go of several picked views first, then returns to the model.
             if ctx.input(|i| i.key_pressed(Key::Escape)) {
-                self.sheet_preview = false;
+                if self.view_set.take().is_some() {
+                    self.sheet_pick = crate::app::sheet_editor::SheetPick::Paper;
+                } else {
+                    self.sheet_preview = false;
+                }
             }
             if ctx.input(|i| i.key_pressed(Key::F) && i.modifiers.shift_only()) {
                 self.preview.zoom = 0.0;
             }
-            // Delete takes the picked view off the sheet (it stays in the model).
+            // Ctrl/⌘+A picks every view on the sheet.
+            if ctx.input(|i| i.modifiers.command_only() && i.key_pressed(Key::A)) {
+                self.pick_all_views();
+            }
+            // Delete takes the picked views off the sheet (they stay in the model).
             if ctx.input(|i| {
                 i.modifiers.is_none()
                     && (i.key_pressed(Key::Delete) || i.key_pressed(Key::Backspace))
             }) && let Some(id) = self.current_sheet()
             {
-                self.remove_viewport(id);
+                self.remove_picked_views(id);
+            }
+            // Arrows nudge the picked views a millimetre of paper (ten with Shift).
+            let mut nudge = DVec2::ZERO;
+            ctx.input(|i| {
+                if i.modifiers.command || i.modifiers.alt {
+                    return;
+                }
+                for (key, dir) in [
+                    (Key::ArrowLeft, DVec2::NEG_X),
+                    (Key::ArrowRight, DVec2::X),
+                    (Key::ArrowUp, DVec2::Y),
+                    (Key::ArrowDown, DVec2::NEG_Y),
+                ] {
+                    nudge += dir * i.num_presses(key) as f64;
+                }
+                if i.modifiers.shift {
+                    nudge *= 10.0;
+                }
+            });
+            if nudge != DVec2::ZERO && self.view_drag.is_none() {
+                self.nudge_views(nudge);
             }
             return;
         }
@@ -156,6 +186,7 @@ impl DriftApp {
                 || self.selected_leader.take().is_some()
                 || self.selected_constraint.take().is_some()
                 || self.editor.selected_annotation.take().is_some()
+                || self.view_set.take().is_some()
                 || self.picked_view.take().is_some()
             {
                 // First Esc just clears a picked relation, dimension, annotation or view.
@@ -351,6 +382,17 @@ impl DriftApp {
     /// A picked view goes, from the model and its sheets. One on sheets asks first, in the
     /// Sheets tab.
     pub(crate) fn delete_picked_view(&mut self, view: drift_core::ViewId) {
+        // Several picked on a sheet: they go together, after a yes in the Inspector.
+        if self.sheet_preview
+            && let Some(sheet) = self
+                .current_sheet()
+                .and_then(|id| self.editor.doc.sheet(id))
+            && self.picked_views(sheet).len() > 1
+        {
+            self.confirm_delete_set = true;
+            self.show_panel(crate::dock::Panel::Inspector);
+            return;
+        }
         if self.editor.doc.sheets_showing(view).is_empty() {
             self.delete_view(view);
         } else {

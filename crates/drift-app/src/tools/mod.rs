@@ -18,7 +18,7 @@ mod annotate;
 mod arc;
 mod base_point;
 mod circle;
-mod corners;
+pub(crate) mod corners;
 mod curve_ops;
 mod dimension;
 mod ellipse;
@@ -517,6 +517,11 @@ pub trait Tool {
 
     /// Entities that must not be snapped to (e.g. the geometry being dragged).
     fn snap_excludes(&self, _ed: &Editor, _id: EntityId) -> bool {
+        false
+    }
+
+    /// Copies of blocks that must not be snapped to (copies moving with the selection).
+    fn snap_excludes_copy(&self, _id: drift_core::InstanceId) -> bool {
         false
     }
 

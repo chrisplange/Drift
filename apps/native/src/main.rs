@@ -5,6 +5,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use eframe::egui;
 
+#[cfg(target_os = "macos")]
+mod macos;
+
 /// The window was last left maximised: it is created at that size, and maximised once it has
 /// something to show (see `DriftApp::maximize_when_shown`).
 static START_MAXIMIZED: AtomicBool = AtomicBool::new(false);
@@ -45,6 +48,9 @@ fn main() -> eframe::Result {
     } else {
         "Drift"
     };
+    // Finder hands files over as an event, not on the command line.
+    #[cfg(target_os = "macos")]
+    macos::listen_for_opened_files();
     eframe::run_native(
         app_id,
         options,
@@ -53,7 +59,8 @@ fn main() -> eframe::Result {
             if START_MAXIMIZED.load(Ordering::Relaxed) {
                 app.maximize_when_shown();
             }
-            // A sketch named on the command line (double-clicked in the file manager) opens.
+            // A sketch named on the command line (double-clicked in the file manager on Windows
+            // and Linux, or a window started for one) opens.
             if let Some(path) = std::env::args_os().nth(1).map(std::path::PathBuf::from)
                 && path.is_file()
             {

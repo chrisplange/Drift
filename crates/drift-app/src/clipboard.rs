@@ -1,14 +1,14 @@
 //! Copy, cut and paste. The selection is copied as a small Drift document (text, so it
 //! travels on the system clipboard between windows and sessions): the curves with their
 //! points, the relations and dimensions among them, fills of copied areas, block copies
-//! (with their blocks) and sketch text. Layers and blocks are matched by name where the
-//! copy lands, and made there if missing.
+//! (with their blocks), sketch text, and groups copied whole (as new groups). Layers and
+//! blocks are matched by name where the copy lands, and made there if missing.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use drift_core::{
     AnnotationId, AnnotationRef, BlockId, Bounds, Constraint, ConstraintId, DVec2, Document,
-    EntityId, EntityKind, FillId, InstanceId, LayerId, TextId,
+    EntityId, EntityKind, FillId, Group, GroupId, InstanceId, LayerId, TextId,
 };
 
 use crate::editor::Editor;
@@ -58,6 +58,63 @@ fn layer_in(
     let to = found.unwrap_or(LayerId::DEFAULT);
     map.insert(layer, to);
     to
+}
+
+/// `name`, or `name 2`, `name 3`… (counting on from a number it ends with) if one of `taken`
+/// has it.
+fn numbered_name<'a>(name: &str, taken: impl Iterator<Item = &'a str>) -> String {
+    let taken: BTreeSet<&str> = taken.collect();
+    let name = name.trim();
+    if !taken.contains(name) {
+        return name.to_owned();
+    }
+    let (stem, from) = match name.rsplit_once(' ') {
+        Some((stem, n)) if !stem.is_empty() => match n.parse::<u32>() {
+            Ok(n) => (stem, n + 1),
+            Err(_) => (name, 2),
+        },
+        _ => (name, 2),
+    };
+    (from..)
+        .map(|n| format!("{stem} {n}"))
+        .find(|n| !taken.contains(n.as_str()))
+        .expect("a free name")
+}
+
+/// New groups in `dst` for those of `groups` whose members were all copied (`copy` gives
+/// each one's copy), named like the original with the next free number ("Panel" → "Panel 2").
+/// With `same` (copies in the same document), a member that is its own copy, such as a line
+/// on a mirror's axis, stays only in the original's group. Returns the new groups.
+pub fn copy_groups(
+    groups: impl IntoIterator<Item = Group>,
+    dst: &mut Document,
+    copy: impl Fn(EntityId) -> Option<EntityId>,
+    same: bool,
+) -> Vec<GroupId> {
+    let mut made = Vec::new();
+    for g in groups {
+        let Some(copies) = g
+            .members
+            .iter()
+            .map(|&e| copy(e).map(|c| (e, c)))
+            .collect::<Option<Vec<_>>>()
+        else {
+            continue;
+        };
+        let members: BTreeSet<EntityId> = copies
+            .into_iter()
+            .filter(|(e, c)| !same || e != c)
+            .map(|(_, c)| c)
+            .collect();
+        if members.is_empty() {
+            continue;
+        }
+        let name = numbered_name(&g.name, dst.groups().map(|(_, g)| g.name.as_str()));
+        if let Ok(id) = dst.add_group(Group { name, members }) {
+            made.push(id);
+        }
+    }
+    made
 }
 
 /// Copy `picked` from `src` into `dst`, moved by `offset`. Call inside a transaction on
@@ -136,6 +193,13 @@ pub fn copy_into(
             out.entities.insert(id, copy);
         }
     }
+    // Groups copied whole are groups of the copies.
+    copy_groups(
+        src.groups().map(|(_, g)| g.clone()),
+        dst,
+        |e| out.entities.get(&e).copied(),
+        same,
+    );
     // Relations and dimensions entirely within the copied geometry come along, except
     // fixed positions (the copy would be pinned where the original is).
     let map = &out.entities;
@@ -561,5 +625,50 @@ mod tests {
         assert!(!is_fragment("hello"));
         assert!(ed.paste("hello", None).is_err());
         assert!(Editor::default().copy_selection().is_none());
+    }
+
+    #[test]
+    fn groups_copied_whole_are_new_groups_and_a_part_of_one_is_loose() {
+        assert_eq!(numbered_name("Panel", ["Panel"].into_iter()), "Panel 2");
+        assert_eq!(
+            numbered_name("Panel 2", ["Panel", "Panel 2"].into_iter()),
+            "Panel 3"
+        );
+        assert_eq!(numbered_name("Desk", ["Panel"].into_iter()), "Desk");
+        let mut ed = sketch();
+        let lines: Vec<EntityId> = ed
+            .doc
+            .iter()
+            .filter(|(_, e)| !e.kind.is_point())
+            .map(|(id, _)| id)
+            .collect();
+        ed.selection = lines[..2].iter().copied().collect();
+        let a = ed.make_group().unwrap();
+        ed.selection = lines[2..].iter().copied().collect();
+        let b = ed.make_group().unwrap();
+        // Both groups, copied and pasted: two new groups of the copies.
+        ed.selection = lines.iter().copied().collect();
+        let text = ed.copy_selection().unwrap();
+        ed.paste(&text, Some(v(100.0, 0.0))).unwrap();
+        let names: Vec<String> = ed.doc.groups().map(|(_, g)| g.name.clone()).collect();
+        assert_eq!(names, ["Group 1", "Group 2", "Group 3", "Group 4"]);
+        for (id, g) in ed.doc.groups() {
+            assert_eq!(g.members.len(), 2);
+            if id != a && id != b {
+                assert!(g.members.iter().all(|m| ed.selection.contains(m)));
+            }
+        }
+        assert_eq!(
+            ed.doc.group(a).unwrap().members,
+            lines[..2].iter().copied().collect()
+        );
+        // One undo step takes the copies and their groups.
+        ed.undo();
+        assert_eq!(ed.doc.groups().count(), 2);
+        // Part of a group: loose copies.
+        ed.selection = [lines[0]].into();
+        ed.duplicate_selection();
+        assert_eq!(ed.doc.groups().count(), 2);
+        assert_eq!(ed.doc.group_of(*ed.selection.first().unwrap()), None);
     }
 }

@@ -80,6 +80,20 @@ pub(crate) struct ViewDrag {
     grip: ViewGrip,
     was: PlacedView,
     from: egui::Pos2,
+    /// The other picked views moving with it (by index, as they were).
+    group: Vec<(usize, PlacedView)>,
+}
+
+/// How far `paper` may move views whose frames span `frames` and keep them all inside the
+/// sheet's drawing area (a set wider than the area keeps to its lower side).
+fn contain_set(frames: drift_core::Bounds, sheet: &Sheet, paper: DVec2) -> DVec2 {
+    let area = drift_draft::sheet::drawing_area(sheet);
+    let mut paper = paper;
+    for k in 0..2 {
+        let (lo, hi) = (area.min[k] - frames.min[k], area.max[k] - frames.max[k]);
+        paper[k] = if lo <= hi { paper[k].clamp(lo, hi) } else { lo };
+    }
+    paper
 }
 
 /// The smallest a view's frame can be made (paper mm), and how near a handle counts (points).
@@ -258,14 +272,10 @@ impl DriftApp {
         crate::tools::view::next_view_name(&self.editor.doc)
     }
 
-    /// A new sheet with a new view of the whole drawing on it, filling the space clear of the
-    /// title block.
+    /// A new, empty sheet: views go on it from the Views list or with V (Add view).
     pub(crate) fn add_sheet(&mut self) -> SheetId {
         let n = self.editor.doc.sheets().count() + 1;
         let mut sheet = self.fresh_sheet(&format!("Sheet {n}"));
-        let (mut view, mut port) =
-            crate::output::sheet_view(self.fit_bounds(), &sheet, self.imperial());
-        view.name = self.next_view_name();
         self.editor.doc.begin();
         // The first sheet names the project after the file: every sheet's title.
         if !sheet.fields.title.is_empty() {
@@ -273,13 +283,33 @@ impl DriftApp {
             project.name = std::mem::take(&mut sheet.fields.title);
             self.editor.doc.set_project(project);
         }
-        port.view = self.editor.doc.add_view(view);
-        sheet.viewports.push(port);
         let id = self.editor.doc.add_sheet(sheet);
         self.editor.commit("New sheet");
         self.active_sheet = Some(id);
         self.sheet_view = 0;
         id
+    }
+
+    /// A new view of the whole drawing on sheet `id`, filling the space clear of the title
+    /// block, picked: one undo step.
+    pub(crate) fn add_whole_view(&mut self, id: SheetId) {
+        let Some(mut sheet) = self.editor.doc.sheet(id).cloned() else {
+            return;
+        };
+        let (mut view, mut port) =
+            crate::output::sheet_view(self.fit_bounds(), &sheet, self.imperial());
+        view.name = self.next_view_name();
+        self.editor.doc.begin();
+        let added = self.editor.doc.add_view(view);
+        port.view = added;
+        sheet.viewports.push(port);
+        let index = sheet.viewports.len() - 1;
+        self.editor.doc.set_sheet(id, sheet);
+        self.editor.commit("Add view");
+        self.sheet_view = index;
+        self.picked_view = Some(added);
+        self.view_set = None;
+        self.sheet_pick = crate::app::sheet_editor::SheetPick::View;
     }
 
     /// Change a sheet, and the picked view on it (`view`: its index and its new state).
@@ -1410,6 +1440,137 @@ impl DriftApp {
         self.sheet_view.min(sheet.viewports.len().saturating_sub(1))
     }
 
+    /// The views picked on the sheet shown, by index: several after Shift/Ctrl-click, a box
+    /// on the paper or Select all, else the current one alone, or none with the paper picked.
+    pub(crate) fn picked_views(&self, sheet: &Sheet) -> std::collections::BTreeSet<usize> {
+        let n = sheet.viewports.len();
+        if self.sheet_pick != crate::app::sheet_editor::SheetPick::View || n == 0 {
+            return Default::default();
+        }
+        let current = self.current_view(sheet);
+        match &self.view_set {
+            Some((id, set)) if Some(*id) == self.current_sheet() && set.contains(&current) => {
+                set.iter().copied().filter(|i| *i < n).collect()
+            }
+            _ => [current].into(),
+        }
+    }
+
+    /// Pick `set` (indices of views on sheet `id`), `current` the one the Inspector and
+    /// handles follow; an empty set picks the paper.
+    pub(crate) fn pick_views(
+        &mut self,
+        id: SheetId,
+        views: &[PlacedView],
+        set: std::collections::BTreeSet<usize>,
+        current: usize,
+    ) {
+        use crate::app::sheet_editor::SheetPick;
+        self.confirm_delete_set = false;
+        let Some(&first) = set.first() else {
+            self.view_set = None;
+            self.sheet_pick = SheetPick::Paper;
+            return;
+        };
+        let current = if set.contains(&current) {
+            current
+        } else {
+            first
+        };
+        self.sheet_view = current;
+        self.picked_view = views.get(current).map(|v| v.id);
+        self.sheet_pick = SheetPick::View;
+        self.view_set = (set.len() > 1).then_some((id, set));
+    }
+
+    /// Pick every view on the current sheet (Select all on a sheet).
+    pub(crate) fn pick_all_views(&mut self) {
+        if let Some(id) = self.current_sheet()
+            && let Some(sheet) = self.editor.doc.sheet(id)
+        {
+            let views = self.editor.doc.placed_views(sheet);
+            let current = self.sheet_view;
+            self.pick_views(id, &views, (0..views.len()).collect(), current);
+        }
+    }
+
+    /// Move the picked views on the current sheet by `paper` millimetres (arrow keys), kept
+    /// inside the drawing area: one undo step.
+    pub(crate) fn nudge_views(&mut self, paper: DVec2) {
+        let Some(id) = self.current_sheet() else {
+            return;
+        };
+        let Some(sheet) = self.editor.doc.sheet(id).cloned() else {
+            return;
+        };
+        let picked = self.picked_views(&sheet);
+        if picked.is_empty() {
+            return;
+        }
+        let views = self.editor.doc.placed_views(&sheet);
+        let frames: drift_core::Bounds = picked.iter().map(|i| views[*i].frame.bounds()).collect();
+        let paper = contain_set(frames, &sheet, paper);
+        if paper == DVec2::ZERO {
+            return;
+        }
+        self.editor.doc.begin();
+        for &i in &picked {
+            let moved = dragged_view(&views[i], ViewGrip::Move, paper);
+            self.editor.doc.set_placed_view(id, i, &moved);
+        }
+        self.editor.commit(if picked.len() == 1 {
+            "Move view on sheet"
+        } else {
+            "Move views on sheet"
+        });
+    }
+
+    /// Take the picked views off sheet `id` (they stay in the model): one undo step.
+    pub(crate) fn remove_picked_views(&mut self, id: SheetId) {
+        let Some(mut sheet) = self.editor.doc.sheet(id).cloned() else {
+            return;
+        };
+        let picked = self.picked_views(&sheet);
+        if picked.len() <= 1 {
+            self.remove_viewport(id);
+            return;
+        }
+        for i in picked.iter().rev() {
+            sheet.viewports.remove(*i);
+        }
+        self.editor.doc.begin();
+        self.editor.doc.set_sheet(id, sheet);
+        self.editor.commit("Remove views from sheet");
+        self.sheet_view = picked.first().map_or(0, |i| i.saturating_sub(1));
+        self.view_set = None;
+        self.sheet_pick = crate::app::sheet_editor::SheetPick::Paper;
+    }
+
+    /// Delete the picked views from the model (and so from every sheet): one undo step.
+    pub(crate) fn delete_picked_views(&mut self) {
+        let Some(sheet) = self
+            .current_sheet()
+            .and_then(|id| self.editor.doc.sheet(id))
+        else {
+            return;
+        };
+        let views = self.editor.doc.placed_views(sheet);
+        let gone: Vec<ViewId> = self
+            .picked_views(sheet)
+            .iter()
+            .map(|i| views[*i].id)
+            .collect();
+        self.editor.doc.begin();
+        for v in &gone {
+            self.editor.doc.remove_view(*v);
+        }
+        self.editor.commit("Delete views");
+        self.picked_view = None;
+        self.view_set = None;
+        self.confirm_delete_set = false;
+        self.sheet_pick = crate::app::sheet_editor::SheetPick::Paper;
+    }
+
     /// A view's frame on screen.
     fn view_rect(&self, rect: egui::Rect, view: &PlacedView) -> egui::Rect {
         let b = view.frame.bounds();
@@ -1449,7 +1610,9 @@ impl DriftApp {
         alt: bool,
     ) -> Option<(usize, ViewGrip)> {
         let picked = self.current_view(sheet);
-        if let Some(v) = views.get(picked) {
+        if let Some(v) = views.get(picked)
+            && self.picked_views(sheet).len() <= 1
+        {
             let frame = self.view_rect(rect, v);
             if let Some((_, (dx, dy))) = Self::view_handles(frame)
                 .into_iter()
@@ -1489,54 +1652,133 @@ impl DriftApp {
         views: &[PlacedView],
     ) {
         let alt = ui.input(|i| i.modifiers.alt);
+        // Shift or Ctrl/⌘ adds to the views picked (or takes one out).
+        let adding = ui.input(|i| i.modifiers.shift || i.modifiers.command);
         if response.drag_started_by(PointerButton::Primary)
             && let Some(from) = ui.input(|i| i.pointer.press_origin())
-            && let Some((index, grip)) = self.view_grip_at(rect, sheet, views, from, alt)
-            && grip != ViewGrip::Fixed
         {
-            self.sheet_view = index;
-            self.picked_view = Some(views[index].id);
-            self.sheet_pick = crate::app::sheet_editor::SheetPick::View;
-            self.view_drag = Some(ViewDrag {
-                sheet: id,
-                index,
-                grip,
-                was: views[index].clone(),
-                from,
-            });
-            self.editor.doc.begin();
+            match self.view_grip_at(rect, sheet, views, from, alt) {
+                Some((index, grip)) if grip != ViewGrip::Fixed => {
+                    // A move of one of several picked views takes them all along.
+                    let picked = self.picked_views(sheet);
+                    let group: Vec<(usize, PlacedView)> =
+                        if grip == ViewGrip::Move && picked.len() > 1 && picked.contains(&index) {
+                            picked
+                                .iter()
+                                .filter(|i| **i != index)
+                                .map(|i| (*i, views[*i].clone()))
+                                .collect()
+                        } else {
+                            Vec::new()
+                        };
+                    let set = if group.is_empty() {
+                        [index].into()
+                    } else {
+                        picked
+                    };
+                    self.pick_views(id, views, set, index);
+                    self.view_drag = Some(ViewDrag {
+                        sheet: id,
+                        index,
+                        grip,
+                        was: views[index].clone(),
+                        from,
+                        group,
+                    });
+                    self.editor.doc.begin();
+                }
+                // On the paper (or a view filling the drawing area): a box to pick views by.
+                _ => self.view_box = Some((from, from)),
+            }
+        }
+        if let Some((start, _)) = self.view_box {
+            let end = ui.input(|i| i.pointer.latest_pos()).unwrap_or(start);
+            self.view_box = Some((start, end));
+            if !response.dragged_by(PointerButton::Primary) {
+                self.view_box = None;
+                // Left to right: views wholly inside; right to left: views it touches too.
+                let area = egui::Rect::from_two_pos(start, end);
+                let crossing = end.x < start.x;
+                let hits = views.iter().enumerate().filter(|(_, v)| {
+                    let frame = self.view_rect(rect, v);
+                    if crossing {
+                        area.intersects(frame)
+                    } else {
+                        area.contains_rect(frame)
+                    }
+                });
+                let mut set = if adding {
+                    self.picked_views(sheet)
+                } else {
+                    Default::default()
+                };
+                set.extend(hits.map(|(i, _)| i));
+                let current = self.sheet_view;
+                self.pick_views(id, views, set, current);
+                self.show_panel(crate::dock::Panel::Inspector);
+            }
         }
         if let Some(drag) = self.view_drag.clone() {
             if let Some(pos) = response.interact_pointer_pos()
                 && drag.index < views.len()
+                && drag.group.iter().all(|(i, _)| *i < views.len())
             {
                 let d = pos - drag.from;
                 let mut paper =
                     DVec2::new(f64::from(d.x), -f64::from(d.y)) / f64::from(self.preview.zoom);
-                // Edges, middles and drawings line up with the other views' (Ctrl: freely).
+                let free = ui.input(|i| i.modifiers.command);
+                // Edges, middles and drawings line up with the other views' (Ctrl: freely);
+                // the views moving along aren't lined up with.
                 self.view_guides.clear();
-                if !ui.input(|i| i.modifiers.command) {
+                if !free {
                     let tol = 6.0 / f64::from(self.preview.zoom);
+                    let moving = |i: usize| drag.group.iter().any(|(g, _)| *g == i);
+                    let others: Vec<PlacedView> = views
+                        .iter()
+                        .enumerate()
+                        .filter(|(i, _)| !moving(*i))
+                        .map(|(_, v)| v.clone())
+                        .collect();
+                    let index = (0..drag.index).filter(|i| !moving(*i)).count();
                     let (snapped, guides) = crate::app::view_align::snap_drag(
-                        sheet, views, drag.index, &drag.was, drag.grip, paper, tol,
+                        sheet, &others, index, &drag.was, drag.grip, paper, tol,
                     );
                     paper = snapped;
                     self.view_guides = guides;
                 }
-                let mut moved = dragged_view(&drag.was, drag.grip, paper);
-                // Views stay on the paper, inside the border (Ctrl: anywhere).
-                if !ui.input(|i| i.modifiers.command) {
-                    contain(&mut moved, sheet, drag.grip);
+                if !drag.group.is_empty() {
+                    // Several views: they keep their places relative to each other, and all
+                    // stay inside the border (Ctrl: anywhere).
+                    if !free {
+                        let frames: drift_core::Bounds = std::iter::once(&drag.was)
+                            .chain(drag.group.iter().map(|(_, v)| v))
+                            .map(|v| v.frame.bounds())
+                            .collect();
+                        paper = contain_set(frames, sheet, paper);
+                    }
+                    for (i, was) in std::iter::once((drag.index, &drag.was))
+                        .chain(drag.group.iter().map(|(i, v)| (*i, v)))
+                    {
+                        let moved = dragged_view(was, ViewGrip::Move, paper);
+                        self.editor.doc.set_placed_view(drag.sheet, i, &moved);
+                    }
+                } else {
+                    let mut moved = dragged_view(&drag.was, drag.grip, paper);
+                    // Views stay on the paper, inside the border (Ctrl: anywhere).
+                    if !free {
+                        contain(&mut moved, sheet, drag.grip);
+                    }
+                    self.editor
+                        .doc
+                        .set_placed_view(drag.sheet, drag.index, &moved);
                 }
-                self.editor
-                    .doc
-                    .set_placed_view(drag.sheet, drag.index, &moved);
             }
             if !response.dragged_by(PointerButton::Primary) {
                 self.view_drag = None;
                 self.view_guides.clear();
                 self.editor.commit(match drag.grip {
                     ViewGrip::Pan => "Move sheet view",
+                    ViewGrip::Move if !drag.group.is_empty() => "Move views on sheet",
                     ViewGrip::Move | ViewGrip::Fixed => "Move view on sheet",
                     ViewGrip::Resize(..) => "Resize view",
                 });
@@ -1556,13 +1798,24 @@ impl DriftApp {
                     !drift_draft::sheet::fills_drawing_area(sheet, v.frame.bounds())
                         || crate::app::sheet_editor::on_drawing(v, model, at)
                 });
+            let primary = response.clicked_by(PointerButton::Primary);
             match hit {
-                Some((index, _)) => {
-                    self.sheet_view = index;
-                    self.picked_view = Some(views[index].id);
-                    self.sheet_pick = crate::app::sheet_editor::SheetPick::View;
+                // Shift or Ctrl/⌘: in or out of the views picked.
+                Some((index, _)) if primary && adding => {
+                    let mut set = self.picked_views(sheet);
+                    if !set.remove(&index) {
+                        set.insert(index);
+                    }
+                    self.pick_views(id, views, set, index);
                 }
-                None => self.sheet_pick = crate::app::sheet_editor::SheetPick::Paper,
+                // A right-click on one of several picked views keeps them all.
+                Some((index, _)) if !primary && self.picked_views(sheet).contains(&index) => {
+                    let set = self.picked_views(sheet);
+                    self.pick_views(id, views, set, index);
+                }
+                Some((index, _)) => self.pick_views(id, views, [index].into(), index),
+                None if primary && adding => {}
+                None => self.pick_views(id, views, Default::default(), 0),
             }
             if response.clicked_by(PointerButton::Primary) {
                 self.show_panel(crate::dock::Panel::Inspector);
@@ -1669,10 +1922,17 @@ impl DriftApp {
         dark: bool,
     ) {
         let accent = theme::accent(dark);
-        let picked = match self.sheet_pick {
-            crate::app::sheet_editor::SheetPick::View => self.current_view(sheet),
-            crate::app::sheet_editor::SheetPick::Paper => usize::MAX,
-        };
+        let picked = self.picked_views(sheet);
+        if let Some((a, b)) = self.view_box {
+            let area = egui::Rect::from_two_pos(a, b);
+            painter.rect_filled(area, 0.0, accent.gamma_multiply(0.08));
+            painter.rect_stroke(
+                area,
+                0.0,
+                egui::Stroke::new(1.0, accent),
+                egui::StrokeKind::Middle,
+            );
+        }
         let hover = painter
             .ctx()
             .input(|i| i.pointer.hover_pos())
@@ -1706,14 +1966,20 @@ impl DriftApp {
         }
         for (i, view) in views.iter().enumerate() {
             let frame = self.view_rect(rect, view);
-            if i == picked {
+            if picked.contains(&i) {
                 painter.rect_stroke(
                     frame,
                     0.0,
                     egui::Stroke::new(1.5, accent),
                     egui::StrokeKind::Outside,
                 );
-                for (at, _) in Self::view_handles(frame) {
+                // Resize handles for one picked view only.
+                let handles = if picked.len() == 1 {
+                    Self::view_handles(frame).to_vec()
+                } else {
+                    Vec::new()
+                };
+                for (at, _) in handles {
                     let knob = egui::Rect::from_center_size(at, egui::Vec2::splat(7.0));
                     painter.rect_filled(knob, 1.0, egui::Color32::WHITE);
                     painter.rect_stroke(
@@ -1789,6 +2055,7 @@ impl DriftApp {
             self.picked_view = None;
         }
         self.confirm_delete_view = None;
+        self.view_set = None;
     }
 
     /// Show a view's crop on the canvas, in the model.
@@ -2205,7 +2472,7 @@ impl DriftApp {
         how.is_some_and(|a| align_view(views, picked, with, a))
     }
 
-    fn paper_to_preview(&self, rect: egui::Rect, p: DVec2) -> egui::Pos2 {
+    pub(crate) fn paper_to_preview(&self, rect: egui::Rect, p: DVec2) -> egui::Pos2 {
         let d = (p - self.preview.center) * f64::from(self.preview.zoom);
         rect.center() + egui::vec2(d.x as f32, -d.y as f32)
     }

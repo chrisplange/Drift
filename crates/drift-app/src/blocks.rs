@@ -70,8 +70,14 @@ impl Editor {
 
     /// The nearest snap point of a copy of a block within `tol` of `p`: its box's corners,
     /// edge middles and centre, its insertion point, and its curves' ends, middles and
-    /// centres.
-    pub fn block_snap(&self, p: DVec2, tol: f64) -> Option<drift_geom::Snap> {
+    /// centres. Copies `exclude` names are passed over, and so is any copy whose box is
+    /// further than `tol` from `p`.
+    pub fn block_snap(
+        &self,
+        p: DVec2,
+        tol: f64,
+        exclude: impl Fn(InstanceId) -> bool,
+    ) -> Option<drift_geom::Snap> {
         use drift_geom::{Snap, SnapKind};
         let editing = self.block_edit.map(|e| e.instance);
         let mut best: Option<(Snap, f64)> = None;
@@ -93,7 +99,10 @@ impl Editor {
             }
         };
         for (id, copy) in self.doc.instances() {
-            if Some(id) == editing || !self.instance_visible(copy) || !self.instance_snappable(copy)
+            if Some(id) == editing
+                || exclude(id)
+                || !self.instance_visible(copy)
+                || !self.instance_snappable(copy)
             {
                 continue;
             }

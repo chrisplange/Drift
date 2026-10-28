@@ -20,6 +20,12 @@ pub(super) enum SelectDrag {
     Fillet {
         arc: EntityId,
     },
+    /// Alt-dragging a side of an offset: the offset's distance (`var`) follows the pointer's
+    /// distance from the curve that side is measured from, and every side moves.
+    Offset {
+        family: Vec<ConstraintId>,
+        from: EntityId,
+    },
     /// Dragging a circle's edge: the radius follows the pointer (drag its centre to move it).
     Radius {
         circle: EntityId,
@@ -399,13 +405,14 @@ impl SelectTool {
         true
     }
 
-    /// The points moving with a drag or grab (never snap targets).
-    fn moving(&self) -> Option<(&BTreeSet<EntityId>, &[EntityId])> {
+    /// The points moving with a drag or grab (never snap targets): the defining points of
+    /// everything moving.
+    fn moving(&self) -> Option<&BTreeSet<EntityId>> {
         if let Some(grab) = &self.grab {
-            return (!grab.picking_base).then_some((&grab.points, grab.ids.as_slice()));
+            return (!grab.picking_base).then_some(&grab.points);
         }
         if let Some(spin) = &self.spin {
-            return (!spin.picking()).then_some((&spin.points, spin.ids.as_slice()));
+            return (!spin.picking()).then_some(&spin.points);
         }
         None
     }
@@ -611,6 +618,11 @@ impl Tool for SelectTool {
             }
             Some(SelectDrag::Radius { .. }) => {
                 "Resizing the circle (drag its centre to move it) · Esc to cancel".into()
+            }
+            Some(SelectDrag::Offset { .. }) => {
+                "Changing the offset in steps: every side follows · Alt: freely · Esc to \
+                 cancel"
+                    .into()
             }
             Some(SelectDrag::Fillet { .. }) => {
                 "Resizing the fillet in steps (Alt: freely) · Esc to cancel".into()
@@ -967,6 +979,15 @@ impl Tool for SelectTool {
                 }
                 let target = target_at(ed, &p, Purpose::DragStart);
                 match target {
+                    // A side of an offset, on its own (with more picked, a drag moves the
+                    // lot): change the offset.
+                    Some(Pick::Geometry(Target::Entity(id)))
+                        if (ed.selection.is_empty() || ed.selection.iter().eq([&id]))
+                            && let Some((family, from)) = ed.offset_side_of(id) =>
+                    {
+                        ed.doc.begin();
+                        self.drag = Some(SelectDrag::Offset { family, from });
+                    }
                     Some(Pick::Geometry(Target::Entity(id))) => {
                         if !ed.selection.contains(&id) {
                             if !mods.shift && !mods.command {
@@ -1183,6 +1204,22 @@ impl Tool for SelectTool {
                         }
                     }
                 }
+                Some(SelectDrag::Offset { family, from }) => {
+                    if let Some(Shape::Line { a, b }) = ed.doc.shape(*from) {
+                        let u = (b - a).normalize_or_zero();
+                        // In round steps for the zoom and the drawing's units, as a fillet
+                        // drag; with Alt, freely (as precise as lengths show).
+                        let d = (p.pos() - a).perp_dot(u).abs();
+                        let d = if p.alt {
+                            ed.shown_length(d)
+                        } else {
+                            let metric = ed.doc.units().length.is_metric();
+                            let step = super::corners::round_step(p.tolerance * 1.5, metric);
+                            ((d / step).round() * step).max(step)
+                        };
+                        ed.drag_offset(family, d);
+                    }
+                }
                 Some(SelectDrag::Radius { circle, center }) => {
                     let r = p.pos().distance(*center);
                     let current = drift_solver::radius_of(&ed.doc, *circle);
@@ -1256,6 +1293,9 @@ impl Tool for SelectTool {
                 Some(SelectDrag::Radius { .. }) => {
                     ed.commit("Resize circle");
                 }
+                Some(SelectDrag::Offset { .. }) => {
+                    ed.commit("Change offset");
+                }
                 Some(SelectDrag::Scale {
                     frame,
                     points,
@@ -1323,6 +1363,7 @@ impl Tool for SelectTool {
         match self.drag.take() {
             Some(
                 SelectDrag::Radius { .. }
+                | SelectDrag::Offset { .. }
                 | SelectDrag::Fillet { .. }
                 | SelectDrag::Text { .. }
                 | SelectDrag::Scale { .. }
@@ -1393,14 +1434,23 @@ impl Tool for SelectTool {
 
     fn snap_excludes(&self, ed: &Editor, id: EntityId) -> bool {
         // Nothing that moves with the selection (picking a grab's base point: anything,
-        // typically a point of the selection).
-        self.moving().is_some_and(|(points, ids)| {
+        // typically a point of the selection). The moving points are every moving entity's
+        // defining points, so set lookups cover the moving curves too.
+        self.moving().is_some_and(|points| {
             points.contains(&id)
-                || ids.contains(&id)
                 || ed
                     .doc
                     .get(id)
                     .is_some_and(|e| e.kind.points().any(|q| points.contains(&q)))
         })
+    }
+
+    fn snap_excludes_copy(&self, id: drift_core::InstanceId) -> bool {
+        let moving = match (&self.grab, &self.spin) {
+            (Some(grab), _) if !grab.picking_base => &grab.instances,
+            (None, Some(spin)) if !spin.picking() => &spin.instances,
+            _ => return false,
+        };
+        moving.iter().any(|(i, _)| *i == id)
     }
 }

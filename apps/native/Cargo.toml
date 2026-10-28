@@ -15,6 +15,11 @@ eframe.workspace = true
 # `/pattern` filters go, and the regex crates with them.
 env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
 
+# Files opened from Finder arrive as an Apple event (see src/macos.rs).
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString"] }
+
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"
 

@@ -231,7 +231,8 @@ baseline {} MB",
                     h.state_mut().show_panel(p);
                     frame(h);
                 }
-                h.state_mut().add_sheet();
+                let sheet = h.state_mut().add_sheet();
+                h.state_mut().add_whole_view(sheet);
                 h.state_mut().sheet_preview = true;
                 h.state_mut().preview.zoom = 0.0;
                 for _ in 0..5 {
@@ -263,7 +264,8 @@ baseline {} MB",
     example(h);
     h.state_mut().show_panel(Panel::Sheets);
     scenario("sheet preview: open", h, &mut failures, |h| {
-        h.state_mut().add_sheet();
+        let sheet = h.state_mut().add_sheet();
+        h.state_mut().add_whole_view(sheet);
         h.state_mut().sheet_preview = true;
         h.state_mut().preview.zoom = 0.0;
         for _ in 0..10 {

@@ -23,12 +23,14 @@ only one). What you see in the sheet preview is exactly what prints.
 1. Open the example (**File → Open example**). Hatch the plate if you like (see
    [Fills and hatches](06-fills-and-hatches.md)).
 2. Click **+** in the tabs over the canvas (or **New sheet** in the **Sheets** panel).
+3. In the **Inspector**, click **Add a view of the whole drawing**.
 
-Drift makes sheet **A-101**, A3 landscape, with the **Modern** title block. It also makes a
-view of the whole drawing, **View 1**, and places it to fill the drawing area, at the
-largest standard scale at which the drawing, dimensions included, clears the title block.
-The sheet is shown, with its settings in the **Inspector**. The next sheet you make is
-**A-102**, and so on.
+Drift makes sheet **A-101**, A3 landscape, with the **Modern** title block, empty: the
+sheet is shown, with its settings in the **Inspector**. **Add a view of the whole drawing**
+makes a view, **View 1**, and places it to fill the drawing area, at the largest standard
+scale at which the drawing, dimensions included, clears the title block. (Views also go on
+from the **Views** list, or with **V**: see below.) The next sheet you make is **A-102**,
+and so on.
 
 The tabs over the canvas are the model and each sheet: click one to show it. On a sheet,
 scroll to zoom, drag with the middle or right button to pan, and press Shift+F to fit the
@@ -162,6 +164,13 @@ On the sheet:
   view's crop in the model changes with it.
 - **Alt-drag** inside it to slide the drawing within the frame. This moves the crop over
   the model.
+- **Pick several views** with Shift-click or Ctrl-click (each click adds a view or takes it
+  out), a box dragged on the paper (left to right: views wholly inside it; right to left:
+  views it touches), or Ctrl+A for every view on the sheet. Drag any one of them and they
+  all move, keeping their places relative to each other, in one undo step. The arrow keys
+  nudge the picked views a millimetre (ten with Shift). Delete takes them off the sheet;
+  the **Inspector** lists them, with **Remove from sheet** and **Delete views**. Handles
+  for cropping show only with one view picked.
 
 Cropping or sliding a view changes it on every sheet it's on, and on the canvas.
 
@@ -324,7 +333,8 @@ drawing's layouts come in as sheets, and each of their viewports as a view.
   print.
 - Views go on sheets from the **Views** list. Reframing a view changes every sheet it's on,
   and one view can be on several sheets.
-- **New sheet** lays the drawing out on paper with a title block, at a fitting scale.
+- **New sheet** makes an empty sheet with a title block; **Add a view of the whole drawing**
+  lays the drawing out on it at a fitting scale.
 - PDF prints every sheet; SVG the current one; DWG and DXF the model at full size.
 - **Model as SVG…** and **Model as PDF…** export the model, or the selection, at 1 : 1 with
   no sheet.

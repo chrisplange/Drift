@@ -2284,7 +2284,10 @@ impl Editor {
 
     /// Offset the chain through curve `id` by `distance` towards `side`. Lines stay parallel
     /// at the distance; arcs and circles share their centre. Ellipses and pen curves give
-    /// smooth pen curves along the offset (a copy: they don't follow later changes).
+    /// smooth pen curves along the offset (a copy: they don't follow later changes). With
+    /// more than one line, only one of the lines' distance dimensions is shown (the picked
+    /// curve's, if it is a line): they are one distance (see [`Editor::offset_family`]), and
+    /// changing it moves the whole offset.
     pub fn offset(
         &mut self,
         id: EntityId,
@@ -2300,6 +2303,8 @@ impl Editor {
         let doc_err = |e: drift_core::DocumentError| invalid(e.to_string());
         self.doc.begin();
         let mut created = Vec::new();
+        // Each line's distance dimension, with the line it offsets.
+        let mut distances: Vec<(ConstraintId, EntityId)> = Vec::new();
         let result = (|| -> Result<(), EditError> {
             // A whole circle's offset is one circle on the same centre, with no ends.
             if let [piece] = pieces.as_slice()
@@ -2350,11 +2355,13 @@ impl Editor {
                     (Shape::Line { .. }, _) => {
                         let line = self.doc.add_line(s, e).map_err(doc_err)?;
                         self.relate(Constraint::Parallel { a: orig, b: line });
-                        self.relate(Constraint::PointLineDistance {
+                        if let Some(dim) = self.relate(Constraint::PointLineDistance {
                             point: s,
                             line: orig,
                             value: distance,
-                        });
+                        }) {
+                            distances.push((dim, orig));
+                        }
                         line
                     }
                     (Shape::Arc { .. }, Some(EntityKind::Arc { center, .. })) => {
@@ -2385,6 +2392,33 @@ impl Editor {
                 self.doc.copy_look(orig, new);
                 created.push(new);
             }
+            // A line and an arc that run on smoothly stay tangent, so the arc keeps between
+            // its lines when the distance changes.
+            for k in 0..n {
+                let next = (k + 1) % n;
+                if (next == 0 && !closed) || ends[k].0 != starts[next] {
+                    continue;
+                }
+                let (p, q) = (&pieces[k], &pieces[next]);
+                let line_arc = match (p.shape, q.shape) {
+                    (Shape::Line { a, b }, Shape::Arc { center, .. }) if !p.bridge => {
+                        Some((created[k], created[next], b - a, ends[k].1 - center))
+                    }
+                    (Shape::Arc { center, .. }, Shape::Line { a, b }) if !q.bridge => {
+                        Some((created[next], created[k], b - a, ends[k].1 - center))
+                    }
+                    _ => None,
+                };
+                if let Some((line, arc, along, radial)) = line_arc
+                    && along
+                        .normalize_or_zero()
+                        .dot(radial.normalize_or_zero())
+                        .abs()
+                        < 1e-6
+                {
+                    self.relate(Constraint::Tangent { a: line, b: arc });
+                }
+            }
             // A closed run of fitted curves (a whole ellipse's offset) is smooth where its
             // last piece meets its first.
             if let (Some(&(0, first, _)), Some(&(last, _, before))) =
@@ -2399,10 +2433,37 @@ impl Editor {
                     b: first,
                 });
             }
+            if distances.len() > 1 {
+                let shown = distances
+                    .iter()
+                    .find(|(_, line)| *line == id)
+                    .unwrap_or(&distances[0])
+                    .0;
+                for &(dim, _) in &distances {
+                    if dim != shown {
+                        self.doc.set_shown(
+                            drift_core::AnnotationRef::Dimension(dim),
+                            drift_core::Shown {
+                                canvas: false,
+                                sheets: false,
+                            },
+                        );
+                    }
+                }
+            }
             Ok(())
         })();
         self.finish(result, "Offset")?;
         Ok(created)
+    }
+
+    /// A length rounded as the drawing shows lengths (its units' decimals or fraction).
+    pub(crate) fn shown_length(&self, mm: f64) -> f64 {
+        self.evaluate_text(
+            &self.doc.units().format_length(mm),
+            drift_core::Kind::Length,
+        )
+        .map_or(mm, |e| e.value)
     }
 
     /// Mirror entities about a line: copies kept symmetric to the originals (points on the
@@ -2519,6 +2580,7 @@ impl Editor {
             }
             self.copy_fills_onto(|e| images.get(&e).copied(), reflect);
             self.copy_walls_onto(&|e| images.get(&e).copied());
+            self.copy_groups_onto(|e| images.get(&e).or_else(|| map.get(&e)).copied());
             copied = self.copy_riders(
                 riders,
                 &|e| images.get(&e).or_else(|| map.get(&e)).copied(),
@@ -2528,6 +2590,13 @@ impl Editor {
         })();
         self.finish(result, "Mirror")?;
         Ok((created, copied))
+    }
+
+    /// New groups of copies made inside the open transaction, for groups copied whole (`copy`
+    /// gives each member's copy): see [`crate::clipboard::copy_groups`].
+    pub(crate) fn copy_groups_onto(&mut self, copy: impl Fn(EntityId) -> Option<EntityId>) {
+        let groups: Vec<drift_core::Group> = self.doc.groups().map(|(_, g)| g.clone()).collect();
+        crate::clipboard::copy_groups(groups, &mut self.doc, copy, true);
     }
 
     /// Copies of entities moved by `transform` (applied `count` times, 1..=count), with the
@@ -2627,6 +2696,7 @@ impl Editor {
                 }
                 self.copy_fills_onto(|e| map.get(&e).copied(), |p| transform(k, p));
                 self.copy_walls_onto(&|e| map.get(&e).copied());
+                self.copy_groups_onto(|e| map.get(&e).copied());
             }
             Ok(())
         })();
@@ -3077,6 +3147,84 @@ mod tests {
             .collect();
         ed.commit("Polyline");
         (ed, ids)
+    }
+
+    /// #235: one variable holds an offset's distance; one of its dimensions shows; a value
+    /// typed into that one moves every side. A rounded corner's arc follows its lines.
+    #[test]
+    fn an_offset_is_one_distance_to_change() {
+        let (mut ed, ids) = polyline(
+            &[v(0.0, 0.0), v(40.0, 0.0), v(40.0, 30.0), v(0.0, 30.0)],
+            true,
+        );
+        let corner = ed.doc.defining_points([ids[1]]).into_iter().next().unwrap();
+        ed.fillet(corner, 5.0).unwrap();
+        let distance = 2.123_456_789_012_345;
+        let made = ed.offset(ids[0], distance, v(20.0, -5.0)).unwrap();
+        let dims: Vec<ConstraintId> = ed
+            .doc
+            .constraints()
+            .filter(|(_, c)| matches!(c, Constraint::PointLineDistance { .. }))
+            .map(|(id, _)| id)
+            .collect();
+        assert_eq!(dims.len(), 4, "one per line");
+        assert_eq!(ed.doc.variables().count(), 0, "nothing in Parameters");
+        let shown: Vec<ConstraintId> = dims
+            .iter()
+            .copied()
+            .filter(|d| {
+                ed.doc
+                    .shown(drift_core::AnnotationRef::Dimension(*d))
+                    .canvas
+            })
+            .collect();
+        assert_eq!(shown.len(), 1);
+        // The picked line's dimension is the one shown.
+        let Constraint::PointLineDistance { line, .. } = *ed.doc.constraint(shown[0]).unwrap()
+        else {
+            unreachable!()
+        };
+        assert_eq!(line, ids[0]);
+        // A new value moves every line, and the arc stays between them.
+        ed.set_dimension_text(shown[0], "3").unwrap();
+        for d in &dims {
+            assert_eq!(ed.doc.constraint(*d).unwrap().value(), Some(3.0));
+        }
+        let arc = made
+            .iter()
+            .find_map(|id| match ed.doc.shape(*id) {
+                Some(Shape::Arc { radius, .. }) => Some(radius),
+                _ => None,
+            })
+            .expect("the corner's arc");
+        assert!((arc - 8.0).abs() < 1e-6, "{arc}");
+        // One undo step; a second offset, inward, is a distance of its own: changing it
+        // leaves the first as it is.
+        ed.undo();
+        assert_eq!(ed.doc.constraint(dims[0]).unwrap().value(), Some(distance));
+        ed.offset(ids[0], 1.0, v(20.0, 5.0)).unwrap();
+        let inner: Vec<ConstraintId> = ed
+            .doc
+            .constraints()
+            .filter(|(id, c)| {
+                matches!(c, Constraint::PointLineDistance { .. }) && !dims.contains(id)
+            })
+            .map(|(id, _)| id)
+            .collect();
+        assert_eq!(ed.offset_family(inner[0]).len(), inner.len());
+        ed.set_dimension_text(inner[0], "1.5").unwrap();
+        assert_eq!(ed.doc.constraint(dims[0]).unwrap().value(), Some(distance));
+        ed.undo();
+        ed.undo();
+        assert_eq!(
+            ed.offset_family(dims[0]).len(),
+            4,
+            "the first offset is as it was"
+        );
+        assert!(
+            inner.iter().all(|d| ed.doc.constraint(*d).is_none()),
+            "the second is gone"
+        );
     }
 
     #[test]

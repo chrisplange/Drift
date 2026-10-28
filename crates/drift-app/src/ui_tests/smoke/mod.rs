@@ -214,6 +214,12 @@ fn drag(h: &mut Harness<'_, DriftApp>, from: DVec2, to: DVec2, steps: u32) {
     drag_steps(h, a, b, steps, None);
 }
 
+/// Undo (Ctrl/⌘+Z).
+fn undo(h: &mut Harness<'_, DriftApp>) {
+    h.key_press_modifiers(EguiModifiers::COMMAND, Key::Z);
+    h.run();
+}
+
 /// Open the command palette (Ctrl+K), type `text`, and run the best match with Enter.
 fn palette(h: &mut Harness<'_, DriftApp>, text: &str) {
     h.event(Event::Key {

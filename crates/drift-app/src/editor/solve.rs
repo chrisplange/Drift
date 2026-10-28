@@ -253,6 +253,52 @@ impl Editor {
         ok
     }
 
+    /// Set an offset's distance (its dimensions, `family`; see [`Editor::offset_family`])
+    /// inside an open transaction, as a drag of one of its sides does: every side moves, and
+    /// the curves they are measured from stay. False, with nothing changed, if the drawing
+    /// can't take it.
+    pub fn drag_offset(&mut self, family: &[ConstraintId], distance: f64) -> bool {
+        if !(distance > 0.0 && distance.is_finite()) {
+            return false;
+        }
+        let was: Vec<(ConstraintId, Constraint, Option<String>)> = family
+            .iter()
+            .filter_map(|d| {
+                let c = *self.doc.constraint(*d)?;
+                Some((*d, c, self.doc.expression(*d).map(str::to_owned)))
+            })
+            .collect();
+        let from = was.iter().filter_map(|(_, c, _)| match c {
+            Constraint::PointLineDistance { line, .. } => Some(*line),
+            _ => None,
+        });
+        let held: Vec<Param> = self
+            .doc
+            .defining_points(from)
+            .into_iter()
+            .flat_map(Param::point)
+            .collect();
+        let degenerate_before = drift_solver::degenerate_entities(&self.doc);
+        // (A value set here replaces an expression the distance was linked to.)
+        let set = was.iter().all(|(d, c, _)| {
+            self.doc.set_expression(*d, None);
+            self.doc.set_constraint(*d, c.with_value(distance)).is_ok()
+        });
+        let ok = set && {
+            let report = self.solve(&held);
+            !self.new_conflicts(&report) && !self.new_degeneracy(&degenerate_before)
+        };
+        if !ok {
+            for (d, c, e) in &was {
+                let _ = self.doc.set_constraint(*d, *c);
+                self.doc.set_expression(*d, e.clone());
+            }
+            self.solve(&held);
+        }
+        self.index.update(&self.doc);
+        ok
+    }
+
     /// Rotate geometry about `pivot` by `degrees` (counter-clockwise), inside an open
     /// transaction. `points` are the selection's defining points; they turn rigidly while
     /// constraints move the rest.

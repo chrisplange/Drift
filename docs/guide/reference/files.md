@@ -94,8 +94,12 @@ session, so the next start is fresh.
   are dropped, only the first is opened. A file that can't be read leaves the drawing open
   now as it is.
   See [Dropping a file on the window](../tutorials/11-underlays-and-dxf.md#dropping-a-file-on-the-window).
-- On Windows, the installer can make `.drift` files open in Drift. On macOS, use
-  **File → Open…** or drop the file on the window for now.
+- On Windows, the installer can make `.drift` files open in Drift. On macOS, Drift opens
+  `.drift` files from Finder (double-click, **Open With**, or a drop on its Dock icon): into
+  the open window if it holds a new drawing nothing has been done to, else in a window of
+  its own.
+- Opening a drawing (or starting a new one) forgets what was picked in the last one, and
+  shows the model.
 
 ## Imports and exports
 

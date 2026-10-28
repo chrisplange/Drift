@@ -411,6 +411,19 @@ impl Editor {
             ));
         }
         let evaluated = self.evaluate_text(text, dimension_kind(&c))?;
+        // An offset's distance: all its sides take the new value (or expression).
+        let family = self.offset_family(id);
+        if family.len() > 1 {
+            if evaluated.references.is_empty() {
+                return self.set_offset(&family, evaluated.value);
+            }
+            return self.parameter_edit("Change offset", |doc| {
+                for d in &family {
+                    doc.set_expression(*d, Some(evaluated.text.clone()));
+                }
+                Ok(())
+            });
+        }
         if evaluated.references.is_empty() {
             self.doc.begin();
             self.doc.set_expression(id, None);
@@ -430,6 +443,95 @@ impl Editor {
             doc.set_expression(id, Some(evaluated.text));
             Ok(())
         })
+    }
+
+    /// The distance dimensions of the offset whose side `line` is (see [`Editor::offset`]),
+    /// and the curve this side is measured from (and kept parallel to). An offset's sides
+    /// are the chain through `line`; its distances are the dimensions from their points to
+    /// curves outside the chain, two or more, all one value, with at most one shown.
+    pub fn offset_side_of(&self, line: EntityId) -> Option<(Vec<ConstraintId>, EntityId)> {
+        let Some(EntityKind::Line { a, b }) = self.doc.get(line).map(|e| e.kind) else {
+            return None;
+        };
+        let (chain, _) = self.chain(line);
+        let sides: BTreeSet<EntityId> = chain.iter().map(|(c, _)| *c).collect();
+        let points = self.doc.defining_points(sides.iter().copied());
+        let dims: BTreeSet<ConstraintId> = points
+            .iter()
+            .flat_map(|p| self.doc.constraints_on(*p))
+            .filter(|c| {
+                matches!(self.doc.constraint(*c),
+                    Some(Constraint::PointLineDistance { point, line, .. })
+                        if points.contains(point) && !sides.contains(line))
+            })
+            .collect();
+        let value = self.doc.constraint(*dims.first()?)?.value()?;
+        let shown = dims
+            .iter()
+            .filter(|d| {
+                let s = self.doc.shown(drift_core::AnnotationRef::Dimension(**d));
+                s.canvas || s.sheets
+            })
+            .count();
+        let same = dims.iter().all(|d| {
+            self.doc
+                .constraint(*d)
+                .and_then(Constraint::value)
+                .is_some_and(|v| (v - value).abs() <= 1e-9 * value.abs().max(1.0))
+        });
+        if dims.len() < 2 || shown > 1 || !same {
+            return None;
+        }
+        // This side's own distance: from one of its ends, to the curve it runs along.
+        let from = dims.iter().find_map(|d| match *self.doc.constraint(*d)? {
+            Constraint::PointLineDistance {
+                point, line: from, ..
+            } if (point == a || point == b)
+                && self
+                    .existing_relation(&Constraint::Parallel { a: from, b: line })
+                    .is_some() =>
+            {
+                Some(from)
+            }
+            _ => None,
+        })?;
+        Some((dims.into_iter().collect(), from))
+    }
+
+    /// The distance dimensions of the offset `dim` is one of (itself included), or none: they
+    /// hold one distance, changed together (see [`Editor::offset_side_of`]).
+    pub fn offset_family(&self, dim: ConstraintId) -> Vec<ConstraintId> {
+        let Some(Constraint::PointLineDistance { point, .. }) = self.doc.constraint(dim).copied()
+        else {
+            return Vec::new();
+        };
+        self.doc
+            .users_of(point)
+            .filter(|u| {
+                matches!(
+                    self.doc.get(*u).map(|e| e.kind),
+                    Some(EntityKind::Line { .. })
+                )
+            })
+            .find_map(|side| {
+                self.offset_side_of(side)
+                    .map(|(dims, _)| dims)
+                    .filter(|dims| dims.contains(&dim))
+            })
+            .unwrap_or_default()
+    }
+
+    /// Set an offset's distance (its dimensions, `family`): one undo step.
+    pub fn set_offset(&mut self, family: &[ConstraintId], distance: f64) -> Result<(), EditError> {
+        self.doc.begin();
+        if self.drag_offset(family, distance) {
+            self.commit("Change offset");
+            Ok(())
+        } else {
+            self.doc.rollback();
+            self.sync();
+            Err(EditError::Conflict)
+        }
     }
 
     /// The text to edit a dimension with: its expression if linked, else its value.

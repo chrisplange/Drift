@@ -648,13 +648,60 @@ impl DriftApp {
         let label = sheet_label(&sheet);
         let mut remove_view = false;
         let mut delete = false;
+        let mut delete_views = false;
+        let mut whole = false;
         let placed = self.editor.doc.placed_views(&sheet);
         let pick = if placed.is_empty() {
             SheetPick::Paper
         } else {
             self.sheet_pick
         };
+        let several = self.picked_views(&sheet);
         match pick {
+            // Several views: what they are, and what can be done with them all.
+            SheetPick::View if several.len() > 1 => {
+                let names: Vec<&str> = several.iter().map(|i| placed[*i].title()).collect();
+                crate::app::panels::title(
+                    ui,
+                    None,
+                    &format!("{} views", several.len()),
+                    &format!("On {label}"),
+                );
+                ui.label(egui::RichText::new(names.join(", ")).weak());
+                ui.label(
+                    egui::RichText::new(
+                        "Drag one to move them all; the arrow keys nudge them. Shift-click \
+                         one to leave it out.",
+                    )
+                    .small()
+                    .weak(),
+                );
+                ui.add_space(16.0);
+                remove_view = theme::danger_button(ui, "Remove from sheet")
+                    .on_hover_text("Take the picked views off this sheet (they stay in the model)")
+                    .clicked();
+                if self.confirm_delete_set {
+                    ui.label(
+                        egui::RichText::new(
+                            "Deleting them takes them out of the model and off every sheet.",
+                        )
+                        .color(egui::Color32::from_rgb(0xff, 0x5d, 0x5d)),
+                    );
+                    ui.horizontal(|ui| {
+                        if ui.button("Delete them").clicked() {
+                            delete_views = true;
+                        }
+                        if ui.button("Keep them").clicked() {
+                            self.confirm_delete_set = false;
+                        }
+                    });
+                } else if theme::danger_button(ui, "Delete views")
+                    .on_hover_text("Delete the picked views from the model and every sheet")
+                    .clicked()
+                {
+                    self.confirm_delete_set = true;
+                }
+            }
             SheetPick::View => {
                 let v = &placed[self.current_view(&sheet).min(placed.len() - 1)];
                 crate::app::panels::title(
@@ -686,6 +733,24 @@ impl DriftApp {
                         if views == 1 { "" } else { "s" }
                     ),
                 );
+                // An empty sheet: how views get onto it, and one click for the whole drawing.
+                if views == 0 {
+                    ui.label(
+                        egui::RichText::new(
+                            "No views yet: drag one from the Views list in the Sheets panel, \
+                             or press V to draw one round part of the model.",
+                        )
+                        .weak(),
+                    );
+                    if ui
+                        .button("Add a view of the whole drawing")
+                        .on_hover_text("A new view of everything drawn, filling the sheet")
+                        .clicked()
+                    {
+                        whole = true;
+                    }
+                    ui.add_space(8.0);
+                }
                 typing |= self.paper_settings(ui, &mut sheet);
                 ui.add_space(16.0);
                 delete = theme::danger_button(ui, "Delete sheet").clicked();
@@ -693,8 +758,14 @@ impl DriftApp {
         }
         self.update_sheet(id, sheet, view, typing);
         if remove_view {
-            self.remove_viewport(id);
+            self.remove_picked_views(id);
             self.sheet_pick = SheetPick::Paper;
+        }
+        if delete_views {
+            self.delete_picked_views();
+        }
+        if whole {
+            self.add_whole_view(id);
         }
         if delete {
             self.delete_sheet(id);

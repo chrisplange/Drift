@@ -151,11 +151,12 @@ impl NotAShape {
 /// divide it).
 fn parts_of<'a>(whole: &Region, regions: &'a [Region]) -> Vec<&'a Region> {
     let b = whole.bounds;
-    let pad = 1e-6 * b.min.abs().max(b.max.abs()).max_element().max(1.0);
+    let pad = drift_core::tolerance::NEAR
+        * drift_core::tolerance::scale(b.min.abs().max(b.max.abs()).max_element());
     regions
         .iter()
         .filter(|r| {
-            r.area <= whole.area * (1.0 + 1e-9)
+            r.area <= whole.area * (1.0 + drift_core::tolerance::SAME)
                 && r.bounds.min.x >= b.min.x - pad
                 && r.bounds.min.y >= b.min.y - pad
                 && r.bounds.max.x <= b.max.x + pad
@@ -1148,8 +1149,8 @@ impl Editor {
                         .map(|(r, o)| (r, Some(o)))
                 })
             {
-                let at_seed =
-                    region_at(&regions, fill.seed).filter(|r| r.area < whole.area * (1.0 - 1e-9));
+                let at_seed = region_at(&regions, fill.seed)
+                    .filter(|r| r.area < whole.area * (1.0 - drift_core::tolerance::SAME));
                 let newly = at_seed.is_some()
                     && was_crossed == Some(false)
                     && !fill.divided
@@ -1313,8 +1314,8 @@ impl Editor {
                 continue;
             };
             let size = was.area.abs().sqrt().max(1.0);
-            let same = (twin.area - was.area).abs() <= 1e-9 * size * size
-                && twin.centroid.distance(was.centroid) <= 1e-9 * size;
+            let same = (twin.area - was.area).abs() <= drift_core::tolerance::SAME * size * size
+                && twin.centroid.distance(was.centroid) <= drift_core::tolerance::same(size);
             if same {
                 fill.boundary = outline_of(twin, &ids);
                 let _ = self.doc.insert_fill(id, fill);
@@ -1336,7 +1337,7 @@ impl Editor {
                 what(*id)
             ),
             FillChange::Refound { id, before, after } => match before {
-                Some(b) if (b - after).abs() > 1e-9 * after.max(1.0) => format!(
+                Some(b) if (b - after).abs() > drift_core::tolerance::same(*after) => format!(
                     "{} now fills the area around its seed ({} → {})",
                     what(*id),
                     units.format_area(*b),
@@ -2017,7 +2018,11 @@ impl Editor {
             0.0
         };
         // A turn too small to tell from rounding is a plain move.
-        let turn = if turn.abs() < 1e-12 { 0.0 } else { turn };
+        let turn = if turn.abs() < drift_core::tolerance::NONE {
+            0.0
+        } else {
+            turn
+        };
         let rotor = DVec2::from_angle(turn);
         let rigid = pairs
             .iter()
@@ -2277,7 +2282,8 @@ impl Editor {
         // Curves clear of the outline's box can't be inside its area or change it: only the
         // ones near it are looked at.
         let mut near: Bounds = outline.iter().map(Shape::bounds).collect();
-        let pad = 1e-6 * near.min.abs().max(near.max.abs()).max_element().max(1.0);
+        let pad = drift_core::tolerance::NEAR
+            * drift_core::tolerance::scale(near.min.abs().max(near.max.abs()).max_element());
         near.min -= DVec2::splat(pad);
         near.max += DVec2::splat(pad);
         let (ids, curves): (Vec<EntityId>, Vec<Shape>) = solid
@@ -2480,13 +2486,8 @@ impl Editor {
     /// Whether the open edit left shape `curves` (sorted) and the area `bounds` round them as
     /// they were (see [`touched_boxes`](Self::touched_boxes)).
     fn shape_untouched(&self, curves: &[EntityId], bounds: &Bounds, boxes: &[Bounds]) -> bool {
-        let pad = 1e-6
-            * bounds
-                .min
-                .abs()
-                .max(bounds.max.abs())
-                .max_element()
-                .max(1.0);
+        let pad = drift_core::tolerance::NEAR
+            * drift_core::tolerance::scale(bounds.min.abs().max(bounds.max.abs()).max_element());
         let near = Bounds {
             min: bounds.min - DVec2::splat(pad),
             max: bounds.max + DVec2::splat(pad),

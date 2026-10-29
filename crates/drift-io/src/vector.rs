@@ -234,6 +234,7 @@ pub fn to_import(art: &Artwork, options: &ImportOptions) -> DxfImport {
         skipped: art.skipped.clone(),
         notes: art.notes.clone(),
         fill_edges_construction: options.construction_edges,
+        sheet_rounded: true,
         ..Default::default()
     };
     out.layers = art

@@ -9,6 +9,7 @@
 
 use std::collections::BTreeSet;
 
+use drift_core::tolerance;
 use drift_core::{Bounds, Constraint, DVec2, EntityId, EntityKind};
 use drift_solver::Param;
 
@@ -79,7 +80,8 @@ impl TransformBox {
                 }
                 // A side too short to grab separately from its corners has no middle handle.
                 let b = self.bounds;
-                if (x == 0 && b.max.x - b.min.x < 1e-9) || (y == 0 && b.max.y - b.min.y < 1e-9) {
+                let none = tolerance::same(b.min.abs().max(b.max.abs()).max_element());
+                if (x == 0 && b.max.x - b.min.x < none) || (y == 0 && b.max.y - b.min.y < none) {
                     continue;
                 }
                 out.push((Handle::Scale { x, y }, self.handle_at_side(x, y, pad)));
@@ -144,14 +146,14 @@ pub fn round_scale(
     proportional: bool,
 ) -> DVec2 {
     let round = |s: f64, length: f64| {
-        if length < 1e-9 || step <= 0.0 {
+        if length < tolerance::NONE || step <= 0.0 {
             return s;
         }
         ((length * s / step).round() * step).max(step) / length
     };
     let (x, y) = (
-        handle.0 != 0 && size.x > 1e-9,
-        handle.1 != 0 && size.y > 1e-9,
+        handle.0 != 0 && size.x > tolerance::NONE,
+        handle.1 != 0 && size.y > tolerance::NONE,
     );
     if proportional {
         // The axis the factor came from: the one that grew the most, if both move.
@@ -183,7 +185,7 @@ pub fn scale_for(
 ) -> DVec2 {
     let along = |side: i8, a: f64, from: f64, to: f64| {
         let span = from - a;
-        if side == 0 || span.abs() < 1e-12 {
+        if side == 0 || span.abs() < tolerance::NONE {
             None
         } else {
             Some(((to - a) / span).max(MIN_SCALE))
@@ -269,7 +271,7 @@ impl Editor {
                 self.doc.get(ids[0]).map(|e| e.kind),
                 Some(EntityKind::Circle { .. })
             );
-        (!bounds.is_empty() && size.max_element() > 1e-9).then_some(TransformBox {
+        (!bounds.is_empty() && size.max_element() > tolerance::NONE).then_some(TransformBox {
             ids,
             bounds,
             lone,
@@ -307,14 +309,19 @@ impl Editor {
         // Where the anchor is in the box, along each axis (0 at its low side, 1 at its high).
         let fraction = self.bounds_of(ids).map(|b| {
             let size = b.max - b.min;
-            let along =
-                |a: f64, lo: f64, span: f64| if span > 1e-12 { (a - lo) / span } else { 0.5 };
+            let along = |a: f64, lo: f64, span: f64| {
+                if span > tolerance::NONE {
+                    (a - lo) / span
+                } else {
+                    0.5
+                }
+            };
             DVec2::new(
                 along(anchor.x, b.min.x, size.x),
                 along(anchor.y, b.min.y, size.y),
             )
         });
-        let factor = if (scale.x - scale.y).abs() < 1e-12 {
+        let factor = if (scale.x - scale.y).abs() < tolerance::NONE {
             scale.x
         } else if scale.x == 1.0 || scale.y == 1.0 {
             1.0
@@ -366,7 +373,7 @@ impl Editor {
         // middle).
         if let (Some(fraction), Some(after)) = (fraction, self.bounds_of(ids)) {
             let shift = anchor - (after.min + (after.max - after.min) * fraction);
-            if shift.length() > 1e-9 {
+            if shift.length() > tolerance::same(anchor.abs().max_element()) {
                 self.doc.translate(points.iter().copied(), shift);
                 report = self.solve_in(&dragged, scope.clone());
             }

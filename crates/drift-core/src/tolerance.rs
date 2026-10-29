@@ -29,8 +29,28 @@ pub fn same(extent: f64) -> f64 {
 /// Positions and numbers from files or measured off drawn geometry, relative to their size
 /// ([`scale`], or the drawing's size where a reader says so): this close, they are the same.
 /// Looser than [`SAME`]: what a writer rounded, not what arithmetic did. Imported ends join
-/// within it; hatch patterns match the library's within it; bounds are padded by it.
+/// within it ([`IMPORT_JOIN`]); hatch patterns match the library's within it; bounds are
+/// padded by it.
 pub const NEAR: f64 = 1e-6;
+
+/// Imported drawings: points this close, relative to the drawing's size, are one point, and
+/// an end this close to another curve is put on it. Files round their coordinates to a
+/// precision relative to the sheet, so ends drawn to meet miss each other, or the curve
+/// they end on, by that much. Measured on real PDFs at paper size (#184): every such miss is
+/// under 0.1 µm, and real detail (dash ends, short segments, glyph corners) starts at about
+/// 1 µm; this is about 1 µm on a 1 m sheet, and grows with the scale a PDF comes in at, as
+/// its rounding does. A CAD drawing's coordinates aren't rounded to a sheet, so its join is
+/// capped at [`IMPORT_JOIN_CAD_MM`].
+pub const IMPORT_JOIN: f64 = NEAR;
+
+/// The most (mm) a CAD drawing's (DXF, DWG) imported points can be apart and still be
+/// joined, whatever [`IMPORT_JOIN`] of its size is (so it acts on drawings over 5 m). In the
+/// samples measured (#184) every CAD join was within 1 nm, but [`IMPORT_JOIN`] alone joined
+/// two ends 17.6 µm apart in a 21.6 m building drawing, and would join within 5 mm on a
+/// site plan 5 km across: a real gap of 0.01 mm between two parts has to stay open, and
+/// this is half that. It isn't smaller because not every CAD file writes full doubles: a
+/// DXF written with 4 decimals in inches rounds to 2.54 µm, and its ends still join.
+pub const IMPORT_JOIN_CAD_MM: f64 = 5e-3;
 
 /// A length (mm) below anything drawn and above rounding at drawing sizes: the least a gap
 /// tolerance or a lookup grid's cell can be.

@@ -19,8 +19,9 @@ use std::f64::consts::TAU;
 
 use drift_core::tolerance;
 use drift_core::{
-    DVec2, Document, EntityId, Fill, FillKind, Hatch, Layer, LayerId, LineType, LineWeight,
-    PaperSize, Rgb, Shape, Sheet, SketchText, TextAlign, TextFont, TitleBlock, View, Viewport,
+    Appearance, DVec2, Document, EntityId, EntityKind, Fill, FillKind, Hatch, Layer, LayerId,
+    LineType, LineWeight, PaperSize, Rgb, Shape, Sheet, SketchText, TextAlign, TextFont,
+    TitleBlock, View, Viewport,
 };
 use drift_draft::{PatLine, Pattern};
 
@@ -167,6 +168,10 @@ pub struct DxfImport {
     pub notes: Vec<String>,
     /// Edges added only to bound a fill come in as construction (they don't print).
     pub fill_edges_construction: bool,
+    /// The coordinates were rounded to a sheet's precision (vector artwork: PDF, SVG,
+    /// Illustrator), so ends join within the drawing's size × [`tolerance::IMPORT_JOIN`],
+    /// however large; a CAD drawing's join is capped at [`tolerance::IMPORT_JOIN_CAD_MM`].
+    pub sheet_rounded: bool,
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -2630,6 +2635,7 @@ pub fn read_at(text: &str, default_mm_per_unit: f64, drawn_at: f64) -> Result<Dx
         skipped: reader.skipped,
         notes,
         fill_edges_construction: false,
+        sheet_rounded: false,
     })
 }
 
@@ -2664,6 +2670,259 @@ const TOO_LARGE: &str = "curves too large to draw";
 /// and more) still comes in and is reported; near f64's limit the drawing's own sums and
 /// squares overflow and come out as NaN.
 const MAX_COORD: f64 = 1e30;
+
+/// A curve by the import points it is on (shared with other curves' within the join
+/// tolerance); a circle's radius is kept beside it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum OnPoints {
+    Line([EntityId; 2]),
+    Circle(EntityId),
+    Arc([EntityId; 3]),
+    Ellipse([EntityId; 3]),
+    EllipseArc([EntityId; 5]),
+    Bezier([EntityId; 4]),
+    Point(EntityId),
+}
+
+impl OnPoints {
+    /// The same for the same curve whichever way round it was drawn: a line's or Bézier's
+    /// points either way (arcs and elliptical arcs run counter-clockwise already).
+    fn key(self) -> OnPoints {
+        match self {
+            OnPoints::Line([a, b]) if b < a => OnPoints::Line([b, a]),
+            OnPoints::Bezier([a, c1, c2, b]) if b < a => OnPoints::Bezier([b, c2, c1, a]),
+            other => other,
+        }
+    }
+
+    /// The curve added to `doc` (a point is there already).
+    fn add(self, doc: &mut Document, radius: f64) -> Option<EntityId> {
+        match self {
+            OnPoints::Line([a, b]) => doc.add_line(a, b).ok(),
+            OnPoints::Circle(c) => doc.add_circle(c, radius).ok(),
+            OnPoints::Arc([c, s, e]) => doc.add_arc(c, s, e).ok(),
+            OnPoints::Ellipse([c, m, n]) => doc.add_ellipse(c, m, n).ok(),
+            OnPoints::EllipseArc([c, m, n, s, e]) => doc.add_ellipse_arc(c, m, n, s, e).ok(),
+            OnPoints::Bezier([a, c1, c2, b]) => doc.add_bezier(a, c1, c2, b).ok(),
+            OnPoints::Point(p) => Some(p),
+        }
+    }
+}
+
+/// Whether a curve drawn again later, looking `theirs`, is what shows over the first copy,
+/// looking `mine` (both on `layer`, which gives what either leaves to it). The heavier line
+/// shows round the other; at the same weight a continuous line shows through a dashed one;
+/// otherwise the later one is drawn on top. (A thinner line drawn over a heavier one still
+/// shows its colour down the middle; the heavier is kept, as its weight says more.)
+fn shows_over(doc: &Document, layer: LayerId, theirs: &Appearance, mine: &Appearance) -> bool {
+    let (weight, line_type) = doc
+        .layer(layer)
+        .map_or((LineWeight::default(), LineType::Continuous), |l| {
+            (l.weight, l.line_type)
+        });
+    let dashed = |a: &Appearance| a.line_type.unwrap_or(line_type) != LineType::Continuous;
+    match theirs
+        .weight
+        .unwrap_or(weight)
+        .cmp(&mine.weight.unwrap_or(weight))
+    {
+        std::cmp::Ordering::Greater => true,
+        std::cmp::Ordering::Less => false,
+        std::cmp::Ordering::Equal => !dashed(theirs) || dashed(mine),
+    }
+}
+
+/// Put ends of `curves` that stop within `tol` of another of them onto it, and say how many
+/// moved. Files round their coordinates, so an end drawn to meet the middle of a curve can
+/// stop a little short of it, and then the area it closes isn't found.
+///
+/// Only open ends move: the end of one curve with no other use (not another curve's point,
+/// a centre or a handle, nor a point of its own in `lone`). Each goes to the nearest point
+/// of the nearest curve (the first of those as near); an arc's end goes to the point of the
+/// arc's own circle nearest that, so the arc keeps its radius. Ends are taken in id order.
+/// An end isn't moved further than a quarter of its own curve, so no short curve collapses
+/// or turns round. (No other point is within `tol` of an end before: points that close are
+/// one point already.) Where an end would land within `tol` of a point already there (two
+/// ends stopping short of one spot from either side), it becomes that point instead, so
+/// points stay more than `tol` apart. An arc's end is only moved, never made another point
+/// (its end is kept on its circle, which would move the other point), so two arc ends can
+/// stay within `tol` of each other. The point an end becomes keeps its own count of uses:
+/// if it is an open end later in id order, it is still moved onto a curve, taking the
+/// joined curve's end with it (both then end on the curve, as they should, and the move is
+/// at most `tol`), with the quarter-length guard checked against its own curve only.
+///
+/// The curves near an end are found through a box index of their bounds (one bulk load and
+/// one small query per open end), the points near where it lands through a grid of cells
+/// `tol` wide.
+fn ends_onto_curves(
+    doc: &mut Document,
+    curves: &[EntityId],
+    lone: &BTreeSet<EntityId>,
+    tol: f64,
+) -> usize {
+    // Everything the import made has ids from `lo` on (its points are new, made just before
+    // the first curve that uses them), and all the curves from `lo` on are its: they are
+    // looked up by id - `lo`, not through the document's maps (tens of thousands of times).
+    let Some(&first) = curves.first() else {
+        return 0;
+    };
+    let lo = doc
+        .get(first)
+        .map_or(first.0, |e| {
+            e.kind.points().map(|p| p.0).fold(first.0, u32::min)
+        })
+        .min(lone.iter().map(|p| p.0).min().unwrap_or(u32::MAX));
+    let slot = |id: EntityId| id.0.checked_sub(lo).map(|i| i as usize);
+    let mut at: Vec<Option<DVec2>> = Vec::new();
+    // Each point's uses among the curves, and the curve it is an end of.
+    let mut uses: Vec<(u32, Option<EntityId>)> = Vec::new();
+    let mut shapes: Vec<(EntityId, Shape)> = Vec::with_capacity(curves.len());
+    for (id, e) in doc.iter() {
+        let Some(i) = slot(id) else {
+            continue;
+        };
+        if at.len() <= i {
+            at.resize(i + 1, None);
+            uses.resize(i + 1, (0, None));
+        }
+        match e.kind {
+            EntityKind::Point(p) => at[i] = Some(p),
+            kind => {
+                let ends = kind.ends();
+                for p in kind.points() {
+                    let Some(j) = slot(p) else {
+                        continue;
+                    };
+                    if uses.len() <= j {
+                        at.resize(j + 1, None);
+                        uses.resize(j + 1, (0, None));
+                    }
+                    uses[j].0 += 1;
+                    if ends.is_some_and(|e| e.contains(&p)) {
+                        uses[j].1 = Some(id);
+                    }
+                }
+            }
+        }
+    }
+    for &c in curves {
+        if let Some(shape) = doc.shape(c) {
+            shapes.push((c, shape));
+        }
+    }
+    let index = drift_geom::BoxIndex::new(shapes.iter().map(|(_, s)| s.bounds()));
+    let cell = |p: DVec2| ((p.x / tol).floor() as i64, (p.y / tol).floor() as i64);
+    // The points by cell, sorted (and the moved ones in their new cells, kept apart).
+    let mut grid: Vec<((i64, i64), u32)> = at
+        .iter()
+        .enumerate()
+        .filter_map(|(i, p)| p.map(|p| (cell(p), i as u32)))
+        .collect();
+    grid.sort_unstable();
+    let mut landed: HashMap<(i64, i64), Vec<u32>> = HashMap::new();
+    let by_shape: HashMap<EntityId, usize> = shapes
+        .iter()
+        .enumerate()
+        .map(|(k, (c, _))| (*c, k))
+        .collect();
+    let mut moved = 0;
+    let mut arcs = BTreeSet::new();
+    let mut freed = Vec::new();
+    for i in 0..uses.len() {
+        let (count, end_of) = uses[i];
+        let (Some(own), Some(from)) = (end_of, at[i]) else {
+            continue;
+        };
+        let p = EntityId(lo + i as u32);
+        if count != 1 || lone.contains(&p) {
+            continue;
+        }
+        let reach = drift_core::Bounds {
+            min: from - DVec2::splat(tol),
+            max: from + DVec2::splat(tol),
+        };
+        let mut best: Option<(f64, DVec2)> = None;
+        for k in index.near(&reach) {
+            let (id, shape) = &shapes[k];
+            if *id == own {
+                continue;
+            }
+            let q = drift_geom::nearest_point(shape, from);
+            let d = q.distance(from);
+            if d <= tol && best.is_none_or(|(b, _)| d < b) {
+                best = Some((d, q));
+            }
+        }
+        let Some((d, mut to)) = best else {
+            continue;
+        };
+        let Some(kind) = doc.get(own).map(|e| e.kind) else {
+            continue;
+        };
+        let length = by_shape.get(&own).map_or(0.0, |&k| shapes[k].1.length());
+        if d == 0.0 || d > length / 4.0 {
+            continue;
+        }
+        match kind {
+            EntityKind::Arc { center, start, .. } => {
+                let (Ok(c), Ok(s)) = (doc.point(center), doc.point(start)) else {
+                    continue;
+                };
+                to = c + (to - c).normalize_or_zero() * s.distance(c);
+                arcs.insert(p);
+            }
+            // An elliptical arc's ends are kept on its ellipse: left as they are.
+            EntityKind::EllipseArc { .. } => continue,
+            _ => {}
+        }
+        let c = cell(to);
+        let near = |q: u32| {
+            q as usize != i
+                && at
+                    .get(q as usize)
+                    .copied()
+                    .flatten()
+                    .is_some_and(|a| a.distance(to) <= tol)
+        };
+        let mut there: Option<u32> = None;
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                let k = (c.0 + dx, c.1 + dy);
+                let from_grid = grid[grid.partition_point(|(g, _)| *g < k)..]
+                    .iter()
+                    .take_while(|(g, _)| *g == k)
+                    .map(|(_, q)| *q);
+                let from_landed = landed.get(&k).into_iter().flatten().copied();
+                for q in from_grid.chain(from_landed) {
+                    if near(q) && there.is_none_or(|t| q < t) {
+                        there = Some(q);
+                    }
+                }
+            }
+        }
+        if let Some(q) = there
+            && !matches!(kind, EntityKind::Arc { .. })
+        {
+            let mut joined = kind;
+            joined.replace_point(p, EntityId(lo + q));
+            if doc.set_entity_kind(own, joined).is_ok() {
+                at[i] = None;
+                freed.push(p);
+                moved += 1;
+            }
+        } else if doc.set_point(p, to).is_ok() {
+            at[i] = Some(to);
+            landed.entry(c).or_default().push(i as u32);
+            moved += 1;
+        }
+    }
+    doc.normalize_arcs_using(&arcs);
+    // (One pass over the drawing for all of them.)
+    if !freed.is_empty() {
+        doc.delete(freed);
+    }
+    moved
+}
 
 /// Every point `add_to_document` makes for `shape` is a number within [`MAX_COORD`] (a NaN
 /// or infinite one would make a drawing that doesn't save).
@@ -2903,8 +3162,10 @@ impl Patterns {
 
 /// Add an import to a document (inside the caller's transaction): curves on layers of the
 /// same names, text, hatches as fills on their boundaries, blocks and their copies, and
-/// layouts as sheets. Ends that coincide (within 1e-6 of the drawing's size) share one point,
-/// so the imported outlines stay connected.
+/// layouts as sheets. Points that coincide (within [`tolerance::IMPORT_JOIN`] of the
+/// drawing's size) are one point, so the imported outlines stay connected; ends that stop
+/// that close to another curve are put on it; a curve drawn twice on a layer comes in once.
+/// The report's notes say how many of each.
 pub fn add_to_document(doc: &mut Document, import: &DxfImport) -> ImportReport {
     let mut report = ImportReport {
         skipped: import.skipped.clone(),
@@ -2939,7 +3200,12 @@ pub fn add_to_document(doc: &mut Document, import: &DxfImport) -> ImportReport {
     let tol = if extent.is_empty() {
         tolerance::SAME
     } else {
-        (extent.max - extent.min).max_element().max(1.0) * tolerance::NEAR
+        let tol = (extent.max - extent.min).max_element().max(1.0) * tolerance::IMPORT_JOIN;
+        if import.sheet_rounded {
+            tol
+        } else {
+            tol.min(tolerance::IMPORT_JOIN_CAD_MM)
+        }
     };
     // Layers by name ("0" is the default layer).
     let mut layer_ids: BTreeMap<String, LayerId> = doc
@@ -2985,22 +3251,20 @@ pub fn add_to_document(doc: &mut Document, import: &DxfImport) -> ImportReport {
         points.entry(cell).or_default().push((p, id));
         id
     };
-    let mut add_shape = |doc: &mut Document, shape: &Shape| -> Option<EntityId> {
+    // A shape on its shared points (made as needed), with a circle's radius.
+    let mut on_points = |doc: &mut Document, shape: &Shape| -> Option<(OnPoints, f64)> {
         if !finite(shape) {
             return None;
         }
-        match *shape {
+        Some(match *shape {
             Shape::Line { a, b } => {
                 let (pa, pb) = (point(doc, a), point(doc, b));
                 if pa == pb {
                     return None;
                 }
-                doc.add_line(pa, pb).ok()
+                (OnPoints::Line([pa, pb]), 0.0)
             }
-            Shape::Circle { center, radius } => {
-                let c = point(doc, center);
-                doc.add_circle(c, radius).ok()
-            }
+            Shape::Circle { center, radius } => (OnPoints::Circle(point(doc, center)), radius),
             Shape::Arc {
                 center,
                 radius,
@@ -3011,9 +3275,9 @@ pub fn add_to_document(doc: &mut Document, import: &DxfImport) -> ImportReport {
                 let s = point(doc, center + DVec2::from_angle(start) * radius);
                 let e2 = point(doc, center + DVec2::from_angle(start + sweep) * radius);
                 if s == e2 {
-                    doc.add_circle(c, radius).ok()
+                    (OnPoints::Circle(c), radius)
                 } else {
-                    doc.add_arc(c, s, e2).ok()
+                    (OnPoints::Arc([c, s, e2]), radius)
                 }
             }
             Shape::Ellipse {
@@ -3029,20 +3293,87 @@ pub fn add_to_document(doc: &mut Document, import: &DxfImport) -> ImportReport {
                 match ends {
                     Some([s, e2]) => {
                         let (s, e2) = (point(doc, s), point(doc, e2));
-                        doc.add_ellipse_arc(c, m, n, s, e2).ok()
+                        (OnPoints::EllipseArc([c, m, n, s, e2]), 0.0)
                     }
-                    None => doc.add_ellipse(c, m, n).ok(),
+                    None => (OnPoints::Ellipse([c, m, n]), 0.0),
                 }
             }
-            Shape::Bezier { p } => {
-                let [a, c1, c2, b] = p.map(|q| point(doc, q));
-                doc.add_bezier(a, c1, c2, b).ok()
-            }
-            Shape::Point(p) => Some(point(doc, p)),
-        }
+            Shape::Bezier { p } => (OnPoints::Bezier(p.map(|q| point(doc, q))), 0.0),
+            Shape::Point(p) => (OnPoints::Point(point(doc, p)), 0.0),
+        })
     };
-    // Curves already added, by what they are, so a hatch finds the outline it was drawn on
-    // instead of doubling it.
+    // Curves already added, by the points they use, so a stroke drawn twice comes in once
+    // and a hatch finds the outline it was drawn on instead of doubling it. (Points are
+    // shared within `tol`, so curves this close are on the same points.)
+    let mut added: HashMap<OnPoints, Vec<(EntityId, f64)>> = HashMap::new();
+    let same_radius = |a: f64, b: f64| (a - b).abs() <= tol;
+    // Every curve this import adds, in the order added.
+    let mut curves: Vec<EntityId> = Vec::new();
+    // Points that stand as points of their own (not only as parts of curves).
+    let mut lone: BTreeSet<EntityId> = BTreeSet::new();
+    let mut duplicates = 0;
+
+    for e in &import.entities {
+        let layer = layer_of(doc, &e.layer, &mut report);
+        if !finite(&e.shape) {
+            *report.skipped.entry(TOO_LARGE.into()).or_insert(0) += 1;
+            continue;
+        }
+        let Some((on, radius)) = on_points(doc, &e.shape) else {
+            continue;
+        };
+        let key = on.key();
+        let lone_point = matches!(on, OnPoints::Point(_));
+        let twin = added.get(&key).filter(|_| !lone_point).and_then(|list| {
+            list.iter()
+                .find(|(id, r)| {
+                    same_radius(*r, radius) && doc.get(*id).is_some_and(|c| c.layer == layer)
+                })
+                .map(|(id, _)| *id)
+        });
+        if let Some(kept) = twin {
+            // Drawn twice (as PDFs often stroke a path): one curve, with the look of the
+            // copy that shows (`shows_over`).
+            let theirs = Appearance {
+                color: e.color,
+                weight: e.weight,
+                line_type: e.line_type,
+            };
+            if let Some(mine) = doc.get(kept).map(|c| c.appearance)
+                && shows_over(doc, layer, &theirs, &mine)
+            {
+                let _ = doc.set_appearance(kept, theirs);
+            }
+            duplicates += 1;
+            continue;
+        }
+        let Some(id) = on.add(doc, radius) else {
+            continue;
+        };
+        if lone_point {
+            lone.insert(id);
+        } else {
+            curves.push(id);
+        }
+        added.entry(key).or_default().push((id, radius));
+        let _ = doc.set_entity_layer(id, layer);
+        if e.color.is_some() || e.line_type.is_some() || e.weight.is_some() {
+            let mut look = doc.get(id).map(|x| x.appearance).unwrap_or_default();
+            look.color = e.color.or(look.color);
+            look.line_type = e.line_type.or(look.line_type);
+            look.weight = e.weight.or(look.weight);
+            let _ = doc.set_appearance(id, look);
+        }
+        report.curves += 1;
+    }
+    if duplicates > 0 {
+        report.notes.push(format!(
+            "{duplicates} {} drawn twice in the file came in once.",
+            if duplicates == 1 { "curve" } else { "curves" }
+        ));
+    }
+
+    // A curve by what it is (to `tol`), for a block's hatch edges to find its curves.
     let key_of = |shape: &Shape| -> Option<(u8, [i64; 6])> {
         let q = |v: f64| (v / tol).round() as i64;
         Some(match *shape {
@@ -3092,30 +3423,6 @@ pub fn add_to_document(doc: &mut Document, import: &DxfImport) -> ImportReport {
             _ => return None,
         })
     };
-    let mut added: HashMap<(u8, [i64; 6]), EntityId> = HashMap::new();
-
-    for e in &import.entities {
-        let layer = layer_of(doc, &e.layer, &mut report);
-        if !finite(&e.shape) {
-            *report.skipped.entry(TOO_LARGE.into()).or_insert(0) += 1;
-            continue;
-        }
-        let Some(id) = add_shape(doc, &e.shape) else {
-            continue;
-        };
-        if let Some(key) = key_of(&e.shape) {
-            added.entry(key).or_insert(id);
-        }
-        let _ = doc.set_entity_layer(id, layer);
-        if e.color.is_some() || e.line_type.is_some() || e.weight.is_some() {
-            let mut look = doc.get(id).map(|x| x.appearance).unwrap_or_default();
-            look.color = e.color.or(look.color);
-            look.line_type = e.line_type.or(look.line_type);
-            look.weight = e.weight.or(look.weight);
-            let _ = doc.set_appearance(id, look);
-        }
-        report.curves += 1;
-    }
 
     let add_text = |doc: &mut Document, t: &DxfText, layer: LayerId| {
         let mut text = SketchText::new(t.text.clone(), t.at, t.height);
@@ -3147,19 +3454,26 @@ pub fn add_to_document(doc: &mut Document, import: &DxfImport) -> ImportReport {
         let mut boundary = Vec::new();
         for (k, shapes) in h.loops.iter().enumerate() {
             for shape in shapes {
-                let key = key_of(shape);
-                let id = match key.and_then(|k| added.get(&k).copied()) {
+                let Some((on, radius)) = on_points(doc, shape) else {
+                    continue;
+                };
+                let key = on.key();
+                let known = added.get(&key).and_then(|list| {
+                    list.iter()
+                        .find(|(_, r)| same_radius(*r, radius))
+                        .map(|(id, _)| *id)
+                });
+                let id = match known {
                     Some(id) => Some(id),
                     None => {
-                        let id = add_shape(doc, shape);
+                        let id = on.add(doc, radius);
                         if let Some(id) = id {
                             let _ = doc.set_entity_layer(id, layer);
                             if import.fill_edges_construction {
                                 doc.set_style(id, drift_core::LineKind::Construction);
                             }
-                            if let Some(key) = key {
-                                added.insert(key, id);
-                            }
+                            added.entry(key).or_default().push((id, radius));
+                            curves.push(id);
                             report.curves += 1;
                         }
                         id
@@ -3185,6 +3499,17 @@ pub fn add_to_document(doc: &mut Document, import: &DxfImport) -> ImportReport {
             doc.set_fill(id, placed);
         }
         report.fills += 1;
+    }
+
+    // Ends that stop just short of another curve (as PDFs round their coordinates) are put
+    // on it, so the areas they close are found.
+    let joined = ends_onto_curves(doc, &curves, &lone, tol);
+    if joined > 0 {
+        report.notes.push(format!(
+            "{joined} {} just short of another curve {} joined to it.",
+            if joined == 1 { "end" } else { "ends" },
+            if joined == 1 { "was" } else { "were" }
+        ));
     }
 
     // Copies of blocks: each block is created once, then placed. A block the drawing already

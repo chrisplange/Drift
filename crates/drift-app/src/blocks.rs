@@ -467,7 +467,7 @@ impl Editor {
             .ok_or("That block is gone")?;
         // The new base point in the block's coordinates.
         let q = copy.invert(world);
-        if q.length() <= 1e-9 * world.abs().max_element().max(1.0) {
+        if q.length() <= drift_core::tolerance::same(world.abs().max_element()) {
             return Ok(());
         }
         let shift = shifted(-q);
@@ -541,7 +541,7 @@ impl Editor {
         };
         let mut points: Vec<(DVec2, EntityId)> = Vec::new();
         let mut point = |doc: &mut drift_core::Document, p: DVec2| -> EntityId {
-            let tol = 1e-9 * p.abs().max_element().max(1.0);
+            let tol = drift_core::tolerance::same(p.abs().max_element());
             if let Some((_, id)) = points.iter().find(|(q, _)| q.distance(p) <= tol) {
                 return *id;
             }

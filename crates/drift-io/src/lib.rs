@@ -635,7 +635,7 @@ impl Look {
                 Some(c) => Some(Rgb::parse(&c).ok_or_else(|| bad("color"))?),
                 None => None,
             },
-            weight: self.weight.map(LineWeight::nearest),
+            weight: self.weight.map(LineWeight::nearest_cad),
             line_type: match self.linetype {
                 Some(t) => Some(LineType::from_name(&t).ok_or_else(|| bad("linetype"))?),
                 None => None,
@@ -1908,7 +1908,7 @@ fn load_value(value: serde_json::Value) -> Result<(Document, Metadata, Vec<Strin
                 name: l.name,
                 color,
                 fill_color,
-                weight: LineWeight::nearest(l.weight),
+                weight: LineWeight::nearest_cad(l.weight),
                 line_type,
                 visible: l.visible,
                 locked: l.locked,

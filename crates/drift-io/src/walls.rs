@@ -475,7 +475,7 @@ fn parse_poche(id: &str, r: PocheRecord) -> Result<FillStyle, LoadError> {
         kind,
         color: color(&r.color, "color")?,
         opacity: r.opacity.unwrap_or(1.0).clamp(0.0, 1.0),
-        weight: r.weight.map(LineWeight::nearest),
+        weight: r.weight.map(LineWeight::nearest_cad),
     })
 }
 

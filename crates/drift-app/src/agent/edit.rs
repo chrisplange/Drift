@@ -406,7 +406,7 @@ fn layer_props(l: &mut Layer, v: &Value) -> Result<(), String> {
         l.color = Some(Rgb::parse(c).ok_or(format!("colour `{c}` isn't like #rrggbb"))?);
     }
     if let Some(w) = args::opt_f64(v, "weight_mm")? {
-        l.weight = LineWeight::nearest(w);
+        l.weight = LineWeight::nearest_cad(w);
     }
     if let Some(t) = args::opt_str(v, "line_type")? {
         l.line_type = LineType::from_name(t).ok_or(format!(

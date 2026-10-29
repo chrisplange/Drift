@@ -189,7 +189,7 @@ fn parse_fill_body(r: FillRecord) -> Result<Fill, LoadError> {
     if let Some(o) = r.opacity {
         fill.opacity = o.clamp(0.0, 1.0);
     }
-    fill.weight = r.weight.map(LineWeight::nearest);
+    fill.weight = r.weight.map(LineWeight::nearest_cad);
     fill.order = r.order;
     fill.divided = r.divided;
     fill.path = match &r.path {

@@ -280,6 +280,25 @@ impl Curve {
     }
 }
 
+/// The middle of an edge, and its direction there.
+fn midpoint(e: &Edge) -> (DVec2, DVec2) {
+    match *e {
+        Edge::Line { a, b } => ((a + b) / 2.0, (b - a).normalize_or_zero()),
+        Edge::Arc {
+            center,
+            radius,
+            start,
+            sweep,
+        } => {
+            let t = start + sweep / 2.0;
+            (
+                center + radius * DVec2::from_angle(t),
+                DVec2::from_angle(t).perp() * sweep.signum(),
+            )
+        }
+    }
+}
+
 fn nearest(points: Vec<DVec2>, to: DVec2) -> Option<DVec2> {
     points
         .into_iter()
@@ -1764,8 +1783,20 @@ impl Gen<'_> {
         let mut holes_of: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
         for h in (0..all.len()).filter(|&i| all[i].area <= 0.0) {
             let hb = all[h].bounds;
-            let probe = all[h].lp.edges[0].start();
             let pad = drift_core::tolerance::NEAR * (1.0 + hb.max.abs().max_element());
+            // A point a little inside the hole's material side, off the middle of its longest
+            // edge. (Not off a corner: a hole's corner can lie on the outer loop, where a
+            // flush face runs on through the node, and a point just off it may fall outside.)
+            let probe = all[h]
+                .lp
+                .edges
+                .iter()
+                .max_by(|a, b| a.length().total_cmp(&b.length()))
+                .map(|e| {
+                    let (at, along) = midpoint(e);
+                    at + along.perp() * pad * 10.0
+                })
+                .expect("a loop has edges");
             let host = outers
                 .iter()
                 .copied()
@@ -1776,13 +1807,7 @@ impl Gen<'_> {
                         && ob.max.x >= hb.max.x - pad
                         && ob.max.y >= hb.max.y - pad
                 })
-                .filter(|&o| {
-                    // (A point a little inside the hole's material side: just off its start.)
-                    let e = &all[h].lp.edges[0];
-                    let along = (e.end() - e.start()).normalize_or_zero();
-                    all[o].lp.contains(probe + along.perp() * pad * 10.0)
-                        || all[o].lp.contains(probe)
-                })
+                .filter(|&o| all[o].lp.contains(probe))
                 .min_by(|&a, &b| all[a].area.total_cmp(&all[b].area));
             match host {
                 Some(o) => holes_of.entry(o).or_default().push(h),

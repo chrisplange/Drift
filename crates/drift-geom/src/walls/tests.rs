@@ -89,6 +89,60 @@ fn a_closed_room_has_inner_and_outer_rectangles() {
 }
 
 #[test]
+fn a_room_whose_corner_touches_the_outer_loop_is_still_a_hole() {
+    // A room in a network (found by walls_props, CI on #268): a left-justified wall turns at
+    // a node where another left-justified wall ends, its face running on through the node,
+    // so the room's corner there lies on the outer loop. The room is still a hole.
+    let left = drift_core::Justify::Left.offsets(100.0);
+    let node = v(2052.104547860062, 1000.0);
+    let mut w0 = wall(
+        1,
+        &[node, v(2011.967682647122, -38.09280575616747)],
+        &[7, 6],
+        false,
+        100.0,
+    );
+    w0.offsets = left;
+    let mut w1 = wall(
+        2,
+        &[v(0.0, 1000.0), v(1000.0, 1000.0), node, v(2000.0, 2000.0)],
+        &[1, 4, 7, 8],
+        false,
+        100.0,
+    );
+    w1.offsets = left;
+    let w2 = wall(
+        3,
+        &[v(0.0, 2000.0), v(1000.0, 2000.0), v(2000.0, 2000.0)],
+        &[2, 5, 8],
+        false,
+        100.0,
+    );
+    let w3 = wall(
+        4,
+        &[v(1000.0, 1000.0), v(1000.0, 2000.0)],
+        &[4, 5],
+        false,
+        100.0,
+    );
+    let g = generate(&[w0, w1, w2, w3], 0.25);
+    assert!(g.notices.is_empty(), "{:?}", g.notices);
+    let keys: Vec<LoopKey> = g.loops.iter().map(|l| l.key).collect();
+    assert_eq!(
+        keys,
+        [LoopKey { outer: 0, hole: 0 }, LoopKey { outer: 0, hole: 1 }]
+    );
+    let hole = g.loop_of(&g.loops[1]).expect("a loop");
+    assert!(
+        hole.edges.iter().any(|e| close(e.start(), node)),
+        "the corner on the outer loop"
+    );
+    let r = &g.regions()[0].2;
+    assert!(!r.contains(v(1500.0, 1500.0)), "the room isn't poché");
+    assert_closed_and_simple(&g);
+}
+
+#[test]
 fn justification_puts_the_path_on_a_face() {
     let mut w = wall(1, &[v(0.0, 0.0), v(100.0, 0.0)], &[1, 2], false, 10.0);
     w.offsets = drift_core::Justify::Left.offsets(10.0);

@@ -69,9 +69,12 @@ from 38 to 41 in two days in October 2026; this document sets the rules that kee
    names are validated when a file is read; a bad file is refused with a message, never
    half-loaded. A file that Drift wrote must always open again.
 9. **The layout is part of the format.** Top-level entries one per line, lists with one record
-   per line, records written compactly by `serde_json` in a fixed field order. Carrying data
-   through (section 4) relies on it: a newer writer must keep it, or what it wrote is
-   rewritten (still correctly, but no longer byte for byte) by an older build that saves it.
+   per line, records written compactly by `serde_json` in a fixed field order: the typed
+   `FileOut` in `crates/drift-io/src/lib.rs`, written through the one formatter in
+   `crates/drift-io/src/layout.rs` (carrying data through lays merged files out with it too).
+   The fixtures hold it byte for byte. A newer writer should keep it: carrying through
+   (section 4) still works if it doesn't, since what this build compares is only ever its own
+   writing, but records that an older build changes come back in this layout.
 
 ## 2. Fixtures and the tests that guard them
 
@@ -145,7 +148,9 @@ the same command (which then writes `vNN.drift`), and add the migration test.
 `tests/newer_files.rs` checks the other direction: a file from a newer Drift (the current
 fixture with unknown tables and fields added on many kinds of record, nested ones too) opens,
 saves unchanged byte for byte, keeps its unknown fields on an edited record, warns when a
-record that had some is deleted, and is refused when its `reader` is newer.
+record that had some is deleted, warns when unknown data names a record that was deleted and
+never hands that id out again, lays out an unknown table written another way as files are
+laid out, and is refused when its `reader` is newer.
 
 ## 3. What each version added
 
@@ -211,7 +216,7 @@ read these files, pass over the addition, and keep it when they save.
 
 ## 4. What Drift does with a file it doesn't fully know
 
-*Checked in the code on 2026-10-24.*
+*Checked in the code on 2026-10-24; the typed writer and ids named by unknown data on 2026-10-29 (#185).*
 
 **A newer `reader`.** `migrate` refuses a file whose `reader` (or, without one, its
 `version`) is above `FORMAT_VERSION`, and `version` 0 or anything that isn't a number, before
@@ -242,7 +247,20 @@ is kept (`crates/drift-io/src/carry.rs`):
   - **unknown tables**: written back where they were;
   - **gone**: what it held that this build doesn't know is lost. That is a record deleted, a
     field cleared, a record replaced by one of another `type` under the same id, or a list
-    without ids that changed length.
+    without ids that changed length;
+  - **naming something deleted**: unknown data (an unknown table, or an unknown field on a
+    record that is still there) that names a record deleted since the file was read (a
+    string in it, or a key, is the `id` of a record in one of the file's tables) is written
+    back as it was, and counts as lost: the newer build drops the reference to nothing
+    (rule 3), so the save warns.
+- **Named ids are never reused.** When the file is read, every id the unknown data names
+  (`e12`, `c3`, `f2`, … whatever kind of id it is) is reserved: nothing this build makes gets
+  it, in that session or, since the reference stays in the file and is reserved again at each
+  read, any later one. So a reference a newer build wrote never comes to point at something
+  else.
+- What this build compares is only its own writing: the baseline and what it writes now, both
+  from the build that saves. How the file spelled things (spacing, key order) is copied, never
+  compared, so a newer writer's layout doesn't stop anything being carried.
 - The `version` and `reader` the file had are kept (they are unchanged records too), so the
   newer build still knows its additions when it opens the file again, and checks them (rule 3).
 
@@ -270,10 +288,15 @@ The other ways a drawing is written:
   build doesn't know (nothing is lost from any file).
 - **The browser demo** reads tolerantly too; it never saves, so it carries nothing.
 
-**Known limits.** A record deleted and a new one made with the same id and type takes the old
-one's unknown fields. A newer field that refers to something an older build deleted is
-dangling: rule 3 makes the newer reader drop it. Edits to the drawing around an unknown
-table never warn, for the same reason.
+**Known limits.** A newer field that refers to something an older build deleted is dangling:
+rule 3 makes the newer reader drop it (the save warns, above). Other edits to the drawing
+around an unknown table never warn, for the same reason. A record deleted and a new one made
+with the same id would take the old one's unknown fields, but this can't happen: ids are
+handed out from counters that only grow while a drawing is open, and are reused only across a
+reading, after which the old record's fields are no longer carried. (Ids the unknown data
+names are reserved, above.) A file restored from the last session (the autosave) keeps its
+unknown data, but the session file stores the drawing with its keys sorted, so a record saved
+unchanged from it is written in that order, not byte for byte as the newer build wrote it.
 
 **The restored session (fixed 2026-10-24).** At start the app restores the last session
 from its autosave (`restore_session` in `app/document.rs`). Before this fix, if that autosave

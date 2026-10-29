@@ -332,6 +332,68 @@ impl Document {
         Ok((doc, dropped))
     }
 
+    /// Make sure no id the drawing hands out from now on is one of `ids`, spelled as files
+    /// write them (`e12`, `c3`, `f2`, ...): ids that something the drawing doesn't hold refers
+    /// to, such as what a newer Drift wrote that this build carries through without knowing it
+    /// (`drift-io`'s `carry.rs`). Spellings no kind of id has are passed over. Not an edit: no
+    /// undo step, and not part of what the drawing is equal to.
+    pub fn reserve_ids<'a>(&mut self, ids: impl IntoIterator<Item = &'a str>) {
+        for (kind, n) in ids.into_iter().filter_map(spelled_id) {
+            let next = n + 1;
+            match kind {
+                'e' => self.next_id = self.next_id.max(next),
+                'c' => self.next_constraint_id = self.next_constraint_id.max(next),
+                // Variables, options, measurements and layers.
+                'v' | 'k' | 'm' | 'l' => self.next_param_id = self.next_param_id.max(next),
+                // Fills, annotations, blocks, instances, groups, paths, sheets, texts,
+                // underlays and views (`w`, like walls).
+                'f' | 'n' | 'b' | 'i' | 'g' | 'p' | 's' | 't' | 'u' => {
+                    self.next_drafting_id = self.next_drafting_id.max(next);
+                }
+                'w' => {
+                    self.next_drafting_id = self.next_drafting_id.max(next);
+                    self.next_wall_id = self.next_wall_id.max(next);
+                }
+                // Openings and property dimensions.
+                'o' | 'q' => self.next_wall_id = self.next_wall_id.max(next),
+                _ => {}
+            }
+        }
+    }
+
+    /// Whether the drawing has something with the id `id`, spelled as files write it (`e12`,
+    /// `c3`, `f2`, ...; see [`reserve_ids`](Self::reserve_ids)).
+    pub fn holds_id(&self, id: &str) -> bool {
+        use crate::{
+            AnnotationId, BlockId, FillId, GroupId, InstanceId, OpeningId, PathId, PropertyDimId,
+            SheetId, TextId, UnderlayId, ViewId, WallId,
+        };
+        let Some((kind, n)) = spelled_id(id) else {
+            return false;
+        };
+        match kind {
+            'e' => self.get(EntityId(n)).is_some(),
+            'c' => self.constraint(ConstraintId(n)).is_some(),
+            'v' => self.variable(VariableId(n)).is_some(),
+            'k' => self.variant(VariantId(n)).is_some(),
+            'm' => self.measurements().any(|(m, _)| m == MeasurementId(n)),
+            'l' => self.layer(LayerId(n)).is_some(),
+            'f' => self.fill(FillId(n)).is_some(),
+            'n' => self.annotation(AnnotationId(n)).is_some(),
+            'b' => self.block(BlockId(n)).is_some(),
+            'i' => self.instance(InstanceId(n)).is_some(),
+            'g' => self.group(GroupId(n)).is_some(),
+            'p' => self.path(PathId(n)).is_some(),
+            's' => self.sheet(SheetId(n)).is_some(),
+            't' => self.text(TextId(n)).is_some(),
+            'u' => self.underlay(UnderlayId(n)).is_some(),
+            'w' => self.view(ViewId(n)).is_some() || self.wall(WallId(n)).is_some(),
+            'o' => self.opening(OpeningId(n)).is_some(),
+            'q' => self.property_dim(PropertyDimId(n)).is_some(),
+            _ => false,
+        }
+    }
+
     pub fn from_parts(
         entities: impl IntoIterator<Item = (EntityId, Entity)>,
         constraints: impl IntoIterator<Item = (ConstraintId, Constraint)>,
@@ -599,4 +661,20 @@ pub fn arc_shape(center: DVec2, start: DVec2, end: DVec2) -> Shape {
         start: a0,
         sweep,
     }
+}
+
+/// An id as files spell it (`e12`): its kind's letter and its number. (Numbers far beyond
+/// any id a drawing makes are a stray string, not an id.)
+fn spelled_id(id: &str) -> Option<(char, u32)> {
+    let mut chars = id.chars();
+    let kind = chars.next().filter(char::is_ascii_lowercase)?;
+    let digits = chars.as_str();
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    digits
+        .parse::<u32>()
+        .ok()
+        .filter(|n| *n < u32::MAX / 2)
+        .map(|n| (kind, n))
 }

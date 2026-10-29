@@ -54,6 +54,8 @@ mod blocks;
 mod carry;
 pub mod clip;
 mod drafting;
+#[cfg(not(feature = "demo"))]
+mod layout;
 // DWG and DXF R2018 export (the writers are left out of the demo).
 #[cfg(all(feature = "dwg", not(feature = "demo")))]
 pub mod cad;
@@ -1185,8 +1187,12 @@ pub fn save_checked(doc: &Document, meta: &Metadata) -> Saved {
     let plain = write(doc, meta);
     match &meta.carried.0 {
         Some(kept) => {
-            let (text, loses_newer_data) = kept.merge(&plain);
-            let carried = Carried(carry::Kept::find(&text, plain).map(std::sync::Arc::new));
+            let holds = |id: &str| doc.holds_id(id);
+            let (text, loses_newer_data) = kept.merge(&plain, holds);
+            let carried = Carried(
+                kept.after_saving(&text, plain, holds)
+                    .map(std::sync::Arc::new),
+            );
             Saved {
                 text,
                 loses_newer_data,
@@ -1201,46 +1207,85 @@ pub fn save_checked(doc: &Document, meta: &Metadata) -> Saved {
     }
 }
 
+/// The whole file as this build writes it, in the order it is written. (`FileRecord` reads
+/// it.) Tables a drawing doesn't use are left out; `entities` and `constraints` always come.
+#[cfg(not(feature = "demo"))]
+#[derive(Serialize)]
+struct FileOut<'a> {
+    format: &'static str,
+    version: u32,
+    reader: u32,
+    meta: &'a Metadata,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    display: Option<DisplayRecord>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    patterns: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    logo: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rules: Option<RulesRecord>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    project: Option<sheets::ProjectRecord>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fonts: Option<fonts::FontsRecord>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    drafting: Option<drafting::DraftRecord>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    layers: Option<Vec<LayerRecord>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    current_layer: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    variables: Vec<VariableRecord>,
+    entities: Vec<EntityRecord>,
+    constraints: Vec<ConstraintRecord>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    measurements: Vec<ConstraintRecord>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    options: Vec<OptionRecord>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    fills: Vec<drafting::FillRecord>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    annotations: Vec<drafting::AnnotationRecord>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    shown: Vec<drafting::ShownRecord>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    styles: Vec<drafting::StyleRecord>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    views: Vec<sheets::ViewRecord>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    sheets: Vec<sheets::SheetRecord>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    groups: Vec<GroupRecord>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    paths: Vec<PathRecord>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    stack: Vec<StackRecord>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    blocks: Vec<blocks::BlockRecord>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    instances: Vec<blocks::InstanceRecord>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    underlays: Vec<underlays::UnderlayRecord>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    texts: Vec<texts::TextRecord>,
+    // (After the entities, paths and fills they name.)
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    walls: Vec<walls::WallRecord>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    property_dims: Vec<walls::PropertyDimRecord>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    openings: Vec<openings::OpeningRecord>,
+}
+
 /// The drawing as this build writes it, without anything carried through.
 #[cfg(not(feature = "demo"))]
 fn write(doc: &Document, meta: &Metadata) -> String {
-    let mut out = String::new();
-    out.push_str("{\n");
-    out.push_str(&format!("  \"format\": \"{FORMAT_TAG}\",\n"));
-    out.push_str(&format!("  \"version\": {FORMAT_VERSION},\n"));
-    out.push_str(&format!("  \"reader\": {READER_VERSION},\n"));
-    let meta = serde_json::to_string(meta).expect("metadata serializes");
-    out.push_str(&format!("  \"meta\": {meta},\n"));
-    if doc.units() != Units::default() {
-        let display = serde_json::to_string(&DisplayRecord::from_units(doc.units()))
-            .expect("display serializes");
-        out.push_str(&format!("  \"display\": {display},\n"));
-    }
-    if !doc.custom_patterns().is_empty() {
-        let p = serde_json::to_string(doc.custom_patterns()).expect("patterns serialize");
-        out.push_str(&format!("  \"patterns\": {p},\n"));
-    }
-    if !doc.logo().is_empty() {
-        let l = serde_json::to_string(doc.logo()).expect("logo serializes");
-        out.push_str(&format!("  \"logo\": {l},\n"));
-    }
-    let rules = RulesRecord::from_rules(doc.rules());
-    if rules != RulesRecord::default() {
-        let r = serde_json::to_string(&rules).expect("rules serialize");
-        out.push_str(&format!("  \"rules\": {r},\n"));
-    }
-    if let Some(p) = sheets::project_record(doc.project()) {
-        let p = serde_json::to_string(&p).expect("project serializes");
-        out.push_str(&format!("  \"project\": {p},\n"));
-    }
-    if let Some(record) = fonts::fonts_record(doc.fonts(), &doc.fonts_in_use()) {
-        let f = serde_json::to_string(&record).expect("fonts serialize");
-        out.push_str(&format!("  \"fonts\": {f},\n"));
-    }
-    if let Some(d) = drafting::draft_record(&doc.draft_style()) {
-        let d = serde_json::to_string(&d).expect("drafting serializes");
-        out.push_str(&format!("  \"drafting\": {d},\n"));
-    }
+    layout::to_file(&file_out(doc, meta))
+}
+
+/// The records of the file for `doc`.
+#[cfg(not(feature = "demo"))]
+fn file_out<'a>(doc: &'a Document, meta: &'a Metadata) -> FileOut<'a> {
     let default_layers = {
         let mut layers = doc.layers();
         matches!(
@@ -1248,53 +1293,32 @@ fn write(doc: &Document, meta: &Metadata) -> String {
             (Some((LayerId::DEFAULT, l)), None) if *l == Layer::new("0")
         )
     };
-    if !default_layers {
-        let layers: Vec<String> = doc
-            .layers()
-            .map(|(id, l)| {
-                serde_json::to_string(&LayerRecord {
-                    id: id.to_string(),
-                    name: l.name.clone(),
-                    color: l.color.map(Rgb::hex),
-                    fill: l.fill_color.map(Rgb::hex),
-                    weight: l.weight.mm(),
-                    linetype: l.line_type.name().to_owned(),
-                    visible: l.visible,
-                    locked: l.locked,
-                    print: l.printable,
-                    snap: l.snappable,
-                })
-                .expect("layer serializes")
-            })
-            .collect();
-        push_array(&mut out, "layers", &layers, true);
-    }
-    if doc.current_layer() != LayerId::DEFAULT {
-        out.push_str(&format!(
-            "  \"current_layer\": \"{}\",\n",
-            doc.current_layer()
-        ));
-    }
-    let variables: Vec<String> = doc
-        .variables()
-        .map(|(id, v)| {
-            serde_json::to_string(&VariableRecord {
+    let layers = (!default_layers).then(|| {
+        doc.layers()
+            .map(|(id, l)| LayerRecord {
                 id: id.to_string(),
-                name: v.name.clone(),
-                expr: v.expr.clone(),
-                kind: kind_name(v.kind).to_owned(),
+                name: l.name.clone(),
+                color: l.color.map(Rgb::hex),
+                fill: l.fill_color.map(Rgb::hex),
+                weight: l.weight.mm(),
+                linetype: l.line_type.name().to_owned(),
+                visible: l.visible,
+                locked: l.locked,
+                print: l.printable,
+                snap: l.snappable,
             })
-            .expect("variable serializes")
+            .collect()
+    });
+    let variables = doc
+        .variables()
+        .map(|(id, v)| VariableRecord {
+            id: id.to_string(),
+            name: v.name.clone(),
+            expr: v.expr.clone(),
+            kind: kind_name(v.kind).to_owned(),
         })
         .collect();
-    if !variables.is_empty() {
-        push_array(&mut out, "variables", &variables, true);
-    }
-    let entities: Vec<String> = doc
-        .iter()
-        .map(|(id, entity)| serde_json::to_string(&record(id, entity)).expect("entity serializes"))
-        .collect();
-    let constraints: Vec<String> = doc
+    let constraints = doc
         .constraints()
         .map(|(id, c)| {
             let mut r = constraint_record(id, c, doc.placement(id), doc.is_driven(id));
@@ -1308,21 +1332,21 @@ fn write(doc: &Document, meta: &Metadata) -> String {
                 r.below = (!n.below.is_empty()).then(|| n.below.clone());
                 r.text = (!n.text.is_empty()).then(|| n.text.clone());
             }
-            serde_json::to_string(&r).expect("constraint serializes")
+            r
         })
         .collect();
-    let measurements: Vec<String> = doc
+    let measurements = doc
         .measurements()
         .map(|(id, c)| {
             let mut r = constraint_record(ConstraintId(1), c, None, false);
             r.id = id.to_string();
             // Measurements have no value of their own.
             (r.value, r.degrees) = (None, None);
-            serde_json::to_string(&r).expect("measurement serializes")
+            r
         })
         .collect();
     let mut sections = None;
-    let options: Vec<String> = doc
+    let options = doc
         .variants()
         .map(|(id, v)| {
             let mut record = OptionRecord {
@@ -1338,9 +1362,8 @@ fn write(doc: &Document, meta: &Metadata) -> String {
             };
             if let Some(sketch) = &v.sketch {
                 let sections = sections.get_or_insert_with(|| shareable_sections(doc));
-                let mut value: serde_json::Value =
-                    serde_json::from_str(&write(sketch, &Metadata::default()))
-                        .expect("a saved sketch parses");
+                let mut value = serde_json::to_value(file_out(sketch, &Metadata::default()))
+                    .expect("a sketch serializes");
                 if let Some(map) = value.as_object_mut() {
                     for key in SHAREABLE {
                         if map.get(key).is_some_and(|v| sections.get(key) == Some(v)) {
@@ -1351,20 +1374,7 @@ fn write(doc: &Document, meta: &Metadata) -> String {
                 }
                 record.sketch = Some(value);
             }
-            serde_json::to_string(&record).expect("option serializes")
-        })
-        .collect();
-    let fills: Vec<String> = doc
-        .fills()
-        .map(|(id, f)| {
-            serde_json::to_string(&drafting::fill_record(doc, id, f)).expect("fill serializes")
-        })
-        .collect();
-    let annotations: Vec<String> = doc
-        .annotations()
-        .map(|(id, a)| {
-            serde_json::to_string(&drafting::annotation_record(id, a))
-                .expect("annotation serializes")
+            record
         })
         .collect();
     let shown_refs: std::collections::BTreeSet<drift_core::AnnotationRef> = doc
@@ -1372,135 +1382,104 @@ fn write(doc: &Document, meta: &Metadata) -> String {
         .map(|(r, _)| r)
         .chain(doc.only_in_settings().map(|(r, _)| r))
         .collect();
-    let shown: Vec<String> = shown_refs
-        .into_iter()
-        .map(|r| {
-            let record = drafting::shown_record(r, doc.shown(r), doc.only_in(r));
-            serde_json::to_string(&record).expect("shown serializes")
-        })
-        .collect();
-    let styles: Vec<String> = doc
-        .style_overrides()
-        .map(|(r, s)| {
-            serde_json::to_string(&drafting::override_record(r, &s)).expect("style serializes")
-        })
-        .collect();
-    let views: Vec<String> = doc
-        .views()
-        .map(|(id, v)| serde_json::to_string(&sheets::view_record(id, v)).expect("view serializes"))
-        .collect();
-    let sheets: Vec<String> = doc
-        .sheets()
-        .map(|(id, s)| {
-            serde_json::to_string(&sheets::sheet_record(id, s)).expect("sheet serializes")
-        })
-        .collect();
-    let groups: Vec<String> = doc
-        .groups()
-        .map(|(id, g)| {
-            serde_json::to_string(&GroupRecord {
+    let rules = RulesRecord::from_rules(doc.rules());
+    FileOut {
+        format: FORMAT_TAG,
+        version: FORMAT_VERSION,
+        reader: READER_VERSION,
+        meta,
+        display: (doc.units() != Units::default()).then(|| DisplayRecord::from_units(doc.units())),
+        patterns: Some(doc.custom_patterns()).filter(|p| !p.is_empty()),
+        logo: Some(doc.logo()).filter(|l| !l.is_empty()),
+        rules: (rules != RulesRecord::default()).then_some(rules),
+        project: sheets::project_record(doc.project()),
+        fonts: fonts::fonts_record(doc.fonts(), &doc.fonts_in_use()),
+        drafting: drafting::draft_record(&doc.draft_style()),
+        layers,
+        current_layer: (doc.current_layer() != LayerId::DEFAULT)
+            .then(|| doc.current_layer().to_string()),
+        variables,
+        entities: doc.iter().map(|(id, entity)| record(id, entity)).collect(),
+        constraints,
+        measurements,
+        options,
+        fills: doc
+            .fills()
+            .map(|(id, f)| drafting::fill_record(doc, id, f))
+            .collect(),
+        annotations: doc
+            .annotations()
+            .map(|(id, a)| drafting::annotation_record(id, a))
+            .collect(),
+        shown: shown_refs
+            .into_iter()
+            .map(|r| drafting::shown_record(r, doc.shown(r), doc.only_in(r)))
+            .collect(),
+        styles: doc
+            .style_overrides()
+            .map(|(r, s)| drafting::override_record(r, &s))
+            .collect(),
+        views: doc
+            .views()
+            .map(|(id, v)| sheets::view_record(id, v))
+            .collect(),
+        sheets: doc
+            .sheets()
+            .map(|(id, s)| sheets::sheet_record(id, s))
+            .collect(),
+        groups: doc
+            .groups()
+            .map(|(id, g)| GroupRecord {
                 id: id.to_string(),
                 name: g.name.clone(),
                 members: g.members.iter().map(|e| id_string(*e)).collect(),
             })
-            .expect("group serializes")
-        })
-        .collect();
-    let paths: Vec<String> = doc
-        .paths()
-        .map(|(id, p)| {
-            serde_json::to_string(&PathRecord {
+            .collect(),
+        paths: doc
+            .paths()
+            .map(|(id, p)| PathRecord {
                 id: id.to_string(),
                 curves: p.curves.iter().map(|e| id_string(*e)).collect(),
                 closed: p.closed,
             })
-            .expect("path serializes")
-        })
-        .collect();
-    let stack: Vec<String> = doc
-        .iter()
-        .filter_map(|(id, e)| Some((id, e.order?)))
-        .map(|(id, order)| {
-            serde_json::to_string(&StackRecord {
+            .collect(),
+        stack: doc
+            .iter()
+            .filter_map(|(id, e)| Some((id, e.order?)))
+            .map(|(id, order)| StackRecord {
                 id: id_string(id),
                 order,
             })
-            .expect("stack serializes")
-        })
-        .collect();
-    let block_lines: Vec<String> = doc
-        .blocks()
-        .map(|(id, b)| {
-            serde_json::to_string(&blocks::block_record(id, b)).expect("block serializes")
-        })
-        .collect();
-    let instances: Vec<String> = doc
-        .instances()
-        .map(|(id, i)| {
-            serde_json::to_string(&blocks::instance_record(id, i)).expect("instance serializes")
-        })
-        .collect();
-    let underlay_lines: Vec<String> = doc
-        .underlays()
-        .map(|(id, u)| {
-            serde_json::to_string(&underlays::underlay_record(id, u)).expect("underlay serializes")
-        })
-        .collect();
-    let text_lines: Vec<String> = doc
-        .texts()
-        .map(|(id, t)| serde_json::to_string(&texts::text_record(id, t)).expect("text serializes"))
-        .collect();
-    let wall_lines: Vec<String> = doc
-        .walls()
-        .map(|(id, w)| {
-            serde_json::to_string(&walls::wall_record(doc, id, w)).expect("wall serializes")
-        })
-        .collect();
-    let property_dims: Vec<String> = doc
-        .property_dims()
-        .map(|(id, d)| {
-            serde_json::to_string(&walls::property_dim_record(id, d))
-                .expect("property dimension serializes")
-        })
-        .collect();
-    let opening_lines: Vec<String> = doc
-        .openings()
-        .map(|(id, o)| {
-            serde_json::to_string(&openings::opening_record(doc, id, o))
-                .expect("opening serializes")
-        })
-        .collect();
-    let tail = [
-        ("measurements", &measurements),
-        ("options", &options),
-        ("fills", &fills),
-        ("annotations", &annotations),
-        ("shown", &shown),
-        ("styles", &styles),
-        ("views", &views),
-        ("sheets", &sheets),
-        ("groups", &groups),
-        ("paths", &paths),
-        ("stack", &stack),
-        ("blocks", &block_lines),
-        ("instances", &instances),
-        ("underlays", &underlay_lines),
-        ("texts", &text_lines),
-        // (After the entities, paths and fills they name.)
-        ("walls", &wall_lines),
-        ("property_dims", &property_dims),
-        ("openings", &opening_lines),
-    ];
-    let last = tail.iter().rposition(|(_, items)| !items.is_empty());
-    push_array(&mut out, "entities", &entities, true);
-    push_array(&mut out, "constraints", &constraints, last.is_some());
-    for (i, (name, items)) in tail.iter().enumerate() {
-        if !items.is_empty() {
-            push_array(&mut out, name, items, Some(i) != last);
-        }
+            .collect(),
+        blocks: doc
+            .blocks()
+            .map(|(id, b)| blocks::block_record(id, b))
+            .collect(),
+        instances: doc
+            .instances()
+            .map(|(id, i)| blocks::instance_record(id, i))
+            .collect(),
+        underlays: doc
+            .underlays()
+            .map(|(id, u)| underlays::underlay_record(id, u))
+            .collect(),
+        texts: doc
+            .texts()
+            .map(|(id, t)| texts::text_record(id, t))
+            .collect(),
+        walls: doc
+            .walls()
+            .map(|(id, w)| walls::wall_record(doc, id, w))
+            .collect(),
+        property_dims: doc
+            .property_dims()
+            .map(|(id, d)| walls::property_dim_record(id, d))
+            .collect(),
+        openings: doc
+            .openings()
+            .map(|(id, o)| openings::opening_record(doc, id, o))
+            .collect(),
     }
-    out.push_str("}\n");
-    out
 }
 
 /// The drawing's [`SHAREABLE`] sections as [`save`] writes them.
@@ -1538,22 +1517,6 @@ fn shareable_sections(doc: &Document) -> serde_json::Map<String, serde_json::Val
     map
 }
 
-#[cfg(not(feature = "demo"))]
-/// Write `"name": [ ... ]` with one item per line.
-fn push_array(out: &mut String, name: &str, items: &[String], more: bool) {
-    out.push_str(&format!("  \"{name}\": ["));
-    if items.is_empty() {
-        out.push(']');
-    } else {
-        for (i, item) in items.iter().enumerate() {
-            out.push_str(if i == 0 { "\n    " } else { ",\n    " });
-            out.push_str(item);
-        }
-        out.push_str("\n  ]");
-    }
-    out.push_str(if more { ",\n" } else { "\n" });
-}
-
 /// Parse `.drift` JSON, upgrading older versions.
 pub fn load(text: &str) -> Result<(Document, Metadata), LoadError> {
     load_with_notes(text).map(|(doc, meta, _)| (doc, meta))
@@ -1573,11 +1536,15 @@ pub fn load_with_notes(text: &str) -> Result<(Document, Metadata, Vec<String>), 
         .and_then(serde_json::Value::as_u64)
         .is_some_and(|v| v >= u64::from(FORMAT_VERSION));
     #[cfg_attr(feature = "demo", allow(unused_mut))]
-    let (doc, mut meta, notes) = load_value(value)?;
+    let (mut doc, mut meta, notes) = load_value(value)?;
     #[cfg(not(feature = "demo"))]
-    if may_carry {
-        meta.carried =
-            Carried(carry::Kept::find(text, write(&doc, &meta)).map(std::sync::Arc::new));
+    if may_carry
+        && let Some(kept) = carry::Kept::find(text, write(&doc, &meta), |id| doc.holds_id(id))
+    {
+        // What it names keeps referring to what the newer build meant, never to something
+        // made here.
+        doc.reserve_ids(kept.named());
+        meta.carried = Carried(Some(std::sync::Arc::new(kept)));
     }
     Ok((doc, meta, notes))
 }

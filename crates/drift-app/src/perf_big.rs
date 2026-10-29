@@ -679,3 +679,261 @@ fn perf_big_drag() {
         }
     }
 }
+
+/// The median of `n` timed runs of `f`, in ms.
+fn median(n: usize, mut f: impl FnMut()) -> f64 {
+    let mut times: Vec<f64> = (0..n)
+        .map(|_| {
+            let t = Instant::now();
+            f();
+            ms(t)
+        })
+        .collect();
+    times.sort_by(f64::total_cmp);
+    times[n / 2]
+}
+
+/// Saving and opening a big drawing (#185): `DRIFT_BIG` as for [`perf_big`] (`synthetic:N`
+/// too). Times a save, an open (which writes the drawing again to look for things from a
+/// newer Drift), and the same with an unknown table and field in the file (opened, saved
+/// unchanged, saved after an edit). `DRIFT_SAVE_OUT` names a file for the saved text, to
+/// compare writers byte for byte.
+#[test]
+#[ignore = "big-drawing probe: needs DRIFT_BIG and a GPU"]
+fn perf_big_save() {
+    let Ok(path) = std::env::var("DRIFT_BIG") else {
+        return;
+    };
+    let mode = match std::env::var("DRIFT_MODE").as_deref() {
+        Ok("underlay") => ImportAs::Underlay,
+        _ => ImportAs::Geometry,
+    };
+    let reps: usize = std::env::var("DRIFT_REPS")
+        .ok()
+        .and_then(|r| r.parse().ok())
+        .unwrap_or(5);
+    let synthetic = path
+        .strip_prefix("synthetic")
+        .map(|n| n.trim_start_matches(':').parse().unwrap_or(8_000));
+    let doc = if let Some(cells) = synthetic {
+        let mut ed = Editor::new(Document::new());
+        ed.doc.begin();
+        drift_io::dxf::add_to_document(&mut ed.doc, &big_drawing(cells));
+        ed.commit_import("Import");
+        ed.doc
+    } else {
+        let mut h = Harness::builder()
+            .with_size([1920.0, 1080.0])
+            .wgpu()
+            .build_eframe(|cc| crate::DriftApp::new(cc));
+        h.run();
+        let name = std::path::Path::new(&path)
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let bytes = std::fs::read(&path).unwrap();
+        h.state_mut().begin_import(&name, bytes, Some(mode), 0.0);
+        let mut pending = h.state_mut().pending_import.take().expect("pending");
+        h.state_mut().finish_import(&mut pending, 0.0);
+        h.state().editor.doc.clone()
+    };
+    println!();
+    println!(
+        "{} curves, {} fills, {} underlays",
+        doc.iter().filter(|(_, e)| !e.kind.is_point()).count(),
+        doc.fills().count(),
+        doc.underlays().count()
+    );
+    let meta = drift_io::Metadata {
+        generator: Some("probe".into()),
+        ..Default::default()
+    };
+    let mut text = String::new();
+    let save = median(reps, || text = drift_io::save(&doc, &meta));
+    let open = median(reps, || {
+        let (_, m, _) = drift_io::load_with_notes(&text).unwrap();
+        assert!(!m.carried.any());
+    });
+    println!(
+        "save {save:.0} ms ({:.1} MB), open {open:.0} ms",
+        text.len() as f64 / 1e6
+    );
+    // From a newer Drift: an unknown table (naming e1) and an unknown field on the first entity.
+    let reader = format!("  \"reader\": {},\n", drift_io::READER_VERSION);
+    let mut newer = text.replacen(
+        &reader,
+        &format!("{reader}  \"zz_newer\": {{\"a\":[1,2],\"on\":\"e1\"}},\n"),
+        1,
+    );
+    newer = newer.replacen(
+        "\"entities\": [\n    {",
+        "\"entities\": [\n    {\"zz\":1,",
+        1,
+    );
+    let mut opened = None;
+    let open_newer = median(reps, || {
+        opened = Some(drift_io::load_with_notes(&newer).unwrap())
+    });
+    let (mut again, again_meta, _) = opened.unwrap();
+    assert!(again_meta.carried.any());
+    let mut same = String::new();
+    let unchanged = median(reps, || same = drift_io::save(&again, &again_meta));
+    assert_eq!(same, newer, "an unchanged newer file saves as it was");
+    // The same open again, and as a 42 file (no look for things from a newer Drift).
+    let open2 = median(reps, || drop(drift_io::load_with_notes(&text).unwrap()));
+    let old = text.replacen(
+        &format!("\"version\": {},", drift_io::FORMAT_VERSION),
+        "\"version\": 42,",
+        1,
+    );
+    let old = old.replacen(
+        &reader,
+        "  \"reader\": 42,
+",
+        1,
+    );
+    let open42 = median(reps, || drop(drift_io::load_with_notes(&old).unwrap()));
+    println!("open again {open2:.0} ms, open as 42 (no carry check) {open42:.0} ms");
+    let point = again
+        .iter()
+        .find(|(_, e)| e.kind.is_point())
+        .map(|(id, _)| id);
+    if let Some(point) = point {
+        let at = again.point(point).unwrap();
+        again.begin();
+        again.set_point(point, at + DVec2::new(1.0, 0.0)).unwrap();
+        again.commit("Move");
+    } else {
+        again.begin();
+        again.set_logo("<svg/>".into());
+        again.commit("Logo");
+    }
+    let mut edited = drift_io::Saved {
+        text: String::new(),
+        loses_newer_data: true,
+        carried: Default::default(),
+    };
+    let after_edit = median(reps, || {
+        edited = drift_io::save_checked(&again, &again_meta)
+    });
+    assert!(!edited.loses_newer_data);
+    assert!(edited.text.contains("\"zz_newer\""));
+    assert_eq!(edited.text.contains("\"zz\":1"), newer.contains("\"zz\":1"));
+    // Only an unknown field on the last entity: found only after looking through them all.
+    let end = "}\n  ],\n  \"constraints\"";
+    if text.contains(end) {
+        let late = text.replacen(end, ",\"zz\":2}\n  ],\n  \"constraints\"", 1);
+        let mut opened = None;
+        let open_late = median(reps, || {
+            opened = Some(drift_io::load_with_notes(&late).unwrap())
+        });
+        let (late_doc, late_meta, _) = opened.unwrap();
+        assert!(late_meta.carried.any());
+        let late_same = median(reps, || {
+            assert_eq!(drift_io::save(&late_doc, &late_meta), late)
+        });
+        println!(
+            "newer field on the last entity only: open {open_late:.0} ms, save unchanged \
+             {late_same:.0} ms"
+        );
+    }
+    // Whether the drawing read back writes the same again.
+    let (read, read_meta, _) = drift_io::load_with_notes(&text).unwrap();
+    let second = drift_io::save(&read, &read_meta);
+    let differ = text
+        .lines()
+        .zip(second.lines())
+        .filter(|(a, b)| a != b)
+        .count();
+    println!(
+        "second save same: {} ({differ} lines differ, {} vs {} bytes)",
+        second == text,
+        text.len(),
+        second.len()
+    );
+    println!(
+        "newer file: open {open_newer:.0} ms, save unchanged {unchanged:.0} ms, \
+         save after an edit {after_edit:.0} ms"
+    );
+    if let Ok(out) = std::env::var("DRIFT_SAVE_OUT") {
+        std::fs::write(&out, &text).unwrap();
+        std::fs::write(format!("{out}.edited"), &edited.text).unwrap();
+        std::fs::write(format!("{out}.second"), &second).unwrap();
+    }
+}
+
+/// Every fixture opened and saved (#185): whether it saves as it was read, whether a second
+/// save is the same, and (with `DRIFT_SAVE_OUT`, a folder) the saved text, to compare writers
+/// byte for byte.
+#[test]
+#[ignore = "writer probe: run with --ignored --nocapture"]
+fn fixtures_save() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../drift-io/tests/fixtures");
+    let out = std::env::var("DRIFT_SAVE_OUT").ok();
+    let mut names: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect();
+    names.sort();
+    println!();
+    for path in names {
+        let text = std::fs::read_to_string(&path)
+            .unwrap()
+            .replace("\r\n", "\n");
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        let (doc, meta, _) = drift_io::load_with_notes(&text).unwrap();
+        let saved = drift_io::save(&doc, &meta);
+        let (again, again_meta, _) = drift_io::load_with_notes(&saved).unwrap();
+        let twice = drift_io::save(&again, &again_meta);
+        println!(
+            "{name:<14} {:>7} bytes  saves as read: {:<5}  second save same: {}",
+            text.len(),
+            saved == text,
+            twice == saved
+        );
+        if let Some(out) = &out {
+            std::fs::create_dir_all(out).unwrap();
+            std::fs::write(std::path::Path::new(out).join(&name), &saved).unwrap();
+            // A newer build's table laid out another way, merged after an edit.
+            let reader = format!(
+                "  \"reader\": {},
+",
+                drift_io::READER_VERSION
+            );
+            if saved.contains(&reader) {
+                let newer = saved.replacen(
+                    &reader,
+                    &format!(
+                        "{reader}  \"marks\":[
+	{{ \"id\": \"m1\" }} ,
+
+   {{\"x\":[1,
+ 2]}}
+ ] ,
+"
+                    ),
+                    1,
+                );
+                let (mut d, m, _) = drift_io::load_with_notes(&newer).unwrap();
+                let p = d.iter().find(|(_, e)| e.kind.is_point()).unwrap().0;
+                let at = d.point(p).unwrap();
+                d.set_point(p, at + DVec2::X).unwrap();
+                std::fs::write(
+                    std::path::Path::new(out).join(format!("{name}.edited")),
+                    drift_io::save(&d, &m),
+                )
+                .unwrap();
+            }
+        }
+    }
+    // The demo drawing, and a fragment as copy writes it.
+    if let Some(out) = &out {
+        let plate = drift_core::demo::mounting_plate();
+        std::fs::write(
+            std::path::Path::new(out).join("mounting_plate.drift"),
+            drift_io::save(&plate, &Default::default()),
+        )
+        .unwrap();
+    }
+}

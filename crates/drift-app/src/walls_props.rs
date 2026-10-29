@@ -422,3 +422,39 @@ proptest! {
         edits_match_a_full_rebuild(net, vec![(0, nudge), (5, (nudge.1 * 7.0, nudge.0 * 7.0))]);
     }
 }
+
+/// Cases the random runs found.
+mod found {
+    use super::*;
+
+    /// CI on #268 (Windows): a room whose corner lies on the outer loop (a flush face running
+    /// on through the node) was taken for a loop outside its walls, so it was no hole until a
+    /// nudge moved the corner off.
+    #[test]
+    fn walls_props_found_room_corner_on_the_outer_loop() {
+        let net = Network {
+            n: 3,
+            runs: vec![
+                (vec![(2, 1), (2, 0)], 0, 1),
+                (vec![(0, 1), (1, 1), (2, 1), (2, 2)], 0, 1),
+                (vec![(0, 2), (1, 2), (2, 2)], 0, 0),
+                (vec![(1, 1), (1, 2)], 0, 0),
+            ],
+            jitter: vec![
+                (0.0, 0.0),
+                (0.0, 0.0),
+                (0.0, 0.0),
+                (0.0, 0.0),
+                (0.0, 0.0),
+                (0.0, 0.0),
+                (11.967682647121931, -38.092805756167465),
+                (52.10454786006203, 0.0),
+                (0.0, 0.0),
+            ],
+        };
+        stable_keys(net.clone(), (-21.94825052774134, -18.971614696201968));
+        idempotent(net.clone());
+        order_independent(net.clone());
+        round_trip(net);
+    }
+}

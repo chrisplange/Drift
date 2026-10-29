@@ -259,3 +259,62 @@ fn smoke_sheet_a_new_sheet_is_empty() {
     undo(&mut h);
     assert!(placed(&h, id).is_empty());
 }
+
+/// #263: the Views list's names (and their detail lines) start at the left of their rows,
+/// whatever their length, as in the other lists.
+#[test]
+fn smoke_sheet_views_list_is_left_justified() {
+    let Some(mut h) = harness() else { return };
+    let id = a_sheet(&mut h);
+    {
+        let ed = &mut h.state_mut().editor;
+        let first = placed_first(ed, id);
+        ed.doc.begin();
+        let mut long = ed.doc.view(first).unwrap().clone();
+        long.name = "A view with a much longer name".into();
+        ed.doc.add_view(long);
+        ed.commit("Another view");
+    }
+    h.state_mut().show_panel(Panel::Sheets);
+    h.run();
+    h.run();
+    let names: Vec<String> = h
+        .state()
+        .editor
+        .doc
+        .views()
+        .map(|(_, v)| v.title().to_owned())
+        .collect();
+    assert_eq!(names.len(), 2);
+    let pad = h.ctx.global_style().spacing.button_padding.x;
+    for name in &names {
+        let row = h
+            .get_all_by_label_contains(name)
+            .find(|n| {
+                use egui_kittest::kittest::NodeT as _;
+                n.accesskit_node().role() == egui::accesskit::Role::Button
+            })
+            .unwrap_or_else(|| panic!("the row of {name}"))
+            .rect();
+        let text_left = h
+            .output()
+            .shapes
+            .iter()
+            .find_map(|c| match &c.shape {
+                egui::Shape::Text(t) if t.galley.job.text.starts_with(name.as_str()) => {
+                    Some(t.pos.x + t.galley.rect.min.x)
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("the text of {name}"));
+        assert!(
+            (text_left - (row.left() + pad)).abs() < 1.5,
+            "{name}: text at {text_left}, row from {}",
+            row.left()
+        );
+    }
+}
+
+fn placed_first(ed: &crate::editor::Editor, id: drift_core::SheetId) -> drift_core::ViewId {
+    ed.doc.sheet(id).unwrap().viewports[0].view
+}

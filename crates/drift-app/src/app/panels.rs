@@ -818,7 +818,7 @@ impl DriftApp {
             }
             self.appearance_panel(ui);
             // Filled shapes among the picked curves (a group's, say): their fills too.
-            let shapes = self.shapes_in_selection();
+            let shapes = self.editor.shapes_in_selection();
             if !shapes.fills.is_empty() {
                 let title = match shapes.fills.len() {
                     1 => "Fill".to_owned(),

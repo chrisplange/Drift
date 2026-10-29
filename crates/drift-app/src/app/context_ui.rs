@@ -1032,6 +1032,7 @@ impl DriftApp {
         if self.clipboard.is_some() && self.command_item(ui, Command::Paste) {
             return;
         }
+        self.command_item(ui, Command::ZoomToSelection);
         self.command_items(
             ui,
             &[

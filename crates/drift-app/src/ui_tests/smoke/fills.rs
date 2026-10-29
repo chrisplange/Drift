@@ -656,3 +656,33 @@ fn smoke_fills_picked_shape_says_how_to_edit_its_fill() {
     let prefs = h.state().view_prefs();
     assert!(prefs.contains("fillalone=3"), "{prefs}");
 }
+
+/// #266: right-click Move to layer on a filled shape takes its fill along, and one undo puts
+/// both back.
+#[test]
+fn smoke_fills_move_to_layer_takes_the_shapes_fill() {
+    let Some(mut h) = harness() else { return };
+    view(&mut h, DVec2::new(-10.0, -10.0), DVec2::new(60.0, 40.0));
+    let (sides, fill) = rectangle(&mut h, DVec2::ZERO, DVec2::new(40.0, 30.0), Fill::Solid);
+    let fill = fill.unwrap();
+    let a = h.state().editor.doc.current_layer();
+    let b = h.state_mut().editor.add_layer("Moved here");
+    h.run();
+    let on = |h: &Harness<'_, DriftApp>, layer| {
+        let doc = &h.state().editor.doc;
+        sides.iter().all(|s| doc.get(*s).unwrap().layer == layer)
+            && doc.fill(fill).unwrap().layer == layer
+    };
+    let inside = DVec2::new(20.0, 15.0);
+    click_world(&mut h, inside);
+    let pos = screen(&h, inside);
+    right_click(&mut h, pos);
+    h.get_by_label_contains("Move to layer").click();
+    h.run();
+    h.get_by_label("Moved here").click();
+    h.run();
+    assert!(on(&h, b), "the outline and its fill on the new layer");
+    h.key_press_modifiers(EguiModifiers::COMMAND, Key::Z);
+    h.run();
+    assert!(on(&h, a), "one undo puts both back");
+}

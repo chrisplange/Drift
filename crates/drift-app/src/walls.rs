@@ -99,7 +99,7 @@ impl Editor {
             return BTreeSet::new();
         };
         let mut set = match self.doc.group_of(first) {
-            Some(g) if self.open_group != Some(g) && self.pick_filter.blocks() => self
+            Some(g) if self.open_group != Some(g) => self
                 .doc
                 .group(g)
                 .map(|g| g.members.clone())

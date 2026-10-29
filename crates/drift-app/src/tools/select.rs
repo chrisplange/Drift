@@ -830,7 +830,6 @@ impl Tool for SelectTool {
                 // A shape in a group (not the open one) picks the whole group, as a click on
                 // its outline does.
                 if let Some(f) = fill
-                    && filter.blocks()
                     && ed.fill_group(f).is_some()
                     && let Some(&first) = ed.shape_outline(f).as_ref().and_then(|o| o.first())
                 {

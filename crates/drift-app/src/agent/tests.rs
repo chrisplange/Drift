@@ -248,7 +248,10 @@ fn layers_fills_and_text() {
     let l = ok(
         &mut s,
         "layers",
-        json!({ "create": [{ "name": "Walls", "color": "#aa0000", "weight_mm": 0.5 }] }),
+        json!({ "create": [
+            { "name": "Walls", "color": "#aa0000", "weight_mm": 0.5 },
+            { "name": "Fine", "weight_mm": 0.09 }
+        ] }),
     );
     let walls = l["created"][0].as_str().unwrap().to_owned();
     let lines = ok(&mut s, "list_entities", json!({ "kind": "line" }));
@@ -284,6 +287,14 @@ fn layers_fills_and_text() {
     let info = ok(&mut s, "drawing_info", json!({}));
     assert_eq!(info["fills"], 1);
     assert_eq!(info["texts"], 1);
+    // A weight on AutoCAD's list stays as given, as from an imported file (#255).
+    let fine = info["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|l| l["name"] == "Fine")
+        .unwrap();
+    assert_eq!(fine["weight_mm"], 0.09);
 }
 
 #[test]

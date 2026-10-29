@@ -221,7 +221,7 @@ pub(crate) fn parse_block(r: BlockRecord) -> Result<(BlockId, Block), LoadError>
                 Some(c) => Some(Rgb::parse(c).ok_or_else(|| bad("color"))?),
                 None => None,
             },
-            weight: item.weight.map(LineWeight::nearest),
+            weight: item.weight.map(LineWeight::nearest_cad),
             line_type: match &item.linetype {
                 Some(t) => Some(LineType::from_name(t).ok_or_else(|| bad("linetype"))?),
                 None => None,

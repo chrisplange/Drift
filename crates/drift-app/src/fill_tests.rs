@@ -2271,3 +2271,113 @@ fn many_filled_rectangles_made_shapes_commit_quickly() {
     assert!(moved < std::time::Duration::from_secs(4), "{moved:?}");
     assert!(small < std::time::Duration::from_secs(2), "{small:?}");
 }
+
+/// A drag moving fills' outlines and everything round them as one moves the fills along,
+/// without finding the drawing's areas again each frame (#253); with anything else near (a
+/// curve the move brings across one) the fill's area is found again.
+#[test]
+fn a_drag_moves_fills_along_with_everything_round_them() {
+    let mut ed = Editor::new(Document::new());
+    let (_, a) = plate(&mut ed);
+    let (_, b) = polygon(
+        &mut ed,
+        &[v(100.0, 0.0), v(140.0, 0.0), v(140.0, 20.0), v(100.0, 20.0)],
+    );
+    // A line that stays, just clear of the first plate until it moves over it.
+    polygon(&mut ed, &[v(42.0, -10.0), v(42.0, 40.0)]);
+    let fa = area_fill_at(&mut ed, v(10.0, 10.0));
+    let fb = area_fill_at(&mut ed, v(110.0, 10.0));
+    let at_rest = ed.fill_shapes();
+    let ids: Vec<EntityId> = a.iter().chain(&b).copied().collect();
+    let dragged: Vec<drift_solver::Param> = ed
+        .doc
+        .defining_points(ids.iter().copied())
+        .into_iter()
+        .flat_map(drift_solver::Param::point)
+        .collect();
+    let areas = |ed: &Editor| ed.regions.as_ref().map(|(_, r)| r.clone());
+
+    // A small move: nothing else comes near either plate.
+    let before = areas(&ed);
+    ed.doc.begin();
+    assert!(ed.drag(&ids, v(1.0, 3.0), &dragged));
+    let shapes = ed.fill_shapes();
+    assert!(
+        matches!((&before, &areas(&ed)), (Some(x), Some(y)) if std::sync::Arc::ptr_eq(x, y)),
+        "the areas were found again"
+    );
+    for f in [fa, fb] {
+        let (was, now) = (&at_rest[&f].region, &shapes[&f].region);
+        assert!(close(now.area, was.area));
+        assert!(now.centroid.distance(was.centroid + v(1.0, 3.0)) < 1e-9);
+        assert!(!shapes[&f].lost);
+    }
+
+    // On over the line that stays: not moved along, but found again (a fill a curve
+    // crosses keeps its whole area, found without the curves across it).
+    let before = areas(&ed);
+    assert!(ed.drag(&ids, v(4.0, 0.0), &dragged));
+    let shapes = ed.fill_shapes();
+    assert!(
+        !matches!((&before, &areas(&ed)), (Some(x), Some(y)) if std::sync::Arc::ptr_eq(x, y)),
+        "moved along though a line it now crosses stayed"
+    );
+    assert!(shapes[&fa].crossed);
+    assert!(close(shapes[&fb].region.area, at_rest[&fb].region.area));
+    let mid_drag = shapes;
+    assert!(ed.commit("Move"));
+    // As a fresh look at the moved drawing finds them.
+    let found = ed.fill_shapes();
+    for f in [fa, fb] {
+        assert!(close(found[&f].region.area, mid_drag[&f].region.area));
+        assert!(
+            found[&f]
+                .region
+                .centroid
+                .distance(mid_drag[&f].region.centroid)
+                < 1e-6
+        );
+    }
+}
+
+/// On a big drawing (its areas found off the edit path) a fill that had no area when a drag
+/// began isn't looked for until the drag ends: it doesn't make every frame find the
+/// drawing's areas (#253).
+#[test]
+fn a_drag_on_a_big_drawing_leaves_fills_without_an_area_until_it_ends() {
+    let mut ed = Editor::new(Document::new());
+    ed.areas.defer = Some(true);
+    let (_, a) = plate(&mut ed);
+    polygon(
+        &mut ed,
+        &[v(100.0, 0.0), v(140.0, 0.0), v(140.0, 20.0), v(100.0, 20.0)],
+    );
+    let fb = area_fill_at(&mut ed, v(110.0, 10.0));
+    // A fill whose area is gone: nothing round its seed.
+    let mut gone = drift_core::Fill::new(Vec::new(), v(-50.0, -50.0), drift_core::FillKind::Solid);
+    ed.fill_style.apply(&mut gone);
+    ed.doc.begin();
+    let gone = ed.doc.add_fill(gone);
+    assert!(ed.commit_import("Fill"));
+    ed.settle_areas();
+    let at_rest = ed.fill_shapes();
+    assert!(!at_rest.contains_key(&gone), "it has no area");
+    // Only the first plate moves: the second's fill stays as it was.
+    let dragged: Vec<drift_solver::Param> = ed
+        .doc
+        .defining_points(a.iter().copied())
+        .into_iter()
+        .flat_map(drift_solver::Param::point)
+        .collect();
+    let before = ed.regions.as_ref().map(|(_, r)| r.clone());
+    ed.doc.begin();
+    assert!(ed.drag(&a, v(3.0, 1.0), &dragged));
+    let shapes = ed.fill_shapes();
+    assert!(
+        matches!((&before, &ed.regions), (Some(x), Some((_, y))) if std::sync::Arc::ptr_eq(x, y)),
+        "the areas were found again"
+    );
+    assert!(!shapes.contains_key(&gone));
+    assert!(close(shapes[&fb].region.area, at_rest[&fb].region.area));
+    assert!(ed.commit("Move"));
+}

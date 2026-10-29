@@ -445,6 +445,18 @@ impl Editor {
         {
             return cache.shapes.clone();
         }
+        // The shapes as an edit found them, for a drag to move along.
+        if let Some(cache) = &self.fill_shapes
+            && self.doc.in_transaction()
+            && cache.serial.is_none()
+            && cache.revision == self.doc.revision_at_begin()
+            && self
+                .fill_shapes_at_begin
+                .as_ref()
+                .is_none_or(|(serial, _)| *serial != self.doc.transaction_serial())
+        {
+            self.fill_shapes_at_begin = Some((self.doc.transaction_serial(), cache.shapes.clone()));
+        }
         // The last edit's fills follow it once its areas are found (on a thread): until
         // then they show as they were before it, unless one is new to the drawing.
         if self.areas.pending.is_some() {
@@ -484,12 +496,14 @@ impl Editor {
         // moved keeps the area found before (finding the drawing's areas takes far longer
         // than a frame); every area is found again once the transaction ends.
         let mut kept = self.kept_fill_shapes();
+        let none = self.moved_fill_shapes(&fills, &mut kept);
         // The drawing's areas are found only when a fill needs them (not for shapes' fills
         // and walls' pochés, which know their own).
         let needs_areas = fills.iter().any(|(id, f)| {
             f.path.is_none()
                 && !walls.as_ref().is_some_and(|w| w.fills.contains_key(id))
                 && !kept.contains_key(id)
+                && !none.contains(id)
         });
         let (regions, ids) = if needs_areas {
             (self.regions(), self.region_ids())
@@ -580,6 +594,9 @@ impl Editor {
             }
             if let Some(shape) = kept.remove(&id) {
                 out.insert(id, shape);
+                continue;
+            }
+            if none.contains(&id) {
                 continue;
             }
             // A curve drawn across a fill cuts its outline into pieces: the fill keeps its
@@ -681,6 +698,234 @@ impl Editor {
             .filter(|(_, s)| !moved(&s.curves))
             .map(|(id, s)| (*id, s.clone()))
             .collect()
+    }
+
+    /// During a drag: the area fills (`fills`, not in `kept`) whose outline the drag moved
+    /// along with everything round it (as far as the outline's box reaches, where it was and
+    /// where it is), all by the same offset, take the shape they had when it began moved by
+    /// that offset: the area found among the moved curves, without finding the drawing's
+    /// areas again every frame (#253). Anything else near (a curve left behind, reshaped or
+    /// moved otherwise) and the fill's area is found again.
+    ///
+    /// Returns the area fills that had no area when the drag began and have none now: the
+    /// drag moved the whole drawing as one, which changes no area.
+    fn moved_fill_shapes(
+        &self,
+        fills: &[(FillId, Fill)],
+        kept: &mut BTreeMap<FillId, FillShape>,
+    ) -> BTreeSet<FillId> {
+        let mut none = BTreeSet::new();
+        let Some((serial, base)) = &self.fill_shapes_at_begin else {
+            return none;
+        };
+        if !self.doc.in_transaction() || *serial != self.doc.transaction_serial() {
+            return none;
+        }
+        // (A fill whose outline, seed or shape the edit changed is found again; a hatch
+        // carried along with its outline only moved its pattern.)
+        let as_it_was = |id: FillId, fill: &Fill| {
+            self.doc.fill_before_transaction(id).is_some_and(|was| {
+                was.boundary == fill.boundary && was.seed == fill.seed && was.path == fill.path
+            })
+        };
+        let touched = self.doc.entities_touched_in_transaction();
+        // How far each touched point moved (None: new).
+        let mut points: HashMap<EntityId, Option<DVec2>> = HashMap::new();
+        for &e in &touched {
+            if let Ok(now) = self.doc.point(e) {
+                let was = match self.doc.entity_before_transaction(e).map(|e| e.kind) {
+                    Some(drift_core::EntityKind::Point(p)) => Some(p),
+                    _ => None,
+                };
+                points.insert(e, was.map(|was| now - was));
+            }
+        }
+        // How far an entity moved as one: its points all by the same offset, nothing else of
+        // it changed (None: reshaped or new).
+        let close = |a: DVec2, b: DVec2, size: f64| {
+            a.distance(b) <= drift_core::tolerance::same(size.max(a.abs().max_element()))
+        };
+        let moved_by = |e: EntityId, size: f64| -> Option<DVec2> {
+            let entity = self.doc.get(e)?;
+            if entity.kind.is_point() {
+                return points.get(&e).copied().unwrap_or(Some(DVec2::ZERO));
+            }
+            if self.doc.touched_in_transaction(e)
+                && self.doc.entity_before_transaction(e).map(|b| b.kind) != Some(entity.kind)
+            {
+                return None;
+            }
+            let mut offset = None;
+            for p in entity.kind.points() {
+                let d = points.get(&p).copied().unwrap_or(Some(DVec2::ZERO))?;
+                match offset {
+                    None => offset = Some(d),
+                    Some(o) if close(o, d, size) => {}
+                    Some(_) => return None,
+                }
+            }
+            offset
+        };
+        let extent = |b: &Bounds| b.min.abs().max(b.max.abs()).max_element();
+        // Where the touched geometry that didn't move by `offset` is and was (the box of all
+        // its points then and now, grown by its size so a curve's bulge is in), found once
+        // for the offset most fills share.
+        let mut others: Option<(DVec2, drift_geom::BoxIndex)> = None;
+        let others_for = |offset: DVec2| {
+            let size = offset.abs().max_element();
+            let boxes: Vec<Bounds> = touched
+                .iter()
+                .filter(|&&e| !moved_by(e, size).is_some_and(|d| close(d, offset, size)))
+                .filter_map(|&e| {
+                    let entity = self.doc.get(e)?;
+                    let before = self.doc.entity_before_transaction(e);
+                    let mut at: Vec<DVec2> = Vec::new();
+                    for p in entity
+                        .kind
+                        .points()
+                        .chain(entity.kind.is_point().then_some(e))
+                    {
+                        at.extend(self.doc.point(p).ok());
+                        if let Some(drift_core::EntityKind::Point(was)) =
+                            self.doc.entity_before_transaction(p).map(|e| e.kind)
+                        {
+                            at.push(was);
+                        }
+                    }
+                    let mut b = Bounds::from_point(*at.first()?);
+                    for &p in &at {
+                        b.include(p);
+                    }
+                    let mut grow = (b.max - b.min).max_element();
+                    for kind in [Some(entity.kind), before.map(|b| b.kind)]
+                        .into_iter()
+                        .flatten()
+                    {
+                        if let drift_core::EntityKind::Circle { radius, .. } = kind {
+                            grow = grow.max(radius);
+                        }
+                    }
+                    b.min -= DVec2::splat(grow);
+                    b.max += DVec2::splat(grow);
+                    Some(b)
+                })
+                .collect();
+            drift_geom::BoxIndex::new(boxes.into_iter())
+        };
+        for (id, fill) in fills {
+            if fill.path.is_some() || kept.contains_key(id) || !as_it_was(*id, fill) {
+                continue;
+            }
+            let Some(shape) = base.get(id).filter(|s| !s.lost) else {
+                continue;
+            };
+            let size = extent(&shape.region.bounds);
+            let Some(offset) = shape.curves.first().and_then(|&c| moved_by(c, size)) else {
+                continue;
+            };
+            if offset == DVec2::ZERO
+                || !shape
+                    .curves
+                    .iter()
+                    .all(|&c| moved_by(c, size).is_some_and(|d| close(d, offset, size)))
+            {
+                continue;
+            }
+            let pad = drift_core::tolerance::same(size + offset.abs().max_element());
+            let grown = |b: Bounds| Bounds {
+                min: b.min - DVec2::splat(pad),
+                max: b.max + DVec2::splat(pad),
+            };
+            let was = grown(shape.region.bounds);
+            let now = grown(Bounds {
+                min: was.min + offset,
+                max: was.max + offset,
+            });
+            // Everything there now moved with it (but points on no curve, which bound no
+            // area)...
+            let with_it = |b: Bounds| {
+                self.index.query(b).all(|e| {
+                    moved_by(e, size).is_some_and(|d| close(d, offset, size))
+                        || (self.doc.get(e).is_some_and(|e| e.kind.is_point())
+                            && self.index.users_of(e).next().is_none())
+                })
+            };
+            if !with_it(was) || !with_it(now) {
+                continue;
+            }
+            // ...and nothing that moved otherwise was there before.
+            if others
+                .as_ref()
+                .is_none_or(|(o, _)| !close(*o, offset, size))
+            {
+                others = Some((offset, others_for(offset)));
+            }
+            let (_, index) = others.as_ref().expect("found above");
+            if !index.near(&was).is_empty() || !index.near(&now).is_empty() {
+                continue;
+            }
+            kept.insert(
+                *id,
+                FillShape {
+                    region: shape.region.moved(offset),
+                    ..shape.clone()
+                },
+            );
+        }
+        // The rest (with no area when it began, or keeping a lost one's last shape) stay so
+        // if the whole drawing moved as one: every point of a curve by the same offset. On a
+        // big drawing, whose areas are found off the edit path, they stay so until the drag
+        // ends whatever moved: they are looked for again then.
+        let rest: Vec<FillId> = fills
+            .iter()
+            .filter(|(id, f)| f.path.is_none() && !kept.contains_key(id) && as_it_was(*id, f))
+            .filter(|(id, _)| base.get(id).is_none_or(|s| s.lost))
+            .map(|(id, _)| *id)
+            .collect();
+        if rest.is_empty() {
+            return none;
+        }
+        // (Points on no curve bound no area.)
+        let mut common: Option<DVec2> = None;
+        let mut whole = true;
+        for id in self.doc.referenced_points() {
+            let Some(Some(d)) = points.get(&id).copied() else {
+                whole = false;
+                break;
+            };
+            match common {
+                None => common = Some(d),
+                Some(o) if close(o, d, d.abs().max_element()) => {}
+                Some(_) => {
+                    whole = false;
+                    break;
+                }
+            }
+        }
+        let offset = common.filter(|_| whole);
+        if offset.is_none() && !self.areas_off_the_edit_path() {
+            return none;
+        }
+        for id in rest {
+            match base.get(&id) {
+                Some(shape) => {
+                    kept.insert(
+                        id,
+                        FillShape {
+                            region: offset.map_or_else(
+                                || shape.region.clone(),
+                                |offset| shape.region.moved(offset),
+                            ),
+                            ..shape.clone()
+                        },
+                    );
+                }
+                None => {
+                    none.insert(id);
+                }
+            }
+        }
+        none
     }
 
     /// Keep each fill on its area as an edit changes it, inside the edit's open transaction

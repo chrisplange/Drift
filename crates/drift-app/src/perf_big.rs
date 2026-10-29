@@ -6,6 +6,9 @@
 //! `perf_big_synthetic` needs no files. `perf_big` runs the whole app (with a GPU) on the
 //! file `DRIFT_BIG` names, imported as `DRIFT_MODE` (`geometry`, the default, or
 //! `underlay`); `DRIFT_BIG=synthetic:8000` imports [`big_drawing`] of 8,000 rooms instead.
+//! `perf_big_drag` drags one curve, 1000 scattered curves, every curve and every point of
+//! the `DRIFT_BIG` file (as geometry), calling `Editor::drag` and then with the Select tool
+//! (`DRIFT_CASE` picks one by the start of its name), with the frame after each step.
 
 use std::collections::BTreeSet;
 use std::time::Instant;
@@ -222,9 +225,71 @@ fn perf_big_synthetic() {
     let kept = ms(t) / hover.len() as f64;
     println!("canvas items: made {made:.1} ms, kept (hovering) {kept:.2} ms a frame");
 
-    println!("  budgets: index update 5 ms, kept items 5 ms a frame");
+    // Dragging every curve (#253): each part moves on its own (rounds moved whole have
+    // nothing to solve), the index keeps searches quick, the fills move along, and the
+    // overlapping curves are looked for again only where things changed.
+    let all: Vec<EntityId> = ed
+        .doc
+        .iter()
+        .filter(|(_, e)| !e.kind.is_point())
+        .map(|(id, _)| id)
+        .collect();
+    let dragged: Vec<drift_solver::Param> = ed
+        .doc
+        .defining_points(all.iter().copied())
+        .into_iter()
+        .flat_map(drift_solver::Param::point)
+        .collect();
+    // (As the app does when a drag begins: the last edit's fills follow it first.)
+    ed.settle_areas();
+    ed.sync();
+    let _ = ed.fill_shapes();
+    let _ = ed.overlapping();
+    ed.doc.begin();
+    let (mut first, mut drag, mut fills, mut over) = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
+    for k in 1..=4 {
+        let t = Instant::now();
+        assert!(ed.drag(&all, DVec2::new(2.0 * k as f64, 1.0), &dragged));
+        // (The first call works out the drag's parts.)
+        if k == 1 {
+            first = ms(t);
+        } else {
+            drag = drag.max(ms(t));
+        }
+        assert_eq!(ed.drag_solves, 0, "rounds moved whole were solved");
+        ed.sync();
+        let t = Instant::now();
+        let _ = ed.fill_shapes();
+        fills = fills.max(ms(t));
+        let t = Instant::now();
+        let _ = ed.overlapping();
+        over = over.max(ms(t));
+    }
+    assert!(ed.commit("Move"));
+    println!(
+        "drag every curve: first call {first:.0} ms, then {drag:.0} ms; fill shapes \
+         {fills:.1} ms, overlapping {over:.1} ms (the worst)"
+    );
+
+    println!(
+        "  budgets: index update 5 ms, kept items 5 ms a frame; dragging every curve: \
+         first call 400 ms, then 150 ms, fills 60 ms, overlapping 80 ms"
+    );
     assert!(index < 5.0, "index update {index:.2} ms");
     assert!(kept < 5.0, "kept items {kept:.2} ms a frame");
+    assert!(
+        first < 400.0,
+        "first call dragging every curve {first:.0} ms"
+    );
+    assert!(drag < 150.0, "dragging every curve {drag:.0} ms a call");
+    assert!(
+        fills < 60.0,
+        "fills while dragging every curve {fills:.1} ms"
+    );
+    assert!(
+        over < 80.0,
+        "overlapping while dragging every curve {over:.1} ms"
+    );
 }
 
 fn phase(
@@ -404,4 +469,213 @@ fn perf_big() {
     });
     edit("undo delete", &mut h, &mut |app| assert!(app.editor.undo()));
     edit("redo delete", &mut h, &mut |app| assert!(app.editor.redo()));
+}
+
+/// #253 probe: what a drag of many curves solves, and the frame after it.
+#[test]
+#[ignore = "big-drawing probe: needs DRIFT_BIG and a GPU"]
+fn perf_big_drag() {
+    let Ok(path) = std::env::var("DRIFT_BIG") else {
+        return;
+    };
+    let mut h = Harness::builder()
+        .with_size([1920.0, 1080.0])
+        .wgpu()
+        .build_eframe(|cc| crate::DriftApp::new(cc));
+    h.run();
+    let name = std::path::Path::new(&path)
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    let bytes = std::fs::read(&path).unwrap();
+    h.state_mut()
+        .begin_import(&name, bytes, Some(ImportAs::Geometry), 0.0);
+    let mut pending = h.state_mut().pending_import.take().expect("pending");
+    h.state_mut().finish_import(&mut pending, 0.0);
+    let fit = h.state().fit_bounds();
+    h.state_mut().fit_target = Some(fit);
+    h.run();
+    h.state_mut().fit_target = None;
+    let (curves, points) = {
+        let ed = &h.state().editor;
+        let mut c = Vec::new();
+        let mut p = Vec::new();
+        for (id, e) in ed.doc.iter() {
+            if e.kind.is_point() {
+                p.push(id)
+            } else {
+                c.push(id)
+            }
+        }
+        (c, p)
+    };
+    println!(
+        "\n{} curves, {} points, {} fills, {} relations",
+        curves.len(),
+        points.len(),
+        h.state().editor.doc.fills().count(),
+        h.state().editor.doc.constraints().count()
+    );
+    let only = std::env::var("DRIFT_CASE").ok();
+    let cases: Vec<(&str, Vec<EntityId>)> = vec![
+        ("one curve", vec![curves[curves.len().min(1001) - 1]]),
+        (
+            "1000 scattered curves",
+            curves
+                .iter()
+                .step_by(curves.len() / 1000)
+                .take(1000)
+                .copied()
+                .collect(),
+        ),
+        ("all curves", curves.clone()),
+        ("all points", points.clone()),
+    ];
+    for (label, ids) in cases {
+        if only.as_deref().is_some_and(|o| !label.starts_with(o)) {
+            continue;
+        }
+        {
+            let ed = &mut h.state_mut().editor;
+            ed.doc.begin();
+            let scope = ed.drag_scope(&ids);
+            let lowering = ed.lowering();
+            let needs = drift_solver::needs_solve_with(&ed.doc, &scope, lowering.as_deref());
+            let relations = ed
+                .doc
+                .constraints()
+                .filter(|(_, c)| c.entities().any(|e| scope.contains(&e)))
+                .count();
+            let mut kinds = std::collections::BTreeMap::<&str, usize>::new();
+            for &id in scope.iter() {
+                let k = match ed.doc.get(id).map(|e| e.kind) {
+                    Some(drift_core::EntityKind::Point(_)) => "point",
+                    Some(drift_core::EntityKind::Line { .. }) => "line",
+                    Some(drift_core::EntityKind::Arc { .. }) => "arc",
+                    Some(drift_core::EntityKind::Circle { .. }) => "circle",
+                    _ => "other",
+                };
+                *kinds.entry(k).or_default() += 1;
+            }
+            // Components: entities joined by shared points.
+            let ids_in: Vec<EntityId> = scope.iter().copied().collect();
+            let at: std::collections::HashMap<EntityId, usize> =
+                ids_in.iter().enumerate().map(|(i, &id)| (id, i)).collect();
+            let mut parent: Vec<usize> = (0..ids_in.len()).collect();
+            fn find(p: &mut [usize], mut i: usize) -> usize {
+                while p[i] != i {
+                    p[i] = p[p[i]];
+                    i = p[i];
+                }
+                i
+            }
+            for (i, &id) in ids_in.iter().enumerate() {
+                if let Some(e) = ed.doc.get(id) {
+                    for q in e.kind.points() {
+                        if let Some(&j) = at.get(&q) {
+                            let (a, b) = (find(&mut parent, i), find(&mut parent, j));
+                            parent[a] = b;
+                        }
+                    }
+                }
+            }
+            let comps: BTreeSet<usize> = (0..ids_in.len()).map(|i| find(&mut parent, i)).collect();
+            println!(
+                "\n== {label}: {} ids; scope {} of {} entities, {} components; kinds {kinds:?}; \
+                 needs_solve {needs}; relations in scope {relations}; locked {}",
+                ids.len(),
+                scope.len(),
+                ed.doc.iter().count(),
+                comps.len(),
+                ed.doc.locked_entities().len()
+            );
+        }
+        let dragged: Vec<drift_solver::Param> = h
+            .state()
+            .editor
+            .doc
+            .defining_points(ids.iter().copied())
+            .iter()
+            .copied()
+            .flat_map(drift_solver::Param::point)
+            .collect();
+        for k in 0..3 {
+            let t = Instant::now();
+            let ok = h
+                .state_mut()
+                .editor
+                .drag(&ids, DVec2::new(2.0, 1.0), &dragged);
+            let call = ms(t);
+            let solves = h.state().editor.drag_solves;
+            let t = Instant::now();
+            h.step();
+            let frame = ms(t);
+            println!(
+                "  step {k}: ok {ok}, drag call {call:.1} ms, {solves} solves, frame {frame:.1} ms"
+            );
+        }
+        {
+            let ed = &mut h.state_mut().editor;
+            ed.doc.rollback();
+            ed.sync();
+        }
+        h.step();
+        h.step();
+        // The same with the Select tool: its move of the picked curves (G), a few pixels a
+        // frame, then a click to finish (the same moves as a drag of them).
+        if ids.len() > 1 && label.contains("curves") {
+            let first = ids[0];
+            let was = h.state().editor.doc.shape(first).map(|s| s.bounds().min);
+            // (The import's report closes first: with a window open the canvas takes no keys.)
+            for _ in 0..3 {
+                h.key_press(eframe::egui::Key::Escape);
+                h.step();
+            }
+            assert!(!h.state().any_dialog_open(), "a window is open");
+            h.state_mut().editor.selection = ids.iter().copied().collect();
+            h.step();
+            h.step();
+            let at = h.state().canvas_rect.center();
+            let press = |h: &mut Harness<'_, crate::DriftApp>, pos: Pos2, pressed: bool| {
+                h.event(eframe::egui::Event::PointerButton {
+                    pos,
+                    button: eframe::egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: eframe::egui::Modifiers::NONE,
+                });
+            };
+            h.hover_at(at);
+            h.step();
+            h.key_press(eframe::egui::Key::G);
+            h.step();
+            for k in 1..=5 {
+                h.hover_at(at + eframe::egui::vec2(4.0 * k as f32, 2.0 * k as f32));
+                let t = Instant::now();
+                h.step();
+                let frame = ms(t);
+                let now = h.state().editor.doc.shape(first).map(|s| s.bounds().min);
+                println!(
+                    "  select tool step {k}: frame {frame:.1} ms, {} solves, moved {:.1} mm",
+                    h.state().editor.drag_solves,
+                    now.zip(was).map_or(0.0, |(a, b)| a.distance(b))
+                );
+            }
+            press(&mut h, at + eframe::egui::vec2(20.0, 10.0), true);
+            press(&mut h, at + eframe::egui::vec2(20.0, 10.0), false);
+            let t = Instant::now();
+            h.step();
+            println!("  select tool release frame {:.1} ms", ms(t));
+            let t = Instant::now();
+            h.step();
+            println!("  frame after {:.1} ms", ms(t));
+            while h.state().editor.areas.pending.is_some() {
+                h.step();
+            }
+            assert!(h.state_mut().editor.undo());
+            h.state_mut().editor.selection.clear();
+            h.step();
+            h.step();
+        }
+    }
 }

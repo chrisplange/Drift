@@ -297,6 +297,40 @@ impl Region {
         }
     }
 
+    /// The region moved by `d`: the region found among its curves moved by `d`, without
+    /// finding it again (a drag moving it and everything round it as one).
+    pub fn moved(&self, d: DVec2) -> Region {
+        let edge = |e: &Edge| match *e {
+            Edge::Line { a, b } => Edge::Line { a: a + d, b: b + d },
+            Edge::Arc {
+                center,
+                radius,
+                start,
+                sweep,
+            } => Edge::Arc {
+                center: center + d,
+                radius,
+                start,
+                sweep,
+            },
+        };
+        let shift = |lp: &Loop| Loop {
+            edges: lp.edges.iter().map(edge).collect(),
+            sources: lp.sources.clone(),
+        };
+        Region {
+            outer: shift(&self.outer),
+            holes: self.holes.iter().map(shift).collect(),
+            area: self.area,
+            perimeter: self.perimeter,
+            centroid: self.centroid + d,
+            bounds: Bounds {
+                min: self.bounds.min + d,
+                max: self.bounds.max + d,
+            },
+        }
+    }
+
     /// An axis-aligned rectangle from `min` to `max`, built directly (for a swatch, say,
     /// without finding regions among curves).
     pub fn rectangle(min: DVec2, max: DVec2) -> Region {

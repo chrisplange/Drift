@@ -612,3 +612,209 @@ mod collinear_tests {
         assert_collinear(&ed, [a, b, c, d]);
     }
 }
+
+/// A drag of many separate pieces (#253): each part of what is dragged moves on its own.
+#[cfg(test)]
+mod drag_parts {
+    use drift_core::DVec2;
+    use drift_solver::Param;
+
+    use super::*;
+
+    fn v(x: f64, y: f64) -> DVec2 {
+        DVec2::new(x, y)
+    }
+
+    /// The parameters a move of `ids` drags: all their points (as the Select tool's).
+    fn dragged(ed: &Editor, ids: &[EntityId]) -> Vec<Param> {
+        ed.doc
+            .defining_points(ids.iter().copied())
+            .into_iter()
+            .flat_map(Param::point)
+            .collect()
+    }
+
+    /// A line from `a` with an arc hanging from its end (a round to reshape when only the
+    /// line moves): returns (line, arc).
+    fn line_with_arc(ed: &mut Editor, a: DVec2) -> (EntityId, EntityId) {
+        let p = ed.doc.add_point(a);
+        let q = ed.doc.add_point(a + v(10.0, 0.0));
+        let line = ed.doc.add_line(p, q).unwrap();
+        let c = ed.doc.add_point(a + v(10.0, 5.0));
+        let e = ed.doc.add_point(a + v(15.0, 5.0));
+        let arc = ed.doc.add_arc(c, q, e).unwrap();
+        (line, arc)
+    }
+
+    #[test]
+    fn free_parts_are_not_solved_with_the_others() {
+        let mut ed = Editor::default();
+        ed.doc.begin();
+        let (line, _) = line_with_arc(&mut ed, v(0.0, 0.0));
+        // Many free lines, none joined to the others (nothing to solve in them).
+        let mut ids = vec![line];
+        for k in 0..300 {
+            let p = ed.doc.add_point(v(100.0 + 3.0 * k as f64, 0.0));
+            let q = ed.doc.add_point(v(100.0 + 3.0 * k as f64, 20.0));
+            ids.push(ed.doc.add_line(p, q).unwrap());
+        }
+        // A whole arc moved with its every point: it keeps its shape, nothing to solve.
+        let c = ed.doc.add_point(v(0.0, 100.0));
+        let s = ed.doc.add_point(v(5.0, 100.0));
+        let e = ed.doc.add_point(v(0.0, 105.0));
+        ids.push(ed.doc.add_arc(c, s, e).unwrap());
+        assert!(ed.commit("Sketch"));
+        let free: Vec<DVec2> = ed
+            .doc
+            .iter()
+            .filter_map(|(_, e)| match e.kind {
+                EntityKind::Point(p) if p.x >= 100.0 => Some(p),
+                _ => None,
+            })
+            .collect();
+
+        ed.doc.begin();
+        let dragged = dragged(&ed, &ids);
+        assert!(ed.drag(&ids, v(2.0, 1.0), &dragged));
+        // Only the line and its arc were solved, not the free lines with them.
+        assert_eq!(ed.drag_solves, 1);
+        assert!(
+            ed.drag_solved <= 6,
+            "{} entities solved for a part of 5",
+            ed.drag_solved
+        );
+        // Everything dragged went the whole way.
+        let moved: Vec<DVec2> = ed
+            .doc
+            .iter()
+            .filter_map(|(_, e)| match e.kind {
+                EntityKind::Point(p) if p.x >= 100.0 => Some(p),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(moved.len(), free.len());
+        for (was, now) in free.iter().zip(&moved) {
+            assert!(now.distance(*was + v(2.0, 1.0)) < 1e-9);
+        }
+        assert!(ed.doc.point(c).unwrap().distance(v(2.0, 101.0)) < 1e-9);
+        assert!(ed.commit("Move"));
+    }
+
+    #[test]
+    fn a_sliver_turned_by_a_move_does_not_split_its_steps() {
+        // A line with a round on its end, and from the round's far end a sliver (a
+        // thousandth of a millimetre, as imports bring in) to a line that stays: the round
+        // reshapes as the line moves, and turns the sliver round, which a drag never minds
+        // in a line too short to see.
+        let mut ed = Editor::default();
+        ed.doc.begin();
+        let (line, arc) = line_with_arc(&mut ed, v(0.0, 0.0));
+        let EntityKind::Arc { end, .. } = ed.doc.get(arc).unwrap().kind else {
+            unreachable!()
+        };
+        let e = ed.doc.point(end).unwrap();
+        let tip = ed.doc.add_point(e + v(0.0007, 0.0007));
+        let sliver = ed.doc.add_line(end, tip).unwrap();
+        let far = ed.doc.add_point(e + v(0.0007, 30.0));
+        ed.doc.add_line(tip, far).unwrap();
+        assert!(ed.commit("Sketch"));
+        ed.doc.begin();
+        let ids = [line];
+        let dragged = dragged(&ed, &ids);
+        for k in 1..=4 {
+            assert!(ed.drag(&ids, v(2.0, 1.0), &dragged));
+            assert_eq!(ed.drag_solves, 1, "step {k}: the sliver split the step");
+        }
+        let EntityKind::Line { a, b } = ed.doc.get(sliver).unwrap().kind else {
+            unreachable!()
+        };
+        // (It did turn round.)
+        let now = ed.doc.point(b).unwrap() - ed.doc.point(a).unwrap();
+        assert!(now.dot(v(1.0, 1.0)) < 0.0, "{now:?}");
+        assert!(ed.commit("Move"));
+    }
+}
+
+/// Overlapping curves found again after an edit only where it changed things (#253).
+#[cfg(test)]
+mod overlaps {
+    use drift_core::DVec2;
+
+    use super::*;
+
+    fn v(x: f64, y: f64) -> DVec2 {
+        DVec2::new(x, y)
+    }
+
+    /// What a fresh look over the whole drawing finds.
+    fn fresh(ed: &Editor) -> Vec<EntityId> {
+        *ed.overlap_cache.borrow_mut() = None;
+        ed.overlapping().to_vec()
+    }
+
+    #[test]
+    fn found_after_edits_as_a_fresh_look_finds_them() {
+        let mut seed = 7u64;
+        let mut rnd = move |n: usize| {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            ((seed >> 33) as usize) % n
+        };
+        // Lines on a coarse grid, so many lie on (or along) others.
+        let mut ed = Editor::default();
+        ed.doc.begin();
+        for _ in 0..150 {
+            let a = ed
+                .doc
+                .add_point(v(rnd(6) as f64 * 10.0, rnd(6) as f64 * 10.0));
+            let b = ed
+                .doc
+                .add_point(v(rnd(6) as f64 * 10.0, rnd(6) as f64 * 10.0));
+            let _ = ed.doc.add_line(a, b);
+        }
+        assert!(ed.commit("Lines"));
+        ed.sync();
+        assert!(!ed.overlapping().is_empty());
+        for step in 0..120 {
+            let curves: Vec<EntityId> = ed
+                .doc
+                .iter()
+                .filter(|(_, e)| !e.kind.is_point())
+                .map(|(id, _)| id)
+                .collect();
+            match rnd(5) {
+                0 if !curves.is_empty() => {
+                    ed.selection = [curves[rnd(curves.len())]].into_iter().collect();
+                    let d = v(rnd(3) as f64 * 10.0 - 10.0, rnd(3) as f64 * 10.0 - 10.0);
+                    let _ = ed.nudge(d);
+                }
+                1 if !curves.is_empty() => {
+                    ed.selection = [curves[rnd(curves.len())]].into_iter().collect();
+                    ed.delete_selection();
+                }
+                2 => {
+                    ed.doc.begin();
+                    let a = ed
+                        .doc
+                        .add_point(v(rnd(6) as f64 * 10.0, rnd(6) as f64 * 10.0));
+                    let b = ed
+                        .doc
+                        .add_point(v(rnd(6) as f64 * 10.0, rnd(6) as f64 * 10.0));
+                    let _ = ed.doc.add_line(a, b);
+                    ed.commit("Line");
+                }
+                3 => {
+                    ed.undo();
+                }
+                _ => {
+                    ed.redo();
+                }
+            }
+            ed.selection.clear();
+            ed.sync();
+            let kept = ed.overlapping().to_vec();
+            assert_eq!(kept, fresh(&ed), "step {step}");
+        }
+    }
+}

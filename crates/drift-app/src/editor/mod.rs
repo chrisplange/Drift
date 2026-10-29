@@ -83,13 +83,18 @@ impl std::fmt::Display for EditError {
 pub(crate) type InstanceBounds =
     std::rc::Rc<std::collections::HashMap<drift_core::InstanceId, Bounds>>;
 
-/// A drag's cached scope: the dragged ids, the document structure it was worked out for, and
-/// the connected entities.
+/// A drag's cached scope: the dragged ids, the document structure it was worked out for, the
+/// connected entities, and the same split into parts nothing joins to one another.
 type DragScope = (
     Vec<EntityId>,
     u64,
     std::rc::Rc<std::collections::HashSet<EntityId>>,
+    DragParts,
 );
+
+/// The parts of a drag's scope ([`drift_solver::connected_parts_with`]), each solved on its
+/// own ([`Editor::drag`]).
+pub(crate) type DragParts = std::rc::Rc<Vec<std::rc::Rc<std::collections::HashSet<EntityId>>>>;
 
 #[derive(Default)]
 pub struct Editor {
@@ -98,6 +103,9 @@ pub struct Editor {
     drag_session: Option<DragSession>,
     /// How many solves the last drag call ran (for the perf tests).
     pub(crate) drag_solves: u32,
+    /// How many entities those solves took in, all told (for the tests: what a frame of a
+    /// drag costs).
+    pub(crate) drag_solved: usize,
     pub history: History,
     pub selection: BTreeSet<EntityId>,
     pub hovered: Option<EntityId>,
@@ -213,6 +221,12 @@ pub struct Editor {
     /// The block the Place block tool places.
     pub place_block: Option<drift_core::BlockId>,
     pub(crate) fill_shapes: Option<crate::fills::FillShapesCache>,
+    /// The fills' shapes as the open transaction found them (its serial, the shapes): what
+    /// a drag moving a fill and all round it as one moves along (see `moved_fill_shapes`).
+    pub(crate) fill_shapes_at_begin: Option<(
+        u64,
+        std::rc::Rc<std::collections::BTreeMap<drift_core::FillId, crate::fills::FillShape>>,
+    )>,
     /// The sketch's solid curves, by [`Document::geometry`](drift_core::Document::geometry).
     pub(crate) solid_cache:
         std::cell::RefCell<Option<(u64, std::rc::Rc<crate::fills::SolidCurves>)>>,
@@ -279,7 +293,7 @@ pub struct Editor {
         )>,
     >,
     /// Overlapping curves, as of a document revision.
-    pub(crate) overlap_cache: std::cell::RefCell<Option<(u64, std::rc::Rc<Vec<EntityId>>)>>,
+    pub(crate) overlap_cache: std::cell::RefCell<Option<selection::Overlaps>>,
     /// The text being typed in place on the canvas (just placed, or double-clicked).
     pub editing_text: Option<drift_core::TextId>,
     /// Where the caret was asked to go in the text being typed (a click that began it).

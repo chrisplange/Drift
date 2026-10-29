@@ -359,6 +359,46 @@ impl Document {
         self.normalize_arcs_using(&points);
     }
 
+    /// [`translate`](Self::translate) where every curve on the moved points is among
+    /// `scope` (a drag's connected part): only its arcs are looked at, not the drawing's
+    /// every entity (a drag of many small parts moves each on its own).
+    pub fn translate_within(
+        &mut self,
+        ids: impl IntoIterator<Item = EntityId>,
+        delta: DVec2,
+        scope: &std::collections::HashSet<EntityId>,
+    ) {
+        if delta == DVec2::ZERO {
+            return;
+        }
+        let points = self.defining_points(ids);
+        for &id in &points {
+            if let Ok(p) = self.point(id) {
+                let _ = self.set_point(id, p + delta);
+            }
+        }
+        // (In id order, as `normalize_arcs_using` takes them: arcs sharing an end move it
+        // in turn.)
+        let mut arcs: Vec<EntityId> = scope
+            .iter()
+            .copied()
+            .filter(|id| {
+                self.entities.get(id).is_some_and(|e| {
+                    matches!(
+                        e.kind,
+                        EntityKind::Arc { .. }
+                            | EntityKind::Ellipse { .. }
+                            | EntityKind::EllipseArc { .. }
+                    ) && e.kind.points().any(|p| points.contains(&p))
+                })
+            })
+            .collect();
+        arcs.sort_unstable();
+        for arc in arcs {
+            self.normalize_arc(arc);
+        }
+    }
+
     /// Re-project the end point of every arc that uses one of `points` onto its circle.
     pub fn normalize_arcs_using(&mut self, points: &BTreeSet<EntityId>) {
         let arcs: Vec<_> = self

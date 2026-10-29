@@ -23,7 +23,7 @@ use drift_core::polygon::UnionFind;
 use drift_core::{Constraint, ConstraintId, DVec2, Document, EntityId, EntityKind};
 
 pub use crate::incremental::{AnalysisCache, analyze_cached};
-pub use crate::lowering::{Lowered, Lowering};
+pub use crate::lowering::{Lowered, Lowering, Relations, relations};
 
 use crate::linalg::{Matrix, rref};
 use crate::sparse::{Dd, Skyline, qr_rank};
@@ -106,6 +106,11 @@ pub struct SolveOptions {
     pub lengths: HashMap<EntityId, f64>,
     /// Relations read in the form they are lowered to (see [`Lowering`]).
     pub lowering: Option<std::rc::Rc<Lowering>>,
+    /// The relations to solve, when the caller has them already: those of
+    /// [`relations`] (read through [`lowering`](Self::lowering)) that relate something in
+    /// [`scope`](Self::scope). A drag of many parts then doesn't look through every relation
+    /// of the drawing for each part's every solve (#253). `None`: found from the document.
+    pub relations: Option<std::rc::Rc<Relations>>,
 }
 
 /// How completely an entity's position is determined by constraints.
@@ -189,6 +194,7 @@ pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
         options.scope.as_deref(),
         &options.radii,
         options.lowering.as_deref(),
+        options.relations.as_deref().map(Vec::as_slice),
     );
     // Sorted, so the preferences' rows come in the same order every run (a hash map's order
     // would change the floating-point sums, and with them the result's last bits).
@@ -399,6 +405,21 @@ pub fn connected_with(
     seeds: impl IntoIterator<Item = EntityId>,
     lowering: Option<&Lowering>,
 ) -> HashSet<EntityId> {
+    connected_parts_with(doc, seeds, lowering)
+        .into_iter()
+        .flatten()
+        .collect()
+}
+
+/// [`connected_with`], part by part: each set of entities joined to one another (and to
+/// some of `seeds`) through shared points and constraints, in id order, the parts in the
+/// order of their first ids. Nothing in one part moves anything in another, so a drag can
+/// solve each on its own.
+pub fn connected_parts_with(
+    doc: &Document,
+    seeds: impl IntoIterator<Item = EntityId>,
+    lowering: Option<&Lowering>,
+) -> Vec<Vec<EntityId>> {
     let ids: Vec<EntityId> = doc.iter().map(|(id, _)| id).collect();
     let index: HashMap<EntityId, usize> = ids.iter().enumerate().map(|(i, id)| (*id, i)).collect();
     let mut parent = UnionFind::new(ids.len());
@@ -425,10 +446,19 @@ pub fn connected_with(
         .filter_map(|id| index.get(&id).copied())
         .map(|i| parent.find(i))
         .collect();
-    (0..ids.len())
-        .filter(|&i| roots.contains(&parent.find(i)))
-        .map(|i| ids[i])
-        .collect()
+    let mut parts: Vec<Vec<EntityId>> = Vec::new();
+    let mut part_of: HashMap<usize, usize> = HashMap::new();
+    for (i, &id) in ids.iter().enumerate() {
+        let root = parent.find(i);
+        if roots.contains(&root) {
+            let k = *part_of.entry(root).or_insert_with(|| {
+                parts.push(Vec::new());
+                parts.len() - 1
+            });
+            parts[k].push(id);
+        }
+    }
+    parts
 }
 
 /// Relations whose geometry is gone or no longer of the kinds they need (a trim or a
@@ -456,32 +486,56 @@ pub fn needs_solve_with(
     scope: &HashSet<EntityId>,
     lowering: Option<&Lowering>,
 ) -> bool {
-    let constrained = doc.constraints().any(|(cid, c)| {
-        !doc.is_driven(cid)
-            && doc.validate(c).is_ok()
-            && match lowering.and_then(|l| l.of.get(&cid)) {
-                Some(list) => list
-                    .iter()
-                    .any(|l| l.entities().iter().any(|e| scope.contains(e))),
-                None => c.entities().any(|e| scope.contains(&e)),
-            }
-    });
+    !solve_reasons_with(doc, scope, lowering, |_| false).is_empty()
+}
+
+/// The entities of `scope` that give it something to solve (see [`needs_solve_with`]): those
+/// in a relation or dimension, pinned on a locked layer, or keeping a shape of their own
+/// unless `moved_whole` says every point of it is moved as one (a move keeps its shape). A
+/// part of the scope ([`connected_parts_with`]) needs solving when it holds one of them.
+pub fn solve_reasons_with(
+    doc: &Document,
+    scope: &HashSet<EntityId>,
+    lowering: Option<&Lowering>,
+    moved_whole: impl Fn(EntityId) -> bool,
+) -> HashSet<EntityId> {
+    let mut out = HashSet::new();
+    for (cid, c) in doc.constraints() {
+        if doc.is_driven(cid) || doc.validate(c).is_err() {
+            continue;
+        }
+        match lowering.and_then(|l| l.of.get(&cid)) {
+            Some(list) => out.extend(
+                list.iter()
+                    .flat_map(Lowered::entities)
+                    .filter(|e| scope.contains(e)),
+            ),
+            None => out.extend(c.entities().filter(|e| scope.contains(e))),
+        }
+    }
     // (A wall's arc faces are generated, not solved.)
     let generated = doc.generated_entities();
-    let shaped = scope
-        .iter()
-        .filter(|id| !generated.contains(id))
-        .any(|&id| {
-            matches!(
-                doc.get(id).map(|e| e.kind),
-                Some(
-                    EntityKind::Arc { .. }
-                        | EntityKind::Ellipse { .. }
-                        | EntityKind::EllipseArc { .. }
-                )
-            )
-        });
-    constrained || shaped || doc.locked_entities().iter().any(|id| scope.contains(id))
+    out.extend(
+        scope
+            .iter()
+            .filter(|id| !generated.contains(id))
+            .filter(|&&id| {
+                matches!(
+                    doc.get(id).map(|e| e.kind),
+                    Some(
+                        EntityKind::Arc { .. }
+                            | EntityKind::Ellipse { .. }
+                            | EntityKind::EllipseArc { .. }
+                    )
+                ) && !moved_whole(id)
+            }),
+    );
+    out.extend(
+        doc.locked_entities()
+            .into_iter()
+            .filter(|id| scope.contains(id)),
+    );
+    out
 }
 
 /// Whether solving the whole drawing can do anything (see [`needs_solve`]): it holds a
@@ -599,6 +653,18 @@ const SWEEP_JUMP: f64 = std::f64::consts::FRAC_PI_2;
 impl Orientation {
     /// The orientation of the arcs and tangencies among `scope` (everything if `None`).
     pub fn of(doc: &Document, scope: Option<&HashSet<EntityId>>) -> Self {
+        let constraints: Vec<(ConstraintId, Constraint)> =
+            doc.constraints().map(|(id, c)| (id, *c)).collect();
+        Self::among(doc, scope, &constraints)
+    }
+
+    /// [`of`](Self::of), looking only at `constraints` (those of the drawing that relate
+    /// something in `scope`: a drag of many parts hands each its own).
+    pub fn among(
+        doc: &Document,
+        scope: Option<&HashSet<EntityId>>,
+        constraints: &[(ConstraintId, Constraint)],
+    ) -> Self {
         let keep = |id: EntityId| scope.is_none_or(|s| s.contains(&id));
         let arcs = match scope {
             Some(ids) => ids
@@ -610,19 +676,21 @@ impl Orientation {
                 .filter_map(|(id, _)| Some((id, arc_sweep(doc, id)?)))
                 .collect(),
         };
-        let sides = doc
-            .constraints()
-            .filter_map(|(id, c)| match *c {
+        let sides = constraints
+            .iter()
+            .copied()
+            .filter_map(|(id, c)| match c {
                 Constraint::Tangent { a, b } if keep(a) && keep(b) && !doc.is_driven(id) => {
                     Some(((a, b), tangent_side(doc, a, b)?))
                 }
                 _ => None,
             })
             .collect();
-        let signs = doc
-            .constraints()
+        let signs = constraints
+            .iter()
+            .copied()
             .filter_map(|(id, c)| {
-                let (a, b) = match *c {
+                let (a, b) = match c {
                     Constraint::HorizontalDistance { a, b, value }
                     | Constraint::VerticalDistance { a, b, value } => {
                         (value != 0.0).then_some((a, b))?
@@ -635,7 +703,7 @@ impl Orientation {
                 if !(keep(a) || keep(b)) || doc.is_driven(id) {
                     return None;
                 }
-                Some(((a, b), *c, distance_sign(doc, c)?))
+                Some(((a, b), c, distance_sign(doc, &c)?))
             })
             .collect();
         Self { arcs, sides, signs }

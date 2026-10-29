@@ -254,11 +254,16 @@ fn perf_editor_pipeline() {
         .flat_map(drift_solver::Param::point)
         .collect();
     ed.doc.begin();
-    report(
-        "drag 1,000 curves (per mouse move)",
-        time(10, |_| {
-            ed.drag(&some, v(0.5, 0.25), &dragged);
-        }),
+    let drag = time(10, |_| {
+        ed.drag(&some, v(0.5, 0.25), &dragged);
+    });
+    report("drag 1,000 curves (per mouse move)", drag);
+    // (About 250 small parts with relations of their own: each part's solves look only at
+    // its own relations, not the drawing's 10,000, #253.)
+    assert!(
+        drag.0 < 20.0,
+        "drag 1,000 curves: {:.1} ms a mouse move (budget 20 ms)",
+        drag.0
     );
     let t = Instant::now();
     ed.commit("Drag");

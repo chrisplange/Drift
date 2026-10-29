@@ -210,13 +210,23 @@ impl System {
         tol: &Tolerances,
         lowering: Option<&Lowering>,
     ) -> Self {
-        Self::build_in(doc, dragged, &[], tol, None, &HashMap::new(), lowering)
+        Self::build_in(
+            doc,
+            dragged,
+            &[],
+            tol,
+            None,
+            &HashMap::new(),
+            lowering,
+            None,
+        )
     }
 
     /// Build the system for the entities in `scope` only (everything if `None`). The scope
     /// must be closed under shared points and constraints (see [`crate::connected`]).
     /// `dragged` and `carried` are the parameters held where they are, in that order of rank.
     /// Relations are read through `lowering` where one is given.
+    #[allow(clippy::too_many_arguments)]
     pub fn build_in(
         doc: &Document,
         dragged: &[Param],
@@ -225,12 +235,21 @@ impl System {
         scope: Option<&std::collections::HashSet<EntityId>>,
         radii: &HashMap<EntityId, f64>,
         lowering: Option<&Lowering>,
+        relations: Option<&[(Option<ConstraintId>, Lowered)]>,
     ) -> Self {
-        // The driving relations as lowered, with the extras under a stand-in id.
-        let rels: Vec<(ConstraintId, Lowered)> = crate::lowering::relations(doc, lowering)
-            .into_iter()
-            .map(|(id, l)| (id.unwrap_or(EXTRA), l))
-            .collect();
+        // The driving relations as lowered (or as given), with the extras under a stand-in
+        // id.
+        let all;
+        let rels: Vec<(ConstraintId, Lowered)> = match relations {
+            Some(given) => given,
+            None => {
+                all = crate::lowering::relations(doc, lowering);
+                &all
+            }
+        }
+        .iter()
+        .map(|&(id, l)| (id.unwrap_or(EXTRA), l))
+        .collect();
         let held: Vec<Param> = dragged.iter().chain(carried).copied().collect();
         // Walls' faces and corners are generated from their centrelines: never unknowns. A
         // corner someone's own curve was drawn from is in, pinned where it is.
@@ -289,7 +308,19 @@ impl System {
         let mut params = Vec::new();
         let mut values = Vec::new();
         let mut entities = Vec::new();
-        for (id, entity) in doc.iter().filter(|(id, _)| keep(*id)) {
+        // (A scope's own entities, in id order as the drawing keeps them: a drag solving a
+        // small part of a big drawing doesn't look through the rest.)
+        let in_scope: Vec<(EntityId, &drift_core::Entity)> = match scope {
+            Some(scope) => {
+                let mut ids: Vec<EntityId> = scope.iter().copied().filter(|&id| keep(id)).collect();
+                ids.sort_unstable();
+                ids.into_iter()
+                    .filter_map(|id| Some((id, doc.get(id)?)))
+                    .collect()
+            }
+            None => doc.iter().filter(|(id, _)| keep(*id)).collect(),
+        };
+        for &(id, entity) in &in_scope {
             entities.push((
                 id,
                 match entity.kind {
@@ -944,7 +975,7 @@ impl System {
 
         // Ellipses keep their minor axis perpendicular to the major one, and elliptical arcs
         // their ends on the ellipse.
-        for (_, entity) in doc.iter().filter(|(id, _)| keep(*id)) {
+        for &(_, entity) in &in_scope {
             let (c, m, n, ends) = match entity.kind {
                 EntityKind::Ellipse {
                     center,
@@ -986,7 +1017,7 @@ impl System {
         // radius, `solve` decides: dragging an end reshapes the arc, dragging its centre
         // carries it along.)
         let mut keep_shape = Vec::new();
-        for (id, entity) in doc.iter().filter(|(id, _)| keep(*id)) {
+        for &(id, entity) in &in_scope {
             if let EntityKind::Arc { center, start, end } = entity.kind {
                 if let Some(&r) = radii.get(&id) {
                     keep_shape.push(Shape::Distance(

@@ -278,6 +278,7 @@ fn finish<'a>(
             Some(&scope),
             &HashMap::new(),
             None,
+            None,
         );
         let Some(mut found) = analyze_parts(&sys, &options, &cluster_of, &of_constraint) else {
             // (Something no cluster owns: the drawing is analysed whole, and nothing kept.)

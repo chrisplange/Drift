@@ -1,10 +1,10 @@
 //! Dragging geometry: [`Editor::drag`], and the steps a drag frame takes when one solve won't
 //! do.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
-use drift_core::{Constraint, DVec2, EntityId, EntityKind};
+use drift_core::{Constraint, ConstraintId, DVec2, EntityId, EntityKind};
 use drift_solver::{Param, SolveOptions};
 
 use super::{Editor, Geometry};
@@ -13,10 +13,16 @@ use super::{Editor, Geometry};
 /// it is taken again in smaller steps ([`Editor::drag`]).
 const WANDERED: usize = 1;
 
-/// The most solves a drag frame runs ([`Editor::drag`]): enough to go round a fold, or to push
-/// a squeezed arc along step after step, not so many that a move that can't be made at all
-/// costs a frame a second.
+/// The most solves a drag frame runs for one part of what it drags ([`Editor::drag`]):
+/// enough to go round a fold, or to push a squeezed arc along step after step, not so many
+/// that a move of one part that can't be made at all costs a frame a second. (Per part: a
+/// frame dragging several parts that each need many solves runs up to this many for each,
+/// each over its own part only.)
 const DRAG_SOLVES: u32 = 200;
+
+/// Lines no longer than this (mm) have no way round that a drag keeps (see
+/// [`Editor::drag`]'s steps): a flattened curve's error, below anything drawn.
+const NO_WAY_ROUND: f64 = drift_core::tolerance::FLATTEN_MM;
 
 /// How many times a step that turns the shape is halved before the curves it turns are taken
 /// to be pushed along.
@@ -39,9 +45,11 @@ pub(super) struct DragSession {
     end: Vec<(EntityId, DVec2)>,
     /// Whether the last frame pushed curves along that couldn't give way any further.
     pushed: bool,
-    /// Whether what is dragged needs solving at all (see [`DragFrame::needs_solve`]); the
-    /// relations don't change during a drag.
-    needs_solve: bool,
+    /// The parts of the scope, each moved on its own (the relations don't change during a
+    /// drag, nor what joins what).
+    parts: Rc<Vec<DragPart>>,
+    /// What the parts that go exactly where they are moved move, together.
+    whole: Rc<WholeMove>,
     /// Relations on walls' faces as lowered when it started (they don't change either).
     lowering: Option<Rc<drift_solver::Lowering>>,
     /// The walls' joins when it started, kept until it ends but for the ends it moves
@@ -49,11 +57,52 @@ pub(super) struct DragSession {
     joins: Option<Rc<drift_geom::walls::Joins>>,
 }
 
-/// What one call of [`Editor::drag`] works with: the same for each step it takes.
+/// One part of a drag's scope ([`drift_solver::connected_parts_with`]): nothing in it is
+/// joined to anything in another part, so each goes through [`Editor::drag`]'s steps on its
+/// own, as if it alone were dragged. A part that can't go the whole way stops the drag, as
+/// one connected drag that couldn't would; one that has to go in smaller steps (round a
+/// fold, past an arc squeezed by the move) takes them alone, not the whole drawing with it
+/// (#253).
+struct DragPart {
+    scope: Rc<HashSet<EntityId>>,
+    /// The dragged ids in it.
+    ids: Vec<EntityId>,
+    /// The dragged parameters in it.
+    dragged: Vec<Param>,
+    dragged_set: HashSet<Param>,
+    /// Its geometry as the drag found it, and what the drag keeps of it.
+    start: Geometry,
+    /// Whether it needs solving at all (see [`DragFrame::needs_solve`]).
+    needs_solve: bool,
+    /// Nothing in it to solve and no line hanging from it to carry along: it goes exactly
+    /// where it is moved, with the others like it, in one move.
+    moves_whole: bool,
+    /// Its smooth anchors (see [`DragFrame::smooth`]).
+    smooth: Vec<(EntityId, EntityId, EntityId)>,
+    /// Its relations as the solver reads them, its stored constraints, and the lines its
+    /// lowered relations measure from: found once, not looked for among the whole
+    /// drawing's at each of its solves (see [`DragFrame::relations`]).
+    relations: Rc<drift_solver::Relations>,
+    constraints: Vec<(ConstraintId, Constraint)>,
+    lowered_lines: Vec<EntityId>,
+}
+
+/// The parts of a drag that go exactly where they are moved ([`DragPart::moves_whole`]), as
+/// one move: the points it moves, where the drag found them, and all they take with them.
+#[derive(Default)]
+struct WholeMove {
+    points: Vec<(EntityId, DVec2)>,
+    moved: std::collections::BTreeSet<EntityId>,
+    /// The parts' entities (the index looks at these).
+    scope: Vec<EntityId>,
+}
+
+/// What one call of [`Editor::drag`] works with for one part: the same for each step it
+/// takes.
 struct DragFrame<'a> {
     ids: &'a [EntityId],
     dragged: &'a [Param],
-    dragged_set: HashSet<Param>,
+    dragged_set: &'a HashSet<Param>,
     /// What the drag can move.
     scope: &'a Rc<HashSet<EntityId>>,
     /// Whole curves are moved (not points dragged).
@@ -63,7 +112,14 @@ struct DragFrame<'a> {
     needs_solve: bool,
     lowering: Option<Rc<drift_solver::Lowering>>,
     /// The smooth anchors in the scope: the anchor and its two handles.
-    smooth: Vec<(EntityId, EntityId, EntityId)>,
+    smooth: &'a [(EntityId, EntityId, EntityId)],
+    /// The relations of the scope as the solver reads them (lowered), the stored constraints
+    /// on it (for its orientation), and the lines its lowered relations measure from: those
+    /// of the drawing that relate something in the scope, so that a drag of many small parts
+    /// costs what the parts do, not the drawing's every relation per solve (#253).
+    relations: &'a Rc<drift_solver::Relations>,
+    constraints: &'a [(ConstraintId, Constraint)],
+    lowered_lines: &'a [EntityId],
     /// Solves this frame may still run.
     solves_left: u32,
     /// The most its solves have wandered (see `SolveReport::wandered`).
@@ -88,14 +144,17 @@ impl Editor {
     /// from the geometry as the drag found it, moved by the whole way so far, keeping its
     /// sizes and lengths from then: where a drag is depends only on how far it
     /// has gone, not the way there, and out and back puts everything back.
+    ///
+    /// Geometry joined to nothing else that is dragged goes on its own: each part of what is
+    /// dragged (with what it's joined to) moves as if it alone were dragged.
     pub fn drag(&mut self, ids: &[EntityId], delta: DVec2, dragged: &[Param]) -> bool {
         let curves = ids
             .iter()
             .all(|id| self.doc.get(*id).is_some_and(|e| !e.kind.is_point()));
         // Anchors carry their curve handles.
         let ids = &self.with_handles(ids);
-        // Only what's connected to the dragged geometry is solved.
-        let scope = self.drag_scope(ids);
+        // Only what's connected to the dragged geometry is solved, part by part.
+        let (scope, scope_parts) = self.drag_scope_and_parts(ids);
         let now = self.geometry_of(&scope);
         let serial = self.doc.transaction_serial();
         let session = self.drag_session.take().filter(|s| {
@@ -108,44 +167,86 @@ impl Editor {
                     .iter()
                     .all(|&(id, p)| self.doc.point(id).ok() == Some(p))
         });
-        let (start, offset, needs_solve, lowering, joins) = match session {
-            Some(s) => (s.start, s.offset, s.needs_solve, s.lowering, s.joins),
+        let (start, offset, parts, whole, lowering, joins) = match session {
+            Some(s) => (s.start, s.offset, s.parts, s.whole, s.lowering, s.joins),
             None => {
                 let lowering = self.lowering();
+                let start = self.drag_start(&scope, &now, curves, dragged);
+                let parts = self.drag_parts(
+                    &scope,
+                    &scope_parts,
+                    ids,
+                    dragged,
+                    &start,
+                    lowering.as_deref(),
+                );
+                let whole = self.whole_move(&parts);
                 (
-                    self.drag_start(&scope, &now, curves, dragged),
+                    start,
                     DVec2::ZERO,
-                    drift_solver::needs_solve_with(&self.doc, &scope, lowering.as_deref()),
+                    Rc::new(parts),
+                    Rc::new(whole),
                     lowering,
                     self.drag_joins(ids),
                 )
             }
         };
-        self.restore_geometry(&start);
-        let mut frame = DragFrame {
-            ids,
-            dragged,
-            dragged_set: dragged.iter().copied().collect(),
-            scope: &scope,
-            curves,
-            needs_solve,
-            lowering: lowering.clone(),
-            smooth: self.smooth_anchors(&scope),
-            solves_left: DRAG_SOLVES,
-            wandered: 0,
-            pushed: false,
-        };
         let to = offset + delta;
-        // (Every frame tries one solve first, even where the last one wandered: skipping it
-        // would make where the drag is depend on the way there.)
-        let ok = self.drag_from_start(&mut frame, to, &start);
-        self.drag_solves = DRAG_SOLVES - frame.solves_left;
-        let pushed = ok && frame.pushed;
+        let mut ok = true;
+        let mut pushed = false;
+        self.drag_solves = 0;
+        self.drag_solved = 0;
+        // What goes exactly where it is moved goes in one move, from where the drag found
+        // it (as `Document::translate` would move it: arcs' ends kept on their circles).
+        if !whole.points.is_empty() {
+            for &(id, p) in &whole.points {
+                let at = p + to;
+                if self.doc.point(id).ok() != Some(at) {
+                    let _ = self.doc.set_point(id, at);
+                }
+            }
+            if to != DVec2::ZERO {
+                self.doc.normalize_arcs_using(&whole.moved);
+            }
+            self.index
+                .update_moved(&self.doc, whole.scope.iter().copied());
+        }
+        for part in parts.iter().filter(|p| !p.moves_whole) {
+            self.restore_geometry(&part.start);
+        }
+        for part in parts.iter().filter(|p| !p.moves_whole) {
+            let mut frame = DragFrame {
+                ids: &part.ids,
+                dragged: &part.dragged,
+                dragged_set: &part.dragged_set,
+                scope: &part.scope,
+                curves,
+                needs_solve: part.needs_solve,
+                lowering: lowering.clone(),
+                smooth: &part.smooth,
+                relations: &part.relations,
+                constraints: &part.constraints,
+                lowered_lines: &part.lowered_lines,
+                solves_left: DRAG_SOLVES,
+                wandered: 0,
+                pushed: false,
+            };
+            // (Every frame tries one solve first, even where the last one wandered: skipping
+            // it would make where the drag is depend on the way there.)
+            ok = self.drag_from_start(&mut frame, to, &part.start);
+            self.drag_solves += DRAG_SOLVES - frame.solves_left;
+            pushed |= frame.pushed;
+            if !ok {
+                break;
+            }
+        }
+        let pushed = ok && pushed;
         if !ok {
             // Where the last frame left it.
             self.restore_geometry(&now);
             self.index.update_moved(&self.doc, scope.iter().copied());
         }
+        self.index.rebuild_if_many_moved(&self.doc);
         let end = self.geometry_of(&scope).points;
         self.drag_session = Some(DragSession {
             serial,
@@ -155,7 +256,8 @@ impl Editor {
             offset: if ok { to } else { offset },
             end,
             pushed,
-            needs_solve,
+            parts,
+            whole,
             lowering,
             joins: joins.clone(),
         });
@@ -176,6 +278,175 @@ impl Editor {
         }
         self.carry_hatches();
         ok
+    }
+
+    /// The parts of a drag's scope as it starts (see [`DragPart`]): the dragged ids and
+    /// parameters, the starting geometry and smooth anchors of each, and whether it has
+    /// anything to solve.
+    fn drag_parts(
+        &self,
+        scope: &HashSet<EntityId>,
+        parts: &[Rc<HashSet<EntityId>>],
+        ids: &[EntityId],
+        dragged: &[Param],
+        start: &Geometry,
+        lowering: Option<&drift_solver::Lowering>,
+    ) -> Vec<DragPart> {
+        let part_of: HashMap<EntityId, usize> = parts
+            .iter()
+            .enumerate()
+            .flat_map(|(k, p)| p.iter().map(move |&id| (id, k)))
+            .collect();
+        // (A round whose every point is dragged moves whole, keeping its shape: nothing to
+        // solve for it. Moving whole curves drags all their points.)
+        let all_dragged: HashSet<Param> = dragged.iter().copied().collect();
+        let reasons = drift_solver::solve_reasons_with(&self.doc, scope, lowering, |id| {
+            self.doc.get(id).is_some_and(|e| {
+                e.kind
+                    .points()
+                    .all(|p| Param::point(p).iter().all(|q| all_dragged.contains(q)))
+            })
+        });
+        let mut out: Vec<DragPart> = parts
+            .iter()
+            .map(|p| DragPart {
+                scope: p.clone(),
+                ids: Vec::new(),
+                dragged: Vec::new(),
+                dragged_set: HashSet::new(),
+                start: Geometry::default(),
+                needs_solve: false,
+                moves_whole: false,
+                smooth: Vec::new(),
+                relations: Rc::new(Vec::new()),
+                constraints: Vec::new(),
+                lowered_lines: Vec::new(),
+            })
+            .collect();
+        for id in &reasons {
+            if let Some(&k) = part_of.get(id) {
+                out[k].needs_solve = true;
+            }
+        }
+        let at = |id: &EntityId| part_of.get(id).copied();
+        for id in ids {
+            if let Some(k) = at(id) {
+                out[k].ids.push(*id);
+            }
+        }
+        for &q in dragged {
+            let (Param::X(id)
+            | Param::Y(id)
+            | Param::Radius(id)
+            | Param::MidX(id)
+            | Param::MidY(id)) = q;
+            if let Some(k) = at(&id) {
+                out[k].dragged.push(q);
+                out[k].dragged_set.insert(q);
+            }
+        }
+        for &(id, p) in &start.points {
+            if let Some(k) = at(&id) {
+                out[k].start.points.push((id, p));
+            }
+        }
+        for &(id, r) in &start.circles {
+            if let Some(k) = at(&id) {
+                out[k].start.circles.push((id, r));
+            }
+        }
+        for (&id, &r) in &start.radii {
+            if let Some(k) = at(&id) {
+                out[k].start.radii.insert(id, r);
+            }
+        }
+        for (&id, &l) in &start.lengths {
+            if let Some(k) = at(&id) {
+                out[k].start.lengths.insert(id, l);
+            }
+        }
+        for &id in &start.lines {
+            if let Some(k) = at(&id) {
+                out[k].start.lines.push(id);
+            }
+        }
+        // Each relation, constraint and lowered line to its part (in the drawing's order, as
+        // the solver would find them).
+        let mut relations: Vec<drift_solver::Relations> = vec![Vec::new(); out.len()];
+        for (id, l) in drift_solver::relations(&self.doc, lowering) {
+            if let Some(k) = l.entities().iter().find_map(at) {
+                relations[k].push((id, l));
+            }
+        }
+        for (part, r) in out.iter_mut().zip(relations) {
+            part.relations = Rc::new(r);
+        }
+        for (id, c) in self.doc.constraints() {
+            let mut touched: Vec<usize> = c.entities().filter_map(|e| at(&e)).collect();
+            touched.sort_unstable();
+            touched.dedup();
+            for k in touched {
+                out[k].constraints.push((id, *c));
+            }
+        }
+        for line in lowering
+            .iter()
+            .flat_map(|l| l.of.values().flatten().chain(&l.extra))
+            .flat_map(drift_solver::Lowered::entities)
+        {
+            if let Some(k) = at(&line) {
+                out[k].lowered_lines.push(line);
+            }
+        }
+        for anchor in self.smooth_anchors(scope) {
+            if let Some(k) = at(&anchor.0) {
+                out[k].smooth.push(anchor);
+            }
+        }
+        for part in &mut out {
+            part.moves_whole = !part.needs_solve
+                && !self.stretches_hanging_line(&part.ids, &part.dragged_set, &part.start);
+        }
+        out
+    }
+
+    /// The parts of `parts` that go exactly where they are moved, as one move.
+    fn whole_move(&self, parts: &[DragPart]) -> WholeMove {
+        let mut whole = WholeMove::default();
+        for part in parts.iter().filter(|p| p.moves_whole) {
+            let moved = self.doc.defining_points(part.ids.iter().copied());
+            whole.points.extend(
+                part.start
+                    .points
+                    .iter()
+                    .copied()
+                    .filter(|(id, _)| moved.contains(id)),
+            );
+            whole.moved.extend(moved);
+            whole.scope.extend(part.scope.iter().copied());
+        }
+        whole
+    }
+
+    /// Whether moving `ids` (dragging `dragged` of their points) would stretch a line
+    /// hanging from them that the drag keeps at its length (see [`Self::drag_start`]): a
+    /// solve carries it along instead. (A line with a dragged end is reshaped by it, solve
+    /// or not.)
+    fn stretches_hanging_line(
+        &self,
+        ids: &[EntityId],
+        dragged: &HashSet<Param>,
+        before: &Geometry,
+    ) -> bool {
+        let moved = self.doc.defining_points(ids.iter().copied());
+        let carried = |p: EntityId| {
+            moved.contains(&p) && !Param::point(p).iter().all(|q| dragged.contains(q))
+        };
+        before.lengths.keys().any(|&line| {
+            matches!(self.doc.get(line).map(|e| e.kind),
+                Some(EntityKind::Line { a, b })
+                    if moved.contains(&a) != moved.contains(&b) && (carried(a) || carried(b)))
+        })
     }
 
     /// The walls' joins as a drag of `ids` finds them, the ends it moves itself left live.
@@ -350,26 +621,13 @@ impl Editor {
         // Free geometry (no relations, nothing pinned, no arcs keeping their shape) goes exactly
         // where it is moved, as in a drawing program: no solve to nudge it. Unless the move
         // stretches a line hanging from moved curves, which a solve carries along instead.
-        if !frame.needs_solve {
-            // (A line with a dragged end is reshaped by it, solve or not.)
-            let moved = self.doc.defining_points(frame.ids.iter().copied());
-            let carried = |p: EntityId| {
-                moved.contains(&p)
-                    && !Param::point(p)
-                        .iter()
-                        .all(|q| frame.dragged_set.contains(q))
-            };
-            let stretched = before.lengths.keys().any(|&line| {
-                matches!(self.doc.get(line).map(|e| e.kind),
-                    Some(EntityKind::Line { a, b })
-                        if moved.contains(&a) != moved.contains(&b) && (carried(a) || carried(b)))
-            });
-            if !stretched {
-                self.doc.translate(frame.ids.iter().copied(), delta);
-                self.index
-                    .update_moved(&self.doc, frame.scope.iter().copied());
-                return true;
-            }
+        if !frame.needs_solve && !self.stretches_hanging_line(frame.ids, frame.dragged_set, before)
+        {
+            self.doc
+                .translate_within(frame.ids.iter().copied(), delta, frame.scope);
+            self.index
+                .update_moved(&self.doc, frame.scope.iter().copied());
+            return true;
         }
         let mut turned = Vec::new();
         let mut ok = self.drag_in_steps(frame, frame.ids, delta, &[], before, 0, &mut turned);
@@ -429,7 +687,8 @@ impl Editor {
         if frame.solves_left == 0 {
             return false;
         }
-        let orientation = drift_solver::Orientation::of(&self.doc, Some(frame.scope));
+        let orientation =
+            drift_solver::Orientation::among(&self.doc, Some(frame.scope), frame.constraints);
         // Lines carried along at their length point the same way after the step: keeping a
         // length holds just as well with the line turned round (or let go through zero),
         // which a big step can land on as the nearer fit. A line with a dragged end is
@@ -451,16 +710,18 @@ impl Editor {
                 )),
                 _ => None,
             })
+            // (A line too short to see has no way round to keep: any move, however small,
+            // could turn it, and every step would be split for nothing. Imports bring in
+            // such slivers.)
+            .filter(|&(.., was)| was.length() > NO_WAY_ROUND)
             .collect();
         // Lines a lowered relation measures a signed offset from (walls' centrelines under
         // dimensioned faces) keep their way round too: turned, which side is the left face
         // would swap, and the relation would hold the other face.
         let lowered_lines: Vec<(EntityId, EntityId, EntityId, DVec2)> = frame
-            .lowering
+            .lowered_lines
             .iter()
-            .flat_map(|l| l.of.values().flatten().chain(&l.extra))
-            .flat_map(drift_solver::Lowered::entities)
-            .filter_map(|line| match self.doc.get(line)?.kind {
+            .filter_map(|&line| match self.doc.get(line)?.kind {
                 EntityKind::Line { a, b } => Some((
                     line,
                     a,
@@ -470,7 +731,8 @@ impl Editor {
                 _ => None,
             })
             .collect();
-        self.doc.translate(ids.iter().copied(), delta);
+        self.doc
+            .translate_within(ids.iter().copied(), delta, frame.scope);
         // Translating keeps the arcs it touches circular by putting their ends back on their
         // circles, which can take a moved point off its target (the end of an arc that isn't
         // moved with it): put those back, and the solve reshapes the arc instead.
@@ -481,8 +743,9 @@ impl Editor {
                 let _ = self.doc.set_point(id, p + delta);
             }
         }
-        self.keep_smooth_anchors(&frame.smooth, ids, delta);
+        self.keep_smooth_anchors(frame.smooth, ids, delta);
         frame.solves_left -= 1;
+        self.drag_solved += frame.scope.len();
         let report = drift_solver::solve(
             &mut self.doc,
             &SolveOptions {
@@ -495,6 +758,7 @@ impl Editor {
                 // Lines carried along by a move of curves keep their length the same way.
                 lengths: before.lengths.clone(),
                 lowering: frame.lowering.clone(),
+                relations: Some(frame.relations.clone()),
                 ..Default::default()
             },
         );

@@ -9,8 +9,17 @@ impl Editor {
         &self,
         ids: &[EntityId],
     ) -> std::rc::Rc<std::collections::HashSet<EntityId>> {
+        self.drag_scope_and_parts(ids).0
+    }
+
+    /// [`drag_scope`](Self::drag_scope), and the same split into the parts nothing joins to
+    /// one another.
+    pub(crate) fn drag_scope_and_parts(
+        &self,
+        ids: &[EntityId],
+    ) -> (std::rc::Rc<std::collections::HashSet<EntityId>>, DragParts) {
         let structure = self.doc.structure();
-        if let Some((key, s, scope)) = &*self.drag_scope.borrow()
+        if let Some((key, s, scope, parts)) = &*self.drag_scope.borrow()
             && key == ids
             && *s == structure
             // Still the same geometry: a move that let go of shared points and was then
@@ -21,15 +30,23 @@ impl Editor {
                 .iter()
                 .all(|p| scope.contains(p))
         {
-            return scope.clone();
+            return (scope.clone(), parts.clone());
         }
-        let scope = std::rc::Rc::new(drift_solver::connected_with(
-            &self.doc,
-            ids.iter().copied(),
-            self.lowering().as_deref(),
-        ));
-        *self.drag_scope.borrow_mut() = Some((ids.to_vec(), structure, scope.clone()));
-        scope
+        let parts: Vec<std::rc::Rc<std::collections::HashSet<EntityId>>> =
+            drift_solver::connected_parts_with(
+                &self.doc,
+                ids.iter().copied(),
+                self.lowering().as_deref(),
+            )
+            .into_iter()
+            .map(|part| std::rc::Rc::new(part.into_iter().collect()))
+            .collect();
+        let scope: std::rc::Rc<std::collections::HashSet<EntityId>> =
+            std::rc::Rc::new(parts.iter().flat_map(|p| p.iter().copied()).collect());
+        let parts = std::rc::Rc::new(parts);
+        *self.drag_scope.borrow_mut() =
+            Some((ids.to_vec(), structure, scope.clone(), parts.clone()));
+        (scope, parts)
     }
 
     pub(crate) fn solve_in(
@@ -408,16 +425,21 @@ impl Editor {
         }
     }
 
+    /// Whether the drawing is big enough that its areas are found off the edit path: as
+    /// `areas.defer` says, or by its size (never on the web).
+    pub(crate) fn areas_off_the_edit_path(&self) -> bool {
+        /// Entities (points and curves) from which a drawing is big.
+        const BIG: usize = 30_000;
+        !cfg!(target_arch = "wasm32") && self.areas.defer.unwrap_or(self.doc.len() >= BIG)
+    }
+
     /// Whether the open edit commits before its fills follow it (see
     /// [`settle_areas`](Self::settle_areas)): on a big drawing (or as `areas.defer` says),
     /// when it has fills that may follow, and the areas of its curves aren't known yet. Their
     /// finding is then started on a thread.
     fn defer_follow(&mut self) -> bool {
-        /// Entities (points and curves) from which a drawing is big.
-        const BIG: usize = 30_000;
-        if cfg!(target_arch = "wasm32")
-            || self.importing
-            || !self.areas.defer.unwrap_or(self.doc.len() >= BIG)
+        if self.importing
+            || !self.areas_off_the_edit_path()
             || self.doc.fills().all(|(_, f)| f.path.is_some())
         {
             return false;

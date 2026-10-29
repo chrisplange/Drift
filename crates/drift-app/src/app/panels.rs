@@ -1282,12 +1282,7 @@ impl DriftApp {
                     // Curves drawn on top of others: a warning that selects them when clicked.
                     // (Not re-counted in the middle of a drag.)
                     let overlaps = if self.tool.is_busy() {
-                        self.editor
-                            .overlap_cache
-                            .borrow()
-                            .as_ref()
-                            .map(|(_, found)| found.clone())
-                            .unwrap_or_default()
+                        self.editor.overlapping_as_last_found()
                     } else {
                         self.editor.overlapping()
                     };

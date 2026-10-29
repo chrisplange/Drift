@@ -2,6 +2,26 @@
 
 use super::*;
 
+/// The curves drawn on top of earlier ones ([`Editor::overlapping`]), kept from one revision
+/// to the next.
+#[derive(Default)]
+pub(crate) struct Overlaps {
+    revision: u64,
+    lineage: u64,
+    /// Each curve on top, with the earlier curves it is over.
+    over: BTreeMap<EntityId, BTreeSet<EntityId>>,
+    /// Each curve under, with the later curves over it.
+    under: HashMap<EntityId, BTreeSet<EntityId>>,
+    found: std::rc::Rc<Vec<EntityId>>,
+}
+
+impl Overlaps {
+    fn add(&mut self, upper: EntityId, lower: EntityId) {
+        self.over.entry(upper).or_default().insert(lower);
+        self.under.entry(lower).or_default().insert(upper);
+    }
+}
+
 impl Editor {
     pub fn delete_selection(&mut self) {
         self.delete_selection_with(&[]);
@@ -105,41 +125,128 @@ impl Editor {
     /// Curves drawn on top of other curves (the later-made one of each pair): the same line
     /// twice, or walls of abutting shapes that run along each other. They are easy to make
     /// by accident and confuse trimming and selection. Found once per change.
+    ///
+    /// After an edit only the curves it changed are looked at again (with what they are over
+    /// and what is over them): a big drawing isn't searched through after every edit (#253).
     pub fn overlapping(&self) -> std::rc::Rc<Vec<EntityId>> {
         let revision = self.doc.revision();
-        if let Some((r, found)) = &*self.overlap_cache.borrow()
-            && *r == revision
+        let mut cache = self.overlap_cache.borrow_mut();
+        if let Some(c) = &*cache
+            && c.revision == revision
+            && c.lineage == self.doc.lineage()
         {
-            return found.clone();
+            return c.found.clone();
         }
-        let mut found = Vec::new();
-        for (id, e) in self.doc.iter() {
-            if e.kind.is_point() {
-                continue;
+        // (The changes since, if few and the index has them.)
+        let changes = cache
+            .as_ref()
+            .filter(|_| self.index.is_current(&self.doc))
+            .and_then(|c| self.doc.changes_since(c.lineage, c.revision))
+            .filter(|ch| !ch.layers && ch.entities.len() <= self.doc.len() / 16);
+        match (cache.as_mut(), changes) {
+            (Some(c), Some(changes)) => {
+                // Curves on a changed point changed with it.
+                let mut changed: BTreeSet<EntityId> = changes.entities.iter().copied().collect();
+                for &id in &changes.entities {
+                    changed.extend(self.index.users_of(id));
+                }
+                for &id in &changed {
+                    for lower in c.over.remove(&id).into_iter().flatten() {
+                        if let Some(u) = c.under.get_mut(&lower) {
+                            u.remove(&id);
+                        }
+                    }
+                    for upper in c.under.remove(&id).into_iter().flatten() {
+                        if let Some(o) = c.over.get_mut(&upper) {
+                            o.remove(&id);
+                        }
+                    }
+                }
+                for &id in &changed {
+                    for (upper, lower) in self.overlaps_of(id) {
+                        c.add(upper, lower);
+                    }
+                }
+                c.revision = revision;
+                c.found = std::rc::Rc::new(
+                    c.over
+                        .iter()
+                        .filter(|(_, lower)| !lower.is_empty())
+                        .map(|(&id, _)| id)
+                        .collect(),
+                );
+                c.found.clone()
             }
-            let Some(shape) = self.index.shape(id) else {
-                continue;
-            };
-            if !matches!(
-                shape,
+            _ => {
+                let mut c = Overlaps {
+                    revision,
+                    lineage: self.doc.lineage(),
+                    ..Default::default()
+                };
+                for (id, e) in self.doc.iter() {
+                    if e.kind.is_point() {
+                        continue;
+                    }
+                    for lower in self.under(id) {
+                        c.add(id, lower);
+                    }
+                }
+                c.found = std::rc::Rc::new(c.over.keys().copied().collect());
+                let found = c.found.clone();
+                *cache = Some(c);
+                found
+            }
+        }
+    }
+
+    /// The overlapping curves as last found (not looked for again): what the status bar
+    /// shows in the middle of a drag.
+    pub(crate) fn overlapping_as_last_found(&self) -> std::rc::Rc<Vec<EntityId>> {
+        self.overlap_cache
+            .borrow()
+            .as_ref()
+            .map(|c| c.found.clone())
+            .unwrap_or_default()
+    }
+
+    /// The earlier curves `id` is drawn over, as the index has the shapes.
+    fn under(&self, id: EntityId) -> impl Iterator<Item = EntityId> + '_ {
+        let shape = self.index.shape(id).filter(|s| {
+            matches!(
+                s,
                 Shape::Line { .. } | Shape::Arc { .. } | Shape::Circle { .. }
-            ) {
-                continue;
-            }
-            let under = self.index.query(shape.bounds()).into_iter().any(|other| {
+            )
+        });
+        shape.into_iter().flat_map(move |shape| {
+            self.index.query(shape.bounds()).filter(move |&other| {
                 other < id
                     && self
                         .index
                         .shape(other)
                         .is_some_and(|s| drift_geom::intersect::overlapping(shape, s))
-            });
-            if under {
-                found.push(id);
-            }
-        }
-        let found = std::rc::Rc::new(found);
-        *self.overlap_cache.borrow_mut() = Some((revision, found.clone()));
-        found
+            })
+        })
+    }
+
+    /// The pairs (the curve on top, the earlier one it is over) `id` is in, as the index
+    /// has the shapes.
+    fn overlaps_of(&self, id: EntityId) -> impl Iterator<Item = (EntityId, EntityId)> + '_ {
+        let over = |s: &Shape| {
+            matches!(
+                s,
+                Shape::Line { .. } | Shape::Arc { .. } | Shape::Circle { .. }
+            )
+        };
+        let shape = self.index.shape(id);
+        shape
+            .into_iter()
+            .flat_map(move |shape| self.index.query(shape.bounds()))
+            .filter(move |&other| other != id)
+            .filter_map(move |other| {
+                let (upper, lower) = if other < id { (id, other) } else { (other, id) };
+                let (a, b) = (self.index.shape(upper)?, self.index.shape(lower)?);
+                (over(a) && drift_geom::intersect::overlapping(a, b)).then_some((upper, lower))
+            })
     }
 
     /// The curves joined end to end with `start` (lines, arcs, elliptical arcs and pen curves

@@ -46,7 +46,7 @@ pub struct SceneIndex {
     /// What each entity was at the last update (a change means roles need working out).
     kinds: HashMap<EntityId, EntityKind>,
     /// Shapes moved during a drag whose places in the tree are out of date. Searches test
-    /// them one by one; the tree is rebuilt once the transaction ends. (Ordered, so results
+    /// them one by one; the tree is rebuilt once there are many of them. (Ordered, so results
     /// don't depend on hash order.)
     moved: BTreeSet<EntityId>,
     roles: HashMap<EntityId, PointRole>,
@@ -149,12 +149,10 @@ impl SceneIndex {
     /// Bring the index up to date with the document. Shapes are compared in place, point
     /// roles are worked out again only when the sketch's structure changed, and the tree is
     /// rebuilt only when something moved. Shapes moved by [`update_moved`](Self::update_moved)
-    /// wait for the tree until the document's transaction ends.
+    /// wait outside the tree until the document's transaction ends, or until there are many.
     pub fn update(&mut self, doc: &Document) {
         if self.revision == Some(doc.revision()) {
-            if self.moved.len() > self.moved_limit() && !doc.in_transaction() {
-                self.rebuild_tree();
-            }
+            self.rebuild_if_many_moved(doc);
             return;
         }
         // Since the last update only some entities changed (an edit, an undo): only those
@@ -279,6 +277,7 @@ impl SceneIndex {
             let added = changed.iter().any(|(_, old)| old.is_none());
             if doc.in_transaction() && !added && removed.is_empty() {
                 self.moved.extend(changed.iter().map(|(id, _)| *id));
+                self.rebuild_if_many_moved(doc);
                 return;
             }
             self.rebuild_tree();
@@ -288,6 +287,28 @@ impl SceneIndex {
     /// How many shapes may wait outside the tree (tested one by one) before it is rebuilt.
     fn moved_limit(&self) -> usize {
         (self.shapes.len() / 64).max(256)
+    }
+
+    /// How many shapes may wait outside the tree in the middle of a drag (a transaction):
+    /// rebuilding it every frame costs a few milliseconds, which only pays once searches
+    /// would otherwise look through a large share of the drawing one shape at a time (a drag
+    /// of most of a big drawing, #253).
+    fn moved_limit_in_drag(&self) -> usize {
+        (self.shapes.len() / 8).max(256)
+    }
+
+    /// Rebuild the tree once too many shapes wait outside it (`moved_limit`; in a
+    /// transaction, `moved_limit_in_drag`). Done by [`update`](Self::update), and to be
+    /// called once a drag frame's [`update_moved`](Self::update_moved) calls are done.
+    pub fn rebuild_if_many_moved(&mut self, doc: &Document) {
+        let limit = if doc.in_transaction() {
+            self.moved_limit_in_drag()
+        } else {
+            self.moved_limit()
+        };
+        if self.moved.len() > limit {
+            self.rebuild_tree();
+        }
     }
 
     /// [`update`](Self::update) for a few `changed` entities (sorted): their shapes, the
@@ -370,9 +391,7 @@ impl SceneIndex {
                 None => self.roles.remove(&p),
             };
         }
-        if self.moved.len() > self.moved_limit() && !doc.in_transaction() {
-            self.rebuild_tree();
-        }
+        self.rebuild_if_many_moved(doc);
     }
 
     fn rebuild_tree(&mut self) {
@@ -389,8 +408,8 @@ impl SceneIndex {
     }
 
     /// During a drag: refresh just the shapes of `ids` (all that can have moved). The tree
-    /// keeps their old places until the transaction ends (rebuilding it costs more than the
-    /// drag); meanwhile searches test the moved shapes one by one, so they're found where
+    /// keeps their old places while there are few of them (rebuilding it costs more than
+    /// the drag); meanwhile searches test the moved shapes one by one, so they're found where
     /// they are now. An id that was added or deleted leaves the index for the next
     /// [`update`](Self::update) to bring up to date.
     pub fn update_moved(&mut self, doc: &Document, ids: impl IntoIterator<Item = EntityId>) {
@@ -442,6 +461,16 @@ impl SceneIndex {
 
     pub fn shape(&self, id: EntityId) -> Option<&Shape> {
         self.shapes.get(&id)
+    }
+
+    /// Whether the index is up to date with `doc` (as of its last update).
+    pub fn is_current(&self, doc: &Document) -> bool {
+        self.revision == Some(doc.revision()) && self.lineage == Some(doc.lineage())
+    }
+
+    /// The curves on point `id` (as of the last update).
+    pub fn users_of(&self, id: EntityId) -> impl Iterator<Item = EntityId> + '_ {
+        self.users.get(&id).into_iter().flatten().copied()
     }
 
     pub fn role(&self, id: EntityId) -> Option<PointRole> {
@@ -788,6 +817,56 @@ mod tests {
         assert!(index.moved.contains(&p));
         assert_eq!(index.pick(v(6.0, 6.0), 0.1, |_| true), Some(p));
         assert_eq!(index.pick(v(1.0, 1.0), 0.1, |_| true), None);
+    }
+
+    /// A drag of most of a big drawing doesn't leave every search testing all it moved one
+    /// by one (#253): the tree is rebuilt once many shapes wait outside it, mid-drag too.
+    #[test]
+    fn a_drag_of_many_shapes_puts_them_back_in_the_tree() {
+        let mut doc = Document::new();
+        let points: Vec<EntityId> = (0..2000).map(|k| doc.add_point(v(k as f64, 0.0))).collect();
+        let mut index = SceneIndex::build(&doc);
+        doc.begin();
+        // A few hundred moved wait outside the tree: rebuilding it every frame for them
+        // would cost more than searching them.
+        for &p in &points[..200] {
+            let at = doc.point(p).unwrap();
+            doc.set_point(p, at + v(0.0, 50.0)).unwrap();
+        }
+        index.update_moved(&doc, points[..200].iter().copied());
+        index.rebuild_if_many_moved(&doc);
+        assert_eq!(index.moved.len(), 200, "rebuilt for a few");
+        assert_eq!(index.pick(v(7.0, 50.0), 0.1, |_| true), Some(points[7]));
+        for &p in &points[..200] {
+            let at = doc.point(p).unwrap();
+            doc.set_point(p, at - v(0.0, 50.0)).unwrap();
+        }
+        for &p in &points {
+            let at = doc.point(p).unwrap();
+            doc.set_point(p, at + v(0.0, 50.0)).unwrap();
+        }
+        index.update_moved(&doc, points.iter().copied());
+        index.rebuild_if_many_moved(&doc);
+        assert!(
+            index.moved.is_empty(),
+            "{} left out of the tree",
+            index.moved.len()
+        );
+        assert_eq!(index.pick(v(7.0, 50.0), 0.1, |_| true), Some(points[7]));
+        assert_eq!(index.pick(v(7.0, 0.0), 0.1, |_| true), None);
+        // Found by an update as well (what the canvas runs every frame).
+        for &p in &points {
+            let at = doc.point(p).unwrap();
+            doc.set_point(p, at + v(0.0, 50.0)).unwrap();
+        }
+        index.update(&doc);
+        assert!(
+            index.moved.is_empty(),
+            "{} left out of the tree",
+            index.moved.len()
+        );
+        assert_eq!(index.pick(v(7.0, 100.0), 0.1, |_| true), Some(points[7]));
+        doc.commit("Move");
     }
 
     #[test]

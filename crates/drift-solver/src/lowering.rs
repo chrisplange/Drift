@@ -61,12 +61,14 @@ impl Lowering {
     }
 }
 
+/// Relations as the solver reads them ([`relations`]): each with its stored constraint's id
+/// (none for a lowering's extras).
+pub type Relations = Vec<(Option<ConstraintId>, Lowered)>;
+
 /// The driving relations as the solver sees them: each stored constraint (or what it was
-/// lowered to), with its id, then the extras (no id).
-pub(crate) fn relations(
-    doc: &Document,
-    lowering: Option<&Lowering>,
-) -> Vec<(Option<ConstraintId>, Lowered)> {
+/// lowered to), with its id, then the extras (no id). A drag hands each part of its scope
+/// its own share of these ([`SolveOptions::relations`](crate::SolveOptions::relations)).
+pub fn relations(doc: &Document, lowering: Option<&Lowering>) -> Relations {
     let mut out = Vec::new();
     for (id, c) in doc.constraints() {
         if doc.is_driven(id) {

@@ -132,13 +132,35 @@ impl Editor {
     /// `ids` plus the handles of any anchors among them, so moving an anchor carries its
     /// handles with it (as in Illustrator).
     pub fn with_handles(&self, ids: &[EntityId]) -> Vec<EntityId> {
+        let anchors: std::collections::HashSet<EntityId> = ids
+            .iter()
+            .copied()
+            .filter(|&id| self.doc.get(id).is_some_and(|e| e.kind.is_point()))
+            .collect();
         let mut out: Vec<EntityId> = ids.to_vec();
-        for &id in ids {
-            if self.doc.get(id).is_some_and(|e| e.kind.is_point()) {
-                for h in self.handles_at(id) {
-                    if !out.contains(&h) {
-                        out.push(h);
-                    }
+        if anchors.is_empty() {
+            return out;
+        }
+        // Each anchor's handles, in drawing order, found in one look through it (a drag of
+        // every point of a big drawing has as many anchors as points).
+        let mut handles: std::collections::HashMap<EntityId, Vec<EntityId>> =
+            std::collections::HashMap::new();
+        for (_, e) in self.doc.iter() {
+            if let EntityKind::Bezier { a, c1, c2, b } = e.kind {
+                if anchors.contains(&a) {
+                    handles.entry(a).or_default().push(c1);
+                }
+                // (A curve closed on itself: its start's handle, as for any anchor.)
+                if anchors.contains(&b) && b != a {
+                    handles.entry(b).or_default().push(c2);
+                }
+            }
+        }
+        let mut seen: std::collections::HashSet<EntityId> = ids.iter().copied().collect();
+        for id in ids {
+            for &h in handles.get(id).into_iter().flatten() {
+                if seen.insert(h) {
+                    out.push(h);
                 }
             }
         }

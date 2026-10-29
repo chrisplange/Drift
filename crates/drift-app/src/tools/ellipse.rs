@@ -2,6 +2,7 @@
 //! other axis's size; a partial ellipse then takes its start and end (counter-clockwise).
 
 use drift_core::shape::{ellipse_angle, ellipse_point};
+use drift_core::tolerance;
 
 use super::*;
 
@@ -43,7 +44,7 @@ impl EllipseTool {
             }
         };
         let v = m - c;
-        (v.length() > 1e-9).then_some(v)
+        (v.length() > tolerance::same(m.abs().max_element())).then_some(v)
     }
 
     /// The minor semi-axis length: the pointer's distance from the major axis until set.
@@ -58,7 +59,7 @@ impl EllipseTool {
             || (p.pos() - c).dot(major.perp().normalize()).abs(),
             f64::abs,
         );
-        (b > 1e-9).then_some(b)
+        (b > tolerance::same(c.abs().max_element())).then_some(b)
     }
 
     fn reset(&mut self) {
@@ -91,7 +92,7 @@ impl EllipseTool {
                 ed.add_shape(&[ellipse]);
             }
             // A level or plumb axis keeps it.
-            let scale = c.distance(m).max(1.0) * 1e-9;
+            let scale = tolerance::same(c.distance(m));
             if ed.auto_relations {
                 if (c.y - m.y).abs() < scale {
                     let _ = ed
@@ -155,7 +156,7 @@ impl EllipseTool {
         // Keep an existing point only if it's already on the ellipse.
         let anchor = p.anchor();
         Some(
-            if anchor.pos.distance(at) <= 1e-9 * at.abs().max_element().max(1.0) {
+            if anchor.pos.distance(at) <= tolerance::same(at.abs().max_element()) {
                 anchor
             } else {
                 exact(p, at).anchor()
@@ -211,7 +212,7 @@ impl Tool for EllipseTool {
         } else if self.start.is_none() {
             self.start = self.on_ellipse(&p);
         } else if let (Some(b), Some(s), Some(e)) = (self.minor, self.start, self.on_ellipse(&p))
-            && s.pos.distance(e.pos) > 1e-9
+            && s.pos.distance(e.pos) > tolerance::same(s.pos.abs().max_element())
         {
             self.create(b, Some((s, e)), ed);
         }
@@ -281,7 +282,7 @@ impl Tool for EllipseTool {
                 let t0 = ellipse_angle(c.pos, major, b, s.pos);
                 let t1 = ellipse_angle(c.pos, major, b, p.pos());
                 items.push(preview_vertex(s.pos));
-                (t0, (t1 - t0).rem_euclid(TAU).max(1e-6))
+                (t0, (t1 - t0).rem_euclid(TAU).max(tolerance::ANGLE))
             }
             _ => (0.0, TAU),
         };

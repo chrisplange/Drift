@@ -220,7 +220,8 @@ fn ellipse_points(
     } else {
         TAU / 8.0
     };
-    let n = ((sweep.abs() / step.max(1e-9)).ceil() as usize).clamp(8, MAX_CURVE_SEGMENTS);
+    let n = ((sweep.abs() / step.max(drift_core::tolerance::NONE)).ceil() as usize)
+        .clamp(8, MAX_CURVE_SEGMENTS);
     (0..=n)
         .map(|k| {
             drift_core::shape::ellipse_point(
@@ -241,7 +242,7 @@ fn bezier_points(p: &[DVec2; 4], tol: f64) -> Vec<DVec2> {
         let chord = p[3] - p[0];
         let len = chord.length();
         let off = |q: DVec2| {
-            if len > 1e-12 {
+            if len > drift_core::tolerance::NONE {
                 (q - p[0]).perp_dot(chord).abs() / len
             } else {
                 q.distance(p[0])
@@ -537,7 +538,7 @@ fn write_item(
             sweep,
         } => {
             // R12 has no ELLIPSE: a polyline close to it (closed for a whole one).
-            let whole = *sweep >= TAU - 1e-12;
+            let whole = *sweep >= TAU - drift_core::tolerance::SAME_ANGLE;
             let mut points = ellipse_points(*center, *major, *minor, *start, *sweep, tol);
             if whole {
                 points.pop();
@@ -577,7 +578,7 @@ fn write_item(
             o.point(10, *at);
             o.num(40, *height);
             o.pair(1, text_value(text, true));
-            if angle.abs() > 1e-9 {
+            if angle.abs() > drift_core::tolerance::SAME_ANGLE {
                 o.num(50, angle.to_degrees());
             }
             if style.italic {
@@ -608,7 +609,7 @@ fn write_item(
             o.num(41, if *mirror { -*scale } else { *scale });
             o.num(42, *scale);
             o.num(43, *scale);
-            if angle.abs() > 1e-12 {
+            if angle.abs() > drift_core::tolerance::NONE {
                 o.num(50, angle.rem_euclid(360.0));
             }
         }

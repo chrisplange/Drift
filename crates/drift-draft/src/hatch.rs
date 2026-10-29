@@ -8,6 +8,7 @@
 
 use std::f64::consts::{PI, TAU};
 
+use drift_core::tolerance;
 use drift_core::{Bounds, DVec2};
 use drift_geom::regions::{Edge, Region};
 
@@ -50,7 +51,7 @@ pub fn hatch(
     limit: usize,
 ) -> Hatching {
     let mut out = Hatching::default();
-    let scale = placement.scale.abs().max(1e-9);
+    let scale = placement.scale.abs().max(tolerance::NONE);
     let rotation = DVec2::from_angle(placement.angle.to_radians());
     let mut bounds = Bounds::EMPTY;
     for p in region.outer.polygon(drift_core::tolerance::FLATTEN_MM) {
@@ -94,7 +95,7 @@ pub fn hatch(
             vs.iter().copied().fold(f64::INFINITY, f64::min),
             vs.iter().copied().fold(f64::NEG_INFINITY, f64::max),
         );
-        let (k0, k1) = if dy.abs() < 1e-12 {
+        let (k0, k1) = if dy.abs() < tolerance::NONE {
             if vmin <= 0.0 && vmax >= 0.0 {
                 (0, 0)
             } else {
@@ -112,7 +113,7 @@ pub fn hatch(
             return out;
         }
         // Scan slightly off each line, so vertices exactly on it don't count twice.
-        let nudge = 1e-9 * dy.abs().max(1e-6);
+        let nudge = tolerance::SAME * dy.abs().max(tolerance::TINY_MM);
         let mut crossings: Vec<f64> = Vec::new();
         for k in k0..=k1 {
             let c = k as f64 * dy;
@@ -159,7 +160,7 @@ fn emit(
 ) -> bool {
     let at = |u: f64| base + d * u;
     let period: f64 = dashes.iter().map(|v| v.abs()).sum();
-    if dashes.is_empty() || period <= 1e-12 {
+    if dashes.is_empty() || period <= tolerance::NONE {
         out.segments.push([at(ua), at(ub)]);
         return out.segments.len() < limit;
     }
@@ -220,7 +221,7 @@ fn edge_crossings(e: &Edge, o: DVec2, d: DVec2, n: DVec2, c: f64, side: f64, out
                 } else {
                     -(start - psi).rem_euclid(TAU)
                 };
-                if t.abs() > 1e-12 && t.abs() < sweep.abs() - 1e-12 {
+                if t.abs() > tolerance::NONE && t.abs() < sweep.abs() - tolerance::NONE {
                     ts.push(t);
                 }
             }
@@ -242,7 +243,9 @@ fn edge_crossings(e: &Edge, o: DVec2, d: DVec2, n: DVec2, c: f64, side: f64, out
                     let pick = [beta + acos, beta - acos]
                         .into_iter()
                         .flat_map(|phi| (-2..=2).map(move |m| phi + m as f64 * TAU))
-                        .filter(|phi| *phi >= lo - 1e-9 && *phi <= hi + 1e-9)
+                        .filter(|phi| {
+                            *phi >= lo - tolerance::SAME_ANGLE && *phi <= hi + tolerance::SAME_ANGLE
+                        })
                         .min_by(|a, b| {
                             let mid = (lo + hi) / 2.0;
                             (a - mid).abs().total_cmp(&(b - mid).abs())

@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::{Arc, OnceLock, RwLock};
 
+use drift_core::tolerance;
 use drift_core::{DVec2, Shape, TextFont};
 use skrifa::instance::{LocationRef, Size};
 use skrifa::outline::{DrawSettings, OutlinePen};
@@ -88,7 +89,9 @@ impl Pen {
     }
 
     fn finish(&mut self) {
-        if self.at.distance(self.start) > 1e-9 && !self.current.is_empty() {
+        if self.at.distance(self.start) > tolerance::same(self.at.abs().max_element())
+            && !self.current.is_empty()
+        {
             self.current.push(Shape::Line {
                 a: self.at,
                 b: self.start,
@@ -109,7 +112,7 @@ impl OutlinePen for Pen {
 
     fn line_to(&mut self, x: f32, y: f32) {
         let b = self.p(x, y);
-        if b.distance(self.at) > 1e-9 {
+        if b.distance(self.at) > tolerance::same(b.abs().max_element()) {
             self.current.push(Shape::Line { a: self.at, b });
         }
         self.at = b;
@@ -352,7 +355,7 @@ impl Paragraph<'_> {
     pub fn index_at(&self, p: DVec2) -> usize {
         let local = DVec2::from_angle(-self.angle.to_radians()).rotate(p - self.at);
         let spans = self.spans();
-        let pitch = (self.spacing * self.height).abs().max(1e-9);
+        let pitch = (self.spacing * self.height).abs().max(tolerance::NONE);
         // Lines are picked by their middles: half a cap height above each baseline.
         let k = ((self.height / 2.0 - local.y) / pitch)
             .round()

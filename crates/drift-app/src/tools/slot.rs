@@ -4,6 +4,7 @@
 
 use super::*;
 use drift_core::LineKind;
+use drift_core::tolerance;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SlotMode {
@@ -167,7 +168,7 @@ impl SlotTool {
             SlotMode::Arc if pts.len() >= 3 => {
                 let (o, s) = (pts[0], pts[1]);
                 let r = s.distance(o);
-                if r <= 1e-9 {
+                if r <= tolerance::same(o.abs().max_element()) {
                     return None;
                 }
                 let e = o + (pts[2] - o).normalize_or_zero() * r;
@@ -212,7 +213,7 @@ impl SlotTool {
         };
         match &mut shape {
             SlotShape::Straight { half: h, ends, .. } => {
-                if ends[0].distance(ends[1]) <= 1e-9 {
+                if ends[0].distance(ends[1]) <= tolerance::same(ends[0].abs().max_element()) {
                     return None;
                 }
                 *h = half;
@@ -222,13 +223,15 @@ impl SlotTool {
                 ends: [s, e],
                 half: h,
             } => {
-                if half >= s.distance(*center) || s.distance(*e) <= 1e-9 {
+                if half >= s.distance(*center)
+                    || s.distance(*e) <= tolerance::same(s.abs().max_element())
+                {
                     return None;
                 }
                 *h = half;
             }
         }
-        (half > 1e-9).then_some(shape)
+        (half > tolerance::same(last.abs().max_element())).then_some(shape)
     }
 
     fn create(&mut self, shape: SlotShape, ed: &mut Editor) {
@@ -280,7 +283,7 @@ impl SlotTool {
                             line: axis,
                         });
                     }
-                    let scale = c1.distance(c2).max(1.0) * 1e-9;
+                    let scale = tolerance::same(c1.distance(c2));
                     if (c1.y - c2.y).abs() < scale {
                         auto_relation(ed, Some(GuideKind::Horizontal), axis);
                     } else if (c1.x - c2.x).abs() < scale {
@@ -398,11 +401,9 @@ impl Tool for SlotTool {
         let mode = self.mode(ed);
         if self.points.len() < mode.points() {
             let at = p.anchor();
-            if self
-                .points
-                .last()
-                .is_some_and(|q| q.pos.distance(at.pos) <= 1e-9)
-            {
+            if self.points.last().is_some_and(|q| {
+                q.pos.distance(at.pos) <= tolerance::same(at.pos.abs().max_element())
+            }) {
                 return;
             }
             self.points.push(at);

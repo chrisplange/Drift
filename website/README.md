@@ -3,8 +3,8 @@
 The website for Drift: a front page, downloads, the user guide, release notes, the licence in
 plain words, and the web app at `/app/`. It's a static site built with [Astro](https://astro.build)
 and hosted on Cloudflare Pages. The **Website** workflow (`.github/workflows/website.yml`)
-builds and deploys it on every merge to `main`, and the release steps in `docs/releasing.md`
-run it once a release is published.
+builds and deploys it on merges to `main` that change what it's built from (its `push` paths
+list), and the release steps in `docs/releasing.md` run it once a release is published.
 
 ## Where things come from
 

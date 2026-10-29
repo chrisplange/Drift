@@ -1,7 +1,10 @@
 name: Website
 
 # Builds the website (website/, with the user guide from docs/guide and the web app at /app/)
-# and deploys it to Cloudflare Pages. It runs on every merge to main. Releases are published in
+# and deploys it to Cloudflare Pages. It runs on merges to main that change what the site is
+# built from: the site, the guide, the web app and every crate it builds in, the workspace
+# files, and LICENSE.md and THIRD-PARTY-NOTICES.txt, which the licence pages read. Add a path
+# here when the site or the web app starts reading something new. Releases are published in
 # the public releases repository, where this workflow can't hear them, so the release steps in
 # docs/releasing.md run it by hand afterwards (`gh workflow run website.yml`) for the download
 # links and release notes to catch up. Pull requests that touch the site only build it. See
@@ -10,6 +13,17 @@ name: Website
 on:
   push:
     branches: [main]
+    paths:
+      - "website/**"
+      - "docs/guide/**"
+      - "apps/web/**"
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "LICENSE.md"
+      - "THIRD-PARTY-NOTICES.txt"
+      - "scripts/check-demo-build.sh"
+      - ".github/workflows/website.yml"
   release:
     types: [published]
   pull_request:

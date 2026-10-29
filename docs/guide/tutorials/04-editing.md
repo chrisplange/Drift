@@ -42,7 +42,7 @@ AutoCAD, Rhino or Vectorworks:
 | **Edges** | Lines, arcs, circles, ellipses and curves (and the relation symbols on them). |
 | **Fills** | Solid fills and hatches. With **Edges** off, a click inside a shape picks its fill without its outline. |
 | **Areas** | Empty closed areas (to measure or fill them), when **Pick an area only where it is filled or hatched** is off in **File → Drawing settings…**. |
-| **Blocks** | Copies of blocks, and groups as a whole. Off, a click on a grouped line picks just that line. |
+| **Blocks** | Copies of blocks, and groups with **Edges** off. A group is always picked whole; double-click it to pick its lines one by one. |
 | **Text** | Sketch text. |
 | **Annotations** | Dimensions, notes, centre marks, and section and elevation marks. |
 

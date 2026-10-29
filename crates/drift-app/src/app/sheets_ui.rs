@@ -2112,10 +2112,12 @@ impl DriftApp {
         for (id, name, detail) in &rows {
             let picked = self.picked_view == Some(*id);
             let text = egui::RichText::new(format!("{name}\n{detail}"));
+            // (The space after the text grows: it sits at the left, as in the other lists.)
             let response = ui
                 .add_sized(
                     [ui.available_width(), 34.0],
-                    egui::Button::selectable(picked, text).sense(egui::Sense::click_and_drag()),
+                    egui::Button::selectable(picked, (text, egui::Atom::grow()))
+                        .sense(egui::Sense::click_and_drag()),
                 )
                 .on_hover_text(
                     "Double-click to zoom to it in the model; drag it onto the sheet to place it",

@@ -438,3 +438,48 @@ mod sheet_order_tests {
         assert!(doc.move_sheet(SheetId(999), 0).is_empty());
     }
 }
+
+#[cfg(test)]
+mod reserved_ids {
+    use super::*;
+    use crate::Group;
+
+    /// Ids something outside the drawing names (a newer Drift's data, carried through) are
+    /// never handed out again: each kind of id steps over its own, and the drawing is equal to
+    /// what it was.
+    #[test]
+    fn new_ids_step_over_reserved_ones_of_their_kind() {
+        let mut doc = Document::new();
+        let a = doc.add_point(DVec2::ZERO);
+        let b = doc.add_point(DVec2::X);
+        let before = doc.clone();
+        doc.reserve_ids([
+            "e7",
+            "c4",
+            "l9",
+            "g12",
+            "x3",
+            "e",
+            "e1x",
+            "e+9",
+            "e4294967295",
+        ]);
+        assert_eq!(doc, before, "reserving isn't part of the drawing");
+        assert_eq!(doc.add_point(DVec2::Y), EntityId(8));
+        assert!(doc.holds_id("e8") && !doc.holds_id("e7") && !doc.holds_id("x8"));
+        let line = doc.add_line(a, b).unwrap();
+        assert_eq!(line, EntityId(9));
+        let c = doc.add_constraint(Constraint::Horizontal { line }).unwrap();
+        assert_eq!(c, ConstraintId(5));
+        assert_eq!(doc.add_layer(crate::Layer::new("A")), LayerId(10));
+        let group = Group {
+            name: "G".into(),
+            members: [a].into_iter().collect(),
+        };
+        assert_eq!(doc.add_group(group).unwrap(), crate::GroupId(13));
+        assert!(doc.holds_id("g13") && doc.holds_id("l10") && doc.holds_id("c5"));
+        // Lower ids than the counters already hand out change nothing.
+        doc.reserve_ids(["e2"]);
+        assert_eq!(doc.add_point(DVec2::Y), EntityId(10));
+    }
+}

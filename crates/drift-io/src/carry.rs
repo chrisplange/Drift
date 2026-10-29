@@ -14,15 +14,22 @@
 //! - unknown data is lost only where the thing that held it is gone: a record that was
 //!   deleted, a field that was cleared, a record replaced by one of another `type`, or a list
 //!   whose items have no `id` and whose length changed. [`Kept::merge`] says so, and the app
-//!   warns before saving.
+//!   warns before saving;
+//! - unknown data that names a record deleted since (a string in it, or a key, is the `id` of
+//!   a record in one of the file's tables) is written back as it was, but [`Kept::merge`]
+//!   says it is lost too: the newer build drops what refers to nothing (policy rule 3). So
+//!   that it never refers to something else instead, the ids unknown data names are never
+//!   handed out again ([`Kept::named`], reserved when the file is read).
 //!
 //! Records in a list are matched by their `id` (or `of`, for settings of a dimension or
 //! annotation), or by position when the list has no ids and kept its length. Everything is
-//! compared as text, as written: this build's writer is deterministic, so an unchanged
-//! drawing writes the baseline exactly.
+//! compared as text, as written: the baseline and what is written now both come from this
+//! build's writer, which is deterministic, so an unchanged drawing writes the baseline exactly.
+//! (How the file had it spelled is never compared, only copied.)
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
+use serde::Serialize;
 use serde::de::{Deserialize, Deserializer, MapAccess, Visitor};
 use serde_json::value::RawValue;
 
@@ -33,32 +40,165 @@ pub struct Kept {
     original: String,
     /// What this build wrote for the drawing as it was read.
     baseline: String,
+    /// Every string (and key) in what this build doesn't know that is spelled as the file's
+    /// ids are (`e12`, `c3`: a letter, then digits).
+    named: BTreeSet<String>,
+    /// Those of [`named`](Self::named) that are the ids of the file's records: if one of these
+    /// is gone, what names it no longer refers to anything.
+    records: BTreeSet<String>,
 }
 
 impl Kept {
     /// `Some` when `original` has anything `baseline` (this build's own writing of it)
-    /// doesn't.
-    pub(crate) fn find(original: &str, baseline: String) -> Option<Self> {
-        (original != baseline && has_extra(original, &baseline)).then(|| Self {
+    /// doesn't. `holds` says whether the drawing it was written from has a record with an id.
+    pub(crate) fn find(
+        original: &str,
+        baseline: String,
+        holds: impl Fn(&str) -> bool,
+    ) -> Option<Self> {
+        let mut named = BTreeSet::new();
+        if original == baseline || !unknown_strings(original, &baseline, &mut named) {
+            return None;
+        }
+        let records = named.iter().filter(|s| holds(s)).cloned().collect();
+        Some(Self {
             original: original.to_owned(),
             baseline,
+            named,
+            records,
         })
     }
 
+    /// [`find`](Self::find) for `saved`, the file [`merge`](Self::merge) wrote. What it
+    /// doesn't know is what this one didn't know, less what was left out, so what it names is
+    /// taken from this one (not looked for again): an id a left-out part named is only reserved
+    /// a little longer than it need be.
+    pub(crate) fn after_saving(
+        &self,
+        saved: &str,
+        baseline: String,
+        holds: impl Fn(&str) -> bool,
+    ) -> Option<Self> {
+        (saved != baseline && has_extra(saved, &baseline)).then(|| Self {
+            original: saved.to_owned(),
+            baseline,
+            named: self.named.clone(),
+            records: self.named.iter().filter(|s| holds(s)).cloned().collect(),
+        })
+    }
+
+    /// What this build doesn't know names, spelled as ids: they must not be handed out again
+    /// (see [`drift_core::Document::reserve_ids`]).
+    pub(crate) fn named(&self) -> impl Iterator<Item = &str> {
+        self.named.iter().map(String::as_str)
+    }
+
     /// The file to write for `now` (what this build writes for the drawing now), with what
-    /// it didn't know put back, and whether any of that had to be left out.
-    pub(crate) fn merge(&self, now: &str) -> (String, bool) {
+    /// it didn't know put back, and whether any of that had to be left out. `holds` says
+    /// whether the drawing now has a record with an id.
+    pub(crate) fn merge(&self, now: &str, holds: impl Fn(&str) -> bool) -> (String, bool) {
         if now == self.baseline {
             return (self.original.clone(), false);
         }
         match (node(&self.original), node(&self.baseline), node(now)) {
             (Node::Object(o), Node::Object(b), Node::Object(n)) => {
                 let (entries, lost) = merge_entries(&o, &b, &n);
-                (layout(&entries), lost)
+                (
+                    layout(&entries),
+                    lost || self.records.iter().any(|id| !holds(id)),
+                )
             }
             _ => (now.to_owned(), true),
         }
     }
+}
+
+/// [`has_extra`], also putting every string and key spelled as an id in what `original` has
+/// that `base` doesn't into `out`.
+fn unknown_strings(original: &str, base: &str, out: &mut BTreeSet<String>) -> bool {
+    if original == base {
+        return false;
+    }
+    let mut extra = false;
+    match (node(original), node(base)) {
+        (Node::Object(o), Node::Object(b)) => {
+            for (k, ov) in &o {
+                match get(&b, k) {
+                    None => {
+                        extra = true;
+                        if let Ok(value) = serde_json::from_str(ov.get()) {
+                            strings(&value, out);
+                        }
+                    }
+                    Some(bv) => extra |= unknown_strings(ov.get(), bv.get(), out),
+                }
+            }
+        }
+        (Node::Array(o), Node::Array(b)) => {
+            for (o, b) in changed_pairs(&o, &b) {
+                extra |= unknown_strings(o.get(), b.get(), out);
+            }
+        }
+        _ => {}
+    }
+    extra
+}
+
+/// [`pairs`] that aren't written the same. Records written the same in the same place are only
+/// compared, not read (most of a big file is that).
+fn changed_pairs<'a>(o: &[&'a RawValue], b: &[&'a RawValue]) -> Vec<(&'a RawValue, &'a RawValue)> {
+    if o.len() == b.len() {
+        let differ: Vec<usize> = (0..o.len()).filter(|&i| o[i].get() != b[i].get()).collect();
+        // The same record in the same place: however the list is matched (by `id`, by `of`,
+        // or by position), it is this one's.
+        let same = |i: usize| {
+            let [ro, rb] = [o[i], b[i]].map(|v| serde_json::from_str::<Record>(v.get()).ok());
+            matches!((ro, rb), (Some(ro), Some(rb)) if ro.id == rb.id && ro.of == rb.of)
+        };
+        if differ.iter().all(|&i| same(i)) {
+            return differ.into_iter().map(|i| (o[i], b[i])).collect();
+        }
+    }
+    pairs(o, b)
+        .into_iter()
+        .filter(|(o, b)| o.get() != b.get())
+        .collect()
+}
+
+/// What a record is known by in a list (see [`KEYS`]).
+#[derive(serde::Deserialize)]
+struct Record {
+    #[serde(default)]
+    id: Option<serde_json::Value>,
+    #[serde(default)]
+    of: Option<serde_json::Value>,
+}
+
+fn strings(value: &serde_json::Value, out: &mut BTreeSet<String>) {
+    let add = |s: &String, out: &mut BTreeSet<String>| {
+        if is_id(s) {
+            out.insert(s.clone());
+        }
+    };
+    match value {
+        serde_json::Value::String(s) => add(s, out),
+        serde_json::Value::Array(items) => items.iter().for_each(|v| strings(v, out)),
+        serde_json::Value::Object(map) => {
+            for (k, v) in map {
+                add(k, out);
+                strings(v, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Spelled as the file's ids are: a lowercase letter, then digits.
+fn is_id(s: &str) -> bool {
+    let mut bytes = s.bytes();
+    bytes.next().is_some_and(|b| b.is_ascii_lowercase())
+        && bytes.len() > 0
+        && bytes.all(|b| b.is_ascii_digit())
 }
 
 /// An object's entries, in the order written.
@@ -309,30 +449,43 @@ fn merge_items(o: &[&RawValue], b: &[&RawValue], n: &[&RawValue]) -> (Vec<String
     (n.iter().map(|v| v.get().to_owned()).collect(), lost)
 }
 
-/// The file's entries laid out as `save` lays them out: one per line, and lists with one item
-/// per line.
+/// The file's entries laid out as `save` lays them out (`layout.rs`): one per line, and lists
+/// with one item per line, each item as it was.
 fn layout(entries: &[(String, String)]) -> String {
-    let mut out = String::from("{\n");
-    for (i, (k, v)) in entries.iter().enumerate() {
-        out.push_str("  ");
-        out.push_str(&key(k));
-        out.push_str(": ");
-        match node(v) {
-            Node::Array(items) if items.is_empty() => out.push_str("[]"),
-            Node::Array(items) => {
-                out.push('[');
-                for (j, item) in items.iter().enumerate() {
-                    out.push_str(if j == 0 { "\n    " } else { ",\n    " });
-                    out.push_str(item.get());
-                }
-                out.push_str("\n  ]");
-            }
-            _ => out.push_str(v.trim()),
-        }
-        out.push_str(if i + 1 < entries.len() { ",\n" } else { "\n" });
+    /// One entry's value: a list item by item, anything else as it was.
+    enum Entry<'a> {
+        List(Vec<&'a RawValue>),
+        Value(&'a RawValue),
     }
-    out.push_str("}\n");
-    out
+    impl Serialize for Entry<'_> {
+        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            match self {
+                Entry::List(items) => items.serialize(serializer),
+                Entry::Value(v) => v.serialize(serializer),
+            }
+        }
+    }
+    struct File<'a>(Vec<(&'a str, Entry<'a>)>);
+    impl Serialize for File<'_> {
+        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            serializer.collect_map(self.0.iter().map(|(k, v)| (k, v)))
+        }
+    }
+    let file = File(
+        entries
+            .iter()
+            .map(|(k, v)| {
+                let entry = match node(v) {
+                    Node::Array(items) => Entry::List(items),
+                    _ => Entry::Value(
+                        serde_json::from_str(v.trim()).expect("a merged value is JSON"),
+                    ),
+                };
+                (k.as_str(), entry)
+            })
+            .collect(),
+    );
+    crate::layout::to_file(&file)
 }
 
 #[cfg(test)]

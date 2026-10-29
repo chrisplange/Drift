@@ -278,3 +278,108 @@ fn an_older_file_carries_nothing() {
     let (_, meta) = load(&text).unwrap();
     assert!(!meta.carried.any());
 }
+
+/// The current fixture's newest entity, and the fixture with `to` put in after `reader` and
+/// `field` added to its text.
+fn naming_the_newest_entity(table: &str, field: &str) -> (EntityId, String) {
+    let text = current_fixture();
+    let (plain, _) = load(&text).unwrap();
+    let newest = plain.iter().map(|(id, _)| id).max().unwrap();
+    let reader = format!("  \"reader\": {READER_VERSION},\n");
+    let mut t = text.clone();
+    if !table.is_empty() {
+        let table = table.replace("NEWEST", &newest.to_string());
+        t = edit(&t, &reader, &format!("{reader}{table}"));
+    }
+    if !field.is_empty() {
+        let field = field.replace("NEWEST", &newest.to_string());
+        t = edit(
+            &t,
+            r#"{"id":"t11","text":"LIVING","#,
+            &format!(r#"{{"id":"t11",{field},"text":"LIVING","#),
+        );
+    }
+    (newest, t)
+}
+
+/// Unknown data that names something deleted since is kept, but the save warns (the newer
+/// build drops the reference), and the id it names is never given to anything made here, in
+/// this session or a later one, so the reference never points at something else.
+#[test]
+fn unknown_data_naming_a_deleted_record_warns_and_its_id_is_never_used_again() {
+    for (table, field) in [
+        (
+            "  \"marks\": [\n    {\"id\":\"m1\",\"on\":\"NEWEST\"}\n  ],\n",
+            "",
+        ),
+        ("", r#""near":{"NEWEST":true}"#),
+    ] {
+        let (newest, text) = naming_the_newest_entity(table, field);
+        let names = |text: &str| text.contains(&format!("\"{newest}\""));
+        let (mut doc, meta) = load(&text).unwrap();
+        assert!(meta.carried.any());
+        // Saved unchanged, or after an edit that keeps it: no warning.
+        assert!(!save_checked(&doc, &meta).loses_newer_data);
+        let (p, _) = doc.iter().find(|(_, e)| e.kind.is_point()).unwrap();
+        let at = doc.point(p).unwrap();
+        doc.set_point(p, at + DVec2::X).unwrap();
+        assert!(!save_checked(&doc, &meta).loses_newer_data);
+        // Deleted: kept as it was, with the warning.
+        doc.delete([newest]);
+        assert!(doc.get(newest).is_none());
+        let saved = save_checked(&doc, &meta);
+        assert!(
+            saved.loses_newer_data,
+            "{table}{field}: deleting what it names warns"
+        );
+        assert!(names(&saved.text), "{table}{field}: what names it is kept");
+        // Made in this session after the delete: a new id.
+        let made = doc.add_point(DVec2::ZERO);
+        assert!(made > newest, "{made}");
+        // Opened again (here or by the newer build), something new doesn't take its id.
+        let (mut again, again_meta) = load(&saved.text).unwrap();
+        assert!(again.get(newest).is_none());
+        let made = again.add_point(DVec2::ZERO);
+        assert_ne!(
+            made, newest,
+            "{table}{field}: the named id was handed out again"
+        );
+        let resaved = save_checked(&again, &again_meta);
+        assert!(
+            !resaved.loses_newer_data,
+            "already left out: no warning again"
+        );
+        assert!(names(&resaved.text));
+        let (last, _) = load(&resaved.text).unwrap();
+        assert!(last.get(newest).is_none(), "nothing has the id it names");
+    }
+}
+
+/// An unknown table a newer build laid out another way is written back one record per line,
+/// as this build lays out every file, once anything around it changed.
+#[test]
+fn an_unknown_table_written_another_way_is_laid_out_as_files_are() {
+    let reader = format!("  \"reader\": {READER_VERSION},\n");
+    let text = edit(
+        &current_fixture(),
+        &reader,
+        &format!(
+            "{reader}  \"marks\":[\n\t{{ \"id\": \"m1\" }} ,\n\n        {{\"id\":\"m2\",\"x\":[1,\n 2]}}\n   ]  ,\n  \"note\" :  \"x\",\n"
+        ),
+    );
+    let (mut doc, meta) = load(&text).unwrap();
+    assert!(meta.carried.any());
+    assert_eq!(save(&doc, &meta), text, "unchanged: as it was");
+    let (p, _) = doc.iter().find(|(_, e)| e.kind.is_point()).unwrap();
+    let at = doc.point(p).unwrap();
+    doc.set_point(p, at + DVec2::X).unwrap();
+    let saved = save(&doc, &meta);
+    assert!(
+        saved.contains(&format!(
+            "{reader}  \"marks\": [\n    {{ \"id\": \"m1\" }},\n    {{\"id\":\"m2\",\"x\":[1,\n 2]}}\n  ],\n  \"note\": \"x\",\n"
+        )),
+        "{}",
+        saved.lines().take(8).collect::<Vec<_>>().join("\n")
+    );
+    load(&saved).unwrap();
+}

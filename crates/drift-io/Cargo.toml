@@ -28,7 +28,7 @@ skrifa = "0.44"
 roxmltree = "0.21.1"
 # DWG import (the `dwg` feature): acadrust reads DWG R12-R2018. MPL-2.0, so changes to its
 # own files must be published; see deny.toml.
-acadrust = { version = "0.6.5", default-features = false, optional = true }
+acadrust = { version = "0.6.6", default-features = false, optional = true }
 
 [dev-dependencies]
 proptest = "1"

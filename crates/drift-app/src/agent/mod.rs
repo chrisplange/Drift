@@ -288,6 +288,7 @@ impl Session {
     fn step(&mut self, label: &str, f: impl FnOnce(&mut Self) -> Res) -> Res {
         let before = self.editor.history.recorded();
         self.editor.fill_changes.clear();
+        let notice_before = self.editor.notice.clone();
         let result = f(self);
         if self.editor.doc.in_transaction() {
             self.editor.doc.rollback();
@@ -298,9 +299,19 @@ impl Session {
                 self.editor.history.squash_last(n, label);
                 self.editor.sync();
                 let fills = self.fill_changes();
+                // What the edit had to say (relations a trim took off, …), left for the
+                // window too.
+                let notice = self
+                    .editor
+                    .notice
+                    .clone()
+                    .filter(|n| notice_before.as_ref() != Some(n));
                 if let Some(o) = v.as_object_mut() {
                     if !fills.is_empty() {
                         o.insert("fills".into(), Value::Array(fills));
+                    }
+                    if let Some(notice) = notice {
+                        o.insert("notice".into(), json!(notice));
                     }
                     o.insert("sketch".into(), self.status());
                 }

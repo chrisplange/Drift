@@ -144,9 +144,10 @@ impl Editor {
             .constraints()
             .flat_map(|(_, c)| match *c {
                 Constraint::Coincident { a, b } => vec![a, b],
-                Constraint::PointOnCurve { point, .. } | Constraint::Midpoint { point, .. } => {
-                    vec![point]
-                }
+                Constraint::PointOnCurve { point, .. }
+                | Constraint::Midpoint { point, .. }
+                | Constraint::MidpointOf { point, .. }
+                | Constraint::Corner { point, .. } => vec![point],
                 _ => Vec::new(),
             })
             .collect();

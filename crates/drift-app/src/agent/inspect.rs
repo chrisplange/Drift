@@ -129,6 +129,13 @@ pub(super) fn describe_constraint(doc: &Document, id: ConstraintId) -> Value {
         Constraint::Symmetric { a, b, axis } => vec![("a", e(a)), ("b", e(b)), ("axis", e(axis))],
         Constraint::Smooth { point, a, b } => vec![("point", e(point)), ("a", e(a)), ("b", e(b))],
         Constraint::Midpoint { point, line } => vec![("point", e(point)), ("line", e(line))],
+        Constraint::MidpointOf { point, a, b } => {
+            vec![("point", e(point)), ("a", e(a)), ("b", e(b))]
+        }
+        Constraint::EqualDistance { a, b, c, d } => {
+            vec![("a", e(a)), ("b", e(b)), ("c", e(c)), ("d", e(d))]
+        }
+        Constraint::Corner { point, a, b } => vec![("point", e(point)), ("a", e(a)), ("b", e(b))],
         Constraint::Fix { point, at } => vec![("point", e(point)), ("at", pt(at))],
         Constraint::FixX { point, x } => vec![("point", e(point)), ("x", num(x))],
         Constraint::FixY { point, y } => vec![("point", e(point)), ("y", num(y))],
@@ -179,6 +186,9 @@ pub(super) fn type_name(c: &Constraint) -> &'static str {
         Constraint::Symmetric { .. } => "symmetric",
         Constraint::Smooth { .. } => "smooth",
         Constraint::Midpoint { .. } => "midpoint",
+        Constraint::MidpointOf { .. } => "midpoint_of",
+        Constraint::EqualDistance { .. } => "equal_distance",
+        Constraint::Corner { .. } => "corner",
         Constraint::Fix { .. }
         | Constraint::FixX { .. }
         | Constraint::FixY { .. }

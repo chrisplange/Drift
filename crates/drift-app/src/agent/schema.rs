@@ -318,10 +318,13 @@ Two filled shapes trimmed into one outline keep one fill, the top one's.",
         },
         ToolSpec {
             name: "fillet_chamfer",
-            description: "Round (radius) or cut (chamfer: a distance or [d1, d2]) the corner where two curves meet.",
+            description: "Round (radius) or cut (chamfer: a distance or [d1, d2]) the corner where two curves meet, or several corners in one step. Dimensions and relations on a corner stay: the corner is kept as a construction point held where the two curves cross (a `corner` relation), and a midpoint or equal length on a side keeps measuring it from corner to corner.",
             schema: object(
                 json!({
-                    "corner": point_ref(),
+                    "corner": { "description": "A corner ([x, y] in mm, or a point id), or a list of corners", "anyOf": [
+                        point_ref(),
+                        { "type": "array", "items": point_ref(), "minItems": 1 }
+                    ]},
                     "radius": { "type": "number" },
                     "chamfer": { "anyOf": [{ "type": "number" }, { "type": "array", "items": { "type": "number" } }] }
                 }),

@@ -38,7 +38,9 @@ fn tag(c: &Constraint) -> Option<&'static str> {
         Constraint::Collinear { .. } => "COL",
         Constraint::PointOnCurve { .. } => "ON",
         Constraint::Symmetric { .. } => "SYM",
-        Constraint::Midpoint { .. } => "M",
+        Constraint::Midpoint { .. } | Constraint::MidpointOf { .. } => "M",
+        Constraint::EqualDistance { .. } => "=",
+        Constraint::Corner { .. } => "CNR",
         Constraint::Fix { .. }
         | Constraint::FixX { .. }
         | Constraint::FixY { .. }
@@ -51,7 +53,7 @@ fn tag(c: &Constraint) -> Option<&'static str> {
 const LEGEND: &str = "Curves: black = fully defined, blue = can still move, red = over-defined (conflict), \
 grey dashed = construction. Green tags are relations: H horizontal, V vertical, // parallel, \
 L perpendicular, = equal, T tangent, CC concentric, CR coradial, COL collinear, ON point on curve, \
-SYM symmetric, M midpoint, FIX fixed, G1 smooth. Purple labels are entity ids.";
+SYM symmetric, M midpoint, CNR corner (a fillet's or chamfer's sharp corner), FIX fixed, G1 smooth. Purple labels are entity ids.";
 
 /// Where a curve's label goes: halfway along it.
 fn middle(pts: &[DVec2]) -> Option<(DVec2, DVec2)> {

@@ -162,14 +162,35 @@ fn every_fixture_opens_keeps_its_contents_and_saves_as_current() {
             .iter()
             .filter(|(id, _)| walls.get(*id).is_none())
             .count();
-        assert_eq!(plain, ENTITIES, "{}", at("entities"));
-        // (From 43 the door's hinge is held by its x and its y apart.)
+        // (From 44 a room corner is also kept as a fillet keeps one.)
+        let kept_corner = usize::from(version >= 44);
+        assert_eq!(plain, ENTITIES + kept_corner, "{}", at("entities"));
+        // (From 43 the door's hinge is held by its x and its y apart; from 44 the kept
+        // corner, the rug's centre midway across the room and equal long sides.)
         let fixes = if version >= 43 { 2 } else { 0 };
+        let sides = if version >= 44 { 3 } else { 0 };
         assert_eq!(
             doc.constraint_count(),
-            CONSTRAINTS + fixes,
+            CONSTRAINTS + fixes + sides,
             "{}",
             at("constraints")
+        );
+        let side_relations = doc
+            .constraints()
+            .filter(|(_, c)| {
+                matches!(
+                    c,
+                    Constraint::Corner { .. }
+                        | Constraint::MidpointOf { .. }
+                        | Constraint::EqualDistance { .. }
+                )
+            })
+            .count();
+        assert_eq!(
+            side_relations,
+            sides,
+            "{}",
+            at("corner, midpoint_of, equal_distance")
         );
         let split_fixes = doc
             .constraints()
@@ -543,6 +564,31 @@ fn fixture_drawing() -> Document {
     let rug = [(2100.0, 1500.0), (2700.0, 1500.0), (2100.0, 1900.0)]
         .map(|(x, y)| doc.add_point(DVec2::new(x, y)));
     doc.add_ellipse(rug[0], rug[1], rug[2]).unwrap();
+    // (44) A room corner kept as a fillet keeps one: a construction point held where two
+    // sides cross. The rug's centre midway across the room, and the long sides equal from
+    // corner to corner.
+    let kept = doc.add_point(DVec2::new(4200.0, 3000.0));
+    doc.set_style(kept, drift_core::LineKind::Construction);
+    for c in [
+        Constraint::Corner {
+            point: kept,
+            a: sides[1],
+            b: sides[2],
+        },
+        Constraint::MidpointOf {
+            point: rug[0],
+            a: corners[0],
+            b: corners[2],
+        },
+        Constraint::EqualDistance {
+            a: corners[0],
+            b: corners[1],
+            c: corners[3],
+            d: corners[2],
+        },
+    ] {
+        doc.add_constraint(c).unwrap();
+    }
     let bench = [
         (300.0, 2600.0),
         (900.0, 2900.0),

@@ -882,3 +882,95 @@ fn a_panicking_tool_is_undone_and_reported() {
     ok(&mut s, "redo", json!({}));
     assert_eq!(s.editor.doc.iter().count(), before.iter().count());
 }
+
+/// #238 over the AI link: a fully defined plate whose width follows a variable, with a point
+/// at the middle of its bottom side, filleted at two corners in one call.
+#[test]
+fn a_fillet_keeps_the_plate_parametric_over_the_link() {
+    let mut s = Session::new();
+    let made = ok(
+        &mut s,
+        "run_script",
+        json!({ "script": "let S = 40 mm\nrect plate about 100 x 50 at 0,0 fixed\n\
+            dim plate.sw to plate.se = S + 60 mm\ndim plate.west = 50\n\
+            point m at 50,0\nmidpoint m of plate.south" }),
+    );
+    let name = |n: &str| str_at(&made, &["names", n]).to_owned();
+    let (se, ne, m) = (name("plate.se"), name("plate.ne"), name("m"));
+    let before = ok(&mut s, "list_constraints", json!({}));
+    let ids = |v: &Value| -> Vec<String> {
+        v["constraints"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["id"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    let undo_steps = s.editor.history.recorded();
+    let v = ok(
+        &mut s,
+        "fillet_chamfer",
+        json!({ "corner": [se, ne], "radius": 8 }),
+    );
+    assert_eq!(v["created"].as_array().map(Vec::len), Some(2), "{v}");
+    assert_eq!(v["sketch"]["dof"], 0, "{v}");
+    assert_eq!(s.editor.history.recorded(), undo_steps + 1, "one undo step");
+    // Every constraint there was is still there: the width on the kept corner, the
+    // midpoint from corner to corner.
+    let after = ok(&mut s, "list_constraints", json!({}));
+    let kept = ids(&after);
+    for id in ids(&before) {
+        assert!(kept.contains(&id), "{id} went: {after}");
+    }
+    let types: Vec<&str> = after["constraints"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["type"].as_str().unwrap())
+        .collect();
+    assert!(
+        types.contains(&"corner") && types.contains(&"midpoint_of"),
+        "{after}"
+    );
+    // The plate follows S.
+    ok(
+        &mut s,
+        "set_variables",
+        json!({ "set": [{ "name": "S", "value": "50 mm" }] }),
+    );
+    let at = |s: &Session, id: &str| {
+        let id = drift_core::EntityId(id[1..].parse().unwrap());
+        s.editor.doc.point(id).unwrap()
+    };
+    assert!(at(&s, &se).distance(glam::DVec2::new(110.0, 0.0)) < 1e-6);
+    assert!((at(&s, &m).x - 55.0).abs() < 1e-6);
+    // A list with a corner that isn't one changes nothing.
+    let count = s.editor.doc.len();
+    let e = err(
+        &mut s,
+        "fillet_chamfer",
+        json!({ "corner": [name("plate.nw"), se], "chamfer": 2 }),
+    );
+    assert!(e.contains(&se), "{e}");
+    assert_eq!(s.editor.doc.len(), count);
+}
+
+/// What an edit takes off comes back as its `notice`.
+#[test]
+fn a_relation_a_trim_takes_off_is_reported() {
+    let mut s = Session::new();
+    let made = ok(
+        &mut s,
+        "run_script",
+        json!({ "script": "line a from 0,0 to 30,0\nline b from 0,10 to 30,10\n\
+            line c from 10,-5 to 10,15\nequal a b" }),
+    );
+    let a = str_at(&made, &["names", "a"]).to_owned();
+    let v = ok(
+        &mut s,
+        "trim_extend_split",
+        json!({ "id": a, "at": [5, 0] }),
+    );
+    let notice = v["notice"].as_str().unwrap_or_default();
+    assert!(notice.contains("Equal"), "{v}");
+}

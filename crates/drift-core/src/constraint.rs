@@ -124,6 +124,28 @@ pub enum Constraint {
         point: EntityId,
         line: EntityId,
     },
+    /// A point kept midway between two points (a filleted or chamfered side's midpoint,
+    /// from corner to corner).
+    MidpointOf {
+        point: EntityId,
+        a: EntityId,
+        b: EntityId,
+    },
+    /// The distance from `a` to `b` equal to that from `c` to `d` (a filleted or chamfered
+    /// side's length, from corner to corner, kept equal to another).
+    EqualDistance {
+        a: EntityId,
+        b: EntityId,
+        c: EntityId,
+        d: EntityId,
+    },
+    /// A point kept where two curves (lines, or circles/arcs, extended) cross: the sharp
+    /// corner a fillet or a chamfer cut off, so what was measured to it stays.
+    Corner {
+        point: EntityId,
+        a: EntityId,
+        b: EntityId,
+    },
     /// A point locked at a location.
     Fix {
         point: EntityId,
@@ -206,6 +228,13 @@ impl Constraint {
                 vec![(point, PointOrMidpoint), (line, Line)]
             }
             Constraint::Midpoint { point, line } => vec![(point, Point), (line, Line)],
+            Constraint::MidpointOf { point, a, b } => vec![(point, Point), (a, Point), (b, Point)],
+            Constraint::EqualDistance { a, b, c, d } => {
+                vec![(a, Point), (b, Point), (c, Point), (d, Point)]
+            }
+            Constraint::Corner { point, a, b } => {
+                vec![(point, Point), (a, LineOrCircular), (b, LineOrCircular)]
+            }
             Constraint::Smooth { point, a, b } => vec![(point, Point), (a, Point), (b, Point)],
             Constraint::Tangent { a, b } => vec![(a, LineOrCircular), (b, Curve)],
             Constraint::Concentric { a, b } | Constraint::Coradial { a, b } => {
@@ -238,7 +267,9 @@ impl Constraint {
     pub fn type_name(&self) -> &'static str {
         match self {
             Constraint::Coincident { .. } => "Coincident",
-            Constraint::Midpoint { .. } => "Midpoint",
+            Constraint::Midpoint { .. } | Constraint::MidpointOf { .. } => "Midpoint",
+            Constraint::EqualDistance { .. } => "Equal",
+            Constraint::Corner { .. } => "Corner",
             Constraint::Smooth { .. } => "Smooth",
             Constraint::Tangent { .. } => "Tangent",
             Constraint::Concentric { .. } => "Concentric",
@@ -354,6 +385,22 @@ impl Constraint {
                 point: f(point),
                 line: f(line),
             },
+            MidpointOf { point, a, b } => MidpointOf {
+                point: f(point),
+                a: f(a),
+                b: f(b),
+            },
+            EqualDistance { a, b, c, d } => EqualDistance {
+                a: f(a),
+                b: f(b),
+                c: f(c),
+                d: f(d),
+            },
+            Corner { point, a, b } => Corner {
+                point: f(point),
+                a: f(a),
+                b: f(b),
+            },
             Smooth { point, a, b } => Smooth {
                 point: f(point),
                 a: f(a),
@@ -451,10 +498,22 @@ impl Constraint {
             | Constraint::FixY { point, .. }
             | Constraint::PointLineDistance { point, .. }
             | Constraint::Midpoint { point, .. }
-            | Constraint::PointOnCurve { point, .. } => swap(point),
+            | Constraint::PointOnCurve { point, .. }
+            | Constraint::Corner { point, .. } => swap(point),
             Constraint::Symmetric { a, b, .. } => {
                 swap(a);
                 swap(b);
+            }
+            Constraint::MidpointOf { point, a, b } => {
+                swap(point);
+                swap(a);
+                swap(b);
+            }
+            Constraint::EqualDistance { a, b, c, d } => {
+                swap(a);
+                swap(b);
+                swap(c);
+                swap(d);
             }
             Constraint::Smooth { point, a, b } => {
                 swap(point);
@@ -483,7 +542,12 @@ impl Constraint {
             | Constraint::Perpendicular { a, b }
             | Constraint::Equal { a, b }
             | Constraint::Angle { a, b, .. } => a == b,
-            Constraint::Smooth { point, a, b } => point == a || point == b || a == b,
+            Constraint::Smooth { point, a, b }
+            | Constraint::MidpointOf { point, a, b }
+            | Constraint::Corner { point, a, b } => point == a || point == b || a == b,
+            Constraint::EqualDistance { a, b, c, d } => {
+                a == b || c == d || (a == c && b == d) || (a == d && b == c)
+            }
             _ => false,
         }
     }

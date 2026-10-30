@@ -16,6 +16,14 @@ fn invalid(msg: impl Into<String>) -> EditError {
     EditError::Invalid(msg.into())
 }
 
+/// An error at one of several corners names that corner.
+fn at_corner(corners: &[EntityId], p: EntityId, e: EditError) -> EditError {
+    match e {
+        EditError::Invalid(why) if corners.len() > 1 => invalid(format!("at {p}: {why}")),
+        e => e,
+    }
+}
+
 /// Why a whole circle or ellipse crossed in `crossings` places (fewer than two) can't be
 /// trimmed, and what to do instead.
 fn closed_trim_refusal(shape: &Shape, crossings: usize) -> String {
@@ -1615,36 +1623,127 @@ impl Editor {
 
     /// Round the corner at point `p` with an arc of radius `r`, tangent to both curves.
     pub fn fillet(&mut self, p: EntityId, r: f64) -> Result<EntityId, EditError> {
-        self.refuse_owned(&[p], crate::walls::Op::Round)?;
+        Ok(self.fillet_corners(&[p], r)?[0])
+    }
+
+    /// Round each corner with an arc of radius `r` (one undo step: all of them, or none).
+    /// What was measured to a corner or along its sides stays (see [`Editor::cut_corner`]).
+    pub fn fillet_corners(
+        &mut self,
+        corners: &[EntityId],
+        r: f64,
+    ) -> Result<Vec<EntityId>, EditError> {
+        self.refuse_owned(corners, crate::walls::Op::Round)?;
+        let before = self.constraint_state();
+        self.doc.begin();
+        let mut made = Vec::new();
+        let result = corners.iter().try_for_each(|&p| {
+            let arc = self.fillet_in(p, r).map_err(|e| at_corner(corners, p, e))?;
+            made.push(arc);
+            Ok(())
+        });
+        self.finish_reshape(result, "Fillet", &before)?;
+        Ok(made)
+    }
+
+    /// [`Editor::fillet`] inside an open transaction.
+    fn fillet_in(&mut self, p: EntityId, r: f64) -> Result<EntityId, EditError> {
         let [(l1, a1), (l2, a2)] = self.fillet_corner(p)?;
         let at = self.doc.point(p).unwrap_or_default();
         let (t1, t2, c, ccw) = fillet_geometry(at, [a1, a2], r)?;
         let doc_err = |e: drift_core::DocumentError| invalid(e.to_string());
-        let before = self.constraint_state();
-        self.doc.begin();
-        let mut arc = None;
-        let result = (|| -> Result<(), EditError> {
-            let (p1, p2, pc) = (
-                self.doc.add_point(t1),
-                self.doc.add_point(t2),
-                self.doc.add_point(c),
-            );
-            self.replace_end(l1, p, p1)?;
-            self.replace_end(l2, p, p2)?;
-            let (s, e) = if ccw { (p1, p2) } else { (p2, p1) };
-            let a = self.doc.add_arc(pc, s, e).map_err(doc_err)?;
-            // The round takes the corner's look (construction stays construction).
-            self.doc.copy_look(l1, a);
-            arc = Some(a);
-            for line in [l1, l2] {
-                self.relate(Constraint::Tangent { a: line, b: a });
-            }
-            self.relate(Constraint::Radius { curve: a, value: r });
-            self.doc.remove_if_orphaned(p);
-            Ok(())
-        })();
-        self.finish_reshape(result, "Fillet", &before)?;
-        Ok(arc.expect("added"))
+        let (p1, p2, pc) = (
+            self.doc.add_point(t1),
+            self.doc.add_point(t2),
+            self.doc.add_point(c),
+        );
+        self.cut_corner(p, [(l1, p1), (l2, p2)])?;
+        let (s, e) = if ccw { (p1, p2) } else { (p2, p1) };
+        let a = self.doc.add_arc(pc, s, e).map_err(doc_err)?;
+        // The round takes the corner's look (construction stays construction).
+        self.doc.copy_look(l1, a);
+        for line in [l1, l2] {
+            self.relate(Constraint::Tangent { a: line, b: a });
+        }
+        self.relate(Constraint::Radius { curve: a, value: r });
+        Ok(a)
+    }
+
+    /// Move the two curves meeting at corner `p` off it, onto their new ends (a fillet's or
+    /// a chamfer's), inside an open transaction. What measured a side from end to end
+    /// measures it to the corner instead (a midpoint, an equal length); and the corner, when
+    /// anything is measured to it or related to it, stays as a construction point held
+    /// where the two curves cross (#238). Otherwise it goes.
+    fn cut_corner(
+        &mut self,
+        p: EntityId,
+        arms: [(EntityId, EntityId); 2],
+    ) -> Result<(), EditError> {
+        for (arm, _) in arms {
+            self.keep_side(arm);
+        }
+        for (arm, end) in arms {
+            self.replace_end(arm, p, end)?;
+        }
+        if self.doc.users_of(p).next().is_none() && !self.doc.is_named(p) {
+            self.doc.delete([p]);
+            return Ok(());
+        }
+        if self.doc.users_of(p).next().is_none() {
+            self.doc.set_style(p, drift_core::LineKind::Construction);
+        }
+        // Not an automatic relation: what is kept on the corner means nothing without it.
+        self.doc
+            .add_constraint(Constraint::Corner {
+                point: p,
+                a: arms[0].0,
+                b: arms[1].0,
+            })
+            .map_err(|e| invalid(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Before line `side` is cut short at one end: a midpoint relation on it, or its length
+    /// kept equal to another line's, becomes the same between its present end points, so it
+    /// holds the side as it was drawn (corner to corner) rather than what is left of it.
+    fn keep_side(&mut self, side: EntityId) {
+        let ends = |doc: &drift_core::Document, id: EntityId| match doc.get(id).map(|e| e.kind) {
+            Some(EntityKind::Line { a, b }) => Some((a, b)),
+            _ => None,
+        };
+        let Some((a, b)) = ends(&self.doc, side) else {
+            return;
+        };
+        let kept: Vec<(ConstraintId, Constraint)> = self
+            .doc
+            .constraints_on(side)
+            .filter_map(|id| {
+                let c = match *self.doc.constraint(id)? {
+                    Constraint::Midpoint { point, line } if line == side => {
+                        Constraint::MidpointOf { point, a, b }
+                    }
+                    Constraint::Equal { a: x, b: y } if x == side || y == side => {
+                        let other = if x == side { y } else { x };
+                        let (c, d) = ends(&self.doc, other)?;
+                        if x == side {
+                            Constraint::EqualDistance { a, b, c, d }
+                        } else {
+                            Constraint::EqualDistance {
+                                a: c,
+                                b: d,
+                                c: a,
+                                d: b,
+                            }
+                        }
+                    }
+                    _ => return None,
+                };
+                Some((id, c))
+            })
+            .collect();
+        for (id, c) in kept {
+            let _ = self.doc.set_constraint(id, c);
+        }
     }
 
     /// The one line that meets curve `of` at its end point `tip` (nothing else may use the
@@ -1742,11 +1841,31 @@ impl Editor {
                 "that isn't a fillet or a chamfer between two lines",
             ));
         };
+        // The corner the fillet or chamfer kept, held where the lines cross (#238).
+        let kept = self.doc.constraints().find_map(|(id, c)| match *c {
+            Constraint::Corner { point, a, b }
+                if (a == lines[0] && b == lines[1]) || (a == lines[1] && b == lines[0]) =>
+            {
+                Some((id, point))
+            }
+            _ => None,
+        });
         self.doc.begin();
         let result = (|| -> Result<(), EditError> {
-            let p = self.doc.add_point(corner);
+            let p = match kept {
+                Some((relation, point)) => {
+                    self.doc.remove_constraint(relation);
+                    let _ = self.doc.set_point(point, corner);
+                    self.doc.set_style(point, drift_core::LineKind::Solid);
+                    point
+                }
+                None => self.doc.add_point(corner),
+            };
             self.replace_end(lines[0], ends[0], p)?;
             self.replace_end(lines[1], ends[1], p)?;
+            for line in lines {
+                self.whole_side(line);
+            }
             // The arc's centre goes with it; its ends are now unused.
             let centre = match self.doc.get(cut).map(|e| e.kind) {
                 Some(EntityKind::Arc { center, .. }) => Some(center),
@@ -1762,6 +1881,48 @@ impl Editor {
         })();
         self.selection.remove(&cut);
         self.finish(result, label)
+    }
+
+    /// After line `side` runs to its corner again: what [`Editor::keep_side`] measured
+    /// between its end points measures the line itself again.
+    fn whole_side(&mut self, side: EntityId) {
+        let ends = |doc: &drift_core::Document, id: EntityId| match doc.get(id).map(|e| e.kind) {
+            Some(EntityKind::Line { a, b }) => Some([a, b]),
+            _ => None,
+        };
+        let Some(own) = ends(&self.doc, side) else {
+            return;
+        };
+        let is =
+            |pair: [EntityId; 2], line: [EntityId; 2]| pair == line || pair == [line[1], line[0]];
+        // The lines a point pair is the ends of.
+        let line_of = |doc: &drift_core::Document, pair: [EntityId; 2]| {
+            doc.users_of(pair[0])
+                .find(|l| ends(doc, *l).is_some_and(|e| is(pair, e)))
+        };
+        let back: Vec<(ConstraintId, Constraint)> = self
+            .doc
+            .constraints_on(own[0])
+            .filter_map(|id| {
+                let c = match *self.doc.constraint(id)? {
+                    Constraint::MidpointOf { point, a, b } if is([a, b], own) => {
+                        Constraint::Midpoint { point, line: side }
+                    }
+                    Constraint::EqualDistance { a, b, c, d } => {
+                        let (x, y) = (line_of(&self.doc, [a, b])?, line_of(&self.doc, [c, d])?);
+                        if x != side && y != side {
+                            return None;
+                        }
+                        Constraint::Equal { a: x, b: y }
+                    }
+                    _ => return None,
+                };
+                Some((id, c))
+            })
+            .collect();
+        for (id, c) in back {
+            let _ = self.doc.set_constraint(id, c);
+        }
     }
 
     /// The one line or arc that meets curve `of` at its end point `tip` (nothing else may use
@@ -1970,30 +2131,49 @@ impl Editor {
 
     /// Cut the corner at point `p` with a line, `d1` / `d2` along the two lines.
     pub fn chamfer(&mut self, p: EntityId, d1: f64, d2: f64) -> Result<EntityId, EditError> {
-        self.refuse_owned(&[p], crate::walls::Op::Round)?;
+        Ok(self.chamfer_corners(&[p], d1, d2)?[0])
+    }
+
+    /// Cut each corner with a line, `d1` / `d2` along its two lines (one undo step: all of
+    /// them, or none).
+    pub fn chamfer_corners(
+        &mut self,
+        corners: &[EntityId],
+        d1: f64,
+        d2: f64,
+    ) -> Result<Vec<EntityId>, EditError> {
+        self.refuse_owned(corners, crate::walls::Op::Round)?;
+        let before = self.constraint_state();
+        self.doc.begin();
+        let mut made = Vec::new();
+        let result = corners.iter().try_for_each(|&p| {
+            let cut = self
+                .chamfer_in(p, d1, d2)
+                .map_err(|e| at_corner(corners, p, e))?;
+            made.push(cut);
+            Ok(())
+        });
+        self.finish_reshape(result, "Chamfer", &before)?;
+        Ok(made)
+    }
+
+    /// [`Editor::chamfer`] inside an open transaction.
+    fn chamfer_in(&mut self, p: EntityId, d1: f64, d2: f64) -> Result<EntityId, EditError> {
         let [(l1, _), (l2, _)] = self.corner(p)?;
         let Some(Shape::Line { a, b }) = self.chamfer_preview(p, d1, d2) else {
             return Err(invalid(
                 "the distances must be positive and shorter than the lines",
             ));
         };
-        let doc_err = |e: drift_core::DocumentError| invalid(e.to_string());
-        let before = self.constraint_state();
-        self.doc.begin();
-        let mut line = None;
-        let result = (|| -> Result<(), EditError> {
-            let (p1, p2) = (self.doc.add_point(a), self.doc.add_point(b));
-            self.replace_end(l1, p, p1)?;
-            self.replace_end(l2, p, p2)?;
-            let cut = self.doc.add_line(p1, p2).map_err(doc_err)?;
-            // The cut takes the corner's look (construction stays construction).
-            self.doc.copy_look(l1, cut);
-            line = Some(cut);
-            self.doc.remove_if_orphaned(p);
-            Ok(())
-        })();
-        self.finish_reshape(result, "Chamfer", &before)?;
-        Ok(line.expect("added"))
+        let (p1, p2) = (self.doc.add_point(a), self.doc.add_point(b));
+        self.cut_corner(p, [(l1, p1), (l2, p2)])?;
+        let cut = self
+            .doc
+            .add_line(p1, p2)
+            .map_err(|e| invalid(e.to_string()))?;
+        // The cut takes the corner's look (construction stays construction).
+        self.doc.copy_look(l1, cut);
+        Ok(cut)
     }
 
     /// The connected chain of curves through `id` (lines, arcs, elliptical arcs and pen
@@ -3188,6 +3368,470 @@ mod tests {
             unreachable!()
         };
         assert!(ed.chamfer(a, 1.0, 1.0).is_err());
+    }
+
+    /// #238: a fully defined 100 × 50 plate (fixed at its bottom-left corner, horizontal and
+    /// vertical sides, its width and height dimensioned) with a point held at the middle of
+    /// its bottom side; or, `square`, 100 × 100 with its height left to an Equal relation
+    /// between bottom and left sides. Corners anticlockwise from the bottom left; sides
+    /// bottom, right, top, left.
+    struct Plate {
+        ed: Editor,
+        corners: [EntityId; 4],
+        sides: [EntityId; 4],
+        width: ConstraintId,
+        /// The bottom side's midpoint relation, or (square) the Equal relation.
+        side: ConstraintId,
+        middle: EntityId,
+    }
+
+    fn plate(square: bool) -> Plate {
+        let mut ed = related();
+        ed.doc.begin();
+        let h = if square { 100.0 } else { 50.0 };
+        let corners =
+            [v(0.0, 0.0), v(100.0, 0.0), v(100.0, h), v(0.0, h)].map(|at| ed.doc.add_point(at));
+        let sides =
+            [0, 1, 2, 3].map(|i| ed.doc.add_line(corners[i], corners[(i + 1) % 4]).unwrap());
+        let middle = ed.doc.add_point(v(50.0, 0.0));
+        let add = |ed: &mut Editor, c| ed.doc.add_constraint(c).unwrap();
+        for c in [
+            Constraint::Horizontal { line: sides[0] },
+            Constraint::Vertical { line: sides[1] },
+            Constraint::Horizontal { line: sides[2] },
+            Constraint::Vertical { line: sides[3] },
+            Constraint::Fix {
+                point: corners[0],
+                at: DVec2::ZERO,
+            },
+            Constraint::Midpoint {
+                point: middle,
+                line: sides[0],
+            },
+        ] {
+            add(&mut ed, c);
+        }
+        let width = add(
+            &mut ed,
+            Constraint::Distance {
+                a: corners[0],
+                b: corners[1],
+                value: 100.0,
+            },
+        );
+        let side = if square {
+            add(
+                &mut ed,
+                Constraint::Equal {
+                    a: sides[0],
+                    b: sides[3],
+                },
+            )
+        } else {
+            add(
+                &mut ed,
+                Constraint::Distance {
+                    a: corners[3],
+                    b: corners[0],
+                    value: 50.0,
+                },
+            );
+            ed.doc
+                .constraints()
+                .find(|(_, c)| matches!(c, Constraint::Midpoint { .. }))
+                .map(|(id, _)| id)
+                .unwrap()
+        };
+        ed.commit("Plate");
+        Plate {
+            ed,
+            corners,
+            sides,
+            width,
+            side,
+            middle,
+        }
+    }
+
+    fn dof(ed: &mut Editor) -> usize {
+        ed.sync();
+        ed.analysis().dof.expect("analysed")
+    }
+
+    /// How far a point is from the line through a line's ends.
+    fn off_line(ed: &Editor, p: EntityId, line: EntityId) -> f64 {
+        let (a, b) = ends(ed, line);
+        let q = ed.doc.point(p).unwrap();
+        (b - a).normalize().perp_dot(q - a).abs()
+    }
+
+    #[test]
+    fn a_fillet_or_chamfer_keeps_what_was_measured_to_its_corner_and_sides() {
+        for chamfer in [false, true] {
+            let Plate {
+                mut ed,
+                corners,
+                sides,
+                width,
+                side,
+                middle,
+            } = plate(false);
+            assert_eq!(dof(&mut ed), 0);
+            let se = corners[1];
+            let made = if chamfer {
+                ed.chamfer(se, 8.0, 8.0).unwrap()
+            } else {
+                ed.fillet(se, 8.0).unwrap()
+            };
+            let what = if chamfer { "chamfer" } else { "fillet" };
+            // The width still measures to the corner, which stays where the sides cross.
+            assert_eq!(
+                ed.doc.constraint(width),
+                Some(&Constraint::Distance {
+                    a: corners[0],
+                    b: se,
+                    value: 100.0
+                }),
+                "{what}"
+            );
+            assert!(
+                ed.doc.users_of(se).next().is_none(),
+                "{what}: no curve ends there"
+            );
+            assert_eq!(
+                ed.doc.get(se).unwrap().style,
+                drift_core::LineKind::Construction
+            );
+            assert_eq!(
+                count(&ed, |c| *c
+                    == Constraint::Corner {
+                        point: se,
+                        a: sides[0],
+                        b: sides[1]
+                    }),
+                1,
+                "{what}"
+            );
+            // The midpoint is the bottom side's from corner to corner still.
+            assert_eq!(
+                ed.doc.constraint(side),
+                Some(&Constraint::MidpointOf {
+                    point: middle,
+                    a: corners[0],
+                    b: se
+                }),
+                "{what}"
+            );
+            assert!(ed.notice.is_none(), "{what}: {:?}", ed.notice);
+            // Still fully defined but for the cut: a fillet's radius is dimensioned; a
+            // chamfer's two lengths are new freedoms.
+            assert_eq!(dof(&mut ed), if chamfer { 2 } else { 0 }, "{what}");
+            assert!(ed.analysis().conflicts.is_empty(), "{what}");
+            // The width drives the plate as before.
+            ed.set_dimension(width, 110.0).unwrap();
+            assert!(close(ed.doc.point(se).unwrap(), v(110.0, 0.0)), "{what}");
+            assert!(
+                (ed.doc.point(middle).unwrap().x - 55.0).abs() < 1e-7,
+                "{what}"
+            );
+            for arm in [sides[0], sides[1]] {
+                assert!(
+                    off_line(&ed, se, arm) < 1e-7,
+                    "{what}: the corner is on its sides"
+                );
+            }
+            if chamfer {
+                let c = ed.chamfer_at(made).expect("still a chamfer");
+                assert!(c.corner.distance(v(110.0, 0.0)) < 1e-7, "{what}");
+            } else {
+                let f = ed.fillet_at(made).expect("still a fillet");
+                assert!(f.corner.distance(v(110.0, 0.0)) < 1e-7 && (f.radius - 8.0).abs() < 1e-7);
+            }
+        }
+    }
+
+    #[test]
+    fn a_fillet_keeps_an_equal_length_from_corner_to_corner() {
+        for chamfer in [false, true] {
+            let Plate {
+                mut ed,
+                corners,
+                width,
+                side,
+                ..
+            } = plate(true);
+            assert_eq!(dof(&mut ed), 0);
+            if chamfer {
+                ed.chamfer(corners[1], 6.0, 6.0).unwrap();
+            } else {
+                ed.fillet(corners[1], 6.0).unwrap();
+            }
+            assert_eq!(
+                ed.doc.constraint(side),
+                Some(&Constraint::EqualDistance {
+                    a: corners[0],
+                    b: corners[1],
+                    c: corners[3],
+                    d: corners[0]
+                })
+            );
+            assert_eq!(dof(&mut ed), if chamfer { 2 } else { 0 });
+            // Wider, and so taller.
+            ed.set_dimension(width, 120.0).unwrap();
+            assert!(close(ed.doc.point(corners[3]).unwrap(), v(0.0, 120.0)));
+        }
+    }
+
+    #[test]
+    fn several_corners_are_rounded_in_one_step_and_a_second_fillet_on_a_side_keeps_it() {
+        let Plate {
+            mut ed,
+            corners,
+            side,
+            middle,
+            ..
+        } = plate(false);
+        let steps = ed.history.recorded();
+        let arcs = ed.fillet_corners(&[corners[0], corners[1]], 5.0).unwrap();
+        assert_eq!(arcs.len(), 2);
+        assert_eq!(ed.history.recorded(), steps + 1, "one undo step");
+        // Both ends of the bottom side are kept corners; its midpoint is still theirs.
+        assert_eq!(
+            ed.doc.constraint(side),
+            Some(&Constraint::MidpointOf {
+                point: middle,
+                a: corners[0],
+                b: corners[1]
+            })
+        );
+        assert_eq!(count(&ed, |c| matches!(c, Constraint::Corner { .. })), 2);
+        assert_eq!(dof(&mut ed), 0);
+        // All or nothing: a corner that can't be rounded refuses the lot.
+        let before = ed.doc.len();
+        let err = ed
+            .fillet_corners(&[corners[2], corners[1]], 5.0)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(&corners[1].to_string()), "{err}");
+        assert_eq!(ed.doc.len(), before, "nothing changed");
+        assert!(
+            ed.chamfer_corners(&[corners[2], corners[3]], 3.0, 3.0)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn removing_a_fillet_or_chamfer_puts_the_corner_and_its_relations_back() {
+        for chamfer in [false, true] {
+            let Plate {
+                mut ed, corners, ..
+            } = plate(false);
+            let constraints = |ed: &Editor| -> Vec<(ConstraintId, Constraint)> {
+                ed.doc.constraints().map(|(id, c)| (id, *c)).collect()
+            };
+            let before = constraints(&ed);
+            let cut = if chamfer {
+                ed.chamfer(corners[1], 8.0, 8.0).unwrap()
+            } else {
+                ed.fillet(corners[1], 8.0).unwrap()
+            };
+            ed.remove_corner_cut(cut).unwrap();
+            // The same point ends both sides again; the relations are as they were.
+            assert_eq!(ed.doc.users_of(corners[1]).count(), 2);
+            assert_eq!(
+                ed.doc.get(corners[1]).unwrap().style,
+                drift_core::LineKind::Solid
+            );
+            let after: Vec<(ConstraintId, Constraint)> = constraints(&ed);
+            assert_eq!(after, before, "chamfer {chamfer}");
+            assert_eq!(dof(&mut ed), 0);
+        }
+    }
+
+    #[test]
+    fn deleting_a_rounded_outline_takes_its_kept_corners() {
+        let Plate {
+            mut ed,
+            corners,
+            sides,
+            middle,
+            ..
+        } = plate(false);
+        let arcs = ed.fillet_corners(&corners, 5.0).unwrap();
+        // (Nothing is measured to the top right corner: it goes with the fillet.)
+        assert!(!ed.doc.contains(corners[2]));
+        assert_eq!(count(&ed, |c| matches!(c, Constraint::Corner { .. })), 3);
+        ed.doc.begin();
+        ed.delete_curves(sides.iter().chain(&arcs).copied());
+        ed.commit("Delete");
+        for p in corners {
+            assert!(!ed.doc.contains(p), "{p} went with its sides");
+        }
+        assert_eq!(count(&ed, |c| matches!(c, Constraint::Corner { .. })), 0);
+        assert!(ed.doc.contains(middle), "a point of its own stays");
+        // With only one side of a corner gone, the corner keeps what names it.
+        let Plate {
+            mut ed,
+            corners,
+            sides,
+            width,
+            ..
+        } = plate(false);
+        ed.fillet(corners[1], 5.0).unwrap();
+        ed.doc.begin();
+        ed.delete_curves([sides[1]]);
+        ed.commit("Delete");
+        assert!(ed.doc.contains(corners[1]) && ed.doc.constraint(width).is_some());
+        assert_eq!(count(&ed, |c| matches!(c, Constraint::Corner { .. })), 0);
+    }
+
+    #[test]
+    fn a_fillet_undoes_and_redoes_exactly() {
+        let Plate {
+            mut ed, corners, ..
+        } = plate(false);
+        type State = (Vec<(ConstraintId, Constraint)>, Vec<(EntityId, DVec2)>);
+        let state = |ed: &Editor| -> State {
+            (
+                ed.doc.constraints().map(|(id, c)| (id, *c)).collect(),
+                ed.doc
+                    .iter()
+                    .filter_map(|(id, e)| match e.kind {
+                        EntityKind::Point(p) => Some((id, p)),
+                        _ => None,
+                    })
+                    .collect(),
+            )
+        };
+        let before = state(&ed);
+        ed.fillet(corners[1], 8.0).unwrap();
+        let after = state(&ed);
+        // The corner and all that was on it are kept, and come back on redo.
+        assert!(
+            before
+                .0
+                .iter()
+                .all(|c| after.0.contains(c) || matches!(c.1, Constraint::Midpoint { .. }))
+        );
+        assert!(
+            after
+                .0
+                .iter()
+                .any(|(_, c)| matches!(c, Constraint::Corner { .. }))
+        );
+        assert!(ed.undo());
+        assert_eq!(state(&ed), before);
+        assert!(ed.redo());
+        assert_eq!(state(&ed), after);
+    }
+
+    #[test]
+    fn a_kept_corner_saves_and_opens() {
+        let Plate {
+            mut ed, corners, ..
+        } = plate(false);
+        ed.fillet(corners[1], 8.0).unwrap();
+        let text = drift_io::save(&ed.doc, &drift_io::Metadata::default());
+        let (doc, _) = drift_io::load(&text).unwrap();
+        let all = |d: &drift_core::Document| -> Vec<Constraint> {
+            d.constraints().map(|(_, c)| *c).collect()
+        };
+        assert_eq!(all(&doc), all(&ed.doc));
+        assert_eq!(
+            doc.get(corners[1]).map(|e| e.style),
+            ed.doc.get(corners[1]).map(|e| e.style)
+        );
+        assert_eq!(drift_io::save(&doc, &drift_io::Metadata::default()), text);
+    }
+
+    #[test]
+    fn a_kept_corner_holds_through_a_radius_change_and_a_drag() {
+        // The corner fixture with its x arm's length dimensioned, to the corner.
+        let (mut ed, p) = corner();
+        let [(x_arm, far), (y_arm, top)] = ed.corner(p).unwrap();
+        let (x_arm, far, y_arm, top) = if ed.doc.point(far).unwrap().x > 0.0 {
+            (x_arm, far, y_arm, top)
+        } else {
+            (y_arm, top, x_arm, far)
+        };
+        ed.doc.begin();
+        let length = ed
+            .doc
+            .add_constraint(Constraint::Distance {
+                a: p,
+                b: far,
+                value: 20.0,
+            })
+            .unwrap();
+        ed.commit("Length");
+        let arc = ed.fillet(p, 3.0).unwrap();
+        ed.refillet(arc, 5.0).unwrap();
+        assert!(
+            close(ed.doc.point(p).unwrap(), v(0.0, 0.0)),
+            "the corner stays put"
+        );
+        assert!(ed.doc.constraint(length).is_some());
+        // The upright arm's top end, dragged sideways: the corner follows where the arms
+        // cross, 20 from the far end of the other.
+        ed.doc.begin();
+        let dragged: Vec<Param> = Param::point(top).into_iter().collect();
+        assert!(ed.drag(&[top], v(4.0, 0.0), &dragged));
+        ed.commit("Drag");
+        for arm in [x_arm, y_arm] {
+            assert!(off_line(&ed, p, arm) < 1e-6);
+        }
+        let d = ed
+            .doc
+            .point(p)
+            .unwrap()
+            .distance(ed.doc.point(far).unwrap());
+        assert!((d - 20.0).abs() < 1e-6, "{d}");
+        assert!(ed.fillet_at(arc).is_some(), "still a fillet");
+    }
+
+    /// The root of #238 in trims too: an end trimmed away keeps what is measured to it, as
+    /// a free point.
+    #[test]
+    fn a_trimmed_away_end_keeps_its_dimension() {
+        let (mut ed, ids) = crossed();
+        let (a, _) = ends(&ed, ids[0]);
+        let a = ed
+            .doc
+            .iter()
+            .find(|(_, e)| e.kind == EntityKind::Point(a))
+            .map(|(id, _)| id)
+            .unwrap();
+        ed.doc.begin();
+        let q = ed.doc.add_point(v(0.0, -10.0));
+        let dim = ed
+            .doc
+            .add_constraint(Constraint::Distance {
+                a,
+                b: q,
+                value: 10.0,
+            })
+            .unwrap();
+        ed.commit("Dimension");
+        ed.trim_at(ids[0], v(5.0, 0.0)).unwrap();
+        assert!(ed.doc.users_of(a).next().is_none(), "trimmed away");
+        assert!(ed.doc.contains(a) && ed.doc.constraint(dim).is_some());
+        // An end with nothing on it but a fix of its own goes, fix and all.
+        let (mut ed, ids) = crossed();
+        let (b_at, _) = ends(&ed, ids[1]);
+        let b = ed
+            .doc
+            .iter()
+            .find(|(_, e)| e.kind == EntityKind::Point(b_at))
+            .map(|(id, _)| id)
+            .unwrap();
+        ed.doc.begin();
+        ed.doc
+            .add_constraint(Constraint::Fix { point: b, at: b_at })
+            .unwrap();
+        ed.commit("Fix");
+        ed.trim_at(ids[1], v(10.0, -3.0)).unwrap();
+        assert!(!ed.doc.contains(b));
+        assert_eq!(count(&ed, |c| matches!(c, Constraint::Fix { .. })), 0);
     }
 
     /// A connected polyline through the points.

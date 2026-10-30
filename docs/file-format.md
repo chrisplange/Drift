@@ -1,6 +1,6 @@
 # The `.drift` file format: versions and stability
 
-*2026-10-24, against `main` at 6a625ec (format 42, reader 42); format 43, reader 43 since 2026-10-27.*
+*2026-10-24, against `main` at 6a625ec (format 42, reader 42); format 43, reader 43 since 2026-10-27; format 44, reader 44 since 2026-10-29.*
 
 A `.drift` file is UTF-8 JSON with one entity, constraint or record per line, so drawings
 diff and merge cleanly. The reader and writer are in `crates/drift-io/src/lib.rs`; the
@@ -14,8 +14,8 @@ from 38 to 41 in two days in October 2026; this document sets the rules that kee
 ```json
 {
   "format": "drift",
-  "version": 43,
-  "reader": 43,
+  "version": 44,
+  "reader": 44,
   "meta": {"title":"Bracket","units":"mm","generator":"Drift 0.1.0"},
   ...
 }
@@ -90,6 +90,7 @@ drawing rules, an option of values and a whole-sketch option) as each format ver
 
 | Fixture | Written by | Shipped in |
 |---|---|---|
+| `v44.drift` | `drift-io` with `corner`, `midpoint_of` and `equal_distance` (#238) | — |
 | `v43.1.drift` | `drift-io` with an underlay's `glyphs` (#205) | — |
 | `v43.drift` | `drift-io` with `fix_x` and `fix_y` (#203) | — |
 | `v42.2.drift` | `drift-io` with openings (W3) | — |
@@ -202,6 +203,7 @@ migration is named, the change was additive and older files read unchanged.
 | 41 | `variants` become `options`, holding values or a whole `sketch` (a Drift file of its own, leaving out the sections it has the `same` as the drawing); a block fill's `"path": "shape"`. Migration: `variants` are renamed `options`. |
 | 42 | `reader` (the oldest version that reads the file). Reading passes over what it doesn't know and keeps it for saving (section 4). No migration. Older builds refuse 42 files with "please update Drift" (they were strict, so they couldn't read a `reader` field anyway). |
 | 43 | `fix_x` and `fix_y` relations: a point's x or y alone held where it is (what Fix pins of a point something else partly holds, #203). Breaking (a new relation type), so `reader` is 43 too. No migration. |
+| 44 | Three relations a fillet or chamfer uses to keep what was measured to its corner and along its sides (#238): `corner` (`point`, curves `a` and `b`: the point held where the two lines, or circles of arcs, cross; the sharp corner the fillet or chamfer cut off, kept as a construction point), `midpoint_of` (`point` midway between points `a` and `b`: a midpoint relation on a side that was cut short, still from corner to corner) and `equal_distance` (the distance from `a` to `b` equal to the one from `c` to `d`: an equal-length relation on such a side). When both of a `corner`'s curves are deleted, the point goes with them, as a sharp corner's point goes with its curves, along with what was measured to it. When only one is deleted, the relation goes and the point stays only if something else names it. Breaking (new relation types), so `reader` is 44 too. No migration. |
 
 ### Additions without a bump (from 42)
 

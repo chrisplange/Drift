@@ -323,11 +323,28 @@ impl Document {
     }
 
     /// Remove points no curve uses and no constraint refers to beyond themselves (cleanup
-    /// after trimming moves a curve's end to a new point).
+    /// after trimming moves a curve's end to a new point). A point something is measured to
+    /// or related by stays, as a free point that keeps it (#238); a fix of the point alone
+    /// goes with it.
     pub fn remove_if_orphaned(&mut self, point: EntityId) {
-        if self.point(point).is_ok() && self.users_of(point).next().is_none() {
+        if self.point(point).is_ok()
+            && self.users_of(point).next().is_none()
+            && self
+                .constraints
+                .values()
+                .chain(self.measurements.values())
+                .all(|c| c.is_point_fix() || !c.entities().any(|e| e == point))
+        {
             self.delete([point]);
         }
+    }
+
+    /// Whether a constraint or a pinned measurement names entity `id`.
+    pub fn is_named(&self, id: EntityId) -> bool {
+        self.constraints
+            .values()
+            .chain(self.measurements.values())
+            .any(|c| c.entities().any(|e| e == id))
     }
 
     /// Every point that defines the given entities (points themselves included).
@@ -547,10 +564,45 @@ impl Document {
             .constraints
             .iter()
             .filter(|(_, c)| c.entities().any(|e| !self.entities.contains_key(&e)))
-            .map(|(id, _)| *id)
+            .map(|(id, c)| (*id, *c))
             .collect();
-        for id in dangling {
+        // A corner a fillet or chamfer kept (#238), held where deleted curves crossed: with
+        // both its curves gone it goes as their own corner would, what was measured to it
+        // too; with one gone, it stays only if something else names it.
+        let corners: Vec<(EntityId, bool)> = dangling
+            .iter()
+            .filter_map(|(_, c)| match *c {
+                Constraint::Corner { point, a, b } if self.entities.contains_key(&point) => {
+                    let both = !self.entities.contains_key(&a) && !self.entities.contains_key(&b);
+                    Some((point, both))
+                }
+                _ => None,
+            })
+            .collect();
+        for (id, _) in dangling {
             self.remove_constraint(id);
+        }
+        let mut gone = Vec::new();
+        for (point, both) in corners {
+            if self.contains(point)
+                && self.users_of(point).next().is_none()
+                && (both || !self.is_named(point))
+            {
+                self.touch(point);
+                self.entities.remove(&point);
+                gone.push(point);
+            }
+        }
+        if !gone.is_empty() {
+            let dangling: Vec<_> = self
+                .constraints
+                .iter()
+                .filter(|(_, c)| c.entities().any(|e| gone.contains(&e)))
+                .map(|(id, _)| *id)
+                .collect();
+            for id in dangling {
+                self.remove_constraint(id);
+            }
         }
         let dangling: Vec<_> = self
             .measurements

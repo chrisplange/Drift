@@ -311,11 +311,10 @@ fn trim_by(s: &mut Session, a: &Value, id: EntityId) -> Res {
 
 /// The corner point: a point id, or the point at (or nearest to) a coordinate where two
 /// curves meet.
-fn corner(s: &Session, a: &Value) -> Result<EntityId, String> {
-    let v = a.get("corner").ok_or("`corner` is required")?;
+fn corner(s: &Session, v: &Value) -> Result<EntityId, String> {
     let doc = &s.editor.doc;
     if !v.is_array() && !v.is_object() {
-        return args::point_at(doc, a, "corner");
+        return args::point_at(doc, &json!({ "corner": v }), "corner");
     }
     let at = args::vec2(v)?;
     doc.iter()
@@ -328,11 +327,35 @@ fn corner(s: &Session, a: &Value) -> Result<EntityId, String> {
         .ok_or("no corner there".into())
 }
 
+/// The corners: one (an id or a coordinate) or a list of them.
+fn corners(s: &Session, a: &Value) -> Result<Vec<EntityId>, String> {
+    let v = a.get("corner").ok_or("`corner` is required")?;
+    let many = v
+        .as_array()
+        .is_some_and(|items| items.first().is_some_and(|f| !f.is_number()));
+    if !many {
+        return Ok(vec![corner(s, v)?]);
+    }
+    let mut out = Vec::new();
+    for item in v.as_array().into_iter().flatten() {
+        let p = corner(s, item)?;
+        if out.contains(&p) {
+            return Err(format!("`corner`: {} is listed twice", args::id(p)));
+        }
+        out.push(p);
+    }
+    Ok(out)
+}
+
 pub(super) fn fillet(s: &mut Session, a: &Value) -> Res {
-    let p = corner(s, a)?;
+    let ps = corners(s, a)?;
+    let many = a.get("corner").is_some_and(|v| {
+        v.as_array()
+            .is_some_and(|items| items.first().is_some_and(|f| !f.is_number()))
+    });
     let ed = &mut s.editor;
     let made = if let Some(r) = args::opt_f64(a, "radius")? {
-        ed.fillet(p, r).map_err(|e| e.to_string())?
+        ed.fillet_corners(&ps, r).map_err(|e| e.to_string())?
     } else {
         let (d1, d2) = match a.get("chamfer") {
             Some(Value::Array(v)) if v.len() == 2 => (
@@ -345,9 +368,13 @@ pub(super) fn fillet(s: &mut Session, a: &Value) -> Res {
             }
             _ => return Err("give a `radius` (fillet) or a `chamfer` distance".into()),
         };
-        ed.chamfer(p, d1, d2).map_err(|e| e.to_string())?
+        ed.chamfer_corners(&ps, d1, d2).map_err(|e| e.to_string())?
     };
-    Ok(json!({ "created": args::id(made), "corner": args::id(p) }))
+    Ok(if many {
+        json!({ "created": ids_json(&made), "corner": ids_json(&ps) })
+    } else {
+        json!({ "created": args::id(made[0]), "corner": args::id(ps[0]) })
+    })
 }
 
 pub(super) fn delete(s: &mut Session, a: &Value) -> Res {

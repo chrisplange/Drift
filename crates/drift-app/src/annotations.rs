@@ -14,6 +14,7 @@ use drift_core::{
 use eframe::egui::{self, Color32, Pos2, Rect, Stroke, StrokeKind, Vec2, pos2, vec2};
 
 use crate::overlay::ScreenMap;
+use drift_edit::labels::{angle_vertex, center_of, dimension_anchor, foot, line_points, ray_from};
 
 /// Default distance of a dimension label from the geometry, in logical points.
 const DEFAULT_OFFSET_PT: f64 = 28.0;
@@ -83,7 +84,7 @@ impl AnnotationColors {
             Color32::from_rgb(0x33, 0x36, 0x3a)
         };
         let normal = color
-            .and_then(|c| crate::editor::contrast(c.0, dark))
+            .and_then(|c| drift_edit::editor::contrast(c.0, dark))
             .map_or(theme, |[r, g, b]| Color32::from_rgb(r, g, b));
         Self {
             normal,
@@ -119,50 +120,6 @@ impl AnnotationColors {
 
 // ---------------------------------------------------------------------------------------------
 // Dimensions
-
-/// The world point a dimension's label offset is measured from.
-pub fn dimension_anchor(doc: &Document, c: &Constraint) -> Option<DVec2> {
-    // Points, or lines standing for their midpoints.
-    let p = |id| doc.ref_point(id);
-    Some(match *c {
-        Constraint::Distance { a, b, .. }
-        | Constraint::HorizontalDistance { a, b, .. }
-        | Constraint::VerticalDistance { a, b, .. } => (p(a)? + p(b)?) * 0.5,
-        Constraint::PointLineDistance { point, line, .. } => {
-            let q = p(point)?;
-            (q + foot(doc, q, line)?) * 0.5
-        }
-        Constraint::Radius { curve, .. } | Constraint::Diameter { curve, .. } => {
-            center_of(doc, curve)?
-        }
-        Constraint::Angle { a, b, .. } => angle_vertex(doc, a, b)?,
-        _ => return None,
-    })
-}
-
-/// A label offset for a newly placed dimension: as far from the geometry as the pointer is,
-/// with the number in the middle of the dimension line. (Dragging the label afterwards moves
-/// it along the line too.)
-pub fn centred_offset(doc: &Document, c: &Constraint, offset: DVec2) -> DVec2 {
-    let p = |id| doc.ref_point(id);
-    let across = |a: Option<DVec2>, b: Option<DVec2>| match (a, b) {
-        (Some(a), Some(b)) if a != b => {
-            let n = (b - a).normalize().perp();
-            n * offset.dot(n)
-        }
-        _ => offset,
-    };
-    match *c {
-        Constraint::Distance { a, b, .. } => across(p(a), p(b)),
-        Constraint::PointLineDistance { point, line, .. } => {
-            let q = p(point);
-            across(q, q.and_then(|q| foot(doc, q, line)))
-        }
-        Constraint::HorizontalDistance { .. } => DVec2::new(0.0, offset.y),
-        Constraint::VerticalDistance { .. } => DVec2::new(offset.x, 0.0),
-        _ => offset,
-    }
-}
 
 /// Where a dimension's label goes when the user hasn't placed it.
 pub fn default_offset(doc: &Document, c: &Constraint, scale: f64) -> DVec2 {
@@ -239,54 +196,6 @@ fn radius_leader(
     (center + u * r, from, from)
 }
 
-fn center_of(doc: &Document, curve: EntityId) -> Option<DVec2> {
-    match doc.get(curve)?.kind {
-        EntityKind::Circle { center, .. } | EntityKind::Arc { center, .. } => {
-            doc.point(center).ok()
-        }
-        _ => None,
-    }
-}
-
-fn line_points(doc: &Document, line: EntityId) -> Option<(DVec2, DVec2)> {
-    match doc.get(line)?.kind {
-        EntityKind::Line { a, b } => Some((doc.point(a).ok()?, doc.point(b).ok()?)),
-        _ => None,
-    }
-}
-
-/// Foot of the perpendicular from `q` onto the (infinite) line.
-pub(crate) fn foot(doc: &Document, q: DVec2, line: EntityId) -> Option<DVec2> {
-    let (a, b) = line_points(doc, line)?;
-    let d = b - a;
-    let len2 = d.length_squared();
-    (len2 > 0.0).then(|| a + d * ((q - a).dot(d) / len2))
-}
-
-/// Intersection of two lines' supporting lines, or the midpoint between them if parallel.
-fn angle_vertex(doc: &Document, l1: EntityId, l2: EntityId) -> Option<DVec2> {
-    let (a1, b1) = line_points(doc, l1)?;
-    let (a2, b2) = line_points(doc, l2)?;
-    Some(
-        drift_geom::intersect::line_line(a1, b1 - a1, a2, b2 - a2)
-            .map_or((a1 + b1 + a2 + b2) * 0.25, |x| x.at),
-    )
-}
-
-/// Unit direction along a line from `vertex` (where it meets the other line of an angle)
-/// toward the line itself: its end farther from the vertex.
-fn ray_from(doc: &Document, line: EntityId, vertex: DVec2) -> Option<DVec2> {
-    let (a, b) = line_points(doc, line)?;
-    let far = if a.distance_squared(vertex) >= b.distance_squared(vertex) {
-        a
-    } else {
-        b
-    };
-    (far - vertex)
-        .try_normalize()
-        .or_else(|| (b - a).try_normalize())
-}
-
 /// One of the four angles two crossing lines make: from the direction `from`, turning
 /// `sweep` radians (counter-clockwise positive).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -328,22 +237,6 @@ pub fn angle_sectors(
         between - std::f64::consts::PI * between.signum()
     };
     Some([Sector { from: r1, sweep }, Sector { from: -r1, sweep }])
-}
-
-/// The order of two lines for an angle dimension that measures the angle between them as
-/// they are drawn (at their corner), rather than its supplement.
-pub fn corner_order(doc: &Document, a: EntityId, b: EntityId) -> (EntityId, EntityId) {
-    let corner = (|| {
-        let vertex = angle_vertex(doc, a, b)?;
-        let (r1, r2) = (ray_from(doc, a, vertex)?, ray_from(doc, b, vertex)?);
-        Some(r1.perp_dot(r2).atan2(r1.dot(r2)).abs().to_degrees())
-    })();
-    let measured = drift_solver::measure(doc, &Constraint::Angle { a, b, degrees: 0.0 });
-    match (corner, measured) {
-        // The solver measures a → b; the other order measures the supplement.
-        (Some(corner), Some(m)) if (m - corner).abs() > (180.0 - m - corner).abs() => (b, a),
-        _ => (a, b),
-    }
 }
 
 /// How far drawn geometry runs from `at` in the direction `out` (a unit vector): along lines
@@ -1686,7 +1579,6 @@ pub fn paint_auto_relation(
 
 #[cfg(test)]
 mod tests {
-
     #[test]
     fn dimensions_take_the_drawings_colour_or_the_canvas_default() {
         use drift_core::Rgb;
@@ -2109,26 +2001,5 @@ mod tests {
         let dim = layout_dimension(&painter, &doc2, Some(h), &c, Some(up), &map).unwrap();
         let lines = extension_lines(&painter, &dim);
         assert!(near(lines[0][0], s(-5.0, 40.0)), "{lines:?}");
-    }
-
-    #[test]
-    fn new_dimensions_are_centred_on_their_line() {
-        let mut doc = Document::new();
-        doc.begin();
-        let a = doc.add_point(DVec2::new(0.0, 0.0));
-        let b = doc.add_point(DVec2::new(40.0, 0.0));
-        let c = doc.add_point(DVec2::new(40.0, 30.0));
-        doc.commit("Points");
-        let off = DVec2::new(13.0, 7.0);
-        let value = 0.0;
-        // Along the measured direction the offset goes; across it, it is kept.
-        let d = centred_offset(&doc, &Constraint::Distance { a, b, value }, off);
-        assert!(d.distance(DVec2::new(0.0, 7.0)) < 1e-12);
-        let d = centred_offset(&doc, &Constraint::Distance { a, b: c, value }, off);
-        assert!(d.dot(DVec2::new(40.0, 30.0)).abs() < 1e-9 && d.length() > 1.0);
-        let h = Constraint::HorizontalDistance { a, b: c, value };
-        assert_eq!(centred_offset(&doc, &h, off), DVec2::new(0.0, 7.0));
-        let v = Constraint::VerticalDistance { a, b: c, value };
-        assert_eq!(centred_offset(&doc, &v, off), DVec2::new(13.0, 0.0));
     }
 }

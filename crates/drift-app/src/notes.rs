@@ -3,14 +3,15 @@
 //! space (like dimensions); centre marks and centre lines are world geometry drawn by the GPU.
 
 use drift_core::{
-    Anchor, Annotation, AnnotationId, DVec2, Document, DraftStyle, Emphasis, EntityId, EntityKind,
-    Leader, LeaderEnd, LeaderShape, LineKind, NoteFrame, NoteStyle, OrdinateAxis, Shape,
-    SketchItem, TextAlign,
+    Annotation, AnnotationId, DVec2, Document, DraftStyle, Emphasis, EntityId, EntityKind, Leader,
+    LeaderEnd, LeaderShape, LineKind, NoteFrame, NoteStyle, OrdinateAxis, Shape, SketchItem,
+    TextAlign,
 };
 use eframe::egui::{self, Color32, Pos2, Rect, Stroke, vec2};
 
 use crate::annotations::{AnnotationColors, AnnotationState, DimStyle, PT_PER_MM, Pen};
 use crate::overlay::ScreenMap;
+use drift_edit::labels::{centre, line_ends};
 
 /// Paper millimetres a centre line runs past its circle.
 const CENTRE_OVERRUN_MM: f64 = 2.5;
@@ -173,31 +174,6 @@ impl NoteLayout {
     }
 }
 
-/// The centre of a circle or arc, or a point's position.
-fn centre(doc: &Document, id: EntityId) -> Option<(DVec2, f64)> {
-    match doc.get(id)?.kind {
-        EntityKind::Circle { center, radius } => Some((doc.point(center).ok()?, radius)),
-        EntityKind::Arc { center, start, .. } => {
-            let c = doc.point(center).ok()?;
-            Some((c, c.distance(doc.point(start).ok()?)))
-        }
-        EntityKind::Ellipse { center, major, .. }
-        | EntityKind::EllipseArc { center, major, .. } => {
-            let c = doc.point(center).ok()?;
-            Some((c, c.distance(doc.point(major).ok()?)))
-        }
-        EntityKind::Point(p) => Some((p, 0.0)),
-        EntityKind::Line { .. } | EntityKind::Bezier { .. } => None,
-    }
-}
-
-fn line_ends(doc: &Document, id: EntityId) -> Option<(DVec2, DVec2)> {
-    match doc.shape(id)? {
-        Shape::Line { a, b } => Some((a, b)),
-        _ => None,
-    }
-}
-
 /// World segments of a centre mark or centre line.
 pub fn centre_segments(doc: &Document, a: &Annotation) -> Vec<(DVec2, DVec2)> {
     let overrun = CENTRE_OVERRUN_MM * doc.draft_style().scale;
@@ -332,63 +308,6 @@ pub fn chamfer_text(doc: &Document, line: EntityId) -> Option<String> {
     })
 }
 
-/// Where an annotation's label is anchored in the world (what dragging moves).
-pub fn label_world(doc: &Document, a: &Annotation) -> Option<DVec2> {
-    match a {
-        Annotation::Note { at, leaders, .. } => doc.note_text_pos(*at, leaders),
-        Annotation::HoleCallout { curve, at, .. } => Some(centre(doc, *curve)?.0 + *at),
-        Annotation::ChamferCallout { line, at } => {
-            let (p, q) = line_ends(doc, *line)?;
-            Some((p + q) * 0.5 + *at)
-        }
-        Annotation::Ordinate {
-            origin,
-            point,
-            axis,
-            at,
-        } => {
-            let (o, p) = (doc.ref_point(*origin)?, doc.ref_point(*point)?);
-            Some(match axis {
-                OrdinateAxis::X => DVec2::new(p.x, o.y + at),
-                OrdinateAxis::Y => DVec2::new(o.x + at, p.y),
-            })
-        }
-        Annotation::CentreMark { .. } | Annotation::Centreline { .. } => None,
-        // A mark is dragged whole, by its first end.
-        Annotation::Section { a, .. } => Some(*a),
-        Annotation::Elevation { at, .. } => Some(*at),
-    }
-}
-
-/// The annotation with its label moved to `to` (world).
-pub fn with_label_at(doc: &Document, a: &Annotation, to: DVec2) -> Option<Annotation> {
-    let mut a = a.clone();
-    match &mut a {
-        Annotation::Note { at, leaders, .. } => *at = doc.note_at(to, leaders)?,
-        Annotation::HoleCallout { curve, at, .. } => *at = to - centre(doc, *curve)?.0,
-        Annotation::ChamferCallout { line, at } => {
-            let (p, q) = line_ends(doc, *line)?;
-            *at = to - (p + q) * 0.5;
-        }
-        Annotation::Ordinate {
-            origin, axis, at, ..
-        } => {
-            let o = doc.ref_point(*origin)?;
-            *at = match axis {
-                OrdinateAxis::X => to.y - o.y,
-                OrdinateAxis::Y => to.x - o.x,
-            };
-        }
-        Annotation::CentreMark { .. } | Annotation::Centreline { .. } => return None,
-        Annotation::Section { a, b, .. } => {
-            *b += to - *a;
-            *a = to;
-        }
-        Annotation::Elevation { at, .. } => *at = to,
-    }
-    Some(a)
-}
-
 /// What a section or elevation mark's flag reads, over and under its rule: the linked view's
 /// number and sheet number (`–` and `–` while the view is on no sheet), or else the mark's
 /// own label and sheet. Worked out as it is drawn, so renumbering a sheet or moving a view
@@ -409,39 +328,6 @@ pub fn mark_reference(doc: &Document, a: &Annotation) -> Option<(String, String)
             .unwrap_or_else(|| ("–".to_owned(), "–".to_owned())),
         None => (label.clone(), sheet.clone()),
     })
-}
-
-/// The next unused label for a new section (`A`, `B` … then `A1` …) or elevation (`1`,
-/// `2` …).
-pub fn next_mark_label(doc: &Document, section: bool) -> String {
-    let used: Vec<&str> = doc
-        .annotations()
-        .filter_map(|(_, a)| match a {
-            Annotation::Section { label, .. } if section => Some(label.as_str()),
-            Annotation::Elevation { label, .. } if !section => Some(label.as_str()),
-            _ => None,
-        })
-        .collect();
-    let free = |label: &String| !used.contains(&label.as_str());
-    if section {
-        (0..)
-            .flat_map(|round: u32| {
-                ('A'..='Z').map(move |c| {
-                    if round == 0 {
-                        c.to_string()
-                    } else {
-                        format!("{c}{round}")
-                    }
-                })
-            })
-            .find(free)
-            .expect("an unbounded supply")
-    } else {
-        (1u32..)
-            .map(|n| n.to_string())
-            .find(free)
-            .expect("an unbounded supply")
-    }
 }
 
 /// A flag: a ring at `c` holding the label (over the sheet it refers to, if given), with a
@@ -1025,42 +911,11 @@ pub fn text_size(doc: &Document) -> f32 {
     (doc.draft_style().text_height as f32 * PT_PER_MM).clamp(8.0, 40.0)
 }
 
-/// The anchor for a leader tip at the pointer: a snapped point, a spot on a curve, or free.
-pub fn anchor_at(
-    doc: &Document,
-    point: Option<EntityId>,
-    curve: Option<EntityId>,
-    at: DVec2,
-) -> Anchor {
-    if let Some(p) = point {
-        return Anchor::Point(p);
-    }
-    if let Some(c) = curve {
-        match doc.shape(c) {
-            Some(Shape::Line { a, b }) => {
-                let d = b - a;
-                let t = if d.length_squared() > 0.0 {
-                    ((at - a).dot(d) / d.length_squared()).clamp(0.0, 1.0)
-                } else {
-                    0.0
-                };
-                return Anchor::Curve { curve: c, t };
-            }
-            Some(Shape::Circle { center, .. } | Shape::Arc { center, .. }) => {
-                let v = at - center;
-                return Anchor::Curve {
-                    curve: c,
-                    t: v.y.atan2(v.x),
-                };
-            }
-            _ => {}
-        }
-    }
-    Anchor::Free(at)
-}
-
 #[cfg(test)]
 mod tests {
+    use drift_core::Anchor;
+    use drift_edit::labels::anchor_at;
+
     use super::*;
 
     #[test]
@@ -1126,34 +981,5 @@ mod tests {
             anchor_at(&doc, Some(p), None, DVec2::ZERO),
             Anchor::Point(p)
         );
-    }
-
-    #[test]
-    fn marks_take_the_next_free_label() {
-        let mut doc = Document::new();
-        assert_eq!(next_mark_label(&doc, true), "A");
-        assert_eq!(next_mark_label(&doc, false), "1");
-        for label in ["A", "C"] {
-            doc.add_annotation(Annotation::Section {
-                a: DVec2::ZERO,
-                b: DVec2::X,
-                label: label.into(),
-                sheet: String::new(),
-                flip: false,
-                view: None,
-            })
-            .unwrap();
-        }
-        doc.add_annotation(Annotation::Elevation {
-            at: DVec2::ZERO,
-            angle: 0.0,
-            label: "1".into(),
-            sheet: String::new(),
-            view: None,
-        })
-        .unwrap();
-        // Gaps are filled; sections and elevations are numbered apart.
-        assert_eq!(next_mark_label(&doc, true), "B");
-        assert_eq!(next_mark_label(&doc, false), "2");
     }
 }

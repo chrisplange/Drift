@@ -1584,7 +1584,7 @@ impl Editor {
 /// A wall's thickness dimension as the dimension renderer draws it: from a corner of its
 /// left face to its right face, on segment `seg`, with the label offset from its anchor;
 /// None for a curved segment or a wall not made.
-pub(crate) fn thickness_dimension(
+pub fn thickness_dimension(
     doc: &drift_core::Document,
     d: &PropertyDim,
 ) -> Option<(drift_core::Constraint, DVec2)> {
@@ -1626,7 +1626,7 @@ pub(crate) fn thickness_dimension(
         value: wall.thickness,
     };
     let label = at + seg.tangent(0.0).perp() * d.out;
-    let anchor = crate::annotations::dimension_anchor(doc, &c)?;
+    let anchor = crate::labels::dimension_anchor(doc, &c)?;
     Some((c, label - anchor))
 }
 

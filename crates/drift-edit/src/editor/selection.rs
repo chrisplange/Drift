@@ -201,7 +201,7 @@ impl Editor {
 
     /// The overlapping curves as last found (not looked for again): what the status bar
     /// shows in the middle of a drag.
-    pub(crate) fn overlapping_as_last_found(&self) -> std::rc::Rc<Vec<EntityId>> {
+    pub fn overlapping_as_last_found(&self) -> std::rc::Rc<Vec<EntityId>> {
         self.overlap_cache
             .borrow()
             .as_ref()

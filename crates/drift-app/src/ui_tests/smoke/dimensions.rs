@@ -282,7 +282,7 @@ fn smoke_dimensions_an_offset_has_one_dimension_for_all_its_sides() {
     undo(&mut h);
     drag_steps(&mut h, from, to, 6, None);
     let tolerance = h.state().last_pointer.as_ref().unwrap().tolerance;
-    let step = crate::tools::corners::round_step(tolerance * 1.5, true);
+    let step = drift_edit::tools::corners::round_step(tolerance * 1.5, true);
     let expected = (6.3 / step).round() * step;
     assert!(step >= 0.1, "a step to see at this zoom: {step}");
     assert!(

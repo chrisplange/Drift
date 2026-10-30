@@ -315,6 +315,6 @@ fn smoke_sheet_views_list_is_left_justified() {
     }
 }
 
-fn placed_first(ed: &crate::editor::Editor, id: drift_core::SheetId) -> drift_core::ViewId {
+fn placed_first(ed: &drift_edit::editor::Editor, id: drift_core::SheetId) -> drift_core::ViewId {
     ed.doc.sheet(id).unwrap().viewports[0].view
 }

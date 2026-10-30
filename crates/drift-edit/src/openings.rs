@@ -864,7 +864,7 @@ impl Editor {
                 b,
                 value: pa.distance(pb),
             };
-            if let Some(anchor) = crate::annotations::dimension_anchor(&self.doc, &c) {
+            if let Some(anchor) = crate::labels::dimension_anchor(&self.doc, &c) {
                 out.push((c, (pa + pb) / 2.0 - frame.y * out_by - anchor));
             }
         };

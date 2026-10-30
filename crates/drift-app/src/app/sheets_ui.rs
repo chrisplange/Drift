@@ -269,7 +269,7 @@ impl DriftApp {
 
     /// `View n`, for the first `n` no view is called.
     pub(crate) fn next_view_name(&self) -> String {
-        crate::tools::view::next_view_name(&self.editor.doc)
+        drift_edit::tools::view::next_view_name(&self.editor.doc)
     }
 
     /// A new, empty sheet: views go on it from the Views list or with V (Add view).

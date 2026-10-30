@@ -818,3 +818,223 @@ mod overlaps {
         }
     }
 }
+
+/// Editor rules that were tested through the app's window (ui_tests) with no more than the
+/// window as a host (R3 S1).
+mod from_the_app {
+    use drift_core::DVec2;
+
+    use super::*;
+
+    #[test]
+    fn long_text_and_long_histories_are_bounded() {
+        let mut ed = Editor::default();
+        let id = ed.add_text(drift_core::SketchText::new("", DVec2::ZERO, 5.0));
+        ed.type_text(id, &"x".repeat(50_000), false);
+        assert_eq!(
+            ed.doc.text(id).unwrap().text.chars().count(),
+            crate::texts::MAX_TEXT_CHARS
+        );
+        // Far more edits than the history keeps: the oldest steps are forgotten.
+        for k in 0..drift_core::History::MAX_STEPS + 50 {
+            ed.update_text(id, |t| t.height = 5.0 + k as f64);
+        }
+        let mut undone = 0;
+        while ed.undo() {
+            undone += 1;
+        }
+        assert_eq!(undone, drift_core::History::MAX_STEPS);
+    }
+
+    #[test]
+    fn sizes_typed_in_the_inspector_become_dimensions() {
+        use drift_core::Constraint;
+        let mut ed = Editor::default();
+        // A line from (-30, 0) to (20, 0).
+        ed.doc.begin();
+        let (a, b) = (
+            ed.doc.add_point(DVec2::new(-30.0, 0.0)),
+            ed.doc.add_point(DVec2::new(20.0, 0.0)),
+        );
+        ed.doc.add_line(a, b).unwrap();
+        ed.commit("Line");
+        let wanted = Constraint::Distance { a, b, value: 0.0 };
+        // No dimension yet: typing a length adds one; typing again changes it.
+        assert!(ed.size_dimension(&wanted).is_none());
+        let id = ed.set_size(wanted, "80").unwrap();
+        assert!((ed.doc.point(a).unwrap().distance(ed.doc.point(b).unwrap()) - 80.0).abs() < 1e-6);
+        assert_eq!(ed.set_size(wanted, "2in").unwrap(), id);
+        assert!((ed.doc.point(a).unwrap().distance(ed.doc.point(b).unwrap()) - 50.8).abs() < 1e-6);
+        assert_eq!(
+            ed.doc
+                .constraints()
+                .filter(|(_, c)| c.value().is_some())
+                .count(),
+            1
+        );
+        // A circle's radius typed where its diameter is dimensioned changes that dimension.
+        ed.doc.begin();
+        let centre = ed.doc.add_point(DVec2::new(0.0, 40.0));
+        let circle = ed.doc.add_circle(centre, 10.0).unwrap();
+        ed.commit("Circle");
+        let d = ed
+            .set_size(
+                Constraint::Diameter {
+                    curve: circle,
+                    value: 0.0,
+                },
+                "30",
+            )
+            .unwrap();
+        let r = ed
+            .set_size(
+                Constraint::Radius {
+                    curve: circle,
+                    value: 0.0,
+                },
+                "25",
+            )
+            .unwrap();
+        assert_eq!(d, r);
+        assert!((drift_solver::radius_of(&ed.doc, circle).unwrap() - 25.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_radius_typed_for_a_fillet_keeps_its_lines() {
+        let v = DVec2::new;
+        // A plain corner, filleted with automatic relations off: nothing holds the lines.
+        let mut ed = Editor {
+            auto_relations: false,
+            ..Editor::default()
+        };
+        ed.doc.begin();
+        let corner = ed.doc.add_point(v(0.0, 0.0));
+        let ends = [v(60.0, 10.0), v(-5.0, 40.0)].map(|at| ed.doc.add_point(at));
+        ed.doc.add_line(corner, ends[0]).unwrap();
+        ed.doc.add_line(corner, ends[1]).unwrap();
+        ed.commit("Corner");
+        let arc = ed.fillet(corner, 6.0).unwrap();
+        assert_eq!(ed.doc.constraint_count(), 0);
+        // The radius typed in the inspector becomes a dimension; the fillet takes that size
+        // where it is.
+        let wanted = drift_core::Constraint::Radius {
+            curve: arc,
+            value: 0.0,
+        };
+        let id = ed.set_size(wanted, "10").unwrap();
+        let f = ed.fillet_at(arc).expect("still a fillet");
+        assert!((f.radius - 10.0).abs() < 1e-7);
+        assert!(
+            f.corner.length() < 1e-7,
+            "the lines still meet where they did"
+        );
+        assert!(kept(&f));
+        // And editing that dimension afterwards, the same.
+        ed.set_dimension(id, 4.0).unwrap();
+        let f = ed.fillet_at(arc).expect("still a fillet");
+        assert!((f.radius - 4.0).abs() < 1e-7 && f.corner.length() < 1e-7);
+        assert!(kept(&f));
+        /// The lines' far ends are where they were (in either order).
+        fn kept(f: &crate::modify::FilletInfo) -> bool {
+            [DVec2::new(60.0, 10.0), DVec2::new(-5.0, 40.0)]
+                .iter()
+                .all(|end| {
+                    f.arms.iter().any(|a| {
+                        let far = f.corner + a.dir(f.corner) * a.length;
+                        far.distance(*end) < 1e-9
+                    })
+                })
+        }
+    }
+
+    #[test]
+    fn text_can_use_the_computers_fonts() {
+        use drift_core::{SketchText, TextFont};
+        let mut ed = Editor::default();
+        let outline_of = |ed: &mut Editor, font: TextFont| {
+            ed.doc.begin();
+            let mut text = SketchText::new("Rag", DVec2::ZERO, 10.0);
+            text.font = font;
+            let id = ed.doc.add_text(text);
+            ed.commit("Text");
+            ed.text_outline(id).expect("an outline")
+        };
+        let sans = outline_of(&mut ed, TextFont::Sans);
+
+        // A font that isn't installed: the text is drawn in the built-in sans, and says so.
+        let missing = TextFont::System("No Such Typeface 123".into());
+        let fallback = outline_of(&mut ed, missing.clone());
+        assert_eq!(fallback.contours, sans.contours);
+        assert_eq!(
+            drift_draft::outline::font_known("No Such Typeface 123"),
+            Some(false)
+        );
+        // It keeps its name in the file all the same.
+        let saved = drift_io::save(&ed.doc, &Default::default());
+        assert!(
+            saved.contains(r#""font":"system:No Such Typeface 123""#),
+            "{saved}"
+        );
+        let (loaded, _) = drift_io::load(&saved).unwrap();
+        assert!(loaded.texts().any(|(_, t)| t.font == missing));
+        assert_eq!(TextFont::from_name("system:"), None);
+        assert_eq!(TextFont::from_name("serif"), None);
+
+        // One that is: its own outlines. (Whatever this computer has; none in a bare CI image.)
+        let families = drift_platform::fonts::families();
+        let Some(family) = ["Arial", "Helvetica", "DejaVu Sans", "Liberation Sans"]
+            .into_iter()
+            .find(|f| families.iter().any(|x| x == f))
+            .map(str::to_owned)
+            .or_else(|| families.first().cloned())
+        else {
+            eprintln!("no system fonts here; skipping the rest");
+            return;
+        };
+        assert!(
+            families
+                .windows(2)
+                .all(|w| w[0].to_lowercase() <= w[1].to_lowercase())
+        );
+        let system = outline_of(&mut ed, TextFont::System(family.clone()));
+        assert_eq!(
+            drift_draft::outline::font_known(&family),
+            Some(true),
+            "{family}"
+        );
+        assert!(!system.contours.is_empty());
+        assert_ne!(
+            system.contours, sans.contours,
+            "{family} is not the built-in sans"
+        );
+        // Capitals are as tall as asked, whatever the font.
+        let height = system.bounds.max.y - system.bounds.min.y;
+        assert!(height > 9.0 && height < 16.0, "{height}");
+    }
+
+    #[test]
+    fn a_dragged_or_typed_tolerance_is_one_undo_step_and_clears_redo() {
+        let mut ed = Editor::default();
+        let start = ed.doc.rules().gap_tolerance;
+        // A tick box, then a tolerance edited in three frames of one drag.
+        ed.change_rules(|r| r.stacked_fills = !r.stacked_fills);
+        ed.change_rules_merging(false, |r| r.gap_tolerance = 1.0);
+        ed.change_rules_merging(true, |r| r.gap_tolerance = 1.5);
+        ed.change_rules_merging(true, |r| r.gap_tolerance = 2.0);
+        ed.undo();
+        assert_eq!(ed.doc.rules().gap_tolerance, start, "the drag was one step");
+        assert_ne!(
+            ed.doc.rules().stacked_fills,
+            drift_core::DrawingRules::default().stacked_fills,
+            "the tick box was a step of its own"
+        );
+        // A new drag after an undo is its own step, and what was undone can't be redone over.
+        ed.undo();
+        assert!(ed.history.can_redo());
+        ed.change_rules_merging(false, |r| r.gap_tolerance = 3.0);
+        ed.change_rules_merging(true, |r| r.gap_tolerance = 4.0);
+        assert!(!ed.history.can_redo());
+        ed.undo();
+        assert_eq!(ed.doc.rules(), drift_core::DrawingRules::default());
+    }
+}

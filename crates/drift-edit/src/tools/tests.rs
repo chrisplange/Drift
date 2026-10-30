@@ -949,13 +949,6 @@ fn midpoints_can_be_hovered_picked_and_constrained() {
 }
 
 #[test]
-fn point_and_line_selection_offers_midpoint() {
-    let (mut ed, base, [c, _]) = midpoint_fixture();
-    ed.selection = [base, c].into();
-    assert!(ed.relation_options().iter().any(|o| o.label == "Midpoint"));
-}
-
-#[test]
 fn starting_a_line_on_a_midpoint_adds_the_relation() {
     let (mut ed, base, _) = midpoint_fixture();
     let mut tool = LineTool::default();
@@ -2589,8 +2582,7 @@ fn chain_and_baseline_dimensions_continue_a_row() {
     );
     let label_y = |id| {
         let c = *ed.doc.constraint(id).unwrap();
-        crate::annotations::dimension_anchor(&ed.doc, &c).unwrap().y
-            + ed.doc.placement(id).unwrap().y
+        crate::labels::dimension_anchor(&ed.doc, &c).unwrap().y + ed.doc.placement(id).unwrap().y
     };
     assert!(
         label_y(last) < label_y(first) - 1.0,
@@ -2933,33 +2925,6 @@ fn tail_ends(ed: &Editor, tail: EntityId) -> (DVec2, DVec2) {
         Some(Shape::Line { a, b }) => (a, b),
         _ => panic!("the tail is a line"),
     }
-}
-
-#[test]
-fn a_line_drawn_across_a_fill_leaves_it_whole() {
-    let (mut ed, _) = rotated_rectangle_fixture();
-    ed.selection.clear();
-    let fill = ed.add_fill_at(v(5.0, 5.0)).unwrap();
-    let area = |ed: &mut Editor| ed.fill_shapes()[&fill].clone();
-    assert!((area(&mut ed).region.area - 200.0).abs() < 1e-6);
-    // A line right across it, past both sides.
-    ed.doc.begin();
-    let a = ed.doc.add_point(v(10.0, -5.0));
-    let b = ed.doc.add_point(v(10.0, 15.0));
-    let across = ed.doc.add_line(a, b).unwrap();
-    ed.commit("Line");
-    let shape = area(&mut ed);
-    assert!(!shape.lost);
-    assert!(
-        (shape.region.area - 200.0).abs() < 1e-6,
-        "{}",
-        shape.region.area
-    );
-    // Its own outline still reshapes it; removing the line changes nothing.
-    ed.doc.begin();
-    ed.doc.delete([across]);
-    ed.commit("Delete");
-    assert!((area(&mut ed).region.area - 200.0).abs() < 1e-6);
 }
 
 #[test]
@@ -5428,7 +5393,7 @@ fn box_select(ed: &mut Editor, tool: &mut SelectTool, from: DVec2, to: DVec2, m:
 }
 
 fn note_label(ed: &Editor, id: drift_core::AnnotationId) -> DVec2 {
-    crate::notes::label_world(&ed.doc, ed.doc.annotation(id).unwrap()).unwrap()
+    crate::labels::label_world(&ed.doc, ed.doc.annotation(id).unwrap()).unwrap()
 }
 
 #[test]

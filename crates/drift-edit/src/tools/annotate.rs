@@ -4,7 +4,7 @@
 use drift_core::{Annotation, Leader, OrdinateAxis};
 
 use super::*;
-use crate::notes;
+use crate::labels;
 
 /// Paper millimetres between the geometry and a new row of ordinate labels.
 const ORDINATE_CLEARANCE_MM: f64 = 8.0;
@@ -140,7 +140,7 @@ fn leader_target(ed: &Editor, p: &Pointer) -> Option<drift_core::Anchor> {
     }
     // A spot on the curve: where the pointer is, onto the curve.
     let at = drift_geom::nearest_point(&ed.doc.shape(curve)?, p.raw);
-    Some(notes::anchor_at(&ed.doc, None, Some(curve), at))
+    Some(labels::anchor_at(&ed.doc, None, Some(curve), at))
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -531,7 +531,7 @@ impl Tool for SectionTool {
                     let mark = Annotation::Section {
                         a,
                         b: p.pos(),
-                        label: notes::next_mark_label(&ed.doc, true),
+                        label: labels::next_mark_label(&ed.doc, true),
                         sheet: String::new(),
                         flip: false,
                         view: None,
@@ -642,7 +642,7 @@ impl Tool for ElevationTool {
                     let mark = Annotation::Elevation {
                         at,
                         angle,
-                        label: notes::next_mark_label(&ed.doc, false),
+                        label: labels::next_mark_label(&ed.doc, false),
                         sheet: String::new(),
                         view: None,
                     };

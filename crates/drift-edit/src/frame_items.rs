@@ -37,7 +37,7 @@ struct Key {
 
 /// The sketch's items at rest, grouped for drawing (see the [module](self)).
 #[derive(Default)]
-pub(crate) struct ItemsCache {
+pub struct ItemsCache {
     key: Option<Key>,
     /// One list per stack group, then the top list (the only one without a stack).
     lists: Vec<Vec<SketchItem>>,
@@ -66,7 +66,7 @@ impl ItemsCache {
     /// Bring the lists up to date for this frame, patch in what hovering changes, and return
     /// the lit-up items (drawn over everything). The lists are then [`lists`](Self::lists)
     /// until [`restore`](Self::restore).
-    pub(crate) fn prepare(
+    pub fn prepare(
         &mut self,
         ed: &Editor,
         status_colors: bool,
@@ -171,22 +171,22 @@ impl ItemsCache {
     }
 
     /// The lists: one per stack group, then the top list.
-    pub(crate) fn lists(&self) -> &[Vec<SketchItem>] {
+    pub fn lists(&self) -> &[Vec<SketchItem>] {
         &self.lists
     }
 
     /// Add an item to a list for this frame (text, which isn't kept).
-    pub(crate) fn push(&mut self, list: usize, item: SketchItem) {
+    pub fn push(&mut self, list: usize, item: SketchItem) {
         self.lists[list].push(item);
     }
 
     /// The top list's index.
-    pub(crate) fn top(&self) -> usize {
+    pub fn top(&self) -> usize {
         self.lists.len() - 1
     }
 
     /// Undo this frame's patches and additions.
-    pub(crate) fn restore(&mut self) {
+    pub fn restore(&mut self) {
         for ((list, index), item) in self.patched.drain(..).rev() {
             self.lists[list][index] = item;
         }
@@ -300,7 +300,7 @@ mod tests {
 
     #[test]
     fn kept_items_draw_as_a_full_rebuild_does() {
-        let (mut doc, _) = crate::perf_tests::torture_sketch();
+        let (mut doc, _) = crate::test_sketches::torture_sketch();
         let block = doc.add_block(Block {
             name: "Desk".into(),
             items: vec![BlockItem {

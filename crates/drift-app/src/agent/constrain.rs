@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 
 use super::args;
 use super::{Res, Session};
-use crate::editor::EditError;
+use drift_edit::editor::EditError;
 
 fn line_ends(doc: &Document, line: EntityId) -> Result<(EntityId, EntityId), String> {
     match doc.get(line).map(|e| e.kind) {
@@ -230,7 +230,7 @@ fn set_value(s: &mut Session, id: ConstraintId, w: &Wanted) -> Result<(), String
 /// on the side away from the middle of the sketch, clear of the geometry.
 fn outside(s: &Session, c: &Constraint) -> Option<DVec2> {
     let doc = &s.editor.doc;
-    let anchor = crate::annotations::dimension_anchor(doc, c)?;
+    let anchor = drift_edit::labels::dimension_anchor(doc, c)?;
     let b = s.editor.bounds();
     if b.is_empty() {
         return None;
@@ -248,7 +248,7 @@ fn outside(s: &Session, c: &Constraint) -> Option<DVec2> {
         Constraint::VerticalDistance { .. } => DVec2::new(gap * side(away.x), 0.0),
         _ => return None,
     };
-    Some(crate::annotations::centred_offset(doc, c, offset))
+    Some(drift_edit::labels::centred_offset(doc, c, offset))
 }
 
 pub(super) fn dimensions(s: &mut Session, a: &Value) -> Res {

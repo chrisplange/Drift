@@ -8,34 +8,18 @@
 pub mod agent;
 mod annotations;
 mod app;
-#[cfg(test)]
-mod areas_props;
-pub mod blocks;
 mod canvas;
-pub mod checker;
-pub mod clipboard;
 mod commands;
-pub mod curves;
 mod dock;
 #[cfg(test)]
-mod drag_props;
-pub mod editor;
-#[cfg(test)]
-mod fill_tests;
-pub mod fills;
+mod edit_session_tests;
 pub mod fonts;
-mod frame_items;
 mod icons;
 mod layers_ui;
-pub mod library;
 pub(crate) mod links;
 #[cfg(test)]
 mod mem_tests;
-pub mod modify;
 mod notes;
-pub mod openings;
-#[cfg(test)]
-mod openings_props;
 pub mod output;
 mod overlay;
 mod parameters;
@@ -43,29 +27,19 @@ mod parameters;
 mod perf_big;
 #[cfg(test)]
 mod perf_tests;
-pub mod picks;
+mod picks;
 mod soak;
-pub mod stack;
-pub mod temp_dims;
 #[cfg(test)]
 mod test_gpu;
-pub mod texts;
 mod theme;
-pub mod tools;
-pub mod transform;
 #[cfg(test)]
 mod ui_tests;
-pub mod underlays;
 #[cfg(not(target_arch = "wasm32"))]
 mod update;
-pub mod walls;
-pub mod walls_from_lines;
 #[cfg(test)]
 mod walls_from_lines_gallery;
 #[cfg(test)]
 mod walls_gallery;
-#[cfg(test)]
-mod walls_props;
 
 use std::f64::consts::TAU;
 
@@ -78,11 +52,14 @@ use drift_platform::{FileEvent, FilePath, FileType, Files};
 use drift_render::{Camera, grid_info};
 use eframe::egui::{self, Key, KeyboardShortcut, Modifiers as EguiModifiers, PointerButton};
 
+use drift_edit::prefs::KEY_VIEW;
+use drift_edit::{checker, clipboard, fills, frame_items, library, texts};
+
 use crate::annotations::{AnnotationColors, AnnotationState, DimLayout, GlyphKind};
 use crate::canvas::CanvasPainter;
-use crate::editor::{Editor, Guide, GuideKind, Pointer};
 use crate::overlay::{OverlayColors, ScreenMap};
-use crate::tools::{Axis, Input, Modifiers, Overlay, Tool, ToolKey, ToolKind};
+use drift_edit::editor::{Editor, Guide, GuideKind, Pointer};
+use drift_edit::tools::{Axis, Input, Modifiers, Overlay, Tool, ToolKey, ToolKind};
 
 /// The steps angle snapping offers, in degrees.
 pub(crate) const ANGLE_STEPS: [f64; 4] = [1.0, 5.0, 15.0, 45.0];
@@ -125,8 +102,6 @@ const KEY_DOCUMENT: &str = "drift.document";
 const KEY_NAME: &str = "drift.name";
 const KEY_PATH: &str = "drift.path";
 const KEY_DIRTY: &str = "drift.dirty";
-/// View preferences (grid, axes, snapping, thin lines, colours, annotations).
-const KEY_VIEW: &str = "drift.view";
 /// Recently opened or saved sketches, one path per line, newest first.
 const KEY_RECENT: &str = "drift.recent";
 /// How many recent files are remembered.

@@ -542,7 +542,7 @@ impl DriftApp {
             let pad = 0.04 * (b.max - b.min).max_element();
             for (id, c) in doc.constraints() {
                 if let (Some(anchor), Some(offset)) = (
-                    crate::annotations::dimension_anchor(doc, c),
+                    drift_edit::labels::dimension_anchor(doc, c),
                     doc.placement(id),
                 ) {
                     let at = anchor + offset;
@@ -552,7 +552,7 @@ impl DriftApp {
             }
             // Notes, callouts and ordinate labels too (the text extends a little further).
             for (_, a) in doc.annotations() {
-                if let Some(at) = crate::notes::label_world(doc, a) {
+                if let Some(at) = drift_edit::labels::label_world(doc, a) {
                     b.include(at - DVec2::splat(pad * 2.0));
                     b.include(at + DVec2::splat(pad * 2.0));
                 }

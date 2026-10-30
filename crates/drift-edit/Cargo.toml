@@ -1,0 +1,40 @@
+[package]
+name = "drift-edit"
+description = "Editing a Drift drawing without a window: the editor, its edits and the drawing tools"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+drift-core.workspace = true
+drift-draft.workspace = true
+drift-geom.workspace = true
+drift-io.workspace = true
+drift-platform.workspace = true
+drift-solver.workspace = true
+glam.workspace = true
+log.workspace = true
+# The door and window size sets (`library/sizes/*.json`), read once (drift-io has it anyway).
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[features]
+default = ["dwg"]
+# Reading DWG drawings (underlays).
+dwg = ["drift-io/dwg"]
+# The browser demo: copies stay inside the app, and the preferences file isn't read.
+demo = ["drift-io/demo", "drift-platform/demo"]
+# The test-only helpers other crates' tests call: `make_block`, `save_variant`, `text_items`,
+# `fill_new_shape`, the `test_sketches` module and the `editor::probes` accessors. drift-app
+# turns it on for its own tests; nothing else should.
+test-support = []
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+proptest = "1"
+tiny-skia = { version = "0.12", default-features = false, features = ["std", "simd", "png-format"] }

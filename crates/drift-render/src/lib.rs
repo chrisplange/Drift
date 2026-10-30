@@ -11,9 +11,8 @@ mod renderer;
 
 pub use camera::Camera;
 pub use frame::{
-    ArcInstance, CanvasImage, DrawGroup, FillMesh, FillVertex, Frame, FrameImage, Globals,
-    GridInfo, GroupRanges, ImageVertex, SegmentInstance, Viewport, build_frame, clip_polygon,
-    grid_info,
+    ArcInstance, DrawGroup, FillVertex, Frame, FrameImage, Globals, GridInfo, GroupRanges,
+    ImageVertex, SegmentInstance, Viewport, build_frame, clip_polygon, grid_info,
 };
 pub use palette::Palette;
 pub use renderer::CanvasRenderer;

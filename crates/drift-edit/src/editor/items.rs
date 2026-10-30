@@ -338,7 +338,7 @@ pub struct TaggedItem {
 /// A layer colour that would be hard to see on the theme's background (WCAG contrast ratio
 /// under 2:1, e.g. black on the dark theme) is shown as the theme's foreground instead
 /// (`None`), like AutoCAD's colour 7.
-pub(crate) fn contrast(c: [u8; 3], dark: bool) -> Option<[u8; 3]> {
+pub fn contrast(c: [u8; 3], dark: bool) -> Option<[u8; 3]> {
     let linear = |v: u8| {
         let v = f64::from(v) / 255.0;
         if v <= 0.04045 {

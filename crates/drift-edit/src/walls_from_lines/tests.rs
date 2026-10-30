@@ -1,10 +1,8 @@
 use std::time::Instant;
 
 use drift_core::{DVec2, Document, EntityId, EntityKind, LayerId, LineKind, Path, Wall};
-use serde_json::json;
 
 use super::*;
-use crate::agent::Session;
 
 const T: f64 = 114.3;
 
@@ -164,137 +162,6 @@ fn exploded_walls_come_back_as_the_same_walls() {
     let got = poche_area(&ed.doc);
     assert!((got - area).abs() < 1e-6 * area, "{got} vs {area}");
     assert!(ed.notice.is_none(), "{:?}", ed.notice);
-}
-
-#[test]
-fn old_script_walls_become_walls() {
-    let mut s = Session::new();
-    let out = s.call(
-        "run_script",
-        &json!({ "script": "wall w1 from 0,0 to 6000,0 thick 200\nwall w2 from 3000,0 to 3000,4000 thick 200\n" }),
-    );
-    assert!(!out.is_error, "{}", out.json);
-    let all = curves(&s.editor.doc);
-    let r = s.editor.walls_from_lines(&all).unwrap();
-    assert_eq!(r.walls.len(), 2, "{}", r.summary());
-    assert!(
-        s.editor
-            .doc
-            .walls()
-            .all(|(_, w)| (w.thickness - 200.0).abs() < 1e-9)
-    );
-    // Nothing of the old walls is left loose: faces, caps and centrelines all went.
-    let loose: Vec<_> = curves(&s.editor.doc)
-        .into_iter()
-        .filter(|id| s.editor.wall_of(*id).is_none())
-        .collect();
-    assert!(loose.is_empty(), "{loose:?}");
-}
-
-#[test]
-fn an_imported_dxf_plan_becomes_walls() {
-    // The exploded grid exported to DXF and imported again, as a plan from elsewhere comes.
-    let dir = std::env::temp_dir().join(format!("drift-walls-lines-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let (ed, area) = exploded_grid(2, 2);
-    let mut s = Session::new().with_root(dir.clone());
-    s.editor = ed;
-    s.editor.sync();
-    let out = s.call("export", &json!({ "path": "plan.dxf" }));
-    assert!(!out.is_error, "{}", out.json);
-    let mut t = Session::new().with_root(dir.clone());
-    t.editor.doc.set_units(drift_core::Units::architectural());
-    let out = t.call("import_file", &json!({ "path": "plan.dxf" }));
-    assert!(!out.is_error, "{}", out.json);
-    let all = curves(&t.editor.doc);
-    let r = t.editor.walls_from_lines(&all).unwrap();
-    if r.walls.len() != 3 {
-        // What came in, to see why.
-        let dump: Vec<String> = t
-            .editor
-            .doc
-            .iter()
-            .filter_map(|(id, e)| {
-                let s = t.editor.doc.shape(id)?;
-                Some(format!("{id} {:?} {:?} {s:?}", e.layer, e.style))
-            })
-            .collect();
-        let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../target/tmp/walls-from-lines-dxf.txt");
-        let _ = std::fs::write(out, dump.join("\n"));
-    }
-    assert_eq!(r.walls.len(), 3, "{}", r.summary());
-    let got = poche_area(&t.editor.doc);
-    assert!((got - area).abs() < 1e-3 * area, "{got} vs {area}");
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-/// The private sample plans (DWG, DXF), if `DRIFT_PRIVATE_SAMPLES` names their folder: what
-/// Walls from lines makes of each and how long it takes. Prints counts only, never names.
-#[test]
-#[ignore = "needs the private sample files"]
-fn walls_from_lines_private_samples() {
-    let Ok(dir) = std::env::var("DRIFT_PRIVATE_SAMPLES") else {
-        return;
-    };
-    let mut n = 0;
-    for entry in std::fs::read_dir(&dir).unwrap() {
-        let path = entry.unwrap().path();
-        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-        if !matches!(ext.to_ascii_lowercase().as_str(), "dwg" | "dxf" | "pdf") {
-            continue;
-        }
-        n += 1;
-        let mut s = Session::new().with_root(path.parent().unwrap().to_path_buf());
-        let name = path.file_name().unwrap().to_str().unwrap();
-        let out = s.call("import_file", &json!({ "path": name }));
-        if out.is_error {
-            println!("sample {n} ({ext}): import failed");
-            continue;
-        }
-        let all = curves(&s.editor.doc);
-        let lines: Vec<drift_geom::walls::from_lines::LineIn> = all
-            .iter()
-            .filter_map(|id| {
-                let e = s.editor.doc.get(*id)?;
-                let EntityKind::Line { a, b } = e.kind else {
-                    return None;
-                };
-                Some(drift_geom::walls::from_lines::LineIn {
-                    id: *id,
-                    group: e.layer.0,
-                    seg: drift_geom::walls::Seg::Line {
-                        a: s.editor.doc.point(a).ok()?,
-                        b: s.editor.doc.point(b).ok()?,
-                    },
-                    guide: e.style == LineKind::Construction,
-                })
-            })
-            .collect();
-        let settings = drift_geom::walls::from_lines::Settings::new(0.5, vec![T], 1.0);
-        let t = Instant::now();
-        let found = drift_geom::walls::from_lines::find(&lines, &settings);
-        let most = found.walls.iter().map(|w| w.lines.len()).max().unwrap_or(0);
-        println!(
-            "  finding: {:.0} ms; most lines in one wall {most}",
-            t.elapsed().as_secs_f64() * 1e3
-        );
-        let t = Instant::now();
-        let r = s.editor.walls_from_lines(&all);
-        let ms = t.elapsed().as_secs_f64() * 1e3;
-        match r {
-            Ok(r) => println!(
-                "sample {n} ({ext}): {} curves; {}; {} kept in part; {ms:.0} ms",
-                all.len(),
-                r.summary(),
-                r.partly.len()
-            ),
-            Err(e) => println!("sample {n} ({ext}): {} curves; {e}; {ms:.0} ms", all.len()),
-        }
-        if let Some(notice) = &s.editor.notice {
-            println!("  notice: {notice}");
-        }
-    }
 }
 
 /// Walls from lines on a large plan: a 30 × 30 grid of rooms, exploded (about 7,000 lines).

@@ -151,7 +151,7 @@ impl DriftApp {
             && let Some(origin) = ui.input(|i| i.pointer.press_origin())
             && let Some(id) = note_at(origin)
             && let Some(a) = self.editor.doc.annotation(id)
-            && let Some(label) = notes::label_world(&self.editor.doc, a)
+            && let Some(label) = drift_edit::labels::label_world(&self.editor.doc, a)
         {
             self.note_drag = Some((id, map.to_world(origin) - label));
             self.editor.selected_annotation = Some(id);
@@ -162,7 +162,7 @@ impl DriftApp {
                 response.interact_pointer_pos(),
                 self.editor.doc.annotation(id).cloned(),
             ) && let Some(moved) =
-                notes::with_label_at(&self.editor.doc, &a, map.to_world(p) - grab)
+                drift_edit::labels::with_label_at(&self.editor.doc, &a, map.to_world(p) - grab)
             {
                 let _ = self.editor.doc.set_annotation(id, moved);
             }
@@ -278,15 +278,15 @@ impl DriftApp {
         }
         // Any line or curve under the pointer, at the spot nearest it.
         let doc = &self.editor.doc;
-        match crate::tools::reference_at(&self.editor, &p) {
+        match drift_edit::tools::reference_at(&self.editor, &p) {
             Some(id) if doc.get(id).is_some_and(|e| e.kind.is_point()) => Anchor::Point(id),
             Some(curve) => {
                 let at = doc
                     .shape(curve)
                     .map_or(raw, |s| drift_geom::nearest_point(&s, raw));
-                notes::anchor_at(doc, None, Some(curve), at)
+                drift_edit::labels::anchor_at(doc, None, Some(curve), at)
             }
-            None => notes::anchor_at(doc, None, p.on_curve(), p.pos()),
+            None => drift_edit::labels::anchor_at(doc, None, p.on_curve(), p.pos()),
         }
     }
 

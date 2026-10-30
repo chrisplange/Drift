@@ -18,7 +18,7 @@ mod annotate;
 mod arc;
 mod base_point;
 mod circle;
-pub(crate) mod corners;
+pub mod corners;
 mod curve_ops;
 mod dimension;
 mod ellipse;
@@ -47,7 +47,7 @@ mod tests;
 mod text;
 mod three_point_arc;
 mod underlay;
-pub(crate) mod view;
+pub mod view;
 mod wall;
 #[cfg(test)]
 mod wall_tests;
@@ -77,7 +77,7 @@ pub use self::{
 
 /// The geometry under the pointer that a temporary dimension's far end can measure to: a
 /// point, or a line (picked at its middle, the line).
-pub(crate) fn reference_at(ed: &Editor, p: &Pointer) -> Option<EntityId> {
+pub fn reference_at(ed: &Editor, p: &Pointer) -> Option<EntityId> {
     picking::pick_target_with(ed, p, crate::editor::PickFilter::ALL).map(|t| match t {
         picking::Target::Entity(id) | picking::Target::Midpoint(id) => id,
     })
@@ -388,34 +388,6 @@ impl ToolKind {
             ToolKind::MoveUnderlay => "A point on the underlay, then where it goes",
             ToolKind::BasePoint => "Click the block's base point; Enter keeps the centre",
         }
-    }
-
-    /// For a tool in a cycle (C: circle, ellipse, partial ellipse), how its key steps
-    /// through the cycle.
-    pub fn cycle_hint(self) -> Option<String> {
-        let key = self.shortcut()?;
-        let cycle: Vec<&str> = Self::ALL
-            .iter()
-            .filter(|k| k.shortcut() == Some(key))
-            .map(|k| k.label())
-            .collect();
-        (cycle.len() > 1).then(|| {
-            format!(
-                "{key} again switches through: {}",
-                cycle.join(", ").to_lowercase()
-            )
-        })
-    }
-
-    /// The shortcut as shown to the user: the key, or "Shift+T" for the text tool. A tool in
-    /// a cycle shows the cycle's key. Keys are bound in the command registry.
-    pub fn shortcut_label(self) -> Option<String> {
-        crate::commands::tool_key(self.cycle_head()).map(|k| k.text(cfg!(target_os = "macos")))
-    }
-
-    /// The single key that picks the tool (`None` for Shift+T and tools without a key).
-    pub fn shortcut(self) -> Option<char> {
-        crate::commands::tool_key(self.cycle_head())?.single()
     }
 
     /// The first tool of the cycle a key steps through: the circle for the ellipses, the

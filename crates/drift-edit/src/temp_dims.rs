@@ -353,7 +353,7 @@ pub fn label_spot(ed: &Editor, t: &TempDim, out: f64) -> Option<DVec2> {
         }
         Constraint::PointLineDistance { point, line, .. } => {
             let q = ed.doc.ref_point(point)?;
-            let foot = crate::annotations::foot(&ed.doc, q, line)?;
+            let foot = crate::labels::foot(&ed.doc, q, line)?;
             // Halfway between, where the lines run alongside.
             let Some(Shape::Line { a, b }) = ed.doc.shape(line) else {
                 return Some((q + foot) * 0.5);

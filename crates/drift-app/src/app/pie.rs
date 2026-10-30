@@ -5,8 +5,8 @@
 //! open, each relation's letter (shown on it) chooses it outright: Q then H for horizontal.
 
 use crate::annotations::{self, AnnotationColors, AnnotationState, GlyphKind};
-use crate::editor::ConstraintOption;
 use crate::*;
+use drift_edit::editor::ConstraintOption;
 
 /// The relations that share each place, counter-clockwise from the right. No selection
 /// offers two from the same place.

@@ -15,6 +15,7 @@ rust-version = "1.92"
 [workspace.dependencies]
 drift-core = { path = "crates/drift-core" }
 drift-draft = { path = "crates/drift-draft" }
+drift-edit = { path = "crates/drift-edit" }
 drift-render = { path = "crates/drift-render" }
 drift-app = { path = "crates/drift-app" }
 drift-geom = { path = "crates/drift-geom" }

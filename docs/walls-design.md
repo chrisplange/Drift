@@ -39,6 +39,7 @@ replaces its model.
 | Rooms | A `Room` record: a name, number and tag point. Its area is the face around the tag among the room-side faces of every room-bounding wall, with openings closed at the face plane. |
 | Keys | **W** for the Wall tool (thin lines moves to Shift+Alt+W). **W again** switches between straight and arc, and **click-drag** bends the next segment. **Space** flips the justification. A stays the Arc tool. All of these are bound through the **command registry**, which lands before W1. |
 | Tool settings | Thickness (with presets), justify and poché sit on the tool bar and remember themselves across drawings, as the Fill switch does. Named **wall types** in the drawing come later (W6). |
+| Other generated geometry | Walls set the protocol any generated geometry follows (offsets as objects, #247, next): a record in drift-core, a generator in drift-geom, a `follow_*` hook in `Editor::commit`, ownership through `Owners`. The checklist is [editor-split-design.md](editor-split-design.md) §6. |
 
 ---
 

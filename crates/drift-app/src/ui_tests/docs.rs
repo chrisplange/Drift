@@ -574,7 +574,7 @@ fn fills() {
 fn blocks() {
     // A 12' × 10' bedroom furnished from the library: a door, a window, a queen bed with
     // nightstands, a desk with its chair, and a dresser.
-    use crate::library::{self, INCH};
+    use drift_edit::library::{self, INCH};
     let mut h = harness().unwrap();
     h.state_mut()
         .editor
@@ -951,7 +951,7 @@ fn menus() {
 
 fn pick_filters() {
     // Select picking edges alone: the bar's toggles, and only lines highlight.
-    use crate::editor::{PickFilter, PickKind};
+    use drift_edit::editor::{PickFilter, PickKind};
     let mut h = harness().unwrap();
     open_example(&mut h);
     h.state_mut()

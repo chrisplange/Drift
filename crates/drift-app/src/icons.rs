@@ -7,7 +7,7 @@ use drift_core::DVec2;
 
 use eframe::egui::{self, Color32, Pos2, Rect, Shape, Stroke, Vec2, pos2, vec2};
 
-use crate::tools::ToolKind;
+use drift_edit::tools::ToolKind;
 
 /// Icons for view toggles.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

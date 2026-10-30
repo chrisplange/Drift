@@ -4,8 +4,8 @@
 //! that instead.
 
 use crate::annotations::{AnnotationColors, AnnotationState, DimLayout, Pen};
-use crate::temp_dims::TempDim;
 use crate::*;
+use drift_edit::temp_dims::TempDim;
 
 /// How far beside the picked line its length shows (points).
 const LENGTH_OUT_PT: f64 = 26.0;
@@ -152,8 +152,8 @@ impl DriftApp {
             let Some(c) = t.measured(&self.editor) else {
                 continue;
             };
-            let placement = crate::temp_dims::label_spot(&self.editor, t, out)
-                .zip(annotations::dimension_anchor(doc, &c))
+            let placement = drift_edit::temp_dims::label_spot(&self.editor, t, out)
+                .zip(drift_edit::labels::dimension_anchor(doc, &c))
                 .map(|(spot, anchor)| spot - anchor);
             let Some(dim) = annotations::layout_dimension(painter, doc, None, &c, placement, map)
             else {
@@ -289,7 +289,7 @@ impl DriftApp {
                 let dropped = release_pos(ui, PointerButton::Primary).or(pos);
                 let target = dropped.and_then(|at| {
                     let p = self.make_pointer(map, at, true);
-                    crate::tools::reference_at(&self.editor, &p)
+                    drift_edit::tools::reference_at(&self.editor, &p)
                 });
                 let moved = target.and_then(|id| {
                     let t = self.temp_dims.dims.get(i)?;

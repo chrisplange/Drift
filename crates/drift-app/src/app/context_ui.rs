@@ -3,8 +3,8 @@
 
 use crate::app::palette::{Command, ViewFlag};
 use crate::icons::{self, Glyph};
-use crate::tools::SlotMode;
 use crate::*;
+use drift_edit::tools::SlotMode;
 
 /// A thin vertical divider.
 fn divider(ui: &mut egui::Ui) {
@@ -47,9 +47,9 @@ pub(super) fn choice<T: Copy + PartialEq>(
 /// double-click a toggle for that kind alone. Returns the filter clicked to.
 fn pick_filter_toggles(
     ui: &mut egui::Ui,
-    filter: crate::editor::PickFilter,
-) -> Option<crate::editor::PickFilter> {
-    use crate::editor::{PickFilter, PickKind};
+    filter: drift_edit::editor::PickFilter,
+) -> Option<drift_edit::editor::PickFilter> {
+    use drift_edit::editor::{PickFilter, PickKind};
     let mut out = None;
     ui.spacing_mut().item_spacing.x = 2.0;
     caption(ui, "Pick");
@@ -713,12 +713,12 @@ impl DriftApp {
                     if let Some(m) = choice(
                         ui,
                         self.editor.dim_mode,
-                        &crate::editor::DimMode::ALL.map(|m| (m, m.label())),
+                        &drift_edit::editor::DimMode::ALL.map(|m| (m, m.label())),
                     ) {
                         self.editor.dim_mode = m;
                     }
                     ui.add_enabled(
-                        self.editor.dim_mode == crate::editor::DimMode::Chain,
+                        self.editor.dim_mode == drift_edit::editor::DimMode::Chain,
                         egui::Checkbox::new(&mut self.editor.dim_overall, "Overall"),
                     )
                     .on_hover_text(
@@ -754,7 +754,7 @@ impl DriftApp {
     }
 
     /// Set what the select tool picks; what is picked now keeps only what the filter allows.
-    pub(crate) fn set_pick_filter(&mut self, filter: crate::editor::PickFilter) {
+    pub(crate) fn set_pick_filter(&mut self, filter: drift_edit::editor::PickFilter) {
         let ed = &mut self.editor;
         ed.pick_filter = filter;
         let doc = &ed.doc;

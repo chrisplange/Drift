@@ -83,7 +83,7 @@ impl Editor {
     /// Areas are found with them as with drawn curves. A fill keeps only its outline (its
     /// holes are whatever lies inside it), so on a layer where a fill is bounded by
     /// construction curves, all of that layer's construction curves count: its holes' too.
-    pub(crate) fn fill_edges(&self) -> std::collections::BTreeSet<EntityId> {
+    pub fn fill_edges(&self) -> std::collections::BTreeSet<EntityId> {
         let construction = |id: &EntityId| {
             self.doc
                 .get(*id)

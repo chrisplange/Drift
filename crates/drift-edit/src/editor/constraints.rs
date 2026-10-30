@@ -157,7 +157,7 @@ impl Editor {
     }
 
     /// What is being fixed, for messages: "this line is", "these 3 are", ….
-    pub(crate) fn fixed_name(&self) -> String {
+    pub fn fixed_name(&self) -> String {
         let curves: Vec<EntityKind> = self
             .selection
             .iter()

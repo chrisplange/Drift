@@ -8,7 +8,7 @@
 use drift_core::{DVec2, Document, EntityId, EntityKind, LineKind};
 use drift_geom::walls::{generate, regen, regenerate};
 
-use crate::editor::Editor;
+use drift_edit::editor::Editor;
 
 /// 4½″: a 2×4 wall, finished.
 const T: f64 = 114.3;
@@ -267,7 +267,7 @@ fn after(
     doc: Document,
 ) -> (
     Editor,
-    Result<crate::walls_from_lines::FromLinesReport, String>,
+    Result<drift_edit::walls_from_lines::FromLinesReport, String>,
 ) {
     let mut ed = Editor::new(doc);
     let all: Vec<EntityId> = ed

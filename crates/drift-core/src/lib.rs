@@ -50,7 +50,7 @@ pub use openings::{
 };
 pub use paths::{Path, PathId};
 pub use rules::DrawingRules;
-pub use shape::{DofState, Emphasis, LineKind, Shape, SketchItem};
+pub use shape::{CanvasImage, DofState, Emphasis, FillMesh, LineKind, Shape, SketchItem};
 pub use shared::Shared;
 pub use sheets::{
     FieldSet, PaperSize, PlacedView, Project, Revision, Sheet, SheetColours, SheetId, TitleBlock,

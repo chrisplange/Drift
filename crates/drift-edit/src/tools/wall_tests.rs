@@ -322,37 +322,6 @@ fn deleting_a_wall_takes_what_it_made() {
     assert_eq!(faces(&ed), 6);
 }
 
-#[test]
-fn walls_print_their_faces_not_their_centrelines_or_butts() {
-    let mut ed = editor();
-    run(&mut ed, &[v(0.0, 0.0), v(200.0, 0.0)]);
-    // A thinner wall of another poché teed into it: it butts against the host's face.
-    // (Another material: faces only, no poché.)
-    ed.wall_thickness = 6.0;
-    ed.wall_poche.on = false;
-    run(&mut ed, &[v(100.0, 80.0), v(100.0, 5.0)]);
-    assert_eq!(ed.doc.fills().count(), 1, "the poché of the host");
-    let ctx = eframe::egui::Context::default();
-    let painter = eframe::egui::Painter::new(
-        ctx,
-        eframe::egui::LayerId::background(),
-        eframe::egui::Rect::from_min_size(
-            eframe::egui::Pos2::ZERO,
-            eframe::egui::vec2(800.0, 800.0),
-        ),
-    );
-    let d =
-        crate::output::model_drawing(&mut ed, &crate::fills::PatternLibrary::default(), &painter);
-    let lines = d
-        .items
-        .iter()
-        .filter(|i| matches!(i.prim, drift_draft::page::Prim::Line(..)))
-        .count();
-    // The host's two faces and caps, the branch's two faces and its far cap: not the
-    // centrelines (construction) nor the butt edge along the host's face.
-    assert_eq!(lines, 7);
-}
-
 /// Outlines and holes of the walls as they are now.
 fn loops(ed: &Editor) -> (usize, usize) {
     let (inputs, _) = drift_geom::walls::regen::wall_inputs(&ed.doc);

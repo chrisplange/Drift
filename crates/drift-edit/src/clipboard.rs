@@ -415,7 +415,7 @@ fn extent(doc: &Document) -> Bounds {
         b.include(t.at);
     }
     for (_, a) in doc.annotations() {
-        if let Some(p) = crate::notes::label_world(doc, a) {
+        if let Some(p) = crate::labels::label_world(doc, a) {
             b.include(p);
         }
     }

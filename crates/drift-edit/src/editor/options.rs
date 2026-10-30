@@ -376,7 +376,7 @@ impl Editor {
                 )
             }
             ([], [a, b], []) => {
-                let (a, b) = crate::annotations::corner_order(&self.doc, *a, *b);
+                let (a, b) = crate::labels::corner_order(&self.doc, *a, *b);
                 push("Angle", Constraint::Angle { a, b, degrees: 0.0 })
             }
             ([], [], [curve]) => push(

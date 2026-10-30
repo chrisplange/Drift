@@ -167,6 +167,12 @@ fn a_point_dragged_past_the_seed_then_a_split() {
     assert!(seed_inside(&mut ed, id), "the seed stays inside");
     ed.split_at(sides[1], v(40.0, 10.0)).unwrap();
     assert!(close(found(&mut ed, id).0, area));
+    // Undo both: the fill is back on the plate as drawn.
+    ed.undo();
+    ed.undo();
+    let shape = ed.fill_shapes()[&id].clone();
+    assert!(!shape.lost);
+    assert!(close(shape.region.area, 800.0));
 }
 
 #[test]

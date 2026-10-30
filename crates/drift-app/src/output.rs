@@ -18,10 +18,10 @@ use drift_render::Camera;
 use eframe::egui::{self, Color32, Pos2};
 
 use crate::annotations::{self, AnnotationColors, AnnotationState, PT_PER_MM, Recorded, Recorder};
-use crate::editor::Editor;
-use crate::fills::PatternLibrary;
 use crate::notes;
 use crate::overlay::ScreenMap;
+use drift_edit::editor::Editor;
+use drift_edit::fills::PatternLibrary;
 
 /// Layer names for drafting content in exports.
 const ANNOTATION_LAYER: &str = "ANNOTATIONS";
@@ -358,11 +358,11 @@ fn copies(
     }
 }
 
-/// The drawing in its stack (see [`crate::stack`]), as the canvas draws it: layer by layer,
+/// The drawing in its stack (see [`drift_edit::stack`]), as the canvas draws it: layer by layer,
 /// each fill drawn with its outline over what is beneath it, and each layer's text and
 /// copies of blocks at its top. (Underlays' pictures never print.)
 fn stacked(ed: &mut Editor, patterns: &PatternLibrary, s: &Space, d: &mut Drawing) {
-    use crate::stack::FillRef;
+    use drift_edit::stack::FillRef;
     let stack = ed.stack();
     let shapes = ed.fill_shapes();
     let copy_fills = ed.copy_fills();
@@ -536,7 +536,7 @@ fn fill(
         .chain(&region.holes)
         .map(|lp| lp.polygon(tol).into_iter().map(|p| s.at(p)).collect())
         .collect();
-    let triangles: Vec<[DVec2; 3]> = crate::fills::tessellate(region, tol)
+    let triangles: Vec<[DVec2; 3]> = drift_edit::fills::tessellate(region, tol)
         .map(|(v, idx)| {
             idx.as_chunks::<3>()
                 .0
@@ -753,7 +753,7 @@ fn annotations(ed: &Editor, painter: &egui::Painter, s: &Space, d: &mut Drawing)
     }
     // Walls' thickness dimensions, as on screen.
     for (_, q) in doc.property_dims().filter(|_| s.dimensions) {
-        let Some((c, at)) = crate::walls::thickness_dimension(doc, q) else {
+        let Some((c, at)) = drift_edit::walls::thickness_dimension(doc, q) else {
             continue;
         };
         if s.leaves_out(doc, &c.entities().collect::<Vec<_>>()) {

@@ -12,8 +12,8 @@ use serde_json::{Value, json};
 
 use super::args::{self, AnyId};
 use super::{Res, Session};
-use crate::fills::FillStyle;
-use crate::modify::{Area, CuttingSet};
+use drift_edit::fills::FillStyle;
+use drift_edit::modify::{Area, CuttingSet};
 
 fn ids_json(ids: &[EntityId]) -> Value {
     json!(ids.iter().map(|i| args::id(*i)).collect::<Vec<_>>())
@@ -68,7 +68,7 @@ fn shift(s: &mut Session, ids: &[EntityId], delta: DVec2) -> Result<(), String> 
 
 /// Copy `ids` in place with the relations among them; the copies, in order.
 fn copy(s: &mut Session, ids: &[EntityId]) -> Vec<EntityId> {
-    let picked = crate::clipboard::Picked {
+    let picked = drift_edit::clipboard::Picked {
         curves: ids.to_vec(),
         instances: Vec::new(),
         texts: Vec::new(),
@@ -78,7 +78,7 @@ fn copy(s: &mut Session, ids: &[EntityId]) -> Vec<EntityId> {
     let ed = &mut s.editor;
     let source = ed.doc.clone();
     ed.doc.begin();
-    let made = crate::clipboard::copy_into(&source, &mut ed.doc, &picked, DVec2::ZERO, true);
+    let made = drift_edit::clipboard::copy_into(&source, &mut ed.doc, &picked, DVec2::ZERO, true);
     ed.commit("Copy");
     ids.iter()
         .filter_map(|id| made.entities.get(id).copied())
@@ -112,7 +112,7 @@ pub(super) fn transform(s: &mut Session, a: &Value) -> Res {
                 ed.sync();
                 return Err("its constraints don't allow it to turn".into());
             }
-            if crate::editor::is_quarter_turn(degrees) {
+            if drift_edit::editor::is_quarter_turn(degrees) {
                 ed.restore_after_rotation(&removed, degrees);
             } else if !removed.is_empty() {
                 result["relations_removed"] = json!(removed.len());
@@ -474,7 +474,7 @@ pub(super) fn layers(s: &mut Session, a: &Value) -> Res {
             let id = args::layer(&ed.doc, assign.get("layer").ok_or("assign needs `layer`")?)?;
             // A curve takes its points with it, a shape whose whole outline is named its
             // fill (#266).
-            let what = crate::editor::LayerMove {
+            let what = drift_edit::editor::LayerMove {
                 entities: args::entities_at(&ed.doc, assign, "ids")?
                     .into_iter()
                     .collect(),

@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 
 use drift_core::{InstanceId, LayerId, SketchText, TextId};
 
-use crate::editor::{PickFilter, PickKind};
+use drift_edit::editor::{PickFilter, PickKind};
 
 use super::*;
 

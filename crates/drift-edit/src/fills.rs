@@ -4,13 +4,13 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
 
+use drift_core::FillMesh;
 use drift_core::{
     Bounds, DVec2, EntityId, Fill, FillId, FillKind, InstanceId, LayerId, PathId, Rgb, Shape,
     SketchItem,
 };
 use drift_draft::{Pattern, Placement};
 use drift_geom::regions::{Region, region_at};
-use drift_render::FillMesh;
 
 use crate::editor::Editor;
 
@@ -198,7 +198,7 @@ pub(crate) struct UncrossedFound {
     shape: Option<FillShape>,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl UncrossedFound {
     /// Its size in bytes, heap included (for the perf probes).
     pub(crate) fn bytes(&self) -> usize {
@@ -1365,7 +1365,7 @@ impl Editor {
     /// them.
     ///
     /// [`Document::delete`]: drift_core::Document::delete
-    pub(crate) fn delete_curves(&mut self, ids: impl IntoIterator<Item = EntityId>) {
+    pub fn delete_curves(&mut self, ids: impl IntoIterator<Item = EntityId>) {
         // (Shapes' fills keep to their paths, which a delete takes apart: not those.)
         let shapes = self.fill_shapes();
         let areas: Vec<(FillId, Region)> = self
@@ -2531,7 +2531,7 @@ impl Editor {
     /// Record a closed shape a drawing tool has just made as a path (its `curves` in order
     /// round it), inside the open transaction, and fill it when new shapes are to be filled:
     /// one undo step with the shape. Returns the path.
-    pub(crate) fn add_shape(&mut self, curves: &[EntityId]) -> Option<PathId> {
+    pub fn add_shape(&mut self, curves: &[EntityId]) -> Option<PathId> {
         let path = self
             .doc
             .add_path(drift_core::Path {
@@ -2552,8 +2552,8 @@ impl Editor {
     }
 
     /// [`add_shape`](Self::add_shape), returning the fill it made.
-    #[cfg(test)]
-    pub(crate) fn fill_new_shape(&mut self, curves: &[EntityId]) -> Option<FillId> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn fill_new_shape(&mut self, curves: &[EntityId]) -> Option<FillId> {
         let path = self.add_shape(curves)?;
         self.doc
             .fills()

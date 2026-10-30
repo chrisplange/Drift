@@ -16,7 +16,7 @@ use crate::editor::Editor;
 fn drawing(cells: usize, defer: bool) -> Editor {
     let mut ed = Editor::new(Document::new());
     ed.doc.begin();
-    drift_io::dxf::add_to_document(&mut ed.doc, &crate::perf_big::big_drawing(cells));
+    drift_io::dxf::add_to_document(&mut ed.doc, &crate::test_sketches::big_drawing(cells));
     assert!(ed.commit_import("Import"));
     // (The import is where the edits start: undo stops there.)
     ed.history.clear();

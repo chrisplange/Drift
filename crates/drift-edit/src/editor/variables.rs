@@ -253,7 +253,7 @@ impl Editor {
     }
 
     /// Save the current variable values as a new option.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn save_variant(&mut self, name: &str) -> VariantId {
         self.save_option(name, false)
     }

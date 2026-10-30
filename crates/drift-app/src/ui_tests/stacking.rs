@@ -141,7 +141,7 @@ pub(super) fn first_painted(art: &drift_io::vector::Artwork, colours: &[Rgb]) ->
 #[test]
 fn print_pdf_and_svg_stack_as_the_canvas_does() {
     let Some(mut h) = harness() else { return };
-    h.state_mut().editor = crate::editor::Editor::new(drawing());
+    h.state_mut().editor = drift_edit::editor::Editor::new(drawing());
     assert!(h.state().editor.doc.rules().stacked_fills);
     // Curves in their own colours, not by how far they are defined.
     h.state_mut().status_colors = false;

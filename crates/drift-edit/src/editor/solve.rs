@@ -81,7 +81,7 @@ impl Editor {
     /// Relations on walls' faces lowered onto their centrelines, for the solver (None when
     /// no relation names a wall's generated geometry). Worked out again whenever the
     /// document changes, so a thickness edit in the same transaction is seen.
-    pub(crate) fn lowering(&self) -> Option<std::rc::Rc<drift_solver::Lowering>> {
+    pub fn lowering(&self) -> Option<std::rc::Rc<drift_solver::Lowering>> {
         if !self.doc.has_walls() {
             return None;
         }

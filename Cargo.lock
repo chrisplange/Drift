@@ -1172,6 +1172,7 @@ version = "0.1.0-beta.1.5"
 dependencies = [
  "drift-core",
  "drift-draft",
+ "drift-edit",
  "drift-geom",
  "drift-io",
  "drift-platform",
@@ -1215,6 +1216,24 @@ dependencies = [
  "lyon_tessellation",
  "roxmltree 0.21.1",
  "skrifa",
+]
+
+[[package]]
+name = "drift-edit"
+version = "0.1.0-beta.1.5"
+dependencies = [
+ "drift-core",
+ "drift-draft",
+ "drift-geom",
+ "drift-io",
+ "drift-platform",
+ "drift-solver",
+ "glam",
+ "log",
+ "proptest",
+ "serde",
+ "serde_json",
+ "tiny-skia",
 ]
 
 [[package]]

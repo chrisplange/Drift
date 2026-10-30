@@ -90,7 +90,7 @@ fn default_size(ed: &Editor) -> f64 {
 
 /// The smallest round increment that is at least `min` (mm): 1, 2 or 5 times a power of ten
 /// in metric; binary fractions of an inch, then inches and feet, in imperial.
-pub(crate) fn round_step(min: f64, metric: bool) -> f64 {
+pub fn round_step(min: f64, metric: bool) -> f64 {
     if !(min > 0.0 && min.is_finite()) {
         return 1.0;
     }

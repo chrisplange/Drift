@@ -2,8 +2,8 @@
 //! what was made, what was skipped and why (with the lines to pick), and what was done with
 //! the lines used (changing it does the command again that way).
 
-use crate::walls_from_lines::{FromLinesReport, UsedLines};
 use crate::*;
+use drift_edit::walls_from_lines::{FromLinesReport, UsedLines};
 
 impl DriftApp {
     /// The report section, at the top of the Inspector.

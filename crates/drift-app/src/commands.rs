@@ -22,10 +22,10 @@ use eframe::egui::Key;
 
 use crate::DriftApp;
 use crate::dock::Panel;
-use crate::editor::{PickFilter, PickKind};
 use crate::icons::Glyph;
-use crate::stack::Arrange;
-use crate::tools::ToolKind;
+use drift_edit::editor::{PickFilter, PickKind};
+use drift_edit::stack::Arrange;
+use drift_edit::tools::ToolKind;
 
 /// Something Drift can do. The registry describes each; `DriftApp::run_command` does it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -598,7 +598,7 @@ impl Spec {
     pub(crate) fn does(&self) -> String {
         let mut out = self.description.to_owned();
         if let Command::Tool(kind) = self.command
-            && let Some(again) = kind.cycle_hint()
+            && let Some(again) = cycle_hint(kind)
             && !self.description.contains(" again")
         {
             out.push_str(". ");
@@ -772,6 +772,29 @@ pub(crate) fn menu_breaks(category: Category) -> Vec<Command> {
 /// other than the first, and a tool with no key).
 pub(crate) fn tool_key(kind: ToolKind) -> Option<Shortcut> {
     spec(Command::Tool(kind))?.keys.first().copied()
+}
+
+/// The single key that picks a tool (`None` for Shift+T and tools without a key). A tool in
+/// a cycle has the cycle's key.
+fn tool_char(kind: ToolKind) -> Option<char> {
+    tool_key(kind.cycle_head())?.single()
+}
+
+/// For a tool in a cycle (C: circle, ellipse, partial ellipse), how its key steps through
+/// the cycle.
+pub(crate) fn cycle_hint(kind: ToolKind) -> Option<String> {
+    let key = tool_char(kind)?;
+    let cycle: Vec<&str> = ToolKind::ALL
+        .iter()
+        .filter(|k| tool_char(**k) == Some(key))
+        .map(|k| k.label())
+        .collect();
+    (cycle.len() > 1).then(|| {
+        format!(
+            "{key} again switches through: {}",
+            cycle.join(", ").to_lowercase()
+        )
+    })
 }
 
 /// The registry's table. Re-binding a key is changing its `.keys(...)` here; the tests catch

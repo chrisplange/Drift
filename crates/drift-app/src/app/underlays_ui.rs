@@ -41,7 +41,7 @@ impl DriftApp {
     pub(crate) fn underlay_imported(
         &mut self,
         name: &str,
-        result: Result<crate::underlays::UnderlayReport, String>,
+        result: Result<drift_edit::underlays::UnderlayReport, String>,
         now: f64,
     ) {
         match result {

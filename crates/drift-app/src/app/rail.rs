@@ -235,7 +235,7 @@ impl DriftApp {
         });
         ui.label(egui::RichText::new(spec.description).weak());
         if let Command::Tool(kind) = command
-            && let Some(again) = kind.cycle_hint()
+            && let Some(again) = crate::commands::cycle_hint(kind)
         {
             ui.label(egui::RichText::new(again).small().weak());
         }

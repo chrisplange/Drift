@@ -23,6 +23,37 @@ pub const VERSION: &str = match option_env!("DRIFT_VERSION") {
     None => env!("CARGO_PKG_VERSION"),
 };
 
+/// The folder an app keeps its data in (its preferences and session, `app.ron`): the one
+/// eframe's `storage_dir` gives, so programs without a window (the assistant's server) read
+/// what the app saved. `%APPDATA%\<app>\data` on Windows, `~/Library/Application Support/<app>`
+/// on macOS, `$XDG_DATA_HOME/<app>` (or `~/.local/share/<app>`) elsewhere, lower case. Not
+/// [`crash::data_dir`], where the log and crash reports go.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn storage_dir(app_id: &str) -> Option<PathBuf> {
+    use std::env::{home_dir, var_os};
+    if cfg!(windows) {
+        var_os("APPDATA").map(|p| PathBuf::from(p).join(app_id).join("data"))
+    } else if cfg!(target_os = "macos") {
+        home_dir().map(|p| {
+            p.join("Library")
+                .join("Application Support")
+                .join(app_id.replace(|c: char| c.is_ascii_whitespace(), "-"))
+        })
+    } else {
+        var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .filter(|p| p.is_absolute())
+            .or_else(|| home_dir().map(|p| p.join(".local").join("share")))
+            .map(|p| {
+                p.join(
+                    app_id
+                        .to_lowercase()
+                        .replace(|c: char| c.is_ascii_whitespace(), ""),
+                )
+            })
+    }
+}
+
 /// Where a document was opened from or saved to. Only native builds have paths; the browser
 /// has no persistent file handles yet, so every web save is a download.
 pub type FilePath = PathBuf;

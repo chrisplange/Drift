@@ -5,7 +5,7 @@ use drift_core::{Document, View};
 use super::*;
 
 /// `View n`, for the first `n` no view of `doc` is called.
-pub(crate) fn next_view_name(doc: &Document) -> String {
+pub fn next_view_name(doc: &Document) -> String {
     (1..)
         .map(|n| format!("View {n}"))
         .find(|name| doc.views().all(|(_, v)| v.name != *name))

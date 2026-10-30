@@ -11,6 +11,7 @@ publish.workspace = true
 [dependencies]
 drift-core.workspace = true
 drift-draft.workspace = true
+drift-edit.workspace = true
 drift-geom.workspace = true
 drift-io.workspace = true
 drift-platform.workspace = true
@@ -56,16 +57,19 @@ egui-wgpu = { version = "0.36.2", default-features = false, features = ["fragile
 [features]
 default = ["dwg"]
 # Reading DWG drawings (File > Import, Import underlay).
-dwg = ["drift-io/dwg"]
+dwg = ["drift-edit/dwg", "drift-io/dwg"]
 # The browser demo: everything but saving, exporting and printing, whose code (and the file
 # writers in drift-io and drift-platform) is left out of the build. The menu items stay and
 # say where to download Drift. Copies stay inside the app, and the session isn't kept.
-demo = ["drift-io/demo", "drift-platform/demo"]
+demo = ["drift-edit/demo", "drift-io/demo", "drift-platform/demo"]
 
 [lints]
 workspace = true
 
 [dev-dependencies]
+# The test-only helpers some of the app's tests call (`make_block`, `save_variant`,
+# `text_items`, `fill_new_shape`, `test_sketches`, the `editor::probes` accessors).
+drift-edit = { workspace = true, features = ["test-support"] }
 egui_kittest = { version = "0.36.2", features = ["eframe", "wgpu", "snapshot"] }
 pollster = "1.0"
 proptest = "1"

@@ -3,10 +3,8 @@
 //! The rendered image is written to `target/tmp/` for visual inspection. If no adapter is
 //! available (e.g. a headless CI machine without a software rasteriser) the test is skipped.
 
-use drift_core::{DVec2, Shape, SketchItem, demo};
-use drift_render::{
-    Camera, CanvasImage, CanvasRenderer, FillMesh, Frame, Palette, Viewport, build_frame,
-};
+use drift_core::{CanvasImage, DVec2, FillMesh, Shape, SketchItem, demo};
+use drift_render::{Camera, CanvasRenderer, Frame, Palette, Viewport, build_frame};
 
 const WIDTH: u32 = 960;
 const HEIGHT: u32 = 640;

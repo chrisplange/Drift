@@ -177,13 +177,13 @@ impl Editor {
     }
 
     /// The pictures of visible underlays, each with its underlay.
-    pub fn underlay_pictures(&self) -> Vec<(UnderlayId, drift_render::CanvasImage)> {
+    pub fn underlay_pictures(&self) -> Vec<(UnderlayId, drift_core::CanvasImage)> {
         let mut out = Vec::new();
         for (id, u) in self.doc.underlays().filter(|(_, u)| u.visible) {
             for image in u.images.iter() {
                 out.push((
                     id,
-                    drift_render::CanvasImage {
+                    drift_core::CanvasImage {
                         pixels: image.rgba.clone(),
                         width: image.width,
                         height: image.height,

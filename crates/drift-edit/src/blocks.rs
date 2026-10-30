@@ -242,7 +242,7 @@ impl Editor {
 
     /// Make a block from the selection and put a copy where the geometry was (the selection
     /// becomes that copy). The base point is the centre of the selection.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn make_block(&mut self, name: &str) -> Result<InstanceId, String> {
         self.make_block_at(name, None)
     }

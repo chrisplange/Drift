@@ -74,7 +74,7 @@ fn link_distance(ed: &Editor, a: Link, b: Link) -> Option<f64> {
     match (a, b) {
         (Link::Line(l), other) | (other, Link::Line(l)) => {
             let p = at(other)?;
-            Some(p.distance(crate::annotations::foot(&ed.doc, p, l)?))
+            Some(p.distance(crate::labels::foot(&ed.doc, p, l)?))
         }
         (Link::Point(_), Link::Point(_)) => Some(at(a)?.distance(at(b)?)),
     }
@@ -188,7 +188,7 @@ impl DimensionTool {
             DimBase::Circular(curve, true) => Constraint::Diameter { curve, value: 0.0 },
             DimBase::Circular(curve, false) => Constraint::Radius { curve, value: 0.0 },
             DimBase::Angle(a, b) => {
-                let (a, b) = crate::annotations::corner_order(&ed.doc, a, b);
+                let (a, b) = crate::labels::corner_order(&ed.doc, a, b);
                 Constraint::Angle { a, b, degrees: 0.0 }
             }
             DimBase::PointLine(point, line) => Constraint::PointLineDistance {
@@ -210,8 +210,8 @@ impl DimensionTool {
         if ed.thickness_dimension_across(&c, at) {
             return;
         }
-        let offset = crate::annotations::dimension_anchor(&ed.doc, &c)
-            .map(|anchor| crate::annotations::centred_offset(&ed.doc, &c, at - anchor));
+        let offset = crate::labels::dimension_anchor(&ed.doc, &c)
+            .map(|anchor| crate::labels::centred_offset(&ed.doc, &c, at - anchor));
         match ed.add_dimension(c, offset) {
             Ok(id) => {
                 ed.pending_edit = Some(id);
@@ -325,7 +325,7 @@ impl DimensionTool {
                     _ => return None,
                 };
                 let p = ed.doc.ref_point(point)?;
-                let foot = crate::annotations::foot(&ed.doc, p, line)?;
+                let foot = crate::labels::foot(&ed.doc, p, line)?;
                 let mid = (p + foot) * 0.5;
                 // Abreast of where the row was placed, further along the lines for `out`.
                 let along = (at - mid).dot(dir);
@@ -372,8 +372,8 @@ impl DimensionTool {
         let Some((c, at, from_base)) = Self::run_dimension(ed, &run, q, step) else {
             return false;
         };
-        let offset = crate::annotations::dimension_anchor(&ed.doc, &c)
-            .map(|anchor| crate::annotations::centred_offset(&ed.doc, &c, at - anchor));
+        let offset = crate::labels::dimension_anchor(&ed.doc, &c)
+            .map(|anchor| crate::labels::centred_offset(&ed.doc, &c, at - anchor));
         let added = match ed.add_dimension(c, offset) {
             Ok(id) => Some(id),
             Err(crate::editor::EditError::Redundant | crate::editor::EditError::Conflict) => {
@@ -422,8 +422,8 @@ impl DimensionTool {
         let Some((c, at)) = Self::link_dimension(ed, &run, run.base, run.last, step) else {
             return;
         };
-        let offset = crate::annotations::dimension_anchor(&ed.doc, &c)
-            .map(|anchor| crate::annotations::centred_offset(&ed.doc, &c, at - anchor));
+        let offset = crate::labels::dimension_anchor(&ed.doc, &c)
+            .map(|anchor| crate::labels::centred_offset(&ed.doc, &c, at - anchor));
         if let Err(e) = ed.add_driven_dimension(c, offset) {
             ed.notice = Some(format!("Overall: {e}"));
         }
@@ -613,10 +613,7 @@ impl Tool for DimensionTool {
     ) -> Option<(Constraint, DVec2)> {
         let at = pointer?.raw;
         let c = Self::dimension(ed, self.base?, at)?;
-        let anchor = crate::annotations::dimension_anchor(&ed.doc, &c)?;
-        Some((
-            c,
-            crate::annotations::centred_offset(&ed.doc, &c, at - anchor),
-        ))
+        let anchor = crate::labels::dimension_anchor(&ed.doc, &c)?;
+        Some((c, crate::labels::centred_offset(&ed.doc, &c, at - anchor)))
     }
 }

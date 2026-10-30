@@ -9534,6 +9534,56 @@ fn drawing_rules_are_the_drawings_and_older_files_get_this_computers() {
     assert!(!h.state().editor.doc.rules().regions_by_layer);
 }
 
+/// The tool preferences (how the tools fill, pick and dimension, the wall and opening
+/// settings, and the Polygon, Slot and Text bars') carry over to the next drawing, new or
+/// opened: the open drawing's editor holds the app's copy.
+#[test]
+fn tool_preferences_carry_over_to_the_next_drawing() {
+    use drift_edit::editor::{PickFilter, PickKind};
+    let Some(mut h) = harness() else { return };
+    let prefs = &mut h.state_mut().editor.prefs;
+    prefs.fill_style = drift_core::FillStyle::solid();
+    prefs.pick_filter = PickFilter::only(PickKind::Edges);
+    prefs.wall_thickness = 115.5;
+    prefs.auto_relations = false;
+    prefs.text_height = 4.5;
+    prefs.polygon_sides = 7;
+    prefs.slot_mode = drift_edit::tools::SlotMode::Arc;
+    let before = prefs.clone();
+    let doc = h.state().new_document();
+    h.state_mut()
+        .replace_document(doc, "next".into(), None, Default::default(), true);
+    assert_eq!(h.state().editor.prefs, before);
+}
+
+/// Preferences as Drift saved them before the tool preferences moved into `EditPrefs` (R3
+/// S2) read back the same: the tool bars' keys set the same fields, and the string written
+/// again is the one read, byte for byte.
+#[test]
+fn saved_preferences_read_back_unchanged() {
+    const SAVED: &str = concat!(
+        "grid=1;axes=1;snap=0;ptsnap=1;thin=0;status=1;auto=1;ends=0;crops=1;combs=1;",
+        "rscale=1;hidden=0;rlayer=0;rfill=1;stack=1;dfollow=0;newfill=1;wpoche=0;wcentre=0;",
+        "tdims=1;ai=0;wheel=auto;asnap=0;gaptol=0.5;wthick=115.5;wjust=l;wlines=l;",
+        "fillalone=2;xsize=16;xfull=0;xweight=1;upchk=1;dock_left=;",
+        "dock_right=inspector,parameters,layers,sheets,blocks;dock_stacks=;dock_front_left=;",
+        "dock_front_right=inspector;dock_collapsed=00;dock_last=;dock_home_left=;",
+        "dock_weights=;dock_folded="
+    );
+    let Some(mut h) = harness() else { return };
+    h.state_mut().apply_view_prefs(SAVED);
+    let prefs = &h.state().editor.prefs;
+    assert!(prefs.fill_new_shapes && !prefs.wall_poche.on);
+    assert_eq!(prefs.wall_thickness, 115.5);
+    assert_eq!(prefs.wall_justify, drift_core::Justify::Left);
+    assert_eq!(
+        prefs.wall_lines,
+        drift_edit::walls_from_lines::UsedLines::Layer
+    );
+    assert_eq!(prefs.fill_alone_picks, 2);
+    assert_eq!(h.state().view_prefs(), SAVED);
+}
+
 #[test]
 fn preferences_has_three_pages() {
     let Some(mut h) = harness() else { return };

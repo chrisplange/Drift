@@ -117,9 +117,10 @@ impl DriftApp {
             self.status_next = Some(OLDER_RULES.into());
         }
         let revision = doc.revision();
-        // Preferences kept on the editor carry over to the next drawing.
+        // The tool preferences carry over to the next drawing: the open drawing's editor holds
+        // the app's copy.
         let mut editor = Editor::new(doc);
-        editor.keep_prefs_from(&self.editor);
+        editor.prefs = self.editor.prefs.clone();
         self.editor = editor;
         self.forget_drawing_state();
         self.fit_target = Some(self.fit_bounds());

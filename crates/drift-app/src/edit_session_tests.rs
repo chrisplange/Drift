@@ -276,3 +276,46 @@ fn walls_print_their_faces_not_their_centrelines_or_butts() {
     // centrelines (construction) nor the butt edge along the host's face.
     assert_eq!(lines, 7);
 }
+
+/// A new drawing made through the live link keeps Drift's tool preferences, as one made in
+/// Drift does; the server's own next drawing starts from its defaults, with any area
+/// pickable.
+#[test]
+fn the_assistant_keeps_drifts_tool_preferences_on_a_new_drawing() {
+    use crate::agent::{LiveChange, LiveDoc, call_live};
+    use drift_edit::editor::EditPrefs;
+    let mut ed = Editor::new(Document::new());
+    ed.prefs.wall_thickness = 115.5;
+    ed.prefs.polygon_sides = 7;
+    ed.prefs.fill_new_shapes = true;
+    ed.prefs.auto_relations = false;
+    let before = ed.prefs.clone();
+    let live = LiveDoc {
+        editor: &mut ed,
+        path: None,
+        meta: Default::default(),
+        dirty: false,
+        ctx: eframe::egui::Context::default(),
+        new_rules: Default::default(),
+    };
+    let (out, change) = call_live(live, "new_drawing", &json!({}), None);
+    assert!(
+        matches!(change, Some(LiveChange::Replaced { .. })),
+        "{}",
+        out.json
+    );
+    assert_eq!(ed.prefs, before);
+
+    let mut s = Session::new();
+    s.editor.prefs.wall_thickness = 115.5;
+    let out = s.call("new_drawing", &json!({}));
+    assert!(!out.is_error, "{}", out.json);
+    assert_eq!(
+        s.editor.prefs,
+        EditPrefs {
+            auto_relations: true,
+            pick_any_area: true,
+            ..Default::default()
+        }
+    );
+}

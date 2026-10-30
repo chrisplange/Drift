@@ -159,7 +159,7 @@ impl Session {
         let mut editor = Editor::new(doc);
         if self.live.is_some() {
             // Drift's own preferences carry over to its next drawing.
-            editor.keep_prefs_from(&self.editor);
+            editor.prefs = self.editor.prefs.clone();
         } else {
             editor.prefs.pick_any_area = true;
         }

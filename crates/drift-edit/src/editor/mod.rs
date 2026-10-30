@@ -318,26 +318,6 @@ impl Editor {
         editor
     }
 
-    /// Take the preferences kept on an editor (how new shapes are filled, what is picked,
-    /// how the dimension tool goes on) from the one this replaces, for a newly opened drawing.
-    pub fn keep_prefs_from(&mut self, was: &Editor) {
-        self.prefs.opening = was.prefs.opening.clone();
-        self.prefs.pick_any_area = was.prefs.pick_any_area;
-        self.prefs.fill_new_shapes = was.prefs.fill_new_shapes;
-        self.prefs.fill_alone_picks = was.prefs.fill_alone_picks;
-        self.prefs.fill_style = was.prefs.fill_style.clone();
-        self.prefs.pick_filter = was.prefs.pick_filter;
-        self.prefs.dim_mode = was.prefs.dim_mode;
-        self.prefs.dim_overall = was.prefs.dim_overall;
-        self.prefs.draw_construction = was.prefs.draw_construction;
-        self.prefs.wall_thickness = was.prefs.wall_thickness;
-        self.prefs.wall_thickness_expr = was.prefs.wall_thickness_expr.clone();
-        self.prefs.wall_justify = was.prefs.wall_justify;
-        self.prefs.wall_arc = was.prefs.wall_arc;
-        self.prefs.wall_poche = was.prefs.wall_poche.clone();
-        self.prefs.wall_lines = was.prefs.wall_lines;
-    }
-
     /// The document revision [`analysis`](Self::analysis) is of.
     pub(crate) fn analyzed(&self) -> Option<u64> {
         self.analyzed

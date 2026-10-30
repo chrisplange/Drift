@@ -24,6 +24,7 @@ use drift_core::{Constraint, ConstraintId, DVec2, Document, EntityId, EntityKind
 
 pub use crate::incremental::{AnalysisCache, analyze_cached};
 pub use crate::lowering::{Lowered, Lowering, Relations, relations};
+pub use crate::system::{TouchingEnds, touching_ends};
 
 use crate::linalg::{Matrix, rref};
 use crate::sparse::{Dd, Skyline, qr_rank};
@@ -111,6 +112,9 @@ pub struct SolveOptions {
     /// [`scope`](Self::scope). A drag of many parts then doesn't look through every relation
     /// of the drawing for each part's every solve (#253). `None`: found from the document.
     pub relations: Option<std::rc::Rc<Relations>>,
+    /// How each tangency touched where the relations held (see [`touching_ends`]): a drag
+    /// finds them once as it begins, and every step keeps them. `None`: from the geometry.
+    pub touching: Option<std::rc::Rc<TouchingEnds>>,
 }
 
 /// How completely an entity's position is determined by constraints.
@@ -195,6 +199,7 @@ pub fn solve(doc: &mut Document, options: &SolveOptions) -> SolveReport {
         &options.radii,
         options.lowering.as_deref(),
         options.relations.as_deref().map(Vec::as_slice),
+        options.touching.as_deref(),
     );
     // Sorted, so the preferences' rows come in the same order every run (a hash map's order
     // would change the floating-point sums, and with them the result's last bits).

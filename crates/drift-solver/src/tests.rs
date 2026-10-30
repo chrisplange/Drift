@@ -1272,3 +1272,42 @@ fn set_point_refuses_non_finite() {
     assert!(doc.set_point(p, v(0.0, f64::INFINITY)).is_err());
     assert_eq!(doc.point(p).unwrap(), v(1.0, 2.0));
 }
+
+/// #198: a tangency touching at an end as a drag begins (a line's end lying on an arc's end,
+/// not joined) keeps that form through a step whose translated geometry no longer touches
+/// there: lowered by the touching ends found at the start, the solve keeps the arc's end on
+/// the line, where it is the tangent point. Lowered by the step's own geometry it took the
+/// general "distance = radius" form, which only pins the touch point to about √(tol·r), and
+/// left the arc ending off its tangency (which a look at the result then read as unmet).
+#[test]
+fn a_tangency_keeps_the_touching_end_it_began_with() {
+    let mut doc = Document::new();
+    let o = doc.add_point(v(0.0, 0.0));
+    let end = doc.add_point(v(-15.0, 0.0));
+    let line = doc.add_line(o, end).unwrap();
+    let c = doc.add_point(v(-15.0, 8.0));
+    let s = doc.add_point(v(-15.0, 8.0) + DVec2::from_angle(225f64.to_radians()) * 8.0);
+    let arc_end = doc.add_point(v(-15.0, 0.0));
+    let arc = doc.add_arc(c, s, arc_end).unwrap();
+    doc.add_constraint(Constraint::Tangent { a: line, b: arc })
+        .unwrap();
+    assert!(unmet(&doc, 1e-9).is_empty());
+    let touching = crate::touching_ends(&doc, &crate::relations(&doc, None));
+    // The step: the line moved up off the arc's end, then solved with the line held.
+    for p in [o, end] {
+        let at = doc.point(p).unwrap();
+        doc.set_point(p, at + v(0.0, 1.0)).unwrap();
+    }
+    let report = solve(
+        &mut doc,
+        &SolveOptions {
+            dragged: [o, end].iter().flat_map(|&p| Param::point(p)).collect(),
+            touching: Some(std::rc::Rc::new(touching)),
+            ..Default::default()
+        },
+    );
+    assert!(report.converged, "{report:?}");
+    let off = doc.point(arc_end).unwrap().y - 1.0;
+    assert!(off.abs() < 1e-9, "the arc's end is {off} off the line");
+    assert!(unmet(&doc, 1e-8).is_empty(), "{:?}", unmet(&doc, 1e-8));
+}

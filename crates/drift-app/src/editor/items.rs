@@ -50,12 +50,15 @@ impl Editor {
     pub(crate) fn item_look(&self, status_colors: bool, dark: bool, rest: bool) -> ItemLook {
         let mut hidden = self.hidden_handles();
         hidden.extend(self.preview_hidden.iter().copied());
+        // (Looked up once per entity of the drawing: hashed, not searched.)
         let shown_ends = (!self.always_endpoints).then(|| {
             if rest {
                 self.points_of(self.selection.iter().copied())
             } else {
                 self.touched_points()
             }
+            .into_iter()
+            .collect()
         });
         let (picked_walls, hovered_wall) = self.lit_walls();
         let hovered_wall = hovered_wall.filter(|_| !rest);
@@ -67,6 +70,7 @@ impl Editor {
             rest,
             hidden,
             shown_ends,
+            selected: self.selection.iter().copied().collect(),
             picked_walls,
             hovered_wall,
             wall_owners,
@@ -219,7 +223,7 @@ impl Editor {
                     .filter(|o| matches!(o, drift_core::Owner::Wall(_)))
             })
             .map(drift_core::Owner::wall);
-        let emphasis = if self.selection.contains(&id)
+        let emphasis = if look.selected.contains(&id)
             || wall.is_some_and(|w| look.picked_walls.contains(&w))
         {
             Emphasis::Selected
@@ -308,7 +312,9 @@ pub(crate) struct ItemLook {
     dark: bool,
     rest: bool,
     hidden: BTreeSet<EntityId>,
-    shown_ends: Option<BTreeSet<EntityId>>,
+    shown_ends: Option<HashSet<EntityId>>,
+    /// The editor's selection, for the same lookup.
+    selected: HashSet<EntityId>,
     picked_walls: BTreeSet<drift_core::WallId>,
     hovered_wall: Option<drift_core::WallId>,
     wall_owners: Option<std::rc::Rc<drift_core::Owners>>,

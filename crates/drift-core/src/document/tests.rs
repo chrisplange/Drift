@@ -483,3 +483,51 @@ mod reserved_ids {
         assert_eq!(doc.add_point(DVec2::Y), EntityId(10));
     }
 }
+
+#[cfg(test)]
+mod change_log {
+    use super::*;
+
+    /// A copy has a lineage of its own, so it starts an empty log (copying the entries made
+    /// every copy of a big drawing cost a megabyte), yet still answers for changes after it.
+    #[test]
+    fn a_copy_starts_its_own_log_and_still_answers_for_later_changes() {
+        let mut doc = Document::new();
+        let points: Vec<EntityId> = (0..100)
+            .map(|i| doc.add_point(DVec2::new(i as f64, 0.0)))
+            .collect();
+        assert_eq!(doc.changes.entries.len(), 100);
+        let mut copy = doc.clone();
+        assert!(copy.changes.entries.is_empty());
+        assert_ne!(copy.lineage(), doc.lineage());
+        let at = copy.revision();
+        assert_eq!(
+            copy.changes_since(copy.lineage(), at),
+            Some(Changes::default())
+        );
+        assert_eq!(copy.changes_since(doc.lineage(), at), None);
+        copy.set_point(points[7], DVec2::new(7.0, 1.0)).unwrap();
+        let changes = copy.changes_since(copy.lineage(), at).unwrap();
+        assert_eq!(changes.entities, vec![points[7]]);
+        // The original keeps its own log.
+        assert_eq!(
+            doc.changes_since(doc.lineage(), 0).unwrap().entities.len(),
+            100
+        );
+        // Every change is noted before the revision moves on (an edit committed, one rolled
+        // back), so a copy's floor is never past its revision.
+        doc.begin();
+        doc.set_point(points[3], DVec2::new(3.0, 2.0)).unwrap();
+        doc.commit("Move");
+        doc.begin();
+        doc.set_point(points[4], DVec2::new(4.0, 2.0)).unwrap();
+        doc.rollback();
+        let copy = doc.clone();
+        assert!(copy.changes.floor <= copy.revision());
+        let at = copy.revision();
+        assert_eq!(
+            copy.changes_since(copy.lineage(), at),
+            Some(Changes::default())
+        );
+    }
+}

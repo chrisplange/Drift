@@ -153,7 +153,7 @@ impl Clone for Lineage {
 }
 
 /// What changed, revision by revision: entities by id, and whether layers did.
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Default)]
 struct ChangeLog {
     lineage: Lineage,
     /// (revision the change was made at, entity changed or `None` for a layer).
@@ -174,6 +174,20 @@ impl ChangeLog {
             self.floor = self.entries.first().map_or(revision, |e| e.0 + 1);
         }
         self.entries.push((revision, what));
+    }
+}
+
+/// A copy starts a log of its own: it has a new lineage, so no cache can ask it for changes
+/// from before it was made, and copying the entries (up to a megabyte) would only slow
+/// every copy (undo steps, design options) down.
+impl Clone for ChangeLog {
+    fn clone(&self) -> Self {
+        Self {
+            lineage: self.lineage.clone(),
+            entries: Vec::new(),
+            // Every change to an entity or layer is noted, so none came after the last one.
+            floor: self.entries.last().map_or(self.floor, |e| e.0 + 1),
+        }
     }
 }
 

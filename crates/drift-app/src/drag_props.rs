@@ -6,6 +6,12 @@
 //!
 //! The case counts are small so `cargo test` stays quick; each property also has a heavier
 //! run behind `#[ignore]` (`cargo test -p drift-app drag_props -- --ignored`).
+//!
+//! The heavy runs save no seeds (a saved failure would fail every later run first), but
+//! each is replayed exactly by its `PROPTEST_RNG_SEED`. To compare two builds, run every
+//! `*_heavy` property with seeds 1 to 20 on each (release, `--exact`, one at a time) and
+//! compare outcome by outcome. Shrunk cases found that way are pinned in `seeds`, one or two
+//! per cause, ignored until fixed.
 
 use std::collections::{BTreeSet, HashSet};
 
@@ -992,8 +998,11 @@ fn continuous(plan: &Plan, pick: &Pick, offset: DVec2) -> Result<(), TestCaseErr
     );
     for i in 0..run.start.len() {
         let moved = run.start[i].distance(run.end[i]);
+        // (A solve rounds: a drag of nothing may still move a point by an ulp or so, as
+        // `close` allows. Without that floor a shrunk case ends at a drag of exactly 0, and
+        // the failure it stands for is lost.)
         prop_assert!(
-            moved <= 100.0 * offset.length(),
+            moved <= 100.0 * offset.length() + LANDS * run.start[i].length().max(1.0),
             "point {i} moved {moved} for a drag of {}",
             offset.length()
         );
@@ -1963,7 +1972,12 @@ proptest! {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig { cases: HEAVY / 10, ..ProptestConfig::default() })]
+    // (No saved seeds, as for the other heavy runs.)
+    #![proptest_config(ProptestConfig {
+        cases: HEAVY / 10,
+        failure_persistence: None,
+        ..ProptestConfig::default()
+    })]
 
     #[test]
     #[ignore = "heavy: run with --ignored"]
@@ -1990,3 +2004,5 @@ fn face_dimension_holds_dragging_a_wall_end_along_it() {
 fn face_dimension_holds_when_an_end_passes_near_another() {
     face_dimensions_hold(1, 3, DVec2::new(777.1960625046115, 1361.8778343154509), 2).unwrap();
 }
+
+mod seeds;

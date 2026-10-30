@@ -109,6 +109,11 @@ pub struct Editor {
     /// How many entities those solves took in, all told (for the tests: what a frame of a
     /// drag costs).
     pub(crate) drag_solved: usize,
+    /// How many times the drawing's areas were found here, and crossed fills' and walls'
+    /// pochés' areas (for the tests: what an edit or a frame looked for again).
+    pub(crate) regions_found: usize,
+    pub(crate) uncrossed_found: std::cell::Cell<usize>,
+    pub(crate) wall_fills_found: std::cell::Cell<usize>,
     pub history: History,
     pub selection: BTreeSet<EntityId>,
     pub hovered: Option<EntityId>,
@@ -254,6 +259,16 @@ pub struct Editor {
     /// Whether each fill was last found kept whole across curves that cross it, so an edit
     /// that newly divides its area can be told from one that leaves it as it was.
     pub(crate) fill_crossed: std::collections::HashMap<drift_core::FillId, bool>,
+    /// Each crossed fill's area as last found among the curves near it, with what it was
+    /// found from: found again only when those change (an edit elsewhere leaves it).
+    pub(crate) uncrossed_memo: std::cell::RefCell<
+        std::collections::HashMap<drift_core::FillId, crate::fills::UncrossedFound>,
+    >,
+    /// Each wall poché's area as last found, with what it was found from: found again only
+    /// when its outline's curves change (dragging what isn't a wall leaves it).
+    pub(crate) wall_fill_memo: std::cell::RefCell<
+        std::collections::HashMap<drift_core::FillId, crate::walls::WallFillFound>,
+    >,
     /// The curves round the holes of each shape's fill, as last found (sorted): what tells
     /// an edit that cut a hole's outline open from one that moved a hole (#201).
     pub(crate) shape_holes: std::collections::HashMap<drift_core::FillId, Vec<EntityId>>,

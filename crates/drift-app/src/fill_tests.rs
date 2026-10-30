@@ -2381,3 +2381,234 @@ fn a_drag_on_a_big_drawing_leaves_fills_without_an_area_until_it_ends() {
     assert!(close(shapes[&fb].region.area, at_rest[&fb].region.area));
     assert!(ed.commit("Move"));
 }
+
+/// A plate and a second rectangle, each with an area fill, and a fill with no area at all
+/// (nothing round its seed), on a drawing whose areas are found off the edit path.
+fn deferred_with_a_shapeless_fill(ed: &mut Editor) -> (Vec<EntityId>, FillId, FillId, FillId) {
+    ed.areas.defer = Some(true);
+    let (_, a) = plate(ed);
+    let fa = area_fill_at(ed, v(20.0, 10.0));
+    polygon(
+        ed,
+        &[v(100.0, 0.0), v(140.0, 0.0), v(140.0, 20.0), v(100.0, 20.0)],
+    );
+    let fb = area_fill_at(ed, v(110.0, 10.0));
+    let mut gone = drift_core::Fill::new(Vec::new(), v(-50.0, -50.0), drift_core::FillKind::Solid);
+    ed.fill_style.apply(&mut gone);
+    ed.doc.begin();
+    let gone = ed.doc.add_fill(gone);
+    assert!(ed.commit_import("Fill"));
+    ed.settle_areas();
+    (a, fa, fb, gone)
+}
+
+/// #198 green baseline: an edit whose fills follow once its areas are found shows the fills'
+/// last shapes meanwhile, though one fill of the drawing has no shape at all (it isn't new:
+/// it had none before either). It used to wait for the areas at the first look.
+#[test]
+fn a_deferred_edit_shows_the_last_shapes_though_a_fill_has_none() {
+    let mut ed = Editor::new(Document::new());
+    let (a, fa, fb, gone) = deferred_with_a_shapeless_fill(&mut ed);
+    let at_rest = ed.fill_shapes();
+    assert!(!at_rest.contains_key(&gone), "it has no area");
+    ed.selection = a.iter().copied().collect();
+    assert_eq!(ed.nudge(v(1.0, 0.0)), Some(true));
+    assert!(
+        ed.areas.pending.is_some(),
+        "the edit's areas are found off its path"
+    );
+    let shapes = ed.fill_shapes();
+    assert!(
+        ed.areas.pending.is_some(),
+        "the fills' last shapes were shown only after waiting for the areas"
+    );
+    assert!(close(shapes[&fa].region.area, at_rest[&fa].region.area));
+    assert!(
+        shapes[&fa]
+            .region
+            .centroid
+            .distance(at_rest[&fa].region.centroid)
+            < 1e-9
+    );
+    assert!(!shapes.contains_key(&gone));
+    // Once found, the moved plate's fill follows it.
+    ed.settle_areas();
+    let followed = ed.fill_shapes();
+    assert!(
+        followed[&fa]
+            .region
+            .centroid
+            .distance(at_rest[&fa].region.centroid + v(1.0, 0.0))
+            < 1e-9
+    );
+    assert!(close(followed[&fb].region.area, at_rest[&fb].region.area));
+}
+
+/// #198 green baseline: on a drawing whose areas are found off the edit path, a drag that
+/// reshapes a fill's outline finds no areas while it goes: the fill keeps the shape it had
+/// as the drag began, and follows once the drag is let go and the areas are in.
+#[test]
+fn a_drag_on_a_big_drawing_keeps_reshaped_fills_as_they_began() {
+    let mut ed = Editor::new(Document::new());
+    let (a, fa, fb, _) = deferred_with_a_shapeless_fill(&mut ed);
+    let at_rest = ed.fill_shapes();
+    // The plate's right side, alone: the plate is stretched, not moved.
+    let side = a[1];
+    let dragged: Vec<drift_solver::Param> = ed
+        .doc
+        .defining_points([side])
+        .into_iter()
+        .flat_map(drift_solver::Param::point)
+        .collect();
+    let found = ed.regions_found;
+    ed.doc.begin();
+    for k in 1..=3 {
+        assert!(ed.drag(&[side], v(2.0, 0.0), &dragged));
+        let shapes = ed.fill_shapes();
+        assert_eq!(
+            ed.regions_found, found,
+            "step {k} found the drawing's areas"
+        );
+        assert!(!shapes[&fa].lost);
+        assert!(close(shapes[&fa].region.area, at_rest[&fa].region.area));
+        assert!(close(shapes[&fb].region.area, at_rest[&fb].region.area));
+    }
+    assert!(ed.commit("Move"));
+    // Shown as they were until the areas are in, then followed: the plate is 6 wider.
+    assert!(close(
+        ed.fill_shapes()[&fa].region.area,
+        at_rest[&fa].region.area
+    ));
+    ed.settle_areas();
+    assert!(close(ed.fill_shapes()[&fa].region.area, 46.0 * 20.0));
+}
+
+/// A plate with an area fill and a line drawn across it: the fill is kept whole across the
+/// line (found among its outline and the curves that don't cross it), and a line far off.
+fn crossed_plate(ed: &mut Editor) -> (FillId, Vec<EntityId>) {
+    plate(ed);
+    let f = area_fill_at(ed, v(10.0, 10.0));
+    ed.doc.begin();
+    let mut line = |a: DVec2, b: DVec2| {
+        let (p, q) = (ed.doc.add_point(a), ed.doc.add_point(b));
+        ed.doc.add_line(p, q).unwrap();
+        vec![p, q]
+    };
+    line(v(20.0, -10.0), v(20.0, 30.0));
+    let far = line(v(500.0, 0.0), v(520.0, 0.0));
+    assert!(ed.commit("Lines"));
+    let shapes = ed.fill_shapes();
+    assert!(shapes[&f].crossed, "the line crosses it");
+    assert!(close(shapes[&f].region.area, 800.0));
+    (f, far)
+}
+
+/// #198 green baseline: a fill kept whole across a curve isn't found again after an edit
+/// that leaves everything near it as it was (a crossed fill's area was found afresh for
+/// every crossed fill on every edit, 110-150 ms on a big drawing).
+#[test]
+fn a_crossed_fill_is_not_found_again_after_an_edit_elsewhere() {
+    let mut ed = Editor::new(Document::new());
+    let (f, far) = crossed_plate(&mut ed);
+    let before = ed.fill_shapes()[&f].clone();
+    let found = ed.uncrossed_found.get();
+    ed.doc.begin();
+    let at = ed.doc.point(far[0]).unwrap();
+    ed.doc.set_point(far[0], at + v(0.0, 5.0)).unwrap();
+    assert!(ed.commit("Move"));
+    let after = ed.fill_shapes()[&f].clone();
+    assert_eq!(
+        ed.uncrossed_found.get(),
+        found,
+        "found again for an edit far off"
+    );
+    // The same as found afresh.
+    ed.uncrossed_memo.borrow_mut().clear();
+    ed.fill_shapes = None;
+    let fresh = ed.fill_shapes()[&f].clone();
+    assert_eq!(ed.uncrossed_found.get(), found + 1);
+    for shape in [&before, &after] {
+        assert_eq!(format!("{:?}", shape.region), format!("{:?}", fresh.region));
+        assert_eq!(shape.curves, fresh.curves);
+        assert!(shape.crossed && !shape.lost);
+    }
+    // An edit near it is looked at again.
+    ed.doc.begin();
+    let p = ed.doc.add_point(v(5.0, 5.0));
+    let q = ed.doc.add_point(v(8.0, 5.0));
+    ed.doc.add_line(p, q).unwrap();
+    assert!(ed.commit("Line"));
+    let _ = ed.fill_shapes();
+    assert_eq!(ed.uncrossed_found.get(), found + 2);
+}
+
+/// #198 green baseline: a wall poché's area isn't found again while dragging what isn't a
+/// wall (a drag frame on a big floor rebuilt the whole cluster's outline every frame), but
+/// is when a wall moves.
+#[test]
+fn a_wall_poche_is_not_found_again_dragging_something_else() {
+    let mut ed = Editor::new(Document::new());
+    ed.auto_relations = false;
+    ed.doc.begin();
+    let corners: Vec<EntityId> = [
+        v(0.0, 0.0),
+        v(4000.0, 0.0),
+        v(4000.0, 3000.0),
+        v(0.0, 3000.0),
+    ]
+    .iter()
+    .map(|p| ed.doc.add_point(*p))
+    .collect();
+    let curves: Vec<EntityId> = (0..4)
+        .map(|i| {
+            let c = ed.doc.add_line(corners[i], corners[(i + 1) % 4]).unwrap();
+            ed.doc.set_style(c, drift_core::LineKind::Construction);
+            c
+        })
+        .collect();
+    let path = ed
+        .doc
+        .add_path(drift_core::Path {
+            curves,
+            closed: true,
+        })
+        .unwrap();
+    ed.doc
+        .add_wall(drift_core::Wall::new(
+            path,
+            200.0,
+            drift_core::LayerId::DEFAULT,
+        ))
+        .unwrap();
+    let (p, q) = (
+        ed.doc.add_point(v(1000.0, 1000.0)),
+        ed.doc.add_point(v(1500.0, 1000.0)),
+    );
+    ed.doc.add_line(p, q).unwrap();
+    assert!(ed.commit("Walls"));
+    let poche = *ed.wall_owners().fills.keys().next().expect("a poché");
+    let at_rest = ed.fill_shapes()[&poche].clone();
+    let found = ed.wall_fills_found.get();
+    ed.doc.begin();
+    for k in 1..=3 {
+        assert!(ed.drag(&[q], v(10.0 * f64::from(k), 0.0), &[]));
+        let shapes = ed.fill_shapes();
+        assert_eq!(
+            ed.wall_fills_found.get(),
+            found,
+            "step {k} found the poché again"
+        );
+        assert_eq!(
+            format!("{:?}", shapes[&poche].region),
+            format!("{:?}", at_rest.region)
+        );
+    }
+    assert!(ed.commit("Move"));
+    // A wall's corner moved: found again.
+    ed.doc.begin();
+    assert!(ed.drag(&[corners[2]], v(100.0, 0.0), &[]));
+    let moved = ed.fill_shapes()[&poche].clone();
+    assert!(ed.wall_fills_found.get() > found);
+    assert!(moved.region.area > at_rest.region.area);
+    assert!(ed.commit("Move"));
+}

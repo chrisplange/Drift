@@ -17,6 +17,7 @@ impl Editor {
         }
         let input = self.areas_input(&key);
         let prior = self.regions.as_ref().map(|(_, r)| r.clone());
+        self.regions_found += 1;
         let check = check_on().then(|| input.find(&[]));
         let (ids, regions) = self.areas.found(input, prior.as_ref());
         if let Some((fresh_ids, fresh)) = check {

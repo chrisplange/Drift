@@ -91,10 +91,8 @@ impl Editor {
                         moves: TempMove::End { point: b, dir: u },
                         reference: None,
                     });
-                    for side in [1.0, -1.0] {
-                        if let Some(other) = self.nearest_parallel(id, side) {
-                            out.extend(self.wall_dim(id, other));
-                        }
+                    for other in self.nearest_parallels(id).into_iter().flatten() {
+                        out.extend(self.wall_dim(id, other));
                     }
                 }
             }
@@ -139,41 +137,46 @@ impl Editor {
         })
     }
 
-    /// The nearest line parallel to `line` on one `side` of it (+1 left of its direction,
-    /// −1 right) that runs alongside it (overlapping it, measured along it).
-    fn nearest_parallel(&self, line: EntityId, side: f64) -> Option<EntityId> {
-        let (a, b, pa, pb) = self.line_ends(line)?;
+    /// The nearest line parallel to `line` on each side of it (left of its direction, then
+    /// right) that runs alongside it (overlapping it, measured along it). One pass over the
+    /// drawing, looking at lines only (a big drawing has tens of thousands of entities).
+    fn nearest_parallels(&self, line: EntityId) -> [Option<EntityId>; 2] {
+        let Some((a, b, pa, pb)) = self.line_ends(line) else {
+            return [None; 2];
+        };
         let len = pa.distance(pb);
         let u = (pb - pa) / len;
         let n = u.perp();
         let tol = 1e-9 * (1.0 + len);
-        let visible = |id: EntityId| {
-            self.doc.get(id).is_some_and(|e| {
-                e.style != LineKind::Construction
-                    && self.doc.layer(e.layer).is_none_or(|l| l.visible)
-            })
+        let visible = |e: &drift_core::Entity| {
+            e.style != LineKind::Construction && self.doc.layer(e.layer).is_none_or(|l| l.visible)
         };
-        self.doc
-            .iter()
-            .filter(|(other, _)| *other != line && visible(*other))
-            .filter_map(|(other, e)| {
-                let EntityKind::Line { a: oa, b: ob } = e.kind else {
-                    return None;
-                };
-                if [oa, ob].iter().any(|p| *p == a || *p == b) {
-                    return None;
-                }
-                let (qa, qb) = (self.doc.point(oa).ok()?, self.doc.point(ob).ok()?);
-                if !parallel(u, (qb - qa).try_normalize()?) {
-                    return None;
-                }
-                let s = (qa - pa).dot(n);
-                let (ta, tb) = ((qa - pa).dot(u), (qb - pa).dot(u));
-                let overlaps = ta.max(tb) > tol && ta.min(tb) < len - tol;
-                (overlaps && s * side > tol).then_some((other, s.abs()))
-            })
-            .min_by(|x, y| x.1.total_cmp(&y.1))
-            .map(|(other, _)| other)
+        let mut best: [Option<(EntityId, f64)>; 2] = [None; 2];
+        for (other, e) in self.doc.iter() {
+            let EntityKind::Line { a: oa, b: ob } = e.kind else {
+                continue;
+            };
+            if other == line || [oa, ob].iter().any(|p| *p == a || *p == b) {
+                continue;
+            }
+            let (Ok(qa), Ok(qb)) = (self.doc.point(oa), self.doc.point(ob)) else {
+                continue;
+            };
+            if !(qb - qa).try_normalize().is_some_and(|d| parallel(u, d)) {
+                continue;
+            }
+            let s = (qa - pa).dot(n);
+            let (ta, tb) = ((qa - pa).dot(u), (qb - pa).dot(u));
+            if !(ta.max(tb) > tol && ta.min(tb) < len - tol) || s.abs() <= tol || !visible(e) {
+                continue;
+            }
+            let k = usize::from(s < 0.0);
+            // (Ties go to the first in id order, as `min_by` gave.)
+            if best[k].is_none_or(|(_, d)| s.abs() < d) {
+                best[k] = Some((other, s.abs()));
+            }
+        }
+        best.map(|b| b.map(|(id, _)| id))
     }
 
     /// The distance from `line` to a parallel `other`: from `other`'s middle if that is

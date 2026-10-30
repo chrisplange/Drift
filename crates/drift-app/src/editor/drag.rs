@@ -85,6 +85,8 @@ struct DragPart {
     relations: Rc<drift_solver::Relations>,
     constraints: Vec<(ConstraintId, Constraint)>,
     lowered_lines: Vec<EntityId>,
+    /// Where its tangencies touched as the drag began: every step lowers them so.
+    touching: Rc<drift_solver::TouchingEnds>,
 }
 
 /// The parts of a drag that go exactly where they are moved ([`DragPart::moves_whole`]), as
@@ -120,6 +122,8 @@ struct DragFrame<'a> {
     relations: &'a Rc<drift_solver::Relations>,
     constraints: &'a [(ConstraintId, Constraint)],
     lowered_lines: &'a [EntityId],
+    /// Where the scope's tangencies touched as the drag began ([`DragPart::touching`]).
+    touching: &'a Rc<drift_solver::TouchingEnds>,
     /// Solves this frame may still run.
     solves_left: u32,
     /// The most its solves have wandered (see `SolveReport::wandered`).
@@ -227,6 +231,7 @@ impl Editor {
                 relations: &part.relations,
                 constraints: &part.constraints,
                 lowered_lines: &part.lowered_lines,
+                touching: &part.touching,
                 solves_left: DRAG_SOLVES,
                 wandered: 0,
                 pushed: false,
@@ -321,6 +326,7 @@ impl Editor {
                 relations: Rc::new(Vec::new()),
                 constraints: Vec::new(),
                 lowered_lines: Vec::new(),
+                touching: Rc::default(),
             })
             .collect();
         for id in &reasons {
@@ -379,6 +385,8 @@ impl Editor {
             }
         }
         for (part, r) in out.iter_mut().zip(relations) {
+            // (The drawing is as the drag found it: where the relations hold.)
+            part.touching = Rc::new(drift_solver::touching_ends(&self.doc, &r));
             part.relations = Rc::new(r);
         }
         for (id, c) in self.doc.constraints() {
@@ -759,6 +767,7 @@ impl Editor {
                 lengths: before.lengths.clone(),
                 lowering: frame.lowering.clone(),
                 relations: Some(frame.relations.clone()),
+                touching: Some(frame.touching.clone()),
                 ..Default::default()
             },
         );

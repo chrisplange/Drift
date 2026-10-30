@@ -472,14 +472,15 @@ pub(super) fn layers(s: &mut Session, a: &Value) -> Res {
         }
         if let Some(assign) = a.get("assign") {
             let id = args::layer(&ed.doc, assign.get("layer").ok_or("assign needs `layer`")?)?;
-            for e in args::entities_at(&ed.doc, assign, "ids")? {
-                // A curve takes its points with it.
-                let mut all: Vec<EntityId> = vec![e];
-                all.extend(ed.doc.defining_points([e]));
-                for x in all {
-                    ed.doc.set_entity_layer(x, id).map_err(|e| e.to_string())?;
-                }
-            }
+            // A curve takes its points with it, a shape whose whole outline is named its
+            // fill (#266).
+            let what = crate::editor::LayerMove {
+                entities: args::entities_at(&ed.doc, assign, "ids")?
+                    .into_iter()
+                    .collect(),
+                ..Default::default()
+            };
+            ed.put_on_layer(id, &what).map_err(|e| e.to_string())?;
         }
         if let Some(Value::Array(list)) = a.get("delete") {
             for v in list {

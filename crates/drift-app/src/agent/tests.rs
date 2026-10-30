@@ -241,6 +241,36 @@ fn modify_tools_work_through_the_session() {
     assert_eq!(arcs["count"], 1);
 }
 
+/// Assigning a filled shape's outline to a layer takes its fill along (#266).
+#[test]
+fn layers_assign_takes_a_shapes_fill() {
+    let mut s = Session::new();
+    // A filled rectangle, as the drawing tools make one.
+    let ed = &mut s.editor;
+    ed.fill_new_shapes = true;
+    ed.doc.begin();
+    let corners = [(0.0, 0.0), (100.0, 0.0), (100.0, 50.0), (0.0, 50.0)];
+    let p: Vec<_> = corners
+        .iter()
+        .map(|(x, y)| ed.doc.add_point(drift_core::DVec2::new(*x, *y)))
+        .collect();
+    let sides: Vec<_> = (0..4)
+        .map(|i| ed.doc.add_line(p[i], p[(i + 1) % 4]).unwrap())
+        .collect();
+    let fill = ed.fill_new_shape(&sides).expect("a shape's fill");
+    ed.commit("Rectangle");
+    let ids: Vec<Value> = sides.iter().map(|c| json!(c.to_string())).collect();
+    let l = ok(&mut s, "layers", json!({ "create": [{ "name": "Walls" }] }));
+    let walls = l["created"][0].as_str().unwrap().to_owned();
+    ok(
+        &mut s,
+        "layers",
+        json!({ "assign": { "layer": "Walls", "ids": ids } }),
+    );
+    let fill = s.editor.doc.fill(fill).unwrap();
+    assert_eq!(fill.layer.to_string(), walls);
+}
+
 #[test]
 fn layers_fills_and_text() {
     let mut s = Session::new();

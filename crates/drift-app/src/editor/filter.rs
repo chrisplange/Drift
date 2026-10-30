@@ -14,7 +14,8 @@ pub enum PickKind {
     Fills,
     /// Empty closed areas (to measure or fill).
     Areas,
-    /// Copies of blocks, and groups as a whole.
+    /// Copies of blocks, and groups (a group is always picked whole; this lets one be
+    /// picked with Edges off).
     Blocks,
     /// Sketch text.
     Text,
@@ -52,7 +53,7 @@ impl PickKind {
             PickKind::Edges => "lines, arcs, circles, ellipses and curves",
             PickKind::Fills => "solid fills and hatches",
             PickKind::Areas => "empty closed areas (to measure or fill)",
-            PickKind::Blocks => "copies of blocks, and groups as a whole",
+            PickKind::Blocks => "copies of blocks, and groups (even with Edges off)",
             PickKind::Text => "sketch text",
             PickKind::Annotations => "dimensions, notes, callouts and marks",
         }

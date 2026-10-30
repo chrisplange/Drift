@@ -344,23 +344,6 @@ impl Editor {
         self.commit("Set current layer");
     }
 
-    /// The selected entities with their defining points.
-    fn selection_with_points(&self) -> Vec<EntityId> {
-        let mut ids = self.doc.defining_points(self.selection.iter().copied());
-        ids.extend(self.selection.iter().copied());
-        ids.into_iter().collect()
-    }
-
-    /// Move the selection (with its points) to a layer.
-    pub fn move_selection_to_layer(&mut self, layer: LayerId) {
-        let ids = self.selection_with_points();
-        self.doc.begin();
-        for id in ids {
-            let _ = self.doc.set_entity_layer(id, layer);
-        }
-        self.commit("Move to layer");
-    }
-
     /// Select every curve and standalone point on a layer.
     pub fn select_layer(&mut self, layer: LayerId) {
         let referenced = self.doc.referenced_points();

@@ -3216,6 +3216,47 @@ fn tab_selects_a_chain_of_connected_curves() {
     assert_eq!(ed.select_chain(), 1);
 }
 
+/// #267: a Tab chain stays on the layer of the curve it starts from, even where curves on
+/// other layers share its end points, and there is none on a hidden layer.
+#[test]
+fn tab_chain_stays_on_its_layer() {
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    let p: Vec<EntityId> = [v(0.0, 0.0), v(10.0, 0.0), v(20.0, 0.0), v(30.0, 0.0)]
+        .iter()
+        .map(|at| ed.doc.add_point(*at))
+        .collect();
+    let lines: Vec<EntityId> = (0..3)
+        .map(|i| ed.doc.add_line(p[i], p[i + 1]).unwrap())
+        .collect();
+    ed.commit("Three lines");
+    let all: BTreeSet<EntityId> = lines.iter().copied().collect();
+    assert_eq!(ed.chain_of(lines[0]), all, "one layer: the whole run");
+    // The middle one on another layer: each end is a chain of its own.
+    let other = ed.add_layer("Other");
+    ed.selection = [lines[1]].into();
+    ed.move_selection_to_layer(other);
+    ed.selection.clear();
+    assert_eq!(ed.chain_of(lines[0]), [lines[0]].into());
+    assert_eq!(ed.chain_of(lines[1]), [lines[1]].into());
+    ed.hovered = Some(lines[0]);
+    assert_eq!(ed.preview_chain(), Some(0), "no chain to preview");
+    // Tab with nothing under the pointer: each seed's chain on its own layer.
+    ed.hovered = None;
+    ed.selection = [lines[0], lines[2]].into();
+    assert_eq!(ed.select_chain(), 2);
+    assert_eq!(ed.selection, [lines[0], lines[2]].into());
+    // Back on one layer, the run chains again; on a hidden layer, nothing does.
+    ed.selection = [lines[1]].into();
+    let first = ed.doc.get(lines[0]).unwrap().layer;
+    ed.move_selection_to_layer(first);
+    assert_eq!(ed.chain_of(lines[2]), all);
+    let mut hidden = ed.doc.layer(first).unwrap().clone();
+    hidden.visible = false;
+    ed.update_layer(first, hidden);
+    assert!(ed.chain_of(lines[0]).is_empty());
+}
+
 #[test]
 fn drawing_inside_an_open_group_adds_to_it() {
     let (mut ed, _) = rotated_rectangle_fixture();
@@ -4112,15 +4153,26 @@ fn selection_filters_pick_only_edges_or_only_points() {
     assert!(ed.selection.is_empty());
     click(&mut ed, &mut tool, v(10.0, 6.0));
     assert_eq!(ed.selection, [c[2]].into());
-    // A grouped rectangle: with Blocks & groups off, a click takes the one line; with it on,
-    // the whole group, as far as the filter allows.
+    // A grouped rectangle: a click takes the whole group, with Blocks & groups off too
+    // (#261), and so does a box round one of its lines.
     ed.selection = l.iter().copied().collect();
     ed.pick_filter = PickFilter::ALL;
     ed.make_group();
     ed.selection.clear();
     ed.pick_filter = PickFilter::only(crate::editor::PickKind::Edges);
     click(&mut ed, &mut tool, v(5.0, 0.0));
-    assert_eq!(ed.selection, [l[0]].into());
+    assert_eq!(ed.selection, l.iter().copied().collect());
+    ed.selection.clear();
+    let start = ptr(&ed, &tool, v(-1.0, -1.0));
+    tool.handle(Input::DragStart(start, m), &mut ed);
+    let end = ptr(&ed, &tool, v(11.0, 1.0));
+    tool.handle(Input::Drag(end), &mut ed);
+    tool.handle(Input::DragEnd(end, m), &mut ed);
+    assert_eq!(
+        ed.selection,
+        l.iter().copied().collect(),
+        "a box round one line"
+    );
     ed.pick_filter = ed.pick_filter.with(crate::editor::PickKind::Blocks, true);
     click(&mut ed, &mut tool, v(5.0, 0.0));
     assert_eq!(ed.selection, l.iter().copied().collect());
@@ -4129,6 +4181,63 @@ fn selection_filters_pick_only_edges_or_only_points() {
     ed.selection.clear();
     click(&mut ed, &mut tool, v(5.0, 0.0));
     assert_eq!(ed.selection, l.iter().copied().collect());
+}
+
+/// #261: a click on the fill of a shape in a group picks the whole group with the filter's
+/// Blocks & groups off too.
+#[test]
+fn a_grouped_shapes_fill_picks_the_group_with_blocks_off() {
+    use crate::editor::{PickFilter, PickKind};
+    let mut ed = Editor::default();
+    ed.fill_new_shapes = true;
+    ed.doc.begin();
+    let c = [v(0.0, 0.0), v(10.0, 0.0), v(10.0, 6.0), v(0.0, 6.0)].map(|p| ed.doc.add_point(p));
+    let l = [0, 1, 2, 3].map(|i| ed.doc.add_line(c[i], c[(i + 1) % 4]).unwrap());
+    let fill = ed.fill_new_shape(&l).unwrap();
+    // A loose line beside it, in the same group.
+    let a = ed.doc.add_point(v(20.0, 0.0));
+    let b = ed.doc.add_point(v(30.0, 0.0));
+    let loose = ed.doc.add_line(a, b).unwrap();
+    ed.commit("Setup");
+    ed.selection = l.iter().copied().chain([loose]).collect();
+    ed.make_group().unwrap();
+    ed.selection.clear();
+    ed.selected_fills.clear();
+    ed.pick_filter = PickFilter::ALL.with(PickKind::Blocks, false);
+    let mut tool = SelectTool::default();
+    click(&mut ed, &mut tool, v(5.0, 3.0));
+    assert!(ed.selection.contains(&loose), "{:?}", ed.selection);
+    assert!(l.iter().all(|s| ed.selection.contains(s)));
+    assert!(ed.selected_fills.contains(&fill));
+}
+
+/// #261: a wall in a group picks the whole group with the filter's Blocks & groups off too.
+#[test]
+fn a_grouped_wall_picks_the_group_with_blocks_off() {
+    use crate::editor::{PickFilter, PickKind};
+    let mut ed = Editor::default();
+    ed.doc.begin();
+    let p = [
+        v(0.0, 0.0),
+        v(4000.0, 0.0),
+        v(0.0, 2000.0),
+        v(1000.0, 2000.0),
+    ]
+    .map(|at| ed.doc.add_point(at));
+    let centre = ed.doc.add_line(p[0], p[1]).unwrap();
+    let loose = ed.doc.add_line(p[2], p[3]).unwrap();
+    ed.commit("Lines");
+    let w = ed.walls_from_curves(&[centre]).unwrap()[0];
+    ed.selection = ed.wall_curves(w).into_iter().chain([loose]).collect();
+    ed.make_group().unwrap();
+    ed.selection.clear();
+    ed.pick_filter = PickFilter::ALL.with(PickKind::Blocks, false);
+    assert!(ed.wall_pick_set(w).contains(&loose));
+    let face = *ed.doc.wall(w).unwrap().made.curves.values().next().unwrap();
+    assert!(
+        ed.pick_set(face).contains(&loose),
+        "a face picks the wall's group"
+    );
 }
 
 #[test]

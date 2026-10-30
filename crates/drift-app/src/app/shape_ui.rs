@@ -4,43 +4,14 @@
 
 use std::collections::BTreeSet;
 
-use drift_core::{EntityId, FillId, LineType};
+use drift_core::{EntityId, LineType};
 
 use crate::app::fill_ui::{FillEdit, fill_style_editor_or_none};
+use crate::editor::PickedShapes;
 use crate::fills::FillStyle;
 use crate::*;
 
-/// Filled shapes picked as objects: their fills, and the curves of their outlines.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub(crate) struct PickedShapes {
-    pub fills: Vec<FillId>,
-    pub curves: Vec<EntityId>,
-}
-
 impl DriftApp {
-    /// The filled shapes in the selection: picked fills of shapes, and shapes whose whole
-    /// outline is picked (a group of them, say).
-    pub(crate) fn shapes_in_selection(&self) -> PickedShapes {
-        let ed = &self.editor;
-        let mut fills = BTreeSet::new();
-        let mut curves = BTreeSet::new();
-        for (id, _) in ed.doc.fills() {
-            let Some(outline) = ed.shape_outline(id) else {
-                continue;
-            };
-            let picked = ed.selected_fills.contains(&id)
-                || (!outline.is_empty() && outline.iter().all(|c| ed.selection.contains(c)));
-            if picked {
-                fills.insert(id);
-                curves.extend(outline);
-            }
-        }
-        PickedShapes {
-            fills: fills.into_iter().collect(),
-            curves: curves.into_iter().collect(),
-        }
-    }
-
     /// The picked filled shapes when they are all that is picked (and nothing but shapes'
     /// fills and outlines): the Inspector shows them as objects.
     pub(crate) fn picked_shapes(&self) -> Option<PickedShapes> {
@@ -49,7 +20,7 @@ impl DriftApp {
             return None;
         }
         // Another fill picked (an area fill) keeps the fill's inspector.
-        let shapes = self.shapes_in_selection();
+        let shapes = self.editor.shapes_in_selection();
         if shapes.fills.is_empty()
             || ed.selected_fills.iter().any(|f| !shapes.fills.contains(f))
             || !ed.selected_instances.is_empty()
@@ -265,24 +236,10 @@ impl DriftApp {
                     }
                 }
             });
-        let Some(layer) = target else { return };
-        let ed = &mut self.editor;
-        let mut ids: BTreeSet<EntityId> = shapes.curves.iter().copied().collect();
-        for c in &shapes.curves {
-            if let Some(e) = ed.doc.get(*c) {
-                ids.extend(e.kind.points());
-            }
+        // What is picked, as the right-click menu moves it (#266): a shape picked whole
+        // takes its fill, a fill picked on its own goes alone.
+        if let Some(layer) = target {
+            self.editor.move_selection_to_layer(layer);
         }
-        ed.doc.begin();
-        for id in ids {
-            let _ = ed.doc.set_entity_layer(id, layer);
-        }
-        for f in &shapes.fills {
-            if let Some(mut fill) = ed.doc.fill(*f).cloned() {
-                fill.layer = layer;
-                ed.doc.set_fill(*f, fill);
-            }
-        }
-        ed.commit("Move to layer");
     }
 }

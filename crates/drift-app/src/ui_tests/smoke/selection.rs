@@ -325,3 +325,29 @@ fn smoke_selection_one_circle_has_a_box_and_one_line_none() {
         .unwrap();
     assert!((value - radius(&h, c)).abs() < 1e-6, "{value}");
 }
+
+/// #262: with something picked, the right-click menu offers Zoom to selection, and it fits
+/// the view to what is picked.
+#[test]
+fn smoke_selection_right_click_zooms_to_the_selection() {
+    let Some(mut h) = harness() else { return };
+    view(&mut h, DVec2::new(-400.0, -300.0), DVec2::new(400.0, 300.0));
+    let (a, b) = (DVec2::new(0.0, 0.0), DVec2::new(100.0, 0.0));
+    let l = line(&mut h, a, b);
+    let across = |h: &Harness<'_, DriftApp>| (screen(h, b) - screen(h, a)).length();
+    let before = across(&h);
+    let on = screen(&h, DVec2::new(30.0, 0.0));
+    h.hover_at(on);
+    h.run();
+    right_click(&mut h, on);
+    assert_eq!(h.state().editor.selection, [l].into(), "the line picked");
+    h.get_by_label_contains("Zoom to selection").click();
+    for _ in 0..3 {
+        h.run();
+    }
+    let after = across(&h);
+    assert!(
+        after > before * 3.0,
+        "zoomed in on the line: {before} → {after}"
+    );
+}

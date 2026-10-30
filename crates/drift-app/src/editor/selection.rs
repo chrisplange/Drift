@@ -251,18 +251,29 @@ impl Editor {
 
     /// The curves joined end to end with `start` (lines, arcs, elliptical arcs and pen curves
     /// meeting at shared end points; circles and ellipses stand alone), as Revit's Tab
-    /// selects a chain of walls.
+    /// selects a chain of walls. The chain stays on the start's layer (#267), and there is
+    /// none on a hidden layer.
     pub fn chain_of(&self, start: EntityId) -> BTreeSet<EntityId> {
+        let mut chain = BTreeSet::new();
+        let Some(layer) = self
+            .doc
+            .get(start)
+            .filter(|e| !e.kind.is_point())
+            .map(|e| e.layer)
+        else {
+            return chain;
+        };
+        if self.doc.layer(layer).is_some_and(|l| !l.visible) {
+            return chain;
+        }
+        // A curve's end points, if it is on the chain's layer.
         let ends = |id: EntityId| -> Vec<EntityId> {
             self.doc
                 .get(id)
+                .filter(|e| e.layer == layer)
                 .and_then(|e| e.kind.ends())
                 .map_or_else(Vec::new, Vec::from)
         };
-        let mut chain = BTreeSet::new();
-        if self.doc.get(start).is_none_or(|e| e.kind.is_point()) {
-            return chain;
-        }
         let mut queue = vec![start];
         chain.insert(start);
         while let Some(c) = queue.pop() {
@@ -374,8 +385,8 @@ impl Editor {
         }
     }
 
-    /// What picking `id` selects: its whole group, unless that group is open (or the filter
-    /// leaves out Blocks & groups: then the one curve).
+    /// What picking `id` selects: its whole group, unless that group is open (whatever the
+    /// selection filter says: a group is picked whole, #261).
     pub fn pick_set(&self, id: EntityId) -> BTreeSet<EntityId> {
         // An opening's symbol or jamb picks the opening.
         if let Some(o) = self.opening_of(id) {
@@ -395,7 +406,7 @@ impl Editor {
             }
         }
         let set: BTreeSet<EntityId> = match self.doc.group_of(id) {
-            Some(g) if self.open_group != Some(g) && self.pick_filter.blocks() => self
+            Some(g) if self.open_group != Some(g) => self
                 .doc
                 .group(g)
                 .map_or_else(|| [id].into(), |g| g.members.clone()),

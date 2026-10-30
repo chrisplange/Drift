@@ -695,6 +695,22 @@ fn dwgs_that_are_broken_fail_cleanly() {
     }
 }
 
+/// A damaged 2000-format file that made acadrust 0.6.5 panic in its handle reader (#287),
+/// found by `mutated_dwg_never_panics`. It is `dwg(DxfVersion::AC1015)` as acadrust 0.6.5
+/// wrote it, after `mutate` with the edits `(427592379494809337, 185, 147),
+/// (440162003467014, 203, 51), (2086780626104455, 77, 219)`: synthetic, nothing else in it.
+/// Kept as bytes because newer acadrust writes that drawing differently.
+#[cfg(feature = "dwg")]
+#[test]
+fn dwg_that_panicked_acadrust_fails_cleanly() {
+    let bytes = include_bytes!("fixtures/dwg-287.dwg").to_vec();
+    survives("dwg #287", move || {
+        if let Ok(import) = drift_io::dwg_import::read(&bytes, 1.0) {
+            add(&import);
+        }
+    });
+}
+
 /// A small valid DWG, saved by acadrust (2018 and 2000 formats).
 #[cfg(feature = "dwg")]
 fn dwg(version: acadrust::types::DxfVersion) -> Vec<u8> {

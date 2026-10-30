@@ -51,15 +51,19 @@ pub fn to_dxf(bytes: &[u8]) -> Result<(String, bool), String> {
             "this DWG version ({code}) isn't one Drift can read"
         ));
     };
-    let strict = DwgReader::from_stream(Cursor::new(bytes)).read();
+    let strict = unwinding(|| DwgReader::from_stream(Cursor::new(bytes)).read())
+        .map_err(|panic| format!("the reader failed: {panic}"))
+        .and_then(|read| read.map_err(|e| e.to_string()));
     let (doc, partial) = match strict {
         Ok(doc) => (doc, false),
         Err(first) => {
-            let mut reader =
-                DwgReader::from_stream_with_options(Cursor::new(bytes), DwgReadOptions::failsafe());
-            match reader.read() {
+            let lenient = unwinding(|| {
+                DwgReader::from_stream_with_options(Cursor::new(bytes), DwgReadOptions::failsafe())
+                    .read()
+            });
+            match lenient {
                 // Something must have survived for the lenient read to count.
-                Ok(doc) if doc.entities().next().is_some() => (doc, true),
+                Ok(Ok(doc)) if doc.entities().next().is_some() => (doc, true),
                 _ => {
                     return Err(format!(
                         "could not read this AutoCAD {release} drawing: {first}"
@@ -68,10 +72,24 @@ pub fn to_dxf(bytes: &[u8]) -> Result<(String, bool), String> {
             }
         }
     };
-    let dxf = DxfWriter::new(&doc)
-        .write_to_vec()
+    let dxf = unwinding(|| DxfWriter::new(&doc).write_to_vec())
+        .map_err(|panic| format!("the writer failed: {panic}"))
+        .and_then(|written| written.map_err(|e| e.to_string()))
         .map_err(|e| format!("could not convert this AutoCAD {release} drawing: {e}"))?;
     Ok((decode(&dxf), partial))
+}
+
+/// Run `f`, turning a panic in it into its message: a bug in acadrust on a damaged file must
+/// fail the import, not end the program (#287). The panic hook still runs (the app logs it).
+/// The web build aborts on a panic (`panic = "abort"`), so there this catches nothing.
+fn unwinding<T>(f: impl FnOnce() -> T) -> Result<T, String> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).map_err(|payload| {
+        payload
+            .downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "(no message)".into())
+    })
 }
 
 /// Read a DWG file. Files that don't say their units are read in `default_mm_per_unit`
@@ -162,6 +180,20 @@ mod tests {
                 "{version:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_panic_is_an_error_with_its_message() {
+        assert_eq!(unwinding(|| 7), Ok(7));
+        assert_eq!(
+            unwinding(|| -> u8 { panic!("bad handle") }),
+            Err("bad handle".into())
+        );
+        let n = 3;
+        assert_eq!(
+            unwinding(|| -> u8 { panic!("{n} bad handles") }),
+            Err("3 bad handles".into())
+        );
     }
 
     #[test]

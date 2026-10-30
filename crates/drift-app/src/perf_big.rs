@@ -469,6 +469,35 @@ fn perf_big() {
     });
     edit("undo delete", &mut h, &mut |app| assert!(app.editor.undo()));
     edit("redo delete", &mut h, &mut |app| assert!(app.editor.redo()));
+    // The crossed fills' areas as remembered are those a fresh look finds.
+    let ed = &mut h.state_mut().editor;
+    ed.settle_areas();
+    let kept = ed.fill_shapes();
+    let memo = ed.uncrossed_memo.borrow();
+    let bytes: usize = memo.values().map(|m| m.bytes()).sum();
+    println!(
+        "crossed-fill memo: {} fills, {:.2} MB",
+        memo.len(),
+        bytes as f64 / 1e6
+    );
+    drop(memo);
+    ed.uncrossed_memo.borrow_mut().clear();
+    ed.fill_shapes = None;
+    let fresh = ed.fill_shapes();
+    assert_eq!(kept.len(), fresh.len());
+    for (id, k) in kept.iter() {
+        let f = &fresh[id];
+        assert_eq!(
+            format!("{:?}", k.region),
+            format!("{:?}", f.region),
+            "fill {id:?}"
+        );
+        assert_eq!(
+            (&k.curves, k.crossed, k.lost),
+            (&f.curves, f.crossed, f.lost)
+        );
+    }
+    println!("fill shapes as kept = found afresh: {} fills", kept.len());
 }
 
 /// #253 probe: what a drag of many curves solves, and the frame after it.

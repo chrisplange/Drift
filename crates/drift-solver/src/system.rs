@@ -193,6 +193,51 @@ fn touching_end(
     lying(b, a).or_else(|| lying(a, b))
 }
 
+/// Where each tangency of a set of relations touched at a curve's end (see
+/// [`touching_end`]), found once on the geometry where they held: what a drag's every step
+/// lowers its tangencies by ([`crate::SolveOptions::touching`]), so a step whose translated
+/// geometry happens to touch elsewhere (or nowhere) keeps the form the drag began with, and
+/// the solve and a later look at the result read the tangency alike.
+#[derive(Clone, Debug, Default)]
+pub struct TouchingEnds(HashMap<(EntityId, EntityId), Option<(EntityId, Touching)>>);
+
+/// The [`TouchingEnds`] of the tangencies among `relations`, on `doc` as it is now.
+pub fn touching_ends(
+    doc: &Document,
+    relations: &[(Option<ConstraintId>, Lowered)],
+) -> TouchingEnds {
+    let constraints = || {
+        relations.iter().filter_map(|(_, l)| match l {
+            Lowered::Relation(c) => Some(*c),
+            _ => None,
+        })
+    };
+    let on_curve = on_curve_of(constraints());
+    TouchingEnds(
+        constraints()
+            .filter_map(|c| match c {
+                Constraint::Tangent { a, b } if doc.validate(&c).is_ok() => {
+                    Some(((a, b), touching_end(doc, a, b, &on_curve)))
+                }
+                _ => None,
+            })
+            .collect(),
+    )
+}
+
+/// Points held on curves by `relations`, for tangencies touching at an end held that way.
+fn on_curve_of(relations: impl Iterator<Item = Constraint>) -> HashSet<(EntityId, EntityId)> {
+    relations
+        .filter_map(|c| match c {
+            Constraint::PointOnCurve { point, curve } => Some((point, curve)),
+            // A line's midpoint is on it too: a tangency touching there takes its form
+            // from the relation, not from where the point happens to be (#148).
+            Constraint::Midpoint { point, line } => Some((point, line)),
+            _ => None,
+        })
+        .collect()
+}
+
 /// The centre point of a circle or arc.
 fn center_of(doc: &Document, curve: EntityId) -> Option<DVec2> {
     match doc.get(curve)?.kind {
@@ -219,13 +264,15 @@ impl System {
             &HashMap::new(),
             lowering,
             None,
+            None,
         )
     }
 
     /// Build the system for the entities in `scope` only (everything if `None`). The scope
     /// must be closed under shared points and constraints (see [`crate::connected`]).
     /// `dragged` and `carried` are the parameters held where they are, in that order of rank.
-    /// Relations are read through `lowering` where one is given.
+    /// Relations are read through `lowering` where one is given. Tangencies `touching`
+    /// names are lowered as it says, not as the geometry now touches.
     #[allow(clippy::too_many_arguments)]
     pub fn build_in(
         doc: &Document,
@@ -236,6 +283,7 @@ impl System {
         radii: &HashMap<EntityId, f64>,
         lowering: Option<&Lowering>,
         relations: Option<&[(Option<ConstraintId>, Lowered)]>,
+        touching: Option<&TouchingEnds>,
     ) -> Self {
         // The driving relations as lowered (or as given), with the extras under a stand-in
         // id.
@@ -447,15 +495,7 @@ impl System {
             _ => unreachable!("validated constraint refers to a circle or arc"),
         };
         // Points held on curves, for tangencies touching at an end held that way.
-        let on_curve: HashSet<(EntityId, EntityId)> = relations()
-            .filter_map(|(_, c)| match c {
-                Constraint::PointOnCurve { point, curve } => Some((point, curve)),
-                // A line's midpoint is on it too: a tangency touching there takes its form
-                // from the relation, not from where the point happens to be (#148).
-                Constraint::Midpoint { point, line } => Some((point, line)),
-                _ => None,
-            })
-            .collect();
+        let on_curve = on_curve_of(relations().map(|(_, c)| c));
         // (Driven (reference) dimensions only report; they aren't among the relations.)
         for (cid, constraint) in relations() {
             let constraint = &constraint;
@@ -744,7 +784,10 @@ impl System {
                     let mut equations = Vec::new();
                     if let Some(t) = shared {
                         equations.push(at_end(t));
-                    } else if let Some((t, on)) = touching_end(doc, a, b, &on_curve) {
+                    } else if let Some((t, on)) = match touching.and_then(|t| t.0.get(&(a, b))) {
+                        Some(&found) => found,
+                        None => touching_end(doc, a, b, &on_curve),
+                    } {
                         // The touching point is at an end of one curve that the other
                         // doesn't share: the same double root (#97). Keep the end on the
                         // other curve (unless a relation already does) and say the tangency

@@ -166,6 +166,60 @@ fn parts_of<'a>(whole: &Region, regions: &'a [Region]) -> Vec<&'a Region> {
         .collect()
 }
 
+/// The areas among an outline (`outline_ids`, sorted, with their `outline` shapes) and the
+/// curves `near` it that don't cross it, with the entity of each of their curve indices.
+fn regions_near(
+    outline_ids: &[EntityId],
+    outline: &[Shape],
+    near: &[(EntityId, Shape)],
+) -> (Vec<Region>, Vec<EntityId>) {
+    let (ids, curves): (Vec<EntityId>, Vec<Shape>) = near
+        .iter()
+        .filter(|(id, shape)| {
+            outline_ids.binary_search(id).is_ok()
+                || outline
+                    .iter()
+                    .all(|o| drift_geom::intersect::intersect(o, shape).is_empty())
+        })
+        .copied()
+        .unzip();
+    (drift_geom::regions::regions(&curves), ids)
+}
+
+/// Solid curves near an outline, each with its entity (see [`Editor::regions_among`]).
+type NearCurves = Vec<(EntityId, Shape)>;
+
+/// A crossed fill's area as [`Editor::uncrossed_region`] last found it, and what from.
+pub(crate) struct UncrossedFound {
+    boundary: Vec<EntityId>,
+    seed: DVec2,
+    outline: Vec<Shape>,
+    near: NearCurves,
+    shape: Option<FillShape>,
+}
+
+#[cfg(test)]
+impl UncrossedFound {
+    /// Its size in bytes, heap included (for the perf probes).
+    pub(crate) fn bytes(&self) -> usize {
+        use std::mem::size_of;
+        let lp = |l: &drift_geom::regions::Loop| {
+            l.edges.capacity() * size_of::<drift_geom::regions::Edge>()
+                + l.sources.capacity() * size_of::<usize>()
+        };
+        size_of::<Self>()
+            + self.boundary.capacity() * size_of::<EntityId>()
+            + self.outline.capacity() * size_of::<Shape>()
+            + self.near.capacity() * size_of::<(EntityId, Shape)>()
+            + self.shape.as_ref().map_or(0, |s| {
+                lp(&s.region.outer)
+                    + s.region.holes.iter().map(lp).sum::<usize>()
+                    + s.region.holes.capacity() * size_of::<drift_geom::regions::Loop>()
+                    + s.curves.capacity() * size_of::<EntityId>()
+            })
+    }
+}
+
 /// A fill's outline curves and the curves of its region's holes, sorted. `ids` is the entity
 /// of each curve index of the curves `region` was found from.
 fn curves_of(fill: &Fill, region: &Region, ids: &[EntityId]) -> Vec<EntityId> {
@@ -392,6 +446,8 @@ pub(crate) struct FillShapesCache {
     /// The transaction it was found in, if any.
     serial: Option<u64>,
     shapes: Rc<BTreeMap<FillId, FillShape>>,
+    /// The fills it was found for (in id order), those without a shape included.
+    fills: Rc<Vec<FillId>>,
 }
 
 /// The sketch's solid curves with their bounds, in document order: what
@@ -459,7 +515,8 @@ impl Editor {
             self.fill_shapes_at_begin = Some((self.doc.transaction_serial(), cache.shapes.clone()));
         }
         // The last edit's fills follow it once its areas are found (on a thread): until
-        // then they show as they were before it, unless one is new to the drawing.
+        // then they show as they were before it, unless one is new to the drawing. (A fill
+        // that had no shape then has none now: it isn't new.)
         if self.areas.pending.is_some() {
             let stale = (!self.doc.in_transaction())
                 .then_some(self.fill_shapes.as_ref())
@@ -467,23 +524,25 @@ impl Editor {
                 .filter(|cache| {
                     self.doc
                         .fills()
-                        .all(|(id, _)| cache.shapes.contains_key(&id))
+                        .all(|(id, _)| cache.fills.binary_search(&id).is_ok())
                 })
                 .map(|cache| {
-                    cache
+                    let shapes = cache
                         .shapes
                         .iter()
                         .filter(|(id, _)| self.doc.fill(**id).is_some())
                         .map(|(id, s)| (*id, s.clone()))
-                        .collect::<BTreeMap<_, _>>()
+                        .collect::<BTreeMap<_, _>>();
+                    (shapes, cache.fills.clone())
                 });
-            if let Some(shapes) = stale {
+            if let Some((shapes, fills)) = stale {
                 let shapes = Rc::new(shapes);
                 self.fill_shapes = Some(FillShapesCache {
                     revision,
                     structure: self.doc.structure(),
                     serial: None,
                     shapes: shapes.clone(),
+                    fills,
                 });
                 return shapes;
             }
@@ -492,6 +551,7 @@ impl Editor {
         // (Settling changes the fills.)
         let revision = self.doc.revision();
         let fills: Vec<(FillId, Fill)> = self.doc.fills().map(|(id, f)| (id, f.clone())).collect();
+        let fill_ids = Rc::new(fills.iter().map(|(id, _)| *id).collect());
         let walls = self.doc.has_walls().then(|| self.wall_owners());
         // During a drag the revision changes every frame. A click-fill none of whose curves
         // moved keeps the area found before (finding the drawing's areas takes far longer
@@ -604,7 +664,7 @@ impl Editor {
             // whole area, found again without the curves that cross it.
             let uncrossed = if areas.exact(&fill).is_none() {
                 let solid = solid.get_or_insert_with(|| self.solid_curves());
-                self.uncrossed_region(&fill, solid)
+                self.uncrossed_region(id, &fill, solid)
             } else {
                 None
             };
@@ -650,6 +710,11 @@ impl Editor {
             }
         }
         let out = Rc::new(out);
+        // (Fills gone since are let go: the memo would otherwise grow for as long as the
+        // window is open.)
+        self.uncrossed_memo
+            .get_mut()
+            .retain(|id, _| self.doc.fill(*id).is_some());
         self.fill_shapes = Some(FillShapesCache {
             revision,
             structure: self.doc.structure(),
@@ -658,6 +723,7 @@ impl Editor {
                 .in_transaction()
                 .then(|| self.doc.transaction_serial()),
             shapes: out.clone(),
+            fills: fill_ids,
         });
         out
     }
@@ -872,6 +938,21 @@ impl Editor {
                     ..shape.clone()
                 },
             );
+        }
+        // On a big drawing, whose areas are found off the edit path, a fill the drag reshapes
+        // round keeps the shape it had when the drag began until the drag ends: finding the
+        // drawing's areas takes far longer than a frame, and they are found (on a thread)
+        // once it is let go, as for any edit.
+        if self.areas_off_the_edit_path() {
+            for (id, fill) in fills {
+                if fill.path.is_none()
+                    && !kept.contains_key(id)
+                    && as_it_was(*id, fill)
+                    && let Some(shape) = base.get(id).filter(|s| !s.lost)
+                {
+                    kept.insert(*id, shape.clone());
+                }
+            }
         }
         // The rest (with no area when it began, or keeping a lost one's last shape) stay so
         // if the whole drawing moved as one: every point of a curve by the same offset. On a
@@ -1127,7 +1208,7 @@ impl Editor {
                 followed.divided = false;
                 r.clone()
             } else if let Some((whole, outline)) = self
-                .uncrossed_region(&fill, solid.get_or_insert_with(|| self.solid_curves()))
+                .uncrossed_region(id, &fill, solid.get_or_insert_with(|| self.solid_curves()))
                 .filter(|s| !floods_hole(&s.curves))
                 .map(|s| (s.region, None))
                 .or_else(|| {
@@ -2212,19 +2293,41 @@ impl Editor {
     /// A fill's area among its own outline curves and the curves that don't cross them (so
     /// holes inside it stay), when curves crossing it have cut its outline.
     /// `solid` is [`solid_curves`](Self::solid_curves).
-    fn uncrossed_region(&self, fill: &Fill, solid: &SolidCurves) -> Option<FillShape> {
+    fn uncrossed_region(&self, id: FillId, fill: &Fill, solid: &SolidCurves) -> Option<FillShape> {
         if fill.boundary.iter().any(|e| !self.doc.contains(*e)) {
             return None;
         }
-        let (regions, ids) = self.regions_among(&fill.boundary, solid)?;
+        let (outline, near) = self.near_outline(&fill.boundary, solid)?;
+        let mut memo = self.uncrossed_memo.borrow_mut();
+        if let Some(found) = memo.get(&id)
+            && found.boundary == fill.boundary
+            && found.seed == fill.seed
+            && found.outline == outline
+            && found.near == near
+        {
+            return found.shape.clone();
+        }
+        self.uncrossed_found.set(self.uncrossed_found.get() + 1);
+        let (regions, ids) = regions_near(&fill.boundary, &outline, &near);
         // (Its curve indices are into these curves, not the sketch's regions'.)
-        Areas::new(&regions, &ids).exact(fill).map(|r| FillShape {
+        let shape = Areas::new(&regions, &ids).exact(fill).map(|r| FillShape {
             curves: curves_of(fill, r, &ids),
             region: r.clone(),
             lost: false,
             crossed: true,
             parts: 0,
-        })
+        });
+        memo.insert(
+            id,
+            UncrossedFound {
+                boundary: fill.boundary.clone(),
+                seed: fill.seed,
+                outline,
+                near,
+                shape: shape.clone(),
+            },
+        );
+        shape
     }
 
     /// A fill's whole area after an edit reshaped its outline (split a side where a curve
@@ -2272,6 +2375,17 @@ impl Editor {
         outline_ids: &[EntityId],
         solid: &SolidCurves,
     ) -> Option<(Vec<Region>, Vec<EntityId>)> {
+        let (outline, near) = self.near_outline(outline_ids, solid)?;
+        Some(regions_near(outline_ids, &outline, &near))
+    }
+
+    /// The shapes of `outline_ids` (sorted curves), and the solid curves near them (in
+    /// `solid`'s order): what [`regions_among`](Self::regions_among) finds areas among.
+    fn near_outline(
+        &self,
+        outline_ids: &[EntityId],
+        solid: &SolidCurves,
+    ) -> Option<(Vec<Shape>, NearCurves)> {
         let outline: Vec<Shape> = outline_ids
             .iter()
             .filter_map(|id| self.doc.shape(*id))
@@ -2286,18 +2400,12 @@ impl Editor {
             * drift_core::tolerance::scale(near.min.abs().max(near.max.abs()).max_element());
         near.min -= DVec2::splat(pad);
         near.max += DVec2::splat(pad);
-        let (ids, curves): (Vec<EntityId>, Vec<Shape>) = solid
+        let near = solid
             .near(&near)
             .into_iter()
-            .filter(|(id, shape, _)| {
-                outline_ids.binary_search(id).is_ok()
-                    || outline
-                        .iter()
-                        .all(|o| drift_geom::intersect::intersect(o, shape).is_empty())
-            })
             .map(|(id, shape, _)| (*id, *shape))
-            .unzip();
-        Some((drift_geom::regions::regions(&curves), ids))
+            .collect();
+        Some((outline, near))
     }
 
     /// Fills in draw order (bottom first): by layer, then each fill's order.

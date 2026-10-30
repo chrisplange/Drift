@@ -1324,7 +1324,8 @@ impl Editor {
         })
     }
 
-    /// The region of a wall cluster's poché (its outline and holes, known exactly).
+    /// The region of a wall cluster's poché (its outline and holes, known exactly), as last
+    /// found while none of their curves has changed (see [`WallFillFound`]).
     pub(crate) fn wall_fill_region(
         &self,
         fill: drift_core::FillId,
@@ -1346,7 +1347,62 @@ impl Editor {
             .filter(|(k, _)| k.outer == key.outer && k.hole != 0)
             .map(|(_, p)| *p)
             .collect();
-        drift_geom::walls::regen::outline_region(&self.doc, outer, &holes)
+        let (lineage, revision, structure) = (
+            self.doc.lineage(),
+            self.doc.revision(),
+            self.doc.structure(),
+        );
+        let mut memo = self.wall_fill_memo.borrow_mut();
+        if let Some(found) = memo.get_mut(&fill)
+            && found.lineage == lineage
+            && found.structure == structure
+            && found.outer == outer
+            && found.holes == holes
+            && self
+                .doc
+                .changes_since(lineage, found.revision)
+                .is_some_and(|c| c.entities.iter().all(|e| !found.uses.contains(e)))
+        {
+            found.revision = revision;
+            return found.region.clone();
+        }
+        self.wall_fills_found.set(self.wall_fills_found.get() + 1);
+        let region = drift_geom::walls::regen::outline_region(&self.doc, outer, &holes);
+        // The paths' curves and their points: what moving changes the outline. Unchanged
+        // while the structure is (a drag moving the walls finds the region every frame, but
+        // not this).
+        let uses = match memo.remove(&fill) {
+            Some(was)
+                if was.lineage == lineage
+                    && was.structure == structure
+                    && was.outer == outer
+                    && was.holes == holes =>
+            {
+                was.uses
+            }
+            _ => std::iter::once(outer)
+                .chain(holes.iter().copied())
+                .filter_map(|p| self.doc.path(p))
+                .flat_map(|p| p.curves.iter().copied())
+                .flat_map(|c| {
+                    std::iter::once(c)
+                        .chain(self.doc.get(c).into_iter().flat_map(|e| e.kind.points()))
+                })
+                .collect(),
+        };
+        memo.insert(
+            fill,
+            WallFillFound {
+                lineage,
+                revision,
+                structure,
+                outer,
+                holes,
+                uses,
+                region: region.clone(),
+            },
+        );
+        region
     }
 
     /// The wall under `p` and where on its centreline the point nearest `p` is: (wall,
@@ -1773,4 +1829,18 @@ fn same_marks(a: [DVec2; 3], b: [DVec2; 3]) -> bool {
     let near = |p: DVec2, q: DVec2| p.distance(q) <= 1e-6 * (1.0 + q.abs().max_element());
     near(a[1], b[1])
         && ((near(a[0], b[0]) && near(a[2], b[2])) || (near(a[0], b[2]) && near(a[2], b[0])))
+}
+
+/// A wall poché's area as [`Editor::wall_fill_region`] last found it, and what from: the
+/// document (lineage) and its structure then (the walls' paths and what they hold), the
+/// outline and holes, and the curves and points they are made of. It stays while no change
+/// since `revision` touched one of those.
+pub(crate) struct WallFillFound {
+    lineage: u64,
+    revision: u64,
+    structure: u64,
+    outer: drift_core::PathId,
+    holes: Vec<drift_core::PathId>,
+    uses: std::collections::HashSet<EntityId>,
+    region: Option<drift_geom::regions::Region>,
 }

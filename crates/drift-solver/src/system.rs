@@ -825,6 +825,46 @@ impl System {
                         });
                     }
                 }
+                Constraint::MidpointOf { point: m, a, b } => {
+                    let ([mx, my], [ax, ay], [bx, by]) = (point(m), point(a), point(b));
+                    for (p, a, b) in [(mx, ax, bx), (my, ay, by)] {
+                        rows.push(Row {
+                            equation: Equation::Midpoint { p, a, b },
+                            source: Some(cid),
+                        });
+                    }
+                }
+                Constraint::EqualDistance { a, b, c, d } => rows.push(Row {
+                    equation: Equation::EqualLength {
+                        a: Length::Points([x(a), y(a), x(b), y(b)]),
+                        b: Length::Points([x(c), y(c), x(d), y(d)]),
+                    },
+                    source: Some(cid),
+                }),
+                // On both curves: the rows an On curve relation gives for each.
+                Constraint::Corner { point: p, a, b } => {
+                    for curve in [a, b] {
+                        let equation = match doc.get(curve).map(|e| e.kind) {
+                            Some(EntityKind::Line { .. }) => Equation::PointLine {
+                                point: point(p),
+                                line: line(curve),
+                                sign: 1.0,
+                                value: 0.0,
+                            },
+                            _ => {
+                                let c = center(curve);
+                                Equation::EqualLength {
+                                    a: Length::Points([x(c), y(c), x(p), y(p)]),
+                                    b: radius(curve),
+                                }
+                            }
+                        };
+                        rows.push(Row {
+                            equation,
+                            source: Some(cid),
+                        });
+                    }
+                }
                 Constraint::Diameter { curve, value } => rows.push(Row {
                     equation: Equation::LengthValue {
                         length: radius(curve),

@@ -229,6 +229,14 @@ Press F again for the **Chamfer** tool. Type its distance, and Tab for a second 
 A fillet or chamfer takes the look of the corner's lines: round a corner of construction
 lines and the arc is construction too.
 
+Dimensions and relations survive a fillet or chamfer. If anything is measured to the corner
+(a width, say) or relates it, the sharp corner stays as a small construction point where the
+two lines would meet, held there by a **Corner** relation. The dimension keeps measuring to
+it, so the shape still follows its dimensions and variables. A midpoint or an equal length on
+a side that was cut short still measures the side from corner to corner. A fully defined
+sketch stays fully defined after a fillet, since the fillet's radius is dimensioned. A
+chamfer adds two freedoms, its two cut lengths, until you dimension them.
+
 A fillet or chamfer that's already there can be resized: click it with the same tool, or
 drag a fillet's arc with the **Select** tool. Its lines keep their directions. To put the
 sharp corner back, right-click it and choose **Remove fillet** or **Remove chamfer**.

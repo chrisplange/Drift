@@ -1423,6 +1423,8 @@ pub enum GlyphKind {
     Collinear,
     OnCurve,
     Symmetric,
+    /// The sharp corner a fillet or chamfer cut off, held where its curves cross.
+    Corner,
 }
 
 #[derive(Clone, Debug)]
@@ -1523,8 +1525,20 @@ pub fn layout_glyphs(doc: &Document, map: &ScreenMap) -> Vec<GlyphLayout> {
                 place(curve, base, id, Fix, &mut out);
             }
             Constraint::Coincident { a, .. } => place(a, point_base(a), id, Coincident, &mut out),
-            Constraint::Midpoint { point, .. } => {
+            Constraint::Midpoint { point, .. } | Constraint::MidpointOf { point, .. } => {
                 place(point, point_base(point), id, Midpoint, &mut out)
+            }
+            Constraint::Corner { point, .. } => {
+                place(point, point_base(point), id, Corner, &mut out)
+            }
+            // Beside the middle of each distance.
+            Constraint::EqualDistance { a, b, c, d } => {
+                for (e, f) in [(a, b), (c, d)] {
+                    let base = p(e)
+                        .zip(p(f))
+                        .map(|(pe, pf)| (pe + (pf - pe) * 0.5 + vec2(0.0, -12.0), vec2(1.0, 0.0)));
+                    place(e, base, id, Equal, &mut out);
+                }
             }
             Constraint::PointOnCurve { point, .. } => {
                 place(point, point_base(point), id, OnCurve, &mut out)
@@ -1628,6 +1642,19 @@ pub fn paint_glyph(
             line((0.0, -5.0), (0.0, 5.0));
             line((-4.5, -2.5), (-4.5, 2.5));
             line((4.5, -2.5), (4.5, 2.5));
+        }
+        GlyphKind::Corner => {
+            // Two sides running on to a dot where they meet, past a round.
+            line((-5.0, 4.5), (-5.0, 0.0));
+            line((0.0, -5.0), (4.5, -5.0));
+            let arc: Vec<Pos2> = (0..=6)
+                .map(|k| {
+                    let a = (180.0 + 90.0 * k as f32 / 6.0).to_radians();
+                    c + vec2(0.0, 0.0) + vec2(a.cos(), a.sin()) * 5.0
+                })
+                .collect();
+            painter.add(egui::Shape::line(arc, s));
+            painter.circle_filled(c + vec2(-5.0, -5.0), 1.6, color);
         }
     }
 }

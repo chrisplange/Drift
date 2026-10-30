@@ -48,6 +48,13 @@ impl Document {
             {
                 Some("midpoint")
             }
+            Constraint::Corner { point, a, b }
+                if [a, b]
+                    .iter()
+                    .any(|c| points_of(c).is_some_and(|mut ps| ps.any(|p| p == *point))) =>
+            {
+                Some("corner on its own curve")
+            }
             _ => None,
         }
     }

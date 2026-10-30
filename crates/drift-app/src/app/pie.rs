@@ -63,6 +63,7 @@ fn glyph(label: &str) -> GlyphKind {
         "Coradial" => GlyphKind::Coradial,
         "Collinear" => GlyphKind::Collinear,
         "Symmetric" => GlyphKind::Symmetric,
+        "Corner" => GlyphKind::Corner,
         _ => GlyphKind::OnCurve,
     }
 }

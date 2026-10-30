@@ -31,6 +31,8 @@ fn open_ends(s: &Session) -> Vec<Value> {
                     Constraint::Coincident { .. }
                         | Constraint::PointOnCurve { .. }
                         | Constraint::Midpoint { .. }
+                        | Constraint::MidpointOf { .. }
+                        | Constraint::Corner { .. }
                 )
             )
         })

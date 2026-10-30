@@ -6,8 +6,8 @@
 //! ```json
 //! {
 //!   "format": "drift",
-//!   "version": 43,
-//!   "reader": 43,
+//!   "version": 44,
+//!   "reader": 44,
 //!   "meta": {"title":"Bracket","units":"mm","generator":"Drift 0.1.0"},
 //!   "display": {"length":"architectural","fraction":16},
 //!   "variables": [
@@ -132,16 +132,20 @@ pub const EXTENSION: &str = "drift";
 /// 42 = adds `reader` (the oldest version that reads the file), and reading passes over what
 /// it doesn't know and keeps it for saving (from here on, additions don't bump the version);
 /// 43 = adds `fix_x` and `fix_y` relations (a point's x or y alone held where it is, by Fix on
-/// geometry something else already partly holds).
-pub const FORMAT_VERSION: u32 = 43;
+/// geometry something else already partly holds); 44 = adds `corner` (a point held where two
+/// curves cross: the sharp corner a fillet or chamfer cut off), `midpoint_of` (a point midway
+/// between two points) and `equal_distance` (two point-to-point distances kept equal), so a
+/// fillet or chamfer keeps what was measured to its corner and along its sides (#238).
+pub const FORMAT_VERSION: u32 = 44;
 /// The oldest version that reads what this build writes: the last breaking change, written as
 /// a file's `"reader"`. A reader refuses a file only when its `reader` is above the reader's
 /// own [`FORMAT_VERSION`] (a file without one, from before 42, gives its `version`).
 ///
 /// History: 42 = files carry `reader` (the strict readers before 42 refused any field they
 /// didn't know); 43 = `fix_x` and `fix_y` relations (a 42 reader refuses a relation type it
-/// doesn't know).
-pub const READER_VERSION: u32 = 43;
+/// doesn't know); 44 = `corner`, `midpoint_of` and `equal_distance` relations (a 43 reader
+/// refuses them the same way).
+pub const READER_VERSION: u32 = 44;
 const FORMAT_TAG: &str = "drift";
 
 /// Document-level properties stored alongside the geometry.
@@ -396,6 +400,11 @@ struct ConstraintRecord {
     a: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     b: Option<String>,
+    /// The second pair of points an `equal_distance` measures (v44).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    c: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    d: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     line: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -777,6 +786,18 @@ fn constraint_record(
             (r.a, r.b, r.point) = (s(a), s(b), s(point));
             "smooth"
         }
+        Constraint::MidpointOf { point, a, b } => {
+            (r.a, r.b, r.point) = (s(a), s(b), s(point));
+            "midpoint_of"
+        }
+        Constraint::EqualDistance { a, b, c, d } => {
+            (r.a, r.b, r.c, r.d) = (s(a), s(b), s(c), s(d));
+            "equal_distance"
+        }
+        Constraint::Corner { point, a, b } => {
+            (r.a, r.b, r.point) = (s(a), s(b), s(point));
+            "corner"
+        }
         Constraint::Fix { point, at } => {
             (r.point, r.at) = (s(point), Some(at.to_array()));
             "fix"
@@ -881,6 +902,22 @@ fn parse_constraint(r: ConstraintRecord) -> Result<ParsedConstraint, LoadError> 
         "midpoint" => Constraint::Midpoint {
             point: entity(&r.point, "point")?,
             line: entity(&r.line, "line")?,
+        },
+        "midpoint_of" => Constraint::MidpointOf {
+            point: entity(&r.point, "point")?,
+            a: a()?,
+            b: b()?,
+        },
+        "equal_distance" => Constraint::EqualDistance {
+            a: a()?,
+            b: b()?,
+            c: entity(&r.c, "c")?,
+            d: entity(&r.d, "d")?,
+        },
+        "corner" => Constraint::Corner {
+            point: entity(&r.point, "point")?,
+            a: a()?,
+            b: b()?,
         },
         "fix" => Constraint::Fix {
             point: entity(&r.point, "point")?,
@@ -2333,8 +2370,8 @@ mod tests {
         let text = save(&doc, &Metadata::default());
         let expected = r#"{
   "format": "drift",
-  "version": 43,
-  "reader": 43,
+  "version": 44,
+  "reader": 44,
   "meta": {"units":"mm"},
   "entities": [
     {"type":"point","id":"e1","at":[0.0,0.0]},

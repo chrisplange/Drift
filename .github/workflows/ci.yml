@@ -28,7 +28,7 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets
       - name: Clippy (wasm32)
-        run: cargo clippy --target wasm32-unknown-unknown -p drift-core -p drift-geom -p drift-io -p drift-platform -p drift-solver -p drift-render -p drift-app -p drift-web
+        run: cargo clippy --target wasm32-unknown-unknown -p drift-core -p drift-geom -p drift-io -p drift-platform -p drift-solver -p drift-render -p drift-edit -p drift-app -p drift-web
       - name: Clippy (wasm32, the browser demo)
         run: cargo clippy --target wasm32-unknown-unknown -p drift-web --features demo
 
@@ -52,6 +52,8 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers
       - run: cargo test --workspace
+      # The editor, edits and tools without a window (no GPU; also part of the line above).
+      - run: cargo test -p drift-edit
       # The browser demo: saving, exporting and printing show a note, and copies stay inside.
       - run: cargo test -p drift-app --features demo --test demo
       - name: Upload render test images

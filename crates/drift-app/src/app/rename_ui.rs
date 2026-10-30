@@ -1,7 +1,7 @@
 //! F2: rename the picked block or group in a small dialog.
 
-use crate::blocks::RenameTarget;
 use crate::*;
+use drift_edit::blocks::RenameTarget;
 
 /// The Rename dialog, while open.
 pub(crate) struct Renaming {

@@ -3,9 +3,9 @@
 use drift_core::{FillId, FillKind, Hatch};
 use drift_draft::{Pattern, Placement};
 
-use crate::fills::{FillStyle, PatternLibrary};
 use crate::layers_ui::{color_choice, weight_combo};
 use crate::*;
+use drift_edit::fills::{FillStyle, PatternLibrary};
 
 /// A small swatch of a hatch pattern, drawn with the painter.
 fn swatch(ui: &mut egui::Ui, pattern: Option<&Pattern>, size: egui::Vec2) -> egui::Response {
@@ -349,7 +349,7 @@ impl DriftApp {
                 _ => String::new(),
             };
             app::panels::title(ui, Some(ToolKind::Fill), &title, &why);
-            if let Some(Err(crate::fills::NotAShape::Corners(_))) = kind
+            if let Some(Err(drift_edit::fills::NotAShape::Corners(_))) = kind
                 && ui
                     .button("Join corners")
                     .on_hover_text("Join the corners that touch but aren't one point: a shape")

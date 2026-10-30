@@ -60,7 +60,7 @@ fn paint_block(
 /// A library type as a tile: its thumbnail over its type name. `added`: the drawing has it.
 fn library_tile(
     ui: &mut egui::Ui,
-    entry: &crate::library::Entry,
+    entry: &drift_edit::library::Entry,
     added: bool,
     width: f32,
 ) -> egui::Response {
@@ -150,7 +150,7 @@ impl DriftApp {
             Ok(()) => {
                 self.set_tool(ToolKind::BasePoint);
                 self.editor.base_point_pick =
-                    Some(crate::blocks::BasePointPick::Make(name.to_owned()));
+                    Some(drift_edit::blocks::BasePointPick::Make(name.to_owned()));
                 self.status_next =
                     Some("Click the block's base point, or press Enter for the centre".into());
             }
@@ -161,7 +161,7 @@ impl DriftApp {
     /// Set the base point of `copy`'s block: pick it on that copy (Enter: the centre).
     pub(crate) fn start_set_base_point(&mut self, copy: drift_core::InstanceId) {
         self.set_tool(ToolKind::BasePoint);
-        self.editor.base_point_pick = Some(crate::blocks::BasePointPick::Block(copy));
+        self.editor.base_point_pick = Some(drift_edit::blocks::BasePointPick::Block(copy));
         self.status_next = Some(
             "Click the new base point: every copy stays where it is (Enter: the centre)".into(),
         );
@@ -401,7 +401,7 @@ impl DriftApp {
         if let Some((id, name)) = rename
             && let Err(e) = self
                 .editor
-                .rename(crate::blocks::RenameTarget::Block(id), &name)
+                .rename(drift_edit::blocks::RenameTarget::Block(id), &name)
         {
             self.editor.notice = Some(e);
         }
@@ -420,7 +420,7 @@ impl DriftApp {
     /// The library: a category (or a search across all of them), its families and their
     /// types. Clicking a type adds it to the drawing, once, and starts placing it.
     fn library_section(&mut self, ui: &mut egui::Ui, search: &str, now: f64) {
-        use crate::library::{self, Category};
+        use drift_edit::library::{self, Category};
         theme::section(ui, "Library");
         let label = |c: Option<Category>| c.map_or("All categories", Category::label);
         egui::ComboBox::from_id_salt("library_category")

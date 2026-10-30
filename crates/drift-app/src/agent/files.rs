@@ -237,7 +237,7 @@ pub(super) fn import(s: &mut Session, a: &Value) -> Res {
                 ed.import_cad_underlay(&name, &import, scale)?
             }
             "dwg" => {
-                let import = crate::underlays::read_dwg(&bytes, unit)?;
+                let import = drift_edit::underlays::read_dwg(&bytes, unit)?;
                 ed.import_cad_underlay(&name, &import, scale)?
             }
             other => {
@@ -266,12 +266,12 @@ pub(super) fn import(s: &mut Session, a: &Value) -> Res {
                 scale,
                 construction_edges: true,
             };
-            pictures = crate::underlays::picture_underlay(&name, &art.images, scale, offset);
+            pictures = drift_edit::underlays::picture_underlay(&name, &art.images, scale, offset);
             drift_io::vector::to_import(&art, &options)
         }
         // A DXF says its units (bare ones are read in the drawing's); `scale` multiplies.
         "dxf" => drift_io::dxf::read_at(&text(), unit, scale)?,
-        "dwg" => crate::underlays::read_dwg_at(&bytes, unit, scale)?,
+        "dwg" => drift_edit::underlays::read_dwg_at(&bytes, unit, scale)?,
         other => {
             return Err(format!(
                 "can't import .{other} files (svg, pdf, ai, dxf or dwg)"
@@ -285,7 +285,7 @@ pub(super) fn import(s: &mut Session, a: &Value) -> Res {
     let report = drift_io::dxf::add_to_document(&mut ed.doc, &import);
     let pictures = pictures.map(|u| ed.doc.add_underlay(u));
     if let Some(id) = pictures {
-        crate::underlays::place_pictures(&mut ed.doc, id, &fills_before);
+        drift_edit::underlays::place_pictures(&mut ed.doc, id, &fills_before);
     }
     let made: Vec<_> = ed
         .doc
@@ -319,7 +319,7 @@ pub(super) fn import(s: &mut Session, a: &Value) -> Res {
     if !far.is_empty() {
         notes.push(format!(
             "more than 100,000 km from the origin (likely stray objects): {}",
-            crate::checker::far_off_count(&ed.doc, &far)
+            drift_edit::checker::far_off_count(&ed.doc, &far)
         ));
     }
     Ok(json!({

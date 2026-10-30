@@ -4,7 +4,7 @@
 
 use drift_core::{EntityId, FillId, Rgb};
 
-use crate::editor::{PickFilter, PickKind};
+use drift_edit::editor::{PickFilter, PickKind};
 
 use super::*;
 

@@ -118,7 +118,7 @@ impl PendingImport {
         reading(|| match &self.source {
             ImportSource::Dxf(text) => drift_io::dxf::read_at(text, self.unit_mm, drawn_at),
             ImportSource::Dwg(bytes) => {
-                crate::underlays::read_dwg_at(bytes, self.unit_mm, drawn_at)
+                drift_edit::underlays::read_dwg_at(bytes, self.unit_mm, drawn_at)
             }
             ImportSource::Svg(_) | ImportSource::Pdf(_) => Err("not a CAD drawing".into()),
         })
@@ -618,13 +618,13 @@ impl DriftApp {
         self.editor.doc.begin();
         let report = drift_io::dxf::add_to_document(&mut self.editor.doc, &import);
         // Its pictures come in as an underlay in the same step, placed over its fills.
-        let pictures = crate::underlays::picture_underlay(&name, &images, scale, DVec2::ZERO)
+        let pictures = drift_edit::underlays::picture_underlay(&name, &images, scale, DVec2::ZERO)
             .map(|u| self.editor.doc.add_underlay(u));
         if let Some(id) = pictures {
-            crate::underlays::place_pictures(&mut self.editor.doc, id, &fills_before);
+            drift_edit::underlays::place_pictures(&mut self.editor.doc, id, &fills_before);
         }
         self.editor.commit_import(label);
-        let imported = crate::underlays::Imported {
+        let imported = drift_edit::underlays::Imported {
             underlays: pictures.into_iter().collect(),
             entities: self
                 .editor
@@ -651,8 +651,8 @@ impl DriftApp {
                 .filter(|id| self.editor.doc.get(*id).is_some_and(|e| !e.kind.is_point()))
                 .collect();
             self.set_tool(ToolKind::Calibrate);
-            self.tool = Box::new(crate::tools::UnderlayTool::new(
-                crate::tools::UnderlayMode::CalibrateImport,
+            self.tool = Box::new(drift_edit::tools::UnderlayTool::new(
+                drift_edit::tools::UnderlayMode::CalibrateImport,
             ));
         }
         self.editor.last_import = Some(imported);

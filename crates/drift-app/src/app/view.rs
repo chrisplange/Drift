@@ -110,7 +110,7 @@ impl DriftApp {
         // Walls' thickness dimensions (drawn as a dimension between the faces).
         if self.show_dimensions {
             for (q, d) in doc.property_dims() {
-                if let Some((c, at)) = crate::walls::thickness_dimension(doc, d) {
+                if let Some((c, at)) = drift_edit::walls::thickness_dimension(doc, d) {
                     out.extend(
                         annotations::layout_dimension(painter, doc, None, &c, Some(at), map).map(
                             |mut l| {
@@ -274,7 +274,7 @@ impl DriftApp {
             if let (Some(p), Some(c)) = (
                 response.interact_pointer_pos(),
                 self.editor.doc.constraint(id).copied(),
-            ) && let Some(anchor) = annotations::dimension_anchor(&self.editor.doc, &c)
+            ) && let Some(anchor) = drift_edit::labels::dimension_anchor(&self.editor.doc, &c)
             {
                 let offset = map.to_world(p) - grab - anchor;
                 // Level with another dimension's line when close (Ctrl places freely).
@@ -844,7 +844,7 @@ impl DriftApp {
             }
         };
         let dark = ui.visuals().dark_mode;
-        let fills = crate::fills::fill_graphics(
+        let fills = drift_edit::fills::fill_graphics(
             &mut self.editor,
             &mut self.fill_meshes,
             &self.hatch_patterns,
@@ -888,8 +888,8 @@ impl DriftApp {
         items.extend(lit);
         if let Some(stack) = &stack {
             let mut fill_groups: std::collections::HashMap<
-                crate::stack::FillRef,
-                crate::fills::FillGroup,
+                drift_edit::stack::FillRef,
+                drift_edit::fills::FillGroup,
             > = fills.groups.into_iter().map(|g| (g.fill, g)).collect();
             let shown = |layer: Option<drift_core::LayerId>| {
                 layer.is_none_or(|l| self.editor.doc.layer(l).is_none_or(|l| l.visible))
@@ -1370,7 +1370,7 @@ impl DriftApp {
 
     /// The transform box, when the select tool has one to show (not while a modal move or
     /// turn is under way): a thin frame with square handles.
-    fn transform_box_shown(&mut self) -> Option<crate::transform::TransformBox> {
+    fn transform_box_shown(&mut self) -> Option<drift_edit::transform::TransformBox> {
         (self.tool.kind() == ToolKind::Select && !self.tool.is_modal())
             .then(|| self.editor.transform_box())
             .flatten()
@@ -1408,9 +1408,9 @@ impl DriftApp {
         }
         // Over a turn handle: a curved arrow by the pointer.
         if let Some(p) = self.pointer
-            && let Some(crate::transform::Handle::Turn { .. }) = frame.handle_at(
+            && let Some(drift_edit::transform::Handle::Turn { .. }) = frame.handle_at(
                 p.raw,
-                crate::transform::handle_reach(p.tolerance),
+                drift_edit::transform::handle_reach(p.tolerance),
                 p.tolerance,
             )
         {
@@ -1421,12 +1421,12 @@ impl DriftApp {
 
     /// The cursor over a transform handle, or inside a picked area a drag would move.
     fn transform_cursor(&mut self) -> Option<egui::CursorIcon> {
-        use crate::transform::Handle;
+        use drift_edit::transform::Handle;
         let p = self.pointer?;
         if let Some(frame) = self.transform_box_shown() {
             match frame.handle_at(
                 p.raw,
-                crate::transform::handle_reach(p.tolerance),
+                drift_edit::transform::handle_reach(p.tolerance),
                 p.tolerance,
             ) {
                 // Screen y is down: a handle on the same side along both axes is on the
@@ -1619,8 +1619,8 @@ impl Wheel {
 /// What one draw group of the canvas holds (see [`drift_render::DrawGroup`]).
 #[derive(Default)]
 struct DrawContent {
-    fills: Vec<drift_render::FillMesh>,
-    images: Vec<drift_render::CanvasImage>,
+    fills: Vec<drift_core::FillMesh>,
+    images: Vec<drift_core::CanvasImage>,
     items: Vec<drift_core::SketchItem>,
 }
 

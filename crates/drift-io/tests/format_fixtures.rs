@@ -850,3 +850,37 @@ fn add_openings(doc: &mut Document, l: drift_core::WallId, curved: drift_core::W
     .collect();
     drift_geom::walls::write_symbol(doc, d, &items, wall.layer);
 }
+
+#[test]
+fn sheets_from_before_views_open_as_they_were() {
+    // A v17 sheet: one view written as the sheet's own scale and centre, with dimensions off.
+    let text = r#"{
+  "format": "drift",
+  "version": 17,
+  "meta": {"units":"mm"},
+  "entities": [],
+  "sheets": [
+    {"id":"s1","name":"Plate","paper":"A3","scale":2.5,"center":[60.0,40.0],"title_block":"modern","dimensions":false}
+  ]
+}"#;
+    let (doc, _) = drift_io::load(text).unwrap();
+    let sheet = doc.sheets().next().unwrap().1;
+    let views = doc.placed_views(sheet);
+    assert_eq!(views.len(), 1);
+    let v = &views[0];
+    assert_eq!((v.scale, v.center), (2.5, DVec2::new(60.0, 40.0)));
+    assert!(!v.dimensions && v.notes && !v.title);
+    // It fills the drawing area, as it did, and is named after its sheet.
+    assert_eq!(v.frame.bounds(), drift_draft::sheet::drawing_area(sheet));
+    assert_eq!(v.name, "Plate");
+    assert_eq!(doc.sheet_scale_text(sheet), "1:2.5");
+    // Saved again, it is written as a model view, placed on the sheet.
+    let saved = drift_io::save(&doc, &Default::default());
+    assert!(
+        saved.contains(r#""name":"Plate","scale":2.5,"center":[60.0,40.0],"size":"#),
+        "{saved}"
+    );
+    assert!(saved.contains(r#""viewports":[{"view":"w"#), "{saved}");
+    let (again, _) = drift_io::load(&saved).unwrap();
+    assert_eq!(again, doc);
+}

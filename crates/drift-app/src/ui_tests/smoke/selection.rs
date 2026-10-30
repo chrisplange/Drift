@@ -1,8 +1,8 @@
 //! Picking and moving: the selection filters, G from a picked midpoint, X and Y locks in a
 //! mouse drag, an area on a hidden layer, and Alt-click on a layer's lock or snap.
 
-use crate::editor::{PickFilter, PickKind};
 use crate::ui_tests::layer_toggles::{LOCK, SNAP, alt_toggle};
+use drift_edit::editor::{PickFilter, PickKind};
 
 use super::*;
 

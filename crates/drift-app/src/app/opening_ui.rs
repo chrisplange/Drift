@@ -3,9 +3,9 @@
 
 use drift_core::{Hand, OpeningAt, OpeningId, Symbol, WallFace};
 
-use crate::library::{hosted, sizes};
-use crate::openings::Flip;
 use crate::*;
+use drift_edit::library::{hosted, sizes};
+use drift_edit::openings::Flip;
 
 /// The four ways an opening opens, as the bar shows them (Space steps through them).
 const SWINGS: [((Hand, WallFace), &str); 4] = [

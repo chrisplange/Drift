@@ -552,7 +552,7 @@ fn walls_gallery_pictures() {
         let (doc, _) = drawing(c);
         let mut s = crate::agent::Session::new();
         // (Through an editor: the openings draw their symbols.)
-        s.editor = crate::editor::Editor::new(doc);
+        s.editor = drift_edit::editor::Editor::new(doc);
         s.editor.sync();
         let out = s.call(
             "render",
@@ -585,21 +585,21 @@ fn walls_gallery_pictures() {
 // ----- Dimensions on faces (W2) -------------------------------------------------------------
 
 /// The editor on a case's drawing.
-fn editor_of(c: &Case) -> crate::editor::Editor {
+fn editor_of(c: &Case) -> drift_edit::editor::Editor {
     let (doc, _) = drawing(c);
-    let mut ed = crate::editor::Editor::new(doc);
+    let mut ed = drift_edit::editor::Editor::new(doc);
     ed.sync();
     ed
 }
 
 /// The `n`th wall drawn.
-fn nth(ed: &crate::editor::Editor, n: usize) -> drift_core::WallId {
+fn nth(ed: &drift_edit::editor::Editor, n: usize) -> drift_core::WallId {
     ed.doc.walls().map(|(id, _)| id).nth(n).unwrap()
 }
 
 /// The piece of a wall's face on segment `seg` nearest `near`.
 fn face(
-    ed: &crate::editor::Editor,
+    ed: &drift_edit::editor::Editor,
     w: drift_core::WallId,
     seg: u16,
     left: bool,
@@ -625,13 +625,13 @@ fn face(
         .unwrap()
 }
 
-fn centre_points(ed: &crate::editor::Editor, w: drift_core::WallId) -> Vec<EntityId> {
+fn centre_points(ed: &drift_edit::editor::Editor, w: drift_core::WallId) -> Vec<EntityId> {
     regen::centreline(&ed.doc, ed.doc.wall(w).unwrap())
         .unwrap()
         .1
 }
 
-fn centre_curves(ed: &crate::editor::Editor, w: drift_core::WallId) -> Vec<EntityId> {
+fn centre_curves(ed: &drift_edit::editor::Editor, w: drift_core::WallId) -> Vec<EntityId> {
     ed.doc
         .path(ed.doc.wall(w).unwrap().centre)
         .unwrap()
@@ -639,7 +639,7 @@ fn centre_curves(ed: &crate::editor::Editor, w: drift_core::WallId) -> Vec<Entit
         .clone()
 }
 
-fn fix_all(ed: &mut crate::editor::Editor, points: &[EntityId]) {
+fn fix_all(ed: &mut drift_edit::editor::Editor, points: &[EntityId]) {
     let fixes: Vec<drift_core::Constraint> = points
         .iter()
         .map(|p| drift_core::Constraint::Fix {
@@ -652,7 +652,7 @@ fn fix_all(ed: &mut crate::editor::Editor, points: &[EntityId]) {
 
 /// A driving dimension, added as the Dimension tool does, then typed.
 fn dimension(
-    ed: &mut crate::editor::Editor,
+    ed: &mut drift_edit::editor::Editor,
     c: drift_core::Constraint,
     value: &str,
 ) -> drift_core::ConstraintId {
@@ -668,13 +668,13 @@ fn dimension(
 }
 
 /// Whether a dimension measures its value now (faces regenerated).
-fn holds(ed: &crate::editor::Editor, id: drift_core::ConstraintId) -> bool {
+fn holds(ed: &drift_edit::editor::Editor, id: drift_core::ConstraintId) -> bool {
     let c = ed.doc.constraint(id).unwrap();
     let m = drift_solver::measure(&ed.doc, c).unwrap();
     (m - c.value().unwrap()).abs() < 1e-6 * c.value().unwrap().max(1.0)
 }
 
-fn outlines(ed: &crate::editor::Editor) -> usize {
+fn outlines(ed: &drift_edit::editor::Editor) -> usize {
     let (inputs, _) = regen::wall_inputs(&ed.doc);
     generate(&inputs, regen::snap(&ed.doc))
         .loops
@@ -744,7 +744,7 @@ fn walls_gallery_a_dimension_across_a_wall_is_its_thickness() {
         value: T,
     };
     // Not a driving dimension (it would only ever conflict with a thickness change)...
-    assert!(ed.refused_on_walls(&c).is_some());
+    assert!(ed.refusal_on_walls(&c).is_some());
     // ...but the Dimension tool places the wall's thickness dimension there.
     assert!(ed.thickness_dimension_across(&c, v(1000.0, 400.0)));
     let dims: Vec<_> = ed.doc.property_dims().map(|(_, d)| *d).collect();

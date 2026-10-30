@@ -139,7 +139,10 @@ fn smoke_walls_a_rooms_floor_fill_is_an_area_fill() {
         .find(|f| !ed.wall_owners().fills.contains_key(f))
         .expect("the floor");
     assert!(ed.doc.fill(floor).unwrap().path.is_none());
-    assert_eq!(ed.fill_kind(floor), Err(crate::fills::NotAShape::Walls));
+    assert_eq!(
+        ed.fill_kind(floor),
+        Err(drift_edit::fills::NotAShape::Walls)
+    );
 }
 
 /// The canvas's index of shapes holds every curve where it is: what is drawn and picked.

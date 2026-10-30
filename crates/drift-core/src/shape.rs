@@ -684,3 +684,24 @@ mod tests {
         assert_close(a.max, b.max);
     }
 }
+
+/// A triangulated area in world coordinates, with an sRGB colour and alpha (a fill as the
+/// canvas draws it).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct FillMesh {
+    pub vertices: Vec<DVec2>,
+    /// Triangles, three indices each.
+    pub indices: Vec<u32>,
+    pub color: [u8; 4],
+}
+
+/// A picture to draw: RGBA pixels (sRGB, not premultiplied, rows from the top) on the
+/// parallelogram with these world corners: top-left, top-right, bottom-right, bottom-left.
+#[derive(Clone, Debug)]
+pub struct CanvasImage {
+    pub pixels: std::sync::Arc<Vec<u8>>,
+    pub width: u32,
+    pub height: u32,
+    pub corners: [DVec2; 4],
+    pub opacity: f32,
+}

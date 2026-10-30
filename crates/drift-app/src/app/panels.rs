@@ -898,7 +898,7 @@ impl DriftApp {
     /// type its value into).
     pub(crate) fn apply_constraint_option(
         &mut self,
-        option: &crate::editor::ConstraintOption,
+        option: &drift_edit::editor::ConstraintOption,
         is_dimension: bool,
         now: f64,
     ) -> Option<ConstraintId> {
@@ -907,10 +907,10 @@ impl DriftApp {
             constraints if is_dimension => self.editor.add_constraints(option.label, constraints),
             // Only the relations that aren't there yet (some may already hold).
             _ => match self.editor.missing_relations(option).as_slice() {
-                [] if crate::editor::Editor::is_fix_option(option) => Err(
-                    crate::editor::EditError::FullyDefined(self.editor.fixed_name()),
+                [] if drift_edit::editor::Editor::is_fix_option(option) => Err(
+                    drift_edit::editor::EditError::FullyDefined(self.editor.fixed_name()),
                 ),
-                [] => Err(crate::editor::EditError::Redundant),
+                [] => Err(drift_edit::editor::EditError::Redundant),
                 missing => self.editor.add_constraints(option.label, missing),
             },
         };

@@ -18,7 +18,7 @@ use egui_kittest::Harness;
 
 use crate::DriftApp;
 use crate::dock::Panel;
-use crate::editor::Editor;
+use drift_edit::editor::Editor;
 
 /// Growth over the baseline at which the watchdog aborts.
 const ABORT_MB: usize = 6_000;
@@ -487,7 +487,7 @@ fn mem_torture() {
 
     // The 10,000-curve sketch: open, draw, select everything, drag it.
     scenario("10k curves: open and draw", h, &mut failures, |h| {
-        let (doc, _) = crate::perf_tests::torture_sketch();
+        let (doc, _) = drift_edit::test_sketches::torture_sketch();
         h.state_mut().editor = Editor::new(doc);
         let fit = h.state().fit_bounds();
         h.state_mut().fit_target = Some(fit);

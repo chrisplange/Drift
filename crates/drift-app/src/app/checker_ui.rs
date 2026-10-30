@@ -1,8 +1,8 @@
 //! The Check sketch window: what the sketch checker finds, to show and fix one at a time or
 //! all at once, with markers on the canvas while it is open.
 
-use crate::checker::Issue;
 use crate::*;
+use drift_edit::checker::Issue;
 
 /// The most issues listed (the rest are counted, and fixed by Fix all).
 const LISTED: usize = 200;

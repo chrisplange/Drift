@@ -94,7 +94,7 @@ fn extent(s: &mut Session) -> Bounds {
     let doc = &ed.doc;
     for (id, c) in doc.constraints() {
         if let (Some(anchor), Some(offset)) = (
-            crate::annotations::dimension_anchor(doc, c),
+            drift_edit::labels::dimension_anchor(doc, c),
             doc.placement(id),
         ) {
             b.include(anchor + offset);

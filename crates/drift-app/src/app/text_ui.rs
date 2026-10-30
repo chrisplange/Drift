@@ -31,7 +31,7 @@ fn paragraph(t: &SketchText) -> drift_draft::outline::Paragraph<'_> {
 fn text_field(words: &mut String, id: egui::Id) -> egui::TextEdit<'_> {
     egui::TextEdit::multiline(words)
         .id(id)
-        .char_limit(crate::texts::MAX_TEXT_CHARS)
+        .char_limit(drift_edit::texts::MAX_TEXT_CHARS)
         .desired_rows(1)
         // Return finishes; a new line is Shift+Return.
         .return_key(Some(new_line_key()))
@@ -533,7 +533,7 @@ impl DriftApp {
             .add(
                 egui::TextEdit::multiline(&mut words)
                     .hint_text("Type the text")
-                    .char_limit(crate::texts::MAX_TEXT_CHARS)
+                    .char_limit(drift_edit::texts::MAX_TEXT_CHARS)
                     .desired_rows(rows)
                     .return_key(Some(new_line_key()))
                     .desired_width(f32::INFINITY),

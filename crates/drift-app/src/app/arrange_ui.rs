@@ -1,7 +1,7 @@
 //! Arrange: what is picked brought forward or sent backward in its layer's stack.
 
-use crate::stack::Arrange;
 use crate::*;
+use drift_edit::stack::Arrange;
 
 impl DriftApp {
     /// The shortcut an Arrange command has (from the command registry), as drawing programs

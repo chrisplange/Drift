@@ -13,7 +13,7 @@
 mod analyze;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use crate::app::document::saved_new_rules;
+pub use drift_edit::prefs::saved_new_rules;
 mod args;
 mod constrain;
 mod edit;
@@ -31,8 +31,8 @@ use std::path::PathBuf;
 
 use serde_json::{Value, json};
 
-use crate::editor::Editor;
-use crate::fills::PatternLibrary;
+use drift_edit::editor::Editor;
+use drift_edit::fills::PatternLibrary;
 
 pub use schema::{INSTRUCTIONS, ToolSpec, tools};
 
@@ -330,7 +330,7 @@ impl Session {
 
     /// What the step's edits did to fills beyond following their outlines (taken).
     fn fill_changes(&mut self) -> Vec<Value> {
-        use crate::fills::FillChange;
+        use drift_edit::fills::FillChange;
         std::mem::take(&mut self.editor.fill_changes)
             .into_iter()
             .map(|c| match c {

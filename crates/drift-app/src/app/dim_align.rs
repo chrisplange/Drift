@@ -23,7 +23,7 @@ pub(crate) fn measure_dir(doc: &Document, c: &Constraint) -> Option<DVec2> {
         Constraint::Distance { a, b, .. } => (p(b)? - p(a)?).try_normalize()?,
         Constraint::PointLineDistance { point, line, .. } => {
             let q = p(point)?;
-            (q - annotations::foot(doc, q, line)?).try_normalize()?
+            (q - drift_edit::labels::foot(doc, q, line)?).try_normalize()?
         }
         _ => return None,
     };
@@ -46,7 +46,7 @@ fn label_and_dir(
     scale: f64,
 ) -> Option<(DVec2, DVec2)> {
     let u = measure_dir(doc, c)?;
-    let anchor = annotations::dimension_anchor(doc, c)?;
+    let anchor = drift_edit::labels::dimension_anchor(doc, c)?;
     let offset = doc
         .placement(id)
         .unwrap_or_else(|| annotations::default_offset(doc, c, scale));
@@ -68,8 +68,10 @@ pub(crate) fn snap_label(
     offset: DVec2,
     scale: f64,
 ) -> (DVec2, Option<[DVec2; 2]>) {
-    let (Some(u), Some(anchor)) = (measure_dir(doc, c), annotations::dimension_anchor(doc, c))
-    else {
+    let (Some(u), Some(anchor)) = (
+        measure_dir(doc, c),
+        drift_edit::labels::dimension_anchor(doc, c),
+    ) else {
         return (offset, None);
     };
     let ours = level(anchor + offset, u);
@@ -149,7 +151,7 @@ fn placed_parallel(
         };
         let (Some((label, u)), Some(anchor)) = (
             label_and_dir(doc, id, c, scale),
-            annotations::dimension_anchor(doc, c),
+            drift_edit::labels::dimension_anchor(doc, c),
         ) else {
             continue;
         };
@@ -240,7 +242,7 @@ mod tests {
                 value: 10.0,
             };
             let id = doc.add_constraint(c).unwrap();
-            let anchor = annotations::dimension_anchor(&doc, &c).unwrap();
+            let anchor = drift_edit::labels::dimension_anchor(&doc, &c).unwrap();
             doc.set_placement(id, DVec2::new(anchor.x, y) - anchor)
                 .unwrap();
             ids.push(id);
@@ -250,14 +252,14 @@ mod tests {
 
     fn line_y(doc: &Document, id: ConstraintId) -> f64 {
         let c = doc.constraint(id).unwrap();
-        annotations::dimension_anchor(doc, c).unwrap().y + doc.placement(id).unwrap().y
+        drift_edit::labels::dimension_anchor(doc, c).unwrap().y + doc.placement(id).unwrap().y
     }
 
     #[test]
     fn a_dragged_label_snaps_level_with_another() {
         let (doc, [a, b, _]) = three();
         let c = *doc.constraint(b).unwrap();
-        let anchor = annotations::dimension_anchor(&doc, &c).unwrap();
+        let anchor = drift_edit::labels::dimension_anchor(&doc, &c).unwrap();
         // Dragged to y = 10.3 at 10 pt per mm: 3 pt from the first's line, so it snaps.
         let (offset, guide) = snap_label(&doc, b, &c, DVec2::new(0.0, 10.3) - anchor, 10.0);
         assert!(((anchor + offset).y - line_y(&doc, a)).abs() < 1e-9);

@@ -240,7 +240,7 @@ impl DriftApp {
 mod tests {
     use drift_core::{Constraint, DVec2};
 
-    use crate::editor::Editor;
+    use drift_edit::editor::Editor;
 
     #[test]
     fn typed_positions_and_angles_move_dimensioned_lines() {

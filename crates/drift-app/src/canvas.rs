@@ -1,9 +1,7 @@
 //! Bridges the egui UI and [`drift_render::CanvasRenderer`] through an egui-wgpu paint callback.
 
-use drift_core::{DVec2, SketchItem};
-use drift_render::{
-    Camera, CanvasImage, CanvasRenderer, DrawGroup, FillMesh, Frame, Palette, Viewport, build_frame,
-};
+use drift_core::{CanvasImage, DVec2, FillMesh, SketchItem};
+use drift_render::{Camera, CanvasRenderer, DrawGroup, Frame, Palette, Viewport, build_frame};
 use eframe::egui;
 use eframe::egui_wgpu::{self, wgpu};
 
@@ -13,7 +11,7 @@ use eframe::egui_wgpu::{self, wgpu};
 /// What the canvas draws. With no `groups`: curves under everything (hatch lines,
 /// underlays), the sketch's curves on top, filled areas (beneath both), and underlays'
 /// pictures (over the fills, under the curves). With `groups` (fills stacked, in the
-/// drawing's [stack](crate::stack)): `images` (pictures beneath the drawing), then `under`,
+/// drawing's [stack](drift_edit::stack)): `images` (pictures beneath the drawing), then `under`,
 /// then `fills`, then each group over the last, then `items` on top.
 pub struct CanvasContent<'a> {
     /// (In runs, drawn one after another.)

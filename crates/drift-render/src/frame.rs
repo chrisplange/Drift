@@ -8,7 +8,9 @@ use std::f64::consts::TAU;
 use std::sync::Arc;
 
 use bytemuck::{Pod, Zeroable};
-use drift_core::{Bounds, DVec2, DofState, Emphasis, LineKind, LineType, Shape, SketchItem};
+use drift_core::{
+    Bounds, CanvasImage, DVec2, DofState, Emphasis, FillMesh, LineKind, LineType, Shape, SketchItem,
+};
 
 use crate::{Camera, Palette};
 
@@ -54,17 +56,6 @@ pub struct FillVertex {
     pub color: [u8; 4],
 }
 
-/// A picture to draw: RGBA pixels (sRGB, not premultiplied, rows from the top) on the
-/// parallelogram with these world corners: top-left, top-right, bottom-right, bottom-left.
-#[derive(Clone, Debug)]
-pub struct CanvasImage {
-    pub pixels: Arc<Vec<u8>>,
-    pub width: u32,
-    pub height: u32,
-    pub corners: [DVec2; 4],
-    pub opacity: f32,
-}
-
 /// A vertex of a picture: where it is (physical pixels relative to the canvas centre), where
 /// in the picture (0–1 across and down), and how opaque.
 #[repr(C)]
@@ -82,15 +73,6 @@ pub struct FrameImage {
     pub width: u32,
     pub height: u32,
     pub vertices: Vec<ImageVertex>,
-}
-
-/// A triangulated area in world coordinates, with an sRGB colour and alpha.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct FillMesh {
-    pub vertices: Vec<DVec2>,
-    /// Triangles, three indices each.
-    pub indices: Vec<u32>,
-    pub color: [u8; 4],
 }
 
 /// Uniform block shared by all canvas pipelines. Laid out as `vec4`s for WebGL2 / std140.

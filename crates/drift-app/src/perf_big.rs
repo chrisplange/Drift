@@ -3,12 +3,15 @@
 //!
 //! `cargo test --release -p drift-app perf_big -- --ignored --nocapture --test-threads=1`
 //!
-//! `perf_big_synthetic` needs no files. `perf_big` runs the whole app (with a GPU) on the
+//! `perf_big` runs the whole app (with a GPU) on the
 //! file `DRIFT_BIG` names, imported as `DRIFT_MODE` (`geometry`, the default, or
 //! `underlay`); `DRIFT_BIG=synthetic:8000` imports [`big_drawing`] of 8,000 rooms instead.
 //! `perf_big_drag` drags one curve, 1000 scattered curves, every curve and every point of
 //! the `DRIFT_BIG` file (as geometry), calling `Editor::drag` and then with the Select tool
 //! (`DRIFT_CASE` picks one by the start of its name), with the frame after each step.
+//!
+//! The ones without a window (`perf_big_synthetic`, `fixtures_save`) are drift-edit's
+//! `perf_big`.
 
 use std::collections::BTreeSet;
 use std::time::Instant;
@@ -18,278 +21,11 @@ use eframe::egui::Pos2;
 use egui_kittest::Harness;
 
 use crate::app::import_ui::ImportAs;
-use crate::editor::Editor;
-
-/// A made-up big CAD drawing: a grid of `cells` rooms, each a closed outline with a door
-/// swing (an arc), a column (a circle) and loose lines across it; every third room hatched
-/// solid; long grid lines across the sheet. About 10 curves a room.
-pub(crate) fn big_drawing(cells: usize) -> drift_io::dxf::DxfImport {
-    use drift_core::Shape;
-    use drift_io::dxf::{DxfEntity, DxfHatch, DxfImport};
-    let mut import = DxfImport::default();
-    let curve = |layer: &str, shape: Shape| DxfEntity {
-        layer: layer.into(),
-        shape,
-        line_type: None,
-        color: None,
-        weight: None,
-    };
-    let v = DVec2::new;
-    let cols = (cells as f64).sqrt().ceil() as usize;
-    let mut seed = 11u64;
-    let mut rnd = move || {
-        seed = seed
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        (seed >> 11) as f64 / (1u64 << 53) as f64
-    };
-    for k in 0..cells {
-        let o = v((k % cols) as f64 * 3000.0, (k / cols) as f64 * 3000.0);
-        let c = [
-            v(0.0, 0.0),
-            v(2400.0, 0.0),
-            v(2400.0, 2000.0),
-            v(0.0, 2000.0),
-        ]
-        .map(|p| o + p);
-        for n in 0..4 {
-            import.entities.push(curve(
-                "walls",
-                Shape::Line {
-                    a: c[n],
-                    b: c[(n + 1) % 4],
-                },
-            ));
-        }
-        import.entities.push(curve(
-            "doors",
-            Shape::Arc {
-                center: o + v(300.0, 0.0),
-                radius: 800.0,
-                start: 0.0,
-                sweep: std::f64::consts::FRAC_PI_2,
-            },
-        ));
-        import.entities.push(curve(
-            "columns",
-            Shape::Circle {
-                center: o + v(1800.0 + 200.0 * rnd(), 1400.0 + 200.0 * rnd()),
-                radius: 150.0,
-            },
-        ));
-        for _ in 0..4 {
-            let a = o + v(200.0 + 2000.0 * rnd(), 200.0 + 1600.0 * rnd());
-            let b = o + v(200.0 + 2000.0 * rnd(), 200.0 + 1600.0 * rnd());
-            import
-                .entities
-                .push(curve("furniture", Shape::Line { a, b }));
-        }
-        if k % 3 == 0 {
-            import.hatches.push(DxfHatch {
-                layer: "fills".into(),
-                loops: vec![
-                    (0..4)
-                        .map(|n| Shape::Line {
-                            a: c[n],
-                            b: c[(n + 1) % 4],
-                        })
-                        .collect(),
-                ],
-                solid: true,
-                pattern: "SOLID".into(),
-                scale: 1.0,
-                angle: 0.0,
-                definition: Vec::new(),
-                origin: DVec2::ZERO,
-                color: None,
-                opacity: None,
-                seeds: Vec::new(),
-            });
-        }
-    }
-    let size = cols as f64 * 3000.0;
-    for n in 0..20 {
-        let t = 2700.0 + n as f64 * size / 20.0;
-        import.entities.push(curve(
-            "grid",
-            Shape::Line {
-                a: v(t, -1000.0),
-                b: v(t, size),
-            },
-        ));
-        import.entities.push(curve(
-            "grid",
-            Shape::Line {
-                a: v(-1000.0, t),
-                b: v(size, t),
-            },
-        ));
-    }
-    import
-}
+use drift_edit::editor::Editor;
+use drift_edit::test_sketches::big_drawing;
 
 fn ms(since: Instant) -> f64 {
     since.elapsed().as_secs_f64() * 1e3
-}
-
-/// The editor side of a big drawing (no window): an edit finds the closed areas once, the
-/// index follows it without a rebuild, and kept canvas items cost next to nothing.
-#[test]
-#[ignore = "torture test: run with --release --ignored --nocapture"]
-fn perf_big_synthetic() {
-    println!();
-    let mut ed = Editor::new(Document::new());
-    ed.doc.begin();
-    drift_io::dxf::add_to_document(&mut ed.doc, &big_drawing(4000));
-    let t = Instant::now();
-    assert!(ed.commit_import("Import"));
-    let _ = ed.fill_shapes();
-    println!("import commit + first fill shapes: {:.0} ms", ms(t));
-    let curves: Vec<EntityId> = ed
-        .doc
-        .iter()
-        .filter(|(_, e)| !e.kind.is_point())
-        .map(|(id, _)| id)
-        .collect();
-    println!("{} curves, {} fills", curves.len(), ed.doc.fills().count());
-
-    // Moving one curve: the areas are found once (for the fills to follow), not again after.
-    ed.selection = [curves[curves.len() / 2]].into_iter().collect();
-    let t = Instant::now();
-    assert_eq!(ed.nudge(DVec2::new(1.0, 0.0)), Some(true));
-    let edit = ms(t);
-    // (Its fills follow once the areas are found on a thread: as they were until then.)
-    let t = Instant::now();
-    let _ = ed.fill_shapes();
-    let stale = ms(t);
-    let t = Instant::now();
-    ed.settle_areas();
-    let settle = ms(t);
-    let found = ed
-        .regions
-        .as_ref()
-        .map(|(_, r)| r.clone())
-        .expect("areas found");
-    let t = Instant::now();
-    let _ = ed.fill_shapes();
-    let next = ms(t);
-    assert!(
-        std::sync::Arc::ptr_eq(&found, &ed.regions.as_ref().unwrap().1),
-        "the areas were found again after the edit"
-    );
-    println!(
-        "move one curve: edit {edit:.0} ms, fill shapes while its areas are found \
-         {stale:.1} ms, fills followed {settle:.0} ms, fill shapes after {next:.0} ms"
-    );
-
-    // The index follows a few changes without rebuilding.
-    let point = ed.doc.iter().find(|(_, e)| e.kind.is_point()).unwrap().0;
-    ed.doc.begin();
-    ed.doc.set_point(point, DVec2::new(-500.0, -500.0)).unwrap();
-    ed.doc.commit("Move");
-    let t = Instant::now();
-    ed.index.update(&ed.doc);
-    let index = ms(t);
-    assert_eq!(
-        ed.index.pick(DVec2::new(-500.0, -500.0), 1.0, |_| true),
-        Some(point)
-    );
-    println!("index update after a move: {index:.2} ms");
-
-    // Deleting 100 curves.
-    ed.selection = curves
-        .iter()
-        .step_by(curves.len() / 100)
-        .take(100)
-        .copied()
-        .collect();
-    let t = Instant::now();
-    ed.delete_selection();
-    println!("delete 100 curves: {:.0} ms", ms(t));
-
-    // Canvas items: made once, then kept frame to frame (hovering patches a few in).
-    ed.sync();
-    let mut items = crate::frame_items::ItemsCache::default();
-    let stack = ed.stack();
-    let t = Instant::now();
-    let _ = items.prepare(&ed, true, false, Some(&stack));
-    items.restore();
-    let made = ms(t);
-    let hover: Vec<EntityId> = curves.iter().step_by(997).copied().collect();
-    let t = Instant::now();
-    for &h in &hover {
-        ed.hovered = Some(h);
-        let _ = items.prepare(&ed, true, false, Some(&stack));
-        items.restore();
-    }
-    let kept = ms(t) / hover.len() as f64;
-    println!("canvas items: made {made:.1} ms, kept (hovering) {kept:.2} ms a frame");
-
-    // Dragging every curve (#253): each part moves on its own (rounds moved whole have
-    // nothing to solve), the index keeps searches quick, the fills move along, and the
-    // overlapping curves are looked for again only where things changed.
-    let all: Vec<EntityId> = ed
-        .doc
-        .iter()
-        .filter(|(_, e)| !e.kind.is_point())
-        .map(|(id, _)| id)
-        .collect();
-    let dragged: Vec<drift_solver::Param> = ed
-        .doc
-        .defining_points(all.iter().copied())
-        .into_iter()
-        .flat_map(drift_solver::Param::point)
-        .collect();
-    // (As the app does when a drag begins: the last edit's fills follow it first.)
-    ed.settle_areas();
-    ed.sync();
-    let _ = ed.fill_shapes();
-    let _ = ed.overlapping();
-    ed.doc.begin();
-    let (mut first, mut drag, mut fills, mut over) = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
-    for k in 1..=4 {
-        let t = Instant::now();
-        assert!(ed.drag(&all, DVec2::new(2.0 * k as f64, 1.0), &dragged));
-        // (The first call works out the drag's parts.)
-        if k == 1 {
-            first = ms(t);
-        } else {
-            drag = drag.max(ms(t));
-        }
-        assert_eq!(ed.drag_solves, 0, "rounds moved whole were solved");
-        ed.sync();
-        let t = Instant::now();
-        let _ = ed.fill_shapes();
-        fills = fills.max(ms(t));
-        let t = Instant::now();
-        let _ = ed.overlapping();
-        over = over.max(ms(t));
-    }
-    assert!(ed.commit("Move"));
-    println!(
-        "drag every curve: first call {first:.0} ms, then {drag:.0} ms; fill shapes \
-         {fills:.1} ms, overlapping {over:.1} ms (the worst)"
-    );
-
-    println!(
-        "  budgets: index update 5 ms, kept items 5 ms a frame; dragging every curve: \
-         first call 400 ms, then 150 ms, fills 60 ms, overlapping 80 ms"
-    );
-    assert!(index < 5.0, "index update {index:.2} ms");
-    assert!(kept < 5.0, "kept items {kept:.2} ms a frame");
-    assert!(
-        first < 400.0,
-        "first call dragging every curve {first:.0} ms"
-    );
-    assert!(drag < 150.0, "dragging every curve {drag:.0} ms a call");
-    assert!(
-        fills < 60.0,
-        "fills while dragging every curve {fills:.1} ms"
-    );
-    assert!(
-        over < 80.0,
-        "overlapping while dragging every curve {over:.1} ms"
-    );
 }
 
 fn phase(
@@ -441,7 +177,7 @@ fn perf_big() {
         // Frames until its fills have followed it (their areas found on a thread).
         let t = Instant::now();
         let mut frames = 0;
-        while h.state().editor.areas.pending.is_some() && frames < 2000 {
+        while h.state().editor.areas_pending() && frames < 2000 {
             h.step();
             frames += 1;
         }
@@ -473,16 +209,13 @@ fn perf_big() {
     let ed = &mut h.state_mut().editor;
     ed.settle_areas();
     let kept = ed.fill_shapes();
-    let memo = ed.uncrossed_memo.borrow();
-    let bytes: usize = memo.values().map(|m| m.bytes()).sum();
+    let (fills, bytes) = ed.crossed_fill_memo();
     println!(
         "crossed-fill memo: {} fills, {:.2} MB",
-        memo.len(),
+        fills,
         bytes as f64 / 1e6
     );
-    drop(memo);
-    ed.uncrossed_memo.borrow_mut().clear();
-    ed.fill_shapes = None;
+    ed.forget_fill_shapes();
     let fresh = ed.fill_shapes();
     assert_eq!(kept.len(), fresh.len());
     for (id, k) in kept.iter() {
@@ -568,7 +301,7 @@ fn perf_big_drag() {
         {
             let ed = &mut h.state_mut().editor;
             ed.doc.begin();
-            let scope = ed.drag_scope(&ids);
+            let scope = ed.scope_of_drag(&ids);
             let lowering = ed.lowering();
             let needs = drift_solver::needs_solve_with(&ed.doc, &scope, lowering.as_deref());
             let relations = ed
@@ -636,7 +369,7 @@ fn perf_big_drag() {
                 .editor
                 .drag(&ids, DVec2::new(2.0, 1.0), &dragged);
             let call = ms(t);
-            let solves = h.state().editor.drag_solves;
+            let solves = h.state().editor.drag_solves();
             let t = Instant::now();
             h.step();
             let frame = ms(t);
@@ -686,7 +419,7 @@ fn perf_big_drag() {
                 let now = h.state().editor.doc.shape(first).map(|s| s.bounds().min);
                 println!(
                     "  select tool step {k}: frame {frame:.1} ms, {} solves, moved {:.1} mm",
-                    h.state().editor.drag_solves,
+                    h.state().editor.drag_solves(),
                     now.zip(was).map_or(0.0, |(a, b)| a.distance(b))
                 );
             }
@@ -698,7 +431,7 @@ fn perf_big_drag() {
             let t = Instant::now();
             h.step();
             println!("  frame after {:.1} ms", ms(t));
-            while h.state().editor.areas.pending.is_some() {
+            while h.state().editor.areas_pending() {
                 h.step();
             }
             assert!(h.state_mut().editor.undo());
@@ -889,80 +622,5 @@ fn perf_big_save() {
         std::fs::write(&out, &text).unwrap();
         std::fs::write(format!("{out}.edited"), &edited.text).unwrap();
         std::fs::write(format!("{out}.second"), &second).unwrap();
-    }
-}
-
-/// Every fixture opened and saved (#185): whether it saves as it was read, whether a second
-/// save is the same, and (with `DRIFT_SAVE_OUT`, a folder) the saved text, to compare writers
-/// byte for byte.
-#[test]
-#[ignore = "writer probe: run with --ignored --nocapture"]
-fn fixtures_save() {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../drift-io/tests/fixtures");
-    let out = std::env::var("DRIFT_SAVE_OUT").ok();
-    let mut names: Vec<_> = std::fs::read_dir(&dir)
-        .unwrap()
-        .map(|e| e.unwrap().path())
-        .collect();
-    names.sort();
-    println!();
-    for path in names {
-        let text = std::fs::read_to_string(&path)
-            .unwrap()
-            .replace("\r\n", "\n");
-        let name = path.file_name().unwrap().to_string_lossy().into_owned();
-        let (doc, meta, _) = drift_io::load_with_notes(&text).unwrap();
-        let saved = drift_io::save(&doc, &meta);
-        let (again, again_meta, _) = drift_io::load_with_notes(&saved).unwrap();
-        let twice = drift_io::save(&again, &again_meta);
-        println!(
-            "{name:<14} {:>7} bytes  saves as read: {:<5}  second save same: {}",
-            text.len(),
-            saved == text,
-            twice == saved
-        );
-        if let Some(out) = &out {
-            std::fs::create_dir_all(out).unwrap();
-            std::fs::write(std::path::Path::new(out).join(&name), &saved).unwrap();
-            // A newer build's table laid out another way, merged after an edit.
-            let reader = format!(
-                "  \"reader\": {},
-",
-                drift_io::READER_VERSION
-            );
-            if saved.contains(&reader) {
-                let newer = saved.replacen(
-                    &reader,
-                    &format!(
-                        "{reader}  \"marks\":[
-	{{ \"id\": \"m1\" }} ,
-
-   {{\"x\":[1,
- 2]}}
- ] ,
-"
-                    ),
-                    1,
-                );
-                let (mut d, m, _) = drift_io::load_with_notes(&newer).unwrap();
-                let p = d.iter().find(|(_, e)| e.kind.is_point()).unwrap().0;
-                let at = d.point(p).unwrap();
-                d.set_point(p, at + DVec2::X).unwrap();
-                std::fs::write(
-                    std::path::Path::new(out).join(format!("{name}.edited")),
-                    drift_io::save(&d, &m),
-                )
-                .unwrap();
-            }
-        }
-    }
-    // The demo drawing, and a fragment as copy writes it.
-    if let Some(out) = &out {
-        let plate = drift_core::demo::mounting_plate();
-        std::fs::write(
-            std::path::Path::new(out).join("mounting_plate.drift"),
-            drift_io::save(&plate, &Default::default()),
-        )
-        .unwrap();
     }
 }

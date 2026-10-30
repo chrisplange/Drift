@@ -6,7 +6,7 @@ use drift_geom::SnapKind;
 
 use super::*;
 
-use crate::editor::GuideKind;
+use drift_edit::editor::GuideKind;
 
 /// Hover `p` and run, so the canvas works out the pointer there.
 fn hover_world(h: &mut Harness<'_, DriftApp>, p: DVec2) {

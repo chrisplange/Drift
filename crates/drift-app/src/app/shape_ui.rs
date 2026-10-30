@@ -7,9 +7,9 @@ use std::collections::BTreeSet;
 use drift_core::{EntityId, LineType};
 
 use crate::app::fill_ui::{FillEdit, fill_style_editor_or_none};
-use crate::editor::PickedShapes;
-use crate::fills::FillStyle;
 use crate::*;
+use drift_edit::editor::PickedShapes;
+use drift_edit::fills::FillStyle;
 
 impl DriftApp {
     /// The picked filled shapes when they are all that is picked (and nothing but shapes'

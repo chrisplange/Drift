@@ -214,10 +214,10 @@ impl DimensionTool {
             .map(|anchor| crate::labels::centred_offset(&ed.doc, &c, at - anchor));
         match ed.add_dimension(c, offset) {
             Ok(id) => {
-                ed.pending_edit = Some(id);
+                ed.out.pending_edit = Some(id);
                 // Horizontal and vertical dimensions, and those square to a line (between
                 // walls), can continue as a chain or baseline row.
-                let baseline = ed.dim_mode == crate::editor::DimMode::Baseline;
+                let baseline = ed.prefs.dim_mode == crate::editor::DimMode::Baseline;
                 let run = |base, last, way| Run {
                     base,
                     last,
@@ -263,7 +263,7 @@ impl DimensionTool {
                     _ => None,
                 };
             }
-            Err(e) => ed.notice = Some(format!("{}: {e}", c.type_name())),
+            Err(e) => ed.out.notice = Some(format!("{}: {e}", c.type_name())),
         }
     }
 
@@ -377,11 +377,11 @@ impl DimensionTool {
         let added = match ed.add_dimension(c, offset) {
             Ok(id) => Some(id),
             Err(crate::editor::EditError::Redundant | crate::editor::EditError::Conflict) => {
-                ed.pending_driven = None;
+                ed.out.pending_driven = None;
                 ed.add_driven_dimension(c, offset).ok()
             }
             Err(e) => {
-                ed.notice = Some(format!("{}: {e}", c.type_name()));
+                ed.out.notice = Some(format!("{}: {e}", c.type_name()));
                 None
             }
         };
@@ -412,8 +412,8 @@ impl DimensionTool {
         let Some(run) = self.run.take() else {
             return;
         };
-        if !ed.dim_overall
-            || ed.dim_mode != crate::editor::DimMode::Chain
+        if !ed.prefs.dim_overall
+            || ed.prefs.dim_mode != crate::editor::DimMode::Chain
             || run.baseline
             || run.count < 2
         {
@@ -425,7 +425,7 @@ impl DimensionTool {
         let offset = crate::labels::dimension_anchor(&ed.doc, &c)
             .map(|anchor| crate::labels::centred_offset(&ed.doc, &c, at - anchor));
         if let Err(e) = ed.add_driven_dimension(c, offset) {
-            ed.notice = Some(format!("Overall: {e}"));
+            ed.out.notice = Some(format!("Overall: {e}"));
         }
     }
 
@@ -542,7 +542,7 @@ impl Tool for DimensionTool {
                 // Continuing a chain / baseline row: in Chain or Baseline mode a click on a
                 // point or line adds the next one (Shift+click, in Single mode). A click on
                 // nothing ends the row.
-                self.continuous = ed.dim_mode != crate::editor::DimMode::Single;
+                self.continuous = ed.prefs.dim_mode != crate::editor::DimMode::Single;
                 if self.run.is_some() && self.first.is_none() && self.base.is_none() {
                     if (mods.shift || self.continuous)
                         && let Some(run) = self.run

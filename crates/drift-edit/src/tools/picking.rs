@@ -181,7 +181,7 @@ impl Pick {
 /// locked, hidden or filtered out), sketch text, a copy of a block, a wall by its poché, a
 /// fill. Empty areas are the caller's: they're picked only where nothing else is.
 pub(super) fn target_at(ed: &mut Editor, p: &Pointer, purpose: Purpose) -> Option<Pick> {
-    let filter = ed.pick_filter;
+    let filter = ed.prefs.pick_filter;
     let geometry = {
         let hidden = ed.hidden_handles();
         // (A drag from a line's middle moves the line; a double-click there opens its group.)

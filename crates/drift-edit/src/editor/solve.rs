@@ -142,7 +142,7 @@ impl Editor {
         };
         if self.new_conflicts(&report) {
             self.doc.rollback();
-            self.notice = Some(format!("{label} undone: it {}", EditError::Conflict));
+            self.out.notice = Some(format!("{label} undone: it {}", EditError::Conflict));
             self.sync();
             return false;
         }
@@ -155,7 +155,7 @@ impl Editor {
         // they are found on a thread, and the fills then follow in this edit's step.
         if self.defer_follow() {
             let tx = self.doc.commit(label);
-            self.far_off = self.far_off_of(tx.entities());
+            self.out.far_off = self.far_off_of(tx.entities());
             self.history.push(tx);
             self.areas.pending = Some(regions::PendingFollow {
                 depth: self.history.undo_depth(),
@@ -174,7 +174,7 @@ impl Editor {
             "{label}: a relation refers to geometry of the wrong kind: {:?}",
             drift_solver::invalid_constraints(&self.doc)
         );
-        self.far_off = self.far_off_of(tx.entities());
+        self.out.far_off = self.far_off_of(tx.entities());
         self.history.push(tx);
         self.sync();
         self.check_caches();

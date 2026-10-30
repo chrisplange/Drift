@@ -578,11 +578,11 @@ impl DriftApp {
         if kind.draws_curves() {
             if let Some(c) = keyed_choice(
                 ui,
-                self.editor.draw_construction,
+                self.editor.prefs.draw_construction,
                 &[(false, "Geometry"), (true, "Construction")],
                 "Draw geometry, or construction guides that don't print (Alt+C)",
             ) {
-                self.editor.draw_construction = c;
+                self.editor.prefs.draw_construction = c;
             }
             divider(ui);
         }
@@ -620,30 +620,30 @@ impl DriftApp {
             }
             ToolKind::Polygon => {
                 caption(ui, "Sides");
-                let mut sides = if self.editor.polygon_sides == 0 {
+                let mut sides = if self.editor.prefs.polygon_sides == 0 {
                     6
                 } else {
-                    self.editor.polygon_sides
+                    self.editor.prefs.polygon_sides
                 };
                 if ui
                     .add(egui::DragValue::new(&mut sides).range(3..=64).speed(0.1))
                     .changed()
                 {
-                    self.editor.polygon_sides = sides;
+                    self.editor.prefs.polygon_sides = sides;
                 }
                 if let Some(c) = keyed_choice(
                     ui,
-                    self.editor.polygon_circumscribed,
+                    self.editor.prefs.polygon_circumscribed,
                     &[(false, "Inscribed"), (true, "Circumscribed")],
                     "X switches while drawing",
                 ) {
-                    self.editor.polygon_circumscribed = c;
+                    self.editor.prefs.polygon_circumscribed = c;
                 }
             }
             ToolKind::Slot => {
                 if let Some(m) = keyed_choice(
                     ui,
-                    self.editor.slot_mode,
+                    self.editor.prefs.slot_mode,
                     &[
                         (SlotMode::Straight, "Straight"),
                         (SlotMode::Centre, "Centre"),
@@ -651,7 +651,7 @@ impl DriftApp {
                     ],
                     "U again switches to the next",
                 ) {
-                    self.editor.slot_mode = m;
+                    self.editor.prefs.slot_mode = m;
                     self.tool.cancel(&mut self.editor);
                 }
             }
@@ -682,8 +682,8 @@ impl DriftApp {
             ToolKind::Text => {
                 caption(ui, "Height");
                 let unit = units.length.mm_per_unit();
-                let mut shown = if self.editor.text_height > 0.0 {
-                    self.editor.text_height
+                let mut shown = if self.editor.prefs.text_height > 0.0 {
+                    self.editor.prefs.text_height
                 } else {
                     10.0
                 } / unit;
@@ -698,7 +698,7 @@ impl DriftApp {
                     .on_hover_text("Cap height of new text")
                     .changed()
                 {
-                    self.editor.text_height = shown * unit;
+                    self.editor.prefs.text_height = shown * unit;
                 }
             }
             ToolKind::Fill => self.fill_tool_bar(ui),
@@ -712,14 +712,14 @@ impl DriftApp {
                     // How horizontal and vertical dimensions go on.
                     if let Some(m) = choice(
                         ui,
-                        self.editor.dim_mode,
+                        self.editor.prefs.dim_mode,
                         &drift_edit::editor::DimMode::ALL.map(|m| (m, m.label())),
                     ) {
-                        self.editor.dim_mode = m;
+                        self.editor.prefs.dim_mode = m;
                     }
                     ui.add_enabled(
-                        self.editor.dim_mode == drift_edit::editor::DimMode::Chain,
-                        egui::Checkbox::new(&mut self.editor.dim_overall, "Overall"),
+                        self.editor.prefs.dim_mode == drift_edit::editor::DimMode::Chain,
+                        egui::Checkbox::new(&mut self.editor.prefs.dim_overall, "Overall"),
                     )
                     .on_hover_text(
                         "When a chain ends, add the overall dimension outside it (as a \
@@ -756,7 +756,7 @@ impl DriftApp {
     /// Set what the select tool picks; what is picked now keeps only what the filter allows.
     pub(crate) fn set_pick_filter(&mut self, filter: drift_edit::editor::PickFilter) {
         let ed = &mut self.editor;
-        ed.pick_filter = filter;
+        ed.prefs.pick_filter = filter;
         let doc = &ed.doc;
         ed.selection.retain(|id| filter.allows(doc, *id));
         if !filter.fills() {
@@ -806,8 +806,8 @@ impl DriftApp {
         let picked = !self.editor.selection.is_empty()
             || !self.editor.selected_instances.is_empty()
             || !self.editor.selected_fills.is_empty();
-        if !picked || !self.editor.pick_filter.is_all() {
-            if let Some(f) = pick_filter_toggles(ui, self.editor.pick_filter) {
+        if !picked || !self.editor.prefs.pick_filter.is_all() {
+            if let Some(f) = pick_filter_toggles(ui, self.editor.prefs.pick_filter) {
                 self.set_pick_filter(f);
             }
             divider(ui);

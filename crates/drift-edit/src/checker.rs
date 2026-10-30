@@ -239,7 +239,7 @@ impl Editor {
     pub fn fix_issue(&mut self, issue: &Issue) -> bool {
         let fixed = self.try_fix(issue, false);
         if !fixed {
-            self.notice = Some(format!(
+            self.out.notice = Some(format!(
                 "Couldn't fix the {}: it conflicts with the relations or dimensions there",
                 issue.label().to_lowercase()
             ));
@@ -431,7 +431,7 @@ mod tests {
         let gap = ed.check_sketch(DEFAULT_TOLERANCE)[0];
         let before = ed.history.undo_label().map(str::to_owned);
         assert!(!ed.fix_issue(&gap));
-        assert!(ed.notice.is_some());
+        assert!(ed.out.notice.is_some());
         assert!(ed.doc.contains(c) && ed.doc.contains(c2), "nothing changed");
         assert_eq!(ed.history.undo_label().map(str::to_owned), before);
     }

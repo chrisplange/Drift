@@ -20,9 +20,9 @@ fn rectangle(h: &mut Harness<'_, DriftApp>, min: DVec2, max: DVec2) -> Vec<Entit
 fn shapes(h: &mut Harness<'_, DriftApp>) -> (Vec<EntityId>, FillId, FillId) {
     h.state_mut().status_colors = false;
     let ed = &mut h.state_mut().editor;
-    ed.fill_new_shapes = true;
-    ed.fill_style.color = Some(Rgb([0, 0, 255]));
-    ed.fill_style.opacity = 1.0;
+    ed.prefs.fill_new_shapes = true;
+    ed.prefs.fill_style.color = Some(Rgb([0, 0, 255]));
+    ed.prefs.fill_style.opacity = 1.0;
     ed.doc.begin();
     let sides = rectangle(h, DVec2::ZERO, DVec2::new(40.0, 30.0));
     let ed = &mut h.state_mut().editor;
@@ -39,7 +39,7 @@ fn shapes(h: &mut Harness<'_, DriftApp>) -> (Vec<EntityId>, FillId, FillId) {
             .unwrap();
     }
     ed.add_shape(&sides).expect("a shape");
-    ed.fill_new_shapes = false;
+    ed.prefs.fill_new_shapes = false;
     rectangle(h, DVec2::new(60.0, 0.0), DVec2::new(90.0, 30.0));
     rectangle(h, DVec2::new(75.0, 15.0), DVec2::new(105.0, 45.0));
     let ed = &mut h.state_mut().editor;
@@ -295,7 +295,7 @@ fn clicking_a_grouped_shapes_fill_picks_the_group() {
     let Some(mut h) = harness() else { return };
     let (sides, shape, _) = shapes(&mut h);
     let ed = &mut h.state_mut().editor;
-    ed.fill_new_shapes = true;
+    ed.prefs.fill_new_shapes = true;
     ed.doc.begin();
     let doc = &mut ed.doc;
     let p = [(0.0, 35.0), (20.0, 35.0), (20.0, 45.0), (0.0, 45.0)]
@@ -304,7 +304,7 @@ fn clicking_a_grouped_shapes_fill_picks_the_group() {
         .map(|i| doc.add_line(p[i], p[(i + 1) % 4]).unwrap())
         .collect();
     ed.add_shape(&other).unwrap();
-    ed.fill_new_shapes = false;
+    ed.prefs.fill_new_shapes = false;
     ed.commit("Second shape");
     let second = ed
         .doc

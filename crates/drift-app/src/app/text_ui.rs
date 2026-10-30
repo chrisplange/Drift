@@ -681,7 +681,7 @@ impl DriftApp {
             );
         }
         if edited != t {
-            self.editor.text_height = edited.height;
+            self.editor.prefs.text_height = edited.height;
             self.editor.update_text(id, |x| *x = edited);
         }
         ui.add_space(6.0);

@@ -35,7 +35,7 @@ fn smoke_selection_filters_one_kind_or_several() {
     for kind in PickKind::ALL {
         pick_only(&mut h, kind.label());
         assert_eq!(
-            h.state().editor.pick_filter,
+            h.state().editor.prefs.pick_filter,
             PickFilter::only(kind),
             "{kind:?}"
         );
@@ -55,7 +55,7 @@ fn smoke_selection_filters_one_kind_or_several() {
     h.get_by_label("Pick Edges").click();
     h.run();
     assert_eq!(
-        h.state().editor.pick_filter,
+        h.state().editor.prefs.pick_filter,
         PickFilter::only(PickKind::Fills).with(PickKind::Edges, true)
     );
     click_world(&mut h, DVec2::new(80.0, 10.0));
@@ -63,7 +63,7 @@ fn smoke_selection_filters_one_kind_or_several() {
     // All: everything again, and a click in the shape picks it whole.
     h.get_by_label("All").click();
     h.run();
-    assert!(h.state().editor.pick_filter.is_all());
+    assert!(h.state().editor.prefs.pick_filter.is_all());
     assert!(h.query_by_label("Selection filter on").is_none());
     click_world(&mut h, DVec2::new(20.0, 15.0));
     assert_eq!(h.state().editor.selection, sides.iter().copied().collect());

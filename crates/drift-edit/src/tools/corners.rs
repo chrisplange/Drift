@@ -258,7 +258,7 @@ impl FilletTool {
             return self.sizing.is_some();
         }
         let Some(corner) = corner_under(ed, p, true) else {
-            ed.notice = Some(no_corner_notice(ed, p, true));
+            ed.out.notice = Some(no_corner_notice(ed, p, true));
             return false;
         };
         self.sizing = Sizing::begin(ed, corner, p, self.radius(ed), true);
@@ -289,7 +289,7 @@ impl FilletTool {
         };
         match done {
             Ok(()) => self.radius = Some(r),
-            Err(e) => ed.notice = Some(format!("Fillet: {e}")),
+            Err(e) => ed.out.notice = Some(format!("Fillet: {e}")),
         }
     }
 
@@ -444,7 +444,7 @@ impl ChamferTool {
             return true;
         }
         let Some(corner) = corner_under(ed, p, false) else {
-            ed.notice = Some(no_corner_notice(ed, p, false));
+            ed.out.notice = Some(no_corner_notice(ed, p, false));
             return false;
         };
         let size = self.distances(ed).0;
@@ -471,7 +471,7 @@ impl ChamferTool {
         };
         match done {
             Ok(()) => self.distances = Some((d1, d2)),
-            Err(e) => ed.notice = Some(format!("Chamfer: {e}")),
+            Err(e) => ed.out.notice = Some(format!("Chamfer: {e}")),
         }
     }
 }

@@ -23,8 +23,8 @@ impl Tool for TextTool {
         let Input::Click(p, _) = input else {
             return;
         };
-        let height = if ed.text_height > 0.0 {
-            ed.text_height
+        let height = if ed.prefs.text_height > 0.0 {
+            ed.prefs.text_height
         } else {
             10.0
         };

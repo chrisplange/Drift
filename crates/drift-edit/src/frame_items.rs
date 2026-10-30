@@ -84,7 +84,7 @@ impl ItemsCache {
             selection: ed.selection.clone(),
             selected_instances: ed.selected_instances.clone(),
             hidden: rest.hidden().clone(),
-            always_endpoints: ed.always_endpoints,
+            always_endpoints: ed.prefs.always_endpoints,
             editing: ed.block_edit.map(|e| e.instance),
         };
         if self.key.as_ref() != Some(&key) {
@@ -357,7 +357,7 @@ mod tests {
         ed.selected_instances = [copies[0]].into_iter().collect();
         ed.hovered_instance = Some(copies[0]);
         check(&mut ed, &mut cache, "a picked copy hovered");
-        ed.always_endpoints = true;
+        ed.prefs.always_endpoints = true;
         check(&mut ed, &mut cache, "end points always shown");
         // An edit: the lists are made again.
         ed.doc.begin();

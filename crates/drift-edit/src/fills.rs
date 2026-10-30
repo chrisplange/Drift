@@ -1352,10 +1352,10 @@ impl Editor {
         }
         self.make_shapes(&touched, walls.as_deref(), &mut changes);
         if !changes.is_empty() {
-            if self.notice.is_none() {
-                self.notice = Some(self.describe_fill_changes(&changes));
+            if self.out.notice.is_none() {
+                self.out.notice = Some(self.describe_fill_changes(&changes));
             }
-            self.fill_changes.extend(changes);
+            self.out.fill_changes.extend(changes);
         }
     }
 
@@ -1798,6 +1798,7 @@ impl Editor {
         }
         if !self.commit("Join corners") {
             return Err(self
+                .out
                 .notice
                 .take()
                 .unwrap_or_else(|| "Joining its corners failed".into()));
@@ -2464,7 +2465,7 @@ impl Editor {
             .map(FillStyle::of)
             .or_else(|| self.instance_fill_style_at(p))
             .ok_or("No fill or hatch here to pick up")?;
-        self.fill_style = style;
+        self.prefs.fill_style = style;
         self.fill_eyedropper = false;
         Ok(())
     }
@@ -2483,7 +2484,7 @@ impl Editor {
             .boundary_at(p)
             .ok_or("Click inside a closed area to fill it")?;
         let mut fill = Fill::new(boundary, p, FillKind::Solid);
-        self.fill_style.apply(&mut fill);
+        self.prefs.fill_style.apply(&mut fill);
         // Inside a shape drawn as one (the area is its inside): the fill is the shape's.
         let walls = self.wall_owners();
         fill.path = self
@@ -2506,16 +2507,16 @@ impl Editor {
         });
         let id = if let Some(id) = existing {
             if let Some(mut current) = self.doc.fill(id).cloned()
-                && FillStyle::of(&current) != self.fill_style
+                && FillStyle::of(&current) != self.prefs.fill_style
             {
-                self.fill_style.apply(&mut current);
+                self.prefs.fill_style.apply(&mut current);
                 self.update_fill(id, current);
             }
             id
         } else {
             self.doc.begin();
             let id = self.doc.add_fill(fill);
-            let label = match self.fill_style.kind {
+            let label = match self.prefs.fill_style.kind {
                 FillKind::Solid => "Fill",
                 FillKind::Hatch(_) => "Hatch",
             };
@@ -2539,13 +2540,13 @@ impl Editor {
                 closed: true,
             })
             .ok()?;
-        if self.fill_new_shapes
+        if self.prefs.fill_new_shapes
             && let Some(region) = self.path_region(path)
         {
             let seed = crate::editor::interior_point(&region, region.centroid);
             let mut fill = Fill::new(curves.to_vec(), seed, FillKind::Solid);
             fill.path = Some(path);
-            self.fill_style.apply(&mut fill);
+            self.prefs.fill_style.apply(&mut fill);
             self.doc.add_fill(fill);
         }
         Some(path)
@@ -2854,10 +2855,10 @@ impl Editor {
             let _ = self.doc.set_path(*id, followed);
         }
         if !changes.is_empty() {
-            if self.notice.is_none() {
-                self.notice = Some(self.describe_fill_changes(&changes));
+            if self.out.notice.is_none() {
+                self.out.notice = Some(self.describe_fill_changes(&changes));
             }
-            self.fill_changes.extend(changes);
+            self.out.fill_changes.extend(changes);
         }
     }
 
@@ -3198,7 +3199,7 @@ mod tests {
         assert_eq!(ed.doc.fills().count(), 1);
         assert_eq!(ed.history.can_undo(), steps);
         // Another pattern: the existing hatch changes to it.
-        ed.fill_style.kind = FillKind::Hatch(drift_core::Hatch::new("ANSI37"));
+        ed.prefs.fill_style.kind = FillKind::Hatch(drift_core::Hatch::new("ANSI37"));
         assert_eq!(ed.add_fill_at(DVec2::new(5.0, 5.0)).unwrap(), first);
         assert_eq!(ed.doc.fills().count(), 1);
         assert!(matches!(

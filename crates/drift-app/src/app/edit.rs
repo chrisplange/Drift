@@ -7,8 +7,8 @@ impl DriftApp {
     /// curves'.
     pub(crate) fn toggle_construction(&mut self, now: f64) {
         if self.tool.kind().draws_curves() {
-            let on = !self.editor.draw_construction;
-            self.editor.draw_construction = on;
+            let on = !self.editor.prefs.draw_construction;
+            self.editor.prefs.draw_construction = on;
             let text = if on {
                 "Drawing construction geometry · Alt+C for geometry"
             } else {
@@ -116,8 +116,8 @@ impl DriftApp {
         if line.is_empty() {
             return;
         }
-        let height = if self.editor.text_height > 0.0 {
-            self.editor.text_height
+        let height = if self.editor.prefs.text_height > 0.0 {
+            self.editor.prefs.text_height
         } else {
             10.0
         };

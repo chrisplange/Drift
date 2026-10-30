@@ -142,7 +142,7 @@ impl SlotShape {
 
 impl SlotTool {
     fn mode(&self, ed: &Editor) -> SlotMode {
-        ed.slot_mode
+        ed.prefs.slot_mode
     }
 
     /// The end centres (and middle) from the clicked points, with the pointer standing in for
@@ -362,7 +362,7 @@ impl SlotTool {
             Err(e) => {
                 ed.doc.rollback();
                 ed.sync();
-                ed.notice = Some(format!("Slot: {e}"));
+                ed.out.notice = Some(format!("Slot: {e}"));
             }
         }
         self.typed_length = None;

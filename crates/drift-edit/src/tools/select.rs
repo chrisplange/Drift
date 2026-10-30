@@ -235,7 +235,7 @@ impl SelectTool {
             }
         };
         if ids.is_empty() && instances.is_empty() && riders.is_empty() {
-            ed.notice = Some("Select something to move first".into());
+            ed.out.notice = Some("Select something to move first".into());
             return true;
         }
         if ed.refuse_locked(&ids) {
@@ -751,7 +751,7 @@ impl Tool for SelectTool {
                     ed.annotation_picks.clear();
                 }
                 let hit = target.and_then(Pick::entity);
-                let filter = ed.pick_filter;
+                let filter = ed.prefs.pick_filter;
                 // Sketch text (anywhere in its box): Shift adds it, Ctrl adds or takes it away.
                 if let Some(t) = target.and_then(Pick::text) {
                     if mods.command {
@@ -1089,7 +1089,7 @@ impl Tool for SelectTool {
                         ed.doc.begin();
                         self.grab = Some(grab);
                     }
-                    _ if ed.pick_filter.areas() && self.start_region_drag(&p, ed) => {}
+                    _ if ed.prefs.pick_filter.areas() && self.start_region_drag(&p, ed) => {}
                     // (No midpoints for a drag start: one from a line's middle moves the line.)
                     _ => {
                         // Dragging inside a picked fill moves its area; elsewhere, box-select.
@@ -1234,7 +1234,7 @@ impl Tool for SelectTool {
                     let mut rect = Bounds::from_point(start);
                     rect.include(p.raw);
                     let crossing = p.raw.x < start.x;
-                    let filter = ed.pick_filter;
+                    let filter = ed.prefs.pick_filter;
                     // Points without edges: every point in the box (a box otherwise takes
                     // curves, and only standalone points).
                     let found: Vec<EntityId> = if !filter.geometry() && !filter.blocks() {
@@ -1283,7 +1283,7 @@ impl Tool for SelectTool {
                         ed.selected_texts.extend(texts);
                     }
                     // Dimensions and annotations are laid out on screen: the app picks them.
-                    ed.box_pick = Some(crate::picks::BoxPick {
+                    ed.out.box_pick = Some(crate::picks::BoxPick {
                         rect,
                         crossing,
                         add,
@@ -1326,7 +1326,7 @@ impl Tool for SelectTool {
                                 });
                             if held {
                                 ed.doc.rollback();
-                                ed.notice = Some(
+                                ed.out.notice = Some(
                                     "Its size is held by a dimension: hold Alt while you scale \
                                      to change the dimension too, or edit its value"
                                         .into(),
@@ -1336,7 +1336,7 @@ impl Tool for SelectTool {
                             }
                         } else {
                             ed.doc.rollback();
-                            ed.notice = Some("Can't scale that far".into());
+                            ed.out.notice = Some("Can't scale that far".into());
                         }
                     }
                     ed.sync();

@@ -195,7 +195,7 @@ fn walls_from_lines_private_samples() {
             ),
             Err(e) => println!("sample {n} ({ext}): {} curves; {e}; {ms:.0} ms", all.len()),
         }
-        if let Some(notice) = &s.editor.notice {
+        if let Some(notice) = &s.editor.out.notice {
             println!("  notice: {notice}");
         }
     }
@@ -228,8 +228,8 @@ fn click(ed: &mut Editor, tool: &mut dyn Tool, at: DVec2) {
 
 fn editor() -> Editor {
     let mut ed = Editor::default();
-    ed.auto_relations = false;
-    ed.wall_thickness = 10.0;
+    ed.prefs.auto_relations = false;
+    ed.prefs.wall_thickness = 10.0;
     ed.show_centrelines = true;
     ed
 }
@@ -249,8 +249,8 @@ fn walls_print_their_faces_not_their_centrelines_or_butts() {
     run(&mut ed, &[v(0.0, 0.0), v(200.0, 0.0)]);
     // A thinner wall of another poché teed into it: it butts against the host's face.
     // (Another material: faces only, no poché.)
-    ed.wall_thickness = 6.0;
-    ed.wall_poche.on = false;
+    ed.prefs.wall_thickness = 6.0;
+    ed.prefs.wall_poche.on = false;
     run(&mut ed, &[v(100.0, 80.0), v(100.0, 5.0)]);
     assert_eq!(ed.doc.fills().count(), 1, "the poché of the host");
     let ctx = eframe::egui::Context::default();

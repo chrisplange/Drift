@@ -63,8 +63,8 @@ impl Editor {
     /// The thickness new walls get: the tool bar's, else 4½″ (a 2×4 wall, finished) in
     /// imperial drawings and 100 mm in metric ones.
     pub fn wall_thickness_now(&self) -> f64 {
-        if self.wall_thickness > 0.0 {
-            self.wall_thickness
+        if self.prefs.wall_thickness > 0.0 {
+            self.prefs.wall_thickness
         } else if self.doc.units().length.is_metric() {
             100.0
         } else {
@@ -79,7 +79,10 @@ impl Editor {
 
     /// The poché new walls get.
     pub fn wall_poche_now(&self) -> Option<FillStyle> {
-        self.wall_poche.on.then(|| self.wall_poche.style.clone())
+        self.prefs
+            .wall_poche
+            .on
+            .then(|| self.prefs.wall_poche.style.clone())
     }
 
     /// A wall's centreline curves.
@@ -266,7 +269,7 @@ impl Editor {
         };
         match refused {
             Some(n) => {
-                self.notice = Some(n);
+                self.out.notice = Some(n);
                 false
             }
             None => true,
@@ -278,7 +281,9 @@ impl Editor {
         if self.guard_owned(ids, op) {
             Ok(())
         } else {
-            Err(EditError::Invalid(self.notice.take().unwrap_or_default()))
+            Err(EditError::Invalid(
+                self.out.notice.take().unwrap_or_default(),
+            ))
         }
     }
 
@@ -426,10 +431,10 @@ impl Editor {
         } else {
             report
         };
-        if self.notice.is_none()
+        if self.out.notice.is_none()
             && let Some(n) = report.notices.first()
         {
-            self.notice = Some(n.clone());
+            self.out.notice = Some(n.clone());
         }
     }
 
@@ -778,10 +783,14 @@ impl Editor {
             w.thickness_expr = expr.clone();
         });
         if !done
-            && self.notice.as_deref().is_some_and(|n| n.contains("undone"))
+            && self
+                .out
+                .notice
+                .as_deref()
+                .is_some_and(|n| n.contains("undone"))
             && walls.iter().any(|w| self.both_faces_held(*w))
         {
-            self.notice = Some(
+            self.out.notice = Some(
                 "Both faces of that wall are dimensioned, so its thickness can't change: make \
                  one of those dimensions a reference (or delete it) first"
                     .into(),
@@ -879,7 +888,7 @@ impl Editor {
     /// set not to join join again. One undo step; false, with a notice, when they can't.
     pub fn join_walls(&mut self, walls: &[WallId]) -> bool {
         let &[a, b] = walls else {
-            self.notice = Some("Pick two walls to join".into());
+            self.out.notice = Some("Pick two walls to join".into());
             return false;
         };
         enum Plan {
@@ -962,7 +971,7 @@ impl Editor {
             }
         }
         let Some((_, plan)) = best else {
-            self.notice = Some(
+            self.out.notice = Some(
                 "Those walls' straight ends don't point at each other: drag an end onto the \
                  other wall instead"
                     .into(),
@@ -983,7 +992,7 @@ impl Editor {
                 let _ = self.doc.set_point(pb, x);
                 if pa != pb && self.doc.merge_points(pb, pa).is_err() {
                     self.doc.rollback();
-                    self.notice = Some("Those walls can't be joined there".into());
+                    self.out.notice = Some("Those walls can't be joined there".into());
                     self.sync();
                     return false;
                 }
@@ -1018,7 +1027,7 @@ impl Editor {
             .map(|((w, e), _)| (*w, usize::from(*e)))
             .collect();
         if ends.is_empty() {
-            self.notice = Some(if picked.len() == 1 {
+            self.out.notice = Some(if picked.len() == 1 {
                 "That wall's ends don't join anything".into()
             } else {
                 "Those walls' ends don't join each other".into()
@@ -1078,7 +1087,7 @@ impl Editor {
             return Err("Pick lines or arcs to make walls along".into());
         }
         if !self.guard_owned(&curves, Op::MakeWalls) {
-            return Err(self.notice.clone().unwrap_or_default());
+            return Err(self.out.notice.clone().unwrap_or_default());
         }
         let chains = chains(&self.doc, &curves);
         self.doc.begin();
@@ -1093,8 +1102,8 @@ impl Editor {
             self.keep_construction(&cs);
             let layer = self.doc.get(cs[0]).map(|e| e.layer).unwrap_or_default();
             let mut w = Wall::new(p, self.wall_thickness_now(), layer);
-            w.thickness_expr = self.wall_thickness_expr.clone();
-            w.justify = self.wall_justify;
+            w.thickness_expr = self.prefs.wall_thickness_expr.clone();
+            w.justify = self.prefs.wall_justify;
             w.poche = self.wall_poche_now();
             if let Ok(id) = self.doc.add_wall(w) {
                 made.push(id);

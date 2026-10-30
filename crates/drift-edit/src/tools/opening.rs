@@ -65,7 +65,7 @@ impl OpeningTool {
 
     fn place(&mut self, ed: &mut Editor) {
         let Some(s) = self.spot else {
-            ed.notice = Some(match self.no_room {
+            ed.out.notice = Some(match self.no_room {
                 Some(w) => format!(
                     "No room for a {} opening there",
                     ed.doc.units().format_readout(w)
@@ -74,19 +74,19 @@ impl OpeningTool {
             });
             return;
         };
-        let was = ed.opening.clone();
+        let was = ed.prefs.opening.clone();
         if let Some(w) = self.typed[1] {
             // A typed width: the leaf keeps its frame allowance.
             let row = ed.opening_type_now();
-            ed.opening.leaf = (w - (row.opening.0 - row.leaf.0)).clamp(0.0, w);
-            ed.opening.width = w;
-            ed.opening.height = row.opening.1;
-            ed.opening.family = row.family.to_owned();
-            ed.opening.type_name.clear();
+            ed.prefs.opening.leaf = (w - (row.opening.0 - row.leaf.0)).clamp(0.0, w);
+            ed.prefs.opening.width = w;
+            ed.prefs.opening.height = row.opening.1;
+            ed.prefs.opening.family = row.family.to_owned();
+            ed.prefs.opening.type_name.clear();
         }
         ed.place_opening(s.wall, s.seg, s.u0);
         if self.typed[1].is_none() {
-            ed.opening = was;
+            ed.prefs.opening = was;
         }
         self.typed = [None; 2];
     }
@@ -156,9 +156,9 @@ impl Tool for OpeningTool {
     fn key(&mut self, key: ToolKey, pointer: Option<&Pointer>, ed: &mut Editor) -> bool {
         match key {
             ToolKey::Space => {
-                let (h, f) = Opening::next_swing(ed.opening.hand, ed.opening.facing);
-                ed.opening.hand = h;
-                ed.opening.facing = f;
+                let (h, f) = Opening::next_swing(ed.prefs.opening.hand, ed.prefs.opening.facing);
+                ed.prefs.opening.hand = h;
+                ed.prefs.opening.facing = f;
                 if let Some(p) = pointer {
                     self.spot = self.spot_for(ed, p);
                 }
@@ -183,8 +183,8 @@ impl Tool for OpeningTool {
             family: row.family.to_owned(),
             type_name: row.name.clone(),
         };
-        op.hand = ed.opening.hand;
-        op.facing = ed.opening.facing;
+        op.hand = ed.prefs.opening.hand;
+        op.facing = ed.prefs.opening.facing;
         let Some(frame) = drift_geom::walls::Frame::of(
             &host.seg,
             host.offsets,

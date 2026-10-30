@@ -61,7 +61,7 @@ fn shift(s: &mut Session, ids: &[EntityId], delta: DVec2) -> Result<(), String> 
         );
     }
     if !ed.commit("Move") {
-        return Err(ed.notice.take().unwrap_or("the move conflicts".into()));
+        return Err(ed.out.notice.take().unwrap_or("the move conflicts".into()));
     }
     Ok(())
 }
@@ -118,7 +118,7 @@ pub(super) fn transform(s: &mut Session, a: &Value) -> Res {
                 result["relations_removed"] = json!(removed.len());
             }
             if !ed.commit("Rotate") {
-                return Err(ed.notice.take().unwrap_or("the turn conflicts".into()));
+                return Err(ed.out.notice.take().unwrap_or("the turn conflicts".into()));
             }
         }
         "scale" => {
@@ -142,7 +142,7 @@ pub(super) fn transform(s: &mut Session, a: &Value) -> Res {
                 return Err("its constraints don't allow that size".into());
             }
             if !ed.commit("Scale") {
-                return Err(ed.notice.take().unwrap_or("the scale conflicts".into()));
+                return Err(ed.out.notice.take().unwrap_or("the scale conflicts".into()));
             }
         }
         "mirror" => {
@@ -532,7 +532,7 @@ pub(super) fn add_fill(s: &mut Session, a: &Value) -> Res {
     };
     let ed = &mut s.editor;
     let style = std::mem::replace(
-        &mut ed.fill_style,
+        &mut ed.prefs.fill_style,
         FillStyle {
             kind,
             color,
@@ -542,7 +542,7 @@ pub(super) fn add_fill(s: &mut Session, a: &Value) -> Res {
     );
     let before: Vec<FillId> = ed.doc.fills().map(|(id, _)| id).collect();
     let result = ed.add_fill_at(at);
-    ed.fill_style = style;
+    ed.prefs.fill_style = style;
     let id = result?;
     // An area that is already filled isn't filled twice: its fill takes the new style.
     let restyled = before.contains(&id);

@@ -323,9 +323,9 @@ fn smoke_picking_overlapping_fills() {
 
 /// A ring of walls round a 100 × 60 room, 10 thick, with the Wall tool; back to Select.
 fn room(h: &mut Harness<'_, DriftApp>) {
-    h.state_mut().editor.wall_thickness = 10.0;
-    h.state_mut().editor.wall_justify = drift_core::Justify::Centre;
-    h.state_mut().editor.wall_arc = false;
+    h.state_mut().editor.prefs.wall_thickness = 10.0;
+    h.state_mut().editor.prefs.wall_justify = drift_core::Justify::Centre;
+    h.state_mut().editor.prefs.wall_arc = false;
     h.key_press(Key::W);
     h.run();
     for p in [
@@ -355,8 +355,8 @@ fn smoke_picking_wall_poche_and_its_door() {
     {
         let ed = &mut h.state_mut().editor;
         ed.set_opening_family("door.single");
-        ed.opening.width = 30.0;
-        ed.opening.leaf = 28.0;
+        ed.prefs.opening.width = 30.0;
+        ed.prefs.opening.leaf = 28.0;
     }
     click_world(&mut h, DVec2::new(50.0, 1.0));
     h.key_press(Key::Escape);
@@ -583,7 +583,7 @@ fn check_filters(table: &[(PickFilter, [&str; 7], [&str; 7])]) {
     let spots = everything(&mut h);
     let mut wrong = Vec::new();
     for (filter, hovers, clicks) in table {
-        h.state_mut().editor.pick_filter = *filter;
+        h.state_mut().editor.prefs.pick_filter = *filter;
         for (i, (name, p)) in spots.iter().enumerate() {
             let lit = hover(&mut h, *p);
             let got = lit_kind(&h, lit);

@@ -48,7 +48,7 @@ fn smoke_drawing_closing_a_loop_keeps_its_direction_relation() {
     let count = |f: fn(&Constraint) -> bool| doc.constraints().filter(|(_, c)| f(c)).count();
     assert_eq!(count(|c| matches!(c, Constraint::Horizontal { .. })), 2);
     assert_eq!(count(|c| matches!(c, Constraint::Vertical { .. })), 2);
-    assert_eq!(h.state().editor.notice, None, "nothing was left out");
+    assert_eq!(h.state().editor.out.notice, None, "nothing was left out");
     save_png("drift_smoke_closed_loop.png", &mut h);
 
     // A height on the right side: the bottom stays level.

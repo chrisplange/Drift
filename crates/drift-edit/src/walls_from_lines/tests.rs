@@ -88,7 +88,7 @@ fn walls_from_lines_is_one_undo_step_and_the_lines_go() {
     assert!(r.skipped.is_empty() && r.partly.is_empty());
     assert!(all.iter().all(|id| !ed.doc.contains(*id)));
     assert_eq!(ed.doc.walls().count(), 1);
-    assert!(ed.notice.is_none(), "{:?}", ed.notice);
+    assert!(ed.out.notice.is_none(), "{:?}", ed.out.notice);
     // The new walls are picked, and the report is current.
     assert_eq!(ed.selected_walls().len(), 1);
     assert!(ed.from_lines_now().is_some());
@@ -106,7 +106,7 @@ fn walls_from_lines_is_one_undo_step_and_the_lines_go() {
 #[test]
 fn the_lines_used_can_be_kept_or_put_on_a_layer() {
     let mut ed = Editor::new(l_plan());
-    ed.wall_lines = UsedLines::Keep;
+    ed.prefs.wall_lines = UsedLines::Keep;
     let all = curves(&ed.doc);
     ed.walls_from_lines(&all).unwrap();
     assert!(all.iter().all(|id| ed.doc.contains(*id)));
@@ -161,7 +161,7 @@ fn exploded_walls_come_back_as_the_same_walls() {
     assert!(r.skipped.is_empty(), "{}", r.summary());
     let got = poche_area(&ed.doc);
     assert!((got - area).abs() < 1e-6 * area, "{got} vs {area}");
-    assert!(ed.notice.is_none(), "{:?}", ed.notice);
+    assert!(ed.out.notice.is_none(), "{:?}", ed.out.notice);
 }
 
 /// Walls from lines on a large plan: a 30 × 30 grid of rooms, exploded (about 7,000 lines).

@@ -51,7 +51,7 @@ impl Editor {
         let mut hidden = self.hidden_handles();
         hidden.extend(self.preview_hidden.iter().copied());
         // (Looked up once per entity of the drawing: hashed, not searched.)
-        let shown_ends = (!self.always_endpoints).then(|| {
+        let shown_ends = (!self.prefs.always_endpoints).then(|| {
             if rest {
                 self.points_of(self.selection.iter().copied())
             } else {

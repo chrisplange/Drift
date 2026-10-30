@@ -132,7 +132,7 @@ impl DriftApp {
         dims: &[DimLayout],
         notes: &[crate::notes::NoteLayout],
     ) {
-        let Some(b) = self.editor.box_pick.take() else {
+        let Some(b) = self.editor.out.box_pick.take() else {
             return;
         };
         if !b.add {
@@ -140,7 +140,7 @@ impl DriftApp {
             self.selected_constraint = None;
             self.selected_leader = None;
         }
-        if !self.editor.pick_filter.annotations() {
+        if !self.editor.prefs.pick_filter.annotations() {
             return;
         }
         let r = egui::Rect::from_two_pos(map.to_screen(b.rect.min), map.to_screen(b.rect.max));
@@ -180,7 +180,7 @@ impl DriftApp {
         let annotating = idle || (self.tool.kind() == ToolKind::Dimension && !self.tool.is_busy());
         // The select tool's filter: dimensions with Annotations (or All), relations with the
         // geometry filters.
-        let filter = self.editor.pick_filter;
+        let filter = self.editor.prefs.pick_filter;
         let select = self.tool.kind() == ToolKind::Select;
         let (dims_ok, glyphs_ok) = (
             !select || filter.annotations(),
@@ -393,7 +393,7 @@ impl DriftApp {
     /// Open the in-place value editor, with or without the text around the value.
     pub(crate) fn open_dimension_editor(&mut self, id: ConstraintId, extras: bool) {
         if self.editor.doc.is_driven(id) {
-            self.editor.notice = Some(
+            self.editor.out.notice = Some(
                 "A driven dimension follows the geometry: untick Driven in the constraint list \
                  to set its value"
                     .into(),
@@ -771,19 +771,19 @@ impl DriftApp {
         // Tool events may have changed the document (and the pointer's snap targets).
         self.editor.sync();
         // Just placed: only its value (the next pick of a chain may be under the rest).
-        if let Some(id) = self.editor.pending_edit.take() {
+        if let Some(id) = self.editor.out.pending_edit.take() {
             self.open_dimension_editor(id, false);
         }
-        if let Some(id) = self.editor.pending_note_edit.take() {
+        if let Some(id) = self.editor.out.pending_note_edit.take() {
             self.open_note_edit(id, true);
         }
         // A base point just picked: back to the select tool.
-        if std::mem::take(&mut self.editor.base_point_done) {
+        if std::mem::take(&mut self.editor.out.base_point_done) {
             self.set_tool(ToolKind::Select);
         }
         // A view just drawn: picked, with the select tool, to name and reframe.
         // (Asked for from a sheet: it goes on that sheet.)
-        if let Some(id) = self.editor.new_view.take()
+        if let Some(id) = self.editor.out.new_view.take()
             && !self.view_drawn(id)
         {
             self.set_tool(ToolKind::Select);
@@ -941,7 +941,7 @@ impl DriftApp {
             };
             items.extend(self.editor.curvature_combs(28.0 / self.camera.scale, comb));
         }
-        let construction = self.editor.draw_construction && self.tool.kind().draws_curves();
+        let construction = self.editor.prefs.draw_construction && self.tool.kind().draws_curves();
         items.extend(
             self.tool
                 .preview(self.pointer.as_ref())

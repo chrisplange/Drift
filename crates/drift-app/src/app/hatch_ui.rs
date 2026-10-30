@@ -353,7 +353,7 @@ impl DriftApp {
                     }
                     None => angle = Some(v.value),
                 },
-                Err(e) => self.editor.notice = Some(format!("Can't use {text}: {e}")),
+                Err(e) => self.editor.out.notice = Some(format!("Can't use {text}: {e}")),
             }
         }
         if edge {
@@ -411,7 +411,7 @@ impl DriftApp {
                     self.align_edge = None;
                 }
                 None => {
-                    self.editor.notice = Some("Click one of the shape's own edges".into());
+                    self.editor.out.notice = Some("Click one of the shape's own edges".into());
                 }
             }
         }

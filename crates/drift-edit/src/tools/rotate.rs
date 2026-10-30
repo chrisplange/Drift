@@ -245,14 +245,14 @@ impl SelectTool {
         if !ok {
             ed.doc.rollback();
             ed.sync();
-            ed.notice = Some("Can't rotate it that way: its constraints don't allow it".into());
+            ed.out.notice = Some("Can't rotate it that way: its constraints don't allow it".into());
             return;
         }
         ed.place_riders(&spin.riders, &turn(spin.pivot, angle));
         if crate::editor::is_quarter_turn(angle) {
             ed.restore_after_rotation(&removed, angle);
         } else if !removed.is_empty() {
-            ed.notice = Some(format!(
+            ed.out.notice = Some(format!(
                 "Rotated {}: {} horizontal / vertical relation(s) no longer applied and were \
                  removed",
                 ed.doc.units().format_angle(angle),

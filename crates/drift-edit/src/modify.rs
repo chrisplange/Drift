@@ -1215,7 +1215,7 @@ impl Editor {
                     names.push(named);
                 }
             }
-            self.notice = Some(format!(
+            self.out.notice = Some(format!(
                 "{label} took off {} that no longer held: {}",
                 if freed.len() == 1 {
                     "a relation"
@@ -3052,7 +3052,7 @@ mod tests {
     /// An empty sketch with automatic relations on, as the app starts.
     fn related() -> Editor {
         let mut ed = Editor::default();
-        ed.auto_relations = true;
+        ed.prefs.auto_relations = true;
         ed
     }
 
@@ -3522,7 +3522,7 @@ mod tests {
                 }),
                 "{what}"
             );
-            assert!(ed.notice.is_none(), "{what}: {:?}", ed.notice);
+            assert!(ed.out.notice.is_none(), "{what}: {:?}", ed.out.notice);
             // Still fully defined but for the cut: a fillet's radius is dimensioned; a
             // chamfer's two lengths are new freedoms.
             assert_eq!(dof(&mut ed), if chamfer { 2 } else { 0 }, "{what}");
@@ -4485,7 +4485,7 @@ mod tests {
             (v(10.0, -10.0), v(10.0, 10.0)),
             (v(30.0, 0.0), v(30.0, 10.0)),
         ]);
-        ed.auto_relations = false;
+        ed.prefs.auto_relations = false;
         ed.trim_at(ids[0], v(15.0, 0.0)).unwrap();
         ed.split_at(ids[1], v(10.0, 5.0)).unwrap();
         ed.offset(ids[2], 2.0, v(40.0, 5.0)).unwrap();
@@ -4499,7 +4499,7 @@ mod tests {
         // so a closed outline made by trimming stays closed.
         let (mut ed, ids) =
             with_lines(&[(v(0.0, 0.0), v(20.0, 0.0)), (v(10.0, -10.0), v(10.0, 10.0))]);
-        ed.auto_relations = false;
+        ed.prefs.auto_relations = false;
         ed.trim_at(ids[0], v(15.0, 0.0)).unwrap();
         ed.trim_at(ids[1], v(10.0, -5.0)).unwrap();
         let corner = |id| match ed.doc.get(id).unwrap().kind {

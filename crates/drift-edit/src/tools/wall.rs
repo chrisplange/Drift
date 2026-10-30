@@ -191,7 +191,7 @@ impl WallTool {
             self.start = join;
             return;
         }
-        if ed.wall_arc {
+        if ed.prefs.wall_arc {
             match self.arc_end.take() {
                 None => {
                     let (anchor, join) = self.join_at(ed, p, at);
@@ -297,15 +297,15 @@ impl WallTool {
                     return;
                 };
                 let mut w = Wall::new(path, ed.wall_thickness_now(), ed.doc.current_layer());
-                w.thickness_expr = ed.wall_thickness_expr.clone();
-                w.justify = ed.wall_justify;
+                w.thickness_expr = ed.prefs.wall_thickness_expr.clone();
+                w.justify = ed.prefs.wall_justify;
                 w.poche = ed.wall_poche_now();
                 w.ends[0] = end(self.start);
                 match ed.doc.add_wall(w) {
                     Ok(id) => id,
                     Err(e) => {
                         ed.doc.rollback();
-                        ed.notice = Some(format!("No wall: {e}"));
+                        ed.out.notice = Some(format!("No wall: {e}"));
                         ed.sync();
                         return;
                     }
@@ -388,7 +388,7 @@ impl WallTool {
                 .and_then(Pointer::snapped_point)
                 .filter(|p| !ed.wall_owners().generated(*p)),
         };
-        let offsets = ed.wall_justify.offsets(ed.wall_thickness_now());
+        let offsets = ed.prefs.wall_justify.offsets(ed.wall_thickness_now());
         Some(ed.wall_preview(next, offsets, from, to))
     }
 
@@ -439,7 +439,7 @@ impl Tool for WallTool {
             }
             Input::DragStart(p, _) => {
                 self.hover = Some(p);
-                if self.corners.is_empty() || ed.wall_arc {
+                if self.corners.is_empty() || ed.prefs.wall_arc {
                     self.click(&p, ed);
                 } else {
                     let (anchor, join) = self.join_at(ed, &p, self.target(&p));
@@ -515,13 +515,13 @@ impl Tool for WallTool {
     fn key(&mut self, key: ToolKey, _pointer: Option<&Pointer>, ed: &mut Editor) -> bool {
         match key {
             ToolKey::Space => {
-                ed.wall_justify = ed.wall_justify.flipped();
+                ed.prefs.wall_justify = ed.prefs.wall_justify.flipped();
                 // The run being drawn flips too (in its last step).
                 if let Some(w) = self.wall
                     && let Some(mut wall) = ed.doc.wall(w).cloned()
-                    && wall.justify != ed.wall_justify
+                    && wall.justify != ed.prefs.wall_justify
                 {
-                    wall.justify = ed.wall_justify;
+                    wall.justify = ed.prefs.wall_justify;
                     ed.doc.begin();
                     let _ = ed.doc.set_wall(w, wall);
                     if ed.commit("Wall") {
@@ -531,12 +531,12 @@ impl Tool for WallTool {
                 true
             }
             ToolKey::Again => {
-                ed.wall_arc = !ed.wall_arc;
+                ed.prefs.wall_arc = !ed.prefs.wall_arc;
                 self.arc_end = None;
                 true
             }
             ToolKey::ArcNext | ToolKey::LineNext => {
-                ed.wall_arc = key == ToolKey::ArcNext;
+                ed.prefs.wall_arc = key == ToolKey::ArcNext;
                 self.arc_end = None;
                 true
             }

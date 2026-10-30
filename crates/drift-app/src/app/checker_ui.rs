@@ -184,7 +184,7 @@ impl DriftApp {
                     false,
                     now,
                 );
-            } else if let Some(notice) = self.editor.notice.take() {
+            } else if let Some(notice) = self.editor.out.notice.take() {
                 self.set_status(notice, true, now);
             }
         }

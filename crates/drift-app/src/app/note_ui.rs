@@ -123,7 +123,7 @@ impl DriftApp {
         // (With the select tool's filter on Annotations or All.)
         let idle = self.tool.kind() == ToolKind::Select
             && !self.tool.is_busy()
-            && self.editor.pick_filter.annotations();
+            && self.editor.prefs.pick_filter.annotations();
         if idle && self.leader_input(ui, response, map, layouts, pos) {
             return true;
         }

@@ -1829,7 +1829,7 @@ fn face_dimension(ed: &mut Editor, point: EntityId, line: EntityId) {
     };
     let c = c.with_value(drift_solver::measure(&ed.doc, &c).unwrap());
     let id = ed.add_dimension(c, None).expect("a face dimension");
-    assert!(!ed.doc.is_driven(id), "{:?}", ed.notice);
+    assert!(!ed.doc.is_driven(id), "{:?}", ed.out.notice);
 }
 
 fn wall_scene(kind: u8) -> WallScene {

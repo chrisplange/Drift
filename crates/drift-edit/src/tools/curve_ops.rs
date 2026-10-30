@@ -15,7 +15,7 @@ pub(super) fn curve_under(ed: &Editor, p: &Pointer) -> Option<EntityId> {
 
 fn report(ed: &mut Editor, what: &str, result: Result<(), crate::editor::EditError>) {
     if let Err(e) = result {
-        ed.notice = Some(format!("{what}: {e}"));
+        ed.out.notice = Some(format!("{what}: {e}"));
     }
 }
 
@@ -132,13 +132,13 @@ impl TrimTool {
     /// Trim the piece of `id` at `at`, against the picked curves if any. In a drag, what it
     /// did or why it couldn't is kept for the drag's notice.
     fn trim(&mut self, ed: &mut Editor, id: EntityId, at: DVec2) -> Result<(), EditError> {
-        let said = ed.notice.take();
+        let said = ed.out.notice.take();
         let r = ed.trim_at_against(id, at, self.edges.against.as_mut());
         if let Some(d) = &mut self.drag {
             match &r {
                 Ok(()) => {
                     d.trimmed += 1;
-                    if let Some(n) = ed.notice.take()
+                    if let Some(n) = ed.out.notice.take()
                         && !d.notes.contains(&n)
                     {
                         d.notes.push(n);
@@ -153,8 +153,8 @@ impl TrimTool {
                 }
             }
         }
-        if ed.notice.is_none() {
-            ed.notice = said;
+        if ed.out.notice.is_none() {
+            ed.out.notice = said;
         }
         self.edges.follow(ed);
         r
@@ -173,7 +173,7 @@ impl TrimTool {
             ed.history.squash_last(n, "Trim");
         }
         if let Some(summary) = d.summary() {
-            ed.notice = Some(summary);
+            ed.out.notice = Some(summary);
         }
     }
 

@@ -275,7 +275,7 @@ pub(super) fn dimensions(s: &mut Session, a: &Value) -> Res {
             match s.editor.add_dimension(c, placement) {
                 Ok(id) => id,
                 Err(e @ (EditError::Redundant | EditError::Conflict)) => {
-                    s.editor.pending_driven = None;
+                    s.editor.out.pending_driven = None;
                     return Err(at(format!(
                         "{e}: the sketch is already defined there (add it with \"driven\": true to show it as a reference)"
                     )));

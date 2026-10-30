@@ -202,7 +202,7 @@ impl Editor {
     /// A click inside an empty closed area picks nothing (the drawing's rule, unless the
     /// assistant is picking).
     pub fn regions_need_fill(&self) -> bool {
-        self.doc.rules().regions_need_fill && !self.pick_any_area
+        self.doc.rules().regions_need_fill && !self.prefs.pick_any_area
     }
 }
 

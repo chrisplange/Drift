@@ -31,16 +31,16 @@ impl DriftApp {
             .on_hover_text("How thick new walls are (by the drawing's units until set)")
             .changed()
         {
-            self.editor.wall_thickness = shown * unit;
-            self.editor.wall_thickness_expr = None;
+            self.editor.prefs.wall_thickness = shown * unit;
+            self.editor.prefs.wall_thickness_expr = None;
         }
         let presets = self.editor.wall_presets();
         ui.menu_button("▾", |ui| {
             for p in presets {
                 let text = format!("{}  ({})", p.label, units.format_readout(p.mm));
                 if ui.button(text).clicked() {
-                    self.editor.wall_thickness = p.mm;
-                    self.editor.wall_thickness_expr = None;
+                    self.editor.prefs.wall_thickness = p.mm;
+                    self.editor.prefs.wall_thickness_expr = None;
                     ui.close();
                 }
             }
@@ -48,17 +48,17 @@ impl DriftApp {
         .response
         .on_hover_text("Common walls, at their actual finished thickness");
         bar_divider(ui);
-        if let Some(j) = app::context_ui::choice(ui, self.editor.wall_justify, &JUSTIFY) {
-            self.editor.wall_justify = j;
+        if let Some(j) = app::context_ui::choice(ui, self.editor.prefs.wall_justify, &JUSTIFY) {
+            self.editor.prefs.wall_justify = j;
         }
         ui.label(egui::RichText::new("Space flips").size(12.0).weak());
         bar_divider(ui);
         if let Some(arc) = app::context_ui::choice(
             ui,
-            self.editor.wall_arc,
+            self.editor.prefs.wall_arc,
             &[(false, "Straight"), (true, "Arc")],
         ) {
-            self.editor.wall_arc = arc;
+            self.editor.prefs.wall_arc = arc;
             self.tool.key(
                 if arc {
                     ToolKey::ArcNext
@@ -71,12 +71,12 @@ impl DriftApp {
         }
         ui.label(egui::RichText::new("W").size(12.0).weak());
         bar_divider(ui);
-        ui.checkbox(&mut self.editor.wall_poche.on, "Poché")
+        ui.checkbox(&mut self.editor.prefs.wall_poche.on, "Poché")
             .on_hover_text("Fill new walls: joined walls of one style on one layer are one area");
-        if self.editor.wall_poche.on {
-            let mut style = self.editor.wall_poche.style.clone();
+        if self.editor.prefs.wall_poche.on {
+            let mut style = self.editor.prefs.wall_poche.style.clone();
             self.style_bar(ui, &mut style, "wall_bar");
-            self.editor.wall_poche.style = style;
+            self.editor.prefs.wall_poche.style = style;
         }
     }
 
@@ -145,7 +145,7 @@ impl DriftApp {
         if let Some(t) = commit {
             self.wall_thickness_text = None;
             if let Err(e) = self.editor.set_wall_thickness(&walls, &t) {
-                self.editor.notice = Some(e.to_string());
+                self.editor.out.notice = Some(e.to_string());
             }
         }
         theme::row(ui, "Justify", |ui| {
@@ -158,7 +158,7 @@ impl DriftApp {
         let mut style = first
             .poche
             .clone()
-            .unwrap_or_else(|| self.editor.wall_poche.style.clone());
+            .unwrap_or_else(|| self.editor.prefs.wall_poche.style.clone());
         let was = (on, style.clone());
         theme::row(ui, "Poché", |ui| {
             ui.checkbox(&mut on, "");

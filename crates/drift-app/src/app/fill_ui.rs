@@ -309,7 +309,7 @@ impl DriftApp {
                     None
                 };
                 if let Some(Err(e)) = result {
-                    self.editor.notice = Some(e);
+                    self.editor.out.notice = Some(e);
                 }
             });
         }
@@ -469,9 +469,9 @@ impl DriftApp {
             .weak(),
         );
         theme::section(ui, "New fills");
-        let mut style = self.editor.fill_style.clone();
+        let mut style = self.editor.prefs.fill_style.clone();
         if fill_style_editor(ui, &mut style, &self.hatch_patterns, dark, "tool", true) {
-            self.editor.fill_style = style;
+            self.editor.prefs.fill_style = style;
         }
         ui.add_space(6.0);
         self.eyedropper_button(ui);
@@ -498,22 +498,22 @@ impl DriftApp {
     /// The drawing tools' Fill control: whether closed shapes come out filled as they are
     /// drawn, and in what style (the Fill tool's).
     pub(crate) fn new_shape_fill_bar(&mut self, ui: &mut egui::Ui) {
-        ui.checkbox(&mut self.editor.fill_new_shapes, "Fill")
+        ui.checkbox(&mut self.editor.prefs.fill_new_shapes, "Fill")
             .on_hover_text(
                 "Closed shapes are filled or hatched as they are drawn, in this style (the \
                  Fill tool's); the fill is part of the shape's undo step",
             );
-        if self.editor.fill_new_shapes {
+        if self.editor.prefs.fill_new_shapes {
             self.fill_style_bar(ui);
         }
     }
 
     /// Solid or hatch, and the colour or pattern, of the current fill style.
     fn fill_style_bar(&mut self, ui: &mut egui::Ui) {
-        let mut style = self.editor.fill_style.clone();
+        let mut style = self.editor.prefs.fill_style.clone();
         self.style_bar(ui, &mut style, "bar");
-        if style != self.editor.fill_style {
-            self.editor.fill_style = style;
+        if style != self.editor.prefs.fill_style {
+            self.editor.prefs.fill_style = style;
         }
     }
 
@@ -570,17 +570,17 @@ impl DriftApp {
                 .on_hover_text("Hatch this area with the Fill tool's pattern")
                 .clicked()
             {
-                make = Some(match &self.editor.fill_style.kind {
+                make = Some(match &self.editor.prefs.fill_style.kind {
                     FillKind::Hatch(h) => FillKind::Hatch(h.clone()),
                     FillKind::Solid => FillKind::Hatch(Hatch::new("ANSI31")),
                 });
             }
         });
         if let Some(kind) = make {
-            let saved = self.editor.fill_style.clone();
-            self.editor.fill_style.kind = kind;
+            let saved = self.editor.prefs.fill_style.clone();
+            self.editor.prefs.fill_style.kind = kind;
             let result = self.editor.add_fill_at(seed);
-            self.editor.fill_style = saved;
+            self.editor.prefs.fill_style = saved;
             if let Err(e) = result {
                 let now = ui.input(|i| i.time);
                 self.set_status(e, true, now);

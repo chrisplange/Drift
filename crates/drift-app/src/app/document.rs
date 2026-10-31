@@ -117,87 +117,21 @@ impl DriftApp {
             self.status_next = Some(OLDER_RULES.into());
         }
         let revision = doc.revision();
-        // The tool preferences carry over to the next drawing: the open drawing's editor holds
-        // the app's copy.
-        let mut editor = Editor::new(doc);
-        editor.prefs = self.drawing.editor.prefs.clone();
-        self.drawing.editor = editor;
-        self.forget_drawing_state();
-        self.drawing.view.fit_target = Some(self.fit_bounds());
-        self.drawing.file = FileState {
+        let file = FileState {
             name,
             path,
             meta,
             clean_revision: clean.then_some(revision),
         };
-    }
-
-    /// Forget what was picked, typed into, dragged or shown of the drawing that was open: its
-    /// ids name other things, or nothing, in the next one. Preferences and view switches stay.
-    /// (Everything here belongs to one drawing; a new field of that kind is reset here too.)
-    pub(crate) fn forget_drawing_state(&mut self) {
-        // Dimensions and relations.
-        self.drawing.dimension_text.clear();
-        self.drawing.focus_dimension = None;
-        self.drawing.selected_constraint = None;
-        self.drawing.hovered_constraint = None;
-        self.drawing.label_drag = None;
-        self.drawing.ext_drag = None;
-        self.drawing.dim_guide = None;
-        self.drawing.dimension_edit = None;
-        self.drawing.property_edit = None;
-        self.drawing.typing = None;
-        self.drawing.inference_points.clear();
-        self.drawing.temp_dims = Default::default();
-        // Variables and options being edited; layers being renamed, opened, isolated.
-        self.drawing.params = Default::default();
-        self.drawing.layer_names.clear();
-        self.drawing.expanded_layers.clear();
-        self.drawing.layer_drag = None;
-        self.drawing.renaming_layer = None;
-        // An isolate belongs to the drawing it was made in (and its undo history).
-        self.drawing.layer_list.isolated = None;
-        self.drawing.layer_list.solos.clear();
-        // Notes, hatches, text, walls and openings being edited.
-        self.drawing.note_drag = None;
-        self.drawing.selected_leader = None;
-        self.drawing.leader_grip = None;
-        self.drawing.adding_leader = None;
-        self.drawing.note_edit = None;
-        self.drawing.hatch_drag = None;
-        self.drawing.hatch_snap = None;
-        self.drawing.align_edge = None;
-        self.drawing.text_typing = None;
-        self.drawing.text_focused = None;
-        self.drawing.text_cursor = None;
-        self.drawing.text_set_cursor = None;
-        self.drawing.text_grip = false;
-        self.drawing.text_touched = false;
-        self.drawing.wall_thickness_text = None;
-        self.drawing.opening_text = None;
-        self.drawing.renaming = None;
-        self.drawing.sketch_check = None;
-        // Sheets and views: back to the model.
-        self.drawing.view.active_sheet = None;
-        self.drawing.view.sheet_preview = false;
-        self.drawing.view.preview = Default::default();
-        self.drawing.view.view_drag = None;
-        self.drawing.view.view_guides.clear();
-        self.drawing.view.align_with = None;
-        self.drawing.view.sheet_view = 0;
-        self.drawing.view.sheet_pick = Default::default();
-        self.drawing.view.view_set = None;
-        self.drawing.view.view_box = None;
-        self.drawing.confirm_delete_set = false;
-        self.drawing.add_view_on = None;
-        self.drawing.pdf_left_out.clear();
-        self.drawing.picked_view = None;
-        self.drawing.confirm_delete_view = None;
-        self.drawing.view.crop_drag = None;
-        #[cfg(not(feature = "demo"))]
-        {
-            self.drawing.output_dialog = None;
-        }
+        // The tool preferences carry over to the next drawing: the open drawing's editor holds
+        // the app's copy. Everything else of the drawing that was open goes with it: its ids
+        // name other things, or nothing, in the next one. Preferences and view switches stay.
+        let canvas_rect = self.drawing.view.canvas_rect;
+        self.drawing = Drawing::new(doc, file, &self.drawing.editor.prefs);
+        // The canvas is where it was: readers before it draws again (the docks, the start
+        // panel) see last frame's rect, not an empty one.
+        self.drawing.view.canvas_rect = canvas_rect;
+        self.drawing.view.fit_target = Some(self.fit_bounds());
     }
 
     /// Preferences and view settings as `key=0|1` pairs (unknown keys are ignored when
@@ -211,8 +145,8 @@ impl DriftApp {
             ("ptsnap", self.perp_tangent_snap),
             ("thin", self.thin_lines),
             ("status", self.status_colors),
-            ("auto", self.auto_relations),
-            ("ends", self.always_endpoints),
+            ("auto", self.drawing.editor.prefs.auto_relations),
+            ("ends", self.drawing.editor.prefs.always_endpoints),
             ("crops", self.show_view_crops),
             ("combs", self.show_combs),
             ("rscale", self.round_scale),
@@ -299,8 +233,8 @@ impl DriftApp {
                 "ptsnap" => self.perp_tangent_snap = on,
                 "thin" => self.thin_lines = on,
                 "status" => self.status_colors = on,
-                "auto" => self.auto_relations = on,
-                "ends" => self.always_endpoints = on,
+                "auto" => self.drawing.editor.prefs.auto_relations = on,
+                "ends" => self.drawing.editor.prefs.always_endpoints = on,
                 "crops" => self.show_view_crops = on,
                 "combs" => self.show_combs = on,
                 "rscale" => self.round_scale = on,
@@ -1026,7 +960,7 @@ impl DriftApp {
                 "Curves in their own and their layers' colours",
             ),
             (
-                self.always_endpoints,
+                self.drawing.editor.prefs.always_endpoints,
                 "End points always shown",
                 "End points shown on hovered and picked curves",
             ),

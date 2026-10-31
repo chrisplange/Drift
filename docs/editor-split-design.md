@@ -24,7 +24,7 @@ every slice.
 | Undo | One `History` per `Editor`, i.e. per drawing, as now. Views have none. Tabs change nothing here. |
 | Script / MCP | `Session` moves to `drift-edit` unchanged in shape: it owns an `Editor` (the server's own drawing) or borrows the app's (`LiveDoc`). `drift-mcp` depends on `drift-edit` only. |
 | Generated geometry | Record in `drift-core`, generator in `drift-geom`, `follow_*` hook in `Editor::commit`, ownership through `Owners`. Walls do this today; offsets (#247) do the same. #247 had not landed by S1, so its `impl Editor` hooks are written in drift-edit. |
-| `DriftApp` | `Drawing { editor, file, caches, edits-in-progress, views }` and `View { camera, pointer, sheet shown, view drags }`; the app keeps the tool, the GPU painter, preferences, layout, files, sessions, dialogs. `self.editor` becomes `self.drawing.editor` by a rename, **not** `Deref`. |
+| `DriftApp` | `Drawing { editor, file, caches, edits-in-progress, view }` and `CanvasView { camera, pointer, sheet shown, view drags }`; the app keeps the tool, the GPU painter, preferences, layout, files, sessions, dialogs. `self.editor` becomes `self.drawing.editor` by a rename, **not** `Deref`. S3 landed them as private structs in `lib.rs`: 53 fields into `Drawing`, 18 into `CanvasView` (one, `drawing.view`, until drift-releases#16), 80 left on the app; `Drawing::new(doc, file, &prefs)` replaces `forget_drawing_state` (§7). |
 | Slices | S1 crate move with the tools (S4 folded in) → S2 `Editor` fields → S3 `Drawing`/`View` → S5 assistant. S1–S3 are what tabs need; S5 is what a GUI-free MCP needs. 4 PRs, sized in §7 by files moved, `pub` items added and knots. |
 | Tool keys | No `ToolKeys` table: no tool reads its key. The key helpers (`shortcut`, `cycle_hint`) live in drift-app's command registry as `commands::{tool_char, cycle_hint}(kind)`; `ToolKind::cycle_head` stays with the tools (S1, §2.2). |
 | Test-only helpers other crates call | A `test-support` feature on drift-edit un-gates exactly those helpers (`#[cfg(any(test, feature = "test-support"))]`); drift-app turns it on for its tests. Test conveniences don't become API (§8, ruling 4). |
@@ -206,8 +206,10 @@ Copying the whole struct widens what carries over by six fields: `auto_relations
 `polygon_circumscribed`, `slot_mode`, `text_height`), which now survive New and Open as every
 other tool bar's do; `text_height` carries as a fixed size in mm, as `wall_thickness` does.
 `EditPrefs::default()` is derived (`auto_relations` false, as `Editor::default()` gave) and
-`Editor::new` sets `auto_relations`; whether the default should mean the app's defaults is
-S3's to decide when the app field appears.
+`Editor::new` sets `auto_relations`. S3 left the default as it is: `DriftApp::new` states the
+app's starting prefs (`EditPrefs { auto_relations: true, ..Default::default() }`, the literal
+`Editor::new` uses) and hands them to the first `Drawing::new`; the tabs step turns that
+literal into the app's own `EditPrefs` field.
 
 Everything else stays where it is and is per drawing: `doc`, `history`, selection and hover
 (every kind), the revision-keyed caches (`index`, analysis, evaluation, regions, areas,
@@ -348,6 +350,27 @@ fields through `&mut self` compiles as is; closures that borrow `self` whole nee
 `let d = &mut self.drawing;` first. The compiler lists them. The smoke tests' `view()` helper
 sets `fit_target` through the view. Measure after: memory of a parked 73k-curve drawing
 (`Editor` caches + `fill_meshes` + `sketch_items`) with `mem_tests`.
+S3: landed as `Drawing` (53 fields + `view`) and `CanvasView` (18), private structs in
+`lib.rs` beside `DriftApp`, no `pub` items added; 80 fields stay on the app. Not `View`:
+`drift_core::View` (a model view placed on a sheet) is imported by that bare name in
+modules that also glob `crate::*` (`mark_views.rs`, `views_ui.rs`), so a crate-root `View`
+would shadow it. One `drawing.view` for now, no `Vec`, no `front` and no accessor: an
+accessor borrowing the whole struct is what would create borrow splits, and `front` has one
+legal value until #16; the target shape there is `views: Vec<CanvasView>, front: usize`,
+reached by the same compiler-found rename. `wheel` stays on the app, against the list above:
+its `mode` is the saved `wheel=` preference, and a fresh view would reset it on New and Open.
+`keys_held` joins the view (the canvas's input state, read only by `make_pointer`), and
+`replace_document` carries `canvas_rect` over (the docks and the start panel read it before
+the canvas draws in the frame a file opens). Fields the rule left open, as Fable ruled:
+`live_profiles`, `import_report` (it holds `EntityId`s; the report now closes on New and
+Open, a fixed leak), `text_blink` and the whole `LayerList` (its filter now clears on New and
+Open) went to `Drawing`; the file lifecycle in flight (`opened`, `opening_revision`,
+`after_save`, `import_as`, `pending_import`, `dropped`, `open_path`, `import_new`, `picking`)
+and the panel fields that name nothing in the document stayed. The compiler found 3,284
+field-path sites to rename (1,871 in the app, 1,413 in tests; `editor` 2,235 of them) and
+no borrow split. The fold: 28 sites, the two per-frame push lines gone, the `auto`/`ends`
+keys unchanged; one test guards that a switch reaches the editor in the frame it is made.
+The parked-drawing number is in the S3 PR.
 
 **S4 — folded into S1** (§8, ruling 7): tools/ is toolkit-free and its two knots were small.
 What S4 also planned, converting the 27 A4 ui tests (they drive a tool by canvas clicks) into

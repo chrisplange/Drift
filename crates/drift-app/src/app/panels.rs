@@ -1435,7 +1435,7 @@ impl DriftApp {
                         ui,
                         Glyph::Endpoints,
                         "End points",
-                        &mut self.always_endpoints,
+                        &mut self.drawing.editor.prefs.always_endpoints,
                         "Always show end points (off: only on hovered or picked curves) · Shift+Alt+V",
                     );
                     toggle(
@@ -1457,7 +1457,7 @@ impl DriftApp {
                         ui,
                         Glyph::AutoRelations,
                         "Auto relations",
-                        &mut self.auto_relations,
+                        &mut self.drawing.editor.prefs.auto_relations,
                         "Auto relations: add relations as you draw and modify (horizontal, coincident, tangent...). Off: plain geometry · Shift+Alt+R",
                     );
                     // Angle snapping sits with grid snapping: a click opens its steps.

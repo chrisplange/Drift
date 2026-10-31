@@ -920,7 +920,7 @@ fn pick_a_midpoint_and_constrain_an_end_point_to_it() {
     use eframe::egui::accesskit::Role;
 
     let Some(mut h) = harness() else { return };
-    h.state_mut().auto_relations = false; // draw freely
+    h.state_mut().drawing.editor.prefs.auto_relations = false; // draw freely
     h.key_press(Key::L);
     h.run();
     click_world(&mut h, DVec2::new(-40.0, 0.0));
@@ -985,7 +985,7 @@ fn pick_a_midpoint_and_constrain_an_end_point_to_it() {
 #[test]
 fn smart_dimension_from_a_midpoint() {
     let Some(mut h) = harness() else { return };
-    h.state_mut().auto_relations = false;
+    h.state_mut().drawing.editor.prefs.auto_relations = false;
     h.key_press(Key::L);
     h.run();
     click_world(&mut h, DVec2::new(-40.0, 0.0));
@@ -1368,11 +1368,11 @@ fn auto_relations_and_end_points_live_in_the_status_bar_with_keys() {
         let r = h.get_by_label(name).rect();
         assert!(r.top() > bottom, "{name} at {r:?}");
     }
-    assert!(h.state().auto_relations);
+    assert!(h.state().drawing.editor.prefs.auto_relations);
     let both = EguiModifiers::SHIFT | EguiModifiers::ALT;
     h.key_press_modifiers(both, Key::R);
     h.run();
-    assert!(!h.state().auto_relations);
+    assert!(!h.state().drawing.editor.prefs.auto_relations);
     assert_eq!(
         h.state().tool.kind(),
         ToolKind::Select,
@@ -1380,16 +1380,34 @@ fn auto_relations_and_end_points_live_in_the_status_bar_with_keys() {
     );
     h.key_press_modifiers(both, Key::R);
     h.run();
-    assert!(h.state().auto_relations);
-    let shown = h.state().always_endpoints;
+    assert!(h.state().drawing.editor.prefs.auto_relations);
+    let shown = h.state().drawing.editor.prefs.always_endpoints;
     h.key_press_modifiers(both, Key::V);
     h.run();
-    assert_eq!(h.state().always_endpoints, !shown);
+    assert_eq!(h.state().drawing.editor.prefs.always_endpoints, !shown);
     assert_eq!(
         h.state().tool.kind(),
         ToolKind::Select,
         "not the point tool"
     );
+}
+
+#[test]
+fn auto_relations_and_end_points_reach_the_editor_in_the_frame_they_are_switched() {
+    // The two switches are the editor's own preferences (nothing pushes them in each frame):
+    // a toggle lands in the editor in the frame it is made, not the next one.
+    let Some(mut h) = harness() else { return };
+    let auto: fn(&DriftApp) -> bool = |app| app.drawing.editor.prefs.auto_relations;
+    let ends: fn(&DriftApp) -> bool = |app| app.drawing.editor.prefs.always_endpoints;
+    for (name, read) in [("Auto relations", auto), ("End points", ends)] {
+        let was = read(h.state());
+        h.get_by_label(name).click();
+        h.step();
+        assert_eq!(read(h.state()), !was, "{name} after one frame");
+        h.get_by_label(name).click();
+        h.step();
+        assert_eq!(read(h.state()), was, "{name} back after one frame");
+    }
 }
 
 /// Press at `from`, move to `to` in steps (a frame each), and let go.
@@ -4535,7 +4553,10 @@ fn end_points_light_up_and_hide_until_used() {
     h.run();
     h.get_by_label("Open example").click();
     h.run();
-    assert!(!h.state().always_endpoints, "Illustrator-like by default");
+    assert!(
+        !h.state().drawing.editor.prefs.always_endpoints,
+        "Illustrator-like by default"
+    );
     // Untouched: no end point markers.
     let markers = |h: &Harness<'_, DriftApp>| {
         h.state()
@@ -4564,7 +4585,7 @@ fn end_points_light_up_and_hide_until_used() {
     assert!(markers(&h) >= 1);
     save_png("drift_ui_endpoint_hover.png", &mut h);
     // Always show: every end point.
-    h.state_mut().always_endpoints = true;
+    h.state_mut().drawing.editor.prefs.always_endpoints = true;
     h.run();
     assert!(markers(&h) > 10);
 }
@@ -4997,7 +5018,7 @@ fn offsets_and_splits_of_ellipses_and_pen_curves_draw() {
     ed.split_at(arch, at).unwrap();
     let fit = h.state().fit_bounds();
     h.state_mut().drawing.view.fit_target = Some(fit);
-    h.state_mut().always_endpoints = true;
+    h.state_mut().drawing.editor.prefs.always_endpoints = true;
     h.state_mut().status_colors = false;
     h.run();
     h.run();
@@ -5177,7 +5198,7 @@ fn control_bar_overlap_warning_and_corner_angles() {
     // The setting is one click away, and the warning selects the doubled wall.
     h.get_by_label("Auto relations").click();
     h.run();
-    assert!(!h.state().auto_relations);
+    assert!(!h.state().drawing.editor.prefs.auto_relations);
     h.state_mut().select_overlapping(0.0);
     assert_eq!(
         h.state()
@@ -9461,7 +9482,7 @@ fn lines_snap_tangent_to_a_circle_and_square_onto_a_line() {
     use drift_core::Constraint;
     use drift_geom::SnapKind;
     let Some(mut h) = harness() else { return };
-    h.state_mut().auto_relations = true;
+    h.state_mut().drawing.editor.prefs.auto_relations = true;
     // A circle about the origin, radius 20, and a line below it.
     h.key_press(Key::C);
     h.run();
@@ -9734,7 +9755,7 @@ fn dragging_a_hatch_over_another_moves_only_its_own_outline() {
 fn tangent_arcs_and_lines_start_on_a_partial_ellipse_and_a_pen_curve() {
     use drift_core::Constraint;
     let Some(mut h) = harness() else { return };
-    h.state_mut().auto_relations = true;
+    h.state_mut().drawing.editor.prefs.auto_relations = true;
     // A partial ellipse (semi-axes 40 and 20) from -30° to 135°, and a pen curve below it.
     let ellipse_at = |degrees: f64| {
         let t = degrees.to_radians();

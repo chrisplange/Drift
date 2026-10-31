@@ -490,7 +490,7 @@ fn editing() {
 
     // A fillet being sized on a corner.
     let mut h = harness().unwrap();
-    h.state_mut().auto_relations = false;
+    h.state_mut().drawing.editor.prefs.auto_relations = false;
     rectangle(
         &mut h,
         DVec2::new(-40.0, -25.0),

@@ -58,7 +58,7 @@ use drift_edit::{checker, clipboard, fills, frame_items, library, texts};
 use crate::annotations::{AnnotationColors, AnnotationState, DimLayout, GlyphKind};
 use crate::canvas::CanvasPainter;
 use crate::overlay::{OverlayColors, ScreenMap};
-use drift_edit::editor::{Editor, Guide, GuideKind, Pointer};
+use drift_edit::editor::{EditPrefs, Editor, Guide, GuideKind, Pointer};
 use drift_edit::tools::{Axis, Input, Modifiers, Overlay, Tool, ToolKey, ToolKind};
 
 /// The steps angle snapping offers, in degrees.
@@ -378,6 +378,102 @@ struct CanvasView {
     keys_held: (bool, bool),
 }
 
+impl Drawing {
+    /// A drawing just opened or made: its editor with the app's tool preferences (the
+    /// open drawing's editor holds the app's copy, so they carry over), nothing picked,
+    /// typed into, dragged or shown yet, and a canvas view that fits it once the caller
+    /// sets `view.fit_target`.
+    fn new(doc: Document, file: FileState, prefs: &EditPrefs) -> Self {
+        let mut editor = Editor::new(doc);
+        editor.prefs = prefs.clone();
+        Self {
+            editor,
+            file,
+            live_profiles: None,
+            #[cfg(not(feature = "demo"))]
+            lossy_save: None,
+            #[cfg(not(feature = "demo"))]
+            saving: None,
+            dimension_text: Default::default(),
+            focus_dimension: None,
+            selected_constraint: None,
+            hovered_constraint: None,
+            label_drag: None,
+            ext_drag: None,
+            dim_guide: None,
+            dimension_edit: None,
+            property_edit: None,
+            typing: None,
+            inference_points: Vec::new(),
+            params: Default::default(),
+            layer_names: Default::default(),
+            expanded_layers: Default::default(),
+            layer_counts: Default::default(),
+            layer_drag: None,
+            renaming_layer: None,
+            layer_list: Default::default(),
+            fill_meshes: Default::default(),
+            sketch_items: Default::default(),
+            note_drag: None,
+            selected_leader: None,
+            leader_grip: None,
+            adding_leader: None,
+            hatch_drag: None,
+            align_edge: None,
+            hatch_snap: None,
+            note_edit: None,
+            preview_cache: None,
+            confirm_delete_set: false,
+            add_view_on: None,
+            pdf_left_out: Default::default(),
+            #[cfg(not(feature = "demo"))]
+            output_dialog: None,
+            picked_view: None,
+            confirm_delete_view: None,
+            renaming: None,
+            import_report: None,
+            sketch_check: None,
+            temp_dims: Default::default(),
+            wall_thickness_text: None,
+            opening_text: None,
+            text_typing: None,
+            text_focused: None,
+            text_cursor: None,
+            text_set_cursor: None,
+            text_grip: false,
+            text_touched: false,
+            text_blink: 0.0,
+            view: CanvasView::new(),
+        }
+    }
+}
+
+impl CanvasView {
+    /// The model, not yet fitted, with no pointer on it and nothing picked on a sheet.
+    fn new() -> Self {
+        Self {
+            camera: Camera::default(),
+            fit_target: None,
+            pan_anchor: None,
+            pointer: None,
+            last_pointer: None,
+            canvas_rect: egui::Rect::NOTHING,
+            active_sheet: None,
+            sheet_preview: false,
+            preview: Default::default(),
+            view_drag: None,
+            view_guides: Vec::new(),
+            align_with: None,
+            sheet_view: 0,
+            view_set: None,
+            view_box: None,
+            sheet_pick: Default::default(),
+            crop_drag: None,
+            keys_held: (false, false),
+        }
+    }
+}
+
 pub struct DriftApp {
     /// The open drawing, with its canvas view. (One for now: tabs bring the `Vec`.)
     drawing: Drawing,
@@ -454,7 +550,6 @@ pub struct DriftApp {
     benchmark: Option<Vec<String>>,
     show_dimensions: bool,
     show_relations: bool,
-    auto_relations: bool,
     /// The pattern fields in the properties panel.
     patterns: app::patterns::PatternUi,
     /// Draw every curve one pixel wide (Revit's thin lines).
@@ -502,8 +597,6 @@ pub struct DriftApp {
     round_scale: bool,
     /// A text field had the keyboard at the end of the last frame.
     text_was_focused: bool,
-    /// Show every end point, or only those of hovered or picked curves (as in Illustrator).
-    always_endpoints: bool,
     /// Lines are drawn at multiples of this many degrees (angle snapping), if on.
     angle_snap: Option<f64>,
     /// How the next file opened to import comes in, when that was chosen before it was
@@ -595,89 +688,22 @@ impl DriftApp {
         let files = Files::new(move || ctx.request_repaint());
 
         let mut app = Self {
-            drawing: Drawing {
-                editor: Editor::new(Document::new()),
-                file: FileState {
+            drawing: Drawing::new(
+                Document::new(),
+                FileState {
                     name: UNTITLED.into(),
                     path: None,
                     meta: Metadata::default(),
                     clean_revision: Some(0),
                 },
-                live_profiles: None,
-                #[cfg(not(feature = "demo"))]
-                lossy_save: None,
-                #[cfg(not(feature = "demo"))]
-                saving: None,
-                dimension_text: Default::default(),
-                focus_dimension: None,
-                selected_constraint: None,
-                hovered_constraint: None,
-                label_drag: None,
-                ext_drag: None,
-                dim_guide: None,
-                dimension_edit: None,
-                property_edit: None,
-                typing: None,
-                inference_points: Vec::new(),
-                params: Default::default(),
-                layer_names: Default::default(),
-                expanded_layers: Default::default(),
-                layer_counts: Default::default(),
-                layer_drag: None,
-                renaming_layer: None,
-                layer_list: Default::default(),
-                fill_meshes: Default::default(),
-                sketch_items: Default::default(),
-                note_drag: None,
-                selected_leader: None,
-                leader_grip: None,
-                adding_leader: None,
-                hatch_drag: None,
-                align_edge: None,
-                hatch_snap: None,
-                note_edit: None,
-                preview_cache: None,
-                confirm_delete_set: false,
-                add_view_on: None,
-                pdf_left_out: Default::default(),
-                #[cfg(not(feature = "demo"))]
-                output_dialog: None,
-                picked_view: None,
-                confirm_delete_view: None,
-                renaming: None,
-                import_report: None,
-                sketch_check: None,
-                temp_dims: Default::default(),
-                wall_thickness_text: None,
-                opening_text: None,
-                text_typing: None,
-                text_focused: None,
-                text_cursor: None,
-                text_set_cursor: None,
-                text_grip: false,
-                text_touched: false,
-                text_blink: 0.0,
-                view: CanvasView {
-                    camera: Camera::default(),
-                    fit_target: Some(EMPTY_VIEW),
-                    pan_anchor: None,
-                    pointer: None,
-                    last_pointer: None,
-                    canvas_rect: egui::Rect::NOTHING,
-                    active_sheet: None,
-                    sheet_preview: false,
-                    preview: Default::default(),
-                    view_drag: None,
-                    view_guides: Vec::new(),
-                    align_with: None,
-                    sheet_view: 0,
-                    view_set: None,
-                    view_box: None,
-                    sheet_pick: Default::default(),
-                    crop_drag: None,
-                    keys_held: (false, false),
+                // The app's starting tool preferences, as `Editor::new` sets them
+                // (`auto_relations` on). The tabs step turns this into the app's own
+                // `EditPrefs` field.
+                &EditPrefs {
+                    auto_relations: true,
+                    ..Default::default()
                 },
-            },
+            ),
             tool: ToolKind::Select.create(),
             painter,
             wheel: Default::default(),
@@ -723,7 +749,6 @@ impl DriftApp {
             benchmark: None,
             show_dimensions: true,
             show_relations: true,
-            auto_relations: true,
             patterns: Default::default(),
             thin_lines: false,
             status_colors: true,
@@ -749,7 +774,6 @@ impl DriftApp {
             crosshair: Default::default(),
             round_scale: true,
             text_was_focused: false,
-            always_endpoints: false,
             angle_snap: None,
             import_as: None,
             pending_import: None,
@@ -768,6 +792,7 @@ impl DriftApp {
             #[cfg(feature = "demo")]
             demo: Default::default(),
         };
+        app.drawing.view.fit_target = Some(EMPTY_VIEW);
         log::info!("Drift {} started", drift_platform::VERSION);
         if let Some(mb) = drift_platform::memory::take_stop_note() {
             app.drawing.editor.out.notice = Some(format!(
@@ -1081,8 +1106,6 @@ impl eframe::App for DriftApp {
             }
             self.open_file(path);
         }
-        self.drawing.editor.prefs.auto_relations = self.auto_relations;
-        self.drawing.editor.prefs.always_endpoints = self.always_endpoints;
         // Text placed but left empty goes once it's no longer picked.
         let keep = self.drawing.editor.sole_text();
         self.drawing.editor.drop_empty_texts(keep);

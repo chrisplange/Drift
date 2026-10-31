@@ -9,7 +9,7 @@ impl DriftApp {
     pub(crate) fn make_pointer(&self, map: &ScreenMap, pos: egui::Pos2, snap: bool) -> Pointer {
         let raw = map.to_world(pos);
         let mut pointer = Pointer::new(raw, PICK_RADIUS / self.drawing.view.camera.scale);
-        pointer.relations = self.auto_relations;
+        pointer.relations = self.drawing.editor.prefs.auto_relations;
         pointer.units = self.drawing.editor.doc.units();
         pointer.alt = !snap;
         (pointer.shift, pointer.command) = self.drawing.view.keys_held;
@@ -1196,7 +1196,7 @@ impl DriftApp {
                     .exact_snap()
                     .and(p.guide)
                     .and_then(|g| relation_name(g.kind))
-                    .filter(|_| self.auto_relations)
+                    .filter(|_| self.drawing.editor.prefs.auto_relations)
                 {
                     label = format!("{label} · {relation}");
                 }
@@ -1406,7 +1406,7 @@ impl DriftApp {
                 GuideKind::Tangent(_) => Some(GlyphKind::Tangent),
                 GuideKind::Aligned => None,
             };
-            if let Some(kind) = kind.filter(|_| self.auto_relations) {
+            if let Some(kind) = kind.filter(|_| self.drawing.editor.prefs.auto_relations) {
                 annotations::paint_auto_relation(
                     painter,
                     at + egui::vec2(-14.0, -16.0),

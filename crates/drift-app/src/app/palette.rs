@@ -49,7 +49,7 @@ impl DriftApp {
             ViewFlag::PerpTangent => &mut self.perp_tangent_snap,
             ViewFlag::Thin => &mut self.thin_lines,
             ViewFlag::Status => &mut self.status_colors,
-            ViewFlag::Endpoints => &mut self.always_endpoints,
+            ViewFlag::Endpoints => &mut self.drawing.editor.prefs.always_endpoints,
             ViewFlag::Dimensions => &mut self.show_dimensions,
             ViewFlag::Relations => &mut self.show_relations,
             ViewFlag::Hidden => &mut self.show_hidden_annotations,
@@ -57,7 +57,7 @@ impl DriftApp {
             ViewFlag::Combs => &mut self.show_combs,
             ViewFlag::Crops => &mut self.show_view_crops,
             ViewFlag::Centrelines => &mut self.show_wall_centrelines,
-            ViewFlag::AutoRelations => &mut self.auto_relations,
+            ViewFlag::AutoRelations => &mut self.drawing.editor.prefs.auto_relations,
         }
     }
 
@@ -197,7 +197,7 @@ impl DriftApp {
                 let v = self.flag(f);
                 *v = !*v;
                 if f == ViewFlag::AutoRelations {
-                    let text = if self.auto_relations {
+                    let text = if self.drawing.editor.prefs.auto_relations {
                         "Auto relations on"
                     } else {
                         "Auto relations off: plain geometry, nothing added for you"

@@ -644,7 +644,7 @@ impl DriftApp {
     fn drawing_prefs(&mut self, ui: &mut egui::Ui) {
         theme::section(ui, "While drawing");
         ui.checkbox(
-            &mut self.auto_relations,
+            &mut self.drawing.editor.prefs.auto_relations,
             "Add relations automatically while drawing",
         )
         .on_hover_text(

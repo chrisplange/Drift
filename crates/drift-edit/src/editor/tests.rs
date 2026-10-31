@@ -313,8 +313,8 @@ mod editing {
             ed.add_dimension(horizontal, placement),
             Err(EditError::Redundant)
         );
-        assert_eq!(ed.pending_driven, Some((horizontal, placement)));
-        let (constraint, placement) = ed.pending_driven.take().unwrap();
+        assert_eq!(ed.out.pending_driven, Some((horizontal, placement)));
+        let (constraint, placement) = ed.out.pending_driven.take().unwrap();
         let driven = ed.add_driven_dimension(constraint, placement).unwrap();
         assert!(ed.doc.is_driven(driven));
         assert_eq!(ed.doc.placement(driven), placement);
@@ -904,7 +904,10 @@ mod from_the_app {
         let v = DVec2::new;
         // A plain corner, filleted with automatic relations off: nothing holds the lines.
         let mut ed = Editor {
-            auto_relations: false,
+            prefs: EditPrefs {
+                auto_relations: false,
+                ..EditPrefs::default()
+            },
             ..Editor::default()
         };
         ed.doc.begin();

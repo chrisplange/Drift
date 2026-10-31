@@ -26,7 +26,7 @@ impl DriftApp {
                 });
             }
             None => {
-                self.editor.notice =
+                self.editor.out.notice =
                     Some("Pick a group, or copies of one block, to rename (F2)".into());
             }
         }

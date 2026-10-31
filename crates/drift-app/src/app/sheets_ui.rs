@@ -740,7 +740,7 @@ impl DriftApp {
             .map(|(kind, n)| format!("{n} × {kind}"))
             .collect();
         // What the import's commit put far off: listed here, not in the status bar.
-        let far = std::mem::take(&mut self.editor.far_off);
+        let far = std::mem::take(&mut self.editor.out.far_off);
         // Anything left out, read approximately or far off is worth more than a passing
         // message.
         if !skipped.is_empty() || !report.notes.is_empty() || !far.is_empty() {

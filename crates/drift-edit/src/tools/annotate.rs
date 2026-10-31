@@ -21,7 +21,7 @@ fn add_annotation(ed: &mut Editor, a: Annotation, label: &str) -> Option<drift_c
         }
         Err(e) => {
             ed.doc.rollback();
-            ed.notice = Some(e.to_string());
+            ed.out.notice = Some(e.to_string());
             None
         }
     }
@@ -101,7 +101,7 @@ impl Tool for NoteTool {
                     leaders,
                     style: Default::default(),
                 };
-                ed.pending_note_edit = add_annotation(ed, note, "Note");
+                ed.out.pending_note_edit = add_annotation(ed, note, "Note");
             }
             Input::Finish => self.targets.clear(),
             _ => {}
@@ -294,7 +294,8 @@ impl Tool for CalloutTool {
                         Some((h, k)) if is_round(k) => Some(CalloutTarget::Hole(h)),
                         Some((h, EntityKind::Line { .. })) => Some(CalloutTarget::Chamfer(h)),
                         _ => {
-                            ed.notice = Some("Click a circle (hole) or a line (chamfer)".into());
+                            ed.out.notice =
+                                Some("Click a circle (hole) or a line (chamfer)".into());
                             None
                         }
                     };
@@ -425,7 +426,7 @@ impl Tool for OrdinateTool {
     fn handle(&mut self, input: Input, ed: &mut Editor) {
         if let Input::Click(p, _) = input {
             let Some(point) = p.snapped_point() else {
-                ed.notice = Some("Click an existing point".into());
+                ed.out.notice = Some("Click an existing point".into());
                 return;
             };
             match self.origin {

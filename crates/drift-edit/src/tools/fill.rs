@@ -30,7 +30,7 @@ impl Tool for FillTool {
             Input::Hover(p) | Input::Drag(p) => self.hover = Some(p.raw),
             Input::Click(p, mods) if mods.alt || ed.fill_eyedropper => {
                 if let Err(e) = ed.pick_up_fill_style(p.raw) {
-                    ed.notice = Some(e);
+                    ed.out.notice = Some(e);
                 }
             }
             Input::Click(p, _) => {
@@ -39,7 +39,7 @@ impl Tool for FillTool {
                     None => ed.add_fill_at(p.raw).map(|_| ()),
                 };
                 if let Err(e) = result {
-                    ed.notice = Some(e);
+                    ed.out.notice = Some(e);
                 }
             }
             _ => {}

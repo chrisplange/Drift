@@ -81,7 +81,7 @@ impl ThreePointArcTool {
             return;
         };
         let Some((center, _, _, swapped)) = self.geometry(p) else {
-            ed.notice = Some("The three points are in line: move off the line".into());
+            ed.out.notice = Some("The three points are in line: move off the line".into());
             return;
         };
         let radius = self.typed[0].map(f64::abs);

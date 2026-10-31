@@ -114,7 +114,7 @@ impl TangentArcTool {
             return;
         };
         let Some((curve, center, end, left)) = self.geometry(p) else {
-            ed.notice = Some("Move off the tangent line to bend the arc".into());
+            ed.out.notice = Some("Move off the tangent line to bend the arc".into());
             return;
         };
         let typed = any_typed(self.typed);
@@ -177,7 +177,7 @@ impl Tool for TangentArcTool {
                 None => match p.snapped_point() {
                     Some(point) if self.begin_at(point, ed) => {}
                     _ => {
-                        ed.notice =
+                        ed.out.notice =
                             Some("Start a tangent arc on the end of a line, arc or curve".into());
                     }
                 },

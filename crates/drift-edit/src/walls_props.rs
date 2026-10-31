@@ -253,7 +253,7 @@ fn stable_keys(net: Network, nudge: (f64, f64)) {
 /// lines does.)
 fn undo_restores(net: Network, edits: Vec<(u8, usize, (f64, f64))>) {
     let mut ed = Editor::new(drawing(&net));
-    ed.auto_relations = false;
+    ed.prefs.auto_relations = false;
     let start = ed.doc.clone();
     let walls: Vec<WallId> = ed.doc.walls().map(|(id, _)| id).collect();
     if walls.is_empty() {
@@ -304,7 +304,7 @@ fn undo_restores(net: Network, edits: Vec<(u8, usize, (f64, f64))>) {
 /// afresh.
 fn edits_match_a_full_rebuild(net: Network, drags: Vec<(usize, (f64, f64))>) {
     let mut ed = Editor::new(drawing(&net));
-    ed.auto_relations = false;
+    ed.prefs.auto_relations = false;
     let points: Vec<EntityId> = {
         let centre: Vec<EntityId> = ed
             .doc

@@ -588,7 +588,7 @@ fn auto_relation(
     relation: Option<GuideKind>,
     line: EntityId,
 ) -> Option<ConstraintId> {
-    if !ed.auto_relations {
+    if !ed.prefs.auto_relations {
         return None;
     }
     let constraint = match relation {
@@ -643,7 +643,7 @@ fn auto_relation_onto_point(ed: &mut Editor, relation: Option<GuideKind>, line: 
     };
     let name = ed.doc.constraint(id).map_or("Relation", |c| c.type_name());
     ed.doc.remove_constraint(id);
-    ed.notice = Some(format!("{name} not added: {why}"));
+    ed.out.notice = Some(format!("{name} not added: {why}"));
 }
 
 /// Unit vector at `degrees`, exact for multiples of 90° (where `cos`/`sin` would leave ~1e-16

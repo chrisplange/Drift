@@ -67,7 +67,7 @@ impl DriftApp {
             return true;
         }
         self.pending.is_some()
-            || self.editor.pending_driven.is_some()
+            || self.editor.out.pending_driven.is_some()
             || self.renaming.is_some()
             || self.pending_import.is_some()
             || self.dropped.is_some()
@@ -234,7 +234,7 @@ impl DriftApp {
         #[cfg(not(target_arch = "wasm32"))]
         self.update_notice(ctx);
         self.picker_notice(ctx);
-        if let Some((constraint, placement)) = self.editor.pending_driven {
+        if let Some((constraint, placement)) = self.editor.out.pending_driven {
             let mut choice = None;
             let modal = egui::Modal::new(egui::Id::new("driven"))
                 .frame(theme::dialog_frame(&ctx.style_of(ctx.theme())))
@@ -263,9 +263,9 @@ impl DriftApp {
                 choice = Some(false);
             }
             if let Some(add) = choice {
-                self.editor.pending_driven = None;
+                self.editor.out.pending_driven = None;
                 if add && let Err(e) = self.editor.add_driven_dimension(constraint, placement) {
-                    self.editor.notice = Some(format!("{}: {e}", constraint.type_name()));
+                    self.editor.out.notice = Some(format!("{}: {e}", constraint.type_name()));
                 }
             }
         }
@@ -442,7 +442,7 @@ impl DriftApp {
             (sel.len(), sel.first().copied(), sel.last().copied()),
             self.editor.hovered,
             self.grid_snap,
-            (self.pending, self.editor.pending_driven.is_some()),
+            (self.pending, self.editor.out.pending_driven.is_some()),
             self.editor.doc.constraint_count(),
             self.selected_constraint,
             self.hovered_constraint,

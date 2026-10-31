@@ -94,7 +94,7 @@ fn rectangle(
     let fills_before: Vec<FillId> = h.state().editor.doc.fills().map(|(id, _)| id).collect();
     h.get_by_label("Rectangle").click();
     h.run();
-    if (fill != Fill::No) != h.state().editor.fill_new_shapes {
+    if (fill != Fill::No) != h.state().editor.prefs.fill_new_shapes {
         h.get_by_label("Fill").click();
         h.run();
     }
@@ -148,7 +148,7 @@ fn right_click(h: &mut Harness<'_, DriftApp>, pos: Pos2) {
 /// A circle drawn with the Circle tool (unfilled), from its centre to a point on it; back
 /// to Select with nothing picked. Returns it.
 fn circle(h: &mut Harness<'_, DriftApp>, centre: DVec2, radius: f64) -> EntityId {
-    h.state_mut().editor.fill_new_shapes = false;
+    h.state_mut().editor.prefs.fill_new_shapes = false;
     let before = ids(h);
     h.key_press(Key::C);
     h.run();

@@ -661,7 +661,7 @@ fn dimension(
     assert!(
         !ed.doc.is_driven(id),
         "a face dimension drives: {:?}",
-        ed.notice
+        ed.out.notice
     );
     ed.set_dimension_text(id, value).expect("typed");
     id
@@ -720,7 +720,7 @@ fn walls_gallery_a_clear_width_between_faces() {
     );
     // A thicker wall b: its held face stays, its centreline moves.
     assert!(ed.set_wall_thickness(&[b], "300").is_ok());
-    assert!(holds(&ed, id), "{:?}", ed.notice);
+    assert!(holds(&ed, id), "{:?}", ed.out.notice);
     assert!((ed.doc.point(pb[0]).unwrap().y - 3850.0).abs() < 1e-6);
     // Undo takes it back, in one step.
     assert!(ed.history.undo(&mut ed.doc));
@@ -888,11 +888,12 @@ fn walls_gallery_corner_dimensions_are_references() {
     let id = ed.add_dimension(c, None).expect("added as a reference");
     assert!(ed.doc.is_driven(id));
     assert!(
-        ed.notice
+        ed.out
+            .notice
             .as_deref()
             .is_some_and(|n| n.contains("corner follows its joins")),
         "{:?}",
-        ed.notice
+        ed.out.notice
     );
     // And can't be made driving.
     assert!(ed.set_driven(id, false).is_err());

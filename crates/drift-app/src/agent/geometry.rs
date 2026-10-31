@@ -347,6 +347,7 @@ pub(super) fn add(s: &mut Session, a: &Value) -> Res {
     }
     if !ed.commit("Add geometry") {
         return Err(ed
+            .out
             .notice
             .take()
             .unwrap_or("the geometry could not be added".into()));

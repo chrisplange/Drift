@@ -97,9 +97,9 @@ fn place(ed: &mut Editor, tries: &Tries) -> Vec<OpeningId> {
         };
         let k = (k % segs.len()) as u16;
         let len = segs[usize::from(k)].length();
-        ed.opening.family = "door.single".into();
-        ed.opening.width = width;
-        ed.opening.leaf = width * 0.9;
+        ed.prefs.opening.family = "door.single".into();
+        ed.prefs.opening.width = width;
+        ed.prefs.opening.leaf = width * 0.9;
         let (before_area, troubled) = poche(ed);
         // (Faces and corners: a cut can join or split the cluster's outline loops, which
         // its lead wall keeps.)
@@ -131,7 +131,7 @@ fn place(ed: &mut Editor, tries: &Tries) -> Vec<OpeningId> {
             (cut - width * t).abs() <= 1e-6 * before_area.max(1.0),
             "an opening {width} wide in a wall {t} thick took {cut} out of the poché ({:?}, \
              of {before_area}; {:?})",
-            ed.notice,
+            ed.out.notice,
             ed.doc
                 .opening(o)
                 .map(|x| (x.wall, x.seg, ed.opening_span(o)))
@@ -162,7 +162,7 @@ fn place(ed: &mut Editor, tries: &Tries) -> Vec<OpeningId> {
 /// a slide keeps every key, and undoing it all gives the drawing back.
 fn openings_follow_edits(net: Network, tries: Tries, edits: Vec<(u8, usize, (f64, f64))>) {
     let mut ed = Editor::new(drawing(&net));
-    ed.auto_relations = false;
+    ed.prefs.auto_relations = false;
     let start = ed.doc.clone();
     let depth = ed.history.undo_depth();
     let placed = place(&mut ed, &tries);
@@ -233,7 +233,7 @@ fn openings_follow_edits(net: Network, tries: Tries, edits: Vec<(u8, usize, (f64
                     assert!(
                         differ.is_empty() && now.outlines == made.outlines,
                         "slide: ids of {id}: {differ:?} ({:?})",
-                        ed.notice
+                        ed.out.notice
                     );
                 }
                 assert_eq!(ed.doc.opening(o).unwrap().made, symbol, "slide: symbol ids");

@@ -300,7 +300,7 @@ fn walls_from_lines_gallery_makes_what_it_should() {
                 c.walls, c.openings, c.skipped
             ));
         }
-        if let Some(n) = &ed.notice {
+        if let Some(n) = &ed.out.notice {
             wrong.push(format!("notice {n:?}"));
         }
         let (inputs, _) = regen::wall_inputs(&ed.doc);

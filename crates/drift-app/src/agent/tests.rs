@@ -247,7 +247,7 @@ fn layers_assign_takes_a_shapes_fill() {
     let mut s = Session::new();
     // A filled rectangle, as the drawing tools make one.
     let ed = &mut s.editor;
-    ed.fill_new_shapes = true;
+    ed.prefs.fill_new_shapes = true;
     ed.doc.begin();
     let corners = [(0.0, 0.0), (100.0, 0.0), (100.0, 50.0), (0.0, 50.0)];
     let p: Vec<_> = corners

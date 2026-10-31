@@ -295,14 +295,14 @@ impl DriftApp {
                         let what = if n == 1 { "a wall" } else { "walls" };
                         self.set_status(format!("Made {what} along the curves"), false, now);
                     }
-                    Err(why) => self.editor.notice = Some(why),
+                    Err(why) => self.editor.out.notice = Some(why),
                 }
             }
             Command::WallsFromLines => {
                 let picked: Vec<_> = self.editor.selection.iter().copied().collect();
                 match self.editor.walls_from_lines(&picked) {
                     Ok(report) => self.set_status(report.summary(), false, now),
-                    Err(why) => self.editor.notice = Some(why),
+                    Err(why) => self.editor.out.notice = Some(why),
                 }
             }
             Command::ExplodeWalls => {
@@ -318,7 +318,7 @@ impl DriftApp {
                 if let Some(f) = self.editor.joinable_fill()
                     && let Err(why) = self.editor.join_corners(f)
                 {
-                    self.editor.notice = Some(why);
+                    self.editor.out.notice = Some(why);
                 }
             }
             Command::JoinWalls => {

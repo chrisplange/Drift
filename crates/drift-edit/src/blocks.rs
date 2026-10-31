@@ -528,7 +528,7 @@ impl Editor {
             }
             Err(e) => {
                 self.doc.rollback();
-                self.notice = Some(e.to_string());
+                self.out.notice = Some(e.to_string());
             }
         }
     }
@@ -761,7 +761,7 @@ impl Editor {
                 self.selected_instances.clear();
                 self.selection.clear();
             }
-            Err(e) => self.notice = Some(e.to_string()),
+            Err(e) => self.out.notice = Some(e.to_string()),
         }
     }
 
@@ -1178,7 +1178,7 @@ mod tests {
     fn blocks_keep_their_fills() {
         use drift_core::FillKind;
         let (mut ed, lines) = square();
-        if let FillKind::Hatch(h) = &mut ed.fill_style.kind {
+        if let FillKind::Hatch(h) = &mut ed.prefs.fill_style.kind {
             h.angle = 30.0;
         }
         ed.add_fill_at(DVec2::new(100.0, 100.0)).unwrap();
@@ -1206,10 +1206,10 @@ mod tests {
         };
         assert!((h.angle - 120.0).abs() < 1e-9, "{}", h.angle);
         // The eyedropper picks up a copy's hatch as it shows.
-        ed.fill_style.kind = FillKind::Solid;
+        ed.prefs.fill_style.kind = FillKind::Solid;
         ed.pick_up_fill_style(DVec2::new(1000.0, 10.0)).unwrap();
         assert!(
-            matches!(&ed.fill_style.kind, FillKind::Hatch(h) if (h.angle - 120.0).abs() < 1e-9)
+            matches!(&ed.prefs.fill_style.kind, FillKind::Hatch(h) if (h.angle - 120.0).abs() < 1e-9)
         );
         // Exploding a copy hatches the area of its new curves.
         let turned = turned.instance;

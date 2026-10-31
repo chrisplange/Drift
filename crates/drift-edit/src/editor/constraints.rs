@@ -298,14 +298,14 @@ impl Editor {
         // On a wall's corner (or a face, where it can't hold it): a reference dimension.
         if let Some(why) = self.refused_on_walls(&constraint) {
             let id = self.add_driven_dimension(constraint, placement)?;
-            self.notice = Some(format!("{why} (it is a reference dimension)"));
+            self.out.notice = Some(format!("{why} (it is a reference dimension)"));
             return Ok(id);
         }
         let id = match self.add_constraints(constraint.type_name(), &[constraint]) {
             Ok(ids) => ids[0],
             Err(e @ (EditError::Redundant | EditError::Conflict)) => {
                 // Over-defining: offer it as a reference dimension instead.
-                self.pending_driven = Some((constraint, placement));
+                self.out.pending_driven = Some((constraint, placement));
                 return Err(e);
             }
             Err(e) => return Err(e),
@@ -573,7 +573,7 @@ impl Editor {
     pub fn add_typed_dimension(&mut self, field: usize, c: Constraint) -> Option<ConstraintId> {
         // With automatic relations off a typed value only sizes what is being drawn (the
         // tools place the geometry at that size already): nothing is left to hold it.
-        if !self.auto_relations {
+        if !self.prefs.auto_relations {
             return None;
         }
         let id = self.doc.add_constraint(c).ok()?;
@@ -803,7 +803,7 @@ impl Editor {
     /// automatic relations off nothing is added: the geometry is left as plain geometry.
     /// Relations the user asks for by name don't come through here.
     pub fn relate(&mut self, relation: Constraint) -> Option<ConstraintId> {
-        if !self.auto_relations {
+        if !self.prefs.auto_relations {
             return None;
         }
         self.doc.add_constraint(relation).ok()

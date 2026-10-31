@@ -4,7 +4,8 @@
 session for the Opus sessions that build it, one slice per PR. Companion to
 [open-drawings-decision.md](open-drawings-decision.md) (tabs step 2, which this does) and
 issue #186. Updated 2026-10-30 as it landed with S1 (main at 347fee6, format 44): the rulings
-on the measure-first survey (§8) and what S1 decided (marked "S1:") are folded in. Offsets as
+on the measure-first survey (§8) and what S1 decided (marked "S1:") are folded in, and what
+S2 decided (marked "S2:"). Offsets as
 objects (#247) had not merged when S1 landed, so there is no `offsets.rs` yet; its `impl
 Editor` module goes into drift-edit when it lands.*
 
@@ -19,7 +20,7 @@ every slice.
 | Question | Decision |
 |---|---|
 | New crate | `drift-edit`: everything that edits a `Document` without a window — `Editor` and the modules that hang off it, the tools, the assistant (tools, script, link). Depends on core/solver/geom/draft/io/platform; from S5 on `egui` too (text layout only; §2.3). Never on eframe, drift-render, wgpu or winit. S1 landed it with no egui at all. |
-| `Editor` | **Stays one type.** It is already toolkit-free; it is "one editing session on one document". Two groups of fields leave it: the app-wide tool preferences (`EditPrefs`) and the one-shot messages to the UI (`Outbox`). No document/session split. |
+| `Editor` | **Stays one type.** It is already toolkit-free; it is "one editing session on one document". Two groups of fields leave it: the app-wide tool preferences (`EditPrefs`) and the one-shot messages to the UI (`Outbox`). No document/session split. S2 landed them as `editor.prefs` and `editor.out` (`drift_edit::editor::{EditPrefs, Outbox}`); the open drawing's `editor.prefs` is the app's copy until tabs (§3). |
 | Undo | One `History` per `Editor`, i.e. per drawing, as now. Views have none. Tabs change nothing here. |
 | Script / MCP | `Session` moves to `drift-edit` unchanged in shape: it owns an `Editor` (the server's own drawing) or borrows the app's (`LiveDoc`). `drift-mcp` depends on `drift-edit` only. |
 | Generated geometry | Record in `drift-core`, generator in `drift-geom`, `follow_*` hook in `Editor::commit`, ownership through `Owners`. Walls do this today; offsets (#247) do the same. #247 had not landed by S1, so its `impl Editor` hooks are written in drift-edit. |
@@ -178,7 +179,7 @@ structs would mean two parameters on ~160 methods for no caller that wants only 
 
 What does leave `Editor` (S2) are the fields that aren't *about this drawing*:
 
-1. **`EditPrefs`** — the set `keep_prefs_from` copies today (`editor/mod.rs:344`) plus the
+1. **`EditPrefs`** — the set `keep_prefs_from` copied (15 fields) plus the
    same-natured fields: `auto_relations`, `always_endpoints`, `pick_any_area`, `pick_filter`,
    `dim_mode`, `dim_overall`, `draw_construction`, `fill_new_shapes`, `fill_alone_picks`,
    `fill_style`, `polygon_sides`, `polygon_circumscribed`, `slot_mode`, `text_height`,
@@ -191,6 +192,22 @@ What does leave `Editor` (S2) are the fields that aren't *about this drawing*:
    `pending_driven`, `pending_note_edit`, `new_view`, `box_pick`, `base_point_done`,
    `fill_changes`, `from_lines`. Grouped as `editor.out: Outbox`. This makes the contract
    visible: the UI drains it; a headless client reads `notice` and ignores the rest.
+
+S2: both structs live in `editor/edit_prefs.rs` and `editor/outbox.rs`, re-exported from
+`drift_edit::editor` only; fields `pub`, no `Deref`, no helpers (the UI drains `out` with
+`std::mem::take` where it did before). With one drawing the app has no `EditPrefs` field of
+its own: the open drawing's `editor.prefs` is the app's copy, and `replace_document` clones it
+into the next drawing's editor (the assistant's live open does the same; the server's own
+drawings start from the defaults with `pick_any_area`). S3's `Drawing::new(doc, file, &prefs)`
+takes that copy; the app field appears with tabs (step 3), written back from the front drawing.
+Copying the whole struct widens what carries over by six fields: `auto_relations` and
+`always_endpoints` (no visible change: the app pushes its own fields of those names into
+`editor.prefs` every frame) and the Polygon, Slot and Text bars' settings (`polygon_sides`,
+`polygon_circumscribed`, `slot_mode`, `text_height`), which now survive New and Open as every
+other tool bar's do; `text_height` carries as a fixed size in mm, as `wall_thickness` does.
+`EditPrefs::default()` is derived (`auto_relations` false, as `Editor::default()` gave) and
+`Editor::new` sets `auto_relations`; whether the default should mean the app's defaults is
+S3's to decide when the app field appears.
 
 Everything else stays where it is and is per drawing: `doc`, `history`, selection and hover
 (every kind), the revision-keyed caches (`index`, analysis, evaluation, regions, areas,
@@ -306,6 +323,11 @@ Editor` blocks in UI files, the cross-crate test helpers (§8, ruling 4).
 §3. The app owns an `EditPrefs`; `replace_document` copies it in; `keep_prefs_from` goes.
 Call sites by sed; the view-prefs string (`view_prefs`/`apply_view_prefs`) reads from
 `EditPrefs`. No test changes except names.
+S2: 31 fields (21 into `EditPrefs`, 10 into `Outbox`); call sites renamed where the compiler
+found an access on an `Editor`, not by sed, so same-named fields of other types stayed. The
+view-prefs string is byte-identical (a test reads a string saved before S2 and writes it back
+unchanged). Three tests added: prefs carry over on open (app and live link), the server's own
+drawings don't take them, and the saved string.
 
 **S3 — `DriftApp` → `Drawing` + `View`.** The open-drawings doc's step 2.
 `Drawing { editor, file: FileState, saving, lossy_save, fill_meshes, sketch_items,
@@ -319,6 +341,8 @@ layout/fonts/dialog/session/update fields, and the view switches (`show_grid`,
 `show_dimensions`, `thin_lines`, …) which are preferences. `self.editor` →
 `self.drawing.editor` (one `Drawing` for now, `self.drawing`; the `Vec` comes with tabs).
 `forget_drawing_state` and `replace_document` become `Drawing::new(doc, file, &prefs)`.
+S3 also folds `DriftApp.auto_relations` and `always_endpoints` into the app's `EditPrefs`:
+today they are app fields pushed into `editor.prefs` every frame (§3, S2).
 **No `Deref`** (§9). Borrow splits are the work: a method that mutates both app and drawing
 fields through `&mut self` compiles as is; closures that borrow `self` whole need
 `let d = &mut self.drawing;` first. The compiler lists them. The smoke tests' `view()` helper

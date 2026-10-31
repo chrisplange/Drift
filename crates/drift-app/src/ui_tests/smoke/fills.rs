@@ -231,7 +231,7 @@ fn free_line(h: &mut Harness<'_, DriftApp>, a: DVec2, b: DVec2) -> EntityId {
 fn smoke_fills_trimming_a_slot_out_of_a_filled_ring() {
     let Some(mut h) = harness() else { return };
     view(&mut h, DVec2::new(-45.0, -50.0), DVec2::new(45.0, 40.0));
-    h.state_mut().editor.fill_new_shapes = false;
+    h.state_mut().editor.prefs.fill_new_shapes = false;
     let before = ids(&h);
     h.key_press(Key::C);
     h.run();
@@ -599,7 +599,7 @@ fn smoke_fills_picked_shape_says_how_to_edit_its_fill() {
     view(&mut h, DVec2::new(-10.0, -10.0), DVec2::new(60.0, 50.0));
     let (sides, fill) = rectangle(&mut h, DVec2::ZERO, DVec2::new(40.0, 30.0), Fill::Solid);
     let fill = fill.unwrap();
-    h.state_mut().editor.fill_alone_picks = 0;
+    h.state_mut().editor.prefs.fill_alone_picks = 0;
     const HINT: &str = "Double-click inside to edit its fill on its own";
     let inside = DVec2::new(20.0, 15.0);
     let whole = |h: &Harness<'_, DriftApp>| {
@@ -622,7 +622,7 @@ fn smoke_fills_picked_shape_says_how_to_edit_its_fill() {
     h.run();
     assert!(alone(&h));
     assert!(h.query_by_label_contains(HINT).is_none());
-    assert_eq!(h.state().editor.fill_alone_picks, 1);
+    assert_eq!(h.state().editor.prefs.fill_alone_picks, 1);
 
     // One side picked isn't the shape: no hint. The palette's Edit fill picks the fill alone
     // too.
@@ -648,7 +648,7 @@ fn smoke_fills_picked_shape_says_how_to_edit_its_fill() {
     let pos = screen(&h, inside);
     double_click(&mut h, pos);
     assert!(alone(&h));
-    assert_eq!(h.state().editor.fill_alone_picks, 3);
+    assert_eq!(h.state().editor.prefs.fill_alone_picks, 3);
     click_world(&mut h, inside);
     assert!(whole(&h));
     assert!(h.query_by_label_contains(HINT).is_none(), "learnt");

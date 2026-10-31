@@ -315,7 +315,7 @@ impl DriftApp {
             if let Some(key) = key {
                 self.tool.key(key, self.pointer.as_ref(), &mut self.editor);
                 let now = ctx.input(|i| i.time);
-                let what = if self.editor.wall_arc {
+                let what = if self.editor.prefs.wall_arc {
                     "Arc walls: click the end, then a point the wall curves through"
                 } else {
                     "Straight walls"
@@ -326,10 +326,10 @@ impl DriftApp {
         }
         if kind == ToolKind::Slot && current == ToolKind::Slot {
             // U again: the next kind of slot.
-            self.editor.slot_mode = self.editor.slot_mode.next();
+            self.editor.prefs.slot_mode = self.editor.prefs.slot_mode.next();
             self.tool.cancel(&mut self.editor);
             let now = ctx.input(|i| i.time);
-            self.set_status(self.editor.slot_mode.label().to_owned(), false, now);
+            self.set_status(self.editor.prefs.slot_mode.label().to_owned(), false, now);
         }
         if kind == ToolKind::Fillet && current == ToolKind::Fillet {
             // F again: chamfer (and again, fillet).
@@ -499,7 +499,7 @@ impl DriftApp {
             } else if consume(Key::Enter) {
                 if let Some(error) = t.evaluate(&self.editor).into_iter().find_map(Result::err) {
                     // Keep the typing so it can be fixed.
-                    self.editor.notice = Some(error);
+                    self.editor.out.notice = Some(error);
                 } else {
                     let values = t.parsed(&self.editor);
                     self.editor.typed_exprs = t.expressions(&self.editor);

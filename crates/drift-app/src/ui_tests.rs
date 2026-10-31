@@ -1090,7 +1090,7 @@ fn curve_relations_and_driven_dimensions_render() {
     h.run();
     h.run();
     let ed = &h.state().editor;
-    assert!(ed.pending_driven.is_none());
+    assert!(ed.out.pending_driven.is_none());
     let driven = ed
         .doc
         .constraints()
@@ -2011,7 +2011,7 @@ fn alt_c_draws_and_makes_construction_geometry() {
     assert!(h.query_by_label("Construction").is_some());
     h.key_press_modifiers(EguiModifiers::ALT, Key::C);
     h.run();
-    assert!(h.state().editor.draw_construction);
+    assert!(h.state().editor.prefs.draw_construction);
     assert_eq!(h.state().tool.kind(), ToolKind::Line, "not the circle tool");
     click_world(&mut h, DVec2::new(-30.0, -10.0));
     click_world(&mut h, DVec2::new(10.0, -10.0));
@@ -2021,7 +2021,7 @@ fn alt_c_draws_and_makes_construction_geometry() {
     // Back to geometry from the bar.
     h.get_by_label("Geometry").click();
     h.run();
-    assert!(!h.state().editor.draw_construction);
+    assert!(!h.state().editor.prefs.draw_construction);
     click_world(&mut h, DVec2::new(-30.0, 20.0));
     click_world(&mut h, DVec2::new(10.0, 20.0));
     h.key_press(Key::Escape);
@@ -2358,7 +2358,7 @@ fn clicking_inside_closed_geometry_selects_its_region() {
 
     let Some(mut h) = harness() else { return };
     // Preferences kept on the editor survive opening a drawing.
-    h.state_mut().editor.pick_filter =
+    h.state_mut().editor.prefs.pick_filter =
         drift_edit::editor::PickFilter::only(drift_edit::editor::PickKind::Points);
     h.get_by_label("File").click();
     h.run();
@@ -2366,10 +2366,10 @@ fn clicking_inside_closed_geometry_selects_its_region() {
     h.run();
     h.run();
     assert_eq!(
-        h.state().editor.pick_filter,
+        h.state().editor.prefs.pick_filter,
         drift_edit::editor::PickFilter::only(drift_edit::editor::PickKind::Points)
     );
-    h.state_mut().editor.pick_filter = drift_edit::editor::PickFilter::ALL;
+    h.state_mut().editor.prefs.pick_filter = drift_edit::editor::PickFilter::ALL;
     // By default an area is picked only where it is filled: the plate is empty.
     assert!(h.state().editor.regions_need_fill());
     click_world(&mut h, DVec2::new(100.0, 10.0));
@@ -2802,7 +2802,7 @@ fn fill_tool_hatches_and_fills_regions() {
     h.query_all_by_label("Solid").next().unwrap().click();
     h.run();
     assert_eq!(
-        h.state().editor.fill_style.kind,
+        h.state().editor.prefs.fill_style.kind,
         drift_core::FillKind::Solid
     );
     assert!(h.query_all_by_label("Pick up a style").count() >= 1);
@@ -4226,7 +4226,10 @@ fn polygons_and_slots_from_the_toolbar() {
     h.run();
     h.key_press(Key::U);
     h.run();
-    assert_eq!(h.state().editor.slot_mode, drift_edit::tools::SlotMode::Arc);
+    assert_eq!(
+        h.state().editor.prefs.slot_mode,
+        drift_edit::tools::SlotMode::Arc
+    );
     click_world(&mut h, v(40.0, 0.0));
     click_world(&mut h, v(70.0, 0.0));
     click_world(&mut h, v(40.0, 30.0));
@@ -4469,7 +4472,7 @@ fn context_bar_canvas_menu_and_shortcuts() {
     save_png("drift_ui_context_polygon.png", &mut h);
     h.get_by_label("Circumscribed").click();
     h.run();
-    assert!(h.state().editor.polygon_circumscribed);
+    assert!(h.state().editor.prefs.polygon_circumscribed);
     // Draw a rectangle, then right-click one side: it's picked and the menu offers actions.
     h.key_press(Key::R);
     h.run();
@@ -5831,7 +5834,7 @@ fn far_off_geometry_is_reported() {
     ed.doc.add_circle(c, 5.0).unwrap();
     assert!(ed.commit("Circle"));
     h.run();
-    assert!(h.state().editor.far_off.is_empty());
+    assert!(h.state().editor.out.far_off.is_empty());
     assert!(h.state().status.is_none());
 }
 
@@ -6980,25 +6983,25 @@ fn top_bar_switches_for_dimensions_selection_and_sheet_scales() {
     h.get_by_label("Chain").click();
     h.run();
     assert_eq!(
-        h.state().editor.dim_mode,
+        h.state().editor.prefs.dim_mode,
         drift_edit::editor::DimMode::Chain
     );
     h.get_by_label("Overall").click();
     h.run();
-    assert!(h.state().editor.dim_overall);
+    assert!(h.state().editor.prefs.dim_overall);
     save_png("drift_ui_dimension_chain_bar.png", &mut h);
     // The select tool's filter.
     h.key_press(Key::S);
     h.run();
     pick_only(&mut h, "Edges");
     assert_eq!(
-        h.state().editor.pick_filter,
+        h.state().editor.prefs.pick_filter,
         drift_edit::editor::PickFilter::only(drift_edit::editor::PickKind::Edges)
     );
     h.get_by_label("All").click();
     h.run();
     assert_eq!(
-        h.state().editor.pick_filter,
+        h.state().editor.prefs.pick_filter,
         drift_edit::editor::PickFilter::ALL
     );
     // Sheet scales in feet and inches: the architectural ones, written as they are.
@@ -7258,7 +7261,8 @@ fn chain_dimensions_in_the_window() {
         }
         ed.commit("Setup");
         // A filter left on in the select tool doesn't hold the dimension tool back.
-        ed.pick_filter = drift_edit::editor::PickFilter::only(drift_edit::editor::PickKind::Edges);
+        ed.prefs.pick_filter =
+            drift_edit::editor::PickFilter::only(drift_edit::editor::PickKind::Edges);
     }
     h.run();
     h.key_press(Key::D);
@@ -9148,7 +9152,7 @@ fn boxes_pick_annotations_and_text_with_the_filter() {
     // note, not the geometry or the text.
     pick_only(&mut h, "Annotations");
     assert_eq!(
-        h.state().editor.pick_filter,
+        h.state().editor.prefs.pick_filter,
         PickFilter::only(drift_edit::editor::PickKind::Annotations)
     );
     everything(&mut h);
@@ -9201,7 +9205,7 @@ fn boxes_pick_annotations_and_text_with_the_filter() {
     h.run();
     pick_only(&mut h, "Text");
     assert_eq!(
-        h.state().editor.pick_filter,
+        h.state().editor.prefs.pick_filter,
         PickFilter::only(drift_edit::editor::PickKind::Text)
     );
     everything(&mut h);
@@ -9528,6 +9532,56 @@ fn drawing_rules_are_the_drawings_and_older_files_get_this_computers() {
     assert!(h.state().view_prefs().contains("rlayer=1"));
     h.state_mut().undo();
     assert!(!h.state().editor.doc.rules().regions_by_layer);
+}
+
+/// The tool preferences (how the tools fill, pick and dimension, the wall and opening
+/// settings, and the Polygon, Slot and Text bars') carry over to the next drawing, new or
+/// opened: the open drawing's editor holds the app's copy.
+#[test]
+fn tool_preferences_carry_over_to_the_next_drawing() {
+    use drift_edit::editor::{PickFilter, PickKind};
+    let Some(mut h) = harness() else { return };
+    let prefs = &mut h.state_mut().editor.prefs;
+    prefs.fill_style = drift_core::FillStyle::solid();
+    prefs.pick_filter = PickFilter::only(PickKind::Edges);
+    prefs.wall_thickness = 115.5;
+    prefs.auto_relations = false;
+    prefs.text_height = 4.5;
+    prefs.polygon_sides = 7;
+    prefs.slot_mode = drift_edit::tools::SlotMode::Arc;
+    let before = prefs.clone();
+    let doc = h.state().new_document();
+    h.state_mut()
+        .replace_document(doc, "next".into(), None, Default::default(), true);
+    assert_eq!(h.state().editor.prefs, before);
+}
+
+/// Preferences as Drift saved them before the tool preferences moved into `EditPrefs` (R3
+/// S2) read back the same: the tool bars' keys set the same fields, and the string written
+/// again is the one read, byte for byte.
+#[test]
+fn saved_preferences_read_back_unchanged() {
+    const SAVED: &str = concat!(
+        "grid=1;axes=1;snap=0;ptsnap=1;thin=0;status=1;auto=1;ends=0;crops=1;combs=1;",
+        "rscale=1;hidden=0;rlayer=0;rfill=1;stack=1;dfollow=0;newfill=1;wpoche=0;wcentre=0;",
+        "tdims=1;ai=0;wheel=auto;asnap=0;gaptol=0.5;wthick=115.5;wjust=l;wlines=l;",
+        "fillalone=2;xsize=16;xfull=0;xweight=1;upchk=1;dock_left=;",
+        "dock_right=inspector,parameters,layers,sheets,blocks;dock_stacks=;dock_front_left=;",
+        "dock_front_right=inspector;dock_collapsed=00;dock_last=;dock_home_left=;",
+        "dock_weights=;dock_folded="
+    );
+    let Some(mut h) = harness() else { return };
+    h.state_mut().apply_view_prefs(SAVED);
+    let prefs = &h.state().editor.prefs;
+    assert!(prefs.fill_new_shapes && !prefs.wall_poche.on);
+    assert_eq!(prefs.wall_thickness, 115.5);
+    assert_eq!(prefs.wall_justify, drift_core::Justify::Left);
+    assert_eq!(
+        prefs.wall_lines,
+        drift_edit::walls_from_lines::UsedLines::Layer
+    );
+    assert_eq!(prefs.fill_alone_picks, 2);
+    assert_eq!(h.state().view_prefs(), SAVED);
 }
 
 #[test]

@@ -307,14 +307,14 @@ pub(super) fn import(s: &mut Session, a: &Value) -> Res {
         }
     }
     if !ed.commit_import("Import") {
-        return Err(ed.notice.take().unwrap_or("the import failed".into()));
+        return Err(ed.out.notice.take().unwrap_or("the import failed".into()));
     }
     let curves = made
         .iter()
         .filter(|id| ed.doc.get(**id).is_some_and(|e| !e.kind.is_point()))
         .count();
     let b = ed.bounds_of(&made);
-    let far = std::mem::take(&mut ed.far_off);
+    let far = std::mem::take(&mut ed.out.far_off);
     let mut notes = report.notes.clone();
     if !far.is_empty() {
         notes.push(format!(

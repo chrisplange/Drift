@@ -34,8 +34,8 @@ fn click(ed: &mut Editor, tool: &mut dyn Tool, at: DVec2) {
 
 fn editor() -> Editor {
     let mut ed = Editor::default();
-    ed.auto_relations = false;
-    ed.wall_thickness = 10.0;
+    ed.prefs.auto_relations = false;
+    ed.prefs.wall_thickness = 10.0;
     ed.show_centrelines = true;
     ed
 }
@@ -165,7 +165,7 @@ fn a_wall_ending_on_a_line_stops_against_it() {
 fn arcs_and_bends() {
     // W again: an arc through a third point.
     let mut ed = editor();
-    ed.wall_arc = true;
+    ed.prefs.wall_arc = true;
     let mut tool = ToolKind::Wall.create();
     for at in [v(50.0, 0.0), v(-50.0, 0.0), v(0.0, 50.0)] {
         click(&mut ed, tool.as_mut(), at);
@@ -202,14 +202,14 @@ fn keys_flip_switch_and_take_back() {
     click(&mut ed, tool.as_mut(), v(100.0, 50.0));
     let w = ed.doc.walls().next().unwrap().0;
     // Space flips the run (in its last undo step).
-    ed.wall_justify = Justify::Left;
+    ed.prefs.wall_justify = Justify::Left;
     tool.key(ToolKey::Space, None, &mut ed);
     assert_eq!(ed.doc.wall(w).unwrap().justify, Justify::Right);
     // W again: arcs; L: straight again.
     tool.key(ToolKey::Again, None, &mut ed);
-    assert!(ed.wall_arc);
+    assert!(ed.prefs.wall_arc);
     tool.key(ToolKey::LineNext, None, &mut ed);
-    assert!(!ed.wall_arc);
+    assert!(!ed.prefs.wall_arc);
     // Backspace: the last segment goes.
     assert!(tool.key(ToolKey::Backspace, None, &mut ed));
     assert_eq!(ed.wall_curves(w).len(), 1);
@@ -248,7 +248,8 @@ fn picking_a_face_or_the_poche_picks_the_wall() {
         .unwrap();
     assert!(!ed.guard_owned(&[face], crate::walls::Op::Cut));
     assert!(
-        ed.notice
+        ed.out
+            .notice
             .as_deref()
             .unwrap_or("")
             .contains("follow the wall")

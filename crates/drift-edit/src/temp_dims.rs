@@ -332,7 +332,7 @@ impl Editor {
         match self.add_dimension(c, offset) {
             Ok(id) => Ok((id, false)),
             Err(EditError::Redundant | EditError::Conflict) => {
-                self.pending_driven = None;
+                self.out.pending_driven = None;
                 self.add_driven_dimension(c, offset)
                     .map(|id| (id, true))
                     .map_err(|e| e.to_string())

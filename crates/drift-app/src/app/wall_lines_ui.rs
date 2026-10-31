@@ -80,7 +80,7 @@ impl DriftApp {
                         {
                             match self.editor.redo_walls_from_lines(u) {
                                 Ok(r) => self.set_status(r.summary(), false, now),
-                                Err(why) => self.editor.notice = Some(why),
+                                Err(why) => self.editor.out.notice = Some(why),
                             }
                         }
                     }

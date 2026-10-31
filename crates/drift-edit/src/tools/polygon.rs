@@ -77,10 +77,10 @@ impl PolygonTool {
     fn sides(&self, ed: &Editor) -> usize {
         self.typed[1]
             .map(|s| s.round().clamp(3.0, 64.0) as usize)
-            .unwrap_or(if ed.polygon_sides == 0 {
+            .unwrap_or(if ed.prefs.polygon_sides == 0 {
                 DEFAULT_SIDES
             } else {
-                ed.polygon_sides
+                ed.prefs.polygon_sides
             })
             .max(3)
     }
@@ -96,7 +96,7 @@ impl PolygonTool {
             c,
             toward,
             self.sides(ed),
-            ed.polygon_circumscribed,
+            ed.prefs.polygon_circumscribed,
             self.typed[0].map(f64::abs),
         )
     }
@@ -106,8 +106,8 @@ impl PolygonTool {
             return;
         };
         let sides = self.sides(ed);
-        ed.polygon_sides = sides;
-        let circumscribed = ed.polygon_circumscribed;
+        ed.prefs.polygon_sides = sides;
+        let circumscribed = ed.prefs.polygon_circumscribed;
         ed.doc.begin();
         let c = center.own(&mut ed.doc);
         let made = (|| -> Result<(), drift_core::DocumentError> {
@@ -120,7 +120,7 @@ impl PolygonTool {
                 lines.push(ed.doc.add_line(points[i], points[(i + 1) % sides])?);
             }
             ed.add_shape(&lines);
-            if !ed.auto_relations {
+            if !ed.prefs.auto_relations {
                 // Plain lines: no construction circle holding them regular.
                 ed.doc.delete([circle]);
                 return Ok(());
@@ -175,7 +175,7 @@ impl PolygonTool {
             Err(e) => {
                 ed.doc.rollback();
                 ed.sync();
-                ed.notice = Some(format!("Polygon: {e}"));
+                ed.out.notice = Some(format!("Polygon: {e}"));
             }
         }
         self.center = None;
@@ -222,7 +222,7 @@ impl Tool for PolygonTool {
 
     fn key(&mut self, key: ToolKey, _pointer: Option<&Pointer>, ed: &mut Editor) -> bool {
         if key == ToolKey::X {
-            ed.polygon_circumscribed = !ed.polygon_circumscribed;
+            ed.prefs.polygon_circumscribed = !ed.prefs.polygon_circumscribed;
             return true;
         }
         false
@@ -248,7 +248,7 @@ impl Tool for PolygonTool {
                     self.create(p, ed);
                 } else if let Some(s) = self.typed[1] {
                     // Only the sides: keep drawing with them.
-                    ed.polygon_sides = s.round().clamp(3.0, 64.0) as usize;
+                    ed.prefs.polygon_sides = s.round().clamp(3.0, 64.0) as usize;
                 }
             }
         }

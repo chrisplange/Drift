@@ -48,7 +48,7 @@ impl OffsetTool {
             return;
         };
         if let Err(e) = ed.offset(id, d, side) {
-            ed.notice = Some(format!("Offset: {e}"));
+            ed.out.notice = Some(format!("Offset: {e}"));
         }
         self.reset(ed);
     }
@@ -171,7 +171,7 @@ impl Tool for MirrorTool {
                 let ids: Vec<EntityId> = ed.selection.iter().copied().collect();
                 let riders = ed.riders();
                 if ids.iter().all(|id| *id == axis) && riders.is_empty() {
-                    ed.notice = Some(
+                    ed.out.notice = Some(
                         "Mirror: select the geometry to mirror first (Select tool), then pick \
                          Mirror and click the line"
                             .into(),
@@ -188,7 +188,7 @@ impl Tool for MirrorTool {
                             .map(drift_core::AnnotationRef::Annotation)
                             .collect();
                     }
-                    Err(e) => ed.notice = Some(format!("Mirror: {e}")),
+                    Err(e) => ed.out.notice = Some(format!("Mirror: {e}")),
                 }
             }
             _ => {}

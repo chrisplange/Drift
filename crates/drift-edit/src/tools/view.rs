@@ -40,7 +40,7 @@ impl ViewTool {
         ed.doc.begin();
         let id = ed.doc.add_view(view);
         ed.commit("View");
-        ed.new_view = Some(id);
+        ed.out.new_view = Some(id);
     }
 
     fn corners(&self, p: &Pointer) -> Option<[DVec2; 4]> {

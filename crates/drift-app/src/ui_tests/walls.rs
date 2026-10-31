@@ -8,9 +8,9 @@ use super::*;
 fn walls_harness() -> Option<Harness<'static, DriftApp>> {
     let mut h = harness()?;
     h.state_mut().grid_snap = false;
-    h.state_mut().editor.wall_thickness = 10.0;
-    h.state_mut().editor.wall_justify = drift_core::Justify::Centre;
-    h.state_mut().editor.wall_arc = false;
+    h.state_mut().editor.prefs.wall_thickness = 10.0;
+    h.state_mut().editor.prefs.wall_justify = drift_core::Justify::Centre;
+    h.state_mut().editor.prefs.wall_arc = false;
     h.state_mut().fit_target = Some(drift_core::Bounds {
         min: DVec2::new(-20.0, -40.0),
         max: DVec2::new(140.0, 100.0),
@@ -77,18 +77,18 @@ fn w_again_arcs_a_and_l_switch_and_backspace_takes_back() {
     // W again: arcs, without leaving the tool.
     h.key_press(Key::W);
     h.run();
-    assert!(h.state().editor.wall_arc);
+    assert!(h.state().editor.prefs.wall_arc);
     assert_eq!(h.state().tool.kind(), ToolKind::Wall);
     h.key_press(Key::W);
     h.run();
-    assert!(!h.state().editor.wall_arc);
+    assert!(!h.state().editor.prefs.wall_arc);
     click_world(&mut h, DVec2::new(0.0, 0.0));
     click_world(&mut h, DVec2::new(100.0, 0.0));
     // A mid-run: an arc next (not the Arc tool).
     h.key_press(Key::A);
     h.run();
     assert_eq!(h.state().tool.kind(), ToolKind::Wall);
-    assert!(h.state().editor.wall_arc);
+    assert!(h.state().editor.prefs.wall_arc);
     // Its end, then a point it curves through.
     click_world(&mut h, DVec2::new(100.0, 60.0));
     click_world(&mut h, DVec2::new(130.0, 30.0));
@@ -98,7 +98,7 @@ fn w_again_arcs_a_and_l_switch_and_backspace_takes_back() {
     h.key_press(Key::L);
     h.run();
     assert_eq!(h.state().tool.kind(), ToolKind::Wall);
-    assert!(!h.state().editor.wall_arc);
+    assert!(!h.state().editor.prefs.wall_arc);
     click_world(&mut h, DVec2::new(0.0, 60.0));
     assert_eq!(h.state().editor.wall_curves(w).len(), 3);
     // Backspace: the last segment goes, the run goes on.
@@ -116,7 +116,7 @@ fn space_flips_types_and_repeats() {
     let Some(mut h) = walls_harness() else { return };
     h.key_press(Key::W);
     h.run();
-    h.state_mut().editor.wall_justify = drift_core::Justify::Left;
+    h.state_mut().editor.prefs.wall_justify = drift_core::Justify::Left;
     click_world(&mut h, DVec2::new(0.0, 0.0));
     click_world(&mut h, DVec2::new(100.0, 0.0));
     // Space flips the run to its other face.

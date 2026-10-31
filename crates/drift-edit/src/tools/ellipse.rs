@@ -93,7 +93,7 @@ impl EllipseTool {
             }
             // A level or plumb axis keeps it.
             let scale = tolerance::same(c.distance(m));
-            if ed.auto_relations {
+            if ed.prefs.auto_relations {
                 if (c.y - m.y).abs() < scale {
                     let _ = ed
                         .doc
@@ -137,7 +137,7 @@ impl EllipseTool {
             Err(e) => {
                 ed.doc.rollback();
                 ed.sync();
-                ed.notice = Some(format!("Ellipse: {e}"));
+                ed.out.notice = Some(format!("Ellipse: {e}"));
             }
         }
         self.reset();

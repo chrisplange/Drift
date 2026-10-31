@@ -193,7 +193,7 @@ mod tests {
         size: f64,
     ) -> (Vec<EntityId>, Vec<EntityId>, FillId) {
         let corners = [at, at + v(size, 0.0), at + v(size, size), at + v(0.0, size)];
-        ed.fill_new_shapes = true;
+        ed.prefs.fill_new_shapes = true;
         ed.doc.begin();
         let p: Vec<EntityId> = corners.iter().map(|c| ed.doc.add_point(*c)).collect();
         let sides: Vec<EntityId> = (0..4)
@@ -287,9 +287,9 @@ mod tests {
         let line = ed.doc.add_line(p0, p1).unwrap();
         ed.commit("Line");
         let w = ed.walls_from_curves(&[line]).unwrap()[0];
-        ed.opening.family = "door.single".into();
-        ed.opening.width = 900.0;
-        ed.opening.leaf = 800.0;
+        ed.prefs.opening.family = "door.single".into();
+        ed.prefs.opening.width = 900.0;
+        ed.prefs.opening.leaf = 800.0;
         let o = ed.place_opening(w, 0, 1500.0).expect("a door");
         let b = ed.add_layer("B");
         ed.selection = ed.wall_pick_set(w);

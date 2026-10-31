@@ -747,7 +747,7 @@ impl DriftApp {
         };
         log::info!("Drift {} started", drift_platform::VERSION);
         if let Some(mb) = drift_platform::memory::take_stop_note() {
-            app.editor.notice = Some(format!(
+            app.editor.out.notice = Some(format!(
                 "Drift stopped itself last time: it was using {:.1} GB of memory. Your last autosave has been restored.",
                 mb as f64 / 1024.0
             ));
@@ -755,7 +755,7 @@ impl DriftApp {
         if let Some(message) = drift_platform::crash::take_note() {
             let log = drift_platform::crash::log_path()
                 .map_or_else(|| "crash.log".into(), |p| p.display().to_string());
-            app.editor.notice = Some(format!(
+            app.editor.out.notice = Some(format!(
                 "Drift crashed last time ({message}). Your last autosave has been restored. The details are in {log}."
             ));
         }
@@ -1003,14 +1003,14 @@ impl eframe::App for DriftApp {
             ctx.request_repaint_after(std::time::Duration::from_secs_f64(wait));
         }
         fonts::sync_screen(&ctx, &self.editor, &mut self.screen_font);
-        if let Some(notice) = self.editor.notice.take() {
+        if let Some(notice) = self.editor.out.notice.take() {
             self.set_status(notice, true, now);
         }
         // (The notice said what edits did to fills; only the assistant lists them.)
-        self.editor.fill_changes.clear();
+        self.editor.out.fill_changes.clear();
         // Far-off geometry from an edit (an import lists it in its report instead).
-        if !self.editor.far_off.is_empty() {
-            let far = std::mem::take(&mut self.editor.far_off);
+        if !self.editor.out.far_off.is_empty() {
+            let far = std::mem::take(&mut self.editor.out.far_off);
             let what = checker::far_off_count(&self.editor.doc, &far);
             self.set_status(
                 format!(
@@ -1054,8 +1054,8 @@ impl eframe::App for DriftApp {
             }
             self.open_file(path);
         }
-        self.editor.auto_relations = self.auto_relations;
-        self.editor.always_endpoints = self.always_endpoints;
+        self.editor.prefs.auto_relations = self.auto_relations;
+        self.editor.prefs.always_endpoints = self.always_endpoints;
         // Text placed but left empty goes once it's no longer picked.
         let keep = self.editor.sole_text();
         self.editor.drop_empty_texts(keep);

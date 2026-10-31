@@ -873,7 +873,7 @@ mod tests {
             v(0.0, 0.0),
             "the first point stays"
         );
-        assert!(ed.notice.as_deref().is_some_and(|n| n.contains("1 : ")));
+        assert!(ed.out.notice.as_deref().is_some_and(|n| n.contains("1 : ")));
         // Move its corner onto (1000, 2000).
         ed.update_underlays();
         let mut tool = ToolKind::MoveUnderlay.create();

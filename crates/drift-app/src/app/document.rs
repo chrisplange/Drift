@@ -117,9 +117,10 @@ impl DriftApp {
             self.status_next = Some(OLDER_RULES.into());
         }
         let revision = doc.revision();
-        // Preferences kept on the editor carry over to the next drawing.
+        // The tool preferences carry over to the next drawing: the open drawing's editor holds
+        // the app's copy.
         let mut editor = Editor::new(doc);
-        editor.keep_prefs_from(&self.editor);
+        editor.prefs = self.editor.prefs.clone();
         self.editor = editor;
         self.forget_drawing_state();
         self.fit_target = Some(self.fit_bounds());
@@ -222,9 +223,9 @@ impl DriftApp {
             ("stack", rules.stacked_fills),
             ("dfollow", rules.follow_divided_fills),
             // The tool bars' Fill switch, as it was last left.
-            ("newfill", self.editor.fill_new_shapes),
+            ("newfill", self.editor.prefs.fill_new_shapes),
             // The Wall tool's poché switch, as it was last left.
-            ("wpoche", self.editor.wall_poche.on),
+            ("wpoche", self.editor.prefs.wall_poche.on),
             ("wcentre", self.show_wall_centrelines),
             ("tdims", self.show_temp_dims),
             ("ai", self.ai_link),
@@ -237,17 +238,17 @@ impl DriftApp {
         prefs.push(format!("asnap={}", self.angle_snap.unwrap_or(0.0)));
         prefs.push(format!("gaptol={}", rules.gap_tolerance));
         // The Wall tool's thickness (0: by the drawing's units) and justification.
-        prefs.push(format!("wthick={}", self.editor.wall_thickness));
+        prefs.push(format!("wthick={}", self.editor.prefs.wall_thickness));
         prefs.push(format!(
             "wjust={}",
-            match self.editor.wall_justify {
+            match self.editor.prefs.wall_justify {
                 drift_core::Justify::Centre => "c",
                 drift_core::Justify::Left => "l",
                 drift_core::Justify::Right => "r",
             }
         ));
-        prefs.push(format!("wlines={}", self.editor.wall_lines.key()));
-        prefs.push(format!("fillalone={}", self.editor.fill_alone_picks));
+        prefs.push(format!("wlines={}", self.editor.prefs.wall_lines.key()));
+        prefs.push(format!("fillalone={}", self.editor.prefs.fill_alone_picks));
         prefs.extend(self.crosshair.prefs());
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -295,19 +296,19 @@ impl DriftApp {
                 "combs" => self.show_combs = on,
                 "rscale" => self.round_scale = on,
                 "hidden" => self.show_hidden_annotations = on,
-                "newfill" => self.editor.fill_new_shapes = on,
-                "wpoche" => self.editor.wall_poche.on = on,
+                "newfill" => self.editor.prefs.fill_new_shapes = on,
+                "wpoche" => self.editor.prefs.wall_poche.on = on,
                 "wcentre" => self.show_wall_centrelines = on,
                 "wthick" => {
                     if let Ok(t) = value.parse::<f64>()
                         && t.is_finite()
                         && t >= 0.0
                     {
-                        self.editor.wall_thickness = t;
+                        self.editor.prefs.wall_thickness = t;
                     }
                 }
                 "wjust" => {
-                    self.editor.wall_justify = match value {
+                    self.editor.prefs.wall_justify = match value {
                         "l" => drift_core::Justify::Left,
                         "r" => drift_core::Justify::Right,
                         _ => drift_core::Justify::Centre,
@@ -315,13 +316,13 @@ impl DriftApp {
                 }
                 "wlines" => {
                     if let Some(u) = drift_edit::walls_from_lines::UsedLines::from_key(value) {
-                        self.editor.wall_lines = u;
+                        self.editor.prefs.wall_lines = u;
                     }
                 }
                 "tdims" => self.show_temp_dims = on,
                 "fillalone" => {
                     if let Ok(n) = value.parse() {
-                        self.editor.fill_alone_picks = n;
+                        self.editor.prefs.fill_alone_picks = n;
                     }
                 }
                 "ai" => self.ai_link = on,
@@ -378,7 +379,7 @@ impl DriftApp {
                         // Said, so a drawing taken over doesn't appear unexplained (unless
                         // a note about the last run already says so).
                         if self.unrestored.is_none()
-                            && self.editor.notice.is_none()
+                            && self.editor.out.notice.is_none()
                             && self.status_next.is_none()
                         {
                             self.status_next =
@@ -641,7 +642,7 @@ impl DriftApp {
     pub(crate) fn write_file(&mut self, as_new: bool, confirmed: bool) {
         // A value that isn't a number would make the file unreadable: write nothing.
         if let Some(id) = self.editor.doc.first_non_finite() {
-            self.editor.notice = Some(not_saved_non_finite(id));
+            self.editor.out.notice = Some(not_saved_non_finite(id));
             self.after_save = None;
             return;
         }

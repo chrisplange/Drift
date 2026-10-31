@@ -80,7 +80,7 @@ impl Editor {
     /// The type placed now: the tool bar's, else the set's usual one for the family (a
     /// door's 3′0″ or 900 mm leaf; a window or opening's nearest to 3′0″ by 4′0″).
     pub fn opening_type_now(&self) -> sizes::SizeRow {
-        let s = &self.opening;
+        let s = &self.prefs.opening;
         let set = self.size_set();
         if s.width > 0.0 {
             return sizes::SizeRow {
@@ -108,17 +108,17 @@ impl Editor {
 
     /// Pick a type from the size set for the tool bar.
     pub fn set_opening_type(&mut self, row: &sizes::SizeRow) {
-        self.opening.family = row.family.to_owned();
-        self.opening.type_name = row.name.clone();
-        self.opening.width = row.opening.0;
-        self.opening.leaf = row.leaf.0;
-        self.opening.height = row.opening.1;
+        self.prefs.opening.family = row.family.to_owned();
+        self.prefs.opening.type_name = row.name.clone();
+        self.prefs.opening.width = row.opening.0;
+        self.prefs.opening.leaf = row.leaf.0;
+        self.prefs.opening.height = row.opening.1;
     }
 
     /// Pick a family for the tool bar: its usual type.
     pub fn set_opening_family(&mut self, family: &str) {
-        self.opening.family = family.to_owned();
-        self.opening.width = 0.0;
+        self.prefs.opening.family = family.to_owned();
+        self.prefs.opening.width = 0.0;
         let row = self.opening_type_now();
         self.set_opening_type(&row);
     }
@@ -305,7 +305,7 @@ impl Editor {
 
     /// Openings removed in the open transaction with their wall: say so.
     pub(crate) fn note_gone_openings(&mut self) {
-        if !self.doc.in_transaction() || self.notice.is_some() {
+        if !self.doc.in_transaction() || self.out.notice.is_some() {
             return;
         }
         let gone: Vec<OpeningId> = self
@@ -321,8 +321,8 @@ impl Editor {
                 })
             })
             .collect();
-        if !gone.is_empty() && self.notice.is_none() {
-            self.notice = Some(match gone.len() {
+        if !gone.is_empty() && self.out.notice.is_none() {
+            self.out.notice = Some(match gone.len() {
                 1 => format!("Opening {} went with its wall", gone[0]),
                 n => format!("{n} openings went with their walls"),
             });
@@ -389,8 +389,8 @@ impl Editor {
             }
             let _ = self.doc.set_opening(id, moved);
         }
-        if removed > 0 && self.notice.is_none() {
-            self.notice = Some(match removed {
+        if removed > 0 && self.out.notice.is_none() {
+            self.out.notice = Some(match removed {
                 1 => "An opening was removed: no wall runs where it was".to_owned(),
                 n => format!("{n} openings were removed: no wall runs where they were"),
             });
@@ -490,7 +490,7 @@ impl Editor {
         let row = self.opening_type_now();
         let width = row.opening.0;
         let Some((a, b)) = self.opening_room(w, seg, u0 + width / 2.0, width, None) else {
-            self.notice = Some(format!(
+            self.out.notice = Some(format!(
                 "No room for a {} opening there",
                 self.doc.units().format_readout(width)
             ));
@@ -515,8 +515,8 @@ impl Editor {
             family: row.family.to_owned(),
             type_name: row.name.clone(),
         };
-        op.hand = self.opening.hand;
-        op.facing = self.opening.facing;
+        op.hand = self.prefs.opening.hand;
+        op.facing = self.prefs.opening.facing;
         let label = match hosted::family(row.family).map(|f| f.kind) {
             Some(hosted::FamilyKind::Window) => "Window",
             Some(hosted::FamilyKind::Door) => "Door",
@@ -527,7 +527,7 @@ impl Editor {
             Ok(id) => id,
             Err(e) => {
                 self.doc.rollback();
-                self.notice = Some(format!("No opening: {e}"));
+                self.out.notice = Some(format!("No opening: {e}"));
                 self.sync();
                 return None;
             }

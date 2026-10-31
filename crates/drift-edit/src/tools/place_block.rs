@@ -41,7 +41,7 @@ impl Tool for BlockTool {
             Input::Hover(p) | Input::Drag(p) => self.hover = Some(p.pos()),
             Input::Click(p, _) => match self.copy_at(ed, p.pos()) {
                 Some(i) => ed.place_instance(i.block, i.at, i.angle, i.mirror),
-                None => ed.notice = Some("Pick a block in the Blocks tab first".into()),
+                None => ed.out.notice = Some("Pick a block in the Blocks tab first".into()),
             },
             _ => {}
         }

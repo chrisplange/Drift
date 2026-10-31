@@ -346,7 +346,7 @@ impl Editor {
     /// created in the open transaction (a curve's own points ride along with it).
     /// Drawing construction geometry: the curves this transaction added become construction.
     pub(super) fn make_new_curves_construction(&mut self) {
-        if !(self.draw_construction && self.drawing_curves) {
+        if !(self.prefs.draw_construction && self.drawing_curves) {
             return;
         }
         let generated = self.doc.generated_entities();
@@ -414,7 +414,7 @@ impl Editor {
         };
         // With a filter on, a group gives only what the filter lets through.
         set.into_iter()
-            .filter(|e| *e == id || self.pick_filter.allows(&self.doc, *e))
+            .filter(|e| *e == id || self.prefs.pick_filter.allows(&self.doc, *e))
             .collect()
     }
 
@@ -466,7 +466,7 @@ impl Editor {
             })
             .collect();
         for (f, picked) in grouped {
-            if picked && self.pick_filter.fills() {
+            if picked && self.prefs.pick_filter.fills() {
                 self.selected_fills.insert(f);
             } else {
                 self.selected_fills.remove(&f);
@@ -477,7 +477,7 @@ impl Editor {
     /// Pick a shape's fill alone (its outline let go): its hatch's handles show without the
     /// transform box's.
     pub fn pick_fill_alone(&mut self, fill: drift_core::FillId) {
-        self.fill_alone_picks = self.fill_alone_picks.saturating_add(1);
+        self.prefs.fill_alone_picks = self.prefs.fill_alone_picks.saturating_add(1);
         self.selected_fills = [fill].into();
         self.selection.clear();
         self.selected_midpoints.clear();
@@ -538,7 +538,7 @@ impl Editor {
             .filter(|id| !referenced.contains(id))
             .collect();
         if members.len() < 2 {
-            self.notice = Some("Select two or more things to group".into());
+            self.out.notice = Some("Select two or more things to group".into());
             return None;
         }
         let n = self.doc.groups().count() + 1;
@@ -606,7 +606,7 @@ impl Editor {
     /// Select everything the filter lets through: every curve and standalone point, and (with
     /// their kinds on) the copies of blocks, sketch text and fills. Nothing hidden or locked.
     pub fn select_all(&mut self) {
-        let filter = self.pick_filter;
+        let filter = self.prefs.pick_filter;
         let shown = |doc: &drift_core::Document, layer: drift_core::LayerId| {
             doc.layer(layer).is_some_and(|l| l.visible && !l.locked)
         };
@@ -717,7 +717,7 @@ impl Editor {
     pub fn refuse_locked(&mut self, ids: &[EntityId]) -> bool {
         let locked = ids.iter().any(|id| self.is_locked(*id));
         if locked {
-            self.notice =
+            self.out.notice =
                 Some("Its outline is on a locked layer: unlock the layer to move it".into());
         }
         locked
@@ -728,7 +728,7 @@ impl Editor {
     /// outline taking its own copy), so they stay put instead of stretching. With automatic
     /// relations on, the joins hold. Inside the caller's transaction.
     pub fn detach_for_move(&mut self, ids: &[EntityId]) {
-        if self.auto_relations {
+        if self.prefs.auto_relations {
             return;
         }
         let moving: BTreeSet<EntityId> = ids.iter().copied().collect();

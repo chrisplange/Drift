@@ -54,7 +54,7 @@ impl DriftApp {
                 self.editor.doc.set_rules(r);
                 self.editor.commit("Size set");
                 // The bar's type follows the set.
-                let family = self.editor.opening.family.clone();
+                let family = self.editor.prefs.opening.family.clone();
                 self.editor.set_opening_family(&family);
             }
         }
@@ -120,17 +120,20 @@ impl DriftApp {
             .changed()
         {
             let w = shown * unit;
-            self.editor.opening.leaf = (w - (now.opening.0 - now.leaf.0)).clamp(0.0, w);
-            self.editor.opening.width = w;
-            self.editor.opening.height = now.opening.1;
-            self.editor.opening.family = now.family.to_owned();
-            self.editor.opening.type_name.clear();
+            self.editor.prefs.opening.leaf = (w - (now.opening.0 - now.leaf.0)).clamp(0.0, w);
+            self.editor.prefs.opening.width = w;
+            self.editor.prefs.opening.height = now.opening.1;
+            self.editor.prefs.opening.family = now.family.to_owned();
+            self.editor.prefs.opening.type_name.clear();
         }
         bar_divider(ui);
-        let swing = (self.editor.opening.hand, self.editor.opening.facing);
+        let swing = (
+            self.editor.prefs.opening.hand,
+            self.editor.prefs.opening.facing,
+        );
         if let Some((h, f)) = app::context_ui::choice(ui, swing, &SWINGS) {
-            self.editor.opening.hand = h;
-            self.editor.opening.facing = f;
+            self.editor.prefs.opening.hand = h;
+            self.editor.prefs.opening.facing = f;
         }
         ui.label(egui::RichText::new("Space").size(12.0).weak());
     }
@@ -206,7 +209,7 @@ impl DriftApp {
                         self.editor.set_opening_width(first, &t)
                     };
                     if let Err(e) = done {
-                        self.editor.notice = Some(e.to_string());
+                        self.editor.out.notice = Some(e.to_string());
                     }
                 }
             }

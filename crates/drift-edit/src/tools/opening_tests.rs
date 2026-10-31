@@ -37,8 +37,8 @@ fn click(ed: &mut Editor, tool: &mut dyn Tool, at: DVec2) {
 /// A metric drawing (the generic metric sizes), walls 100 mm thick.
 fn editor() -> Editor {
     let mut ed = Editor::default();
-    ed.auto_relations = false;
-    ed.wall_thickness = T;
+    ed.prefs.auto_relations = false;
+    ed.prefs.wall_thickness = T;
     ed
 }
 
@@ -130,19 +130,19 @@ fn space_steps_the_swing_and_typing_sets_offset_then_width() {
     let mut ed = editor();
     run(&mut ed, &[v(0.0, 0.0), v(4000.0, 0.0)]);
     let mut tool = ToolKind::Opening.create();
-    let start = (ed.opening.hand, ed.opening.facing);
+    let start = (ed.prefs.opening.hand, ed.prefs.opening.facing);
     let p = ptr(&ed, v(1000.0, 0.0));
     tool.handle(Input::Hover(p), &mut ed);
     for _ in 0..4 {
         assert!(tool.key(ToolKey::Space, Some(&p), &mut ed));
     }
     assert_eq!(
-        (ed.opening.hand, ed.opening.facing),
+        (ed.prefs.opening.hand, ed.prefs.opening.facing),
         start,
         "four ways round"
     );
     tool.key(ToolKey::Space, Some(&p), &mut ed);
-    assert_ne!((ed.opening.hand, ed.opening.facing), start);
+    assert_ne!((ed.prefs.opening.hand, ed.prefs.opening.facing), start);
     // Offset 300 from the nearer corner (the free end's cap at 0), width 800.
     assert_eq!(tool.fields(), &["Offset", "Width"]);
     tool.set_typed([Some(300.0), Some(800.0)]);
@@ -160,7 +160,10 @@ fn space_steps_the_swing_and_typing_sets_offset_then_width() {
         (u0 - (300.0 + crate::openings::CLEARANCE)).abs() < 1e-6,
         "{u0}"
     );
-    assert_eq!((op.hand, op.facing), (ed.opening.hand, ed.opening.facing));
+    assert_eq!(
+        (op.hand, op.facing),
+        (ed.prefs.opening.hand, ed.prefs.opening.facing)
+    );
 }
 
 #[test]
@@ -175,9 +178,9 @@ fn an_opening_keeps_clear_of_corners_and_refuses_no_room() {
     assert_eq!(jambs(&ed, w), 2);
     // A wall too short for it: refused, with a notice.
     let short = run(&mut ed, &[v(0.0, 3000.0), v(500.0, 3000.0)]);
-    ed.notice = None;
+    ed.out.notice = None;
     assert!(place(&mut ed, v(250.0, 3000.0)).is_none());
-    assert!(ed.notice.as_deref().unwrap_or("").contains("No room"));
+    assert!(ed.out.notice.as_deref().unwrap_or("").contains("No room"));
     assert_eq!(jambs(&ed, short), 0);
 }
 
@@ -350,12 +353,13 @@ fn an_opening_goes_with_its_wall_and_stays_when_exploded() {
     let made = symbol(&ed, o);
     // Deleting the wall (by its centreline) deletes the opening, and says so.
     ed.selection = ed.wall_curves(w).into_iter().collect();
-    ed.notice = None;
+    ed.out.notice = None;
     ed.delete_selection();
     assert_eq!(ed.doc.openings().count(), 0);
     assert!(made.iter().all(|e| !ed.doc.contains(*e)));
     assert!(
-        ed.notice
+        ed.out
+            .notice
             .as_deref()
             .unwrap_or("")
             .contains("went with its wall")
@@ -416,13 +420,13 @@ fn copying_a_wall_copies_its_openings() {
 #[test]
 fn a_window_in_an_arc_wall_and_a_size_set_by_units() {
     let mut ed = editor();
-    ed.wall_arc = true;
+    ed.prefs.wall_arc = true;
     let mut tool = ToolKind::Wall.create();
     click(&mut ed, tool.as_mut(), v(0.0, 0.0));
     click(&mut ed, tool.as_mut(), v(4000.0, 0.0));
     click(&mut ed, tool.as_mut(), v(2000.0, 1000.0));
     tool.handle(Input::Finish, &mut ed);
-    ed.wall_arc = false;
+    ed.prefs.wall_arc = false;
     let w = ed.doc.walls().next().unwrap().0;
     ed.set_opening_family("window.casement");
     assert_eq!(ed.size_set().id, "metric");

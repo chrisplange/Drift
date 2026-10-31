@@ -12,16 +12,16 @@ use super::*;
 fn drawing(h: &mut Harness<'_, DriftApp>) -> (Vec<EntityId>, FillId, EntityId) {
     let v = DVec2::new;
     let ed = &mut h.state_mut().editor;
-    ed.fill_new_shapes = true;
-    ed.fill_style.kind = drift_core::FillKind::Solid;
-    ed.fill_style.color = Some(Rgb([0, 0, 255]));
+    ed.prefs.fill_new_shapes = true;
+    ed.prefs.fill_style.kind = drift_core::FillKind::Solid;
+    ed.prefs.fill_style.color = Some(Rgb([0, 0, 255]));
     ed.doc.begin();
     let p = [v(0.0, 0.0), v(40.0, 0.0), v(40.0, 30.0), v(0.0, 30.0)].map(|q| ed.doc.add_point(q));
     let sides: Vec<EntityId> = (0..4)
         .map(|i| ed.doc.add_line(p[i], p[(i + 1) % 4]).unwrap())
         .collect();
     ed.add_shape(&sides).expect("a shape");
-    ed.fill_new_shapes = false;
+    ed.prefs.fill_new_shapes = false;
     let (a, b) = (
         ed.doc.add_point(v(60.0, 0.0)),
         ed.doc.add_point(v(90.0, 20.0)),
@@ -44,7 +44,7 @@ fn drawing(h: &mut Harness<'_, DriftApp>) -> (Vec<EntityId>, FillId, EntityId) {
 }
 
 fn filter(h: &Harness<'_, DriftApp>) -> PickFilter {
-    h.state().editor.pick_filter
+    h.state().editor.prefs.pick_filter
 }
 
 /// A window round the whole drawing.

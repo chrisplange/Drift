@@ -256,7 +256,7 @@ impl DriftApp {
 
     /// A filter on: a badge on the Select tool, so it isn't forgotten.
     fn pick_filter_badge(&self, ui: &mut egui::Ui, response: &egui::Response) {
-        let filter = self.editor.pick_filter;
+        let filter = self.editor.prefs.pick_filter;
         if filter.is_all() {
             return;
         }

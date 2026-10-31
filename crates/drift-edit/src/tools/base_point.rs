@@ -11,7 +11,7 @@ pub struct BasePointTool;
 impl BasePointTool {
     /// Use `at` (or, with `None`, the centre) for what the pick is for.
     fn pick(ed: &mut Editor, at: Option<DVec2>) {
-        ed.base_point_done = true;
+        ed.out.base_point_done = true;
         let Some(pick) = ed.base_point_pick.take() else {
             return;
         };
@@ -23,7 +23,7 @@ impl BasePointTool {
             },
         };
         if let Err(e) = done {
-            ed.notice = Some(e);
+            ed.out.notice = Some(e);
         }
     }
 }

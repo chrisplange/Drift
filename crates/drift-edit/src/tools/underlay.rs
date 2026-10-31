@@ -37,7 +37,7 @@ impl UnderlayTool {
     fn calibrate(&mut self, b: DVec2, distance: f64, ed: &mut Editor) {
         if self.mode == UnderlayMode::CalibrateImport {
             if let Some(a) = self.first {
-                ed.notice = Some(match ed.calibrate_import(a, b, distance) {
+                ed.out.notice = Some(match ed.calibrate_import(a, b, distance) {
                     Ok(k) => format!(
                         "Calibrated: that distance is now {} (scaled × {})",
                         ed.doc.units().format_readout(distance),
@@ -70,12 +70,12 @@ impl UnderlayTool {
                     Some((s, false)) => format!(", scale × {s:.4}"),
                     None => String::new(),
                 };
-                ed.notice = Some(format!(
+                ed.out.notice = Some(format!(
                     "Calibrated: that distance is now {}{ratio}",
                     units.format_readout(distance)
                 ));
             }
-            Err(e) => ed.notice = Some(e),
+            Err(e) => ed.out.notice = Some(e),
         }
         self.reset();
     }
@@ -131,11 +131,11 @@ impl Tool for UnderlayTool {
             return;
         }
         let Some(id) = ed.active_underlay() else {
-            ed.notice = Some("Pick an underlay in the Layers tab first".into());
+            ed.out.notice = Some("Pick an underlay in the Layers tab first".into());
             return;
         };
         if ed.doc.underlay(id).is_some_and(|u| u.locked) {
-            ed.notice = Some("The underlay is locked: unlock it in the Layers tab".into());
+            ed.out.notice = Some("The underlay is locked: unlock it in the Layers tab".into());
             return;
         }
         let at = p.pos();
@@ -148,7 +148,7 @@ impl Tool for UnderlayTool {
             }
             (UnderlayMode::Move, Some(from)) => {
                 if let Err(e) = ed.move_underlay(id, from, at) {
-                    ed.notice = Some(e);
+                    ed.out.notice = Some(e);
                 }
                 self.reset();
             }

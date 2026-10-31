@@ -113,7 +113,7 @@ fn axis_locks_apply_per_segment() {
 #[test]
 fn an_axis_lock_adds_no_relation_when_automatic_relations_are_off() {
     let mut ed = Editor::default();
-    assert!(!ed.auto_relations);
+    assert!(!ed.prefs.auto_relations);
     let mut tool = LineTool::default();
     click(&mut ed, &mut tool, v(0.0, 0.0));
     assert!(tool.lock_axis(Axis::X));
@@ -295,7 +295,7 @@ fn cancelling_a_grab_restores_the_geometry() {
     let p = ptr(&ed, &tool, v(0.0, 0.0));
     assert!(tool.key(ToolKey::G, Some(&p), &mut ed));
     assert!(!tool.is_modal());
-    assert!(ed.notice.take().is_some());
+    assert!(ed.out.notice.take().is_some());
 }
 
 /// The single arc in the document: (centre, start, end) positions.
@@ -449,7 +449,7 @@ fn three_point_arc_takes_typed_values_and_refuses_collinear_points() {
     tool.commit_typed(&p, &mut ed);
     // Collinear third point: refused, still waiting.
     click(&mut ed, &mut tool, v(40.0, 0.0));
-    assert!(ed.notice.take().is_some());
+    assert!(ed.out.notice.take().is_some());
     assert!(tool.is_busy());
     // Typed radius, bulging towards the pointer (above).
     let p = ptr(&ed, &tool, v(8.0, 30.0));
@@ -485,7 +485,7 @@ fn tangents(ed: &Editor) -> usize {
 #[test]
 fn tangent_arcs_continue_lines_and_chain() {
     let (mut ed, end) = line_end_fixture();
-    ed.auto_relations = true;
+    ed.prefs.auto_relations = true;
     let mut tool = TangentArcTool::default();
     click(&mut ed, &mut tool, v(10.1, 0.1)); // snaps to the line's end
     assert_eq!(tool.chain_end(), Some(end));
@@ -517,7 +517,7 @@ fn tangent_arcs_continue_lines_and_chain() {
 #[test]
 fn tangent_arc_takes_a_typed_radius_and_sweep() {
     let (mut ed, _) = line_end_fixture();
-    ed.auto_relations = true;
+    ed.prefs.auto_relations = true;
     let mut tool = TangentArcTool::default();
     click(&mut ed, &mut tool, v(10.0, 0.0));
     let p = ptr(&ed, &tool, v(14.0, 3.0));
@@ -543,7 +543,7 @@ fn tangent_arc_needs_a_curve_end_to_start_from() {
     let mut tool = TangentArcTool::default();
     click(&mut ed, &mut tool, v(0.0, 0.0));
     assert!(!tool.is_busy());
-    assert!(ed.notice.take().is_some());
+    assert!(ed.out.notice.take().is_some());
 }
 
 #[test]
@@ -829,7 +829,7 @@ fn smart_dimension_picks_the_type_from_the_label_position() {
         constraints(&ed)[..],
         [Constraint::HorizontalDistance { value, .. }] if value == 10.0
     ));
-    let id = ed.pending_edit.take().expect("value editor requested");
+    let id = ed.out.pending_edit.take().expect("value editor requested");
     assert_eq!(ed.doc.placement(id), Some(v(0.0, 17.5)));
 
     // Label to the right, within its y range: vertical distance.
@@ -845,12 +845,13 @@ fn smart_dimension_picks_the_type_from_the_label_position() {
     click(&mut ed, &mut tool, v(12.0, -4.0));
     assert_eq!(ed.doc.constraint_count(), 2);
     assert!(
-        ed.notice
+        ed.out
+            .notice
             .take()
             .is_some_and(|n| n.contains("already implied"))
     );
     // ...and offered as a driven dimension instead.
-    let (driven, placement) = ed.pending_driven.take().expect("driven prompt");
+    let (driven, placement) = ed.out.pending_driven.take().expect("driven prompt");
     assert!(matches!(driven, Constraint::Distance { .. }));
     let id = ed.add_driven_dimension(driven, placement).unwrap();
     assert!(ed.doc.is_driven(id));
@@ -1025,7 +1026,7 @@ fn a_line_ending_on_a_curve_stays_on_it() {
 
     // Without automatic relations the point is only placed there.
     let (mut ed, _) = circle_fixture();
-    ed.auto_relations = false;
+    ed.prefs.auto_relations = false;
     let mut tool = LineTool::default();
     let mut p = ptr(&ed, &tool, v(30.0, 0.0));
     p.relations = false;
@@ -1247,11 +1248,12 @@ fn a_drag_trim_is_one_undo_step() {
     }
     assert_eq!(ed.history.undo_depth(), depth + 1, "one step");
     assert!(
-        ed.notice
+        ed.out
+            .notice
             .as_deref()
             .is_some_and(|n| n.starts_with("Trim: 3 pieces")),
         "{:?}",
-        ed.notice
+        ed.out.notice
     );
     assert!(ed.undo());
     assert_eq!(geometry(&ed), before, "one Ctrl+Z brings every piece back");
@@ -1280,12 +1282,13 @@ fn a_drag_trim_reports_the_pieces_it_skipped() {
     );
     assert_eq!(geometry(&ed), before);
     assert!(
-        ed.notice
+        ed.out
+            .notice
             .as_deref()
             .is_some_and(|n| n.contains("2 pieces weren't trimmed")
                 && n.contains("crossed in two places to trim a piece; it's crossed in 1 here")),
         "{:?}",
-        ed.notice
+        ed.out.notice
     );
     assert_eq!(line_ends(&ed, ids[1]), (v(10.0, -5.0), v(10.0, 5.0)));
 }
@@ -1468,7 +1471,7 @@ fn fillet_and_chamfer_tools_use_typed_sizes() {
     assert!(arc.distance(v(4.0, 4.0)) < 1e-9);
     // Not a corner: explained.
     click(&mut ed, &mut tool, v(10.0, 0.0));
-    assert!(ed.notice.take().is_some());
+    assert!(ed.out.notice.take().is_some());
 
     let mut ed = corner_fixture();
     let mut tool = ChamferTool::default();
@@ -1570,7 +1573,7 @@ fn fillet_and_chamfer_size_with_the_pointer_in_steps() {
 /// The corner fixture, filleted at radius 4: the arc, and a point on its middle.
 fn filleted_fixture(relations: bool) -> (Editor, EntityId, DVec2) {
     let mut ed = corner_fixture();
-    ed.auto_relations = relations;
+    ed.prefs.auto_relations = relations;
     let corner = ed
         .doc
         .iter()
@@ -1779,7 +1782,7 @@ fn a_chamfer_is_resized_in_place_and_corners_can_be_put_back() {
 fn typed_sizes_leave_no_dimension_when_automatic_relations_are_off() {
     for relations in [false, true] {
         let mut ed = Editor::default();
-        ed.auto_relations = relations;
+        ed.prefs.auto_relations = relations;
         let mut tool = LineTool::default();
         click(&mut ed, &mut tool, v(0.0, 0.0));
         let p = ptr(&ed, &tool, v(8.0, 0.2));
@@ -2041,7 +2044,7 @@ fn mirror_tool_mirrors_the_selection() {
     let mut tool = MirrorTool;
     // Nothing selected: explained.
     click(&mut ed, &mut tool, v(0.0, 5.0));
-    assert!(ed.notice.take().is_some());
+    assert!(ed.out.notice.take().is_some());
     ed.selection = [ids[0]].into();
     click(&mut ed, &mut tool, v(0.0, 5.0));
     assert_eq!(lines(&ed.doc), 3);
@@ -2625,7 +2628,7 @@ fn chained_dimensions_over_a_defined_sketch_become_reference() {
         .filter(|(id, _)| ed.doc.is_driven(*id))
         .count();
     assert_eq!(driven, 1);
-    assert!(ed.pending_driven.is_none());
+    assert!(ed.out.pending_driven.is_none());
 }
 
 #[test]
@@ -2661,7 +2664,7 @@ fn a_drawn_circle_takes_a_diameter_dimension() {
 
 fn rotated_rectangle_fixture() -> (Editor, Vec<EntityId>) {
     let mut ed = Editor::default();
-    ed.auto_relations = true;
+    ed.prefs.auto_relations = true;
     let mut rect = RectangleTool::default();
     click(&mut ed, &mut rect, v(0.0, 0.0));
     click(&mut ed, &mut rect, v(20.0, 10.0));
@@ -2709,7 +2712,7 @@ fn rotate_turns_the_selection_about_its_centre() {
         "the corner (0, 0) lands at {expected:?}"
     );
     assert_eq!(hv_count(&ed), (0, 0));
-    assert!(ed.notice.take().is_some_and(|n| n.contains("removed")));
+    assert!(ed.out.notice.take().is_some_and(|n| n.contains("removed")));
     // One undo step puts it back, relations and all.
     ed.undo();
     assert_eq!(hv_count(&ed), (2, 2));
@@ -2806,7 +2809,7 @@ fn groups_pick_together_and_open_for_editing() {
 fn a_note_leader_can_point_at_a_line_anywhere_along_it() {
     let (mut ed, _) = rotated_rectangle_fixture();
     ed.selection.clear();
-    ed.auto_relations = false;
+    ed.prefs.auto_relations = false;
     let mut tool = NoteTool::default();
     // On the bottom edge, away from its ends and middle.
     let on_edge = ptr(&ed, &tool, v(6.0, 0.3));
@@ -2864,12 +2867,12 @@ fn the_fill_tools_eyedropper_picks_up_a_style() {
     use drift_core::FillKind;
     let (mut ed, _) = rotated_rectangle_fixture();
     ed.selection.clear();
-    if let FillKind::Hatch(h) = &mut ed.fill_style.kind {
+    if let FillKind::Hatch(h) = &mut ed.prefs.fill_style.kind {
         h.angle = 45.0;
     }
-    let hatched = ed.fill_style.clone();
+    let hatched = ed.prefs.fill_style.clone();
     ed.add_fill_at(v(5.0, 5.0)).unwrap();
-    ed.fill_style.kind = FillKind::Solid;
+    ed.prefs.fill_style.kind = FillKind::Solid;
     let mut tool = FillTool::default();
     // Alt+click a fill: its style, and nothing filled.
     let p = ptr(&ed, &tool, v(5.0, 5.0));
@@ -2878,16 +2881,16 @@ fn the_fill_tools_eyedropper_picks_up_a_style() {
         ..Default::default()
     };
     tool.handle(Input::Click(p, alt), &mut ed);
-    assert_eq!(ed.fill_style, hatched);
+    assert_eq!(ed.prefs.fill_style, hatched);
     assert_eq!(ed.doc.fills().count(), 1);
     // The eyedropper button: the next click picks up a style, then filling resumes.
-    ed.fill_style.kind = FillKind::Solid;
+    ed.prefs.fill_style.kind = FillKind::Solid;
     ed.fill_eyedropper = true;
     click(&mut ed, &mut tool, v(500.0, 500.0));
-    assert!(ed.notice.take().is_some(), "nothing there");
+    assert!(ed.out.notice.take().is_some(), "nothing there");
     assert!(ed.fill_eyedropper, "still picking");
     click(&mut ed, &mut tool, v(5.0, 5.0));
-    assert_eq!(ed.fill_style, hatched);
+    assert_eq!(ed.prefs.fill_style, hatched);
     assert!(!ed.fill_eyedropper);
     // Escape leaves it.
     ed.fill_eyedropper = true;
@@ -2907,7 +2910,7 @@ fn hatched_rectangle_with_tail(auto_relations: bool) -> (Editor, EntityId) {
     let end = doc.add_point(v(40.0, 10.0));
     let tail = doc.add_line(p[2], end).unwrap();
     let mut ed = Editor::new(doc);
-    ed.auto_relations = auto_relations;
+    ed.prefs.auto_relations = auto_relations;
     ed.add_fill_at(v(5.0, 5.0)).unwrap();
     (ed, tail)
 }
@@ -2948,7 +2951,7 @@ fn a_hatch_on_a_locked_outline_does_not_move_it() {
     let before: Vec<_> = ed.doc.iter().map(|(id, e)| (id, *e)).collect();
     // G refuses, and says why.
     grab_by(&mut ed, v(30.0, 0.0));
-    assert!(ed.notice.take().is_some_and(|n| n.contains("locked")));
+    assert!(ed.out.notice.take().is_some_and(|n| n.contains("locked")));
     // Dragging inside the picked hatch refuses too.
     let mut tool = SelectTool::default();
     tool.handle(
@@ -3373,8 +3376,8 @@ fn polygon_is_regular_with_four_freedoms() {
 
     // Circumscribed square with a typed radius (the apothem): sides 20 long, dimensioned.
     let mut ed = Editor::default();
-    ed.auto_relations = true;
-    ed.polygon_circumscribed = true;
+    ed.prefs.auto_relations = true;
+    ed.prefs.polygon_circumscribed = true;
     let mut tool = PolygonTool::default();
     click(&mut ed, &mut tool, v(0.0, 0.0));
     let p = ptr(&ed, &tool, v(0.0, 7.0));
@@ -3382,7 +3385,7 @@ fn polygon_is_regular_with_four_freedoms() {
     tool.set_typed([Some(10.0), Some(4.0)]);
     tool.commit_typed(&p, &mut ed);
     assert_eq!(lines(&ed.doc), 4);
-    assert_eq!(ed.polygon_sides, 4, "remembered");
+    assert_eq!(ed.prefs.polygon_sides, 4, "remembered");
     for (id, _) in ed.doc.iter() {
         if let Some(Shape::Line { a, b }) = ed.doc.shape(id) {
             assert!((a.distance(b) - 20.0).abs() < 1e-6);
@@ -3414,8 +3417,8 @@ fn slots_keep_their_shape_and_freedoms() {
 
     // Centre slot, horizontal, typed length and width: only the middle moves.
     let mut ed = with_auto_relations();
-    ed.auto_relations = true;
-    ed.slot_mode = SlotMode::Centre;
+    ed.prefs.auto_relations = true;
+    ed.prefs.slot_mode = SlotMode::Centre;
     let mut tool = SlotTool::default();
     click(&mut ed, &mut tool, v(0.0, 0.0));
     let p = ptr(&ed, &tool, v(20.0, 0.0));
@@ -3448,7 +3451,7 @@ fn slots_keep_their_shape_and_freedoms() {
 
     // Arc slot: centre, start, end (drawn clockwise), width.
     let mut ed = with_auto_relations();
-    ed.slot_mode = SlotMode::Arc;
+    ed.prefs.slot_mode = SlotMode::Arc;
     let mut tool = SlotTool::default();
     click(&mut ed, &mut tool, v(0.0, 0.0));
     click(&mut ed, &mut tool, v(0.0, 50.0));
@@ -3471,7 +3474,7 @@ fn slots_keep_their_shape_and_freedoms() {
 #[test]
 fn ellipses_draw_snap_and_fill() {
     let mut ed = Editor::default();
-    ed.auto_relations = true;
+    ed.prefs.auto_relations = true;
     let mut tool = EllipseTool::default();
     click(&mut ed, &mut tool, v(0.0, 0.0));
     click(&mut ed, &mut tool, v(20.0, 0.0));
@@ -3684,8 +3687,8 @@ fn shapes_drawn_onto_another_shapes_points_stay_distinct() {
 fn closed_shapes_come_out_filled_when_asked() {
     use drift_core::{FillKind, Rgb};
     let mut ed = Editor::default();
-    ed.fill_new_shapes = true;
-    ed.fill_style = crate::fills::FillStyle {
+    ed.prefs.fill_new_shapes = true;
+    ed.prefs.fill_style = crate::fills::FillStyle {
         kind: FillKind::Solid,
         color: Some(Rgb([10, 20, 30])),
         opacity: 0.5,
@@ -3751,7 +3754,7 @@ fn closed_shapes_come_out_filled_when_asked() {
     }
     tool.cancel(&mut ed);
     assert_eq!(fills(&ed), 5);
-    ed.fill_new_shapes = false;
+    ed.prefs.fill_new_shapes = false;
     let mut tool = RectangleTool::default();
     click(&mut ed, &mut tool, v(600.0, 0.0));
     click(&mut ed, &mut tool, v(640.0, 20.0));
@@ -4101,7 +4104,7 @@ fn selection_filters_pick_only_edges_or_only_points() {
     assert_eq!(boxed(&mut ed, &mut tool), l.iter().copied().collect());
     // Edges only: the box takes the four lines; a click on a corner takes a line, not the
     // point; a click inside picks no area.
-    ed.pick_filter = PickFilter::only(crate::editor::PickKind::Edges);
+    ed.prefs.pick_filter = PickFilter::only(crate::editor::PickKind::Edges);
     let picked = boxed(&mut ed, &mut tool);
     assert_eq!(picked, l.iter().copied().collect());
     ed.selection.clear();
@@ -4110,7 +4113,7 @@ fn selection_filters_pick_only_edges_or_only_points() {
     click(&mut ed, &mut tool, v(5.0, 3.0));
     assert!(ed.selected_region.is_none(), "no areas with a filter on");
     // Points only: the box takes the four corners; a click on a line takes nothing.
-    ed.pick_filter = PickFilter::only(crate::editor::PickKind::Points);
+    ed.prefs.pick_filter = PickFilter::only(crate::editor::PickKind::Points);
     let picked = boxed(&mut ed, &mut tool);
     assert_eq!(picked, c.iter().copied().collect());
     ed.selection.clear();
@@ -4121,10 +4124,10 @@ fn selection_filters_pick_only_edges_or_only_points() {
     // A grouped rectangle: a click takes the whole group, with Blocks & groups off too
     // (#261), and so does a box round one of its lines.
     ed.selection = l.iter().copied().collect();
-    ed.pick_filter = PickFilter::ALL;
+    ed.prefs.pick_filter = PickFilter::ALL;
     ed.make_group();
     ed.selection.clear();
-    ed.pick_filter = PickFilter::only(crate::editor::PickKind::Edges);
+    ed.prefs.pick_filter = PickFilter::only(crate::editor::PickKind::Edges);
     click(&mut ed, &mut tool, v(5.0, 0.0));
     assert_eq!(ed.selection, l.iter().copied().collect());
     ed.selection.clear();
@@ -4138,11 +4141,14 @@ fn selection_filters_pick_only_edges_or_only_points() {
         l.iter().copied().collect(),
         "a box round one line"
     );
-    ed.pick_filter = ed.pick_filter.with(crate::editor::PickKind::Blocks, true);
+    ed.prefs.pick_filter = ed
+        .prefs
+        .pick_filter
+        .with(crate::editor::PickKind::Blocks, true);
     click(&mut ed, &mut tool, v(5.0, 0.0));
     assert_eq!(ed.selection, l.iter().copied().collect());
     // Blocks & groups alone: a click on a grouped line still takes the group's curves.
-    ed.pick_filter = PickFilter::only(crate::editor::PickKind::Blocks);
+    ed.prefs.pick_filter = PickFilter::only(crate::editor::PickKind::Blocks);
     ed.selection.clear();
     click(&mut ed, &mut tool, v(5.0, 0.0));
     assert_eq!(ed.selection, l.iter().copied().collect());
@@ -4154,7 +4160,7 @@ fn selection_filters_pick_only_edges_or_only_points() {
 fn a_grouped_shapes_fill_picks_the_group_with_blocks_off() {
     use crate::editor::{PickFilter, PickKind};
     let mut ed = Editor::default();
-    ed.fill_new_shapes = true;
+    ed.prefs.fill_new_shapes = true;
     ed.doc.begin();
     let c = [v(0.0, 0.0), v(10.0, 0.0), v(10.0, 6.0), v(0.0, 6.0)].map(|p| ed.doc.add_point(p));
     let l = [0, 1, 2, 3].map(|i| ed.doc.add_line(c[i], c[(i + 1) % 4]).unwrap());
@@ -4168,7 +4174,7 @@ fn a_grouped_shapes_fill_picks_the_group_with_blocks_off() {
     ed.make_group().unwrap();
     ed.selection.clear();
     ed.selected_fills.clear();
-    ed.pick_filter = PickFilter::ALL.with(PickKind::Blocks, false);
+    ed.prefs.pick_filter = PickFilter::ALL.with(PickKind::Blocks, false);
     let mut tool = SelectTool::default();
     click(&mut ed, &mut tool, v(5.0, 3.0));
     assert!(ed.selection.contains(&loose), "{:?}", ed.selection);
@@ -4196,7 +4202,7 @@ fn a_grouped_wall_picks_the_group_with_blocks_off() {
     ed.selection = ed.wall_curves(w).into_iter().chain([loose]).collect();
     ed.make_group().unwrap();
     ed.selection.clear();
-    ed.pick_filter = PickFilter::ALL.with(PickKind::Blocks, false);
+    ed.prefs.pick_filter = PickFilter::ALL.with(PickKind::Blocks, false);
     assert!(ed.wall_pick_set(w).contains(&loose));
     let face = *ed.doc.wall(w).unwrap().made.curves.values().next().unwrap();
     assert!(
@@ -4230,14 +4236,14 @@ fn chain_mode_runs_dimensions_along_a_row_and_ends_with_an_overall() {
             })
             .collect()
     };
-    ed.dim_mode = DimMode::Chain;
-    ed.dim_overall = true;
+    ed.prefs.dim_mode = DimMode::Chain;
+    ed.prefs.dim_overall = true;
     let mut tool = DimensionTool::default();
     // The first: two points, placed above them.
     click(&mut ed, &mut tool, v(0.0, 0.0));
     click(&mut ed, &mut tool, v(10.0, 0.0));
     click(&mut ed, &mut tool, v(5.0, 8.0));
-    ed.pending_edit = None;
+    ed.out.pending_edit = None;
     assert_eq!(rows(&ed), vec![(p[0], p[1], 10.0, false)]);
     // Plain clicks go on along the row: a point, then the wall (its nearer end, the foot).
     click(&mut ed, &mut tool, v(25.0, 0.0));
@@ -4270,8 +4276,8 @@ fn chain_mode_runs_dimensions_along_a_row_and_ends_with_an_overall() {
     ed2.doc.begin();
     let q = [0.0, 10.0, 25.0, 40.0].map(|x| ed2.doc.add_point(v(x, 0.0)));
     ed2.commit("Setup");
-    ed2.dim_mode = DimMode::Baseline;
-    ed2.dim_overall = true;
+    ed2.prefs.dim_mode = DimMode::Baseline;
+    ed2.prefs.dim_overall = true;
     let mut tool = DimensionTool::default();
     click(&mut ed2, &mut tool, v(0.0, 0.0));
     click(&mut ed2, &mut tool, v(10.0, 0.0));
@@ -4533,7 +4539,7 @@ fn two_arcs_meeting_at_a_notch_are_filleted() {
 #[test]
 fn a_line_meeting_an_arc_is_filleted_with_the_tool() {
     let mut ed = Editor::default();
-    ed.auto_relations = true;
+    ed.prefs.auto_relations = true;
     ed.doc.begin();
     let c = ed.doc.add_point(v(0.0, 0.0));
     let s = ed.doc.add_point(v(10.0, 0.0));
@@ -4793,9 +4799,12 @@ fn trimming_a_line_held_equal_leaves_the_rest_where_it_is() {
         2
     );
     assert!(
-        ed.notice.as_deref().is_some_and(|n| n.contains("Equal ×2")),
+        ed.out
+            .notice
+            .as_deref()
+            .is_some_and(|n| n.contains("Equal ×2")),
         "{:?}",
-        ed.notice
+        ed.out.notice
     );
     // One undo brings the line and its relations back.
     ed.undo();
@@ -4867,7 +4876,7 @@ fn base_line(ed: &mut Editor, a: DVec2, b: DVec2) -> EntityId {
 #[test]
 fn lines_snap_square_onto_a_line_and_keep_it() {
     let mut ed = with_auto_relations();
-    ed.auto_relations = true;
+    ed.prefs.auto_relations = true;
     let base = base_line(&mut ed, v(0.0, 0.0), v(20.0, 0.0));
     let mut tool = LineTool::default();
     click_square(&mut ed, &mut tool, v(5.0, 10.0));
@@ -4895,7 +4904,7 @@ fn lines_snap_square_onto_a_line_and_keep_it() {
 #[test]
 fn lines_snap_tangent_and_radial_to_circles() {
     let mut ed = with_auto_relations();
-    ed.auto_relations = true;
+    ed.prefs.auto_relations = true;
     ed.doc.begin();
     let c = ed.doc.add_point(v(0.0, 0.0));
     let circle = ed.doc.add_circle(c, 5.0).unwrap();
@@ -4930,7 +4939,7 @@ fn lines_snap_tangent_and_radial_to_circles() {
 #[test]
 fn without_auto_relations_the_snaps_only_place_points() {
     let mut ed = with_auto_relations();
-    ed.auto_relations = false;
+    ed.prefs.auto_relations = false;
     base_line(&mut ed, v(0.0, 0.0), v(20.0, 0.0));
     let mut tool = LineTool::default();
     click_square(&mut ed, &mut tool, v(5.0, 10.0));
@@ -4945,7 +4954,7 @@ fn without_auto_relations_the_snaps_only_place_points() {
 #[test]
 fn drawing_on_from_a_line_follows_a_square_guide() {
     let mut ed = with_auto_relations();
-    ed.auto_relations = true;
+    ed.prefs.auto_relations = true;
     let mut tool = LineTool::default();
     click_square(&mut ed, &mut tool, v(0.0, 0.0));
     click_square(&mut ed, &mut tool, v(10.0, 5.0));
@@ -4975,7 +4984,7 @@ fn drawing_on_from_a_line_follows_a_square_guide() {
 #[test]
 fn square_to_a_level_line_stays_a_vertical_relation() {
     let mut ed = with_auto_relations();
-    ed.auto_relations = true;
+    ed.prefs.auto_relations = true;
     let mut tool = LineTool::default();
     click_square(&mut ed, &mut tool, v(0.0, 0.0));
     click_square(&mut ed, &mut tool, v(10.0, 0.0));
@@ -4986,7 +4995,7 @@ fn square_to_a_level_line_stays_a_vertical_relation() {
 #[test]
 fn drawing_on_from_an_arc_follows_its_tangent() {
     let mut ed = with_auto_relations();
-    ed.auto_relations = true;
+    ed.prefs.auto_relations = true;
     ed.doc.begin();
     let c = ed.doc.add_point(v(0.0, 0.0));
     let s = ed.doc.add_point(v(5.0, 0.0));
@@ -5014,7 +5023,7 @@ fn drawing_on_from_an_arc_follows_its_tangent() {
 /// -30° to 135°: (editor, arc, its start and end points, its major-axis point).
 fn ellipse_arc_fixture() -> (Editor, EntityId, [EntityId; 2], EntityId) {
     let mut ed = with_auto_relations();
-    ed.auto_relations = true;
+    ed.prefs.auto_relations = true;
     ed.doc.begin();
     let c = ed.doc.add_point(v(0.0, 0.0));
     let major = ed.doc.add_point(v(8.0, 0.0));
@@ -5034,7 +5043,7 @@ fn ellipse_arc_fixture() -> (Editor, EntityId, [EntityId; 2], EntityId) {
 /// its end (no length): (editor, curve, its anchors, its handles).
 fn pen_curve_fixture(flat_end: bool) -> (Editor, EntityId, [EntityId; 2], [EntityId; 2]) {
     let mut ed = with_auto_relations();
-    ed.auto_relations = true;
+    ed.prefs.auto_relations = true;
     ed.doc.begin();
     let a = ed.doc.add_point(v(0.0, 0.0));
     let c1 = ed.doc.add_point(v(2.0, 6.0));
@@ -5081,9 +5090,9 @@ fn tangent_arc_from(ed: &mut Editor, point: EntityId, to: DVec2) -> EntityId {
     let from = ed.doc.point(point).unwrap();
     click(ed, &mut tool, from);
     assert_eq!(tool.chain_end(), Some(point), "started on the end");
-    assert!(ed.notice.is_none(), "{:?}", ed.notice);
+    assert!(ed.out.notice.is_none(), "{:?}", ed.out.notice);
     click(ed, &mut tool, to);
-    assert!(ed.notice.is_none(), "{:?} at {to}", ed.notice);
+    assert!(ed.out.notice.is_none(), "{:?} at {to}", ed.out.notice);
     let arc = newest_curve(ed);
     assert!(matches!(
         ed.doc.get(arc).unwrap().kind,
@@ -5276,10 +5285,10 @@ fn corners_on_arc_centres_are_filleted() {
         assert!(
             tool.is_modal(),
             "the corner at {at} is taken: {:?}",
-            ed.notice
+            ed.out.notice
         );
         tool.handle(Input::Finish, &mut ed);
-        assert!(ed.notice.is_none(), "{:?}", ed.notice);
+        assert!(ed.out.notice.is_none(), "{:?}", ed.out.notice);
     }
     assert_eq!(arcs(&ed.doc), 4, "two fillets");
     assert_eq!(lines(&ed.doc), 4);
@@ -5298,7 +5307,7 @@ fn corners_on_arc_centres_are_chamfered() {
         assert!(
             tool.is_modal(),
             "the corner at {at} is taken: {:?}",
-            ed.notice
+            ed.out.notice
         );
         tool.handle(Input::Finish, &mut ed);
     }
@@ -5318,12 +5327,12 @@ fn a_corner_that_cant_be_filleted_says_why() {
     let mut tool = FilletTool::default();
     click(&mut ed, &mut tool, v(0.0, 0.0));
     assert!(!tool.is_modal());
-    let notice = ed.notice.clone().unwrap_or_default();
+    let notice = ed.out.notice.clone().unwrap_or_default();
     assert!(notice.contains("3 curves meet here"), "{notice}");
     // An open end: only one curve.
-    ed.notice = None;
+    ed.out.notice = None;
     click(&mut ed, &mut tool, v(10.0, 0.0));
-    let notice = ed.notice.clone().unwrap_or_default();
+    let notice = ed.out.notice.clone().unwrap_or_default();
     assert!(notice.contains("only one curve ends here"), "{notice}");
 }
 
@@ -5406,42 +5415,42 @@ fn boxes_pick_text_and_hand_annotations_to_the_app() {
     box_select(&mut ed, &mut tool, v(-20.0, -10.0), v(50.0, 30.0), m);
     assert!(ed.selection.contains(&line));
     assert_eq!(ed.selected_texts, [text].into());
-    let b = ed.box_pick.take().expect("the box, for the app");
+    let b = ed.out.box_pick.take().expect("the box, for the app");
     assert!(!b.crossing && !b.add);
     // A window round only part of the text doesn't take it; a crossing box does.
     let o = ed.text_outline(text).unwrap().bounds;
     let mid = (o.min + o.max) * 0.5;
     box_select(&mut ed, &mut tool, o.min - v(1.0, 1.0), mid, m);
     assert!(ed.selected_texts.is_empty());
-    ed.box_pick = None;
+    ed.out.box_pick = None;
     // (From beside the text: a drag that starts on it moves it.)
     let beside = v(o.max.x + 1.0, o.max.y + 1.0);
     box_select(&mut ed, &mut tool, beside, mid, m);
     assert_eq!(ed.selected_texts, [text].into());
-    assert!(ed.box_pick.take().unwrap().crossing);
+    assert!(ed.out.box_pick.take().unwrap().crossing);
     // Text only: the same window takes the text and no geometry; a click on the line picks
     // nothing.
-    ed.pick_filter = PickFilter::only(crate::editor::PickKind::Text);
+    ed.prefs.pick_filter = PickFilter::only(crate::editor::PickKind::Text);
     box_select(&mut ed, &mut tool, v(-20.0, -10.0), v(50.0, 30.0), m);
     assert!(ed.selection.is_empty());
     assert_eq!(ed.selected_texts, [text].into());
     click(&mut ed, &mut tool, v(5.0, 0.0));
     assert!(ed.selection.is_empty() && ed.selected_texts.is_empty());
     // Annotations only: no geometry or text, only the box for the app.
-    ed.pick_filter = PickFilter::only(crate::editor::PickKind::Annotations);
+    ed.prefs.pick_filter = PickFilter::only(crate::editor::PickKind::Annotations);
     box_select(&mut ed, &mut tool, v(-20.0, -10.0), v(50.0, 30.0), m);
     assert!(ed.selection.is_empty() && ed.selected_texts.is_empty());
-    assert!(ed.box_pick.is_some());
+    assert!(ed.out.box_pick.is_some());
     click(&mut ed, &mut tool, mid);
     assert!(
         ed.selected_texts.is_empty(),
         "text isn't picked with Annotations"
     );
     // Edges: a box takes no text; Shift adds to what is picked.
-    ed.pick_filter = PickFilter::ALL;
+    ed.prefs.pick_filter = PickFilter::ALL;
     box_select(&mut ed, &mut tool, v(-20.0, 15.0), v(50.0, 30.0), m);
     assert_eq!(ed.selected_texts, [text].into());
-    ed.pick_filter = PickFilter::only(crate::editor::PickKind::Edges);
+    ed.prefs.pick_filter = PickFilter::only(crate::editor::PickKind::Edges);
     let shift = Modifiers { shift: true, ..m };
     box_select(&mut ed, &mut tool, v(-20.0, -10.0), v(50.0, 30.0), shift);
     assert!(ed.selection.contains(&line));
@@ -5601,7 +5610,7 @@ fn a_fill_follows_its_circle_dragged_off_one_it_overlapped() {
         let a = ed.doc.add_point(v(0.0, 0.0));
         let ca = ed.doc.add_circle(a, 40.0).unwrap();
         ed.commit("Circle a");
-        ed.fill_new_shapes = fill_on_create;
+        ed.prefs.fill_new_shapes = fill_on_create;
         ed.doc.begin();
         let b = ed.doc.add_point(v(70.0, 0.0));
         let cb = ed.doc.add_circle(b, 45.0).unwrap();
@@ -5663,7 +5672,7 @@ fn a_fill_follows_its_circle_dragged_off_one_it_overlapped() {
 #[test]
 fn a_move_confirmed_after_letting_go_of_a_shared_centre_solves() {
     let mut ed = Editor::default();
-    ed.auto_relations = false;
+    ed.prefs.auto_relations = false;
     ed.doc.begin();
     let c = ed.doc.add_point(v(0.0, 0.0));
     let s = ed.doc.add_point(v(50.0, 0.0));
@@ -5965,7 +5974,7 @@ fn closing_a_loop_a_hair_off_level_makes_the_side_level() {
     // #204: the end-point snap used to replace the Horizontal the closing side comes out
     // with; within the snap tolerance it is added, and the solve makes the side level.
     let mut ed = Editor::default();
-    ed.auto_relations = true;
+    ed.prefs.auto_relations = true;
     let mut tool = LineTool::default();
     for at in [v(0.0, 0.0), v(0.0, 10.0), v(20.0, 10.0), v(20.0, 0.3)] {
         click(&mut ed, &mut tool, at);
@@ -5975,7 +5984,7 @@ fn closing_a_loop_a_hair_off_level_makes_the_side_level() {
     click(&mut ed, &mut tool, v(0.1, 0.1));
     assert!(tool.last.is_none(), "closed");
     assert_eq!(horizontals(&ed.doc), 2);
-    assert_eq!(ed.notice, None);
+    assert_eq!(ed.out.notice, None);
     let ys: Vec<f64> = ed
         .doc
         .iter()
@@ -5993,7 +6002,7 @@ fn a_direction_already_implied_is_left_out_and_said() {
     // #204: a line between two points fixed on one level would get a Horizontal they already
     // imply; it is left out, the line is drawn, and the notice says why.
     let mut ed = Editor::default();
-    ed.auto_relations = true;
+    ed.prefs.auto_relations = true;
     ed.doc.begin();
     let a = ed.doc.add_point(v(0.0, 0.0));
     let b = ed.doc.add_point(v(20.0, 0.0));
@@ -6012,7 +6021,7 @@ fn a_direction_already_implied_is_left_out_and_said() {
     assert_eq!(lines(&ed.doc), 1, "the line is drawn");
     assert_eq!(horizontals(&ed.doc), 0);
     assert_eq!(
-        ed.notice.as_deref(),
+        ed.out.notice.as_deref(),
         Some("Horizontal not added: already implied by existing constraints")
     );
 }

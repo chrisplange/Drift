@@ -248,15 +248,15 @@ impl Editor {
             openings: found.openings.len(),
             input,
             revision: self.doc.revision(),
-            lines: self.wall_lines,
+            lines: self.prefs.wall_lines,
         };
-        self.from_lines = Some(report.clone());
+        self.out.from_lines = Some(report.clone());
         Ok(report)
     }
 
     /// Remove, keep or move the lines made into walls, as `wall_lines` says.
     fn put_away_used_lines(&mut self, used: &[EntityId]) {
-        match self.wall_lines {
+        match self.prefs.wall_lines {
             UsedLines::Remove => self.doc.delete(used.iter().copied()),
             UsedLines::Keep => {}
             UsedLines::Layer => {
@@ -294,7 +294,8 @@ impl Editor {
 
     /// The last Walls from lines report, while the drawing is as it left it.
     pub fn from_lines_now(&self) -> Option<&FromLinesReport> {
-        self.from_lines
+        self.out
+            .from_lines
             .as_ref()
             .filter(|r| r.revision == self.doc.revision())
     }
@@ -302,7 +303,7 @@ impl Editor {
     /// Do the last Walls from lines again with the lines used put away another way (one
     /// undo step still: the first is undone).
     pub fn redo_walls_from_lines(&mut self, lines: UsedLines) -> Result<FromLinesReport, String> {
-        self.wall_lines = lines;
+        self.prefs.wall_lines = lines;
         let Some(report) = self.from_lines_now().cloned() else {
             return Err("The drawing has changed since".into());
         };

@@ -836,8 +836,8 @@ impl DriftApp {
             Some(SizeEdit::Dimension(wanted, text)) => {
                 // A dimension already there is edited. Otherwise the size is added as a
                 // dimension, unless automatic relations are off: then it only resizes.
-                let keeps =
-                    self.editor.auto_relations || self.editor.size_dimension(&wanted).is_some();
+                let keeps = self.editor.prefs.auto_relations
+                    || self.editor.size_dimension(&wanted).is_some();
                 let result = if keeps {
                     self.editor.set_size(wanted, &text).map(|_| ())
                 } else {
@@ -1501,7 +1501,7 @@ impl DriftApp {
         // How to get at a picked shape's fill on its own, until it has been done a few times
         // (#223).
         let tool_hint = if selecting
-            && self.editor.fill_alone_picks < crate::FILL_ALONE_HINTS
+            && self.editor.prefs.fill_alone_picks < crate::FILL_ALONE_HINTS
             && self.editor.picked_shape_fill().is_some()
         {
             format!(

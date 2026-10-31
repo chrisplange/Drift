@@ -403,7 +403,7 @@ impl DriftApp {
                 .editor
                 .rename(drift_edit::blocks::RenameTarget::Block(id), &name)
         {
-            self.editor.notice = Some(e);
+            self.editor.out.notice = Some(e);
         }
         if let Some(id) = delete {
             self.editor.doc.begin();

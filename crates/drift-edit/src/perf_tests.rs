@@ -757,7 +757,7 @@ fn perf_walls() {
         }),
     );
     let mut ed = Editor::new(doc);
-    ed.auto_relations = false;
+    ed.prefs.auto_relations = false;
     let node = grid[20][12];
     let at = ed.doc.point(node).unwrap();
     // A furniture point, for the same edits without walls.
@@ -872,7 +872,7 @@ fn perf_walls() {
     };
     let c = c.with_value(drift_solver::measure(&ed.doc, &c).unwrap());
     let dim = ed.add_dimension(c, None).expect("a face dimension");
-    assert!(!ed.doc.is_driven(dim), "{:?}", ed.notice);
+    assert!(!ed.doc.is_driven(dim), "{:?}", ed.out.notice);
     let value = c.value().unwrap();
     let typed = time(6, |k| {
         let units = ed.doc.units();
@@ -945,7 +945,7 @@ fn perf_walls_openings() {
         }
     }
     let mut ed = Editor::new(doc);
-    ed.auto_relations = false;
+    ed.prefs.auto_relations = false;
     report(
         "floor with 1,000 doors (walls, cuts, symbols)",
         once(t.elapsed().as_secs_f64() * 1e3),
@@ -1062,7 +1062,7 @@ fn perf_drag_frames() {
     // A1: the wall floor (26,000 entities), dragging a furniture point.
     let (doc, grid) = wall_floor();
     let mut ed = Editor::new(doc);
-    ed.auto_relations = false;
+    ed.prefs.auto_relations = false;
     let owners = ed.doc.wall_owners();
     let loose = ed
         .doc

@@ -11,8 +11,8 @@ use super::*;
 fn hatched_shape(h: &mut Harness<'_, DriftApp>) -> (Vec<EntityId>, FillId) {
     h.state_mut().status_colors = false;
     let ed = &mut h.state_mut().editor;
-    ed.fill_new_shapes = true;
-    ed.fill_style.kind = FillKind::Hatch(Hatch::new("ANSI31"));
+    ed.prefs.fill_new_shapes = true;
+    ed.prefs.fill_style.kind = FillKind::Hatch(Hatch::new("ANSI31"));
     ed.doc.begin();
     let corners = [(0.0, 0.0), (40.0, 0.0), (50.0, 30.0), (10.0, 30.0)];
     let p = corners.map(|(x, y)| ed.doc.add_point(DVec2::new(x, y)));
@@ -20,7 +20,7 @@ fn hatched_shape(h: &mut Harness<'_, DriftApp>) -> (Vec<EntityId>, FillId) {
         .map(|i| ed.doc.add_line(p[i], p[(i + 1) % 4]).unwrap())
         .collect();
     ed.add_shape(&sides).expect("a shape");
-    ed.fill_new_shapes = false;
+    ed.prefs.fill_new_shapes = false;
     ed.commit("Shape");
     let fill = ed.doc.fills().next().map(|(id, _)| id).expect("its hatch");
     ed.selected_fills.clear();

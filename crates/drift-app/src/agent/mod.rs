@@ -159,9 +159,9 @@ impl Session {
         let mut editor = Editor::new(doc);
         if self.live.is_some() {
             // Drift's own preferences carry over to its next drawing.
-            editor.keep_prefs_from(&self.editor);
+            editor.prefs = self.editor.prefs.clone();
         } else {
-            editor.pick_any_area = true;
+            editor.prefs.pick_any_area = true;
         }
         self.editor = editor;
     }
@@ -287,8 +287,8 @@ impl Session {
     /// or, if it fails, undone and forgotten. The result gains the sketch's status.
     fn step(&mut self, label: &str, f: impl FnOnce(&mut Self) -> Res) -> Res {
         let before = self.editor.history.recorded();
-        self.editor.fill_changes.clear();
-        let notice_before = self.editor.notice.clone();
+        self.editor.out.fill_changes.clear();
+        let notice_before = self.editor.out.notice.clone();
         let result = f(self);
         if self.editor.doc.in_transaction() {
             self.editor.doc.rollback();
@@ -303,6 +303,7 @@ impl Session {
                 // window too.
                 let notice = self
                     .editor
+                    .out
                     .notice
                     .clone()
                     .filter(|n| notice_before.as_ref() != Some(n));
@@ -320,8 +321,8 @@ impl Session {
             Err(e) => {
                 let ed = &mut self.editor;
                 ed.history.discard_last(n, &mut ed.doc);
-                ed.notice = None;
-                ed.fill_changes.clear();
+                ed.out.notice = None;
+                ed.out.fill_changes.clear();
                 ed.sync();
                 Err(format!("{e} (nothing was changed)"))
             }
@@ -331,7 +332,7 @@ impl Session {
     /// What the step's edits did to fills beyond following their outlines (taken).
     fn fill_changes(&mut self) -> Vec<Value> {
         use drift_edit::fills::FillChange;
-        std::mem::take(&mut self.editor.fill_changes)
+        std::mem::take(&mut self.editor.out.fill_changes)
             .into_iter()
             .map(|c| match c {
                 FillChange::Divided { id, parts } => json!({
@@ -465,7 +466,7 @@ impl Session {
 /// tools add their own), and areas picked whether filled or not.
 fn new_editor(doc: drift_core::Document) -> Editor {
     let mut ed = Editor::new(doc);
-    ed.pick_any_area = true;
+    ed.prefs.pick_any_area = true;
     ed
 }
 

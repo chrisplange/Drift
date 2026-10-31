@@ -5,9 +5,9 @@ use super::*;
 
 /// A ring of walls round a 100 × 60 room, 10 thick, with the Wall tool; back to Select.
 fn room(h: &mut Harness<'_, DriftApp>) {
-    h.state_mut().editor.wall_thickness = 10.0;
-    h.state_mut().editor.wall_justify = drift_core::Justify::Centre;
-    h.state_mut().editor.wall_arc = false;
+    h.state_mut().editor.prefs.wall_thickness = 10.0;
+    h.state_mut().editor.prefs.wall_justify = drift_core::Justify::Centre;
+    h.state_mut().editor.prefs.wall_arc = false;
     h.key_press(Key::W);
     h.run();
     for p in [
@@ -93,7 +93,7 @@ fn smoke_walls_save_open_and_explode() {
     assert_eq!(h.state().editor.doc.walls().count(), 0);
     h.state().files.open_path(&path);
     h.run_steps(3);
-    assert!(h.state().editor.notice.is_none(), "nothing repaired");
+    assert!(h.state().editor.out.notice.is_none(), "nothing repaired");
     assert!(
         h.state().editor.doc.same_sketch(&before.sketch_copy()),
         "the walls as they were"

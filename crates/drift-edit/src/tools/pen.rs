@@ -284,9 +284,9 @@ impl Tool for PenTool {
                     })
                 {
                     match ed.toggle_smooth(id) {
-                        Ok(true) => ed.notice = Some("Smooth point".into()),
-                        Ok(false) => ed.notice = Some("Corner point".into()),
-                        Err(e) => ed.notice = Some(e),
+                        Ok(true) => ed.out.notice = Some("Smooth point".into()),
+                        Ok(false) => ed.out.notice = Some("Corner point".into()),
+                        Err(e) => ed.out.notice = Some(e),
                     }
                     return;
                 }

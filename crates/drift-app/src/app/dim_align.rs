@@ -178,11 +178,11 @@ impl DriftApp {
     /// One undo step; says what happened.
     pub(crate) fn align_picked_dimensions(&mut self, spread: bool, now: f64) {
         let ids = self.picked_dimensions();
-        let scale = self.camera.scale;
+        let scale = self.drawing.view.camera.scale;
         let moves = if spread {
-            spaced(&self.editor.doc, &ids, scale)
+            spaced(&self.drawing.editor.doc, &ids, scale)
         } else {
-            aligned(&self.editor.doc, &ids, scale)
+            aligned(&self.drawing.editor.doc, &ids, scale)
         };
         if moves.is_empty() {
             let why = if spread {
@@ -193,16 +193,16 @@ impl DriftApp {
             self.set_status(why.into(), true, now);
             return;
         }
-        self.editor.doc.begin();
+        self.drawing.editor.doc.begin();
         for &(id, offset) in &moves {
-            self.editor.place_dimension(id, offset);
+            self.drawing.editor.place_dimension(id, offset);
         }
         let label = if spread {
             "Space dimensions"
         } else {
             "Align dimensions"
         };
-        self.editor.commit(label);
+        self.drawing.editor.commit(label);
         let done = moves.len() + usize::from(!spread);
         let left_out = ids.len() - done;
         let mut text = format!(
@@ -218,7 +218,12 @@ impl DriftApp {
     /// Whether Align / Space evenly apply: two (or three) or more parallel dimensions picked.
     pub(crate) fn can_align_dimensions(&self) -> (bool, bool) {
         let ids = self.picked_dimensions();
-        let n = placed_parallel(&self.editor.doc, &ids, self.camera.scale).len();
+        let n = placed_parallel(
+            &self.drawing.editor.doc,
+            &ids,
+            self.drawing.view.camera.scale,
+        )
+        .len();
         (n >= 2, n >= 3)
     }
 }

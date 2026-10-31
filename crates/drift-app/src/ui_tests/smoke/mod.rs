@@ -41,9 +41,9 @@ mod walls;
 /// Show the drawing from `min` to `max`, with grid snapping off (pointer positions are exact).
 fn view(h: &mut Harness<'_, DriftApp>, min: DVec2, max: DVec2) {
     h.state_mut().grid_snap = false;
-    h.state_mut().fit_target = Some(drift_core::Bounds { min, max });
+    h.state_mut().drawing.view.fit_target = Some(drift_core::Bounds { min, max });
     h.run();
-    h.state_mut().fit_target = None;
+    h.state_mut().drawing.view.fit_target = None;
     h.run();
 }
 
@@ -61,12 +61,18 @@ fn added(h: &Harness<'_, DriftApp>, before: &[EntityId]) -> Vec<EntityId> {
 }
 
 fn ids(h: &Harness<'_, DriftApp>) -> Vec<EntityId> {
-    h.state().editor.doc.iter().map(|(id, _)| id).collect()
+    h.state()
+        .drawing
+        .editor
+        .doc
+        .iter()
+        .map(|(id, _)| id)
+        .collect()
 }
 
 /// The curves among `ids`.
 fn curves(h: &Harness<'_, DriftApp>, ids: &[EntityId]) -> Vec<EntityId> {
-    let doc = &h.state().editor.doc;
+    let doc = &h.state().drawing.editor.doc;
     ids.iter()
         .copied()
         .filter(|id| doc.get(*id).is_some_and(|e| !e.kind.is_point()))
@@ -91,10 +97,17 @@ fn rectangle(
     fill: Fill,
 ) -> (Vec<EntityId>, Option<FillId>) {
     let before = ids(h);
-    let fills_before: Vec<FillId> = h.state().editor.doc.fills().map(|(id, _)| id).collect();
+    let fills_before: Vec<FillId> = h
+        .state()
+        .drawing
+        .editor
+        .doc
+        .fills()
+        .map(|(id, _)| id)
+        .collect();
     h.get_by_label("Rectangle").click();
     h.run();
-    if (fill != Fill::No) != h.state().editor.prefs.fill_new_shapes {
+    if (fill != Fill::No) != h.state().drawing.editor.prefs.fill_new_shapes {
         h.get_by_label("Fill").click();
         h.run();
     }
@@ -117,13 +130,14 @@ fn rectangle(
     assert_eq!(sides.len(), 4, "a rectangle drawn");
     let new_fill = h
         .state()
+        .drawing
         .editor
         .doc
         .fills()
         .map(|(id, _)| id)
         .find(|id| !fills_before.contains(id));
     assert_eq!(new_fill.is_some(), fill != Fill::No, "filled as asked");
-    let ed = &mut h.state_mut().editor;
+    let ed = &mut h.state_mut().drawing.editor;
     ed.selection.clear();
     ed.selected_fills.clear();
     h.run();
@@ -148,7 +162,7 @@ fn right_click(h: &mut Harness<'_, DriftApp>, pos: Pos2) {
 /// A circle drawn with the Circle tool (unfilled), from its centre to a point on it; back
 /// to Select with nothing picked. Returns it.
 fn circle(h: &mut Harness<'_, DriftApp>, centre: DVec2, radius: f64) -> EntityId {
-    h.state_mut().editor.prefs.fill_new_shapes = false;
+    h.state_mut().drawing.editor.prefs.fill_new_shapes = false;
     let before = ids(h);
     h.key_press(Key::C);
     h.run();
@@ -160,7 +174,7 @@ fn circle(h: &mut Harness<'_, DriftApp>, centre: DVec2, radius: f64) -> EntityId
     }
     let new = curves(h, &added(h, &before));
     assert_eq!(new.len(), 1, "a circle drawn");
-    h.state_mut().editor.selection.clear();
+    h.state_mut().drawing.editor.selection.clear();
     h.run();
     new[0]
 }
@@ -256,12 +270,12 @@ fn temp_file(test: &str, name: &str, contents: &[u8]) -> std::path::PathBuf {
 
 /// A point's position.
 fn at(h: &Harness<'_, DriftApp>, p: EntityId) -> DVec2 {
-    h.state().editor.doc.point(p).unwrap()
+    h.state().drawing.editor.doc.point(p).unwrap()
 }
 
 /// A line's end points.
 fn ends(h: &Harness<'_, DriftApp>, line: EntityId) -> (EntityId, EntityId) {
-    match h.state().editor.doc.get(line).unwrap().kind {
+    match h.state().drawing.editor.doc.get(line).unwrap().kind {
         EntityKind::Line { a, b } => (a, b),
         ref other => panic!("not a line: {other:?}"),
     }
@@ -269,7 +283,7 @@ fn ends(h: &Harness<'_, DriftApp>, line: EntityId) -> (EntityId, EntityId) {
 
 /// Every point's position, in id order.
 fn positions(h: &Harness<'_, DriftApp>) -> Vec<(EntityId, DVec2)> {
-    let doc = &h.state().editor.doc;
+    let doc = &h.state().drawing.editor.doc;
     doc.iter()
         .filter(|(_, e)| e.kind.is_point())
         .map(|(id, _)| (id, doc.point(id).unwrap()))
@@ -278,7 +292,7 @@ fn positions(h: &Harness<'_, DriftApp>) -> Vec<(EntityId, DVec2)> {
 
 fn is_hatch(h: &Harness<'_, DriftApp>, fill: FillId) -> bool {
     matches!(
-        h.state().editor.doc.fill(fill).unwrap().kind,
+        h.state().drawing.editor.doc.fill(fill).unwrap().kind,
         FillKind::Hatch(_)
     )
 }

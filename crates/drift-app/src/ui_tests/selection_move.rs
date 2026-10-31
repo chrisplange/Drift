@@ -7,7 +7,7 @@ use super::*;
 
 /// A line from `a` to `b`, with its end points.
 fn line(h: &mut Harness<'_, DriftApp>, a: DVec2, b: DVec2) -> (EntityId, EntityId, EntityId) {
-    let ed = &mut h.state_mut().editor;
+    let ed = &mut h.state_mut().drawing.editor;
     ed.doc.begin();
     let (pa, pb) = (ed.doc.add_point(a), ed.doc.add_point(b));
     let l = ed.doc.add_line(pa, pb).unwrap();
@@ -16,15 +16,15 @@ fn line(h: &mut Harness<'_, DriftApp>, a: DVec2, b: DVec2) -> (EntityId, EntityI
 }
 
 fn at(h: &Harness<'_, DriftApp>, p: EntityId) -> DVec2 {
-    h.state().editor.doc.point(p).unwrap()
+    h.state().drawing.editor.doc.point(p).unwrap()
 }
 
 /// Show the drawing from `min` to `max`, without grid snapping (pointer offsets are exact).
 fn view(h: &mut Harness<'_, DriftApp>, min: DVec2, max: DVec2) {
     h.state_mut().grid_snap = false;
-    h.state_mut().fit_target = Some(drift_core::Bounds { min, max });
+    h.state_mut().drawing.view.fit_target = Some(drift_core::Bounds { min, max });
     h.run();
-    h.state_mut().fit_target = None;
+    h.state_mut().drawing.view.fit_target = None;
     h.run();
 }
 
@@ -36,8 +36,8 @@ fn g_moves_a_line_picked_by_its_midpoint() {
     view(&mut h, v(-30.0, -30.0), v(90.0, 60.0));
     // Picked by its midpoint, nothing else.
     click_world(&mut h, v(20.0, 10.0));
-    assert_eq!(h.state().editor.selected_midpoints, [l].into());
-    assert!(h.state().editor.selection.is_empty());
+    assert_eq!(h.state().drawing.editor.selected_midpoints, [l].into());
+    assert!(h.state().drawing.editor.selection.is_empty());
     // G: the line follows the pointer from its midpoint; a click places it.
     h.hover_at(screen(&h, v(20.0, 10.0)));
     h.run();
@@ -55,8 +55,8 @@ fn g_moves_a_line_picked_by_its_midpoint() {
         "both ends, rigidly"
     );
     // G, X, a typed 12, Enter: exactly 12 along X.
-    h.state_mut().editor.selected_midpoints = [l].into();
-    h.state_mut().editor.selection.clear();
+    h.state_mut().drawing.editor.selected_midpoints = [l].into();
+    h.state_mut().drawing.editor.selection.clear();
     h.hover_at(screen(&h, v(40.0, 0.0)));
     h.run();
     h.key_press(Key::G);
@@ -162,7 +162,7 @@ fn an_area_outlined_by_hidden_curves_is_not_picked() {
     let v = DVec2::new;
     // A rectangle on layer 0, a line on layer B away from it.
     let sides: Vec<EntityId> = {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         ed.change_rules(|r| r.regions_need_fill = false);
         ed.doc.begin();
         let p =
@@ -174,9 +174,9 @@ fn an_area_outlined_by_hidden_curves_is_not_picked() {
         sides
     };
     let (shelf, sa, sb) = line(&mut h, v(60.0, 10.0), v(90.0, 10.0));
-    let b = h.state_mut().editor.add_layer("B");
+    let b = h.state_mut().drawing.editor.add_layer("B");
     {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         ed.doc.begin();
         for id in [shelf, sa, sb] {
             ed.doc.set_entity_layer(id, b).unwrap();
@@ -185,27 +185,29 @@ fn an_area_outlined_by_hidden_curves_is_not_picked() {
     }
     view(&mut h, v(-10.0, -10.0), v(100.0, 40.0));
     let picked = |h: &Harness<'_, DriftApp>| {
-        let ed = &h.state().editor;
+        let ed = &h.state().drawing.editor;
         (ed.selected_region.is_some(), ed.selection.len())
     };
     // Everything shown: a click inside the rectangle picks its area (and outline).
     click_world(&mut h, v(20.0, 15.0));
     assert_eq!(picked(&h), (true, 4));
-    assert!(h.state_mut().editor.region().is_some());
+    assert!(h.state_mut().drawing.editor.region().is_some());
     h.key_press(Key::Escape);
     h.run();
     // B isolated: the rectangle is hidden, and a click there picks nothing.
-    let before = h.state_mut().editor.isolate_layer(b);
+    let before = h.state_mut().drawing.editor.isolate_layer(b);
     h.run();
     click_world(&mut h, v(20.0, 15.0));
     assert_eq!(picked(&h), (false, 0));
     // Nor when its layer is hidden the usual way.
     h.state_mut()
+        .drawing
         .editor
         .set_layers_visible(&before, "End isolate");
-    let zero = h.state().editor.doc.layer_of(sides[0]).clone();
+    let zero = h.state().drawing.editor.doc.layer_of(sides[0]).clone();
     let layer0 = h
         .state()
+        .drawing
         .editor
         .doc
         .layers()
@@ -213,6 +215,7 @@ fn an_area_outlined_by_hidden_curves_is_not_picked() {
         .map(|(id, _)| id)
         .unwrap();
     h.state_mut()
+        .drawing
         .editor
         .set_layers_visible(&[(layer0, false)], "Hide");
     h.run();
@@ -220,13 +223,15 @@ fn an_area_outlined_by_hidden_curves_is_not_picked() {
     assert_eq!(picked(&h), (false, 0));
     // A picked area whose layer is hidden afterwards isn't highlighted (or moved) either.
     h.state_mut()
+        .drawing
         .editor
         .set_layers_visible(&[(layer0, true)], "Show");
     h.run();
     click_world(&mut h, v(20.0, 15.0));
     assert_eq!(picked(&h), (true, 4));
     h.state_mut()
+        .drawing
         .editor
         .set_layers_visible(&[(layer0, false)], "Hide");
-    assert!(h.state_mut().editor.region().is_none());
+    assert!(h.state_mut().drawing.editor.region().is_none());
 }

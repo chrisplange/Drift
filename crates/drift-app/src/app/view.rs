@@ -8,11 +8,11 @@ const EXTENSION_GRIP_REACH: f32 = 6.0;
 impl DriftApp {
     pub(crate) fn make_pointer(&self, map: &ScreenMap, pos: egui::Pos2, snap: bool) -> Pointer {
         let raw = map.to_world(pos);
-        let mut pointer = Pointer::new(raw, PICK_RADIUS / self.camera.scale);
+        let mut pointer = Pointer::new(raw, PICK_RADIUS / self.drawing.view.camera.scale);
         pointer.relations = self.auto_relations;
-        pointer.units = self.editor.doc.units();
+        pointer.units = self.drawing.editor.doc.units();
         pointer.alt = !snap;
-        (pointer.shift, pointer.command) = self.keys_held;
+        (pointer.shift, pointer.command) = self.drawing.view.keys_held;
         pointer.round_scale = self.round_scale;
         pointer.angle_step = self.angle_snap.filter(|_| snap);
         pointer.perp_tangent = self.perp_tangent_snap;
@@ -21,13 +21,13 @@ impl DriftApp {
                 tolerance: pointer.tolerance,
                 grid: self
                     .grid_snap
-                    .then(|| grid_info(&self.camera, self.imperial()).minor),
+                    .then(|| grid_info(&self.drawing.view.camera, self.imperial()).minor),
                 from: self
                     .perp_tangent_snap
                     .then(|| self.tool.snap_from())
                     .flatten(),
             };
-            let ed = &self.editor;
+            let ed = &self.drawing.editor;
             let tool = &self.tool;
             pointer.snap = ed.snap_excluding(
                 raw,
@@ -52,7 +52,7 @@ impl DriftApp {
     pub(crate) fn inference(&self, at: DVec2, tol: f64) -> Option<Guide> {
         let mut x_ref: Option<(f64, DVec2)> = None;
         let mut y_ref: Option<(f64, DVec2)> = None;
-        for &q in &self.inference_points {
+        for &q in &self.drawing.inference_points {
             if (at - q).length() <= tol {
                 continue;
             }
@@ -82,7 +82,7 @@ impl DriftApp {
         painter: &egui::Painter,
         map: &ScreenMap,
     ) -> Vec<DimLayout> {
-        let doc = &self.editor.doc;
+        let doc = &self.drawing.editor.doc;
         let mut out: Vec<DimLayout> = doc
             .constraints()
             .filter(|(id, c)| {
@@ -94,8 +94,8 @@ impl DriftApp {
             .collect();
         // A picked opening's width and offset.
         if self.tool.kind() == ToolKind::Select {
-            for o in self.editor.selected_openings() {
-                for (c, at) in self.editor.opening_dimensions(o) {
+            for o in self.drawing.editor.selected_openings() {
+                for (c, at) in self.drawing.editor.opening_dimensions(o) {
                     out.extend(annotations::layout_dimension(
                         painter,
                         doc,
@@ -132,15 +132,15 @@ impl DriftApp {
         dims: &[DimLayout],
         notes: &[crate::notes::NoteLayout],
     ) {
-        let Some(b) = self.editor.out.box_pick.take() else {
+        let Some(b) = self.drawing.editor.out.box_pick.take() else {
             return;
         };
         if !b.add {
             // (The tool cleared the editor's picks.)
-            self.selected_constraint = None;
-            self.selected_leader = None;
+            self.drawing.selected_constraint = None;
+            self.drawing.selected_leader = None;
         }
-        if !self.editor.prefs.pick_filter.annotations() {
+        if !self.drawing.editor.prefs.pick_filter.annotations() {
             return;
         }
         let r = egui::Rect::from_two_pos(map.to_screen(b.rect.min), map.to_screen(b.rect.max));
@@ -180,7 +180,7 @@ impl DriftApp {
         let annotating = idle || (self.tool.kind() == ToolKind::Dimension && !self.tool.is_busy());
         // The select tool's filter: dimensions with Annotations (or All), relations with the
         // geometry filters.
-        let filter = self.editor.prefs.pick_filter;
+        let filter = self.drawing.editor.prefs.pick_filter;
         let select = self.tool.kind() == ToolKind::Select;
         let (dims_ok, glyphs_ok) = (
             !select || filter.annotations(),
@@ -206,14 +206,14 @@ impl DriftApp {
                 .or_else(|| glyph_at(p).map(|g| g.id))
         };
 
-        self.hovered_constraint = if annotating && self.label_drag.is_none() {
+        self.drawing.hovered_constraint = if annotating && self.drawing.label_drag.is_none() {
             pos.and_then(hit)
         } else {
             None
         };
 
         // The grips at the starts of the picked dimension's extension lines.
-        let picked = self.selected_constraint;
+        let picked = self.drawing.selected_constraint;
         let grip_at = |p: egui::Pos2| -> Option<(ConstraintId, usize, DVec2, DVec2)> {
             let id = picked?;
             let dim = dims.iter().find(|d| d.id == Some(id))?;
@@ -225,16 +225,16 @@ impl DriftApp {
         };
         // Dragging one: the extension line starts where it is dropped (along its line).
         if idle
-            && self.ext_drag.is_none()
-            && self.label_drag.is_none()
+            && self.drawing.ext_drag.is_none()
+            && self.drawing.label_drag.is_none()
             && response.drag_started_by(PointerButton::Primary)
             && let Some(origin) = ui.input(|i| i.pointer.press_origin())
             && let Some((id, end, ..)) = grip_at(origin)
         {
-            self.ext_drag = Some((id, end));
-            self.editor.doc.begin();
+            self.drawing.ext_drag = Some((id, end));
+            self.drawing.editor.doc.begin();
         }
-        if let Some((id, end)) = self.ext_drag {
+        if let Some((id, end)) = self.drawing.ext_drag {
             if let Some(p) = response.interact_pointer_pos()
                 && let Some((_, _, from, out)) = dims
                     .iter()
@@ -242,11 +242,15 @@ impl DriftApp {
                     .and_then(|d| d.shape.extension_grips().into_iter().find(|g| g.0 == end))
             {
                 let t = (map.to_world(p) - from).dot(out);
-                let _ = self.editor.doc.set_extension_start(id, end, Some(t));
+                let _ = self
+                    .drawing
+                    .editor
+                    .doc
+                    .set_extension_start(id, end, Some(t));
             }
             if !response.dragged_by(PointerButton::Primary) {
-                self.ext_drag = None;
-                self.editor.commit("Move extension line");
+                self.drawing.ext_drag = None;
+                self.drawing.editor.commit("Move extension line");
             }
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
             return true;
@@ -257,7 +261,7 @@ impl DriftApp {
 
         // Dragging a dimension label.
         if idle
-            && self.label_drag.is_none()
+            && self.drawing.label_drag.is_none()
             && response.drag_started_by(PointerButton::Primary)
             && let Some(origin) = ui.input(|i| i.pointer.press_origin())
             && let Some(dim) = dim_at(origin)
@@ -266,15 +270,16 @@ impl DriftApp {
             // From where the number is drawn (it may have been centred, or moved outside a
             // tight dimension), so it doesn't jump as the drag begins.
             let label = map.to_world(dim.handle);
-            self.label_drag = Some((id, map.to_world(origin) - label));
-            self.selected_constraint = Some(id);
-            self.editor.doc.begin();
+            self.drawing.label_drag = Some((id, map.to_world(origin) - label));
+            self.drawing.selected_constraint = Some(id);
+            self.drawing.editor.doc.begin();
         }
-        if let Some((id, grab)) = self.label_drag {
+        if let Some((id, grab)) = self.drawing.label_drag {
             if let (Some(p), Some(c)) = (
                 response.interact_pointer_pos(),
-                self.editor.doc.constraint(id).copied(),
-            ) && let Some(anchor) = drift_edit::labels::dimension_anchor(&self.editor.doc, &c)
+                self.drawing.editor.doc.constraint(id).copied(),
+            ) && let Some(anchor) =
+                drift_edit::labels::dimension_anchor(&self.drawing.editor.doc, &c)
             {
                 let offset = map.to_world(p) - grab - anchor;
                 // Level with another dimension's line when close (Ctrl places freely).
@@ -282,20 +287,20 @@ impl DriftApp {
                     (offset, None)
                 } else {
                     crate::app::dim_align::snap_label(
-                        &self.editor.doc,
+                        &self.drawing.editor.doc,
                         id,
                         &c,
                         offset,
                         map.camera.scale,
                     )
                 };
-                self.dim_guide = guide;
-                self.editor.place_dimension(id, offset);
+                self.drawing.dim_guide = guide;
+                self.drawing.editor.place_dimension(id, offset);
             }
             if !response.dragged_by(PointerButton::Primary) {
-                self.label_drag = None;
-                self.dim_guide = None;
-                self.editor.commit("Move dimension");
+                self.drawing.label_drag = None;
+                self.drawing.dim_guide = None;
+                self.drawing.editor.commit("Move dimension");
             }
             return true;
         }
@@ -307,9 +312,9 @@ impl DriftApp {
         // one keeps the dimension picked.
         if idle && let Some((id, end, ..)) = at.and_then(grip_at) {
             if response.double_clicked_by(PointerButton::Primary) {
-                self.editor.doc.begin();
-                let _ = self.editor.doc.set_extension_start(id, end, None);
-                self.editor.commit("Reset extension line");
+                self.drawing.editor.doc.begin();
+                let _ = self.drawing.editor.doc.set_extension_start(id, end, None);
+                self.drawing.editor.commit("Reset extension line");
                 return true;
             }
             if response.clicked_by(PointerButton::Primary) {
@@ -333,6 +338,7 @@ impl DriftApp {
             let shift = crate::app::visibility_ui::shift_click(ui);
             if let Some(id) = at.and_then(hit) {
                 let is_dimension = self
+                    .drawing
                     .editor
                     .doc
                     .constraint(id)
@@ -341,18 +347,18 @@ impl DriftApp {
                     // Added to what is picked, geometry and all.
                     self.toggle_annotation_pick(drift_core::AnnotationRef::Dimension(id));
                 } else {
-                    self.editor.annotation_picks.clear();
-                    self.editor.selected_annotation = None;
-                    self.editor.selected_texts.clear();
-                    self.selected_constraint = Some(id);
-                    self.editor.selection.clear();
+                    self.drawing.editor.annotation_picks.clear();
+                    self.drawing.editor.selected_annotation = None;
+                    self.drawing.editor.selected_texts.clear();
+                    self.drawing.selected_constraint = Some(id);
+                    self.drawing.editor.selection.clear();
                 }
                 return true;
             }
             // Shift or Ctrl adds geometry to the picked dimensions (the tool sees the click).
             if !shift && !ui.input(|i| i.modifiers.command) {
-                self.selected_constraint = None;
-                self.editor.annotation_picks.clear();
+                self.drawing.selected_constraint = None;
+                self.drawing.editor.annotation_picks.clear();
             }
         }
         false
@@ -368,7 +374,7 @@ impl DriftApp {
         colors: &AnnotationColors,
     ) {
         let color = colors.selected;
-        let manual = self.editor.doc.extension_starts(id);
+        let manual = self.drawing.editor.doc.extension_starts(id);
         for (end, at, ..) in dim.shape.extension_grips() {
             let square = egui::Rect::from_center_size(at, egui::Vec2::splat(7.0));
             let fill = if manual[end].is_some() {
@@ -392,16 +398,16 @@ impl DriftApp {
 
     /// Open the in-place value editor, with or without the text around the value.
     pub(crate) fn open_dimension_editor(&mut self, id: ConstraintId, extras: bool) {
-        if self.editor.doc.is_driven(id) {
-            self.editor.out.notice = Some(
+        if self.drawing.editor.doc.is_driven(id) {
+            self.drawing.editor.out.notice = Some(
                 "A driven dimension follows the geometry: untick Driven in the constraint list \
                  to set its value"
                     .into(),
             );
             return;
         }
-        if let Some(text) = self.editor.dimension_edit_text(id) {
-            self.dimension_edit = Some(DimensionEdit {
+        if let Some(text) = self.drawing.editor.dimension_edit_text(id) {
+            self.drawing.dimension_edit = Some(DimensionEdit {
                 id,
                 text,
                 focus: true,
@@ -412,23 +418,26 @@ impl DriftApp {
 
     /// Open the in-place editor of a property dimension (a wall's thickness).
     pub(crate) fn open_property_edit(&mut self, q: drift_core::PropertyDimId) {
-        let Some(d) = self.editor.doc.property_dim(q) else {
+        let Some(d) = self.drawing.editor.doc.property_dim(q) else {
             return;
         };
         let w = d.target.wall();
-        let Some(wall) = self.editor.doc.wall(w) else {
+        let Some(wall) = self.drawing.editor.doc.wall(w) else {
             return;
         };
-        let text = wall
-            .thickness_expr
-            .clone()
-            .unwrap_or_else(|| self.editor.doc.units().format_length(wall.thickness));
-        self.property_edit = Some((q, text, true));
+        let text = wall.thickness_expr.clone().unwrap_or_else(|| {
+            self.drawing
+                .editor
+                .doc
+                .units()
+                .format_length(wall.thickness)
+        });
+        self.drawing.property_edit = Some((q, text, true));
     }
 
     /// The in-place editor of a property dimension: Enter sets the wall's thickness.
     pub(crate) fn property_editor(&mut self, ctx: &egui::Context, dims: &[DimLayout], now: f64) {
-        let Some((q, mut text, focus)) = self.property_edit.take() else {
+        let Some((q, mut text, focus)) = self.drawing.property_edit.take() else {
             return;
         };
         let Some(at) = dims
@@ -464,29 +473,39 @@ impl DriftApp {
             )
         });
         if !focus && enter {
-            let wall = self.editor.doc.property_dim(q).map(|d| d.target.wall());
+            let wall = self
+                .drawing
+                .editor
+                .doc
+                .property_dim(q)
+                .map(|d| d.target.wall());
             if let Some(w) = wall
-                && let Err(e) = self.editor.set_wall_thickness(&[w], &text)
+                && let Err(e) = self.drawing.editor.set_wall_thickness(&[w], &text)
             {
                 self.set_status(format!("Can't use {text}: {e}"), true, now);
             }
             return;
         }
         if focus || !(escape || outside) {
-            self.property_edit = Some((q, text, false));
+            self.drawing.property_edit = Some((q, text, false));
         }
     }
 
     /// The in-place dimension value editor.
     pub(crate) fn dimension_editor(&mut self, ctx: &egui::Context, dims: &[DimLayout], now: f64) {
-        let Some(mut edit) = self.dimension_edit.take() else {
+        let Some(mut edit) = self.drawing.dimension_edit.take() else {
             return;
         };
         let Some(at) = dims
             .iter()
             .find(|d| d.id == Some(edit.id))
             .map(|d| d.text_rect.center())
-            .or_else(|| self.pointer.map(|_| self.canvas_rect.center()))
+            .or_else(|| {
+                self.drawing
+                    .view
+                    .pointer
+                    .map(|_| self.drawing.view.canvas_rect.center())
+            })
         else {
             return;
         };
@@ -495,6 +514,7 @@ impl DriftApp {
         // The text around the value is edited here too: before and after it, and the
         // common notes (TYP, EQ…) a click away.
         let mut note = self
+            .drawing
             .editor
             .doc
             .dim_note(edit.id)
@@ -562,46 +582,47 @@ impl DriftApp {
         let mut keep = first || !(enter || escape || outside);
         if !first
             && enter
-            && Some(&edit.text) != self.editor.dimension_edit_text(edit.id).as_ref()
-            && let Err(e) = self.editor.set_dimension_text(edit.id, &edit.text)
+            && Some(&edit.text) != self.drawing.editor.dimension_edit_text(edit.id).as_ref()
+            && let Err(e) = self.drawing.editor.set_dimension_text(edit.id, &edit.text)
         {
             self.set_status(format!("Can't use {}: {e}", edit.text), true, now);
             keep = false;
         }
         if note != was {
-            self.editor.doc.begin();
-            self.editor.doc.set_dim_note(edit.id, Some(note));
-            self.editor.commit("Dimension text");
+            self.drawing.editor.doc.begin();
+            self.drawing.editor.doc.set_dim_note(edit.id, Some(note));
+            self.drawing.editor.commit("Dimension text");
         }
         if keep {
-            self.dimension_edit = Some(edit);
+            self.drawing.dimension_edit = Some(edit);
         }
     }
 
     pub(crate) fn canvas(&mut self, ui: &mut egui::Ui) {
         let (rect, response) =
             ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
-        self.canvas_rect = rect;
-        self.editor.drawing_curves = self.tool.kind().draws_curves();
+        self.drawing.view.canvas_rect = rect;
+        self.drawing.editor.drawing_curves = self.tool.kind().draws_curves();
         // The Wall and Dimension tools snap to walls' centrelines: they show (faintly).
-        self.editor.show_centrelines = self.show_wall_centrelines
+        self.drawing.editor.show_centrelines = self.show_wall_centrelines
             || matches!(self.tool.kind(), ToolKind::Wall | ToolKind::Dimension);
         let view_size = DVec2::new(f64::from(rect.width()), f64::from(rect.height()));
-        self.editor.update_underlays();
+        self.drawing.editor.update_underlays();
         // A point the pointer snaps to lights up like a hovered one (as in Illustrator).
-        self.editor.snapped_point = self.pointer.and_then(|p| p.snapped_point());
+        self.drawing.editor.snapped_point =
+            self.drawing.view.pointer.and_then(|p| p.snapped_point());
 
         if response.double_clicked_by(PointerButton::Middle) {
-            self.fit_target = Some(self.fit_bounds());
+            self.drawing.view.fit_target = Some(self.fit_bounds());
         }
         self.pan_and_zoom(ui, &response, rect);
-        if let Some(bounds) = self.fit_target {
-            self.camera.fit(bounds, view_size, FIT_MARGIN);
+        if let Some(bounds) = self.drawing.view.fit_target {
+            self.drawing.view.camera.fit(bounds, view_size, FIT_MARGIN);
         }
 
         let map = ScreenMap {
             rect,
-            camera: self.camera,
+            camera: self.drawing.view.camera,
         };
         let (mods, alt) = ui.input(|i| {
             (
@@ -614,7 +635,7 @@ impl DriftApp {
             )
         });
         let snap = !alt; // hold Alt to place freely
-        self.keys_held = (mods.shift, mods.command);
+        self.drawing.view.keys_held = (mods.shift, mods.command);
 
         // Annotations are laid out first so they can take pointer input before the tool.
         let annotation_painter = ui.painter_at(rect);
@@ -624,11 +645,11 @@ impl DriftApp {
             Vec::new()
         };
         let glyphs = if self.show_relations {
-            let mut glyphs = annotations::layout_glyphs(&self.editor.doc, &map);
+            let mut glyphs = annotations::layout_glyphs(&self.drawing.editor.doc, &map);
             // (Not on walls' centrelines unless the wall is picked.)
-            if self.editor.doc.has_walls() {
-                let hidden = self.editor.unpicked_centrelines();
-                let doc = &self.editor.doc;
+            if self.drawing.editor.doc.has_walls() {
+                let hidden = self.drawing.editor.unpicked_centrelines();
+                let doc = &self.drawing.editor.doc;
                 glyphs.retain(|g| {
                     doc.constraint(g.id)
                         .is_none_or(|c| !c.entities().any(|e| hidden.contains(&e)))
@@ -649,7 +670,7 @@ impl DriftApp {
             response.hover_pos()
         };
         // While a note's text is being typed, a click on the canvas only finishes it.
-        let typing_note = self.note_edit.is_some()
+        let typing_note = self.drawing.note_edit.is_some()
             && (response.clicked() || response.drag_started() || response.dragged());
         let hatch = self.hatch_handles(&map);
         let consumed = typing_note
@@ -661,27 +682,27 @@ impl DriftApp {
             || self.annotation_input(ui, &response, &map, &dims, &glyphs, pos)
             || self.view_crop_input(ui, &response, &map, pos, snap);
         if consumed {
-            self.pointer = pos.map(|pos| self.make_pointer(&map, pos, snap));
+            self.drawing.view.pointer = pos.map(|pos| self.make_pointer(&map, pos, snap));
         } else if response.drag_started_by(PointerButton::Primary)
             && let Some(origin) = ui.input(|i| i.pointer.press_origin())
         {
             let p = self.make_pointer(&map, origin, snap);
             self.tool
-                .handle(Input::DragStart(p, mods), &mut self.editor);
+                .handle(Input::DragStart(p, mods), &mut self.drawing.editor);
         }
         if !consumed {
-            self.pointer = pos.map(|pos| self.make_pointer(&map, pos, snap));
+            self.drawing.view.pointer = pos.map(|pos| self.make_pointer(&map, pos, snap));
         }
-        if self.pointer.is_some() {
-            self.last_pointer = self.pointer;
+        if self.drawing.view.pointer.is_some() {
+            self.drawing.view.last_pointer = self.drawing.view.pointer;
         }
         if consumed {
             // The annotation took this frame's input.
-        } else if let Some(p) = self.pointer {
+        } else if let Some(p) = self.drawing.view.pointer {
             if dragging {
-                self.tool.handle(Input::Drag(p), &mut self.editor);
+                self.tool.handle(Input::Drag(p), &mut self.drawing.editor);
             } else {
-                self.tool.handle(Input::Hover(p), &mut self.editor);
+                self.tool.handle(Input::Hover(p), &mut self.drawing.editor);
             }
             // Use the exact release position: if a slow frame batched the release with later
             // pointer motion, the current position is no longer where the user clicked.
@@ -689,17 +710,18 @@ impl DriftApp {
                 .map_or(p, |pos| self.make_pointer(&map, pos, snap));
             if response.drag_stopped_by(PointerButton::Primary) {
                 self.tool
-                    .handle(Input::DragEnd(released, mods), &mut self.editor);
+                    .handle(Input::DragEnd(released, mods), &mut self.drawing.editor);
             }
             if response.clicked_by(PointerButton::Primary) {
                 self.tool
-                    .handle(Input::Click(released, mods), &mut self.editor);
+                    .handle(Input::Click(released, mods), &mut self.drawing.editor);
             }
             if response.double_clicked_by(PointerButton::Primary) {
-                self.tool.handle(Input::DoubleClick(p), &mut self.editor);
+                self.tool
+                    .handle(Input::DoubleClick(p), &mut self.drawing.editor);
             }
         } else {
-            self.editor.hovered = None;
+            self.drawing.editor.hovered = None;
             // A drag released off the canvas (e.g. over a side panel) still ends, where the
             // button came up, so a selection box or move doesn't stay stuck.
             if response.drag_stopped_by(PointerButton::Primary)
@@ -708,7 +730,7 @@ impl DriftApp {
             {
                 let released = self.make_pointer(&map, at, snap);
                 self.tool
-                    .handle(Input::DragEnd(released, mods), &mut self.editor);
+                    .handle(Input::DragEnd(released, mods), &mut self.drawing.editor);
             }
         }
         self.take_box_pick(&map, &dims, &notes);
@@ -717,39 +739,42 @@ impl DriftApp {
         let menu_tool = self.tool.kind() == ToolKind::Select && !self.tool.is_busy();
         if menu_tool
             && response.secondary_clicked()
-            && let Some(h) = self.editor.hovered
-            && !self.editor.selection.contains(&h)
+            && let Some(h) = self.drawing.editor.hovered
+            && !self.drawing.editor.selection.contains(&h)
         {
-            self.editor.selection = [h].into_iter().collect();
+            self.drawing.editor.selection = [h].into_iter().collect();
         }
         // On a dimension or annotation: pick it (unless it already is), for its menu.
-        if menu_tool && response.secondary_clicked() && self.editor.hovered.is_none() {
+        if menu_tool && response.secondary_clicked() && self.drawing.editor.hovered.is_none() {
             let hovered = self
+                .drawing
                 .hovered_constraint
                 .filter(|id| {
-                    self.editor
+                    self.drawing
+                        .editor
                         .doc
                         .constraint(*id)
                         .is_some_and(|c| c.is_dimension())
                 })
                 .map(drift_core::AnnotationRef::Dimension)
                 .or(self
+                    .drawing
                     .editor
                     .hovered_annotation
                     .map(drift_core::AnnotationRef::Annotation));
             if let Some(r) = hovered
                 && !self.annotation_picked(r)
             {
-                self.editor.annotation_picks.clear();
-                self.editor.selection.clear();
+                self.drawing.editor.annotation_picks.clear();
+                self.drawing.editor.selection.clear();
                 match r {
                     drift_core::AnnotationRef::Dimension(id) => {
-                        self.selected_constraint = Some(id);
-                        self.editor.selected_annotation = None;
+                        self.drawing.selected_constraint = Some(id);
+                        self.drawing.editor.selected_annotation = None;
                     }
                     drift_core::AnnotationRef::Annotation(id) => {
-                        self.editor.selected_annotation = Some(id);
-                        self.selected_constraint = None;
+                        self.drawing.editor.selected_annotation = Some(id);
+                        self.drawing.selected_constraint = None;
                     }
                 }
             }
@@ -760,60 +785,61 @@ impl DriftApp {
         if response.clicked_by(PointerButton::Secondary) {
             if self.tool.is_modal() {
                 // Right-click cancels a grab, as in Blender.
-                self.tool.cancel(&mut self.editor);
+                self.tool.cancel(&mut self.drawing.editor);
             } else {
-                self.tool.handle(Input::Finish, &mut self.editor);
+                self.tool.handle(Input::Finish, &mut self.drawing.editor);
             }
         }
         if !self.tool.is_busy() {
-            self.editor.region_motion = None;
+            self.drawing.editor.region_motion = None;
         }
         // Tool events may have changed the document (and the pointer's snap targets).
-        self.editor.sync();
+        self.drawing.editor.sync();
         // Just placed: only its value (the next pick of a chain may be under the rest).
-        if let Some(id) = self.editor.out.pending_edit.take() {
+        if let Some(id) = self.drawing.editor.out.pending_edit.take() {
             self.open_dimension_editor(id, false);
         }
-        if let Some(id) = self.editor.out.pending_note_edit.take() {
+        if let Some(id) = self.drawing.editor.out.pending_note_edit.take() {
             self.open_note_edit(id, true);
         }
         // A base point just picked: back to the select tool.
-        if std::mem::take(&mut self.editor.out.base_point_done) {
+        if std::mem::take(&mut self.drawing.editor.out.base_point_done) {
             self.set_tool(ToolKind::Select);
         }
         // A view just drawn: picked, with the select tool, to name and reframe.
         // (Asked for from a sheet: it goes on that sheet.)
-        if let Some(id) = self.editor.out.new_view.take()
+        if let Some(id) = self.drawing.editor.out.new_view.take()
             && !self.view_drawn(id)
         {
             self.set_tool(ToolKind::Select);
             self.pick_view_alone(id);
         }
         // Remember points the pointer snapped to, for inference lines.
-        if let Some(snap) = self.pointer.and_then(|p| p.snap)
+        if let Some(snap) = self.drawing.view.pointer.and_then(|p| p.snap)
             && snap.kind.is_point()
-            && !self.inference_points.contains(&snap.at)
+            && !self.drawing.inference_points.contains(&snap.at)
         {
-            self.inference_points.push(snap.at);
-            if self.inference_points.len() > 4 {
-                self.inference_points.remove(0);
+            self.drawing.inference_points.push(snap.at);
+            if self.drawing.inference_points.len() > 4 {
+                self.drawing.inference_points.remove(0);
             }
         }
         // Show what a hovered or picked relation/dimension applies to.
         if self.tool.kind() != ToolKind::Dimension {
-            self.editor.highlight = self
+            self.drawing.editor.highlight = self
+                .drawing
                 .hovered_constraint
-                .or(self.selected_constraint)
-                .and_then(|id| self.editor.doc.constraint(id))
+                .or(self.drawing.selected_constraint)
+                .and_then(|id| self.drawing.editor.doc.constraint(id))
                 .map(|c| c.entities().collect())
                 .unwrap_or_default();
             // A picked fill shows the curves that move with it.
-            if self.editor.selection.is_empty()
-                && !self.editor.selected_fills.is_empty()
+            if self.drawing.editor.selection.is_empty()
+                && !self.drawing.editor.selected_fills.is_empty()
                 && !self.tool.is_busy()
-                && let Some((curves, _)) = self.editor.selected_fill_curves()
+                && let Some((curves, _)) = self.drawing.editor.selected_fill_curves()
             {
-                self.editor.highlight.extend(curves);
+                self.drawing.editor.highlight.extend(curves);
             }
         }
         // Drawing and editing tools: Drift's own crosshair in place of the system cursor (whose
@@ -832,7 +858,7 @@ impl DriftApp {
 
         // Fills and hatches under the geometry (GPU).
         self.hatch_patterns
-            .update(self.editor.doc.custom_patterns());
+            .update(self.drawing.editor.doc.custom_patterns());
         let view = {
             let (a, b) = (
                 map.to_world(rect.left_top()),
@@ -845,26 +871,26 @@ impl DriftApp {
         };
         let dark = ui.visuals().dark_mode;
         let fills = drift_edit::fills::fill_graphics(
-            &mut self.editor,
-            &mut self.fill_meshes,
+            &mut self.drawing.editor,
+            &mut self.drawing.fill_meshes,
             &self.hatch_patterns,
             view,
-            self.camera.scale,
+            self.drawing.view.camera.scale,
             dark,
         );
         // Geometry (GPU): underlays under everything else.
-        let underlays = self.editor.underlay_items(view, dark);
-        let stacked = self.editor.doc.rules().stacked_fills;
-        let pictures = self.editor.underlay_pictures();
+        let underlays = self.drawing.editor.underlay_items(view, dark);
+        let stacked = self.drawing.editor.doc.rules().stacked_fills;
+        let pictures = self.drawing.editor.underlay_pictures();
         // Fills under every curve: their hatch lines go under the sketch too.
         let meshes = if stacked { Vec::new() } else { fills.meshes() };
         let hatch_lines = if stacked { Vec::new() } else { fills.lines() };
         let mut items = Vec::new();
         if self.show_dimensions {
             items.extend(crate::notes::centre_items(
-                &self.editor.doc,
-                self.editor.selected_annotation,
-                self.editor.hovered_annotation,
+                &self.drawing.editor.doc,
+                self.drawing.editor.selected_annotation,
+                self.drawing.editor.hovered_annotation,
                 &|id| self.on_canvas(drift_core::AnnotationRef::Annotation(id)),
             ));
         }
@@ -875,16 +901,22 @@ impl DriftApp {
         // everything.
         let mut groups: Vec<DrawContent> = Vec::new();
         let mut images = Vec::new();
-        self.editor.preview_hidden = self.tool.preview_hides(&self.editor);
-        let text = self.editor.text_items_tagged(self.status_colors, dark);
-        let stack = stacked.then(|| self.editor.stack());
+        self.drawing.editor.preview_hidden = self.tool.preview_hides(&self.drawing.editor);
+        let text = self
+            .drawing
+            .editor
+            .text_items_tagged(self.status_colors, dark);
+        let stack = stacked.then(|| self.drawing.editor.stack());
         // The sketch's items, kept from frame to frame: one list per stack group (or one),
         // and what is lit up, over everything.
-        let lit =
-            self.sketch_items
-                .prepare(&self.editor, self.status_colors, dark, stack.as_deref());
-        let top = self.sketch_items.top();
-        items.extend_from_slice(&self.sketch_items.lists()[top]);
+        let lit = self.drawing.sketch_items.prepare(
+            &self.drawing.editor,
+            self.status_colors,
+            dark,
+            stack.as_deref(),
+        );
+        let top = self.drawing.sketch_items.top();
+        items.extend_from_slice(&self.drawing.sketch_items.lists()[top]);
         items.extend(lit);
         if let Some(stack) = &stack {
             let mut fill_groups: std::collections::HashMap<
@@ -892,7 +924,7 @@ impl DriftApp {
                 drift_edit::fills::FillGroup,
             > = fills.groups.into_iter().map(|g| (g.fill, g)).collect();
             let shown = |layer: Option<drift_core::LayerId>| {
-                layer.is_none_or(|l| self.editor.doc.layer(l).is_none_or(|l| l.visible))
+                layer.is_none_or(|l| self.drawing.editor.doc.layer(l).is_none_or(|l| l.visible))
             };
             for g in &stack.groups {
                 let mut content = DrawContent::default();
@@ -918,7 +950,7 @@ impl DriftApp {
                     .flatten()
                     .filter(|k| *k < groups.len());
                 match at {
-                    Some(k) => self.sketch_items.push(k, t.item),
+                    Some(k) => self.drawing.sketch_items.push(k, t.item),
                     None => items.push(t.item),
                 }
             }
@@ -932,19 +964,24 @@ impl DriftApp {
         } else {
             [0x8a, 0x8e, 0x96]
         };
-        items.extend(self.editor.handle_lines(handle_grey));
+        items.extend(self.drawing.editor.handle_lines(handle_grey));
         if self.show_combs {
             let comb = if ui.visuals().dark_mode {
                 [0xd9, 0x8c, 0xff]
             } else {
                 [0x9b, 0x3c, 0xc8]
             };
-            items.extend(self.editor.curvature_combs(28.0 / self.camera.scale, comb));
+            items.extend(
+                self.drawing
+                    .editor
+                    .curvature_combs(28.0 / self.drawing.view.camera.scale, comb),
+            );
         }
-        let construction = self.editor.prefs.draw_construction && self.tool.kind().draws_curves();
+        let construction =
+            self.drawing.editor.prefs.draw_construction && self.tool.kind().draws_curves();
         items.extend(
             self.tool
-                .preview(self.pointer.as_ref())
+                .preview(self.drawing.view.pointer.as_ref())
                 .into_iter()
                 .map(|item| {
                     if construction && item.kind == drift_core::LineKind::Solid {
@@ -954,10 +991,10 @@ impl DriftApp {
                     }
                 }),
         );
-        items.extend(self.tool.editor_preview(&self.editor));
-        self.editor.preview_hidden.clear();
+        items.extend(self.tool.editor_preview(&self.drawing.editor));
+        self.drawing.editor.preview_hidden.clear();
         let ppp = f64::from(ui.ctx().pixels_per_point());
-        let lists = self.sketch_items.lists();
+        let lists = self.drawing.sketch_items.lists();
         let group_refs: Vec<drift_render::DrawGroup<'_>> = groups
             .iter()
             .enumerate()
@@ -987,7 +1024,7 @@ impl DriftApp {
                 images: &images,
                 groups: &group_refs,
             },
-            &self.camera,
+            &self.drawing.view.camera,
             crate::canvas::CanvasOptions {
                 dark_mode: ui.visuals().dark_mode,
                 imperial_grid: self.imperial(),
@@ -997,7 +1034,7 @@ impl DriftApp {
             },
         );
         ui.painter().add(callback);
-        self.sketch_items.restore();
+        self.drawing.sketch_items.restore();
 
         // Overlays (egui).
         let painter = ui.painter_at(rect);
@@ -1017,7 +1054,7 @@ impl DriftApp {
                 overlay::rotate_guide(&painter, &map, pivot, from, degrees, &colors);
             }
             Some(Overlay::Region { at }) => {
-                let regions = self.editor.regions();
+                let regions = self.drawing.editor.regions();
                 if let Some(region) = drift_geom::regions::region_at(&regions, at) {
                     overlay::region_fill(&painter, &map, region, colors.snap.gamma_multiply(0.25));
                 }
@@ -1026,19 +1063,21 @@ impl DriftApp {
         }
         // A block's base point, while it is edited or picked.
         if let Some(at) = self
+            .drawing
             .editor
             .base_point_cross(self.tool.kind() == ToolKind::BasePoint)
         {
             overlay::base_point(&painter, &map, at, &colors);
         }
         // Picked and hovered fills.
-        let shapes = self.editor.fill_shapes();
+        let shapes = self.drawing.editor.fill_shapes();
         for (id, alpha) in self
+            .drawing
             .editor
             .selected_fills
             .iter()
             .map(|id| (*id, 0.3))
-            .chain(self.editor.hovered_fill.map(|id| (id, 0.14)))
+            .chain(self.drawing.editor.hovered_fill.map(|id| (id, 0.14)))
         {
             if let Some(shape) = shapes.get(&id) {
                 let color = if shape.lost {
@@ -1052,11 +1091,12 @@ impl DriftApp {
         // Fills an edit divided, kept whole: marked at their seed until fitted, split or
         // kept.
         let dark = ui.visuals().dark_mode;
-        for (id, fill) in self.editor.doc.fills() {
+        for (id, fill) in self.drawing.editor.doc.fills() {
             let Some(shape) = shapes.get(&id).filter(|s| fill.divided && s.parts > 1) else {
                 continue;
             };
             if self
+                .drawing
                 .editor
                 .doc
                 .layer(fill.layer)
@@ -1085,14 +1125,14 @@ impl DriftApp {
             self.paint_transform_box(&painter, &map, &colors, ui.visuals().dark_mode);
             self.paint_opening_arrows(&painter, &map, &colors);
         }
-        if let Some(region) = self.editor.region() {
+        if let Some(region) = self.drawing.editor.region() {
             overlay::region_fill(&painter, &map, &region, colors.window.gamma_multiply(0.22));
         }
         self.paint_annotations(&painter, &map, &dims, &glyphs, ui.visuals().dark_mode);
         self.paint_temp_dims(&painter, &map, &temps, ui.visuals().dark_mode);
         self.paint_view_crops(&painter, &map, ui.visuals().dark_mode);
         // A dragged dimension snapped level with another: a guide between them.
-        if let Some([a, b]) = self.dim_guide {
+        if let Some([a, b]) = self.drawing.dim_guide {
             let (a, b) = (map.to_screen(a), map.to_screen(b));
             let along = (b - a).normalized() * 16.0;
             crate::overlay::dashed(
@@ -1144,7 +1184,7 @@ impl DriftApp {
         self.note_editor(&ctx, &notes);
         self.text_editor(ui, &map, &painter);
         self.paint_add_view_prompt(&painter, &map);
-        if let (Some(p), Some(pos)) = (self.pointer, pos) {
+        if let (Some(p), Some(pos)) = (self.drawing.view.pointer, pos) {
             // The HUD: what was snapped to, the measurement, and the values being typed.
             // (What can be typed is in the status bar's prompt.)
             let mut info = overlay::CursorInfo::default();
@@ -1176,9 +1216,9 @@ impl DriftApp {
             if let Some(m) = self.tool.measurement(&p) {
                 info.notes.push(m);
             }
-            if let Some(t) = &self.typing {
-                let results = t.evaluate(&self.editor);
-                let units = self.editor.doc.units();
+            if let Some(t) = &self.drawing.typing {
+                let results = t.evaluate(&self.drawing.editor);
+                let units = self.drawing.editor.doc.units();
                 for (i, field) in t.fields.iter().enumerate() {
                     let (note, error) = match &results[i] {
                         // Show what an expression comes to.
@@ -1214,22 +1254,23 @@ impl DriftApp {
         dark: bool,
     ) {
         let colors = AnnotationColors::new(dark);
-        let dim_colors = AnnotationColors::drafting(dark, self.editor.doc.draft_style().color);
+        let dim_colors =
+            AnnotationColors::drafting(dark, self.drawing.editor.doc.draft_style().color);
         // A dimension with a colour of its own is drawn in it.
         let colors_of = |id: ConstraintId| {
             let r = drift_core::AnnotationRef::Dimension(id);
-            match self.editor.doc.style_override(r).color {
+            match self.drawing.editor.doc.style_override(r).color {
                 Some(c) => AnnotationColors::drafting(dark, c),
                 None => dim_colors,
             }
         };
-        let conflicts = &self.editor.analysis().conflicts;
+        let conflicts = &self.drawing.editor.analysis().conflicts;
         let state = |id: ConstraintId| {
             if self.annotation_picked(drift_core::AnnotationRef::Dimension(id))
-                || self.label_drag.is_some_and(|d| d.0 == id)
+                || self.drawing.label_drag.is_some_and(|d| d.0 == id)
             {
                 AnnotationState::Selected
-            } else if self.hovered_constraint == Some(id) {
+            } else if self.drawing.hovered_constraint == Some(id) {
                 AnnotationState::Hovered
             } else if conflicts.contains(&id) {
                 AnnotationState::Conflict
@@ -1239,10 +1280,15 @@ impl DriftApp {
         };
         for dim in dims {
             if let Some(id) = dim.id
-                && self.dimension_edit.as_ref().is_none_or(|e| e.id != id)
+                && self
+                    .drawing
+                    .dimension_edit
+                    .as_ref()
+                    .is_none_or(|e| e.id != id)
             {
                 // Hidden on the canvas (drawn only while hidden ones are shown): faded.
                 let shown = self
+                    .drawing
                     .editor
                     .doc
                     .shown(drift_core::AnnotationRef::Dimension(id));
@@ -1250,7 +1296,9 @@ impl DriftApp {
                 let faded = own.faded();
                 let look = if shown.canvas { &own } else { &faded };
                 annotations::paint_dimension(painter, dim, state(id), look);
-                if self.selected_constraint == Some(id) && self.tool.kind() == ToolKind::Select {
+                if self.drawing.selected_constraint == Some(id)
+                    && self.tool.kind() == ToolKind::Select
+                {
                     self.paint_extension_grips(painter, dim, id, &colors);
                 }
                 if !shown.sheets {
@@ -1260,10 +1308,10 @@ impl DriftApp {
                 for (e, slot) in dim.constraint.slots() {
                     if slot == drift_core::Slot::PointOrMidpoint
                         && matches!(
-                            self.editor.doc.get(e).map(|x| x.kind),
+                            self.drawing.editor.doc.get(e).map(|x| x.kind),
                             Some(drift_core::EntityKind::Line { .. })
                         )
-                        && let Some(m) = self.editor.doc.ref_point(e)
+                        && let Some(m) = self.drawing.editor.doc.ref_point(e)
                     {
                         let color = match state(id) {
                             AnnotationState::Normal => own.normal,
@@ -1279,10 +1327,10 @@ impl DriftApp {
         }
         if let Some((c, offset)) = self
             .tool
-            .pending_dimension(&self.editor, self.pointer.as_ref())
+            .pending_dimension(&self.drawing.editor, self.drawing.view.pointer.as_ref())
             && let Some(dim) = annotations::layout_dimension(
                 painter,
-                &self.editor.doc,
+                &self.drawing.editor.doc,
                 None,
                 &c,
                 Some(offset),
@@ -1298,9 +1346,10 @@ impl DriftApp {
             glyph_background: colors.glyph_background.gamma_multiply(0.55),
             ..colors
         };
-        let selection = &self.editor.selection;
+        let selection = &self.drawing.editor.selection;
         for glyph in glyphs {
             let touches = self
+                .drawing
                 .editor
                 .doc
                 .constraint(glyph.id)
@@ -1309,7 +1358,7 @@ impl DriftApp {
             annotations::paint_glyph(painter, glyph.rect, glyph.kind, state(glyph.id), look);
         }
         // Picked and hovered line midpoints.
-        let ed = &self.editor;
+        let ed = &self.drawing.editor;
         let midpoint_at = |line| match ed.index.shape(line) {
             Some(drift_core::Shape::Line { a, b }) => Some(map.to_screen((*a + *b) * 0.5)),
             _ => None,
@@ -1340,7 +1389,7 @@ impl DriftApp {
         }
         // Inference guide lines and the automatic relation about to be added. On an exact
         // snap only the relation shows: the snap decides the position (#204).
-        if let Some(p) = self.pointer
+        if let Some(p) = self.drawing.view.pointer
             && let Some(guide) = p.guide
         {
             let at = map.to_screen(guide.at);
@@ -1372,7 +1421,7 @@ impl DriftApp {
     /// turn is under way): a thin frame with square handles.
     fn transform_box_shown(&mut self) -> Option<drift_edit::transform::TransformBox> {
         (self.tool.kind() == ToolKind::Select && !self.tool.is_modal())
-            .then(|| self.editor.transform_box())
+            .then(|| self.drawing.editor.transform_box())
             .flatten()
     }
 
@@ -1386,7 +1435,7 @@ impl DriftApp {
         let Some(frame) = self.transform_box_shown() else {
             return;
         };
-        let pad = PICK_RADIUS / self.camera.scale;
+        let pad = PICK_RADIUS / self.drawing.view.camera.scale;
         let b = frame.padded(pad);
         let (a, c) = (map.to_screen(b.min), map.to_screen(b.max));
         let stroke = egui::Stroke::new(1.0, colors.window);
@@ -1407,7 +1456,7 @@ impl DriftApp {
             painter.rect_stroke(square, 0.0, stroke, egui::StrokeKind::Middle);
         }
         // Over a turn handle: a curved arrow by the pointer.
-        if let Some(p) = self.pointer
+        if let Some(p) = self.drawing.view.pointer
             && let Some(drift_edit::transform::Handle::Turn { .. }) = frame.handle_at(
                 p.raw,
                 drift_edit::transform::handle_reach(p.tolerance),
@@ -1422,7 +1471,7 @@ impl DriftApp {
     /// The cursor over a transform handle, or inside a picked area a drag would move.
     fn transform_cursor(&mut self) -> Option<egui::CursorIcon> {
         use drift_edit::transform::Handle;
-        let p = self.pointer?;
+        let p = self.drawing.view.pointer?;
         if let Some(frame) = self.transform_box_shown() {
             match frame.handle_at(
                 p.raw,
@@ -1445,8 +1494,12 @@ impl DriftApp {
         }
         if self.tool.kind() == ToolKind::Select
             && !self.tool.is_busy()
-            && self.editor.hovered.is_none()
-            && self.editor.region().is_some_and(|r| r.contains(p.raw))
+            && self.drawing.editor.hovered.is_none()
+            && self
+                .drawing
+                .editor
+                .region()
+                .is_some_and(|r| r.contains(p.raw))
         {
             return Some(egui::CursorIcon::Move);
         }
@@ -1456,7 +1509,7 @@ impl DriftApp {
     /// Over a fillet's arc that a drag would re-size (rather than move): a resize cursor
     /// along the way it grows, towards its corner.
     fn fillet_cursor(&self) -> Option<egui::CursorIcon> {
-        let ed = &self.editor;
+        let ed = &self.drawing.editor;
         let arc = ed.hovered?;
         let alone = ed.selection.len() == 1 || !ed.selection.contains(&arc);
         let f = ed.fillet_at(arc).filter(|_| alone)?;
@@ -1491,33 +1544,40 @@ impl DriftApp {
         if response.drag_started_by(PointerButton::Middle)
             || response.drag_started_by(PointerButton::Secondary)
         {
-            self.pan_anchor = ui.input(|i| i.pointer.press_origin());
+            self.drawing.view.pan_anchor = ui.input(|i| i.pointer.press_origin());
         }
         if panning
-            && let (Some(from), Some(to)) = (self.pan_anchor, response.interact_pointer_pos())
+            && let (Some(from), Some(to)) = (
+                self.drawing.view.pan_anchor,
+                response.interact_pointer_pos(),
+            )
         {
             let delta = to - from;
             if delta != egui::Vec2::ZERO {
-                self.camera
+                self.drawing
+                    .view
+                    .camera
                     .pan(DVec2::new(f64::from(delta.x), f64::from(delta.y)));
-                self.fit_target = None;
+                self.drawing.view.fit_target = None;
             }
-            self.pan_anchor = Some(to);
+            self.drawing.view.pan_anchor = Some(to);
         }
         if !panning {
-            self.pan_anchor = None;
+            self.drawing.view.pan_anchor = None;
         }
 
         if let Some(pos) = response.hover_pos() {
             let (pan, factor) = self.wheel.read(ui);
             if pan != egui::Vec2::ZERO {
-                self.camera
+                self.drawing
+                    .view
+                    .camera
                     .pan(DVec2::new(f64::from(pan.x), f64::from(pan.y)));
-                self.fit_target = None;
+                self.drawing.view.fit_target = None;
             }
             if factor != 1.0 {
-                self.camera.zoom_at(to_view(pos), factor);
-                self.fit_target = None;
+                self.drawing.view.camera.zoom_at(to_view(pos), factor);
+                self.drawing.view.fit_target = None;
             }
         }
     }

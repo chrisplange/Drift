@@ -99,7 +99,7 @@ pub(super) fn drop_file(h: &mut Harness<'_, DriftApp>, path: &std::path::Path) {
 
 /// The lengths of the drawing's lines.
 fn lines(app: &DriftApp) -> Vec<f64> {
-    let doc = &app.editor.doc;
+    let doc = &app.drawing.editor.doc;
     doc.iter()
         .filter_map(|(id, _)| match doc.shape(id) {
             Some(drift_core::Shape::Line { a, b }) => Some((b - a).length()),
@@ -158,7 +158,7 @@ fn a_dropped_drawing_asks_how_it_comes_in() {
     );
     h.get_by_label("Import").click();
     h.run_steps(3);
-    assert_eq!(h.state().editor.doc.underlays().count(), 1);
+    assert_eq!(h.state().drawing.editor.doc.underlays().count(), 1);
     let _ = std::fs::remove_file(&path);
 }
 
@@ -207,13 +207,13 @@ fn opening_a_dropped_drawing_as_new_guards_unsaved_changes() {
     assert!(app.pending_import.is_none());
     let got = lines(app);
     assert!(got.len() == 1 && (got[0] - 100.0).abs() < 1e-6, "{got:?}");
-    assert_eq!(app.file.name, "plan.drift");
-    assert!(app.file.path.is_none(), "saving asks where");
+    assert_eq!(app.drawing.file.name, "plan.drift");
+    assert!(app.drawing.file.path.is_none(), "saving asks where");
     assert!(app.is_dirty());
 
     // With nothing unsaved it opens straight away.
     let path2 = temp_file("guard", "second.dxf", line_dxf(70.0).as_bytes());
-    h.state_mut().file.clean_revision = Some(h.state().editor.doc.revision());
+    h.state_mut().drawing.file.clean_revision = Some(h.state().drawing.editor.doc.revision());
     drop_file(&mut h, &path2);
     h.get_by_label("Open as new drawing").click();
     h.run_steps(3);
@@ -222,7 +222,7 @@ fn opening_a_dropped_drawing_as_new_guards_unsaved_changes() {
     assert!(h.state().pending.is_none());
     let got = lines(h.state());
     assert!(got.len() == 1 && (got[0] - 70.0).abs() < 1e-6, "{got:?}");
-    assert_eq!(h.state().file.name, "second.drift");
+    assert_eq!(h.state().drawing.file.name, "second.drift");
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_file(&path2);
 }
@@ -240,7 +240,7 @@ fn a_dropped_drift_file_still_opens() {
     let path = temp_file("drift", "kept.drift", text.as_bytes());
     drop_file(&mut h, &path);
     assert!(h.state().dropped.is_none(), "no question for a sketch");
-    assert_eq!(h.state().file.name, "kept.drift");
+    assert_eq!(h.state().drawing.file.name, "kept.drift");
     assert_eq!(lines(h.state()).len(), 1);
     let _ = std::fs::remove_file(&path);
 }
@@ -254,11 +254,11 @@ fn an_unreadable_drop_leaves_the_drawing_and_the_recent_files_alone() {
     let recent = h.state().recent.clone();
     // A sketch that isn't one.
     let bad = temp_file("unreadable", "broken.drift", b"not a drawing");
-    h.state_mut().file.clean_revision = Some(h.state().editor.doc.revision());
+    h.state_mut().drawing.file.clean_revision = Some(h.state().drawing.editor.doc.revision());
     drop_file(&mut h, &bad);
     h.run();
     assert_eq!(lines(h.state()).len(), 1, "the drawing stays");
-    assert_ne!(h.state().file.name, "broken.drift");
+    assert_ne!(h.state().drawing.file.name, "broken.drift");
     assert_eq!(h.state().recent, recent, "not a recent file");
     // A PDF that isn't one: said so, and no dialog.
     let pdf = temp_file("unreadable", "broken.pdf", b"%PDF-1.4 nothing here");
@@ -320,8 +320,12 @@ fn file_open_takes_imports_as_new_drawings_with_this_computers_rules() {
     h.get_by_label("Open").click();
     h.run_steps(3);
     let app = h.state();
-    assert_eq!(app.file.name, "site.drift");
-    assert_eq!(app.editor.doc.rules(), rules, "the new drawing's rules");
+    assert_eq!(app.drawing.file.name, "site.drift");
+    assert_eq!(
+        app.drawing.editor.doc.rules(),
+        rules,
+        "the new drawing's rules"
+    );
     let got = lines(app);
     assert!(got.len() == 1 && (got[0] - 40.0).abs() < 1e-6, "{got:?}");
     let _ = std::fs::remove_file(&path);
@@ -395,7 +399,13 @@ fn an_svg_underlay_has_the_scale_controls() {
     h.get_by_label("Import").click();
     h.run_steps(3);
     let app = h.state();
-    let (_, u) = app.editor.doc.underlays().next().expect("an underlay");
+    let (_, u) = app
+        .drawing
+        .editor
+        .doc
+        .underlays()
+        .next()
+        .expect("an underlay");
     assert!((u.scale - 50.0).abs() < 1e-9, "{}", u.scale);
     // The 50 mm line on paper is 2.5 m at 1:50.
     let b = u.bounds();
@@ -419,6 +429,7 @@ fn a_dxf_underlay_is_drawn_at_its_scale() {
     h.run_steps(3);
     let (_, u) = h
         .state()
+        .drawing
         .editor
         .doc
         .underlays()
@@ -443,6 +454,7 @@ fn pdf_pictures_come_in_only_when_asked() {
     let Some(mut h) = harness() else { return };
     let pictures = |h: &Harness<'_, DriftApp>| {
         h.state()
+            .drawing
             .editor
             .doc
             .underlays()
@@ -458,7 +470,7 @@ fn pdf_pictures_come_in_only_when_asked() {
     h.run_steps(3);
     assert_eq!(pictures(&h), 1);
     // Off: the line comes in, the picture doesn't.
-    h.state_mut().editor.undo();
+    h.state_mut().drawing.editor.undo();
     h.state_mut()
         .begin_import("photo.pdf", pdf_with_picture(), None, 0.0);
     h.run_steps(3);
@@ -482,7 +494,7 @@ fn pdf_pictures_come_in_only_when_asked() {
     h.get_by_label("Import").click();
     h.run_steps(3);
     assert_eq!(pictures(&h), 0);
-    assert_eq!(h.state().editor.doc.underlays().count(), 1);
+    assert_eq!(h.state().drawing.editor.doc.underlays().count(), 1);
 }
 
 /// A logo of two shapes, as Drawing settings → Logo takes it.
@@ -500,9 +512,13 @@ fn an_svg_chosen_for_the_logo_becomes_the_logo_not_an_import() {
     h.state().files.open_path(&path);
     h.run_steps(3);
     let app = h.state();
-    assert!(!app.editor.doc.logo().is_empty(), "it is the logo");
+    assert!(!app.drawing.editor.doc.logo().is_empty(), "it is the logo");
     assert!(app.pending_import.is_none(), "no import dialog");
-    assert_eq!(app.editor.doc.iter().count(), 0, "nothing on the canvas");
+    assert_eq!(
+        app.drawing.editor.doc.iter().count(),
+        0,
+        "nothing on the canvas"
+    );
     // The same file dropped on the window is a drawing to import, as before.
     h.state().files.open_path(&path);
     h.run_steps(3);

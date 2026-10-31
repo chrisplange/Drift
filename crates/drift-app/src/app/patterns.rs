@@ -33,11 +33,18 @@ impl Default for PatternUi {
 impl DriftApp {
     pub(crate) fn pattern_panel(&mut self, ui: &mut egui::Ui, now: f64) {
         let ids: Vec<drift_core::EntityId> = self
+            .drawing
             .editor
             .selection
             .iter()
             .copied()
-            .filter(|id| self.editor.doc.get(*id).is_some_and(|e| !e.kind.is_point()))
+            .filter(|id| {
+                self.drawing
+                    .editor
+                    .doc
+                    .get(*id)
+                    .is_some_and(|e| !e.kind.is_point())
+            })
             .collect();
         if ids.is_empty() {
             return;
@@ -57,7 +64,7 @@ impl DriftApp {
                 ui.label(label);
                 ui.add(egui::TextEdit::singleline(text).desired_width(70.0));
             };
-            let ed = &self.editor;
+            let ed = &self.drawing.editor;
             let eval = |text: &str, kind| {
                 ed.evaluate_text(text, kind)
                     .map(|e| e.value)
@@ -116,6 +123,7 @@ impl DriftApp {
             None => return,
             Some(Err(e)) => Err(e),
             Some(Ok(PatternRequest::Linear { count, step })) => self
+                .drawing
                 .editor
                 .linear_pattern(&ids, count, step)
                 .map_err(|e| e.to_string()),
@@ -124,6 +132,7 @@ impl DriftApp {
                 center,
                 degrees,
             })) => self
+                .drawing
                 .editor
                 .circular_pattern(&ids, count, center, degrees)
                 .map_err(|e| e.to_string()),

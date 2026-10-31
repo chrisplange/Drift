@@ -67,8 +67,8 @@ impl DriftApp {
             return true;
         }
         self.pending.is_some()
-            || self.editor.out.pending_driven.is_some()
-            || self.renaming.is_some()
+            || self.drawing.editor.out.pending_driven.is_some()
+            || self.drawing.renaming.is_some()
             || self.pending_import.is_some()
             || self.dropped.is_some()
             || self.lossy_save_open()
@@ -77,7 +77,7 @@ impl DriftApp {
 
     #[cfg(not(feature = "demo"))]
     fn lossy_save_open(&self) -> bool {
-        self.lossy_save.is_some()
+        self.drawing.lossy_save.is_some()
     }
 
     #[cfg(feature = "demo")]
@@ -89,7 +89,7 @@ impl DriftApp {
     /// whatever was to follow the save, such as closing, doesn't happen).
     #[cfg(not(feature = "demo"))]
     fn lossy_save_prompt(&mut self, ctx: &egui::Context) {
-        let Some(as_new) = self.lossy_save else {
+        let Some(as_new) = self.drawing.lossy_save else {
             return;
         };
         let mut choice = None;
@@ -97,7 +97,7 @@ impl DriftApp {
             .frame(theme::dialog_frame(&ctx.style_of(ctx.theme())))
             .show(ctx, |ui| {
                 ui.set_width(380.0);
-                theme::dialog_title(ui, &format!("Save {}?", self.file.name), false);
+                theme::dialog_title(ui, &format!("Save {}?", self.drawing.file.name), false);
                 ui.label(app::document::LOSSY_SAVE);
                 ui.label("To keep the file as it is, save to a new file with Save As.");
                 theme::dialog_buttons(ui, |ui| {
@@ -114,7 +114,7 @@ impl DriftApp {
             choice = Some(false);
         }
         if let Some(save) = choice {
-            self.lossy_save = None;
+            self.drawing.lossy_save = None;
             if save {
                 self.write_file(as_new, true);
             } else {
@@ -132,11 +132,11 @@ impl DriftApp {
             "Keyboard shortcuts" => self.show_shortcuts,
             "Solver benchmark" => self.benchmark.is_some(),
             #[cfg(not(feature = "demo"))]
-            "output_sheets" => self.output_dialog.is_some(),
+            "output_sheets" => self.drawing.output_dialog.is_some(),
             #[cfg(not(feature = "demo"))]
             "cad_export" => self.cad_dialog,
-            "import_report" => self.import_report.is_some(),
-            "sketch_check" => self.sketch_check.is_some(),
+            "import_report" => self.drawing.import_report.is_some(),
+            "sketch_check" => self.drawing.sketch_check.is_some(),
             "Drawing settings" => self.show_drawing_settings,
             "Preferences" => self.show_settings,
             _ => false,
@@ -151,11 +151,11 @@ impl DriftApp {
             "Keyboard shortcuts" => self.show_shortcuts = false,
             "Solver benchmark" => self.benchmark = None,
             #[cfg(not(feature = "demo"))]
-            "output_sheets" => self.output_dialog = None,
+            "output_sheets" => self.drawing.output_dialog = None,
             #[cfg(not(feature = "demo"))]
             "cad_export" => self.cad_dialog = false,
-            "import_report" => self.import_report = None,
-            "sketch_check" => self.sketch_check = None,
+            "import_report" => self.drawing.import_report = None,
+            "sketch_check" => self.drawing.sketch_check = None,
             "Drawing settings" => self.show_drawing_settings = false,
             "Preferences" => self.show_settings = false,
             _ => {}
@@ -234,7 +234,7 @@ impl DriftApp {
         #[cfg(not(target_arch = "wasm32"))]
         self.update_notice(ctx);
         self.picker_notice(ctx);
-        if let Some((constraint, placement)) = self.editor.out.pending_driven {
+        if let Some((constraint, placement)) = self.drawing.editor.out.pending_driven {
             let mut choice = None;
             let modal = egui::Modal::new(egui::Id::new("driven"))
                 .frame(theme::dialog_frame(&ctx.style_of(ctx.theme())))
@@ -263,9 +263,15 @@ impl DriftApp {
                 choice = Some(false);
             }
             if let Some(add) = choice {
-                self.editor.out.pending_driven = None;
-                if add && let Err(e) = self.editor.add_driven_dimension(constraint, placement) {
-                    self.editor.out.notice = Some(format!("{}: {e}", constraint.type_name()));
+                self.drawing.editor.out.pending_driven = None;
+                if add
+                    && let Err(e) = self
+                        .drawing
+                        .editor
+                        .add_driven_dimension(constraint, placement)
+                {
+                    self.drawing.editor.out.notice =
+                        Some(format!("{}: {e}", constraint.type_name()));
                 }
             }
         }
@@ -282,7 +288,7 @@ impl DriftApp {
                 .frame(theme::dialog_frame(&ctx.style_of(ctx.theme())))
                 .show(ctx, |ui| {
                 ui.set_width(380.0);
-                theme::dialog_title(ui, &format!("Save changes to {}?", self.file.name), false);
+                theme::dialog_title(ui, &format!("Save changes to {}?", self.drawing.file.name), false);
                 ui.label(match action {
                     Pending::Quit => "Your changes will be lost if you close without saving.",
                     #[cfg(not(target_arch = "wasm32"))]
@@ -313,7 +319,7 @@ impl DriftApp {
                     Choice::Save => {
                         // Carry on once the file is written (a cancelled save dialog
                         // leaves things as they are).
-                        self.after_save = Some((action, self.editor.doc.revision()));
+                        self.after_save = Some((action, self.drawing.editor.doc.revision()));
                         self.save();
                     }
                     Choice::Discard => {
@@ -435,26 +441,32 @@ impl DriftApp {
 
     /// A cheap fingerprint of the state the panels display.
     pub(crate) fn ui_signature(&self) -> impl PartialEq + use<> {
-        let sel = &self.editor.selection;
+        let sel = &self.drawing.editor.selection;
         (
             self.tool.kind(),
-            self.editor.doc.revision(),
+            self.drawing.editor.doc.revision(),
             (sel.len(), sel.first().copied(), sel.last().copied()),
-            self.editor.hovered,
+            self.drawing.editor.hovered,
             self.grid_snap,
-            (self.pending, self.editor.out.pending_driven.is_some()),
-            self.editor.doc.constraint_count(),
-            self.selected_constraint,
-            self.hovered_constraint,
-            self.editor.hovered_midpoint,
-            self.editor.selected_midpoints.len(),
-            self.typing.as_ref().map(|t| (t.values.clone(), t.active)),
+            (
+                self.pending,
+                self.drawing.editor.out.pending_driven.is_some(),
+            ),
+            self.drawing.editor.doc.constraint_count(),
+            self.drawing.selected_constraint,
+            self.drawing.hovered_constraint,
+            self.drawing.editor.hovered_midpoint,
+            self.drawing.editor.selected_midpoints.len(),
+            self.drawing
+                .typing
+                .as_ref()
+                .map(|t| (t.values.clone(), t.active)),
         )
     }
 
     pub(crate) fn update_title(&mut self, ctx: &egui::Context) {
         let dirty = if self.is_dirty() { "• " } else { "" };
-        let title = format!("{dirty}{} — Drift", self.file.name);
+        let title = format!("{dirty}{} — Drift", self.drawing.file.name);
         if title != self.window_title {
             #[cfg(not(target_arch = "wasm32"))]
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));

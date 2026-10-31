@@ -481,7 +481,7 @@ impl DriftApp {
         if self.dock_view.hide_all {
             return;
         }
-        let canvas = self.canvas_rect;
+        let canvas = self.drawing.view.canvas_rect;
         if !canvas.is_positive() {
             return;
         }
@@ -947,7 +947,7 @@ impl DriftApp {
     /// Where a dragged panel would dock: each side's dock, or a band along that edge of the
     /// canvas when the side has no dock.
     fn drop_zones(&self) -> Vec<(Side, egui::Rect)> {
-        let canvas = self.canvas_rect;
+        let canvas = self.drawing.view.canvas_rect;
         [Side::Left, Side::Right]
             .into_iter()
             .map(|side| {
@@ -1162,7 +1162,7 @@ impl DriftApp {
                 self.layout.move_to(panel, Place::Dock(side), index);
                 self.restore_stack_position(keep);
             }
-            None if !window && self.canvas_rect.contains(pos) => {
+            None if !window && self.drawing.view.canvas_rect.contains(pos) => {
                 let keep = self.stack_position(panel);
                 self.layout.move_to(panel, Place::Float, None);
                 self.restore_stack_position(keep);

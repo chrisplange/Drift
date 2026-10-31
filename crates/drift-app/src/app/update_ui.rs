@@ -279,7 +279,7 @@ impl DriftApp {
         {
             let n = self.other_windows();
             if n > 0 {
-                self.editor.out.notice = Some(format!(
+                self.drawing.editor.out.notice = Some(format!(
                     "Close your other Drift window{} first ({n} open), then install the update",
                     if n == 1 { "" } else { "s" }
                 ));

@@ -11,7 +11,7 @@ use super::*;
 /// A filled rectangle (a shape, its fill solid), a loose line and a sketch text, in view.
 fn drawing(h: &mut Harness<'_, DriftApp>) -> (Vec<EntityId>, FillId, EntityId) {
     let v = DVec2::new;
-    let ed = &mut h.state_mut().editor;
+    let ed = &mut h.state_mut().drawing.editor;
     ed.prefs.fill_new_shapes = true;
     ed.prefs.fill_style.kind = drift_core::FillKind::Solid;
     ed.prefs.fill_style.color = Some(Rgb([0, 0, 255]));
@@ -33,18 +33,18 @@ fn drawing(h: &mut Harness<'_, DriftApp>) -> (Vec<EntityId>, FillId, EntityId) {
     ed.selection.clear();
     ed.selected_fills.clear();
     ed.selected_texts.clear();
-    h.state_mut().fit_target = Some(drift_core::Bounds {
+    h.state_mut().drawing.view.fit_target = Some(drift_core::Bounds {
         min: v(-10.0, -10.0),
         max: v(110.0, 45.0),
     });
     h.run();
-    h.state_mut().fit_target = None;
+    h.state_mut().drawing.view.fit_target = None;
     h.run();
     (sides, fill, line)
 }
 
 fn filter(h: &Harness<'_, DriftApp>) -> PickFilter {
-    h.state().editor.prefs.pick_filter
+    h.state().drawing.editor.prefs.pick_filter
 }
 
 /// A window round the whole drawing.
@@ -117,26 +117,26 @@ fn the_filter_applies_to_clicks_boxes_and_select_all() {
         .set_pick_filter(PickFilter::only(PickKind::Fills));
     click_world(&mut h, DVec2::new(20.0, 15.0));
     {
-        let ed = &h.state().editor;
+        let ed = &h.state().drawing.editor;
         assert_eq!(ed.selected_fills, [fill].into());
         assert!(ed.selection.is_empty(), "{:?}", ed.selection);
     }
     click_world(&mut h, DVec2::new(75.0, 10.0));
     assert!(
-        h.state().editor.selection.is_empty(),
+        h.state().drawing.editor.selection.is_empty(),
         "the line isn't picked"
     );
     box_all(&mut h);
     {
-        let ed = &h.state().editor;
+        let ed = &h.state().drawing.editor;
         assert_eq!(ed.selected_fills, [fill].into());
         assert!(ed.selection.is_empty() && ed.selected_texts.is_empty());
     }
-    h.state_mut().editor.selected_fills.clear();
+    h.state_mut().drawing.editor.selected_fills.clear();
     h.key_press_modifiers(EguiModifiers::COMMAND, Key::A);
     h.run();
     {
-        let ed = &h.state().editor;
+        let ed = &h.state().drawing.editor;
         assert_eq!(ed.selected_fills, [fill].into());
         assert!(ed.selection.is_empty() && ed.selected_texts.is_empty());
     }
@@ -147,7 +147,7 @@ fn the_filter_applies_to_clicks_boxes_and_select_all() {
     h.run();
     box_all(&mut h);
     {
-        let ed = &h.state().editor;
+        let ed = &h.state().drawing.editor;
         assert!(ed.selected_fills.is_empty());
         assert!(sides.iter().all(|s| ed.selection.contains(s)));
         assert!(ed.selection.contains(&line));
@@ -158,7 +158,7 @@ fn the_filter_applies_to_clicks_boxes_and_select_all() {
     h.key_press(Key::Escape);
     h.run();
     box_all(&mut h);
-    let ed = &h.state().editor;
+    let ed = &h.state().drawing.editor;
     assert_eq!(ed.selected_fills, [fill].into());
     assert!(ed.selection.contains(&line));
 }
@@ -168,7 +168,7 @@ fn areas_off_means_a_click_on_blank_paper_never_picks_an_area() {
     let Some(mut h) = harness() else { return };
     let v = DVec2::new;
     {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         ed.change_rules(|r| r.regions_need_fill = false);
         ed.doc.begin();
         let p =
@@ -178,20 +178,20 @@ fn areas_off_means_a_click_on_blank_paper_never_picks_an_area() {
         }
         ed.commit("Rectangle");
     }
-    h.state_mut().fit_target = Some(drift_core::Bounds {
+    h.state_mut().drawing.view.fit_target = Some(drift_core::Bounds {
         min: v(-10.0, -10.0),
         max: v(50.0, 40.0),
     });
     h.run();
     click_world(&mut h, v(20.0, 15.0));
-    assert!(h.state().editor.selected_region.is_some());
+    assert!(h.state().drawing.editor.selected_region.is_some());
     h.key_press(Key::Escape);
     h.run();
     h.state_mut()
         .set_pick_filter(PickFilter::ALL.with(PickKind::Areas, false));
     click_world(&mut h, v(20.0, 15.0));
-    assert!(h.state().editor.selected_region.is_none());
-    assert!(h.state().editor.selection.is_empty());
+    assert!(h.state().drawing.editor.selected_region.is_none());
+    assert!(h.state().drawing.editor.selection.is_empty());
 }
 
 #[test]

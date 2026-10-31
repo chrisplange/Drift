@@ -7,8 +7,8 @@ impl DriftApp {
     /// curves'.
     pub(crate) fn toggle_construction(&mut self, now: f64) {
         if self.tool.kind().draws_curves() {
-            let on = !self.editor.prefs.draw_construction;
-            self.editor.prefs.draw_construction = on;
+            let on = !self.drawing.editor.prefs.draw_construction;
+            self.drawing.editor.prefs.draw_construction = on;
             let text = if on {
                 "Drawing construction geometry · Alt+C for geometry"
             } else {
@@ -16,27 +16,27 @@ impl DriftApp {
             };
             self.set_status(text.into(), false, now);
         } else {
-            self.editor.toggle_construction();
+            self.drawing.editor.toggle_construction();
         }
     }
 
     /// Clear the relations (or, with `dimensions`, the dimensions) on the selection, as one
     /// undo step, and say what went.
     pub(crate) fn clear_selection_constraints(&mut self, dimensions: bool, now: f64) {
-        let (relations, dims) = self.editor.selection_constraints();
+        let (relations, dims) = self.drawing.editor.selection_constraints();
         let ids = if dimensions { dims } else { relations };
         if ids.is_empty() {
             return;
         }
-        let what = crate::constraint_summary(&self.editor.doc, &ids);
+        let what = crate::constraint_summary(&self.drawing.editor.doc, &ids);
         let (label, kind) = if dimensions {
             ("Clear dimensions", "dimension")
         } else {
             ("Clear relations", "relation")
         };
-        let n = self.editor.clear_constraints(&ids, label);
+        let n = self.drawing.editor.clear_constraints(&ids, label);
         if n > 0 {
-            self.selected_constraint = None;
+            self.drawing.selected_constraint = None;
             let plural = if n == 1 { "" } else { "s" };
             self.set_status(
                 format!("Removed {n} {kind}{plural} ({what}) · Ctrl+Z to undo"),
@@ -49,7 +49,7 @@ impl DriftApp {
     /// Copy the selection to the clipboard (and remember it, for Edit → Paste).
     pub(crate) fn copy(&mut self, ctx: &egui::Context) {
         let now = ctx.input(|i| i.time);
-        match self.editor.copy_fragment() {
+        match self.drawing.editor.copy_fragment() {
             Some(fragment) => {
                 Self::to_system_clipboard(ctx, &fragment);
                 self.clipboard = Some(fragment);
@@ -61,7 +61,7 @@ impl DriftApp {
 
     pub(crate) fn cut(&mut self, ctx: &egui::Context) {
         let now = ctx.input(|i| i.time);
-        match self.editor.cut_fragment() {
+        match self.drawing.editor.cut_fragment() {
             Some(fragment) => {
                 Self::to_system_clipboard(ctx, &fragment);
                 self.clipboard = Some(fragment);
@@ -83,7 +83,10 @@ impl DriftApp {
 
     /// Where a paste lands: under the pointer when it's over the canvas, else mid-view.
     fn paste_point(&self) -> DVec2 {
-        self.pointer.map_or(self.camera.center, |p| p.raw)
+        self.drawing
+            .view
+            .pointer
+            .map_or(self.drawing.view.camera.center, |p| p.raw)
     }
 
     /// Paste clipboard text: copied geometry (under the pointer, or where it came from for
@@ -98,6 +101,7 @@ impl DriftApp {
         }
         if clipboard::is_fragment(text) {
             let result = self
+                .drawing
                 .editor
                 .paste(text, (!in_place).then_some(self.paste_point()));
             self.pasted(result, in_place, now);
@@ -116,13 +120,14 @@ impl DriftApp {
         if line.is_empty() {
             return;
         }
-        let height = if self.editor.prefs.text_height > 0.0 {
-            self.editor.prefs.text_height
+        let height = if self.drawing.editor.prefs.text_height > 0.0 {
+            self.drawing.editor.prefs.text_height
         } else {
             10.0
         };
-        self.editor.selection.clear();
-        self.editor
+        self.drawing.editor.selection.clear();
+        self.drawing
+            .editor
             .add_text(drift_core::SketchText::new(line, at, height));
         self.set_status("Pasted as text".into(), false, now);
     }
@@ -134,7 +139,7 @@ impl DriftApp {
             self.set_tool(ToolKind::Select);
         }
         let at = (!in_place).then_some(self.paste_point());
-        let result = self.editor.paste_fragment(fragment, at);
+        let result = self.drawing.editor.paste_fragment(fragment, at);
         self.pasted(result, in_place, now);
     }
 
@@ -145,9 +150,12 @@ impl DriftApp {
                 self.set_status(format!("Pasted {n}"), false, now);
                 // Straight into a move, to put the copy where it belongs (as after
                 // duplicating); Esc leaves it where it landed.
-                if !in_place && self.pointer.is_some() {
-                    self.tool
-                        .key(ToolKey::G, self.pointer.as_ref(), &mut self.editor);
+                if !in_place && self.drawing.view.pointer.is_some() {
+                    self.tool.key(
+                        ToolKey::G,
+                        self.drawing.view.pointer.as_ref(),
+                        &mut self.drawing.editor,
+                    );
                 }
             }
             Err(e) => self.set_status(format!("Can't paste that: {e}"), true, now),
@@ -205,10 +213,13 @@ impl DriftApp {
             }
         }
         // Arrows nudge the selection by a grid step (ten with Shift), with the select tool.
-        if self.tool.kind() != ToolKind::Select || self.tool.is_busy() || self.sheet_preview {
+        if self.tool.kind() != ToolKind::Select
+            || self.tool.is_busy()
+            || self.drawing.view.sheet_preview
+        {
             return;
         }
-        let step = grid_info(&self.camera, self.imperial()).minor;
+        let step = grid_info(&self.drawing.view.camera, self.imperial()).minor;
         let mut delta = DVec2::ZERO;
         ctx.input(|i| {
             if i.modifiers.command || i.modifiers.alt {
@@ -226,7 +237,7 @@ impl DriftApp {
                 delta *= 10.0;
             }
         });
-        if delta != DVec2::ZERO && self.editor.nudge(delta * step) == Some(false) {
+        if delta != DVec2::ZERO && self.drawing.editor.nudge(delta * step) == Some(false) {
             self.set_status(
                 "That can't move (it's held by its relations)".into(),
                 false,

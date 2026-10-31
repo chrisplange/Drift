@@ -13,9 +13,9 @@ impl DriftApp {
 
     /// Move the picked fills and shapes in their layers' stacks, or say why nothing moved.
     pub(crate) fn arrange(&mut self, how: Arrange, now: f64) {
-        if !self.editor.can_arrange() {
+        if !self.drawing.editor.can_arrange() {
             self.set_status("Pick a fill or a shape to arrange".into(), true, now);
-        } else if !self.editor.arrange(how) {
+        } else if !self.drawing.editor.arrange(how) {
             let place = if matches!(how, Arrange::ToFront | Arrange::Forward) {
                 "top"
             } else {

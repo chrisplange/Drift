@@ -8,7 +8,7 @@ use super::*;
 
 /// A line in view, picked.
 fn picked_line(h: &mut Harness<'_, DriftApp>) -> EntityId {
-    let ed = &mut h.state_mut().editor;
+    let ed = &mut h.state_mut().drawing.editor;
     ed.doc.begin();
     let a = ed.doc.add_point(DVec2::new(0.0, 0.0));
     let b = ed.doc.add_point(DVec2::new(40.0, 10.0));
@@ -120,7 +120,7 @@ fn smoke_commands_dialogs_keep_canvas_keys_and_esc_closes_them() {
     h.key_press(Key::Escape);
     h.run();
     assert!(!h.state().show_settings);
-    assert_eq!(h.state().editor.selection.len(), 1);
+    assert_eq!(h.state().drawing.editor.selection.len(), 1);
     // With it gone, Delete acts again.
     h.key_press(Key::Delete);
     h.run();

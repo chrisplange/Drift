@@ -28,7 +28,7 @@ fn on_rail(h: &Harness<'_, DriftApp>, label: &str) -> Option<egui::Rect> {
 /// Every place on the rail is there, by the name of what it shows, and above the status bar
 /// without scrolling.
 fn rail_in_view(h: &Harness<'_, DriftApp>, size: &str) {
-    let bottom = h.state().canvas_rect.bottom();
+    let bottom = h.state().drawing.view.canvas_rect.bottom();
     for (_, slots) in RAIL {
         for slot in *slots {
             let shows = h.state().rail_shows(slot);
@@ -265,7 +265,7 @@ fn smoke_rail_move_and_rotate() {
     h.run();
     assert!(!h.state().tool.is_modal(), "Move without a selection");
     // A line picked: Move from the rail grabs it, where the pointer last was on the canvas.
-    let ed = &mut h.state_mut().editor;
+    let ed = &mut h.state_mut().drawing.editor;
     ed.doc.begin();
     let a = ed.doc.add_point(DVec2::new(0.0, 0.0));
     let b = ed.doc.add_point(DVec2::new(40.0, 10.0));

@@ -98,7 +98,7 @@ impl DriftApp {
     }
 
     pub(crate) fn is_dirty(&self) -> bool {
-        self.file.clean_revision != Some(self.editor.doc.revision())
+        self.drawing.file.clean_revision != Some(self.drawing.editor.doc.revision())
     }
 
     pub(crate) fn replace_document(
@@ -109,7 +109,7 @@ impl DriftApp {
         meta: Metadata,
         clean: bool,
     ) {
-        self.tool.cancel(&mut self.editor);
+        self.tool.cancel(&mut self.drawing.editor);
         self.tool = ToolKind::Select.create();
         // A file from before drawings kept their rules had this computer's.
         if meta.older_rules {
@@ -120,11 +120,11 @@ impl DriftApp {
         // The tool preferences carry over to the next drawing: the open drawing's editor holds
         // the app's copy.
         let mut editor = Editor::new(doc);
-        editor.prefs = self.editor.prefs.clone();
-        self.editor = editor;
+        editor.prefs = self.drawing.editor.prefs.clone();
+        self.drawing.editor = editor;
         self.forget_drawing_state();
-        self.fit_target = Some(self.fit_bounds());
-        self.file = FileState {
+        self.drawing.view.fit_target = Some(self.fit_bounds());
+        self.drawing.file = FileState {
             name,
             path,
             meta,
@@ -137,66 +137,66 @@ impl DriftApp {
     /// (Everything here belongs to one drawing; a new field of that kind is reset here too.)
     pub(crate) fn forget_drawing_state(&mut self) {
         // Dimensions and relations.
-        self.dimension_text.clear();
-        self.focus_dimension = None;
-        self.selected_constraint = None;
-        self.hovered_constraint = None;
-        self.label_drag = None;
-        self.ext_drag = None;
-        self.dim_guide = None;
-        self.dimension_edit = None;
-        self.property_edit = None;
-        self.typing = None;
-        self.inference_points.clear();
-        self.temp_dims = Default::default();
+        self.drawing.dimension_text.clear();
+        self.drawing.focus_dimension = None;
+        self.drawing.selected_constraint = None;
+        self.drawing.hovered_constraint = None;
+        self.drawing.label_drag = None;
+        self.drawing.ext_drag = None;
+        self.drawing.dim_guide = None;
+        self.drawing.dimension_edit = None;
+        self.drawing.property_edit = None;
+        self.drawing.typing = None;
+        self.drawing.inference_points.clear();
+        self.drawing.temp_dims = Default::default();
         // Variables and options being edited; layers being renamed, opened, isolated.
-        self.params = Default::default();
-        self.layer_names.clear();
-        self.expanded_layers.clear();
-        self.layer_drag = None;
-        self.renaming_layer = None;
+        self.drawing.params = Default::default();
+        self.drawing.layer_names.clear();
+        self.drawing.expanded_layers.clear();
+        self.drawing.layer_drag = None;
+        self.drawing.renaming_layer = None;
         // An isolate belongs to the drawing it was made in (and its undo history).
-        self.layer_list.isolated = None;
-        self.layer_list.solos.clear();
+        self.drawing.layer_list.isolated = None;
+        self.drawing.layer_list.solos.clear();
         // Notes, hatches, text, walls and openings being edited.
-        self.note_drag = None;
-        self.selected_leader = None;
-        self.leader_grip = None;
-        self.adding_leader = None;
-        self.note_edit = None;
-        self.hatch_drag = None;
-        self.hatch_snap = None;
-        self.align_edge = None;
-        self.text_typing = None;
-        self.text_focused = None;
-        self.text_cursor = None;
-        self.text_set_cursor = None;
-        self.text_grip = false;
-        self.text_touched = false;
-        self.wall_thickness_text = None;
-        self.opening_text = None;
-        self.renaming = None;
-        self.sketch_check = None;
+        self.drawing.note_drag = None;
+        self.drawing.selected_leader = None;
+        self.drawing.leader_grip = None;
+        self.drawing.adding_leader = None;
+        self.drawing.note_edit = None;
+        self.drawing.hatch_drag = None;
+        self.drawing.hatch_snap = None;
+        self.drawing.align_edge = None;
+        self.drawing.text_typing = None;
+        self.drawing.text_focused = None;
+        self.drawing.text_cursor = None;
+        self.drawing.text_set_cursor = None;
+        self.drawing.text_grip = false;
+        self.drawing.text_touched = false;
+        self.drawing.wall_thickness_text = None;
+        self.drawing.opening_text = None;
+        self.drawing.renaming = None;
+        self.drawing.sketch_check = None;
         // Sheets and views: back to the model.
-        self.active_sheet = None;
-        self.sheet_preview = false;
-        self.preview = Default::default();
-        self.view_drag = None;
-        self.view_guides.clear();
-        self.align_with = None;
-        self.sheet_view = 0;
-        self.sheet_pick = Default::default();
-        self.view_set = None;
-        self.view_box = None;
-        self.confirm_delete_set = false;
-        self.add_view_on = None;
-        self.pdf_left_out.clear();
-        self.picked_view = None;
-        self.confirm_delete_view = None;
-        self.crop_drag = None;
+        self.drawing.view.active_sheet = None;
+        self.drawing.view.sheet_preview = false;
+        self.drawing.view.preview = Default::default();
+        self.drawing.view.view_drag = None;
+        self.drawing.view.view_guides.clear();
+        self.drawing.view.align_with = None;
+        self.drawing.view.sheet_view = 0;
+        self.drawing.view.sheet_pick = Default::default();
+        self.drawing.view.view_set = None;
+        self.drawing.view.view_box = None;
+        self.drawing.confirm_delete_set = false;
+        self.drawing.add_view_on = None;
+        self.drawing.pdf_left_out.clear();
+        self.drawing.picked_view = None;
+        self.drawing.confirm_delete_view = None;
+        self.drawing.view.crop_drag = None;
         #[cfg(not(feature = "demo"))]
         {
-            self.output_dialog = None;
+            self.drawing.output_dialog = None;
         }
     }
 
@@ -223,9 +223,9 @@ impl DriftApp {
             ("stack", rules.stacked_fills),
             ("dfollow", rules.follow_divided_fills),
             // The tool bars' Fill switch, as it was last left.
-            ("newfill", self.editor.prefs.fill_new_shapes),
+            ("newfill", self.drawing.editor.prefs.fill_new_shapes),
             // The Wall tool's poché switch, as it was last left.
-            ("wpoche", self.editor.prefs.wall_poche.on),
+            ("wpoche", self.drawing.editor.prefs.wall_poche.on),
             ("wcentre", self.show_wall_centrelines),
             ("tdims", self.show_temp_dims),
             ("ai", self.ai_link),
@@ -238,17 +238,26 @@ impl DriftApp {
         prefs.push(format!("asnap={}", self.angle_snap.unwrap_or(0.0)));
         prefs.push(format!("gaptol={}", rules.gap_tolerance));
         // The Wall tool's thickness (0: by the drawing's units) and justification.
-        prefs.push(format!("wthick={}", self.editor.prefs.wall_thickness));
+        prefs.push(format!(
+            "wthick={}",
+            self.drawing.editor.prefs.wall_thickness
+        ));
         prefs.push(format!(
             "wjust={}",
-            match self.editor.prefs.wall_justify {
+            match self.drawing.editor.prefs.wall_justify {
                 drift_core::Justify::Centre => "c",
                 drift_core::Justify::Left => "l",
                 drift_core::Justify::Right => "r",
             }
         ));
-        prefs.push(format!("wlines={}", self.editor.prefs.wall_lines.key()));
-        prefs.push(format!("fillalone={}", self.editor.prefs.fill_alone_picks));
+        prefs.push(format!(
+            "wlines={}",
+            self.drawing.editor.prefs.wall_lines.key()
+        ));
+        prefs.push(format!(
+            "fillalone={}",
+            self.drawing.editor.prefs.fill_alone_picks
+        ));
         prefs.extend(self.crosshair.prefs());
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -296,19 +305,19 @@ impl DriftApp {
                 "combs" => self.show_combs = on,
                 "rscale" => self.round_scale = on,
                 "hidden" => self.show_hidden_annotations = on,
-                "newfill" => self.editor.prefs.fill_new_shapes = on,
-                "wpoche" => self.editor.prefs.wall_poche.on = on,
+                "newfill" => self.drawing.editor.prefs.fill_new_shapes = on,
+                "wpoche" => self.drawing.editor.prefs.wall_poche.on = on,
                 "wcentre" => self.show_wall_centrelines = on,
                 "wthick" => {
                     if let Ok(t) = value.parse::<f64>()
                         && t.is_finite()
                         && t >= 0.0
                     {
-                        self.editor.prefs.wall_thickness = t;
+                        self.drawing.editor.prefs.wall_thickness = t;
                     }
                 }
                 "wjust" => {
-                    self.editor.prefs.wall_justify = match value {
+                    self.drawing.editor.prefs.wall_justify = match value {
                         "l" => drift_core::Justify::Left,
                         "r" => drift_core::Justify::Right,
                         _ => drift_core::Justify::Centre,
@@ -316,13 +325,13 @@ impl DriftApp {
                 }
                 "wlines" => {
                     if let Some(u) = drift_edit::walls_from_lines::UsedLines::from_key(value) {
-                        self.editor.prefs.wall_lines = u;
+                        self.drawing.editor.prefs.wall_lines = u;
                     }
                 }
                 "tdims" => self.show_temp_dims = on,
                 "fillalone" => {
                     if let Ok(n) = value.parse() {
-                        self.editor.prefs.fill_alone_picks = n;
+                        self.drawing.editor.prefs.fill_alone_picks = n;
                     }
                 }
                 "ai" => self.ai_link = on,
@@ -379,7 +388,7 @@ impl DriftApp {
                         // Said, so a drawing taken over doesn't appear unexplained (unless
                         // a note about the last run already says so).
                         if self.unrestored.is_none()
-                            && self.editor.out.notice.is_none()
+                            && self.drawing.editor.out.notice.is_none()
                             && self.status_next.is_none()
                         {
                             self.status_next =
@@ -454,9 +463,9 @@ impl DriftApp {
     /// Give the drawing open now (a new, untouched one) the rules new drawings start with.
     pub(crate) fn start_with_new_rules(&mut self) {
         let clean = !self.is_dirty();
-        self.editor.doc.set_rules(self.new_rules);
+        self.drawing.editor.doc.set_rules(self.new_rules);
         if clean {
-            self.file.clean_revision = Some(self.editor.doc.revision());
+            self.drawing.file.clean_revision = Some(self.drawing.editor.doc.revision());
         }
     }
 
@@ -488,12 +497,12 @@ impl DriftApp {
     /// to open in windows of their own; one already open here is left out.
     #[cfg(all(not(target_arch = "wasm32"), not(feature = "demo")))]
     pub(crate) fn open_requested(&mut self, paths: Vec<FilePath>) -> Vec<FilePath> {
-        let mut untouched = self.file.path.is_none()
+        let mut untouched = self.drawing.file.path.is_none()
             && self.open_path.is_none()
-            && self.editor.doc.is_empty()
-            && self.editor.history.recorded() == 0
+            && self.drawing.editor.doc.is_empty()
+            && self.drawing.editor.history.recorded() == 0
             && !self.is_dirty();
-        let mut here = self.file.path.clone();
+        let mut here = self.drawing.file.path.clone();
         let mut elsewhere = Vec::new();
         for path in paths {
             if here.as_ref() == Some(&path) || elsewhere.contains(&path) {
@@ -574,20 +583,20 @@ impl DriftApp {
                 self.replace_document(doc, UNTITLED.into(), None, Metadata::default(), true);
             }
             Pending::Open => {
-                self.opening_revision = Some(self.editor.doc.revision());
+                self.opening_revision = Some(self.drawing.editor.doc.revision());
                 // (Tests hand over their files themselves: no system dialog.)
                 #[cfg(not(test))]
                 self.files.open(app::import_ui::OPEN_FILE);
             }
             Pending::Recent(i) => {
                 if let Some(path) = self.recent.get(i).cloned() {
-                    self.opening_revision = Some(self.editor.doc.revision());
+                    self.opening_revision = Some(self.drawing.editor.doc.revision());
                     self.files.open_path(&path);
                 }
             }
             Pending::OpenPath => {
                 if let Some(path) = self.open_path.take() {
-                    self.opening_revision = Some(self.editor.doc.revision());
+                    self.opening_revision = Some(self.drawing.editor.doc.revision());
                     self.files.open_path(&path);
                 }
             }
@@ -620,9 +629,9 @@ impl DriftApp {
 
     #[cfg(not(feature = "demo"))]
     fn saved(&self) -> drift_io::Saved {
-        let mut meta = self.file.meta.clone();
+        let mut meta = self.drawing.file.meta.clone();
         meta.generator = Some(format!("Drift {}", drift_platform::VERSION));
-        drift_io::save_checked(&self.editor.doc, &meta)
+        drift_io::save_checked(&self.drawing.editor.doc, &meta)
     }
 
     #[cfg(not(feature = "demo"))]
@@ -641,26 +650,28 @@ impl DriftApp {
     #[cfg(not(feature = "demo"))]
     pub(crate) fn write_file(&mut self, as_new: bool, confirmed: bool) {
         // A value that isn't a number would make the file unreadable: write nothing.
-        if let Some(id) = self.editor.doc.first_non_finite() {
-            self.editor.out.notice = Some(not_saved_non_finite(id));
+        if let Some(id) = self.drawing.editor.doc.first_non_finite() {
+            self.drawing.editor.out.notice = Some(not_saved_non_finite(id));
             self.after_save = None;
             return;
         }
         let saved = self.saved();
         if saved.loses_newer_data && !confirmed {
-            self.lossy_save = Some(as_new);
+            self.drawing.lossy_save = Some(as_new);
             return;
         }
-        self.saving = Some((saved.carried, self.editor.doc.revision()));
+        self.drawing.saving = Some((saved.carried, self.drawing.editor.doc.revision()));
         let bytes = saved.text.into_bytes();
         // Only ever overwrite a sketch file: never an export or an imported drawing.
-        match &self.file.path {
+        match &self.drawing.file.path {
             Some(path) if !as_new && is_sketch_file(path) => self.files.save_to(path, &bytes),
             // (Tests hand over the saved event themselves: no system dialog.)
             #[cfg(test)]
             _ => drop((DRIFT_FILE, bytes)),
             #[cfg(not(test))]
-            _ => self.files.save_as(&self.file.name, DRIFT_FILE, bytes),
+            _ => self
+                .files
+                .save_as(&self.drawing.file.name, DRIFT_FILE, bytes),
         }
     }
 
@@ -682,8 +693,11 @@ impl DriftApp {
     /// The Blender profiles file's text, or `None` when no block is marked as a profile.
     #[cfg(not(feature = "demo"))]
     pub(crate) fn profiles_text(&self) -> Option<String> {
-        let blocks = self.editor.blocks_as_drawn();
-        drift_io::profiles::write(blocks.iter().map(|(id, b)| (*id, b)), &self.file.name)
+        let blocks = self.drawing.editor.blocks_as_drawn();
+        drift_io::profiles::write(
+            blocks.iter().map(|(id, b)| (*id, b)),
+            &self.drawing.file.name,
+        )
     }
 
     /// File → Export → Blender profiles: the profiles file, wherever it's wanted.
@@ -713,7 +727,7 @@ impl DriftApp {
     #[cfg(all(not(target_arch = "wasm32"), not(feature = "demo")))]
     fn update_profiles_beside(&self, path: &std::path::Path) -> Result<String, String> {
         use drift_io::profiles::{Updated, update_beside};
-        let blocks = self.editor.blocks_as_drawn();
+        let blocks = self.drawing.editor.blocks_as_drawn();
         match update_beside(path, blocks.iter().map(|(id, b)| (*id, b))) {
             Ok(Updated::Written(n)) => Ok(format!(
                 " and {n} Blender profile{}",
@@ -732,19 +746,26 @@ impl DriftApp {
     /// every [`LIVE_PROFILES_S`], so Blender's Auto-reload follows the edit before it's
     /// saved. Returns how long to wait before a change still to be written can go out.
     pub(crate) fn live_profiles(&mut self, now: f64) -> Option<f64> {
-        let editing = self
-            .editor
-            .block_edit
-            .filter(|e| self.editor.doc.block(e.block).is_some_and(|b| b.profile));
+        let editing = self.drawing.editor.block_edit.filter(|e| {
+            self.drawing
+                .editor
+                .doc
+                .block(e.block)
+                .is_some_and(|b| b.profile)
+        });
         let (Some(_), Some(path)) = (
             editing,
-            self.file.path.as_deref().filter(|p| is_sketch_file(p)),
+            self.drawing
+                .file
+                .path
+                .as_deref()
+                .filter(|p| is_sketch_file(p)),
         ) else {
-            self.live_profiles = None;
+            self.drawing.live_profiles = None;
             return None;
         };
-        let revision = self.editor.doc.revision();
-        match self.live_profiles {
+        let revision = self.drawing.editor.doc.revision();
+        match self.drawing.live_profiles {
             Some((written, _)) if written == revision => return None,
             Some((_, at)) if now - at < LIVE_PROFILES_S => {
                 return Some(LIVE_PROFILES_S - (now - at));
@@ -755,12 +776,12 @@ impl DriftApp {
         // writes no files.
         #[cfg(not(feature = "demo"))]
         {
-            let blocks = self.editor.blocks_as_drawn();
+            let blocks = self.drawing.editor.blocks_as_drawn();
             let _ = drift_io::profiles::update_beside(path, blocks.iter().map(|(id, b)| (*id, b)));
         }
         #[cfg(feature = "demo")]
         let _ = path;
-        self.live_profiles = Some((revision, now));
+        self.drawing.live_profiles = Some((revision, now));
         None
     }
 
@@ -780,7 +801,7 @@ impl DriftApp {
             Picking::Logo => self
                 .set_logo(&String::from_utf8_lossy(&contents))
                 .map(|()| format!("{name} is now the title block logo")),
-            Picking::Font => self.editor.add_font_file(contents).map(|family| {
+            Picking::Font => self.drawing.editor.add_font_file(contents).map(|family| {
                 format!("{family} is now kept in this drawing: pick it in a font menu")
             }),
             Picking::Patterns => self
@@ -856,7 +877,9 @@ impl DriftApp {
                             // from the AI link while the picker was open, say): ask again
                             // before those changes go.
                             let asked_at = self.opening_revision.take();
-                            if self.is_dirty() && asked_at != Some(self.editor.doc.revision()) {
+                            if self.is_dirty()
+                                && asked_at != Some(self.drawing.editor.doc.revision())
+                            {
                                 self.opened = Some(Box::new(opened));
                                 self.pending = Some(Pending::Opened);
                             } else {
@@ -880,27 +903,27 @@ impl DriftApp {
                         Ok(more) => self.set_status(format!("Saved {name}{more}"), false, now),
                         Err(more) => self.set_status(format!("Saved {name}{more}"), true, now),
                     }
-                    self.file.name = name;
+                    self.drawing.file.name = name;
                     if let Some(p) = &path {
                         self.remember(p.clone());
                     }
                     if path.is_some() {
-                        self.file.path = path;
+                        self.drawing.file.path = path;
                     }
                     // What was written: edits made while Save As's picker was open stay
                     // unsaved.
                     #[cfg_attr(feature = "demo", allow(unused_mut))]
-                    let mut written = self.editor.doc.revision();
+                    let mut written = self.drawing.editor.doc.revision();
                     #[cfg(not(feature = "demo"))]
-                    if let Some((carried, revision)) = self.saving.take() {
+                    if let Some((carried, revision)) = self.drawing.saving.take() {
                         // The next save compares with this file.
-                        self.file.meta.carried = carried;
+                        self.drawing.file.meta.carried = carried;
                         written = revision;
                     }
-                    self.file.clean_revision = Some(written);
+                    self.drawing.file.clean_revision = Some(written);
                     // Saved from the unsaved-changes prompt: carry on with what was asked.
                     if let Some((action, revision)) = self.after_save.take()
-                        && revision == self.editor.doc.revision()
+                        && revision == self.drawing.editor.doc.revision()
                     {
                         self.perform(action);
                     }
@@ -937,9 +960,9 @@ impl DriftApp {
     /// Make an SVG the title blocks' logo (one undo step), if it can be read.
     pub(crate) fn set_logo(&mut self, svg: &str) -> Result<(), String> {
         drift_draft::logo::parse(svg)?;
-        self.editor.doc.begin();
-        self.editor.doc.set_logo(svg.to_owned());
-        self.editor.commit("Title block logo");
+        self.drawing.editor.doc.begin();
+        self.drawing.editor.doc.set_logo(svg.to_owned());
+        self.drawing.editor.commit("Title block logo");
         Ok(())
     }
 
@@ -948,30 +971,33 @@ impl DriftApp {
         if new.is_empty() {
             return Err("no patterns found".into());
         }
-        let mut all = drift_draft::parse_pat(self.editor.doc.custom_patterns()).unwrap_or_default();
+        let mut all =
+            drift_draft::parse_pat(self.drawing.editor.doc.custom_patterns()).unwrap_or_default();
         all.retain(|p| !new.iter().any(|n| n.name.eq_ignore_ascii_case(&p.name)));
         let count = new.len();
         all.extend(new);
-        self.editor.doc.begin();
-        self.editor
+        self.drawing.editor.doc.begin();
+        self.drawing
+            .editor
             .doc
             .set_custom_patterns(drift_draft::to_pat(&all));
-        self.editor.commit("Import hatch patterns");
+        self.drawing.editor.commit("Import hatch patterns");
         Ok(count)
     }
 
     /// Remove an imported pattern (fills using it fall back to a tint until re-imported).
     pub(crate) fn remove_pattern(&mut self, name: &str) {
-        let mut all = drift_draft::parse_pat(self.editor.doc.custom_patterns()).unwrap_or_default();
+        let mut all =
+            drift_draft::parse_pat(self.drawing.editor.doc.custom_patterns()).unwrap_or_default();
         all.retain(|p| p.name != name);
         let text = if all.is_empty() {
             String::new()
         } else {
             drift_draft::to_pat(&all)
         };
-        self.editor.doc.begin();
-        self.editor.doc.set_custom_patterns(text);
-        self.editor.commit("Remove hatch pattern");
+        self.drawing.editor.doc.begin();
+        self.drawing.editor.doc.set_custom_patterns(text);
+        self.drawing.editor.commit("Remove hatch pattern");
     }
 
     pub(crate) fn set_status(&mut self, text: String, error: bool, now: f64) {
@@ -1030,7 +1056,7 @@ impl DriftApp {
                 "View crops hidden",
             ),
             (
-                self.params.show_free,
+                self.drawing.params.show_free,
                 "Free directions shown",
                 "Free directions hidden",
             ),
@@ -1053,47 +1079,47 @@ impl DriftApp {
     /// Abort the active tool's operation in progress, keeping the selection.
     /// True if the document shows imperial units (for grid steps).
     pub(crate) fn imperial(&self) -> bool {
-        !self.editor.doc.units().length.is_metric()
+        !self.drawing.editor.doc.units().length.is_metric()
     }
 
     pub(crate) fn abort_operation(&mut self) {
         if self.tool.is_busy() {
-            self.tool.cancel(&mut self.editor);
+            self.tool.cancel(&mut self.drawing.editor);
         }
     }
 
     pub(crate) fn set_tool(&mut self, kind: ToolKind) {
         // Another tool gives up a view being drawn for a sheet.
         if kind != ToolKind::View {
-            self.add_view_on = None;
+            self.drawing.add_view_on = None;
         }
-        if self.sheet_preview && kind != ToolKind::Select {
+        if self.drawing.view.sheet_preview && kind != ToolKind::Select {
             self.show_sheet(None);
             self.status_next = Some("Back in the model to draw".to_owned());
         }
         if self.tool.kind() != kind {
             self.abort_operation();
-            self.typing = None;
-            self.inference_points.clear();
-            self.editor.highlight.clear();
+            self.drawing.typing = None;
+            self.drawing.inference_points.clear();
+            self.drawing.editor.highlight.clear();
             self.tool = kind.create();
-            self.editor.hovered = None;
-            self.editor.hovered_fill = None;
+            self.drawing.editor.hovered = None;
+            self.drawing.editor.hovered_fill = None;
         }
     }
 
     pub(crate) fn undo(&mut self) {
         self.abort_operation();
-        self.editor.undo();
+        self.drawing.editor.undo();
     }
 
     pub(crate) fn redo(&mut self) {
         self.abort_operation();
-        self.editor.redo();
+        self.drawing.editor.redo();
     }
 
     pub(crate) fn set_selection_style(&mut self, style: LineKind) {
-        let ed = &mut self.editor;
+        let ed = &mut self.drawing.editor;
         let ids: Vec<_> = ed
             .selection
             .iter()

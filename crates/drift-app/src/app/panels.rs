@@ -487,7 +487,7 @@ impl DriftApp {
 
     /// Select the curves that lie on top of others (the later-made of each pair).
     pub(crate) fn select_overlapping(&mut self, now: f64) {
-        let found = self.editor.overlapping();
+        let found = self.drawing.editor.overlapping();
         if found.is_empty() {
             self.set_status("No curves overlap".into(), false, now);
             return;
@@ -496,7 +496,7 @@ impl DriftApp {
         if self.tool.kind() != ToolKind::Select {
             self.set_tool(ToolKind::Select);
         }
-        self.editor.selection = found.iter().copied().collect();
+        self.drawing.editor.selection = found.iter().copied().collect();
         self.set_status(
             format!(
                 "Selected {} overlapping curve(s). Delete removes them and leaves the ones \
@@ -511,14 +511,17 @@ impl DriftApp {
     /// Zoom so that 100% is life size on a 96 dpi screen, about the middle of the canvas.
     pub(crate) fn zoom_to_percent(&mut self, percent: f64) {
         let target = percent / 100.0 * 96.0 / drift_core::units::MM_PER_INCH;
-        self.fit_target = None;
+        self.drawing.view.fit_target = None;
         // The view's origin is the canvas centre.
-        self.camera.zoom_at(DVec2::ZERO, target / self.camera.scale);
+        self.drawing
+            .view
+            .camera
+            .zoom_at(DVec2::ZERO, target / self.drawing.view.camera.scale);
     }
 
     /// Fit the view to what is selected. False with nothing selected.
     pub(crate) fn zoom_to_selection(&mut self) -> bool {
-        let ed = &self.editor;
+        let ed = &self.drawing.editor;
         let mut bounds: Bounds = ed
             .selection
             .iter()
@@ -549,11 +552,11 @@ impl DriftApp {
         }
         // A single point has no size to fit: show some room around it.
         if bounds.min == bounds.max {
-            let pad = DVec2::splat(grid_info(&self.camera, self.imperial()).major);
+            let pad = DVec2::splat(grid_info(&self.drawing.view.camera, self.imperial()).major);
             bounds.min -= pad;
             bounds.max += pad;
         }
-        self.fit_target = Some(bounds);
+        self.drawing.view.fit_target = Some(bounds);
         true
     }
 
@@ -595,7 +598,7 @@ impl DriftApp {
     /// Several things picked, text or annotations among them: what they are, and where the
     /// annotations show. Returns true if it showed.
     pub(crate) fn mixed_inspector(&mut self, ui: &mut egui::Ui) -> bool {
-        let ed = &self.editor;
+        let ed = &self.drawing.editor;
         let annotations = self.picked_annotations();
         let n = ed.selection.len()
             + ed.selected_instances.len()
@@ -656,7 +659,7 @@ impl DriftApp {
 
     pub(crate) fn inspector(&mut self, ui: &mut egui::Ui) {
         // On a sheet, the Inspector shows what is picked there.
-        if self.sheet_preview {
+        if self.drawing.view.sheet_preview {
             self.sheet_inspector(ui);
             return;
         }
@@ -675,8 +678,8 @@ impl DriftApp {
         {
             return;
         }
-        if let Some(region) = self.editor.region() {
-            let units = self.editor.doc.units();
+        if let Some(region) = self.drawing.editor.region() {
+            let units = self.drawing.editor.doc.units();
             theme::section(ui, "Region");
             let mono = |ui: &mut egui::Ui, text: String| {
                 ui.label(text);
@@ -699,7 +702,7 @@ impl DriftApp {
             self.region_fill_buttons(ui);
         }
         self.group_inspector(ui);
-        let ed = &self.editor;
+        let ed = &self.drawing.editor;
         let selection: Vec<_> = ed.selection.iter().copied().collect();
         for line in &ed.selected_midpoints {
             if let Some(drift_core::Shape::Line { a, b }) = ed.index.shape(*line) {
@@ -740,15 +743,15 @@ impl DriftApp {
                     );
                     ui.label(egui::RichText::new("Nothing selected").weak());
                 });
-                let hint = if self.editor.regions_need_fill() {
+                let hint = if self.drawing.editor.regions_need_fill() {
                     "Click geometry, or a fill or hatch, to inspect it."
                 } else {
                     "Click geometry to inspect it, or inside a closed area to measure it."
                 };
                 ui.label(egui::RichText::new(hint).small().weak());
                 theme::section(ui, "Sketch");
-                self.layer_counts.update(&self.editor.doc);
-                let curves = self.layer_counts.total;
+                self.drawing.layer_counts.update(&self.drawing.editor.doc);
+                let curves = self.drawing.layer_counts.total;
                 let relations = ed.doc.constraint_count();
                 let layers = ed.doc.layers().count();
                 ui.horizontal(|ui| {
@@ -818,7 +821,7 @@ impl DriftApp {
             }
             self.appearance_panel(ui);
             // Filled shapes among the picked curves (a group's, say): their fills too.
-            let shapes = self.editor.shapes_in_selection();
+            let shapes = self.drawing.editor.shapes_in_selection();
             if !shapes.fills.is_empty() {
                 let title = match shapes.fills.len() {
                     1 => "Fill".to_owned(),
@@ -836,23 +839,23 @@ impl DriftApp {
             Some(SizeEdit::Dimension(wanted, text)) => {
                 // A dimension already there is edited. Otherwise the size is added as a
                 // dimension, unless automatic relations are off: then it only resizes.
-                let keeps = self.editor.prefs.auto_relations
-                    || self.editor.size_dimension(&wanted).is_some();
+                let keeps = self.drawing.editor.prefs.auto_relations
+                    || self.drawing.editor.size_dimension(&wanted).is_some();
                 let result = if keeps {
-                    self.editor.set_size(wanted, &text).map(|_| ())
+                    self.drawing.editor.set_size(wanted, &text).map(|_| ())
                 } else {
-                    self.editor.resize_once(wanted, &text)
+                    self.drawing.editor.resize_once(wanted, &text)
                 };
                 if let Err(e) = result {
                     self.set_status(format!("Can't use {text}: {e}"), true, now);
                 }
             }
             Some(SizeEdit::Point(id, axis, text)) => {
-                match self.editor.evaluate_text(&text, Kind::Length) {
+                match self.drawing.editor.evaluate_text(&text, Kind::Length) {
                     Ok(v) => {
-                        if let Ok(mut to) = self.editor.doc.point(id) {
+                        if let Ok(mut to) = self.drawing.editor.doc.point(id) {
                             to[axis] = v.value;
-                            if !self.editor.move_point_to(id, to) {
+                            if !self.drawing.editor.move_point_to(id, to) {
                                 self.set_status(
                                     "That point is held by its relations".into(),
                                     true,
@@ -865,9 +868,9 @@ impl DriftApp {
                 }
             }
             Some(SizeEdit::Angle(line, text)) => {
-                match self.editor.evaluate_text(&text, Kind::Angle) {
+                match self.drawing.editor.evaluate_text(&text, Kind::Angle) {
                     Ok(v) => {
-                        if !self.editor.set_line_angle(line, v.value) {
+                        if !self.drawing.editor.set_line_angle(line, v.value) {
                             self.set_status(
                                 "That line's direction is held by its relations".into(),
                                 true,
@@ -885,10 +888,10 @@ impl DriftApp {
         self.pattern_panel(ui, now);
         self.constraint_list(ui);
 
-        if !self.editor.selection.is_empty() {
+        if !self.drawing.editor.selection.is_empty() {
             ui.add_space(16.0);
             if theme::danger_button(ui, "Delete selection").clicked() {
-                self.editor.delete_selection();
+                self.drawing.editor.delete_selection();
             }
         }
         ui.add_space(10.0);
@@ -903,15 +906,22 @@ impl DriftApp {
         now: f64,
     ) -> Option<ConstraintId> {
         let added = match option.constraints.as_slice() {
-            [c] if is_dimension => self.editor.add_dimension(*c, None).map(|id| vec![id]),
-            constraints if is_dimension => self.editor.add_constraints(option.label, constraints),
+            [c] if is_dimension => self
+                .drawing
+                .editor
+                .add_dimension(*c, None)
+                .map(|id| vec![id]),
+            constraints if is_dimension => self
+                .drawing
+                .editor
+                .add_constraints(option.label, constraints),
             // Only the relations that aren't there yet (some may already hold).
-            _ => match self.editor.missing_relations(option).as_slice() {
+            _ => match self.drawing.editor.missing_relations(option).as_slice() {
                 [] if drift_edit::editor::Editor::is_fix_option(option) => Err(
-                    drift_edit::editor::EditError::FullyDefined(self.editor.fixed_name()),
+                    drift_edit::editor::EditError::FullyDefined(self.drawing.editor.fixed_name()),
                 ),
                 [] => Err(drift_edit::editor::EditError::Redundant),
-                missing => self.editor.add_constraints(option.label, missing),
+                missing => self.drawing.editor.add_constraints(option.label, missing),
             },
         };
         match added {
@@ -926,8 +936,8 @@ impl DriftApp {
 
     /// Relations and dimensions that fit the selection, as chips.
     pub(crate) fn constraint_buttons(&mut self, ui: &mut egui::Ui) {
-        let relations = self.editor.relation_options();
-        let dimensions = self.editor.dimension_options();
+        let relations = self.drawing.editor.relation_options();
+        let dimensions = self.drawing.editor.dimension_options();
         let now = ui.input(|i| i.time);
         let pins = dimensions.clone();
         for (heading, options, is_dimension) in [
@@ -952,7 +962,7 @@ impl DriftApp {
                 && let Some(id) = self.apply_constraint_option(&option, is_dimension, now)
             {
                 // Let the user type the value straight away.
-                self.focus_dimension = Some(id);
+                self.drawing.focus_dimension = Some(id);
             }
         }
         if !pins.is_empty() {
@@ -973,7 +983,7 @@ impl DriftApp {
                 });
             });
             if let Some(c) = chosen {
-                match self.editor.pin_measurement(c) {
+                match self.drawing.editor.pin_measurement(c) {
                     Ok(_) => self.set_status("Pinned (see the Parameters tab)".into(), false, now),
                     Err(e) => self.set_status(format!("Can't pin it: {e}"), true, now),
                 }
@@ -985,7 +995,7 @@ impl DriftApp {
     /// dimension values. Each row: the name (click to select its geometry), the value, a
     /// "reference" toggle for dimensions, and a delete button that shows on hover.
     pub(crate) fn constraint_list(&mut self, ui: &mut egui::Ui) {
-        let ed = &self.editor;
+        let ed = &self.drawing.editor;
         let constraints: Vec<(ConstraintId, Constraint)> =
             if ed.selection.is_empty() && ed.selected_midpoints.is_empty() {
                 ed.doc.constraints().map(|(id, c)| (id, *c)).collect()
@@ -1085,6 +1095,7 @@ impl DriftApp {
                     Some(_) => {
                         let field = egui::Id::new(("dimension", id.0));
                         let mut text = self
+                            .drawing
                             .dimension_text
                             .get(id)
                             .cloned()
@@ -1096,18 +1107,18 @@ impl DriftApp {
                                 .desired_width(86.0)
                                 .hint_text(c.unit()),
                         );
-                        if self.focus_dimension == Some(*id) {
+                        if self.drawing.focus_dimension == Some(*id) {
                             response.request_focus();
-                            self.focus_dimension = None;
+                            self.drawing.focus_dimension = None;
                         }
                         if response.has_focus() {
-                            self.dimension_text.insert(*id, text.clone());
+                            self.drawing.dimension_text.insert(*id, text.clone());
                         }
                         if response.lost_focus() {
                             if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                                 apply = Some((*id, text.clone()));
                             }
-                            self.dimension_text.remove(id);
+                            self.drawing.dimension_text.remove(id);
                         }
                         let mut driven = false;
                         if ui
@@ -1153,7 +1164,7 @@ impl DriftApp {
         }
         // Clearing all of them at once (on a selection).
         if !everything {
-            let (relations, dims) = self.editor.selection_constraints();
+            let (relations, dims) = self.drawing.editor.selection_constraints();
             let mut clear = None;
             ui.horizontal_wrapped(|ui| {
                 if !relations.is_empty()
@@ -1163,7 +1174,7 @@ impl DriftApp {
                             "Remove the relations on the selection, including those holding it \
                              to what isn't picked: {}. Shared corners stay joined; dimensions \
                              stay",
-                            crate::constraint_summary(&self.editor.doc, &relations)
+                            crate::constraint_summary(&self.drawing.editor.doc, &relations)
                         ))
                         .clicked()
                 {
@@ -1174,7 +1185,7 @@ impl DriftApp {
                         .button(format!("Clear dimensions ({})", dims.len()))
                         .on_hover_text(format!(
                             "Remove the dimensions on the selection: {}",
-                            crate::constraint_summary(&self.editor.doc, &dims)
+                            crate::constraint_summary(&self.drawing.editor.doc, &dims)
                         ))
                         .clicked()
                 {
@@ -1187,19 +1198,19 @@ impl DriftApp {
             }
         }
         if let Some(c) = select {
-            self.editor.selection = c.entities().collect();
+            self.drawing.editor.selection = c.entities().collect();
         }
         if let Some(id) = remove {
-            self.editor.remove_constraint(id);
+            self.drawing.editor.remove_constraint(id);
         }
         if let Some((id, driven)) = toggle_driven
-            && let Err(e) = self.editor.set_driven(id, driven)
+            && let Err(e) = self.drawing.editor.set_driven(id, driven)
         {
             self.set_status(format!("Can't make it driving: it {e}"), true, now);
         }
         if let Some((id, text)) = apply
-            && Some(&text) != self.editor.dimension_edit_text(id).as_ref()
-            && let Err(e) = self.editor.set_dimension_text(id, &text)
+            && Some(&text) != self.drawing.editor.dimension_edit_text(id).as_ref()
+            && let Err(e) = self.drawing.editor.set_dimension_text(id, &text)
         {
             self.set_status(format!("Can't use {text}: {e}"), true, now);
         }
@@ -1210,8 +1221,8 @@ impl DriftApp {
     pub(crate) fn status_bar(&mut self, ui: &mut egui::Ui, _now: f64) {
         let cluster_left = ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 10.0;
-            let units = self.editor.doc.units();
-            let (x, y) = match self.pointer {
+            let units = self.drawing.editor.doc.units();
+            let (x, y) = match self.drawing.view.pointer {
                 Some(p) => {
                     let at = p.pos();
                     (units.format_readout(at.x), units.format_readout(at.y))
@@ -1246,7 +1257,7 @@ impl DriftApp {
                     // One control height across the bar.
                     ui.spacing_mut().interact_size.y = 22.0;
                     // Zoom as a percentage of real size on a 96 dpi screen.
-                    let zoom = self.camera.scale * drift_core::units::MM_PER_INCH / 96.0 * 100.0;
+                    let zoom = self.drawing.view.camera.scale * drift_core::units::MM_PER_INCH / 96.0 * 100.0;
                     let button = ui
                         .add(
                             egui::Button::new(
@@ -1259,8 +1270,8 @@ impl DriftApp {
                     egui::Popup::menu(&button).show(|ui| self.zoom_menu(ui));
                     #[cfg(all(not(target_arch = "wasm32"), not(feature = "demo")))]
                     self.link_pill(ui);
-                    if !self.editor.doc.is_empty() {
-                        let analysis = self.editor.analysis();
+                    if !self.drawing.editor.doc.is_empty() {
+                        let analysis = self.drawing.editor.analysis();
                         let dark = ui.visuals().dark_mode;
                         let (text, color) = if !analysis.converged {
                             (
@@ -1282,9 +1293,9 @@ impl DriftApp {
                     // Curves drawn on top of others: a warning that selects them when clicked.
                     // (Not re-counted in the middle of a drag.)
                     let overlaps = if self.tool.is_busy() {
-                        self.editor.overlapping_as_last_found()
+                        self.drawing.editor.overlapping_as_last_found()
                     } else {
-                        self.editor.overlapping()
+                        self.drawing.editor.overlapping()
                     };
                     if !overlaps.is_empty() {
                         let amber = egui::Color32::from_rgb(0xff, 0x9f, 0x0a);
@@ -1356,7 +1367,7 @@ impl DriftApp {
                             self.show_hidden_annotations = !self.show_hidden_annotations;
                         }
                     }
-                    let mut units = self.editor.doc.units();
+                    let mut units = self.drawing.editor.doc.units();
                     let short = |f: drift_core::LengthFormat| match f {
                         drift_core::LengthFormat::Architectural => "ft-in",
                         drift_core::LengthFormat::FractionalInch => "in ½",
@@ -1375,11 +1386,11 @@ impl DriftApp {
                         })
                         .response
                         .on_hover_text("Display units (more in File → Drawing settings)");
-                    if units != self.editor.doc.units() {
-                        self.editor.set_units(units);
+                    if units != self.drawing.editor.doc.units() {
+                        self.drawing.editor.set_units(units);
                     }
                     status_divider(ui);
-                    let minor = grid_info(&self.camera, self.imperial()).minor;
+                    let minor = grid_info(&self.drawing.view.camera, self.imperial()).minor;
                     let grid = if units.length.is_metric() {
                         format!("{} mm", format_length(minor))
                     } else {
@@ -1501,8 +1512,8 @@ impl DriftApp {
         // How to get at a picked shape's fill on its own, until it has been done a few times
         // (#223).
         let tool_hint = if selecting
-            && self.editor.prefs.fill_alone_picks < crate::FILL_ALONE_HINTS
-            && self.editor.picked_shape_fill().is_some()
+            && self.drawing.editor.prefs.fill_alone_picks < crate::FILL_ALONE_HINTS
+            && self.drawing.editor.picked_shape_fill().is_some()
         {
             format!(
                 "Double-click inside to edit its fill on its own · {}",
@@ -1511,19 +1522,19 @@ impl DriftApp {
         } else {
             self.tool.hint()
         };
-        let hint = if self.align_edge.is_some() {
+        let hint = if self.drawing.align_edge.is_some() {
             "Align to edge: click one of the shape's edges (the pattern runs along it from its \
              start) · Esc cancels"
                 .to_owned()
-        } else if self.add_view_on.is_some() && !self.tool.is_busy() {
+        } else if self.drawing.add_view_on.is_some() && !self.tool.is_busy() {
             "Drag a rectangle round what the new view shows · Esc cancels".to_owned()
-        } else if self.sheet_preview {
+        } else if self.drawing.view.sheet_preview {
             "Drag a view to move it · Alt-drag the drawing inside it · its handles crop it · Esc \
              returns to the model"
                 .to_owned()
-        } else if let Some(f) = self.editor.hovered_fill.filter(|_| selecting) {
+        } else if let Some(f) = self.drawing.editor.hovered_fill.filter(|_| selecting) {
             // What the fill under the pointer is: a shape, or an area fill and why (#202).
-            let kind = match self.editor.fill_kind(f) {
+            let kind = match self.drawing.editor.fill_kind(f) {
                 Ok(()) => "Shape".to_owned(),
                 Err(why) => format!("Area fill: {}", why.reason()),
             };

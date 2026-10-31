@@ -30,8 +30,8 @@ fn open_example(h: &mut Harness<'_, DriftApp>) {
 /// Where a paper point is on screen in the sheet editor.
 fn on_paper(h: &Harness<'_, DriftApp>, p: DVec2) -> Pos2 {
     let app = h.state();
-    let rect = app.canvas_rect;
-    let d = (p - app.preview.center) * f64::from(app.preview.zoom);
+    let rect = app.drawing.view.canvas_rect;
+    let d = (p - app.drawing.view.preview.center) * f64::from(app.drawing.view.preview.zoom);
     rect.center() + egui::vec2(d.x as f32, -d.y as f32)
 }
 
@@ -88,7 +88,7 @@ fn audit_sheets() {
     shot("04-tool-on-sheet", &mut h);
     eprintln!(
         "after picking Line on the sheet: sheet_preview = {}, tool = {:?}",
-        h.state().sheet_preview,
+        h.state().drawing.view.sheet_preview,
         h.state().tool.kind()
     );
     h.key_press(Key::Escape);
@@ -121,7 +121,7 @@ fn audit_sheets() {
     shot("06-added-view", &mut h);
 
     // 7. The new view, picked, dragged far left: it stays on the paper.
-    let sheet = h.state().editor.doc.sheet(id).unwrap().clone();
+    let sheet = h.state().drawing.editor.doc.sheet(id).unwrap().clone();
     let frame = placed(&h, id)[1].frame;
     let from = on_paper(&h, frame.at);
     drag(
@@ -157,7 +157,7 @@ fn audit_sheets() {
     h.state_mut().status = None;
     shot("11-second-sheet", &mut h);
     let s2 = h.state().current_sheet().unwrap();
-    let f = &h.state().editor.doc.sheet(s2).unwrap().fields;
+    let f = &h.state().drawing.editor.doc.sheet(s2).unwrap().fields;
     eprintln!("second sheet fields: {f:?}");
 
     // 11. The Sheets panel with two sheets.

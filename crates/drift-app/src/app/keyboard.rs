@@ -34,7 +34,7 @@ impl DriftApp {
             return;
         }
         // Add view from a sheet: Esc (before the crop is started) goes back to the sheet.
-        if let Some(sheet) = self.add_view_on
+        if let Some(sheet) = self.drawing.add_view_on
             && !self.tool.is_busy()
             && ctx.input(|i| i.key_pressed(Key::Escape))
         {
@@ -43,7 +43,7 @@ impl DriftApp {
             return;
         }
         // The sheet preview takes no drawing keys: Esc (or F) returns to the model.
-        if self.sheet_preview {
+        if self.drawing.view.sheet_preview {
             // V adds a view, by its region in the model.
             if ctx.input(|i| i.modifiers.is_none() && i.key_pressed(Key::V))
                 && let Some(id) = self.current_sheet()
@@ -53,14 +53,14 @@ impl DriftApp {
             }
             // Esc lets go of several picked views first, then returns to the model.
             if ctx.input(|i| i.key_pressed(Key::Escape)) {
-                if self.view_set.take().is_some() {
-                    self.sheet_pick = crate::app::sheet_editor::SheetPick::Paper;
+                if self.drawing.view.view_set.take().is_some() {
+                    self.drawing.view.sheet_pick = crate::app::sheet_editor::SheetPick::Paper;
                 } else {
-                    self.sheet_preview = false;
+                    self.drawing.view.sheet_preview = false;
                 }
             }
             if ctx.input(|i| i.key_pressed(Key::F) && i.modifiers.shift_only()) {
-                self.preview.zoom = 0.0;
+                self.drawing.view.preview.zoom = 0.0;
             }
             // Ctrl/⌘+A picks every view on the sheet.
             if ctx.input(|i| i.modifiers.command_only() && i.key_pressed(Key::A)) {
@@ -92,7 +92,7 @@ impl DriftApp {
                     nudge *= 10.0;
                 }
             });
-            if nudge != DVec2::ZERO && self.view_drag.is_none() {
+            if nudge != DVec2::ZERO && self.drawing.view.view_drag.is_none() {
                 self.nudge_views(nudge);
             }
             return;
@@ -120,7 +120,7 @@ impl DriftApp {
                 self.set_tool(ToolKind::Select);
             }
             let now = ctx.input(|i| i.time);
-            match self.editor.preview_chain() {
+            match self.drawing.editor.preview_chain() {
                 // Over a curve: its chain is highlighted, for a click to pick.
                 Some(0) => {}
                 Some(n) => self.set_status(
@@ -130,7 +130,7 @@ impl DriftApp {
                 ),
                 // Over nothing: the selection widens to whole chains.
                 None => {
-                    let n = self.editor.select_chain();
+                    let n = self.drawing.editor.select_chain();
                     if n > 0 {
                         self.set_status(format!("Selected a chain of {n}"), false, now);
                     }
@@ -142,9 +142,11 @@ impl DriftApp {
         // B picks a move's base point.
         let mut claimed = |key, tool_key| {
             pressed(key)
-                && self
-                    .tool
-                    .key(tool_key, self.pointer.as_ref(), &mut self.editor)
+                && self.tool.key(
+                    tool_key,
+                    self.drawing.view.pointer.as_ref(),
+                    &mut self.drawing.editor,
+                )
         };
         claimed(Key::X, ToolKey::X);
         claimed(Key::Y, ToolKey::Y);
@@ -156,9 +158,9 @@ impl DriftApp {
         claimed(Key::Space, ToolKey::Space);
         claimed(Key::Backspace, ToolKey::Backspace);
         // G with another tool in hand moves what is picked: the select tool takes over.
-        let picked = !self.editor.selection.is_empty()
-            || !self.editor.selected_instances.is_empty()
-            || self.editor.picks_annotations();
+        let picked = !self.drawing.editor.selection.is_empty()
+            || !self.drawing.editor.selected_instances.is_empty()
+            || self.drawing.editor.picks_annotations();
         if pressed(Key::G)
             && !g_claimed
             && picked
@@ -166,31 +168,34 @@ impl DriftApp {
             && !self.tool.is_busy()
         {
             self.set_tool(ToolKind::Select);
-            self.tool
-                .key(ToolKey::G, self.pointer.as_ref(), &mut self.editor);
+            self.tool.key(
+                ToolKey::G,
+                self.drawing.view.pointer.as_ref(),
+                &mut self.drawing.editor,
+            );
         }
         if self.tool.is_modal() {
             // Only Esc and Enter (and the modal keys above) act during a grab.
             if pressed(Key::Escape) {
-                self.tool.cancel(&mut self.editor);
+                self.tool.cancel(&mut self.drawing.editor);
             }
             if pressed(Key::Enter) {
-                self.tool.handle(Input::Finish, &mut self.editor);
+                self.tool.handle(Input::Finish, &mut self.drawing.editor);
             }
             return;
         }
 
         if pressed(Key::Escape) {
-            if self.adding_leader.take().is_some()
-                || self.align_edge.take().is_some()
-                || self.selected_leader.take().is_some()
-                || self.selected_constraint.take().is_some()
-                || self.editor.selected_annotation.take().is_some()
-                || self.view_set.take().is_some()
-                || self.picked_view.take().is_some()
+            if self.drawing.adding_leader.take().is_some()
+                || self.drawing.align_edge.take().is_some()
+                || self.drawing.selected_leader.take().is_some()
+                || self.drawing.selected_constraint.take().is_some()
+                || self.drawing.editor.selected_annotation.take().is_some()
+                || self.drawing.view.view_set.take().is_some()
+                || self.drawing.picked_view.take().is_some()
             {
                 // First Esc just clears a picked relation, dimension, annotation or view.
-            } else if !self.tool.cancel(&mut self.editor) {
+            } else if !self.tool.cancel(&mut self.drawing.editor) {
                 self.set_tool(ToolKind::Select);
             }
         }
@@ -199,7 +204,7 @@ impl DriftApp {
         let idle = self.tool.kind() == ToolKind::Select && !self.tool.is_busy();
         let again = idle && (pressed(Key::Enter) || pressed(Key::Space));
         if !(again && self.repeat_last_command(ctx)) && pressed(Key::Enter) {
-            self.tool.handle(Input::Finish, &mut self.editor);
+            self.tool.handle(Input::Finish, &mut self.drawing.editor);
         }
         self.key_commands(
             ctx,
@@ -313,9 +318,13 @@ impl DriftApp {
                 _ => None,
             };
             if let Some(key) = key {
-                self.tool.key(key, self.pointer.as_ref(), &mut self.editor);
+                self.tool.key(
+                    key,
+                    self.drawing.view.pointer.as_ref(),
+                    &mut self.drawing.editor,
+                );
                 let now = ctx.input(|i| i.time);
-                let what = if self.editor.prefs.wall_arc {
+                let what = if self.drawing.editor.prefs.wall_arc {
                     "Arc walls: click the end, then a point the wall curves through"
                 } else {
                     "Straight walls"
@@ -326,10 +335,14 @@ impl DriftApp {
         }
         if kind == ToolKind::Slot && current == ToolKind::Slot {
             // U again: the next kind of slot.
-            self.editor.prefs.slot_mode = self.editor.prefs.slot_mode.next();
-            self.tool.cancel(&mut self.editor);
+            self.drawing.editor.prefs.slot_mode = self.drawing.editor.prefs.slot_mode.next();
+            self.tool.cancel(&mut self.drawing.editor);
             let now = ctx.input(|i| i.time);
-            self.set_status(self.editor.prefs.slot_mode.label().to_owned(), false, now);
+            self.set_status(
+                self.drawing.editor.prefs.slot_mode.label().to_owned(),
+                false,
+                now,
+            );
         }
         if kind == ToolKind::Fillet && current == ToolKind::Fillet {
             // F again: chamfer (and again, fillet).
@@ -358,45 +371,50 @@ impl DriftApp {
     /// Delete what is picked: geometry, text, annotations and dimensions together; or a
     /// picked leader on its own, or a picked view's crop (asking first if it's on a sheet).
     pub(crate) fn delete_picked(&mut self) {
-        if let Some((id, k)) = self.selected_leader.take()
-            && self.editor.selection.is_empty()
-            && self.editor.selected_texts.is_empty()
-            && self.editor.annotation_picks.is_empty()
+        if let Some((id, k)) = self.drawing.selected_leader.take()
+            && self.drawing.editor.selection.is_empty()
+            && self.drawing.editor.selected_texts.is_empty()
+            && self.drawing.editor.annotation_picks.is_empty()
         {
             // A picked leader goes on its own; its note stays.
             self.remove_leader(id, k);
             return;
         }
-        if self.editor.selection.is_empty()
-            && self.selected_constraint.is_none()
-            && let Some(view) = self.picked_view
+        if self.drawing.editor.selection.is_empty()
+            && self.drawing.selected_constraint.is_none()
+            && let Some(view) = self.drawing.picked_view
         {
             self.delete_picked_view(view);
             return;
         }
         // Everything picked goes together: geometry, text, annotations and dimensions.
-        let picked: Vec<_> = self.selected_constraint.take().into_iter().collect();
-        self.editor.delete_selection_with(&picked);
+        let picked: Vec<_> = self
+            .drawing
+            .selected_constraint
+            .take()
+            .into_iter()
+            .collect();
+        self.drawing.editor.delete_selection_with(&picked);
     }
 
     /// A picked view goes, from the model and its sheets. One on sheets asks first, in the
     /// Sheets tab.
     pub(crate) fn delete_picked_view(&mut self, view: drift_core::ViewId) {
         // Several picked on a sheet: they go together, after a yes in the Inspector.
-        if self.sheet_preview
+        if self.drawing.view.sheet_preview
             && let Some(sheet) = self
                 .current_sheet()
-                .and_then(|id| self.editor.doc.sheet(id))
+                .and_then(|id| self.drawing.editor.doc.sheet(id))
             && self.picked_views(sheet).len() > 1
         {
-            self.confirm_delete_set = true;
+            self.drawing.confirm_delete_set = true;
             self.show_panel(crate::dock::Panel::Inspector);
             return;
         }
-        if self.editor.doc.sheets_showing(view).is_empty() {
+        if self.drawing.editor.doc.sheets_showing(view).is_empty() {
             self.delete_view(view);
         } else {
-            self.confirm_delete_view = Some(view);
+            self.drawing.confirm_delete_view = Some(view);
             self.show_panel(crate::dock::Panel::Sheets);
         }
     }
@@ -408,7 +426,7 @@ impl DriftApp {
         if let Some(point) = chain
             && matches!(kind, ToolKind::Line | ToolKind::TangentArc)
         {
-            self.tool.continue_from(point, &mut self.editor);
+            self.tool.continue_from(point, &mut self.drawing.editor);
         }
         // The last tool picked (however it was picked) is what Enter repeats.
         if commands::spec(Command::Tool(kind)).is_some_and(|s| s.repeatable) {
@@ -430,18 +448,24 @@ impl DriftApp {
             ctx.memory_mut(|m| m.surrender_focus(id));
         }
         if fields.is_empty() || ctx.text_edit_focused() || self.text_was_focused {
-            self.typing = None;
+            self.drawing.typing = None;
             self.tool.set_typed([None; 2]);
             return;
         }
-        if self.typing.as_ref().is_some_and(|t| t.fields != fields) {
-            self.typing = None;
+        if self
+            .drawing
+            .typing
+            .as_ref()
+            .is_some_and(|t| t.fields != fields)
+        {
+            self.drawing.typing = None;
         }
         // Typing starts with a digit, `.`, `-`, `(`, or `=` (to start with a variable name).
         // Once it has started, any text goes into the field (units, `'`, `"`, variables), and
         // letter keys no longer act as shortcuts.
-        let active = self.typing.is_some();
+        let active = self.drawing.typing.is_some();
         let in_call = self
+            .drawing
             .typing
             .as_ref()
             .is_some_and(|t| t.values[t.active].contains('('));
@@ -479,15 +503,18 @@ impl DriftApp {
         };
         let consume = |key| ctx.input_mut(|i| i.consume_key(EguiModifiers::NONE, key));
         if !typed.is_empty() || starting {
-            let t = self.typing.get_or_insert_with(|| Typing::new(fields));
+            let t = self
+                .drawing
+                .typing
+                .get_or_insert_with(|| Typing::new(fields));
             t.values[t.active].push_str(&typed);
-        } else if self.typing.is_none() && fields.len() > 1 && consume(Key::Tab) {
+        } else if self.drawing.typing.is_none() && fields.len() > 1 && consume(Key::Tab) {
             // Tab first: start with the second field (e.g. angle).
             let mut t = Typing::new(fields);
             t.active = 1;
-            self.typing = Some(t);
+            self.drawing.typing = Some(t);
         }
-        if let Some(t) = &mut self.typing {
+        if let Some(t) = &mut self.drawing.typing {
             if consume(Key::Tab) {
                 t.active = (t.active + 1) % t.fields.len();
             }
@@ -495,39 +522,52 @@ impl DriftApp {
                 t.values[t.active].pop();
             }
             if consume(Key::Escape) {
-                self.typing = None;
+                self.drawing.typing = None;
             } else if consume(Key::Enter) {
-                if let Some(error) = t.evaluate(&self.editor).into_iter().find_map(Result::err) {
+                if let Some(error) = t
+                    .evaluate(&self.drawing.editor)
+                    .into_iter()
+                    .find_map(Result::err)
+                {
                     // Keep the typing so it can be fixed.
-                    self.editor.out.notice = Some(error);
+                    self.drawing.editor.out.notice = Some(error);
                 } else {
-                    let values = t.parsed(&self.editor);
-                    self.editor.typed_exprs = t.expressions(&self.editor);
-                    self.typing = None;
-                    let pointer = self.pointer.unwrap_or_else(|| {
-                        let mut p =
-                            Pointer::new(self.camera.center, PICK_RADIUS / self.camera.scale);
-                        p.units = self.editor.doc.units();
+                    let values = t.parsed(&self.drawing.editor);
+                    self.drawing.editor.typed_exprs = t.expressions(&self.drawing.editor);
+                    self.drawing.typing = None;
+                    let pointer = self.drawing.view.pointer.unwrap_or_else(|| {
+                        let mut p = Pointer::new(
+                            self.drawing.view.camera.center,
+                            PICK_RADIUS / self.drawing.view.camera.scale,
+                        );
+                        p.units = self.drawing.editor.doc.units();
                         p
                     });
                     self.tool.set_typed(values);
-                    self.tool.commit_typed(&pointer, &mut self.editor);
-                    self.editor.typed_exprs = [None, None];
+                    self.tool.commit_typed(&pointer, &mut self.drawing.editor);
+                    self.drawing.editor.typed_exprs = [None, None];
                 }
             }
         }
         let values = self
+            .drawing
             .typing
             .as_ref()
-            .map_or([None; 2], |t| t.parsed(&self.editor));
+            .map_or([None; 2], |t| t.parsed(&self.drawing.editor));
         self.tool.set_typed(values);
     }
 
     /// What zoom-to-fit frames: the geometry plus placed dimension labels (with a little room
     /// for the label text).
     pub(crate) fn fit_bounds(&self) -> Bounds {
-        let mut b = self.editor.bounds();
-        for (_, u) in self.editor.doc.underlays().filter(|(_, u)| u.visible) {
+        let mut b = self.drawing.editor.bounds();
+        for (_, u) in self
+            .drawing
+            .editor
+            .doc
+            .underlays()
+            .filter(|(_, u)| u.visible)
+        {
             let ub = u.bounds();
             if !ub.is_empty() {
                 b.include(ub.min);
@@ -538,7 +578,7 @@ impl DriftApp {
             return EMPTY_VIEW;
         }
         if self.show_dimensions {
-            let doc = &self.editor.doc;
+            let doc = &self.drawing.editor.doc;
             let pad = 0.04 * (b.max - b.min).max_element();
             for (id, c) in doc.constraints() {
                 if let (Some(anchor), Some(offset)) = (

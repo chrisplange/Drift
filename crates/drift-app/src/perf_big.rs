@@ -74,7 +74,7 @@ fn perf_big() {
     println!();
     let t = Instant::now();
     if let Some(cells) = synthetic {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         ed.doc.begin();
         drift_io::dxf::add_to_document(&mut ed.doc, &big_drawing(cells));
         ed.commit_import("Import");
@@ -91,7 +91,7 @@ fn perf_big() {
     }
     println!("import {:.0} ms", ms(t));
     {
-        let ed = &h.state().editor;
+        let ed = &h.state().drawing.editor;
         let curves = ed.doc.iter().filter(|(_, e)| !e.kind.is_point()).count();
         println!(
             "{curves} curves, {} fills, {} underlays",
@@ -100,13 +100,13 @@ fn perf_big() {
         );
     }
     let fit = h.state().fit_bounds();
-    h.state_mut().fit_target = Some(fit);
+    h.state_mut().drawing.view.fit_target = Some(fit);
     let t = Instant::now();
     h.step();
     println!("first frame after import {:.0} ms", ms(t));
     h.run();
-    h.state_mut().fit_target = None;
-    let fitted = h.state().camera;
+    h.state_mut().drawing.view.fit_target = None;
+    let fitted = h.state().drawing.view.camera;
 
     let spot = |k: usize| {
         Pos2::new(
@@ -119,10 +119,10 @@ fn perf_big() {
         h.hover_at(spot(k))
     });
     phase("pan, fit", &mut h, 30, &mut |h, _| {
-        h.state_mut().camera.pan(DVec2::new(4.0, 2.0));
+        h.state_mut().drawing.view.camera.pan(DVec2::new(4.0, 2.0));
     });
     {
-        let c = &mut h.state_mut().camera;
+        let c = &mut h.state_mut().drawing.view.camera;
         *c = fitted;
         c.center = fit.min + (fit.max - fit.min) * 0.15;
         c.scale = fitted.scale * 12.0;
@@ -133,12 +133,12 @@ fn perf_big() {
         h.hover_at(spot(k))
     });
     phase("pan, zoomed x12", &mut h, 30, &mut |h, _| {
-        h.state_mut().camera.pan(DVec2::new(6.0, 3.0));
+        h.state_mut().drawing.view.camera.pan(DVec2::new(6.0, 3.0));
     });
-    h.state_mut().camera = fitted;
+    h.state_mut().drawing.view.camera = fitted;
     h.step();
     let one = {
-        let ed = &h.state().editor;
+        let ed = &h.state().drawing.editor;
         ed.doc
             .iter()
             .filter(|(_, e)| !e.kind.is_point())
@@ -146,11 +146,11 @@ fn perf_big() {
             .nth(1000)
     };
     if let Some(one) = one {
-        h.state_mut().editor.selection = [one].into_iter().collect();
+        h.state_mut().drawing.editor.selection = [one].into_iter().collect();
         phase("one curve picked, hover, fit", &mut h, 20, &mut |h, k| {
             h.hover_at(Pos2::new(500.0 + (k as f32 * 37.0) % 1100.0, 300.0));
         });
-        h.state_mut().editor.selection.clear();
+        h.state_mut().drawing.editor.selection.clear();
         h.step();
     }
     if mode != ImportAs::Geometry {
@@ -158,6 +158,7 @@ fn perf_big() {
     }
     let curves: Vec<EntityId> = h
         .state()
+        .drawing
         .editor
         .doc
         .iter()
@@ -177,7 +178,7 @@ fn perf_big() {
         // Frames until its fills have followed it (their areas found on a thread).
         let t = Instant::now();
         let mut frames = 0;
-        while h.state().editor.areas_pending() && frames < 2000 {
+        while h.state().drawing.editor.areas_pending() && frames < 2000 {
             h.step();
             frames += 1;
         }
@@ -189,10 +190,12 @@ fn perf_big() {
         h.step();
     };
     edit("move one curve (nudge)", &mut h, &mut |app| {
-        app.editor.selection = [mid].into_iter().collect();
-        assert_eq!(app.editor.nudge(DVec2::new(1.0, 0.0)), Some(true));
+        app.drawing.editor.selection = [mid].into_iter().collect();
+        assert_eq!(app.drawing.editor.nudge(DVec2::new(1.0, 0.0)), Some(true));
     });
-    edit("undo", &mut h, &mut |app| assert!(app.editor.undo()));
+    edit("undo", &mut h, &mut |app| {
+        assert!(app.drawing.editor.undo())
+    });
     let hundred: BTreeSet<EntityId> = curves
         .iter()
         .step_by(curves.len() / 100)
@@ -200,13 +203,17 @@ fn perf_big() {
         .copied()
         .collect();
     edit("delete 100 curves", &mut h, &mut |app| {
-        app.editor.selection = hundred.clone();
-        app.editor.delete_selection();
+        app.drawing.editor.selection = hundred.clone();
+        app.drawing.editor.delete_selection();
     });
-    edit("undo delete", &mut h, &mut |app| assert!(app.editor.undo()));
-    edit("redo delete", &mut h, &mut |app| assert!(app.editor.redo()));
+    edit("undo delete", &mut h, &mut |app| {
+        assert!(app.drawing.editor.undo())
+    });
+    edit("redo delete", &mut h, &mut |app| {
+        assert!(app.drawing.editor.redo())
+    });
     // The crossed fills' areas as remembered are those a fresh look finds.
-    let ed = &mut h.state_mut().editor;
+    let ed = &mut h.state_mut().drawing.editor;
     ed.settle_areas();
     let kept = ed.fill_shapes();
     let (fills, bytes) = ed.crossed_fill_memo();
@@ -256,11 +263,11 @@ fn perf_big_drag() {
     let mut pending = h.state_mut().pending_import.take().expect("pending");
     h.state_mut().finish_import(&mut pending, 0.0);
     let fit = h.state().fit_bounds();
-    h.state_mut().fit_target = Some(fit);
+    h.state_mut().drawing.view.fit_target = Some(fit);
     h.run();
-    h.state_mut().fit_target = None;
+    h.state_mut().drawing.view.fit_target = None;
     let (curves, points) = {
-        let ed = &h.state().editor;
+        let ed = &h.state().drawing.editor;
         let mut c = Vec::new();
         let mut p = Vec::new();
         for (id, e) in ed.doc.iter() {
@@ -276,8 +283,8 @@ fn perf_big_drag() {
         "\n{} curves, {} points, {} fills, {} relations",
         curves.len(),
         points.len(),
-        h.state().editor.doc.fills().count(),
-        h.state().editor.doc.constraints().count()
+        h.state().drawing.editor.doc.fills().count(),
+        h.state().drawing.editor.doc.constraints().count()
     );
     let only = std::env::var("DRIFT_CASE").ok();
     let cases: Vec<(&str, Vec<EntityId>)> = vec![
@@ -299,7 +306,7 @@ fn perf_big_drag() {
             continue;
         }
         {
-            let ed = &mut h.state_mut().editor;
+            let ed = &mut h.state_mut().drawing.editor;
             ed.doc.begin();
             let scope = ed.scope_of_drag(&ids);
             let lowering = ed.lowering();
@@ -355,6 +362,7 @@ fn perf_big_drag() {
         }
         let dragged: Vec<drift_solver::Param> = h
             .state()
+            .drawing
             .editor
             .doc
             .defining_points(ids.iter().copied())
@@ -366,10 +374,11 @@ fn perf_big_drag() {
             let t = Instant::now();
             let ok = h
                 .state_mut()
+                .drawing
                 .editor
                 .drag(&ids, DVec2::new(2.0, 1.0), &dragged);
             let call = ms(t);
-            let solves = h.state().editor.drag_solves();
+            let solves = h.state().drawing.editor.drag_solves();
             let t = Instant::now();
             h.step();
             let frame = ms(t);
@@ -378,7 +387,7 @@ fn perf_big_drag() {
             );
         }
         {
-            let ed = &mut h.state_mut().editor;
+            let ed = &mut h.state_mut().drawing.editor;
             ed.doc.rollback();
             ed.sync();
         }
@@ -388,17 +397,23 @@ fn perf_big_drag() {
         // frame, then a click to finish (the same moves as a drag of them).
         if ids.len() > 1 && label.contains("curves") {
             let first = ids[0];
-            let was = h.state().editor.doc.shape(first).map(|s| s.bounds().min);
+            let was = h
+                .state()
+                .drawing
+                .editor
+                .doc
+                .shape(first)
+                .map(|s| s.bounds().min);
             // (The import's report closes first: with a window open the canvas takes no keys.)
             for _ in 0..3 {
                 h.key_press(eframe::egui::Key::Escape);
                 h.step();
             }
             assert!(!h.state().any_dialog_open(), "a window is open");
-            h.state_mut().editor.selection = ids.iter().copied().collect();
+            h.state_mut().drawing.editor.selection = ids.iter().copied().collect();
             h.step();
             h.step();
-            let at = h.state().canvas_rect.center();
+            let at = h.state().drawing.view.canvas_rect.center();
             let press = |h: &mut Harness<'_, crate::DriftApp>, pos: Pos2, pressed: bool| {
                 h.event(eframe::egui::Event::PointerButton {
                     pos,
@@ -416,10 +431,16 @@ fn perf_big_drag() {
                 let t = Instant::now();
                 h.step();
                 let frame = ms(t);
-                let now = h.state().editor.doc.shape(first).map(|s| s.bounds().min);
+                let now = h
+                    .state()
+                    .drawing
+                    .editor
+                    .doc
+                    .shape(first)
+                    .map(|s| s.bounds().min);
                 println!(
                     "  select tool step {k}: frame {frame:.1} ms, {} solves, moved {:.1} mm",
-                    h.state().editor.drag_solves(),
+                    h.state().drawing.editor.drag_solves(),
                     now.zip(was).map_or(0.0, |(a, b)| a.distance(b))
                 );
             }
@@ -431,11 +452,11 @@ fn perf_big_drag() {
             let t = Instant::now();
             h.step();
             println!("  frame after {:.1} ms", ms(t));
-            while h.state().editor.areas_pending() {
+            while h.state().drawing.editor.areas_pending() {
                 h.step();
             }
-            assert!(h.state_mut().editor.undo());
-            h.state_mut().editor.selection.clear();
+            assert!(h.state_mut().drawing.editor.undo());
+            h.state_mut().drawing.editor.selection.clear();
             h.step();
             h.step();
         }
@@ -498,7 +519,7 @@ fn perf_big_save() {
         h.state_mut().begin_import(&name, bytes, Some(mode), 0.0);
         let mut pending = h.state_mut().pending_import.take().expect("pending");
         h.state_mut().finish_import(&mut pending, 0.0);
-        h.state().editor.doc.clone()
+        h.state().drawing.editor.doc.clone()
     };
     println!();
     println!(

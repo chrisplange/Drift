@@ -15,12 +15,12 @@ impl DriftApp {
     /// The picked filled shapes when they are all that is picked (and nothing but shapes'
     /// fills and outlines): the Inspector shows them as objects.
     pub(crate) fn picked_shapes(&self) -> Option<PickedShapes> {
-        let ed = &self.editor;
+        let ed = &self.drawing.editor;
         if ed.selected_fills.is_empty() && ed.selection.is_empty() {
             return None;
         }
         // Another fill picked (an area fill) keeps the fill's inspector.
-        let shapes = self.editor.shapes_in_selection();
+        let shapes = self.drawing.editor.shapes_in_selection();
         if shapes.fills.is_empty()
             || ed.selected_fills.iter().any(|f| !shapes.fills.contains(f))
             || !ed.selected_instances.is_empty()
@@ -43,7 +43,7 @@ impl DriftApp {
             return false;
         };
         let first = shapes.fills[0];
-        let Some(fill) = self.editor.doc.fill(first).cloned() else {
+        let Some(fill) = self.drawing.editor.doc.fill(first).cloned() else {
             return false;
         };
         let (name, detail) = match shapes.fills.len() {
@@ -51,6 +51,7 @@ impl DriftApp {
                 // A lone circle or ellipse goes by its name; anything else is a shape.
                 let name = match shapes.curves.as_slice() {
                     [one] => self
+                        .drawing
                         .editor
                         .doc
                         .get(*one)
@@ -58,6 +59,7 @@ impl DriftApp {
                     _ => "Shape",
                 };
                 let layer = self
+                    .drawing
                     .editor
                     .doc
                     .layer(fill.layer)
@@ -84,9 +86,9 @@ impl DriftApp {
         self.arrange_row(ui);
         if let ([_], Some(shape)) = (
             shapes.fills.as_slice(),
-            self.editor.fill_shapes().get(&first).cloned(),
+            self.drawing.editor.fill_shapes().get(&first).cloned(),
         ) {
-            let units = self.editor.doc.units();
+            let units = self.drawing.editor.doc.units();
             let r = &shape.region;
             theme::section(ui, "Size");
             theme::row(ui, "Area", |ui| {
@@ -99,8 +101,11 @@ impl DriftApp {
         ui.add_space(10.0);
         if theme::danger_button(ui, "Delete").clicked() {
             // The whole shape: its outline, and with it its fill.
-            self.editor.selection.extend(shapes.curves.iter().copied());
-            self.editor.delete_selection();
+            self.drawing
+                .editor
+                .selection
+                .extend(shapes.curves.iter().copied());
+            self.drawing.editor.delete_selection();
         }
         true
     }
@@ -111,13 +116,13 @@ impl DriftApp {
         let Some(fill) = shapes
             .fills
             .first()
-            .and_then(|f| self.editor.doc.fill(*f))
+            .and_then(|f| self.drawing.editor.doc.fill(*f))
             .cloned()
         else {
             return false;
         };
         self.hatch_patterns
-            .update(self.editor.doc.custom_patterns());
+            .update(self.drawing.editor.doc.custom_patterns());
         let dark = ui.visuals().dark_mode;
         let mut style = FillStyle::of(&fill);
         // One hatched shape: its pattern's alignment, with the angle among it.
@@ -137,24 +142,27 @@ impl DriftApp {
         match edit {
             FillEdit::Unchanged => false,
             FillEdit::Changed => {
-                self.editor.doc.begin();
+                self.drawing.editor.doc.begin();
                 for id in &shapes.fills {
-                    if let Some(mut f) = self.editor.doc.fill(*id).cloned() {
+                    if let Some(mut f) = self.drawing.editor.doc.fill(*id).cloned() {
                         style.apply(&mut f);
-                        self.editor.doc.set_fill(*id, f);
+                        self.drawing.editor.doc.set_fill(*id, f);
                     }
                 }
-                self.editor.commit("Edit fill");
+                self.drawing.editor.commit("Edit fill");
                 false
             }
             FillEdit::Removed => {
-                self.editor.doc.begin();
+                self.drawing.editor.doc.begin();
                 for id in &shapes.fills {
-                    self.editor.doc.remove_fill(*id);
+                    self.drawing.editor.doc.remove_fill(*id);
                 }
-                if self.editor.commit("Remove fill") {
-                    self.editor.selected_fills.clear();
-                    self.editor.selection.extend(shapes.curves.iter().copied());
+                if self.drawing.editor.commit("Remove fill") {
+                    self.drawing.editor.selected_fills.clear();
+                    self.drawing
+                        .editor
+                        .selection
+                        .extend(shapes.curves.iter().copied());
                 }
                 true
             }
@@ -164,7 +172,7 @@ impl DriftApp {
     /// A Stroke section for `curves`: a line or none, then (with a line) its colour, weight
     /// and line type.
     pub(crate) fn stroke_section(&mut self, ui: &mut egui::Ui, curves: &[EntityId]) {
-        let ed = &self.editor;
+        let ed = &self.drawing.editor;
         let stroked = |id: &EntityId| {
             ed.doc.get(*id).is_some_and(|e| {
                 let layer = ed.doc.layer_of(*id);
@@ -179,7 +187,7 @@ impl DriftApp {
             && line != on
         {
             // None: not drawn or printed. A line again: as its layer draws it.
-            self.editor.update_appearance(curves, |a| {
+            self.drawing.editor.update_appearance(curves, |a| {
                 a.line_type = (!line).then_some(LineType::None);
             });
         }
@@ -203,7 +211,7 @@ impl DriftApp {
 
     /// The shapes' layer: moving them moves their outlines (with their points) and fills.
     fn shape_layer_row(&mut self, ui: &mut egui::Ui, shapes: &PickedShapes) {
-        let ed = &self.editor;
+        let ed = &self.drawing.editor;
         let layers: Vec<(drift_core::LayerId, String)> = ed
             .doc
             .layers()
@@ -239,7 +247,7 @@ impl DriftApp {
         // What is picked, as the right-click menu moves it (#266): a shape picked whole
         // takes its fill, a fill picked on its own goes alone.
         if let Some(layer) = target {
-            self.editor.move_selection_to_layer(layer);
+            self.drawing.editor.move_selection_to_layer(layer);
         }
     }
 }

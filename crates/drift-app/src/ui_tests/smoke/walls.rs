@@ -5,9 +5,9 @@ use super::*;
 
 /// A ring of walls round a 100 × 60 room, 10 thick, with the Wall tool; back to Select.
 fn room(h: &mut Harness<'_, DriftApp>) {
-    h.state_mut().editor.prefs.wall_thickness = 10.0;
-    h.state_mut().editor.prefs.wall_justify = drift_core::Justify::Centre;
-    h.state_mut().editor.prefs.wall_arc = false;
+    h.state_mut().drawing.editor.prefs.wall_thickness = 10.0;
+    h.state_mut().drawing.editor.prefs.wall_justify = drift_core::Justify::Centre;
+    h.state_mut().drawing.editor.prefs.wall_arc = false;
     h.key_press(Key::W);
     h.run();
     for p in [
@@ -26,7 +26,7 @@ fn room(h: &mut Harness<'_, DriftApp>) {
 }
 
 fn poche(h: &mut Harness<'_, DriftApp>) -> f64 {
-    let shapes = h.state_mut().editor.fill_shapes();
+    let shapes = h.state_mut().drawing.editor.fill_shapes();
     shapes.values().map(|s| s.region.area).sum()
 }
 
@@ -35,7 +35,7 @@ fn smoke_walls_room_tee_and_thickness() {
     let Some(mut h) = harness() else { return };
     view(&mut h, DVec2::new(-20.0, -20.0), DVec2::new(160.0, 80.0));
     room(&mut h);
-    assert_eq!(h.state().editor.doc.walls().count(), 1);
+    assert_eq!(h.state().drawing.editor.doc.walls().count(), 1);
     let ring = 110.0 * 70.0 - 90.0 * 50.0;
     assert!((poche(&mut h) - ring).abs() < 0.5, "{}", poche(&mut h));
     // A wall teed onto the room's right side, out to the right.
@@ -47,18 +47,25 @@ fn smoke_walls_room_tee_and_thickness() {
     h.run();
     h.key_press(Key::Escape);
     h.run();
-    assert_eq!(h.state().editor.doc.walls().count(), 2);
+    assert_eq!(h.state().drawing.editor.doc.walls().count(), 2);
     assert_eq!(
-        h.state().editor.doc.fills().count(),
+        h.state().drawing.editor.doc.fills().count(),
         1,
         "one poché for both"
     );
     assert!((poche(&mut h) - (ring + 450.0)).abs() < 0.5);
     // Picked by its poché, re-thickened from the Inspector's value.
     click_world(&mut h, DVec2::new(50.0, 1.0));
-    let picked: Vec<_> = h.state().editor.selected_walls().into_iter().collect();
+    let picked: Vec<_> = h
+        .state()
+        .drawing
+        .editor
+        .selected_walls()
+        .into_iter()
+        .collect();
     assert_eq!(picked.len(), 1);
     h.state_mut()
+        .drawing
         .editor
         .set_wall_thickness(&picked, "20")
         .unwrap();
@@ -81,21 +88,28 @@ fn smoke_walls_save_open_and_explode() {
     let Some(mut h) = harness() else { return };
     view(&mut h, DVec2::new(-20.0, -20.0), DVec2::new(160.0, 80.0));
     room(&mut h);
-    let before = h.state().editor.doc.clone();
+    let before = h.state().drawing.editor.doc.clone();
     let dir = scratch_dir("smoke-walls");
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("Walls.drift");
-    h.state_mut().file.path = Some(path.clone());
+    h.state_mut().drawing.file.path = Some(path.clone());
     h.key_press_modifiers(EguiModifiers::COMMAND, Key::S);
     h.run_steps(3);
     h.key_press_modifiers(EguiModifiers::COMMAND, Key::N);
     h.run_steps(2);
-    assert_eq!(h.state().editor.doc.walls().count(), 0);
+    assert_eq!(h.state().drawing.editor.doc.walls().count(), 0);
     h.state().files.open_path(&path);
     h.run_steps(3);
-    assert!(h.state().editor.out.notice.is_none(), "nothing repaired");
     assert!(
-        h.state().editor.doc.same_sketch(&before.sketch_copy()),
+        h.state().drawing.editor.out.notice.is_none(),
+        "nothing repaired"
+    );
+    assert!(
+        h.state()
+            .drawing
+            .editor
+            .doc
+            .same_sketch(&before.sketch_copy()),
         "the walls as they were"
     );
     // Picked by a click in its poché and exploded (Edit → Explode): plain lines and a fill.
@@ -107,11 +121,11 @@ fn smoke_walls_save_open_and_explode() {
         button(&h, pos, pressed);
         h.run_steps(2);
     }
-    assert_eq!(h.state().editor.selected_walls().len(), 1);
-    h.state_mut().editor.explode_selected();
+    assert_eq!(h.state().drawing.editor.selected_walls().len(), 1);
+    h.state_mut().drawing.editor.explode_selected();
     h.run_steps(2);
-    assert_eq!(h.state().editor.doc.walls().count(), 0);
-    assert_eq!(h.state().editor.doc.fills().count(), 1);
+    assert_eq!(h.state().drawing.editor.doc.walls().count(), 0);
+    assert_eq!(h.state().drawing.editor.doc.fills().count(), 1);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -122,14 +136,14 @@ fn smoke_walls_a_rooms_floor_fill_is_an_area_fill() {
     let Some(mut h) = harness() else { return };
     view(&mut h, DVec2::new(-20.0, -20.0), DVec2::new(160.0, 80.0));
     room(&mut h);
-    let paths = h.state().editor.doc.paths().count();
-    let fills = h.state().editor.doc.fills().count();
+    let paths = h.state().drawing.editor.doc.paths().count();
+    let fills = h.state().drawing.editor.doc.fills().count();
     h.key_press(Key::H);
     h.run();
     click_world(&mut h, DVec2::new(50.0, 30.0));
     h.key_press(Key::Escape);
     h.run();
-    let ed = &h.state().editor;
+    let ed = &h.state().drawing.editor;
     assert_eq!(ed.doc.fills().count(), fills + 1, "the floor filled");
     assert_eq!(ed.doc.paths().count(), paths, "no shape made of wall faces");
     let floor = ed
@@ -147,7 +161,7 @@ fn smoke_walls_a_rooms_floor_fill_is_an_area_fill() {
 
 /// The canvas's index of shapes holds every curve where it is: what is drawn and picked.
 fn index_follows(h: &Harness<'_, DriftApp>, when: &str) {
-    let ed = &h.state().editor;
+    let ed = &h.state().drawing.editor;
     for (id, _) in ed.doc.iter() {
         assert_eq!(
             ed.index.shape(id),
@@ -179,7 +193,7 @@ fn smoke_walls_moved_by_poche_or_face_take_their_faces() {
     ] {
         click_world(&mut h, at);
         assert_eq!(
-            h.state().editor.selected_walls().len(),
+            h.state().drawing.editor.selected_walls().len(),
             1,
             "picked by its {by}"
         );
@@ -222,7 +236,11 @@ fn smoke_walls_moved_by_poche_or_face_take_their_faces() {
     index_follows(&h, "dragging");
     button(&h, to, false);
     h.run_steps(2);
-    assert_eq!(h.state().editor.selected_walls().len(), 1, "still picked");
+    assert_eq!(
+        h.state().drawing.editor.selected_walls().len(),
+        1,
+        "still picked"
+    );
     // (Its base point snaps on the way, so the move is the first point's, about 30 up.)
     let d = positions(&h)[0].1 - before[0].1;
     assert!((d.y - 30.0).abs() < 1.0, "{d:?}");
@@ -240,13 +258,13 @@ fn smoke_walls_pasted_room_moves_whole() {
     click_world(&mut h, DVec2::new(50.0, 1.0));
     h.event(Event::Copy);
     h.run_steps(2);
-    let text = h.state().editor.copy_selection().unwrap();
+    let text = h.state().drawing.editor.copy_selection().unwrap();
     let first = screen(&h, DVec2::new(150.0, 40.0));
     h.hover_at(first);
     h.run_steps(2);
     h.event(Event::Paste(text));
     h.run_steps(2);
-    assert_eq!(h.state().editor.doc.walls().count(), 2, "pasted");
+    assert_eq!(h.state().drawing.editor.doc.walls().count(), 2, "pasted");
     for k in 1..=4 {
         h.hover_at(first + egui::vec2(10.0 * k as f32, 6.0 * k as f32));
         h.run_steps(2);
@@ -258,7 +276,7 @@ fn smoke_walls_pasted_room_moves_whole() {
     button(&h, drop, false);
     h.run_steps(2);
     index_follows(&h, "dropped");
-    let ed = &mut h.state_mut().editor;
+    let ed = &mut h.state_mut().drawing.editor;
     let shapes = ed.fill_shapes();
     assert!(shapes.values().all(|s| !s.lost), "both pochés found");
     let ring = 110.0 * 70.0 - 90.0 * 50.0;
@@ -271,7 +289,7 @@ fn smoke_walls_pasted_room_moves_whole() {
 /// its floor filled (an area fill inside the walls' faces). Returns the floor.
 fn bay_room(h: &mut Harness<'_, DriftApp>, justify: drift_core::Justify) -> FillId {
     {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         ed.doc.begin();
         let [a, b, c, d, o] = [
             (0.0, 0.0),
@@ -303,13 +321,13 @@ fn bay_room(h: &mut Harness<'_, DriftApp>, justify: drift_core::Justify) -> Fill
         assert!(ed.commit("Wall"));
     }
     h.run_steps(2);
-    let fills = h.state().editor.doc.fills().count();
+    let fills = h.state().drawing.editor.doc.fills().count();
     h.key_press(Key::H);
     h.run_steps(2);
     click_world(h, DVec2::new(50.0, 30.0));
     h.key_press(Key::Escape);
     h.run_steps(2);
-    let ed = &h.state().editor;
+    let ed = &h.state().drawing.editor;
     assert_eq!(ed.doc.fills().count(), fills + 1, "the floor filled");
     ed.doc
         .fills()
@@ -320,7 +338,7 @@ fn bay_room(h: &mut Harness<'_, DriftApp>, justify: drift_core::Justify) -> Fill
 
 /// The radii of the arcs walls made, sorted.
 fn face_radii(h: &Harness<'_, DriftApp>, w: drift_core::WallId) -> Vec<f64> {
-    let doc = &h.state().editor.doc;
+    let doc = &h.state().drawing.editor.doc;
     let mut r: Vec<f64> = doc
         .wall(w)
         .unwrap()
@@ -353,7 +371,7 @@ fn smoke_walls_mirror_copies_the_floor_and_the_faces() {
         view(&mut h, DVec2::new(-30.0, -30.0), DVec2::new(330.0, 150.0));
         let floor = bay_room(&mut h, justify);
         let (axis, original, curves) = {
-            let ed = &mut h.state_mut().editor;
+            let ed = &mut h.state_mut().drawing.editor;
             let original = ed.doc.walls().next().unwrap().0;
             let curves = ed.doc.iter().filter(|(_, e)| !e.kind.is_point()).count();
             ed.doc.begin();
@@ -367,7 +385,7 @@ fn smoke_walls_mirror_copies_the_floor_and_the_faces() {
         assert_eq!(radii.len(), 2, "two faces round the bay");
         if all {
             // Every curve, the walls' faces too (as a script can pick them), but the axis.
-            let ed = &mut h.state_mut().editor;
+            let ed = &mut h.state_mut().drawing.editor;
             ed.selection = ed
                 .doc
                 .iter()
@@ -383,15 +401,23 @@ fn smoke_walls_mirror_copies_the_floor_and_the_faces() {
             };
             click_world(&mut h, DVec2::new(50.0, y));
         }
-        assert_eq!(h.state().editor.selected_walls().len(), 1);
+        assert_eq!(h.state().drawing.editor.selected_walls().len(), 1);
         palette(&mut h, "Mirror");
         assert_eq!(h.state().tool.kind(), ToolKind::Mirror);
-        let on_axis = h.state().editor.doc.shape(axis).unwrap().bounds().center();
+        let on_axis = h
+            .state()
+            .drawing
+            .editor
+            .doc
+            .shape(axis)
+            .unwrap()
+            .bounds()
+            .center();
         click_world(&mut h, on_axis);
         h.key_press(Key::Escape);
         h.run_steps(2);
         let what = format!("{justify:?}, all picked: {all}");
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         let copy = ed
             .doc
             .walls()
@@ -437,7 +463,7 @@ fn smoke_walls_mirror_copies_the_floor_and_the_faces() {
 
 /// The floors (fills that aren't pochés): each found, by area.
 fn floors(h: &mut Harness<'_, DriftApp>) -> Vec<f64> {
-    let ed = &mut h.state_mut().editor;
+    let ed = &mut h.state_mut().drawing.editor;
     let owners = ed.wall_owners();
     let shapes = ed.fill_shapes();
     let mut out: Vec<f64> = ed
@@ -465,12 +491,12 @@ fn smoke_walls_copies_take_the_floor() {
         bay_room(&mut h, drift_core::Justify::Centre);
         let floor = floors(&mut h)[0];
         click_world(&mut h, DVec2::new(50.0, -5.0));
-        assert_eq!(h.state().editor.selected_walls().len(), 1);
+        assert_eq!(h.state().drawing.editor.selected_walls().len(), 1);
         match how {
             "paste" => {
                 h.event(Event::Copy);
                 h.run_steps(2);
-                let text = h.state().editor.copy_selection().unwrap();
+                let text = h.state().drawing.editor.copy_selection().unwrap();
                 h.hover_at(screen(&h, DVec2::new(250.0, 50.0)));
                 h.run_steps(2);
                 h.event(Event::Paste(text));
@@ -491,13 +517,13 @@ fn smoke_walls_copies_take_the_floor() {
                 h.run_steps(2);
             }
             _ => {
-                let ed = &mut h.state_mut().editor;
+                let ed = &mut h.state_mut().drawing.editor;
                 let ids: Vec<_> = ed.selection.iter().copied().collect();
                 ed.linear_pattern(&ids, 2, DVec2::new(200.0, 0.0)).unwrap();
                 h.run_steps(2);
             }
         }
-        assert_eq!(h.state().editor.doc.walls().count(), 2, "{how}");
+        assert_eq!(h.state().drawing.editor.doc.walls().count(), 2, "{how}");
         let found = floors(&mut h);
         assert_eq!(found.len(), 2, "the floor copied, {how}");
         assert!((found[1] - floor).abs() < 1e-6, "{found:?}, {how}");

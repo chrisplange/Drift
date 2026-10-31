@@ -26,10 +26,14 @@ fn grouped(
     click_world(h, DVec2::new(15.0, 15.0));
     let other = screen(h, DVec2::new(65.0, 15.0));
     click_with(h, other, EguiModifiers::SHIFT);
-    assert_eq!(h.state().editor.selection.len(), 8, "both shapes picked");
+    assert_eq!(
+        h.state().drawing.editor.selection.len(),
+        8,
+        "both shapes picked"
+    );
     h.key_press_modifiers(EguiModifiers::COMMAND, Key::G);
     h.run();
-    let g = h.state().editor.selected_group().expect("grouped");
+    let g = h.state().drawing.editor.selected_group().expect("grouped");
     h.key_press(Key::Escape);
     h.run();
     (left, right, [a.unwrap(), b.unwrap()], g)
@@ -41,10 +45,18 @@ fn grouped(
 fn smoke_groups_fill_click_picks_the_group_and_g_moves_it() {
     let Some(mut h) = harness() else { return };
     let (left, _, fills, g) = grouped(&mut h);
-    let members = h.state().editor.doc.group(g).unwrap().members.clone();
+    let members = h
+        .state()
+        .drawing
+        .editor
+        .doc
+        .group(g)
+        .unwrap()
+        .members
+        .clone();
     click_world(&mut h, DVec2::new(15.0, 15.0));
     {
-        let ed = &h.state().editor;
+        let ed = &h.state().drawing.editor;
         assert_eq!(ed.selection, members, "the group");
         assert_eq!(ed.selected_fills, fills.into(), "with both fills");
     }
@@ -64,7 +76,7 @@ fn smoke_groups_fill_click_picks_the_group_and_g_moves_it() {
     h.run();
     assert_eq!(at(&h, corner), before + DVec2::new(40.0, 0.0));
     {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         let shapes = ed.fill_shapes();
         for f in fills {
             assert!(!shapes[&f].lost, "the fills went along");
@@ -76,7 +88,7 @@ fn smoke_groups_fill_click_picks_the_group_and_g_moves_it() {
     h.run();
     let inside = screen(&h, DVec2::new(55.0, 15.0));
     double_click(&mut h, inside);
-    let ed = &h.state().editor;
+    let ed = &h.state().drawing.editor;
     assert_eq!(ed.open_group, Some(g), "inside the group");
     assert_eq!(ed.selection, left.iter().copied().collect());
     assert_eq!(ed.selected_fills, [fills[0]].into());
@@ -93,7 +105,7 @@ fn smoke_groups_make_a_block_and_explode_it() {
     h.run();
     h.run();
     let block = {
-        let ed = &h.state().editor;
+        let ed = &h.state().drawing.editor;
         assert!(ed.doc.group(g).is_none(), "the group became a block");
         let copy = *ed.selected_instances.first().expect("its copy, picked");
         let block = ed.doc.instance(copy).unwrap().block;
@@ -108,7 +120,7 @@ fn smoke_groups_make_a_block_and_explode_it() {
     h.get_by_label("Explode to group").click();
     h.run();
     h.run();
-    let ed = &h.state().editor;
+    let ed = &h.state().drawing.editor;
     assert_eq!(ed.doc.instances().count(), 0);
     let (_, group) = ed.doc.groups().next().expect("a group again");
     assert_eq!(group.members.len(), 8);
@@ -134,13 +146,13 @@ fn smoke_groups_a_moving_block_copy_does_not_snap_to_itself() {
         Fill::No,
     );
     let c = {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         ed.selection = sides.iter().copied().collect();
         ed.make_block("Box").unwrap()
     };
     click_world(&mut h, DVec2::new(110.0, 10.0));
-    assert_eq!(h.state().editor.selected_instances, [c].into());
-    let from = h.state().editor.doc.instance(c).unwrap().at;
+    assert_eq!(h.state().drawing.editor.selected_instances, [c].into());
+    let from = h.state().drawing.editor.doc.instance(c).unwrap().at;
     let grip = DVec2::new(100.0, 15.0);
     let start = screen(&h, grip);
     h.hover_at(start);
@@ -152,7 +164,7 @@ fn smoke_groups_a_moving_block_copy_does_not_snap_to_itself() {
         let at = screen(&h, grip + step);
         h.hover_at(at);
         h.run();
-        let to = h.state().editor.doc.instance(c).unwrap().at;
+        let to = h.state().drawing.editor.doc.instance(c).unwrap().at;
         assert!(
             to.distance(from + step) < 0.05,
             "step {k}: moved with the pointer, not onto its own snap points: {from:?} → {to:?}"
@@ -165,6 +177,7 @@ fn smoke_groups_a_moving_block_copy_does_not_snap_to_itself() {
 /// Every group, as (name, members).
 fn groups_now(h: &Harness<'_, DriftApp>) -> Vec<(String, BTreeSet<EntityId>)> {
     h.state()
+        .drawing
         .editor
         .doc
         .groups()
@@ -188,14 +201,14 @@ fn copied_as_a_group(
     assert_eq!(name, "Group 2");
     assert_eq!(members.len(), before[0].1.len());
     assert!(members.is_disjoint(&before[0].1));
-    let ed = &h.state().editor;
+    let ed = &h.state().drawing.editor;
     assert_eq!(&ed.selection, members, "the copy is picked");
     assert!(ed.selected_group().is_some());
     for _ in 0..undos {
         undo(h);
     }
     assert_eq!(groups_now(h), before);
-    assert_eq!(h.state().editor.doc.len(), entities);
+    assert_eq!(h.state().drawing.editor.doc.len(), entities);
 }
 
 /// #227: Shift+D on a group gives a new group of the copies.
@@ -203,7 +216,7 @@ fn copied_as_a_group(
 fn smoke_groups_duplicating_a_group_makes_a_group() {
     let Some(mut h) = harness() else { return };
     grouped(&mut h);
-    let (before, entities) = (groups_now(&h), h.state().editor.doc.len());
+    let (before, entities) = (groups_now(&h), h.state().drawing.editor.doc.len());
     click_world(&mut h, DVec2::new(15.0, 15.0));
     h.hover_at(screen(&h, DVec2::new(15.0, 15.0)));
     h.run();
@@ -218,11 +231,11 @@ fn smoke_groups_duplicating_a_group_makes_a_group() {
 fn smoke_groups_copy_and_paste_a_group_makes_a_group() {
     let Some(mut h) = harness() else { return };
     grouped(&mut h);
-    let (before, entities) = (groups_now(&h), h.state().editor.doc.len());
+    let (before, entities) = (groups_now(&h), h.state().drawing.editor.doc.len());
     click_world(&mut h, DVec2::new(15.0, 15.0));
     h.event(Event::Copy);
     h.run();
-    let text = h.state().editor.copy_selection().unwrap();
+    let text = h.state().drawing.editor.copy_selection().unwrap();
     h.hover_at(screen(&h, DVec2::new(40.0, 40.0)));
     h.run();
     h.event(Event::Paste(text));
@@ -238,7 +251,7 @@ fn smoke_groups_mirroring_a_group_makes_a_group() {
     let Some(mut h) = harness() else { return };
     grouped(&mut h);
     let axis = {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         ed.doc.begin();
         let a = ed.doc.add_point(DVec2::new(95.0, -5.0));
         let b = ed.doc.add_point(DVec2::new(95.0, 45.0));
@@ -246,11 +259,19 @@ fn smoke_groups_mirroring_a_group_makes_a_group() {
         ed.commit("Line");
         axis
     };
-    let (before, entities) = (groups_now(&h), h.state().editor.doc.len());
+    let (before, entities) = (groups_now(&h), h.state().drawing.editor.doc.len());
     click_world(&mut h, DVec2::new(15.0, 15.0));
     palette(&mut h, "Mirror");
     assert_eq!(h.state().tool.kind(), ToolKind::Mirror);
-    let on_axis = h.state().editor.doc.shape(axis).unwrap().bounds().center();
+    let on_axis = h
+        .state()
+        .drawing
+        .editor
+        .doc
+        .shape(axis)
+        .unwrap()
+        .bounds()
+        .center();
     click_world(&mut h, on_axis);
     copied_as_a_group(&mut h, &before, entities, 1);
 }

@@ -221,24 +221,174 @@ struct Status {
     until: f64,
 }
 
-pub struct DriftApp {
+/// One open drawing: its editor (the document, its undo history and caches), its file,
+/// everything picked, typed into, dragged or shown of it, and the canvas view onto it.
+/// Everything here belongs to one drawing; a new field of that kind goes here, not on
+/// [`DriftApp`]. Preferences and view switches stay on the app.
+struct Drawing {
     editor: Editor,
-    tool: Box<dyn Tool>,
+    file: FileState,
+    /// While a Blender profile block is open for editing: the document revision last written
+    /// to the profiles file beside the drawing, and when.
+    live_profiles: Option<(u64, f64)>,
+    /// Saving would leave out things from a newer Drift: the prompt asking first is up, for
+    /// Save As (`true`) or Save.
+    #[cfg(not(feature = "demo"))]
+    lossy_save: Option<bool>,
+    /// What the drawing carries from a newer Drift once the save in progress is written, and
+    /// the document revision that was written: edits made while Save As's picker was open
+    /// aren't in the file, so they stay unsaved.
+    #[cfg(not(feature = "demo"))]
+    saving: Option<(drift_io::Carried, u64)>,
+    /// Text being typed into dimension value fields.
+    dimension_text: std::collections::HashMap<ConstraintId, String>,
+    /// A dimension field to focus next frame (e.g. right after creating the dimension).
+    focus_dimension: Option<ConstraintId>,
+    /// A relation or dimension picked on the canvas (Delete removes it).
+    selected_constraint: Option<ConstraintId>,
+    hovered_constraint: Option<ConstraintId>,
+    /// A dimension label being dragged, and the grab offset from the label (world units).
+    label_drag: Option<(ConstraintId, DVec2)>,
+    /// The start of a dimension's extension line being dragged: the dimension and its end.
+    ext_drag: Option<(ConstraintId, usize)>,
+    /// While a label is dragged: the dimension it snapped level with (a guide, world).
+    dim_guide: Option<[DVec2; 2]>,
+    dimension_edit: Option<DimensionEdit>,
+    /// A property dimension (a wall's thickness) being typed into: its text, and whether to
+    /// focus it on the next frame.
+    property_edit: Option<(drift_core::PropertyDimId, String, bool)>,
+    typing: Option<Typing>,
+    /// Points the pointer recently snapped to; new points can align with them.
+    inference_points: Vec<DVec2>,
+    /// The Parameters tab's state.
+    params: parameters::ParamUi,
+    /// Layer names being edited in the Layers tab.
+    layer_names: std::collections::HashMap<drift_core::LayerId, String>,
+    /// Layers showing their colours and line settings in the Layers panel.
+    expanded_layers: std::collections::HashSet<drift_core::LayerId>,
+    /// The Layers panel's layers and curve counts, kept until the drawing changes.
+    layer_counts: crate::layers_ui::LayerCounts,
+    /// A layer row being dragged to a new place in the order.
+    layer_drag: Option<drift_core::LayerId>,
+    /// The layer whose name is being edited.
+    renaming_layer: Option<drift_core::LayerId>,
+    /// The Layers panel's filter, isolated layer and row heights.
+    layer_list: layers_ui::LayerList,
+    /// Fill tessellations, kept while the document is unchanged.
+    fill_meshes: fills::MeshCache,
+    /// The sketch's items for the canvas, kept from frame to frame.
+    sketch_items: frame_items::ItemsCache,
+    /// An annotation label being dragged, and the grab offset (world units).
+    note_drag: Option<(drift_core::AnnotationId, DVec2)>,
+    /// A picked note's leader (its index), a grip of the picked note being dragged, and a note
+    /// waiting for a click to say what a new leader points to.
+    selected_leader: Option<(drift_core::AnnotationId, usize)>,
+    leader_grip: Option<(drift_core::AnnotationId, app::note_ui::LeaderGrip)>,
+    adding_leader: Option<drift_core::AnnotationId>,
+    note_edit: Option<app::note_ui::NoteEdit>,
+    /// A picked hatch's handle being dragged, and what its origin snapped to.
+    hatch_drag: Option<(drift_core::FillId, app::hatch_ui::HatchGrip)>,
+    hatch_snap: Option<drift_geom::Snap>,
+    /// Align to edge… is waiting for a click on one of this hatch's outline curves.
+    align_edge: Option<drift_core::FillId>,
+    /// The previewed page, as of a document revision.
+    preview_cache: Option<(u64, drift_core::SheetId, drift_draft::page::Drawing)>,
+    /// Delete was pressed with several views picked on a sheet: waiting for a yes.
+    confirm_delete_set: bool,
+    /// Add view from a sheet in progress: the sheet the view drawn next goes on.
+    add_view_on: Option<drift_core::SheetId>,
+    /// Sheets left out of the PDF and print (chosen in the output dialog, for this session).
+    pdf_left_out: std::collections::BTreeSet<drift_core::SheetId>,
+    /// The output dialog choosing the sheets for a PDF or print, while open.
+    #[cfg(not(feature = "demo"))]
+    output_dialog: Option<app::sheets_ui::Output>,
+    /// The model view picked in the Views list or on the canvas (its crop shows grips).
+    picked_view: Option<drift_core::ViewId>,
+    /// A view placed on sheets that Delete was pressed for, waiting for a yes.
+    confirm_delete_view: Option<drift_core::ViewId>,
+    /// The Rename dialog (F2), while open.
+    renaming: Option<app::rename_ui::Renaming>,
+    /// The report of the last import, until it is closed.
+    import_report: Option<app::sheets_ui::ImportSummary>,
+    /// The temporary dimensions showing on a picked curve.
+    temp_dims: app::temp_dims_ui::TempDims,
+    /// The Check sketch window, while it is open.
+    sketch_check: Option<app::checker_ui::SketchCheck>,
+    /// The Inspector's thickness field being typed into, for the walls it was opened on.
+    wall_thickness_text: Option<(Vec<drift_core::WallId>, String)>,
+    /// The picked opening's offset (0) or width (1) being typed in the Inspector.
+    opening_text: Option<(drift_core::OpeningId, u8, String)>,
+    /// The text being typed into (its edits merge into one undo step).
+    text_typing: Option<drift_core::TextId>,
+    /// The text whose in-place field has been given the keyboard.
+    text_focused: Option<drift_core::TextId>,
+    /// The caret in the text being typed on the canvas: the gap it is at, and the gap the
+    /// selection runs from (the same when nothing is selected).
+    text_cursor: Option<(usize, usize)>,
+    /// A caret to give the text's field before it next reads the keyboard.
+    text_set_cursor: Option<(usize, usize)>,
+    /// The pointer went down in the text being typed and hasn't come up.
+    text_grip: bool,
+    /// The pointer was used in the text being typed this frame.
+    text_touched: bool,
+    /// When the caret last moved (it shows steadily for a moment, then blinks).
+    text_blink: f64,
+    /// The canvas onto this drawing.
+    view: CanvasView,
+}
+
+/// A canvas onto a drawing: the camera and what the pointer is doing, and the sheet shown
+/// instead of the model with its preview, view picks and drags. One per drawing until
+/// several views of one drawing come (drift-releases#16). Not `View`: that name is
+/// `drift_core::View`, a model view placed on a sheet.
+struct CanvasView {
     camera: Camera,
-    painter: CanvasPainter,
     /// While set, the view keeps fitting these bounds as the canvas resizes (e.g. while the
     /// browser lays out the page), until the user pans or zooms.
     fit_target: Option<Bounds>,
     /// Last pointer position of an in-progress pan drag.
     pan_anchor: Option<egui::Pos2>,
+    pointer: Option<Pointer>,
+    /// Where the pointer last was on the canvas, for Move and Rotate from a menu.
+    last_pointer: Option<Pointer>,
+    /// Where the canvas was laid out last frame.
+    canvas_rect: egui::Rect,
+    /// The sheet shown in the Sheets tab and the preview.
+    active_sheet: Option<drift_core::SheetId>,
+    /// The canvas shows the current sheet as it prints, instead of the model.
+    sheet_preview: bool,
+    preview: app::sheets_ui::PreviewView,
+    view_drag: Option<app::sheets_ui::ViewDrag>,
+    /// The lines a view being dragged has snapped to.
+    view_guides: Vec<app::view_align::AlignGuide>,
+    /// The view the picked one is aligned with (the Views section's "Align with").
+    align_with: Option<usize>,
+    /// The view picked on the current sheet, and a change to its views to make.
+    sheet_view: usize,
+    /// What is picked on the sheet shown: a view, or the sheet itself.
+    sheet_pick: app::sheet_editor::SheetPick,
+    /// Several views picked on a sheet (by index; `sheet_view` is one of them). See
+    /// [`DriftApp::picked_views`].
+    view_set: Option<(drift_core::SheetId, std::collections::BTreeSet<usize>)>,
+    /// A box being dragged on the sheet to pick views by (screen corners).
+    view_box: Option<(egui::Pos2, egui::Pos2)>,
+    /// A drag on a view's crop on the canvas.
+    crop_drag: Option<app::views_ui::CropDrag>,
+    /// Shift and Ctrl (Cmd) as they are held this frame, for the pointer.
+    keys_held: (bool, bool),
+}
+
+pub struct DriftApp {
+    /// The open drawing, with its canvas view. (One for now: tabs bring the `Vec`.)
+    drawing: Drawing,
+    tool: Box<dyn Tool>,
+    painter: CanvasPainter,
     /// What scrolling does over the canvas, and the gesture in progress.
     wheel: app::view::Wheel,
-    pointer: Option<Pointer>,
     grid_snap: bool,
     /// Perpendicular and tangent snaps and guides while drawing lines.
     perp_tangent_snap: bool,
     files: Files,
-    file: FileState,
     pending: Option<Pending>,
     status: Option<Status>,
     show_shortcuts: bool,
@@ -268,9 +418,6 @@ pub struct DriftApp {
     /// Closing was confirmed (or nothing was unsaved): let the window close.
     quit_confirmed: bool,
     quit_sent: bool,
-    /// While a Blender profile block is open for editing: the document revision last written
-    /// to the profiles file beside the drawing, and when.
-    live_profiles: Option<(u64, f64)>,
     /// "Don't save" on quitting: the session isn't kept for the next start.
     discard_session: bool,
     /// The last session couldn't be restored: the window saying so, while it is up.
@@ -280,15 +427,6 @@ pub struct DriftApp {
     /// This window's autosaved session file.
     #[cfg(all(not(target_arch = "wasm32"), not(feature = "demo")))]
     session_files: app::session::SessionFiles,
-    /// Saving would leave out things from a newer Drift: the prompt asking first is up, for
-    /// Save As (`true`) or Save.
-    #[cfg(not(feature = "demo"))]
-    lossy_save: Option<bool>,
-    /// What the drawing carries from a newer Drift once the save in progress is written, and
-    /// the document revision that was written: edits made while Save As's picker was open
-    /// aren't in the file, so they stay unsaved.
-    #[cfg(not(feature = "demo"))]
-    saving: Option<(drift_io::Carried, u64)>,
     /// The start panel over an empty sketch.
     show_start: bool,
     show_about: bool,
@@ -306,140 +444,42 @@ pub struct DriftApp {
     recent_commands: Vec<app::palette::Command>,
     /// What Enter or Space with nothing in hand does again.
     last_command: Option<app::palette::Command>,
-    /// Where the pointer last was on the canvas, for Move and Rotate from a menu.
-    last_pointer: Option<Pointer>,
     /// The tool rail's families: the command each shows (the last used), by head.
     rail_shown: Vec<(app::palette::Command, app::palette::Command)>,
     /// The tool rail's open flyout.
     rail_flyout: Option<app::rail::Flyout>,
     backend: String,
     window_title: String,
-    /// Where the canvas was laid out last frame.
-    canvas_rect: egui::Rect,
-    /// Text being typed into dimension value fields.
-    dimension_text: std::collections::HashMap<ConstraintId, String>,
-    /// A dimension field to focus next frame (e.g. right after creating the dimension).
-    focus_dimension: Option<ConstraintId>,
     /// Results of Help → Run solver benchmark (in development builds).
     benchmark: Option<Vec<String>>,
     show_dimensions: bool,
     show_relations: bool,
     auto_relations: bool,
-    /// A relation or dimension picked on the canvas (Delete removes it).
-    selected_constraint: Option<ConstraintId>,
-    hovered_constraint: Option<ConstraintId>,
-    /// A dimension label being dragged, and the grab offset from the label (world units).
-    label_drag: Option<(ConstraintId, DVec2)>,
-    /// The start of a dimension's extension line being dragged: the dimension and its end.
-    ext_drag: Option<(ConstraintId, usize)>,
-    /// While a label is dragged: the dimension it snapped level with (a guide, world).
-    dim_guide: Option<[DVec2; 2]>,
-    dimension_edit: Option<DimensionEdit>,
-    /// A property dimension (a wall's thickness) being typed into: its text, and whether to
-    /// focus it on the next frame.
-    property_edit: Option<(drift_core::PropertyDimId, String, bool)>,
-    typing: Option<Typing>,
-    /// Points the pointer recently snapped to; new points can align with them.
-    inference_points: Vec<DVec2>,
-    /// The Parameters tab's state.
-    params: parameters::ParamUi,
     /// The pattern fields in the properties panel.
     patterns: app::patterns::PatternUi,
     /// Draw every curve one pixel wide (Revit's thin lines).
     thin_lines: bool,
     /// Colour geometry by constraint status (under / fully defined) rather than by layer.
     status_colors: bool,
-    /// Layer names being edited in the Layers tab.
-    layer_names: std::collections::HashMap<drift_core::LayerId, String>,
-    /// Layers showing their colours and line settings in the Layers panel.
-    expanded_layers: std::collections::HashSet<drift_core::LayerId>,
-    /// The Layers panel's layers and curve counts, kept until the drawing changes.
-    layer_counts: crate::layers_ui::LayerCounts,
-    /// A layer row being dragged to a new place in the order.
-    layer_drag: Option<drift_core::LayerId>,
-    /// The layer whose name is being edited.
-    renaming_layer: Option<drift_core::LayerId>,
-    /// The Layers panel's filter, isolated layer and row heights.
-    layer_list: layers_ui::LayerList,
     show_grid: bool,
     show_axes: bool,
-    /// Fill tessellations, kept while the document is unchanged.
-    fill_meshes: fills::MeshCache,
-    /// The sketch's items for the canvas, kept from frame to frame.
-    sketch_items: frame_items::ItemsCache,
     /// Built-in and imported hatch patterns.
     hatch_patterns: fills::PatternLibrary,
-    /// An annotation label being dragged, and the grab offset (world units).
-    note_drag: Option<(drift_core::AnnotationId, DVec2)>,
-    /// A picked note's leader (its index), a grip of the picked note being dragged, and a note
-    /// waiting for a click to say what a new leader points to.
-    selected_leader: Option<(drift_core::AnnotationId, usize)>,
-    leader_grip: Option<(drift_core::AnnotationId, app::note_ui::LeaderGrip)>,
-    adding_leader: Option<drift_core::AnnotationId>,
-    note_edit: Option<app::note_ui::NoteEdit>,
-    /// A picked hatch's handle being dragged, and what its origin snapped to.
-    hatch_drag: Option<(drift_core::FillId, app::hatch_ui::HatchGrip)>,
-    hatch_snap: Option<drift_geom::Snap>,
-    /// Align to edge… is waiting for a click on one of this hatch's outline curves.
-    align_edge: Option<drift_core::FillId>,
-    /// The sheet shown in the Sheets tab and the preview.
-    active_sheet: Option<drift_core::SheetId>,
-    /// The canvas shows the current sheet as it prints, instead of the model.
-    sheet_preview: bool,
-    preview: app::sheets_ui::PreviewView,
-    /// The previewed page, as of a document revision.
-    preview_cache: Option<(u64, drift_core::SheetId, drift_draft::page::Drawing)>,
-    view_drag: Option<app::sheets_ui::ViewDrag>,
-    /// The lines a view being dragged has snapped to.
-    view_guides: Vec<app::view_align::AlignGuide>,
-    /// The view the picked one is aligned with (the Views section's "Align with").
-    align_with: Option<usize>,
-    /// The view picked on the current sheet, and a change to its views to make.
-    sheet_view: usize,
-    /// What is picked on the sheet shown: a view, or the sheet itself.
-    sheet_pick: app::sheet_editor::SheetPick,
-    /// Several views picked on a sheet (by index; `sheet_view` is one of them). See
-    /// [`DriftApp::picked_views`].
-    view_set: Option<(drift_core::SheetId, std::collections::BTreeSet<usize>)>,
-    /// A box being dragged on the sheet to pick views by (screen corners).
-    view_box: Option<(egui::Pos2, egui::Pos2)>,
-    /// Delete was pressed with several views picked on a sheet: waiting for a yes.
-    confirm_delete_set: bool,
-    /// Add view from a sheet in progress: the sheet the view drawn next goes on.
-    add_view_on: Option<drift_core::SheetId>,
     /// A message to show in the next frame (from code that doesn't know the time).
     status_next: Option<String>,
-    /// Sheets left out of the PDF and print (chosen in the output dialog, for this session).
-    pdf_left_out: std::collections::BTreeSet<drift_core::SheetId>,
     /// Model exports (SVG and PDF at 1 : 1) include dimensions and notes.
     model_annotations: bool,
-    /// The output dialog choosing the sheets for a PDF or print, while open.
-    #[cfg(not(feature = "demo"))]
-    output_dialog: Option<app::sheets_ui::Output>,
     /// The Export DWG / DXF dialog is open, and the format it has chosen (for this session).
     #[cfg(not(feature = "demo"))]
     cad_dialog: bool,
     #[cfg(not(feature = "demo"))]
     cad_format: output::CadFormat,
-    /// The model view picked in the Views list or on the canvas (its crop shows grips).
-    picked_view: Option<drift_core::ViewId>,
-    /// A view placed on sheets that Delete was pressed for, waiting for a yes.
-    confirm_delete_view: Option<drift_core::ViewId>,
-    /// The Rename dialog (F2), while open.
-    renaming: Option<app::rename_ui::Renaming>,
     /// Show views' crops and names on the canvas (View → View crops).
     show_view_crops: bool,
-    /// A drag on a view's crop on the canvas.
-    crop_drag: Option<app::views_ui::CropDrag>,
-    /// The report of the last import, until it is closed.
-    import_report: Option<app::sheets_ui::ImportSummary>,
     /// Dimensions and annotations hidden on the canvas are drawn (faded) and can be picked.
     show_hidden_annotations: bool,
-    /// Temporary dimensions show on a picked curve (a preference), and those showing.
+    /// Temporary dimensions show on a picked curve (a preference).
     show_temp_dims: bool,
-    temp_dims: app::temp_dims_ui::TempDims,
-    /// The Check sketch window, while it is open.
-    sketch_check: Option<app::checker_ui::SketchCheck>,
     /// The rules a new drawing starts with (how its areas and fills behave, its gap
     /// tolerance), and those an older file is given: kept on this computer.
     new_rules: drift_core::DrawingRules,
@@ -456,33 +496,12 @@ pub struct DriftApp {
     show_combs: bool,
     /// Every wall's centreline is shown (View → Wall centrelines).
     show_wall_centrelines: bool,
-    /// The Inspector's thickness field being typed into, for the walls it was opened on.
-    wall_thickness_text: Option<(Vec<drift_core::WallId>, String)>,
-    /// The picked opening's offset (0) or width (1) being typed in the Inspector.
-    opening_text: Option<(drift_core::OpeningId, u8, String)>,
     /// The drawing crosshair's size and weight.
     crosshair: app::crosshair::Crosshair,
     /// Alt-scaling steps the picked geometry through round sizes (rather than any size).
     round_scale: bool,
-    /// The text being typed into (its edits merge into one undo step).
-    text_typing: Option<drift_core::TextId>,
     /// A text field had the keyboard at the end of the last frame.
     text_was_focused: bool,
-    /// The text whose in-place field has been given the keyboard.
-    text_focused: Option<drift_core::TextId>,
-    /// The caret in the text being typed on the canvas: the gap it is at, and the gap the
-    /// selection runs from (the same when nothing is selected).
-    text_cursor: Option<(usize, usize)>,
-    /// A caret to give the text's field before it next reads the keyboard.
-    text_set_cursor: Option<(usize, usize)>,
-    /// The pointer went down in the text being typed and hasn't come up.
-    text_grip: bool,
-    /// The pointer was used in the text being typed this frame.
-    text_touched: bool,
-    /// Shift and Ctrl (Cmd) as they are held this frame, for the pointer.
-    keys_held: (bool, bool),
-    /// When the caret last moved (it shows steadily for a moment, then blinks).
-    text_blink: f64,
     /// Show every end point, or only those of hovered or picked curves (as in Illustrator).
     always_endpoints: bool,
     /// Lines are drawn at multiples of this many degrees (angle snapping), if on.
@@ -576,23 +595,95 @@ impl DriftApp {
         let files = Files::new(move || ctx.request_repaint());
 
         let mut app = Self {
-            editor: Editor::new(Document::new()),
+            drawing: Drawing {
+                editor: Editor::new(Document::new()),
+                file: FileState {
+                    name: UNTITLED.into(),
+                    path: None,
+                    meta: Metadata::default(),
+                    clean_revision: Some(0),
+                },
+                live_profiles: None,
+                #[cfg(not(feature = "demo"))]
+                lossy_save: None,
+                #[cfg(not(feature = "demo"))]
+                saving: None,
+                dimension_text: Default::default(),
+                focus_dimension: None,
+                selected_constraint: None,
+                hovered_constraint: None,
+                label_drag: None,
+                ext_drag: None,
+                dim_guide: None,
+                dimension_edit: None,
+                property_edit: None,
+                typing: None,
+                inference_points: Vec::new(),
+                params: Default::default(),
+                layer_names: Default::default(),
+                expanded_layers: Default::default(),
+                layer_counts: Default::default(),
+                layer_drag: None,
+                renaming_layer: None,
+                layer_list: Default::default(),
+                fill_meshes: Default::default(),
+                sketch_items: Default::default(),
+                note_drag: None,
+                selected_leader: None,
+                leader_grip: None,
+                adding_leader: None,
+                hatch_drag: None,
+                align_edge: None,
+                hatch_snap: None,
+                note_edit: None,
+                preview_cache: None,
+                confirm_delete_set: false,
+                add_view_on: None,
+                pdf_left_out: Default::default(),
+                #[cfg(not(feature = "demo"))]
+                output_dialog: None,
+                picked_view: None,
+                confirm_delete_view: None,
+                renaming: None,
+                import_report: None,
+                sketch_check: None,
+                temp_dims: Default::default(),
+                wall_thickness_text: None,
+                opening_text: None,
+                text_typing: None,
+                text_focused: None,
+                text_cursor: None,
+                text_set_cursor: None,
+                text_grip: false,
+                text_touched: false,
+                text_blink: 0.0,
+                view: CanvasView {
+                    camera: Camera::default(),
+                    fit_target: Some(EMPTY_VIEW),
+                    pan_anchor: None,
+                    pointer: None,
+                    last_pointer: None,
+                    canvas_rect: egui::Rect::NOTHING,
+                    active_sheet: None,
+                    sheet_preview: false,
+                    preview: Default::default(),
+                    view_drag: None,
+                    view_guides: Vec::new(),
+                    align_with: None,
+                    sheet_view: 0,
+                    view_set: None,
+                    view_box: None,
+                    sheet_pick: Default::default(),
+                    crop_drag: None,
+                    keys_held: (false, false),
+                },
+            },
             tool: ToolKind::Select.create(),
-            camera: Camera::default(),
             painter,
-            fit_target: Some(EMPTY_VIEW),
-            pan_anchor: None,
             wheel: Default::default(),
-            pointer: None,
             grid_snap: false,
             perp_tangent_snap: true,
             files,
-            file: FileState {
-                name: UNTITLED.into(),
-                path: None,
-                meta: Metadata::default(),
-                clean_revision: Some(0),
-            },
             pending: None,
             status: None,
             show_shortcuts: false,
@@ -609,16 +700,11 @@ impl DriftApp {
             opened: None,
             quit_confirmed: false,
             quit_sent: false,
-            live_profiles: None,
             discard_session: false,
             unrestored: None,
             hold_session: false,
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "demo")))]
             session_files: Default::default(),
-            #[cfg(not(feature = "demo"))]
-            lossy_save: None,
-            #[cfg(not(feature = "demo"))]
-            saving: None,
             // Tests drive the bare canvas.
             show_start: !cfg!(test),
             show_about: false,
@@ -630,82 +716,29 @@ impl DriftApp {
             palette: None,
             recent_commands: Vec::new(),
             last_command: None,
-            last_pointer: None,
             rail_shown: Vec::new(),
             rail_flyout: None,
             backend,
             window_title: String::new(),
-            canvas_rect: egui::Rect::NOTHING,
-            dimension_text: Default::default(),
-            focus_dimension: None,
             benchmark: None,
             show_dimensions: true,
             show_relations: true,
             auto_relations: true,
-            selected_constraint: None,
-            hovered_constraint: None,
-            label_drag: None,
-            ext_drag: None,
-            dim_guide: None,
-            dimension_edit: None,
-            property_edit: None,
-            typing: None,
-            inference_points: Vec::new(),
-            params: Default::default(),
             patterns: Default::default(),
             thin_lines: false,
             status_colors: true,
-            layer_names: Default::default(),
-            expanded_layers: Default::default(),
-            layer_counts: Default::default(),
-            layer_drag: None,
-            renaming_layer: None,
-            layer_list: Default::default(),
             show_grid: true,
             show_axes: true,
-            fill_meshes: Default::default(),
-            sketch_items: Default::default(),
             hatch_patterns: Default::default(),
-            note_drag: None,
-            selected_leader: None,
-            leader_grip: None,
-            adding_leader: None,
-            hatch_drag: None,
-            align_edge: None,
-            hatch_snap: None,
-            note_edit: None,
-            active_sheet: None,
-            sheet_preview: false,
-            preview: Default::default(),
-            preview_cache: None,
-            view_drag: None,
-            view_guides: Vec::new(),
-            align_with: None,
-            sheet_view: 0,
-            view_set: None,
-            view_box: None,
-            confirm_delete_set: false,
-            sheet_pick: Default::default(),
-            add_view_on: None,
             status_next: None,
-            pdf_left_out: Default::default(),
             model_annotations: true,
-            #[cfg(not(feature = "demo"))]
-            output_dialog: None,
             #[cfg(not(feature = "demo"))]
             cad_dialog: false,
             #[cfg(not(feature = "demo"))]
             cad_format: Default::default(),
-            picked_view: None,
-            confirm_delete_view: None,
-            renaming: None,
             show_view_crops: true,
-            crop_drag: None,
-            import_report: None,
-            sketch_check: None,
             show_hidden_annotations: false,
             show_temp_dims: true,
-            temp_dims: Default::default(),
             new_rules: drift_core::DrawingRules::default(),
             view_seen: None,
             new_block_name: String::new(),
@@ -713,19 +746,9 @@ impl DriftApp {
             library_category: Some(library::Category::Doors),
             show_combs: true,
             show_wall_centrelines: false,
-            wall_thickness_text: None,
-            opening_text: None,
             crosshair: Default::default(),
             round_scale: true,
-            text_typing: None,
             text_was_focused: false,
-            text_focused: None,
-            text_cursor: None,
-            text_set_cursor: None,
-            text_grip: false,
-            text_touched: false,
-            keys_held: (false, false),
-            text_blink: 0.0,
             always_endpoints: false,
             angle_snap: None,
             import_as: None,
@@ -747,7 +770,7 @@ impl DriftApp {
         };
         log::info!("Drift {} started", drift_platform::VERSION);
         if let Some(mb) = drift_platform::memory::take_stop_note() {
-            app.editor.out.notice = Some(format!(
+            app.drawing.editor.out.notice = Some(format!(
                 "Drift stopped itself last time: it was using {:.1} GB of memory. Your last autosave has been restored.",
                 mb as f64 / 1024.0
             ));
@@ -755,7 +778,7 @@ impl DriftApp {
         if let Some(message) = drift_platform::crash::take_note() {
             let log = drift_platform::crash::log_path()
                 .map_or_else(|| "crash.log".into(), |p| p.display().to_string());
-            app.editor.out.notice = Some(format!(
+            app.drawing.editor.out.notice = Some(format!(
                 "Drift crashed last time ({message}). Your last autosave has been restored. The details are in {log}."
             ));
         }
@@ -790,9 +813,9 @@ impl DriftApp {
     #[cfg(not(feature = "demo"))]
     fn save_document(&mut self, storage: &mut dyn eframe::Storage) {
         // (With the last edit's fills followed: what is kept is a whole drawing.)
-        self.editor.settle_areas();
+        self.drawing.editor.settle_areas();
         // A value that isn't a number would make the session unreadable: keep the last one.
-        if let Some(id) = self.editor.doc.first_non_finite() {
+        if let Some(id) = self.drawing.editor.doc.first_non_finite() {
             log::warn!("autosave skipped: {id} has a position that isn't a number");
             return;
         }
@@ -801,12 +824,12 @@ impl DriftApp {
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(slot) = &mut self.session_files.slot {
             let stamp = app::session::Stamp {
-                revision: self.editor.doc.revision(),
-                name: self.file.name.clone(),
-                path: self.file.path.clone(),
+                revision: self.drawing.editor.doc.revision(),
+                name: self.drawing.file.name.clone(),
+                path: self.drawing.file.path.clone(),
                 dirty,
             };
-            let (doc, file_meta) = (&self.editor.doc, &self.file.meta);
+            let (doc, file_meta) = (&self.drawing.editor.doc, &self.drawing.file.meta);
             let text = || {
                 let mut meta = file_meta.clone();
                 meta.generator = Some(format!("Drift {}", drift_platform::VERSION));
@@ -821,11 +844,15 @@ impl DriftApp {
                 Err(e) => log::error!("autosave to the session file failed: {e}"),
             }
         }
-        let mut meta = self.file.meta.clone();
+        let mut meta = self.drawing.file.meta.clone();
         meta.generator = Some(format!("Drift {}", drift_platform::VERSION));
-        storage.set_string(KEY_DOCUMENT, drift_io::save(&self.editor.doc, &meta));
-        storage.set_string(KEY_NAME, self.file.name.clone());
+        storage.set_string(
+            KEY_DOCUMENT,
+            drift_io::save(&self.drawing.editor.doc, &meta),
+        );
+        storage.set_string(KEY_NAME, self.drawing.file.name.clone());
         let path = self
+            .drawing
             .file
             .path
             .as_ref()
@@ -993,8 +1020,8 @@ impl eframe::App for DriftApp {
                 })
         });
         if may_edit {
-            self.editor.settle_areas();
-        } else if self.editor.poll_areas() {
+            self.drawing.editor.settle_areas();
+        } else if self.drawing.editor.poll_areas() {
             ctx.request_repaint_after(std::time::Duration::from_millis(15));
         }
         let before = self.ui_signature();
@@ -1002,16 +1029,16 @@ impl eframe::App for DriftApp {
         if let Some(wait) = self.live_profiles(now) {
             ctx.request_repaint_after(std::time::Duration::from_secs_f64(wait));
         }
-        fonts::sync_screen(&ctx, &self.editor, &mut self.screen_font);
-        if let Some(notice) = self.editor.out.notice.take() {
+        fonts::sync_screen(&ctx, &self.drawing.editor, &mut self.screen_font);
+        if let Some(notice) = self.drawing.editor.out.notice.take() {
             self.set_status(notice, true, now);
         }
         // (The notice said what edits did to fills; only the assistant lists them.)
-        self.editor.out.fill_changes.clear();
+        self.drawing.editor.out.fill_changes.clear();
         // Far-off geometry from an edit (an import lists it in its report instead).
-        if !self.editor.out.far_off.is_empty() {
-            let far = std::mem::take(&mut self.editor.out.far_off);
-            let what = checker::far_off_count(&self.editor.doc, &far);
+        if !self.drawing.editor.out.far_off.is_empty() {
+            let far = std::mem::take(&mut self.drawing.editor.out.far_off);
+            let what = checker::far_off_count(&self.drawing.editor.doc, &far);
             self.set_status(
                 format!(
                     "More than 100,000 km from the origin now: {what}. Was a value mistyped? \
@@ -1054,11 +1081,11 @@ impl eframe::App for DriftApp {
             }
             self.open_file(path);
         }
-        self.editor.prefs.auto_relations = self.auto_relations;
-        self.editor.prefs.always_endpoints = self.always_endpoints;
+        self.drawing.editor.prefs.auto_relations = self.auto_relations;
+        self.drawing.editor.prefs.always_endpoints = self.always_endpoints;
         // Text placed but left empty goes once it's no longer picked.
-        let keep = self.editor.sole_text();
-        self.editor.drop_empty_texts(keep);
+        let keep = self.drawing.editor.sole_text();
+        self.drawing.editor.drop_empty_texts(keep);
         // Esc closes the frontmost window; while a dialog is open the canvas takes no keys.
         self.close_top_dialog(&ctx);
         if !self.any_dialog_open() {
@@ -1098,7 +1125,7 @@ impl eframe::App for DriftApp {
             // The model and each sheet, as tabs over the canvas, right on top of it.
             ui.spacing_mut().item_spacing.y = 0.0;
             self.canvas_tabs(ui);
-            if self.sheet_preview {
+            if self.drawing.view.sheet_preview {
                 self.sheet_canvas(ui);
             } else {
                 self.canvas(ui);

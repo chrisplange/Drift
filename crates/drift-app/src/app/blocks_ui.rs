@@ -111,7 +111,7 @@ fn library_tile(
 impl DriftApp {
     /// Pick a block to place: the Place block tool, with that block.
     pub(crate) fn start_placing(&mut self, block: BlockId) {
-        self.editor.place_block = Some(block);
+        self.drawing.editor.place_block = Some(block);
         self.set_tool(ToolKind::Block);
     }
 
@@ -119,7 +119,7 @@ impl DriftApp {
     /// name no other block has.
     fn rename_block_typed(&mut self, block: BlockId, name: &str) {
         let name = name.trim();
-        let ed = &mut self.editor;
+        let ed = &mut self.drawing.editor;
         if name.is_empty() || ed.doc.block_named(name).is_some_and(|b| b != block) {
             return;
         }
@@ -139,17 +139,17 @@ impl DriftApp {
 
     /// Make a block from a group, saying why not if it can't be.
     pub(crate) fn block_from_group(&mut self, g: drift_core::GroupId, now: f64) {
-        if let Err(e) = self.editor.block_from_group(g) {
+        if let Err(e) = self.drawing.editor.block_from_group(g) {
             self.set_status(e, true, now);
         }
     }
 
     /// Make a block of the selection: first pick its base point (Enter keeps the centre).
     pub(crate) fn start_make_block(&mut self, name: &str) {
-        match self.editor.check_make_block(name) {
+        match self.drawing.editor.check_make_block(name) {
             Ok(()) => {
                 self.set_tool(ToolKind::BasePoint);
-                self.editor.base_point_pick =
+                self.drawing.editor.base_point_pick =
                     Some(drift_edit::blocks::BasePointPick::Make(name.to_owned()));
                 self.status_next =
                     Some("Click the block's base point, or press Enter for the centre".into());
@@ -161,7 +161,7 @@ impl DriftApp {
     /// Set the base point of `copy`'s block: pick it on that copy (Enter: the centre).
     pub(crate) fn start_set_base_point(&mut self, copy: drift_core::InstanceId) {
         self.set_tool(ToolKind::BasePoint);
-        self.editor.base_point_pick = Some(drift_edit::blocks::BasePointPick::Block(copy));
+        self.drawing.editor.base_point_pick = Some(drift_edit::blocks::BasePointPick::Block(copy));
         self.status_next = Some(
             "Click the new base point: every copy stays where it is (Enter: the centre)".into(),
         );
@@ -170,14 +170,15 @@ impl DriftApp {
     /// A copy of `block` to pick its base point on: a picked one, else the first.
     fn copy_of(&self, block: BlockId) -> Option<drift_core::InstanceId> {
         let copies = || {
-            self.editor
+            self.drawing
+                .editor
                 .doc
                 .instances()
                 .filter(move |(_, i)| i.block == block)
                 .map(|(id, _)| id)
         };
         copies()
-            .find(|id| self.editor.selected_instances.contains(id))
+            .find(|id| self.drawing.editor.selected_instances.contains(id))
             .or_else(|| copies().next())
     }
 
@@ -192,13 +193,14 @@ impl DriftApp {
     fn blocks_contents(&mut self, ui: &mut egui::Ui) {
         let now = ui.input(|i| i.time);
         let blocks: Vec<(BlockId, drift_core::Block)> = self
+            .drawing
             .editor
             .doc
             .blocks()
             .map(|(id, b)| (id, b.clone()))
             .collect();
-        let counts = self.editor.copy_counts();
-        if !self.editor.selection.is_empty() {
+        let counts = self.drawing.editor.copy_counts();
+        if !self.drawing.editor.selection.is_empty() {
             theme::section(ui, "New block");
             ui.horizontal(|ui| {
                 ui.add(
@@ -263,7 +265,7 @@ impl DriftApp {
         let mut profile = None;
         for (id, block) in shown {
             let picked =
-                self.tool.kind() == ToolKind::Block && self.editor.place_block == Some(*id);
+                self.tool.kind() == ToolKind::Block && self.drawing.editor.place_block == Some(*id);
             let row = egui::Frame::new()
                 .fill(if picked {
                     theme::accent(ui.visuals().dark_mode).gamma_multiply(0.18)
@@ -320,7 +322,7 @@ impl DriftApp {
                         ui.close();
                     }
                     if ui.button("Select all copies").clicked() {
-                        self.editor.select_copies(*id);
+                        self.drawing.editor.select_copies(*id);
                         ui.close();
                     }
                     let copy = self.copy_of(*id);
@@ -382,7 +384,7 @@ impl DriftApp {
                 ))
                 .clicked()
         {
-            let n = self.editor.purge_unused_blocks();
+            let n = self.drawing.editor.purge_unused_blocks();
             self.set_status(
                 format!("Purged {n} unused block{}", if n == 1 { "" } else { "s" }),
                 false,
@@ -396,22 +398,23 @@ impl DriftApp {
             self.start_set_base_point(copy);
         }
         if let Some((id, on)) = profile {
-            self.editor.set_block_profile(id, on);
+            self.drawing.editor.set_block_profile(id, on);
         }
         if let Some((id, name)) = rename
             && let Err(e) = self
+                .drawing
                 .editor
                 .rename(drift_edit::blocks::RenameTarget::Block(id), &name)
         {
-            self.editor.out.notice = Some(e);
+            self.drawing.editor.out.notice = Some(e);
         }
         if let Some(id) = delete {
-            self.editor.doc.begin();
-            self.editor.doc.remove_block(id);
-            self.editor.commit("Delete block");
-            self.editor.selected_instances.clear();
-            if self.editor.place_block == Some(id) {
-                self.editor.place_block = None;
+            self.drawing.editor.doc.begin();
+            self.drawing.editor.doc.remove_block(id);
+            self.drawing.editor.commit("Delete block");
+            self.drawing.editor.selected_instances.clear();
+            if self.drawing.editor.place_block == Some(id) {
+                self.drawing.editor.place_block = None;
             }
         }
         self.library_section(ui, &search, now);
@@ -444,7 +447,7 @@ impl DriftApp {
             .collect();
         let missing = entries
             .iter()
-            .filter(|e| self.editor.doc.block_named(&e.block.name).is_none())
+            .filter(|e| self.drawing.editor.doc.block_named(&e.block.name).is_none())
             .count();
         ui.horizontal(|ui| {
             ui.label(
@@ -465,7 +468,10 @@ impl DriftApp {
                     ))
                     .clicked()
             {
-                let n = self.editor.add_library_blocks(entries.iter().copied());
+                let n = self
+                    .drawing
+                    .editor
+                    .add_library_blocks(entries.iter().copied());
                 self.set_status(
                     format!("Added {n} block{}", if n == 1 { "" } else { "s" }),
                     false,
@@ -488,7 +494,7 @@ impl DriftApp {
                 let across = ((room + 6.0) / 68.0).floor().max(1.0);
                 let width = ((room - 6.0 * (across - 1.0)) / across).floor();
                 for e in family {
-                    let added = self.editor.doc.block_named(&e.block.name).is_some();
+                    let added = self.drawing.editor.doc.block_named(&e.block.name).is_some();
                     let tile = library_tile(ui, e, added, width).on_hover_text(format!(
                         "{}\n{}",
                         e.block.name,
@@ -508,21 +514,24 @@ impl DriftApp {
             ui.label(egui::RichText::new("Nothing in the library matches.").weak());
         }
         if let Some(e) = chosen {
-            let id = self.editor.library_block(e);
+            let id = self.drawing.editor.library_block(e);
             self.start_placing(id);
         }
     }
 
     /// The inspector for picked copies of blocks. Returns true if any are picked.
     pub(crate) fn instance_inspector(&mut self, ui: &mut egui::Ui) -> bool {
-        if !self.editor.selection.is_empty() || self.editor.selected_instances.is_empty() {
+        if !self.drawing.editor.selection.is_empty()
+            || self.drawing.editor.selected_instances.is_empty()
+        {
             return false;
         }
-        let picked: Vec<(InstanceId, drift_core::Instance)> = self.editor.picked_instances();
+        let picked: Vec<(InstanceId, drift_core::Instance)> =
+            self.drawing.editor.picked_instances();
         let Some(&(first_id, first)) = picked.first() else {
             return false;
         };
-        let doc = &self.editor.doc;
+        let doc = &self.drawing.editor.doc;
         let name = doc
             .block(first.block)
             .map_or("?".to_owned(), |b| b.name.clone());
@@ -538,6 +547,7 @@ impl DriftApp {
             doc.layers().map(|(id, l)| (id, l.name.clone())).collect();
         let units = doc.units();
         let copies = self
+            .drawing
             .editor
             .copy_counts()
             .get(&first.block)
@@ -576,7 +586,7 @@ impl DriftApp {
                 .on_hover_text("A block is a thing you reuse: pick another to put in its place");
         });
         if let Some(b) = replace {
-            self.editor.replace_block(b);
+            self.drawing.editor.replace_block(b);
         }
         ui.horizontal_wrapped(|ui| {
             if picked.len() == 1
@@ -587,27 +597,28 @@ impl DriftApp {
                     )
                     .clicked()
             {
-                self.editor.edit_block(first_id);
+                self.drawing.editor.edit_block(first_id);
             }
             if ui
                 .button("Explode")
                 .on_hover_text("Turn the copy back into ordinary geometry")
                 .clicked()
             {
-                self.editor.explode_selected();
+                self.drawing.editor.explode_selected();
             }
             if ui
                 .button("Explode to group")
                 .on_hover_text("Turn the copy into a group named after the block, with its fills")
                 .clicked()
             {
-                self.editor.explode_to_groups();
+                self.drawing.editor.explode_to_groups();
             }
         });
-        if self.editor.selected_instances.is_empty() {
+        if self.drawing.editor.selected_instances.is_empty() {
             return true;
         }
         let mut is_profile = self
+            .drawing
             .editor
             .doc
             .block(first.block)
@@ -617,7 +628,9 @@ impl DriftApp {
             .on_hover_text(PROFILE_HINT)
             .changed()
         {
-            self.editor.set_block_profile(first.block, is_profile);
+            self.drawing
+                .editor
+                .set_block_profile(first.block, is_profile);
         }
         let mut edited = first;
         if picked.len() == 1 {
@@ -679,16 +692,16 @@ impl DriftApp {
                 });
         });
         if edited != first {
-            self.editor.doc.begin();
+            self.drawing.editor.doc.begin();
             if picked.len() == 1 {
-                let _ = self.editor.doc.set_instance(first_id, edited);
+                let _ = self.drawing.editor.doc.set_instance(first_id, edited);
             } else {
                 for (id, mut i) in picked.clone() {
                     i.layer = edited.layer;
-                    let _ = self.editor.doc.set_instance(id, i);
+                    let _ = self.drawing.editor.doc.set_instance(id, i);
                 }
             }
-            self.editor.commit("Edit block copy");
+            self.drawing.editor.commit("Edit block copy");
         }
         ui.add_space(6.0);
         ui.horizontal_wrapped(|ui| {
@@ -703,22 +716,23 @@ impl DriftApp {
                 self.start_set_base_point(first_id);
             }
             if ui.button("Select all copies").clicked() {
-                self.editor.select_copies(first.block);
+                self.drawing.editor.select_copies(first.block);
             }
         });
         ui.add_space(10.0);
         if theme::danger_button(ui, "Delete").clicked() {
-            self.editor.delete_selection();
+            self.drawing.editor.delete_selection();
         }
         true
     }
 
     /// While a block is edited in place: what it is and how to finish. Returns true if so.
     pub(crate) fn block_edit_banner(&mut self, ui: &mut egui::Ui) -> bool {
-        let Some(edit) = self.editor.block_edit else {
+        let Some(edit) = self.drawing.editor.block_edit else {
             return false;
         };
         let name = self
+            .drawing
             .editor
             .doc
             .block(edit.block)
@@ -741,7 +755,7 @@ impl DriftApp {
             .on_hover_text("Esc")
             .clicked()
         {
-            self.editor.finish_block_edit();
+            self.drawing.editor.finish_block_edit();
         }
         if ui
             .add_sized(

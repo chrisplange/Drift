@@ -67,7 +67,7 @@ impl DriftApp {
     fn patterns_section(&mut self, ui: &mut egui::Ui) {
         crate::theme::section(ui, "Hatch patterns");
         self.hatch_patterns
-            .update(self.editor.doc.custom_patterns());
+            .update(self.drawing.editor.doc.custom_patterns());
         let custom: Vec<(String, String)> = self
             .hatch_patterns
             .custom()
@@ -110,7 +110,7 @@ impl DriftApp {
 
     pub(crate) fn units_section(&mut self, ui: &mut egui::Ui) {
         crate::theme::section(ui, "Units");
-        let mut units = self.editor.doc.units();
+        let mut units = self.drawing.editor.doc.units();
         let before = units;
         let metric = units.length.is_metric();
         match crate::theme::segmented(ui, metric, &[(true, "Metric"), (false, "Imperial")]) {
@@ -155,14 +155,15 @@ impl DriftApp {
             ui.label(egui::RichText::new("decimals").weak());
         });
         if units != before {
-            self.editor.set_units(units);
+            self.drawing.editor.set_units(units);
         }
     }
 
     fn variables_section(&mut self, ui: &mut egui::Ui, now: f64) {
         crate::theme::section(ui, "Variables");
-        let units = self.editor.doc.units();
+        let units = self.drawing.editor.doc.units();
         let vars: Vec<_> = self
+            .drawing
             .editor
             .doc
             .variables()
@@ -180,10 +181,15 @@ impl DriftApp {
         let mut status = None;
         let mut remove = None;
         for (id, var) in &vars {
-            let value = self.editor.evaluation().value(&self.editor.doc, *id);
+            let value = self
+                .drawing
+                .editor
+                .evaluation()
+                .value(&self.drawing.editor.doc, *id);
             ui.horizontal(|ui| {
                 // Name (renamed on Enter or when focus leaves).
                 let name = self
+                    .drawing
                     .params
                     .name_text
                     .entry(*id)
@@ -193,9 +199,9 @@ impl DriftApp {
                     .on_hover_text(format!("A {}", var.kind.label().to_lowercase()));
                 if r.lost_focus() {
                     let text = std::mem::take(name);
-                    self.params.name_text.remove(id);
+                    self.drawing.params.name_text.remove(id);
                     if text.trim() != var.name
-                        && let Err(e) = self.editor.rename_variable(*id, &text)
+                        && let Err(e) = self.drawing.editor.rename_variable(*id, &text)
                     {
                         status = Some(format!("Can't rename {}: {e}", var.name));
                     }
@@ -204,6 +210,7 @@ impl DriftApp {
                 }
                 ui.label("=");
                 let expr = self
+                    .drawing
                     .params
                     .expr_text
                     .entry(*id)
@@ -215,10 +222,10 @@ impl DriftApp {
                 );
                 if r.lost_focus() {
                     let text = std::mem::take(expr);
-                    self.params.expr_text.remove(id);
+                    self.drawing.params.expr_text.remove(id);
                     if ui.input(|i| i.key_pressed(egui::Key::Enter))
                         && text.trim() != var.expr
-                        && let Err(e) = self.editor.set_variable(*id, &text)
+                        && let Err(e) = self.drawing.editor.set_variable(*id, &text)
                     {
                         status = Some(format!("Can't set {}: {e}", var.name));
                     }
@@ -236,7 +243,7 @@ impl DriftApp {
             });
             // A plain value gets a slider to scrub it; an expression shows what it comes to.
             match value {
-                Some(Ok(v)) if self.editor.is_scrubbable(*id) => {
+                Some(Ok(v)) if self.drawing.editor.is_scrubbable(*id) => {
                     self.slider(ui, *id, var.kind, v);
                 }
                 Some(Ok(v)) => {
@@ -255,7 +262,7 @@ impl DriftApp {
             ui.add_space(2.0);
         }
         if let Some(id) = remove
-            && let Err(e) = self.editor.remove_variable(id)
+            && let Err(e) = self.drawing.editor.remove_variable(id)
         {
             status = Some(format!("Can't delete it: {e}"));
         }
@@ -264,13 +271,13 @@ impl DriftApp {
         let mut enter = false;
         ui.horizontal(|ui| {
             ui.add(
-                egui::TextEdit::singleline(&mut self.params.new_name)
+                egui::TextEdit::singleline(&mut self.drawing.params.new_name)
                     .hint_text("name")
                     .desired_width(80.0),
             );
             ui.label("=");
             let r = ui.add(
-                egui::TextEdit::singleline(&mut self.params.new_expr)
+                egui::TextEdit::singleline(&mut self.drawing.params.new_expr)
                     .hint_text("value or expression")
                     .desired_width(ui.available_width() - 6.0),
             );
@@ -278,22 +285,22 @@ impl DriftApp {
         });
         ui.horizontal(|ui| {
             egui::ComboBox::from_id_salt("new_kind")
-                .selected_text(self.params.new_kind.label())
+                .selected_text(self.drawing.params.new_kind.label())
                 .width(100.0)
                 .show_ui(ui, |ui| {
                     for k in Kind::ALL {
-                        ui.selectable_value(&mut self.params.new_kind, k, k.label());
+                        ui.selectable_value(&mut self.drawing.params.new_kind, k, k.label());
                     }
                 });
             if ui.button("Add").clicked() || enter {
-                match self.editor.add_variable(
-                    &self.params.new_name,
-                    &self.params.new_expr,
-                    self.params.new_kind,
+                match self.drawing.editor.add_variable(
+                    &self.drawing.params.new_name,
+                    &self.drawing.params.new_expr,
+                    self.drawing.params.new_kind,
                 ) {
                     Ok(_) => {
-                        self.params.new_name.clear();
-                        self.params.new_expr.clear();
+                        self.drawing.params.new_name.clear();
+                        self.drawing.params.new_expr.clear();
                     }
                     Err(e) => status = Some(format!("Can't add it: {e}")),
                 }
@@ -305,7 +312,7 @@ impl DriftApp {
     }
 
     fn slider(&mut self, ui: &mut egui::Ui, id: VariableId, kind: Kind, value: f64) {
-        let (lo, hi) = match self.params.slider_range {
+        let (lo, hi) = match self.drawing.params.slider_range {
             Some((v, lo, hi)) if v == id => (lo, hi),
             _ => slider_range(kind, value),
         };
@@ -316,21 +323,22 @@ impl DriftApp {
                 .clamping(egui::SliderClamping::Always),
         );
         if r.drag_started() {
-            self.params.slider_range = Some((id, lo, hi));
+            self.drawing.params.slider_range = Some((id, lo, hi));
         }
         if r.changed() && v != value {
-            self.editor.scrub_variable(id, v);
+            self.drawing.editor.scrub_variable(id, v);
         }
-        if !r.dragged() && self.editor.is_scrubbing() {
-            self.editor.end_scrub();
-            self.params.slider_range = None;
+        if !r.dragged() && self.drawing.editor.is_scrubbing() {
+            self.drawing.editor.end_scrub();
+            self.drawing.params.slider_range = None;
         }
     }
 
     fn options_section(&mut self, ui: &mut egui::Ui, now: f64) {
         crate::theme::section(ui, "Options");
-        let active = self.editor.active_variant();
+        let active = self.drawing.editor.active_variant();
         let options: Vec<_> = self
+            .drawing
             .editor
             .doc
             .variants()
@@ -349,15 +357,15 @@ impl DriftApp {
         for (id, name, whole) in options {
             ui.horizontal(|ui| {
                 let kind = if whole { "Whole sketch" } else { "Values only" };
-                if let Some((rid, text)) = &mut self.params.renaming
+                if let Some((rid, text)) = &mut self.drawing.params.renaming
                     && *rid == id
                 {
                     let r = ui.add(egui::TextEdit::singleline(text).desired_width(110.0));
                     if r.lost_focus() {
                         let text = std::mem::take(text);
-                        self.params.renaming = None;
+                        self.drawing.params.renaming = None;
                         if !text.trim().is_empty() && text.trim() != name {
-                            self.editor.rename_variant(id, &text);
+                            self.drawing.editor.rename_variant(id, &text);
                         }
                     } else {
                         r.request_focus();
@@ -367,10 +375,10 @@ impl DriftApp {
                         .radio(active == Some(id), &name)
                         .on_hover_text(format!("{kind}. Click to apply; double-click to rename"));
                     if r.double_clicked() {
-                        self.params.renaming = Some((id, name.clone()));
+                        self.drawing.params.renaming = Some((id, name.clone()));
                     } else if r.clicked()
                         && active != Some(id)
-                        && let Err(e) = self.editor.apply_variant(id)
+                        && let Err(e) = self.drawing.editor.apply_variant(id)
                     {
                         status = Some(format!("Can't apply {name}: {e}"));
                     }
@@ -380,7 +388,7 @@ impl DriftApp {
                         .small()
                         .weak(),
                 );
-                let mut shown = self.params.ghosted.contains(&id);
+                let mut shown = self.drawing.params.ghosted.contains(&id);
                 let tip = if active == Some(id) {
                     "Ghost: the drawing is in this option now"
                 } else {
@@ -394,9 +402,9 @@ impl DriftApp {
                     tip,
                 ) {
                     if shown {
-                        self.params.ghosted.insert(id);
+                        self.drawing.params.ghosted.insert(id);
                     } else {
-                        self.params.ghosted.remove(&id);
+                        self.drawing.params.ghosted.remove(&id);
                     }
                 }
                 let update_tip = if whole {
@@ -409,31 +417,39 @@ impl DriftApp {
                     .on_hover_text(update_tip)
                     .clicked()
                 {
-                    self.editor.update_variant(id);
+                    self.drawing.editor.update_variant(id);
                 }
                 if ui.small_button("×").on_hover_text("Delete").clicked() {
-                    self.editor.remove_variant(id);
-                    self.params.ghosted.remove(&id);
+                    self.drawing.editor.remove_variant(id);
+                    self.drawing.params.ghosted.remove(&id);
                 }
             });
         }
         ui.horizontal(|ui| {
             ui.add(
-                egui::TextEdit::singleline(&mut self.params.option_name)
+                egui::TextEdit::singleline(&mut self.drawing.params.option_name)
                     .hint_text("name")
                     .desired_width(110.0),
             );
             egui::ComboBox::from_id_salt("option_kind")
-                .selected_text(if self.params.option_whole {
+                .selected_text(if self.drawing.params.option_whole {
                     "Whole sketch"
                 } else {
                     "Values only"
                 })
                 .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut self.params.option_whole, false, "Values only")
-                        .on_hover_text("The variables' values, applied over the sketch as it is");
-                    ui.selectable_value(&mut self.params.option_whole, true, "Whole sketch")
-                        .on_hover_text("Everything in the drawing, to return to as it was");
+                    ui.selectable_value(
+                        &mut self.drawing.params.option_whole,
+                        false,
+                        "Values only",
+                    )
+                    .on_hover_text("The variables' values, applied over the sketch as it is");
+                    ui.selectable_value(
+                        &mut self.drawing.params.option_whole,
+                        true,
+                        "Whole sketch",
+                    )
+                    .on_hover_text("Everything in the drawing, to return to as it was");
                 });
         });
         if ui
@@ -441,13 +457,15 @@ impl DriftApp {
             .on_hover_text("Save the drawing as it is now as an option (saved in the file)")
             .clicked()
         {
-            let n = self.editor.doc.variants().count() + 1;
-            let name = if self.params.option_name.trim().is_empty() {
+            let n = self.drawing.editor.doc.variants().count() + 1;
+            let name = if self.drawing.params.option_name.trim().is_empty() {
                 format!("Option {n}")
             } else {
-                std::mem::take(&mut self.params.option_name)
+                std::mem::take(&mut self.drawing.params.option_name)
             };
-            self.editor.save_option(&name, self.params.option_whole);
+            self.drawing
+                .editor
+                .save_option(&name, self.drawing.params.option_whole);
         }
         if let Some(text) = status {
             self.set_status(text, true, now);
@@ -456,8 +474,9 @@ impl DriftApp {
 
     fn measurements_section(&mut self, ui: &mut egui::Ui) {
         crate::theme::section(ui, "Pinned measurements");
-        let units = self.editor.doc.units();
+        let units = self.drawing.editor.doc.units();
         let pinned: Vec<_> = self
+            .drawing
             .editor
             .doc
             .measurements()
@@ -472,8 +491,8 @@ impl DriftApp {
         let mut unpin = None;
         for (id, c) in pinned {
             ui.horizontal(|ui| {
-                ui.label(crate::constraint_label(&self.editor.doc, &c));
-                let value = drift_solver::measure(&self.editor.doc, &c)
+                ui.label(crate::constraint_label(&self.drawing.editor.doc, &c));
+                let value = drift_solver::measure(&self.drawing.editor.doc, &c)
                     .map_or("—".into(), |v| units.format(dimension_kind(&c), v));
                 ui.label(value);
                 if ui.small_button("Unpin").clicked() {
@@ -482,7 +501,7 @@ impl DriftApp {
             });
         }
         if let Some(id) = unpin {
-            self.editor.unpin_measurement(id);
+            self.drawing.editor.unpin_measurement(id);
         }
     }
 
@@ -490,25 +509,26 @@ impl DriftApp {
     pub(crate) fn paint_free_directions(&mut self, painter: &egui::Painter, map: &ScreenMap) {
         // Hidden mid-drag (and mid-scrub): they would be stale, and recomputing them every
         // frame would slow the drag on large sketches.
-        if !self.params.show_free || self.editor.doc.in_transaction() {
+        if !self.drawing.params.show_free || self.drawing.editor.doc.in_transaction() {
             return;
         }
-        let revision = self.editor.doc.revision();
+        let revision = self.drawing.editor.doc.revision();
         if self
+            .drawing
             .params
             .free
             .as_ref()
             .is_none_or(|(r, _)| *r != revision)
         {
-            self.params.free = Some((
+            self.drawing.params.free = Some((
                 revision,
                 drift_solver::free_directions_with(
-                    &self.editor.doc,
-                    self.editor.lowering().as_deref(),
+                    &self.drawing.editor.doc,
+                    self.drawing.editor.lowering().as_deref(),
                 ),
             ));
         }
-        let Some((_, free)) = &self.params.free else {
+        let Some((_, free)) = &self.drawing.params.free else {
             return;
         };
         let color = Color32::from_rgb(0x3d, 0xa5, 0xf5);
@@ -521,7 +541,7 @@ impl DriftApp {
             painter.line_segment([tip, tip - dir * 4.0 - n], stroke);
         };
         for (id, freedom) in free {
-            let Ok(p) = self.editor.doc.point(*id) else {
+            let Ok(p) = self.drawing.editor.doc.point(*id) else {
                 continue;
             };
             let at = map.to_screen(p);
@@ -552,24 +572,31 @@ impl DriftApp {
     /// The ghosts' geometry, worked out again after each committed edit (never during a
     /// drag or any edit under way, which would cost a solve per option per frame).
     pub(crate) fn refresh_ghosts(&mut self) {
-        let doc = &self.editor.doc;
-        self.params.ghosted.retain(|id| doc.variant(*id).is_some());
-        let ghosted = &self.params.ghosted;
-        self.params.ghosts.retain(|id, _| ghosted.contains(id));
+        let doc = &self.drawing.editor.doc;
+        self.drawing
+            .params
+            .ghosted
+            .retain(|id| doc.variant(*id).is_some());
+        let ghosted = &self.drawing.params.ghosted;
+        self.drawing
+            .params
+            .ghosts
+            .retain(|id, _| ghosted.contains(id));
         if doc.in_transaction() {
             return;
         }
         let revision = doc.revision();
-        for &id in &self.params.ghosted {
+        for &id in &self.drawing.params.ghosted {
             if self
+                .drawing
                 .params
                 .ghosts
                 .get(&id)
                 .is_none_or(|(r, _)| *r != revision)
             {
-                self.params.ghost_computations += 1;
-                let items = self.editor.variant_geometry(id);
-                self.params.ghosts.insert(id, (revision, items));
+                self.drawing.params.ghost_computations += 1;
+                let items = self.drawing.editor.variant_geometry(id);
+                self.drawing.params.ghosts.insert(id, (revision, items));
             }
         }
     }
@@ -577,23 +604,29 @@ impl DriftApp {
     /// The options picked as ghosts, drawn faintly behind the sketch (not the one the
     /// drawing is in: it would cover the drawing exactly).
     pub(crate) fn paint_ghosts(&mut self, painter: &egui::Painter, map: &ScreenMap) {
-        if self.params.ghosted.is_empty() {
+        if self.drawing.params.ghosted.is_empty() {
             return;
         }
         self.refresh_ghosts();
-        let active = self.editor.active_variant();
+        let active = self.drawing.editor.active_variant();
         let palette = [
             Color32::from_rgb(0xb3, 0x88, 0xff),
             Color32::from_rgb(0xff, 0x9e, 0x5e),
             Color32::from_rgb(0x4d, 0xd0, 0xc4),
             Color32::from_rgb(0xf0, 0x6e, 0xaa),
         ];
-        let order: Vec<VariantId> = self.editor.doc.variants().map(|(id, _)| id).collect();
+        let order: Vec<VariantId> = self
+            .drawing
+            .editor
+            .doc
+            .variants()
+            .map(|(id, _)| id)
+            .collect();
         for (i, id) in order.iter().enumerate() {
             if Some(*id) == active {
                 continue;
             }
-            let Some((_, Some(items))) = self.params.ghosts.get(id) else {
+            let Some((_, Some(items))) = self.drawing.params.ghosts.get(id) else {
                 continue;
             };
             let stroke = Stroke::new(1.2, palette[i % palette.len()].gamma_multiply(0.55));

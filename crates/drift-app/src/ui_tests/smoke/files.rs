@@ -10,12 +10,12 @@ fn smoke_files_save_close_and_reopen() {
     view(&mut h, DVec2::new(-10.0, -10.0), DVec2::new(60.0, 40.0));
     rectangle(&mut h, DVec2::ZERO, DVec2::new(40.0, 30.0), Fill::Solid);
     let drawn = positions(&h);
-    let fills = h.state().editor.doc.fills().count();
+    let fills = h.state().drawing.editor.doc.fills().count();
     // Saved to its file (Save As's dialog is the system's: the path it would give).
     let dir = scratch_dir("smoke-files");
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("Saved.drift");
-    h.state_mut().file.path = Some(path.clone());
+    h.state_mut().drawing.file.path = Some(path.clone());
     h.key_press_modifiers(EguiModifiers::COMMAND, Key::S);
     h.run_steps(3);
     assert!(path.exists(), "written");
@@ -24,7 +24,7 @@ fn smoke_files_save_close_and_reopen() {
     h.key_press_modifiers(EguiModifiers::COMMAND, Key::N);
     h.run_steps(2);
     assert!(h.state().pending.is_none(), "nothing unsaved to ask about");
-    assert!(h.state().editor.doc.is_empty());
+    assert!(h.state().drawing.editor.doc.is_empty());
     // Open recent → Saved.drift: the drawing as it was.
     open_menu(&mut h, "File");
     h.get_by_label_contains("Open recent").hover();
@@ -33,11 +33,11 @@ fn smoke_files_save_close_and_reopen() {
     h.get_by_label("Saved.drift").click();
     h.run_steps(3);
     let app = h.state();
-    assert_eq!(app.file.name, "Saved.drift");
-    assert_eq!(app.file.path.as_deref(), Some(path.as_path()));
+    assert_eq!(app.drawing.file.name, "Saved.drift");
+    assert_eq!(app.drawing.file.path.as_deref(), Some(path.as_path()));
     assert!(!app.is_dirty());
     assert_eq!(positions(&h), drawn);
-    assert_eq!(h.state().editor.doc.fills().count(), fills);
+    assert_eq!(h.state().drawing.editor.doc.fills().count(), fills);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -58,7 +58,10 @@ fn smoke_files_recovered_session_is_kept() {
     assert_eq!(kept.len(), 1, "{kept:?}");
     assert_eq!(std::fs::read_to_string(&kept[0]).unwrap(), text);
     assert!(h.state().unrestored.is_some(), "said so");
-    assert!(h.state().editor.doc.is_empty(), "a new drawing instead");
+    assert!(
+        h.state().drawing.editor.doc.is_empty(),
+        "a new drawing instead"
+    );
     h.get_by_label("OK").click();
     h.run();
     assert!(h.state().unrestored.is_none());
@@ -89,8 +92,8 @@ fn smoke_files_unknown_fields_are_saved_back() {
     // Dropped on the window, it opens as the drawing.
     drop_file(&mut h, &path);
     h.run_steps(2);
-    assert_eq!(h.state().file.name, "Newer.drift");
-    assert!(!h.state().editor.doc.is_empty());
+    assert_eq!(h.state().drawing.file.name, "Newer.drift");
+    assert!(!h.state().drawing.editor.doc.is_empty());
     // An edit somewhere else, then Ctrl+S: no question, and the extras are still there.
     view(&mut h, DVec2::new(-50.0, -50.0), DVec2::new(250.0, 150.0));
     rectangle(
@@ -102,7 +105,7 @@ fn smoke_files_unknown_fields_are_saved_back() {
     h.key_press_modifiers(EguiModifiers::COMMAND, Key::S);
     h.run_steps(3);
     assert!(
-        h.state().lossy_save.is_none(),
+        h.state().drawing.lossy_save.is_none(),
         "nothing is lost: no question"
     );
     let saved = std::fs::read_to_string(&path).unwrap();
@@ -130,7 +133,7 @@ fn smoke_files_dxf_export_opens_in_autocad_and_comes_back() {
     // An ellipse, a pen curve and text outside ASCII: AutoCAD discarded the whole R12 file
     // at the first ELLIPSE or SPLINE, and the text came out as question marks.
     let v = DVec2::new;
-    let ed = &mut h.state_mut().editor;
+    let ed = &mut h.state_mut().drawing.editor;
     ed.doc.begin();
     let [c, m, n] = [v(-50.0, 0.0), v(-20.0, 10.0), v(-55.0, 15.0)].map(|p| ed.doc.add_point(p));
     ed.doc.add_ellipse(c, m, n).unwrap();
@@ -170,6 +173,7 @@ fn smoke_files_dxf_export_opens_in_autocad_and_comes_back() {
     h.run_steps(3);
     let texts: Vec<String> = h
         .state()
+        .drawing
         .editor
         .doc
         .texts()
@@ -203,7 +207,7 @@ fn smoke_files_dwg_export_keeps_fills_hatches_and_blocks() {
         Fill::Hatch,
     );
     let v = DVec2::new;
-    let ed = &mut h.state_mut().editor;
+    let ed = &mut h.state_mut().drawing.editor;
     ed.selection.extend(sides);
     ed.selected_fills.extend(hatch);
     let copy = ed.make_block("Panel").unwrap();
@@ -217,6 +221,7 @@ fn smoke_files_dwg_export_keeps_fills_hatches_and_blocks() {
     h.run();
     let block_fills = |h: &Harness<'_, DriftApp>| -> usize {
         h.state()
+            .drawing
             .editor
             .doc
             .blocks()
@@ -244,7 +249,7 @@ fn smoke_files_dwg_export_keeps_fills_hatches_and_blocks() {
     let painter = painter(&h);
     let dwg = h.state_mut().cad_bytes(&painter, CadFormat::Dwg).unwrap();
     assert!(dwg.starts_with(b"AC1032"));
-    let doc = &h.state().editor.doc;
+    let doc = &h.state().drawing.editor.doc;
     let fills_before = doc.fills().count();
     let copies_before = doc.instances().count();
     let path = temp_file("dwg-export", "export.dwg", &dwg);
@@ -255,11 +260,11 @@ fn smoke_files_dwg_export_keeps_fills_hatches_and_blocks() {
     h.run_steps(3);
     h.get_by_label("Import").click();
     h.run_steps(3);
-    let doc = &h.state().editor.doc;
+    let doc = &h.state().drawing.editor.doc;
     assert_eq!(doc.fills().count(), fills_before + 1, "the solid fill");
     assert_eq!(doc.instances().count(), copies_before + 1, "the copy");
     assert_eq!(block_fills(&h), 2, "the hatch, in its block");
-    let doc = &h.state().editor.doc;
+    let doc = &h.state().drawing.editor.doc;
     assert!(
         doc.instances().filter(|(_, c)| c.mirror).count() == 2,
         "still mirrored"
@@ -297,7 +302,7 @@ fn smoke_files_cad_export_block_copies_keep_their_own_layer_look() {
     view(&mut h, DVec2::new(-20.0, -20.0), DVec2::new(140.0, 60.0));
     let (sides, _) = rectangle(&mut h, DVec2::ZERO, DVec2::new(20.0, 20.0), Fill::No);
     let (red, blue) = (Rgb([255, 0, 0]), Rgb([0, 0, 255]));
-    let ed = &mut h.state_mut().editor;
+    let ed = &mut h.state_mut().drawing.editor;
     ed.selection.extend(sides);
     let copy = ed.make_block("Square").unwrap();
     ed.doc.begin();
@@ -337,7 +342,7 @@ fn smoke_files_cad_export_block_copies_keep_their_own_layer_look() {
             .replace_document(doc, "new".into(), None, Default::default(), true);
         h.run();
         import_from_menu(&mut h, "cad-copies", name, &bytes);
-        let doc = &h.state().editor.doc;
+        let doc = &h.state().drawing.editor.doc;
         let copies: Vec<_> = doc.instances().map(|(_, c)| *c).collect();
         assert_eq!(copies.len(), 2, "{name}: both copies");
         assert_eq!(
@@ -385,7 +390,7 @@ fn smoke_files_dashed_line_comes_in_alike_from_svg_and_dxf() {
     ] {
         let before = ids(&h);
         import_from_menu(&mut h, "dashes", name, contents);
-        let doc = &h.state().editor.doc;
+        let doc = &h.state().drawing.editor.doc;
         let new: Vec<_> = curves(&h, &ids(&h))
             .into_iter()
             .filter(|id| !before.contains(id))
@@ -402,7 +407,7 @@ fn smoke_files_dashed_line_comes_in_alike_from_svg_and_dxf() {
 
 /// An edit from outside the canvas (the AI link, say), which a file picker doesn't stop.
 fn edit_from_link(h: &mut Harness<'_, DriftApp>) {
-    let ed = &mut h.state_mut().editor;
+    let ed = &mut h.state_mut().drawing.editor;
     ed.doc.begin();
     ed.doc.add_point(DVec2::new(5.0, 5.0));
     ed.commit("Point");
@@ -423,7 +428,7 @@ fn smoke_files_edits_during_save_as_stay_unsaved() {
     // The canvas waits: a click on a side picks nothing.
     click_world(&mut h, DVec2::new(20.0, 0.0));
     assert!(
-        h.state().editor.selection.is_empty(),
+        h.state().drawing.editor.selection.is_empty(),
         "the canvas is blocked"
     );
     edit_from_link(&mut h);
@@ -436,7 +441,7 @@ fn smoke_files_edits_during_save_as_stay_unsaved() {
     drop(picker);
     h.run_steps(2);
     let app = h.state();
-    assert_eq!(app.file.path.as_deref(), Some(path.as_path()));
+    assert_eq!(app.drawing.file.path.as_deref(), Some(path.as_path()));
     assert!(app.is_dirty(), "the point added meanwhile isn't saved");
     assert!(h.query_by_label("Waiting for the file dialog").is_none());
 }
@@ -447,8 +452,8 @@ fn smoke_files_edits_during_open_are_asked_about() {
     let Some(mut h) = harness() else { return };
     view(&mut h, DVec2::new(-10.0, -10.0), DVec2::new(60.0, 40.0));
     rectangle(&mut h, DVec2::ZERO, DVec2::new(40.0, 30.0), Fill::No);
-    let saved = h.state().editor.doc.revision();
-    h.state_mut().file.clean_revision = Some(saved);
+    let saved = h.state().drawing.editor.doc.revision();
+    h.state_mut().drawing.file.clean_revision = Some(saved);
     // File → Open with nothing unsaved: straight to the picker (a stand-in here).
     let picker = h.state().files.picker();
     h.state_mut().request(crate::Pending::Open);
@@ -466,13 +471,13 @@ fn smoke_files_edits_during_open_are_asked_about() {
     h.run_steps(2);
     // Asked first; the drawing is still there.
     assert_eq!(h.state().pending, Some(crate::Pending::Opened));
-    assert_ne!(h.state().file.name, "Other.drift");
-    assert!(!h.state().editor.doc.is_empty());
+    assert_ne!(h.state().drawing.file.name, "Other.drift");
+    assert!(!h.state().drawing.editor.doc.is_empty());
     h.get_by_label("Don't save").click();
     h.run_steps(2);
     let app = h.state();
-    assert_eq!(app.file.name, "Other.drift");
-    assert!(app.editor.doc.is_empty());
+    assert_eq!(app.drawing.file.name, "Other.drift");
+    assert!(app.drawing.editor.doc.is_empty());
     assert!(!app.is_dirty());
 }
 
@@ -485,8 +490,8 @@ fn smoke_files_non_finite_is_not_saved() {
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("Broken.drift");
     std::fs::write(&path, b"the good version").unwrap();
-    h.state_mut().file.path = Some(path.clone());
-    let ed = &mut h.state_mut().editor;
+    h.state_mut().drawing.file.path = Some(path.clone());
+    let ed = &mut h.state_mut().drawing.editor;
     ed.doc.begin();
     let bad = ed.doc.add_point(DVec2::new(f64::NAN, 0.0));
     ed.commit("Point");
@@ -522,13 +527,13 @@ fn smoke_files_each_window_keeps_its_own_session() {
     second.state_mut().session_files.dir = Some(dir.clone());
     second.state_mut().restore_session(&storage);
     assert!(
-        second.state().editor.doc.is_empty(),
+        second.state().drawing.editor.doc.is_empty(),
         "the first window's drawing stays its own"
     );
     std::thread::sleep(std::time::Duration::from_millis(20));
     edit_from_link(&mut second);
     eframe::App::save(second.state_mut(), &mut storage);
-    let newer = second.state().editor.doc.clone();
+    let newer = second.state().drawing.editor.doc.clone();
     // Both windows go: the system lets go of their sessions' locks (here, by hand).
     for h in [&mut first, &mut second] {
         h.state_mut().session_files.slot = None;
@@ -538,7 +543,7 @@ fn smoke_files_each_window_keeps_its_own_session() {
     next.state_mut().session_files.dir = Some(dir.clone());
     next.state_mut().restore_session(&storage);
     next.run();
-    assert_eq!(next.state().editor.doc, newer);
+    assert_eq!(next.state().drawing.editor.doc, newer);
     assert!(next.state().is_dirty(), "unsaved work stays marked unsaved");
     // Said, so the drawing doesn't appear unexplained.
     let status = next.state().status.as_ref().map(|s| s.text.clone());
@@ -606,14 +611,14 @@ fn smoke_files_sessions_left_behind_are_opened_or_deleted() {
     opened.state_mut().session_files.restoring = true;
     opened.state_mut().restore_session(&storage);
     opened.run();
-    assert_eq!(opened.state().file.name, "C.drift", "the newest");
+    assert_eq!(opened.state().drawing.file.name, "C.drift", "the newest");
     assert!(opened.state().session_files.left_behind.is_empty());
     assert!(opened.query_by_label("Drawings left open").is_none());
     let Some(mut next) = harness() else { return };
     next.state_mut().session_files.dir = Some(dir.clone());
     next.state_mut().restore_session(&storage);
     next.run();
-    assert_eq!(next.state().file.name, "B.drift");
+    assert_eq!(next.state().drawing.file.name, "B.drift");
     assert_eq!(next.state().session_files.left_behind.len(), 1);
     next.get_by_label("Delete them").click();
     next.run();
@@ -660,9 +665,9 @@ fn smoke_files_opening_a_file_takes_over_its_session() {
     h.state_mut().open_file(file.clone());
     h.run_steps(2);
     let app = h.state();
-    assert_eq!(app.file.name, "Plan.drift");
+    assert_eq!(app.drawing.file.name, "Plan.drift");
     assert!(
-        app.is_dirty() && !app.editor.doc.is_empty(),
+        app.is_dirty() && !app.drawing.editor.doc.is_empty(),
         "the unsaved changes"
     );
     assert!(app.pending.is_none(), "not opened again over them");
@@ -679,13 +684,13 @@ fn smoke_files_session_moves_from_the_settings_on_first_start() {
     edit_from_link(&mut old);
     let mut storage = MemoryStorage::default();
     eframe::App::save(old.state_mut(), &mut storage);
-    let drawn = old.state().editor.doc.clone();
+    let drawn = old.state().drawing.editor.doc.clone();
     assert!(!storage.get_string(crate::KEY_DOCUMENT).unwrap().is_empty());
     let dir = scratch_dir("smoke-migrate");
     let Some(mut h) = harness() else { return };
     h.state_mut().session_files.dir = Some(dir.clone());
     h.state_mut().restore_session(&storage);
-    assert_eq!(h.state().editor.doc, drawn);
+    assert_eq!(h.state().drawing.editor.doc, drawn);
     eframe::App::save(h.state_mut(), &mut storage);
     assert_eq!(storage.get_string(crate::KEY_DOCUMENT).as_deref(), Some(""));
     assert_eq!(sessions_in(&dir), 1);
@@ -748,8 +753,11 @@ fn smoke_files_files_handed_over_open_here_only_when_untouched() {
         "the second in a window of its own"
     );
     h.run_steps(3);
-    assert_eq!(h.state().file.path.as_deref(), Some(first.as_path()));
-    assert!(!h.state().editor.doc.is_empty(), "opened here");
+    assert_eq!(
+        h.state().drawing.file.path.as_deref(),
+        Some(first.as_path())
+    );
+    assert!(!h.state().drawing.editor.doc.is_empty(), "opened here");
     assert!(h.state_mut().open_requested(vec![first.clone()]).is_empty());
     assert_eq!(
         h.state_mut().open_requested(vec![second.clone()]),
@@ -785,6 +793,7 @@ fn smoke_files_opening_another_drawing_forgets_the_last_ones_picks() {
     {
         let app = h.state_mut();
         let dim = app
+            .drawing
             .editor
             .doc
             .add_constraint(drift_core::Constraint::Distance {
@@ -794,33 +803,39 @@ fn smoke_files_opening_another_drawing_forgets_the_last_ones_picks() {
             })
             .ok();
         assert!(dim.is_some());
-        app.selected_constraint = dim;
-        app.dimension_text
+        app.drawing.selected_constraint = dim;
+        app.drawing
+            .dimension_text
             .insert(drift_core::ConstraintId(1), "123".into());
-        app.picked_view = Some(drift_core::ViewId(1));
-        app.active_sheet = Some(drift_core::SheetId(1));
-        app.sheet_preview = true;
-        app.sheet_view = 3;
-        app.temp_dims.subject = Some(sides[0]);
-        app.layer_names
+        app.drawing.picked_view = Some(drift_core::ViewId(1));
+        app.drawing.view.active_sheet = Some(drift_core::SheetId(1));
+        app.drawing.view.sheet_preview = true;
+        app.drawing.view.sheet_view = 3;
+        app.drawing.temp_dims.subject = Some(sides[0]);
+        app.drawing
+            .layer_names
             .insert(drift_core::LayerId::DEFAULT, "Renaming".into());
-        app.text_typing = Some(drift_core::TextId(1));
-        app.inference_points.push(DVec2::new(5.0, 5.0));
+        app.drawing.text_typing = Some(drift_core::TextId(1));
+        app.drawing.inference_points.push(DVec2::new(5.0, 5.0));
     }
-    h.state_mut().file.clean_revision = Some(h.state().editor.doc.revision());
+    h.state_mut().drawing.file.clean_revision = Some(h.state().drawing.editor.doc.revision());
     h.state_mut().open_file(path.clone());
     h.run_steps(3);
     let app = h.state();
-    assert_eq!(app.file.path.as_deref(), Some(path.as_path()), "B is open");
-    assert_eq!(app.selected_constraint, None);
-    assert!(app.dimension_text.is_empty());
-    assert_eq!(app.picked_view, None);
-    assert_eq!(app.active_sheet, None);
-    assert!(!app.sheet_preview, "back to the model");
-    assert_eq!(app.sheet_view, 0);
-    assert_eq!(app.temp_dims.subject, None);
-    assert!(app.layer_names.is_empty());
-    assert_eq!(app.text_typing, None);
-    assert!(app.inference_points.is_empty());
+    assert_eq!(
+        app.drawing.file.path.as_deref(),
+        Some(path.as_path()),
+        "B is open"
+    );
+    assert_eq!(app.drawing.selected_constraint, None);
+    assert!(app.drawing.dimension_text.is_empty());
+    assert_eq!(app.drawing.picked_view, None);
+    assert_eq!(app.drawing.view.active_sheet, None);
+    assert!(!app.drawing.view.sheet_preview, "back to the model");
+    assert_eq!(app.drawing.view.sheet_view, 0);
+    assert_eq!(app.drawing.temp_dims.subject, None);
+    assert!(app.drawing.layer_names.is_empty());
+    assert_eq!(app.drawing.text_typing, None);
+    assert!(app.drawing.inference_points.is_empty());
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }

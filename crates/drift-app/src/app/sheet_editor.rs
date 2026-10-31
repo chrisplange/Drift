@@ -218,17 +218,17 @@ fn fit_on_sheet(
 impl DriftApp {
     /// Show a sheet (or the model, with `None`) on the canvas.
     pub(crate) fn show_sheet(&mut self, id: Option<SheetId>) {
-        self.add_view_on = None;
+        self.drawing.add_view_on = None;
         match id {
             Some(id) => {
-                if self.active_sheet != Some(id) || !self.sheet_preview {
-                    self.preview.zoom = 0.0;
-                    self.sheet_pick = SheetPick::Paper;
+                if self.drawing.view.active_sheet != Some(id) || !self.drawing.view.sheet_preview {
+                    self.drawing.view.preview.zoom = 0.0;
+                    self.drawing.view.sheet_pick = SheetPick::Paper;
                 }
-                self.active_sheet = Some(id);
-                self.sheet_preview = true;
+                self.drawing.view.active_sheet = Some(id);
+                self.drawing.view.sheet_preview = true;
             }
-            None => self.sheet_preview = false,
+            None => self.drawing.view.sheet_preview = false,
         }
     }
 
@@ -236,7 +236,7 @@ impl DriftApp {
     pub(crate) fn new_sheet(&mut self) {
         let id = self.add_sheet();
         self.show_sheet(Some(id));
-        self.sheet_pick = SheetPick::Paper;
+        self.drawing.view.sheet_pick = SheetPick::Paper;
         self.show_panel(crate::dock::Panel::Inspector);
     }
 
@@ -256,12 +256,13 @@ impl DriftApp {
             egui::Stroke::new(1.0, n.border),
         );
         let sheets: Vec<(SheetId, String)> = self
+            .drawing
             .editor
             .doc
             .sheets()
             .map(|(id, s)| (id, sheet_label(s)))
             .collect();
-        let on_sheet = self.sheet_preview;
+        let on_sheet = self.drawing.view.sheet_preview;
         let current = self.current_sheet();
         let mut tabs: Vec<(Option<SheetId>, String)> = vec![(None, "Model".to_owned())];
         tabs.extend(sheets.into_iter().map(|(id, l)| (Some(id), l)));
@@ -437,29 +438,34 @@ impl DriftApp {
 
     /// Move a sheet to position `to` among the sheets, as one undo step.
     pub(crate) fn move_sheet(&mut self, id: SheetId, to: usize) {
-        let from = self.editor.doc.sheets().position(|(s, _)| s == id);
+        let from = self.drawing.editor.doc.sheets().position(|(s, _)| s == id);
         if from.is_none_or(|from| from == to) {
             return;
         }
-        self.editor.doc.begin();
-        let went = self.editor.doc.move_sheet(id, to);
-        self.editor.commit("Move sheet");
+        self.drawing.editor.doc.begin();
+        let went = self.drawing.editor.doc.move_sheet(id, to);
+        self.drawing.editor.commit("Move sheet");
         self.follow_sheets(&went);
     }
 
     /// Keep what refers to sheets on the same sheets after they moved between ids.
     fn follow_sheets(&mut self, went: &std::collections::BTreeMap<SheetId, SheetId>) {
         let follow = |s: SheetId| went.get(&s).copied().unwrap_or(s);
-        self.active_sheet = self.active_sheet.map(follow);
-        self.add_view_on = self.add_view_on.map(follow);
-        self.pdf_left_out = self.pdf_left_out.iter().map(|s| follow(*s)).collect();
+        self.drawing.view.active_sheet = self.drawing.view.active_sheet.map(follow);
+        self.drawing.add_view_on = self.drawing.add_view_on.map(follow);
+        self.drawing.pdf_left_out = self
+            .drawing
+            .pdf_left_out
+            .iter()
+            .map(|s| follow(*s))
+            .collect();
     }
 
     /// A copy of a sheet, right after it and numbered after it: its paper, title block and
     /// fields, without its revisions. With `views`, it gets copies of the views (each its own
     /// view, to change apart from the first); without, it starts empty.
     pub(crate) fn duplicate_sheet(&mut self, id: SheetId, views: bool) {
-        let doc = &self.editor.doc;
+        let doc = &self.drawing.editor.doc;
         let Some(mut sheet) = doc.sheet(id).cloned() else {
             return;
         };
@@ -475,36 +481,36 @@ impl DriftApp {
         sheet.fields.number = number;
         sheet.name = format!("{} copy", sheet.name.trim());
         sheet.revisions.clear();
-        self.editor.doc.begin();
+        self.drawing.editor.doc.begin();
         if views {
             for port in &mut sheet.viewports {
-                if let Some(mut v) = self.editor.doc.view(port.view).cloned() {
+                if let Some(mut v) = self.drawing.editor.doc.view(port.view).cloned() {
                     v.name = format!("{} copy", v.title());
-                    port.view = self.editor.doc.add_view(v);
+                    port.view = self.drawing.editor.doc.add_view(v);
                 }
             }
         } else {
             sheet.viewports.clear();
         }
-        let new = self.editor.doc.add_sheet(sheet);
-        let went = self.editor.doc.move_sheet(new, at + 1);
-        self.editor.commit("Duplicate sheet");
+        let new = self.drawing.editor.doc.add_sheet(sheet);
+        let went = self.drawing.editor.doc.move_sheet(new, at + 1);
+        self.drawing.editor.commit("Duplicate sheet");
         self.follow_sheets(&went);
         self.show_sheet(Some(went.get(&new).copied().unwrap_or(new)));
-        self.sheet_view = 0;
-        self.sheet_pick = SheetPick::Paper;
+        self.drawing.view.sheet_view = 0;
+        self.drawing.view.sheet_pick = SheetPick::Paper;
     }
 
     /// Delete a sheet; the canvas goes back to the model if none are left.
     pub(crate) fn delete_sheet(&mut self, id: SheetId) {
-        self.editor.doc.begin();
-        self.editor.doc.remove_sheet(id);
-        self.editor.commit("Delete sheet");
-        if self.active_sheet == Some(id) {
-            self.active_sheet = None;
+        self.drawing.editor.doc.begin();
+        self.drawing.editor.doc.remove_sheet(id);
+        self.drawing.editor.commit("Delete sheet");
+        if self.drawing.view.active_sheet == Some(id) {
+            self.drawing.view.active_sheet = None;
         }
-        if self.editor.doc.sheets().next().is_none() {
-            self.sheet_preview = false;
+        if self.drawing.editor.doc.sheets().next().is_none() {
+            self.drawing.view.sheet_preview = false;
         }
     }
 
@@ -562,34 +568,35 @@ impl DriftApp {
     /// Add view, from a sheet: the canvas shows the model with the View tool, to drag the
     /// view's crop; the view then goes on the sheet (see [`Self::view_drawn`]).
     pub(crate) fn start_add_view(&mut self, id: SheetId) {
-        self.sheet_preview = false;
+        self.drawing.view.sheet_preview = false;
         self.set_tool(ToolKind::View);
-        self.add_view_on = Some(id);
+        self.drawing.add_view_on = Some(id);
     }
 
     /// A view was just drawn with the View tool. Asked for from a sheet, it goes on that
     /// sheet where there is room, picked, and the sheet is shown again. Returns true if so.
     pub(crate) fn view_drawn(&mut self, view: ViewId) -> bool {
-        let Some(sheet) = self.add_view_on.take() else {
+        let Some(sheet) = self.drawing.add_view_on.take() else {
             return false;
         };
         self.set_tool(ToolKind::Select);
         // At the largest standard scale that finds free paper there, and in that spot (the
         // crop stays as drawn); else where there is room at the scale it has.
         let at = match (
-            self.editor.doc.view(view).cloned(),
-            self.editor.doc.sheet(sheet),
+            self.drawing.editor.doc.view(view).cloned(),
+            self.drawing.editor.doc.sheet(sheet),
         ) {
             (Some(v), Some(s)) => {
-                let placed = self.editor.doc.placed_views(s);
+                let placed = self.drawing.editor.doc.placed_views(s);
                 let fit = fit_on_sheet(v.size, s, &placed, self.fit_bounds(), self.imperial());
                 fit.map(|(scale, at)| {
                     if scale != v.scale {
-                        self.editor.doc.begin();
-                        self.editor
+                        self.drawing.editor.doc.begin();
+                        self.drawing
+                            .editor
                             .doc
                             .set_view(view, drift_core::View { scale, ..v });
-                        self.editor.commit("View scale");
+                        self.drawing.editor.commit("View scale");
                     }
                     at
                 })
@@ -599,23 +606,28 @@ impl DriftApp {
         if self.place_view(sheet, view, at).is_none() {
             return false;
         }
-        let index = self.sheet_view;
+        let index = self.drawing.view.sheet_view;
         self.show_sheet(Some(sheet));
-        self.sheet_view = index;
-        self.picked_view = Some(view);
-        self.sheet_pick = SheetPick::View;
+        self.drawing.view.sheet_view = index;
+        self.drawing.picked_view = Some(view);
+        self.drawing.view.sheet_pick = SheetPick::View;
         self.show_panel(crate::dock::Panel::Inspector);
         true
     }
 
     /// While a view for a sheet is being drawn: what to do, at the top of the canvas.
     pub(crate) fn paint_add_view_prompt(&self, painter: &egui::Painter, map: &ScreenMap) {
-        let Some(id) = self.add_view_on else {
+        let Some(id) = self.drawing.add_view_on else {
             return;
         };
         let dark = painter.ctx().theme() == egui::Theme::Dark;
         let accent = theme::accent(dark);
-        let sheet = self.editor.doc.sheet(id).map_or(String::new(), sheet_label);
+        let sheet = self
+            .drawing
+            .editor
+            .doc
+            .sheet(id)
+            .map_or(String::new(), sheet_label);
         let text =
             format!("New view on {sheet}: drag a rectangle round what it shows · Esc cancels");
         let n = theme::neutrals(dark);
@@ -639,7 +651,7 @@ impl DriftApp {
         let Some(id) = self.current_sheet() else {
             return;
         };
-        let Some(original) = self.editor.doc.sheet(id).cloned() else {
+        let Some(original) = self.drawing.editor.doc.sheet(id).cloned() else {
             return;
         };
         let mut sheet = original.clone();
@@ -650,11 +662,11 @@ impl DriftApp {
         let mut delete = false;
         let mut delete_views = false;
         let mut whole = false;
-        let placed = self.editor.doc.placed_views(&sheet);
+        let placed = self.drawing.editor.doc.placed_views(&sheet);
         let pick = if placed.is_empty() {
             SheetPick::Paper
         } else {
-            self.sheet_pick
+            self.drawing.view.sheet_pick
         };
         let several = self.picked_views(&sheet);
         match pick {
@@ -680,7 +692,7 @@ impl DriftApp {
                 remove_view = theme::danger_button(ui, "Remove from sheet")
                     .on_hover_text("Take the picked views off this sheet (they stay in the model)")
                     .clicked();
-                if self.confirm_delete_set {
+                if self.drawing.confirm_delete_set {
                     ui.label(
                         egui::RichText::new(
                             "Deleting them takes them out of the model and off every sheet.",
@@ -692,14 +704,14 @@ impl DriftApp {
                             delete_views = true;
                         }
                         if ui.button("Keep them").clicked() {
-                            self.confirm_delete_set = false;
+                            self.drawing.confirm_delete_set = false;
                         }
                     });
                 } else if theme::danger_button(ui, "Delete views")
                     .on_hover_text("Delete the picked views from the model and every sheet")
                     .clicked()
                 {
-                    self.confirm_delete_set = true;
+                    self.drawing.confirm_delete_set = true;
                 }
             }
             SheetPick::View => {
@@ -759,7 +771,7 @@ impl DriftApp {
         self.update_sheet(id, sheet, view, typing);
         if remove_view {
             self.remove_picked_views(id);
-            self.sheet_pick = SheetPick::Paper;
+            self.drawing.view.sheet_pick = SheetPick::Paper;
         }
         if delete_views {
             self.delete_picked_views();

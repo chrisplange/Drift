@@ -105,12 +105,12 @@ fn perf_app_frames() {
         .build_eframe(|cc| crate::DriftApp::new(cc));
     h.run();
     let (doc, curves) = torture_sketch();
-    h.state_mut().editor = Editor::new(doc);
+    h.state_mut().drawing.editor = Editor::new(doc);
     let fit = h.state().fit_bounds();
-    h.state_mut().fit_target = Some(fit);
+    h.state_mut().drawing.view.fit_target = Some(fit);
     h.run();
     // Fitted; let the camera moves below stick (as a mouse pan or zoom would).
-    h.state_mut().fit_target = None;
+    h.state_mut().drawing.view.fit_target = None;
     println!("\n{curves} curves in the full app at 1920 × 1080:");
 
     let frame = |h: &mut Harness<'_, crate::DriftApp>| {
@@ -149,24 +149,34 @@ fn perf_app_frames() {
     });
     phase("panning, whole sketch", &mut h, &mut |h, _| {
         h.state_mut()
+            .drawing
+            .view
             .camera
             .pan(egui::emath::Vec2::new(4.0, 2.0).into_dvec());
     });
     phase("zooming in", &mut h, &mut |h, _| {
-        let c = h.state().camera;
+        let c = h.state().drawing.view.camera;
         let _ = c;
-        h.state_mut().camera.zoom_at(DVec2::ZERO, 1.05);
+        h.state_mut().drawing.view.camera.zoom_at(DVec2::ZERO, 1.05);
     });
-    println!("  scale after zooming in: {}", h.state().camera.scale);
+    println!(
+        "  scale after zooming in: {}",
+        h.state().drawing.view.camera.scale
+    );
     phase("panning, zoomed in", &mut h, &mut |h, _| {
-        h.state_mut().camera.pan(v(6.0, 3.0));
+        h.state_mut().drawing.view.camera.pan(v(6.0, 3.0));
     });
     phase("zooming out past everything", &mut h, &mut |h, _| {
-        h.state_mut().camera.zoom_at(DVec2::ZERO, 1.0 / 1.12);
+        h.state_mut()
+            .drawing
+            .view
+            .camera
+            .zoom_at(DVec2::ZERO, 1.0 / 1.12);
     });
     // A thousand curves picked: emphasis, handles, combs, inspector.
     let some: BTreeSet<EntityId> = h
         .state()
+        .drawing
         .editor
         .doc
         .iter()
@@ -175,10 +185,10 @@ fn perf_app_frames() {
         .take(1000)
         .collect();
     let fit = h.state().fit_bounds();
-    h.state_mut().fit_target = Some(fit);
+    h.state_mut().drawing.view.fit_target = Some(fit);
     h.run();
-    h.state_mut().fit_target = None;
-    h.state_mut().editor.selection = some;
+    h.state_mut().drawing.view.fit_target = None;
+    h.state_mut().drawing.editor.selection = some;
     phase("1,000 picked, hovering", &mut h, &mut |h, k| {
         h.hover_at(Pos2::new(400.0 + (k as f32 * 31.0) % 1200.0, centre.y));
     });
@@ -278,16 +288,23 @@ fn perf_zoom_frame_cost() {
         .replace_document(doc, "zoom".into(), None, meta, true);
     h.state_mut().show_view_crops = true;
     h.run();
-    h.state_mut().fit_target = None;
-    let fitted = h.state().camera;
+    h.state_mut().drawing.view.fit_target = None;
+    let fitted = h.state().drawing.view.camera;
     // About the middle, and about a fill's seed (something is on screen at every zoom).
-    let seeds: Vec<DVec2> = h.state().editor.doc.fills().map(|(_, f)| f.seed).collect();
+    let seeds: Vec<DVec2> = h
+        .state()
+        .drawing
+        .editor
+        .doc
+        .fills()
+        .map(|(_, f)| f.seed)
+        .collect();
     let anchors = [fitted.center, seeds[seeds.len() / 2]];
     for anchor in anchors {
         println!("\nzoomed in about {:.1}, {:.1}:", anchor.x, anchor.y);
         let mut at_100 = 0.0;
         for percent in [100.0, 1000.0, 3000.0, 10000.0] {
-            h.state_mut().camera = drift_render::Camera {
+            h.state_mut().drawing.view.camera = drift_render::Camera {
                 center: anchor,
                 // Zoom as the status bar shows it: real size on a 96 dpi screen.
                 scale: percent / 100.0 * 96.0 / 25.4,

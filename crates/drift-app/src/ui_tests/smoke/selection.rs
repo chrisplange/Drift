@@ -19,7 +19,7 @@ fn line(h: &mut Harness<'_, DriftApp>, a: DVec2, b: DVec2) -> EntityId {
     h.run();
     let new = curves(h, &added(h, &before));
     assert_eq!(new.len(), 1, "a line drawn");
-    h.state_mut().editor.selection.clear();
+    h.state_mut().drawing.editor.selection.clear();
     new[0]
 }
 
@@ -35,7 +35,7 @@ fn smoke_selection_filters_one_kind_or_several() {
     for kind in PickKind::ALL {
         pick_only(&mut h, kind.label());
         assert_eq!(
-            h.state().editor.prefs.pick_filter,
+            h.state().drawing.editor.prefs.pick_filter,
             PickFilter::only(kind),
             "{kind:?}"
         );
@@ -47,26 +47,32 @@ fn smoke_selection_filters_one_kind_or_several() {
     // Fills alone: a click in the shape picks its fill, not its outline; the line isn't picked.
     pick_only(&mut h, "Fills");
     click_world(&mut h, DVec2::new(20.0, 15.0));
-    assert_eq!(h.state().editor.selected_fills, [fill].into());
-    assert!(h.state().editor.selection.is_empty());
+    assert_eq!(h.state().drawing.editor.selected_fills, [fill].into());
+    assert!(h.state().drawing.editor.selection.is_empty());
     click_world(&mut h, DVec2::new(80.0, 10.0));
-    assert!(h.state().editor.selection.is_empty(), "edges are off");
+    assert!(
+        h.state().drawing.editor.selection.is_empty(),
+        "edges are off"
+    );
     // Edges as well: the line picks too.
     h.get_by_label("Pick Edges").click();
     h.run();
     assert_eq!(
-        h.state().editor.prefs.pick_filter,
+        h.state().drawing.editor.prefs.pick_filter,
         PickFilter::only(PickKind::Fills).with(PickKind::Edges, true)
     );
     click_world(&mut h, DVec2::new(80.0, 10.0));
-    assert_eq!(h.state().editor.selection, [loose].into());
+    assert_eq!(h.state().drawing.editor.selection, [loose].into());
     // All: everything again, and a click in the shape picks it whole.
     h.get_by_label("All").click();
     h.run();
-    assert!(h.state().editor.prefs.pick_filter.is_all());
+    assert!(h.state().drawing.editor.prefs.pick_filter.is_all());
     assert!(h.query_by_label("Selection filter on").is_none());
     click_world(&mut h, DVec2::new(20.0, 15.0));
-    assert_eq!(h.state().editor.selection, sides.iter().copied().collect());
+    assert_eq!(
+        h.state().drawing.editor.selection,
+        sides.iter().copied().collect()
+    );
 }
 
 /// #154: G with a line picked by its midpoint moves the line. #155: X locks a mouse drag to
@@ -80,7 +86,7 @@ fn smoke_selection_g_from_a_midpoint_and_axis_lock_in_a_drag() {
     // (Clicked, its ends are where the pointer was: within a pixel's rounding.)
     let (a0, b0) = (at(&h, a), at(&h, b));
     click_world(&mut h, DVec2::new(20.0, 10.0));
-    assert_eq!(h.state().editor.selected_midpoints, [l].into());
+    assert_eq!(h.state().drawing.editor.selected_midpoints, [l].into());
     h.hover_at(screen(&h, DVec2::new(20.0, 10.0)));
     h.run();
     h.key_press(Key::G);
@@ -131,21 +137,26 @@ fn smoke_selection_g_from_a_midpoint_and_axis_lock_in_a_drag() {
 fn smoke_selection_hidden_layer_area_is_not_picked() {
     let Some(mut h) = harness() else { return };
     h.state_mut()
+        .drawing
         .editor
         .change_rules(|r| r.regions_need_fill = false);
     view(&mut h, DVec2::new(-10.0, -10.0), DVec2::new(60.0, 40.0));
     rectangle(&mut h, DVec2::ZERO, DVec2::new(40.0, 30.0), Fill::No);
     click_world(&mut h, DVec2::new(20.0, 15.0));
-    assert!(h.state().editor.selected_region.is_some(), "the area");
+    assert!(
+        h.state().drawing.editor.selected_region.is_some(),
+        "the area"
+    );
     h.key_press(Key::Escape);
     h.run();
-    let layer = h.state().editor.doc.current_layer();
+    let layer = h.state().drawing.editor.doc.current_layer();
     h.state_mut()
+        .drawing
         .editor
         .set_layers_visible(&[(layer, false)], "Hide");
     h.run();
     click_world(&mut h, DVec2::new(20.0, 15.0));
-    let ed = &h.state().editor;
+    let ed = &h.state().drawing.editor;
     assert!(ed.selected_region.is_none() && ed.selection.is_empty());
 }
 
@@ -157,28 +168,53 @@ fn smoke_selection_alt_click_layer_lock_and_snap() {
     let layers = many_layers(&mut h, 3);
     let others = |h: &Harness<'_, DriftApp>, f: fn(&drift_core::Layer) -> bool| {
         h.state()
+            .drawing
             .editor
             .doc
             .layers()
             .filter(|(id, l)| *id != layers[1] && f(l))
             .count()
     };
-    let total = h.state().editor.doc.layers().count();
-    let name = h.state().editor.doc.layer(layers[1]).unwrap().name.clone();
+    let total = h.state().drawing.editor.doc.layers().count();
+    let name = h
+        .state()
+        .drawing
+        .editor
+        .doc
+        .layer(layers[1])
+        .unwrap()
+        .name
+        .clone();
     alt_toggle(&mut h, &name, LOCK);
     assert_eq!(others(&h, |l| l.locked), total - 1, "the others locked");
-    assert!(!h.state().editor.doc.layer(layers[1]).unwrap().locked);
+    assert!(
+        !h.state()
+            .drawing
+            .editor
+            .doc
+            .layer(layers[1])
+            .unwrap()
+            .locked
+    );
     h.state_mut().undo();
     h.run();
     assert_eq!(others(&h, |l| l.locked), 0);
     alt_toggle(&mut h, &name, SNAP);
     assert_eq!(others(&h, |l| l.snappable), 0, "snapping to this one only");
-    assert!(h.state().editor.doc.layer(layers[1]).unwrap().snappable);
+    assert!(
+        h.state()
+            .drawing
+            .editor
+            .doc
+            .layer(layers[1])
+            .unwrap()
+            .snappable
+    );
 }
 
 /// The radius of a circle.
 fn radius(h: &Harness<'_, DriftApp>, c: EntityId) -> f64 {
-    match h.state().editor.doc.shape(c) {
+    match h.state().drawing.editor.doc.shape(c) {
         Some(drift_core::Shape::Circle { radius, .. }) => radius,
         other => panic!("not a circle: {other:?}"),
     }
@@ -219,8 +255,8 @@ fn smoke_selection_one_circle_has_a_box_and_one_line_none() {
     view(&mut h, v(-40.0, -40.0), v(40.0, 40.0));
     let c = circle(&mut h, DVec2::ZERO, 10.0);
     click_world(&mut h, v(10.0, 0.0));
-    assert_eq!(h.state().editor.selection, [c].into());
-    let frame = h.state_mut().editor.transform_box().expect("a box");
+    assert_eq!(h.state().drawing.editor.selection, [c].into());
+    let frame = h.state_mut().drawing.editor.transform_box().expect("a box");
     assert!(frame.lone && frame.uniform, "{frame:?}");
     save_png("drift_smoke_circle_box.png", &mut h);
     let cursor = |h: &Harness<'_, DriftApp>| h.output().platform_output.cursor_icon;
@@ -249,7 +285,7 @@ fn smoke_selection_one_circle_has_a_box_and_one_line_none() {
         EguiModifiers::NONE,
     );
     assert!((radius(&h, c) - 15.0).abs() < 0.1, "{}", radius(&h, c));
-    let centre = |h: &Harness<'_, DriftApp>| match h.state().editor.doc.shape(c) {
+    let centre = |h: &Harness<'_, DriftApp>| match h.state().drawing.editor.doc.shape(c) {
         Some(drift_core::Shape::Circle { center, .. }) => center,
         other => panic!("{other:?}"),
     };
@@ -274,12 +310,12 @@ fn smoke_selection_one_circle_has_a_box_and_one_line_none() {
     let l = line(&mut h, v(-30.0, -30.0), v(-15.0, -25.0));
     // (A third of the way along: its middle would pick its midpoint.)
     click_world(&mut h, v(-25.0, -30.0 + 5.0 / 3.0));
-    assert_eq!(h.state().editor.selection, [l].into());
-    assert!(h.state_mut().editor.transform_box().is_none());
+    assert_eq!(h.state().drawing.editor.selection, [l].into());
+    assert!(h.state_mut().drawing.editor.transform_box().is_none());
 
     // The circle's radius dimensioned at 10: the box keeps it, and says so.
     let dim = {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         ed.doc.begin();
         let dim = ed
             .doc
@@ -292,8 +328,8 @@ fn smoke_selection_one_circle_has_a_box_and_one_line_none() {
         dim
     };
     click_world(&mut h, v(10.0, 0.0));
-    assert_eq!(h.state().editor.selection, [c].into());
-    let depth = h.state().editor.history.undo_depth();
+    assert_eq!(h.state().drawing.editor.selection, [c].into());
+    let depth = h.state().drawing.editor.history.undo_depth();
     handle_drag(
         &mut h,
         handle,
@@ -301,7 +337,11 @@ fn smoke_selection_one_circle_has_a_box_and_one_line_none() {
         EguiModifiers::NONE,
     );
     assert_eq!(radius(&h, c), 10.0);
-    assert_eq!(h.state().editor.history.undo_depth(), depth, "no step");
+    assert_eq!(
+        h.state().drawing.editor.history.undo_depth(),
+        depth,
+        "no step"
+    );
     assert!(
         status(&h).contains("held by a dimension") && status(&h).contains("Alt"),
         "{}",
@@ -317,6 +357,7 @@ fn smoke_selection_one_circle_has_a_box_and_one_line_none() {
     assert!((radius(&h, c) - 15.0).abs() < 0.1, "{}", radius(&h, c));
     let value = h
         .state()
+        .drawing
         .editor
         .doc
         .constraint(dim)
@@ -340,7 +381,11 @@ fn smoke_selection_right_click_zooms_to_the_selection() {
     h.hover_at(on);
     h.run();
     right_click(&mut h, on);
-    assert_eq!(h.state().editor.selection, [l].into(), "the line picked");
+    assert_eq!(
+        h.state().drawing.editor.selection,
+        [l].into(),
+        "the line picked"
+    );
     h.get_by_label_contains("Zoom to selection").click();
     for _ in 0..3 {
         h.run();

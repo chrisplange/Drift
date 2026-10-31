@@ -109,7 +109,7 @@ impl DriftApp {
         };
         ctx.request_repaint();
         soak.frame += 1;
-        let entities = self.editor.doc.len();
+        let entities = self.drawing.editor.doc.len();
         if soak.reported.elapsed() >= Duration::from_secs(1) {
             soak.reported = Instant::now();
             let mb = drift_platform::memory::used().unwrap_or(0) / (1024 * 1024);
@@ -164,7 +164,7 @@ impl DriftApp {
             }
             _ => {}
         }
-        let canvas = self.canvas_rect;
+        let canvas = self.drawing.view.canvas_rect;
         if canvas.is_positive() {
             let at = |r: u64| {
                 Pos2::new(

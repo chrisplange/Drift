@@ -107,12 +107,12 @@ fn place_pos(center: egui::Pos2, place: usize) -> egui::Pos2 {
 impl DriftApp {
     /// The ring's eight places for the selection.
     pub(crate) fn pie_slices(&self) -> [Slice; 8] {
-        let options = self.editor.relation_options();
+        let options = self.drawing.editor.relation_options();
         PLACES.map(|labels| {
             let option = options.iter().find(|o| labels.contains(&o.label)).cloned();
             let on = option
                 .as_ref()
-                .is_some_and(|o| self.editor.has_relations(o));
+                .is_some_and(|o| self.drawing.editor.has_relations(o));
             Slice {
                 label: option.as_ref().map_or(labels[0], |o| o.label),
                 option,
@@ -125,7 +125,7 @@ impl DriftApp {
     pub(crate) fn open_pie(&mut self, ctx: &egui::Context) {
         let at = ctx
             .input(|i| i.pointer.latest_pos())
-            .unwrap_or(self.canvas_rect.center());
+            .unwrap_or(self.drawing.view.canvas_rect.center());
         let screen = ctx.content_rect().shrink2(egui::vec2(170.0, 130.0));
         self.pie = Some(Pie {
             center: if screen.is_positive() {
@@ -169,7 +169,9 @@ impl DriftApp {
             if !pressed || self.tool.is_busy() {
                 return false;
             }
-            if self.editor.selection.is_empty() && self.editor.selected_midpoints.is_empty() {
+            if self.drawing.editor.selection.is_empty()
+                && self.drawing.editor.selected_midpoints.is_empty()
+            {
                 self.set_status(
                     "Select what to relate first, then press Q".into(),
                     false,
@@ -210,21 +212,21 @@ impl DriftApp {
             return;
         };
         if slice.on {
-            let existing = self.editor.existing_relations(&option);
-            self.editor.remove_relations(&existing);
+            let existing = self.drawing.editor.existing_relations(&option);
+            self.drawing.editor.remove_relations(&existing);
             return;
         }
         // Only what isn't there yet (some of several lines may already be horizontal).
         let missing = ConstraintOption {
             label: option.label,
-            constraints: self.editor.missing_relations(&option),
+            constraints: self.drawing.editor.missing_relations(&option),
         };
         self.apply_constraint_option(&missing, false, now);
     }
 
     /// Whether adding the relation at `place` would over-define the sketch.
     fn pie_conflict(&mut self, place: usize, slice: &Slice) -> bool {
-        let revision = self.editor.doc.revision();
+        let revision = self.drawing.editor.doc.revision();
         if let Some(Pie {
             conflict: Some((p, r, bad)),
             ..
@@ -236,13 +238,13 @@ impl DriftApp {
         }
         let bad = match &slice.option {
             Some(option) if !slice.on => {
-                let missing = self.editor.missing_relations(option);
-                self.editor.would_conflict(&missing)
+                let missing = self.drawing.editor.missing_relations(option);
+                self.drawing.editor.would_conflict(&missing)
             }
             _ => false,
         };
         // (The dry run itself counts as a change to the document, and back.)
-        let revision = self.editor.doc.revision();
+        let revision = self.drawing.editor.doc.revision();
         if let Some(pie) = &mut self.pie {
             pie.conflict = Some((place, revision, bad));
         }

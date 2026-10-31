@@ -53,7 +53,7 @@ impl DriftApp {
             ViewFlag::Dimensions => &mut self.show_dimensions,
             ViewFlag::Relations => &mut self.show_relations,
             ViewFlag::Hidden => &mut self.show_hidden_annotations,
-            ViewFlag::Free => &mut self.params.show_free,
+            ViewFlag::Free => &mut self.drawing.params.show_free,
             ViewFlag::Combs => &mut self.show_combs,
             ViewFlag::Crops => &mut self.show_view_crops,
             ViewFlag::Centrelines => &mut self.show_wall_centrelines,
@@ -67,7 +67,7 @@ impl DriftApp {
             Command::Toggle(f) => *self.flag(f),
             Command::Panel(p) => self.layout.is_shown(p) && !self.dock_view.hide_all,
             Command::HideAllPanels => self.dock_view.hide_all,
-            Command::SheetPreview => self.sheet_preview,
+            Command::SheetPreview => self.drawing.view.sheet_preview,
             _ => return None,
         })
     }
@@ -76,11 +76,11 @@ impl DriftApp {
     fn command_title(&self, spec: &Spec, menu: bool) -> String {
         let base = if menu { spec.menu } else { spec.title };
         let count = match spec.command {
-            Command::ClearRelations => self.editor.selection_constraints().0.len(),
-            Command::ClearDimensions => self.editor.selection_constraints().1.len(),
+            Command::ClearRelations => self.drawing.editor.selection_constraints().0.len(),
+            Command::ClearDimensions => self.drawing.editor.selection_constraints().1.len(),
             _ => 0,
         };
-        let history = &self.editor.history;
+        let history = &self.drawing.editor.history;
         match spec.command {
             _ if count > 0 => format!("{base} ({count})"),
             Command::Undo if menu => history
@@ -125,13 +125,14 @@ impl DriftApp {
         };
         out.sort_by_key(|e| toolbar(e).unwrap_or(usize::MAX));
         let options: Vec<_> = self
+            .drawing
             .editor
             .doc
             .variants()
             .map(|(id, v)| (id, v.name.clone()))
             .collect();
         for (id, name) in options {
-            let ghosted = self.params.ghosted.contains(&id);
+            let ghosted = self.drawing.params.ghosted.contains(&id);
             for (command, title, on) in [
                 (
                     Command::ApplyOption(id),
@@ -227,10 +228,10 @@ impl DriftApp {
             Command::Undo => self.undo(),
             Command::Redo => self.redo(),
             // On a sheet: all its views.
-            Command::SelectAll if self.sheet_preview => self.pick_all_views(),
+            Command::SelectAll if self.drawing.view.sheet_preview => self.pick_all_views(),
             Command::SelectAll => {
                 self.set_tool(ToolKind::Select);
-                self.editor.select_all();
+                self.drawing.editor.select_all();
             }
             Command::SelectOverlapping => self.select_overlapping(now),
             Command::CheckSketch => self.open_sketch_check(),
@@ -258,76 +259,76 @@ impl DriftApp {
             Command::PasteInPlace => self.paste_copied(true, now),
             Command::Delete => self.delete_picked(),
             Command::DeleteView => {
-                if let Some(view) = self.picked_view {
+                if let Some(view) = self.drawing.picked_view {
                     self.delete_picked_view(view);
                 }
             }
             Command::RemoveFromSheet => {
                 if let Some(id) = self.current_sheet() {
                     self.remove_picked_views(id);
-                    self.sheet_pick = crate::app::sheet_editor::SheetPick::Paper;
+                    self.drawing.view.sheet_pick = crate::app::sheet_editor::SheetPick::Paper;
                 }
             }
             Command::Duplicate => self.duplicate_and_grab(),
             Command::Group => {
-                self.editor.make_group();
+                self.drawing.editor.make_group();
             }
             Command::Arrange(how) => self.arrange(how, now),
             Command::Rename => self.start_rename(),
             Command::Ungroup => {
-                self.editor.ungroup();
+                self.drawing.editor.ungroup();
             }
             Command::MakeBlock => self.start_make_block(""),
-            Command::Explode => self.editor.explode_selected(),
+            Command::Explode => self.drawing.editor.explode_selected(),
             Command::BlockFromGroup => {
-                if let Some(g) = self.editor.convertible_group() {
+                if let Some(g) = self.drawing.editor.convertible_group() {
                     self.block_from_group(g, now);
                 }
             }
             Command::ExplodeToGroup => {
-                self.editor.explode_to_groups();
+                self.drawing.editor.explode_to_groups();
             }
             Command::WallsFromCurves => {
-                let picked: Vec<_> = self.editor.selection.iter().copied().collect();
-                match self.editor.walls_from_curves(&picked) {
+                let picked: Vec<_> = self.drawing.editor.selection.iter().copied().collect();
+                match self.drawing.editor.walls_from_curves(&picked) {
                     Ok(made) => {
                         let n = made.len();
                         let what = if n == 1 { "a wall" } else { "walls" };
                         self.set_status(format!("Made {what} along the curves"), false, now);
                     }
-                    Err(why) => self.editor.out.notice = Some(why),
+                    Err(why) => self.drawing.editor.out.notice = Some(why),
                 }
             }
             Command::WallsFromLines => {
-                let picked: Vec<_> = self.editor.selection.iter().copied().collect();
-                match self.editor.walls_from_lines(&picked) {
+                let picked: Vec<_> = self.drawing.editor.selection.iter().copied().collect();
+                match self.drawing.editor.walls_from_lines(&picked) {
                     Ok(report) => self.set_status(report.summary(), false, now),
-                    Err(why) => self.editor.out.notice = Some(why),
+                    Err(why) => self.drawing.editor.out.notice = Some(why),
                 }
             }
             Command::ExplodeWalls => {
-                let walls: Vec<_> = self.editor.selected_walls().into_iter().collect();
-                self.editor.explode_walls(&walls);
+                let walls: Vec<_> = self.drawing.editor.selected_walls().into_iter().collect();
+                self.drawing.editor.explode_walls(&walls);
             }
             Command::EditFill => {
-                if let Some(f) = self.editor.picked_shape_fill() {
-                    self.editor.pick_fill_alone(f);
+                if let Some(f) = self.drawing.editor.picked_shape_fill() {
+                    self.drawing.editor.pick_fill_alone(f);
                 }
             }
             Command::JoinCorners => {
-                if let Some(f) = self.editor.joinable_fill()
-                    && let Err(why) = self.editor.join_corners(f)
+                if let Some(f) = self.drawing.editor.joinable_fill()
+                    && let Err(why) = self.drawing.editor.join_corners(f)
                 {
-                    self.editor.out.notice = Some(why);
+                    self.drawing.editor.out.notice = Some(why);
                 }
             }
             Command::JoinWalls => {
-                let walls: Vec<_> = self.editor.selected_walls().into_iter().collect();
-                self.editor.join_walls(&walls);
+                let walls: Vec<_> = self.drawing.editor.selected_walls().into_iter().collect();
+                self.drawing.editor.join_walls(&walls);
             }
             Command::UnjoinWalls => {
-                let walls: Vec<_> = self.editor.selected_walls().into_iter().collect();
-                self.editor.unjoin_walls(&walls);
+                let walls: Vec<_> = self.drawing.editor.selected_walls().into_iter().collect();
+                self.drawing.editor.unjoin_walls(&walls);
             }
             Command::Move => self.start_transform(ToolKey::G, now),
             Command::Rotate => self.start_transform(ToolKey::R, now),
@@ -344,22 +345,24 @@ impl DriftApp {
                 self.show_panel(Panel::Inspector);
             }
             Command::SaveOption(whole) => {
-                let n = self.editor.doc.variants().count() + 1;
-                self.editor.save_option(&format!("Option {n}"), whole);
+                let n = self.drawing.editor.doc.variants().count() + 1;
+                self.drawing
+                    .editor
+                    .save_option(&format!("Option {n}"), whole);
                 self.show_panel(Panel::Parameters);
             }
             Command::ApplyOption(id) => {
-                if let Err(e) = self.editor.apply_variant(id) {
+                if let Err(e) = self.drawing.editor.apply_variant(id) {
                     self.set_status(format!("Can't apply it: {e}"), true, now);
                 }
             }
             Command::GhostOption(id) => {
-                if !self.params.ghosted.remove(&id) {
-                    self.params.ghosted.insert(id);
+                if !self.drawing.params.ghosted.remove(&id) {
+                    self.drawing.params.ghosted.insert(id);
                 }
             }
             Command::Construction => self.toggle_construction(now),
-            Command::ZoomToFit => self.fit_target = Some(self.fit_bounds()),
+            Command::ZoomToFit => self.drawing.view.fit_target = Some(self.fit_bounds()),
             Command::ZoomToSelection => {
                 self.zoom_to_selection();
             }
@@ -368,8 +371,8 @@ impl DriftApp {
                 if self.current_sheet().is_none() {
                     self.add_sheet();
                 }
-                self.sheet_preview = !self.sheet_preview;
-                self.preview.zoom = 0.0;
+                self.drawing.view.sheet_preview = !self.drawing.view.sheet_preview;
+                self.drawing.view.preview.zoom = 0.0;
             }
             Command::Palette => self.open_palette(),
             Command::Shortcuts => self.show_shortcuts = true,
@@ -413,8 +416,11 @@ impl DriftApp {
             self.set_tool(ToolKind::Select);
         }
         // From a menu or the palette the pointer is off the canvas: start where it last was.
-        let pointer = self.pointer.or(self.last_pointer);
-        if !self.tool.key(key, pointer.as_ref(), &mut self.editor) {
+        let pointer = self.drawing.view.pointer.or(self.drawing.view.last_pointer);
+        if !self
+            .tool
+            .key(key, pointer.as_ref(), &mut self.drawing.editor)
+        {
             let (what, letter) = if key == ToolKey::G {
                 ("Move", "G")
             } else {

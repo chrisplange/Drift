@@ -141,17 +141,17 @@ pub(super) fn first_painted(art: &drift_io::vector::Artwork, colours: &[Rgb]) ->
 #[test]
 fn print_pdf_and_svg_stack_as_the_canvas_does() {
     let Some(mut h) = harness() else { return };
-    h.state_mut().editor = drift_edit::editor::Editor::new(drawing());
-    assert!(h.state().editor.doc.rules().stacked_fills);
+    h.state_mut().drawing.editor = drift_edit::editor::Editor::new(drawing());
+    assert!(h.state().drawing.editor.doc.rules().stacked_fills);
     // Curves in their own colours, not by how far they are defined.
     h.state_mut().status_colors = false;
     let bounds = drift_core::Bounds {
         min: DVec2::new(-12.0, -8.0),
         max: DVec2::new(82.0, 62.0),
     };
-    h.state_mut().fit_target = Some(bounds);
+    h.state_mut().drawing.view.fit_target = Some(bounds);
     h.run();
-    h.state_mut().fit_target = None;
+    h.state_mut().drawing.view.fit_target = None;
     h.run();
 
     // On screen: what is over what.
@@ -202,8 +202,13 @@ fn print_pdf_and_svg_stack_as_the_canvas_does() {
         egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(1000.0, 1000.0)),
     );
     let app = h.state_mut();
-    let page =
-        crate::output::model_page(&mut app.editor, &app.hatch_patterns, &painter, None, false);
+    let page = crate::output::model_page(
+        &mut app.drawing.editor,
+        &app.hatch_patterns,
+        &painter,
+        None,
+        false,
+    );
     let svg = drift_io::svg::write(&page);
     let pdf = drift_io::pdf::write(std::slice::from_ref(&page), "Stacked");
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/tmp");
@@ -235,13 +240,18 @@ fn print_pdf_and_svg_stack_as_the_canvas_does() {
 
     // Without stacking, every fill prints under every curve (as the canvas draws it then).
     let app = h.state_mut();
-    let mut rules = app.editor.doc.rules();
+    let mut rules = app.drawing.editor.doc.rules();
     rules.stacked_fills = false;
-    app.editor.doc.begin();
-    app.editor.doc.set_rules(rules);
-    app.editor.commit("Rules");
-    let page =
-        crate::output::model_page(&mut app.editor, &app.hatch_patterns, &painter, None, false);
+    app.drawing.editor.doc.begin();
+    app.drawing.editor.doc.set_rules(rules);
+    app.drawing.editor.commit("Rules");
+    let page = crate::output::model_page(
+        &mut app.drawing.editor,
+        &app.hatch_patterns,
+        &painter,
+        None,
+        false,
+    );
     // (The PDF: an SVG groups each layer's items together.)
     let pdf = drift_io::pdf::write(std::slice::from_ref(&page), "Flat");
     let art = drift_io::pdf_import::read_artwork(&pdf, 1, "flat").expect("reads");

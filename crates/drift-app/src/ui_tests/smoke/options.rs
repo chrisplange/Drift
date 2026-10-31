@@ -7,7 +7,7 @@ use super::*;
 
 /// A horizontal line from the origin, its length a dimension driven by the variable `w` = 25.
 fn dimensioned(h: &mut Harness<'_, DriftApp>) -> (EntityId, drift_core::VariableId) {
-    let ed = &mut h.state_mut().editor;
+    let ed = &mut h.state_mut().drawing.editor;
     ed.doc.begin();
     let a = ed.doc.add_point(DVec2::ZERO);
     let b = ed.doc.add_point(DVec2::new(40.0, 0.0));
@@ -54,7 +54,7 @@ fn smoke_options_values_and_whole_sketch_apply_and_undo() {
     h.get_by_label("Save current").click();
     h.run();
     // w = 60, and the whole sketch saved as "Option 2".
-    h.state_mut().editor.set_variable(w, "60").unwrap();
+    h.state_mut().drawing.editor.set_variable(w, "60").unwrap();
     h.run();
     h.get_by_value("Values only").click();
     h.run();
@@ -64,6 +64,7 @@ fn smoke_options_values_and_whole_sketch_apply_and_undo() {
     h.run();
     let kinds: Vec<bool> = h
         .state()
+        .drawing
         .editor
         .doc
         .variants()
@@ -72,7 +73,7 @@ fn smoke_options_values_and_whole_sketch_apply_and_undo() {
     assert_eq!(kinds, [false, true], "one of each");
     // Something drawn after, which only the whole sketch takes away.
     let extra = {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         ed.doc.begin();
         let a = ed.doc.add_point(DVec2::new(0.0, 30.0));
         let b = ed.doc.add_point(DVec2::new(30.0, 30.0));
@@ -86,16 +87,16 @@ fn smoke_options_values_and_whole_sketch_apply_and_undo() {
     h.get_by_label("Option 1").click();
     h.run();
     assert!(close(length(&h, line), 25.0), "{}", length(&h, line));
-    assert!(h.state().editor.doc.get(extra).is_some());
+    assert!(h.state().drawing.editor.doc.get(extra).is_some());
     h.state_mut().undo();
     h.run();
     assert!(close(length(&h, line), 60.0), "undone");
     // A click on Option 2 brings the whole sketch back as it was: no extra line.
     h.get_by_label("Option 2").click();
     h.run();
-    assert!(h.state().editor.doc.get(extra).is_none());
+    assert!(h.state().drawing.editor.doc.get(extra).is_none());
     assert!(close(length(&h, line), 60.0));
     h.state_mut().undo();
     h.run();
-    assert!(h.state().editor.doc.get(extra).is_some(), "undone");
+    assert!(h.state().drawing.editor.doc.get(extra).is_some(), "undone");
 }

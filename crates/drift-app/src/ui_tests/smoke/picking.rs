@@ -36,7 +36,7 @@ struct Picked {
 fn hover(h: &mut Harness<'_, DriftApp>, p: DVec2) -> Lit {
     h.hover_at(screen(h, p));
     h.run();
-    let ed = &h.state().editor;
+    let ed = &h.state().drawing.editor;
     Lit {
         entity: ed.hovered,
         midpoint: ed.hovered_midpoint,
@@ -47,7 +47,7 @@ fn hover(h: &mut Harness<'_, DriftApp>, p: DVec2) -> Lit {
 }
 
 fn picked(h: &Harness<'_, DriftApp>) -> Picked {
-    let ed = &h.state().editor;
+    let ed = &h.state().drawing.editor;
     Picked {
         selection: ed.selection.clone(),
         midpoints: ed.selected_midpoints.clone(),
@@ -60,7 +60,7 @@ fn picked(h: &Harness<'_, DriftApp>) -> Picked {
 
 /// Pick nothing.
 fn clear(h: &mut Harness<'_, DriftApp>) {
-    let ed = &mut h.state_mut().editor;
+    let ed = &mut h.state_mut().drawing.editor;
     ed.selection.clear();
     ed.selected_midpoints.clear();
     ed.selected_texts.clear();
@@ -86,7 +86,7 @@ fn double_click_at(h: &mut Harness<'_, DriftApp>, p: DVec2) {
 
 /// A line from `a` to `b` on the current layer. Returns it.
 fn line(h: &mut Harness<'_, DriftApp>, a: DVec2, b: DVec2) -> EntityId {
-    let ed = &mut h.state_mut().editor;
+    let ed = &mut h.state_mut().drawing.editor;
     ed.doc.begin();
     let (a, b) = (ed.doc.add_point(a), ed.doc.add_point(b));
     let line = ed.doc.add_line(a, b).unwrap();
@@ -99,6 +99,7 @@ fn line(h: &mut Harness<'_, DriftApp>, a: DVec2, b: DVec2) -> EntityId {
 fn text(h: &mut Harness<'_, DriftApp>, words: &str, at: DVec2, height: f64) -> TextId {
     let id = h
         .state_mut()
+        .drawing
         .editor
         .add_text(SketchText::new(words, at, height));
     clear(h);
@@ -106,7 +107,7 @@ fn text(h: &mut Harness<'_, DriftApp>, words: &str, at: DVec2, height: f64) -> T
 }
 
 fn text_anchor(h: &Harness<'_, DriftApp>, t: TextId) -> DVec2 {
-    h.state().editor.doc.text(t).unwrap().at
+    h.state().drawing.editor.doc.text(t).unwrap().at
 }
 
 fn near(a: DVec2, b: DVec2) -> bool {
@@ -165,9 +166,9 @@ fn smoke_picking_text_over_a_line() {
     undo(&mut h);
     // A double-click on the line edits nothing; on the text, types into it.
     double_click_at(&mut h, on_line);
-    assert_eq!(h.state().editor.editing_text, None);
+    assert_eq!(h.state().drawing.editor.editing_text, None);
     double_click_at(&mut h, on_text);
-    assert_eq!(h.state().editor.editing_text, Some(t));
+    assert_eq!(h.state().drawing.editor.editing_text, Some(t));
 }
 
 /// A copy of a block, on its curves or inside it, with a text inside it taking precedence.
@@ -182,7 +183,7 @@ fn smoke_picking_a_block_copy_and_text_in_it() {
         Fill::No,
     );
     let c = {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         ed.selection = sides.iter().copied().collect();
         ed.make_block("Box").unwrap()
     };
@@ -228,16 +229,16 @@ fn smoke_picking_a_block_copy_and_text_in_it() {
         }
     );
     // A drag from inside moves the copy.
-    let from = h.state().editor.doc.instance(c).unwrap().at;
+    let from = h.state().drawing.editor.doc.instance(c).unwrap().at;
     clear(&mut h);
     drag(&mut h, inside, inside + DVec2::new(10.0, 0.0), 4);
-    let to = h.state().editor.doc.instance(c).unwrap().at;
+    let to = h.state().drawing.editor.doc.instance(c).unwrap().at;
     assert!(near(to, from + DVec2::new(10.0, 0.0)), "{from:?} → {to:?}");
     undo(&mut h);
     // A double-click inside opens it for editing.
     double_click_at(&mut h, inside);
     assert_eq!(
-        h.state().editor.block_edit.map(|e| e.instance),
+        h.state().drawing.editor.block_edit.map(|e| e.instance),
         Some(c),
         "editing the block"
     );
@@ -323,9 +324,9 @@ fn smoke_picking_overlapping_fills() {
 
 /// A ring of walls round a 100 × 60 room, 10 thick, with the Wall tool; back to Select.
 fn room(h: &mut Harness<'_, DriftApp>) {
-    h.state_mut().editor.prefs.wall_thickness = 10.0;
-    h.state_mut().editor.prefs.wall_justify = drift_core::Justify::Centre;
-    h.state_mut().editor.prefs.wall_arc = false;
+    h.state_mut().drawing.editor.prefs.wall_thickness = 10.0;
+    h.state_mut().drawing.editor.prefs.wall_justify = drift_core::Justify::Centre;
+    h.state_mut().drawing.editor.prefs.wall_arc = false;
     h.key_press(Key::W);
     h.run();
     for p in [
@@ -353,7 +354,7 @@ fn smoke_picking_wall_poche_and_its_door() {
     h.key_press_modifiers(EguiModifiers::SHIFT, Key::O);
     h.run();
     {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         ed.set_opening_family("door.single");
         ed.prefs.opening.width = 30.0;
         ed.prefs.opening.leaf = 28.0;
@@ -363,8 +364,8 @@ fn smoke_picking_wall_poche_and_its_door() {
     h.run();
     h.key_press(Key::Escape);
     h.run();
-    let door = h.state().editor.doc.openings().next().unwrap().0;
-    let poche = h.state().editor.doc.fills().next().unwrap().0;
+    let door = h.state().drawing.editor.doc.openings().next().unwrap().0;
+    let poche = h.state().drawing.editor.doc.fills().next().unwrap().0;
     let (centre, in_poche, jamb) = (
         DVec2::new(20.0, 0.0),
         DVec2::new(20.0, 3.0),
@@ -379,18 +380,22 @@ fn smoke_picking_wall_poche_and_its_door() {
     // A click in the poché picks the wall; on the jamb, the door.
     click(&mut h, in_poche);
     {
-        let ed = &h.state().editor;
+        let ed = &h.state().drawing.editor;
         assert_eq!(ed.selected_walls().len(), 1, "the wall");
         assert!(ed.selected_openings().is_empty() && ed.selected_fills.is_empty());
     }
     click(&mut h, centre);
-    assert_eq!(h.state().editor.selected_walls().len(), 1, "the wall");
+    assert_eq!(
+        h.state().drawing.editor.selected_walls().len(),
+        1,
+        "the wall"
+    );
     click(&mut h, jamb);
-    assert_eq!(h.state().editor.selected_openings(), [door].into());
+    assert_eq!(h.state().drawing.editor.selected_openings(), [door].into());
     // Dragged by its jamb, the door slides along the wall.
-    let (u0, _) = h.state().editor.opening_span(door).unwrap();
+    let (u0, _) = h.state().drawing.editor.opening_span(door).unwrap();
     drag(&mut h, jamb, jamb + DVec2::new(10.0, 0.0), 4);
-    let (u1, _) = h.state().editor.opening_span(door).unwrap();
+    let (u1, _) = h.state().drawing.editor.opening_span(door).unwrap();
     assert!((u1 - u0 - 10.0).abs() < 0.5, "{u0} → {u1}");
     undo(&mut h);
     // A drag in the poché with nothing picked box-selects: the wall stays.
@@ -400,7 +405,7 @@ fn smoke_picking_wall_poche_and_its_door() {
     assert_eq!(positions(&h), before, "nothing moved");
     // A double-click in the poché picks the wall and opens nothing.
     double_click_at(&mut h, in_poche);
-    let ed = &h.state().editor;
+    let ed = &h.state().drawing.editor;
     assert_eq!(ed.selected_walls().len(), 1);
     assert_eq!(ed.open_group, None);
     assert_eq!(ed.editing_text, None);
@@ -417,20 +422,20 @@ fn smoke_picking_through_a_locked_layer() {
     let (sides, f) = rectangle(&mut h, DVec2::ZERO, DVec2::new(40.0, 30.0), Fill::Solid);
     let f = f.unwrap();
     let locked = {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         let layer = ed.add_layer("Locked");
         ed.set_current_layer(layer);
         layer
     };
     let l = line(&mut h, DVec2::new(10.0, 15.0), DVec2::new(30.0, 15.0));
     {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         let mut layer = ed.doc.layer(locked).unwrap().clone();
         layer.locked = true;
         ed.update_layer(locked, layer);
         ed.set_current_layer(LayerId::DEFAULT);
     }
-    assert!(h.state().editor.is_locked(l));
+    assert!(h.state().drawing.editor.is_locked(l));
     let (on_line, middle, end) = (
         DVec2::new(14.0, 15.0),
         DVec2::new(20.0, 15.0),
@@ -474,7 +479,7 @@ fn smoke_picking_hidden_handles() {
     let Some(mut h) = harness() else { return };
     view(&mut h, DVec2::new(130.0, 40.0), DVec2::new(210.0, 100.0));
     let (curve, c1) = {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         ed.doc.begin();
         let [a, c1, c2, b] = [(150.0, 60.0), (150.0, 90.0), (190.0, 90.0), (190.0, 60.0)]
             .map(|(x, y)| ed.doc.add_point(DVec2::new(x, y)));
@@ -497,12 +502,12 @@ fn smoke_picking_hidden_handles() {
         }
     );
     click_world(&mut h, handle);
-    assert_eq!(h.state().editor.selection, [c1].into());
+    assert_eq!(h.state().drawing.editor.selection, [c1].into());
 }
 
 /// What a hover lit, in a word.
 fn lit_kind(h: &Harness<'_, DriftApp>, lit: Lit) -> &'static str {
-    let doc = &h.state().editor.doc;
+    let doc = &h.state().drawing.editor.doc;
     match lit {
         Lit {
             entity: Some(id), ..
@@ -522,7 +527,7 @@ fn lit_kind(h: &Harness<'_, DriftApp>, lit: Lit) -> &'static str {
 
 /// What a click picked, in a word.
 fn picked_kind(h: &Harness<'_, DriftApp>, p: &Picked) -> &'static str {
-    let doc = &h.state().editor.doc;
+    let doc = &h.state().drawing.editor.doc;
     if !p.fills.is_empty() {
         "fill"
     } else if !p.copies.is_empty() {
@@ -551,6 +556,7 @@ fn picked_kind(h: &Harness<'_, DriftApp>, p: &Picked) -> &'static str {
 /// with empty areas pickable. Returns where each is, by name.
 fn everything(h: &mut Harness<'_, DriftApp>) -> [(&'static str, DVec2); 7] {
     h.state_mut()
+        .drawing
         .editor
         .change_rules(|r| r.regions_need_fill = false);
     view(h, DVec2::new(-10.0, -10.0), DVec2::new(160.0, 90.0));
@@ -558,7 +564,7 @@ fn everything(h: &mut Harness<'_, DriftApp>) -> [(&'static str, DVec2); 7] {
     rectangle(h, DVec2::new(0.0, 50.0), DVec2::new(40.0, 80.0), Fill::No);
     let (sides, _) = rectangle(h, DVec2::new(120.0, 0.0), DVec2::new(150.0, 30.0), Fill::No);
     {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         ed.selection = sides.iter().copied().collect();
         ed.make_block("Box").unwrap();
     }
@@ -583,7 +589,7 @@ fn check_filters(table: &[(PickFilter, [&str; 7], [&str; 7])]) {
     let spots = everything(&mut h);
     let mut wrong = Vec::new();
     for (filter, hovers, clicks) in table {
-        h.state_mut().editor.prefs.pick_filter = *filter;
+        h.state_mut().drawing.editor.prefs.pick_filter = *filter;
         for (i, (name, p)) in spots.iter().enumerate() {
             let lit = hover(&mut h, *p);
             let got = lit_kind(&h, lit);

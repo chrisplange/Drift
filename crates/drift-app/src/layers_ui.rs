@@ -295,21 +295,22 @@ impl DriftApp {
     /// than one with ten.
     pub(crate) fn layers_panel(&mut self, ui: &mut egui::Ui, now: f64) {
         self.end_stale_isolate();
-        self.layer_counts.update(&self.editor.doc);
-        let counts = std::mem::take(&mut self.layer_counts.curves);
-        let layers = std::mem::take(&mut self.layer_counts.layers);
-        let current = self.editor.doc.current_layer();
-        let has_selection = !self.editor.selection.is_empty();
+        self.drawing.layer_counts.update(&self.drawing.editor.doc);
+        let counts = std::mem::take(&mut self.drawing.layer_counts.curves);
+        let layers = std::mem::take(&mut self.drawing.layer_counts.layers);
+        let current = self.drawing.editor.doc.current_layer();
+        let has_selection = !self.drawing.editor.selection.is_empty();
         // The layers the selection is on.
         let picked: std::collections::BTreeSet<LayerId> = self
+            .drawing
             .editor
             .selection
             .iter()
-            .filter_map(|id| self.editor.doc.get(*id).map(|e| e.layer))
+            .filter_map(|id| self.drawing.editor.doc.get(*id).map(|e| e.layer))
             .collect();
         // The rows, top down as the layers stack (the top one draws over the rest), that
         // match the filter.
-        let needle = self.layer_list.filter.trim().to_lowercase();
+        let needle = self.drawing.layer_list.filter.trim().to_lowercase();
         let mut total = 0;
         let mut any_hidden = false;
         let mut list: Vec<LayerId> = Vec::new();
@@ -326,7 +327,7 @@ impl DriftApp {
             has_selection,
             counts: &counts,
             picked: &picked,
-            isolated: self.layer_list.isolated.as_ref().map(|i| i.layer),
+            isolated: self.drawing.layer_list.isolated.as_ref().map(|i| i.layer),
             any_hidden,
             solo_lock: self.solo_of(LayerFlag::Locked),
             solo_snap: self.solo_of(LayerFlag::Snappable),
@@ -334,11 +335,12 @@ impl DriftApp {
         let mut status = None;
         let mut action = None;
         crate::theme::section(ui, &format!("Layers · {total}"));
-        if total > FILTER_FROM || !self.layer_list.filter.is_empty() {
+        if total > FILTER_FROM || !self.drawing.layer_list.filter.is_empty() {
             self.layer_filter(ui, list.len(), total);
         }
-        if let Some(iso) = &self.layer_list.isolated {
+        if let Some(iso) = &self.drawing.layer_list.isolated {
             let name = self
+                .drawing
                 .editor
                 .doc
                 .layer(iso.layer)
@@ -363,16 +365,16 @@ impl DriftApp {
             .auto_shrink([false, false])
             .show_viewport(ui, |ui, viewport| {
                 // Each row's top, from the heights the rows had when last drawn.
-                let closed = if self.layer_list.row > 0.0 {
-                    self.layer_list.row
+                let closed = if self.drawing.layer_list.row > 0.0 {
+                    self.drawing.layer_list.row
                 } else {
                     29.0
                 };
                 let heights: Vec<f32> = list
                     .iter()
                     .map(|id| {
-                        if self.expanded_layers.contains(id) {
-                            let opened = self.layer_list.opened.get(id).copied();
+                        if self.drawing.expanded_layers.contains(id) {
+                            let opened = self.drawing.layer_list.opened.get(id).copied();
                             opened.unwrap_or(closed + 140.0)
                         } else {
                             closed
@@ -386,7 +388,13 @@ impl DriftApp {
                     y += h;
                 }
                 tops.push(y);
-                if let Some(i) = self.layer_list.reveal.take().and_then(|r| pos_of(&list, r)) {
+                if let Some(i) = self
+                    .drawing
+                    .layer_list
+                    .reveal
+                    .take()
+                    .and_then(|r| pos_of(&list, r))
+                {
                     let top = ui.max_rect().top();
                     let rect = egui::Rect::from_x_y_ranges(
                         ui.max_rect().x_range(),
@@ -409,12 +417,12 @@ impl DriftApp {
                     ui.add_space(1.0);
                     rows.push((id, rect));
                     let drawn = ui.cursor().top() - top;
-                    let open = self.expanded_layers.contains(&id);
+                    let open = self.drawing.expanded_layers.contains(&id);
                     let guess = heights[i];
                     if open {
-                        self.layer_list.opened.insert(id, drawn);
+                        self.drawing.layer_list.opened.insert(id, drawn);
                     } else {
-                        self.layer_list.row = drawn;
+                        self.drawing.layer_list.row = drawn;
                     }
                     if (drawn - guess).abs() > 0.5 {
                         // Laid out with a wrong height: again, with the right one.
@@ -438,46 +446,56 @@ impl DriftApp {
                             .on_hover_text("A new layer, made current; type its name")
                             .clicked()
                         {
-                            let n = self.editor.doc.layers().count();
+                            let n = self.drawing.editor.doc.layers().count();
                             let name = format!("Layer {n}");
-                            let id = self.editor.add_layer(&name);
-                            self.editor.set_current_layer(id);
-                            self.renaming_layer = Some(id);
-                            self.layer_names.insert(id, name);
+                            let id = self.drawing.editor.add_layer(&name);
+                            self.drawing.editor.set_current_layer(id);
+                            self.drawing.renaming_layer = Some(id);
+                            self.drawing.layer_names.insert(id, name);
                             // The new layer would hide behind a filter it doesn't match.
-                            self.layer_list.filter.clear();
-                            self.layer_list.reveal = Some(id);
+                            self.drawing.layer_list.filter.clear();
+                            self.drawing.layer_list.reveal = Some(id);
                         }
                     });
                     self.underlays_section(ui);
                 });
             });
         self.panel_scrolled(ui, crate::dock::Panel::Layers, &output);
-        self.layer_counts.curves = counts;
-        self.layer_counts.layers = layers;
-        self.layer_list
+        self.drawing.layer_counts.curves = counts;
+        self.drawing.layer_counts.layers = layers;
+        self.drawing
+            .layer_list
             .opened
-            .retain(|id, _| self.expanded_layers.contains(id));
+            .retain(|id, _| self.drawing.expanded_layers.contains(id));
         match action {
             Some(LayerAction::Isolate(id)) => {
-                let before = self.editor.isolate_layer(id);
+                let before = self.drawing.editor.isolate_layer(id);
                 // Isolating another layer keeps the first isolate's "before".
-                let before = match self.layer_list.isolated.take() {
+                let before = match self.drawing.layer_list.isolated.take() {
                     Some(iso) => iso.before,
                     None => before,
                 };
-                self.layer_list.isolated = Some(Isolated { layer: id, before });
+                self.drawing.layer_list.isolated = Some(Isolated { layer: id, before });
             }
             Some(LayerAction::EndIsolate) => {
-                if let Some(iso) = self.layer_list.isolated.take() {
-                    self.editor.set_layers_visible(&iso.before, "End isolate");
+                if let Some(iso) = self.drawing.layer_list.isolated.take() {
+                    self.drawing
+                        .editor
+                        .set_layers_visible(&iso.before, "End isolate");
                 }
             }
             Some(LayerAction::ShowAll) => {
-                self.layer_list.isolated = None;
-                let all: Vec<(LayerId, bool)> =
-                    self.editor.doc.layers().map(|(id, _)| (id, true)).collect();
-                self.editor.set_layers_visible(&all, "Show all layers");
+                self.drawing.layer_list.isolated = None;
+                let all: Vec<(LayerId, bool)> = self
+                    .drawing
+                    .editor
+                    .doc
+                    .layers()
+                    .map(|(id, _)| (id, true))
+                    .collect();
+                self.drawing
+                    .editor
+                    .set_layers_visible(&all, "Show all layers");
             }
             Some(LayerAction::Solo(flag, id)) => self.toggle_solo(flag, id),
             None => {}
@@ -489,7 +507,8 @@ impl DriftApp {
 
     /// The layer a setting is Alt-clicked onto, if any.
     fn solo_of(&self, flag: LayerFlag) -> Option<LayerId> {
-        self.layer_list
+        self.drawing
+            .layer_list
             .solos
             .iter()
             .find(|s| s.flag == flag)
@@ -500,21 +519,23 @@ impl DriftApp {
     /// on the layer it was done on, put them back (one undo step each).
     pub(crate) fn toggle_solo(&mut self, flag: LayerFlag, id: LayerId) {
         let was = self
+            .drawing
             .layer_list
             .solos
             .iter()
             .position(|s| s.flag == flag)
-            .map(|i| self.layer_list.solos.remove(i));
+            .map(|i| self.drawing.layer_list.solos.remove(i));
         match was {
             Some(solo) if solo.layer == id => {
-                self.editor
+                self.drawing
+                    .editor
                     .set_layers_flag(flag, &solo.before, flag.labels().1);
             }
             was => {
-                let before = self.editor.solo_layer_flag(flag, id);
+                let before = self.drawing.editor.solo_layer_flag(flag, id);
                 // Done on another layer meanwhile: the first one's "before" stays.
                 let before = was.map_or(before, |s| s.before);
-                self.layer_list.solos.push(Solo {
+                self.drawing.layer_list.solos.push(Solo {
                     flag,
                     layer: id,
                     before,
@@ -526,8 +547,8 @@ impl DriftApp {
     /// Forget an isolate that is over: its layer deleted, or undone back to how the layers
     /// were before it. The same for lock and snap set on all but one layer.
     fn end_stale_isolate(&mut self) {
-        let doc = &self.editor.doc;
-        self.layer_list.solos.retain(|s| {
+        let doc = &self.drawing.editor.doc;
+        self.drawing.layer_list.solos.retain(|s| {
             let gone = doc.layer(s.layer).is_none();
             let undone = s
                 .before
@@ -535,17 +556,17 @@ impl DriftApp {
                 .all(|(id, on)| doc.layer(*id).is_none_or(|l| s.flag.get(l) == *on));
             !gone && !undone
         });
-        let Some(iso) = &self.layer_list.isolated else {
+        let Some(iso) = &self.drawing.layer_list.isolated else {
             return;
         };
-        let doc = &self.editor.doc;
+        let doc = &self.drawing.editor.doc;
         let gone = doc.layer(iso.layer).is_none();
         let undone = iso
             .before
             .iter()
             .all(|(id, on)| doc.layer(*id).is_none_or(|l| l.visible == *on));
         if gone || undone {
-            self.layer_list.isolated = None;
+            self.drawing.layer_list.isolated = None;
         }
     }
 
@@ -554,7 +575,7 @@ impl DriftApp {
     fn layer_filter(&mut self, ui: &mut egui::Ui, matched: usize, total: usize) {
         ui.horizontal(|ui| {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let filter = &mut self.layer_list.filter;
+                let filter = &mut self.drawing.layer_list.filter;
                 if !filter.is_empty() {
                     ui.label(
                         egui::RichText::new(format!("{matched} of {total}"))
@@ -595,13 +616,13 @@ impl DriftApp {
         status: &mut Option<String>,
         action: &mut Option<LayerAction>,
     ) -> egui::Rect {
-        let Some(layer) = self.editor.doc.layer(id).cloned() else {
+        let Some(layer) = self.drawing.editor.doc.layer(id).cloned() else {
             return egui::Rect::NOTHING;
         };
         let accent = crate::theme::accent(ui.visuals().dark_mode);
         let mut edited = layer.clone();
         let is_current = id == info.current;
-        let open = self.expanded_layers.contains(&id);
+        let open = self.drawing.expanded_layers.contains(&id);
         // The whole row: a click makes the layer current, a drag moves it in the order (its
         // own buttons and fields take their clicks first).
         let sense = if draggable {
@@ -637,12 +658,12 @@ impl DriftApp {
         );
         let row = row.response;
         if row.clicked() && !is_current {
-            self.editor.set_current_layer(id);
+            self.drawing.editor.set_current_layer(id);
         }
         if row.drag_started() {
-            self.layer_drag = Some(id);
+            self.drawing.layer_drag = Some(id);
         }
-        if self.layer_drag.is_none() && row.hovered() && !is_current {
+        if self.drawing.layer_drag.is_none() && row.hovered() && !is_current {
             ui.painter().rect_stroke(
                 row.rect,
                 7.0,
@@ -659,18 +680,18 @@ impl DriftApp {
         row.on_hover_text(format!("{}\n{tip}", layer.name))
             .context_menu(|ui| {
                 if ui.button("Make current").clicked() {
-                    self.editor.set_current_layer(id);
+                    self.drawing.editor.set_current_layer(id);
                     ui.close();
                 }
                 if ui
                     .add_enabled(id != LayerId::DEFAULT, egui::Button::new("Rename"))
                     .clicked()
                 {
-                    self.renaming_layer = Some(id);
+                    self.drawing.renaming_layer = Some(id);
                     ui.close();
                 }
                 if ui.button("Select all on this layer").clicked() {
-                    self.editor.select_layer(id);
+                    self.drawing.editor.select_layer(id);
                     ui.close();
                 }
                 if ui
@@ -680,7 +701,7 @@ impl DriftApp {
                     )
                     .clicked()
                 {
-                    self.editor.move_selection_to_layer(id);
+                    self.drawing.editor.move_selection_to_layer(id);
                     ui.close();
                 }
                 ui.separator();
@@ -713,14 +734,14 @@ impl DriftApp {
                     .add_enabled(id != LayerId::DEFAULT, egui::Button::new("Delete layer"))
                     .clicked()
                 {
-                    if let Err(e) = self.editor.remove_layer(id) {
+                    if let Err(e) = self.drawing.editor.remove_layer(id) {
                         *status = Some(e);
                     }
                     ui.close();
                 }
             });
-        if edited != layer && self.editor.doc.layer(id).is_some() {
-            self.editor.update_layer(id, edited);
+        if edited != layer && self.drawing.editor.doc.layer(id).is_some() {
+            self.drawing.editor.update_layer(id, edited);
         }
         rect
     }
@@ -739,7 +760,7 @@ impl DriftApp {
         let dark = ui.visuals().dark_mode;
         let accent = crate::theme::accent(dark);
         let is_current = id == info.current;
-        let open = self.expanded_layers.contains(&id);
+        let open = self.drawing.expanded_layers.contains(&id);
         let mut action = None;
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 5.0;
@@ -780,9 +801,9 @@ impl DriftApp {
                 .add(egui::Shape::line(pts, egui::Stroke::new(1.4, color)));
             if r.on_hover_text("Colours and line settings").clicked() {
                 if open {
-                    self.expanded_layers.remove(&id);
+                    self.drawing.expanded_layers.remove(&id);
                 } else {
-                    self.expanded_layers.insert(id);
+                    self.drawing.expanded_layers.insert(id);
                 }
             }
             // Stroke colour, with the fill colour in the lower right when it differs.
@@ -880,13 +901,13 @@ impl DriftApp {
         rows: &[(LayerId, egui::Rect)],
         (up, down_room): (bool, bool),
     ) {
-        let Some(dragged) = self.layer_drag else {
+        let Some(dragged) = self.drawing.layer_drag else {
             return;
         };
         let (Some(pointer), down) =
             ui.input(|i| (i.pointer.interact_pos(), i.pointer.primary_down()))
         else {
-            self.layer_drag = None;
+            self.drawing.layer_drag = None;
             return;
         };
         // The gap the pointer is nearest: before row `slot` (rows top down).
@@ -926,10 +947,11 @@ impl DriftApp {
         if down {
             return;
         }
-        self.layer_drag = None;
+        self.drawing.layer_drag = None;
         // The dragged layer goes just above the row after the gap, or just below the row
         // before it, in the whole list (top down) without the dragged layer.
         let mut order: Vec<LayerId> = self
+            .drawing
             .editor
             .doc
             .layers()
@@ -954,9 +976,14 @@ impl DriftApp {
         };
         order.insert(at, dragged);
         let index = order.len() - 1 - at;
-        let now = self.editor.doc.layers().position(|(id, _)| id == dragged);
+        let now = self
+            .drawing
+            .editor
+            .doc
+            .layers()
+            .position(|(id, _)| id == dragged);
         if now != Some(index) {
-            self.editor.reorder_layer(dragged, index);
+            self.drawing.editor.reorder_layer(dragged, index);
         }
     }
 
@@ -969,8 +996,9 @@ impl DriftApp {
         edited: &mut Layer,
         is_current: bool,
     ) {
-        if self.renaming_layer == Some(id) && id != LayerId::DEFAULT {
+        if self.drawing.renaming_layer == Some(id) && id != LayerId::DEFAULT {
             let name = self
+                .drawing
                 .layer_names
                 .entry(id)
                 .or_insert_with(|| layer.name.clone());
@@ -983,8 +1011,8 @@ impl DriftApp {
                 if !cancel && !name.trim().is_empty() {
                     edited.name = name.trim().to_owned();
                 }
-                self.renaming_layer = None;
-                self.layer_names.remove(&id);
+                self.drawing.renaming_layer = None;
+                self.drawing.layer_names.remove(&id);
             }
             return;
         }
@@ -1016,10 +1044,10 @@ impl DriftApp {
                 }
             ));
         if r.clicked() && !is_current {
-            self.editor.set_current_layer(id);
+            self.drawing.editor.set_current_layer(id);
         }
         if r.double_clicked() && id != LayerId::DEFAULT {
-            self.renaming_layer = Some(id);
+            self.drawing.renaming_layer = Some(id);
         }
     }
 
@@ -1074,7 +1102,7 @@ impl DriftApp {
         ui.horizontal(|ui| {
             ui.add_space(indent);
             if ui.small_button("Select all").clicked() {
-                self.editor.select_layer(id);
+                self.drawing.editor.select_layer(id);
             }
             if ui
                 .add_enabled(
@@ -1084,7 +1112,7 @@ impl DriftApp {
                 .on_hover_text("Move the selected geometry onto this layer")
                 .clicked()
             {
-                self.editor.move_selection_to_layer(id);
+                self.drawing.editor.move_selection_to_layer(id);
             }
             if id != LayerId::DEFAULT
                 && ui
@@ -1097,10 +1125,10 @@ impl DriftApp {
                     .on_hover_text("Delete the layer (its geometry moves to 0)")
                     .clicked()
             {
-                if let Err(e) = self.editor.remove_layer(id) {
+                if let Err(e) = self.drawing.editor.remove_layer(id) {
                     *status = Some(e);
                 }
-                self.expanded_layers.remove(&id);
+                self.drawing.expanded_layers.remove(&id);
             }
         });
         ui.add_space(3.0);
@@ -1109,18 +1137,32 @@ impl DriftApp {
     /// Layer and appearance controls for the selected curves (in the Properties tab).
     pub(crate) fn appearance_panel(&mut self, ui: &mut egui::Ui) {
         let curves: Vec<EntityId> = self
+            .drawing
             .editor
             .selection
             .iter()
             .copied()
-            .filter(|id| self.editor.doc.get(*id).is_some_and(|e| !e.kind.is_point()))
+            .filter(|id| {
+                self.drawing
+                    .editor
+                    .doc
+                    .get(*id)
+                    .is_some_and(|e| !e.kind.is_point())
+            })
             .collect();
         if curves.is_empty() {
             return;
         }
-        let first = self.editor.doc.get(curves[0]).copied().expect("exists");
+        let first = self
+            .drawing
+            .editor
+            .doc
+            .get(curves[0])
+            .copied()
+            .expect("exists");
         let uniform_layer = curves.iter().all(|id| {
-            self.editor
+            self.drawing
+                .editor
                 .doc
                 .get(*id)
                 .is_some_and(|e| e.layer == first.layer)
@@ -1135,7 +1177,8 @@ impl DriftApp {
             .show(ui, |ui| {
                 label(ui, "Layer");
                 let text = if uniform_layer {
-                    self.editor
+                    self.drawing
+                        .editor
                         .doc
                         .layer(first.layer)
                         .map_or("?".into(), |l| l.name.clone())
@@ -1143,6 +1186,7 @@ impl DriftApp {
                     "(mixed)".into()
                 };
                 let layers: Vec<(LayerId, String)> = self
+                    .drawing
                     .editor
                     .doc
                     .layers()
@@ -1163,7 +1207,7 @@ impl DriftApp {
                         }
                     });
                 if let Some(id) = target {
-                    self.editor.move_selection_to_layer(id);
+                    self.drawing.editor.move_selection_to_layer(id);
                 }
                 ui.end_row();
                 self.stroke_rows(ui, &curves, "selection");
@@ -1175,7 +1219,7 @@ impl DriftApp {
     pub(crate) fn stroke_rows(&mut self, ui: &mut egui::Ui, curves: &[EntityId], salt: &str) {
         let Some(first) = curves
             .first()
-            .and_then(|id| self.editor.doc.get(*id))
+            .and_then(|id| self.drawing.editor.doc.get(*id))
             .copied()
         else {
             return;
@@ -1187,19 +1231,25 @@ impl DriftApp {
         let a = first.appearance;
         label(ui, "Colour");
         if let Some(c) = color_choice(ui, a.color, "By layer", dark) {
-            self.editor.update_appearance(curves, |x| x.color = c);
+            self.drawing
+                .editor
+                .update_appearance(curves, |x| x.color = c);
         }
         ui.end_row();
         label(ui, "Weight");
         let mut w = a.weight;
         if weight_combo(ui, (salt, "weight"), &mut w, true) {
-            self.editor.update_appearance(curves, |x| x.weight = w);
+            self.drawing
+                .editor
+                .update_appearance(curves, |x| x.weight = w);
         }
         ui.end_row();
         label(ui, "Line type");
         let mut t = a.line_type;
         if line_type_combo(ui, (salt, "type"), &mut t, true) {
-            self.editor.update_appearance(curves, |x| x.line_type = t);
+            self.drawing
+                .editor
+                .update_appearance(curves, |x| x.line_type = t);
         }
         ui.end_row();
     }

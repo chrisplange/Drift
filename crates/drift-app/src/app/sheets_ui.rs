@@ -236,7 +236,7 @@ pub(crate) enum Output {
 impl DriftApp {
     /// The file name without its extension, for exports.
     pub(crate) fn file_stem(&self) -> String {
-        let name = &self.file.name;
+        let name = &self.drawing.file.name;
         name.rsplit_once('.')
             .map_or(name.as_str(), |(s, _)| s)
             .to_owned()
@@ -244,15 +244,18 @@ impl DriftApp {
 
     /// The sheet shown in the Sheets tab and the preview (the first, if none is picked).
     pub(crate) fn current_sheet(&self) -> Option<SheetId> {
-        self.active_sheet
-            .filter(|id| self.editor.doc.sheet(*id).is_some())
-            .or_else(|| self.editor.doc.sheets().next().map(|(id, _)| id))
+        self.drawing
+            .view
+            .active_sheet
+            .filter(|id| self.drawing.editor.doc.sheet(*id).is_some())
+            .or_else(|| self.drawing.editor.doc.sheets().next().map(|(id, _)| id))
     }
 
     /// A new sheet titled after the file.
     fn fresh_sheet(&self, name: &str) -> Sheet {
         let mut sheet = Sheet::new(name);
         let last = self
+            .drawing
             .editor
             .doc
             .sheets()
@@ -260,7 +263,7 @@ impl DriftApp {
             .map(|(_, s)| s.fields.number.clone());
         sheet.fields.number = crate::app::sheet_editor::next_sheet_number(last.as_deref());
         // The title is the project's; with no project name yet, the file's.
-        if self.editor.doc.project().name.trim().is_empty() {
+        if self.drawing.editor.doc.project().name.trim().is_empty() {
             sheet.fields.title = self.file_stem();
         }
         sheet.fields.date = today();
@@ -269,47 +272,47 @@ impl DriftApp {
 
     /// `View n`, for the first `n` no view is called.
     pub(crate) fn next_view_name(&self) -> String {
-        drift_edit::tools::view::next_view_name(&self.editor.doc)
+        drift_edit::tools::view::next_view_name(&self.drawing.editor.doc)
     }
 
     /// A new, empty sheet: views go on it from the Views list or with V (Add view).
     pub(crate) fn add_sheet(&mut self) -> SheetId {
-        let n = self.editor.doc.sheets().count() + 1;
+        let n = self.drawing.editor.doc.sheets().count() + 1;
         let mut sheet = self.fresh_sheet(&format!("Sheet {n}"));
-        self.editor.doc.begin();
+        self.drawing.editor.doc.begin();
         // The first sheet names the project after the file: every sheet's title.
         if !sheet.fields.title.is_empty() {
-            let mut project = self.editor.doc.project().clone();
+            let mut project = self.drawing.editor.doc.project().clone();
             project.name = std::mem::take(&mut sheet.fields.title);
-            self.editor.doc.set_project(project);
+            self.drawing.editor.doc.set_project(project);
         }
-        let id = self.editor.doc.add_sheet(sheet);
-        self.editor.commit("New sheet");
-        self.active_sheet = Some(id);
-        self.sheet_view = 0;
+        let id = self.drawing.editor.doc.add_sheet(sheet);
+        self.drawing.editor.commit("New sheet");
+        self.drawing.view.active_sheet = Some(id);
+        self.drawing.view.sheet_view = 0;
         id
     }
 
     /// A new view of the whole drawing on sheet `id`, filling the space clear of the title
     /// block, picked: one undo step.
     pub(crate) fn add_whole_view(&mut self, id: SheetId) {
-        let Some(mut sheet) = self.editor.doc.sheet(id).cloned() else {
+        let Some(mut sheet) = self.drawing.editor.doc.sheet(id).cloned() else {
             return;
         };
         let (mut view, mut port) =
             crate::output::sheet_view(self.fit_bounds(), &sheet, self.imperial());
         view.name = self.next_view_name();
-        self.editor.doc.begin();
-        let added = self.editor.doc.add_view(view);
+        self.drawing.editor.doc.begin();
+        let added = self.drawing.editor.doc.add_view(view);
         port.view = added;
         sheet.viewports.push(port);
         let index = sheet.viewports.len() - 1;
-        self.editor.doc.set_sheet(id, sheet);
-        self.editor.commit("Add view");
-        self.sheet_view = index;
-        self.picked_view = Some(added);
-        self.view_set = None;
-        self.sheet_pick = crate::app::sheet_editor::SheetPick::View;
+        self.drawing.editor.doc.set_sheet(id, sheet);
+        self.drawing.editor.commit("Add view");
+        self.drawing.view.sheet_view = index;
+        self.drawing.picked_view = Some(added);
+        self.drawing.view.view_set = None;
+        self.drawing.view.sheet_pick = crate::app::sheet_editor::SheetPick::View;
     }
 
     /// Change a sheet, and the picked view on it (`view`: its index and its new state).
@@ -321,7 +324,7 @@ impl DriftApp {
         view: Option<(usize, PlacedView)>,
         typing: bool,
     ) {
-        let doc = &self.editor.doc;
+        let doc = &self.drawing.editor.doc;
         let view = view.filter(|(i, v)| doc.placed_views(&sheet).get(*i) != Some(v));
         if doc.sheet(id) == Some(&sheet) && view.is_none() {
             return;
@@ -331,24 +334,24 @@ impl DriftApp {
         } else {
             "Edit sheet"
         };
-        self.editor.doc.begin();
-        self.editor.doc.set_sheet(id, sheet);
+        self.drawing.editor.doc.begin();
+        self.drawing.editor.doc.set_sheet(id, sheet);
         if let Some((i, v)) = view {
-            self.editor.doc.set_placed_view(id, i, &v);
+            self.drawing.editor.doc.set_placed_view(id, i, &v);
         }
-        let tx = self.editor.doc.commit(label);
-        if typing && self.editor.history.undo_label() == Some(label) {
-            self.editor.history.merge_into_last(tx);
+        let tx = self.drawing.editor.doc.commit(label);
+        if typing && self.drawing.editor.history.undo_label() == Some(label) {
+            self.drawing.editor.history.merge_into_last(tx);
         } else {
-            self.editor.history.push(tx);
+            self.drawing.editor.history.push(tx);
         }
-        self.editor.sync();
+        self.drawing.editor.sync();
     }
 
     /// Every sheet as a page (or, with no sheets, a fitted A3 sheet).
     #[cfg(not(feature = "demo"))]
     pub(crate) fn pages(&mut self, painter: &egui::Painter) -> Vec<Drawing> {
-        let doc = &self.editor.doc;
+        let doc = &self.drawing.editor.doc;
         let mut sheets: Vec<(Sheet, Vec<PlacedView>)> = doc
             .sheets()
             .map(|(_, s)| (s.clone(), doc.placed_views(s)))
@@ -362,13 +365,13 @@ impl DriftApp {
         }
         let count = sheets.len();
         self.hatch_patterns
-            .update(self.editor.doc.custom_patterns());
+            .update(self.drawing.editor.doc.custom_patterns());
         sheets
             .iter()
             .enumerate()
             .map(|(i, (s, views))| {
                 crate::output::sheet_drawing(
-                    &mut self.editor,
+                    &mut self.drawing.editor,
                     &self.hatch_patterns,
                     painter,
                     s,
@@ -384,10 +387,11 @@ impl DriftApp {
     /// set ("2 / 5"), so a reissued sheet matches the set it belongs to.
     pub(crate) fn pdf_bytes(&mut self, painter: &egui::Painter) -> Vec<u8> {
         let chosen: Vec<bool> = self
+            .drawing
             .editor
             .doc
             .sheets()
-            .map(|(id, _)| !self.pdf_left_out.contains(&id))
+            .map(|(id, _)| !self.drawing.pdf_left_out.contains(&id))
             .collect();
         let mut pages = self.pages(painter);
         if chosen.contains(&true) && chosen.len() == pages.len() {
@@ -400,8 +404,8 @@ impl DriftApp {
     #[cfg(not(feature = "demo"))]
     /// Export a PDF: with several sheets, first a dialog to choose which.
     pub(crate) fn export_pdf(&mut self, painter: &egui::Painter) {
-        if self.editor.doc.sheets().nth(1).is_some() {
-            self.output_dialog = Some(Output::Pdf);
+        if self.drawing.editor.doc.sheets().nth(1).is_some() {
+            self.drawing.output_dialog = Some(Output::Pdf);
         } else {
             self.write_pdf(painter);
         }
@@ -420,7 +424,7 @@ impl DriftApp {
         let pages = self.pages(painter);
         let index = self
             .current_sheet()
-            .and_then(|id| self.editor.doc.sheets().position(|(s, _)| s == id))
+            .and_then(|id| self.drawing.editor.doc.sheets().position(|(s, _)| s == id))
             .unwrap_or(0);
         drift_io::svg::write(&pages[index.min(pages.len() - 1)])
     }
@@ -437,10 +441,10 @@ impl DriftApp {
     #[cfg(not(feature = "demo"))]
     pub(crate) fn model_page(&mut self, painter: &egui::Painter) -> Option<Drawing> {
         self.hatch_patterns
-            .update(self.editor.doc.custom_patterns());
+            .update(self.drawing.editor.doc.custom_patterns());
         let only = self.model_scope();
         let d = crate::output::model_page(
-            &mut self.editor,
+            &mut self.drawing.editor,
             &self.hatch_patterns,
             painter,
             only.as_ref(),
@@ -484,8 +488,13 @@ impl DriftApp {
         format: crate::output::CadFormat,
     ) -> Result<Vec<u8>, String> {
         self.hatch_patterns
-            .update(self.editor.doc.custom_patterns());
-        crate::output::cad_file(&mut self.editor, &self.hatch_patterns, painter, format)
+            .update(self.drawing.editor.doc.custom_patterns());
+        crate::output::cad_file(
+            &mut self.drawing.editor,
+            &self.hatch_patterns,
+            painter,
+            format,
+        )
     }
 
     /// Export DWG / DXF: first the dialog choosing the format.
@@ -564,8 +573,8 @@ impl DriftApp {
     #[cfg(not(feature = "demo"))]
     /// Print: with several sheets, first a dialog to choose which.
     pub(crate) fn print(&mut self, painter: &egui::Painter) {
-        if self.editor.doc.sheets().nth(1).is_some() {
-            self.output_dialog = Some(Output::Print);
+        if self.drawing.editor.doc.sheets().nth(1).is_some() {
+            self.drawing.output_dialog = Some(Output::Print);
         } else {
             self.open_to_print(painter);
         }
@@ -574,7 +583,7 @@ impl DriftApp {
     #[cfg(not(feature = "demo"))]
     /// Choose the sheets for a PDF or print, then make it.
     pub(crate) fn output_window(&mut self, ctx: &egui::Context) {
-        let Some(kind) = self.output_dialog else {
+        let Some(kind) = self.drawing.output_dialog else {
             return;
         };
         let title = match kind {
@@ -582,6 +591,7 @@ impl DriftApp {
             Output::Print => "Print",
         };
         let sheets: Vec<(SheetId, String)> = self
+            .drawing
             .editor
             .doc
             .sheets()
@@ -603,14 +613,14 @@ impl DriftApp {
                         if let Some(c) = current
                             && ui.link("This sheet").clicked()
                         {
-                            self.pdf_left_out = sheets
+                            self.drawing.pdf_left_out = sheets
                                 .iter()
                                 .map(|(id, _)| *id)
                                 .filter(|id| *id != c)
                                 .collect();
                         }
                         if ui.link("All").clicked() {
-                            self.pdf_left_out.clear();
+                            self.drawing.pdf_left_out.clear();
                         }
                     });
                 });
@@ -618,19 +628,19 @@ impl DriftApp {
                     .max_height(280.0)
                     .show(ui, |ui| {
                         for (id, label) in &sheets {
-                            let mut on = !self.pdf_left_out.contains(id);
+                            let mut on = !self.drawing.pdf_left_out.contains(id);
                             if ui.checkbox(&mut on, label).changed() {
                                 if on {
-                                    self.pdf_left_out.remove(id);
+                                    self.drawing.pdf_left_out.remove(id);
                                 } else {
-                                    self.pdf_left_out.insert(*id);
+                                    self.drawing.pdf_left_out.insert(*id);
                                 }
                             }
                         }
                     });
                 let chosen = sheets
                     .iter()
-                    .filter(|(id, _)| !self.pdf_left_out.contains(id))
+                    .filter(|(id, _)| !self.drawing.pdf_left_out.contains(id))
                     .count();
                 ui.add_space(4.0);
                 ui.label(
@@ -658,14 +668,14 @@ impl DriftApp {
                 });
             });
         if go {
-            self.output_dialog = None;
+            self.drawing.output_dialog = None;
             let painter = ctx.layer_painter(egui::LayerId::background());
             match kind {
                 Output::Pdf => self.write_pdf(&painter),
                 Output::Print => self.open_to_print(&painter),
             }
         } else if close {
-            self.output_dialog = None;
+            self.drawing.output_dialog = None;
         }
     }
 
@@ -740,11 +750,11 @@ impl DriftApp {
             .map(|(kind, n)| format!("{n} × {kind}"))
             .collect();
         // What the import's commit put far off: listed here, not in the status bar.
-        let far = std::mem::take(&mut self.editor.out.far_off);
+        let far = std::mem::take(&mut self.drawing.editor.out.far_off);
         // Anything left out, read approximately or far off is worth more than a passing
         // message.
         if !skipped.is_empty() || !report.notes.is_empty() || !far.is_empty() {
-            self.import_report = Some(ImportSummary {
+            self.drawing.import_report = Some(ImportSummary {
                 title: name.to_owned(),
                 summary: summary.clone(),
                 skipped,
@@ -753,20 +763,20 @@ impl DriftApp {
             });
         }
         self.set_status(summary, false, now);
-        self.fit_target = Some(self.fit_bounds());
+        self.drawing.view.fit_target = Some(self.fit_bounds());
     }
 
     /// The report of the last import, until it is closed.
     pub(crate) fn import_report_window(&mut self, ctx: &egui::Context) {
-        let Some(report) = &self.import_report else {
+        let Some(report) = &self.drawing.import_report else {
             return;
         };
         let mut open = true;
         let mut close = false;
         let mut check = false;
         let mut pick_far = false;
-        let far_count =
-            (!report.far.is_empty()).then(|| checker::far_off_count(&self.editor.doc, &report.far));
+        let far_count = (!report.far.is_empty())
+            .then(|| checker::far_off_count(&self.drawing.editor.doc, &report.far));
         let title = format!("Imported {}", report.title);
         theme::dialog(ctx, &title)
             .id(egui::Id::new("import_report"))
@@ -842,13 +852,13 @@ impl DriftApp {
                 });
             });
         if pick_far {
-            self.editor.selection = report.far.iter().copied().collect();
+            self.drawing.editor.selection = report.far.iter().copied().collect();
         }
         if check {
             self.open_sketch_check();
         }
         if close || !open {
-            self.import_report = None;
+            self.drawing.import_report = None;
         }
     }
 
@@ -864,6 +874,7 @@ impl DriftApp {
     fn sheets_contents(&mut self, ui: &mut egui::Ui) {
         theme::section(ui, "Sheets");
         let sheets: Vec<(SheetId, String)> = self
+            .drawing
             .editor
             .doc
             .sheets()
@@ -884,7 +895,7 @@ impl DriftApp {
         let mut spots = Vec::new();
         let (mut dragging, mut dropped, mut chose) = (None, None, None);
         for (k, (id, label)) in sheets.iter().enumerate() {
-            let shown = self.sheet_preview && current == Some(*id);
+            let shown = self.drawing.view.sheet_preview && current == Some(*id);
             let row = theme::list_row(ui, shown, label).interact(egui::Sense::drag());
             spots.push((*id, row.rect.top(), row.rect.bottom()));
             if row.dragged() {
@@ -968,7 +979,7 @@ impl DriftApp {
             .weak(),
         );
         ui.add_space(2.0);
-        let before = self.editor.doc.project().clone();
+        let before = self.drawing.editor.doc.project().clone();
         let mut p = before.clone();
         let mut typing = false;
         for (label, value, hint) in [
@@ -1010,15 +1021,15 @@ impl DriftApp {
             } else {
                 "Edit project"
             };
-            self.editor.doc.begin();
-            self.editor.doc.set_project(p);
-            let tx = self.editor.doc.commit(label);
-            if typing && self.editor.history.undo_label() == Some(label) {
-                self.editor.history.merge_into_last(tx);
+            self.drawing.editor.doc.begin();
+            self.drawing.editor.doc.set_project(p);
+            let tx = self.drawing.editor.doc.commit(label);
+            if typing && self.drawing.editor.history.undo_label() == Some(label) {
+                self.drawing.editor.history.merge_into_last(tx);
             } else {
-                self.editor.history.push(tx);
+                self.drawing.editor.history.push(tx);
             }
-            self.editor.sync();
+            self.drawing.editor.sync();
         }
     }
 
@@ -1101,7 +1112,7 @@ impl DriftApp {
                 }
             });
         theme::row(ui, "Logo", |ui| {
-            let has = !self.editor.doc.logo().is_empty();
+            let has = !self.drawing.editor.doc.logo().is_empty();
             if ui
                 .button(if has { "Replace…" } else { "Choose SVG…" })
                 .on_hover_text(
@@ -1113,13 +1124,13 @@ impl DriftApp {
                 self.pick_file(crate::app::document::Picking::Logo);
             }
             if has && ui.button("Remove").clicked() {
-                self.editor.doc.begin();
-                self.editor.doc.set_logo(String::new());
-                self.editor.commit("Remove logo");
+                self.drawing.editor.doc.begin();
+                self.drawing.editor.doc.set_logo(String::new());
+                self.drawing.editor.commit("Remove logo");
             }
         });
         // The project's title and company show as hints: typing one here is this sheet's own.
-        let project = self.editor.doc.project().clone();
+        let project = self.drawing.editor.doc.project().clone();
         let or = |own: &'static str, shared: &str| -> String {
             if shared.trim().is_empty() {
                 own.to_owned()
@@ -1285,13 +1296,14 @@ impl DriftApp {
 
     /// What a model export is limited to: the pick, if anything is picked.
     fn model_scope(&self) -> Option<crate::output::Scope> {
-        let dimension = self.selected_constraint.filter(|id| {
-            self.editor
+        let dimension = self.drawing.selected_constraint.filter(|id| {
+            self.drawing
+                .editor
                 .doc
                 .constraint(*id)
                 .is_some_and(|c| c.is_dimension())
         });
-        crate::output::Scope::of_selection(&self.editor, dimension)
+        crate::output::Scope::of_selection(&self.drawing.editor, dimension)
     }
 
     // ----- The sheet preview -----------------------------------------------------------------
@@ -1300,13 +1312,13 @@ impl DriftApp {
     /// pans, and dragging with the primary button moves the drawing within the sheet.
     pub(crate) fn sheet_canvas(&mut self, ui: &mut egui::Ui) {
         let Some(id) = self.current_sheet() else {
-            self.sheet_preview = false;
+            self.drawing.view.sheet_preview = false;
             return;
         };
         let (rect, response) =
             ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
-        self.canvas_rect = rect;
-        self.pointer = None;
+        self.drawing.view.canvas_rect = rect;
+        self.drawing.view.pointer = None;
         let painter = ui.painter_at(rect);
         let dark = ui.visuals().dark_mode;
         painter.rect_filled(
@@ -1318,65 +1330,70 @@ impl DriftApp {
                 egui::Color32::from_rgb(0xd5, 0xd8, 0xde)
             },
         );
-        let Some(sheet) = self.editor.doc.sheet(id).cloned() else {
+        let Some(sheet) = self.drawing.editor.doc.sheet(id).cloned() else {
             return;
         };
         let size = sheet.size();
         // Build the page (cached while the document doesn't change).
-        let revision = self.editor.doc.revision();
-        let stale = !matches!(&self.preview_cache, Some((r, s, _)) if *r == revision && *s == id);
+        let revision = self.drawing.editor.doc.revision();
+        let stale =
+            !matches!(&self.drawing.preview_cache, Some((r, s, _)) if *r == revision && *s == id);
         if stale {
             let number = self
+                .drawing
                 .editor
                 .doc
                 .sheets()
                 .position(|(s, _)| s == id)
                 .map_or(1, |i| i + 1);
-            let count = self.editor.doc.sheets().count();
+            let count = self.drawing.editor.doc.sheets().count();
             self.hatch_patterns
-                .update(self.editor.doc.custom_patterns());
-            let views = self.editor.doc.placed_views(&sheet);
+                .update(self.drawing.editor.doc.custom_patterns());
+            let views = self.drawing.editor.doc.placed_views(&sheet);
             let d = crate::output::sheet_drawing(
-                &mut self.editor,
+                &mut self.drawing.editor,
                 &self.hatch_patterns,
                 &painter,
                 &sheet,
                 &views,
                 (number, count),
             );
-            self.preview_cache = Some((revision, id, d));
+            self.drawing.preview_cache = Some((revision, id, d));
         }
-        if self.preview.zoom <= 0.0 || response.double_clicked_by(PointerButton::Middle) {
+        if self.drawing.view.preview.zoom <= 0.0
+            || response.double_clicked_by(PointerButton::Middle)
+        {
             let fit =
                 ((rect.width() - 48.0) / size.x as f32).min((rect.height() - 48.0) / size.y as f32);
-            self.preview.zoom = fit.max(0.05);
-            self.preview.center = size * 0.5;
+            self.drawing.view.preview.zoom = fit.max(0.05);
+            self.drawing.view.preview.center = size * 0.5;
         }
         // Zoom at the pointer, pan with middle / right drag.
         if let Some(pos) = response.hover_pos() {
             let (pan, factor) = self.wheel.read(ui);
             let factor = factor as f32;
-            self.preview.center -=
-                DVec2::new(f64::from(pan.x), -f64::from(pan.y)) / f64::from(self.preview.zoom);
+            self.drawing.view.preview.center -= DVec2::new(f64::from(pan.x), -f64::from(pan.y))
+                / f64::from(self.drawing.view.preview.zoom);
             if factor != 1.0 {
                 let before = self.preview_to_paper(rect, pos);
-                self.preview.zoom = (self.preview.zoom * factor).clamp(0.05, 200.0);
+                self.drawing.view.preview.zoom =
+                    (self.drawing.view.preview.zoom * factor).clamp(0.05, 200.0);
                 let after = self.preview_to_paper(rect, pos);
-                self.preview.center += before - after;
+                self.drawing.view.preview.center += before - after;
             }
         }
         if response.dragged_by(PointerButton::Middle)
             || response.dragged_by(PointerButton::Secondary)
         {
             let d = response.drag_delta();
-            self.preview.center -=
-                DVec2::new(f64::from(d.x), -f64::from(d.y)) / f64::from(self.preview.zoom);
+            self.drawing.view.preview.center -= DVec2::new(f64::from(d.x), -f64::from(d.y))
+                / f64::from(self.drawing.view.preview.zoom);
         }
-        let views = self.editor.doc.placed_views(&sheet);
+        let views = self.drawing.editor.doc.placed_views(&sheet);
         self.view_input(ui, &response, rect, id, &sheet, &views);
         self.view_drop(ui, &response, rect, id);
         // Right-click on a view: what can be done with it.
-        if self.sheet_pick == crate::app::sheet_editor::SheetPick::View {
+        if self.drawing.view.sheet_pick == crate::app::sheet_editor::SheetPick::View {
             response.context_menu(|ui| {
                 ui.set_min_width(210.0);
                 self.command_items(
@@ -1389,7 +1406,7 @@ impl DriftApp {
             });
         }
 
-        let zoom = self.preview.zoom;
+        let zoom = self.drawing.view.preview.zoom;
         let to_screen = |p: DVec2| self.paper_to_preview(rect, p);
         let (a, b) = (to_screen(DVec2::ZERO), to_screen(size));
         let page = egui::Rect::from_two_pos(a, b);
@@ -1399,7 +1416,7 @@ impl DriftApp {
             egui::Color32::from_black_alpha(60),
         );
         painter.rect_filled(page, 0.0, egui::Color32::WHITE);
-        if let Some((_, _, d)) = &self.preview_cache {
+        if let Some((_, _, d)) = &self.drawing.preview_cache {
             crate::output::paint_drawing(
                 &painter.with_clip_rect(page.intersect(rect)),
                 d,
@@ -1419,7 +1436,7 @@ impl DriftApp {
             } else {
                 "landscape"
             },
-            self.editor.doc.sheet_scale_text(&sheet)
+            self.drawing.editor.doc.sheet_scale_text(&sheet)
         );
         let galley = painter.layout_no_wrap(
             info,
@@ -1437,18 +1454,21 @@ impl DriftApp {
 
     /// The view of `sheet` picked in the sheet editor and the Sheets panel.
     pub(crate) fn current_view(&self, sheet: &Sheet) -> usize {
-        self.sheet_view.min(sheet.viewports.len().saturating_sub(1))
+        self.drawing
+            .view
+            .sheet_view
+            .min(sheet.viewports.len().saturating_sub(1))
     }
 
     /// The views picked on the sheet shown, by index: several after Shift/Ctrl-click, a box
     /// on the paper or Select all, else the current one alone, or none with the paper picked.
     pub(crate) fn picked_views(&self, sheet: &Sheet) -> std::collections::BTreeSet<usize> {
         let n = sheet.viewports.len();
-        if self.sheet_pick != crate::app::sheet_editor::SheetPick::View || n == 0 {
+        if self.drawing.view.sheet_pick != crate::app::sheet_editor::SheetPick::View || n == 0 {
             return Default::default();
         }
         let current = self.current_view(sheet);
-        match &self.view_set {
+        match &self.drawing.view.view_set {
             Some((id, set)) if Some(*id) == self.current_sheet() && set.contains(&current) => {
                 set.iter().copied().filter(|i| *i < n).collect()
             }
@@ -1466,10 +1486,10 @@ impl DriftApp {
         current: usize,
     ) {
         use crate::app::sheet_editor::SheetPick;
-        self.confirm_delete_set = false;
+        self.drawing.confirm_delete_set = false;
         let Some(&first) = set.first() else {
-            self.view_set = None;
-            self.sheet_pick = SheetPick::Paper;
+            self.drawing.view.view_set = None;
+            self.drawing.view.sheet_pick = SheetPick::Paper;
             return;
         };
         let current = if set.contains(&current) {
@@ -1477,19 +1497,19 @@ impl DriftApp {
         } else {
             first
         };
-        self.sheet_view = current;
-        self.picked_view = views.get(current).map(|v| v.id);
-        self.sheet_pick = SheetPick::View;
-        self.view_set = (set.len() > 1).then_some((id, set));
+        self.drawing.view.sheet_view = current;
+        self.drawing.picked_view = views.get(current).map(|v| v.id);
+        self.drawing.view.sheet_pick = SheetPick::View;
+        self.drawing.view.view_set = (set.len() > 1).then_some((id, set));
     }
 
     /// Pick every view on the current sheet (Select all on a sheet).
     pub(crate) fn pick_all_views(&mut self) {
         if let Some(id) = self.current_sheet()
-            && let Some(sheet) = self.editor.doc.sheet(id)
+            && let Some(sheet) = self.drawing.editor.doc.sheet(id)
         {
-            let views = self.editor.doc.placed_views(sheet);
-            let current = self.sheet_view;
+            let views = self.drawing.editor.doc.placed_views(sheet);
+            let current = self.drawing.view.sheet_view;
             self.pick_views(id, &views, (0..views.len()).collect(), current);
         }
     }
@@ -1500,25 +1520,25 @@ impl DriftApp {
         let Some(id) = self.current_sheet() else {
             return;
         };
-        let Some(sheet) = self.editor.doc.sheet(id).cloned() else {
+        let Some(sheet) = self.drawing.editor.doc.sheet(id).cloned() else {
             return;
         };
         let picked = self.picked_views(&sheet);
         if picked.is_empty() {
             return;
         }
-        let views = self.editor.doc.placed_views(&sheet);
+        let views = self.drawing.editor.doc.placed_views(&sheet);
         let frames: drift_core::Bounds = picked.iter().map(|i| views[*i].frame.bounds()).collect();
         let paper = contain_set(frames, &sheet, paper);
         if paper == DVec2::ZERO {
             return;
         }
-        self.editor.doc.begin();
+        self.drawing.editor.doc.begin();
         for &i in &picked {
             let moved = dragged_view(&views[i], ViewGrip::Move, paper);
-            self.editor.doc.set_placed_view(id, i, &moved);
+            self.drawing.editor.doc.set_placed_view(id, i, &moved);
         }
-        self.editor.commit(if picked.len() == 1 {
+        self.drawing.editor.commit(if picked.len() == 1 {
             "Move view on sheet"
         } else {
             "Move views on sheet"
@@ -1527,7 +1547,7 @@ impl DriftApp {
 
     /// Take the picked views off sheet `id` (they stay in the model): one undo step.
     pub(crate) fn remove_picked_views(&mut self, id: SheetId) {
-        let Some(mut sheet) = self.editor.doc.sheet(id).cloned() else {
+        let Some(mut sheet) = self.drawing.editor.doc.sheet(id).cloned() else {
             return;
         };
         let picked = self.picked_views(&sheet);
@@ -1538,37 +1558,37 @@ impl DriftApp {
         for i in picked.iter().rev() {
             sheet.viewports.remove(*i);
         }
-        self.editor.doc.begin();
-        self.editor.doc.set_sheet(id, sheet);
-        self.editor.commit("Remove views from sheet");
-        self.sheet_view = picked.first().map_or(0, |i| i.saturating_sub(1));
-        self.view_set = None;
-        self.sheet_pick = crate::app::sheet_editor::SheetPick::Paper;
+        self.drawing.editor.doc.begin();
+        self.drawing.editor.doc.set_sheet(id, sheet);
+        self.drawing.editor.commit("Remove views from sheet");
+        self.drawing.view.sheet_view = picked.first().map_or(0, |i| i.saturating_sub(1));
+        self.drawing.view.view_set = None;
+        self.drawing.view.sheet_pick = crate::app::sheet_editor::SheetPick::Paper;
     }
 
     /// Delete the picked views from the model (and so from every sheet): one undo step.
     pub(crate) fn delete_picked_views(&mut self) {
         let Some(sheet) = self
             .current_sheet()
-            .and_then(|id| self.editor.doc.sheet(id))
+            .and_then(|id| self.drawing.editor.doc.sheet(id))
         else {
             return;
         };
-        let views = self.editor.doc.placed_views(sheet);
+        let views = self.drawing.editor.doc.placed_views(sheet);
         let gone: Vec<ViewId> = self
             .picked_views(sheet)
             .iter()
             .map(|i| views[*i].id)
             .collect();
-        self.editor.doc.begin();
+        self.drawing.editor.doc.begin();
         for v in &gone {
-            self.editor.doc.remove_view(*v);
+            self.drawing.editor.doc.remove_view(*v);
         }
-        self.editor.commit("Delete views");
-        self.picked_view = None;
-        self.view_set = None;
-        self.confirm_delete_set = false;
-        self.sheet_pick = crate::app::sheet_editor::SheetPick::Paper;
+        self.drawing.editor.commit("Delete views");
+        self.drawing.picked_view = None;
+        self.drawing.view.view_set = None;
+        self.drawing.confirm_delete_set = false;
+        self.drawing.view.sheet_pick = crate::app::sheet_editor::SheetPick::Paper;
     }
 
     /// A view's frame on screen.
@@ -1677,7 +1697,7 @@ impl DriftApp {
                         picked
                     };
                     self.pick_views(id, views, set, index);
-                    self.view_drag = Some(ViewDrag {
+                    self.drawing.view.view_drag = Some(ViewDrag {
                         sheet: id,
                         index,
                         grip,
@@ -1685,17 +1705,17 @@ impl DriftApp {
                         from,
                         group,
                     });
-                    self.editor.doc.begin();
+                    self.drawing.editor.doc.begin();
                 }
                 // On the paper (or a view filling the drawing area): a box to pick views by.
-                _ => self.view_box = Some((from, from)),
+                _ => self.drawing.view.view_box = Some((from, from)),
             }
         }
-        if let Some((start, _)) = self.view_box {
+        if let Some((start, _)) = self.drawing.view.view_box {
             let end = ui.input(|i| i.pointer.latest_pos()).unwrap_or(start);
-            self.view_box = Some((start, end));
+            self.drawing.view.view_box = Some((start, end));
             if !response.dragged_by(PointerButton::Primary) {
-                self.view_box = None;
+                self.drawing.view.view_box = None;
                 // Left to right: views wholly inside; right to left: views it touches too.
                 let area = egui::Rect::from_two_pos(start, end);
                 let crossing = end.x < start.x;
@@ -1713,25 +1733,25 @@ impl DriftApp {
                     Default::default()
                 };
                 set.extend(hits.map(|(i, _)| i));
-                let current = self.sheet_view;
+                let current = self.drawing.view.sheet_view;
                 self.pick_views(id, views, set, current);
                 self.show_panel(crate::dock::Panel::Inspector);
             }
         }
-        if let Some(drag) = self.view_drag.clone() {
+        if let Some(drag) = self.drawing.view.view_drag.clone() {
             if let Some(pos) = response.interact_pointer_pos()
                 && drag.index < views.len()
                 && drag.group.iter().all(|(i, _)| *i < views.len())
             {
                 let d = pos - drag.from;
-                let mut paper =
-                    DVec2::new(f64::from(d.x), -f64::from(d.y)) / f64::from(self.preview.zoom);
+                let mut paper = DVec2::new(f64::from(d.x), -f64::from(d.y))
+                    / f64::from(self.drawing.view.preview.zoom);
                 let free = ui.input(|i| i.modifiers.command);
                 // Edges, middles and drawings line up with the other views' (Ctrl: freely);
                 // the views moving along aren't lined up with.
-                self.view_guides.clear();
+                self.drawing.view.view_guides.clear();
                 if !free {
-                    let tol = 6.0 / f64::from(self.preview.zoom);
+                    let tol = 6.0 / f64::from(self.drawing.view.preview.zoom);
                     let moving = |i: usize| drag.group.iter().any(|(g, _)| *g == i);
                     let others: Vec<PlacedView> = views
                         .iter()
@@ -1744,7 +1764,7 @@ impl DriftApp {
                         sheet, &others, index, &drag.was, drag.grip, paper, tol,
                     );
                     paper = snapped;
-                    self.view_guides = guides;
+                    self.drawing.view.view_guides = guides;
                 }
                 if !drag.group.is_empty() {
                     // Several views: they keep their places relative to each other, and all
@@ -1760,7 +1780,10 @@ impl DriftApp {
                         .chain(drag.group.iter().map(|(i, v)| (*i, v)))
                     {
                         let moved = dragged_view(was, ViewGrip::Move, paper);
-                        self.editor.doc.set_placed_view(drag.sheet, i, &moved);
+                        self.drawing
+                            .editor
+                            .doc
+                            .set_placed_view(drag.sheet, i, &moved);
                     }
                 } else {
                     let mut moved = dragged_view(&drag.was, drag.grip, paper);
@@ -1768,15 +1791,16 @@ impl DriftApp {
                     if !free {
                         contain(&mut moved, sheet, drag.grip);
                     }
-                    self.editor
+                    self.drawing
+                        .editor
                         .doc
                         .set_placed_view(drag.sheet, drag.index, &moved);
                 }
             }
             if !response.dragged_by(PointerButton::Primary) {
-                self.view_drag = None;
-                self.view_guides.clear();
-                self.editor.commit(match drag.grip {
+                self.drawing.view.view_drag = None;
+                self.drawing.view.view_guides.clear();
+                self.drawing.editor.commit(match drag.grip {
                     ViewGrip::Pan => "Move sheet view",
                     ViewGrip::Move if !drag.group.is_empty() => "Move views on sheet",
                     ViewGrip::Move | ViewGrip::Fixed => "Move view on sheet",
@@ -1822,13 +1846,19 @@ impl DriftApp {
             }
         }
         if response.hovered() {
-            let grip = self.view_drag.as_ref().map(|d| d.grip).or_else(|| {
-                response
-                    .hover_pos()
-                    .and_then(|p| self.view_grip_at(rect, sheet, views, p, alt))
-                    .map(|(_, g)| g)
-            });
-            let dragging = self.view_drag.is_some();
+            let grip = self
+                .drawing
+                .view
+                .view_drag
+                .as_ref()
+                .map(|d| d.grip)
+                .or_else(|| {
+                    response
+                        .hover_pos()
+                        .and_then(|p| self.view_grip_at(rect, sheet, views, p, alt))
+                        .map(|(_, g)| g)
+                });
+            let dragging = self.drawing.view.view_drag.is_some();
             ui.ctx().set_cursor_icon(match grip {
                 Some(ViewGrip::Resize(0, _)) => egui::CursorIcon::ResizeVertical,
                 Some(ViewGrip::Resize(_, 0)) => egui::CursorIcon::ResizeHorizontal,
@@ -1879,13 +1909,13 @@ impl DriftApp {
         let Some(held) = response.dnd_hover_payload::<ViewId>() else {
             return;
         };
-        let Some(view) = self.editor.doc.view(*held) else {
+        let Some(view) = self.drawing.editor.doc.view(*held) else {
             return;
         };
         let size = view.paper_size();
         let ghost = egui::Rect::from_center_size(
             pos,
-            egui::vec2(size.x as f32, size.y as f32) * self.preview.zoom,
+            egui::vec2(size.x as f32, size.y as f32) * self.drawing.view.preview.zoom,
         );
         let accent = theme::accent(ui.visuals().dark_mode);
         let painter = ui.painter_at(rect);
@@ -1923,7 +1953,7 @@ impl DriftApp {
     ) {
         let accent = theme::accent(dark);
         let picked = self.picked_views(sheet);
-        if let Some((a, b)) = self.view_box {
+        if let Some((a, b)) = self.drawing.view.view_box {
             let area = egui::Rect::from_two_pos(a, b);
             painter.rect_filled(area, 0.0, accent.gamma_multiply(0.08));
             painter.rect_stroke(
@@ -1942,7 +1972,7 @@ impl DriftApp {
         // The lines a dragged view snapped to, across the sheet: frames in the accent, drawings
         // lining up in magenta.
         let paper = sheet.size();
-        for g in &self.view_guides {
+        for g in &self.drawing.view.view_guides {
             let (a, b) = if g.vertical {
                 (DVec2::new(g.at, 0.0), DVec2::new(g.at, paper.y))
             } else {
@@ -2010,9 +2040,9 @@ impl DriftApp {
         view: ViewId,
         at: Option<DVec2>,
     ) -> Option<usize> {
-        let mut sheet = self.editor.doc.sheet(id)?.clone();
-        let size = self.editor.doc.view(view)?.paper_size();
-        let placed = self.editor.doc.placed_views(&sheet);
+        let mut sheet = self.drawing.editor.doc.sheet(id)?.clone();
+        let size = self.drawing.editor.doc.view(view)?.paper_size();
+        let placed = self.drawing.editor.doc.placed_views(&sheet);
         let model = self.fit_bounds();
         let at = at
             .or_else(|| crate::app::sheet_editor::free_spot_on_sheet(&sheet, &placed, model, size))
@@ -2021,18 +2051,18 @@ impl DriftApp {
         port.title = true;
         sheet.viewports.push(port);
         let index = sheet.viewports.len() - 1;
-        self.editor.doc.begin();
-        self.editor.doc.set_sheet(id, sheet);
-        self.editor.commit("Place view on sheet");
-        self.active_sheet = Some(id);
-        self.sheet_view = index;
-        self.picked_view = Some(view);
+        self.drawing.editor.doc.begin();
+        self.drawing.editor.doc.set_sheet(id, sheet);
+        self.drawing.editor.commit("Place view on sheet");
+        self.drawing.view.active_sheet = Some(id);
+        self.drawing.view.sheet_view = index;
+        self.drawing.picked_view = Some(view);
         Some(index)
     }
 
     /// Take the picked view off a sheet. The view stays in the model, for placing again.
     pub(crate) fn remove_viewport(&mut self, id: SheetId) {
-        let Some(mut sheet) = self.editor.doc.sheet(id).cloned() else {
+        let Some(mut sheet) = self.drawing.editor.doc.sheet(id).cloned() else {
             return;
         };
         if sheet.viewports.is_empty() {
@@ -2040,36 +2070,36 @@ impl DriftApp {
         }
         let index = self.current_view(&sheet);
         sheet.viewports.remove(index);
-        self.editor.doc.begin();
-        self.editor.doc.set_sheet(id, sheet);
-        self.editor.commit("Remove view from sheet");
-        self.sheet_view = index.saturating_sub(1);
+        self.drawing.editor.doc.begin();
+        self.drawing.editor.doc.set_sheet(id, sheet);
+        self.drawing.editor.commit("Remove view from sheet");
+        self.drawing.view.sheet_view = index.saturating_sub(1);
     }
 
     /// Delete a view from the model, and so from every sheet it is on.
     pub(crate) fn delete_view(&mut self, view: ViewId) {
-        self.editor.doc.begin();
-        self.editor.doc.remove_view(view);
-        self.editor.commit("Delete view");
-        if self.picked_view == Some(view) {
-            self.picked_view = None;
+        self.drawing.editor.doc.begin();
+        self.drawing.editor.doc.remove_view(view);
+        self.drawing.editor.commit("Delete view");
+        if self.drawing.picked_view == Some(view) {
+            self.drawing.picked_view = None;
         }
-        self.confirm_delete_view = None;
-        self.view_set = None;
+        self.drawing.confirm_delete_view = None;
+        self.drawing.view.view_set = None;
     }
 
     /// Show a view's crop on the canvas, in the model.
     pub(crate) fn zoom_to_view(&mut self, view: ViewId) {
-        if let Some(v) = self.editor.doc.view(view) {
+        if let Some(v) = self.drawing.editor.doc.view(view) {
             let crop = v.crop();
             // A little air round it, so its name and grips show.
             let air = crop.size().max_element() * 0.08;
-            self.fit_target = Some(Bounds {
+            self.drawing.view.fit_target = Some(Bounds {
                 min: crop.min - DVec2::splat(air),
                 max: crop.max + DVec2::splat(air),
             });
-            self.sheet_preview = false;
-            self.picked_view = Some(view);
+            self.drawing.view.sheet_preview = false;
+            self.drawing.picked_view = Some(view);
         }
     }
 
@@ -2078,7 +2108,7 @@ impl DriftApp {
     /// dragging one onto the sheet preview places it there.
     fn model_views_section(&mut self, ui: &mut egui::Ui, current: Option<SheetId>) {
         theme::section(ui, "Views");
-        let doc = &self.editor.doc;
+        let doc = &self.drawing.editor.doc;
         let rows: Vec<(ViewId, String, String)> = doc
             .views()
             .map(|(id, v)| {
@@ -2110,7 +2140,7 @@ impl DriftApp {
         }
         let mut zoom = None;
         for (id, name, detail) in &rows {
-            let picked = self.picked_view == Some(*id);
+            let picked = self.drawing.picked_view == Some(*id);
             let text = egui::RichText::new(format!("{name}\n{detail}"));
             // (The space after the text grows: it sits at the left, as in the other lists.)
             let response = ui
@@ -2124,7 +2154,7 @@ impl DriftApp {
                 );
             response.dnd_set_drag_payload(*id);
             if response.clicked() || response.drag_started() {
-                self.picked_view = Some(*id);
+                self.drawing.picked_view = Some(*id);
             }
             if response.double_clicked() {
                 zoom = Some(*id);
@@ -2134,12 +2164,13 @@ impl DriftApp {
             self.zoom_to_view(id);
         }
         let Some(view_id) = self
+            .drawing
             .picked_view
-            .filter(|id| self.editor.doc.view(*id).is_some())
+            .filter(|id| self.drawing.editor.doc.view(*id).is_some())
         else {
             return;
         };
-        let Some(original) = self.editor.doc.view(view_id).cloned() else {
+        let Some(original) = self.drawing.editor.doc.view(view_id).cloned() else {
             return;
         };
         let mut view = original.clone();
@@ -2176,7 +2207,7 @@ impl DriftApp {
         });
         self.update_view(view_id, view, typing);
         self.referenced_by(ui, view_id);
-        let placed = self.editor.doc.sheets_showing(view_id);
+        let placed = self.drawing.editor.doc.sheets_showing(view_id);
         ui.horizontal_wrapped(|ui| {
             if let Some(sheet) = current {
                 let here = placed.contains(&sheet);
@@ -2190,7 +2221,7 @@ impl DriftApp {
                     .clicked()
                 {
                     self.place_view(sheet, view_id, None);
-                    self.sheet_preview = true;
+                    self.drawing.view.sheet_preview = true;
                 }
             }
             if ui
@@ -2204,11 +2235,11 @@ impl DriftApp {
                 if placed.is_empty() {
                     self.delete_view(view_id);
                 } else {
-                    self.confirm_delete_view = Some(view_id);
+                    self.drawing.confirm_delete_view = Some(view_id);
                 }
             }
         });
-        if self.confirm_delete_view == Some(view_id) {
+        if self.drawing.confirm_delete_view == Some(view_id) {
             let n = placed.len();
             ui.label(
                 egui::RichText::new(format!(
@@ -2223,7 +2254,7 @@ impl DriftApp {
                     self.delete_view(view_id);
                 }
                 if ui.button("Keep it").clicked() {
-                    self.confirm_delete_view = None;
+                    self.drawing.confirm_delete_view = None;
                 }
             });
         }
@@ -2278,13 +2309,13 @@ impl DriftApp {
         let mut typing = false;
         let imperial = self.imperial();
         theme::section(ui, "Views on this sheet");
-        let views = self.editor.doc.placed_views(sheet);
+        let views = self.drawing.editor.doc.placed_views(sheet);
         let picked = self.current_view(sheet);
         for (i, v) in views.iter().enumerate() {
             let text = format!("{}  {}  ·  {}", i + 1, v.title(), scale_label(v.scale));
             if theme::list_row(ui, picked == i, &text).clicked() {
-                self.sheet_view = i;
-                self.picked_view = Some(v.id);
+                self.drawing.view.sheet_view = i;
+                self.drawing.picked_view = Some(v.id);
             }
         }
         let picked = self.current_view(sheet);
@@ -2346,6 +2377,7 @@ impl DriftApp {
             });
             // The layers drawn in this view; one hidden in the model is off everywhere.
             let layers: Vec<(drift_core::LayerId, String, bool)> = self
+                .drawing
                 .editor
                 .doc
                 .layers()
@@ -2416,6 +2448,8 @@ impl DriftApp {
             .map(|(i, v)| (i, format!("{} {}", i + 1, v.title())))
             .collect();
         let mut with = self
+            .drawing
+            .view
             .align_with
             .filter(|w| others.iter().any(|(i, _)| i == w))
             .unwrap_or(others[0].0);
@@ -2433,7 +2467,7 @@ impl DriftApp {
                     }
                 });
         });
-        self.align_with = Some(with);
+        self.drawing.view.align_with = Some(with);
         let same_scale = same_scale(&views[picked], &views[with]);
         let mut how = None;
         ui.horizontal_wrapped(|ui| {
@@ -2475,14 +2509,15 @@ impl DriftApp {
     }
 
     pub(crate) fn paper_to_preview(&self, rect: egui::Rect, p: DVec2) -> egui::Pos2 {
-        let d = (p - self.preview.center) * f64::from(self.preview.zoom);
+        let d = (p - self.drawing.view.preview.center) * f64::from(self.drawing.view.preview.zoom);
         rect.center() + egui::vec2(d.x as f32, -d.y as f32)
     }
 
     fn preview_to_paper(&self, rect: egui::Rect, pos: egui::Pos2) -> DVec2 {
         let v = pos - rect.center();
-        self.preview.center
-            + DVec2::new(f64::from(v.x), -f64::from(v.y)) / f64::from(self.preview.zoom)
+        self.drawing.view.preview.center
+            + DVec2::new(f64::from(v.x), -f64::from(v.y))
+                / f64::from(self.drawing.view.preview.zoom)
     }
 }
 

@@ -67,8 +67,8 @@ fn harness() -> Option<Harness<'static, DriftApp>> {
 fn screen(h: &Harness<'_, DriftApp>, p: DVec2) -> Pos2 {
     let app = h.state();
     ScreenMap {
-        rect: app.canvas_rect,
-        camera: app.camera,
+        rect: app.drawing.view.canvas_rect,
+        camera: app.drawing.view.camera,
     }
     .to_screen(p)
 }
@@ -95,6 +95,7 @@ fn click_world(h: &mut Harness<'_, DriftApp>, p: DVec2) {
 
 fn count(h: &Harness<'_, DriftApp>, pred: impl Fn(&EntityKind) -> bool) -> usize {
     h.state()
+        .drawing
         .editor
         .doc
         .iter()
@@ -108,7 +109,7 @@ fn lines(h: &Harness<'_, DriftApp>) -> usize {
 
 /// The views on a sheet, with their model views.
 fn placed(h: &Harness<'_, DriftApp>, id: drift_core::SheetId) -> Vec<drift_core::PlacedView> {
-    let doc = &h.state().editor.doc;
+    let doc = &h.state().drawing.editor.doc;
     doc.placed_views(doc.sheet(id).expect("the sheet"))
 }
 
@@ -120,7 +121,7 @@ fn set_placed(
     view: &drift_core::PlacedView,
     label: &str,
 ) {
-    let ed = &mut h.state_mut().editor;
+    let ed = &mut h.state_mut().drawing.editor;
     ed.doc.begin();
     ed.doc.set_placed_view(id, index, view);
     ed.commit(label);
@@ -167,7 +168,7 @@ fn draw_select_delete_undo() {
     click_world(&mut h, DVec2::new(-40.0, -20.0));
     click_world(&mut h, DVec2::new(40.0, 30.0));
     assert_eq!(lines(&h), 4, "rectangle drawn");
-    let bounds = h.state().editor.bounds();
+    let bounds = h.state().drawing.editor.bounds();
     assert!((bounds.min - DVec2::new(-40.0, -20.0)).length() < 0.5);
     assert!((bounds.max - DVec2::new(40.0, 30.0)).length() < 0.5);
 
@@ -176,11 +177,23 @@ fn draw_select_delete_undo() {
     h.run();
     click_world(&mut h, DVec2::new(40.3, 30.2));
     click_world(&mut h, DVec2::new(50.0, 30.0));
-    let circle_center = h.state().editor.doc.iter().find_map(|(_, e)| match e.kind {
-        EntityKind::Circle { center, .. } => Some(center),
-        _ => None,
-    });
-    let center = h.state().editor.doc.point(circle_center.unwrap()).unwrap();
+    let circle_center = h
+        .state()
+        .drawing
+        .editor
+        .doc
+        .iter()
+        .find_map(|(_, e)| match e.kind {
+            EntityKind::Circle { center, .. } => Some(center),
+            _ => None,
+        });
+    let center = h
+        .state()
+        .drawing
+        .editor
+        .doc
+        .point(circle_center.unwrap())
+        .unwrap();
     assert_eq!(center, bounds.max, "snapped to the corner exactly");
 
     save_png("drift_ui_drawn.png", &mut h);
@@ -189,7 +202,7 @@ fn draw_select_delete_undo() {
     h.key_press(Key::Escape);
     h.run();
     click_world(&mut h, DVec2::new(-20.0, -20.0));
-    assert_eq!(h.state().editor.selection.len(), 1);
+    assert_eq!(h.state().drawing.editor.selection.len(), 1);
     save_png("drift_ui_selected.png", &mut h);
     h.key_press(Key::Delete);
     h.run();
@@ -215,7 +228,7 @@ fn canvas_keys_wait_while_a_dialog_is_open_and_esc_closes_it() {
     assert_eq!(lines(&h), 1, "line drawn");
     h.key_press_modifiers(EguiModifiers::COMMAND, Key::A);
     h.run();
-    assert_eq!(h.state().editor.selection.len(), 1, "line picked");
+    assert_eq!(h.state().drawing.editor.selection.len(), 1, "line picked");
 
     type Open = fn(&mut DriftApp);
     type IsOpen = fn(&DriftApp) -> bool;
@@ -239,14 +252,14 @@ fn canvas_keys_wait_while_a_dialog_is_open_and_esc_closes_it() {
         (
             "Check sketch",
             |a| a.open_sketch_check(),
-            |a| a.sketch_check.is_some(),
+            |a| a.drawing.sketch_check.is_some(),
         ),
         (
             "Import report",
             |a| {
-                a.import_report = Some(crate::app::sheets_ui::ImportSummary::default());
+                a.drawing.import_report = Some(crate::app::sheets_ui::ImportSummary::default());
             },
-            |a| a.import_report.is_some(),
+            |a| a.drawing.import_report.is_some(),
         ),
         (
             "Drop dialog",
@@ -267,7 +280,7 @@ fn canvas_keys_wait_while_a_dialog_is_open_and_esc_closes_it() {
         h.run();
         assert!(!is_open(h.state()), "{name}: Esc closes it");
         assert_eq!(
-            h.state().editor.selection.len(),
+            h.state().drawing.editor.selection.len(),
             1,
             "{name}: the same Esc keeps the pick"
         );
@@ -296,6 +309,7 @@ fn click_uses_release_position_when_events_are_batched() {
     h.run();
     let (_, point) = h
         .state()
+        .drawing
         .editor
         .doc
         .iter()
@@ -314,7 +328,7 @@ fn example_opens_and_fits() {
     h.run();
     h.get_by_label("Open example").click();
     h.run();
-    assert!(h.state().editor.doc.len() > 20);
+    assert!(h.state().drawing.editor.doc.len() > 20);
     assert!(h.state().is_dirty(), "examples are unsaved documents");
     save_png("drift_ui_example.png", &mut h);
 }
@@ -351,12 +365,15 @@ fn session_restores_document_and_unsaved_state() {
     let Some(mut fresh) = harness() else { return };
     fresh.state_mut().restore_session(&storage);
     fresh.run();
-    assert_eq!(fresh.state().editor.doc, h.state().editor.doc);
+    assert_eq!(
+        fresh.state().drawing.editor.doc,
+        h.state().drawing.editor.doc
+    );
     assert!(
         fresh.state().is_dirty(),
         "unsaved work stays marked unsaved"
     );
-    assert_eq!(fresh.state().file.name, crate::UNTITLED);
+    assert_eq!(fresh.state().drawing.file.name, crate::UNTITLED);
 }
 
 use eframe::Storage as _;
@@ -406,17 +423,17 @@ fn saving_over_things_from_a_newer_drift_asks_first() {
     // can move a point by a rounding error: that record is written anew, the rest as read.)
     h.state_mut().save();
     h.run();
-    assert!(h.state().lossy_save.is_none());
+    assert!(h.state().drawing.lossy_save.is_none());
     let text = std::fs::read_to_string(&path).unwrap();
     assert!(text.contains(r#"{"type":"point","id":"e1","weld":"fillet","#));
     // Deleting the point would lose the field: asked first, and Cancel saves nothing.
-    let ed = &mut h.state_mut().editor;
+    let ed = &mut h.state_mut().drawing.editor;
     ed.doc.begin();
     ed.doc.delete([drift_core::EntityId(1)]);
     ed.commit("Delete");
     h.state_mut().save();
     h.run();
-    assert!(h.state().lossy_save.is_some());
+    assert!(h.state().drawing.lossy_save.is_some());
     assert!(
         h.query_by_label_contains("things from a newer Drift that this version doesn't know")
             .is_some()
@@ -424,19 +441,19 @@ fn saving_over_things_from_a_newer_drift_asks_first() {
     save_png("drift_ui_lossy_save.png", &mut h);
     h.get_by_label("Cancel").click();
     h.run();
-    assert!(h.state().lossy_save.is_none());
+    assert!(h.state().drawing.lossy_save.is_none());
     assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
     // Save anyway writes it, without the field; the next save doesn't ask again.
     h.state_mut().save();
     h.run();
     h.get_by_label("Save anyway").click();
     h.run();
-    assert!(h.state().lossy_save.is_none());
+    assert!(h.state().drawing.lossy_save.is_none());
     let saved = std::fs::read_to_string(&path).unwrap();
     assert!(!saved.contains("weld"));
     h.state_mut().save();
     h.run();
-    assert!(h.state().lossy_save.is_none());
+    assert!(h.state().drawing.lossy_save.is_none());
     assert_eq!(std::fs::read_to_string(&path).unwrap(), saved);
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -474,7 +491,10 @@ fn a_session_from_a_newer_drift_is_kept_as_a_file_and_said() {
         message.contains(&format!("newer Drift (format {newer})")) && message.contains(&name),
         "{message}"
     );
-    assert!(h.state().editor.doc.is_empty(), "a new drawing instead");
+    assert!(
+        h.state().drawing.editor.doc.is_empty(),
+        "a new drawing instead"
+    );
     h.run_steps(30);
     assert!(h.state().unrestored.is_some());
     h.get_by_label("OK").click();
@@ -522,15 +542,15 @@ fn constrain_a_line_from_the_properties_panel() {
     h.key_press(Key::Escape); // back to Select
     h.run();
     click_world(&mut h, DVec2::new(5.0, 7.5)); // on the line, away from its middle
-    assert_eq!(h.state().editor.selection.len(), 1);
+    assert_eq!(h.state().drawing.editor.selection.len(), 1);
 
     h.get_by_role_and_label(Role::Button, "Horizontal").click();
     h.run();
-    assert_eq!(h.state().editor.doc.constraint_count(), 1);
+    assert_eq!(h.state().drawing.editor.doc.constraint_count(), 1);
 
     h.get_by_role_and_label(Role::Button, "Length").click();
     h.run();
-    assert_eq!(h.state().editor.doc.constraint_count(), 2);
+    assert_eq!(h.state().drawing.editor.doc.constraint_count(), 2);
     // The new dimension's field has focus: type a value and press Enter.
     h.event(Event::Key {
         key: Key::A,
@@ -546,6 +566,7 @@ fn constrain_a_line_from_the_properties_panel() {
 
     let app = h.state();
     let (_, line) = app
+        .drawing
         .editor
         .doc
         .iter()
@@ -555,8 +576,8 @@ fn constrain_a_line_from_the_properties_panel() {
         unreachable!()
     };
     let (pa, pb) = (
-        app.editor.doc.point(a).unwrap(),
-        app.editor.doc.point(b).unwrap(),
+        app.drawing.editor.doc.point(a).unwrap(),
+        app.drawing.editor.doc.point(b).unwrap(),
     );
     assert!(
         (pa.distance(pb) - 42.0).abs() < 1e-9,
@@ -565,7 +586,7 @@ fn constrain_a_line_from_the_properties_panel() {
     );
     assert!((pa.y - pb.y).abs() < 1e-12);
     // Two DOF left: the line can still slide.
-    assert_eq!(app.editor.analysis().dof, Some(2));
+    assert_eq!(app.drawing.editor.analysis().dof, Some(2));
     save_png("drift_ui_constrained.png", &mut h);
 }
 
@@ -581,7 +602,10 @@ fn add_view_by_region(h: &mut Harness<'_, DriftApp>, a: DVec2, b: DVec2) {
         .click();
     h.run();
     h.run();
-    assert!(!h.state().sheet_preview, "the model, to drag the crop on");
+    assert!(
+        !h.state().drawing.view.sheet_preview,
+        "the model, to drag the crop on"
+    );
     assert_eq!(h.state().tool.kind(), ToolKind::View);
     let (pa, pb) = (screen(h, a), screen(h, b));
     h.hover_at(pa);
@@ -605,13 +629,13 @@ fn type_text(h: &mut Harness<'_, DriftApp>, text: &str) {
 fn screen_map(h: &Harness<'_, DriftApp>) -> crate::overlay::ScreenMap {
     let app = h.state();
     crate::overlay::ScreenMap {
-        rect: app.canvas_rect,
-        camera: app.camera,
+        rect: app.drawing.view.canvas_rect,
+        camera: app.drawing.view.camera,
     }
 }
 
 fn the_line(h: &Harness<'_, DriftApp>) -> (DVec2, DVec2) {
-    let doc = &h.state().editor.doc;
+    let doc = &h.state().drawing.editor.doc;
     let (_, line) = doc
         .iter()
         .find(|(_, e)| matches!(e.kind, EntityKind::Line { .. }))
@@ -631,13 +655,17 @@ fn whole_view(h: &mut Harness<'_, DriftApp>) {
     let sheet = app.current_sheet().expect("a sheet");
     app.add_whole_view(sheet);
     // (With the paper picked, as a new sheet shows it.)
-    app.sheet_pick = crate::app::sheet_editor::SheetPick::Paper;
+    app.drawing.view.sheet_pick = crate::app::sheet_editor::SheetPick::Paper;
     h.run();
 }
 
 fn first_dimension(h: &Harness<'_, DriftApp>) -> crate::annotations::DimLayout {
     let app = h.state();
-    let painter = egui::Painter::new(h.ctx.clone(), egui::LayerId::background(), app.canvas_rect);
+    let painter = egui::Painter::new(
+        h.ctx.clone(),
+        egui::LayerId::background(),
+        app.drawing.view.canvas_rect,
+    );
     app.layout_dimensions(&painter, &screen_map(h))
         .into_iter()
         .next()
@@ -664,10 +692,17 @@ fn type_a_start_point_and_a_length() {
     let (a, b) = the_line(&h);
     assert_eq!(a, DVec2::new(10.0, 5.0));
     assert!((a.distance(b) - 50.0).abs() < 1e-9);
-    assert!(h.state().editor.doc.constraints().any(|(_, c)| matches!(
-        c,
-        drift_core::Constraint::Distance { value, .. } if *value == 50.0
-    )));
+    assert!(
+        h.state()
+            .drawing
+            .editor
+            .doc
+            .constraints()
+            .any(|(_, c)| matches!(
+                c,
+                drift_core::Constraint::Distance { value, .. } if *value == 50.0
+            ))
+    );
 }
 
 #[test]
@@ -682,15 +717,18 @@ fn smart_dimension_place_type_drag_and_delete_relation() {
     click_world(&mut h, DVec2::new(20.0, 0.5));
     h.key_press(Key::Escape);
     h.run();
-    assert_eq!(h.state().editor.doc.constraint_count(), 1);
+    assert_eq!(h.state().drawing.editor.doc.constraint_count(), 1);
 
     // Smart Dimension: click the line, place above, type the value.
     h.key_press(Key::D);
     h.run();
     click_world(&mut h, DVec2::new(-10.0, 0.125)); // on the line, away from its midpoint
     click_world(&mut h, DVec2::new(5.0, 15.0));
-    assert_eq!(h.state().editor.doc.constraint_count(), 2);
-    assert!(h.state().dimension_edit.is_some(), "value editor opened");
+    assert_eq!(h.state().drawing.editor.doc.constraint_count(), 2);
+    assert!(
+        h.state().drawing.dimension_edit.is_some(),
+        "value editor opened"
+    );
     type_text(&mut h, "30");
     h.key_press(Key::Enter);
     h.run();
@@ -709,7 +747,7 @@ fn smart_dimension_place_type_drag_and_delete_relation() {
     h.run();
     let dim = first_dimension(&h);
     let id = dim.id.unwrap();
-    let before = h.state().editor.doc.placement(id);
+    let before = h.state().drawing.editor.doc.placement(id);
     let from = dim.text_rect.center();
     let to = from + egui::vec2(60.0, 0.0);
     h.hover_at(from);
@@ -722,12 +760,12 @@ fn smart_dimension_place_type_drag_and_delete_relation() {
     h.run();
     button(&h, to, false);
     h.run();
-    let after = h.state().editor.doc.placement(id).unwrap();
+    let after = h.state().drawing.editor.doc.placement(id).unwrap();
     assert!(Some(after) != before, "label moved");
     assert!((first_dimension(&h).text_rect.center().x - to.x).abs() < 2.0);
     h.key_press_modifiers(EguiModifiers::COMMAND, Key::Z);
     h.run();
-    assert_eq!(h.state().editor.doc.placement(id), before);
+    assert_eq!(h.state().drawing.editor.doc.placement(id), before);
 
     // A double click just outside the corner of the text still edits it, with the select
     // tool and with the dimension tool. (The harness's frames are a quarter of a second
@@ -749,12 +787,12 @@ fn smart_dimension_place_type_drag_and_delete_relation() {
         }
         h.run();
         assert_eq!(
-            h.state().dimension_edit.as_ref().map(|e| e.id),
+            h.state().drawing.dimension_edit.as_ref().map(|e| e.id),
             Some(id),
             "{tool:?}"
         );
         assert_eq!(
-            h.state().editor.doc.constraint_count(),
+            h.state().drawing.editor.doc.constraint_count(),
             2,
             "no new dimension"
         );
@@ -767,7 +805,7 @@ fn smart_dimension_place_type_drag_and_delete_relation() {
     h.run();
 
     // Pick the horizontal relation's glyph and delete it.
-    let glyph = layout_glyphs(&h.state().editor.doc, &screen_map(&h))
+    let glyph = layout_glyphs(&h.state().drawing.editor.doc, &screen_map(&h))
         .into_iter()
         .next()
         .expect("a relation glyph");
@@ -778,12 +816,12 @@ fn smart_dimension_place_type_drag_and_delete_relation() {
     h.run();
     button(&h, at, false);
     h.run();
-    assert_eq!(h.state().selected_constraint, Some(glyph.id));
+    assert_eq!(h.state().drawing.selected_constraint, Some(glyph.id));
     save_png("drift_ui_relation_picked.png", &mut h);
     h.key_press(Key::Delete);
     h.run();
-    assert!(h.state().editor.doc.constraint(glyph.id).is_none());
-    assert_eq!(h.state().editor.doc.constraint_count(), 1);
+    assert!(h.state().drawing.editor.doc.constraint(glyph.id).is_none());
+    assert_eq!(h.state().drawing.editor.doc.constraint_count(), 1);
 }
 
 #[test]
@@ -793,7 +831,7 @@ fn every_annotation_kind_renders() {
     let Some(mut h) = harness() else { return };
     let v = DVec2::new;
     {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         ed.doc.begin();
         let doc = &mut ed.doc;
         let p = [v(-60.0, -30.0), v(0.0, -30.0), v(0.0, 10.0), v(-60.0, 10.0)]
@@ -861,14 +899,14 @@ fn every_annotation_kind_renders() {
         }
         ed.commit("Setup");
         let bounds = ed.bounds();
-        h.state_mut().fit_target = Some(bounds);
+        h.state_mut().drawing.view.fit_target = Some(bounds);
     }
     h.run();
-    assert!(h.state().editor.analysis().converged);
+    assert!(h.state().drawing.editor.analysis().converged);
     let painter = egui::Painter::new(
         h.ctx.clone(),
         egui::LayerId::background(),
-        h.state().canvas_rect,
+        h.state().drawing.view.canvas_rect,
     );
     assert_eq!(
         h.state().layout_dimensions(&painter, &screen_map(&h)).len(),
@@ -898,7 +936,7 @@ fn pick_a_midpoint_and_constrain_an_end_point_to_it() {
 
     // Hover then click the first line's midpoint.
     click_world(&mut h, DVec2::new(0.5, 0.3));
-    assert_eq!(h.state().editor.selected_midpoints.len(), 1);
+    assert_eq!(h.state().drawing.editor.selected_midpoints.len(), 1);
     // Shift-click the second line's start point.
     let at = screen(&h, DVec2::new(5.0, 20.0));
     h.hover_at(at);
@@ -923,12 +961,12 @@ fn pick_a_midpoint_and_constrain_an_end_point_to_it() {
         EguiModifiers::SHIFT,
     );
     h.run();
-    assert_eq!(h.state().editor.selection.len(), 1);
+    assert_eq!(h.state().drawing.editor.selection.len(), 1);
     save_png("drift_ui_midpoint_picked.png", &mut h);
 
     h.get_by_role_and_label(Role::Button, "Midpoint").click();
     h.run();
-    let doc = &h.state().editor.doc;
+    let doc = &h.state().drawing.editor.doc;
     let Some(drift_core::Constraint::Midpoint { point, line }) = doc
         .constraints()
         .map(|(_, c)| *c)
@@ -963,12 +1001,12 @@ fn smart_dimension_from_a_midpoint() {
     click_world(&mut h, DVec2::new(0.4, 0.2)); // the line's midpoint
     click_world(&mut h, DVec2::new(15.0, 25.0)); // the point
     click_world(&mut h, DVec2::new(30.0, 12.0)); // label to the right: vertical distance
-    assert!(h.state().dimension_edit.is_some());
+    assert!(h.state().drawing.dimension_edit.is_some());
     type_text(&mut h, "30");
     h.key_press(Key::Enter);
     h.run();
 
-    let doc = &h.state().editor.doc;
+    let doc = &h.state().drawing.editor.doc;
     let Some((_, dim)) = doc.constraints().next() else {
         panic!("no dimension")
     };
@@ -994,7 +1032,7 @@ fn curve_relations_and_driven_dimensions_render() {
     let v = DVec2::new;
     let hole;
     {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         ed.doc.begin();
         let doc = &mut ed.doc;
         // A slot: two lines tangent to two arcs at shared end points.
@@ -1060,15 +1098,15 @@ fn curve_relations_and_driven_dimensions_render() {
         )
         .unwrap();
         let bounds = ed.bounds();
-        h.state_mut().fit_target = Some(bounds);
+        h.state_mut().drawing.view.fit_target = Some(bounds);
     }
     h.run();
-    assert!(h.state().editor.analysis().converged);
-    assert!(h.state().editor.analysis().conflicts.is_empty());
+    assert!(h.state().drawing.editor.analysis().converged);
+    assert!(h.state().drawing.editor.analysis().conflicts.is_empty());
     let painter = egui::Painter::new(
         h.ctx.clone(),
         egui::LayerId::background(),
-        h.state().canvas_rect,
+        h.state().drawing.view.canvas_rect,
     );
     let dims = h.state().layout_dimensions(&painter, &screen_map(&h));
     let driven: Vec<_> = dims.iter().filter(|d| d.driven).collect();
@@ -1081,7 +1119,7 @@ fn curve_relations_and_driven_dimensions_render() {
         curve: hole,
         value: 5.0,
     };
-    let refused = h.state_mut().editor.add_dimension(radius, None);
+    let refused = h.state_mut().drawing.editor.add_dimension(radius, None);
     assert!(refused.is_err());
     h.run();
     save_png("drift_ui_driven_prompt.png", &mut h);
@@ -1089,7 +1127,7 @@ fn curve_relations_and_driven_dimensions_render() {
         .click();
     h.run();
     h.run();
-    let ed = &h.state().editor;
+    let ed = &h.state().drawing.editor;
     assert!(ed.out.pending_driven.is_none());
     let driven = ed
         .doc
@@ -1108,8 +1146,11 @@ fn a_dragged_dimension_snaps_level_with_another() {
     h.run();
     let horizontal = |h: &Harness<'_, DriftApp>| {
         let app = h.state();
-        let painter =
-            egui::Painter::new(h.ctx.clone(), egui::LayerId::background(), app.canvas_rect);
+        let painter = egui::Painter::new(
+            h.ctx.clone(),
+            egui::LayerId::background(),
+            app.drawing.view.canvas_rect,
+        );
         let mut dims: Vec<_> = app
             .layout_dimensions(&painter, &screen_map(h))
             .into_iter()
@@ -1138,7 +1179,7 @@ fn a_dragged_dimension_snaps_level_with_another() {
         h.run();
     }
     assert!(
-        h.state().dim_guide.is_some(),
+        h.state().drawing.dim_guide.is_some(),
         "a guide shows what it snapped to"
     );
     save_png("drift_ui_dimension_snap.png", &mut h);
@@ -1154,7 +1195,7 @@ fn a_dragged_dimension_snaps_level_with_another() {
         moved.handle.y,
         above.handle.y
     );
-    assert!(h.state().dim_guide.is_none());
+    assert!(h.state().drawing.dim_guide.is_none());
 }
 
 #[test]
@@ -1163,7 +1204,7 @@ fn extension_lines_start_past_geometry_and_their_grips_drag_and_reset() {
     // Two upright lines of different lengths, dimensioned between their bottom ends with the
     // dimension line above both.
     let (id, bottom) = {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         ed.doc.begin();
         let p = [(0.0, 0.0), (0.0, 100.0), (40.0, 0.0), (40.0, 60.0)]
             .map(|(x, y)| ed.doc.add_point(DVec2::new(x, y)));
@@ -1182,8 +1223,8 @@ fn extension_lines_start_past_geometry_and_their_grips_drag_and_reset() {
         (id, p[0])
     };
     h.run();
-    h.state_mut().fit_target = None;
-    h.state_mut().camera = drift_render::Camera {
+    h.state_mut().drawing.view.fit_target = None;
+    h.state_mut().drawing.view.camera = drift_render::Camera {
         center: DVec2::new(20.0, 70.0),
         scale: 3.0,
     };
@@ -1200,7 +1241,7 @@ fn extension_lines_start_past_geometry_and_their_grips_drag_and_reset() {
     h.run();
     button(&h, at, false);
     h.run();
-    assert_eq!(h.state().selected_constraint, Some(id));
+    assert_eq!(h.state().drawing.selected_constraint, Some(id));
     let grips = dim.shape.extension_grips();
     assert_eq!(grips.len(), 2);
     let gap = dim.style.gap;
@@ -1226,17 +1267,21 @@ fn extension_lines_start_past_geometry_and_their_grips_drag_and_reset() {
     }
     button(&h, to, false);
     h.run();
-    let start = h.state().editor.doc.extension_starts(id);
+    let start = h.state().drawing.editor.doc.extension_starts(id);
     assert!(
         start[0].is_some_and(|t| (t - 40.0).abs() < 0.05),
         "{start:?}"
     );
     assert_eq!(start[1], None);
-    assert_eq!(h.state().selected_constraint, Some(id), "still picked");
+    assert_eq!(
+        h.state().drawing.selected_constraint,
+        Some(id),
+        "still picked"
+    );
     save_png("drift_ui_extension_lines_dragged.png", &mut h);
     // It keeps its distance from the measured point when the geometry moves.
     {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         ed.doc.begin();
         ed.doc.set_point(bottom, DVec2::new(0.0, -10.0)).unwrap();
         ed.commit("Move");
@@ -1251,10 +1296,13 @@ fn extension_lines_start_past_geometry_and_their_grips_drag_and_reset() {
     h.run();
     h.key_press_modifiers(EguiModifiers::COMMAND, Key::Z);
     h.run();
-    assert_eq!(h.state().editor.doc.extension_starts(id), [None, None]);
+    assert_eq!(
+        h.state().drawing.editor.doc.extension_starts(id),
+        [None, None]
+    );
     h.key_press_modifiers(EguiModifiers::COMMAND | EguiModifiers::SHIFT, Key::Z);
     h.run();
-    assert!(h.state().editor.doc.extension_starts(id)[0].is_some());
+    assert!(h.state().drawing.editor.doc.extension_starts(id)[0].is_some());
 
     // A double-click on its grip starts it automatically again.
     h.ctx
@@ -1269,9 +1317,19 @@ fn extension_lines_start_past_geometry_and_their_grips_drag_and_reset() {
         h.step();
     }
     h.run();
-    assert_eq!(h.state().editor.doc.extension_starts(id), [None, None]);
-    assert_eq!(h.state().selected_constraint, Some(id), "still picked");
-    assert!(h.state().dimension_edit.is_none(), "not the value editor");
+    assert_eq!(
+        h.state().drawing.editor.doc.extension_starts(id),
+        [None, None]
+    );
+    assert_eq!(
+        h.state().drawing.selected_constraint,
+        Some(id),
+        "still picked"
+    );
+    assert!(
+        h.state().drawing.dimension_edit.is_none(),
+        "not the value editor"
+    );
 }
 
 #[test]
@@ -1281,7 +1339,7 @@ fn drawing_tools_show_drifts_own_crosshair() {
     h.state_mut().crosshair.weight = 2.0;
     h.key_press(Key::L);
     h.run();
-    let at = h.state().canvas_rect.center() + egui::vec2(-150.0, 80.0);
+    let at = h.state().drawing.view.canvas_rect.center() + egui::vec2(-150.0, 80.0);
     h.hover_at(at);
     h.run();
     // The system cursor is hidden; Drift draws its own.
@@ -1305,7 +1363,7 @@ fn drawing_tools_show_drifts_own_crosshair() {
 fn auto_relations_and_end_points_live_in_the_status_bar_with_keys() {
     let Some(mut h) = harness() else { return };
     // One switch each, in the status bar at the bottom (not the top bar).
-    let bottom = h.state().canvas_rect.bottom();
+    let bottom = h.state().drawing.view.canvas_rect.bottom();
     for name in ["Auto relations", "End points"] {
         let r = h.get_by_label(name).rect();
         assert!(r.top() > bottom, "{name} at {r:?}");
@@ -1383,7 +1441,7 @@ fn a_tab_nudged_out_of_its_dock_stays_docked() {
     let before = h.state().layout.clone();
     // 25 px onto the canvas from the dock's edge: not far enough to come away.
     let from = h.get_by_label("Layers").rect().center();
-    let edge = h.state().canvas_rect.right();
+    let edge = h.state().drawing.view.canvas_rect.right();
     let down = from + egui::vec2(0.0, 120.0);
     let to = egui::pos2(edge - 25.0, down.y);
     h.hover_at(from);
@@ -1429,7 +1487,7 @@ fn floating_panels_stack_and_come_apart() {
     // Pull Blocks out of the stack by its header, onto the canvas: it floats on its own.
     let header = h.state().header_rect(Panel::Blocks).unwrap();
     let from = header.left_center() + egui::vec2(60.0, 0.0);
-    let to = h.state().canvas_rect.left_center() + egui::vec2(120.0, 0.0);
+    let to = h.state().drawing.view.canvas_rect.left_center() + egui::vec2(120.0, 0.0);
     drag_steps(&mut h, from, to, 10, None);
     assert_eq!(
         h.state().layout.floating,
@@ -1450,7 +1508,7 @@ fn a_floating_stack_stays_inside_a_short_canvas() {
     h.set_size(egui::vec2(1280.0, 380.0));
     h.run_steps(6);
     save_png("drift_ui_floating_short.png", &mut h);
-    let canvas = h.state().canvas_rect;
+    let canvas = h.state().drawing.view.canvas_rect;
     let (_, window) = h.state().floating_rects(Panel::Layers).unwrap();
     let header = h.state().header_rect(Panel::Layers).unwrap();
     assert!(
@@ -1464,7 +1522,7 @@ fn a_floating_stack_stays_inside_a_short_canvas() {
     // And back to a tall window: still all there.
     h.set_size(egui::vec2(1280.0, 800.0));
     h.run_steps(6);
-    let canvas = h.state().canvas_rect;
+    let canvas = h.state().drawing.view.canvas_rect;
     let (_, window) = h.state().floating_rects(Panel::Layers).unwrap();
     assert!(window.top() >= canvas.top() - 0.5 && window.bottom() <= canvas.bottom() + 0.5);
 }
@@ -1700,7 +1758,7 @@ fn a_leaders_shoulder_and_curve_are_set_by_dragging() {
     use drift_core::{Anchor, Annotation, Leader, LeaderShape};
     let Some(mut h) = harness() else { return };
     let id = {
-        let doc = &mut h.state_mut().editor.doc;
+        let doc = &mut h.state_mut().drawing.editor.doc;
         doc.begin();
         let mut leader = Leader::to(Anchor::Free(DVec2::new(0.0, 0.0)));
         leader.shape = LeaderShape::Curved(0.2);
@@ -1715,12 +1773,15 @@ fn a_leaders_shoulder_and_curve_are_set_by_dragging() {
         let _ = doc.commit("Note");
         id
     };
-    h.state_mut().editor.selected_annotation = Some(id);
+    h.state_mut().drawing.editor.selected_annotation = Some(id);
     h.run();
     let leader_path = |h: &Harness<'_, DriftApp>| {
         let app = h.state();
-        let painter =
-            egui::Painter::new(h.ctx.clone(), egui::LayerId::background(), app.canvas_rect);
+        let painter = egui::Painter::new(
+            h.ctx.clone(),
+            egui::LayerId::background(),
+            app.drawing.view.canvas_rect,
+        );
         app.layout_notes(&painter, &screen_map(h))
             .into_iter()
             .find(|l| l.id == id)
@@ -1728,7 +1789,7 @@ fn a_leaders_shoulder_and_curve_are_set_by_dragging() {
             .leaders[0]
             .clone()
     };
-    let leader = |h: &Harness<'_, DriftApp>| match h.state().editor.doc.annotation(id) {
+    let leader = |h: &Harness<'_, DriftApp>| match h.state().drawing.editor.doc.annotation(id) {
         Some(Annotation::Note { leaders, .. }) => leaders[0],
         _ => panic!("a note"),
     };
@@ -1773,7 +1834,7 @@ fn note_text_stays_in_its_box_whatever_the_alignment() {
     use drift_core::{Annotation, NoteFrame, NoteStyle, TextAlign};
     let Some(mut h) = harness() else { return };
     let id = {
-        let doc = &mut h.state_mut().editor.doc;
+        let doc = &mut h.state_mut().drawing.editor.doc;
         doc.begin();
         let id = doc
             .add_annotation(Annotation::Note {
@@ -1790,7 +1851,7 @@ ALL OVER"
     };
     for align in TextAlign::ALL {
         {
-            let doc = &mut h.state_mut().editor.doc;
+            let doc = &mut h.state_mut().drawing.editor.doc;
             doc.begin();
             doc.set_annotation(
                 id,
@@ -1812,8 +1873,11 @@ ALL OVER"
         }
         h.run();
         let app = h.state();
-        let painter =
-            egui::Painter::new(h.ctx.clone(), egui::LayerId::background(), app.canvas_rect);
+        let painter = egui::Painter::new(
+            h.ctx.clone(),
+            egui::LayerId::background(),
+            app.drawing.view.canvas_rect,
+        );
         let layout = app
             .layout_notes(&painter, &screen_map(&h))
             .into_iter()
@@ -1821,7 +1885,7 @@ ALL OVER"
             .unwrap();
         let rect = layout.text.as_ref().unwrap().rect;
         let recorder = Recorder::new(&painter);
-        let style = DimStyle::of(&app.editor.doc.draft_style());
+        let style = DimStyle::of(&app.drawing.editor.doc.draft_style());
         crate::notes::paint_annotation(
             &recorder,
             &layout,
@@ -1875,6 +1939,7 @@ fn notes_take_leaders_from_their_grips_and_lose_them_with_delete() {
     let note = |h: &Harness<'_, DriftApp>| {
         let (id, a) = h
             .state()
+            .drawing
             .editor
             .doc
             .annotations()
@@ -1889,12 +1954,12 @@ fn notes_take_leaders_from_their_grips_and_lose_them_with_delete() {
     let (id, leaders) = note(&h);
     assert_eq!(leaders.len(), 1);
     // Pick it; drag from the + on its right to further along the bottom edge.
-    h.state_mut().editor.selected_annotation = Some(id);
+    h.state_mut().drawing.editor.selected_annotation = Some(id);
     h.run();
     let painter = egui::Painter::new(
         h.ctx.clone(),
         egui::LayerId::background(),
-        h.state().canvas_rect,
+        h.state().drawing.view.canvas_rect,
     );
     let layout = h
         .state()
@@ -1924,7 +1989,7 @@ fn notes_take_leaders_from_their_grips_and_lose_them_with_delete() {
     // Style it for the picture: a rounded frame, a mask, bold italic, a bent and a curved
     // leader with an open arrow.
     {
-        let doc = &mut h.state_mut().editor.doc;
+        let doc = &mut h.state_mut().drawing.editor.doc;
         let Some(Annotation::Note {
             text,
             at,
@@ -1973,13 +2038,13 @@ fn notes_take_leaders_from_their_grips_and_lose_them_with_delete() {
     h.run();
     button(&h, on, false);
     h.run();
-    assert_eq!(h.state().selected_leader, Some((id, 1)));
+    assert_eq!(h.state().drawing.selected_leader, Some((id, 1)));
     h.key_press(Key::Delete);
     h.run();
     let (_, leaders) = note(&h);
     assert_eq!(leaders.len(), 1);
     assert!(
-        h.state().editor.doc.annotation(id).is_some(),
+        h.state().drawing.editor.doc.annotation(id).is_some(),
         "the note stays"
     );
     let after = h
@@ -1999,7 +2064,7 @@ fn alt_c_draws_and_makes_construction_geometry() {
     use drift_core::LineKind;
     let Some(mut h) = harness() else { return };
     let style_of_newest = |h: &Harness<'_, DriftApp>| {
-        let doc = &h.state().editor.doc;
+        let doc = &h.state().drawing.editor.doc;
         doc.iter()
             .filter(|(_, e)| !e.kind.is_point())
             .max_by_key(|(id, _)| *id)
@@ -2011,7 +2076,7 @@ fn alt_c_draws_and_makes_construction_geometry() {
     assert!(h.query_by_label("Construction").is_some());
     h.key_press_modifiers(EguiModifiers::ALT, Key::C);
     h.run();
-    assert!(h.state().editor.prefs.draw_construction);
+    assert!(h.state().drawing.editor.prefs.draw_construction);
     assert_eq!(h.state().tool.kind(), ToolKind::Line, "not the circle tool");
     click_world(&mut h, DVec2::new(-30.0, -10.0));
     click_world(&mut h, DVec2::new(10.0, -10.0));
@@ -2021,7 +2086,7 @@ fn alt_c_draws_and_makes_construction_geometry() {
     // Back to geometry from the bar.
     h.get_by_label("Geometry").click();
     h.run();
-    assert!(!h.state().editor.prefs.draw_construction);
+    assert!(!h.state().drawing.editor.prefs.draw_construction);
     click_world(&mut h, DVec2::new(-30.0, 20.0));
     click_world(&mut h, DVec2::new(10.0, 20.0));
     h.key_press(Key::Escape);
@@ -2032,7 +2097,7 @@ fn alt_c_draws_and_makes_construction_geometry() {
     h.run();
     assert_eq!(h.state().tool.kind(), ToolKind::Select);
     click_world(&mut h, DVec2::new(-20.0, 20.0));
-    assert_eq!(h.state().editor.selection.len(), 1);
+    assert_eq!(h.state().drawing.editor.selection.len(), 1);
     h.key_press(Key::X);
     h.run();
     assert_eq!(style_of_newest(&h), Some(LineKind::Solid));
@@ -2058,7 +2123,7 @@ fn x_and_y_keys_lock_line_segments() {
     click_world(&mut h, DVec2::new(25.0, 20.0));
     h.key_press(Key::Escape);
     h.run();
-    let doc = &h.state().editor.doc;
+    let doc = &h.state().drawing.editor.doc;
     let ends: Vec<_> = doc
         .iter()
         .filter_map(|(_, e)| match e.kind {
@@ -2081,7 +2146,7 @@ fn g_moves_the_selection_with_typed_offsets_and_base_points() {
     let Some(mut h) = harness() else { return };
     let v = DVec2::new;
     {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         ed.doc.begin();
         let a = ed.doc.add_point(v(-20.0, 0.0));
         let b = ed.doc.add_point(v(0.0, 10.0));
@@ -2094,7 +2159,7 @@ fn g_moves_the_selection_with_typed_offsets_and_base_points() {
     }
     h.run();
     let line_ends = |h: &Harness<'_, DriftApp>| {
-        let doc = &h.state().editor.doc;
+        let doc = &h.state().drawing.editor.doc;
         let (_, e) = doc
             .iter()
             .find(|(_, e)| matches!(e.kind, EntityKind::Line { .. }))
@@ -2162,6 +2227,7 @@ fn g_moves_the_selection_with_typed_offsets_and_base_points() {
     // Shift+D duplicates in place and grabs the copy; a click drops it, the original stays.
     let lines = |h: &Harness<'_, DriftApp>| {
         h.state()
+            .drawing
             .editor
             .doc
             .iter()
@@ -2214,7 +2280,7 @@ fn a_cycles_arc_tools_and_switches_mid_polyline() {
     h.key_press(Key::Escape);
     h.run();
 
-    let doc = &h.state().editor.doc;
+    let doc = &h.state().drawing.editor.doc;
     let count = |pred: fn(&EntityKind) -> bool| doc.iter().filter(|(_, e)| pred(&e.kind)).count();
     assert_eq!(count(|k| matches!(k, EntityKind::Line { .. })), 2);
     assert_eq!(count(|k| matches!(k, EntityKind::Arc { .. })), 1);
@@ -2224,7 +2290,7 @@ fn a_cycles_arc_tools_and_switches_mid_polyline() {
         doc.constraints()
             .any(|(_, c)| matches!(c, drift_core::Constraint::Tangent { .. }))
     );
-    assert!(h.state().editor.analysis().conflicts.is_empty());
+    assert!(h.state().drawing.editor.analysis().conflicts.is_empty());
     save_png("drift_ui_line_arc_line.png", &mut h);
 }
 
@@ -2236,6 +2302,7 @@ fn variables_drive_typed_dimensions_and_units_change_display() {
     let v = DVec2::new;
     let w = h
         .state_mut()
+        .drawing
         .editor
         .add_variable("w", "40", drift_core::Kind::Length)
         .unwrap();
@@ -2258,6 +2325,7 @@ fn variables_drive_typed_dimensions_and_units_change_display() {
     assert!((a.distance(b) - 40.0).abs() < 1e-9, "{}", a.distance(b));
     let linked = h
         .state()
+        .drawing
         .editor
         .doc
         .expressions()
@@ -2266,16 +2334,21 @@ fn variables_drive_typed_dimensions_and_units_change_display() {
     assert_eq!(linked, ["w"]);
 
     // Changing the variable moves the line.
-    h.state_mut().editor.set_variable(w, "2.5 in").unwrap();
+    h.state_mut()
+        .drawing
+        .editor
+        .set_variable(w, "2.5 in")
+        .unwrap();
     h.run();
     let (a, b) = the_line(&h);
     assert!((a.distance(b) - 63.5).abs() < 1e-9);
 
     // The Parameters tab, in architectural units, with free directions shown.
     h.state_mut()
+        .drawing
         .editor
         .set_units(drift_core::Units::architectural());
-    h.state_mut().params.show_free = true;
+    h.state_mut().drawing.params.show_free = true;
     h.get_by_role_and_label(Role::Button, "Parameters").click();
     h.run();
     h.run();
@@ -2284,12 +2357,23 @@ fn variables_drive_typed_dimensions_and_units_change_display() {
     save_png("drift_ui_parameters.png", &mut h);
 
     // Variants: the other one shows as a ghost.
-    let small = h.state_mut().editor.save_variant("Small");
-    h.state_mut().editor.set_variable(w, "4 in").unwrap();
-    h.state_mut().editor.save_variant("Large");
-    h.state_mut().editor.apply_variant(small).unwrap();
-    let options: Vec<_> = h.state().editor.doc.variants().map(|(id, _)| id).collect();
-    h.state_mut().params.ghosted = options.into_iter().collect();
+    let small = h.state_mut().drawing.editor.save_variant("Small");
+    h.state_mut()
+        .drawing
+        .editor
+        .set_variable(w, "4 in")
+        .unwrap();
+    h.state_mut().drawing.editor.save_variant("Large");
+    h.state_mut().drawing.editor.apply_variant(small).unwrap();
+    let options: Vec<_> = h
+        .state()
+        .drawing
+        .editor
+        .doc
+        .variants()
+        .map(|(id, _)| id)
+        .collect();
+    h.state_mut().drawing.params.ghosted = options.into_iter().collect();
     h.run();
     h.run();
     let (a, b) = the_line(&h);
@@ -2298,7 +2382,7 @@ fn variables_drive_typed_dimensions_and_units_change_display() {
 
     // A drag never works the ghosts out again, however many frames it lasts; letting go
     // does, once per option shown.
-    let computed = h.state().params.ghost_computations;
+    let computed = h.state().drawing.params.ghost_computations;
     let from = screen(&h, (a + b) / 2.0);
     h.hover_at(from);
     h.run();
@@ -2308,13 +2392,16 @@ fn variables_drive_typed_dimensions_and_units_change_display() {
         h.hover_at(from + egui::vec2(0.0, 4.0 * k as f32));
         h.run();
     }
-    assert!(h.state().editor.doc.in_transaction(), "still dragging");
-    assert_eq!(h.state().params.ghost_computations, computed);
+    assert!(
+        h.state().drawing.editor.doc.in_transaction(),
+        "still dragging"
+    );
+    assert_eq!(h.state().drawing.params.ghost_computations, computed);
     button(&h, from + egui::vec2(0.0, 32.0), false);
     h.run();
     h.run();
-    assert!(!h.state().editor.doc.in_transaction());
-    assert!(h.state().params.ghost_computations <= computed + 2);
+    assert!(!h.state().drawing.editor.doc.in_transaction());
+    assert!(h.state().drawing.params.ghost_computations <= computed + 2);
 }
 
 #[test]
@@ -2322,7 +2409,7 @@ fn modify_tools_from_the_toolbar() {
     let Some(mut h) = harness() else { return };
     let v = DVec2::new;
     {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         ed.doc.begin();
         for (a, b) in [
             (v(-30.0, 0.0), v(30.0, 0.0)),
@@ -2358,7 +2445,7 @@ fn clicking_inside_closed_geometry_selects_its_region() {
 
     let Some(mut h) = harness() else { return };
     // Preferences kept on the editor survive opening a drawing.
-    h.state_mut().editor.prefs.pick_filter =
+    h.state_mut().drawing.editor.prefs.pick_filter =
         drift_edit::editor::PickFilter::only(drift_edit::editor::PickKind::Points);
     h.get_by_label("File").click();
     h.run();
@@ -2366,24 +2453,30 @@ fn clicking_inside_closed_geometry_selects_its_region() {
     h.run();
     h.run();
     assert_eq!(
-        h.state().editor.prefs.pick_filter,
+        h.state().drawing.editor.prefs.pick_filter,
         drift_edit::editor::PickFilter::only(drift_edit::editor::PickKind::Points)
     );
-    h.state_mut().editor.prefs.pick_filter = drift_edit::editor::PickFilter::ALL;
+    h.state_mut().drawing.editor.prefs.pick_filter = drift_edit::editor::PickFilter::ALL;
     // By default an area is picked only where it is filled: the plate is empty.
-    assert!(h.state().editor.regions_need_fill());
+    assert!(h.state().drawing.editor.regions_need_fill());
     click_world(&mut h, DVec2::new(100.0, 10.0));
     assert!(
-        h.state_mut().editor.region().is_none(),
+        h.state_mut().drawing.editor.region().is_none(),
         "an empty outline picks nothing"
     );
     assert!(h.state().view_prefs().contains("rfill=1"));
     // With that off, the inside of any closed outline picks it.
     h.state_mut()
+        .drawing
         .editor
         .change_rules(|r| r.regions_need_fill = false);
     click_world(&mut h, DVec2::new(100.0, 10.0));
-    let region = h.state_mut().editor.region().expect("the plate region");
+    let region = h
+        .state_mut()
+        .drawing
+        .editor
+        .region()
+        .expect("the plate region");
     assert_eq!(region.holes.len(), 6, "bore, four bolt holes and the slot");
     let corners = 4.0 * (100.0 - PI * 100.0 / 4.0);
     let holes = PI * 14.0 * 14.0 + 4.0 * PI * 3.2 * 3.2 + (8.0 * 30.0 + PI * 16.0);
@@ -2398,7 +2491,7 @@ fn clicking_inside_closed_geometry_selects_its_region() {
     // Clicking inside a hole (clear of the centre lines, the 45° line and the glyphs)
     // picks the hole's own region.
     click_world(&mut h, DVec2::new(63.0, 47.0));
-    let bore = h.state_mut().editor.region().expect("the bore");
+    let bore = h.state_mut().drawing.editor.region().expect("the bore");
     assert!((bore.area - PI * 196.0).abs() < 1e-9);
 }
 
@@ -2413,7 +2506,7 @@ fn layers_colour_weight_and_thin_lines() {
     h.run();
     {
         let app = h.state_mut();
-        let ed = &mut app.editor;
+        let ed = &mut app.drawing.editor;
         let outline = ed.add_layer("Outline");
         let mut look = ed.doc.layer(outline).unwrap().clone();
         look.color = Some(drift_core::Rgb([0xe0, 0x50, 0x40]));
@@ -2493,11 +2586,18 @@ fn parameters_and_layers_tabs_render() {
     h.state_mut().show_panel(Panel::Parameters);
     h.run();
     save_png("drift_ui_parameters.png", &mut h);
-    let id = h.state_mut().editor.add_layer("Notes");
-    let mut layer = h.state().editor.doc.layer(id).cloned().expect("added");
+    let id = h.state_mut().drawing.editor.add_layer("Notes");
+    let mut layer = h
+        .state()
+        .drawing
+        .editor
+        .doc
+        .layer(id)
+        .cloned()
+        .expect("added");
     layer.visible = false;
     layer.locked = true;
-    h.state_mut().editor.update_layer(id, layer);
+    h.state_mut().drawing.editor.update_layer(id, layer);
     h.state_mut().show_panel(Panel::Layers);
     h.run();
     save_png("drift_ui_layers.png", &mut h);
@@ -2507,7 +2607,7 @@ fn parameters_and_layers_tabs_render() {
 fn layer_rows_pick_and_drag_to_reorder() {
     let Some(mut h) = harness() else { return };
     let (walls, doors, notes) = {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         (
             ed.add_layer("Walls"),
             ed.add_layer("Doors"),
@@ -2531,7 +2631,7 @@ fn layer_rows_pick_and_drag_to_reorder() {
     h.run();
     button(&h, at, false);
     h.run();
-    assert_eq!(h.state().editor.doc.current_layer(), walls);
+    assert_eq!(h.state().drawing.editor.doc.current_layer(), walls);
     save_png("drift_ui_layer_rows.png", &mut h);
     // Drag Notes to just below Walls: second from the bottom of the draw order.
     let (from, to) = (row(&h, "Notes"), row(&h, "Walls") + egui::vec2(0.0, 8.0));
@@ -2546,7 +2646,14 @@ fn layer_rows_pick_and_drag_to_reorder() {
     button(&h, to, false);
     h.run();
     h.run();
-    let order: Vec<_> = h.state().editor.doc.layers().map(|(id, _)| id).collect();
+    let order: Vec<_> = h
+        .state()
+        .drawing
+        .editor
+        .doc
+        .layers()
+        .map(|(id, _)| id)
+        .collect();
     assert_eq!(order, [drift_core::LayerId::DEFAULT, notes, walls, doors]);
 }
 
@@ -2555,7 +2662,7 @@ fn layer_rows_pick_and_drag_to_reorder() {
 fn many_layers(h: &mut Harness<'_, DriftApp>, n: usize) -> Vec<drift_core::LayerId> {
     let kinds = ["WALL", "DOOR", "GLAZ", "FURN", "ANNO"];
     let ids = {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         ed.doc.begin();
         let ids = (0..n)
             .map(|i| {
@@ -2574,7 +2681,7 @@ fn many_layers(h: &mut Harness<'_, DriftApp>, n: usize) -> Vec<drift_core::Layer
 
 /// The layer rows drawn this frame.
 fn drawn_rows(h: &Harness<'_, DriftApp>) -> Vec<String> {
-    let doc = &h.state().editor.doc;
+    let doc = &h.state().drawing.editor.doc;
     doc.layers()
         .map(|(_, l)| l.name.clone())
         // (Layer 0's name is also a curve count.)
@@ -2604,7 +2711,7 @@ fn hundreds_of_layers_draw_only_the_rows_in_view() {
         // (Rows pass under the pointer, their tooltips coming and going.)
         h.step();
     }
-    h.hover_at(h.state().canvas_rect.center());
+    h.hover_at(h.state().drawing.view.canvas_rect.center());
     h.run();
     let rows = drawn_rows(&h);
     assert!(rows.contains(&"A-WALL-000".to_owned()), "{rows:?}");
@@ -2613,7 +2720,7 @@ fn hundreds_of_layers_draw_only_the_rows_in_view() {
     // Opening a row there (taller) keeps the rows below it in place, and clicking one
     // still makes it current.
     let walls = ids[0];
-    h.state_mut().expanded_layers.insert(ids[3]);
+    h.state_mut().drawing.expanded_layers.insert(ids[3]);
     h.run();
     h.run();
     let r = h.get_by_label("A-WALL-000").rect();
@@ -2624,7 +2731,7 @@ fn hundreds_of_layers_draw_only_the_rows_in_view() {
     h.run();
     button(&h, at, false);
     h.run();
-    assert_eq!(h.state().editor.doc.current_layer(), walls);
+    assert_eq!(h.state().drawing.editor.doc.current_layer(), walls);
     save_png("drift_ui_many_layers_bottom.png", &mut h);
 }
 
@@ -2633,7 +2740,7 @@ fn the_layer_filter_finds_layers_and_keeps_the_current_one() {
     let Some(mut h) = harness() else { return };
     let ids = many_layers(&mut h, 500);
     let current = ids[1]; // A-DOOR-001
-    h.state_mut().editor.set_current_layer(current);
+    h.state_mut().drawing.editor.set_current_layer(current);
     let field =
         egui_kittest::kittest::By::new().predicate(|n| n.placeholder() == Some("Filter layers"));
     h.get(field).click();
@@ -2656,14 +2763,14 @@ fn the_layer_filter_finds_layers_and_keeps_the_current_one() {
     );
     save_png("drift_ui_layer_filter.png", &mut h);
     // Any case; cleared by its button.
-    h.state_mut().layer_list.filter = "WALL-49".into();
+    h.state_mut().drawing.layer_list.filter = "WALL-49".into();
     h.run();
     h.run();
     assert!(h.query_by_label("2 of 501").is_some());
     h.get_by_label("×").click();
     h.run();
     h.run();
-    assert!(h.state().layer_list.filter.is_empty());
+    assert!(h.state().drawing.layer_list.filter.is_empty());
     assert!(drawn_rows(&h).contains(&"A-ANNO-499".to_owned()));
 }
 
@@ -2671,7 +2778,7 @@ fn the_layer_filter_finds_layers_and_keeps_the_current_one() {
 fn long_layer_names_lose_their_middle_and_show_whole_in_the_tooltip() {
     let Some(mut h) = harness() else { return };
     let long = "A-WALL-FULL-PATT-EXTERIOR-CONCRETE-200MM-HATCH";
-    h.state_mut().editor.add_layer(long);
+    h.state_mut().drawing.editor.add_layer(long);
     h.state_mut().show_panel(Panel::Layers);
     h.run();
     h.run();
@@ -2700,7 +2807,7 @@ fn a_layer_is_isolated_and_the_isolate_ended_in_one_undo_step_each() {
     let Some(mut h) = harness() else { return };
     let ids = many_layers(&mut h, 12);
     let visible = |h: &Harness<'_, DriftApp>| {
-        let doc = &h.state().editor.doc;
+        let doc = &h.state().drawing.editor.doc;
         doc.layers()
             .filter(|(_, l)| l.visible)
             .map(|(id, _)| id)
@@ -2709,7 +2816,7 @@ fn a_layer_is_isolated_and_the_isolate_ended_in_one_undo_step_each() {
     // One layer hidden beforehand, to come back hidden.
     let hidden = ids[5];
     {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         let mut l = ed.doc.layer(hidden).cloned().unwrap();
         l.visible = false;
         ed.update_layer(hidden, l);
@@ -2735,7 +2842,7 @@ fn a_layer_is_isolated_and_the_isolate_ended_in_one_undo_step_each() {
     h.run();
     h.run();
     assert_eq!(visible(&h), [target]);
-    assert_eq!(h.state().editor.doc.current_layer(), target);
+    assert_eq!(h.state().drawing.editor.doc.current_layer(), target);
     assert!(h.query_by_label("Isolating A-ANNO-009").is_some());
     save_png("drift_ui_layer_isolated.png", &mut h);
     // One undo step: undone, the layers are as they were and the bar goes.
@@ -2791,24 +2898,24 @@ fn fill_tool_hatches_and_fills_regions() {
     assert_eq!(h.state().tool.kind(), ToolKind::Fill);
     // Hatch the plate (the bore and holes stay open), then fill the bore solid.
     click_world(&mut h, DVec2::new(100.0, 15.0));
-    assert_eq!(h.state().editor.doc.fills().count(), 1);
+    assert_eq!(h.state().drawing.editor.doc.fills().count(), 1);
     // With the new hatch picked, the tool's bar and inspector still set the next fill's
     // style, and the eyedropper is at hand.
     h.run();
-    assert_eq!(h.state().editor.selected_fills.len(), 1);
+    assert_eq!(h.state().drawing.editor.selected_fills.len(), 1);
     assert!(h.query_by_label("New fills").is_some());
     // (Solid is in the tool's bar and in the inspector.)
     assert_eq!(h.query_all_by_label("Solid").count(), 2);
     h.query_all_by_label("Solid").next().unwrap().click();
     h.run();
     assert_eq!(
-        h.state().editor.prefs.fill_style.kind,
+        h.state().drawing.editor.prefs.fill_style.kind,
         drift_core::FillKind::Solid
     );
     assert!(h.query_all_by_label("Pick up a style").count() >= 1);
     click_world(&mut h, DVec2::new(75.0, 45.0));
-    assert_eq!(h.state().editor.doc.fills().count(), 2);
-    let shapes = h.state_mut().editor.fill_shapes();
+    assert_eq!(h.state().drawing.editor.doc.fills().count(), 2);
+    let shapes = h.state_mut().drawing.editor.fill_shapes();
     assert!(shapes.values().all(|s| !s.lost));
     assert!(
         shapes.values().any(|s| s.region.holes.len() >= 5),
@@ -2820,18 +2927,18 @@ fn fill_tool_hatches_and_fills_regions() {
     h.get_by_label("Select").click();
     h.run();
     click_world(&mut h, DVec2::new(100.0, 15.0));
-    assert_eq!(h.state().editor.selected_fills.len(), 1);
+    assert_eq!(h.state().drawing.editor.selected_fills.len(), 1);
     // (The plate's outline is a closed chain of free curves: the hatch made it a shape,
     // #202, picked with its outline.)
-    assert!(!h.state().editor.selection.is_empty());
+    assert!(!h.state().drawing.editor.selection.is_empty());
     h.run();
     save_png("drift_ui_hatch_selected.png", &mut h);
     // Delete removes the fill, undo brings it back.
     h.key_press(Key::Delete);
     h.run();
-    assert_eq!(h.state().editor.doc.fills().count(), 1);
+    assert_eq!(h.state().drawing.editor.doc.fills().count(), 1);
     h.state_mut().undo();
-    assert_eq!(h.state().editor.doc.fills().count(), 2);
+    assert_eq!(h.state().drawing.editor.doc.fills().count(), 2);
 }
 
 #[test]
@@ -2858,11 +2965,15 @@ fn temporary_dimensions_show_and_move_the_picked_wall() {
     // (Off its middle, which picks the midpoint.)
     click_world(&mut h, DVec2::new(120.0, 100.0));
     h.run();
-    assert_eq!(h.state().editor.selection, [mid].into());
-    assert_eq!(h.state().temp_dims.dims.len(), 3, "length, above, below");
+    assert_eq!(h.state().drawing.editor.selection, [mid].into());
+    assert_eq!(
+        h.state().drawing.temp_dims.dims.len(),
+        3,
+        "length, above, below"
+    );
     save_png("drift_ui_temp_dims.png", &mut h);
     // Click the value between the walls and type a new one: the picked wall moves.
-    let below = h.state().temp_dims.values[2].1;
+    let below = h.state().drawing.temp_dims.values[2].1;
     h.hover_at(below);
     h.run();
     button(&h, below, true);
@@ -2870,7 +2981,7 @@ fn temporary_dimensions_show_and_move_the_picked_wall() {
     button(&h, below, false);
     h.run();
     assert!(
-        h.state().temp_dims.edit.is_some(),
+        h.state().drawing.temp_dims.edit.is_some(),
         "the value editor opened"
     );
     h.run();
@@ -2878,19 +2989,23 @@ fn temporary_dimensions_show_and_move_the_picked_wall() {
     h.run();
     h.key_press(Key::Enter);
     h.run();
-    let y = |h: &Harness<'_, DriftApp>, l| match h.state().editor.doc.shape(l) {
+    let y = |h: &Harness<'_, DriftApp>, l| match h.state().drawing.editor.doc.shape(l) {
         Some(drift_core::Shape::Line { a, .. }) => a.y,
         _ => f64::NAN,
     };
     assert!((y(&h, mid) - 120.0).abs() < 1e-6, "{}", y(&h, mid));
     assert_eq!(y(&h, low), 0.0);
-    assert_eq!(h.state().editor.selection, [mid].into(), "still picked");
+    assert_eq!(
+        h.state().drawing.editor.selection,
+        [mid].into(),
+        "still picked"
+    );
     h.run();
     save_png("drift_ui_temp_dims_moved.png", &mut h);
     // The preference turns them off.
     h.state_mut().show_temp_dims = false;
     h.run();
-    assert!(h.state().temp_dims.dims.is_empty());
+    assert!(h.state().drawing.temp_dims.dims.is_empty());
 }
 
 #[test]
@@ -2903,6 +3018,7 @@ fn drafting_tools_annotate_the_plate() {
     h.run();
     let annotations = |h: &Harness<'_, DriftApp>| -> Vec<Annotation> {
         h.state()
+            .drawing
             .editor
             .doc
             .annotations()
@@ -2915,13 +3031,16 @@ fn drafting_tools_annotate_the_plate() {
     h.run();
     click_world(&mut h, DVec2::new(40.0, 80.0));
     click_world(&mut h, DVec2::new(25.0, 95.0));
-    assert!(h.state().note_edit.is_some(), "the note opens for typing");
+    assert!(
+        h.state().drawing.note_edit.is_some(),
+        "the note opens for typing"
+    );
     h.event(Event::Text("DEBURR ALL EDGES".into()));
     h.run();
     h.key_press(Key::Enter);
     h.run();
     h.run();
-    assert!(h.state().note_edit.is_none());
+    assert!(h.state().drawing.note_edit.is_none());
     match annotations(&h).as_slice() {
         [Annotation::Note { text, leaders, .. }] => {
             assert_eq!(text, "DEBURR ALL EDGES");
@@ -2958,7 +3077,8 @@ fn drafting_tools_annotate_the_plate() {
         })
         .expect("a hole callout");
     assert_eq!(
-        crate::notes::hole_callout_text(&h.state().editor.doc, callout.0, &callout.1).as_deref(),
+        crate::notes::hole_callout_text(&h.state().drawing.editor.doc, callout.0, &callout.1)
+            .as_deref(),
         Some("4× Ø6.4 THRU")
     );
     assert_eq!(
@@ -2978,7 +3098,7 @@ fn drafting_tools_annotate_the_plate() {
     // Pick the note by its text and delete it.
     let painter = h.ctx.layer_painter(egui::LayerId::background());
     let map = screen_map(&h);
-    let note = crate::notes::layout_annotations(&painter, &h.state().editor.doc, &map)
+    let note = crate::notes::layout_annotations(&painter, &h.state().drawing.editor.doc, &map)
         .into_iter()
         .find(|l| {
             l.text
@@ -2993,7 +3113,7 @@ fn drafting_tools_annotate_the_plate() {
     h.run();
     button(&h, at, false);
     h.run();
-    assert!(h.state().editor.selected_annotation.is_some());
+    assert!(h.state().drawing.editor.selected_annotation.is_some());
     h.run();
     save_png("drift_ui_note_selected.png", &mut h);
     h.key_press(Key::Delete);
@@ -3015,6 +3135,7 @@ fn drafting_styles_render() {
     h.run();
     let dims: Vec<(ConstraintId, Constraint)> = h
         .state()
+        .drawing
         .editor
         .doc
         .constraints()
@@ -3035,7 +3156,7 @@ fn drafting_styles_render() {
     let height = find(
         &|c| matches!(c, Constraint::VerticalDistance { value, .. } if (value - 80.0).abs() < 1e-9),
     );
-    let ed = &mut h.state_mut().editor;
+    let ed = &mut h.state_mut().drawing.editor;
     ed.doc.begin();
     ed.doc.set_dim_note(
         bore,
@@ -3068,7 +3189,7 @@ fn drafting_styles_render() {
     let mut asme = DraftStyle::asme();
     asme.alt_units = Some(LengthFormat::Inch);
     asme.arrow = drift_core::ArrowStyle::Open;
-    let ed = &mut h.state_mut().editor;
+    let ed = &mut h.state_mut().drawing.editor;
     ed.doc.begin();
     ed.doc.set_draft_style(asme);
     ed.commit("ASME");
@@ -3078,7 +3199,7 @@ fn drafting_styles_render() {
     save_png("drift_ui_asme.png", &mut h);
     // Pick the height dimension: the inspector edits its tolerance.
     h.state_mut().show_panel(Panel::Inspector);
-    h.state_mut().selected_constraint = Some(height);
+    h.state_mut().drawing.selected_constraint = Some(height);
     h.run();
     h.run();
     save_png("drift_ui_dimension_inspector.png", &mut h);
@@ -3112,7 +3233,7 @@ fn selection_box_released_over_a_side_panel_ends() {
     assert!(h.state().tool.overlay().is_none(), "no box left on screen");
     assert!(!h.state().tool.is_busy());
     assert!(
-        !h.state().editor.selection.is_empty(),
+        !h.state().drawing.editor.selection.is_empty(),
         "the box selected what it covered"
     );
 }
@@ -3127,6 +3248,7 @@ fn drawn_circle_can_be_picked_and_dimensioned() {
     click_world(&mut h, DVec2::new(20.0, 0.0));
     let circle = h
         .state()
+        .drawing
         .editor
         .doc
         .iter()
@@ -3138,7 +3260,7 @@ fn drawn_circle_can_be_picked_and_dimensioned() {
     h.run();
     click_world(&mut h, DVec2::new(0.0, 20.0));
     assert!(
-        h.state().editor.selection.contains(&circle),
+        h.state().drawing.editor.selection.contains(&circle),
         "click picks the circle"
     );
     // Dimension it.
@@ -3148,6 +3270,7 @@ fn drawn_circle_can_be_picked_and_dimensioned() {
     click_world(&mut h, DVec2::new(30.0, 30.0));
     let has = h
         .state()
+        .drawing
         .editor
         .doc
         .constraints()
@@ -3167,7 +3290,7 @@ fn drawn_circle_can_be_picked_and_dimensioned() {
     h.run();
     h.run();
     assert_eq!(
-        drift_solver::radius_of(&h.state().editor.doc, circle),
+        drift_solver::radius_of(&h.state().drawing.editor.doc, circle),
         Some(25.0)
     );
 }
@@ -3181,6 +3304,7 @@ fn dragging_a_drawn_circles_edge_resizes_it() {
     click_world(&mut h, DVec2::new(20.0, 0.0));
     let circle = h
         .state()
+        .drawing
         .editor
         .doc
         .iter()
@@ -3201,7 +3325,7 @@ fn dragging_a_drawn_circles_edge_resizes_it() {
     }
     button(&h, to, false);
     h.run();
-    let r = drift_solver::radius_of(&h.state().editor.doc, circle).unwrap();
+    let r = drift_solver::radius_of(&h.state().drawing.editor.doc, circle).unwrap();
     assert!((r - 35.0).abs() < 1.0, "radius {r}");
 }
 
@@ -3221,7 +3345,7 @@ fn a_sheet_prints_in_greyscale_or_black_and_white() {
     h.get_by_label("Select").click();
     h.run();
     {
-        let doc = &mut h.state_mut().editor.doc;
+        let doc = &mut h.state_mut().drawing.editor.doc;
         doc.begin();
         let fills: Vec<_> = doc.fills().map(|(id, _)| id).collect();
         for id in fills {
@@ -3235,7 +3359,7 @@ fn a_sheet_prints_in_greyscale_or_black_and_white() {
         red.color = Some(Rgb([0xe0, 0x20, 0x20]));
         doc.set_layer(layer, red);
     }
-    h.state_mut().editor.commit("Colour it");
+    h.state_mut().drawing.editor.commit("Colour it");
     h.state_mut().show_panel(Panel::Sheets);
     h.run();
     h.get_by_label("New sheet").click();
@@ -3244,12 +3368,13 @@ fn a_sheet_prints_in_greyscale_or_black_and_white() {
     h.run();
     let id = h.state().current_sheet().expect("a sheet");
     assert_eq!(
-        h.state().editor.doc.sheet(id).unwrap().colours,
+        h.state().drawing.editor.doc.sheet(id).unwrap().colours,
         SheetColours::Colour
     );
     let painter = h.ctx.layer_painter(egui::LayerId::background());
     // What the preview shows, and what the PDF writes.
-    let preview = |h: &Harness<'_, DriftApp>| h.state().preview_cache.as_ref().unwrap().2.clone();
+    let preview =
+        |h: &Harness<'_, DriftApp>| h.state().drawing.preview_cache.as_ref().unwrap().2.clone();
     let grey = |c: Rgb| c.0[0] == c.0[1] && c.0[1] == c.0[2];
     let colour = preview(&h);
     assert!(colour.items.iter().any(|i| !grey(i.pen.color)), "in colour");
@@ -3259,10 +3384,13 @@ fn a_sheet_prints_in_greyscale_or_black_and_white() {
     h.run();
     h.run();
     assert_eq!(
-        h.state().editor.doc.sheet(id).unwrap().colours,
+        h.state().drawing.editor.doc.sheet(id).unwrap().colours,
         SheetColours::BlackWhite
     );
-    assert_eq!(h.state().editor.history.undo_label(), Some("Edit sheet"));
+    assert_eq!(
+        h.state().drawing.editor.history.undo_label(),
+        Some("Edit sheet")
+    );
     let mono = preview(&h);
     assert_eq!(mono.items.len(), colour.items.len());
     for it in &mono.items {
@@ -3299,20 +3427,20 @@ fn a_sheet_prints_in_greyscale_or_black_and_white() {
             .any(|i| !matches!(i.prim, Prim::Fill { .. }) && i.pen.color != Rgb([0, 0, 0]))
     );
     save_png("drift_ui_sheet_greyscale.png", &mut h);
-    let saved = drift_io::save(&h.state().editor.doc, &Default::default());
+    let saved = drift_io::save(&h.state().drawing.editor.doc, &Default::default());
     assert!(saved.contains(r#""colours":"greyscale""#));
     // Undo goes back to black & white, then colour.
     h.state_mut().undo();
     h.state_mut().undo();
     assert_eq!(
-        h.state().editor.doc.sheet(id).unwrap().colours,
+        h.state().drawing.editor.doc.sheet(id).unwrap().colours,
         SheetColours::Colour
     );
 }
 
 /// A picked 400 square made into the block "Table": the app, with its one copy picked.
 fn table_block(h: &mut Harness<'static, DriftApp>) -> drift_core::BlockId {
-    let ed = &mut h.state_mut().editor;
+    let ed = &mut h.state_mut().drawing.editor;
     ed.doc.begin();
     let p = [(0.0, 0.0), (400.0, 0.0), (400.0, 400.0), (0.0, 400.0)]
         .map(|(x, y)| ed.doc.add_point(DVec2::new(x, y)));
@@ -3347,7 +3475,10 @@ fn f2_renames_the_picked_blocks_copies() {
     h.key_press(Key::Enter);
     h.run();
     h.run();
-    assert_eq!(h.state().editor.doc.block(block).unwrap().name, "Desk");
+    assert_eq!(
+        h.state().drawing.editor.doc.block(block).unwrap().name,
+        "Desk"
+    );
     assert!(h.query_by_label("Rename block").is_none(), "closed");
 }
 
@@ -3356,7 +3487,7 @@ fn a_blocks_menu_stays_open_while_its_name_is_typed() {
     let Some(mut h) = harness() else { return };
     let block = table_block(&mut h);
     // Nothing picked, so the only name field is the menu's.
-    h.state_mut().editor.selected_instances.clear();
+    h.state_mut().drawing.editor.selected_instances.clear();
     h.state_mut().show_panel(Panel::Blocks);
     h.run();
     // Right-click the block's row, then click into the menu's Name field (#130).
@@ -3376,14 +3507,17 @@ fn a_blocks_menu_stays_open_while_its_name_is_typed() {
     h.key_press(Key::Enter);
     h.run();
     h.run();
-    assert_eq!(h.state().editor.doc.block(block).unwrap().name, "Table 2");
+    assert_eq!(
+        h.state().drawing.editor.doc.block(block).unwrap().name,
+        "Table 2"
+    );
 }
 
 #[test]
 fn a_blocks_base_point_is_picked_when_made_and_set_later() {
     let Some(mut h) = harness() else { return };
     // A 400 square, picked.
-    let ed = &mut h.state_mut().editor;
+    let ed = &mut h.state_mut().drawing.editor;
     ed.doc.begin();
     let p = [(0.0, 0.0), (400.0, 0.0), (400.0, 400.0), (0.0, 400.0)]
         .map(|(x, y)| ed.doc.add_point(DVec2::new(x, y)));
@@ -3400,15 +3534,25 @@ fn a_blocks_base_point_is_picked_when_made_and_set_later() {
     h.get_by_label("Make").click();
     h.run();
     assert_eq!(h.state().tool.kind(), ToolKind::BasePoint);
-    assert!(h.state().editor.doc.instances().next().is_none(), "not yet");
+    assert!(
+        h.state().drawing.editor.doc.instances().next().is_none(),
+        "not yet"
+    );
     click_world(&mut h, DVec2::new(1.0, -1.0));
     h.run();
     assert_eq!(h.state().tool.kind(), ToolKind::Select);
-    let (copy, i) = h.state().editor.doc.instances().next().expect("the copy");
+    let (copy, i) = h
+        .state()
+        .drawing
+        .editor
+        .doc
+        .instances()
+        .next()
+        .expect("the copy");
     assert_eq!(i.at, DVec2::ZERO);
     let block = i.block;
     // The Inspector's Set base point, then Enter: the block's middle.
-    h.state_mut().editor.selected_instances = [copy].into();
+    h.state_mut().drawing.editor.selected_instances = [copy].into();
     h.state_mut().show_panel(Panel::Inspector);
     h.run();
     h.run();
@@ -3421,20 +3565,20 @@ fn a_blocks_base_point_is_picked_when_made_and_set_later() {
     h.run();
     assert_eq!(h.state().tool.kind(), ToolKind::Select);
     assert_eq!(
-        h.state().editor.doc.instance(copy).unwrap().at,
+        h.state().drawing.editor.doc.instance(copy).unwrap().at,
         DVec2::new(200.0, 200.0)
     );
-    let b = h.state().editor.doc.block(block).unwrap().bounds();
+    let b = h.state().drawing.editor.doc.block(block).unwrap().bounds();
     assert_eq!(b.center(), DVec2::ZERO);
     assert_eq!(
-        h.state().editor.history.undo_label(),
+        h.state().drawing.editor.history.undo_label(),
         Some("Set base point")
     );
     // Editing the block: its base point shows, and can be set from the banner.
-    h.state_mut().editor.edit_block(copy);
+    h.state_mut().drawing.editor.edit_block(copy);
     h.run();
     assert!(h.query_by_label("Set base point").is_some());
-    h.state_mut().editor.finish_block_edit();
+    h.state_mut().drawing.editor.finish_block_edit();
     h.run();
 }
 
@@ -3445,8 +3589,8 @@ fn a_profile_block_open_for_editing_is_written_live_without_saving() {
     std::fs::create_dir_all(&dir).unwrap();
     let beside = dir.join("Live.drift-profiles.json");
     let app = h.state_mut();
-    app.file.path = Some(dir.join("Live.drift"));
-    let ed = &mut app.editor;
+    app.drawing.file.path = Some(dir.join("Live.drift"));
+    let ed = &mut app.drawing.editor;
     ed.doc.begin();
     let block = ed.doc.add_block(drift_core::Block {
         name: "Bead".into(),
@@ -3475,10 +3619,10 @@ fn a_profile_block_open_for_editing_is_written_live_without_saving() {
     assert_eq!(h.state_mut().live_profiles(0.0), None);
     assert!(!beside.exists());
     // Opened for editing: written straight away, then as it changes.
-    h.state_mut().editor.edit_block(copy);
+    h.state_mut().drawing.editor.edit_block(copy);
     assert_eq!(h.state_mut().live_profiles(1.0), None);
     assert_eq!(far_end(), Some(0.01));
-    let ed = &mut h.state_mut().editor;
+    let ed = &mut h.state_mut().drawing.editor;
     let end = ed
         .doc
         .iter()
@@ -3495,7 +3639,7 @@ fn a_profile_block_open_for_editing_is_written_live_without_saving() {
     assert_eq!(far_end(), Some(0.025));
     // Nothing more to write until it changes again.
     assert_eq!(h.state_mut().live_profiles(2.0), None);
-    h.state_mut().editor.finish_block_edit();
+    h.state_mut().drawing.editor.finish_block_edit();
     assert_eq!(h.state_mut().live_profiles(3.0), None);
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -3504,7 +3648,7 @@ fn a_profile_block_open_for_editing_is_written_live_without_saving() {
 fn a_block_marked_as_a_blender_profile_is_written_beside_the_drawing_on_save() {
     let Some(mut h) = harness() else { return };
     // A block with a copy, picked.
-    let ed = &mut h.state_mut().editor;
+    let ed = &mut h.state_mut().drawing.editor;
     ed.doc.begin();
     let line = |a: (f64, f64), b: (f64, f64)| drift_core::BlockItem {
         shape: drift_core::Shape::Line {
@@ -3529,15 +3673,15 @@ fn a_block_marked_as_a_blender_profile_is_written_beside_the_drawing_on_save() {
         .unwrap();
     ed.commit("Block");
     assert!(h.state().profiles_text().is_none(), "nothing marked yet");
-    h.state_mut().editor.selected_instances = [copy].into();
+    h.state_mut().drawing.editor.selected_instances = [copy].into();
     h.state_mut().show_panel(Panel::Inspector);
     h.run();
     // The Inspector's checkbox marks the block.
     h.get_by_label("Blender profile").click();
     h.run();
-    assert!(h.state().editor.doc.block(block).unwrap().profile);
+    assert!(h.state().drawing.editor.doc.block(block).unwrap().profile);
     assert_eq!(
-        h.state().editor.history.undo_label(),
+        h.state().drawing.editor.history.undo_label(),
         Some("Mark as Blender profile")
     );
     save_png("drift_ui_blender_profile_inspector.png", &mut h);
@@ -3558,7 +3702,7 @@ fn a_block_marked_as_a_blender_profile_is_written_beside_the_drawing_on_save() {
     std::fs::create_dir_all(&dir).unwrap();
     let drawing = dir.join("Trim.drift");
     let beside = dir.join("Trim.drift-profiles.json");
-    h.state_mut().file.path = Some(drawing.clone());
+    h.state_mut().drawing.file.path = Some(drawing.clone());
     h.state_mut().save();
     h.run();
     assert!(drawing.exists());
@@ -3573,7 +3717,7 @@ fn a_block_marked_as_a_blender_profile_is_written_beside_the_drawing_on_save() {
             .text
             .contains("1 Blender profile")
     );
-    h.state_mut().editor.set_block_profile(block, false);
+    h.state_mut().drawing.editor.set_block_profile(block, false);
     h.state_mut().save();
     h.run();
     assert!(!beside.exists());
@@ -3650,7 +3794,7 @@ fn a_sheets_title_block_can_be_border_only_or_none() {
     save_png("drift_ui_title_block_choices.png", &mut h);
     h.get_by_label("Border only").click();
     h.run();
-    let sheet = h.state().editor.doc.sheet(id).unwrap().clone();
+    let sheet = h.state().drawing.editor.doc.sheet(id).unwrap().clone();
     assert_eq!(sheet.title_block, drift_core::TitleBlock::Border);
     let border = frame_items(&mut h);
     assert!(border > 0 && border < modern, "{border} of {modern}");
@@ -3660,7 +3804,7 @@ fn a_sheets_title_block_can_be_border_only_or_none() {
     h.get_by_label("None").click();
     h.run();
     h.run();
-    let sheet = h.state().editor.doc.sheet(id).unwrap().clone();
+    let sheet = h.state().drawing.editor.doc.sheet(id).unwrap().clone();
     assert_eq!(sheet.title_block, drift_core::TitleBlock::None);
     save_png("drift_ui_title_block_none.png", &mut h);
     let painter = h.ctx.layer_painter(egui::LayerId::background());
@@ -3697,12 +3841,12 @@ fn sheets_preview_and_export() {
     h.run();
     let id = h.state().current_sheet().expect("a sheet");
     let views = placed(&h, id);
-    assert!(h.state().sheet_preview);
+    assert!(h.state().drawing.view.sheet_preview);
     // The 120 × 80 plate with its dimensions fits A3 at 1:1, above the title block, in a
     // new view of the model.
     assert_eq!(views[0].scale, 1.0);
     assert_eq!(views[0].name, "View 1");
-    assert_eq!(h.state().editor.doc.views().count(), 1);
+    assert_eq!(h.state().drawing.editor.doc.views().count(), 1);
     save_png("drift_ui_sheet.png", &mut h);
 
     let painter = h.ctx.layer_painter(egui::LayerId::background());
@@ -3757,7 +3901,7 @@ fn sheets_preview_and_export() {
     let pdf = h.state_mut().pdf_bytes(&painter);
     let text = String::from_utf8_lossy(&pdf);
     assert!(!text.contains("(120) Tj") && text.contains("(1:1) Tj"));
-    let saved = drift_io::save(&h.state().editor.doc, &Default::default());
+    let saved = drift_io::save(&h.state().drawing.editor.doc, &Default::default());
     assert!(saved.contains(r#""dimensions":false"#) && !saved.contains(r#""notes""#));
     let (loaded, _) = drift_io::load(&saved).unwrap();
     let back = loaded.placed_views(loaded.sheets().next().unwrap().1);
@@ -3768,7 +3912,7 @@ fn sheets_preview_and_export() {
 
     // A plain drag on the view that fills the sheet leaves it be (a drag moves a view, and
     // this one has nowhere to move).
-    let rect = h.state().canvas_rect;
+    let rect = h.state().drawing.view.canvas_rect;
     let from = rect.center();
     let drag = |h: &mut Harness<'_, DriftApp>| {
         h.hover_at(from);
@@ -3800,9 +3944,9 @@ fn sheets_preview_and_export() {
     // Esc returns to the model.
     h.key_press(Key::Escape);
     h.run();
-    assert!(!h.state().sheet_preview);
+    assert!(!h.state().drawing.view.sheet_preview);
     // An ANSI B sheet with an ASME title block and revisions.
-    let mut ansi = h.state().editor.doc.sheet(id).cloned().unwrap();
+    let mut ansi = h.state().drawing.editor.doc.sheet(id).cloned().unwrap();
     ansi.paper = drift_core::PaperSize::AnsiB;
     ansi.title_block = drift_core::TitleBlock::Ansi;
     ansi.fields.number = "DR-001".into();
@@ -3817,7 +3961,7 @@ fn sheets_preview_and_export() {
             by: "CP".into(),
         });
     }
-    h.state_mut().editor.doc.set_sheet(id, ansi);
+    h.state_mut().drawing.editor.doc.set_sheet(id, ansi);
     let svg = h.state_mut().svg_text(&painter);
     assert!(svg.contains("Bore H7") && svg.contains(">DWG NO<"));
     std::fs::write(
@@ -3835,8 +3979,8 @@ fn panels_float_dock_and_switch_layers() {
     h.run();
     h.get_by_label("Open example").click();
     h.run();
-    let walls = h.state_mut().editor.add_layer("Walls");
-    h.state_mut().editor.add_layer("Hatching");
+    let walls = h.state_mut().drawing.editor.add_layer("Walls");
+    h.state_mut().drawing.editor.add_layer("Hatching");
     // Every panel starts in the right dock with the inspector in front.
     assert_eq!(
         h.state().layout.place(Panel::Layers),
@@ -3858,10 +4002,10 @@ fn panels_float_dock_and_switch_layers() {
     // Clicking a layer's name makes it the current layer.
     h.get_by_label("Walls").click();
     h.run();
-    assert_eq!(h.state().editor.doc.current_layer(), walls);
+    assert_eq!(h.state().drawing.editor.doc.current_layer(), walls);
     // Drag the Layers tab onto the canvas: it floats there.
     let tab = h.get_by_label("Layers").rect().center();
-    let canvas = h.state().canvas_rect.center();
+    let canvas = h.state().drawing.view.canvas_rect.center();
     h.hover_at(tab);
     h.run();
     button(&h, tab, true);
@@ -3952,7 +4096,7 @@ fn group_and_rotate_on_the_canvas() {
     h.run();
     // Pick the four bolt holes and group them.
     let holes: std::collections::BTreeSet<drift_core::EntityId> = {
-        let doc = &h.state().editor.doc;
+        let doc = &h.state().drawing.editor.doc;
         doc.iter()
             .filter(|(id, e)| {
                 matches!(e.kind, EntityKind::Circle { .. })
@@ -3962,7 +4106,7 @@ fn group_and_rotate_on_the_canvas() {
             .collect()
     };
     assert_eq!(holes.len(), 4);
-    h.state_mut().editor.selection = holes.clone();
+    h.state_mut().drawing.editor.selection = holes.clone();
     h.event(Event::Key {
         key: Key::G,
         physical_key: None,
@@ -3971,13 +4115,16 @@ fn group_and_rotate_on_the_canvas() {
         modifiers: EguiModifiers::COMMAND,
     });
     h.run();
-    let g = h.state().editor.selected_group().expect("grouped");
-    assert_eq!(h.state().editor.doc.group(g).unwrap().members, holes);
+    let g = h.state().drawing.editor.selected_group().expect("grouped");
+    assert_eq!(
+        h.state().drawing.editor.doc.group(g).unwrap().members,
+        holes
+    );
     // Clicking any hole picks all four.
-    h.state_mut().editor.selection.clear();
+    h.state_mut().drawing.editor.selection.clear();
     let hole = DVec2::new(70.0, 40.0) + DVec2::splat(26.0 / 2f64.sqrt());
     click_world(&mut h, hole + DVec2::new(0.0, 3.2));
-    assert_eq!(h.state().editor.selection, holes);
+    assert_eq!(h.state().drawing.editor.selection, holes);
     h.run();
     save_png("drift_ui_group.png", &mut h);
     // R rotates the group about its centre: show the guide mid-turn.
@@ -4014,11 +4161,16 @@ fn furniture_blocks_place_edit_and_export() {
     h.run();
     let chair = h
         .state()
+        .drawing
         .editor
         .doc
         .block_named("Chair – Dining")
         .expect("library");
-    assert_eq!(h.state().editor.doc.blocks().count(), 1, "only that one");
+    assert_eq!(
+        h.state().drawing.editor.doc.blocks().count(),
+        1,
+        "only that one"
+    );
     // Place two chairs (the second turned with R), then a bed.
     assert_eq!(h.state().tool.kind(), ToolKind::Block);
     click_world(&mut h, DVec2::new(15.0, 70.0));
@@ -4029,15 +4181,17 @@ fn furniture_blocks_place_edit_and_export() {
     h.run();
     click_world(&mut h, DVec2::new(105.0, 70.0));
     let queen = drift_edit::library::entry("Bed – Queen").unwrap();
-    let bed = h.state_mut().editor.library_block(queen);
+    let bed = h.state_mut().drawing.editor.library_block(queen);
     // Clear of the chairs (the example is small; a bed isn't).
     h.state_mut()
+        .drawing
         .editor
         .place_instance(bed, DVec2::new(5000.0, 0.0), 0.0, false);
-    h.state_mut().editor.selected_instances.clear();
-    assert_eq!(h.state().editor.doc.instances().count(), 3);
+    h.state_mut().drawing.editor.selected_instances.clear();
+    assert_eq!(h.state().drawing.editor.doc.instances().count(), 3);
     let turned = h
         .state()
+        .drawing
         .editor
         .doc
         .instances()
@@ -4058,6 +4212,7 @@ fn furniture_blocks_place_edit_and_export() {
     h.run();
     let first = h
         .state()
+        .drawing
         .editor
         .doc
         .instances()
@@ -4067,27 +4222,47 @@ fn furniture_blocks_place_edit_and_export() {
     // On the left edge of the chair's seat, clear of the example.
     let seat = 9.0 * drift_edit::library::INCH - 0.5 * drift_edit::library::INCH;
     click_world(&mut h, first + DVec2::new(-seat, -300.0));
-    assert_eq!(h.state().editor.selected_instances.len(), 1);
+    assert_eq!(h.state().drawing.editor.selected_instances.len(), 1);
     h.state_mut().show_panel(Panel::Inspector);
     h.run();
     h.run();
     save_png("drift_ui_blocks.png", &mut h);
     // Edit the chair block in place: every copy updates.
-    let copy = *h.state().editor.selected_instances.first().unwrap();
-    h.state_mut().editor.edit_block(copy);
+    let copy = *h.state().drawing.editor.selected_instances.first().unwrap();
+    h.state_mut().drawing.editor.edit_block(copy);
     h.run();
-    let a = h.state_mut().editor.doc.add_point(DVec2::new(15.0, 70.0));
-    let ed = &mut h.state_mut().editor;
+    let a = h
+        .state_mut()
+        .drawing
+        .editor
+        .doc
+        .add_point(DVec2::new(15.0, 70.0));
+    let ed = &mut h.state_mut().drawing.editor;
     ed.doc.begin();
     let c = ed.doc.add_point(DVec2::new(15.0, 75.0));
     ed.doc.add_line(a, c).unwrap();
     ed.commit("Line");
-    let before = h.state().editor.doc.block(chair).unwrap().items.len();
+    let before = h
+        .state()
+        .drawing
+        .editor
+        .doc
+        .block(chair)
+        .unwrap()
+        .items
+        .len();
     h.key_press(Key::Escape);
     h.run();
-    assert!(h.state().editor.block_edit.is_none());
+    assert!(h.state().drawing.editor.block_edit.is_none());
     assert_eq!(
-        h.state().editor.doc.block(chair).unwrap().items.len(),
+        h.state()
+            .drawing
+            .editor
+            .doc
+            .block(chair)
+            .unwrap()
+            .items
+            .len(),
         before + 1
     );
     let painter = h.ctx.layer_painter(egui::LayerId::background());
@@ -4144,7 +4319,7 @@ fn pdf_underlay_calibrate_and_trace() {
     h.state_mut().status = None;
     h.run();
     let (id, u) = {
-        let doc = &h.state().editor.doc;
+        let doc = &h.state().drawing.editor.doc;
         let (id, u) = doc.underlays().next().expect("an underlay");
         (id, u.clone())
     };
@@ -4159,7 +4334,7 @@ fn pdf_underlay_calibrate_and_trace() {
     type_text(&mut h, "5000");
     h.key_press(Key::Enter);
     h.run();
-    let u = h.state().editor.doc.underlay(id).unwrap().clone();
+    let u = h.state().drawing.editor.doc.underlay(id).unwrap().clone();
     assert!(
         (u.scale / drift_core::underlays::MM_PER_POINT - 50.0).abs() < 1e-3,
         "{}",
@@ -4185,6 +4360,7 @@ fn pdf_underlay_calibrate_and_trace() {
     h.run();
     let line = h
         .state()
+        .drawing
         .editor
         .doc
         .iter()
@@ -4193,7 +4369,7 @@ fn pdf_underlay_calibrate_and_trace() {
             _ => None,
         })
         .expect("a traced line");
-    let doc = &h.state().editor.doc;
+    let doc = &h.state().drawing.editor.doc;
     assert!(doc.point(line.0).unwrap().distance(a) < 1e-6);
     assert!(doc.point(line.1).unwrap().distance(b) < 1e-6);
     h.key_press(Key::S);
@@ -4227,7 +4403,7 @@ fn polygons_and_slots_from_the_toolbar() {
     h.key_press(Key::U);
     h.run();
     assert_eq!(
-        h.state().editor.prefs.slot_mode,
+        h.state().drawing.editor.prefs.slot_mode,
         drift_edit::tools::SlotMode::Arc
     );
     click_world(&mut h, v(40.0, 0.0));
@@ -4238,6 +4414,7 @@ fn polygons_and_slots_from_the_toolbar() {
     click_world(&mut h, v(74.0, 3.0));
     let curves = h
         .state()
+        .drawing
         .editor
         .doc
         .iter()
@@ -4280,6 +4457,7 @@ fn c_cycles_to_ellipses_and_draws_them() {
     click_world(&mut h, v(5.0, -5.0));
     let kinds: Vec<&str> = h
         .state()
+        .drawing
         .editor
         .doc
         .iter()
@@ -4322,6 +4500,7 @@ fn pen_draws_curves_like_illustrator() {
     h.run();
     let curves = h
         .state()
+        .drawing
         .editor
         .doc
         .iter()
@@ -4332,7 +4511,7 @@ fn pen_draws_curves_like_illustrator() {
     h.key_press(Key::Escape);
     h.run();
     let on_curve = {
-        let doc = &h.state().editor.doc;
+        let doc = &h.state().drawing.editor.doc;
         let (_, e) = doc
             .iter()
             .find(|(_, e)| matches!(e.kind, EntityKind::Bezier { .. }))
@@ -4344,8 +4523,8 @@ fn pen_draws_curves_like_illustrator() {
         drift_core::shape::bezier_point(&p, 0.5)
     };
     click_world(&mut h, on_curve);
-    assert_eq!(h.state().editor.selection.len(), 1);
-    assert_eq!(h.state().editor.handle_lines([0, 0, 0]).len(), 2);
+    assert_eq!(h.state().drawing.editor.selection.len(), 1);
+    assert_eq!(h.state().drawing.editor.handle_lines([0, 0, 0]).len(), 2);
     save_png("drift_ui_pen_picked.png", &mut h);
 }
 
@@ -4360,6 +4539,7 @@ fn end_points_light_up_and_hide_until_used() {
     // Untouched: no end point markers.
     let markers = |h: &Harness<'_, DriftApp>| {
         h.state()
+            .drawing
             .editor
             .items_styled(true, true)
             .iter()
@@ -4372,9 +4552,10 @@ fn end_points_light_up_and_hide_until_used() {
     h.hover_at(screen(&h, corner));
     h.run();
     h.run();
-    let hovered = h.state().editor.hovered;
+    let hovered = h.state().drawing.editor.hovered;
     assert!(hovered.is_some_and(|id| {
         h.state()
+            .drawing
             .editor
             .doc
             .get(id)
@@ -4411,10 +4592,10 @@ fn view_and_tool_hotkeys() {
         assert_eq!(h.state().tool.kind(), expected);
     }
     // Shift+F fits (and doesn't change the tool).
-    h.state_mut().fit_target = None;
+    h.state_mut().drawing.view.fit_target = None;
     h.key_press_modifiers(EguiModifiers::SHIFT, Key::F);
     h.run();
-    assert!(h.state().fit_target.is_some());
+    assert!(h.state().drawing.view.fit_target.is_some());
     assert_eq!(h.state().tool.kind(), ToolKind::Fillet);
 }
 
@@ -4432,19 +4613,19 @@ fn text_tool_places_and_types_live() {
     type_text(&mut h, "Drift 2026");
     h.run();
     let (id, t) = {
-        let doc = &h.state().editor.doc;
+        let doc = &h.state().drawing.editor.doc;
         let (id, t) = doc.texts().next().expect("a text");
         (id, t.clone())
     };
     assert_eq!(t.text, "Drift 2026");
-    assert!(h.state().editor.text_items(true, true).len() > 20);
+    assert!(h.state().drawing.editor.text_items(true, true).len() > 20);
     // One undo step for the typing, one for placing it.
     // Drag it by its body with the select tool.
     h.key_press(Key::Escape);
     h.run();
     h.key_press(Key::S);
     h.run();
-    let b = h.state().editor.text_outline(id).unwrap().bounds;
+    let b = h.state().drawing.editor.text_outline(id).unwrap().bounds;
     let grab = b.center();
     let from = screen(&h, grab);
     let to = screen(&h, grab + v(0.0, -20.0));
@@ -4458,7 +4639,7 @@ fn text_tool_places_and_types_live() {
     }
     button(&h, to, false);
     h.run();
-    let moved = h.state().editor.doc.text(id).unwrap().at;
+    let moved = h.state().drawing.editor.doc.text(id).unwrap().at;
     assert!(moved.distance(t.at + v(0.0, -20.0)) < 1.0, "{moved:?}");
     save_png("drift_ui_text.png", &mut h);
 }
@@ -4472,7 +4653,7 @@ fn context_bar_canvas_menu_and_shortcuts() {
     save_png("drift_ui_context_polygon.png", &mut h);
     h.get_by_label("Circumscribed").click();
     h.run();
-    assert!(h.state().editor.prefs.polygon_circumscribed);
+    assert!(h.state().drawing.editor.prefs.polygon_circumscribed);
     // Draw a rectangle, then right-click one side: it's picked and the menu offers actions.
     h.key_press(Key::R);
     h.run();
@@ -4495,13 +4676,13 @@ fn context_bar_canvas_menu_and_shortcuts() {
         h.run();
     }
     h.run();
-    assert_eq!(h.state().editor.selection.len(), 1);
-    let line = *h.state().editor.selection.iter().next().unwrap();
+    assert_eq!(h.state().drawing.editor.selection.len(), 1);
+    let line = *h.state().drawing.editor.selection.iter().next().unwrap();
     save_png("drift_ui_canvas_menu.png", &mut h);
     h.get_by_label_contains("Toggle construction").click();
     h.run();
     assert_eq!(
-        h.state().editor.doc.get(line).unwrap().style,
+        h.state().drawing.editor.doc.get(line).unwrap().style,
         drift_core::LineKind::Construction
     );
     // The selection's actions are in the context bar.
@@ -4533,8 +4714,8 @@ fn exports_never_become_the_documents_file() {
     let Some(mut fresh) = harness() else { return };
     fresh.state_mut().restore_session(&storage);
     // The name is a sketch's again, and Save can't overwrite the PDF.
-    assert_eq!(fresh.state().file.name, "Plan.drift");
-    assert!(fresh.state().file.path.is_none());
+    assert_eq!(fresh.state().drawing.file.name, "Plan.drift");
+    assert!(fresh.state().drawing.file.path.is_none());
 }
 
 #[test]
@@ -4548,7 +4729,7 @@ fn copy_paste_and_nudge_on_the_canvas() {
     h.run();
     h.key_press(Key::Escape);
     h.run();
-    h.state_mut().editor.select_all();
+    h.state_mut().drawing.editor.select_all();
     h.run();
     // Ctrl+C then Ctrl+V with the pointer elsewhere: a second rectangle centred there.
     h.event(Event::Copy);
@@ -4563,10 +4744,11 @@ fn copy_paste_and_nudge_on_the_canvas() {
     assert_eq!(lines(&h), 8);
     let pasted: drift_core::Bounds = h
         .state()
+        .drawing
         .editor
         .selection
         .iter()
-        .filter_map(|id| h.state().editor.doc.shape(*id))
+        .filter_map(|id| h.state().drawing.editor.doc.shape(*id))
         .map(|s| s.bounds())
         .collect();
     assert!(
@@ -4580,24 +4762,25 @@ fn copy_paste_and_nudge_on_the_canvas() {
     assert!(!h.state().tool.is_modal());
     assert_eq!(lines(&h), 8);
     // Arrow keys nudge the pasted copy by a grid step; Shift by ten.
-    let step = drift_render::grid_info(&h.state().camera, false).minor;
+    let step = drift_render::grid_info(&h.state().drawing.view.camera, false).minor;
     h.key_press(Key::ArrowRight);
     h.run();
     h.key_press_modifiers(EguiModifiers::SHIFT, Key::ArrowUp);
     h.run();
     let moved: drift_core::Bounds = h
         .state()
+        .drawing
         .editor
         .selection
         .iter()
-        .filter_map(|id| h.state().editor.doc.shape(*id))
+        .filter_map(|id| h.state().drawing.editor.doc.shape(*id))
         .map(|s| s.bounds())
         .collect();
     assert!((moved.min - pasted.min - DVec2::new(step, 10.0 * step)).length() < 1e-6);
     // Plain text pastes as sketch text.
     h.event(Event::Paste("Kitchen".into()));
     h.run();
-    assert_eq!(h.state().editor.doc.texts().count(), 1);
+    assert_eq!(h.state().drawing.editor.doc.texts().count(), 1);
     save_png("drift_ui_pasted.png", &mut h);
 }
 
@@ -4620,13 +4803,13 @@ fn start_panel_recent_files_and_the_quit_prompt() {
     h.get_by_label("Recent test").click();
     h.run();
     h.run();
-    assert!(!h.state().editor.doc.is_empty());
-    assert_eq!(h.state().file.path.as_ref(), Some(&path));
+    assert!(!h.state().drawing.editor.doc.is_empty());
+    assert_eq!(h.state().drawing.file.path.as_ref(), Some(&path));
     assert!(!h.state().show_start);
     // Closing with unsaved changes asks; "Don't save" lets the window go and drops the
     // session, keeping the recent list.
-    h.state_mut().editor.select_all();
-    h.state_mut().editor.delete_selection();
+    h.state_mut().drawing.editor.select_all();
+    h.state_mut().drawing.editor.delete_selection();
     assert!(h.state().is_dirty());
     h.state_mut().pending = Some(crate::Pending::Quit);
     h.run();
@@ -4639,7 +4822,7 @@ fn start_panel_recent_files_and_the_quit_prompt() {
     assert_eq!(storage.get_string(crate::KEY_DOCUMENT).as_deref(), Some(""));
     let Some(mut fresh) = harness() else { return };
     fresh.state_mut().restore_session(&storage);
-    assert!(fresh.state().editor.doc.is_empty());
+    assert!(fresh.state().drawing.editor.doc.is_empty());
     assert_eq!(fresh.state().recent, std::slice::from_ref(&path));
     let _ = std::fs::remove_file(&path);
 }
@@ -4652,13 +4835,14 @@ fn text_is_typed_in_place_and_windows_open() {
     assert_eq!(h.state().tool.kind(), ToolKind::Text);
     click_world(&mut h, DVec2::new(-20.0, 10.0));
     h.run();
-    assert!(h.state().editor.editing_text.is_some());
+    assert!(h.state().drawing.editor.editing_text.is_some());
     h.event(Event::Text("Hall".into()));
     h.run();
     h.run();
     save_png("drift_ui_text_in_place.png", &mut h);
     let texts: Vec<String> = h
         .state()
+        .drawing
         .editor
         .doc
         .texts()
@@ -4668,10 +4852,10 @@ fn text_is_typed_in_place_and_windows_open() {
     h.key_press(Key::Enter);
     h.run();
     h.run();
-    assert!(h.state().editor.editing_text.is_none());
+    assert!(h.state().drawing.editor.editing_text.is_none());
     // Zoom presets, and zoom to the selection.
     h.state_mut().zoom_to_percent(100.0);
-    assert!((h.state().camera.scale - 96.0 / 25.4).abs() < 1e-9);
+    assert!((h.state().drawing.view.camera.scale - 96.0 / 25.4).abs() < 1e-9);
     assert!(h.state_mut().zoom_to_selection());
     // Preferences and About open from their commands.
     h.state_mut().show_settings = true;
@@ -4708,7 +4892,7 @@ fn inspector_fields_take_typed_values() {
     h.run();
     click_world(&mut h, DVec2::new(5.0, 7.0));
     h.run();
-    assert_eq!(h.state().editor.selection.len(), 1);
+    assert_eq!(h.state().drawing.editor.selection.len(), 1);
     // The line's fields, in order: Length, Angle, Start X, Start Y, End X, End Y.
     fn type_into(h: &mut Harness<'_, DriftApp>, field: usize, text: &str, finish: Key) {
         let fields: Vec<_> = h.get_all_by_role(Role::TextInput).collect();
@@ -4730,7 +4914,7 @@ fn inspector_fields_take_typed_values() {
         h.run();
     }
     let ends = |h: &Harness<'_, DriftApp>| {
-        let doc = &h.state().editor.doc;
+        let doc = &h.state().drawing.editor.doc;
         doc.iter()
             .find_map(|(_, e)| match e.kind {
                 EntityKind::Line { a, b } => Some((doc.point(a).unwrap(), doc.point(b).unwrap())),
@@ -4747,7 +4931,7 @@ fn inspector_fields_take_typed_values() {
         "length {}",
         a.distance(b)
     );
-    assert_eq!(h.state().editor.doc.constraint_count(), 1);
+    assert_eq!(h.state().drawing.editor.doc.constraint_count(), 1);
     // An angle turns the line about its start, keeping the length.
     type_into(&mut h, 1, "90", Key::Enter);
     let (a2, b2) = ends(&h);
@@ -4763,14 +4947,14 @@ fn inspector_fields_take_typed_values() {
     type_into(&mut h, 3, "55", Key::Escape);
     assert_eq!(ends(&h), (a3, b3));
     assert_eq!(
-        h.state().editor.selection.len(),
+        h.state().drawing.editor.selection.len(),
         1,
         "Esc in a field keeps the selection"
     );
     // In feet and inches a bare number is inches.
-    let mut units = h.state().editor.doc.units();
+    let mut units = h.state().drawing.editor.doc.units();
     units.length = drift_core::LengthFormat::Architectural;
-    h.state_mut().editor.set_units(units);
+    h.state_mut().drawing.editor.set_units(units);
     h.run();
     type_into(&mut h, 0, "30", Key::Enter);
     let (a4, b4) = ends(&h);
@@ -4792,7 +4976,7 @@ fn inspector_fields_take_typed_values() {
 fn offsets_and_splits_of_ellipses_and_pen_curves_draw() {
     let Some(mut h) = harness() else { return };
     let v = DVec2::new;
-    let ed = &mut h.state_mut().editor;
+    let ed = &mut h.state_mut().drawing.editor;
     ed.doc.begin();
     let [c, m, n] = [v(-45.0, 0.0), v(-15.0, 10.0), v(-50.0, 15.0)].map(|p| ed.doc.add_point(p));
     let ellipse = ed.doc.add_ellipse(c, m, n).unwrap();
@@ -4812,7 +4996,7 @@ fn offsets_and_splits_of_ellipses_and_pen_curves_draw() {
     let at = ed.doc.shape(arch).map(|s| s.point_at(0.4)).unwrap();
     ed.split_at(arch, at).unwrap();
     let fit = h.state().fit_bounds();
-    h.state_mut().fit_target = Some(fit);
+    h.state_mut().drawing.view.fit_target = Some(fit);
     h.state_mut().always_endpoints = true;
     h.state_mut().status_colors = false;
     h.run();
@@ -4830,7 +5014,7 @@ fn modern_sheet_layout() {
     h.state_mut().add_sheet();
     whole_view(&mut h);
     let id = h.state().current_sheet().expect("a sheet");
-    let mut sheet = h.state().editor.doc.sheet(id).cloned().unwrap();
+    let mut sheet = h.state().drawing.editor.doc.sheet(id).cloned().unwrap();
     assert_eq!(sheet.title_block, drift_core::TitleBlock::Modern);
     sheet.fields.title = "Mounting plate".into();
     sheet.fields.number = "DR-0142".into();
@@ -4852,8 +5036,8 @@ fn modern_sheet_layout() {
         });
     }
     h.state_mut().update_sheet(id, sheet, None, false);
-    h.state_mut().sheet_preview = true;
-    h.state_mut().preview.zoom = 0.0;
+    h.state_mut().drawing.view.sheet_preview = true;
+    h.state_mut().drawing.view.preview.zoom = 0.0;
     h.state_mut().dock_view.hide_all = true;
     h.run();
     h.run();
@@ -4875,7 +5059,7 @@ fn modern_sheet_layout() {
     )
     .unwrap();
     // The same on A4 upright, where the strip has far less room.
-    let mut narrow = h.state().editor.doc.sheet(id).cloned().unwrap();
+    let mut narrow = h.state().drawing.editor.doc.sheet(id).cloned().unwrap();
     narrow.paper = drift_core::PaperSize::A4;
     narrow.portrait = true;
     let bounds = h.state().fit_bounds();
@@ -4902,7 +5086,7 @@ fn control_bar_overlap_warning_and_corner_angles() {
     use drift_core::Constraint;
     let Some(mut h) = harness() else { return };
     let v = DVec2::new;
-    let ed = &mut h.state_mut().editor;
+    let ed = &mut h.state_mut().drawing.editor;
     // Two rooms side by side, each with its own copy of the wall between them.
     ed.doc.begin();
     let mut walls = Vec::new();
@@ -4964,7 +5148,7 @@ fn control_bar_overlap_warning_and_corner_angles() {
     // Pick a wall: the bar shows its layer, stroke and fill, and the settings at the right.
     ed.selection = [walls[0]].into();
     let fit = h.state().fit_bounds();
-    h.state_mut().fit_target = Some(fit);
+    h.state_mut().drawing.view.fit_target = Some(fit);
     h.run();
     h.run();
     save_png("drift_ui_control_bar.png", &mut h);
@@ -4997,6 +5181,7 @@ fn control_bar_overlap_warning_and_corner_angles() {
     h.state_mut().select_overlapping(0.0);
     assert_eq!(
         h.state()
+            .drawing
             .editor
             .selection
             .iter()
@@ -5010,11 +5195,11 @@ fn control_bar_overlap_warning_and_corner_angles() {
 fn a_wheel_zooms_and_a_trackpad_pans() {
     use crate::app::view::WheelMode;
     let Some(mut h) = harness() else { return };
-    let at = h.state().canvas_rect.center() + egui::vec2(60.0, 40.0);
+    let at = h.state().drawing.view.canvas_rect.center() + egui::vec2(60.0, 40.0);
     let scroll = |h: &mut Harness<'static, DriftApp>, unit, delta| {
         h.hover_at(at);
         h.run();
-        let before = h.state().camera;
+        let before = h.state().drawing.view.camera;
         h.event(Event::MouseWheel {
             unit,
             delta,
@@ -5024,7 +5209,7 @@ fn a_wheel_zooms_and_a_trackpad_pans() {
         // The scroll is smoothed over a few frames.
         h.run();
         h.run();
-        (before, h.state().camera)
+        (before, h.state().drawing.view.camera)
     };
     use egui::MouseWheelUnit::{Line, Point};
     // A wheel notch zooms about the pointer.
@@ -5050,7 +5235,7 @@ fn a_wheel_zooms_and_a_trackpad_pans() {
     assert!(after.center.y > before.center.y);
     // Ctrl + scroll still zooms.
     h.hover_at(at);
-    let before = h.state().camera.scale;
+    let before = h.state().drawing.view.camera.scale;
     h.event(Event::MouseWheel {
         unit: Line,
         delta: egui::vec2(0.0, 1.0),
@@ -5059,7 +5244,7 @@ fn a_wheel_zooms_and_a_trackpad_pans() {
     });
     h.run();
     h.run();
-    assert!(h.state().camera.scale > before);
+    assert!(h.state().drawing.view.camera.scale > before);
     h.state_mut().apply_view_prefs("wheel=auto");
     assert_eq!(h.state().wheel.mode, WheelMode::Auto);
 }
@@ -5079,7 +5264,7 @@ fn hatch_handles_move_and_turn_the_pattern() {
     click_world(&mut h, DVec2::new(40.0, 30.0));
     h.run();
     let hatch = |h: &Harness<'_, DriftApp>| {
-        let ed = &h.state().editor;
+        let ed = &h.state().drawing.editor;
         let id = *ed
             .selected_fills
             .iter()
@@ -5118,13 +5303,18 @@ fn hatch_handles_move_and_turn_the_pattern() {
     assert!(origin.distance(DVec2::new(10.0, 10.0)) < 1e-3, "{origin:?}");
     assert!(
         h.state()
+            .drawing
             .editor
             .doc
             .iter()
             .any(|(_, e)| e.kind == EntityKind::Point(origin)),
         "exactly on the corner point"
     );
-    assert_eq!(h.state().editor.selected_fills.len(), 1, "still picked");
+    assert_eq!(
+        h.state().drawing.editor.selected_fills.len(),
+        1,
+        "still picked"
+    );
     // The round handle turns the pattern, in 15 degree steps.
     let map = screen_map(&h);
     let handles = h.state_mut().hatch_handles(&map).expect("handles");
@@ -5161,7 +5351,7 @@ fn control_bar_sets_stroke_weight_and_line_type() {
     click_world(&mut h, DVec2::new(12.0, 0.0));
     h.run();
     let look = |h: &Harness<'_, DriftApp>| {
-        let ed = &h.state().editor;
+        let ed = &h.state().drawing.editor;
         let id = *ed.selection.iter().next().expect("the line is picked");
         ed.doc.get(id).unwrap().appearance
     };
@@ -5201,7 +5391,7 @@ fn relations_pie_toggles_relations_on_the_selection() {
     let Some(mut h) = harness() else { return };
     let v = DVec2::new;
     // Two lines, a little off parallel.
-    let ed = &mut h.state_mut().editor;
+    let ed = &mut h.state_mut().drawing.editor;
     ed.doc.begin();
     let p = [
         v(-40.0, -10.0),
@@ -5215,14 +5405,19 @@ fn relations_pie_toggles_relations_on_the_selection() {
     ed.commit("Lines");
     h.run();
     let has = |h: &Harness<'_, DriftApp>, want: fn(&Constraint) -> bool| {
-        h.state().editor.doc.constraints().any(|(_, c)| want(c))
+        h.state()
+            .drawing
+            .editor
+            .doc
+            .constraints()
+            .any(|(_, c)| want(c))
     };
     let parallel = |c: &Constraint| matches!(c, Constraint::Parallel { .. });
     let equal = |c: &Constraint| matches!(c, Constraint::Equal { .. });
-    let at = h.state().canvas_rect.center();
+    let at = h.state().drawing.view.canvas_rect.center();
     h.hover_at(at);
     h.run();
-    h.state_mut().editor.selection = [a, b].into();
+    h.state_mut().drawing.editor.selection = [a, b].into();
     h.run();
 
     // Hold Q, move up and to the right (Parallel's place), let go: a flick.
@@ -5255,7 +5450,7 @@ fn relations_pie_toggles_relations_on_the_selection() {
     h.run();
     assert!(h.state().pie.is_none());
     assert!(has(&h, parallel), "parallel added");
-    assert_eq!(h.state().editor.selection.len(), 2, "still picked");
+    assert_eq!(h.state().drawing.editor.selection.len(), 2, "still picked");
 
     // A tap of Q leaves the ring open: Parallel is lit, and Perpendicular would now
     // over-define the sketch (it says so; choosing it is refused and nothing changes).
@@ -5281,7 +5476,7 @@ fn relations_pie_toggles_relations_on_the_selection() {
     assert!(h.state().pie.is_none());
     assert!(has(&h, equal), "equal added");
     assert_eq!(
-        h.state().editor.selection.len(),
+        h.state().drawing.editor.selection.len(),
         2,
         "the click didn't reach the canvas"
     );
@@ -5300,7 +5495,7 @@ fn relations_pie_toggles_relations_on_the_selection() {
     assert!(has(&h, parallel));
 
     // Esc closes it, and so does Q again; neither changes anything.
-    let before = h.state().editor.doc.constraint_count();
+    let before = h.state().drawing.editor.doc.constraint_count();
     h.key_press(Key::Q);
     h.run();
     assert!(h.state().pie.is_some());
@@ -5312,8 +5507,8 @@ fn relations_pie_toggles_relations_on_the_selection() {
     h.key_press(Key::Q);
     h.run();
     assert!(h.state().pie.is_none());
-    assert_eq!(h.state().editor.doc.constraint_count(), before);
-    assert_eq!(h.state().editor.selection.len(), 2);
+    assert_eq!(h.state().drawing.editor.doc.constraint_count(), before);
+    assert_eq!(h.state().drawing.editor.selection.len(), 2);
 
     // A relation's letter chooses it outright: tap Q, then E takes Equal off; hold Q and
     // press E to put it back, and let go of Q without choosing anything else.
@@ -5360,7 +5555,8 @@ fn a_sheet_holds_several_views() {
     h.run();
     h.run();
     let id = h.state().current_sheet().expect("a sheet");
-    let sheet = |h: &Harness<'_, DriftApp>| h.state().editor.doc.sheet(id).cloned().unwrap();
+    let sheet =
+        |h: &Harness<'_, DriftApp>| h.state().drawing.editor.doc.sheet(id).cloned().unwrap();
     assert_eq!(placed(&h, id).len(), 1);
     assert!(
         drift_draft::sheet::fills_drawing_area(&sheet(&h), placed(&h, id)[0].frame.bounds()),
@@ -5370,15 +5566,15 @@ fn a_sheet_holds_several_views() {
     // Add view: its crop is dragged out in the model (round the bore) with the View tool; it
     // goes on the sheet in a frame of its own where there is room, titled, and picked.
     add_view_by_region(&mut h, DVec2::new(55.0, 25.0), DVec2::new(100.0, 58.0));
-    assert!(h.state().sheet_preview, "back on the sheet");
+    assert!(h.state().drawing.view.sheet_preview, "back on the sheet");
     assert_eq!(h.state().tool.kind(), ToolKind::Select);
     let s = sheet(&h);
     let views = placed(&h, id);
     assert_eq!(views.len(), 2);
     let added = views[1].clone();
     assert!(added.title && added.name == "View 2");
-    assert_eq!(h.state().sheet_view, 1);
-    assert_eq!(h.state().picked_view, Some(added.id));
+    assert_eq!(h.state().drawing.view.sheet_view, 1);
+    assert_eq!(h.state().drawing.picked_view, Some(added.id));
     let area = drift_draft::sheet::view_area(&s);
     let b = added.frame.bounds();
     assert!(
@@ -5399,7 +5595,7 @@ fn a_sheet_holds_several_views() {
     detail.border = true;
     set_placed(&mut h, id, 1, &detail, "Detail");
     // Its crop in the model: the frame at 2:1.
-    let crop = h.state().editor.doc.view(detail.id).unwrap().crop();
+    let crop = h.state().drawing.editor.doc.view(detail.id).unwrap().crop();
     assert_eq!(crop.size(), DVec2::new(50.0, 40.0));
     h.run();
     h.run();
@@ -5421,13 +5617,13 @@ fn a_sheet_holds_several_views() {
 
     // On the sheet: a press inside the detail takes hold of it (to move it on the paper);
     // with Alt, of the drawing inside it. Its handles crop it.
-    let rect = h.state().canvas_rect;
+    let rect = h.state().drawing.view.canvas_rect;
     let s = sheet(&h);
     let views = placed(&h, id);
     let app = h.state();
-    let zoom = f64::from(app.preview.zoom);
+    let zoom = f64::from(app.drawing.view.preview.zoom);
     let to_screen = |p: DVec2| {
-        let d = (p - app.preview.center) * zoom;
+        let d = (p - app.drawing.view.preview.center) * zoom;
         rect.center() + egui::vec2(d.x as f32, -d.y as f32)
     };
     let inside = to_screen(DVec2::new(330.0, 200.0));
@@ -5497,17 +5693,17 @@ fn a_sheet_holds_several_views() {
     assert_eq!(tiny.frame.size, DVec2::splat(10.0));
 
     // Delete takes the picked view off the sheet, down to none; the views stay in the model.
-    assert_eq!(h.state().sheet_view, 1);
+    assert_eq!(h.state().drawing.view.sheet_view, 1);
     h.key_press(Key::Delete);
     h.run();
     assert_eq!(placed(&h, id).len(), 1);
     h.key_press(Key::Delete);
     h.run();
     assert!(placed(&h, id).is_empty(), "a sheet can be empty");
-    assert_eq!(h.state().editor.doc.views().count(), 2);
+    assert_eq!(h.state().drawing.editor.doc.views().count(), 2);
     h.run();
     assert_eq!(
-        h.state().editor.doc.sheet_scale_text(&sheet(&h)),
+        h.state().drawing.editor.doc.sheet_scale_text(&sheet(&h)),
         "-",
         "no scale"
     );
@@ -5526,6 +5722,7 @@ fn section_and_elevation_marks() {
     h.run();
     let marks = |h: &Harness<'_, DriftApp>| -> Vec<Annotation> {
         h.state()
+            .drawing
             .editor
             .doc
             .annotations()
@@ -5579,6 +5776,7 @@ fn section_and_elevation_marks() {
             assert!((*angle - 135.0).abs() < 0.05, "{angle}");
             assert_eq!(label.as_str(), "1");
             h.state()
+                .drawing
                 .editor
                 .selected_annotation
                 .expect("the new mark is picked")
@@ -5586,20 +5784,28 @@ fn section_and_elevation_marks() {
         other => panic!("{other:?}"),
     };
     // The inspector names the sheet it is drawn on.
-    let mut named = h.state().editor.doc.annotation(id).cloned().unwrap();
+    let mut named = h
+        .state()
+        .drawing
+        .editor
+        .doc
+        .annotation(id)
+        .cloned()
+        .unwrap();
     if let Annotation::Elevation { sheet, .. } = &mut named {
         *sheet = "A-201".into();
     }
-    h.state_mut().editor.doc.begin();
+    h.state_mut().drawing.editor.doc.begin();
     h.state_mut()
+        .drawing
         .editor
         .doc
         .set_annotation(id, named.clone())
         .unwrap();
-    h.state_mut().editor.commit("Sheet");
+    h.state_mut().drawing.editor.commit("Sheet");
     h.get_by_label("Select").click();
     h.run();
-    h.state_mut().fit_target = Some(h.state().fit_bounds());
+    h.state_mut().drawing.view.fit_target = Some(h.state().fit_bounds());
     h.run();
     h.run();
     save_png("drift_ui_marks.png", &mut h);
@@ -5630,7 +5836,7 @@ fn section_and_elevation_marks() {
     h.state_mut().undo();
 
     // They are saved, and print with the notes.
-    let saved = drift_io::save(&h.state().editor.doc, &Default::default());
+    let saved = drift_io::save(&h.state().drawing.editor.doc, &Default::default());
     assert!(saved.contains(r#""type":"section""#) && saved.contains(r#""sheet":"A-201""#));
     let (loaded, _) = drift_io::load(&saved).unwrap();
     let back: Vec<Annotation> = loaded.annotations().map(|(_, a)| a.clone()).collect();
@@ -5670,7 +5876,7 @@ fn a_logo_goes_in_the_title_block() {
             .set_logo("<svg><text>Acme</text></svg>")
             .is_err()
     );
-    assert!(h.state().editor.doc.logo().is_empty());
+    assert!(h.state().drawing.editor.doc.logo().is_empty());
     h.state_mut().set_logo(logo).unwrap();
     h.run();
     h.run();
@@ -5681,7 +5887,16 @@ fn a_logo_goes_in_the_title_block() {
         "the logo is drawn"
     );
     // In the strip, at the left, as large as its room (16 mm tall, 44 mm wide) allows.
-    let page = h.state_mut().editor.doc.sheets().next().unwrap().1.clone();
+    let page = h
+        .state_mut()
+        .drawing
+        .editor
+        .doc
+        .sheets()
+        .next()
+        .unwrap()
+        .1
+        .clone();
     let border = drift_draft::sheet::border(&page);
     let parsed = drift_draft::logo::parse(logo).unwrap();
     let mut d = drift_draft::page::Drawing::new(page.size());
@@ -5710,11 +5925,11 @@ fn a_logo_goes_in_the_title_block() {
     assert!((hi.y - lo.y - 44.0 / 3.0).abs() < 0.05, "{lo:?} {hi:?}");
     assert!(lo.x >= border.min.x + 4.9 && lo.y >= border.min.y + 3.9);
     // It is kept in the file, and is one undo step.
-    let saved = drift_io::save(&h.state().editor.doc, &Default::default());
+    let saved = drift_io::save(&h.state().drawing.editor.doc, &Default::default());
     let (loaded, _) = drift_io::load(&saved).unwrap();
     assert_eq!(loaded.logo(), logo);
     h.state_mut().undo();
-    assert!(h.state().editor.doc.logo().is_empty());
+    assert!(h.state().drawing.editor.doc.logo().is_empty());
 }
 
 #[test]
@@ -5735,7 +5950,7 @@ fn angle_snap_is_on_the_status_bar() {
     click_world(&mut h, DVec2::new(40.0, 21.0));
     h.key_press(Key::Escape);
     h.run();
-    let ed = &h.state().editor;
+    let ed = &h.state().drawing.editor;
     let (a, b) = ed
         .doc
         .iter()
@@ -5786,7 +6001,7 @@ fn far_off_geometry_is_reported() {
     h.state_mut()
         .import_now("stray.dxf", text.clone().into_bytes(), 0.0);
     h.run_steps(3);
-    let report = h.state().import_report.clone().expect("a report");
+    let report = h.state().drawing.import_report.clone().expect("a report");
     assert_eq!(report.far.len(), 1);
     let stray = report.far[0];
     // The import says so in its report, not also in the status bar.
@@ -5799,9 +6014,10 @@ fn far_off_geometry_is_reported() {
     );
     h.get_by_label("Select them").click();
     h.run_steps(2);
-    assert!(h.state().import_report.is_none());
+    assert!(h.state().drawing.import_report.is_none());
     assert_eq!(
         h.state()
+            .drawing
             .editor
             .selection
             .iter()
@@ -5811,7 +6027,7 @@ fn far_off_geometry_is_reported() {
     );
 
     // An edit: a circle typed 1e12 across.
-    let ed = &mut h.state_mut().editor;
+    let ed = &mut h.state_mut().drawing.editor;
     ed.doc.begin();
     let c = ed.doc.add_point(DVec2::ZERO);
     ed.doc.add_circle(c, 1e12).unwrap();
@@ -5828,13 +6044,13 @@ fn far_off_geometry_is_reported() {
     );
     // Ordinary edits don't warn.
     h.state_mut().status = None;
-    let ed = &mut h.state_mut().editor;
+    let ed = &mut h.state_mut().drawing.editor;
     ed.doc.begin();
     let c = ed.doc.add_point(DVec2::new(10.0, 10.0));
     ed.doc.add_circle(c, 5.0).unwrap();
     assert!(ed.commit("Circle"));
     h.run();
-    assert!(h.state().editor.out.far_off.is_empty());
+    assert!(h.state().drawing.editor.out.far_off.is_empty());
     assert!(h.state().status.is_none());
 }
 
@@ -5983,7 +6199,7 @@ fn a_dxf_from_a_live_project_comes_in_whole() {
         .import_now("room.dxf", text.clone().into_bytes(), 0.0);
     h.run_steps(3);
     let app = h.state_mut();
-    let doc = &app.editor.doc;
+    let doc = &app.drawing.editor.doc;
     // Text: the paragraph's two lines and the dimension's number.
     let words: Vec<String> = doc.texts().map(|(_, t)| t.text.clone()).collect();
     assert!(
@@ -6002,7 +6218,7 @@ fn a_dxf_from_a_live_project_comes_in_whole() {
     // the column as a hole, and it follows the walls.
     let fills: Vec<drift_core::FillId> = doc.fills().map(|(id, _)| id).collect();
     assert_eq!(fills.len(), 1);
-    let shapes = app.editor.fill_shapes();
+    let shapes = app.drawing.editor.fill_shapes();
     let shape = &shapes[&fills[0]];
     assert!(!shape.lost, "the fill found its boundary");
     assert_eq!(shape.region.holes.len(), 1);
@@ -6013,9 +6229,9 @@ fn a_dxf_from_a_live_project_comes_in_whole() {
         shape.region.area
     );
     // The room's outline is there once, not doubled by the hatch.
-    assert!(app.editor.overlapping().is_empty());
+    assert!(app.drawing.editor.overlapping().is_empty());
     // What couldn't come in is reported, and stays up.
-    let report = app.import_report.clone().expect("a report");
+    let report = app.drawing.import_report.clone().expect("a report");
     assert!(report.summary.contains("1 hatch or fill") && report.summary.contains("1 sheet"));
     assert_eq!(report.skipped, vec!["1 × 3DSOLID".to_owned()]);
     assert!(report.notes.iter().any(|n| n.contains("1 dimension")));
@@ -6024,8 +6240,8 @@ fn a_dxf_from_a_live_project_comes_in_whole() {
     save_png("drift_ui_dxf_import.png", &mut h);
     // One undo takes the whole import out.
     h.state_mut().undo();
-    assert_eq!(h.state().editor.doc.texts().count(), 0);
-    assert_eq!(h.state().editor.doc.sheets().count(), 0);
+    assert_eq!(h.state().drawing.editor.doc.texts().count(), 0);
+    assert_eq!(h.state().drawing.editor.doc.sheets().count(), 0);
 }
 
 #[test]
@@ -6038,10 +6254,16 @@ fn the_drawing_font_is_kept_in_the_drawing_and_used_everywhere() {
     // A font file added to the drawing (the built-in monospaced one stands in for a file
     // the user picked): it is kept under its own family name.
     let hack = drift_draft::outline::builtin_font(true);
-    let family = h.state_mut().editor.add_font_file(hack.to_vec()).unwrap();
+    let family = h
+        .state_mut()
+        .drawing
+        .editor
+        .add_font_file(hack.to_vec())
+        .unwrap();
     assert_eq!(family, "Hack");
     assert!(
         h.state_mut()
+            .drawing
             .editor
             .add_font_file(b"not a font".to_vec())
             .is_err()
@@ -6049,11 +6271,15 @@ fn the_drawing_font_is_kept_in_the_drawing_and_used_everywhere() {
     // A second one that nothing will be set in.
     let ubuntu = drift_draft::outline::builtin_font(false);
     assert_eq!(
-        h.state_mut().editor.add_font_file(ubuntu.to_vec()).unwrap(),
+        h.state_mut()
+            .drawing
+            .editor
+            .add_font_file(ubuntu.to_vec())
+            .unwrap(),
         "Ubuntu"
     );
     // Nothing is set in it yet: the standard look.
-    assert!(h.state().editor.drawing_font().is_none());
+    assert!(h.state().drawing.editor.drawing_font().is_none());
     let painter = h.ctx.layer_painter(egui::LayerId::background());
     h.state_mut().show_panel(Panel::Sheets);
     h.run();
@@ -6065,10 +6291,18 @@ fn the_drawing_font_is_kept_in_the_drawing_and_used_everywhere() {
 
     // Make it the drawing's font: dimensions, notes and the title block are set in it.
     assert_eq!(
-        h.state_mut().editor.set_drawing_font(Some("Hack".into())),
+        h.state_mut()
+            .drawing
+            .editor
+            .set_drawing_font(Some("Hack".into())),
         None
     );
-    let font = h.state().editor.drawing_font().expect("the drawing's font");
+    let font = h
+        .state()
+        .drawing
+        .editor
+        .drawing_font()
+        .expect("the drawing's font");
     assert_eq!(font.regular.family, "Hack");
     // The screen's text renderer takes it over a frame.
     h.run();
@@ -6104,7 +6338,7 @@ fn the_drawing_font_is_kept_in_the_drawing_and_used_everywhere() {
     save_png("drift_ui_drawing_font_model.png", &mut h);
 
     // Saved with the drawing: the font in use goes into the file, the unused one doesn't.
-    let saved = drift_io::save(&h.state().editor.doc, &Default::default());
+    let saved = drift_io::save(&h.state().drawing.editor.doc, &Default::default());
     assert!(saved.contains(r#""drawing":"Hack""#));
     assert!(saved.contains(r#""family":"Hack""#) && !saved.contains(r#""family":"Ubuntu""#));
     let (loaded, _) = drift_io::load(&saved).unwrap();
@@ -6128,9 +6362,9 @@ fn the_drawing_font_is_kept_in_the_drawing_and_used_everywhere() {
 
     // Back to the standard look is one undo step, and one choice.
     h.state_mut().undo();
-    assert!(h.state().editor.drawing_font().is_none());
+    assert!(h.state().drawing.editor.drawing_font().is_none());
     h.state_mut().redo();
-    h.state_mut().editor.set_drawing_font(None);
+    h.state_mut().drawing.editor.set_drawing_font(None);
     h.run();
     h.run();
     assert_eq!(h.state().screen_font, crate::fonts::ScreenFont::Standard);
@@ -6150,19 +6384,30 @@ fn sketch_text_runs_to_several_lines() {
     assert_eq!(h.state().tool.kind(), ToolKind::Text);
     click_world(&mut h, DVec2::new(-20.0, 10.0));
     h.run();
-    let id = h.state().editor.editing_text.expect("typing in place");
+    let id = h
+        .state()
+        .drawing
+        .editor
+        .editing_text
+        .expect("typing in place");
     h.event(Event::Text("PLAN".into()));
     h.run();
     h.key_press_modifiers(EguiModifiers::SHIFT, Key::Enter);
     h.run();
-    assert!(h.state().editor.editing_text.is_some(), "still typing");
+    assert!(
+        h.state().drawing.editor.editing_text.is_some(),
+        "still typing"
+    );
     h.event(Event::Text("Level 2".into()));
     h.run();
     h.key_press(Key::Enter);
     h.run();
     h.run();
-    assert!(h.state().editor.editing_text.is_none(), "Enter finishes");
-    let text = h.state().editor.doc.text(id).cloned().unwrap();
+    assert!(
+        h.state().drawing.editor.editing_text.is_none(),
+        "Enter finishes"
+    );
+    let text = h.state().drawing.editor.doc.text(id).cloned().unwrap();
     assert_eq!(text.text, "PLAN\nLevel 2");
     assert_eq!(
         (text.align, text.spacing, text.wrap),
@@ -6170,7 +6415,7 @@ fn sketch_text_runs_to_several_lines() {
     );
     // The outlines cover both lines: the second a line spacing below the first.
     let one_line = text.height;
-    let bounds = h.state().editor.text_outline(id).unwrap().bounds;
+    let bounds = h.state().drawing.editor.text_outline(id).unwrap().bounds;
     assert!(bounds.max.y - bounds.min.y > one_line * 2.0);
     assert!(
         bounds.min.y < text.at.y - one_line,
@@ -6179,11 +6424,12 @@ fn sketch_text_runs_to_several_lines() {
 
     // Centred: the lines sit about the anchor. Wrapped: more lines, within the width.
     let width_of = |h: &Harness<'_, DriftApp>| {
-        let b = h.state().editor.text_outline(id).unwrap().bounds;
+        let b = h.state().drawing.editor.text_outline(id).unwrap().bounds;
         (b.min.x, b.max.x, b.min.y)
     };
     let (left, right, low) = width_of(&h);
     h.state_mut()
+        .drawing
         .editor
         .update_text(id, |t| t.align = TextAlign::Center);
     let (cl, cr, _) = width_of(&h);
@@ -6192,7 +6438,7 @@ fn sketch_text_runs_to_several_lines() {
         "centred on the anchor"
     );
     assert!(((cr - cl) - (right - left)).abs() < 1e-6);
-    h.state_mut().editor.update_text(id, |t| {
+    h.state_mut().drawing.editor.update_text(id, |t| {
         t.align = TextAlign::Left;
         t.text = "one two three four five six".into();
         t.wrap = Some((right - left) * 0.9);
@@ -6204,15 +6450,15 @@ fn sketch_text_runs_to_several_lines() {
     save_png("drift_ui_multiline_text.png", &mut h);
 
     // Saved and loaded as it is.
-    h.state_mut().editor.update_text(id, |t| {
+    h.state_mut().drawing.editor.update_text(id, |t| {
         t.align = TextAlign::Right;
         t.spacing = 2.0;
     });
-    let saved = drift_io::save(&h.state().editor.doc, &Default::default());
+    let saved = drift_io::save(&h.state().drawing.editor.doc, &Default::default());
     assert!(saved.contains(r#""align":"right""#) && saved.contains(r#""spacing":2.0"#));
     assert!(saved.contains(r#""wrap":"#));
     let (loaded, _) = drift_io::load(&saved).unwrap();
-    assert_eq!(loaded.text(id), h.state().editor.doc.text(id));
+    assert_eq!(loaded.text(id), h.state().drawing.editor.doc.text(id));
     // A plain one-line text writes none of it.
     let mut plain = drift_core::Document::new();
     plain.add_text(SketchText::new("A", DVec2::ZERO, 3.0));
@@ -6222,7 +6468,7 @@ fn sketch_text_runs_to_several_lines() {
 
 /// The middle of the caret before character `gap` of a text, in the drawing.
 fn text_gap(h: &Harness<'_, DriftApp>, id: drift_core::TextId, gap: usize) -> DVec2 {
-    let t = h.state().editor.doc.text(id).unwrap();
+    let t = h.state().drawing.editor.doc.text(id).unwrap();
     let [foot, head] = drift_draft::outline::Paragraph {
         text: &t.text,
         font: &t.font,
@@ -6240,14 +6486,20 @@ fn text_gap(h: &Harness<'_, DriftApp>, id: drift_core::TextId, gap: usize) -> DV
 #[test]
 fn text_is_typed_straight_onto_the_canvas() {
     let Some(mut h) = harness() else { return };
-    let words = |h: &Harness<'_, DriftApp>, id| h.state().editor.doc.text(id).unwrap().text.clone();
+    let words =
+        |h: &Harness<'_, DriftApp>, id| h.state().drawing.editor.doc.text(id).unwrap().text.clone();
     h.key_press_modifiers(EguiModifiers::SHIFT, Key::T);
     h.run();
     click_world(&mut h, DVec2::new(-60.0, 10.0));
     h.run();
-    let id = h.state().editor.editing_text.expect("typing in place");
+    let id = h
+        .state()
+        .drawing
+        .editor
+        .editing_text
+        .expect("typing in place");
     assert_eq!(
-        h.state().text_cursor,
+        h.state().drawing.text_cursor,
         Some((0, 0)),
         "a caret in the empty text"
     );
@@ -6255,7 +6507,7 @@ fn text_is_typed_straight_onto_the_canvas() {
     h.run();
     assert_eq!(words(&h, id), "HELLO WORLD");
     assert_eq!(
-        h.state().text_cursor,
+        h.state().drawing.text_cursor,
         Some((11, 11)),
         "the caret follows the typing"
     );
@@ -6267,7 +6519,7 @@ fn text_is_typed_straight_onto_the_canvas() {
         h.key_press(Key::ArrowLeft);
         h.run();
     }
-    assert_eq!(h.state().text_cursor, Some((6, 6)));
+    assert_eq!(h.state().drawing.text_cursor, Some((6, 6)));
     h.event(Event::Text("BIG ".into()));
     h.run();
     assert_eq!(words(&h, id), "HELLO BIG WORLD");
@@ -6276,13 +6528,17 @@ fn text_is_typed_straight_onto_the_canvas() {
     let at = text_gap(&h, id, 5) + DVec2::new(0.3, 0.0);
     click_world(&mut h, at);
     h.run();
-    assert_eq!(h.state().editor.editing_text, Some(id), "still typing");
-    assert_eq!(h.state().text_cursor, Some((5, 5)));
+    assert_eq!(
+        h.state().drawing.editor.editing_text,
+        Some(id),
+        "still typing"
+    );
+    assert_eq!(h.state().drawing.text_cursor, Some((5, 5)));
     h.event(Event::Text("!".into()));
     h.run();
     assert_eq!(words(&h, id), "HELLO! BIG WORLD");
     assert_eq!(
-        h.state().editor.doc.texts().count(),
+        h.state().drawing.editor.doc.texts().count(),
         1,
         "the click made no new text"
     );
@@ -6290,34 +6546,34 @@ fn text_is_typed_straight_onto_the_canvas() {
     // End, a new line, and Up and Down by the lines on the canvas.
     h.key_press(Key::End);
     h.run();
-    assert_eq!(h.state().text_cursor, Some((16, 16)));
+    assert_eq!(h.state().drawing.text_cursor, Some((16, 16)));
     h.key_press_modifiers(EguiModifiers::SHIFT, Key::Enter);
     h.run();
     h.event(Event::Text("ab".into()));
     h.run();
     assert_eq!(words(&h, id), "HELLO! BIG WORLD\nab");
-    assert_eq!(h.state().text_cursor, Some((19, 19)));
+    assert_eq!(h.state().drawing.text_cursor, Some((19, 19)));
     h.key_press(Key::ArrowUp);
     h.run();
-    let (up, _) = h.state().text_cursor.unwrap();
+    let (up, _) = h.state().drawing.text_cursor.unwrap();
     assert!(
         (1..=3).contains(&up),
         "above the end of the second line: {up}"
     );
     h.key_press(Key::Home);
     h.run();
-    assert_eq!(h.state().text_cursor, Some((0, 0)));
+    assert_eq!(h.state().drawing.text_cursor, Some((0, 0)));
     h.key_press_modifiers(EguiModifiers::SHIFT, Key::ArrowDown);
     h.run();
     assert_eq!(
-        h.state().text_cursor,
+        h.state().drawing.text_cursor,
         Some((17, 0)),
         "Shift selects as it goes"
     );
     h.key_press(Key::ArrowDown);
     h.run();
     assert_eq!(
-        h.state().text_cursor,
+        h.state().drawing.text_cursor,
         Some((19, 19)),
         "off the bottom: the end"
     );
@@ -6336,8 +6592,8 @@ fn text_is_typed_straight_onto_the_canvas() {
         h.step();
     }
     h.run();
-    assert_eq!(h.state().text_cursor, Some((10, 7)), "BIG");
-    assert_eq!(h.state().editor.editing_text, Some(id));
+    assert_eq!(h.state().drawing.text_cursor, Some((10, 7)), "BIG");
+    assert_eq!(h.state().drawing.editor.editing_text, Some(id));
     h.event(Event::Text("SMALL".into()));
     h.run();
     assert_eq!(words(&h, id), "HELLO! SMALL WORLD\nab");
@@ -6353,16 +6609,16 @@ fn text_is_typed_straight_onto_the_canvas() {
     h.run();
     h.hover_at(to);
     h.run();
-    assert_eq!(h.state().text_cursor, Some((12, 7)));
+    assert_eq!(h.state().drawing.text_cursor, Some((12, 7)));
     button(&h, to, false);
     h.run();
     h.run();
     assert_eq!(
-        h.state().text_cursor,
+        h.state().drawing.text_cursor,
         Some((12, 7)),
         "kept when the button comes up"
     );
-    assert_eq!(h.state().editor.editing_text, Some(id));
+    assert_eq!(h.state().drawing.editor.editing_text, Some(id));
     save_png("drift_ui_live_text.png", &mut h);
     // Shift and a click selects up to the click.
     let at = screen(&h, text_gap(&h, id, 18) + DVec2::new(0.3, 0.0));
@@ -6380,13 +6636,13 @@ fn text_is_typed_straight_onto_the_canvas() {
     h.run();
     button(&h, at, false);
     h.run();
-    assert_eq!(h.state().text_cursor, Some((18, 7)));
+    assert_eq!(h.state().drawing.text_cursor, Some((18, 7)));
 
     // Enter finishes. All of it was one undo step after the placing.
     h.key_press(Key::Enter);
     h.run();
     h.run();
-    assert_eq!(h.state().editor.editing_text, None);
+    assert_eq!(h.state().drawing.editor.editing_text, None);
     assert_eq!(
         words(&h, id),
         "HELLO! SMALL WORLD\nab",
@@ -6400,9 +6656,9 @@ fn text_is_typed_straight_onto_the_canvas() {
     let at = text_gap(&h, id, 3) + DVec2::new(0.3, 0.0);
     click_world(&mut h, at);
     h.run();
-    assert_eq!(h.state().editor.editing_text, Some(id));
-    assert_eq!(h.state().text_cursor, Some((3, 3)));
-    assert_eq!(h.state().editor.doc.texts().count(), 1);
+    assert_eq!(h.state().drawing.editor.editing_text, Some(id));
+    assert_eq!(h.state().drawing.text_cursor, Some((3, 3)));
+    assert_eq!(h.state().drawing.editor.doc.texts().count(), 1);
     h.key_press(Key::S);
     h.event(Event::Text("S".into()));
     h.run();
@@ -6418,7 +6674,7 @@ fn text_is_typed_straight_onto_the_canvas() {
     button(&h, away, true);
     h.run();
     assert_ne!(
-        h.state().editor.editing_text,
+        h.state().drawing.editor.editing_text,
         Some(id),
         "the press ended the typing"
     );
@@ -6427,23 +6683,23 @@ fn text_is_typed_straight_onto_the_canvas() {
     h.key_press(Key::Escape);
     h.run();
     h.run();
-    assert_eq!(h.state().editor.editing_text, None);
+    assert_eq!(h.state().drawing.editor.editing_text, None);
 
     // Too small on screen to aim a caret at: a field under the text takes the typing.
-    h.state_mut().camera.scale = 0.2;
+    h.state_mut().drawing.view.camera.scale = 0.2;
     h.run();
-    h.state_mut().editor.selected_texts = [id].into();
-    h.state_mut().editor.editing_text = Some(id);
+    h.state_mut().drawing.editor.selected_texts = [id].into();
+    h.state_mut().drawing.editor.editing_text = Some(id);
     h.run();
     h.run();
-    assert_eq!(h.state().editor.editing_text, Some(id));
+    assert_eq!(h.state().drawing.editor.editing_text, Some(id));
     h.event(Event::Text("!".into()));
     h.run();
     assert_eq!(words(&h, id), "HELSLO! SMALL WORLD\nab!");
     h.key_press(Key::Enter);
     h.run();
     h.run();
-    assert_eq!(h.state().editor.editing_text, None);
+    assert_eq!(h.state().drawing.editor.editing_text, None);
 }
 
 #[test]
@@ -6452,7 +6708,7 @@ fn transform_handles_on_the_canvas() {
     let Some(mut h) = harness() else { return };
     // A 40 × 24 rectangle with square corners, picked.
     let c = {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         ed.doc.begin();
         let c = [
             DVec2::new(-20.0, -12.0),
@@ -6501,7 +6757,8 @@ fn transform_handles_on_the_canvas() {
     button(&h, to, false);
     h.run();
     h.run();
-    let at = |h: &Harness<'_, DriftApp>, i: usize| h.state().editor.doc.point(c[i]).unwrap();
+    let at =
+        |h: &Harness<'_, DriftApp>, i: usize| h.state().drawing.editor.doc.point(c[i]).unwrap();
     assert!(
         at(&h, 0).distance(DVec2::new(-20.0, -12.0)) < 1e-6,
         "the anchor stays"
@@ -6511,7 +6768,7 @@ fn transform_handles_on_the_canvas() {
         "{:?}",
         at(&h, 2)
     );
-    assert_eq!(h.state().editor.selection.len(), 4, "still picked");
+    assert_eq!(h.state().drawing.editor.selection.len(), 4, "still picked");
     save_png("drift_ui_transform_scaled.png", &mut h);
     h.state_mut().undo();
     assert_eq!(at(&h, 2), DVec2::new(20.0, 12.0), "one undo step");
@@ -6522,7 +6779,7 @@ fn check_sketch_finds_and_fixes_gaps() {
     let Some(mut h) = harness() else { return };
     // A 40 × 30 outline whose last corner misses by 0.3, and a line stopping 0.2 short.
     let (corner, end) = {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         ed.doc.begin();
         let p = [
             DVec2::new(-20.0, -15.0),
@@ -6544,7 +6801,10 @@ fn check_sketch_finds_and_fixes_gaps() {
         (p[4], b)
     };
     h.run();
-    assert!(h.state_mut().editor.regions().is_empty(), "not closed");
+    assert!(
+        h.state_mut().drawing.editor.regions().is_empty(),
+        "not closed"
+    );
 
     // Edit → Check sketch…: two issues, marked on the canvas.
     h.get_by_label("Edit").click();
@@ -6552,7 +6812,7 @@ fn check_sketch_finds_and_fixes_gaps() {
     h.get_by_label("Check sketch…").click();
     h.run();
     h.run();
-    assert!(h.state().sketch_check.is_some());
+    assert!(h.state().drawing.sketch_check.is_some());
     assert_eq!(h.state_mut().sketch_issues().len(), 2);
     assert!(h.query_by_label("Fix all (2)").is_some());
     save_png("drift_ui_check_sketch.png", &mut h);
@@ -6561,27 +6821,28 @@ fn check_sketch_finds_and_fixes_gaps() {
     h.get_all_by_label("Show").next().unwrap().click();
     h.run();
     h.run();
-    assert!(h.state().editor.selection.contains(&corner));
+    assert!(h.state().drawing.editor.selection.contains(&corner));
 
     // Fix all: one undo step; the outline closes and the line reaches it.
     h.get_by_label("Fix all (2)").click();
     h.run();
     h.run();
-    assert!(!h.state().editor.doc.contains(corner), "joined");
-    assert_eq!(h.state_mut().editor.regions().len(), 1, "closed");
-    let x = h.state().editor.doc.point(end).unwrap().x;
+    assert!(!h.state().drawing.editor.doc.contains(corner), "joined");
+    assert_eq!(h.state_mut().drawing.editor.regions().len(), 1, "closed");
+    let x = h.state().drawing.editor.doc.point(end).unwrap().x;
     assert!((x - 20.0).abs() < 1e-6, "{x}");
     assert!(h.state_mut().sketch_issues().is_empty());
     h.state_mut().undo();
-    assert!(h.state().editor.doc.contains(corner));
+    assert!(h.state().drawing.editor.doc.contains(corner));
     h.run();
     assert_eq!(h.state_mut().sketch_issues().len(), 2);
 
     // The tolerance is kept with the drawing, not the preferences.
     h.state_mut()
+        .drawing
         .editor
         .change_rules(|r| r.gap_tolerance = 0.25);
-    assert_eq!(h.state().editor.doc.rules().gap_tolerance, 0.25);
+    assert_eq!(h.state().drawing.editor.doc.rules().gap_tolerance, 0.25);
     assert!(h.state().view_prefs().contains("gaptol=0.5"));
     assert_eq!(
         h.state_mut().sketch_issues().len(),
@@ -6592,7 +6853,7 @@ fn check_sketch_finds_and_fixes_gaps() {
     h.run();
     h.get_by_label("Close").click();
     h.run();
-    assert!(h.state().sketch_check.is_none());
+    assert!(h.state().drawing.sketch_check.is_none());
 }
 
 #[test]
@@ -6603,14 +6864,19 @@ fn g_moves_a_picked_text() {
     h.run();
     click_world(&mut h, DVec2::new(-30.0, 10.0));
     h.run();
-    let id = h.state().editor.editing_text.expect("typing in place");
+    let id = h
+        .state()
+        .drawing
+        .editor
+        .editing_text
+        .expect("typing in place");
     h.event(Event::Text("MOVE ME".into()));
     h.run();
     h.key_press(Key::Enter);
     h.run();
     h.run();
-    assert_eq!(h.state().editor.sole_text(), Some(id));
-    let from = h.state().editor.doc.text(id).unwrap().at;
+    assert_eq!(h.state().drawing.editor.sole_text(), Some(id));
+    let from = h.state().drawing.editor.doc.text(id).unwrap().at;
     // G: the select tool takes over and the text follows the pointer; a click places it.
     let start = screen(&h, DVec2::new(-30.0, 10.0));
     h.hover_at(start);
@@ -6622,7 +6888,7 @@ fn g_moves_a_picked_text() {
     let to = screen(&h, DVec2::new(10.0, -15.0));
     h.hover_at(to);
     h.run();
-    let moving = h.state().editor.doc.text(id).unwrap().at;
+    let moving = h.state().drawing.editor.doc.text(id).unwrap().at;
     assert!(
         (moving - from - DVec2::new(40.0, -25.0)).length() < 1.0,
         "{moving:?}"
@@ -6632,22 +6898,26 @@ fn g_moves_a_picked_text() {
     button(&h, to, false);
     h.run();
     assert!(!h.state().tool.is_modal());
-    let placed = h.state().editor.doc.text(id).unwrap().at;
+    let placed = h.state().drawing.editor.doc.text(id).unwrap().at;
     assert!((placed - from - DVec2::new(40.0, -25.0)).length() < 1.0);
-    assert_eq!(h.state().editor.sole_text(), Some(id), "still picked");
+    assert_eq!(
+        h.state().drawing.editor.sole_text(),
+        Some(id),
+        "still picked"
+    );
     // One undo step; and Esc during a move puts it back.
     h.state_mut().undo();
-    assert_eq!(h.state().editor.doc.text(id).unwrap().at, from);
+    assert_eq!(h.state().drawing.editor.doc.text(id).unwrap().at, from);
     h.hover_at(start);
     h.run();
     h.key_press(Key::G);
     h.run();
     h.hover_at(to);
     h.run();
-    assert_ne!(h.state().editor.doc.text(id).unwrap().at, from);
+    assert_ne!(h.state().drawing.editor.doc.text(id).unwrap().at, from);
     h.key_press(Key::Escape);
     h.run();
-    assert_eq!(h.state().editor.doc.text(id).unwrap().at, from);
+    assert_eq!(h.state().drawing.editor.doc.text(id).unwrap().at, from);
     // Y locks the move to an axis, as for anything else.
     h.hover_at(start);
     h.run();
@@ -6657,7 +6927,7 @@ fn g_moves_a_picked_text() {
     h.run();
     h.hover_at(to);
     h.run();
-    let locked = h.state().editor.doc.text(id).unwrap().at;
+    let locked = h.state().drawing.editor.doc.text(id).unwrap().at;
     assert!((locked.x - from.x).abs() < 1e-9 && (locked.y - from.y + 25.0).abs() < 1.0);
     h.key_press(Key::Escape);
     h.run();
@@ -6666,7 +6936,7 @@ fn g_moves_a_picked_text() {
 #[test]
 fn r_turns_a_picked_text_about_its_anchor() {
     let Some(mut h) = harness() else { return };
-    let ed = &mut h.state_mut().editor;
+    let ed = &mut h.state_mut().drawing.editor;
     ed.doc.begin();
     let id = ed.doc.add_text(drift_core::SketchText::new(
         "TURN",
@@ -6690,14 +6960,14 @@ fn r_turns_a_picked_text_about_its_anchor() {
     h.run();
     button(&h, up, false);
     h.run();
-    let text = h.state().editor.doc.text(id).cloned().unwrap();
+    let text = h.state().drawing.editor.doc.text(id).cloned().unwrap();
     assert!((text.angle - 90.0).abs() < 1e-6, "{}", text.angle);
     assert!(
         text.at.distance(DVec2::new(10.0, 5.0)) < 1e-9,
         "about its own anchor"
     );
     h.state_mut().undo();
-    assert_eq!(h.state().editor.doc.text(id).unwrap().angle, 0.0);
+    assert_eq!(h.state().drawing.editor.doc.text(id).unwrap().angle, 0.0);
 }
 
 #[test]
@@ -6706,7 +6976,7 @@ fn dimensions_hide_leave_sheets_and_take_text() {
     let Some(mut h) = harness() else { return };
     // A 40 × 24 rectangle with its width and height dimensioned.
     let (width, height) = {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         ed.doc.begin();
         let p = [
             DVec2::new(-20.0, -12.0),
@@ -6746,7 +7016,7 @@ fn dimensions_hide_leave_sheets_and_take_text() {
         egui::Painter::new(
             h.ctx.clone(),
             egui::LayerId::background(),
-            h.state().canvas_rect,
+            h.state().drawing.view.canvas_rect,
         )
     };
     let laid_out = |h: &Harness<'_, DriftApp>| -> Vec<drift_core::ConstraintId> {
@@ -6768,7 +7038,7 @@ fn dimensions_hide_leave_sheets_and_take_text() {
     let on_sheets = |h: &mut Harness<'_, DriftApp>| -> Vec<String> {
         let p = painter(h);
         let app = h.state_mut();
-        let d = crate::output::model_drawing(&mut app.editor, &app.hatch_patterns, &p);
+        let d = crate::output::model_drawing(&mut app.drawing.editor, &app.hatch_patterns, &p);
         d.items
             .iter()
             .filter_map(|i| match &i.prim {
@@ -6787,13 +7057,16 @@ fn dimensions_hide_leave_sheets_and_take_text() {
     h.run();
     button(&h, at, false);
     h.run();
-    assert_eq!(h.state().selected_constraint, Some(width));
+    assert_eq!(h.state().drawing.selected_constraint, Some(width));
     h.get_by_label("Driven (reference)").click();
     h.run();
-    assert!(h.state().editor.doc.is_driven(width));
+    assert!(h.state().drawing.editor.doc.is_driven(width));
     h.get_by_label("Driven (reference)").click();
     h.run();
-    assert!(!h.state().editor.doc.is_driven(width), "driving again");
+    assert!(
+        !h.state().drawing.editor.doc.is_driven(width),
+        "driving again"
+    );
 
     // Off sheets: still on the canvas, gone from output.
     assert!(on_sheets(&mut h).iter().any(|t| t.contains("40")));
@@ -6801,6 +7074,7 @@ fn dimensions_hide_leave_sheets_and_take_text() {
     h.run();
     assert!(
         !h.state()
+            .drawing
             .editor
             .doc
             .shown(AnnotationRef::Dimension(width))
@@ -6825,13 +7099,21 @@ fn dimensions_hide_leave_sheets_and_take_text() {
     assert_eq!(laid_out(&h).len(), 2);
     save_png("drift_ui_dimension_hidden_shown.png", &mut h);
     // It still holds: the width can't be dragged out of 40.
-    let x = h.state().editor.doc.constraint(width).unwrap().value();
+    let x = h
+        .state()
+        .drawing
+        .editor
+        .doc
+        .constraint(width)
+        .unwrap()
+        .value();
     assert_eq!(x, Some(40.0));
     // Undo brings it back.
     h.state_mut().undo();
     h.state_mut().undo();
     assert!(
         h.state()
+            .drawing
             .editor
             .doc
             .shown(AnnotationRef::Dimension(width))
@@ -6875,7 +7157,7 @@ fn dimensions_hide_leave_sheets_and_take_text() {
     assert!(h.query_by_label_contains("For the 2 picked").is_some());
     h.get_by_label("On the canvas").click();
     h.run();
-    let doc = &h.state().editor.doc;
+    let doc = &h.state().drawing.editor.doc;
     assert!(!doc.shown(AnnotationRef::Dimension(width)).canvas);
     assert!(!doc.shown(AnnotationRef::Dimension(height)).canvas);
     h.state_mut().undo();
@@ -6897,7 +7179,7 @@ fn dimensions_hide_leave_sheets_and_take_text() {
         h.step();
     }
     h.run();
-    assert!(h.state().dimension_edit.is_some());
+    assert!(h.state().drawing.dimension_edit.is_some());
     // (The inspector has the same chips: this one is by the dimension.)
     h.get_all_by_label("TYP")
         .min_by(|p, q| {
@@ -6907,13 +7189,16 @@ fn dimensions_hide_leave_sheets_and_take_text() {
         .unwrap()
         .click();
     h.run();
-    assert_eq!(h.state().editor.doc.dim_note(width).unwrap().suffix, "TYP");
-    assert!(h.state().dimension_edit.is_some(), "still open");
+    assert_eq!(
+        h.state().drawing.editor.doc.dim_note(width).unwrap().suffix,
+        "TYP"
+    );
+    assert!(h.state().drawing.dimension_edit.is_some(), "still open");
     save_png("drift_ui_dimension_chips.png", &mut h);
     h.key_press(Key::Escape);
     h.run();
     h.run();
-    assert!(h.state().dimension_edit.is_none());
+    assert!(h.state().drawing.dimension_edit.is_none());
     let label = |h: &Harness<'_, DriftApp>| {
         h.state()
             .layout_dimensions(&painter(h), &screen_map(h))
@@ -6923,10 +7208,17 @@ fn dimensions_hide_leave_sheets_and_take_text() {
             .label
     };
     assert_eq!(label(&h).plain(), "40 TYP");
-    let mut note = h.state().editor.doc.dim_note(width).cloned().unwrap();
+    let mut note = h
+        .state()
+        .drawing
+        .editor
+        .doc
+        .dim_note(width)
+        .cloned()
+        .unwrap();
     note.text = "EQ".into();
     note.below = "TO FACE OF STUD".into();
-    let ed = &mut h.state_mut().editor;
+    let ed = &mut h.state_mut().drawing.editor;
     ed.doc.begin();
     ed.doc.set_dim_note(width, Some(note));
     ed.commit("Text");
@@ -6942,7 +7234,7 @@ fn dimensions_hide_leave_sheets_and_take_text() {
 
     // Notes too: hidden on the canvas they aren't laid out; off sheets they aren't output.
     let note = {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         ed.doc.begin();
         let id = ed
             .doc
@@ -6969,7 +7261,7 @@ fn dimensions_hide_leave_sheets_and_take_text() {
     assert_eq!(notes(&h), 0);
     assert!(!on_sheets(&mut h).iter().any(|t| t == "SEE DETAIL"));
     // Saved and loaded as it is.
-    let saved = drift_io::save(&h.state().editor.doc, &Default::default());
+    let saved = drift_io::save(&h.state().drawing.editor.doc, &Default::default());
     let (loaded, _) = drift_io::load(&saved).unwrap();
     assert!(!loaded.shown(r).canvas && !loaded.shown(r).sheets);
 }
@@ -6983,31 +7275,31 @@ fn top_bar_switches_for_dimensions_selection_and_sheet_scales() {
     h.get_by_label("Chain").click();
     h.run();
     assert_eq!(
-        h.state().editor.prefs.dim_mode,
+        h.state().drawing.editor.prefs.dim_mode,
         drift_edit::editor::DimMode::Chain
     );
     h.get_by_label("Overall").click();
     h.run();
-    assert!(h.state().editor.prefs.dim_overall);
+    assert!(h.state().drawing.editor.prefs.dim_overall);
     save_png("drift_ui_dimension_chain_bar.png", &mut h);
     // The select tool's filter.
     h.key_press(Key::S);
     h.run();
     pick_only(&mut h, "Edges");
     assert_eq!(
-        h.state().editor.prefs.pick_filter,
+        h.state().drawing.editor.prefs.pick_filter,
         drift_edit::editor::PickFilter::only(drift_edit::editor::PickKind::Edges)
     );
     h.get_by_label("All").click();
     h.run();
     assert_eq!(
-        h.state().editor.prefs.pick_filter,
+        h.state().drawing.editor.prefs.pick_filter,
         drift_edit::editor::PickFilter::ALL
     );
     // Sheet scales in feet and inches: the architectural ones, written as they are.
-    let mut units = h.state().editor.doc.units();
+    let mut units = h.state().drawing.editor.doc.units();
     units.length = drift_core::LengthFormat::Architectural;
-    h.state_mut().editor.set_units(units);
+    h.state_mut().drawing.editor.set_units(units);
     assert_eq!(drift_core::sheets::scale_text([48.0]), "1/4\" = 1'-0\"");
 }
 
@@ -7016,7 +7308,7 @@ fn tab_highlights_a_chain_and_a_click_picks_it() {
     let Some(mut h) = harness() else { return };
     // An L of two joined lines, and a line on its own.
     let (l1, l2) = {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         ed.doc.begin();
         let p = [
             DVec2::new(-20.0, 0.0),
@@ -7041,8 +7333,14 @@ fn tab_highlights_a_chain_and_a_click_picks_it() {
     // Tab: highlighted, not picked.
     h.key_press(Key::Tab);
     h.run();
-    assert!(h.state().editor.selection.is_empty());
-    let preview = h.state().editor.chain_preview.clone().expect("highlighted");
+    assert!(h.state().drawing.editor.selection.is_empty());
+    let preview = h
+        .state()
+        .drawing
+        .editor
+        .chain_preview
+        .clone()
+        .expect("highlighted");
     assert_eq!(preview.1, [l1, l2].into());
     assert!(
         h.ctx.memory(|m| m.focused()).is_none(),
@@ -7052,7 +7350,7 @@ fn tab_highlights_a_chain_and_a_click_picks_it() {
     // Tab again: back to the one line.
     h.key_press(Key::Tab);
     h.run();
-    assert!(h.state().editor.chain_preview.is_none());
+    assert!(h.state().drawing.editor.chain_preview.is_none());
     h.key_press(Key::Tab);
     h.run();
     // A click picks the chain.
@@ -7060,18 +7358,18 @@ fn tab_highlights_a_chain_and_a_click_picks_it() {
     h.run();
     button(&h, on, false);
     h.run();
-    assert_eq!(h.state().editor.selection, [l1, l2].into());
-    assert!(h.state().editor.chain_preview.is_none());
+    assert_eq!(h.state().drawing.editor.selection, [l1, l2].into());
+    assert!(h.state().drawing.editor.chain_preview.is_none());
     // Moving off the chain clears a highlight.
     h.key_press(Key::Escape);
     h.run();
-    h.state_mut().editor.selection.clear();
+    h.state_mut().drawing.editor.selection.clear();
     h.key_press(Key::Tab);
     h.run();
-    assert!(h.state().editor.chain_preview.is_some());
+    assert!(h.state().drawing.editor.chain_preview.is_some());
     h.hover_at(screen(&h, DVec2::new(0.0, 40.0)));
     h.run();
-    assert!(h.state().editor.chain_preview.is_none());
+    assert!(h.state().drawing.editor.chain_preview.is_none());
 }
 
 /// Export a drawing's sheets to PDF and SVG, and its model to DWG and DXF (2018 and R12),
@@ -7109,7 +7407,7 @@ fn probe_export() {
     let painter = egui::Painter::new(
         h.ctx.clone(),
         egui::LayerId::background(),
-        h.state().canvas_rect,
+        h.state().drawing.view.canvas_rect,
     );
     let out_dir = std::path::Path::new(&out);
     for (format, name) in [
@@ -7145,7 +7443,7 @@ fn finding_a_font_keeps_the_menu_open_and_a_pick_closes_it() {
     };
     let Some(mut h) = harness() else { return };
     let id = {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         ed.add_text(drift_core::SketchText::new("ROOM", DVec2::ZERO, 10.0))
     };
     h.run();
@@ -7187,7 +7485,7 @@ fn finding_a_font_keeps_the_menu_open_and_a_pick_closes_it() {
         "closed by the pick"
     );
     assert_eq!(
-        h.state().editor.doc.text(id).unwrap().font,
+        h.state().drawing.editor.doc.text(id).unwrap().font,
         drift_core::TextFont::System(family)
     );
 }
@@ -7197,7 +7495,7 @@ fn sketch_text_goes_out_as_text() {
     use drift_draft::page::Prim;
     let Some(mut h) = harness() else { return };
     {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         let mut t = drift_core::SketchText::new("ROOM 101\nSee detail", DVec2::new(5.0, 5.0), 4.0);
         t.align = drift_core::TextAlign::Center;
         ed.add_text(t);
@@ -7206,10 +7504,10 @@ fn sketch_text_goes_out_as_text() {
     let painter = egui::Painter::new(
         h.ctx.clone(),
         egui::LayerId::background(),
-        h.state().canvas_rect,
+        h.state().drawing.view.canvas_rect,
     );
     let app = h.state_mut();
-    let d = crate::output::model_drawing(&mut app.editor, &app.hatch_patterns, &painter);
+    let d = crate::output::model_drawing(&mut app.drawing.editor, &app.hatch_patterns, &painter);
     // Two lines of text in the text's font, and no curves.
     let texts: Vec<(String, f64, Option<drift_core::TextFont>)> = d
         .items
@@ -7252,7 +7550,7 @@ fn chain_dimensions_in_the_window() {
     let Some(mut h) = harness() else { return };
     // Four vertical walls along a floor, as in an elevation.
     {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         ed.doc.begin();
         for x in [-30.0, -10.0, 15.0, 30.0] {
             let a = ed.doc.add_point(DVec2::new(x, 0.0));
@@ -7271,6 +7569,7 @@ fn chain_dimensions_in_the_window() {
     h.run();
     let values = |h: &Harness<'_, DriftApp>| -> Vec<f64> {
         h.state()
+            .drawing
             .editor
             .doc
             .constraints()
@@ -7283,7 +7582,13 @@ fn chain_dimensions_in_the_window() {
     click_world(&mut h, DVec2::new(-10.0, 20.0));
     click_world(&mut h, DVec2::new(-20.0, 26.0));
     h.run();
-    assert!(h.state().dimension_edit.as_ref().is_some_and(|e| !e.extras));
+    assert!(
+        h.state()
+            .drawing
+            .dimension_edit
+            .as_ref()
+            .is_some_and(|e| !e.extras)
+    );
     assert!(
         h.query_by_label("TYP").is_none(),
         "no chips under a value just placed"
@@ -7319,7 +7624,7 @@ fn views_line_up_on_the_sheet() {
         size: DVec2::new(160.0, 120.0),
     };
     {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         ed.doc.begin();
         ed.doc.set_placed_view(id, 0, &a);
         let mut north = ed.doc.view(a.id).unwrap().clone();
@@ -7333,10 +7638,10 @@ fn views_line_up_on_the_sheet() {
         ed.doc.set_sheet(id, s);
         ed.commit("Views");
     }
-    h.state_mut().sheet_view = 1;
-    h.state_mut().sheet_preview = true;
+    h.state_mut().drawing.view.sheet_view = 1;
+    h.state_mut().drawing.view.sheet_preview = true;
     // The picked view's settings are in the Inspector.
-    h.state_mut().sheet_pick = crate::app::sheet_editor::SheetPick::View;
+    h.state_mut().drawing.view.sheet_pick = crate::app::sheet_editor::SheetPick::View;
     h.state_mut().show_panel(Panel::Inspector);
     h.run();
     h.run();
@@ -7370,8 +7675,9 @@ fn views_line_up_on_the_sheet() {
     let mid = {
         let f = placed(&h, id)[1].frame.bounds();
         let app = h.state();
-        let r = app.canvas_rect;
-        let d = (f.center() - app.preview.center) * f64::from(app.preview.zoom);
+        let r = app.drawing.view.canvas_rect;
+        let d = (f.center() - app.drawing.view.preview.center)
+            * f64::from(app.drawing.view.preview.zoom);
         r.center() + egui::vec2(d.x as f32, -d.y as f32)
     };
     h.hover_at(mid);
@@ -7382,7 +7688,10 @@ fn views_line_up_on_the_sheet() {
     h.run();
     h.hover_at(mid + egui::vec2(25.0, 3.0));
     h.run();
-    assert!(!h.state().view_guides.is_empty(), "a guide while snapped");
+    assert!(
+        !h.state().drawing.view.view_guides.is_empty(),
+        "a guide while snapped"
+    );
     save_png("drift_ui_view_guides.png", &mut h);
     button(&h, mid + egui::vec2(25.0, 3.0), false);
     h.run();
@@ -7390,7 +7699,7 @@ fn views_line_up_on_the_sheet() {
         (offset(&h, 0).y - offset(&h, 1).y).abs() < 1e-9,
         "snapped level again"
     );
-    assert!(h.state().view_guides.is_empty());
+    assert!(h.state().drawing.view.view_guides.is_empty());
 }
 
 #[test]
@@ -7398,7 +7707,7 @@ fn chain_dimensions_from_wall_to_wall() {
     let Some(mut h) = harness() else { return };
     // Four walls standing on a floor, as in an elevation; picked by the walls themselves.
     {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         ed.doc.begin();
         for x in [-30.0, -10.0, 15.0, 30.0] {
             let a = ed.doc.add_point(DVec2::new(x, 0.0));
@@ -7415,7 +7724,7 @@ fn chain_dimensions_from_wall_to_wall() {
     h.get_by_label("Overall").click();
     h.run();
     let values = |h: &Harness<'_, DriftApp>| -> Vec<(f64, bool)> {
-        let doc = &h.state().editor.doc;
+        let doc = &h.state().drawing.editor.doc;
         doc.constraints()
             .filter_map(|(id, c)| c.value().map(|v| (v, doc.is_driven(id))))
             .collect()
@@ -7438,7 +7747,7 @@ fn chain_dimensions_from_wall_to_wall() {
         vec![(20.0, false), (25.0, false), (15.0, false), (60.0, true)]
     );
     // The row's labels stand level with the first's.
-    let doc = &h.state().editor.doc;
+    let doc = &h.state().drawing.editor.doc;
     let ys: Vec<f64> = doc
         .constraints()
         .filter_map(|(id, c)| {
@@ -7457,7 +7766,7 @@ fn clear_relations_on_a_selection() {
     let Some(mut h) = harness() else { return };
     // A rectangle (level and plumb sides), its corner fixed and its height dimensioned.
     let (left, bottom, corner, top_left) = {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         ed.doc.begin();
         let p = [
             DVec2::new(-20.0, -10.0),
@@ -7480,7 +7789,7 @@ fn clear_relations_on_a_selection() {
         (l[3], l[0], p[0], p[3])
     };
     {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         ed.add_constraints(
             "Fix",
             &[Constraint::Fix {
@@ -7502,7 +7811,7 @@ fn clear_relations_on_a_selection() {
     }
     h.run();
     let count = |h: &Harness<'_, DriftApp>| {
-        let doc = &h.state().editor.doc;
+        let doc = &h.state().drawing.editor.doc;
         (
             doc.constraints().filter(|(_, c)| !c.is_dimension()).count(),
             doc.constraints().filter(|(_, c)| c.is_dimension()).count(),
@@ -7525,13 +7834,13 @@ fn clear_relations_on_a_selection() {
         "the other two sides keep theirs; the height stays"
     );
     // Corners stay joined: the two sides still share their corner point.
-    let doc = &h.state().editor.doc;
+    let doc = &h.state().drawing.editor.doc;
     assert_eq!(doc.users_of(corner).count(), 2);
     // One undo step brings them all back.
     h.state_mut().undo();
     assert_eq!(count(&h), (5, 1));
     // Dimensions have their own button.
-    h.state_mut().editor.selection = [left, bottom].into();
+    h.state_mut().drawing.editor.selection = [left, bottom].into();
     h.run();
     // (At the foot of a long inspector: brought into view first.)
     h.get_by_label("Clear dimensions (1)").scroll_to_me();
@@ -7556,7 +7865,7 @@ fn library_contact_sheets() {
         let mut i = 0;
         while i < entries.len() {
             {
-                let ed = &mut h.state_mut().editor;
+                let ed = &mut h.state_mut().drawing.editor;
                 ed.set_units(drift_core::Units::architectural());
                 let ids: Vec<_> = ed.doc.blocks().map(|(id, _)| id).collect();
                 ed.doc.begin();
@@ -7567,7 +7876,7 @@ fn library_contact_sheets() {
                 ed.selected_instances.clear();
             }
             h.run();
-            let canvas = h.state().canvas_rect;
+            let canvas = h.state().drawing.view.canvas_rect;
             let width = canvas.width() as f64 / scale - 24.0 * INCH;
             let height = canvas.height() as f64 / scale - 24.0 * INCH;
             let (mut x, mut y, mut row) = (0.0, 0.0, 0.0f64);
@@ -7583,23 +7892,26 @@ fn library_contact_sheets() {
                 if -y + size.y > height && y < 0.0 {
                     break;
                 }
-                let id = h.state_mut().editor.library_block(e);
+                let id = h.state_mut().drawing.editor.library_block(e);
                 let at = DVec2::new(x, y - size.y) - b.min;
-                h.state_mut().editor.place_instance(id, at, 0.0, false);
+                h.state_mut()
+                    .drawing
+                    .editor
+                    .place_instance(id, at, 0.0, false);
                 x += size.x + 18.0 * INCH;
                 row = row.max(size.y);
                 i += 1;
             }
-            let ed = &h.state().editor;
+            let ed = &h.state().drawing.editor;
             let mut bounds = drift_core::Bounds::EMPTY;
             for (id, _) in ed.doc.instances() {
                 let b = ed.instance_bounds(id);
                 bounds.include(b.min);
                 bounds.include(b.max);
             }
-            h.state_mut().editor.selected_instances.clear();
-            h.state_mut().fit_target = None;
-            h.state_mut().camera = drift_render::Camera {
+            h.state_mut().drawing.editor.selected_instances.clear();
+            h.state_mut().drawing.view.fit_target = None;
+            h.state_mut().drawing.view.camera = drift_render::Camera {
                 center: bounds.center(),
                 scale,
             };
@@ -7646,7 +7958,7 @@ fn svg_artwork_is_imported_as_curves_on_its_layers_at_a_scale() {
     h.run_steps(3);
     let app = h.state_mut();
     assert!(app.pending_import.is_none());
-    let doc = &app.editor.doc;
+    let doc = &app.drawing.editor.doc;
     let layer = |name: &str| {
         doc.layers()
             .find(|(_, l)| l.name == name)
@@ -7694,32 +8006,33 @@ fn svg_artwork_is_imported_as_curves_on_its_layers_at_a_scale() {
         doc.fills().next().unwrap().1.color,
         Some(drift_core::Rgb([0x9a, 0xb3, 0xd5]))
     );
-    let shapes = app.editor.fill_shapes();
+    let shapes = app.drawing.editor.fill_shapes();
     let ring = &shapes[&fills[0]];
     assert!(!ring.lost);
     assert_eq!(ring.region.holes.len(), 1);
     // The label.
-    let (_, text) = app.editor.doc.texts().next().expect("the label");
+    let (_, text) = app.drawing.editor.doc.texts().next().expect("the label");
     let text = text.clone();
     assert_eq!(text.text, "LIVING");
     assert_eq!(text.layer, furniture);
     // Artwork comes in free: no relations or dimensions (adding them is up to the user).
-    assert_eq!(app.editor.doc.constraint_count(), 0);
+    assert_eq!(app.drawing.editor.doc.constraint_count(), 0);
 
     // Calibrating: the import stays picked and the calibrate tool is on. The rectangle's
     // bottom edge, said to be 6 m, scales everything about its first corner.
     assert_eq!(app.tool.kind(), ToolKind::Calibrate);
     assert!(app.tool.hint().contains("import"), "{}", app.tool.hint());
-    assert_eq!(app.editor.selection.len(), 12);
+    assert_eq!(app.drawing.editor.selection.len(), 12);
     let (a, b) = (bounds.min, DVec2::new(bounds.max.x, bounds.min.y));
-    let k = app.editor.calibrate_import(a, b, 6000.0).unwrap();
+    let k = app.drawing.editor.calibrate_import(a, b, 6000.0).unwrap();
     assert!((k - 6000.0 / (101.6 * 50.0)).abs() < 1e-9);
     let after = app
+        .drawing
         .editor
         .doc
         .iter()
         .filter(|(_, e)| e.layer == walls && !e.kind.is_point())
-        .filter_map(|(id, _)| app.editor.doc.shape(id))
+        .filter_map(|(id, _)| app.drawing.editor.doc.shape(id))
         .fold(drift_core::Bounds::EMPTY, |mut bb, s| {
             let sb = s.bounds();
             bb.include(sb.min);
@@ -7728,16 +8041,16 @@ fn svg_artwork_is_imported_as_curves_on_its_layers_at_a_scale() {
         });
     assert!(after.min.distance(a) < 1e-6);
     assert!((after.max.x - after.min.x - 6000.0).abs() < 1e-6);
-    let (_, label) = app.editor.doc.texts().next().unwrap();
+    let (_, label) = app.drawing.editor.doc.texts().next().unwrap();
     assert!((label.height - text.height * k).abs() < 1e-9);
-    assert_eq!(app.editor.doc.constraint_count(), 0);
+    assert_eq!(app.drawing.editor.doc.constraint_count(), 0);
     // The fill follows its edges.
-    let shapes = app.editor.fill_shapes();
+    let shapes = app.drawing.editor.fill_shapes();
     assert!(!shapes[&fills[0]].lost);
     // One undo puts the scale back; another takes the import away.
     app.undo();
     app.undo();
-    assert_eq!(app.editor.doc.fills().count(), 0);
+    assert_eq!(app.drawing.editor.doc.fills().count(), 0);
 }
 
 #[test]
@@ -7780,14 +8093,14 @@ fn the_import_dialog_says_what_wont_come_across_before_importing() {
     h.get_by_label("Import").click();
     h.run_steps(2);
     assert!(h.state().pending_import.is_some(), "refused: still asking");
-    assert_eq!(h.state().editor.doc.iter().count(), 0);
+    assert_eq!(h.state().drawing.editor.doc.iter().count(), 0);
     // As an underlay it's fine.
     h.state_mut().pending_import.as_mut().unwrap().mode = crate::app::import_ui::ImportAs::Underlay;
     h.run_steps(2);
     h.get_by_label("Import").click();
     h.run_steps(3);
     assert!(h.state().pending_import.is_none());
-    assert_eq!(h.state().editor.doc.underlays().count(), 1);
+    assert_eq!(h.state().drawing.editor.doc.underlays().count(), 1);
 }
 
 /// Press at one world point, move there in steps and let go, one frame per event.
@@ -7825,6 +8138,7 @@ fn views_are_drawn_on_the_canvas_and_placed_on_sheets() {
     h.run();
     let views: Vec<(drift_core::ViewId, drift_core::View)> = h
         .state()
+        .drawing
         .editor
         .doc
         .views()
@@ -7835,27 +8149,27 @@ fn views_are_drawn_on_the_canvas_and_placed_on_sheets() {
     assert_eq!(view.name, "View 1");
     assert!(near(view.crop().min, DVec2::new(-20.0, -15.0)), "{view:?}");
     assert!(near(view.crop().max, DVec2::new(70.0, 95.0)), "{view:?}");
-    assert_eq!(view.scale, h.state().editor.doc.draft_style().scale);
+    assert_eq!(view.scale, h.state().drawing.editor.doc.draft_style().scale);
     // Drawn: picked, back with the select tool, its name and scale on the bar.
-    assert_eq!(h.state().picked_view, Some(id));
+    assert_eq!(h.state().drawing.picked_view, Some(id));
     assert_eq!(h.state().tool.kind(), ToolKind::Select);
     h.run();
     assert!(h.query_by_label("Sheets…").is_some(), "the view's bar");
     save_png("drift_ui_view_crop.png", &mut h);
     // One undo step.
     h.state_mut().undo();
-    assert_eq!(h.state().editor.doc.views().count(), 0);
+    assert_eq!(h.state().drawing.editor.doc.views().count(), 0);
     h.state_mut().redo();
-    assert_eq!(h.state().editor.doc.view(id), Some(&view));
-    h.state_mut().picked_view = Some(id);
+    assert_eq!(h.state().drawing.editor.doc.view(id), Some(&view));
+    h.state_mut().drawing.picked_view = Some(id);
     h.run();
 
     // Its grips reframe it: the right edge out by 30.
     let crop_grip = |h: &Harness<'_, DriftApp>, at: DVec2| {
         let app = h.state();
         let map = ScreenMap {
-            rect: app.canvas_rect,
-            camera: app.camera,
+            rect: app.drawing.view.canvas_rect,
+            camera: app.drawing.view.camera,
         };
         let painter = h.ctx.layer_painter(egui::LayerId::background());
         app.crop_grip_at(&painter, &map, map.to_screen(at))
@@ -7865,26 +8179,29 @@ fn views_are_drawn_on_the_canvas_and_placed_on_sheets() {
         Some((id, CropGrip::Resize(1, 0)))
     );
     drag_world(&mut h, DVec2::new(70.0, 40.0), DVec2::new(100.0, 40.0));
-    let crop = h.state().editor.doc.view(id).unwrap().crop();
+    let crop = h.state().drawing.editor.doc.view(id).unwrap().crop();
     assert!((crop.max.x - 100.0).abs() < 0.01 && (crop.min.x + 20.0).abs() < 0.01);
-    assert_eq!(h.state().editor.history.undo_label(), Some("Reframe view"));
+    assert_eq!(
+        h.state().drawing.editor.history.undo_label(),
+        Some("Reframe view")
+    );
 
     // A click elsewhere lets it go; a click on its edge picks it again.
     click_world(&mut h, DVec2::new(108.0, 90.0));
-    assert_eq!(h.state().picked_view, None);
+    assert_eq!(h.state().drawing.picked_view, None);
     assert_eq!(
         crop_grip(&h, DVec2::new(-20.0, 40.0)),
         Some((id, CropGrip::Move))
     );
     click_world(&mut h, DVec2::new(-20.0, 40.0));
-    assert_eq!(h.state().picked_view, Some(id));
+    assert_eq!(h.state().drawing.picked_view, Some(id));
     h.key_press(Key::Escape);
     h.run();
-    assert_eq!(h.state().picked_view, None);
+    assert_eq!(h.state().drawing.picked_view, None);
 
     // Hidden, its crop is neither drawn nor picked: on its own (Crop off), or all of them
     // (View → View crops).
-    let mut hidden = h.state().editor.doc.view(id).unwrap().clone();
+    let mut hidden = h.state().drawing.editor.doc.view(id).unwrap().clone();
     hidden.crop_visible = false;
     h.state_mut().update_view(id, hidden, false);
     assert_eq!(crop_grip(&h, DVec2::new(-20.0, 40.0)), None);
@@ -7913,7 +8230,7 @@ fn views_are_drawn_on_the_canvas_and_placed_on_sheets() {
     h.run();
     let sheet = h.state().current_sheet().expect("a sheet");
     assert_eq!(placed(&h, sheet).len(), 1);
-    h.state_mut().picked_view = Some(id);
+    h.state_mut().drawing.picked_view = Some(id);
     // (New sheet shows the sheet in the Inspector; the Views list is in the Sheets panel.)
     h.state_mut().show_panel(Panel::Sheets);
     h.run();
@@ -7925,7 +8242,7 @@ fn views_are_drawn_on_the_canvas_and_placed_on_sheets() {
     assert_eq!(on.len(), 2);
     assert_eq!(on[1].id, id);
     assert!(on[1].title);
-    let crop = h.state().editor.doc.view(id).unwrap().crop();
+    let crop = h.state().drawing.editor.doc.view(id).unwrap().crop();
     assert!(near(on[1].frame.size, crop.size() / on[1].scale));
     // And on a second sheet: one view on two sheets.
     h.state_mut().add_sheet();
@@ -7933,7 +8250,10 @@ fn views_are_drawn_on_the_canvas_and_placed_on_sheets() {
     let other = h.state().current_sheet().unwrap();
     assert_ne!(other, sheet);
     h.state_mut().place_view(other, id, None);
-    assert_eq!(h.state().editor.doc.sheets_showing(id), [sheet, other]);
+    assert_eq!(
+        h.state().drawing.editor.doc.sheets_showing(id),
+        [sheet, other]
+    );
     h.run();
     // (Sheets by number and name.)
     let row = format!(
@@ -7946,8 +8266,8 @@ fn views_are_drawn_on_the_canvas_and_placed_on_sheets() {
     );
 
     // Reframed on the canvas, it changes on both sheets.
-    h.state_mut().sheet_preview = false;
-    h.state_mut().picked_view = Some(id);
+    h.state_mut().drawing.view.sheet_preview = false;
+    h.state_mut().drawing.picked_view = Some(id);
     h.run();
     let top = DVec2::new(40.0, 95.0);
     assert_eq!(crop_grip(&h, top), Some((id, CropGrip::Resize(0, 1))));
@@ -7961,25 +8281,33 @@ fn views_are_drawn_on_the_canvas_and_placed_on_sheets() {
     }
 
     // Dragged from the Views list onto the sheet, a view goes where it is let go.
-    h.state_mut().active_sheet = Some(other);
-    h.state_mut().sheet_preview = true;
-    h.state_mut().preview.zoom = 0.0;
+    h.state_mut().drawing.view.active_sheet = Some(other);
+    h.state_mut().drawing.view.sheet_preview = true;
+    h.state_mut().drawing.view.preview.zoom = 0.0;
     h.run();
     h.run();
     let two = h
         .state()
+        .drawing
         .editor
         .doc
         .views()
         .find(|(_, v)| v.name == "View 2")
         .map(|(id, _)| id)
         .unwrap();
-    assert!(!h.state().editor.doc.sheets_showing(two).contains(&other));
+    assert!(
+        !h.state()
+            .drawing
+            .editor
+            .doc
+            .sheets_showing(two)
+            .contains(&other)
+    );
     let rows = h.get_by_label_contains("View 2\n");
     rows.scroll_to_me();
     h.run();
     let from = h.get_by_label_contains("View 2\n").rect().center();
-    let rect = h.state().canvas_rect;
+    let rect = h.state().drawing.view.canvas_rect;
     let to = rect.center() + egui::vec2(-120.0, 60.0);
     h.hover_at(from);
     h.run();
@@ -7999,30 +8327,33 @@ fn views_are_drawn_on_the_canvas_and_placed_on_sheets() {
         .find(|v| v.id == two)
         .expect("dropped on the sheet");
     let app = h.state();
-    let at = app.preview.center
+    let at = app.drawing.view.preview.center
         + DVec2::new(
             f64::from(to.x - rect.center().x),
             -f64::from(to.y - rect.center().y),
-        ) / f64::from(app.preview.zoom);
+        ) / f64::from(app.drawing.view.preview.zoom);
     assert!(dropped.frame.at.distance(at) < 0.5, "{dropped:?} at {at:?}");
     save_png("drift_ui_view_dropped.png", &mut h);
 
     // Deleting a view on sheets asks first, then takes it off them all; undo brings it back.
-    h.state_mut().picked_view = Some(id);
+    h.state_mut().drawing.picked_view = Some(id);
     h.run();
     h.get_by_label("Delete view").scroll_to_me();
     h.run();
     h.get_by_label("Delete view").click();
     h.run();
-    assert!(h.state().editor.doc.view(id).is_some(), "not yet");
-    assert_eq!(h.state().confirm_delete_view, Some(id));
+    assert!(h.state().drawing.editor.doc.view(id).is_some(), "not yet");
+    assert_eq!(h.state().drawing.confirm_delete_view, Some(id));
     h.get_by_label("Delete it").click();
     h.run();
-    assert!(h.state().editor.doc.view(id).is_none());
-    assert!(h.state().editor.doc.sheets_showing(id).is_empty());
+    assert!(h.state().drawing.editor.doc.view(id).is_none());
+    assert!(h.state().drawing.editor.doc.sheets_showing(id).is_empty());
     assert_eq!(placed(&h, sheet).len(), 1);
     h.state_mut().undo();
-    assert_eq!(h.state().editor.doc.sheets_showing(id), [sheet, other]);
+    assert_eq!(
+        h.state().drawing.editor.doc.sheets_showing(id),
+        [sheet, other]
+    );
 }
 
 #[test]
@@ -8030,7 +8361,7 @@ fn a_picked_dimension_sets_its_own_style_and_resets_it() {
     use drift_core::{AnnotationRef, ArrowStyle, Constraint as C};
     let Some(mut h) = harness() else { return };
     let dim = {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         ed.doc.begin();
         let a = ed.doc.add_point(DVec2::new(-20.0, 0.0));
         let b = ed.doc.add_point(DVec2::new(20.0, 0.0));
@@ -8042,12 +8373,12 @@ fn a_picked_dimension_sets_its_own_style_and_resets_it() {
         )
         .unwrap()
     };
-    h.state_mut().selected_constraint = Some(dim);
+    h.state_mut().drawing.selected_constraint = Some(dim);
     h.run();
     h.run();
     let r = AnnotationRef::Dimension(dim);
     // Arrows follow the drawing until a different one is picked here.
-    assert!(h.state().editor.doc.style_override(r).is_empty());
+    assert!(h.state().drawing.editor.doc.style_override(r).is_empty());
     let arrows = h
         .get_all_by_role(egui::accesskit::Role::ComboBox)
         .find(|c| c.value().as_deref() == Some("Closed arrow"))
@@ -8058,18 +8389,18 @@ fn a_picked_dimension_sets_its_own_style_and_resets_it() {
     h.run();
     h.run();
     assert_eq!(
-        h.state().editor.doc.style_override(r).arrow,
+        h.state().drawing.editor.doc.style_override(r).arrow,
         Some(ArrowStyle::Tick)
     );
     assert_eq!(
-        h.state().editor.doc.draft_style_for(r).arrow,
+        h.state().drawing.editor.doc.draft_style_for(r).arrow,
         ArrowStyle::Tick
     );
     save_png("drift_ui_dimension_own_style.png", &mut h);
     // The reset arrow beside it puts the drawing's back.
     h.get_by_label("Reset").click();
     h.run();
-    assert!(h.state().editor.doc.style_override(r).is_empty());
+    assert!(h.state().drawing.editor.doc.style_override(r).is_empty());
     // And the drawing's style is one click away (below the fold: scrolled to first).
     h.get_by_label("Drawing style…").scroll_to_me();
     h.run();
@@ -8097,11 +8428,11 @@ fn sheets_are_tabs_with_their_own_tools_and_inspector() {
     h.run();
     let first = h.state().current_sheet().expect("a sheet");
     let doc_sheet =
-        |h: &Harness<'_, DriftApp>, id| h.state().editor.doc.sheet(id).cloned().unwrap();
+        |h: &Harness<'_, DriftApp>, id| h.state().drawing.editor.doc.sheet(id).cloned().unwrap();
     assert_eq!(doc_sheet(&h, first).fields.number, "A-101");
-    assert!(h.state().sheet_preview);
+    assert!(h.state().drawing.view.sheet_preview);
     assert_eq!(
-        h.state().sheet_pick,
+        h.state().drawing.view.sheet_pick,
         SheetPick::Paper,
         "the sheet itself, in the Inspector"
     );
@@ -8128,18 +8459,18 @@ fn sheets_are_tabs_with_their_own_tools_and_inspector() {
     assert!(h.query_by_label("Add view").is_some());
     h.state_mut().set_tool(ToolKind::Line);
     h.run();
-    assert!(!h.state().sheet_preview);
+    assert!(!h.state().drawing.view.sheet_preview);
     assert_eq!(h.state().tool.kind(), ToolKind::Line);
     h.key_press(Key::Escape);
     h.run();
     h.get_by_label("A-101  Sheet 1").click();
     h.run();
     h.run();
-    assert!(h.state().sheet_preview);
+    assert!(h.state().drawing.view.sheet_preview);
 
     // A plain drag on the view that fills the sheet leaves it be.
     let before = placed(&h, first)[0].center;
-    let mid = h.state().canvas_rect.center();
+    let mid = h.state().drawing.view.canvas_rect.center();
     h.hover_at(mid);
     h.run();
     button(&h, mid, true);
@@ -8155,14 +8486,14 @@ fn sheets_are_tabs_with_their_own_tools_and_inspector() {
     // A view drawn for this sheet: it lands on free paper, picked, and stays inside the
     // border when dragged far out.
     add_view_by_region(&mut h, DVec2::new(55.0, 25.0), DVec2::new(100.0, 58.0));
-    assert_eq!(h.state().sheet_pick, SheetPick::View);
+    assert_eq!(h.state().drawing.view.sheet_pick, SheetPick::View);
     let s = doc_sheet(&h, first);
     let area = drift_draft::sheet::drawing_area(&s);
     let frame = placed(&h, first)[1].frame;
     let to_screen = |h: &Harness<'_, DriftApp>, p: DVec2| {
         let app = h.state();
-        let d = (p - app.preview.center) * f64::from(app.preview.zoom);
-        app.canvas_rect.center() + egui::vec2(d.x as f32, -d.y as f32)
+        let d = (p - app.drawing.view.preview.center) * f64::from(app.drawing.view.preview.zoom);
+        app.drawing.view.canvas_rect.center() + egui::vec2(d.x as f32, -d.y as f32)
     };
     let from = to_screen(&h, frame.at);
     h.hover_at(from);
@@ -8188,11 +8519,11 @@ fn sheets_are_tabs_with_their_own_tools_and_inspector() {
     h.run();
     button(&h, paper, false);
     h.run();
-    assert_eq!(h.state().sheet_pick, SheetPick::Paper);
+    assert_eq!(h.state().drawing.view.sheet_pick, SheetPick::Paper);
     // The Model tab goes back.
     h.get_by_label("Model").click();
     h.run();
-    assert!(!h.state().sheet_preview);
+    assert!(!h.state().drawing.view.sheet_preview);
     save_png("drift_ui_sheet_tabs.png", &mut h);
 }
 
@@ -8213,8 +8544,8 @@ fn place_on_sheet_finds_free_paper() {
     // goes on free paper at the view's scale, clear of what is drawn there already.
     add_view_by_region(&mut h, DVec2::new(55.0, 25.0), DVec2::new(100.0, 58.0));
     let id = placed(&h, sheet)[1].id;
-    let scale = h.state().editor.doc.view(id).unwrap().scale;
-    h.state_mut().picked_view = Some(id);
+    let scale = h.state().drawing.editor.doc.view(id).unwrap().scale;
+    h.state_mut().drawing.picked_view = Some(id);
     h.state_mut().show_panel(Panel::Sheets);
     h.run();
     h.get_by_label("Place again").scroll_to_me();
@@ -8248,7 +8579,7 @@ fn a_view_leaves_out_the_layers_it_hides() {
     h.run();
     // A dimensioned line on a layer of its own.
     let layer = {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         ed.doc.begin();
         let layer = ed.doc.add_layer(drift_core::Layer::new("Setting out"));
         let a = ed.doc.add_point(DVec2::new(20.0, 10.0));
@@ -8271,10 +8602,11 @@ fn a_view_leaves_out_the_layers_it_hides() {
     h.run();
     let sheet = h.state().current_sheet().expect("a sheet");
     let view = placed(&h, sheet)[0].id;
-    h.state_mut().picked_view = Some(view);
-    h.state_mut().sheet_pick = SheetPick::View;
+    h.state_mut().drawing.picked_view = Some(view);
+    h.state_mut().drawing.view.sheet_pick = SheetPick::View;
     h.run();
-    let preview = |h: &Harness<'_, DriftApp>| h.state().preview_cache.as_ref().unwrap().2.clone();
+    let preview =
+        |h: &Harness<'_, DriftApp>| h.state().drawing.preview_cache.as_ref().unwrap().2.clone();
     let on_layer = |d: &drift_draft::page::Drawing| {
         d.items.iter().filter(|i| i.layer == "Setting out").count()
     };
@@ -8293,7 +8625,10 @@ fn a_view_leaves_out_the_layers_it_hides() {
     h.run();
     h.run();
     assert!(placed(&h, sheet)[0].hidden_layers.contains(&layer));
-    assert_eq!(h.state().editor.history.undo_label(), Some("Edit sheet"));
+    assert_eq!(
+        h.state().drawing.editor.history.undo_label(),
+        Some("Edit sheet")
+    );
     let after = preview(&h);
     assert_eq!(on_layer(&after), 0);
     assert!(!dimension(&after), "its dimension goes with it");
@@ -8305,7 +8640,7 @@ fn a_view_leaves_out_the_layers_it_hides() {
     assert_eq!(h.state_mut().pages(&painter)[0], after, "and prints so");
     save_png("drift_ui_view_layers.png", &mut h);
     // Saved with the view, and read back.
-    let saved = drift_io::save(&h.state().editor.doc, &Default::default());
+    let saved = drift_io::save(&h.state().drawing.editor.doc, &Default::default());
     assert!(
         saved.contains(&format!(r#""hidden_layers":["{layer}"]"#)),
         "{saved}"
@@ -8314,7 +8649,7 @@ fn a_view_leaves_out_the_layers_it_hides() {
     assert!(read.view(view).unwrap().hidden_layers.contains(&layer));
     // Deleting the layer forgets it.
     {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         ed.doc.begin();
         ed.doc.remove_layer(layer).unwrap();
         ed.commit("Delete layer");
@@ -8344,10 +8679,11 @@ fn a_view_can_show_construction_geometry() {
     h.run();
     let sheet = h.state().current_sheet().expect("a sheet");
     let view = placed(&h, sheet)[0].id;
-    h.state_mut().picked_view = Some(view);
-    h.state_mut().sheet_pick = SheetPick::View;
+    h.state_mut().drawing.picked_view = Some(view);
+    h.state_mut().drawing.view.sheet_pick = SheetPick::View;
     h.run();
-    let preview = |h: &Harness<'_, DriftApp>| h.state().preview_cache.as_ref().unwrap().2.clone();
+    let preview =
+        |h: &Harness<'_, DriftApp>| h.state().drawing.preview_cache.as_ref().unwrap().2.clone();
     // The example's construction curves print as hairline dashes.
     let guides = |d: &drift_draft::page::Drawing| {
         d.items
@@ -8365,7 +8701,10 @@ fn a_view_can_show_construction_geometry() {
     h.run();
     h.run();
     assert!(placed(&h, sheet)[0].construction);
-    assert_eq!(h.state().editor.history.undo_label(), Some("Edit sheet"));
+    assert_eq!(
+        h.state().drawing.editor.history.undo_label(),
+        Some("Edit sheet")
+    );
     let after = preview(&h);
     assert!(guides(&after) > 0);
     assert_eq!(
@@ -8377,7 +8716,7 @@ fn a_view_can_show_construction_geometry() {
     assert_eq!(h.state_mut().pages(&painter)[0], after, "and prints so");
     save_png("drift_ui_view_construction.png", &mut h);
     // Saved with the view, and read back.
-    let saved = drift_io::save(&h.state().editor.doc, &Default::default());
+    let saved = drift_io::save(&h.state().drawing.editor.doc, &Default::default());
     assert!(saved.contains(r#""construction":true"#), "{saved}");
     let (read, _) = drift_io::load(&saved).unwrap();
     assert!(read.view(view).unwrap().construction);
@@ -8394,7 +8733,15 @@ fn a_view_can_show_construction_geometry() {
     h.get_by_label("Construction").click();
     h.run();
     h.run();
-    assert!(h.state().editor.doc.view(view).unwrap().construction);
+    assert!(
+        h.state()
+            .drawing
+            .editor
+            .doc
+            .view(view)
+            .unwrap()
+            .construction
+    );
     assert!(guides(&preview(&h)) > 0);
     save_png("drift_ui_model_view_construction.png", &mut h);
 }
@@ -8414,6 +8761,7 @@ fn sheets_reorder_duplicate_and_choose_for_pdf() {
     }
     let order = |h: &Harness<'_, DriftApp>| -> Vec<String> {
         h.state()
+            .drawing
             .editor
             .doc
             .sheets()
@@ -8424,9 +8772,9 @@ fn sheets_reorder_duplicate_and_choose_for_pdf() {
 
     // Duplicating A-101 puts the copy right after it, numbered on past the numbers taken,
     // with copies of its views and none of its revisions.
-    let first = h.state().editor.doc.sheets().next().unwrap().0;
+    let first = h.state().drawing.editor.doc.sheets().next().unwrap().0;
     {
-        let doc = &mut h.state_mut().editor.doc;
+        let doc = &mut h.state_mut().drawing.editor.doc;
         let mut s = doc.sheet(first).unwrap().clone();
         s.revisions.push(drift_core::Revision {
             rev: "A".into(),
@@ -8445,11 +8793,11 @@ fn sheets_reorder_duplicate_and_choose_for_pdf() {
         ["A-101  Sheet 1", "A-103  Sheet 1 copy", "A-102  Sheet 2"]
     );
     assert_eq!(
-        h.state().editor.history.undo_label(),
+        h.state().drawing.editor.history.undo_label(),
         Some("Duplicate sheet")
     );
     let copy = h.state().current_sheet().unwrap();
-    let doc = &h.state().editor.doc;
+    let doc = &h.state().drawing.editor.doc;
     let (a, b) = (doc.sheet(first).unwrap(), doc.sheet(copy).unwrap());
     assert!(b.revisions.is_empty());
     assert_ne!(
@@ -8463,6 +8811,7 @@ fn sheets_reorder_duplicate_and_choose_for_pdf() {
     let empty = h.state().current_sheet().unwrap();
     assert!(
         h.state()
+            .drawing
             .editor
             .doc
             .sheet(empty)
@@ -8476,7 +8825,7 @@ fn sheets_reorder_duplicate_and_choose_for_pdf() {
     assert_eq!(order(&h).len(), 3);
 
     // Drag A-102's tab in front of A-101: the sheets reorder, and the one shown stays shown.
-    let canvas = h.state().canvas_rect;
+    let canvas = h.state().drawing.view.canvas_rect;
     let tab = |h: &Harness<'_, DriftApp>, label: &str| {
         h.get_all_by_label(label)
             .map(|n| n.rect())
@@ -8499,10 +8848,13 @@ fn sheets_reorder_duplicate_and_choose_for_pdf() {
         order(&h),
         ["A-102  Sheet 2", "A-101  Sheet 1", "A-103  Sheet 1 copy"]
     );
-    assert_eq!(h.state().editor.history.undo_label(), Some("Move sheet"));
+    assert_eq!(
+        h.state().drawing.editor.history.undo_label(),
+        Some("Move sheet")
+    );
     let shown = h.state().current_sheet().unwrap();
     assert_eq!(
-        crate::app::sheet_editor::sheet_label(h.state().editor.doc.sheet(shown).unwrap()),
+        crate::app::sheet_editor::sheet_label(h.state().drawing.editor.doc.sheet(shown).unwrap()),
         "A-102  Sheet 2"
     );
     h.state_mut().undo();
@@ -8539,13 +8891,13 @@ fn sheets_reorder_duplicate_and_choose_for_pdf() {
     h.run();
     h.run();
     assert_eq!(
-        h.state().output_dialog,
+        h.state().drawing.output_dialog,
         Some(crate::app::sheets_ui::Output::Pdf)
     );
     h.get_by_label("This sheet").click();
     h.run();
     h.run();
-    assert_eq!(h.state().pdf_left_out.len(), 2);
+    assert_eq!(h.state().drawing.pdf_left_out.len(), 2);
     save_png("drift_ui_pdf_sheets.png", &mut h);
     assert_eq!(pages(&mut h), 1);
     h.get_by_label("All").click();
@@ -8553,7 +8905,7 @@ fn sheets_reorder_duplicate_and_choose_for_pdf() {
     assert_eq!(pages(&mut h), 3);
     h.get_by_label("Cancel").click();
     h.run();
-    assert_eq!(h.state().output_dialog, None);
+    assert_eq!(h.state().drawing.output_dialog, None);
 }
 
 #[test]
@@ -8569,16 +8921,29 @@ fn a_section_mark_makes_its_view_and_reads_its_number() {
     h.run();
     click_world(&mut h, DVec2::new(-10.0, 40.0));
     click_world(&mut h, DVec2::new(130.0, 40.0));
-    let mark = h.state().editor.selected_annotation.expect("the new mark");
+    let mark = h
+        .state()
+        .drawing
+        .editor
+        .selected_annotation
+        .expect("the new mark");
     h.get_by_label("Select").click();
     h.run();
     let reads = |h: &Harness<'_, DriftApp>| {
-        let doc = &h.state().editor.doc;
+        let doc = &h.state().drawing.editor.doc;
         crate::notes::mark_reference(doc, doc.annotation(mark).unwrap()).unwrap()
     };
-    let link = |h: &Harness<'_, DriftApp>| h.state().editor.doc.annotation(mark).unwrap().view();
+    let link = |h: &Harness<'_, DriftApp>| {
+        h.state()
+            .drawing
+            .editor
+            .doc
+            .annotation(mark)
+            .unwrap()
+            .view()
+    };
     assert_eq!(reads(&h), ("A".to_owned(), String::new()), "its own label");
-    h.state_mut().fit_target = Some(h.state().fit_bounds());
+    h.state_mut().drawing.view.fit_target = Some(h.state().fit_bounds());
     h.run();
     h.run();
     save_png("drift_ui_mark_view_before.png", &mut h);
@@ -8602,7 +8967,7 @@ fn a_section_mark_makes_its_view_and_reads_its_number() {
     h.run();
     let view = link(&h).expect("linked to its new view");
     {
-        let doc = &h.state().editor.doc;
+        let doc = &h.state().drawing.editor.doc;
         let v = doc.view(view).unwrap();
         assert_eq!(v.name, "Section A");
         let crop = v.crop();
@@ -8617,12 +8982,12 @@ fn a_section_mark_makes_its_view_and_reads_its_number() {
         assert!(drift_core::sheets::standard_scales(false).contains(&v.scale));
         assert!(doc.sheets_showing(view).is_empty());
     }
-    assert_eq!(h.state().picked_view, Some(view));
+    assert_eq!(h.state().drawing.picked_view, Some(view));
     assert!(h.query_by_label("Zoom to view").is_some());
     assert_eq!(reads(&h), ("–".to_owned(), "–".to_owned()));
     // One undo step.
     h.state_mut().undo();
-    assert!(h.state().editor.doc.view(view).is_none());
+    assert!(h.state().drawing.editor.doc.view(view).is_none());
     assert_eq!(link(&h), None);
     h.state_mut().redo();
     assert_eq!(link(&h), Some(view));
@@ -8635,7 +9000,7 @@ fn a_section_mark_makes_its_view_and_reads_its_number() {
     h.run();
     h.run();
     let sheet = h.state().current_sheet().expect("a sheet");
-    h.state_mut().picked_view = Some(view);
+    h.state_mut().drawing.picked_view = Some(view);
     h.state_mut().show_panel(Panel::Sheets);
     h.run();
     h.get_by_label("Place on sheet").scroll_to_me();
@@ -8644,18 +9009,22 @@ fn a_section_mark_makes_its_view_and_reads_its_number() {
     h.run();
     assert_eq!(reads(&h), ("2".to_owned(), "A-101".to_owned()));
     // The view's Inspector on the sheet lists the mark.
-    h.state_mut().sheet_pick = crate::app::sheet_editor::SheetPick::View;
+    h.state_mut().drawing.view.sheet_pick = crate::app::sheet_editor::SheetPick::View;
     h.state_mut().show_panel(Panel::Inspector);
     h.run();
     h.run();
     assert!(h.query_by_label("Section A mark").is_some());
 
     // Renumbering the sheet renumbers the flag.
-    let mut renumbered = h.state().editor.doc.sheet(sheet).unwrap().clone();
+    let mut renumbered = h.state().drawing.editor.doc.sheet(sheet).unwrap().clone();
     renumbered.fields.number = "A-501".into();
-    h.state_mut().editor.doc.begin();
-    h.state_mut().editor.doc.set_sheet(sheet, renumbered);
-    h.state_mut().editor.commit("Renumber");
+    h.state_mut().drawing.editor.doc.begin();
+    h.state_mut()
+        .drawing
+        .editor
+        .doc
+        .set_sheet(sheet, renumbered);
+    h.state_mut().drawing.editor.commit("Renumber");
     assert_eq!(reads(&h), ("2".to_owned(), "A-501".to_owned()));
 
     // Referenced by: clicking the mark picks it in the model; its Inspector says what the
@@ -8663,10 +9032,10 @@ fn a_section_mark_makes_its_view_and_reads_its_number() {
     h.get_by_label("Section A mark").click();
     h.run();
     h.run();
-    assert!(!h.state().sheet_preview);
-    assert_eq!(h.state().editor.selected_annotation, Some(mark));
+    assert!(!h.state().drawing.view.sheet_preview);
+    assert_eq!(h.state().drawing.editor.selected_annotation, Some(mark));
     assert!(h.query_by_label("2 / A-501").is_some());
-    h.state_mut().fit_target = Some(h.state().fit_bounds());
+    h.state_mut().drawing.view.fit_target = Some(h.state().fit_bounds());
     h.run();
     h.run();
     save_png("drift_ui_mark_view_after.png", &mut h);
@@ -8696,26 +9065,37 @@ fn a_section_mark_makes_its_view_and_reads_its_number() {
     assert_eq!(link(&h), Some(view));
 
     // Saved and loaded, it still points at its view.
-    let saved = drift_io::save(&h.state().editor.doc, &Default::default());
+    let saved = drift_io::save(&h.state().drawing.editor.doc, &Default::default());
     assert!(saved.contains(&format!(r#""view":"{view}""#)), "{saved}");
     let (loaded, _) = drift_io::load(&saved).unwrap();
     assert_eq!(
         loaded.annotation(mark),
-        h.state().editor.doc.annotation(mark)
+        h.state().drawing.editor.doc.annotation(mark)
     );
-    assert_eq!(loaded.view(view), h.state().editor.doc.view(view));
+    assert_eq!(loaded.view(view), h.state().drawing.editor.doc.view(view));
 
     // Deleting the view unlinks the mark in the same step; undo links it again.
-    let before = h.state().editor.history.undo_label().map(str::to_owned);
+    let before = h
+        .state()
+        .drawing
+        .editor
+        .history
+        .undo_label()
+        .map(str::to_owned);
     h.state_mut().delete_view(view);
-    assert!(h.state().editor.doc.view(view).is_none());
+    assert!(h.state().drawing.editor.doc.view(view).is_none());
     assert_eq!(link(&h), None);
     assert_eq!(reads(&h), ("A".to_owned(), String::new()));
     h.state_mut().undo();
     assert_eq!(link(&h), Some(view));
     assert_eq!(reads(&h), ("2".to_owned(), "A-501".to_owned()));
     assert_eq!(
-        h.state().editor.history.undo_label().map(str::to_owned),
+        h.state()
+            .drawing
+            .editor
+            .history
+            .undo_label()
+            .map(str::to_owned),
         before
     );
 }
@@ -8734,13 +9114,21 @@ fn every_sheet_shares_the_project() {
         h.run();
     }
     // The first sheet named the project after the file; the sheets leave their titles to it.
-    let project = |h: &Harness<'_, DriftApp>| h.state().editor.doc.project().clone();
+    let project = |h: &Harness<'_, DriftApp>| h.state().drawing.editor.doc.project().clone();
     let stem = h.state().file_stem();
     assert_eq!(project(&h).name, stem);
-    let ids: Vec<_> = h.state().editor.doc.sheets().map(|(id, _)| id).collect();
+    let ids: Vec<_> = h
+        .state()
+        .drawing
+        .editor
+        .doc
+        .sheets()
+        .map(|(id, _)| id)
+        .collect();
     for id in &ids {
         assert!(
             h.state()
+                .drawing
                 .editor
                 .doc
                 .sheet(*id)
@@ -8752,6 +9140,7 @@ fn every_sheet_shares_the_project() {
     }
     let texts = |h: &Harness<'_, DriftApp>| -> Vec<String> {
         h.state()
+            .drawing
             .preview_cache
             .as_ref()
             .unwrap()
@@ -8773,9 +9162,12 @@ fn every_sheet_shares_the_project() {
     h.get_by_label("Architectural").click();
     h.run();
     assert_eq!(project(&h).fields, FieldSet::Architectural);
-    assert_eq!(h.state().editor.history.undo_label(), Some("Edit project"));
+    assert_eq!(
+        h.state().drawing.editor.history.undo_label(),
+        Some("Edit project")
+    );
     {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         let mut p = ed.doc.project().clone();
         p.name = "Riverside house".into();
         p.number = "2026-014".into();
@@ -8812,7 +9204,7 @@ fn every_sheet_shares_the_project() {
 
     // A sheet's own title wins; the others keep the project's.
     {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         let mut s = ed.doc.sheet(ids[1]).unwrap().clone();
         s.fields.title = "Ground floor plan".into();
         s.title_block = TitleBlock::Iso;
@@ -8833,9 +9225,9 @@ fn every_sheet_shares_the_project() {
         "the other sheet's title"
     );
     // Saved and read back.
-    let saved = drift_io::save(&h.state().editor.doc, &Default::default());
+    let saved = drift_io::save(&h.state().drawing.editor.doc, &Default::default());
     let (read, _) = drift_io::load(&saved).unwrap();
-    assert_eq!(read.project(), h.state().editor.doc.project());
+    assert_eq!(read.project(), h.state().drawing.editor.doc.project());
 }
 
 #[test]
@@ -8850,7 +9242,7 @@ fn view_crops_snap_like_anything_placed() {
         DVec2::new(-30.0, -20.0),
     ];
     {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         ed.doc.begin();
         for p in [a, b, c, d] {
             ed.doc.add_point(p);
@@ -8860,8 +9252,19 @@ fn view_crops_snap_like_anything_placed() {
     h.state_mut().grid_snap = false;
     h.run();
     // A couple of pixels off each point, in world units.
-    let off = |h: &Harness<'_, DriftApp>| DVec2::new(2.0, -1.5) / h.state().camera.scale;
-    let crop = |h: &Harness<'_, DriftApp>| h.state().editor.doc.views().next().unwrap().1.crop();
+    let off =
+        |h: &Harness<'_, DriftApp>| DVec2::new(2.0, -1.5) / h.state().drawing.view.camera.scale;
+    let crop = |h: &Harness<'_, DriftApp>| {
+        h.state()
+            .drawing
+            .editor
+            .doc
+            .views()
+            .next()
+            .unwrap()
+            .1
+            .crop()
+    };
     let near = |p: DVec2, q: DVec2| p.distance(q) < 1e-9;
 
     // The View tool's corners land on the points.
@@ -8869,7 +9272,7 @@ fn view_crops_snap_like_anything_placed() {
     h.run();
     let o = off(&h);
     drag_world(&mut h, a + o, b - o);
-    let id = h.state().editor.doc.views().next().unwrap().0;
+    let id = h.state().drawing.editor.doc.views().next().unwrap().0;
     assert!(
         near(crop(&h).min, a) && near(crop(&h).max, b),
         "{:?}",
@@ -8877,7 +9280,7 @@ fn view_crops_snap_like_anything_placed() {
     );
 
     // A dragged corner grip lands on a point.
-    h.state_mut().picked_view = Some(id);
+    h.state_mut().drawing.picked_view = Some(id);
     h.run();
     let painter = h.ctx.layer_painter(egui::LayerId::background());
     let map = screen_map(&h);
@@ -8903,7 +9306,7 @@ fn view_crops_snap_like_anything_placed() {
     assert!(near(crop(&h).min, d), "{:?}", crop(&h));
     assert!(crop(&h).size().distance(size) < 1e-9);
     assert_eq!(
-        h.state().editor.history.undo_label(),
+        h.state().drawing.editor.history.undo_label(),
         Some("Move view crop")
     );
 
@@ -8934,18 +9337,19 @@ fn an_annotation_can_be_drawn_in_some_views_only() {
         let app = h.state_mut();
         let b = app.fit_bounds();
         let first = app
+            .drawing
             .editor
             .doc
-            .placed_views(app.editor.doc.sheet(sheet).unwrap())[0]
+            .placed_views(app.drawing.editor.doc.sheet(sheet).unwrap())[0]
             .id;
-        app.editor.doc.begin();
+        app.drawing.editor.doc.begin();
         let crop = drift_core::Bounds {
             min: b.min - DVec2::splat(5.0),
             max: b.max + DVec2::splat(5.0),
         };
         let v = drift_core::View::new("Detail", crop, 2.0);
-        let second = app.editor.doc.add_view(v);
-        app.editor.commit("View");
+        let second = app.drawing.editor.doc.add_view(v);
+        app.drawing.editor.commit("View");
         (first, second)
     };
     h.state_mut()
@@ -8955,6 +9359,7 @@ fn an_annotation_can_be_drawn_in_some_views_only() {
     // The overall width, dimensioned once in the model: drawn in both views.
     let width = h
         .state()
+        .drawing
         .editor
         .doc
         .constraints()
@@ -8963,6 +9368,7 @@ fn an_annotation_can_be_drawn_in_some_views_only() {
         .expect("the 120 dimension");
     let count_120 = |h: &Harness<'_, DriftApp>| {
         h.state()
+            .drawing
             .preview_cache
             .as_ref()
             .unwrap()
@@ -8978,7 +9384,7 @@ fn an_annotation_can_be_drawn_in_some_views_only() {
 
     // Picked in the model, its Inspector says where it's drawn: All views, or only Detail.
     h.state_mut().show_sheet(None);
-    h.state_mut().selected_constraint = Some(width);
+    h.state_mut().drawing.selected_constraint = Some(width);
     h.state_mut().show_panel(Panel::Inspector);
     h.run();
     // (The menu sits beside its row's label.)
@@ -8992,18 +9398,30 @@ fn an_annotation_can_be_drawn_in_some_views_only() {
     h.run();
     h.run();
     assert!(h.query_by_label("All views").is_some(), "the menu is open");
-    let name = h.state().editor.doc.view(first).unwrap().title().to_owned();
+    let name = h
+        .state()
+        .drawing
+        .editor
+        .doc
+        .view(first)
+        .unwrap()
+        .title()
+        .to_owned();
     h.get_by_label(&name).click();
     h.run();
     h.run();
     let only = h
         .state()
+        .drawing
         .editor
         .doc
         .only_in(drift_core::AnnotationRef::Dimension(width))
         .cloned();
     assert_eq!(only, Some([second].into()));
-    assert_eq!(h.state().editor.history.undo_label(), Some("Views it's in"));
+    assert_eq!(
+        h.state().drawing.editor.history.undo_label(),
+        Some("Views it's in")
+    );
     save_png("drift_ui_annotation_views.png", &mut h);
     h.key_press(Key::Escape);
     h.run();
@@ -9014,7 +9432,7 @@ fn an_annotation_can_be_drawn_in_some_views_only() {
     save_png("drift_ui_annotation_views_sheet.png", &mut h);
 
     // Saved and read back; deleting the detail leaves it off sheets rather than everywhere.
-    let saved = drift_io::save(&h.state().editor.doc, &Default::default());
+    let saved = drift_io::save(&h.state().drawing.editor.doc, &Default::default());
     assert!(
         saved.contains(&format!(r#""views":["{second}"]"#)),
         "{saved}"
@@ -9025,17 +9443,17 @@ fn an_annotation_can_be_drawn_in_some_views_only() {
         only.as_ref()
     );
     {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         ed.doc.begin();
         ed.doc.remove_view(second);
         ed.commit("Delete view");
     }
     let r = drift_core::AnnotationRef::Dimension(width);
-    assert_eq!(h.state().editor.doc.only_in(r), None);
-    assert!(!h.state().editor.doc.shown(r).sheets);
+    assert_eq!(h.state().drawing.editor.doc.only_in(r), None);
+    assert!(!h.state().drawing.editor.doc.shown(r).sheets);
     h.state_mut().undo();
-    assert_eq!(h.state().editor.doc.only_in(r).cloned(), only);
-    assert!(h.state().editor.doc.shown(r).sheets);
+    assert_eq!(h.state().drawing.editor.doc.only_in(r).cloned(), only);
+    assert!(h.state().drawing.editor.doc.shown(r).sheets);
 }
 
 #[test]
@@ -9066,12 +9484,19 @@ fn lines_snap_tangent_to_a_circle_and_square_onto_a_line() {
     let touch = DVec2::from_angle(toward + (20.0f64 / 50.0).acos()) * 20.0;
     h.hover_at(screen(&h, touch));
     h.run();
-    let snap = h.state().pointer.and_then(|p| p.snap).expect("a snap");
+    let snap = h
+        .state()
+        .drawing
+        .view
+        .pointer
+        .and_then(|p| p.snap)
+        .expect("a snap");
     assert_eq!(snap.kind, SnapKind::Tangent);
     save_png("drift_ui_tangent_snap.png", &mut h);
     click_world(&mut h, touch);
     let tangent = |h: &Harness<'_, DriftApp>| {
         h.state()
+            .drawing
             .editor
             .doc
             .constraints()
@@ -9084,7 +9509,13 @@ fn lines_snap_tangent_to_a_circle_and_square_onto_a_line() {
     let foot = DVec2::new(touch.x, -40.0);
     h.hover_at(screen(&h, foot + DVec2::new(0.4, 0.4)));
     h.run();
-    let snap = h.state().pointer.and_then(|p| p.snap).expect("a snap");
+    let snap = h
+        .state()
+        .drawing
+        .view
+        .pointer
+        .and_then(|p| p.snap)
+        .expect("a snap");
     assert_eq!(snap.kind, SnapKind::Perpendicular);
     // Straight below the solved touching point, on the line.
     assert!((snap.at - foot).length() < 0.01);
@@ -9096,7 +9527,13 @@ fn lines_snap_tangent_to_a_circle_and_square_onto_a_line() {
     assert!(!h.state().perp_tangent_snap);
     h.hover_at(screen(&h, foot + DVec2::new(0.4, 0.4)));
     h.run();
-    let snap = h.state().pointer.and_then(|p| p.snap).expect("a snap");
+    let snap = h
+        .state()
+        .drawing
+        .view
+        .pointer
+        .and_then(|p| p.snap)
+        .expect("a snap");
     assert_eq!(snap.kind, SnapKind::OnCurve);
 }
 
@@ -9108,7 +9545,7 @@ fn boxes_pick_annotations_and_text_with_the_filter() {
     let v = DVec2::new;
     // A 60 × 40 rectangle with its width dimensioned, a note and a line of text beside it.
     let (lines, width, note, text) = {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         ed.doc.begin();
         let c =
             [v(0.0, 0.0), v(60.0, 0.0), v(60.0, 40.0), v(0.0, 40.0)].map(|p| ed.doc.add_point(p));
@@ -9138,7 +9575,7 @@ fn boxes_pick_annotations_and_text_with_the_filter() {
         ed.commit("Setup");
         let mut fit = drift_core::Bounds::from_point(v(-40.0, -60.0));
         fit.include(v(170.0, 80.0));
-        h.state_mut().fit_target = Some(fit);
+        h.state_mut().drawing.view.fit_target = Some(fit);
         (lines, width, note, text)
     };
     h.run();
@@ -9152,26 +9589,30 @@ fn boxes_pick_annotations_and_text_with_the_filter() {
     // note, not the geometry or the text.
     pick_only(&mut h, "Annotations");
     assert_eq!(
-        h.state().editor.prefs.pick_filter,
+        h.state().drawing.editor.prefs.pick_filter,
         PickFilter::only(drift_edit::editor::PickKind::Annotations)
     );
     everything(&mut h);
     let refs = picked(&h);
     assert!(refs.contains(&AnnotationRef::Dimension(width)), "{refs:?}");
     assert!(refs.contains(&AnnotationRef::Annotation(note)), "{refs:?}");
-    assert!(h.state().editor.selection.is_empty());
-    assert!(h.state().editor.selected_texts.is_empty());
+    assert!(h.state().drawing.editor.selection.is_empty());
+    assert!(h.state().drawing.editor.selected_texts.is_empty());
     // Delete takes both, as one undo step.
     h.key_press(Key::Delete);
     h.run();
-    assert!(h.state().editor.doc.constraint(width).is_none());
-    assert!(h.state().editor.doc.annotation(note).is_none());
-    assert_eq!(h.state().editor.doc.texts().count(), 1);
+    assert!(h.state().drawing.editor.doc.constraint(width).is_none());
+    assert!(h.state().drawing.editor.doc.annotation(note).is_none());
+    assert_eq!(h.state().drawing.editor.doc.texts().count(), 1);
     assert_eq!(lines.len(), 4);
-    assert!(lines.iter().all(|l| h.state().editor.doc.get(*l).is_some()));
+    assert!(
+        lines
+            .iter()
+            .all(|l| h.state().drawing.editor.doc.get(*l).is_some())
+    );
     h.state_mut().undo();
     h.run();
-    assert!(h.state().editor.doc.annotation(note).is_some());
+    assert!(h.state().drawing.editor.doc.annotation(note).is_some());
 
     // A narrow box across the note's text: a crossing box (dragged right to left) takes it,
     // a window the same size doesn't (the text isn't all inside it).
@@ -9187,7 +9628,7 @@ fn boxes_pick_annotations_and_text_with_the_filter() {
     h.get_by_label("All").click();
     h.run();
     everything(&mut h);
-    let ed = &h.state().editor;
+    let ed = &h.state().drawing.editor;
     assert!(lines.iter().all(|l| ed.selection.contains(l)));
     assert_eq!(ed.selected_texts, [text].into());
     assert_eq!(picked(&h).len(), 2);
@@ -9205,11 +9646,11 @@ fn boxes_pick_annotations_and_text_with_the_filter() {
     h.run();
     pick_only(&mut h, "Text");
     assert_eq!(
-        h.state().editor.prefs.pick_filter,
+        h.state().drawing.editor.prefs.pick_filter,
         PickFilter::only(drift_edit::editor::PickKind::Text)
     );
     everything(&mut h);
-    let ed = &h.state().editor;
+    let ed = &h.state().drawing.editor;
     assert!(ed.selection.is_empty());
     assert_eq!(ed.selected_texts, [text].into());
     assert!(picked(&h).is_empty());
@@ -9243,15 +9684,22 @@ fn dragging_a_hatch_over_another_moves_only_its_own_outline() {
     h.state_mut()
         .replace_document(doc, "arrows".into(), None, Default::default(), true);
     h.run();
-    h.state_mut().fit_target = None;
-    h.state_mut().camera = drift_render::Camera {
+    h.state_mut().drawing.view.fit_target = None;
+    h.state_mut().drawing.view.camera = drift_render::Camera {
         center: v(-150.0, 38.0),
         scale: 1.8,
     };
     h.run();
     let first = |h: &Harness<'_, DriftApp>| -> Vec<DVec2> {
         [164, 165, 167, 169, 171]
-            .map(|i| h.state().editor.doc.point(drift_core::EntityId(i)).unwrap())
+            .map(|i| {
+                h.state()
+                    .drawing
+                    .editor
+                    .doc
+                    .point(drift_core::EntityId(i))
+                    .unwrap()
+            })
             .to_vec()
     };
     let before = first(&h);
@@ -9261,7 +9709,7 @@ fn dragging_a_hatch_over_another_moves_only_its_own_outline() {
     let mut at = v(10.0, 38.0);
     click_world(&mut h, at);
     assert_eq!(
-        h.state().editor.selected_fills,
+        h.state().drawing.editor.selected_fills,
         [drift_core::FillId(10)].into()
     );
     for d in [-25.4, -12.7, 38.1, -50.8] {
@@ -9269,11 +9717,12 @@ fn dragging_a_hatch_over_another_moves_only_its_own_outline() {
         drag_world(&mut h, at, at + v(d, 0.0));
         at += v(d, 0.0);
         assert_eq!(first(&h), before, "the first arrow moved");
-        let shapes = h.state_mut().editor.fill_shapes();
+        let shapes = h.state_mut().drawing.editor.fill_shapes();
         assert!(shapes.values().all(|s| !s.lost));
     }
     let moved = h
         .state()
+        .drawing
         .editor
         .doc
         .point(drift_core::EntityId(174))
@@ -9292,7 +9741,7 @@ fn tangent_arcs_and_lines_start_on_a_partial_ellipse_and_a_pen_curve() {
         DVec2::new(40.0 * t.cos(), 20.0 * t.sin())
     };
     let (ellipse, end, curve, curve_end) = {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         ed.doc.begin();
         let c = ed.doc.add_point(DVec2::ZERO);
         let major = ed.doc.add_point(DVec2::new(40.0, 0.0));
@@ -9310,6 +9759,7 @@ fn tangent_arcs_and_lines_start_on_a_partial_ellipse_and_a_pen_curve() {
     };
     let tangents = |h: &Harness<'_, DriftApp>| -> Vec<Constraint> {
         h.state()
+            .drawing
             .editor
             .doc
             .constraints()
@@ -9319,6 +9769,7 @@ fn tangent_arcs_and_lines_start_on_a_partial_ellipse_and_a_pen_curve() {
     };
     let leaving = |h: &Harness<'_, DriftApp>, c: drift_core::EntityId, p| {
         h.state()
+            .drawing
             .editor
             .doc
             .end_direction(c, p)
@@ -9343,7 +9794,15 @@ fn tangent_arcs_and_lines_start_on_a_partial_ellipse_and_a_pen_curve() {
     h.run();
     save_png("drift_ui_tangent_arc_on_partial_ellipse.png", &mut h);
     click_world(&mut h, to);
-    let arc = h.state().editor.doc.iter().map(|(id, _)| id).max().unwrap();
+    let arc = h
+        .state()
+        .drawing
+        .editor
+        .doc
+        .iter()
+        .map(|(id, _)| id)
+        .max()
+        .unwrap();
     assert!(tangents(&h).contains(&Constraint::Tangent { a: arc, b: ellipse }));
     assert!((leaving(&h, arc, end) + dir).length() < 1e-9, "tangent");
     h.key_press(Key::Escape);
@@ -9362,12 +9821,22 @@ fn tangent_arcs_and_lines_start_on_a_partial_ellipse_and_a_pen_curve() {
     h.run();
     let guide = h
         .state()
+        .drawing
+        .view
         .pointer
         .and_then(|p| p.guide)
         .expect("the tangent guide");
     assert_eq!(guide.kind, drift_edit::editor::GuideKind::Tangent(curve));
     click_world(&mut h, on_guide + dir.perp() * 0.2);
-    let line = h.state().editor.doc.iter().map(|(id, _)| id).max().unwrap();
+    let line = h
+        .state()
+        .drawing
+        .editor
+        .doc
+        .iter()
+        .map(|(id, _)| id)
+        .max()
+        .unwrap();
     assert!(tangents(&h).contains(&Constraint::Tangent { a: line, b: curve }));
     assert!(
         (leaving(&h, line, curve_end) + dir).length() < 1e-6,
@@ -9382,7 +9851,7 @@ fn tangent_arcs_and_lines_start_on_a_partial_ellipse_and_a_pen_curve() {
     save_png("drift_ui_tangent_line_and_arc_from_curve.png", &mut h);
     click_world(&mut h, next);
     assert_eq!(tangents(&h).len(), 3);
-    assert!(h.state().editor.analysis().conflicts.is_empty());
+    assert!(h.state().drawing.editor.analysis().conflicts.is_empty());
 }
 
 #[test]
@@ -9476,7 +9945,7 @@ fn drawing_rules_are_the_drawings_and_older_files_get_this_computers() {
     assert_eq!(h.state().new_rules, mine);
     h.state_mut().perform(crate::Pending::New);
     h.run();
-    assert_eq!(h.state().editor.doc.rules(), mine);
+    assert_eq!(h.state().drawing.editor.doc.rules(), mine);
     assert!(!h.state().is_dirty(), "a new drawing is clean");
 
     // An older file opens with them (nothing changes on day one) ...
@@ -9490,7 +9959,7 @@ fn drawing_rules_are_the_drawings_and_older_files_get_this_computers() {
     let (doc, meta) = drift_io::load(&older).unwrap();
     h.state_mut()
         .replace_document(doc, "old.drift".into(), None, meta, true);
-    assert_eq!(h.state().editor.doc.rules(), mine);
+    assert_eq!(h.state().drawing.editor.doc.rules(), mine);
     // ... and says so, once.
     assert_eq!(
         h.state().status_next.as_deref(),
@@ -9503,7 +9972,7 @@ fn drawing_rules_are_the_drawings_and_older_files_get_this_computers() {
     h.state_mut()
         .replace_document(doc, "new.drift".into(), None, meta, true);
     assert_eq!(
-        h.state().editor.doc.rules(),
+        h.state().drawing.editor.doc.rules(),
         drift_core::DrawingRules::default()
     );
 
@@ -9516,9 +9985,12 @@ fn drawing_rules_are_the_drawings_and_older_files_get_this_computers() {
         .click();
     h.run();
     h.run();
-    assert!(h.state().editor.doc.rules().regions_by_layer);
+    assert!(h.state().drawing.editor.doc.rules().regions_by_layer);
     assert!(h.state().is_dirty());
-    let text = drift_io::save(&h.state().editor.doc, &drift_io::Metadata::default());
+    let text = drift_io::save(
+        &h.state().drawing.editor.doc,
+        &drift_io::Metadata::default(),
+    );
     let (loaded, _) = drift_io::load(&text).unwrap();
     assert!(loaded.rules().regions_by_layer);
     h.get_by_label("Use these area and fill rules for new drawings")
@@ -9528,10 +10000,10 @@ fn drawing_rules_are_the_drawings_and_older_files_get_this_computers() {
     h.get_by_label("Use these area and fill rules for new drawings")
         .click();
     h.run();
-    assert_eq!(h.state().new_rules, h.state().editor.doc.rules());
+    assert_eq!(h.state().new_rules, h.state().drawing.editor.doc.rules());
     assert!(h.state().view_prefs().contains("rlayer=1"));
     h.state_mut().undo();
-    assert!(!h.state().editor.doc.rules().regions_by_layer);
+    assert!(!h.state().drawing.editor.doc.rules().regions_by_layer);
 }
 
 /// The tool preferences (how the tools fill, pick and dimension, the wall and opening
@@ -9541,7 +10013,7 @@ fn drawing_rules_are_the_drawings_and_older_files_get_this_computers() {
 fn tool_preferences_carry_over_to_the_next_drawing() {
     use drift_edit::editor::{PickFilter, PickKind};
     let Some(mut h) = harness() else { return };
-    let prefs = &mut h.state_mut().editor.prefs;
+    let prefs = &mut h.state_mut().drawing.editor.prefs;
     prefs.fill_style = drift_core::FillStyle::solid();
     prefs.pick_filter = PickFilter::only(PickKind::Edges);
     prefs.wall_thickness = 115.5;
@@ -9553,7 +10025,7 @@ fn tool_preferences_carry_over_to_the_next_drawing() {
     let doc = h.state().new_document();
     h.state_mut()
         .replace_document(doc, "next".into(), None, Default::default(), true);
-    assert_eq!(h.state().editor.prefs, before);
+    assert_eq!(h.state().drawing.editor.prefs, before);
 }
 
 /// Preferences as Drift saved them before the tool preferences moved into `EditPrefs` (R3
@@ -9572,7 +10044,7 @@ fn saved_preferences_read_back_unchanged() {
     );
     let Some(mut h) = harness() else { return };
     h.state_mut().apply_view_prefs(SAVED);
-    let prefs = &h.state().editor.prefs;
+    let prefs = &h.state().drawing.editor.prefs;
     assert!(prefs.fill_new_shapes && !prefs.wall_poche.on);
     assert_eq!(prefs.wall_thickness, 115.5);
     assert_eq!(prefs.wall_justify, drift_core::Justify::Left);

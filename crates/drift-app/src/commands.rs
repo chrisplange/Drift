@@ -338,7 +338,7 @@ pub(crate) enum When {
 
 impl When {
     pub(crate) fn holds(self, app: &mut DriftApp) -> bool {
-        let ed = &app.editor;
+        let ed = &app.drawing.editor;
         let curves = !ed.selection.is_empty();
         let selection = curves || !ed.selected_instances.is_empty();
         match self {
@@ -354,31 +354,33 @@ impl When {
             When::Clipboard => app.clipboard.is_some(),
             When::CanUndo => ed.history.can_undo(),
             When::CanRedo => ed.history.can_redo(),
-            When::Arrangeable => app.editor.can_arrange(),
+            When::Arrangeable => app.drawing.editor.can_arrange(),
             When::RelationsOnSelection => !ed.selection_constraints().0.is_empty(),
             When::DimensionsOnSelection => !ed.selection_constraints().1.is_empty(),
             When::AlignableDimensions => app.can_align_dimensions().0,
             When::SpaceableDimensions => app.can_align_dimensions().1,
             When::PickedAnnotations => !app.picked_annotations().is_empty(),
-            When::Walls => !app.editor.selected_walls().is_empty(),
+            When::Walls => !app.drawing.editor.selected_walls().is_empty(),
             When::PickedView => {
-                app.picked_view.is_some_and(|v| ed.doc.view(v).is_some())
-                    && if app.sheet_preview {
+                app.drawing
+                    .picked_view
+                    .is_some_and(|v| ed.doc.view(v).is_some())
+                    && if app.drawing.view.sheet_preview {
                         When::ViewOnSheet.holds(app)
                     } else {
-                        !selection && app.selected_constraint.is_none()
+                        !selection && app.drawing.selected_constraint.is_none()
                     }
             }
             When::ViewOnSheet => {
-                app.sheet_preview
-                    && app.sheet_pick == crate::app::sheet_editor::SheetPick::View
+                app.drawing.view.sheet_preview
+                    && app.drawing.view.sheet_pick == crate::app::sheet_editor::SheetPick::View
                     && app
                         .current_sheet()
-                        .and_then(|id| app.editor.doc.sheet(id))
+                        .and_then(|id| app.drawing.editor.doc.sheet(id))
                         .is_some_and(|s| !s.viewports.is_empty())
             }
-            When::JoinableCorners => app.editor.joinable_fill().is_some(),
-            When::FilledShape => app.editor.picked_shape_fill().is_some(),
+            When::JoinableCorners => app.drawing.editor.joinable_fill().is_some(),
+            When::FilledShape => app.drawing.editor.picked_shape_fill().is_some(),
             When::Desktop => cfg!(not(target_arch = "wasm32")),
             When::Debug => cfg!(debug_assertions),
         }

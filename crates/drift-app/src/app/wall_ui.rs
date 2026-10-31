@@ -16,10 +16,10 @@ impl DriftApp {
     /// The Wall tool's bar: `Thickness [ … ▾ ] · Left face | Centre | Right face · Straight |
     /// Arc · ☐ Poché [Solid ▾ ■]`. What is set here is kept for the next drawing too.
     pub(crate) fn wall_tool_bar(&mut self, ui: &mut egui::Ui) {
-        let units = self.editor.doc.units();
+        let units = self.drawing.editor.doc.units();
         ui.label(egui::RichText::new("Thickness").size(12.0).weak());
         let unit = units.length.mm_per_unit();
-        let mut shown = self.editor.wall_thickness_now() / unit;
+        let mut shown = self.drawing.editor.wall_thickness_now() / unit;
         if ui
             .add(
                 egui::DragValue::new(&mut shown)
@@ -31,16 +31,16 @@ impl DriftApp {
             .on_hover_text("How thick new walls are (by the drawing's units until set)")
             .changed()
         {
-            self.editor.prefs.wall_thickness = shown * unit;
-            self.editor.prefs.wall_thickness_expr = None;
+            self.drawing.editor.prefs.wall_thickness = shown * unit;
+            self.drawing.editor.prefs.wall_thickness_expr = None;
         }
-        let presets = self.editor.wall_presets();
+        let presets = self.drawing.editor.wall_presets();
         ui.menu_button("▾", |ui| {
             for p in presets {
                 let text = format!("{}  ({})", p.label, units.format_readout(p.mm));
                 if ui.button(text).clicked() {
-                    self.editor.prefs.wall_thickness = p.mm;
-                    self.editor.prefs.wall_thickness_expr = None;
+                    self.drawing.editor.prefs.wall_thickness = p.mm;
+                    self.drawing.editor.prefs.wall_thickness_expr = None;
                     ui.close();
                 }
             }
@@ -48,17 +48,19 @@ impl DriftApp {
         .response
         .on_hover_text("Common walls, at their actual finished thickness");
         bar_divider(ui);
-        if let Some(j) = app::context_ui::choice(ui, self.editor.prefs.wall_justify, &JUSTIFY) {
-            self.editor.prefs.wall_justify = j;
+        if let Some(j) =
+            app::context_ui::choice(ui, self.drawing.editor.prefs.wall_justify, &JUSTIFY)
+        {
+            self.drawing.editor.prefs.wall_justify = j;
         }
         ui.label(egui::RichText::new("Space flips").size(12.0).weak());
         bar_divider(ui);
         if let Some(arc) = app::context_ui::choice(
             ui,
-            self.editor.prefs.wall_arc,
+            self.drawing.editor.prefs.wall_arc,
             &[(false, "Straight"), (true, "Arc")],
         ) {
-            self.editor.prefs.wall_arc = arc;
+            self.drawing.editor.prefs.wall_arc = arc;
             self.tool.key(
                 if arc {
                     ToolKey::ArcNext
@@ -66,31 +68,31 @@ impl DriftApp {
                     ToolKey::LineNext
                 },
                 None,
-                &mut self.editor,
+                &mut self.drawing.editor,
             );
         }
         ui.label(egui::RichText::new("W").size(12.0).weak());
         bar_divider(ui);
-        ui.checkbox(&mut self.editor.prefs.wall_poche.on, "Poché")
+        ui.checkbox(&mut self.drawing.editor.prefs.wall_poche.on, "Poché")
             .on_hover_text("Fill new walls: joined walls of one style on one layer are one area");
-        if self.editor.prefs.wall_poche.on {
-            let mut style = self.editor.prefs.wall_poche.style.clone();
+        if self.drawing.editor.prefs.wall_poche.on {
+            let mut style = self.drawing.editor.prefs.wall_poche.style.clone();
             self.style_bar(ui, &mut style, "wall_bar");
-            self.editor.prefs.wall_poche.style = style;
+            self.drawing.editor.prefs.wall_poche.style = style;
         }
     }
 
     /// The Inspector for picked walls. False when no wall is picked.
     pub(crate) fn wall_inspector(&mut self, ui: &mut egui::Ui) -> bool {
-        let walls: Vec<WallId> = self.editor.selected_walls().into_iter().collect();
+        let walls: Vec<WallId> = self.drawing.editor.selected_walls().into_iter().collect();
         let Some(first) = walls
             .first()
-            .and_then(|w| self.editor.doc.wall(*w))
+            .and_then(|w| self.drawing.editor.doc.wall(*w))
             .cloned()
         else {
             return false;
         };
-        let doc = &self.editor.doc;
+        let doc = &self.drawing.editor.doc;
         let units = doc.units();
         let layer = doc
             .layer(first.layer)
@@ -114,7 +116,7 @@ impl DriftApp {
         } else {
             String::new()
         };
-        let mut text = match &self.wall_thickness_text {
+        let mut text = match &self.drawing.wall_thickness_text {
             Some((for_walls, t)) if *for_walls == walls => t.clone(),
             _ => current.clone(),
         };
@@ -126,12 +128,12 @@ impl DriftApp {
                     .hint_text("various"),
             );
             if r.changed() {
-                self.wall_thickness_text = Some((walls.clone(), text.clone()));
+                self.drawing.wall_thickness_text = Some((walls.clone(), text.clone()));
             }
             if r.lost_focus() && text != current {
                 commit = Some(text.clone());
             }
-            let presets = self.editor.wall_presets();
+            let presets = self.drawing.editor.wall_presets();
             ui.menu_button("▾", |ui| {
                 for p in presets {
                     let label = format!("{}  ({})", p.label, units.format_readout(p.mm));
@@ -143,14 +145,14 @@ impl DriftApp {
             });
         });
         if let Some(t) = commit {
-            self.wall_thickness_text = None;
-            if let Err(e) = self.editor.set_wall_thickness(&walls, &t) {
-                self.editor.out.notice = Some(e.to_string());
+            self.drawing.wall_thickness_text = None;
+            if let Err(e) = self.drawing.editor.set_wall_thickness(&walls, &t) {
+                self.drawing.editor.out.notice = Some(e.to_string());
             }
         }
         theme::row(ui, "Justify", |ui| {
             if let Some(j) = app::context_ui::choice(ui, first.justify, &JUSTIFY) {
-                self.editor.set_wall_justify(&walls, j);
+                self.drawing.editor.set_wall_justify(&walls, j);
             }
         });
         // Poché: on or off, and its style.
@@ -158,7 +160,7 @@ impl DriftApp {
         let mut style = first
             .poche
             .clone()
-            .unwrap_or_else(|| self.editor.prefs.wall_poche.style.clone());
+            .unwrap_or_else(|| self.drawing.editor.prefs.wall_poche.style.clone());
         let was = (on, style.clone());
         theme::row(ui, "Poché", |ui| {
             ui.checkbox(&mut on, "");
@@ -167,11 +169,13 @@ impl DriftApp {
             }
         });
         if (on, style.clone()) != was {
-            self.editor
+            self.drawing
+                .editor
                 .set_wall_poche(&walls, on.then_some(style.clone()));
         }
         // Layer: the wall's, whichever part of it was picked.
         let layers: Vec<(drift_core::LayerId, String)> = self
+            .drawing
             .editor
             .doc
             .layers()
@@ -193,7 +197,8 @@ impl DriftApp {
                 });
         });
         if to != first.layer {
-            self.editor
+            self.drawing
+                .editor
                 .edit_walls(&walls, "Wall layer", |w| w.layer = to);
         }
         theme::section(ui, "Joins");
@@ -203,10 +208,16 @@ impl DriftApp {
             .on_hover_text("Crossing walls of the same poché and layer clean up as an X")
             .changed()
         {
-            self.editor
+            self.drawing
+                .editor
                 .edit_walls(&walls, "Wall joins", |w| w.cross = cross);
         }
-        let closed = self.editor.doc.path(first.centre).is_some_and(|p| p.closed);
+        let closed = self
+            .drawing
+            .editor
+            .doc
+            .path(first.centre)
+            .is_some_and(|p| p.closed);
         if walls.len() == 1 && !closed {
             for (which, label) in [(0, "Joins at its start"), (1, "Joins at its end")] {
                 let mut join = first.ends[which].join;
@@ -215,7 +226,8 @@ impl DriftApp {
                     .on_hover_text("Off: this end stays capped and overlaps what it meets")
                     .changed()
                 {
-                    self.editor
+                    self.drawing
+                        .editor
                         .edit_walls(&walls, "Wall joins", |w| w.ends[which].join = join);
                 }
             }
@@ -227,23 +239,26 @@ impl DriftApp {
                     .on_hover_text("Join these two walls where they come nearest: an L, or a T")
                     .clicked()
             {
-                self.editor.join_walls(&walls);
+                self.drawing.editor.join_walls(&walls);
             }
             if ui
                 .button("Unjoin")
                 .on_hover_text("Stop joining where they meet: the ends are capped and overlap")
                 .clicked()
             {
-                self.editor.unjoin_walls(&walls);
+                self.drawing.editor.unjoin_walls(&walls);
             }
         });
         if walls.len() == 1 {
             let w = walls[0];
             let segs = self
+                .drawing
                 .editor
                 .doc
                 .wall(w)
-                .and_then(|wall| drift_geom::walls::regen::centreline(&self.editor.doc, wall).ok())
+                .and_then(|wall| {
+                    drift_geom::walls::regen::centreline(&self.drawing.editor.doc, wall).ok()
+                })
                 .map(|(s, ..)| s)
                 .unwrap_or_default();
             theme::section(ui, "Segments");
@@ -266,7 +281,7 @@ impl DriftApp {
                 });
             }
             if let Some(k) = split {
-                self.editor.split_wall(w, k);
+                self.drawing.editor.split_wall(w, k);
             }
             ui.add_space(6.0);
             ui.horizontal_wrapped(|ui| {
@@ -275,20 +290,20 @@ impl DriftApp {
                     .on_hover_text("A dimension of its thickness: type into it to change it")
                     .clicked()
                 {
-                    self.editor.show_wall_thickness(w);
+                    self.drawing.editor.show_wall_thickness(w);
                 }
                 if ui
                     .button("Explode")
                     .on_hover_text("Plain lines, arcs and a fill: no longer a wall")
                     .clicked()
                 {
-                    self.editor.explode_walls(&[w]);
+                    self.drawing.editor.explode_walls(&[w]);
                 }
             });
         } else {
             ui.add_space(6.0);
             if ui.button("Explode").clicked() {
-                self.editor.explode_walls(&walls);
+                self.drawing.editor.explode_walls(&walls);
             }
         }
         true

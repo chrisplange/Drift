@@ -39,8 +39,10 @@ impl DriftApp {
             let started = dir
                 .ok_or_else(|| "no folder for the link file".to_owned())
                 .and_then(|dir| {
-                    LinkServer::start(&dir, &self.file.name, move || waker.request_repaint())
-                        .map_err(|e| e.to_string())
+                    LinkServer::start(&dir, &self.drawing.file.name, move || {
+                        waker.request_repaint()
+                    })
+                    .map_err(|e| e.to_string())
                 });
             match started {
                 Ok(server) => self.link.server = Some(server),
@@ -55,14 +57,14 @@ impl DriftApp {
         // every few seconds), and whenever the drawing's name changes.
         let focused = ctx.input(|i| i.focused);
         let (at, name) = &self.link.touched;
-        if (focused && now - at > 3.0) || *name != self.file.name {
-            self.link.touched = (now, self.file.name.clone());
+        if (focused && now - at > 3.0) || *name != self.drawing.file.name {
+            self.link.touched = (now, self.drawing.file.name.clone());
             if let Some(server) = &mut self.link.server {
-                server.touch(&self.file.name);
+                server.touch(&self.drawing.file.name);
             }
         }
         // Calls wait while the user is in the middle of an edit.
-        while !self.tool.is_busy() && !self.editor.doc.in_transaction() {
+        while !self.tool.is_busy() && !self.drawing.editor.doc.in_transaction() {
             let Some(job) = self.link.server.as_ref().and_then(LinkServer::poll) else {
                 break;
             };
@@ -72,12 +74,12 @@ impl DriftApp {
 
     fn run_link_call(&mut self, ctx: &egui::Context, job: agent::link::Job, now: f64) {
         let before: std::collections::BTreeSet<_> =
-            self.editor.doc.iter().map(|(id, _)| id).collect();
+            self.drawing.editor.doc.iter().map(|(id, _)| id).collect();
         let dirty = self.is_dirty();
         let doc = LiveDoc {
-            editor: &mut self.editor,
-            path: self.file.path.clone(),
-            meta: self.file.meta.clone(),
+            editor: &mut self.drawing.editor,
+            path: self.drawing.file.path.clone(),
+            meta: self.drawing.file.meta.clone(),
             dirty,
             ctx: ctx.clone(),
             new_rules: self.new_rules,
@@ -85,7 +87,7 @@ impl DriftApp {
         let (out, change) = agent::call_live(doc, &job.tool, &job.args, job.root.clone());
         match change {
             Some(LiveChange::Replaced { path, meta }) => {
-                let doc = std::mem::take(&mut self.editor.doc);
+                let doc = std::mem::take(&mut self.drawing.editor.doc);
                 let name = path
                     .as_ref()
                     .and_then(|p| p.file_name())
@@ -96,28 +98,30 @@ impl DriftApp {
                 self.replace_document(doc, name, path, meta, true);
             }
             Some(LiveChange::Saved { path, meta }) => {
-                self.file.name = path
+                self.drawing.file.name = path
                     .file_name()
-                    .map_or(self.file.name.clone(), |n| n.to_string_lossy().into_owned());
-                self.file.meta = meta;
-                self.file.clean_revision = Some(self.editor.doc.revision());
+                    .map_or(self.drawing.file.name.clone(), |n| {
+                        n.to_string_lossy().into_owned()
+                    });
+                self.drawing.file.meta = meta;
+                self.drawing.file.clean_revision = Some(self.drawing.editor.doc.revision());
                 self.remember(path.clone());
-                self.file.path = Some(path);
+                self.drawing.file.path = Some(path);
             }
             None => {
                 // What the call made is picked, so it shows on the canvas.
-                let doc = &self.editor.doc;
+                let doc = &self.drawing.editor.doc;
                 let made: std::collections::BTreeSet<_> = doc
                     .iter()
                     .filter(|(id, e)| !before.contains(id) && !e.kind.is_point())
                     .map(|(id, _)| id)
                     .collect();
                 if !made.is_empty() {
-                    self.editor.selection = made;
+                    self.drawing.editor.selection = made;
                 }
             }
         }
-        self.editor.sync();
+        self.drawing.editor.sync();
         if out.is_error
             && let Some(e) = out.json["error"].as_str()
         {

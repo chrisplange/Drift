@@ -62,8 +62,16 @@ impl DriftApp {
         current: Option<&TextFont>,
     ) -> Option<FontPick> {
         let mut picked = None;
-        let own: Vec<String> = self.editor.doc.fonts().embedded.keys().cloned().collect();
-        let drawing = self.editor.doc.fonts().drawing.clone();
+        let own: Vec<String> = self
+            .drawing
+            .editor
+            .doc
+            .fonts()
+            .embedded
+            .keys()
+            .cloned()
+            .collect();
+        let drawing = self.drawing.editor.doc.fonts().drawing.clone();
         // Sketch text chooses among the built-in fonts; the drawing's font, the standard look.
         let for_text = current.is_some();
         let is = |family: &str| match current {
@@ -151,7 +159,7 @@ impl DriftApp {
     /// The drawing's own font, in the Drafting section: what dimensions, notes, view titles
     /// and title blocks are set in.
     pub(crate) fn drawing_font_row(&mut self, ui: &mut egui::Ui) {
-        let drawing = self.editor.doc.fonts().drawing.clone();
+        let drawing = self.drawing.editor.doc.fonts().drawing.clone();
         let shown = drawing
             .clone()
             .unwrap_or_else(|| "Standard (Helvetica)".to_owned());
@@ -162,17 +170,17 @@ impl DriftApp {
         let now = ui.input(|i| i.time);
         match picked {
             Some(FontPick::Standard) if drawing.is_some() => {
-                self.editor.set_drawing_font(None);
+                self.drawing.editor.set_drawing_font(None);
             }
             Some(FontPick::Family(family)) if drawing.as_deref() != Some(family.as_str()) => {
-                if let Some(note) = self.editor.set_drawing_font(Some(family)) {
+                if let Some(note) = self.drawing.editor.set_drawing_font(Some(family)) {
                     self.set_status(note, false, now);
                 }
             }
             Some(FontPick::AddFile) => self.pick_file(crate::app::document::Picking::Font),
             _ => {}
         }
-        if let Some(family) = self.editor.drawing_font_missing() {
+        if let Some(family) = self.drawing.editor.drawing_font_missing() {
             ui.label(
                 egui::RichText::new(format!(
                     "{family} isn't in this drawing or on this computer: the standard font is \
@@ -182,7 +190,13 @@ impl DriftApp {
                 .color(egui::Color32::from_rgb(0xff, 0x9f, 0x0a)),
             );
         } else if let Some(family) = &drawing {
-            let kept = self.editor.doc.fonts().embedded.contains_key(family);
+            let kept = self
+                .drawing
+                .editor
+                .doc
+                .fonts()
+                .embedded
+                .contains_key(family);
             ui.label(
                 egui::RichText::new(if kept {
                     "Dimensions, notes and sheets are set in it. It is kept in the drawing and \
@@ -199,8 +213,8 @@ impl DriftApp {
 
     /// Every way a drawing's fonts add to its file, for the Drafting section.
     pub(crate) fn kept_fonts_note(&self, ui: &mut egui::Ui) {
-        let fonts = self.editor.doc.fonts();
-        let used = self.editor.doc.fonts_in_use();
+        let fonts = self.drawing.editor.doc.fonts();
+        let used = self.drawing.editor.doc.fonts_in_use();
         let kept: usize = fonts
             .embedded
             .iter()
@@ -223,19 +237,19 @@ impl DriftApp {
     /// Whether a text is typed straight into on the canvas (large enough on screen to see
     /// a caret in), or in a field under it.
     fn text_is_live(&self, t: &SketchText) -> bool {
-        t.height * self.camera.scale >= LIVE_MIN_POINTS
+        t.height * self.drawing.view.camera.scale >= LIVE_MIN_POINTS
     }
 
     /// Stop typing into the text on the canvas.
     fn finish_text(&mut self) {
-        self.editor.editing_text = None;
-        self.editor.text_caret_at = None;
-        self.text_typing = None;
-        self.text_focused = None;
-        self.text_cursor = None;
-        self.text_set_cursor = None;
-        self.text_grip = false;
-        self.text_touched = false;
+        self.drawing.editor.editing_text = None;
+        self.drawing.editor.text_caret_at = None;
+        self.drawing.text_typing = None;
+        self.drawing.text_focused = None;
+        self.drawing.text_cursor = None;
+        self.drawing.text_set_cursor = None;
+        self.drawing.text_grip = false;
+        self.drawing.text_touched = false;
     }
 
     /// The pointer in the text being typed: a press puts the caret there (Shift: selects up
@@ -248,11 +262,11 @@ impl DriftApp {
         response: &egui::Response,
         map: &ScreenMap,
     ) -> bool {
-        let Some(id) = self.editor.editing_text else {
-            self.text_grip = false;
+        let Some(id) = self.drawing.editor.editing_text else {
+            self.drawing.text_grip = false;
             return false;
         };
-        let Some(t) = self.editor.doc.text(id).cloned() else {
+        let Some(t) = self.drawing.editor.doc.text(id).cloned() else {
             return false;
         };
         let (pressed, down, at, shift) = ui.input(|i| {
@@ -264,7 +278,7 @@ impl DriftApp {
             )
         });
         let para = paragraph(&t);
-        let from = self.text_cursor.map(|c| c.1);
+        let from = self.drawing.text_cursor.map(|c| c.1);
         if pressed && response.is_pointer_button_down_on() {
             let inside = self.text_is_live(&t)
                 && at.is_some_and(|at| self.in_text(id, map.to_world(at), map));
@@ -273,28 +287,28 @@ impl DriftApp {
                 return false;
             };
             let to = para.index_at(map.to_world(at));
-            self.text_set_cursor = Some((to, from.filter(|_| shift).unwrap_or(to)));
-            self.text_grip = true;
-            self.text_touched = true;
+            self.drawing.text_set_cursor = Some((to, from.filter(|_| shift).unwrap_or(to)));
+            self.drawing.text_grip = true;
+            self.drawing.text_touched = true;
             return true;
         }
-        if !self.text_grip {
+        if !self.drawing.text_grip {
             return false;
         }
-        self.text_touched = true;
+        self.drawing.text_touched = true;
         if down {
             if let Some(at) = at {
                 let to = para.index_at(map.to_world(at));
-                self.text_set_cursor = Some((to, from.unwrap_or(to)));
+                self.drawing.text_set_cursor = Some((to, from.unwrap_or(to)));
             }
         } else {
-            self.text_grip = false;
-            let caret = self.text_cursor.map_or(0, |c| c.0);
+            self.drawing.text_grip = false;
+            let caret = self.drawing.text_cursor.map_or(0, |c| c.0);
             if response.triple_clicked() {
-                self.text_set_cursor = Some((t.text.chars().count(), 0));
+                self.drawing.text_set_cursor = Some((t.text.chars().count(), 0));
             } else if response.double_clicked() {
                 let (start, end) = drift_draft::outline::word_range(&t.text, caret);
-                self.text_set_cursor = Some((end, start));
+                self.drawing.text_set_cursor = Some((end, start));
             }
         }
         true
@@ -302,7 +316,7 @@ impl DriftApp {
 
     /// Whether `p` is on the text being typed, with room to spare around it.
     fn in_text(&self, id: drift_core::TextId, p: DVec2, map: &ScreenMap) -> bool {
-        let Some(bounds) = self.editor.text_outline(id).map(|o| o.bounds) else {
+        let Some(bounds) = self.drawing.editor.text_outline(id).map(|o| o.bounds) else {
             return false;
         };
         let pad = 10.0 / map.camera.scale;
@@ -318,12 +332,12 @@ impl DriftApp {
     /// under the text when it is too small for that. Return, Esc or a click elsewhere
     /// finishes; Shift+Return starts a new line.
     pub(crate) fn text_editor(&mut self, ui: &mut egui::Ui, map: &ScreenMap, on: &egui::Painter) {
-        let Some(id) = self.editor.editing_text else {
-            self.text_focused = None;
-            self.text_cursor = None;
+        let Some(id) = self.drawing.editor.editing_text else {
+            self.drawing.text_focused = None;
+            self.drawing.text_cursor = None;
             return;
         };
-        let Some(t) = self.editor.doc.text(id).cloned() else {
+        let Some(t) = self.drawing.editor.doc.text(id).cloned() else {
             self.finish_text();
             return;
         };
@@ -331,23 +345,23 @@ impl DriftApp {
         let now = ctx.input(|i| i.time);
         let live = self.text_is_live(&t);
         let field = egui::Id::new("text_edit_field");
-        let starting = self.text_focused != Some(id);
+        let starting = self.drawing.text_focused != Some(id);
         let count = t.text.chars().count();
         let para = paragraph(&t);
 
         // Where the typing starts: at the click that began it, or at the end.
-        if let Some(p) = self.editor.text_caret_at.take() {
+        if let Some(p) = self.drawing.editor.text_caret_at.take() {
             let at = if live { para.index_at(p) } else { count };
-            self.text_set_cursor = Some((at, at));
-        } else if starting && self.text_set_cursor.is_none() {
-            self.text_set_cursor = Some((count, count));
+            self.drawing.text_set_cursor = Some((at, at));
+        } else if starting && self.drawing.text_set_cursor.is_none() {
+            self.drawing.text_set_cursor = Some((count, count));
         }
         // Up, Down, Home and End go by the lines as they are set on the canvas, which the
         // field knows nothing of.
         if live
             && !starting
             && ctx.memory(|m| m.has_focus(field))
-            && let Some((caret, from)) = self.text_cursor
+            && let Some((caret, from)) = self.drawing.text_cursor
         {
             for key in [
                 egui::Key::ArrowUp,
@@ -369,11 +383,11 @@ impl DriftApp {
                         egui::Key::Home => para.line_ends(caret).0,
                         _ => para.line_ends(caret).1,
                     };
-                    self.text_set_cursor = Some((to, if extend { from } else { to }));
+                    self.drawing.text_set_cursor = Some((to, if extend { from } else { to }));
                 }
             }
         }
-        if let Some((caret, from)) = self.text_set_cursor.take() {
+        if let Some((caret, from)) = self.drawing.text_set_cursor.take() {
             let mut state = egui::TextEdit::load_state(&ctx, field).unwrap_or_default();
             state
                 .cursor
@@ -382,13 +396,13 @@ impl DriftApp {
                     egui::text::CCursor::new(caret.min(count)),
                 )));
             state.store(&ctx, field);
-            self.text_blink = now;
+            self.drawing.text_blink = now;
         }
 
         let mut words = t.text.clone();
         let response = if live {
             // Out of sight, by the caret (where a window for composing characters opens).
-            let caret = self.text_cursor.map_or(count, |c| c.0);
+            let caret = self.drawing.text_cursor.map_or(count, |c| c.0);
             let at = map.to_screen(para.caret(caret)[0]);
             let mut hidden = ui.new_child(
                 egui::UiBuilder::new()
@@ -402,6 +416,7 @@ impl DriftApp {
         } else {
             // Under the text's lowest line, so the field doesn't cover what is being typed.
             let low = self
+                .drawing
                 .editor
                 .text_outline(id)
                 .map_or(t.at.y, |o| o.bounds.min.y.min(t.at.y));
@@ -428,16 +443,16 @@ impl DriftApp {
         };
         if response.changed() {
             // Typing is one undo step per visit to the text.
-            let continuing = self.text_typing == Some(id);
-            self.editor.type_text(id, &words, continuing);
-            self.text_typing = Some(id);
-            self.text_blink = now;
+            let continuing = self.drawing.text_typing == Some(id);
+            self.drawing.editor.type_text(id, &words, continuing);
+            self.drawing.text_typing = Some(id);
+            self.drawing.text_blink = now;
         }
         let enter = ctx.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.shift);
         if starting {
             response.request_focus();
-            self.text_focused = Some(id);
-        } else if std::mem::take(&mut self.text_touched) {
+            self.drawing.text_focused = Some(id);
+        } else if std::mem::take(&mut self.drawing.text_touched) {
             // A press or a click in the text took the keyboard from the field: give it back.
             response.request_focus();
         } else if !response.has_focus() || enter {
@@ -448,16 +463,16 @@ impl DriftApp {
         let cursor = egui::TextEdit::load_state(&ctx, field)
             .and_then(|state| state.cursor.char_range())
             .map(|r| (r.primary.index.0, r.secondary.index.0));
-        if cursor != self.text_cursor {
-            self.text_blink = now;
+        if cursor != self.drawing.text_cursor {
+            self.drawing.text_blink = now;
         }
-        self.text_cursor = cursor;
+        self.drawing.text_cursor = cursor;
         if !live {
             return;
         }
 
         // The caret and the selection, on the text as it now is.
-        let Some(t) = self.editor.doc.text(id).cloned() else {
+        let Some(t) = self.drawing.editor.doc.text(id).cloned() else {
             return;
         };
         let para = paragraph(&t);
@@ -473,7 +488,7 @@ impl DriftApp {
         }
         let [foot, head] = para.caret(caret).map(|p| map.to_screen(p));
         // Steady for half a second after it moves, then half a second off and on.
-        let since = (now - self.text_blink).max(0.0);
+        let since = (now - self.drawing.text_blink).max(0.0);
         if since % 1.0 < 0.5 {
             let ink = if dark {
                 egui::Color32::WHITE
@@ -496,15 +511,15 @@ impl DriftApp {
         ctx.output_mut(|o| {
             o.ime = Some(egui::output::IMEOutput {
                 purpose: egui::IMEPurpose::Normal,
-                rect: self.canvas_rect,
+                rect: self.drawing.view.canvas_rect,
                 cursor_rect: egui::Rect::from_two_pos(foot, head),
                 should_interrupt_composition: false,
             });
         });
         // An I-beam over the text.
-        if !self.text_grip
+        if !self.drawing.text_grip
             && let Some(at) = ctx.input(|i| i.pointer.hover_pos())
-            && self.canvas_rect.contains(at)
+            && self.drawing.view.canvas_rect.contains(at)
             && self.in_text(id, map.to_world(at), map)
             && ctx.layer_id_at(at) == Some(ui.layer_id())
         {
@@ -514,17 +529,22 @@ impl DriftApp {
 
     /// Edit the picked text: its words, size, angle and font; convert it to curves.
     pub(crate) fn text_inspector(&mut self, ui: &mut egui::Ui) -> bool {
-        let Some(id) = self.editor.sole_text() else {
+        let Some(id) = self.drawing.editor.sole_text() else {
             return false;
         };
-        let Some(t) = self.editor.doc.text(id).cloned() else {
-            self.editor.selected_texts.clear();
+        let Some(t) = self.drawing.editor.doc.text(id).cloned() else {
+            self.drawing.editor.selected_texts.clear();
             return false;
         };
-        let units = self.editor.doc.units();
-        let layer = self.editor.doc.layer(t.layer).map_or(String::new(), |l| {
-            format!("{} · on layer {}", t.font.label(), l.name)
-        });
+        let units = self.drawing.editor.doc.units();
+        let layer = self
+            .drawing
+            .editor
+            .doc
+            .layer(t.layer)
+            .map_or(String::new(), |l| {
+                format!("{} · on layer {}", t.font.label(), l.name)
+            });
         app::panels::title(ui, Some(ToolKind::Text), "Text", &layer);
         ui.add_space(4.0);
         let mut words = t.text.clone();
@@ -541,12 +561,12 @@ impl DriftApp {
             .on_hover_text("Shift+Enter starts a new line");
         if edit.changed() {
             // Typing is one undo step per visit to the field.
-            let continuing = self.text_typing == Some(id);
-            self.editor.type_text(id, &words, continuing);
-            self.text_typing = Some(id);
+            let continuing = self.drawing.text_typing == Some(id);
+            self.drawing.editor.type_text(id, &words, continuing);
+            self.drawing.text_typing = Some(id);
         }
         if edit.lost_focus() {
-            self.text_typing = None;
+            self.drawing.text_typing = None;
         }
         let unit = units.length.mm_per_unit();
         let mut edited = t.clone();
@@ -657,7 +677,7 @@ impl DriftApp {
             Some(FontPick::BuiltIn(font)) => edited.font = font,
             Some(FontPick::Family(family)) => {
                 // Kept in the drawing where its licence and size allow, so it travels.
-                if let Err(why) = self.editor.embed_font(&family)
+                if let Err(why) = self.drawing.editor.embed_font(&family)
                     && drift_platform::fonts::load(&family).is_some()
                 {
                     let now = ui.input(|i| i.time);
@@ -681,8 +701,8 @@ impl DriftApp {
             );
         }
         if edited != t {
-            self.editor.prefs.text_height = edited.height;
-            self.editor.update_text(id, |x| *x = edited);
+            self.drawing.editor.prefs.text_height = edited.height;
+            self.drawing.editor.update_text(id, |x| *x = edited);
         }
         ui.add_space(6.0);
         ui.horizontal_wrapped(|ui| {
@@ -691,14 +711,14 @@ impl DriftApp {
                 .on_hover_text("Replace the text with its outlines as curves and lines (grouped)")
                 .clicked()
             {
-                let n = self.editor.convert_text(id);
+                let n = self.drawing.editor.convert_text(id);
                 let now = ui.input(|i| i.time);
                 self.set_status(format!("Converted the text into {n} curves"), false, now);
             }
         });
         ui.add_space(16.0);
         if theme::danger_button(ui, "Delete").clicked() {
-            self.editor.remove_text(id);
+            self.drawing.editor.remove_text(id);
         }
         true
     }

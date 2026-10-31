@@ -81,6 +81,10 @@ pub(super) struct Grab {
     pub(super) detach: bool,
     /// Moving by dragging with the mouse: it ends when the button is let go. None for G.
     pub(super) by_mouse: Option<MouseMove>,
+    /// The move was started on a copy just made by Duplicate or Paste of these originals
+    /// (none for Paste): cancelling removes the copy, which was never meant to stay stacked
+    /// on them, and picks the originals again (#264).
+    pub(super) from_copy: Option<crate::clipboard::Picked>,
 }
 
 /// A move by dragging with the mouse.
@@ -113,6 +117,7 @@ impl Grab {
             riders: Default::default(),
             detach: false,
             by_mouse: None,
+            from_copy: None,
         }
     }
 
@@ -396,12 +401,22 @@ impl SelectTool {
     }
 
     pub(super) fn cancel_grab(&mut self, ed: &mut Editor) -> bool {
-        if self.grab.take().is_none() {
+        let Some(grab) = self.grab.take() else {
             return false;
-        }
+        };
         ed.region_motion = None;
         ed.doc.rollback();
         ed.sync();
+        // A copy just made by Duplicate or Paste and not placed: it would sit stacked on the
+        // original, so cancelling removes it (one step back, kept on Redo) and picks the
+        // originals again (#264).
+        if let Some(originals) = grab.from_copy
+            && matches!(ed.history.undo_label(), Some("Duplicate" | "Paste"))
+            && ed.undo()
+        {
+            ed.pick(&originals);
+            ed.out.notice = Some("Copy removed · Redo brings it back".into());
+        }
         true
     }
 
@@ -1352,6 +1367,12 @@ impl Tool for SelectTool {
                 }
                 None => {}
             },
+        }
+    }
+
+    fn grab_from_copy(&mut self, originals: crate::clipboard::Picked) {
+        if let Some(grab) = self.grab.as_mut().filter(|g| g.by_mouse.is_none()) {
+            grab.from_copy = Some(originals);
         }
     }
 

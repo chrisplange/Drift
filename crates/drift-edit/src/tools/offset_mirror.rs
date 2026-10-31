@@ -169,8 +169,10 @@ impl Tool for MirrorTool {
                     return;
                 };
                 let ids: Vec<EntityId> = ed.selection.iter().copied().collect();
+                let instances: Vec<drift_core::InstanceId> =
+                    ed.selected_instances.iter().copied().collect();
                 let riders = ed.riders();
-                if ids.iter().all(|id| *id == axis) && riders.is_empty() {
+                if ids.iter().all(|id| *id == axis) && instances.is_empty() && riders.is_empty() {
                     ed.out.notice = Some(
                         "Mirror: select the geometry to mirror first (Select tool), then pick \
                          Mirror and click the line"
@@ -178,9 +180,10 @@ impl Tool for MirrorTool {
                     );
                     return;
                 }
-                match ed.mirror_with(&ids, axis, &riders) {
-                    Ok((copies, (texts, notes))) => {
+                match ed.mirror_with(&ids, &instances, axis, &riders) {
+                    Ok((copies, instances, (texts, notes))) => {
                         ed.selection = copies.into_iter().collect();
+                        ed.selected_instances = instances.into_iter().collect();
                         ed.selected_texts = texts.into_iter().collect();
                         ed.selected_annotation = None;
                         ed.annotation_picks = notes

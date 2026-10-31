@@ -919,17 +919,20 @@ impl DriftApp {
         }
     }
 
-    /// Duplicate the selection in place and grab the copy (Shift+D).
+    /// Duplicate the selection in place and grab the copy (Shift+D). Esc then removes the
+    /// copy again and picks the originals, rather than leave it stacked on them (#264).
     pub(crate) fn duplicate_and_grab(&mut self) {
         if self.tool.kind() != ToolKind::Select {
             self.set_tool(ToolKind::Select);
         }
+        let originals = self.drawing.editor.picked();
         if self.drawing.editor.duplicate_selection() > 0 {
             self.tool.key(
                 ToolKey::G,
                 self.drawing.view.pointer.as_ref(),
                 &mut self.drawing.editor,
             );
+            self.tool.grab_from_copy(originals);
         }
     }
 

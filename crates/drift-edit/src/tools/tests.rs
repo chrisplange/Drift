@@ -3300,6 +3300,62 @@ fn duplicate_copies_curves_and_their_relations_then_grabs_the_copy() {
     assert_eq!(lines(&ed.doc), 1);
 }
 
+/// #264: Esc during the move Shift+D starts removes the copy (it was never moved, so it would
+/// sit stacked on the original), picks the originals again, and leaves the copy on Redo.
+#[test]
+fn duplicate_then_esc_removes_the_copy_and_picks_the_originals_again() {
+    let (mut ed, line, _, _) = move_fixture();
+    ed.selection = [line].into();
+    let originals = ed.picked();
+    assert_eq!(ed.duplicate_selection(), 1);
+    assert_eq!(lines(&ed.doc), 2);
+    let mut tool = SelectTool::default();
+    let p = ptr(&ed, &tool, v(5.0, 0.0));
+    assert!(tool.key(ToolKey::G, Some(&p), &mut ed));
+    tool.grab_from_copy(originals);
+    // The copy follows the pointer, then Esc.
+    let moved = ptr(&ed, &tool, v(5.0, 20.0));
+    tool.handle(Input::Hover(moved), &mut ed);
+    assert!(tool.cancel(&mut ed));
+    assert_eq!(lines(&ed.doc), 1, "the copy is gone");
+    assert_eq!(ed.selection, [line].into(), "the original is picked again");
+    assert_eq!(ed.history.redo_label(), Some("Duplicate"));
+    assert!(
+        ed.out
+            .notice
+            .take()
+            .is_some_and(|n| n.contains("Copy removed"))
+    );
+    assert!(ed.redo());
+    assert_eq!(lines(&ed.doc), 2, "Redo brings the copy back");
+    // A plain G is still cancelled by putting things back, nothing undone.
+    ed.selection = [line].into();
+    let p = ptr(&ed, &tool, v(5.0, 0.0));
+    assert!(tool.key(ToolKey::G, Some(&p), &mut ed));
+    assert!(tool.cancel(&mut ed));
+    assert_eq!(lines(&ed.doc), 2);
+}
+
+/// #264: the same for Paste, which has no originals to pick again.
+#[test]
+fn paste_then_esc_removes_the_pasted_copy() {
+    let (mut ed, line, _, _) = move_fixture();
+    ed.selection = [line].into();
+    let fragment = ed.copy_fragment().unwrap();
+    assert_eq!(ed.paste_fragment(&fragment, Some(v(50.0, 50.0))), Ok(1));
+    assert_eq!(lines(&ed.doc), 2);
+    let mut tool = SelectTool::default();
+    let p = ptr(&ed, &tool, v(50.0, 50.0));
+    assert!(tool.key(ToolKey::G, Some(&p), &mut ed));
+    tool.grab_from_copy(Default::default());
+    assert!(tool.cancel(&mut ed));
+    assert_eq!(lines(&ed.doc), 1);
+    assert!(ed.selection.is_empty());
+    assert_eq!(ed.history.redo_label(), Some("Paste"));
+    assert!(ed.redo());
+    assert_eq!(lines(&ed.doc), 2);
+}
+
 #[test]
 fn duplicate_brings_the_fill_of_a_copied_area_and_it_follows_the_copy() {
     let mut ed = Editor::default();
@@ -5545,7 +5601,7 @@ fn mirror_copy_and_delete_take_text_and_annotations_along() {
     };
     pick_all(&mut ed);
     let riders = ed.riders();
-    let (_, (texts, notes)) = ed.mirror_with(&[line], axis, &riders).unwrap();
+    let (_, _, (texts, notes)) = ed.mirror_with(&[line], &[], axis, &riders).unwrap();
     assert_eq!((texts.len(), notes.len()), (1, 3));
     assert_eq!(ed.doc.texts().count(), 2);
     // The free note lands mirrored; the section mark looks the other way.

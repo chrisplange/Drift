@@ -485,24 +485,32 @@ impl DriftApp {
         });
     }
 
-    /// Select the curves that lie on top of others (the later-made of each pair).
+    /// Select the curves that lie on top of others, and the block copies placed on another
+    /// copy (the later-made of each pair).
     pub(crate) fn select_overlapping(&mut self, now: f64) {
+        // (First: cancelling a copy's move can take a copy away.)
+        self.abort_operation();
         let found = self.drawing.editor.overlapping();
-        if found.is_empty() {
-            self.set_status("No curves overlap".into(), false, now);
+        let copies = self.drawing.editor.overlapping_instances();
+        if found.is_empty() && copies.is_empty() {
+            self.set_status("Nothing overlaps".into(), false, now);
             return;
         }
-        self.abort_operation();
         if self.tool.kind() != ToolKind::Select {
             self.set_tool(ToolKind::Select);
         }
         self.drawing.editor.selection = found.iter().copied().collect();
-        self.set_status(
-            format!(
-                "Selected {} overlapping curve(s). Delete removes them and leaves the ones \
-                 underneath",
-                found.len()
+        self.drawing.editor.selected_instances = copies.iter().copied().collect();
+        let what = match (found.len(), copies.len()) {
+            (n, 0) => format!("{n} overlapping curve(s)"),
+            (0, n) => format!("{n} stacked block cop{}", if n == 1 { "y" } else { "ies" }),
+            (n, m) => format!(
+                "{n} overlapping curve(s) and {m} stacked block cop{}",
+                if m == 1 { "y" } else { "ies" }
             ),
+        };
+        self.set_status(
+            format!("Selected {what}. Delete removes them and leaves the ones underneath"),
             false,
             now,
         );
@@ -1290,24 +1298,30 @@ impl DriftApp {
                             "Degrees of freedom: how much the sketch can still move",
                         );
                     }
-                    // Curves drawn on top of others: a warning that selects them when clicked.
-                    // (Not re-counted in the middle of a drag.)
+                    // Curves drawn on top of others, and block copies stacked on another copy
+                    // (#264): a warning that selects them when clicked. (Curves aren't
+                    // re-counted in the middle of a drag; the few copies are.)
                     let overlaps = if self.tool.is_busy() {
                         self.drawing.editor.overlapping_as_last_found()
                     } else {
                         self.drawing.editor.overlapping()
                     };
-                    if !overlaps.is_empty() {
+                    let stacked = self.drawing.editor.overlapping_instances().len();
+                    if !overlaps.is_empty() || stacked > 0 {
                         let amber = egui::Color32::from_rgb(0xff, 0x9f, 0x0a);
-                        let pill =
-                            theme::pill(ui, &format!("{} overlapping", overlaps.len()), amber);
+                        let text = format!("{} overlapping", overlaps.len() + stacked);
+                        let pill = theme::pill(ui, &text, amber);
                         let click = ui
                             .interact(pill.rect, ui.id().with("overlaps"), egui::Sense::click())
                             .on_hover_text(
                                 "Curves drawn on top of other curves (the same line twice, or the \
-                             touching sides of two shapes). Click to select the ones on top; \
-                             Delete then removes them and leaves those underneath.",
+                             touching sides of two shapes), and block copies placed exactly on \
+                             another copy. Click to select the ones on top; Delete then removes \
+                             them and leaves those underneath.",
                             );
+                        click.widget_info(|| {
+                            egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &text)
+                        });
                         if click.clicked() {
                             self.select_overlapping(_now);
                         }

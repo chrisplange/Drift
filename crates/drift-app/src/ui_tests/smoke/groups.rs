@@ -226,7 +226,7 @@ fn smoke_groups_duplicating_a_group_makes_a_group() {
     copied_as_a_group(&mut h, &before, entities, 2);
 }
 
-/// #227: Copy and Paste of a group gives a new group of the copies.
+/// #227: Copy and Paste (and Enter) of a group gives a new group of the copies.
 #[test]
 fn smoke_groups_copy_and_paste_a_group_makes_a_group() {
     let Some(mut h) = harness() else { return };
@@ -240,7 +240,8 @@ fn smoke_groups_copy_and_paste_a_group_makes_a_group() {
     h.run();
     h.event(Event::Paste(text));
     h.run();
-    h.key_press(Key::Escape);
+    // (Enter leaves the copy where it landed; Esc would remove it again, #264.)
+    h.key_press(Key::Enter);
     h.run();
     copied_as_a_group(&mut h, &before, entities, 1);
 }
@@ -274,4 +275,160 @@ fn smoke_groups_mirroring_a_group_makes_a_group() {
         .center();
     click_world(&mut h, on_axis);
     copied_as_a_group(&mut h, &before, entities, 1);
+}
+
+/// An asymmetric shape (a box with one diagonal) drawn at 100..140 × 0..30 and made a block
+/// named "Flag"; its one copy, picked.
+fn flag_block(h: &mut Harness<'_, DriftApp>) -> drift_core::InstanceId {
+    view(h, DVec2::new(80.0, -20.0), DVec2::new(200.0, 50.0));
+    let ed = &mut h.state_mut().drawing.editor;
+    ed.doc.begin();
+    let c = [
+        DVec2::new(100.0, 0.0),
+        DVec2::new(140.0, 0.0),
+        DVec2::new(140.0, 30.0),
+        DVec2::new(100.0, 30.0),
+    ]
+    .map(|p| ed.doc.add_point(p));
+    let mut sides: Vec<EntityId> = (0..4)
+        .map(|i| ed.doc.add_line(c[i], c[(i + 1) % 4]).unwrap())
+        .collect();
+    sides.push(ed.doc.add_line(c[0], c[2]).unwrap());
+    ed.commit("Flag");
+    ed.selection = sides.into_iter().collect();
+    let copy = ed.make_block("Flag").unwrap();
+    h.run();
+    copy
+}
+
+fn copies(h: &Harness<'_, DriftApp>) -> Vec<(drift_core::InstanceId, drift_core::Instance)> {
+    h.state()
+        .drawing
+        .editor
+        .doc
+        .instances()
+        .map(|(id, i)| (id, *i))
+        .collect()
+}
+
+/// #260: Mirror with a block copy picked mirrors the copy: a new copy on the far side of the
+/// line, mirrored, whose points are the mirror images of the original's.
+#[test]
+fn smoke_groups_mirroring_a_block_copy_makes_a_mirrored_copy() {
+    let Some(mut h) = harness() else { return };
+    let copy = flag_block(&mut h);
+    let axis = {
+        let ed = &mut h.state_mut().drawing.editor;
+        ed.doc.begin();
+        let a = ed.doc.add_point(DVec2::new(160.0, -10.0));
+        let b = ed.doc.add_point(DVec2::new(160.0, 40.0));
+        let axis = ed.doc.add_line(a, b).unwrap();
+        ed.commit("Line");
+        axis
+    };
+    click_world(&mut h, DVec2::new(110.0, 10.0));
+    assert_eq!(h.state().drawing.editor.selected_instances, [copy].into());
+    let original = *h.state().drawing.editor.doc.instance(copy).unwrap();
+    palette(&mut h, "Mirror");
+    assert_eq!(h.state().tool.kind(), ToolKind::Mirror);
+    click_world(&mut h, DVec2::new(160.0, 15.0));
+    let _ = axis;
+    let now = copies(&h);
+    assert_eq!(now.len(), 2, "a mirrored copy was placed: {now:?}");
+    let (id, image) = now.into_iter().find(|(id, _)| *id != copy).unwrap();
+    let reflect = |p: DVec2| DVec2::new(320.0 - p.x, p.y);
+    assert!(image.at.distance(reflect(original.at)) < 1e-9, "{image:?}");
+    assert!(image.mirror && !original.mirror);
+    assert!(
+        image.angle.abs() < 1e-9,
+        "a vertical axis keeps the turn: {image:?}"
+    );
+    // The box's corner (a snap point) lands on its mirror image.
+    let corner = original.invert(DVec2::new(100.0, 0.0));
+    assert!(image.apply(corner).distance(DVec2::new(220.0, 0.0)) < 1e-9);
+    assert_eq!(
+        h.state().drawing.editor.selected_instances,
+        [id].into(),
+        "the new copy is picked, as mirrored curves are"
+    );
+    save_png("drift_smoke_block_mirrored.png", &mut h);
+    undo(&mut h);
+    assert_eq!(copies(&h).len(), 1);
+}
+
+/// #264: Shift+D then Esc leaves no copy stacked on the original (the copy is removed, Redo
+/// brings it back); the same for Ctrl+V then Esc.
+#[test]
+fn smoke_groups_shift_d_then_esc_leaves_no_stacked_copy() {
+    let Some(mut h) = harness() else { return };
+    let copy = flag_block(&mut h);
+    click_world(&mut h, DVec2::new(110.0, 10.0));
+    assert_eq!(h.state().drawing.editor.selected_instances, [copy].into());
+    h.hover_at(screen(&h, DVec2::new(110.0, 10.0)));
+    h.run();
+    h.key_press_modifiers(EguiModifiers::SHIFT, Key::D);
+    h.run();
+    assert_eq!(copies(&h).len(), 2, "duplicated, and being moved");
+    assert!(h.state().tool.is_busy());
+    h.key_press(Key::Escape);
+    h.run();
+    assert_eq!(copies(&h).len(), 1, "Esc removed the unmoved copy");
+    assert_eq!(h.state().drawing.editor.selected_instances, [copy].into());
+    assert!(status(&h).contains("Copy removed"), "{}", status(&h));
+    h.key_press_modifiers(EguiModifiers::COMMAND | EguiModifiers::SHIFT, Key::Z);
+    h.run();
+    assert_eq!(copies(&h).len(), 2, "Redo brings the copy back");
+    undo(&mut h);
+    assert_eq!(copies(&h).len(), 1);
+    // Paste under the pointer, then Esc: nothing left behind either.
+    click_world(&mut h, DVec2::new(110.0, 10.0));
+    h.event(Event::Copy);
+    h.run();
+    let text = h.state().drawing.editor.copy_selection().unwrap();
+    h.hover_at(screen(&h, DVec2::new(170.0, 10.0)));
+    h.run();
+    h.event(Event::Paste(text));
+    h.run();
+    assert_eq!(copies(&h).len(), 2, "pasted, and being moved");
+    h.key_press(Key::Escape);
+    h.run();
+    assert_eq!(copies(&h).len(), 1, "Esc removed the pasted copy");
+    // Shift+D and a click still place a copy, in two undo steps (Duplicate, Move).
+    click_world(&mut h, DVec2::new(110.0, 10.0));
+    h.hover_at(screen(&h, DVec2::new(110.0, 10.0)));
+    h.run();
+    h.key_press_modifiers(EguiModifiers::SHIFT, Key::D);
+    h.run();
+    click_world(&mut h, DVec2::new(170.0, 10.0));
+    assert_eq!(copies(&h).len(), 2);
+    undo(&mut h);
+    undo(&mut h);
+    assert_eq!(copies(&h).len(), 1);
+}
+
+/// #264: two copies at the same place and transform count as overlapping: the status bar's
+/// pill says so, Select overlapping picks the later one, Delete removes it.
+#[test]
+fn smoke_groups_stacked_copies_show_as_overlapping() {
+    let Some(mut h) = harness() else { return };
+    let copy = flag_block(&mut h);
+    let second = {
+        let ed = &mut h.state_mut().drawing.editor;
+        let i = *ed.doc.instance(copy).unwrap();
+        ed.place_instance(i.block, i.at, i.angle, i.mirror);
+        *ed.selected_instances.iter().next().unwrap()
+    };
+    h.key_press(Key::Escape);
+    h.run();
+    h.run();
+    h.get_by_label("1 overlapping");
+    palette(&mut h, "Select overlapping");
+    assert_eq!(h.state().drawing.editor.selected_instances, [second].into());
+    assert!(h.state().drawing.editor.selection.is_empty());
+    h.key_press(Key::Delete);
+    h.run();
+    let left = copies(&h);
+    assert_eq!(left.len(), 1);
+    assert_eq!(left[0].0, copy, "the earlier copy stays");
+    assert!(h.state().drawing.editor.overlapping_instances().is_empty());
 }

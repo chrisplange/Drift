@@ -467,10 +467,10 @@ fn smoke_fills_a_filled_outline_of_lines_is_a_shape() {
         h.query_all_by_label("Stroke").next().is_some(),
         "the shape's Inspector"
     );
-    // Shift+D: a copy, with its fill.
+    // Shift+D: a copy, with its fill (Enter leaves it where it is; Esc would remove it).
     h.key_press_modifiers(EguiModifiers::SHIFT, Key::D);
     h.run();
-    h.key_press(Key::Escape);
+    h.key_press(Key::Enter);
     h.run();
     assert_eq!(
         h.state().drawing.editor.doc.fills().count(),

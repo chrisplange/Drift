@@ -4,7 +4,7 @@
 //! shapes, the areas, the analysis and the undo steps alike — and undo takes both back the
 //! same way.
 //!
-//! `cargo test -p drift-app areas_props` (the `*_heavy` versions: `--release -- --ignored`).
+//! `cargo test -p drift-edit areas_props` (the `*_heavy` versions: `--release -- --ignored`).
 
 use drift_core::{DVec2, Document, EntityId};
 use proptest::prelude::*;

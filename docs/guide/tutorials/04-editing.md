@@ -131,6 +131,8 @@ Other ways to move:
 - Ctrl+C, Ctrl+X and Ctrl+V copy, cut and paste. Paste lands under the pointer and goes
   straight into a move. Ctrl+Shift+V pastes in place. Copies keep their relations and
   dimensions, and the clipboard works between Drift windows.
+- Esc (or a right-click) during that move removes the copy again instead of leaving it
+  stacked on the original; Redo brings it back. A click or Enter places it.
 
 ## Rotate with R
 

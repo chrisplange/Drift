@@ -493,6 +493,11 @@ pub trait Tool {
     }
 
     /// Copies of blocks that must not be snapped to (copies moving with the selection).
+    /// The move just started by G was started on a copy just made (Duplicate or Paste) of
+    /// `originals`: cancelling it removes the copy instead of leaving it stacked on them
+    /// (#264). Only the select tool has such a move.
+    fn grab_from_copy(&mut self, _originals: crate::clipboard::Picked) {}
+
     fn snap_excludes_copy(&self, _id: drift_core::InstanceId) -> bool {
         false
     }

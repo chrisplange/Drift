@@ -1069,6 +1069,42 @@ mod tests {
         (Editor::new(doc), lines)
     }
 
+    /// #264: copies placed exactly on another copy of the same block (same turn, scale and
+    /// mirroring) count as overlapping, the later-made one of each pair; moving one apart
+    /// clears it.
+    #[test]
+    fn stacked_copies_are_overlapping() {
+        let (mut ed, lines) = square();
+        ed.selection = lines;
+        let first = ed.make_block("Table").unwrap();
+        let block = ed.doc.instance(first).unwrap().block;
+        assert!(ed.overlapping_instances().is_empty());
+        let at = DVec2::new(1000.0, 0.0);
+        ed.place_instance(block, at, 0.0, false);
+        let a = *ed.selected_instances.iter().next().unwrap();
+        ed.place_instance(block, at, 0.0, false);
+        let b = *ed.selected_instances.iter().next().unwrap();
+        // Alike in place only: not stacked.
+        ed.place_instance(block, at, 90.0, false);
+        ed.place_instance(block, at, 0.0, true);
+        ed.place_instance(block, DVec2::new(2000.0, 0.0), 0.0, false);
+        assert_eq!(*ed.overlapping_instances(), vec![b]);
+        // Found once per change.
+        assert!(std::rc::Rc::ptr_eq(
+            &ed.overlapping_instances(),
+            &ed.overlapping_instances()
+        ));
+        // Moved apart: no longer stacked.
+        let moved = *ed.doc.instance(b).unwrap();
+        ed.doc.begin();
+        ed.move_instances(&[(b, moved)], DVec2::new(50.0, 0.0));
+        ed.commit("Move");
+        assert!(ed.overlapping_instances().is_empty());
+        ed.undo();
+        assert_eq!(*ed.overlapping_instances(), vec![b]);
+        let _ = a;
+    }
+
     #[test]
     fn blocks_and_groups_are_renamed_by_what_is_picked() {
         let (mut ed, lines) = square();

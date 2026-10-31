@@ -4776,9 +4776,10 @@ fn copy_paste_and_nudge_on_the_canvas() {
         ((pasted.min + pasted.max) * 0.5 - at).length() < 1.0,
         "{pasted:?}"
     );
-    // The paste went straight into a move; Esc leaves the copy where it landed.
+    // The paste went straight into a move; Enter places the copy where it landed (Esc
+    // would remove it again, #264).
     assert!(h.state().tool.is_modal(), "moving the pasted copy");
-    h.key_press(Key::Escape);
+    h.key_press(Key::Enter);
     h.run();
     assert!(!h.state().tool.is_modal());
     assert_eq!(lines(&h), 8);

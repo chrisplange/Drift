@@ -22,6 +22,13 @@ impl Overlaps {
     }
 }
 
+/// Block copies placed exactly on another copy of the same block, as last found.
+pub(crate) struct CopyOverlaps {
+    revision: u64,
+    lineage: u64,
+    found: std::rc::Rc<Vec<drift_core::InstanceId>>,
+}
+
 impl Editor {
     pub fn delete_selection(&mut self) {
         self.delete_selection_with(&[]);
@@ -84,13 +91,7 @@ impl Editor {
     /// block copies, text and annotations. The copies become the selection. Returns how many
     /// things were copied.
     pub fn duplicate_selection(&mut self) -> usize {
-        let picked = crate::clipboard::Picked {
-            curves: self.selection.iter().copied().collect(),
-            instances: self.selected_instances.iter().copied().collect(),
-            texts: self.selected_texts.iter().copied().collect(),
-            fills: self.selected_fills.iter().copied().collect(),
-            annotations: self.picked_notes(),
-        };
+        let picked = self.picked();
         if picked.curves.is_empty()
             && picked.instances.is_empty()
             && picked.texts.is_empty()
@@ -197,6 +198,58 @@ impl Editor {
                 found
             }
         }
+    }
+
+    /// Block copies placed on another copy of the same block with the same turn, scale and
+    /// mirroring (the later-made one of each pair): a stray Shift+D or paste leaves them
+    /// stacked and invisible (#264). Found once per change over all the copies: a drawing
+    /// has few, so no incremental re-check is kept, unlike for curves.
+    pub fn overlapping_instances(&self) -> std::rc::Rc<Vec<drift_core::InstanceId>> {
+        let (revision, lineage) = (self.doc.revision(), self.doc.lineage());
+        let mut cache = self.copy_overlap_cache.borrow_mut();
+        if let Some(c) = &*cache
+            && c.revision == revision
+            && c.lineage == lineage
+        {
+            return c.found.clone();
+        }
+        let found = std::rc::Rc::new(self.stacked_instances());
+        *cache = Some(CopyOverlaps {
+            revision,
+            lineage,
+            found: found.clone(),
+        });
+        found
+    }
+
+    /// The later-made copy of each pair of copies placed alike: O(n log n + Σ k²) over the n
+    /// copies, k per block.
+    fn stacked_instances(&self) -> Vec<drift_core::InstanceId> {
+        let mut by_block: BTreeMap<
+            drift_core::BlockId,
+            Vec<(drift_core::InstanceId, &drift_core::Instance)>,
+        > = BTreeMap::new();
+        for (id, i) in self.doc.instances() {
+            by_block.entry(i.block).or_default().push((id, i));
+        }
+        let alike = |a: &drift_core::Instance, b: &drift_core::Instance| {
+            let turn = (a.angle - b.angle).rem_euclid(360.0);
+            a.mirror == b.mirror
+                && (turn <= 1e-9 || 360.0 - turn <= 1e-9)
+                && (a.scale - b.scale).abs() <= 1e-9
+                && a.at.distance(b.at) <= drift_core::tolerance::same(a.at.abs().max_element())
+        };
+        let mut found = Vec::new();
+        for copies in by_block.values() {
+            // (Ids rise as copies are made: the later one of each pair is listed.)
+            for (k, (id, i)) in copies.iter().enumerate() {
+                if copies[..k].iter().any(|(_, earlier)| alike(earlier, i)) {
+                    found.push(*id);
+                }
+            }
+        }
+        found.sort_unstable();
+        found
     }
 
     /// The overlapping curves as last found (not looked for again): what the status bar

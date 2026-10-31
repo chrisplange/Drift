@@ -271,6 +271,9 @@ pub struct Editor {
     >,
     /// Overlapping curves, as of a document revision.
     pub(crate) overlap_cache: std::cell::RefCell<Option<selection::Overlaps>>,
+    /// Block copies stacked on others, found once per change (see
+    /// [`Editor::overlapping_instances`]).
+    pub(crate) copy_overlap_cache: std::cell::RefCell<Option<selection::CopyOverlaps>>,
     /// The text being typed in place on the canvas (just placed, or double-clicked).
     pub editing_text: Option<drift_core::TextId>,
     /// Where the caret was asked to go in the text being typed (a click that began it).

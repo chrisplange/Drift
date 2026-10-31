@@ -14,7 +14,7 @@ use drift_core::{
 use crate::editor::Editor;
 
 /// What to copy out of a document.
-#[derive(Default)]
+#[derive(Clone, Debug, Default)]
 pub struct Picked {
     pub curves: Vec<EntityId>,
     pub instances: Vec<InstanceId>,
@@ -429,8 +429,8 @@ pub fn is_fragment(text: &str) -> bool {
 }
 
 impl Editor {
-    /// What is selected, for copying.
-    fn picked(&self) -> Picked {
+    /// What is selected, for copying (and for picking again after a cancelled copy).
+    pub fn picked(&self) -> Picked {
         Picked {
             curves: self.selection.iter().copied().collect(),
             instances: self.selected_instances.iter().copied().collect(),
@@ -438,6 +438,43 @@ impl Editor {
             fills: self.selected_fills.iter().copied().collect(),
             annotations: self.picked_notes(),
         }
+    }
+
+    /// Pick `picked` again (what still exists), and nothing else.
+    pub fn pick(&mut self, picked: &Picked) {
+        self.selection = picked
+            .curves
+            .iter()
+            .copied()
+            .filter(|id| self.doc.contains(*id))
+            .collect();
+        self.selected_instances = picked
+            .instances
+            .iter()
+            .copied()
+            .filter(|id| self.doc.instance(*id).is_some())
+            .collect();
+        self.selected_texts = picked
+            .texts
+            .iter()
+            .copied()
+            .filter(|id| self.doc.text(*id).is_some())
+            .collect();
+        self.selected_fills = picked
+            .fills
+            .iter()
+            .copied()
+            .filter(|id| self.doc.fill(*id).is_some())
+            .collect();
+        self.selected_region = None;
+        self.selected_annotation = None;
+        self.annotation_picks = picked
+            .annotations
+            .iter()
+            .copied()
+            .filter(|id| self.doc.annotation(*id).is_some())
+            .map(AnnotationRef::Annotation)
+            .collect();
     }
 
     /// The selection as a small document of its own (`None` with nothing to copy).

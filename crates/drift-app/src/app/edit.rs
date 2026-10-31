@@ -149,13 +149,14 @@ impl DriftApp {
             Ok(n) => {
                 self.set_status(format!("Pasted {n}"), false, now);
                 // Straight into a move, to put the copy where it belongs (as after
-                // duplicating); Esc leaves it where it landed.
+                // duplicating); Esc removes it again (#264).
                 if !in_place && self.drawing.view.pointer.is_some() {
                     self.tool.key(
                         ToolKey::G,
                         self.drawing.view.pointer.as_ref(),
                         &mut self.drawing.editor,
                     );
+                    self.tool.grab_from_copy(Default::default());
                 }
             }
             Err(e) => self.set_status(format!("Can't paste that: {e}"), true, now),

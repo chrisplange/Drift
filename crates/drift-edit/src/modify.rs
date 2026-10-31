@@ -2671,21 +2671,24 @@ impl Editor {
     /// Mirror entities about a line: copies kept symmetric to the originals (points on the
     /// line are shared).
     pub fn mirror(&mut self, ids: &[EntityId], axis: EntityId) -> Result<Vec<EntityId>, EditError> {
-        self.mirror_with(ids, axis, &crate::picks::Riders::default())
-            .map(|(copies, _)| copies)
+        self.mirror_with(ids, &[], axis, &crate::picks::Riders::default())
+            .map(|(copies, _, _)| copies)
     }
 
-    /// Mirror entities, and the text and annotations picked with them, about a line: the
-    /// copies of the entities, and of the text and annotations.
+    /// Mirror entities, block copies, and the text and annotations picked with them, about a
+    /// line: the copies of the entities, of the block copies, and of the text and annotations.
+    /// A block copy's image is a new copy on the far side, mirrored (#260).
     #[allow(clippy::type_complexity)]
     pub fn mirror_with(
         &mut self,
         ids: &[EntityId],
+        instances: &[drift_core::InstanceId],
         axis: EntityId,
         riders: &crate::picks::Riders,
     ) -> Result<
         (
             Vec<EntityId>,
+            Vec<drift_core::InstanceId>,
             (Vec<drift_core::TextId>, Vec<drift_core::AnnotationId>),
         ),
         EditError,
@@ -2711,12 +2714,13 @@ impl Editor {
             .copied()
             .filter(|id| *id != axis && !generated.contains(id))
             .collect();
-        if ids.is_empty() && riders.is_empty() {
+        if ids.is_empty() && instances.is_empty() && riders.is_empty() {
             return Err(invalid("select geometry to mirror, then the line"));
         }
         let doc_err = |e: drift_core::DocumentError| invalid(e.to_string());
         self.doc.begin();
         let mut created = Vec::new();
+        let mut copies = Vec::new();
         let mut copied = Default::default();
         let result = (|| -> Result<(), EditError> {
             let mut map: HashMap<EntityId, EntityId> = HashMap::new();
@@ -2789,6 +2793,25 @@ impl Editor {
             self.copy_fills_onto(|e| images.get(&e).copied(), reflect);
             self.copy_walls_onto(&|e| images.get(&e).copied(), &reflect, true);
             self.copy_groups_onto(|e| images.get(&e).or_else(|| map.get(&e)).copied());
+            // Block copies: a new copy on the far side. `mirror` flips the block's x before
+            // the turn, so the image's turn is 2θ + 180° − angle for an axis at θ, and a
+            // mirrored copy's image comes back unmirrored (#260).
+            let theta = u.y.atan2(u.x).to_degrees();
+            for &id in instances {
+                let Some(i) = self.doc.instance(id).copied() else {
+                    continue;
+                };
+                let image = drift_core::Instance {
+                    at: reflect(i.at),
+                    angle: (2.0 * theta + 180.0 - i.angle).rem_euclid(360.0),
+                    mirror: !i.mirror,
+                    ..i
+                };
+                let copy = self.doc.add_instance(image).map_err(doc_err)?;
+                // (A new copy lands on the current layer: this one keeps the original's.)
+                self.doc.set_instance(copy, image).map_err(doc_err)?;
+                copies.push(copy);
+            }
             copied = self.copy_riders(
                 riders,
                 &|e| images.get(&e).or_else(|| map.get(&e)).copied(),
@@ -2797,7 +2820,7 @@ impl Editor {
             Ok(())
         })();
         self.finish(result, "Mirror")?;
-        Ok((created, copied))
+        Ok((created, copies, copied))
     }
 
     /// New groups of copies made inside the open transaction, for groups copied whole (`copy`
@@ -3987,6 +4010,73 @@ mod tests {
         let inner = ed.offset(circle, 2.0, v(1.0, 0.0)).unwrap();
         assert!(matches!(ed.doc.get(inner[0]).map(|e| e.kind),
             Some(EntityKind::Circle { radius, .. }) if (radius - 3.0).abs() < 1e-12));
+    }
+
+    /// #260: a picked block copy is mirrored too: a new copy on the far side whose placement
+    /// is the reflection of the original's. `mirror` flips the block's x before the turn,
+    /// so the image turns by 2θ + 180° − angle about an axis at θ; a mirrored copy's image
+    /// comes back unmirrored.
+    #[test]
+    fn mirror_places_the_reflection_of_a_block_copy() {
+        // An L (asymmetric), made a block; a second copy turned 30° and mirrored.
+        let (mut ed, ids) = with_lines(&[
+            (v(0.0, 0.0), v(10.0, 0.0)),
+            (v(0.0, 0.0), v(0.0, 7.0)),
+            (v(100.0, -50.0), v(160.0, 70.0)),
+        ]);
+        let axis = ids[2];
+        ed.selection = [ids[0], ids[1]].into();
+        let first = ed.make_block("L").unwrap();
+        let block = ed.doc.instance(first).unwrap().block;
+        ed.place_instance(block, v(40.0, 20.0), 30.0, true);
+        let second = *ed.selected_instances.iter().next().unwrap();
+        let (pa, pb) = ends(&ed, axis);
+        let u = (pb - pa).normalize();
+        let reflect = |p: DVec2| {
+            let foot = pa + u * (p - pa).dot(u);
+            foot * 2.0 - p
+        };
+        let theta = u.y.atan2(u.x).to_degrees();
+        let before: Vec<_> = ed.doc.instances().map(|(id, i)| (id, *i)).collect();
+        let (curves, images, _) = ed
+            .mirror_with(
+                &[],
+                &[first, second],
+                axis,
+                &crate::picks::Riders::default(),
+            )
+            .unwrap();
+        assert!(curves.is_empty() && images.len() == 2);
+        assert_eq!(ed.doc.instances().count(), 4);
+        for ((id, original), image) in before.iter().zip(&images) {
+            assert_eq!(ed.doc.instance(*id), Some(original), "the original stays");
+            let image = *ed.doc.instance(*image).unwrap();
+            assert_eq!(image.block, block);
+            assert_eq!(image.mirror, !original.mirror);
+            assert!(close(image.at, reflect(original.at)));
+            assert!(
+                (image.angle - (2.0 * theta + 180.0 - original.angle).rem_euclid(360.0)).abs()
+                    < 1e-9,
+                "{} for {} about {theta}",
+                image.angle,
+                original.angle
+            );
+            assert!((image.scale - original.scale).abs() < 1e-12);
+            assert_eq!(image.layer, original.layer);
+            // Three block points land on the reflections of where the original puts them.
+            for p in [v(0.0, 0.0), v(10.0, 0.0), v(0.0, 7.0)] {
+                assert!(
+                    close(image.apply(p), reflect(original.apply(p))),
+                    "{p:?}: {:?} vs {:?}",
+                    image.apply(p),
+                    reflect(original.apply(p))
+                );
+            }
+        }
+        // One undo step takes both images away.
+        assert_eq!(ed.history.undo_label(), Some("Mirror"));
+        ed.undo();
+        assert_eq!(ed.doc.instances().count(), 2);
     }
 
     #[test]

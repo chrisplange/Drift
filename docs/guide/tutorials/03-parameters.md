@@ -85,8 +85,10 @@ While drawing, typing starts on a digit, so to start a typed value with a variab
 press `=` first: `=width/2`. Once typing has started, letters go into the field.
 
 Bare numbers take the display unit for lengths (inches for feet-and-inches) and degrees for
-angles. Drift writes the unit into the stored expression, so changing the display units
-later never changes a value.
+angles, also inside an expression: `spacing + 60` adds 60 mm in a millimetre drawing (a
+bare number in a product is just a factor: `spacing * 2`). Drift writes the unit into the
+stored expression (`spacing + 60 mm`), so changing the display units later never changes a
+value.
 
 ## Pinned measurements
 

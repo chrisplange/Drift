@@ -58,7 +58,7 @@ fn ids(what: &str) -> Value {
 }
 
 fn value() -> Value {
-    json!({ "description": "A number (mm, or degrees for angles) or text as typed in Drift: units, variables, expressions (\"3600\", \"3.6 m\", \"W/2 + 100\", \"12'6\\\"\")",
+    json!({ "description": "A number (mm, or degrees for angles) or text as typed in Drift: units, variables, expressions (\"3600\", \"3.6 m\", \"W/2 + 100\", \"12'6\\\"\"). A bare number in text is in the drawing's display unit, also when added to or taken from a length: \"W/2 + 100\" adds 100 mm in a millimetre drawing and 100 inches in an inch drawing",
             "anyOf": [{ "type": "number" }, { "type": "string" }] })
 }
 

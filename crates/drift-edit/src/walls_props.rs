@@ -4,7 +4,7 @@
 //! are regenerated and edited, and what the walls make is checked against what it should be.
 //!
 //! The case counts are small so `cargo test` stays quick; each property also has a heavier run
-//! behind `#[ignore]` (`cargo test -p drift-app walls_props -- --ignored`).
+//! behind `#[ignore]` (`cargo test -p drift-edit walls_props -- --ignored`).
 
 use std::collections::BTreeMap;
 
@@ -402,7 +402,7 @@ proptest! {
     #![proptest_config(config(HEAVY))]
 
     #[test]
-    #[ignore = "heavy: cargo test -p drift-app walls_props -- --ignored"]
+    #[ignore = "heavy: cargo test -p drift-edit walls_props -- --ignored"]
     fn walls_props_heavy_idempotent_and_ordered(net in network()) {
         idempotent(net.clone());
         order_independent(net.clone());
@@ -410,7 +410,7 @@ proptest! {
     }
 
     #[test]
-    #[ignore = "heavy: cargo test -p drift-app walls_props -- --ignored"]
+    #[ignore = "heavy: cargo test -p drift-edit walls_props -- --ignored"]
     fn walls_props_heavy_edits(
         net in network(),
         nudge in (-30.0f64..30.0, -30.0f64..30.0),

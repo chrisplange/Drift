@@ -5,7 +5,7 @@
 //! a time; these find the class.
 //!
 //! The case counts are small so `cargo test` stays quick; each property also has a heavier
-//! run behind `#[ignore]` (`cargo test -p drift-app drag_props -- --ignored`).
+//! run behind `#[ignore]` (`cargo test -p drift-edit drag_props -- --ignored`).
 //!
 //! The heavy runs save no seeds (a saved failure would fail every later run first), but
 //! each is replayed exactly by its `PROPTEST_RNG_SEED`. To compare two builds, run every

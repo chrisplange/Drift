@@ -178,9 +178,9 @@ fn perf_big_synthetic() {
     );
 }
 
-/// Every fixture opened and saved (#185): whether it saves as it was read, whether a second
-/// save is the same, and (with `DRIFT_SAVE_OUT`, a folder) the saved text, to compare writers
-/// byte for byte.
+/// Every `.drift` fixture opened and saved (#185): whether it saves as it was read, whether a
+/// second save is the same, and (with `DRIFT_SAVE_OUT`, a folder) the saved text, to compare
+/// writers byte for byte.
 #[test]
 #[ignore = "writer probe: run with --ignored --nocapture"]
 fn fixtures_save() {
@@ -189,6 +189,7 @@ fn fixtures_save() {
     let mut names: Vec<_> = std::fs::read_dir(&dir)
         .unwrap()
         .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|e| e == "drift"))
         .collect();
     names.sort();
     println!();

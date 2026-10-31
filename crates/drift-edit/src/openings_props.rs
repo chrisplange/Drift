@@ -6,7 +6,7 @@
 //! undo and saving must give the drawing back.
 //!
 //! Small case counts keep `cargo test` quick; the heavy run is behind `#[ignore]`
-//! (`cargo test -p drift-app openings_props -- --ignored`).
+//! (`cargo test -p drift-edit openings_props -- --ignored`).
 
 use drift_core::{DVec2, EntityId, OpeningId, WallId};
 use drift_geom::walls::regenerate;
@@ -294,7 +294,7 @@ proptest! {
     #![proptest_config(config(HEAVY))]
 
     #[test]
-    #[ignore = "heavy: cargo test -p drift-app openings_props -- --ignored"]
+    #[ignore = "heavy: cargo test -p drift-edit openings_props -- --ignored"]
     fn openings_props_heavy(
         net in network(),
         tries in tries(),

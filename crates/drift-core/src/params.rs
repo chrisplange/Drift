@@ -66,7 +66,7 @@ pub fn evaluate(doc: &Document) -> Evaluation {
         };
         let kind = dimension_kind(c);
         let result = expr::parse(text)
-            .and_then(|e| e.eval(&lookup))
+            .and_then(|e| e.eval(&lookup, doc.units().length))
             .and_then(|q| expr::to_kind(q, kind, doc.units().length))
             .and_then(|v| {
                 if c.with_value(v).value_is_valid() {
@@ -141,7 +141,7 @@ fn eval_variable(
         }))
     };
     let result = expr::parse(&var.expr)
-        .and_then(|e| e.eval(&lookup))
+        .and_then(|e| e.eval(&lookup, doc.units().length))
         .and_then(|q| expr::to_kind(q, var.kind, doc.units().length))
         .map(|v| expr::from_kind(v, var.kind));
     stack.borrow_mut().pop();
@@ -164,6 +164,7 @@ pub fn evaluate_text(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::units::MM_PER_INCH;
     use crate::{Constraint, DVec2, Variable};
 
     fn var(name: &str, expr: &str, kind: Kind) -> Variable {
@@ -226,11 +227,50 @@ mod tests {
         // Invalid values (negative lengths) are errors.
         doc.set_expression(d, Some("-w".into()));
         assert!(evaluate(&doc).dimensions[&d].is_err());
-        // Typed input sees variables.
-        let r = evaluate_text(&doc, &evaluate(&doc), "w + 1", Kind::Length);
-        assert!(r.is_err(), "mixing a length and a number");
+        // Typed input sees variables; a bare number beside a length is in the drawing's
+        // unit, and the stored text says so.
+        let r = evaluate_text(&doc, &evaluate(&doc), "w + 1", Kind::Length).unwrap();
+        assert_eq!((r.value, r.text.as_str()), (26.0, "w + 1 mm"));
         let r = evaluate_text(&doc, &evaluate(&doc), "w + 1mm", Kind::Length).unwrap();
         assert_eq!((r.value, r.references), (26.0, vec!["w".to_owned()]));
+    }
+
+    /// A bare number added to a length variable is in the drawing's unit (#241), and the
+    /// stored text carries that unit, so changing the drawing's units keeps the value.
+    #[test]
+    fn bare_numbers_in_expressions_follow_the_drawing_unit() {
+        let mut doc = Document::new();
+        let p = doc.add_point(DVec2::ZERO);
+        let q = doc.add_point(DVec2::new(10.0, 0.0));
+        let d = doc
+            .add_constraint(Constraint::Distance {
+                a: p,
+                b: q,
+                value: 10.0,
+            })
+            .unwrap();
+        doc.add_variable(var("spacing", "60 mm", Kind::Length))
+            .unwrap();
+        doc.set_expression(d, Some("spacing + 60".into()));
+        assert_eq!(evaluate(&doc).dimensions.get(&d), Some(&Ok(120.0)));
+        // Typed, the unit is written into the stored text...
+        let r = evaluate_text(&doc, &evaluate(&doc), "spacing + 60", Kind::Length).unwrap();
+        assert_eq!((r.value, r.text.as_str()), (120.0, "spacing + 60 mm"));
+        doc.set_expression(d, Some(r.text));
+        // ...so in inches the value stays, where the text as typed would follow the unit.
+        doc.set_units(crate::Units::architectural());
+        assert_eq!(evaluate(&doc).dimensions.get(&d), Some(&Ok(120.0)));
+        doc.set_expression(d, Some("spacing + 60".into()));
+        assert_eq!(
+            evaluate(&doc).dimensions.get(&d),
+            Some(&Ok(60.0 + 60.0 * MM_PER_INCH))
+        );
+        // Typed in an inch drawing, a bare number is inches.
+        let r = evaluate_text(&doc, &evaluate(&doc), "spacing + 2", Kind::Length).unwrap();
+        assert_eq!(
+            (r.value, r.text.as_str()),
+            (60.0 + 2.0 * MM_PER_INCH, "spacing + 2 in")
+        );
     }
 
     #[test]

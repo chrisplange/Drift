@@ -12,8 +12,12 @@
 //!   Architectural forms like `1'-6"`, `1' 6 1/2"`, `6-1/2"` and `3/8"` are single literals,
 //!   so `1'-6"` means one foot six inches rather than a subtraction.
 //! - Lengths, angles and plain numbers are checked: adding a length to an angle is an error.
+//!   A plain number added to or taken from a length (or set beside one in `min`, `max`,
+//!   `hypot` and `atan2`) is read in the context's unit, as a plain number alone is; a plain
+//!   number in a product is a factor (`width * 2`). Angles take plain numbers as degrees.
 //!   Trigonometry takes angles, or plain numbers as degrees (the CAD convention).
-//! - A result with no units is read in the context's unit (see [`evaluate_input`]).
+//! - A result with no units is read in the context's unit (see [`evaluate_input`], which also
+//!   writes that unit into the stored text).
 
 use std::f64::consts::PI;
 use std::fmt;
@@ -284,12 +288,24 @@ impl Lexer<'_> {
 // ----- Parser --------------------------------------------------------------------------------
 
 #[derive(Clone, Debug, PartialEq)]
-enum Node {
+enum NodeKind {
     Value(Quantity),
     Var(String),
     Neg(Box<Node>),
     Bin(char, Box<Node>, Box<Node>),
     Call(String, Vec<Node>),
+}
+
+/// A node of the tree and where it came from: `start..end` are character offsets into the
+/// parsed text, so [`evaluate_input`] can write a unit after an operand it read in the
+/// context's unit. A parenthesised expression is the inner node with the parentheses in its
+/// span and `paren` set.
+#[derive(Clone, Debug, PartialEq)]
+struct Node {
+    kind: NodeKind,
+    start: usize,
+    end: usize,
+    paren: bool,
 }
 
 /// A parsed expression.
@@ -299,34 +315,56 @@ pub struct Expr {
 }
 
 struct Parser {
-    toks: Vec<Tok>,
+    /// Tokens with their character spans.
+    toks: Vec<(Tok, usize, usize)>,
     pos: usize,
 }
 
 impl Parser {
     fn peek(&self) -> Option<&Tok> {
-        self.toks.get(self.pos)
+        self.toks.get(self.pos).map(|(t, ..)| t)
     }
 
     fn next(&mut self) -> Option<Tok> {
-        let t = self.toks.get(self.pos).cloned();
+        let t = self.toks.get(self.pos).map(|(t, ..)| t.clone());
         self.pos += 1;
         t
     }
 
+    /// A node spanning the tokens from `first` to the last one consumed.
+    fn node(&self, kind: NodeKind, first: usize) -> Node {
+        Node {
+            kind,
+            start: self.toks[first].1,
+            end: self.toks[self.pos - 1].2,
+            paren: false,
+        }
+    }
+
+    /// A node for the single token at `at`.
+    fn leaf(&self, kind: NodeKind, at: usize) -> Node {
+        Node {
+            kind,
+            start: self.toks[at].1,
+            end: self.toks[at].2,
+            paren: false,
+        }
+    }
+
     fn sum(&mut self) -> Result<Node, ExprError> {
+        let first = self.pos;
         let mut left = self.product()?;
         while let Some(Tok::Op(op @ ('+' | '-'))) = self.peek().cloned() {
             self.pos += 1;
             let right = self.product()?;
-            left = Node::Bin(op, Box::new(left), Box::new(right));
+            left = self.node(NodeKind::Bin(op, Box::new(left), Box::new(right)), first);
         }
         Ok(left)
     }
 
     /// The unit at `pos`, if any.
     fn unit_at(&self, pos: usize) -> Option<Quantity> {
-        match self.toks.get(pos) {
+        match self.toks.get(pos).map(|(t, ..)| t) {
             Some(Tok::Ident(name)) => unit(name),
             Some(Tok::Mark('\'')) => unit("ft"),
             Some(Tok::Mark('"')) => unit("in"),
@@ -335,13 +373,20 @@ impl Parser {
         }
     }
 
+    /// `left` times the unit `u` at `pos` (consumed here), spanning from token `first`.
+    fn times_unit(&mut self, left: Node, u: Quantity, first: usize) -> Node {
+        let unit = self.leaf(NodeKind::Value(u), self.pos);
+        self.pos += 1;
+        self.node(NodeKind::Bin('*', Box::new(left), Box::new(unit)), first)
+    }
+
     fn product(&mut self) -> Result<Node, ExprError> {
+        let first = self.pos;
         let mut left = self.unary()?;
         loop {
             // A unit applies to the product so far.
             if let Some(u) = self.unit_at(self.pos) {
-                self.pos += 1;
-                left = Node::Bin('*', Box::new(left), Box::new(Node::Value(u)));
+                left = self.times_unit(left, u, first);
                 continue;
             }
             let Some(Tok::Op(op @ ('*' | '/'))) = self.peek().cloned() else {
@@ -349,16 +394,18 @@ impl Parser {
             };
             self.pos += 1;
             let right = self.unary()?;
-            left = Node::Bin(op, Box::new(left), Box::new(right));
+            left = self.node(NodeKind::Bin(op, Box::new(left), Box::new(right)), first);
         }
         Ok(left)
     }
 
     fn unary(&mut self) -> Result<Node, ExprError> {
+        let first = self.pos;
         match self.peek() {
             Some(Tok::Op('-')) => {
                 self.pos += 1;
-                Ok(Node::Neg(Box::new(self.unary()?)))
+                let inner = self.unary()?;
+                Ok(self.node(NodeKind::Neg(Box::new(inner)), first))
             }
             Some(Tok::Op('+')) => {
                 self.pos += 1;
@@ -369,30 +416,34 @@ impl Parser {
     }
 
     fn power(&mut self) -> Result<Node, ExprError> {
+        let first = self.pos;
         let mut base = self.primary()?;
         // `3mm^2`: a unit right before `^` belongs to the base.
         if let Some(u) = self.unit_at(self.pos)
-            && self.toks.get(self.pos + 1) == Some(&Tok::Op('^'))
+            && matches!(self.toks.get(self.pos + 1), Some((Tok::Op('^'), ..)))
         {
-            self.pos += 1;
-            base = Node::Bin('*', Box::new(base), Box::new(Node::Value(u)));
+            base = self.times_unit(base, u, first);
         }
         if let Some(Tok::Op('^')) = self.peek() {
             self.pos += 1;
             let exp = self.unary()?;
-            return Ok(Node::Bin('^', Box::new(base), Box::new(exp)));
+            return Ok(self.node(NodeKind::Bin('^', Box::new(base), Box::new(exp)), first));
         }
         Ok(base)
     }
 
     fn primary(&mut self) -> Result<Node, ExprError> {
+        let first = self.pos;
         match self.next() {
-            Some(Tok::Num(v)) => Ok(Node::Value(Quantity::number(v))),
-            Some(Tok::Literal(q)) => Ok(Node::Value(q)),
+            Some(Tok::Num(v)) => Ok(self.leaf(NodeKind::Value(Quantity::number(v)), first)),
+            Some(Tok::Literal(q)) => Ok(self.leaf(NodeKind::Value(q), first)),
             Some(Tok::LParen) => {
                 let inner = self.sum()?;
                 match self.next() {
-                    Some(Tok::RParen) => Ok(inner),
+                    Some(Tok::RParen) => Ok(Node {
+                        paren: true,
+                        ..self.node(inner.kind, first)
+                    }),
                     _ => err("missing `)`"),
                 }
             }
@@ -415,15 +466,15 @@ impl Parser {
                             }
                         }
                     }
-                    return Ok(Node::Call(name, args));
+                    return Ok(self.node(NodeKind::Call(name, args), first));
                 }
                 if name == "pi" {
-                    return Ok(Node::Value(Quantity::number(PI)));
+                    return Ok(self.leaf(NodeKind::Value(Quantity::number(PI)), first));
                 }
                 if unit(&name).is_some() {
                     return err(format!("`{name}` needs a number before it"));
                 }
-                Ok(Node::Var(name))
+                Ok(self.leaf(NodeKind::Var(name), first))
             }
             Some(Tok::Op(op)) => err(format!("unexpected `{op}`")),
             Some(Tok::Mark(m)) => err(format!("unexpected `{m}`")),
@@ -440,7 +491,7 @@ pub fn parse(text: &str) -> Result<Expr, ExprError> {
         chars: text.chars().collect(),
         text,
     };
-    let toks: Vec<Tok> = lexer.tokens()?.into_iter().map(|(t, ..)| t).collect();
+    let toks = lexer.tokens()?;
     if toks.is_empty() {
         return err("empty expression");
     }
@@ -485,99 +536,161 @@ fn radians(q: Quantity, f: &str) -> Result<f64, ExprError> {
     }
 }
 
+/// What an evaluation reads bare numbers in, and the operands it did that to.
+struct EvalCtx {
+    length: LengthFormat,
+    /// Operands read in the context's unit, in text order.
+    coerced: Vec<Coerced>,
+}
+
+/// An operand with no unit that was read in the context's unit, by its span in the text.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Coerced {
+    start: usize,
+    end: usize,
+    /// The dimension it was read as (length or angle).
+    dim: Dim,
+    /// An operand under a binary operator (`60 + 10`, `2*30`) is parenthesised before the
+    /// unit, as a whole result is (`(10*3) mm`), so the text reads as it evaluates.
+    binary: bool,
+}
+
+/// Read a unitless operand in the context's unit when it meets a length or an angle: lengths
+/// in `ctx.length`, angles in degrees (as a bare number alone is read). Records the operand
+/// so the stored text can carry the unit. `None` when `q` keeps its dimension.
+fn coerce(ctx: &mut EvalCtx, q: Quantity, node: &Node, to: Dim) -> Option<Quantity> {
+    if !q.dim.is_none() {
+        return None;
+    }
+    let value = if to == Dim::LENGTH {
+        q.value * ctx.length.mm_per_unit()
+    } else if to == Dim::ANGLE {
+        q.value
+    } else {
+        return None;
+    };
+    ctx.coerced.push(Coerced {
+        start: node.start,
+        end: node.end,
+        dim: to,
+        binary: matches!(node.kind, NodeKind::Bin(..)) && !node.paren,
+    });
+    Some(Quantity { value, dim: to })
+}
+
+/// Functions whose arguments are like quantities (compared or combined, not multiplied), so
+/// a bare number among lengths or angles is read in the context's unit.
+const LIKE_ARGS: &[&str] = &["min", "max", "hypot", "atan2"];
+
 impl Node {
-    fn eval(&self, vars: &Lookup<'_>) -> Result<Quantity, ExprError> {
-        Ok(match self {
-            Node::Value(q) => *q,
-            Node::Var(name) => match vars(name) {
+    fn eval(&self, vars: &Lookup<'_>, ctx: &mut EvalCtx) -> Result<Quantity, ExprError> {
+        Ok(match &self.kind {
+            NodeKind::Value(q) => *q,
+            NodeKind::Var(name) => match vars(name) {
                 Some(r) => r?,
                 None => return err(format!("unknown variable `{name}`")),
             },
-            Node::Neg(a) => {
-                let q = a.eval(vars)?;
+            NodeKind::Neg(a) => {
+                let q = a.eval(vars, ctx)?;
                 Quantity {
                     value: -q.value,
                     ..q
                 }
             }
-            Node::Bin(op, a, b) => {
-                let (a, b) = (a.eval(vars)?, b.eval(vars)?);
+            NodeKind::Bin(op, a, b) => {
+                let (mut x, mut y) = (a.eval(vars, ctx)?, b.eval(vars, ctx)?);
                 match op {
-                    '+' => {
-                        same_dim("add", a, b)?;
-                        Quantity {
-                            value: a.value + b.value,
-                            dim: a.dim,
+                    '+' | '-' => {
+                        // A bare number added to a length or an angle is in the context's unit.
+                        if x.dim != y.dim {
+                            if let Some(q) = coerce(ctx, x, a, y.dim) {
+                                x = q;
+                            } else if let Some(q) = coerce(ctx, y, b, x.dim) {
+                                y = q;
+                            }
                         }
-                    }
-                    '-' => {
-                        same_dim("subtract", a, b)?;
+                        let adding = *op == '+';
+                        same_dim(if adding { "add" } else { "subtract" }, x, y)?;
                         Quantity {
-                            value: a.value - b.value,
-                            dim: a.dim,
+                            value: if adding {
+                                x.value + y.value
+                            } else {
+                                x.value - y.value
+                            },
+                            dim: x.dim,
                         }
                     }
                     '*' => Quantity {
-                        value: a.value * b.value,
+                        value: x.value * y.value,
                         dim: Dim {
-                            length: a.dim.length + b.dim.length,
-                            angle: a.dim.angle + b.dim.angle,
+                            length: x.dim.length + y.dim.length,
+                            angle: x.dim.angle + y.dim.angle,
                         },
                     },
                     '/' => {
-                        if b.value == 0.0 {
+                        if y.value == 0.0 {
                             return err("division by zero");
                         }
                         Quantity {
-                            value: a.value / b.value,
+                            value: x.value / y.value,
                             dim: Dim {
-                                length: a.dim.length - b.dim.length,
-                                angle: a.dim.angle - b.dim.angle,
+                                length: x.dim.length - y.dim.length,
+                                angle: x.dim.angle - y.dim.angle,
                             },
                         }
                     }
                     _ => {
-                        if !b.dim.is_none() {
+                        if !y.dim.is_none() {
                             return err("an exponent must be a plain number");
                         }
-                        let Some(dim) = scale_dim(a.dim, b.value) else {
+                        let Some(dim) = scale_dim(x.dim, y.value) else {
                             return err(format!(
                                 "can't raise {} to the power {}",
-                                a.dim.name(),
-                                b.value
+                                x.dim.name(),
+                                y.value
                             ));
                         };
                         Quantity {
-                            value: a.value.powf(b.value),
+                            value: x.value.powf(y.value),
                             dim,
                         }
                     }
                 }
             }
-            Node::Call(f, args) => {
-                let args: Vec<Quantity> = args
+            NodeKind::Call(f, args) => {
+                let mut values: Vec<Quantity> = args
                     .iter()
-                    .map(|a| a.eval(vars))
+                    .map(|a| a.eval(vars, ctx))
                     .collect::<Result<_, _>>()?;
-                call(f, &args)?
+                // Like quantities: a bare number among lengths or angles is in the context's unit.
+                if LIKE_ARGS.contains(&f.as_str())
+                    && let Some(dim) = values.iter().map(|q| q.dim).find(|d| !d.is_none())
+                {
+                    for (q, node) in values.iter_mut().zip(args) {
+                        if let Some(c) = coerce(ctx, *q, node, dim) {
+                            *q = c;
+                        }
+                    }
+                }
+                call(f, &values)?
             }
         })
     }
 
     fn identifiers(&self, out: &mut Vec<String>) {
-        match self {
-            Node::Value(_) => {}
-            Node::Var(name) => {
+        match &self.kind {
+            NodeKind::Value(_) => {}
+            NodeKind::Var(name) => {
                 if !out.contains(name) {
                     out.push(name.clone());
                 }
             }
-            Node::Neg(a) => a.identifiers(out),
-            Node::Bin(_, a, b) => {
+            NodeKind::Neg(a) => a.identifiers(out),
+            NodeKind::Bin(_, a, b) => {
                 a.identifiers(out);
                 b.identifiers(out);
             }
-            Node::Call(_, args) => args.iter().for_each(|a| a.identifiers(out)),
+            NodeKind::Call(_, args) => args.iter().for_each(|a| a.identifiers(out)),
         }
     }
 }
@@ -683,11 +796,25 @@ fn call(f: &str, args: &[Quantity]) -> Result<Quantity, ExprError> {
 }
 
 impl Expr {
-    /// Evaluate with variables from `vars`.
-    pub fn eval(&self, vars: &Lookup<'_>) -> Result<Quantity, ExprError> {
-        let q = self.root.eval(vars)?;
+    /// Evaluate with variables from `vars`, reading a bare number added to a length in
+    /// `length` (the module doc has the rule).
+    pub fn eval(&self, vars: &Lookup<'_>, length: LengthFormat) -> Result<Quantity, ExprError> {
+        self.eval_recording(vars, length).map(|(q, _)| q)
+    }
+
+    /// [`Expr::eval`], also returning the operands read in the context's unit.
+    fn eval_recording(
+        &self,
+        vars: &Lookup<'_>,
+        length: LengthFormat,
+    ) -> Result<(Quantity, Vec<Coerced>), ExprError> {
+        let mut ctx = EvalCtx {
+            length,
+            coerced: Vec::new(),
+        };
+        let q = self.root.eval(vars, &mut ctx)?;
         if q.value.is_finite() {
-            Ok(q)
+            Ok((q, ctx.coerced))
         } else {
             err("the result isn't a finite number")
         }
@@ -702,7 +829,7 @@ impl Expr {
 
     /// True for a single number with no units (e.g. `12.5`).
     pub fn is_bare_number(&self) -> bool {
-        matches!(self.root, Node::Value(q) if q.dim.is_none())
+        matches!(self.root.kind, NodeKind::Value(q) if q.dim.is_none())
     }
 }
 
@@ -750,8 +877,9 @@ pub fn evaluate_input(
 ) -> Result<Evaluated, ExprError> {
     let text = text.trim();
     let expr = parse(text)?;
-    let q = expr.eval(vars)?;
+    let (q, coerced) = expr.eval_recording(vars, default)?;
     let value = to_kind(q, kind, default)?;
+    let text = with_units(text, &coerced, default);
     let unit = match kind {
         Kind::Length => default.symbol(),
         Kind::Angle => "deg",
@@ -764,13 +892,67 @@ pub fn evaluate_input(
             format!("({text}) {unit}")
         }
     } else {
-        text.to_owned()
+        text
     };
     Ok(Evaluated {
         value,
         text,
         references: expr.identifiers(),
     })
+}
+
+/// `text` with the unit written after each operand that was read in the context's unit
+/// (`spacing + 60` → `spacing + 60 mm`), so the stored text keeps its value whatever the
+/// display unit becomes. An operand under a binary operator is parenthesised first, as a whole
+/// result is: `60 + 10 + spacing` → `(60 + 10) mm + spacing`, `spacing + 2*30` →
+/// `spacing + (2*30) mm`. Spans can nest (`spacing + (spacing + 60) / spacing` reads `60` and
+/// then the whole quotient), so they are written as a tree.
+fn with_units(text: &str, coerced: &[Coerced], length: LengthFormat) -> String {
+    if coerced.is_empty() {
+        return text.to_owned();
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let mut spans = coerced.to_vec();
+    // By position, an outer span before the spans inside it.
+    spans.sort_by(|a, b| a.start.cmp(&b.start).then(b.end.cmp(&a.end)));
+    let mut out = String::new();
+    write_spans(&chars, &spans, &mut 0, 0, chars.len(), length, &mut out);
+    out
+}
+
+/// Write `chars[from..to]` to `out`, with every span from `spans[*next..]` that lies inside
+/// it (they are sorted outer first) wrapped and followed by its unit.
+fn write_spans(
+    chars: &[char],
+    spans: &[Coerced],
+    next: &mut usize,
+    from: usize,
+    to: usize,
+    length: LengthFormat,
+    out: &mut String,
+) {
+    let mut last = from;
+    while let Some(c) = spans.get(*next).copied()
+        && c.start < to
+    {
+        *next += 1;
+        out.extend(&chars[last..c.start]);
+        if c.binary {
+            out.push('(');
+        }
+        write_spans(chars, spans, next, c.start, c.end, length, out);
+        if c.binary {
+            out.push(')');
+        }
+        out.push(' ');
+        out.push_str(if c.dim == Dim::LENGTH {
+            length.symbol()
+        } else {
+            "deg"
+        });
+        last = c.end;
+    }
+    out.extend(&chars[last..to]);
 }
 
 /// Replace whole-word uses of variable `old` with `new` (for renaming a variable).
@@ -803,14 +985,20 @@ pub fn rename(text: &str, old: &str, new: &str) -> String {
 mod tests {
     use super::*;
 
-    fn eval(text: &str) -> Result<Quantity, ExprError> {
+    fn eval_in(text: &str, length: LengthFormat) -> Result<Quantity, ExprError> {
         let vars = |name: &str| match name {
             "width" => Some(Ok(Quantity::length(120.0))),
+            "spacing" => Some(Ok(Quantity::length(60.0))),
+            "tilt" => Some(Ok(Quantity::angle(30.0))),
             "n" => Some(Ok(Quantity::number(4.0))),
             "broken" => Some(err("broken")),
             _ => None,
         };
-        parse(text)?.eval(&vars)
+        parse(text)?.eval(&vars, length)
+    }
+
+    fn eval(text: &str) -> Result<Quantity, ExprError> {
+        eval_in(text, LengthFormat::Millimetre)
     }
 
     fn mm(text: &str) -> f64 {
@@ -876,7 +1064,7 @@ mod tests {
     #[test]
     fn errors_explain_themselves() {
         let msg = |t: &str| eval(t).unwrap_err().0;
-        assert_eq!(msg("10 + 5mm"), "can't add a number and a length");
+        assert_eq!(msg("3mm^2 + 5"), "can't add an area and a number");
         assert_eq!(msg("5mm + 2deg"), "can't add a length and an angle");
         assert_eq!(msg("height * 2"), "unknown variable `height`");
         assert_eq!(msg("broken + 1"), "broken");
@@ -907,6 +1095,144 @@ mod tests {
         let vars = |n: &str| (n == "w").then_some(Ok(Quantity::length(10.0)));
         let r = evaluate_input("w/2", Kind::Length, LengthFormat::Inch, &vars).unwrap();
         assert_eq!((r.value, r.references), (5.0, vec!["w".to_owned()]));
+    }
+
+    /// A bare number added to or taken from a length is in the context's unit (#241), as it
+    /// is alone; beside an angle it is degrees; in a product it is a factor.
+    #[test]
+    fn bare_numbers_beside_lengths_follow_the_context_unit() {
+        let inch = MM_PER_INCH;
+        let in_inches = |t: &str| eval_in(t, LengthFormat::Inch).unwrap();
+        assert_eq!(mm("spacing + 60"), 120.0);
+        assert_eq!(
+            in_inches("spacing + 60"),
+            Quantity::length(60.0 + 60.0 * inch)
+        );
+        assert_eq!(in_inches("width + 2"), Quantity::length(120.0 + 2.0 * inch));
+        assert_eq!(mm("10 + 5mm"), 15.0);
+        assert_eq!(in_inches("10 + 5mm"), Quantity::length(10.0 * inch + 5.0));
+        assert_eq!(mm("spacing - 10"), 50.0);
+        assert_eq!(mm("60 - spacing"), 0.0);
+        assert_eq!(mm("spacing + 2*5"), 70.0);
+        assert_eq!(mm("spacing + n"), 64.0);
+        // Products stay plain arithmetic.
+        assert_eq!(eval("2 * 3").unwrap(), Quantity::number(6.0));
+        assert_eq!(mm("spacing * 2"), 120.0);
+        assert_eq!(mm("spacing * n"), 240.0);
+        // Functions of like quantities read a bare number the same way.
+        assert_eq!(mm("min(spacing, 50)"), 50.0);
+        assert_eq!(mm("max(50, spacing)"), 60.0);
+        assert_eq!(mm("hypot(spacing, 80)"), 100.0);
+        let a = eval("atan2(spacing, 60)").unwrap();
+        assert_eq!(a.dim, Dim::ANGLE);
+        assert!((a.value - 45.0).abs() < 1e-12);
+        // Angles: a bare number is degrees.
+        assert_eq!(eval("tilt + 5").unwrap(), Quantity::angle(35.0));
+        assert!((eval("sin(tilt + 60)").unwrap().value - 1.0).abs() < 1e-15);
+        // Real mismatches still fail.
+        let msg = |t: &str| eval(t).unwrap_err().0;
+        assert_eq!(msg("5mm + 2deg"), "can't add a length and an angle");
+        assert_eq!(msg("3mm^2 + 5"), "can't add an area and a number");
+        assert_eq!(
+            msg("spacing - 2deg"),
+            "can't subtract a length and an angle"
+        );
+        assert_eq!(
+            msg("min(spacing, 2deg)"),
+            "can't use min() on a length and an angle"
+        );
+    }
+
+    /// The stored text carries the unit a bare operand was read in, so it keeps its value
+    /// whatever the display unit becomes, and evaluating it again changes nothing.
+    #[test]
+    fn coerced_operands_are_stored_with_their_unit() {
+        let vars = |name: &str| match name {
+            "spacing" => Some(Ok(Quantity::length(60.0))),
+            "tilt" => Some(Ok(Quantity::angle(30.0))),
+            "n" => Some(Ok(Quantity::number(4.0))),
+            "a" | "b" => Some(Ok(Quantity::length(1.0))),
+            _ => None,
+        };
+        let cases: &[(&str, &str, f64)] = &[
+            ("spacing + 60", "spacing + 60 mm", 120.0),
+            ("60 + spacing", "60 mm + spacing", 120.0),
+            ("spacing - 2*5", "spacing - (2*5) mm", 50.0),
+            ("spacing + 2*30", "spacing + (2*30) mm", 120.0),
+            ("spacing + n", "spacing + n mm", 64.0),
+            ("spacing + (10 + 20)", "spacing + (10 + 20) mm", 90.0),
+            ("spacing + max(10, 20)", "spacing + max(10, 20) mm", 80.0),
+            ("spacing + -5", "spacing + -5 mm", 55.0),
+            ("spacing + 2^3", "spacing + (2^3) mm", 68.0),
+            ("spacing + 35 1/2", "spacing + 35 1/2 mm", 95.5),
+            ("max(spacing, 50)", "max(spacing, 50 mm)", 60.0),
+            ("a + (b + 60)", "a + (b + 60 mm)", 62.0),
+            ("(60 + 2) + spacing", "(60 + 2) mm + spacing", 122.0),
+            // Operands under a binary operator are parenthesised, as a whole result is.
+            ("60 + 10 + spacing", "(60 + 10) mm + spacing", 130.0),
+            ("max(10 + 20, spacing)", "max((10 + 20) mm, spacing)", 60.0),
+            // Nested: a sum read in the unit, inside a quotient read in it too.
+            (
+                "spacing + (spacing + 60) / spacing",
+                "spacing + ((spacing + 60 mm) / spacing) mm",
+                62.0,
+            ),
+            (
+                "spacing + n * ((spacing + 60) / spacing)",
+                "spacing + (n * ((spacing + 60 mm) / spacing)) mm",
+                68.0,
+            ),
+            // Untouched: a factor, and text that already has its units.
+            ("spacing * n", "spacing * n", 240.0),
+            ("spacing + 60 mm", "spacing + 60 mm", 120.0),
+        ];
+        for (typed, stored, value) in cases {
+            let r = evaluate_input(typed, Kind::Length, LengthFormat::Millimetre, &vars)
+                .unwrap_or_else(|e| panic!("{typed}: {e}"));
+            assert_eq!((r.text.as_str(), r.value), (*stored, *value), "{typed}");
+            // Round trip: the same value in another display unit, and stable in this one.
+            let again = evaluate_input(stored, Kind::Length, LengthFormat::Inch, &vars).unwrap();
+            assert_eq!(
+                (again.text.as_str(), again.value),
+                (*stored, *value),
+                "{stored} in inches"
+            );
+            let same =
+                evaluate_input(stored, Kind::Length, LengthFormat::Millimetre, &vars).unwrap();
+            assert_eq!(same.text, *stored, "{stored} again");
+        }
+        // Every case one level deeper, so its spans nest inside a read quotient: no panic,
+        // the right value, and a stable text.
+        for (typed, _, value) in cases {
+            let deeper = format!("spacing + ({typed}) / spacing");
+            let r = evaluate_input(&deeper, Kind::Length, LengthFormat::Millimetre, &vars)
+                .unwrap_or_else(|e| panic!("{deeper}: {e}"));
+            assert_eq!(r.value, 60.0 + value / 60.0, "{deeper}");
+            let same = evaluate_input(&r.text, Kind::Length, LengthFormat::Inch, &vars)
+                .unwrap_or_else(|e| panic!("{}: {e}", r.text));
+            assert_eq!((same.text.as_str(), same.value), (r.text.as_str(), r.value));
+        }
+        // Inches, angles, and a bare operand inside a result that is itself bare.
+        let r = evaluate_input("spacing + 2", Kind::Length, LengthFormat::Inch, &vars).unwrap();
+        assert_eq!(
+            (r.text.as_str(), r.value),
+            ("spacing + 2 in", 60.0 + 2.0 * MM_PER_INCH)
+        );
+        let r = evaluate_input("tilt + 5", Kind::Angle, LengthFormat::Millimetre, &vars).unwrap();
+        assert_eq!((r.text.as_str(), r.value), ("tilt + 5 deg", 35.0));
+        let r = evaluate_input(
+            "(spacing + 60) / spacing",
+            Kind::Length,
+            LengthFormat::Millimetre,
+            &vars,
+        )
+        .unwrap();
+        assert_eq!(
+            (r.text.as_str(), r.value),
+            ("((spacing + 60 mm) / spacing) mm", 2.0)
+        );
+        let same = evaluate_input(&r.text, Kind::Length, LengthFormat::Inch, &vars).unwrap();
+        assert_eq!((same.text.as_str(), same.value), (r.text.as_str(), 2.0));
     }
 
     #[test]

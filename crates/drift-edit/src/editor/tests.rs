@@ -391,6 +391,24 @@ mod editing {
         ed.remove_variable(w).unwrap();
     }
 
+    /// A bare number added to a length variable is in the drawing's unit (#241), for
+    /// dimensions and variables alike, and the stored text carries the unit.
+    #[test]
+    fn bare_numbers_in_a_sum_follow_the_drawing_unit() {
+        let (mut ed, d, a, b) = dimensioned_line();
+        ed.add_variable("w", "25", Kind::Length).unwrap();
+        ed.set_dimension_text(d, "w + 10").unwrap();
+        assert!((length(&ed, a, b) - 35.0).abs() < 1e-9);
+        assert_eq!(
+            ed.doc.expression(d),
+            Some("w + 10 mm"),
+            "unit made explicit"
+        );
+        assert_eq!(ed.dimension_edit_text(d).as_deref(), Some("w + 10 mm"));
+        let h = ed.add_variable("h", "w + 5", Kind::Length).unwrap();
+        assert_eq!(ed.doc.variable(h).unwrap().expr, "w + 5 mm");
+    }
+
     #[test]
     fn bad_parameter_edits_are_refused_and_rolled_back() {
         let (mut ed, d, ..) = dimensioned_line();

@@ -320,3 +320,55 @@ fn smoke_dimensions_an_offset_has_one_dimension_for_all_its_sides() {
         gaps(&h)
     );
 }
+
+/// A bare number added to a length variable is in the drawing's unit (#241): `spacing + 60`
+/// typed into a dimension is 120 mm in a millimetre drawing, and `W + 2` is W plus two
+/// inches in a feet-and-inches drawing. The stored expression carries the unit.
+#[test]
+fn smoke_dimensions_bare_numbers_in_expressions_follow_the_drawing_unit() {
+    let Some(mut h) = harness() else { return };
+    view(&mut h, DVec2::new(-40.0, -30.0), DVec2::new(60.0, 40.0));
+    let line = chain(&mut h, &[DVec2::new(-20.0, 0.0), DVec2::new(20.0, 0.0)])[0];
+    h.state_mut()
+        .drawing
+        .editor
+        .add_variable("spacing", "60", drift_core::Kind::Length)
+        .unwrap();
+    // D, the line, a place above it, an expression typed.
+    h.key_press(Key::D);
+    h.run();
+    click_world(&mut h, DVec2::new(-10.0, 0.0));
+    click_world(&mut h, DVec2::new(5.0, 15.0));
+    assert!(
+        h.state().drawing.dimension_edit.is_some(),
+        "its value to type"
+    );
+    type_text(&mut h, "spacing + 60");
+    h.key_press(Key::Enter);
+    h.run();
+    assert!(
+        (length(&h, line) - 120.0).abs() < 1e-9,
+        "{}",
+        length(&h, line)
+    );
+    let d = first_dimension(&h).id.expect("the dimension");
+    assert_eq!(
+        h.state().drawing.editor.doc.expression(d),
+        Some("spacing + 60 mm"),
+        "unit made explicit"
+    );
+    h.key_press(Key::Escape);
+    h.run();
+    // Feet and inches: a bare number is inches.
+    let ed = &mut h.state_mut().drawing.editor;
+    ed.set_units(drift_core::Units::architectural());
+    ed.add_variable("W", "4", drift_core::Kind::Length).unwrap();
+    ed.set_dimension_text(d, "W + 2").unwrap();
+    assert_eq!(ed.doc.expression(d), Some("W + 2 in"));
+    h.run();
+    assert!(
+        (length(&h, line) - 6.0 * 25.4).abs() < 1e-9,
+        "{}",
+        length(&h, line)
+    );
+}

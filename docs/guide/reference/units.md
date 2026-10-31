@@ -52,6 +52,7 @@ You can type any unit, whatever the display units:
 | `1'6"`, `1'-6"`, `1'-6 1/2"` | feet and inches |
 | `6-1/2"`, `3/8"` | fractions of an inch |
 | `35 1/2` | a mixed number in the display unit |
+| `W + 60`, `spacing - 10` | bare numbers added to or taken from a length are in the display unit too |
 | `30deg`, `30°`, `pi/4 rad` | angles (bare numbers are degrees) |
 | `100mm + 2in` | mixed units in an expression |
 

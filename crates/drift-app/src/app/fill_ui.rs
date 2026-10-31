@@ -256,10 +256,10 @@ impl DriftApp {
     /// What is wrong with a fill, with what to do about it: its boundary lost, or an
     /// edit dividing its area.
     pub(crate) fn fill_notices(&mut self, ui: &mut egui::Ui, first: FillId) {
-        let Some(fill) = self.editor.doc.fill(first).cloned() else {
+        let Some(fill) = self.drawing.editor.doc.fill(first).cloned() else {
             return;
         };
-        let shapes = self.editor.fill_shapes();
+        let shapes = self.drawing.editor.fill_shapes();
         let shape = shapes.get(&first);
         if shape.is_none_or(|s| s.lost) {
             ui.add_space(4.0);
@@ -272,7 +272,7 @@ impl DriftApp {
                 .small(),
             );
             if ui.button("Re-pick boundary").clicked() {
-                self.editor.repick_fill = Some(first);
+                self.drawing.editor.repick_fill = Some(first);
                 self.set_tool(ToolKind::Fill);
             }
         }
@@ -291,25 +291,25 @@ impl DriftApp {
                     .on_hover_text("Cover only the area where it was first clicked")
                     .clicked()
                 {
-                    Some(self.editor.fit_fill_to_seed(first))
+                    Some(self.drawing.editor.fit_fill_to_seed(first))
                 } else if ui
                     .button(format!("Split into {parts}"))
                     .on_hover_text("One fill per area, each in this style")
                     .clicked()
                 {
-                    Some(self.editor.split_fill(first).map(|_| ()))
+                    Some(self.drawing.editor.split_fill(first).map(|_| ()))
                 } else {
                     if ui
                         .button("Keep whole")
                         .on_hover_text("Clear the mark and keep covering every area")
                         .clicked()
                     {
-                        self.editor.keep_fill_whole(first);
+                        self.drawing.editor.keep_fill_whole(first);
                     }
                     None
                 };
                 if let Some(Err(e)) = result {
-                    self.editor.out.notice = Some(e);
+                    self.drawing.editor.out.notice = Some(e);
                 }
             });
         }
@@ -318,27 +318,36 @@ impl DriftApp {
     pub(crate) fn fill_inspector(&mut self, ui: &mut egui::Ui) -> bool {
         let dark = ui.visuals().dark_mode;
         self.hatch_patterns
-            .update(self.editor.doc.custom_patterns());
+            .update(self.drawing.editor.doc.custom_patterns());
         let fills: Vec<FillId> = self
+            .drawing
             .editor
             .selected_fills
             .iter()
             .copied()
-            .filter(|id| self.editor.doc.fill(*id).is_some())
+            .filter(|id| self.drawing.editor.doc.fill(*id).is_some())
             .collect();
         // A picked group's shapes' fills come with it: the curves' inspector shows the group
         // and their Fill.
-        if !self.editor.selection.is_empty()
-            && fills.iter().all(|f| self.editor.fill_group(*f).is_some())
+        if !self.drawing.editor.selection.is_empty()
+            && fills
+                .iter()
+                .all(|f| self.drawing.editor.fill_group(*f).is_some())
         {
             return false;
         }
         if let Some(&first) = fills.first() {
-            let fill = self.editor.doc.fill(first).cloned().expect("exists");
-            let shapes = self.editor.fill_shapes();
+            let fill = self
+                .drawing
+                .editor
+                .doc
+                .fill(first)
+                .cloned()
+                .expect("exists");
+            let shapes = self.drawing.editor.fill_shapes();
             let shape = shapes.get(&first).cloned();
             // Not a shape's (those have the shape inspector): an area fill, and why (#202).
-            let kind = (fills.len() == 1).then(|| self.editor.fill_kind(first));
+            let kind = (fills.len() == 1).then(|| self.drawing.editor.fill_kind(first));
             let title = match (&fill.kind, fills.len()) {
                 (FillKind::Solid, 1) => "Area fill".to_owned(),
                 (FillKind::Hatch(_), 1) => "Area hatch".to_owned(),
@@ -372,26 +381,28 @@ impl DriftApp {
                 "selected",
                 !aligned,
             ) {
-                self.editor.doc.begin();
+                self.drawing.editor.doc.begin();
                 for id in &fills {
-                    if let Some(mut f) = self.editor.doc.fill(*id).cloned() {
+                    if let Some(mut f) = self.drawing.editor.doc.fill(*id).cloned() {
                         style.apply(&mut f);
-                        self.editor.doc.set_fill(*id, f);
+                        self.drawing.editor.doc.set_fill(*id, f);
                     }
                 }
-                self.editor.commit("Edit fill");
+                self.drawing.editor.commit("Edit fill");
             }
             if aligned {
                 self.pattern_alignment(ui, first);
             }
             theme::section(ui, "Layer");
             let layers: Vec<(drift_core::LayerId, String)> = self
+                .drawing
                 .editor
                 .doc
                 .layers()
                 .map(|(id, l)| (id, l.name.clone()))
                 .collect();
             let current = self
+                .drawing
                 .editor
                 .doc
                 .layer(fill.layer)
@@ -408,19 +419,19 @@ impl DriftApp {
                     }
                 });
             if let Some(layer) = target {
-                self.editor.doc.begin();
+                self.drawing.editor.doc.begin();
                 for id in &fills {
-                    if let Some(mut f) = self.editor.doc.fill(*id).cloned() {
+                    if let Some(mut f) = self.drawing.editor.doc.fill(*id).cloned() {
                         f.layer = layer;
-                        self.editor.doc.set_fill(*id, f);
+                        self.drawing.editor.doc.set_fill(*id, f);
                     }
                 }
-                self.editor.commit("Move fill to layer");
+                self.drawing.editor.commit("Move fill to layer");
             }
             theme::section(ui, "Arrange");
             self.arrange_row(ui);
             if let Some(shape) = shape {
-                let units = self.editor.doc.units();
+                let units = self.drawing.editor.doc.units();
                 let r = &shape.region;
                 theme::section(ui, "Area");
                 theme::row(ui, "Area", |ui| {
@@ -439,7 +450,7 @@ impl DriftApp {
             }
             ui.add_space(10.0);
             if theme::danger_button(ui, "Delete").clicked() {
-                self.editor.delete_selection();
+                self.drawing.editor.delete_selection();
             }
             return true;
         }
@@ -454,12 +465,12 @@ impl DriftApp {
         }
         let dark = ui.visuals().dark_mode;
         self.hatch_patterns
-            .update(self.editor.doc.custom_patterns());
+            .update(self.drawing.editor.doc.custom_patterns());
         app::panels::title(ui, Some(ToolKind::Fill), "Fill / hatch", "New fills");
         ui.label(
-            egui::RichText::new(if self.editor.repick_fill.is_some() {
+            egui::RichText::new(if self.drawing.editor.repick_fill.is_some() {
                 "Click inside the area that should be the fill's new boundary."
-            } else if self.editor.fill_eyedropper {
+            } else if self.drawing.editor.fill_eyedropper {
                 "Click a fill or hatch to pick up its style."
             } else {
                 "Click inside a closed area to fill it with this style; click a fill again to \
@@ -469,9 +480,9 @@ impl DriftApp {
             .weak(),
         );
         theme::section(ui, "New fills");
-        let mut style = self.editor.prefs.fill_style.clone();
+        let mut style = self.drawing.editor.prefs.fill_style.clone();
         if fill_style_editor(ui, &mut style, &self.hatch_patterns, dark, "tool", true) {
-            self.editor.prefs.fill_style = style;
+            self.drawing.editor.prefs.fill_style = style;
         }
         ui.add_space(6.0);
         self.eyedropper_button(ui);
@@ -479,13 +490,13 @@ impl DriftApp {
     }
 
     fn eyedropper_button(&mut self, ui: &mut egui::Ui) {
-        let on = self.editor.fill_eyedropper;
+        let on = self.drawing.editor.fill_eyedropper;
         if ui
             .add(egui::Button::new("Pick up a style").selected(on))
             .on_hover_text("Click a fill or hatch to use its style for new fills (or Alt+click it)")
             .clicked()
         {
-            self.editor.fill_eyedropper = !on;
+            self.drawing.editor.fill_eyedropper = !on;
         }
     }
 
@@ -498,22 +509,22 @@ impl DriftApp {
     /// The drawing tools' Fill control: whether closed shapes come out filled as they are
     /// drawn, and in what style (the Fill tool's).
     pub(crate) fn new_shape_fill_bar(&mut self, ui: &mut egui::Ui) {
-        ui.checkbox(&mut self.editor.prefs.fill_new_shapes, "Fill")
+        ui.checkbox(&mut self.drawing.editor.prefs.fill_new_shapes, "Fill")
             .on_hover_text(
                 "Closed shapes are filled or hatched as they are drawn, in this style (the \
                  Fill tool's); the fill is part of the shape's undo step",
             );
-        if self.editor.prefs.fill_new_shapes {
+        if self.drawing.editor.prefs.fill_new_shapes {
             self.fill_style_bar(ui);
         }
     }
 
     /// Solid or hatch, and the colour or pattern, of the current fill style.
     fn fill_style_bar(&mut self, ui: &mut egui::Ui) {
-        let mut style = self.editor.prefs.fill_style.clone();
+        let mut style = self.drawing.editor.prefs.fill_style.clone();
         self.style_bar(ui, &mut style, "bar");
-        if style != self.editor.prefs.fill_style {
-            self.editor.prefs.fill_style = style;
+        if style != self.drawing.editor.prefs.fill_style {
+            self.drawing.editor.prefs.fill_style = style;
         }
     }
 
@@ -522,7 +533,7 @@ impl DriftApp {
     pub(crate) fn style_bar(&mut self, ui: &mut egui::Ui, style: &mut FillStyle, salt: &str) {
         let dark = ui.visuals().dark_mode;
         self.hatch_patterns
-            .update(self.editor.doc.custom_patterns());
+            .update(self.drawing.editor.doc.custom_patterns());
         let solid = matches!(style.kind, FillKind::Solid);
         if let Some(choice) =
             app::context_ui::choice(ui, solid, &[(true, "Solid"), (false, "Hatch")])
@@ -552,7 +563,7 @@ impl DriftApp {
 
     /// Buttons under a selected region's measurements: fill or hatch it.
     pub(crate) fn region_fill_buttons(&mut self, ui: &mut egui::Ui) {
-        let Some(seed) = self.editor.selected_region else {
+        let Some(seed) = self.drawing.editor.selected_region else {
             return;
         };
         ui.add_space(6.0);
@@ -570,17 +581,17 @@ impl DriftApp {
                 .on_hover_text("Hatch this area with the Fill tool's pattern")
                 .clicked()
             {
-                make = Some(match &self.editor.prefs.fill_style.kind {
+                make = Some(match &self.drawing.editor.prefs.fill_style.kind {
                     FillKind::Hatch(h) => FillKind::Hatch(h.clone()),
                     FillKind::Solid => FillKind::Hatch(Hatch::new("ANSI31")),
                 });
             }
         });
         if let Some(kind) = make {
-            let saved = self.editor.prefs.fill_style.clone();
-            self.editor.prefs.fill_style.kind = kind;
-            let result = self.editor.add_fill_at(seed);
-            self.editor.prefs.fill_style = saved;
+            let saved = self.drawing.editor.prefs.fill_style.clone();
+            self.drawing.editor.prefs.fill_style.kind = kind;
+            let result = self.drawing.editor.add_fill_at(seed);
+            self.drawing.editor.prefs.fill_style = saved;
             if let Err(e) = result {
                 let now = ui.input(|i| i.time);
                 self.set_status(e, true, now);

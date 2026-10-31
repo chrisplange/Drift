@@ -73,7 +73,7 @@ impl DriftApp {
     /// The one picked hatch whose pattern can be aligned: a hatch picked alone, or a hatched
     /// shape picked (its fill with its outline).
     pub(crate) fn aligned_hatch(&self) -> Option<FillId> {
-        let ed = &self.editor;
+        let ed = &self.drawing.editor;
         if ed.selected_fills.len() != 1
             || !ed.selected_instances.is_empty()
             || !ed.selected_texts.is_empty()
@@ -95,13 +95,13 @@ impl DriftApp {
     /// tool is idle.
     pub(crate) fn hatch_handles(&mut self, map: &ScreenMap) -> Option<HatchHandles> {
         if self.tool.kind() != ToolKind::Select
-            || (self.tool.is_busy() && self.hatch_drag.is_none())
-            || self.align_edge.is_some()
+            || (self.tool.is_busy() && self.drawing.hatch_drag.is_none())
+            || self.drawing.align_edge.is_some()
         {
             return None;
         }
         let id = self.aligned_hatch()?;
-        let ed = &mut self.editor;
+        let ed = &mut self.drawing.editor;
         // A whole shape picked has the transform box round it.
         let boxed = !ed.selection.is_empty();
         let FillKind::Hatch(hatch) = &ed.doc.fill(id)?.kind else {
@@ -122,7 +122,7 @@ impl DriftApp {
         } else {
             origin_in(origin, &region.bounds)
         };
-        let moving = self.hatch_drag == Some((id, HatchGrip::Origin));
+        let moving = self.drawing.hatch_drag == Some((id, HatchGrip::Origin));
         let at = if near || moving {
             origin
         } else {
@@ -154,27 +154,27 @@ impl DriftApp {
         snap: bool,
     ) -> bool {
         let Some(h) = handles else {
-            if self.hatch_drag.take().is_some() {
-                self.editor.commit("Edit hatch");
+            if self.drawing.hatch_drag.take().is_some() {
+                self.drawing.editor.commit("Edit hatch");
             }
             return false;
         };
-        if self.hatch_drag.is_none()
+        if self.drawing.hatch_drag.is_none()
             && response.drag_started_by(PointerButton::Primary)
             && let Some(grip) = ui
                 .input(|i| i.pointer.press_origin())
                 .and_then(|p| h.grip_at(p))
         {
-            self.hatch_drag = Some((h.fill, grip));
-            self.editor.doc.begin();
+            self.drawing.hatch_drag = Some((h.fill, grip));
+            self.drawing.editor.doc.begin();
         }
-        if let Some((id, grip)) = self.hatch_drag {
+        if let Some((id, grip)) = self.drawing.hatch_drag {
             if let Some(p) = response.interact_pointer_pos() {
                 self.move_hatch_grip(id, grip, h, map, p, snap);
             }
             if !response.dragged_by(PointerButton::Primary) {
-                self.hatch_drag = None;
-                self.editor.commit(match grip {
+                self.drawing.hatch_drag = None;
+                self.drawing.editor.commit(match grip {
                     HatchGrip::Origin => "Move hatch pattern",
                     HatchGrip::Angle => "Turn hatch pattern",
                 });
@@ -208,7 +208,7 @@ impl DriftApp {
         p: egui::Pos2,
         snap: bool,
     ) {
-        let Some(mut fill) = self.editor.doc.fill(id).cloned() else {
+        let Some(mut fill) = self.drawing.editor.doc.fill(id).cloned() else {
             return;
         };
         let FillKind::Hatch(hatch) = &mut fill.kind else {
@@ -219,16 +219,16 @@ impl DriftApp {
             HatchGrip::Origin => {
                 // Onto points, curves and the grid, like anything else that is placed.
                 let options = drift_geom::SnapOptions {
-                    tolerance: PICK_RADIUS / self.camera.scale,
-                    grid: self
-                        .grid_snap
-                        .then(|| drift_render::grid_info(&self.camera, self.imperial()).minor),
+                    tolerance: PICK_RADIUS / self.drawing.view.camera.scale,
+                    grid: self.grid_snap.then(|| {
+                        drift_render::grid_info(&self.drawing.view.camera, self.imperial()).minor
+                    }),
                     from: None,
                 };
                 let found = snap
-                    .then(|| self.editor.snap(raw, options, |_| false))
+                    .then(|| self.drawing.editor.snap(raw, options, |_| false))
                     .flatten();
-                self.hatch_snap = found.filter(|s| s.kind != drift_geom::SnapKind::Grid);
+                self.drawing.hatch_snap = found.filter(|s| s.kind != drift_geom::SnapKind::Grid);
                 hatch.origin = found.map_or(raw, |s| s.at);
             }
             HatchGrip::Angle => {
@@ -251,7 +251,7 @@ impl DriftApp {
                 }
             }
         }
-        self.editor.doc.set_fill(id, fill);
+        self.drawing.editor.doc.set_fill(id, fill);
     }
 
     /// The Fill section's Pattern alignment rows for one hatch: its origin (typed, or put on
@@ -259,11 +259,17 @@ impl DriftApp {
     /// edges), and Reset.
     pub(crate) fn pattern_alignment(&mut self, ui: &mut egui::Ui, id: FillId) {
         const UNITS: &str = "units and variables work, e.g. 2in or =width/2";
-        let Some(FillKind::Hatch(h)) = self.editor.doc.fill(id).map(|f| f.kind.clone()) else {
+        let Some(FillKind::Hatch(h)) = self.drawing.editor.doc.fill(id).map(|f| f.kind.clone())
+        else {
             return;
         };
-        let units = self.editor.doc.units();
-        let bounds = self.editor.fill_shapes().get(&id).map(|s| s.region.bounds);
+        let units = self.drawing.editor.doc.units();
+        let bounds = self
+            .drawing
+            .editor
+            .fill_shapes()
+            .get(&id)
+            .map(|s| s.region.bounds);
         ui.add_space(6.0);
         ui.label(
             egui::RichText::new("Pattern alignment")
@@ -307,7 +313,7 @@ impl DriftApp {
             {
                 typed.push((None, text));
             }
-            let waiting = self.align_edge == Some(id);
+            let waiting = self.drawing.align_edge == Some(id);
             if ui
                 .add(egui::Button::new("Align to edge…").selected(waiting))
                 .on_hover_text(
@@ -344,7 +350,7 @@ impl DriftApp {
                 Some(_) => drift_core::units::Kind::Length,
                 None => drift_core::units::Kind::Angle,
             };
-            match self.editor.evaluate_text(&text, kind) {
+            match self.drawing.editor.evaluate_text(&text, kind) {
                 Ok(v) => match axis {
                     Some(axis) => {
                         let mut o = origin.unwrap_or(h.origin);
@@ -353,18 +359,18 @@ impl DriftApp {
                     }
                     None => angle = Some(v.value),
                 },
-                Err(e) => self.editor.out.notice = Some(format!("Can't use {text}: {e}")),
+                Err(e) => self.drawing.editor.out.notice = Some(format!("Can't use {text}: {e}")),
             }
         }
         if edge {
-            self.align_edge = if self.align_edge == Some(id) {
+            self.drawing.align_edge = if self.drawing.align_edge == Some(id) {
                 None
             } else {
                 Some(id)
             };
         }
         if origin.is_some() || angle.is_some() {
-            self.editor.align_hatch(id, origin, angle);
+            self.drawing.editor.align_hatch(id, origin, angle);
         }
     }
 
@@ -377,27 +383,28 @@ impl DriftApp {
         map: &ScreenMap,
         pos: Option<egui::Pos2>,
     ) -> bool {
-        let Some(id) = self.align_edge else {
+        let Some(id) = self.drawing.align_edge else {
             return false;
         };
         // Its hatch no longer picked (or another tool taken up): it's over.
         if self.tool.kind() != ToolKind::Select || self.aligned_hatch() != Some(id) {
-            self.align_edge = None;
+            self.drawing.align_edge = None;
             return false;
         }
-        let Some(boundary) = self.editor.doc.fill(id).map(|f| f.boundary.clone()) else {
-            self.align_edge = None;
+        let Some(boundary) = self.drawing.editor.doc.fill(id).map(|f| f.boundary.clone()) else {
+            self.drawing.align_edge = None;
             return false;
         };
-        let tolerance = PICK_RADIUS / self.camera.scale;
+        let tolerance = PICK_RADIUS / self.drawing.view.camera.scale;
         let curve_at = |app: &Self, p: egui::Pos2| {
-            app.editor
+            app.drawing
+                .editor
                 .index
                 .pick(map.to_world(p), tolerance, |c| boundary.contains(&c))
         };
         let over = pos.and_then(|p| curve_at(self, p));
-        self.editor.hovered = over;
-        self.editor.hovered_fill = None;
+        self.drawing.editor.hovered = over;
+        self.drawing.editor.hovered_fill = None;
         ui.ctx().set_cursor_icon(if over.is_some() {
             egui::CursorIcon::PointingHand
         } else {
@@ -407,11 +414,12 @@ impl DriftApp {
             let at = release_pos(ui, PointerButton::Primary).or(pos);
             match at.and_then(|p| curve_at(self, p)) {
                 Some(curve) => {
-                    self.editor.align_hatch_to_edge(id, curve);
-                    self.align_edge = None;
+                    self.drawing.editor.align_hatch_to_edge(id, curve);
+                    self.drawing.align_edge = None;
                 }
                 None => {
-                    self.editor.out.notice = Some("Click one of the shape's own edges".into());
+                    self.drawing.editor.out.notice =
+                        Some("Click one of the shape's own edges".into());
                 }
             }
         }
@@ -428,7 +436,7 @@ impl DriftApp {
     ) {
         let color = handle_color(colors.dark);
         let halo = colors.label_bg;
-        let dragging = self.hatch_drag.map(|d| d.1);
+        let dragging = self.drawing.hatch_drag.map(|d| d.1);
         painter.line_segment([h.origin, h.angle], egui::Stroke::new(1.0, color));
         // The origin: a cross in a square. The angle: a round knob.
         let square = egui::Rect::from_center_size(h.origin, egui::Vec2::splat(11.0));
@@ -450,11 +458,11 @@ impl DriftApp {
                 overlay::cursor_label(painter, h.angle, &[text], colors);
             }
             Some(HatchGrip::Origin) => {
-                if let Some(snap) = &self.hatch_snap {
+                if let Some(snap) = &self.drawing.hatch_snap {
                     overlay::snap_marker(painter, map, snap, colors.snap);
                 }
             }
-            None => self.hatch_snap = None,
+            None => self.drawing.hatch_snap = None,
         }
     }
 }

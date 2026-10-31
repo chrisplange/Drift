@@ -101,7 +101,7 @@ impl DriftApp {
         if !self.show_dimensions {
             return Vec::new();
         }
-        notes::layout_annotations(painter, &self.editor.doc, map)
+        notes::layout_annotations(painter, &self.drawing.editor.doc, map)
             .into_iter()
             .filter(|l| self.on_canvas(drift_core::AnnotationRef::Annotation(l.id)))
             .collect()
@@ -123,7 +123,7 @@ impl DriftApp {
         // (With the select tool's filter on Annotations or All.)
         let idle = self.tool.kind() == ToolKind::Select
             && !self.tool.is_busy()
-            && self.editor.prefs.pick_filter.annotations();
+            && self.drawing.editor.prefs.pick_filter.annotations();
         if idle && self.leader_input(ui, response, map, layouts, pos) {
             return true;
         }
@@ -138,37 +138,39 @@ impl DriftApp {
                 layouts.iter().rev().find(|l| l.hit(p)).map(|l| l.id)
             }
         };
-        self.editor.hovered_annotation =
-            if idle && self.note_drag.is_none() && self.label_drag.is_none() {
+        self.drawing.editor.hovered_annotation =
+            if idle && self.drawing.note_drag.is_none() && self.drawing.label_drag.is_none() {
                 pos.and_then(note_at)
             } else {
                 None
             };
         if idle
-            && self.note_drag.is_none()
-            && self.label_drag.is_none()
+            && self.drawing.note_drag.is_none()
+            && self.drawing.label_drag.is_none()
             && response.drag_started_by(PointerButton::Primary)
             && let Some(origin) = ui.input(|i| i.pointer.press_origin())
             && let Some(id) = note_at(origin)
-            && let Some(a) = self.editor.doc.annotation(id)
-            && let Some(label) = drift_edit::labels::label_world(&self.editor.doc, a)
+            && let Some(a) = self.drawing.editor.doc.annotation(id)
+            && let Some(label) = drift_edit::labels::label_world(&self.drawing.editor.doc, a)
         {
-            self.note_drag = Some((id, map.to_world(origin) - label));
-            self.editor.selected_annotation = Some(id);
-            self.editor.doc.begin();
+            self.drawing.note_drag = Some((id, map.to_world(origin) - label));
+            self.drawing.editor.selected_annotation = Some(id);
+            self.drawing.editor.doc.begin();
         }
-        if let Some((id, grab)) = self.note_drag {
+        if let Some((id, grab)) = self.drawing.note_drag {
             if let (Some(p), Some(a)) = (
                 response.interact_pointer_pos(),
-                self.editor.doc.annotation(id).cloned(),
-            ) && let Some(moved) =
-                drift_edit::labels::with_label_at(&self.editor.doc, &a, map.to_world(p) - grab)
-            {
-                let _ = self.editor.doc.set_annotation(id, moved);
+                self.drawing.editor.doc.annotation(id).cloned(),
+            ) && let Some(moved) = drift_edit::labels::with_label_at(
+                &self.drawing.editor.doc,
+                &a,
+                map.to_world(p) - grab,
+            ) {
+                let _ = self.drawing.editor.doc.set_annotation(id, moved);
             }
             if !response.dragged_by(PointerButton::Primary) {
-                self.note_drag = None;
-                self.editor.commit("Move note");
+                self.drawing.note_drag = None;
+                self.drawing.editor.commit("Move note");
             }
             return true;
         }
@@ -185,11 +187,11 @@ impl DriftApp {
         if response.clicked_by(PointerButton::Primary) {
             if let Some(id) = at.and_then(note_at) {
                 // On one of its leaders: that leader is picked too (Delete removes it).
-                self.selected_leader = at.and_then(|p| {
+                self.drawing.selected_leader = at.and_then(|p| {
                     let l = layouts.iter().find(|l| l.id == id)?;
                     let on_text = l.text.as_ref().is_some_and(|t| t.rect.contains(p));
                     let note = matches!(
-                        self.editor.doc.annotation(id),
+                        self.drawing.editor.doc.annotation(id),
                         Some(Annotation::Note { .. })
                     );
                     (note && !on_text)
@@ -201,32 +203,32 @@ impl DriftApp {
                     // Added to what is picked, geometry and all.
                     self.toggle_annotation_pick(drift_core::AnnotationRef::Annotation(id));
                 } else {
-                    self.editor.annotation_picks.clear();
-                    self.editor.selected_annotation = Some(id);
-                    self.selected_constraint = None;
-                    self.editor.selection.clear();
-                    self.editor.selected_fills.clear();
-                    self.editor.selected_instances.clear();
-                    self.editor.selected_texts.clear();
-                    self.editor.selected_region = None;
+                    self.drawing.editor.annotation_picks.clear();
+                    self.drawing.editor.selected_annotation = Some(id);
+                    self.drawing.selected_constraint = None;
+                    self.drawing.editor.selection.clear();
+                    self.drawing.editor.selected_fills.clear();
+                    self.drawing.editor.selected_instances.clear();
+                    self.drawing.editor.selected_texts.clear();
+                    self.drawing.editor.selected_region = None;
                 }
                 return true;
             }
             if !crate::app::visibility_ui::shift_click(ui) && !ui.input(|i| i.modifiers.command) {
-                self.editor.selected_annotation = None;
+                self.drawing.editor.selected_annotation = None;
             }
-            self.selected_leader = None;
+            self.drawing.selected_leader = None;
         }
         false
     }
 
     /// The grips of the picked note, on screen.
     fn note_grips(&self, layouts: &[NoteLayout]) -> Vec<(egui::Pos2, LeaderGrip)> {
-        let Some(id) = self.editor.selected_annotation else {
+        let Some(id) = self.drawing.editor.selected_annotation else {
             return Vec::new();
         };
         if !matches!(
-            self.editor.doc.annotation(id),
+            self.drawing.editor.doc.annotation(id),
             Some(Annotation::Note { .. })
         ) {
             return Vec::new();
@@ -262,23 +264,23 @@ impl DriftApp {
     /// Where a leader dropped at `pos` points: a snapped point, a spot on a curve, or free.
     fn leader_anchor(&self, map: &ScreenMap, pos: egui::Pos2) -> Anchor {
         let raw = map.to_world(pos);
-        let tolerance = PICK_RADIUS / self.camera.scale;
+        let tolerance = PICK_RADIUS / self.drawing.view.camera.scale;
         let options = drift_geom::SnapOptions {
             tolerance,
             grid: self
                 .grid_snap
-                .then(|| drift_render::grid_info(&self.camera, self.imperial()).minor),
+                .then(|| drift_render::grid_info(&self.drawing.view.camera, self.imperial()).minor),
             from: None,
         };
         let mut p = Pointer::new(raw, tolerance);
         p.relations = true;
-        p.snap = self.editor.snap(raw, options, |_| false);
+        p.snap = self.drawing.editor.snap(raw, options, |_| false);
         if let Some(point) = p.snapped_point() {
             return Anchor::Point(point);
         }
         // Any line or curve under the pointer, at the spot nearest it.
-        let doc = &self.editor.doc;
-        match drift_edit::tools::reference_at(&self.editor, &p) {
+        let doc = &self.drawing.editor.doc;
+        match drift_edit::tools::reference_at(&self.drawing.editor, &p) {
             Some(id) if doc.get(id).is_some_and(|e| e.kind.is_point()) => Anchor::Point(id),
             Some(curve) => {
                 let at = doc
@@ -293,7 +295,7 @@ impl DriftApp {
     /// Change a note's leaders, keeping its text where it is (inside the caller's
     /// transaction).
     fn change_leaders(&mut self, id: AnnotationId, f: impl FnOnce(&mut Vec<Leader>)) {
-        let doc = &self.editor.doc;
+        let doc = &self.drawing.editor.doc;
         let Some(Annotation::Note {
             text,
             at,
@@ -310,7 +312,7 @@ impl DriftApp {
         let Some(at) = doc.note_at(pos, &leaders) else {
             return;
         };
-        let _ = self.editor.doc.set_annotation(
+        let _ = self.drawing.editor.doc.set_annotation(
             id,
             Annotation::Note {
                 text,
@@ -323,14 +325,14 @@ impl DriftApp {
 
     /// Remove a note's leader (one undo step); the text stays where it is.
     pub(crate) fn remove_leader(&mut self, id: AnnotationId, k: usize) {
-        self.editor.doc.begin();
+        self.drawing.editor.doc.begin();
         self.change_leaders(id, |leaders| {
             if k < leaders.len() {
                 leaders.remove(k);
             }
         });
-        self.editor.commit("Remove leader");
-        self.selected_leader = None;
+        self.drawing.editor.commit("Remove leader");
+        self.drawing.selected_leader = None;
     }
 
     /// The picked note's grips, and a click that adds a leader after Add leader: returns
@@ -345,7 +347,7 @@ impl DriftApp {
     ) -> bool {
         let released = || release_pos(ui, PointerButton::Primary).or(pos);
         // After Add leader: the next click says what it points to.
-        if let Some(id) = self.adding_leader {
+        if let Some(id) = self.drawing.adding_leader {
             if pos.is_some() {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
             }
@@ -353,10 +355,10 @@ impl DriftApp {
                 && let Some(at) = released()
             {
                 let to = self.leader_anchor(map, at);
-                self.editor.doc.begin();
+                self.drawing.editor.doc.begin();
                 self.change_leaders(id, |leaders| leaders.push(Leader::to(to)));
-                self.editor.commit("Add leader");
-                self.adding_leader = None;
+                self.drawing.editor.commit("Add leader");
+                self.drawing.adding_leader = None;
                 return true;
             }
         }
@@ -375,16 +377,16 @@ impl DriftApp {
                 _ => egui::CursorIcon::Grab,
             });
         }
-        if self.leader_grip.is_none()
+        if self.drawing.leader_grip.is_none()
             && response.drag_started_by(PointerButton::Primary)
             && let Some(origin) = ui.input(|i| i.pointer.press_origin())
             && let Some(grip) = grip_at(origin)
-            && let Some(id) = self.editor.selected_annotation
+            && let Some(id) = self.drawing.editor.selected_annotation
         {
-            self.leader_grip = Some((id, grip));
-            self.editor.doc.begin();
+            self.drawing.leader_grip = Some((id, grip));
+            self.drawing.editor.doc.begin();
         }
-        let Some((id, grip)) = self.leader_grip else {
+        let Some((id, grip)) = self.drawing.leader_grip else {
             return false;
         };
         if let Some(p) = response.interact_pointer_pos() {
@@ -399,7 +401,7 @@ impl DriftApp {
                 }
                 LeaderGrip::Bend(k) => {
                     let at = map.to_world(p);
-                    let doc = &self.editor.doc;
+                    let doc = &self.drawing.editor.doc;
                     let tip = match doc.annotation(id) {
                         Some(Annotation::Note { leaders, .. }) => {
                             leaders.get(k).and_then(|l| doc.anchor_pos(&l.to))
@@ -469,36 +471,48 @@ impl DriftApp {
                 LeaderGrip::Shoulder(_) => "Shoulder length",
                 LeaderGrip::Curve(_) => "Curve leader",
             };
-            self.leader_grip = None;
-            self.editor.commit(label);
+            self.drawing.leader_grip = None;
+            self.drawing.editor.commit(label);
         }
         true
     }
 
     pub(crate) fn paint_notes(&self, painter: &egui::Painter, layouts: &[NoteLayout], dark: bool) {
         for l in layouts {
-            if self.note_edit.as_ref().is_some_and(|e| e.id == l.id) {
+            if self
+                .drawing
+                .note_edit
+                .as_ref()
+                .is_some_and(|e| e.id == l.id)
+            {
                 continue;
             }
             let r = drift_core::AnnotationRef::Annotation(l.id);
             // Each in its own style: the drawing's, with its own settings in place.
-            let draft = self.editor.doc.draft_style_for(r);
+            let draft = self.drawing.editor.doc.draft_style_for(r);
             let colors = AnnotationColors::drafting(dark, draft.color);
             let faded = colors.faded();
             let style = annotations::DimStyle::of(&draft);
-            let state = if self.annotation_picked(r) || self.note_drag.is_some_and(|d| d.0 == l.id)
+            let state = if self.annotation_picked(r)
+                || self.drawing.note_drag.is_some_and(|d| d.0 == l.id)
             {
                 AnnotationState::Selected
-            } else if self.editor.hovered_annotation == Some(l.id) {
+            } else if self.drawing.editor.hovered_annotation == Some(l.id) {
                 AnnotationState::Hovered
             } else {
                 AnnotationState::Normal
             };
-            let shown = self.editor.doc.shown(r);
+            let shown = self.drawing.editor.doc.shown(r);
             let look = if shown.canvas { &colors } else { &faded };
             notes::paint_annotation(painter, l, state, look, &style);
-            if self.selected_leader.is_some_and(|(id, _)| id == l.id)
-                && let Some(leader) = self.selected_leader.and_then(|(_, k)| l.leaders.get(k))
+            if self
+                .drawing
+                .selected_leader
+                .is_some_and(|(id, _)| id == l.id)
+                && let Some(leader) = self
+                    .drawing
+                    .selected_leader
+                    .and_then(|(_, k)| l.leaders.get(k))
             {
                 let picked = egui::Stroke::new(2.5, look.selected);
                 notes::paint_leader(painter, leader, picked, look.selected, &style);
@@ -567,7 +581,7 @@ impl DriftApp {
                 }
             }
         }
-        if let Some((_, LeaderGrip::New(from))) = self.leader_grip
+        if let Some((_, LeaderGrip::New(from))) = self.drawing.leader_grip
             && let Some(to) = painter.ctx().input(|i| i.pointer.latest_pos())
         {
             crate::overlay::dashed(
@@ -582,18 +596,18 @@ impl DriftApp {
 
     /// Start typing a note's text on the canvas (other annotations open the inspector).
     pub(crate) fn open_note_edit(&mut self, id: AnnotationId, new: bool) {
-        match self.editor.doc.annotation(id) {
+        match self.drawing.editor.doc.annotation(id) {
             Some(Annotation::Note { text, .. }) => {
-                self.note_edit = Some(NoteEdit {
+                self.drawing.note_edit = Some(NoteEdit {
                     id,
                     text: text.clone(),
                     focus: true,
                     new,
                 });
-                self.editor.selected_annotation = Some(id);
+                self.drawing.editor.selected_annotation = Some(id);
             }
             Some(_) => {
-                self.editor.selected_annotation = Some(id);
+                self.drawing.editor.selected_annotation = Some(id);
                 self.show_panel(crate::dock::Panel::Inspector);
             }
             None => {}
@@ -603,7 +617,7 @@ impl DriftApp {
     /// The in-place note editor: Return adds a line, clicking away keeps the text, Esc
     /// cancels (removing a note that was just placed).
     pub(crate) fn note_editor(&mut self, ctx: &egui::Context, layouts: &[NoteLayout]) {
-        let Some(mut edit) = self.note_edit.take() else {
+        let Some(mut edit) = self.drawing.note_edit.take() else {
             return;
         };
         let Some(rect) = layouts
@@ -614,7 +628,7 @@ impl DriftApp {
             return;
         };
         let field = egui::Id::new("note_edit_field");
-        let font = notes::text_size(&self.editor.doc);
+        let font = notes::text_size(&self.drawing.editor.doc);
         let mut keep = true;
         egui::Area::new(egui::Id::new("note_edit"))
             .fixed_pos(rect.left_top() - egui::vec2(6.0, 4.0))
@@ -655,7 +669,7 @@ impl DriftApp {
                 });
             });
         if keep {
-            self.note_edit = Some(edit);
+            self.drawing.note_edit = Some(edit);
         }
     }
 
@@ -663,23 +677,23 @@ impl DriftApp {
         let text = edit.text.trim_end().to_owned();
         let Some(Annotation::Note {
             at, leaders, style, ..
-        }) = self.editor.doc.annotation(edit.id).cloned()
+        }) = self.drawing.editor.doc.annotation(edit.id).cloned()
         else {
             return;
         };
         if (cancelled || text.trim().is_empty()) && edit.new {
             // A note placed but never written goes away (part of the same undo step).
-            self.editor.doc.begin();
-            self.editor.doc.remove_annotation(edit.id);
-            self.editor.commit("Note");
-            self.editor.selected_annotation = None;
+            self.drawing.editor.doc.begin();
+            self.drawing.editor.doc.remove_annotation(edit.id);
+            self.drawing.editor.commit("Note");
+            self.drawing.editor.selected_annotation = None;
             return;
         }
         if cancelled || text.trim().is_empty() {
             return;
         }
-        self.editor.doc.begin();
-        let _ = self.editor.doc.set_annotation(
+        self.drawing.editor.doc.begin();
+        let _ = self.drawing.editor.doc.set_annotation(
             edit.id,
             Annotation::Note {
                 text,
@@ -688,13 +702,14 @@ impl DriftApp {
                 style,
             },
         );
-        self.editor.commit("Note text");
+        self.drawing.editor.commit("Note text");
     }
 
     /// "Add centre marks" for selected circles and arcs that don't have one yet.
     pub(crate) fn centre_mark_button(&mut self, ui: &mut egui::Ui) {
-        let doc = &self.editor.doc;
+        let doc = &self.drawing.editor.doc;
         let unmarked: Vec<drift_core::EntityId> = self
+            .drawing
             .editor
             .selection
             .iter()
@@ -724,24 +739,25 @@ impl DriftApp {
             .on_hover_text("Centre lines across the selected circles and arcs")
             .clicked()
         {
-            self.editor.doc.begin();
+            self.drawing.editor.doc.begin();
             for curve in unmarked {
                 let _ = self
+                    .drawing
                     .editor
                     .doc
                     .add_annotation(Annotation::CentreMark { curve });
             }
-            self.editor.commit("Centre marks");
+            self.drawing.editor.commit("Centre marks");
         }
     }
 
     /// The inspector for a picked annotation. Returns true if one is picked.
     pub(crate) fn annotation_inspector(&mut self, ui: &mut egui::Ui) -> bool {
-        let Some(id) = self.editor.selected_annotation else {
+        let Some(id) = self.drawing.editor.selected_annotation else {
             return false;
         };
-        let Some(a) = self.editor.doc.annotation(id).cloned() else {
-            self.editor.selected_annotation = None;
+        let Some(a) = self.drawing.editor.doc.annotation(id).cloned() else {
+            self.drawing.editor.selected_annotation = None;
             return false;
         };
         // The icon of the tool that makes it.
@@ -776,7 +792,8 @@ impl DriftApp {
                         .on_hover_text("Off: the drafting style's text height")
                         .changed()
                     {
-                        style.height = own.then(|| self.editor.doc.draft_style().text_height);
+                        style.height =
+                            own.then(|| self.drawing.editor.doc.draft_style().text_height);
                     }
                     if let Some(h) = &mut style.height {
                         ui.add(
@@ -830,7 +847,7 @@ impl DriftApp {
                 ui.checkbox(&mut style.mask, "Mask what's behind it")
                     .on_hover_text("Paper behind the text, so it reads over hatches and lines");
                 theme::section(ui, &format!("Leaders · {}", leaders.len()));
-                let doc = &self.editor.doc;
+                let doc = &self.drawing.editor.doc;
                 let pos = doc.note_text_pos(*at, leaders);
                 let mut remove = None;
                 for (k, l) in leaders.iter_mut().enumerate() {
@@ -884,7 +901,7 @@ impl DriftApp {
                     {
                         *at = new_at;
                     }
-                    self.selected_leader = None;
+                    self.drawing.selected_leader = None;
                 }
                 if ui
                     .button("Add leader")
@@ -894,7 +911,7 @@ impl DriftApp {
                     )
                     .clicked()
                 {
-                    self.adding_leader = Some(id);
+                    self.drawing.adding_leader = Some(id);
                     let now = ui.input(|i| i.time);
                     self.set_status(
                         "Click what the new leader points to (it snaps) · Esc to stop".into(),
@@ -914,7 +931,8 @@ impl DriftApp {
                 );
             }
             Annotation::HoleCallout { curve, suffix, .. } => {
-                if let Some(t) = notes::hole_callout_text(&self.editor.doc, *curve, suffix) {
+                if let Some(t) = notes::hole_callout_text(&self.drawing.editor.doc, *curve, suffix)
+                {
                     ui.label(t);
                 }
                 theme::section(ui, "Text");
@@ -934,7 +952,7 @@ impl DriftApp {
                 });
             }
             Annotation::ChamferCallout { line, .. } => {
-                if let Some(t) = notes::chamfer_text(&self.editor.doc, *line) {
+                if let Some(t) = notes::chamfer_text(&self.drawing.editor.doc, *line) {
                     ui.label(t);
                 }
             }
@@ -944,9 +962,11 @@ impl DriftApp {
                 axis,
                 ..
             } => {
-                if let Some(v) = notes::ordinate_value(&self.editor.doc, *origin, *point, *axis) {
-                    let units = self.editor.doc.units();
-                    ui.label(self.editor.doc.draft_style().length(&units, v));
+                if let Some(v) =
+                    notes::ordinate_value(&self.drawing.editor.doc, *origin, *point, *axis)
+                {
+                    let units = self.drawing.editor.doc.units();
+                    ui.label(self.drawing.editor.doc.draft_style().length(&units, v));
                 }
                 theme::section(ui, "Measures");
                 if let Some(x) =
@@ -971,7 +991,7 @@ impl DriftApp {
                 view,
             } => {
                 theme::section(ui, "Mark");
-                mark_fields(ui, &self.editor.doc, label, sheet, view, "A");
+                mark_fields(ui, &self.drawing.editor.doc, label, sheet, view, "A");
                 theme::row(ui, "Direction", |ui| {
                     if ui
                         .button("Flip")
@@ -998,7 +1018,7 @@ impl DriftApp {
                 ..
             } => {
                 theme::section(ui, "Mark");
-                mark_fields(ui, &self.editor.doc, label, sheet, view, "1");
+                mark_fields(ui, &self.drawing.editor.doc, label, sheet, view, "1");
                 theme::row(ui, "Facing", |ui| {
                     ui.add(
                         egui::DragValue::new(angle)
@@ -1016,15 +1036,15 @@ impl DriftApp {
             }
         }
         if edited != a {
-            self.editor.doc.begin();
-            let _ = self.editor.doc.set_annotation(id, edited);
-            self.editor.commit("Edit note");
+            self.drawing.editor.doc.begin();
+            let _ = self.drawing.editor.doc.set_annotation(id, edited);
+            self.drawing.editor.commit("Edit note");
         }
         self.visibility_section(ui);
         self.style_section(ui);
         ui.add_space(10.0);
         if theme::danger_button(ui, "Delete").clicked() {
-            self.editor.delete_selection();
+            self.drawing.editor.delete_selection();
         }
         true
     }

@@ -8,25 +8,25 @@ use super::*;
 fn walls_harness() -> Option<Harness<'static, DriftApp>> {
     let mut h = harness()?;
     h.state_mut().grid_snap = false;
-    h.state_mut().editor.prefs.wall_thickness = 10.0;
-    h.state_mut().editor.prefs.wall_justify = drift_core::Justify::Centre;
-    h.state_mut().editor.prefs.wall_arc = false;
-    h.state_mut().fit_target = Some(drift_core::Bounds {
+    h.state_mut().drawing.editor.prefs.wall_thickness = 10.0;
+    h.state_mut().drawing.editor.prefs.wall_justify = drift_core::Justify::Centre;
+    h.state_mut().drawing.editor.prefs.wall_arc = false;
+    h.state_mut().drawing.view.fit_target = Some(drift_core::Bounds {
         min: DVec2::new(-20.0, -40.0),
         max: DVec2::new(140.0, 100.0),
     });
     h.run();
-    h.state_mut().fit_target = None;
+    h.state_mut().drawing.view.fit_target = None;
     h.run();
     Some(h)
 }
 
 fn walls(h: &Harness<'_, DriftApp>) -> usize {
-    h.state().editor.doc.walls().count()
+    h.state().drawing.editor.doc.walls().count()
 }
 
 fn poche(h: &mut Harness<'_, DriftApp>) -> f64 {
-    let shapes = h.state_mut().editor.fill_shapes();
+    let shapes = h.state_mut().drawing.editor.fill_shapes();
     shapes.values().map(|s| s.region.area).sum()
 }
 
@@ -53,7 +53,7 @@ fn w_draws_walls_that_join_and_undo_per_segment() {
     h.key_press(Key::Enter);
     h.run();
     assert_eq!(walls(&h), 2);
-    assert_eq!(h.state().editor.doc.fills().count(), 1, "one poché");
+    assert_eq!(h.state().drawing.editor.doc.fills().count(), 1, "one poché");
     assert!(
         (poche(&mut h) - (1600.0 + 750.0)).abs() < 0.5,
         "{}",
@@ -77,34 +77,34 @@ fn w_again_arcs_a_and_l_switch_and_backspace_takes_back() {
     // W again: arcs, without leaving the tool.
     h.key_press(Key::W);
     h.run();
-    assert!(h.state().editor.prefs.wall_arc);
+    assert!(h.state().drawing.editor.prefs.wall_arc);
     assert_eq!(h.state().tool.kind(), ToolKind::Wall);
     h.key_press(Key::W);
     h.run();
-    assert!(!h.state().editor.prefs.wall_arc);
+    assert!(!h.state().drawing.editor.prefs.wall_arc);
     click_world(&mut h, DVec2::new(0.0, 0.0));
     click_world(&mut h, DVec2::new(100.0, 0.0));
     // A mid-run: an arc next (not the Arc tool).
     h.key_press(Key::A);
     h.run();
     assert_eq!(h.state().tool.kind(), ToolKind::Wall);
-    assert!(h.state().editor.prefs.wall_arc);
+    assert!(h.state().drawing.editor.prefs.wall_arc);
     // Its end, then a point it curves through.
     click_world(&mut h, DVec2::new(100.0, 60.0));
     click_world(&mut h, DVec2::new(130.0, 30.0));
-    let w = h.state().editor.doc.walls().next().unwrap().0;
-    assert_eq!(h.state().editor.wall_curves(w).len(), 2);
+    let w = h.state().drawing.editor.doc.walls().next().unwrap().0;
+    assert_eq!(h.state().drawing.editor.wall_curves(w).len(), 2);
     // L: straight again.
     h.key_press(Key::L);
     h.run();
     assert_eq!(h.state().tool.kind(), ToolKind::Wall);
-    assert!(!h.state().editor.prefs.wall_arc);
+    assert!(!h.state().drawing.editor.prefs.wall_arc);
     click_world(&mut h, DVec2::new(0.0, 60.0));
-    assert_eq!(h.state().editor.wall_curves(w).len(), 3);
+    assert_eq!(h.state().drawing.editor.wall_curves(w).len(), 3);
     // Backspace: the last segment goes, the run goes on.
     h.key_press(Key::Backspace);
     h.run();
-    assert_eq!(h.state().editor.wall_curves(w).len(), 2);
+    assert_eq!(h.state().drawing.editor.wall_curves(w).len(), 2);
     assert!(h.state().tool.is_busy());
     h.key_press(Key::Escape);
     h.run();
@@ -116,23 +116,27 @@ fn space_flips_types_and_repeats() {
     let Some(mut h) = walls_harness() else { return };
     h.key_press(Key::W);
     h.run();
-    h.state_mut().editor.prefs.wall_justify = drift_core::Justify::Left;
+    h.state_mut().drawing.editor.prefs.wall_justify = drift_core::Justify::Left;
     click_world(&mut h, DVec2::new(0.0, 0.0));
     click_world(&mut h, DVec2::new(100.0, 0.0));
     // Space flips the run to its other face.
     h.key_press(Key::Space);
     h.run();
-    let w = h.state().editor.doc.walls().next().unwrap().0;
+    let w = h.state().drawing.editor.doc.walls().next().unwrap().0;
     assert_eq!(
-        h.state().editor.doc.wall(w).unwrap().justify,
+        h.state().drawing.editor.doc.wall(w).unwrap().justify,
         drift_core::Justify::Right
     );
     assert_eq!(h.state().tool.kind(), ToolKind::Wall, "Space didn't repeat");
     // Space while typing a length goes into it: 6 1/2" is one value.
-    h.state_mut().editor.doc.set_units(drift_core::Units {
-        length: drift_core::LengthFormat::Architectural,
-        ..drift_core::Units::default()
-    });
+    h.state_mut()
+        .drawing
+        .editor
+        .doc
+        .set_units(drift_core::Units {
+            length: drift_core::LengthFormat::Architectural,
+            ..drift_core::Units::default()
+        });
     // (Typed a character at a time, Space as a key and its text, as a keyboard sends them.)
     type_text(&mut h, "6");
     h.event(Event::Key {
@@ -144,7 +148,12 @@ fn space_flips_types_and_repeats() {
     });
     type_text(&mut h, " ");
     type_text(&mut h, "1/2\"");
-    let typing = h.state().typing.as_ref().map(|t| t.values[0].clone());
+    let typing = h
+        .state()
+        .drawing
+        .typing
+        .as_ref()
+        .map(|t| t.values[0].clone());
     assert_eq!(typing.as_deref(), Some("6 1/2\""));
     h.key_press(Key::Escape);
     h.run();
@@ -198,7 +207,7 @@ fn picking_a_wall_shows_its_inspector() {
     h.run();
     // A click inside its poché.
     click_world(&mut h, DVec2::new(50.0, 2.0));
-    assert_eq!(h.state().editor.selected_walls().len(), 1);
+    assert_eq!(h.state().drawing.editor.selected_walls().len(), 1);
     h.state_mut().show_panel(crate::dock::Panel::Inspector);
     h.run();
     assert!(
@@ -207,6 +216,6 @@ fn picking_a_wall_shows_its_inspector() {
     );
     h.get_by_label("Show thickness").click();
     h.run();
-    assert_eq!(h.state().editor.doc.property_dims().count(), 1);
+    assert_eq!(h.state().drawing.editor.doc.property_dims().count(), 1);
     save_png("drift_walls_inspector.png", &mut h);
 }

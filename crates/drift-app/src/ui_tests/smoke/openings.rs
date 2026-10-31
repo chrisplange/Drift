@@ -5,9 +5,9 @@ use super::*;
 
 /// A ring of walls round a 100 × 60 room, 10 thick, with the Wall tool; back to Select.
 fn room(h: &mut Harness<'_, DriftApp>) {
-    h.state_mut().editor.prefs.wall_thickness = 10.0;
-    h.state_mut().editor.prefs.wall_justify = drift_core::Justify::Centre;
-    h.state_mut().editor.prefs.wall_arc = false;
+    h.state_mut().drawing.editor.prefs.wall_thickness = 10.0;
+    h.state_mut().drawing.editor.prefs.wall_justify = drift_core::Justify::Centre;
+    h.state_mut().drawing.editor.prefs.wall_arc = false;
     h.key_press(Key::W);
     h.run();
     for p in [
@@ -26,7 +26,7 @@ fn room(h: &mut Harness<'_, DriftApp>) {
 }
 
 fn poche(h: &mut Harness<'_, DriftApp>) -> f64 {
-    let shapes = h.state_mut().editor.fill_shapes();
+    let shapes = h.state_mut().drawing.editor.fill_shapes();
     shapes.values().map(|s| s.region.area).sum()
 }
 
@@ -41,14 +41,14 @@ fn smoke_openings_place_pick_delete_and_reopen() {
     h.run();
     assert_eq!(h.state().tool.kind(), ToolKind::Opening);
     {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         ed.set_opening_family("door.single");
         ed.prefs.opening.width = 30.0;
         ed.prefs.opening.leaf = 28.0;
     }
     let swing = (
-        h.state().editor.prefs.opening.hand,
-        h.state().editor.prefs.opening.facing,
+        h.state().drawing.editor.prefs.opening.hand,
+        h.state().drawing.editor.prefs.opening.facing,
     );
     let at = screen(&h, DVec2::new(50.0, 1.0));
     h.hover_at(at);
@@ -57,14 +57,14 @@ fn smoke_openings_place_pick_delete_and_reopen() {
     h.run();
     assert_ne!(
         (
-            h.state().editor.prefs.opening.hand,
-            h.state().editor.prefs.opening.facing
+            h.state().drawing.editor.prefs.opening.hand,
+            h.state().drawing.editor.prefs.opening.facing
         ),
         swing,
         "Space steps the swing"
     );
     click_world(&mut h, DVec2::new(50.0, 1.0));
-    assert_eq!(h.state().editor.doc.openings().count(), 1);
+    assert_eq!(h.state().drawing.editor.doc.openings().count(), 1);
     assert!(
         (ring - poche(&mut h) - 30.0 * 10.0).abs() < 0.5,
         "the door cuts the poché: {}",
@@ -78,34 +78,45 @@ fn smoke_openings_place_pick_delete_and_reopen() {
     h.run();
     click_world(&mut h, DVec2::new(35.0, 3.0));
     assert_eq!(
-        h.state().editor.selected_openings().len(),
+        h.state().drawing.editor.selected_openings().len(),
         1,
         "the door is picked"
     );
     h.key_press(Key::Delete);
     h.run();
-    assert_eq!(h.state().editor.doc.openings().count(), 0);
-    assert_eq!(h.state().editor.doc.walls().count(), 1, "its wall stays");
+    assert_eq!(h.state().drawing.editor.doc.openings().count(), 0);
+    assert_eq!(
+        h.state().drawing.editor.doc.walls().count(),
+        1,
+        "its wall stays"
+    );
     assert!((poche(&mut h) - ring).abs() < 0.5, "the wall closes up");
     h.key_press_modifiers(EguiModifiers::COMMAND, Key::Z);
     h.run();
-    assert_eq!(h.state().editor.doc.openings().count(), 1);
+    assert_eq!(h.state().drawing.editor.doc.openings().count(), 1);
     // Saved, opened again: as it was, with nothing repaired.
-    let before = h.state().editor.doc.clone();
+    let before = h.state().drawing.editor.doc.clone();
     let dir = scratch_dir("smoke-openings");
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("Door.drift");
-    h.state_mut().file.path = Some(path.clone());
+    h.state_mut().drawing.file.path = Some(path.clone());
     h.key_press_modifiers(EguiModifiers::COMMAND, Key::S);
     h.run_steps(3);
     h.key_press_modifiers(EguiModifiers::COMMAND, Key::N);
     h.run_steps(2);
-    assert_eq!(h.state().editor.doc.openings().count(), 0);
+    assert_eq!(h.state().drawing.editor.doc.openings().count(), 0);
     h.state().files.open_path(&path);
     h.run_steps(3);
-    assert!(h.state().editor.out.notice.is_none(), "nothing repaired");
     assert!(
-        h.state().editor.doc.same_sketch(&before.sketch_copy()),
+        h.state().drawing.editor.out.notice.is_none(),
+        "nothing repaired"
+    );
+    assert!(
+        h.state()
+            .drawing
+            .editor
+            .doc
+            .same_sketch(&before.sketch_copy()),
         "the door as it was"
     );
     let _ = std::fs::remove_dir_all(&dir);

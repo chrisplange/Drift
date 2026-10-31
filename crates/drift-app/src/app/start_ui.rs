@@ -43,12 +43,12 @@ impl DriftApp {
     /// Whether the start panel should show: nothing drawn, nothing opened, nothing under way.
     fn start_wanted(&self) -> bool {
         self.show_start
-            && self.editor.doc.is_empty()
-            && self.editor.doc.texts().next().is_none()
-            && self.editor.doc.underlays().next().is_none()
-            && self.file.path.is_none()
+            && self.drawing.editor.doc.is_empty()
+            && self.drawing.editor.doc.texts().next().is_none()
+            && self.drawing.editor.doc.underlays().next().is_none()
+            && self.drawing.file.path.is_none()
             && self.tool.kind() == ToolKind::Select
-            && !self.sheet_preview
+            && !self.drawing.view.sheet_preview
             && self.pending.is_none()
             && self.palette.is_none()
     }
@@ -66,7 +66,7 @@ impl DriftApp {
             }
             return;
         }
-        let canvas = self.canvas_rect;
+        let canvas = self.drawing.view.canvas_rect;
         if !canvas.is_positive() || canvas.width() < 460.0 || canvas.height() < 380.0 {
             return;
         }
@@ -132,7 +132,7 @@ impl DriftApp {
                                         close = true;
                                     }
                                     ui.add_space(2.0);
-                                    let units = self.editor.doc.units();
+                                    let units = self.drawing.editor.doc.units();
                                     let options = [(true, "Metric"), (false, "Imperial")];
                                     if let Some(metric) =
                                         theme::segmented(ui, units.length.is_metric(), &options)
@@ -140,14 +140,14 @@ impl DriftApp {
                                     {
                                         // A blank sketch stays clean: nothing to save yet.
                                         let clean = !self.is_dirty();
-                                        self.editor.set_units(if metric {
+                                        self.drawing.editor.set_units(if metric {
                                             drift_core::Units::default()
                                         } else {
                                             drift_core::Units::architectural()
                                         });
                                         if clean {
-                                            self.file.clean_revision =
-                                                Some(self.editor.doc.revision());
+                                            self.drawing.file.clean_revision =
+                                                Some(self.drawing.editor.doc.revision());
                                         }
                                     }
                                     ui.label(
@@ -597,7 +597,7 @@ impl DriftApp {
                     egui::RichText::new(format!(
                         "Saved with {}. A picked dimension or note can set its own style in \
                          the Inspector.",
-                        self.file.name
+                        self.drawing.file.name
                     ))
                     .small()
                     .weak(),
@@ -644,7 +644,7 @@ impl DriftApp {
     fn drawing_prefs(&mut self, ui: &mut egui::Ui) {
         theme::section(ui, "While drawing");
         ui.checkbox(
-            &mut self.auto_relations,
+            &mut self.drawing.editor.prefs.auto_relations,
             "Add relations automatically while drawing",
         )
         .on_hover_text(
@@ -728,7 +728,7 @@ impl DriftApp {
     /// Drawing settings → Closed areas and fills: the drawing's rules (saved with it).
     fn rules_section(&mut self, ui: &mut egui::Ui) {
         theme::section(ui, "Closed areas and fills");
-        let mut rules = self.editor.doc.rules();
+        let mut rules = self.drawing.editor.doc.rules();
         ui.checkbox(
             &mut rules.regions_by_layer,
             "Find closed areas on each layer separately",
@@ -774,11 +774,11 @@ impl DriftApp {
             .small()
             .weak(),
         );
-        self.editor.change_rules(|r| *r = rules);
+        self.drawing.editor.change_rules(|r| *r = rules);
         theme::section(ui, "Check sketch");
         self.gap_tolerance_row(ui);
         ui.add_space(4.0);
-        let rules = self.editor.doc.rules();
+        let rules = self.drawing.editor.doc.rules();
         let same = rules == self.new_rules;
         if ui
             .add_enabled(

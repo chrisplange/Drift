@@ -40,7 +40,7 @@ fn press(h: &mut Harness<'_, DriftApp>, key: Key) {
 
 /// A line in view, picked.
 fn picked_line(h: &mut Harness<'_, DriftApp>) {
-    let ed = &mut h.state_mut().editor;
+    let ed = &mut h.state_mut().drawing.editor;
     ed.doc.begin();
     let a = ed.doc.add_point(DVec2::new(0.0, 0.0));
     let b = ed.doc.add_point(DVec2::new(40.0, 10.0));
@@ -222,7 +222,7 @@ fn enter_or_space_repeats_the_last_command() {
     h.get_by_label("Linear pattern…").click();
     h.run();
     assert_eq!(h.state().last_command, Some(Command::Pattern(false)));
-    h.state_mut().editor.selection.clear();
+    h.state_mut().drawing.editor.selection.clear();
     h.state_mut().last_command = Some(Command::Tool(ToolKind::Offset));
     press(&mut h, Key::Enter);
     assert_eq!(h.state().tool.kind(), ToolKind::Offset);

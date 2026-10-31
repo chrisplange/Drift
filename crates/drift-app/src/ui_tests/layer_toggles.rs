@@ -50,6 +50,7 @@ fn alt_click(h: &mut Harness<'_, DriftApp>, at: Pos2) {
 /// The layers (bottom up) with the setting on.
 fn with(h: &Harness<'_, DriftApp>, f: impl Fn(&drift_core::Layer) -> bool) -> Vec<LayerId> {
     h.state()
+        .drawing
         .editor
         .doc
         .layers()
@@ -62,10 +63,17 @@ fn with(h: &Harness<'_, DriftApp>, f: impl Fn(&drift_core::Layer) -> bool) -> Ve
 fn alt_click_on_lock_or_snap_sets_the_other_layers_and_puts_them_back() {
     let Some(mut h) = harness() else { return };
     let ids = many_layers(&mut h, 6);
-    let all: Vec<LayerId> = h.state().editor.doc.layers().map(|(id, _)| id).collect();
+    let all: Vec<LayerId> = h
+        .state()
+        .drawing
+        .editor
+        .doc
+        .layers()
+        .map(|(id, _)| id)
+        .collect();
     // One layer locked and one not snapped beforehand, to come back as they were.
     {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         let mut l = ed.doc.layer(ids[1]).cloned().unwrap();
         l.locked = true;
         ed.update_layer(ids[1], l);
@@ -77,13 +85,20 @@ fn alt_click_on_lock_or_snap_sets_the_other_layers_and_puts_them_back() {
     let locked_before = with(&h, |l| l.locked);
     let snapped_before = with(&h, |l| l.snappable);
     let target = ids[3]; // A-FURN-003
-    let last = |h: &Harness<'_, DriftApp>| h.state().editor.history.undo_label().map(str::to_owned);
+    let last = |h: &Harness<'_, DriftApp>| {
+        h.state()
+            .drawing
+            .editor
+            .history
+            .undo_label()
+            .map(str::to_owned)
+    };
 
     // Alt-click its lock: every other layer locked, this one not, and made current.
     alt_toggle(&mut h, "A-FURN-003", LOCK);
     let others: Vec<LayerId> = all.iter().copied().filter(|l| *l != target).collect();
     assert_eq!(with(&h, |l| l.locked), others);
-    assert_eq!(h.state().editor.doc.current_layer(), target);
+    assert_eq!(h.state().drawing.editor.doc.current_layer(), target);
     assert_eq!(
         last(&h).as_deref(),
         Some("Lock other layers"),
@@ -126,6 +141,14 @@ fn alt_click_on_lock_or_snap_sets_the_other_layers_and_puts_them_back() {
     h.run();
     button(&h, at, false);
     h.run();
-    assert!(!h.state().editor.doc.layer(ids[1]).unwrap().snappable);
+    assert!(
+        !h.state()
+            .drawing
+            .editor
+            .doc
+            .layer(ids[1])
+            .unwrap()
+            .snappable
+    );
     assert_eq!(with(&h, |l| l.snappable).len(), snapped_before.len() - 1);
 }

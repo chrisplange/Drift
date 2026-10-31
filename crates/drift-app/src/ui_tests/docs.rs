@@ -37,7 +37,7 @@ fn rectangle(
     max: DVec2,
     square: bool,
 ) -> ([EntityId; 4], [EntityId; 4]) {
-    let ed = &mut h.state_mut().editor;
+    let ed = &mut h.state_mut().drawing.editor;
     ed.doc.begin();
     let p = [min, DVec2::new(max.x, min.y), max, DVec2::new(min.x, max.y)]
         .map(|at| ed.doc.add_point(at));
@@ -58,7 +58,7 @@ fn rectangle(
 
 fn fit(h: &mut Harness<'_, DriftApp>) {
     let bounds = h.state().fit_bounds();
-    h.state_mut().fit_target = Some(bounds);
+    h.state_mut().drawing.view.fit_target = Some(bounds);
     h.run();
     h.run();
 }
@@ -217,7 +217,7 @@ fn constraints() {
     h.key_press(Key::Escape);
     h.run();
     let corner = {
-        let doc = &h.state().editor.doc;
+        let doc = &h.state().drawing.editor.doc;
         doc.iter()
             .filter(|(_, e)| e.kind.is_point())
             .min_by(|(a, _), (b, _)| {
@@ -230,8 +230,9 @@ fn constraints() {
             .map(|(id, _)| id)
             .unwrap()
     };
-    let at = h.state().editor.doc.point(corner).unwrap();
+    let at = h.state().drawing.editor.doc.point(corner).unwrap();
     h.state_mut()
+        .drawing
         .editor
         .add_constraints("Fix", &[C::Fix { point: corner, at }])
         .unwrap();
@@ -249,7 +250,7 @@ fn constraints() {
         true,
     );
     {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         ed.add_dimension(
             C::HorizontalDistance {
                 a: p[0],
@@ -283,7 +284,7 @@ fn constraints() {
 
     // The relations pie on two lines.
     let mut h = harness().unwrap();
-    let ed = &mut h.state_mut().editor;
+    let ed = &mut h.state_mut().drawing.editor;
     ed.doc.begin();
     let p = [
         DVec2::new(-40.0, -10.0),
@@ -296,10 +297,10 @@ fn constraints() {
     let b = ed.doc.add_line(p[2], p[3]).unwrap();
     ed.commit("Lines");
     h.run();
-    let at = h.state().canvas_rect.center();
+    let at = h.state().drawing.view.canvas_rect.center();
     h.hover_at(at);
     h.run();
-    h.state_mut().editor.selection = [a, b].into();
+    h.state_mut().drawing.editor.selection = [a, b].into();
     h.run();
     h.key_down(Key::Q);
     h.run();
@@ -312,7 +313,7 @@ fn constraints() {
     // Chain dimensions from wall to wall, with the overall.
     let mut h = harness().unwrap();
     {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         ed.doc.begin();
         for x in [-30.0, -10.0, 15.0, 30.0] {
             let a = ed.doc.add_point(DVec2::new(x, 0.0));
@@ -345,7 +346,7 @@ fn parameters() {
     let mut h = harness().unwrap();
     let (p, _) = rectangle(&mut h, DVec2::ZERO, DVec2::new(100.0, 50.0), true);
     let (width, height) = {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         ed.add_constraints(
             "Fix",
             &[C::Fix {
@@ -377,7 +378,7 @@ fn parameters() {
         (w, ht)
     };
     {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         let var = ed.add_variable("width", "100", Kind::Length).unwrap();
         ed.set_dimension_text(width, "width").unwrap();
         ed.set_dimension_text(height, "width / 2").unwrap();
@@ -385,11 +386,18 @@ fn parameters() {
         ed.set_variable(var, "60").unwrap();
         ed.save_option("Narrow", false);
     }
-    let options: Vec<_> = h.state().editor.doc.variants().map(|(id, _)| id).collect();
-    h.state_mut().params.ghosted = options.into_iter().collect();
+    let options: Vec<_> = h
+        .state()
+        .drawing
+        .editor
+        .doc
+        .variants()
+        .map(|(id, _)| id)
+        .collect();
+    h.state_mut().drawing.params.ghosted = options.into_iter().collect();
     h.state_mut().show_panel(Panel::Parameters);
     // Room for the wide variant's ghost.
-    h.state_mut().fit_target = Some(drift_core::Bounds {
+    h.state_mut().drawing.view.fit_target = Some(drift_core::Bounds {
         min: DVec2::new(-20.0, -25.0),
         max: DVec2::new(125.0, 60.0),
     });
@@ -407,7 +415,7 @@ fn editing() {
         DVec2::new(20.0, 12.0),
         true,
     );
-    h.state_mut().editor.selection = l.iter().copied().collect();
+    h.state_mut().drawing.editor.selection = l.iter().copied().collect();
     h.run();
     shot("transform-handles.png", &mut h);
 
@@ -420,7 +428,7 @@ fn editing() {
         true,
     );
     {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         ed.doc.begin();
         ed.doc
             .add_constraint(C::Distance {
@@ -456,7 +464,7 @@ fn editing() {
     let mut h = harness().unwrap();
     open_example(&mut h);
     let holes: std::collections::BTreeSet<EntityId> = {
-        let doc = &h.state().editor.doc;
+        let doc = &h.state().drawing.editor.doc;
         doc.iter()
             .filter(|(id, e)| {
                 matches!(e.kind, EntityKind::Circle { .. })
@@ -465,7 +473,7 @@ fn editing() {
             .map(|(id, _)| id)
             .collect()
     };
-    h.state_mut().editor.selection = holes;
+    h.state_mut().drawing.editor.selection = holes;
     h.run();
     h.hover_at(screen(&h, DVec2::new(110.0, 40.0)));
     h.run();
@@ -482,7 +490,7 @@ fn editing() {
 
     // A fillet being sized on a corner.
     let mut h = harness().unwrap();
-    h.state_mut().auto_relations = false;
+    h.state_mut().drawing.editor.prefs.auto_relations = false;
     rectangle(
         &mut h,
         DVec2::new(-40.0, -25.0),
@@ -516,7 +524,7 @@ fn temporary_dimensions() {
     h.run();
     click_world(&mut h, DVec2::new(120.0, 100.0));
     shot("temp-dims.png", &mut h);
-    let below = h.state().temp_dims.values[2].1;
+    let below = h.state().drawing.temp_dims.values[2].1;
     h.hover_at(below);
     h.run();
     button(&h, below, true);
@@ -577,6 +585,7 @@ fn blocks() {
     use drift_edit::library::{self, INCH};
     let mut h = harness().unwrap();
     h.state_mut()
+        .drawing
         .editor
         .set_units(drift_core::Units::architectural());
     let (w, d) = (144.0 * INCH, 120.0 * INCH);
@@ -591,7 +600,7 @@ fn blocks() {
     click_world(&mut h, DVec2::new(w / 2.0, d));
     h.key_press(Key::Escape);
     h.run();
-    let ed = &mut h.state_mut().editor;
+    let ed = &mut h.state_mut().drawing.editor;
     for (name, at, angle) in [
         (
             "Door – Single Swing – 32\"",
@@ -627,7 +636,7 @@ fn layers() {
     // and the walls' layer current.
     let mut h = harness().unwrap();
     let (walls, hatch, reference) = {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         let walls = ed.add_layer("Walls");
         let hatch = ed.add_layer("Hatch");
         let reference = ed.add_layer("Survey (reference)");
@@ -655,7 +664,7 @@ fn layers() {
         true,
     );
     {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         ed.set_current_layer(hatch);
         ed.add_fill_at(DVec2::new(100.0, 1500.0)).unwrap();
         ed.selected_fills.clear();
@@ -739,6 +748,7 @@ fn annotation() {
     );
     let width = h
         .state_mut()
+        .drawing
         .editor
         .add_dimension(
             C::HorizontalDistance {
@@ -755,7 +765,7 @@ fn annotation() {
     let painter = egui::Painter::new(
         h.ctx.clone(),
         egui::LayerId::background(),
-        h.state().canvas_rect,
+        h.state().drawing.view.canvas_rect,
     );
     let at = h
         .state()
@@ -804,15 +814,15 @@ fn sheets() {
     // A detail drawn as a view on the canvas, round the bore: its crop and name, picked
     // with its grips.
     let sheet = h.state().current_sheet().expect("a sheet");
-    h.state_mut().sheet_preview = false;
+    h.state_mut().drawing.view.sheet_preview = false;
     h.state_mut().set_tool(ToolKind::View);
     h.run();
     h.event(Event::ModifiersChanged(EguiModifiers::ALT));
     drag_world(&mut h, DVec2::new(59.0, 20.0), DVec2::new(109.0, 60.0));
     h.event(Event::ModifiersChanged(EguiModifiers::NONE));
     h.run();
-    let id = h.state().picked_view.expect("the new view");
-    let mut view = h.state().editor.doc.view(id).unwrap().clone();
+    let id = h.state().drawing.picked_view.expect("the new view");
+    let mut view = h.state().drawing.editor.doc.view(id).unwrap().clone();
     view.name = "Detail A".into();
     view.scale = 0.5;
     h.state_mut().update_view(id, view, false);
@@ -823,14 +833,18 @@ fn sheets() {
         .state_mut()
         .place_view(sheet, id, Some(DVec2::new(330.0, 200.0)))
         .unwrap();
-    let doc = &h.state().editor.doc;
+    let doc = &h.state().drawing.editor.doc;
     let mut v = doc.placed_views(doc.sheet(sheet).unwrap())[index].clone();
     v.border = true;
-    h.state_mut().editor.doc.begin();
-    h.state_mut().editor.doc.set_placed_view(sheet, index, &v);
-    h.state_mut().editor.commit("Detail");
-    h.state_mut().sheet_preview = true;
-    h.state_mut().preview.zoom = 0.0;
+    h.state_mut().drawing.editor.doc.begin();
+    h.state_mut()
+        .drawing
+        .editor
+        .doc
+        .set_placed_view(sheet, index, &v);
+    h.state_mut().drawing.editor.commit("Detail");
+    h.state_mut().drawing.view.sheet_preview = true;
+    h.state_mut().drawing.view.preview.zoom = 0.0;
     shot("sheet-views.png", &mut h);
 }
 
@@ -888,7 +902,16 @@ fn underlay() {
     h.key_press_modifiers(EguiModifiers::SHIFT, Key::F);
     h.run();
     h.run();
-    let u = h.state().editor.doc.underlays().next().unwrap().1.clone();
+    let u = h
+        .state()
+        .drawing
+        .editor
+        .doc
+        .underlays()
+        .next()
+        .unwrap()
+        .1
+        .clone();
     let Some(drift_core::Shape::Line { a, b }) = u.shapes().first().copied() else {
         panic!("the bottom wall")
     };
@@ -908,7 +931,7 @@ fn underlay() {
 fn checker() {
     let mut h = harness().unwrap();
     {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         ed.doc.begin();
         let p = [
             DVec2::new(-20.0, -15.0),

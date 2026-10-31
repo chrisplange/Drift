@@ -218,11 +218,11 @@ impl DriftApp {
 
     /// A panic while importing `name` was caught: undo what it had begun, and say so.
     fn import_failed(&mut self, name: &str, now: f64) {
-        if self.editor.doc.in_transaction() {
-            self.editor.doc.rollback();
+        if self.drawing.editor.doc.in_transaction() {
+            self.drawing.editor.doc.rollback();
         }
         self.pending_import = None;
-        self.editor.sync();
+        self.drawing.editor.sync();
         self.set_status(format!("Could not import {name}: {CANT_READ}"), true, now);
     }
 
@@ -263,7 +263,7 @@ impl DriftApp {
             )
         };
         let cad = matches!(source, ImportSource::Dxf(_) | ImportSource::Dwg(_));
-        let unit_mm = self.editor.doc.units().length.mm_per_unit();
+        let unit_mm = self.drawing.editor.doc.units().length.mm_per_unit();
         self.pending_import = Some(PendingImport {
             name: name.to_owned(),
             source,
@@ -293,7 +293,7 @@ impl DriftApp {
             let now = ctx.input(|i| i.time);
             self.finish_import(&mut pending, now);
         }
-        let units = self.editor.doc.units();
+        let units = self.drawing.editor.doc.units();
         let Some(pending) = &mut self.pending_import else {
             return;
         };
@@ -530,7 +530,7 @@ impl DriftApp {
         let scale = pending.scale;
         if pending.underlay() {
             let result = match &pending.source {
-                ImportSource::Pdf(bytes) => self.editor.import_pdf_underlay(
+                ImportSource::Pdf(bytes) => self.drawing.editor.import_pdf_underlay(
                     &name,
                     bytes,
                     pending.page,
@@ -540,14 +540,17 @@ impl DriftApp {
                 ImportSource::Svg(_) => match pending.art() {
                     Ok(art) => {
                         let art = art.clone();
-                        self.editor.import_svg_underlay(&name, &art, scale)
+                        self.drawing.editor.import_svg_underlay(&name, &art, scale)
                     }
                     Err(e) => Err(e.clone()),
                 },
                 ImportSource::Dxf(_) | ImportSource::Dwg(_) => {
                     pending.cad();
                     match pending.cad.take().expect("read") {
-                        Ok(import) => self.editor.import_cad_underlay(&name, &import, scale),
+                        Ok(import) => self
+                            .drawing
+                            .editor
+                            .import_cad_underlay(&name, &import, scale),
                         Err(e) => Err(e),
                     }
                 }
@@ -610,23 +613,24 @@ impl DriftApp {
         }
         self.abort_operation();
         let before: std::collections::BTreeSet<_> =
-            self.editor.doc.iter().map(|(id, _)| id).collect();
+            self.drawing.editor.doc.iter().map(|(id, _)| id).collect();
         let texts_before: std::collections::BTreeSet<_> =
-            self.editor.doc.texts().map(|(id, _)| id).collect();
+            self.drawing.editor.doc.texts().map(|(id, _)| id).collect();
         let fills_before: std::collections::BTreeSet<_> =
-            self.editor.doc.fills().map(|(id, _)| id).collect();
-        self.editor.doc.begin();
-        let report = drift_io::dxf::add_to_document(&mut self.editor.doc, &import);
+            self.drawing.editor.doc.fills().map(|(id, _)| id).collect();
+        self.drawing.editor.doc.begin();
+        let report = drift_io::dxf::add_to_document(&mut self.drawing.editor.doc, &import);
         // Its pictures come in as an underlay in the same step, placed over its fills.
         let pictures = drift_edit::underlays::picture_underlay(&name, &images, scale, DVec2::ZERO)
-            .map(|u| self.editor.doc.add_underlay(u));
+            .map(|u| self.drawing.editor.doc.add_underlay(u));
         if let Some(id) = pictures {
-            drift_edit::underlays::place_pictures(&mut self.editor.doc, id, &fills_before);
+            drift_edit::underlays::place_pictures(&mut self.drawing.editor.doc, id, &fills_before);
         }
-        self.editor.commit_import(label);
+        self.drawing.editor.commit_import(label);
         let imported = drift_edit::underlays::Imported {
             underlays: pictures.into_iter().collect(),
             entities: self
+                .drawing
                 .editor
                 .doc
                 .iter()
@@ -634,6 +638,7 @@ impl DriftApp {
                 .filter(|id| !before.contains(id))
                 .collect(),
             texts: self
+                .drawing
                 .editor
                 .doc
                 .texts()
@@ -644,18 +649,24 @@ impl DriftApp {
         self.report_import(&name, &report, now);
         if pending.calibrate && !imported.entities.is_empty() {
             // What came in stays picked, to see what is being calibrated.
-            self.editor.selection = imported
+            self.drawing.editor.selection = imported
                 .entities
                 .iter()
                 .copied()
-                .filter(|id| self.editor.doc.get(*id).is_some_and(|e| !e.kind.is_point()))
+                .filter(|id| {
+                    self.drawing
+                        .editor
+                        .doc
+                        .get(*id)
+                        .is_some_and(|e| !e.kind.is_point())
+                })
                 .collect();
             self.set_tool(ToolKind::Calibrate);
             self.tool = Box::new(drift_edit::tools::UnderlayTool::new(
                 drift_edit::tools::UnderlayMode::CalibrateImport,
             ));
         }
-        self.editor.last_import = Some(imported);
+        self.drawing.editor.last_import = Some(imported);
     }
 
     /// A drawing dropped on the window: open it as a new drawing, or import it into this

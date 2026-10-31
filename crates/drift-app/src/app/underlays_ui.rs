@@ -60,7 +60,7 @@ impl DriftApp {
                 }
                 self.set_status(msg, false, now);
                 self.show_panel(crate::dock::Panel::Layers);
-                self.fit_target = Some(self.fit_bounds());
+                self.drawing.view.fit_target = Some(self.fit_bounds());
             }
             Err(e) => self.set_status(format!("Could not import {name}: {e}"), true, now),
         }
@@ -69,6 +69,7 @@ impl DriftApp {
     /// The Underlays section of the Layers tab.
     pub(crate) fn underlays_section(&mut self, ui: &mut egui::Ui) {
         let underlays: Vec<(UnderlayId, drift_core::Underlay)> = self
+            .drawing
             .editor
             .doc
             .underlays()
@@ -88,7 +89,7 @@ impl DriftApp {
         let dark = ui.visuals().dark_mode;
         let accent = theme::accent(dark);
         for (id, u) in underlays {
-            let picked = self.editor.selected_underlay == Some(id);
+            let picked = self.drawing.editor.selected_underlay == Some(id);
             let mut edited = u.clone();
             let frame = egui::Frame::new()
                 .inner_margin(egui::Margin::symmetric(6, 4))
@@ -115,7 +116,8 @@ impl DriftApp {
                         .on_hover_text(&u.source)
                         .clicked()
                     {
-                        self.editor.selected_underlay = if picked { None } else { Some(id) };
+                        self.drawing.editor.selected_underlay =
+                            if picked { None } else { Some(id) };
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
@@ -130,7 +132,7 @@ impl DriftApp {
                             .on_hover_text("Delete underlay")
                             .clicked()
                         {
-                            self.editor.remove_underlay(id);
+                            self.drawing.editor.remove_underlay(id);
                         }
                         let lock_glyph = if edited.locked {
                             Glyph::Lock
@@ -165,7 +167,8 @@ impl DriftApp {
                 }
             });
             if edited != u {
-                self.editor
+                self.drawing
+                    .editor
                     .update_underlay(id, "Edit underlay", |x| *x = edited);
             }
         }
@@ -187,7 +190,7 @@ impl DriftApp {
         u: &drift_core::Underlay,
         edited: &mut drift_core::Underlay,
     ) {
-        let units = self.editor.doc.units();
+        let units = self.drawing.editor.doc.units();
         let dark = ui.visuals().dark_mode;
         ui.label(egui::RichText::new(&u.source).small().weak());
         ui.add_space(2.0);
@@ -197,7 +200,8 @@ impl DriftApp {
             let r = ui.add(egui::Slider::new(&mut percent, 5.0..=100.0).suffix("%"));
             if r.changed() {
                 let continuing = r.dragged() && !r.drag_started();
-                self.editor
+                self.drawing
+                    .editor
                     .adjust_underlay(id, continuing, |x| x.opacity = percent / 100.0);
                 edited.opacity = percent / 100.0;
             }
@@ -211,6 +215,7 @@ impl DriftApp {
         // import's pictures go over the fills that came in with them).
         if !u.images.is_empty() {
             let layers: Vec<(drift_core::LayerId, String)> = self
+                .drawing
                 .editor
                 .doc
                 .layers()
@@ -342,7 +347,7 @@ impl DriftApp {
                     )
                     .clicked()
                 {
-                    self.editor.selected_underlay = Some(id);
+                    self.drawing.editor.selected_underlay = Some(id);
                     self.set_tool(ToolKind::Calibrate);
                 }
                 if ui
@@ -350,14 +355,14 @@ impl DriftApp {
                     .on_hover_text("Click a point on the underlay, then where it goes")
                     .clicked()
                 {
-                    self.editor.selected_underlay = Some(id);
+                    self.drawing.editor.selected_underlay = Some(id);
                     self.set_tool(ToolKind::MoveUnderlay);
                 }
             });
             if ui.button("Zoom to").clicked() {
                 let b = u.bounds();
                 if !b.is_empty() {
-                    self.fit_target = Some(b);
+                    self.drawing.view.fit_target = Some(b);
                 }
             }
             if ui
@@ -368,7 +373,7 @@ impl DriftApp {
                 )
                 .clicked()
             {
-                let n = self.editor.convert_underlay(id);
+                let n = self.drawing.editor.convert_underlay(id);
                 let now = ui.input(|i| i.time);
                 self.set_status(
                     format!("Converted the underlay into {n} curves"),

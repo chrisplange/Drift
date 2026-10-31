@@ -33,7 +33,7 @@ impl DriftApp {
     /// that name the tool, its keys and what it does.
     pub(crate) fn toolbar(&mut self, ui: &mut egui::Ui, wide: bool) {
         // On a sheet, the rail holds what can be done on paper.
-        if self.sheet_preview {
+        if self.drawing.view.sheet_preview {
             self.sheet_rail(ui, wide);
             return;
         }
@@ -256,7 +256,7 @@ impl DriftApp {
 
     /// A filter on: a badge on the Select tool, so it isn't forgotten.
     fn pick_filter_badge(&self, ui: &mut egui::Ui, response: &egui::Response) {
-        let filter = self.editor.prefs.pick_filter;
+        let filter = self.drawing.editor.prefs.pick_filter;
         if filter.is_all() {
             return;
         }

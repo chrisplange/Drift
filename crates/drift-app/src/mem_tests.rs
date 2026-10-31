@@ -97,11 +97,11 @@ fn frame(h: &mut App<'_>) {
 }
 
 fn example(h: &mut App<'_>) {
-    h.state_mut().editor = Editor::new(drift_core::demo::mounting_plate());
+    h.state_mut().drawing.editor = Editor::new(drift_core::demo::mounting_plate());
     let fit = h.state().fit_bounds();
-    h.state_mut().fit_target = Some(fit);
+    h.state_mut().drawing.view.fit_target = Some(fit);
     frame(h);
-    h.state_mut().fit_target = None;
+    h.state_mut().drawing.view.fit_target = None;
 }
 
 /// Run a scenario, print what it cost, and fail it if it peaked too high.
@@ -134,7 +134,7 @@ fn zoom_sweep(h: &mut App<'_>) {
     let centre = DVec2::new(900.0, 500.0);
     for factor in [0.5, 2.0, 2.0, 0.5] {
         for _ in 0..40 {
-            h.state_mut().camera.zoom_at(centre, factor);
+            h.state_mut().drawing.view.camera.zoom_at(centre, factor);
             frame(h);
         }
     }
@@ -160,9 +160,9 @@ baseline {} MB",
         h,
         &mut failures,
         |h| {
-            let mut units = h.state().editor.doc.units();
+            let mut units = h.state().drawing.editor.doc.units();
             units.length = LengthFormat::Architectural;
-            h.state_mut().editor.set_units(units);
+            h.state_mut().drawing.editor.set_units(units);
             h.state_mut().grid_snap = true;
             h.state_mut().show_grid = false;
             h.state_mut().status_colors = false;
@@ -170,6 +170,8 @@ baseline {} MB",
             // Draw with the line tool while zoomed far out and far in.
             for factor in [1e-9, 1e9, 1e9, 1e-9] {
                 h.state_mut()
+                    .drawing
+                    .view
                     .camera
                     .zoom_at(DVec2::new(900.0, 500.0), factor);
                 h.key_press(Key::L);
@@ -191,7 +193,7 @@ baseline {} MB",
                 h.key_press(Key::Escape);
                 frame(h);
             }
-            println!("    {} entities", h.state().editor.doc.len());
+            println!("    {} entities", h.state().drawing.editor.doc.len());
         },
     );
     for size in [1e6, 1e12, 1e18, 1e150, 1e300] {
@@ -201,7 +203,7 @@ baseline {} MB",
             h,
             &mut failures,
             |h| {
-                let ed = &mut h.state_mut().editor;
+                let ed = &mut h.state_mut().drawing.editor;
                 ed.doc.begin();
                 let c = [(0.0, 0.0), (size, 0.0), (size, size), (0.0, size)]
                     .map(|(x, y)| ed.doc.add_point(DVec2::new(x, y)));
@@ -211,34 +213,35 @@ baseline {} MB",
                 let centre = ed.doc.add_point(DVec2::new(size, size));
                 let _ = ed.doc.add_circle(centre, size * 0.3);
                 ed.commit("Huge");
-                let regions = h.state_mut().editor.regions().len();
+                let regions = h.state_mut().drawing.editor.regions().len();
                 let _ = h
                     .state_mut()
+                    .drawing
                     .editor
                     .add_fill_at(DVec2::new(size * 0.5, size * 0.1));
                 println!(
                     "    {regions} regions, {} fills",
-                    h.state().editor.doc.fills().count()
+                    h.state().drawing.editor.doc.fills().count()
                 );
                 frame(h);
                 let fit = h.state().fit_bounds();
-                h.state_mut().fit_target = Some(fit);
+                h.state_mut().drawing.view.fit_target = Some(fit);
                 frame(h);
-                h.state_mut().fit_target = None;
+                h.state_mut().drawing.view.fit_target = None;
                 zoom_sweep(h);
-                h.state_mut().editor.select_all();
+                h.state_mut().drawing.editor.select_all();
                 for p in Panel::ALL {
                     h.state_mut().show_panel(p);
                     frame(h);
                 }
                 let sheet = h.state_mut().add_sheet();
                 h.state_mut().add_whole_view(sheet);
-                h.state_mut().sheet_preview = true;
-                h.state_mut().preview.zoom = 0.0;
+                h.state_mut().drawing.view.sheet_preview = true;
+                h.state_mut().drawing.view.preview.zoom = 0.0;
                 for _ in 0..5 {
                     frame(h);
                 }
-                h.state_mut().sheet_preview = false;
+                h.state_mut().drawing.view.sheet_preview = false;
                 let mut storage = crate::ui_tests::MemoryStorage::default();
                 eframe::App::save(h.state_mut(), &mut storage);
             },
@@ -266,8 +269,8 @@ baseline {} MB",
     scenario("sheet preview: open", h, &mut failures, |h| {
         let sheet = h.state_mut().add_sheet();
         h.state_mut().add_whole_view(sheet);
-        h.state_mut().sheet_preview = true;
-        h.state_mut().preview.zoom = 0.0;
+        h.state_mut().drawing.view.sheet_preview = true;
+        h.state_mut().drawing.view.preview.zoom = 0.0;
         for _ in 0..10 {
             frame(h);
         }
@@ -280,12 +283,12 @@ baseline {} MB",
             |h| {
                 let mut zoom = 0.05_f32;
                 while zoom < 200.0 {
-                    h.state_mut().preview.zoom = zoom;
+                    h.state_mut().drawing.view.preview.zoom = zoom;
                     frame(h);
                     zoom *= 1.07;
                 }
                 while zoom > 0.05 {
-                    h.state_mut().preview.zoom = zoom;
+                    h.state_mut().drawing.view.preview.zoom = zoom;
                     frame(h);
                     zoom /= 1.13;
                 }
@@ -318,7 +321,11 @@ fn mem_torture() {
     );
     scenario("pan to 1e12 and back", h, &mut failures, |h| {
         for d in [1e3, 1e6, 1e9, 1e12, -1e12, -1e9, -1e6, -1e3] {
-            h.state_mut().camera.pan(DVec2::new(d, d * 0.5));
+            h.state_mut()
+                .drawing
+                .view
+                .camera
+                .pan(DVec2::new(d, d * 0.5));
             frame(h);
         }
     });
@@ -332,7 +339,7 @@ fn mem_torture() {
         |h| {
             for (k, height) in [0.001, 0.1, 10.0, 1e3, 1e6].into_iter().enumerate() {
                 let at = DVec2::new(0.0, -30.0 * k as f64);
-                h.state_mut().editor.add_text(SketchText::new(
+                h.state_mut().drawing.editor.add_text(SketchText::new(
                     "Hamburgefonstiv 0123456789",
                     at,
                     height,
@@ -347,6 +354,7 @@ fn mem_torture() {
         for k in 0..400 {
             let at = DVec2::new(200.0, 6.0 * f64::from(k));
             h.state_mut()
+                .drawing
                 .editor
                 .add_text(SketchText::new(line, at, 3.0));
         }
@@ -360,14 +368,15 @@ fn mem_torture() {
         h,
         &mut failures,
         |h| {
-            let id =
-                h.state_mut()
-                    .editor
-                    .add_text(SketchText::new("", DVec2::new(-300.0, 0.0), 5.0));
+            let id = h.state_mut().drawing.editor.add_text(SketchText::new(
+                "",
+                DVec2::new(-300.0, 0.0),
+                5.0,
+            ));
             let mut words = String::new();
             for k in 0..300 {
                 words.push(char::from(b'a' + (k % 26) as u8));
-                h.state_mut().editor.type_text(id, &words, k > 0);
+                h.state_mut().drawing.editor.type_text(id, &words, k > 0);
                 frame(h);
             }
         },
@@ -382,11 +391,19 @@ fn mem_torture() {
         |h| {
             let fill = h
                 .state_mut()
+                .drawing
                 .editor
                 .add_fill_at(DVec2::new(100.0, 15.0))
                 .expect("a region to fill");
             for scale in [1.0, 0.1, 1e-3, 1e-6] {
-                let mut f = h.state().editor.doc.fill(fill).cloned().expect("fill");
+                let mut f = h
+                    .state()
+                    .drawing
+                    .editor
+                    .doc
+                    .fill(fill)
+                    .cloned()
+                    .expect("fill");
                 f.kind = FillKind::Hatch(Hatch {
                     pattern: "ANSI31".into(),
                     scale,
@@ -395,7 +412,7 @@ fn mem_torture() {
                     model: true,
                     background: None,
                 });
-                h.state_mut().editor.update_fill(fill, f);
+                h.state_mut().drawing.editor.update_fill(fill, f);
                 for _ in 0..5 {
                     frame(h);
                 }
@@ -411,7 +428,7 @@ fn mem_torture() {
         h,
         &mut failures,
         |h| {
-            h.state_mut().editor.select_all();
+            h.state_mut().drawing.editor.select_all();
             for p in Panel::ALL {
                 h.state_mut().show_panel(p);
                 for _ in 0..60 {
@@ -440,7 +457,7 @@ fn mem_torture() {
         |h| {
             for k in 0..400 {
                 let o = DVec2::new(200.0 + 12.0 * f64::from(k % 40), 12.0 * f64::from(k / 40));
-                let ed = &mut h.state_mut().editor;
+                let ed = &mut h.state_mut().drawing.editor;
                 ed.doc.begin();
                 let c = [(0.0, 0.0), (10.0, 0.0), (10.0, 8.0), (0.0, 8.0)]
                     .map(|(x, y)| ed.doc.add_point(o + DVec2::new(x, y)));
@@ -468,13 +485,16 @@ fn mem_torture() {
         &mut failures,
         |h| {
             for _ in 0..6 {
-                h.state_mut().editor.select_all();
-                h.state_mut().editor.duplicate_selection();
+                h.state_mut().drawing.editor.select_all();
+                h.state_mut().drawing.editor.duplicate_selection();
                 frame(h);
             }
             // Regions over coincident copies (fills and region picking ask for them).
-            let n = h.state_mut().editor.regions().len();
-            println!("    {} curves, {n} regions", h.state().editor.doc.len());
+            let n = h.state_mut().drawing.editor.regions().len();
+            println!(
+                "    {} curves, {n} regions",
+                h.state().drawing.editor.doc.len()
+            );
             frame(h);
         },
     );
@@ -488,11 +508,11 @@ fn mem_torture() {
     // The 10,000-curve sketch: open, draw, select everything, drag it.
     scenario("10k curves: open and draw", h, &mut failures, |h| {
         let (doc, _) = drift_edit::test_sketches::torture_sketch();
-        h.state_mut().editor = Editor::new(doc);
+        h.state_mut().drawing.editor = Editor::new(doc);
         let fit = h.state().fit_bounds();
-        h.state_mut().fit_target = Some(fit);
+        h.state_mut().drawing.view.fit_target = Some(fit);
         frame(h);
-        h.state_mut().fit_target = None;
+        h.state_mut().drawing.view.fit_target = None;
         for _ in 0..30 {
             frame(h);
         }
@@ -503,7 +523,7 @@ fn mem_torture() {
         h,
         &mut failures,
         |h| {
-            h.state_mut().editor.select_all();
+            h.state_mut().drawing.editor.select_all();
             for p in Panel::ALL {
                 h.state_mut().show_panel(p);
                 for _ in 0..10 {
@@ -513,16 +533,16 @@ fn mem_torture() {
         },
     );
     scenario("10k curves: regions", h, &mut failures, |h| {
-        let n = h.state_mut().editor.regions().len();
+        let n = h.state_mut().drawing.editor.regions().len();
         println!("    {n} regions");
     });
     scenario("10k curves: duplicate in place x2", h, &mut failures, |h| {
         for _ in 0..2 {
-            h.state_mut().editor.select_all();
-            h.state_mut().editor.duplicate_selection();
+            h.state_mut().drawing.editor.select_all();
+            h.state_mut().drawing.editor.duplicate_selection();
             frame(h);
         }
-        println!("    {} entities", h.state().editor.doc.len());
+        println!("    {} entities", h.state().drawing.editor.doc.len());
     });
     scenario("10k+ curves: autosave x10", h, &mut failures, |h| {
         let mut storage = crate::ui_tests::MemoryStorage::default();
@@ -545,6 +565,7 @@ fn mem_torture() {
                 })
                 .collect();
             h.state_mut()
+                .drawing
                 .editor
                 .add_underlay(Underlay::new("plan", "plan.pdf", prims));
             for _ in 0..10 {
@@ -618,7 +639,7 @@ fn mem_torture() {
                 }
                 h.step();
             }
-            println!("    {} entities", h.state().editor.doc.len());
+            println!("    {} entities", h.state().drawing.editor.doc.len());
         },
     );
 

@@ -97,7 +97,7 @@ fn crop_colour(dark: bool) -> egui::Color32 {
 impl DriftApp {
     /// Whether a view's crop is on the canvas: shown, or picked (from the Views list, say).
     pub(crate) fn crop_shown(&self, id: ViewId, view: &View) -> bool {
-        self.picked_view == Some(id) || (self.show_view_crops && view.crop_visible)
+        self.drawing.picked_view == Some(id) || (self.show_view_crops && view.crop_visible)
     }
 
     /// A view's crop on screen.
@@ -125,8 +125,9 @@ impl DriftApp {
         map: &ScreenMap,
         pos: egui::Pos2,
     ) -> Option<(ViewId, CropGrip)> {
-        let doc = &self.editor.doc;
+        let doc = &self.drawing.editor.doc;
         if let Some((id, view)) = self
+            .drawing
             .picked_view
             .and_then(|id| doc.view(id).map(|v| (id, v)))
         {
@@ -146,7 +147,7 @@ impl DriftApp {
             .filter(|(id, v)| self.crop_shown(*id, v))
             .collect();
         // The picked one first, then the last drawn (on top).
-        shown.sort_by_key(|(id, _)| self.picked_view != Some(*id));
+        shown.sort_by_key(|(id, _)| self.drawing.picked_view != Some(*id));
         shown
             .into_iter()
             .find(|(_, v)| {
@@ -166,20 +167,20 @@ impl DriftApp {
         pos: Option<egui::Pos2>,
         snap: bool,
     ) -> bool {
-        if let Some(drag) = self.crop_drag.clone() {
+        if let Some(drag) = self.drawing.view.crop_drag.clone() {
             // The crop has the pointer: nothing under it is hovered meanwhile.
-            self.editor.hovered = None;
+            self.drawing.editor.hovered = None;
             if let Some(p) = response.interact_pointer_pos() {
                 let (d, found) = self.snap_crop_drag(&drag, map.to_world(p) - drag.from, snap);
-                if let Some(c) = &mut self.crop_drag {
+                if let Some(c) = &mut self.drawing.view.crop_drag {
                     c.snap = found;
                 }
                 let moved = dragged_crop(&drag.was, drag.grip, d);
-                self.editor.doc.set_view(drag.view, moved);
+                self.drawing.editor.doc.set_view(drag.view, moved);
             }
             if !response.dragged_by(PointerButton::Primary) {
-                self.crop_drag = None;
-                self.editor.commit(match drag.grip {
+                self.drawing.view.crop_drag = None;
+                self.drawing.editor.commit(match drag.grip {
                     CropGrip::Move => "Move view crop",
                     CropGrip::Resize(..) => "Reframe view",
                 });
@@ -193,22 +194,22 @@ impl DriftApp {
         // Geometry under the pointer wins over a crop's edge (a crop's grips win over it).
         let wins =
             |grip: CropGrip, geometry: bool| matches!(grip, CropGrip::Resize(..)) || !geometry;
-        let geometry = self.editor.hovered.is_some();
+        let geometry = self.drawing.editor.hovered.is_some();
         if response.drag_started_by(PointerButton::Primary)
             && let Some(from) = ui.input(|i| i.pointer.press_origin())
             && let Some((view, grip)) = self.crop_grip_at(&painter, map, from)
             && wins(grip, geometry)
-            && let Some(was) = self.editor.doc.view(view).cloned()
+            && let Some(was) = self.drawing.editor.doc.view(view).cloned()
         {
-            self.picked_view = Some(view);
-            self.crop_drag = Some(CropDrag {
+            self.drawing.picked_view = Some(view);
+            self.drawing.view.crop_drag = Some(CropDrag {
                 view,
                 grip,
                 was,
                 from: map.to_world(from),
                 snap: None,
             });
-            self.editor.doc.begin();
+            self.drawing.editor.doc.begin();
             return true;
         }
         let under = pos.and_then(|p| self.crop_grip_at(&painter, map, p));
@@ -220,7 +221,7 @@ impl DriftApp {
                 return true;
             }
             // A click anywhere else lets the view go.
-            self.picked_view = None;
+            self.drawing.picked_view = None;
         }
         if response.hovered()
             && let Some((_, grip)) = under
@@ -250,17 +251,17 @@ impl DriftApp {
             return (d, None);
         }
         let options = drift_geom::SnapOptions {
-            tolerance: PICK_RADIUS / self.camera.scale,
+            tolerance: PICK_RADIUS / self.drawing.view.camera.scale,
             grid: self
                 .grid_snap
-                .then(|| drift_render::grid_info(&self.camera, self.imperial()).minor),
+                .then(|| drift_render::grid_info(&self.drawing.view.camera, self.imperial()).minor),
             from: None,
         };
         let best = dragged_points(drag.was.crop(), drag.grip)
             .into_iter()
             .filter_map(|p| {
                 let at = p + d;
-                let s = self.editor.snap(at, options, |_| false)?;
+                let s = self.drawing.editor.snap(at, options, |_| false)?;
                 Some(((s.at - at).length(), s, s.at - at))
             })
             .min_by(|a, b| a.0.total_cmp(&b.0));
@@ -280,11 +281,11 @@ impl DriftApp {
             .filter(|p| map.rect.contains(*p))
             .and_then(|p| self.crop_grip_at(painter, map, p))
             .map(|(id, _)| id);
-        for (id, view) in self.editor.doc.views() {
+        for (id, view) in self.drawing.editor.doc.views() {
             if !self.crop_shown(id, view) {
                 continue;
             }
-            let picked = self.picked_view == Some(id);
+            let picked = self.drawing.picked_view == Some(id);
             let rect = Self::crop_rect(map, view);
             if !rect.expand(40.0).intersects(map.rect) {
                 continue;
@@ -339,7 +340,13 @@ impl DriftApp {
             }
         }
         // What a dragged crop snapped to, over its grips.
-        if let Some(s) = self.crop_drag.as_ref().and_then(|d| d.snap.as_ref()) {
+        if let Some(s) = self
+            .drawing
+            .view
+            .crop_drag
+            .as_ref()
+            .and_then(|d| d.snap.as_ref())
+        {
             let colour = crate::overlay::OverlayColors::new(dark).snap;
             crate::overlay::snap_marker(painter, map, s, colour);
         }
@@ -347,18 +354,18 @@ impl DriftApp {
 
     /// Pick a view on the canvas, and nothing else (its bar shows in the context bar).
     pub(crate) fn pick_view_alone(&mut self, view: ViewId) {
-        self.picked_view = Some(view);
-        self.editor.selection.clear();
-        self.editor.selected_fills.clear();
-        self.editor.selected_instances.clear();
-        self.editor.selected_annotation = None;
-        self.selected_constraint = None;
+        self.drawing.picked_view = Some(view);
+        self.drawing.editor.selection.clear();
+        self.drawing.editor.selected_fills.clear();
+        self.drawing.editor.selected_instances.clear();
+        self.drawing.editor.selected_annotation = None;
+        self.drawing.selected_constraint = None;
     }
 
     /// Change a view (from the Views list or the context bar). Typing into its name merges
     /// into one undo step.
     pub(crate) fn update_view(&mut self, id: ViewId, view: View, typing: bool) {
-        if self.editor.doc.view(id) == Some(&view) {
+        if self.drawing.editor.doc.view(id) == Some(&view) {
             return;
         }
         let label = if typing {
@@ -366,21 +373,21 @@ impl DriftApp {
         } else {
             "Edit view"
         };
-        self.editor.doc.begin();
-        self.editor.doc.set_view(id, view);
-        let tx = self.editor.doc.commit(label);
-        if typing && self.editor.history.undo_label() == Some(label) {
-            self.editor.history.merge_into_last(tx);
+        self.drawing.editor.doc.begin();
+        self.drawing.editor.doc.set_view(id, view);
+        let tx = self.drawing.editor.doc.commit(label);
+        if typing && self.drawing.editor.history.undo_label() == Some(label) {
+            self.drawing.editor.history.merge_into_last(tx);
         } else {
-            self.editor.history.push(tx);
+            self.drawing.editor.history.push(tx);
         }
-        self.editor.sync();
+        self.drawing.editor.sync();
     }
 
     /// The context bar for a view picked on the canvas: its name and scale, whether its crop
     /// shows, and where to place it.
     pub(crate) fn view_actions(&mut self, ui: &mut egui::Ui, id: ViewId) {
-        let Some(original) = self.editor.doc.view(id).cloned() else {
+        let Some(original) = self.drawing.editor.doc.view(id).cloned() else {
             return;
         };
         let mut view = original.clone();
@@ -396,7 +403,7 @@ impl DriftApp {
         self.scale_menu(ui, "bar_view_scale", &mut view.scale);
         ui.checkbox(&mut view.crop_visible, "Crop")
             .on_hover_text("Show its crop and name on the canvas (they never print)");
-        let sheets = self.editor.doc.sheets_showing(id).len();
+        let sheets = self.drawing.editor.doc.sheets_showing(id).len();
         let placed = match sheets {
             0 => "Not on a sheet".to_owned(),
             1 => "On 1 sheet".to_owned(),

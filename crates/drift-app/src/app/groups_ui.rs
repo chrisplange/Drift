@@ -8,10 +8,10 @@ use crate::*;
 impl DriftApp {
     /// A group's members' extent on screen.
     fn group_rect(&self, map: &ScreenMap, g: GroupId) -> Option<egui::Rect> {
-        let group = self.editor.doc.group(g)?;
+        let group = self.drawing.editor.doc.group(g)?;
         let mut b = Bounds::EMPTY;
         for id in &group.members {
-            if let Some(shape) = self.editor.index.shape(*id) {
+            if let Some(shape) = self.drawing.editor.index.shape(*id) {
                 let s = shape.bounds();
                 b.include(s.min);
                 b.include(s.max);
@@ -60,7 +60,7 @@ impl DriftApp {
 
     /// Frames: the open group (solid), picked groups (dashed, named) and the hovered group.
     pub(crate) fn paint_groups(&self, painter: &egui::Painter, map: &ScreenMap, dark: bool) {
-        let ed = &self.editor;
+        let ed = &self.drawing.editor;
         let accent = theme::accent(dark);
         if let Some(g) = ed.open_group
             && let Some(rect) = self.group_rect(map, g)
@@ -97,16 +97,21 @@ impl DriftApp {
 
     /// The inspector's group section: shown for a picked group, or the open one.
     pub(crate) fn group_inspector(&mut self, ui: &mut egui::Ui) {
-        if self.editor.block_edit.is_some() {
+        if self.drawing.editor.block_edit.is_some() {
             return;
         }
-        let Some(g) = self.editor.selected_group().or(self.editor.open_group) else {
+        let Some(g) = self
+            .drawing
+            .editor
+            .selected_group()
+            .or(self.drawing.editor.open_group)
+        else {
             return;
         };
-        let Some(group) = self.editor.doc.group(g).cloned() else {
+        let Some(group) = self.drawing.editor.doc.group(g).cloned() else {
             return;
         };
-        let open = self.editor.open_group == Some(g);
+        let open = self.drawing.editor.open_group == Some(g);
         theme::section(ui, if open { "Editing group" } else { "Group" });
         ui.label(
             egui::RichText::new("A group is one thing; a block is a thing you reuse.")
@@ -122,13 +127,13 @@ impl DriftApp {
                 .changed()
             {
                 // Typing merges into one undo step.
-                self.editor.doc.begin();
-                self.editor.doc.rename_group(g, &name);
-                let tx = self.editor.doc.commit("Rename group");
-                if self.editor.history.undo_label() == Some("Rename group") {
-                    self.editor.history.merge_into_last(tx);
+                self.drawing.editor.doc.begin();
+                self.drawing.editor.doc.rename_group(g, &name);
+                let tx = self.drawing.editor.doc.commit("Rename group");
+                if self.drawing.editor.history.undo_label() == Some("Rename group") {
+                    self.drawing.editor.history.merge_into_last(tx);
                 } else {
-                    self.editor.history.push(tx);
+                    self.drawing.editor.history.push(tx);
                 }
             }
         });
@@ -139,24 +144,24 @@ impl DriftApp {
         ui.horizontal_wrapped(|ui| {
             if open {
                 if ui.button("Finish editing").clicked() {
-                    self.editor.open_group = None;
-                    self.editor.selection = group.members.clone();
+                    self.drawing.editor.open_group = None;
+                    self.drawing.editor.selection = group.members.clone();
                 }
             } else if ui
                 .button("Edit in place")
                 .on_hover_text("Pick its members one by one (or double-click the group)")
                 .clicked()
             {
-                self.editor.open_group = Some(g);
-                self.editor.selection.clear();
+                self.drawing.editor.open_group = Some(g);
+                self.drawing.editor.selection.clear();
             }
             if ui
                 .button("Ungroup")
                 .on_hover_text(app::panels::shortcut("G", true))
                 .clicked()
             {
-                self.editor.selection = group.members.clone();
-                self.editor.ungroup();
+                self.drawing.editor.selection = group.members.clone();
+                self.drawing.editor.ungroup();
             }
             if ui
                 .button("Make block")

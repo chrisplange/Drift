@@ -17,20 +17,20 @@ pub(crate) struct SketchCheck {
 impl DriftApp {
     /// Open the Check sketch window (from the Edit menu, the palette or an import).
     pub(crate) fn open_sketch_check(&mut self) {
-        self.sketch_check = Some(SketchCheck::default());
+        self.drawing.sketch_check = Some(SketchCheck::default());
     }
 
     /// The issues for the document as it is now (found again only when it changes).
     pub(crate) fn sketch_issues(&mut self) -> Vec<Issue> {
-        let revision = self.editor.doc.revision();
-        let tolerance = self.editor.doc.rules().gap_tolerance;
-        let Some(check) = &mut self.sketch_check else {
+        let revision = self.drawing.editor.doc.revision();
+        let tolerance = self.drawing.editor.doc.rules().gap_tolerance;
+        let Some(check) = &mut self.drawing.sketch_check else {
             return Vec::new();
         };
         match &check.found {
             Some((r, issues)) if *r == revision => issues.clone(),
             _ => {
-                let issues = self.editor.check_sketch(tolerance);
+                let issues = self.drawing.editor.check_sketch(tolerance);
                 check.found = Some((revision, issues.clone()));
                 issues
             }
@@ -40,9 +40,9 @@ impl DriftApp {
     /// The drawing's gap tolerance, as Check sketch and Drawing settings both edit it: a drag
     /// or a typed value is one undo step.
     pub(crate) fn gap_tolerance_row(&mut self, ui: &mut egui::Ui) {
-        let units = self.editor.doc.units();
+        let units = self.drawing.editor.doc.units();
         let per = units.length.mm_per_unit();
-        let mut shown = self.editor.doc.rules().gap_tolerance / per;
+        let mut shown = self.drawing.editor.doc.rules().gap_tolerance / per;
         let mut response = None;
         theme::row(ui, "Gaps up to", |ui| {
             response = Some(
@@ -63,17 +63,18 @@ impl DriftApp {
             // Still the same drag, or the same typing: one step.
             let continuing = (response.dragged() && !response.drag_started())
                 || (response.has_focus() && !response.gained_focus());
-            self.editor
+            self.drawing
+                .editor
                 .change_rules_merging(continuing, |r| r.gap_tolerance = shown * per);
         }
     }
 
     pub(crate) fn sketch_check_window(&mut self, ctx: &egui::Context) {
-        if self.sketch_check.is_none() {
+        if self.drawing.sketch_check.is_none() {
             return;
         }
         let issues = self.sketch_issues();
-        let units = self.editor.doc.units();
+        let units = self.drawing.editor.doc.units();
         let now = ctx.input(|i| i.time);
         let mut open = true;
         let mut close = false;
@@ -85,7 +86,7 @@ impl DriftApp {
             .open(&mut open)
             .pivot(egui::Align2::LEFT_TOP)
             // Over the canvas's top right, clear of the side panels.
-            .default_pos(self.canvas_rect.right_top() + egui::vec2(-446.0, 14.0))
+            .default_pos(self.drawing.view.canvas_rect.right_top() + egui::vec2(-446.0, 14.0))
             .show(ctx, |ui| {
                 ui.set_width(400.0);
                 if theme::dialog_title(ui, "Check sketch", true) {
@@ -178,18 +179,18 @@ impl DriftApp {
             self.show_issue(&issue);
         }
         if let Some(issue) = fix {
-            if self.editor.fix_issue(&issue) {
+            if self.drawing.editor.fix_issue(&issue) {
                 self.set_status(
                     format!("Fixed: {}", issue.label().to_lowercase()),
                     false,
                     now,
                 );
-            } else if let Some(notice) = self.editor.out.notice.take() {
+            } else if let Some(notice) = self.drawing.editor.out.notice.take() {
                 self.set_status(notice, true, now);
             }
         }
         if fix_all {
-            let (fixed, left) = self.editor.fix_issues(&issues);
+            let (fixed, left) = self.drawing.editor.fix_issues(&issues);
             let count = |n: usize| format!("{n} issue{}", if n == 1 { "" } else { "s" });
             let text = if left == 0 {
                 format!("Fixed {}", count(fixed))
@@ -203,7 +204,7 @@ impl DriftApp {
             self.set_status(text, left > 0 && fixed == 0, now);
         }
         if close || !open {
-            self.sketch_check = None;
+            self.drawing.sketch_check = None;
         }
     }
 
@@ -213,18 +214,18 @@ impl DriftApp {
         if self.tool.kind() != ToolKind::Select {
             self.set_tool(ToolKind::Select);
         }
-        self.editor.selection = issue
+        self.drawing.editor.selection = issue
             .entities()
             .into_iter()
-            .filter(|id| self.editor.doc.contains(*id))
+            .filter(|id| self.drawing.editor.doc.contains(*id))
             .collect();
         if self.zoom_to_selection()
-            && let Some(bounds) = self.fit_target
+            && let Some(bounds) = self.drawing.view.fit_target
         {
             // Close enough to see the gap, not just the curves around it.
             let pad = DVec2::splat(issue.distance().unwrap_or(1.0).max(1.0) * 20.0);
-            let at = issue_at(&self.editor.doc, issue).unwrap_or(bounds.center());
-            self.fit_target = Some(Bounds {
+            let at = issue_at(&self.drawing.editor.doc, issue).unwrap_or(bounds.center());
+            self.drawing.view.fit_target = Some(Bounds {
                 min: at - pad,
                 max: at + pad,
             });
@@ -233,12 +234,12 @@ impl DriftApp {
 
     /// Rings round what the open Check sketch window lists.
     pub(crate) fn paint_check_markers(&mut self, painter: &egui::Painter, map: &ScreenMap) {
-        if self.sketch_check.is_none() {
+        if self.drawing.sketch_check.is_none() {
             return;
         }
         let amber = egui::Color32::from_rgb(0xff, 0x9f, 0x0a);
         for issue in self.sketch_issues().iter().take(LISTED * 5) {
-            if let Some(at) = issue_at(&self.editor.doc, issue) {
+            if let Some(at) = issue_at(&self.drawing.editor.doc, issue) {
                 let at = map.to_screen(at);
                 painter.circle_stroke(at, 9.0, egui::Stroke::new(2.0, amber));
             }

@@ -8,7 +8,7 @@ use drift_edit::walls_from_lines::{FromLinesReport, UsedLines};
 impl DriftApp {
     /// The report section, at the top of the Inspector.
     pub(crate) fn walls_from_lines_report(&mut self, ui: &mut egui::Ui) {
-        let Some(report) = self.editor.from_lines_now().cloned() else {
+        let Some(report) = self.drawing.editor.from_lines_now().cloned() else {
             return;
         };
         theme::section(ui, "Walls from lines");
@@ -78,9 +78,9 @@ impl DriftApp {
                         if ui.selectable_label(u == report.lines, u.label()).clicked()
                             && u != report.lines
                         {
-                            match self.editor.redo_walls_from_lines(u) {
+                            match self.drawing.editor.redo_walls_from_lines(u) {
                                 Ok(r) => self.set_status(r.summary(), false, now),
-                                Err(why) => self.editor.out.notice = Some(why),
+                                Err(why) => self.drawing.editor.out.notice = Some(why),
                             }
                         }
                     }
@@ -89,9 +89,9 @@ impl DriftApp {
                 .on_hover_text("What Walls from lines does with the lines it makes into walls");
         });
         if let Some(lines) = pick {
-            self.editor.selection = lines
+            self.drawing.editor.selection = lines
                 .into_iter()
-                .filter(|id| self.editor.doc.contains(*id))
+                .filter(|id| self.drawing.editor.doc.contains(*id))
                 .collect();
         }
     }

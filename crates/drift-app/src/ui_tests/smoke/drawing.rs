@@ -32,7 +32,7 @@ fn smoke_drawing_closing_a_loop_keeps_its_direction_relation() {
     }
     // On the start point: the end-point snap, and the relation the side will get.
     hover_world(&mut h, v(0.0, 0.0));
-    let p = h.state().pointer.expect("a pointer");
+    let p = h.state().drawing.view.pointer.expect("a pointer");
     assert_eq!(p.snap.map(|s| s.kind), Some(SnapKind::Endpoint));
     assert_eq!(
         p.auto_relation(),
@@ -44,17 +44,21 @@ fn smoke_drawing_closing_a_loop_keeps_its_direction_relation() {
     h.run();
     let sides = curves(&h, &added(&h, &before));
     assert_eq!(sides.len(), 4, "a closed loop of four sides");
-    let doc = &h.state().editor.doc;
+    let doc = &h.state().drawing.editor.doc;
     let count = |f: fn(&Constraint) -> bool| doc.constraints().filter(|(_, c)| f(c)).count();
     assert_eq!(count(|c| matches!(c, Constraint::Horizontal { .. })), 2);
     assert_eq!(count(|c| matches!(c, Constraint::Vertical { .. })), 2);
-    assert_eq!(h.state().editor.out.notice, None, "nothing was left out");
+    assert_eq!(
+        h.state().drawing.editor.out.notice,
+        None,
+        "nothing was left out"
+    );
     save_png("drift_smoke_closed_loop.png", &mut h);
 
     // A height on the right side: the bottom stays level.
     let right = sides[2];
     let (a, b) = ends(&h, right);
-    let ed = &mut h.state_mut().editor;
+    let ed = &mut h.state_mut().drawing.editor;
     let id = ed
         .add_constraints("Length", &[Constraint::Distance { a, b, value: 30.0 }])
         .unwrap()[0];
@@ -95,7 +99,7 @@ fn smoke_drawing_snap_markers_show_with_an_axis_lock() {
     h.run();
     let start = h.state().tool.snap_from().expect("the line started");
     hover_world(&mut h, low);
-    let p = h.state().pointer.expect("a pointer");
+    let p = h.state().drawing.view.pointer.expect("a pointer");
     assert_eq!(p.snap, None, "the lock decides where the point goes");
     assert_eq!(
         p.overridden.map(|s| (s.kind, s.at)),
@@ -122,7 +126,7 @@ fn smoke_drawing_snap_markers_show_with_an_axis_lock() {
         h.state_mut().set_tool(tool);
         h.run();
         hover_world(&mut h, high);
-        let p = h.state().pointer.expect("a pointer");
+        let p = h.state().drawing.view.pointer.expect("a pointer");
         assert_eq!(
             p.snap.map(|s| (s.kind, s.at)),
             Some((SnapKind::Endpoint, high)),
@@ -137,7 +141,7 @@ fn smoke_drawing_snap_markers_show_with_an_axis_lock() {
     click_world(&mut h, v(0.0, 0.0));
     click_world(&mut h, v(10.0, 0.0));
     hover_world(&mut h, high);
-    let p = h.state().pointer.expect("a pointer");
+    let p = h.state().drawing.view.pointer.expect("a pointer");
     assert_eq!(p.snap, None, "the arc's circle decides where it ends");
     assert_eq!(
         p.overridden.map(|s| (s.kind, s.at)),
@@ -165,7 +169,7 @@ fn smoke_drawing_trimming_a_circle_crossed_once_says_why() {
     view(&mut h, v(-40.0, -40.0), v(40.0, 40.0));
     let c = circle(&mut h, DVec2::ZERO, 10.0);
     {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         ed.doc.begin();
         let a = ed.doc.add_point(v(0.0, -30.0));
         let b = ed.doc.add_point(v(0.0, -4.0));
@@ -174,14 +178,14 @@ fn smoke_drawing_trimming_a_circle_crossed_once_says_why() {
     }
     h.run();
     let before = positions(&h);
-    let depth = h.state().editor.history.undo_depth();
+    let depth = h.state().drawing.editor.history.undo_depth();
     h.key_press(Key::T);
     h.run();
     hover_world(&mut h, v(0.0, 10.0));
     let rings: Vec<DVec2> = h
         .state()
         .tool
-        .editor_preview(&h.state().editor)
+        .editor_preview(&h.state().drawing.editor)
         .iter()
         .filter_map(|item| match item.shape {
             drift_core::Shape::Circle { center, .. } => Some(center),
@@ -198,7 +202,11 @@ fn smoke_drawing_trimming_a_circle_crossed_once_says_why() {
         ) && said.contains("Use Delete to remove it all"),
         "{said}"
     );
-    assert!(h.state().editor.doc.contains(c));
+    assert!(h.state().drawing.editor.doc.contains(c));
     assert_eq!(positions(&h), before, "nothing changed");
-    assert_eq!(h.state().editor.history.undo_depth(), depth, "no step");
+    assert_eq!(
+        h.state().drawing.editor.history.undo_depth(),
+        depth,
+        "no step"
+    );
 }

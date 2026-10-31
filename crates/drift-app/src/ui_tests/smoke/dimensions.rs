@@ -25,7 +25,7 @@ fn chain(h: &mut Harness<'_, DriftApp>, points: &[DVec2]) -> Vec<EntityId> {
     h.run();
     let new = curves(h, &added(h, &before));
     assert_eq!(new.len(), points.len() - 1, "the chain drawn");
-    h.state_mut().editor.selection.clear();
+    h.state_mut().drawing.editor.selection.clear();
     new
 }
 
@@ -39,7 +39,10 @@ fn smoke_dimensions_dimension_a_line_and_change_its_value() {
     h.run();
     click_world(&mut h, DVec2::new(-10.0, 0.0));
     click_world(&mut h, DVec2::new(5.0, 15.0));
-    assert!(h.state().dimension_edit.is_some(), "its value to type");
+    assert!(
+        h.state().drawing.dimension_edit.is_some(),
+        "its value to type"
+    );
     type_text(&mut h, "30");
     h.key_press(Key::Enter);
     h.run();
@@ -56,7 +59,10 @@ fn smoke_dimensions_dimension_a_line_and_change_its_value() {
     h.run();
     let label = first_dimension(&h).text_rect.center();
     double_click(&mut h, label);
-    assert!(h.state().dimension_edit.is_some(), "editing it again");
+    assert!(
+        h.state().drawing.dimension_edit.is_some(),
+        "editing it again"
+    );
     h.key_press_modifiers(EguiModifiers::COMMAND, Key::A);
     type_text(&mut h, "45");
     h.key_press(Key::Enter);
@@ -119,7 +125,7 @@ fn smoke_dimensions_fix_pins_what_is_still_free() {
     view(&mut h, v(-40.0, -30.0), v(60.0, 40.0));
     let line = chain(&mut h, &[v(-20.0, 0.0), v(20.0, 0.0)])[0];
     let (a, b) = ends(&h, line);
-    let ed = &mut h.state_mut().editor;
+    let ed = &mut h.state_mut().drawing.editor;
     assert!(
         ed.doc
             .constraints()
@@ -132,9 +138,14 @@ fn smoke_dimensions_fix_pins_what_is_still_free() {
     h.key_press(Key::S);
     h.run();
     click_world(&mut h, v(-10.0, 0.0));
-    assert_eq!(h.state().editor.selection.len(), 1, "the line picked");
+    assert_eq!(
+        h.state().drawing.editor.selection.len(),
+        1,
+        "the line picked"
+    );
     let fix = h
         .state()
+        .drawing
         .editor
         .relation_options()
         .into_iter()
@@ -142,7 +153,7 @@ fn smoke_dimensions_fix_pins_what_is_still_free() {
         .expect("Fix offered");
     h.state_mut().apply_constraint_option(&fix, false, 0.0);
     h.run();
-    let ed = &h.state().editor;
+    let ed = &h.state().drawing.editor;
     let pins: Vec<Constraint> = ed
         .doc
         .constraints()
@@ -165,9 +176,10 @@ fn smoke_dimensions_fix_pins_what_is_still_free() {
         );
     }
     // Fix again: nothing left to pin.
-    h.state_mut().editor.selection = [line].into();
+    h.state_mut().drawing.editor.selection = [line].into();
     let err = h
         .state_mut()
+        .drawing
         .editor
         .add_constraints("Fix", &fix.constraints);
     assert_eq!(
@@ -184,7 +196,7 @@ fn smoke_dimensions_fix_pins_what_is_still_free() {
     assert!(slices[place].on, "Fix shows as on");
     h.state_mut().pie_choose(place, 0.0);
     h.run();
-    let ed = &h.state().editor;
+    let ed = &h.state().drawing.editor;
     assert!(
         !ed.doc.constraints().any(|(_, c)| c.is_point_fix()),
         "the pin is off"
@@ -213,7 +225,7 @@ fn smoke_dimensions_an_offset_has_one_dimension_for_all_its_sides() {
     assert_eq!(offsets.len(), 4, "the offset rectangle");
     // Each offset side's distance from its original (from its middle).
     let gaps = |h: &Harness<'_, DriftApp>| -> Vec<f64> {
-        let doc = &h.state().editor.doc;
+        let doc = &h.state().drawing.editor.doc;
         offsets
             .iter()
             .map(|o| {
@@ -235,7 +247,7 @@ fn smoke_dimensions_an_offset_has_one_dimension_for_all_its_sides() {
     let painter = egui::Painter::new(
         h.ctx.clone(),
         egui::LayerId::background(),
-        h.state().canvas_rect,
+        h.state().drawing.view.canvas_rect,
     );
     let shown = h.state().layout_dimensions(&painter, &screen_map(&h));
     assert_eq!(shown.len(), 1, "one offset dimension on the canvas");
@@ -245,7 +257,10 @@ fn smoke_dimensions_an_offset_has_one_dimension_for_all_its_sides() {
     h.key_press(Key::S);
     h.run();
     double_click(&mut h, shown[0].text_rect.center());
-    assert!(h.state().dimension_edit.is_some(), "editing the offset");
+    assert!(
+        h.state().drawing.dimension_edit.is_some(),
+        "editing the offset"
+    );
     h.key_press_modifiers(EguiModifiers::COMMAND, Key::A);
     type_text(&mut h, "3");
     h.key_press(Key::Enter);
@@ -281,7 +296,14 @@ fn smoke_dimensions_an_offset_has_one_dimension_for_all_its_sides() {
     assert_eq!(at(&h, ends(&h, sides[0]).0), corner, "the rectangle stays");
     undo(&mut h);
     drag_steps(&mut h, from, to, 6, None);
-    let tolerance = h.state().last_pointer.as_ref().unwrap().tolerance;
+    let tolerance = h
+        .state()
+        .drawing
+        .view
+        .last_pointer
+        .as_ref()
+        .unwrap()
+        .tolerance;
     let step = drift_edit::tools::corners::round_step(tolerance * 1.5, true);
     let expected = (6.3 / step).round() * step;
     assert!(step >= 0.1, "a step to see at this zoom: {step}");

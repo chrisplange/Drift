@@ -16,24 +16,24 @@ pub(crate) struct Renaming {
 impl DriftApp {
     /// Open the Rename dialog for what F2 renames, or say what can be renamed.
     pub(crate) fn start_rename(&mut self) {
-        match self.editor.rename_target() {
+        match self.drawing.editor.rename_target() {
             Some(target) => {
-                self.renaming = Some(Renaming {
+                self.drawing.renaming = Some(Renaming {
                     target,
-                    name: self.editor.name_of(target).unwrap_or_default(),
+                    name: self.drawing.editor.name_of(target).unwrap_or_default(),
                     error: None,
                     fresh: true,
                 });
             }
             None => {
-                self.editor.out.notice =
+                self.drawing.editor.out.notice =
                     Some("Pick a group, or copies of one block, to rename (F2)".into());
             }
         }
     }
 
     pub(crate) fn rename_dialog(&mut self, ctx: &egui::Context) {
-        let Some(r) = &mut self.renaming else {
+        let Some(r) = &mut self.drawing.renaming else {
             return;
         };
         let what = match r.target {
@@ -89,16 +89,16 @@ impl DriftApp {
         }
         if apply {
             let (target, name) = (r.target, r.name.clone());
-            match self.editor.rename(target, &name) {
-                Ok(()) => self.renaming = None,
+            match self.drawing.editor.rename(target, &name) {
+                Ok(()) => self.drawing.renaming = None,
                 Err(e) => {
-                    if let Some(r) = &mut self.renaming {
+                    if let Some(r) = &mut self.drawing.renaming {
                         r.error = Some(e);
                     }
                 }
             }
         } else if cancel {
-            self.renaming = None;
+            self.drawing.renaming = None;
         }
     }
 }

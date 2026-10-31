@@ -68,21 +68,26 @@ fn an_assistant_draws_in_the_open_window_through_the_link() {
     {
         let app = h.state_mut();
         let lines = app
+            .drawing
             .editor
             .doc
             .iter()
             .filter(|(_, e)| matches!(e.kind, drift_core::EntityKind::Line { .. }))
             .count();
         assert_eq!(lines, 4, "the rectangle is in the window's drawing");
-        assert_eq!(app.editor.selection.len(), 4, "and picked, so it shows");
         assert_eq!(
-            app.editor.history.undo_label(),
+            app.drawing.editor.selection.len(),
+            4,
+            "and picked, so it shows"
+        );
+        assert_eq!(
+            app.drawing.editor.history.undo_label(),
             Some("Assistant: add geometry")
         );
         assert_eq!(app.link.server.as_ref().map(|s| s.connected()), Some(1));
         // The user undoes it like any edit of their own.
-        assert!(app.editor.undo());
-        assert!(app.editor.doc.is_empty());
+        assert!(app.drawing.editor.undo());
+        assert!(app.drawing.editor.doc.is_empty());
     }
     // Turning the link off closes it: the assistant's next call fails, and the file goes.
     h.state_mut().ai_link = false;
@@ -131,10 +136,11 @@ fn an_assistant_saves_and_opens_through_the_window() {
         "the server's root folder holds in the window too"
     );
     let app = h.state_mut();
-    assert_eq!(app.file.name, "disc.drift");
+    assert_eq!(app.drawing.file.name, "disc.drift");
     assert!(!app.is_dirty(), "the opened drawing is clean");
     assert_eq!(
-        app.editor
+        app.drawing
+            .editor
             .doc
             .iter()
             .filter(|(_, e)| matches!(e.kind, drift_core::EntityKind::Circle { .. }))
@@ -178,25 +184,25 @@ hatch bath.walls ANSI31"#;
     {
         let app = h.state_mut();
         assert_eq!(
-            app.editor.history.undo_label(),
+            app.drawing.editor.history.undo_label(),
             Some("Assistant: script"),
             "the whole script is one step in the window's history"
         );
-        assert_eq!(app.editor.history.undo_depth(), 1);
-        let over = app.editor.overlapping();
+        assert_eq!(app.drawing.editor.history.undo_depth(), 1);
+        let over = app.drawing.editor.overlapping();
         let desc: Vec<String> = over
             .iter()
             .map(|id| {
                 format!(
                     "{id} {:?} {:?}",
-                    app.editor.doc.get(*id).map(|e| e.style),
-                    app.editor.doc.shape(*id)
+                    app.drawing.editor.doc.get(*id).map(|e| e.style),
+                    app.drawing.editor.doc.shape(*id)
                 )
             })
             .collect();
         assert!(over.is_empty(), "no curve lies on another: {desc:?}");
-        app.editor.selection.clear();
-        app.fit_target = Some(app.fit_bounds());
+        app.drawing.editor.selection.clear();
+        app.drawing.view.fit_target = Some(app.fit_bounds());
     }
     h.run();
     save_png("drift_live_script.png", &mut h);
@@ -211,15 +217,15 @@ hatch bath.walls ANSI31"#;
     assert_eq!(out.json["sketch"]["fully_defined"], true, "{}", out.json);
     {
         let app = h.state_mut();
-        app.editor.selection.clear();
-        app.fit_target = Some(app.fit_bounds());
+        app.drawing.editor.selection.clear();
+        app.drawing.view.fit_target = Some(app.fit_bounds());
     }
     h.run();
     save_png("drift_live_script_wider.png", &mut h);
     // One undo takes the change back.
-    assert!(h.state_mut().editor.undo());
+    assert!(h.state_mut().drawing.editor.undo());
     assert_eq!(
-        h.state().editor.history.undo_label(),
+        h.state().drawing.editor.history.undo_label(),
         Some("Assistant: script")
     );
     let _ = std::fs::remove_dir_all(&dir);

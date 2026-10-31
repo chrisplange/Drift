@@ -42,7 +42,7 @@ fn smoke_sheet_with_a_view_title_block_and_export() {
     h.run();
     h.get_by_label("Border only").click();
     h.run();
-    let sheet = |h: &Harness<'_, DriftApp>| h.state().editor.doc.sheet(id).unwrap().clone();
+    let sheet = |h: &Harness<'_, DriftApp>| h.state().drawing.editor.doc.sheet(id).unwrap().clone();
     assert_eq!(sheet(&h).title_block, drift_core::TitleBlock::Border);
     h.state_mut().undo();
     h.run();
@@ -69,13 +69,13 @@ fn smoke_sheet_with_a_view_title_block_and_export() {
     h.run();
     h.run();
     assert!(
-        h.state().output_dialog.is_some(),
+        h.state().drawing.output_dialog.is_some(),
         "Print asks for the sheets"
     );
     assert!(h.query_by_label("Print…").is_some());
     h.get_by_label("Cancel").click();
     h.run();
-    assert!(h.state().output_dialog.is_none());
+    assert!(h.state().drawing.output_dialog.is_none());
 }
 
 /// #151: an SVG chosen with a sheet's Logo → Choose SVG… is the logo, not a drawing to import.
@@ -83,7 +83,7 @@ fn smoke_sheet_with_a_view_title_block_and_export() {
 fn smoke_sheet_logo_chosen_as_svg_is_the_logo() {
     let Some(mut h) = harness() else { return };
     a_sheet(&mut h);
-    let entities = h.state().editor.doc.iter().count();
+    let entities = h.state().drawing.editor.doc.iter().count();
     h.get_by_label("Choose SVG…").click();
     h.run();
     // (The file dialog is the system's: hand over the file it would.)
@@ -92,8 +92,12 @@ fn smoke_sheet_logo_chosen_as_svg_is_the_logo() {
     h.run_steps(3);
     let app = h.state();
     assert!(app.pending_import.is_none(), "no import dialog");
-    assert!(!app.editor.doc.logo().is_empty(), "it is the logo");
-    assert_eq!(app.editor.doc.iter().count(), entities, "nothing drawn");
+    assert!(!app.drawing.editor.doc.logo().is_empty(), "it is the logo");
+    assert_eq!(
+        app.drawing.editor.doc.iter().count(),
+        entities,
+        "nothing drawn"
+    );
     assert!(h.query_by_label("Replace…").is_some());
     save_png("drift_smoke_sheet_logo.png", &mut h);
     let _ = std::fs::remove_file(&path);
@@ -105,13 +109,13 @@ fn smoke_sheet_logo_chosen_as_svg_is_the_logo() {
 fn smoke_sheet_view_right_click_menu() {
     let Some(mut h) = harness() else { return };
     let sheet = a_sheet(&mut h);
-    let (view, _) = h.state().editor.doc.views().next().expect("a view");
-    let view_count = |h: &Harness<'_, DriftApp>| h.state().editor.doc.views().count();
+    let (view, _) = h.state().drawing.editor.doc.views().next().expect("a view");
+    let view_count = |h: &Harness<'_, DriftApp>| h.state().drawing.editor.doc.views().count();
 
     // On the sheet: right-click the view, Remove from sheet; it stays in the model.
     h.state_mut().show_sheet(Some(sheet));
     h.run();
-    let centre = h.state().canvas_rect.center();
+    let centre = h.state().drawing.view.canvas_rect.center();
     right_click(&mut h, centre);
     // (The Inspector has a Remove from sheet button too: the menu's is by the pointer.)
     h.get_all_by_label("Remove from sheet")
@@ -126,12 +130,12 @@ fn smoke_sheet_view_right_click_menu() {
     assert_eq!(placed(&h, sheet).len(), 1, "undo puts it back");
 
     // In the model: pick the view's crop, right-click, Delete view…, and confirm.
-    h.state_mut().sheet_preview = false;
+    h.state_mut().drawing.view.sheet_preview = false;
     h.state_mut().zoom_to_view(view);
     h.run();
     h.run();
-    assert_eq!(h.state().picked_view, Some(view));
-    let corner = h.state().canvas_rect.left_top() + egui::vec2(40.0, 40.0);
+    assert_eq!(h.state().drawing.picked_view, Some(view));
+    let corner = h.state().drawing.view.canvas_rect.left_top() + egui::vec2(40.0, 40.0);
     right_click(&mut h, corner);
     save_png("drift_smoke_view_menu.png", &mut h);
     h.get_by_label("Delete view…").click();
@@ -159,7 +163,7 @@ fn smoke_sheet_several_views_move_together() {
         ("B", DVec2::new(170.0, 200.0)),
     ] {
         let view = {
-            let ed = &mut h.state_mut().editor;
+            let ed = &mut h.state_mut().drawing.editor;
             ed.doc.begin();
             let crop = drift_core::Bounds {
                 min: DVec2::ZERO,
@@ -179,7 +183,7 @@ fn smoke_sheet_several_views_move_together() {
     let on_screen = |h: &Harness<'_, DriftApp>, i: usize| {
         let app = h.state();
         let at = placed(h, id)[i].frame.at;
-        app.paper_to_preview(app.canvas_rect, at)
+        app.paper_to_preview(app.drawing.view.canvas_rect, at)
     };
     // A click on A, Shift-click on B: both picked.
     let a = on_screen(&h, 1);
@@ -188,7 +192,7 @@ fn smoke_sheet_several_views_move_together() {
     click_with(&mut h, b, EguiModifiers::SHIFT);
     let picked = |h: &Harness<'_, DriftApp>| {
         let app = h.state();
-        app.picked_views(app.editor.doc.sheet(id).unwrap())
+        app.picked_views(app.drawing.editor.doc.sheet(id).unwrap())
     };
     assert_eq!(picked(&h), [1, 2].into());
     assert!(
@@ -226,7 +230,7 @@ fn smoke_sheet_several_views_move_together() {
     h.run();
     assert!(picked(&h).is_empty());
     let (a, b) = (on_screen(&h, 1), on_screen(&h, 2));
-    let rect = h.state().canvas_rect;
+    let rect = h.state().drawing.view.canvas_rect;
     let from = egui::pos2(a.x - 60.0, a.y - 60.0).max(rect.min + egui::vec2(4.0, 4.0));
     drag_steps(&mut h, from, b + egui::vec2(60.0, 60.0), 4, None);
     assert_eq!(picked(&h), [1, 2].into(), "the box");
@@ -249,7 +253,11 @@ fn smoke_sheet_a_new_sheet_is_empty() {
     h.run();
     let id = h.state().current_sheet().expect("a sheet");
     assert!(placed(&h, id).is_empty(), "nothing on it");
-    assert_eq!(h.state().editor.doc.views().count(), 0, "no view made");
+    assert_eq!(
+        h.state().drawing.editor.doc.views().count(),
+        0,
+        "no view made"
+    );
     h.state_mut().show_panel(Panel::Inspector);
     h.run();
     h.get_by_label("Add a view of the whole drawing").click();
@@ -267,7 +275,7 @@ fn smoke_sheet_views_list_is_left_justified() {
     let Some(mut h) = harness() else { return };
     let id = a_sheet(&mut h);
     {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         let first = placed_first(ed, id);
         ed.doc.begin();
         let mut long = ed.doc.view(first).unwrap().clone();
@@ -280,6 +288,7 @@ fn smoke_sheet_views_list_is_left_justified() {
     h.run();
     let names: Vec<String> = h
         .state()
+        .drawing
         .editor
         .doc
         .views()

@@ -42,13 +42,13 @@ fn open_example(h: &mut Harness<'_, DriftApp>) {
 
 fn fit(h: &mut Harness<'_, DriftApp>) {
     let bounds = h.state().fit_bounds();
-    h.state_mut().fit_target = Some(bounds);
+    h.state_mut().drawing.view.fit_target = Some(bounds);
     h.run();
     h.run();
 }
 
 fn rectangle(h: &mut Harness<'_, DriftApp>, min: DVec2, max: DVec2) -> [EntityId; 4] {
-    let ed = &mut h.state_mut().editor;
+    let ed = &mut h.state_mut().drawing.editor;
     ed.doc.begin();
     let p = [min, DVec2::new(max.x, min.y), max, DVec2::new(min.x, max.y)]
         .map(|at| ed.doc.add_point(at));
@@ -150,7 +150,7 @@ fn panels(dark: bool) {
     }
     // Some layers and parameters, so the lists aren't empty.
     {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         let walls = ed.add_layer("Walls");
         ed.add_layer("Furniture");
         ed.add_layer("Survey (reference)");
@@ -240,7 +240,7 @@ fn menus(dark: bool) {
 
     // The relations pie on two lines.
     let mut h = themed(dark);
-    let ed = &mut h.state_mut().editor;
+    let ed = &mut h.state_mut().drawing.editor;
     ed.doc.begin();
     let p = [
         DVec2::new(-40.0, -10.0),
@@ -253,10 +253,10 @@ fn menus(dark: bool) {
     let b = ed.doc.add_line(p[2], p[3]).unwrap();
     ed.commit("Lines");
     h.run();
-    let at = h.state().canvas_rect.center();
+    let at = h.state().drawing.view.canvas_rect.center();
     h.hover_at(at);
     h.run();
-    h.state_mut().editor.selection = [a, b].into();
+    h.state_mut().drawing.editor.selection = [a, b].into();
     h.run();
     h.key_down(Key::Q);
     h.run();
@@ -294,7 +294,7 @@ fn dialogs(dark: bool) {
     h.state_mut().pending_import = None;
     h.run();
 
-    h.state_mut().import_report = Some(crate::app::sheets_ui::ImportSummary {
+    h.state_mut().drawing.import_report = Some(crate::app::sheets_ui::ImportSummary {
         title: "site-plan.dwg".into(),
         summary: "Imported 1,204 curves, 38 lines of text, 12 hatches and fills from site-plan.dwg"
             .into(),
@@ -306,7 +306,7 @@ fn dialogs(dark: bool) {
         far: Vec::new(),
     });
     shot(dark, "44-import-report", &mut h);
-    h.state_mut().import_report = None;
+    h.state_mut().drawing.import_report = None;
     h.run();
 
     // The unsaved-changes prompt.
@@ -320,7 +320,7 @@ fn dialogs(dark: bool) {
     let mut h = themed(dark);
     let p = rectangle(&mut h, DVec2::new(-40.0, -25.0), DVec2::new(40.0, 25.0));
     {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         for (i, line) in ed
             .doc
             .iter()
@@ -361,7 +361,7 @@ fn dialogs(dark: bool) {
     // Check sketch.
     let mut h = themed(dark);
     {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         ed.doc.begin();
         let p = [
             DVec2::new(-20.0, -15.0),
@@ -408,13 +408,14 @@ fn canvas_states(dark: bool) {
     shot(dark, "52-hover", &mut h);
     let all: std::collections::BTreeSet<EntityId> = h
         .state()
+        .drawing
         .editor
         .doc
         .iter()
         .filter(|(_, e)| matches!(e.kind, EntityKind::Line { .. }))
         .map(|(id, _)| id)
         .collect();
-    h.state_mut().editor.selection = all;
+    h.state_mut().drawing.editor.selection = all;
     h.run();
     shot(dark, "53-selection-handles", &mut h);
 
@@ -454,7 +455,7 @@ fn canvas_states(dark: bool) {
     h.run();
     h.state_mut().status = None;
     shot(dark, "55-sheet", &mut h);
-    h.state_mut().sheet_preview = true;
+    h.state_mut().drawing.view.sheet_preview = true;
     h.run();
     shot(dark, "56-sheet-preview", &mut h);
 }
@@ -464,7 +465,7 @@ fn own_style(dark: bool) {
     let mut h = themed(dark);
     let p = rectangle(&mut h, DVec2::new(-40.0, -25.0), DVec2::new(40.0, 25.0));
     let (width, height) = {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         let w = ed
             .add_dimension(
                 C::HorizontalDistance {
@@ -488,7 +489,7 @@ fn own_style(dark: bool) {
         (w, ht)
     };
     let r = drift_core::AnnotationRef::Dimension(width);
-    h.state_mut().editor.doc.set_style_override(
+    h.state_mut().drawing.editor.doc.set_style_override(
         r,
         drift_core::StyleOverride {
             arrow: Some(drift_core::ArrowStyle::Tick),
@@ -499,12 +500,12 @@ fn own_style(dark: bool) {
     );
     let _ = height;
     fit(&mut h);
-    h.state_mut().selected_constraint = Some(width);
+    h.state_mut().drawing.selected_constraint = Some(width);
     h.run();
     h.get_by_label("Drawing style…").scroll_to_me();
     h.run();
     shot(dark, "48-dimension-style", &mut h);
-    h.state_mut().selected_constraint = None;
+    h.state_mut().drawing.selected_constraint = None;
     h.state_mut().show_drawing_settings = true;
     shot(dark, "49-drawing-settings", &mut h);
 }

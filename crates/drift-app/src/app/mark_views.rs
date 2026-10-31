@@ -86,19 +86,20 @@ impl DriftApp {
     /// Make a model view from a section or elevation mark and link the mark to it, in one
     /// undo step. The view is picked in the Views list (not placed on a sheet).
     pub(crate) fn make_view_from_mark(&mut self, id: AnnotationId) -> Option<ViewId> {
-        let a = self.editor.doc.annotation(id)?.clone();
+        let a = self.drawing.editor.doc.annotation(id)?.clone();
         let fallback = self.fit_bounds().size().max_element().max(1.0);
-        let crop = mark_crop(&a, self.editor.bounds(), fallback)?;
+        let crop = mark_crop(&a, self.drawing.editor.bounds(), fallback)?;
         let scale = drift_core::sheets::fit_scale(crop.size(), ROOM, self.imperial());
         let mut linked = a.clone();
-        self.editor.doc.begin();
+        self.drawing.editor.doc.begin();
         let view = self
+            .drawing
             .editor
             .doc
             .add_view(View::new(mark_view_name(&a), crop, scale));
         linked.set_view(Some(view));
-        let _ = self.editor.doc.set_annotation(id, linked);
-        self.editor.commit("Make view");
+        let _ = self.drawing.editor.doc.set_annotation(id, linked);
+        self.drawing.editor.commit("Make view");
         self.pick_view_alone(view);
         self.show_panel(crate::dock::Panel::Sheets);
         Some(view)
@@ -107,19 +108,19 @@ impl DriftApp {
     /// Pick a mark in the model (from a view's Referenced by list).
     pub(crate) fn pick_mark(&mut self, id: AnnotationId) {
         self.show_sheet(None);
-        self.editor.selection.clear();
-        self.editor.selected_fills.clear();
-        self.editor.selected_instances.clear();
-        self.editor.annotation_picks.clear();
-        self.selected_constraint = None;
-        self.picked_view = None;
-        self.editor.selected_annotation = Some(id);
+        self.drawing.editor.selection.clear();
+        self.drawing.editor.selected_fills.clear();
+        self.drawing.editor.selected_instances.clear();
+        self.drawing.editor.annotation_picks.clear();
+        self.drawing.selected_constraint = None;
+        self.drawing.picked_view = None;
+        self.drawing.editor.selected_annotation = Some(id);
         self.show_panel(crate::dock::Panel::Inspector);
     }
 
     /// The marks that point at a view, as rows that pick them in the model.
     pub(crate) fn referenced_by(&mut self, ui: &mut egui::Ui, view: ViewId) {
-        let doc = &self.editor.doc;
+        let doc = &self.drawing.editor.doc;
         let marks: Vec<(AnnotationId, String)> = doc
             .marks_of_view(view)
             .into_iter()

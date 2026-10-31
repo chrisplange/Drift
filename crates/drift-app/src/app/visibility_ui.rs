@@ -14,19 +14,19 @@ impl DriftApp {
     /// The dimensions and annotations picked now: the picked dimension and annotation, and
     /// any added with Shift.
     pub(crate) fn picked_annotations(&self) -> Vec<AnnotationRef> {
-        let doc = &self.editor.doc;
+        let doc = &self.drawing.editor.doc;
         let mut out = Vec::new();
-        if let Some(id) = self.selected_constraint
+        if let Some(id) = self.drawing.selected_constraint
             && doc.constraint(id).is_some_and(|c| c.is_dimension())
         {
             out.push(AnnotationRef::Dimension(id));
         }
-        if let Some(id) = self.editor.selected_annotation
+        if let Some(id) = self.drawing.editor.selected_annotation
             && doc.annotation(id).is_some()
         {
             out.push(AnnotationRef::Annotation(id));
         }
-        for r in &self.editor.annotation_picks {
+        for r in &self.drawing.editor.annotation_picks {
             if doc.annotation_ref_exists(*r) && !out.contains(r) {
                 out.push(*r);
             }
@@ -37,35 +37,45 @@ impl DriftApp {
     /// Whether a dimension or annotation is picked (as well as, or instead of, the primary
     /// pick).
     pub(crate) fn annotation_picked(&self, r: AnnotationRef) -> bool {
-        self.editor.annotation_picks.contains(&r)
+        self.drawing.editor.annotation_picks.contains(&r)
             || match r {
-                AnnotationRef::Dimension(id) => self.selected_constraint == Some(id),
-                AnnotationRef::Annotation(id) => self.editor.selected_annotation == Some(id),
+                AnnotationRef::Dimension(id) => self.drawing.selected_constraint == Some(id),
+                AnnotationRef::Annotation(id) => {
+                    self.drawing.editor.selected_annotation == Some(id)
+                }
             }
     }
 
     /// Shift+click: add a dimension or annotation to what is picked, or take it out.
     pub(crate) fn toggle_annotation_pick(&mut self, r: AnnotationRef) {
-        if let Some(i) = self.editor.annotation_picks.iter().position(|p| *p == r) {
-            self.editor.annotation_picks.remove(i);
+        if let Some(i) = self
+            .drawing
+            .editor
+            .annotation_picks
+            .iter()
+            .position(|p| *p == r)
+        {
+            self.drawing.editor.annotation_picks.remove(i);
             return;
         }
         // The first one picked becomes the primary pick (the inspector shows it).
         let primary_free = match r {
             AnnotationRef::Dimension(_) => {
-                self.selected_constraint.is_none() && self.editor.selected_annotation.is_none()
+                self.drawing.selected_constraint.is_none()
+                    && self.drawing.editor.selected_annotation.is_none()
             }
             AnnotationRef::Annotation(_) => {
-                self.editor.selected_annotation.is_none() && self.selected_constraint.is_none()
+                self.drawing.editor.selected_annotation.is_none()
+                    && self.drawing.selected_constraint.is_none()
             }
         };
         if primary_free {
             match r {
-                AnnotationRef::Dimension(id) => self.selected_constraint = Some(id),
-                AnnotationRef::Annotation(id) => self.editor.selected_annotation = Some(id),
+                AnnotationRef::Dimension(id) => self.drawing.selected_constraint = Some(id),
+                AnnotationRef::Annotation(id) => self.drawing.editor.selected_annotation = Some(id),
             }
         } else if !self.annotation_picked(r) {
-            self.editor.annotation_picks.push(r);
+            self.drawing.editor.annotation_picks.push(r);
         }
     }
 
@@ -81,16 +91,16 @@ impl DriftApp {
         if refs.is_empty() {
             return;
         }
-        self.editor.doc.begin();
+        self.drawing.editor.doc.begin();
         for r in refs {
-            let mut s = self.editor.doc.shown(*r);
+            let mut s = self.drawing.editor.doc.shown(*r);
             if let Some(c) = canvas {
                 s.canvas = c;
             }
             if let Some(p) = sheets {
                 s.sheets = p;
             }
-            self.editor.doc.set_shown(*r, s);
+            self.drawing.editor.doc.set_shown(*r, s);
         }
         let label = match (canvas, sheets) {
             (Some(false), _) => "Hide on canvas",
@@ -98,7 +108,7 @@ impl DriftApp {
             (_, Some(false)) => "Leave off sheets",
             _ => "Show on sheets",
         };
-        self.editor.commit(label);
+        self.drawing.editor.commit(label);
         if canvas == Some(false) && !self.show_hidden_annotations {
             self.set_status(
                 format!(
@@ -118,7 +128,7 @@ impl DriftApp {
         if refs.is_empty() {
             return;
         }
-        let doc = &self.editor.doc;
+        let doc = &self.drawing.editor.doc;
         let count = |f: fn(Shown) -> bool| refs.iter().filter(|r| f(doc.shown(**r))).count();
         let (canvas, sheets) = (count(|s| s.canvas), count(|s| s.sheets));
         let now = ui.input(|i| i.time);
@@ -164,7 +174,7 @@ impl DriftApp {
     /// The views the picked dimensions and annotations are drawn in on sheets: every view,
     /// or some (a note for the detail alone).
     fn views_row(&mut self, ui: &mut egui::Ui, refs: &[AnnotationRef]) {
-        let doc = &self.editor.doc;
+        let doc = &self.drawing.editor.doc;
         let views: Vec<(ViewId, String)> = doc
             .views()
             .map(|(id, v)| (id, v.title().to_owned()))
@@ -219,12 +229,13 @@ impl DriftApp {
         });
         let Some(change) = change else { return };
         let every: BTreeSet<ViewId> = views.iter().map(|(id, _)| *id).collect();
-        self.editor.doc.begin();
+        self.drawing.editor.doc.begin();
         for r in refs {
             let set = match change {
                 None => BTreeSet::new(),
                 Some((view, on)) => {
                     let mut set = self
+                        .drawing
                         .editor
                         .doc
                         .only_in(*r)
@@ -242,14 +253,15 @@ impl DriftApp {
                     if set == every { BTreeSet::new() } else { set }
                 }
             };
-            self.editor.doc.set_only_in(*r, set);
+            self.drawing.editor.doc.set_only_in(*r, set);
         }
-        self.editor.commit("Views it's in");
+        self.drawing.editor.commit("Views it's in");
     }
 
     /// How many dimensions and annotations are hidden on the canvas.
     pub(crate) fn hidden_annotation_count(&self) -> usize {
-        self.editor
+        self.drawing
+            .editor
             .doc
             .shown_settings()
             .filter(|(_, s)| !s.canvas)
@@ -259,7 +271,7 @@ impl DriftApp {
     /// Whether a dimension or annotation is drawn on the canvas (shown, or hidden while hidden
     /// ones are shown).
     pub(crate) fn on_canvas(&self, r: AnnotationRef) -> bool {
-        self.show_hidden_annotations || self.editor.doc.shown(r).canvas
+        self.show_hidden_annotations || self.drawing.editor.doc.shown(r).canvas
     }
 
     /// A small "not on sheets" badge: a sheet of paper struck through, by `at`.

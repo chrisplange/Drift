@@ -10,7 +10,7 @@ use super::*;
 /// Returns its sides (in order round it) and its hatch.
 fn hatched_shape(h: &mut Harness<'_, DriftApp>) -> (Vec<EntityId>, FillId) {
     h.state_mut().status_colors = false;
-    let ed = &mut h.state_mut().editor;
+    let ed = &mut h.state_mut().drawing.editor;
     ed.prefs.fill_new_shapes = true;
     ed.prefs.fill_style.kind = FillKind::Hatch(Hatch::new("ANSI31"));
     ed.doc.begin();
@@ -25,18 +25,26 @@ fn hatched_shape(h: &mut Harness<'_, DriftApp>) -> (Vec<EntityId>, FillId) {
     let fill = ed.doc.fills().next().map(|(id, _)| id).expect("its hatch");
     ed.selected_fills.clear();
     ed.selection.clear();
-    h.state_mut().fit_target = Some(drift_core::Bounds {
+    h.state_mut().drawing.view.fit_target = Some(drift_core::Bounds {
         min: DVec2::new(-20.0, -20.0),
         max: DVec2::new(70.0, 50.0),
     });
     h.run();
-    h.state_mut().fit_target = None;
+    h.state_mut().drawing.view.fit_target = None;
     h.run();
     (sides, fill)
 }
 
 fn hatch(h: &Harness<'_, DriftApp>, fill: FillId) -> Hatch {
-    match &h.state().editor.doc.fill(fill).expect("the fill").kind {
+    match &h
+        .state()
+        .drawing
+        .editor
+        .doc
+        .fill(fill)
+        .expect("the fill")
+        .kind
+    {
         FillKind::Hatch(hatch) => hatch.clone(),
         other => panic!("{other:?}"),
     }
@@ -83,7 +91,7 @@ fn a_picked_hatched_shape_shows_its_pattern_handles() {
     // A click inside picks the shape: its outline and its hatch.
     click_world(&mut h, DVec2::new(25.0, 15.0));
     {
-        let ed = &h.state().editor;
+        let ed = &h.state().drawing.editor;
         assert_eq!(ed.selected_fills, [fill].into());
         assert_eq!(ed.selection, sides.iter().copied().collect());
     }
@@ -93,12 +101,14 @@ fn a_picked_hatched_shape_shows_its_pattern_handles() {
         .hatch_handles(&map)
         .expect("the pattern's handles");
     assert!(
-        h.state_mut().editor.transform_box().is_some(),
+        h.state_mut().drawing.editor.transform_box().is_some(),
         "with the transform box"
     );
     // The origin (the sketch's, outside the shape) shows in the middle, and the angle
     // handle's arm stays inside the area.
-    let region = h.state_mut().editor.fill_shapes()[&fill].region.clone();
+    let region = h.state_mut().drawing.editor.fill_shapes()[&fill]
+        .region
+        .clone();
     assert!(region.contains(handles.at));
     assert!(region.contains(map.to_world(handles.angle)));
     h.run();
@@ -117,14 +127,14 @@ fn a_picked_hatched_shape_shows_its_pattern_handles() {
         "{:?}",
         hatch(&h, fill).origin
     );
-    assert_eq!(h.state().editor.selected_fills, [fill].into());
+    assert_eq!(h.state().drawing.editor.selected_fills, [fill].into());
     assert_eq!(
-        h.state().editor.selection.len(),
+        h.state().drawing.editor.selection.len(),
         4,
         "the shape is still picked"
     );
     // Nothing moved but the pattern.
-    let ed = &h.state().editor;
+    let ed = &h.state().drawing.editor;
     let first = ed.doc.get(sides[0]).unwrap().kind;
     let EntityKind::Line { a, .. } = first else {
         unreachable!()
@@ -150,7 +160,7 @@ fn the_inspector_aligns_the_pattern_to_corners_an_edge_and_back() {
     // start.
     h.get_by_label("Align to edge…").click();
     h.run();
-    assert_eq!(h.state().align_edge, Some(fill));
+    assert_eq!(h.state().drawing.align_edge, Some(fill));
     click_world(&mut h, DVec2::new(45.0, 15.0));
     h.run();
     let aligned = hatch(&h, fill);
@@ -161,9 +171,9 @@ fn the_inspector_aligns_the_pattern_to_corners_an_edge_and_back() {
         "{:?}",
         aligned.origin
     );
-    assert_eq!(h.state().align_edge, None, "done after one click");
+    assert_eq!(h.state().drawing.align_edge, None, "done after one click");
     assert_eq!(
-        h.state().editor.selection,
+        h.state().drawing.editor.selection,
         sides.iter().copied().collect(),
         "the click on the edge didn't change what is picked"
     );
@@ -183,9 +193,9 @@ fn the_inspector_aligns_the_pattern_to_corners_an_edge_and_back() {
     h.run();
     h.key_press(Key::Escape);
     h.run();
-    assert_eq!(h.state().align_edge, None);
+    assert_eq!(h.state().drawing.align_edge, None);
     assert_eq!(
-        h.state().editor.selected_fills,
+        h.state().drawing.editor.selected_fills,
         [fill].into(),
         "still picked"
     );
@@ -197,7 +207,7 @@ fn a_shape_moved_or_turned_carries_its_pattern() {
     let (sides, fill) = hatched_shape(&mut h);
     h.state_mut().grid_snap = false;
     {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         assert!(ed.align_hatch_to_edge(fill, sides[1]));
     }
     let before = hatch(&h, fill);
@@ -207,7 +217,7 @@ fn a_shape_moved_or_turned_carries_its_pattern() {
     let to = screen(&h, DVec2::new(30.0, 0.0));
     drag_steps(&mut h, from, to, 6, None);
     let corner = |h: &Harness<'_, DriftApp>| {
-        let ed = &h.state().editor;
+        let ed = &h.state().drawing.editor;
         let EntityKind::Line { a, .. } = ed.doc.get(sides[1]).unwrap().kind else {
             unreachable!()
         };
@@ -220,10 +230,10 @@ fn a_shape_moved_or_turned_carries_its_pattern() {
     assert_eq!(after.angle, before.angle);
     // Turned a quarter about the corner: the pattern turns with it.
     {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         let points = ed.doc.defining_points(sides.iter().copied());
         let pivot = corner(&h);
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         ed.doc.begin();
         let (ok, _) = ed.rotate_geometry(&sides, &points, pivot, 90.0);
         assert!(ok);
@@ -251,28 +261,28 @@ fn alt_click_or_double_click_picks_the_fill_alone() {
     // Alt-click: the hatch alone, with its handles and no transform box.
     click_with(&mut h, inside, EguiModifiers::ALT);
     {
-        let ed = &h.state().editor;
+        let ed = &h.state().drawing.editor;
         assert_eq!(ed.selected_fills, [fill].into());
         assert!(ed.selection.is_empty(), "{:?}", ed.selection);
     }
     let map = screen_map(&h);
     assert!(h.state_mut().hatch_handles(&map).is_some());
-    assert!(h.state_mut().editor.transform_box().is_none());
+    assert!(h.state_mut().drawing.editor.transform_box().is_none());
     // A plain click picks the whole shape again; a double-click, the fill alone.
     click_world(&mut h, DVec2::new(18.0, 6.0));
-    assert_eq!(h.state().editor.selection.len(), 4);
+    assert_eq!(h.state().drawing.editor.selection.len(), 4);
     h.ctx
         .options_mut(|o| o.input_options.max_double_click_delay = 0.6);
     double_click(&mut h, inside);
-    assert!(h.state().editor.selection.is_empty());
-    assert_eq!(h.state().editor.selected_fills, [fill].into());
+    assert!(h.state().drawing.editor.selection.is_empty());
+    assert_eq!(h.state().drawing.editor.selected_fills, [fill].into());
 
     // In a group: a click picks the group, a double-click enters it with the shape picked,
     // and another the fill alone (#159's steps, then this one).
     h.key_press(Key::Escape);
     h.run();
     {
-        let ed = &mut h.state_mut().editor;
+        let ed = &mut h.state_mut().drawing.editor;
         ed.selection = sides.iter().copied().collect();
         ed.make_group().expect("grouped");
         ed.selection.clear();
@@ -280,16 +290,16 @@ fn alt_click_or_double_click_picks_the_fill_alone() {
     }
     h.run();
     click_world(&mut h, DVec2::new(18.0, 6.0));
-    assert!(h.state().editor.open_group.is_none());
-    assert!(h.state().editor.selection.len() >= 4, "the group");
+    assert!(h.state().drawing.editor.open_group.is_none());
+    assert!(h.state().drawing.editor.selection.len() >= 4, "the group");
     double_click(&mut h, inside);
     {
-        let ed = &h.state().editor;
+        let ed = &h.state().drawing.editor;
         assert!(ed.open_group.is_some(), "into the group");
         assert_eq!(ed.selection, sides.iter().copied().collect());
     }
     double_click(&mut h, inside);
-    let ed = &h.state().editor;
+    let ed = &h.state().drawing.editor;
     assert!(ed.open_group.is_some());
     assert!(ed.selection.is_empty());
     assert_eq!(ed.selected_fills, [fill].into());

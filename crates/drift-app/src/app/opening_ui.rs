@@ -19,11 +19,11 @@ impl DriftApp {
     /// The drawing's size set picker: by its units, or a set it names (a drawing setting,
     /// one undo step).
     fn size_set_picker(&mut self, ui: &mut egui::Ui, salt: &str) {
-        let rules = self.editor.doc.rules();
+        let rules = self.drawing.editor.doc.rules();
         let named = rules.size_set.map(|s| s.to_string());
         let shown = match &named {
             Some(id) => sizes::get(id).map_or(id.clone(), |s| s.name.clone()),
-            None => format!("{} (by units)", self.editor.size_set().name),
+            None => format!("{} (by units)", self.drawing.editor.size_set().name),
         };
         let mut pick: Option<Option<&'static str>> = None;
         egui::ComboBox::from_id_salt(salt)
@@ -50,12 +50,12 @@ impl DriftApp {
             let mut r = rules;
             r.size_set = sizes::id_for(p);
             if r != rules {
-                self.editor.doc.begin();
-                self.editor.doc.set_rules(r);
-                self.editor.commit("Size set");
+                self.drawing.editor.doc.begin();
+                self.drawing.editor.doc.set_rules(r);
+                self.drawing.editor.commit("Size set");
                 // The bar's type follows the set.
-                let family = self.editor.prefs.opening.family.clone();
-                self.editor.set_opening_family(&family);
+                let family = self.drawing.editor.prefs.opening.family.clone();
+                self.drawing.editor.set_opening_family(&family);
             }
         }
     }
@@ -66,8 +66,8 @@ impl DriftApp {
     pub(crate) fn opening_tool_bar(&mut self, ui: &mut egui::Ui) {
         self.size_set_picker(ui, "opening_size_set");
         bar_divider(ui);
-        let set = self.editor.size_set();
-        let now = self.editor.opening_type_now();
+        let set = self.drawing.editor.size_set();
+        let now = self.drawing.editor.opening_type_now();
         let family_name = hosted::family(now.family).map_or(now.family, |f| f.name);
         let mut family: Option<&'static str> = None;
         egui::ComboBox::from_id_salt("opening_family")
@@ -80,9 +80,9 @@ impl DriftApp {
                 }
             });
         if let Some(f) = family {
-            self.editor.set_opening_family(f);
+            self.drawing.editor.set_opening_family(f);
         }
-        let now = self.editor.opening_type_now();
+        let now = self.drawing.editor.opening_type_now();
         let mut row: Option<sizes::SizeRow> = None;
         egui::ComboBox::from_id_salt("opening_type")
             .selected_text(if now.name.is_empty() {
@@ -100,13 +100,13 @@ impl DriftApp {
             .response
             .on_hover_text("The type: named by its leaf; the wall is cut to its opening");
         if let Some(r) = row {
-            self.editor.set_opening_type(&r);
+            self.drawing.editor.set_opening_type(&r);
         }
         bar_divider(ui);
-        let units = self.editor.doc.units();
+        let units = self.drawing.editor.doc.units();
         let unit = units.length.mm_per_unit();
         ui.label(egui::RichText::new("Opening").size(12.0).weak());
-        let now = self.editor.opening_type_now();
+        let now = self.drawing.editor.opening_type_now();
         let mut shown = now.opening.0 / unit;
         if ui
             .add(
@@ -120,34 +120,40 @@ impl DriftApp {
             .changed()
         {
             let w = shown * unit;
-            self.editor.prefs.opening.leaf = (w - (now.opening.0 - now.leaf.0)).clamp(0.0, w);
-            self.editor.prefs.opening.width = w;
-            self.editor.prefs.opening.height = now.opening.1;
-            self.editor.prefs.opening.family = now.family.to_owned();
-            self.editor.prefs.opening.type_name.clear();
+            self.drawing.editor.prefs.opening.leaf =
+                (w - (now.opening.0 - now.leaf.0)).clamp(0.0, w);
+            self.drawing.editor.prefs.opening.width = w;
+            self.drawing.editor.prefs.opening.height = now.opening.1;
+            self.drawing.editor.prefs.opening.family = now.family.to_owned();
+            self.drawing.editor.prefs.opening.type_name.clear();
         }
         bar_divider(ui);
         let swing = (
-            self.editor.prefs.opening.hand,
-            self.editor.prefs.opening.facing,
+            self.drawing.editor.prefs.opening.hand,
+            self.drawing.editor.prefs.opening.facing,
         );
         if let Some((h, f)) = app::context_ui::choice(ui, swing, &SWINGS) {
-            self.editor.prefs.opening.hand = h;
-            self.editor.prefs.opening.facing = f;
+            self.drawing.editor.prefs.opening.hand = h;
+            self.drawing.editor.prefs.opening.facing = f;
         }
         ui.label(egui::RichText::new("Space").size(12.0).weak());
     }
 
     /// The Inspector for picked openings. False when no opening is picked.
     pub(crate) fn opening_inspector(&mut self, ui: &mut egui::Ui) -> bool {
-        let openings: Vec<OpeningId> = self.editor.selected_openings().into_iter().collect();
+        let openings: Vec<OpeningId> = self
+            .drawing
+            .editor
+            .selected_openings()
+            .into_iter()
+            .collect();
         let Some(&first) = openings.first() else {
             return false;
         };
-        let Some(op) = self.editor.doc.opening(first).cloned() else {
+        let Some(op) = self.drawing.editor.doc.opening(first).cloned() else {
             return false;
         };
-        let units = self.editor.doc.units();
+        let units = self.drawing.editor.doc.units();
         let name = match (&op.symbol, openings.len()) {
             (Symbol::Library { family, type_name }, 1) => {
                 let f = hosted::family(family).map_or(family.as_str(), |f| f.name);
@@ -169,9 +175,10 @@ impl DriftApp {
         theme::section(ui, "Opening");
         if openings.len() == 1 {
             let offset_now = self
+                .drawing
                 .editor
                 .opening_offsets(first)
-                .zip(self.editor.opening_span(first))
+                .zip(self.drawing.editor.opening_span(first))
                 .map(|((a, b, start), (u0, u1))| if start { u0 - a } else { b - u1 });
             let width_now = op
                 .width_expr
@@ -184,7 +191,7 @@ impl DriftApp {
                 let Some(current) = current else {
                     continue;
                 };
-                let mut text = match &self.opening_text {
+                let mut text = match &self.drawing.opening_text {
                     Some((o, f, t)) if *o == first && *f == field => t.clone(),
                     _ => current.clone(),
                 };
@@ -195,21 +202,21 @@ impl DriftApp {
                             .desired_width(ui.available_width() - 8.0),
                     );
                     if r.changed() {
-                        self.opening_text = Some((first, field, text.clone()));
+                        self.drawing.opening_text = Some((first, field, text.clone()));
                     }
                     if r.lost_focus() && text != current {
                         commit = Some(text.clone());
                     }
                 });
                 if let Some(t) = commit {
-                    self.opening_text = None;
+                    self.drawing.opening_text = None;
                     let done = if field == 0 {
-                        self.editor.set_opening_offset(first, &t)
+                        self.drawing.editor.set_opening_offset(first, &t)
                     } else {
-                        self.editor.set_opening_width(first, &t)
+                        self.drawing.editor.set_opening_width(first, &t)
                     };
                     if let Err(e) = done {
-                        self.editor.out.notice = Some(e.to_string());
+                        self.drawing.editor.out.notice = Some(e.to_string());
                     }
                 }
             }
@@ -236,10 +243,12 @@ impl DriftApp {
                 .show_ui(ui, |ui| {
                     for ((h, f), label) in SWINGS {
                         if ui.selectable_label((h, f) == swing, label).clicked() {
-                            self.editor.edit_openings(&openings, "Opening swing", |o| {
-                                o.hand = h;
-                                o.facing = f;
-                            });
+                            self.drawing
+                                .editor
+                                .edit_openings(&openings, "Opening swing", |o| {
+                                    o.hand = h;
+                                    o.facing = f;
+                                });
                         }
                     }
                 });
@@ -250,18 +259,18 @@ impl DriftApp {
                 .on_hover_text("Hinged at the other jamb")
                 .clicked()
             {
-                self.editor.flip_openings(&openings, Flip::Hand);
+                self.drawing.editor.flip_openings(&openings, Flip::Hand);
             }
             if ui
                 .button("Flip side")
                 .on_hover_text("Opens to the wall's other face")
                 .clicked()
             {
-                self.editor.flip_openings(&openings, Flip::Facing);
+                self.drawing.editor.flip_openings(&openings, Flip::Facing);
             }
             let centred = openings.iter().all(|o| {
                 matches!(
-                    self.editor.doc.opening(*o).map(|x| &x.at),
+                    self.drawing.editor.doc.opening(*o).map(|x| &x.at),
                     Some(OpeningAt::Centred)
                 )
             });
@@ -271,14 +280,14 @@ impl DriftApp {
                     .on_hover_text("In the middle of its wall segment")
                     .clicked()
             {
-                self.editor.centre_openings(&openings);
+                self.drawing.editor.centre_openings(&openings);
             }
             if ui
                 .button("Delete")
                 .on_hover_text("The wall closes up")
                 .clicked()
             {
-                self.editor.delete_openings(&openings);
+                self.drawing.editor.delete_openings(&openings);
             }
         });
         theme::section(ui, "Size set");
@@ -296,15 +305,17 @@ impl DriftApp {
         map: &crate::overlay::ScreenMap,
         colors: &crate::overlay::OverlayColors,
     ) {
-        let picked = self.editor.selected_openings();
+        let picked = self.drawing.editor.selected_openings();
         if picked.len() != 1 {
             return;
         }
         let hover = self
+            .drawing
+            .view
             .pointer
-            .and_then(|p| self.editor.opening_arrow_at(p.raw, p.tolerance));
+            .and_then(|p| self.drawing.editor.opening_arrow_at(p.raw, p.tolerance));
         for o in picked {
-            for (at, dir, flip) in self.editor.opening_flip_arrows(o) {
+            for (at, dir, flip) in self.drawing.editor.opening_flip_arrows(o) {
                 let c = map.to_screen(at);
                 // Screen y is down.
                 let d = egui::vec2(dir.x as f32, -dir.y as f32).normalized();

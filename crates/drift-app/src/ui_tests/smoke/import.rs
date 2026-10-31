@@ -62,10 +62,10 @@ fn smoke_import_drop_dialog_choices_and_an_unreadable_drop() {
     h.run_steps(3);
     assert_eq!(lines(&h), 1);
     // A dropped sketch that isn't one, and a PDF that isn't one: the drawing stays.
-    h.state_mut().file.clean_revision = Some(h.state().editor.doc.revision());
-    let name = h.state().file.name.clone();
+    h.state_mut().drawing.file.clean_revision = Some(h.state().drawing.editor.doc.revision());
+    let name = h.state().drawing.file.name.clone();
     let recent = h.state().recent.clone();
-    let doc = h.state().editor.doc.clone();
+    let doc = h.state().drawing.editor.doc.clone();
     let bad = temp_file("drop", "broken.drift", b"not a drawing");
     drop_file(&mut h, &bad);
     let pdf = temp_file("drop", "broken.pdf", b"%PDF-1.4 nothing here");
@@ -76,8 +76,8 @@ fn smoke_import_drop_dialog_choices_and_an_unreadable_drop() {
     }
     let app = h.state();
     assert!(app.pending_import.is_none());
-    assert_eq!(app.editor.doc, doc, "the drawing is untouched");
-    assert_eq!(app.file.name, name);
+    assert_eq!(app.drawing.editor.doc, doc, "the drawing is untouched");
+    assert_eq!(app.drawing.file.name, name);
     assert_eq!(app.recent, recent, "not a recent file");
     for p in [dxf, bad, pdf] {
         let _ = std::fs::remove_file(p);
@@ -192,7 +192,7 @@ fn smoke_import_dxf_mirrored_door_stays_mirrored_and_blocks_stay_their_own() {
     let Some(mut h) = harness() else { return };
     let path = temp_file("doors", "doors.dxf", doors_dxf().as_bytes());
     import_through_the_dialog(&mut h, &path);
-    let doc = &h.state().editor.doc;
+    let doc = &h.state().drawing.editor.doc;
     let copies: Vec<drift_core::Instance> = doc.instances().map(|(_, i)| *i).collect();
     assert_eq!(copies.len(), 2, "both doors are copies of the block");
     let mirrored = copies
@@ -207,7 +207,7 @@ fn smoke_import_dxf_mirrored_door_stays_mirrored_and_blocks_stay_their_own() {
     );
     // The same file again: the same DOOR block is used, not a second one.
     import_through_the_dialog(&mut h, &path);
-    let doc = &h.state().editor.doc;
+    let doc = &h.state().drawing.editor.doc;
     assert_eq!(doc.blocks().count(), 1);
     assert_eq!(doc.instances().count(), 4);
     let _ = std::fs::remove_file(&path);
@@ -367,7 +367,7 @@ fn smoke_import_dxf_hatches_at_real_size_solids_and_hatched_blocks() {
     let Some(mut h) = harness() else { return };
     let path = temp_file("hatches", "hatches.dxf", hatches_dxf().as_bytes());
     import_through_the_dialog(&mut h, &path);
-    let doc = &h.state().editor.doc;
+    let doc = &h.state().drawing.editor.doc;
     let fills: Vec<drift_core::Fill> = doc.fills().map(|(_, f)| f.clone()).collect();
     assert_eq!(fills.len(), 2, "the hatch and the SOLID");
     let hatch = fills
@@ -388,7 +388,7 @@ fn smoke_import_dxf_hatches_at_real_size_solids_and_hatched_blocks() {
     // The block's hatch is its own fill, and each copy shows it.
     let (_, block) = doc.blocks().next().expect("the block");
     assert_eq!(block.fills.len(), 1);
-    assert_eq!(h.state_mut().editor.copy_fills().len(), 2);
+    assert_eq!(h.state_mut().drawing.editor.copy_fills().len(), 2);
     // The drawing shows it all.
     view(
         &mut h,
@@ -438,7 +438,7 @@ fn smoke_import_dxf_block_curves_keep_their_own_layers_look() {
     let Some(mut h) = harness() else { return };
     let path = temp_file("layered-block", "box.dxf", layered_block_dxf().as_bytes());
     import_through_the_dialog(&mut h, &path);
-    let doc = &h.state().editor.doc;
+    let doc = &h.state().drawing.editor.doc;
     let (_, copy) = doc.instances().next().expect("the copy");
     assert_eq!(doc.layer(copy.layer).unwrap().name, "Green");
     let block = doc.block(copy.block).unwrap();
@@ -534,7 +534,7 @@ fn smoke_import_pdf_underlay_shows_its_text() {
     h.run_steps(3);
     assert!(h.state().pending_import.is_none());
     let _ = std::fs::remove_file(&path);
-    let ed = &h.state().editor;
+    let ed = &h.state().drawing.editor;
     let (id, u) = ed.doc.underlays().next().expect("the underlay");
     assert_eq!(u.prims.len(), 3, "the dimension line and its ticks");
     assert!(!u.glyphs.is_empty(), "its text");
@@ -615,5 +615,5 @@ fn smoke_import_reader_panic_keeps_the_drawing() {
     // The rectangle is still one undo away.
     h.key_press_modifiers(EguiModifiers::COMMAND, Key::Z);
     h.run_steps(2);
-    assert!(h.state().editor.doc.is_empty());
+    assert!(h.state().drawing.editor.doc.is_empty());
 }

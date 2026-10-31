@@ -24,7 +24,7 @@ impl DriftApp {
     /// Preferences' Drafting section: the drawing's dimension standard and its settings.
     pub(crate) fn drafting_section(&mut self, ui: &mut egui::Ui) {
         theme::section(ui, "Drafting");
-        let mut style = self.editor.doc.draft_style();
+        let mut style = self.drawing.editor.doc.draft_style();
         let before = style;
         if let Some(standard) = theme::segmented(
             ui,
@@ -116,26 +116,26 @@ impl DriftApp {
              dark canvas, charcoal on the light one",
         );
         if style != before {
-            self.editor.doc.begin();
-            self.editor.doc.set_draft_style(style);
-            self.editor.commit("Drafting style");
+            self.drawing.editor.doc.begin();
+            self.drawing.editor.doc.set_draft_style(style);
+            self.drawing.editor.commit("Drafting style");
         }
     }
 
     /// The inspector for a picked dimension: prefix, suffix and tolerance. Returns true if a
     /// dimension is picked.
     pub(crate) fn dimension_inspector(&mut self, ui: &mut egui::Ui) -> bool {
-        let Some(id) = self.selected_constraint else {
+        let Some(id) = self.drawing.selected_constraint else {
             return false;
         };
-        let Some(c) = self.editor.doc.constraint(id).copied() else {
+        let Some(c) = self.drawing.editor.doc.constraint(id).copied() else {
             return false;
         };
         if !c.is_dimension() {
             return false;
         }
         let angle = matches!(c, drift_core::Constraint::Angle { .. });
-        let label = annotations::dimension_label(&self.editor.doc, Some(id), &c);
+        let label = annotations::dimension_label(&self.drawing.editor.doc, Some(id), &c);
         let shown = match &label.stack {
             Some((u, l)) => format!("{} {u} / {l}{}", label.before, label.after),
             None => format!("{}{}", label.before, label.after),
@@ -143,12 +143,12 @@ impl DriftApp {
         crate::app::panels::title(
             ui,
             Some(ToolKind::Dimension),
-            crate::constraint_label(&self.editor.doc, &c),
+            crate::constraint_label(&self.drawing.editor.doc, &c),
             &shown,
         );
         let now = ui.input(|i| i.time);
         // Driven: a reference that reports the geometry's size rather than setting it.
-        let driven = self.editor.doc.is_driven(id);
+        let driven = self.drawing.editor.doc.is_driven(id);
         let mut want = driven;
         if ui
             .checkbox(&mut want, "Driven (reference)")
@@ -157,12 +157,12 @@ impl DriftApp {
                  hold it. Untick to make it drive the geometry again",
             )
             .changed()
-            && let Err(e) = self.editor.set_driven(id, want)
+            && let Err(e) = self.drawing.editor.set_driven(id, want)
         {
             self.set_status(format!("Can't make it driving: it {e}"), true, now);
         }
         // Extension lines start past geometry they would run along, unless dragged.
-        if self.editor.doc.extension_starts(id) != [None, None]
+        if self.drawing.editor.doc.extension_starts(id) != [None, None]
             && ui
                 .button("Reset extension lines")
                 .on_hover_text(
@@ -171,13 +171,19 @@ impl DriftApp {
                 )
                 .clicked()
         {
-            self.editor.doc.begin();
+            self.drawing.editor.doc.begin();
             for end in 0..2 {
-                let _ = self.editor.doc.set_extension_start(id, end, None);
+                let _ = self.drawing.editor.doc.set_extension_start(id, end, None);
             }
-            self.editor.commit("Reset extension lines");
+            self.drawing.editor.commit("Reset extension lines");
         }
-        let mut note = self.editor.doc.dim_note(id).cloned().unwrap_or_default();
+        let mut note = self
+            .drawing
+            .editor
+            .doc
+            .dim_note(id)
+            .cloned()
+            .unwrap_or_default();
         let before = note.clone();
         theme::section(ui, "Text");
         theme::row(ui, "Prefix", |ui| {
@@ -219,7 +225,7 @@ impl DriftApp {
             ui.label(
                 egui::RichText::new(format!(
                     "Holds {}",
-                    self.editor.dimension_edit_text(id).unwrap_or(value)
+                    self.drawing.editor.dimension_edit_text(id).unwrap_or(value)
                 ))
                 .small()
                 .weak(),
@@ -254,7 +260,7 @@ impl DriftApp {
                         }
                     }
                 });
-            let units = self.editor.doc.units();
+            let units = self.drawing.editor.doc.units();
             // Tolerances are edited in the display unit (degrees for angles).
             let scale = if angle {
                 1.0
@@ -297,9 +303,9 @@ impl DriftApp {
             }
         }
         if note != before {
-            self.editor.doc.begin();
-            self.editor.doc.set_dim_note(id, Some(note));
-            self.editor.commit("Dimension text");
+            self.drawing.editor.doc.begin();
+            self.drawing.editor.doc.set_dim_note(id, Some(note));
+            self.drawing.editor.commit("Dimension text");
         }
         self.visibility_section(ui);
         self.style_section(ui);
@@ -421,7 +427,7 @@ impl DriftApp {
         let Some(&first) = refs.first() else {
             return;
         };
-        let doc = &self.editor.doc;
+        let doc = &self.drawing.editor.doc;
         let drawing = doc.draft_style();
         let shown = doc.draft_style_for(first);
         let own: Vec<StyleOverride> = refs.iter().map(|r| doc.style_override(*r)).collect();
@@ -597,13 +603,13 @@ impl DriftApp {
             }
         });
         if let Some(edit) = edit {
-            self.editor.doc.begin();
+            self.drawing.editor.doc.begin();
             for r in &refs {
-                let mut o = self.editor.doc.style_override(*r);
+                let mut o = self.drawing.editor.doc.style_override(*r);
                 edit(&mut o);
-                self.editor.doc.set_style_override(*r, o);
+                self.drawing.editor.doc.set_style_override(*r, o);
             }
-            self.editor.commit("Annotation style");
+            self.drawing.editor.commit("Annotation style");
         }
         if open_settings {
             self.show_drawing_settings = true;

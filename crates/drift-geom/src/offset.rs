@@ -13,6 +13,26 @@ pub enum OffsetError {
     TooTight,
     /// The curve has no direction somewhere (a zero-length stretch).
     Degenerate,
+    /// The distance is more than a circle's or an arc's radius on the inside.
+    LargerThanRadius,
+    /// A line of the chain would be offset past its length (its offset runs backwards).
+    TooLarge,
+    /// A chain curve isn't a curve.
+    NotACurve,
+}
+
+impl std::fmt::Display for OffsetError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            OffsetError::TooTight => {
+                "the offset is larger than the curve's tightest bend on that side"
+            }
+            OffsetError::Degenerate => "the curve is too short",
+            OffsetError::LargerThanRadius => "the offset is larger than the radius",
+            OffsetError::TooLarge => "the offset is too large for the shape",
+            OffsetError::NotACurve => "not a curve",
+        })
+    }
 }
 
 /// The most halvings of a piece while fitting (so at most 2^8 curves per starting piece).

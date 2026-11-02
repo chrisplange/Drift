@@ -14,6 +14,7 @@ pub mod expr;
 pub mod fonts;
 pub mod groups;
 pub mod layers;
+pub mod offsets;
 pub mod openings;
 pub mod params;
 pub mod paths;
@@ -45,6 +46,7 @@ pub use fonts::{EmbeddedFont, FontFile, FontSet};
 pub use glam::DVec2;
 pub use groups::{Group, GroupId};
 pub use layers::{Appearance, Layer, LayerId, LineType, LineWeight, Rgb};
+pub use offsets::Side;
 pub use openings::{
     Hand, Opening, OpeningAt, OpeningId, OpeningMade, SegEnd, SizeSetId, Symbol, WallFace,
 };

@@ -898,7 +898,7 @@ impl Editor {
 impl Editor {
     /// Whether a constraint names a wall's generated face or corner.
     pub(crate) fn on_wall_faces(&self, c: &Constraint) -> bool {
-        self.doc.has_walls() && {
+        (self.doc.has_walls() || self.doc.has_offsets()) && {
             let owners = self.wall_owners();
             c.entities().any(|e| owners.generated(e))
         }
@@ -910,6 +910,17 @@ impl Editor {
     pub(crate) fn refused_on_walls(&self, c: &Constraint) -> Option<String> {
         if !self.on_wall_faces(c) {
             return None;
+        }
+        // An offset's curves follow their source: nothing is lowered, nothing holds them.
+        if self.doc.has_offsets() {
+            let owners = self.wall_owners();
+            if c.entities().any(|e| owners.offset(e).is_some()) {
+                return Some(
+                    "An offset's curves follow its source: relate the source, or Detach the \
+                     offset"
+                        .to_owned(),
+                );
+            }
         }
         drift_geom::walls::lower::lower_constraint(&self.doc, c)?.err()
     }

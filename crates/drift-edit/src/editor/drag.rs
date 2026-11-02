@@ -152,6 +152,11 @@ impl Editor {
     /// Geometry joined to nothing else that is dragged goes on its own: each part of what is
     /// dragged (with what it's joined to) moves as if it alone were dragged.
     pub fn drag(&mut self, ids: &[EntityId], delta: DVec2, dragged: &[Param]) -> bool {
+        // (An offset's pieces aren't dragged: they follow their source.)
+        let ids = &self.without_offset_pieces(ids);
+        if ids.is_empty() {
+            return true;
+        }
         let curves = ids
             .iter()
             .all(|id| self.doc.get(*id).is_some_and(|e| !e.kind.is_point()));
@@ -274,6 +279,16 @@ impl Editor {
             // (The faces they made again are out of the scope: the index is told of them too,
             // or it would look over the whole drawing for what changed. Only their points were
             // touched, so the index adds the faces on them.)
+            if self.doc.revision() != before {
+                self.index.update_moved_with_curves(
+                    &self.doc,
+                    self.doc.entities_touched_in_transaction(),
+                );
+            }
+        }
+        if self.doc.has_offsets() {
+            let before = self.doc.revision();
+            self.follow_offsets();
             if self.doc.revision() != before {
                 self.index.update_moved_with_curves(
                     &self.doc,

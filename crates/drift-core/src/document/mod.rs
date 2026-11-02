@@ -17,6 +17,7 @@ use crate::drafting::{
 };
 use crate::groups::{Group, GroupId};
 use crate::layers::{Appearance, Layer, LayerId};
+use crate::offsets::{Offset, OffsetId};
 use crate::openings::{Opening, OpeningId};
 use crate::paths::{Path, PathId};
 use crate::sheets::{PlacedView, Sheet, SheetId, View, ViewId};
@@ -34,6 +35,7 @@ mod geometry;
 mod grouping;
 mod journal;
 mod layers;
+mod offsets;
 mod settings;
 mod sheets;
 #[cfg(test)]
@@ -106,13 +108,16 @@ pub struct Document {
     property_dims: Shared<BTreeMap<PropertyDimId, PropertyDim>>,
     /// Doors, windows and openings in walls, and what their symbols made.
     openings: Shared<BTreeMap<OpeningId, Opening>>,
+    /// Offsets of chains of curves, and the pieces they made (#247).
+    offsets: Shared<BTreeMap<OffsetId, Offset>>,
     next_id: u32,
     next_constraint_id: u32,
     /// Next id for variables, variants and measurements (one counter, ids never reused).
     next_param_id: u32,
     /// Next id for fills and annotations (one counter, ids never reused).
     next_drafting_id: u32,
-    /// Next id for walls, property dimensions and openings (one counter, ids never reused).
+    /// Next id for walls, property dimensions, openings and offsets (one counter, ids never
+    /// reused).
     next_wall_id: u32,
     /// Incremented on every change, so caches (spatial index, autosave) can tell when to refresh.
     revision: u64,
@@ -235,6 +240,7 @@ impl PartialEq for Document {
             && self.walls == other.walls
             && self.property_dims == other.property_dims
             && self.openings == other.openings
+            && self.offsets == other.offsets
     }
 }
 
@@ -276,6 +282,7 @@ impl Default for Document {
             walls: BTreeMap::new().into(),
             property_dims: BTreeMap::new().into(),
             openings: BTreeMap::new().into(),
+            offsets: BTreeMap::new().into(),
             // Ids start at 1; `e0` and `c0` are not valid ids in `.drift` files.
             next_id: 1,
             next_constraint_id: 1,
@@ -368,8 +375,8 @@ impl Document {
                     self.next_drafting_id = self.next_drafting_id.max(next);
                     self.next_wall_id = self.next_wall_id.max(next);
                 }
-                // Openings and property dimensions.
-                'o' | 'q' => self.next_wall_id = self.next_wall_id.max(next),
+                // Openings, property dimensions and offsets.
+                'o' | 'q' | 'x' => self.next_wall_id = self.next_wall_id.max(next),
                 _ => {}
             }
         }
@@ -379,8 +386,8 @@ impl Document {
     /// `c3`, `f2`, ...; see [`reserve_ids`](Self::reserve_ids)).
     pub fn holds_id(&self, id: &str) -> bool {
         use crate::{
-            AnnotationId, BlockId, FillId, GroupId, InstanceId, OpeningId, PathId, PropertyDimId,
-            SheetId, TextId, UnderlayId, ViewId, WallId,
+            AnnotationId, BlockId, FillId, GroupId, InstanceId, OffsetId, OpeningId, PathId,
+            PropertyDimId, SheetId, TextId, UnderlayId, ViewId, WallId,
         };
         let Some((kind, n)) = spelled_id(id) else {
             return false;
@@ -404,6 +411,7 @@ impl Document {
             'w' => self.view(ViewId(n)).is_some() || self.wall(WallId(n)).is_some(),
             'o' => self.opening(OpeningId(n)).is_some(),
             'q' => self.property_dim(PropertyDimId(n)).is_some(),
+            'x' => self.offset(OffsetId(n)).is_some(),
             _ => false,
         }
     }

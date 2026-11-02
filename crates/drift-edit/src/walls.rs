@@ -27,6 +27,8 @@ pub enum Op {
     Construction,
     /// Make walls from them.
     MakeWalls,
+    /// Move, turn or scale them (G, R, a drag, a nudge, the transform box).
+    Move,
 }
 
 /// Thickness presets for the tool bar and Inspector: (label, actual thickness in mm).
@@ -139,7 +141,7 @@ impl Editor {
     /// Picking a wall's face, corner or poché picks the wall: its centreline curves. Points
     /// of its centreline stay points (they are its grips).
     pub(crate) fn walls_for_picks(&self, ids: impl IntoIterator<Item = EntityId>) -> Vec<EntityId> {
-        if !self.doc.has_walls() {
+        if !self.doc.has_walls() && !self.doc.has_offsets() {
             return ids.into_iter().collect();
         }
         let owners = self.wall_owners();
@@ -148,6 +150,7 @@ impl Editor {
             match owners.get(id) {
                 Some(Owner::Wall(w)) => out.extend(self.wall_curves(w)),
                 Some(Owner::Opening(o, _)) => out.extend(self.opening_pick_set(o)),
+                Some(Owner::Offset(x)) => out.extend(self.offset_curves(x)),
                 _ => out.push(id),
             }
         }
@@ -245,26 +248,42 @@ impl Editor {
     /// faces are refused (its centreline is what to edit), as is making walls of a wall or
     /// making its parts construction. Returns false (with a notice) when refused.
     pub fn guard_owned(&mut self, ids: &[EntityId], op: Op) -> bool {
-        if !self.doc.has_walls() {
+        if !self.doc.has_walls() && !self.doc.has_offsets() {
             return true;
         }
         let owners = self.wall_owners();
-        let generated = ids.iter().any(|id| owners.generated(*id));
+        let generated = ids.iter().any(|id| owners.by_wall(*id));
         let centre = ids
             .iter()
             .any(|id| matches!(owners.get(*id), Some(Owner::Centre(_))));
+        let piece = ids.iter().any(|id| owners.offset(*id).is_some());
+        let only_pieces = piece && ids.iter().all(|id| owners.offset(*id).is_some());
         let refused = match op {
             Op::Cut if generated => {
                 Some("Wall faces follow the wall: trim its centreline, or Explode it".to_owned())
             }
+            Op::Cut if piece => Some(
+                "An offset's curves follow its source: trim the source, or Detach the offset"
+                    .to_owned(),
+            ),
             Op::Round if generated => Some(
                 "Wall faces follow the wall: round its centreline's corner, or Explode it"
+                    .to_owned(),
+            ),
+            Op::Round if piece => Some(
+                "An offset's curves follow its source: round the source's corner, or Detach \
+                 the offset"
                     .to_owned(),
             ),
             Op::Construction if generated || centre => {
                 Some("A wall's lines follow the wall: Explode it to change them".to_owned())
             }
             Op::MakeWalls if generated || centre => Some("That is already a wall".to_owned()),
+            Op::MakeWalls if piece => Some("Detach the offset first".to_owned()),
+            Op::Move if only_pieces => Some(
+                "An offset's curves follow its source: move the source, or Detach the offset"
+                    .to_owned(),
+            ),
             _ => None,
         };
         match refused {
@@ -1597,7 +1616,9 @@ pub fn thickness_dimension(
     doc: &drift_core::Document,
     d: &PropertyDim,
 ) -> Option<(drift_core::Constraint, DVec2)> {
-    let PropertyRef::WallThickness(w) = d.target;
+    let PropertyRef::WallThickness(w) = d.target else {
+        return None;
+    };
     let wall = doc.wall(w)?;
     let (segs, ..) = drift_geom::walls::regen::centreline(doc, wall).ok()?;
     let seg = segs.get(usize::from(d.seg))?;

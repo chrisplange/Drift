@@ -83,6 +83,8 @@ pub(crate) enum Command {
     WallsFromLines,
     /// The picked walls as plain geometry.
     ExplodeWalls,
+    /// The picked offsets' curves as plain curves, no longer following their source (#247).
+    DetachOffset,
     /// Two picked walls' nearest ends joined (an L or a T).
     JoinWalls,
     /// The picked area fill's corners that touch but aren't one point, joined (#202).
@@ -322,6 +324,8 @@ pub(crate) enum When {
     PickedAnnotations,
     /// Walls picked.
     Walls,
+    /// An offset is picked (all of its pieces).
+    Offsets,
     /// A view picked: its crop in the model (nothing else picked), or on the sheet shown.
     PickedView,
     /// A view picked on the sheet shown.
@@ -361,6 +365,7 @@ impl When {
             When::SpaceableDimensions => app.can_align_dimensions().1,
             When::PickedAnnotations => !app.picked_annotations().is_empty(),
             When::Walls => !app.drawing.editor.selected_walls().is_empty(),
+            When::Offsets => !app.drawing.editor.selected_offsets().is_empty(),
             When::PickedView => {
                 app.drawing
                     .picked_view
@@ -407,6 +412,7 @@ impl When {
             When::SpaceableDimensions => "Pick three or more stacked parallel dimensions",
             When::PickedAnnotations => "Pick some dimensions or notes",
             When::Walls => "Pick a wall",
+            When::Offsets => "Pick an offset",
             When::PickedView => "Pick a view's crop, or a view on a sheet",
             When::ViewOnSheet => "Pick a view on a sheet",
             When::JoinableCorners => "Pick an area fill whose corners aren't joined",
@@ -1659,6 +1665,16 @@ fn table() -> Vec<Spec> {
         tool("modify.offset", C::Modify, ToolKind::Offset)
             .keys(const { &[plain(Key::O)] })
             .aliases(&["OFFSET", "O"]),
+        Spec::new(
+            "modify.detach_offset",
+            C::Modify,
+            K::DetachOffset,
+            "Detach offset",
+            "Turn the picked offset into plain curves that no longer follow their source",
+        )
+        .when(When::Offsets)
+        .aliases(&["DETACHOFFSET"])
+        .words("explode plain curves"),
         tool("modify.trim", C::Modify, ToolKind::Trim)
             .keys(const { &[plain(Key::T)] })
             .aliases(&["TRIM", "TR"]),

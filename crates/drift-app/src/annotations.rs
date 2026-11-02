@@ -952,23 +952,7 @@ pub fn layout_dimension(
     // Points, or lines standing for their midpoints.
     let p = |id| doc.ref_point(id);
 
-    let linear = |p1: Pos2, p2: Pos2| {
-        let u = dir(p1, p2);
-        let n = u.rot90();
-        let d = relieved((label - p1).dot(n), 0.0, 0.0);
-        let d1 = p1 + n * d;
-        let d2 = p2 + n * d;
-        let along = (label - d1).dot(u);
-        (
-            DimShape::Linear {
-                p: [p1, p2],
-                d: [d1, d2],
-                start: [style.gap; 2],
-                ends: [None; 2],
-            },
-            d1 + u * along,
-        )
-    };
+    let linear = |p1: Pos2, p2: Pos2| linear_shape(p1, p2, label, &style);
     // The measured points in the sketch, and a direction square to the dimension line.
     let measured: Option<([DVec2; 2], DVec2)> = match *c {
         Constraint::Distance { a, b, .. } => p(a).zip(p(b)).map(|(a, b)| ([a, b], (b - a).perp())),
@@ -1076,6 +1060,74 @@ pub fn layout_dimension(
         }
         _ => return None,
     };
+    Some(finish_layout(
+        painter, doc, id, c, shape, text_pos, measured, map, style,
+    ))
+}
+
+/// A linear dimension's shape between two screen points, its line through `label`'s
+/// distance from them, and where its text starts out.
+fn linear_shape(p1: Pos2, p2: Pos2, label: Pos2, style: &DimStyle) -> (DimShape, Pos2) {
+    let u = dir(p1, p2);
+    let n = u.rot90();
+    let d = relieved((label - p1).dot(n), 0.0, 0.0);
+    let d1 = p1 + n * d;
+    let d2 = p2 + n * d;
+    let along = (label - d1).dot(u);
+    (
+        DimShape::Linear {
+            p: [p1, p2],
+            d: [d1, d2],
+            start: [style.gap; 2],
+            ends: [None; 2],
+        },
+        d1 + u * along,
+    )
+}
+
+/// An offset's distance (#247) drawn as a linear dimension between two world points, its
+/// label starting at `gap.label`. It has no constraint of its own: the layout's is a stand-in
+/// holding the value.
+pub fn layout_gap(
+    painter: &egui::Painter,
+    doc: &Document,
+    gap: &drift_edit::offsets::Gap,
+    map: &ScreenMap,
+) -> Option<DimLayout> {
+    let style = DimStyle::of(&dimension_style(doc, None));
+    let c = Constraint::Distance {
+        a: EntityId(0),
+        b: EntityId(0),
+        value: gap.value,
+    };
+    let label = map.to_screen(gap.label);
+    let (shape, text_pos) = linear_shape(
+        map.to_screen(gap.from),
+        map.to_screen(gap.to),
+        label,
+        &style,
+    );
+    let measured = Some(([gap.from, gap.to], (gap.to - gap.from).perp()));
+    Some(finish_layout(
+        painter, doc, None, &c, shape, text_pos, measured, map, style,
+    ))
+}
+
+/// The rest of a dimension's layout once its shape is known: extension line starts, the
+/// label settled along a linear dimension's line (above it, rotated, when aligned).
+#[allow(clippy::too_many_arguments)]
+fn finish_layout(
+    painter: &egui::Painter,
+    doc: &Document,
+    id: Option<ConstraintId>,
+    c: &Constraint,
+    shape: DimShape,
+    text_pos: Pos2,
+    measured: Option<([DVec2; 2], DVec2)>,
+    map: &ScreenMap,
+    style: DimStyle,
+) -> DimLayout {
+    let s = |p: DVec2| map.to_screen(p);
     let mut shape = shape;
     if let (
         DimShape::Linear {
@@ -1148,7 +1200,7 @@ pub fn layout_dimension(
         _ => (text_pos, 0.0),
     };
     let text_rect = rotated_bounds(text_pos, galleys.size, angle).expand2(vec2(3.0, 1.0));
-    Some(DimLayout {
+    DimLayout {
         id,
         property: None,
         constraint: *c,
@@ -1160,7 +1212,7 @@ pub fn layout_dimension(
         shape,
         driven,
         style,
-    })
+    }
 }
 
 /// An arrowhead (or tick / dot) at `tip`, pointing along `direction`.

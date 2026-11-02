@@ -162,9 +162,18 @@ fn every_fixture_opens_keeps_its_contents_and_saves_as_current() {
             .iter()
             .filter(|(id, _)| walls.get(*id).is_none())
             .count();
-        // (From 44 a room corner is also kept as a fillet keeps one.)
+        // (From 44 a room corner is also kept as a fillet keeps one; from 44.1 the offsets'
+        // sources, a rectangle and a circle, are plain too: 4 lines, 4 corners, a circle and
+        // its centre.)
         let kept_corner = usize::from(version >= 44);
-        assert_eq!(plain, ENTITIES + kept_corner, "{}", at("entities"));
+        let has_offsets = (version, addition) >= (44, 1);
+        let offset_sources = if has_offsets { 10 } else { 0 };
+        assert_eq!(
+            plain,
+            ENTITIES + kept_corner + offset_sources,
+            "{}",
+            at("entities")
+        );
         // (From 43 the door's hinge is held by its x and its y apart; from 44 the kept
         // corner, the rug's centre midway across the room and equal long sides.)
         let fixes = if version >= 43 { 2 } else { 0 };
@@ -277,7 +286,7 @@ fn every_fixture_opens_keeps_its_contents_and_saves_as_current() {
         );
         assert_eq!(
             doc.property_dims().count(),
-            usize::from(has_walls),
+            usize::from(has_walls) + usize::from(has_offsets),
             "{}",
             at("property dimensions")
         );
@@ -311,6 +320,30 @@ fn every_fixture_opens_keeps_its_contents_and_saves_as_current() {
                 .filter(|k| k.part == drift_core::Part::Jamb)
                 .count();
             assert_eq!(jambs, 4, "{}", at("jambs"));
+        }
+        // Offsets (44.1): a rectangle offset outward with its distance shown, and a circle
+        // offset inward; regenerating them changes nothing.
+        assert_eq!(
+            doc.offsets().count(),
+            if has_offsets { 2 } else { 0 },
+            "{}",
+            at("offsets")
+        );
+        if has_offsets {
+            let pieces: usize = doc.offsets().map(|(_, o)| o.made.curves.len()).sum();
+            assert_eq!(pieces, 5, "{}", at("offset pieces"));
+            assert!(
+                doc.offsets().all(|(_, o)| !o.made.is_empty()),
+                "{}",
+                at("offsets made")
+            );
+            let mut regenerated = doc.clone();
+            let report = drift_geom::offsets::regenerate(&mut regenerated);
+            assert!(
+                !report.changed,
+                "{}",
+                at(&format!("offsets regenerate: {report:?}"))
+            );
         }
         if version >= 39 {
             let mut rules = fixture_rules();
@@ -727,7 +760,40 @@ fn fixture_drawing() -> Document {
     let before = Variant::sketch("As found", &doc);
     doc.add_variant(before);
     add_walls(&mut doc, walls);
+    add_offsets(&mut doc);
     doc
+}
+
+/// Offsets (44.1): a 400 × 300 rectangle offset 50 outward, its distance dimension shown,
+/// and a circle of radius 150 offset 25 inward, clear of the rest, with their pieces made.
+fn add_offsets(doc: &mut Document) {
+    use drift_core::{Offset, PropertyDim, PropertyRef, Side};
+    let p = |doc: &mut Document, x: f64, y: f64| doc.add_point(DVec2::new(14000.0 + x, y));
+    let corners = [
+        p(doc, 0.0, 0.0),
+        p(doc, 400.0, 0.0),
+        p(doc, 400.0, 300.0),
+        p(doc, 0.0, 300.0),
+    ];
+    let sides: Vec<EntityId> = (0..4)
+        .map(|i| line(doc, corners[i], corners[(i + 1) % 4]))
+        .collect();
+    // Counter-clockwise: outward is to the right of travel.
+    let rect = doc
+        .add_offset(Offset::new(sides, Side::Right, 50.0))
+        .unwrap();
+    doc.add_property_dim(PropertyDim {
+        target: PropertyRef::OffsetDistance(rect),
+        seg: 0,
+        along: 0.5,
+        out: 0.0,
+    })
+    .unwrap();
+    let centre = p(doc, 1000.0, 150.0);
+    let circle = doc.add_circle(centre, 150.0).unwrap();
+    doc.add_offset(Offset::new(vec![circle], Side::Right, 25.0))
+        .unwrap();
+    drift_geom::offsets::regenerate(doc);
 }
 
 /// Walls (42.1): an L, a T, an X, a curved wall and a thickness dimension, on the walls

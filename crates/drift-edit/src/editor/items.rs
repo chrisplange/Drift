@@ -62,8 +62,10 @@ impl Editor {
         });
         let (picked_walls, hovered_wall) = self.lit_walls();
         let hovered_wall = hovered_wall.filter(|_| !rest);
+        let hovered_offset = self.hovered_offset().filter(|_| !rest);
         let wall_owners =
-            (!picked_walls.is_empty() || hovered_wall.is_some()).then(|| self.wall_owners());
+            (!picked_walls.is_empty() || hovered_wall.is_some() || hovered_offset.is_some())
+                .then(|| self.wall_owners());
         ItemLook {
             status_colors,
             dark,
@@ -73,6 +75,7 @@ impl Editor {
             selected: self.selection.iter().copied().collect(),
             picked_walls,
             hovered_wall,
+            hovered_offset,
             wall_owners,
         }
     }
@@ -215,20 +218,21 @@ impl Editor {
         if role.is_some_and(|r| r != PointRole::Standalone && r != PointRole::Handle) {
             item = item.as_vertex();
         }
-        let wall = look
-            .wall_owners
-            .as_ref()
-            .and_then(|o| {
-                o.get(id)
-                    .filter(|o| matches!(o, drift_core::Owner::Wall(_)))
-            })
-            .map(drift_core::Owner::wall);
+        let owner = look.wall_owners.as_ref().and_then(|o| o.get(id));
+        let wall = owner
+            .filter(|o| matches!(o, drift_core::Owner::Wall(_)))
+            .and_then(drift_core::Owner::wall);
+        let offset = match owner {
+            Some(drift_core::Owner::Offset(x)) => Some(x),
+            _ => None,
+        };
         let emphasis = if look.selected.contains(&id)
             || wall.is_some_and(|w| look.picked_walls.contains(&w))
         {
             Emphasis::Selected
         } else if !look.rest
             && ((wall.is_some() && wall == look.hovered_wall)
+                || (offset.is_some() && offset == look.hovered_offset)
                 || self.hovered == Some(id)
                 || self.highlight.contains(&id)
                 || self.snapped_point == Some(id)
@@ -317,6 +321,7 @@ pub(crate) struct ItemLook {
     selected: HashSet<EntityId>,
     picked_walls: BTreeSet<drift_core::WallId>,
     hovered_wall: Option<drift_core::WallId>,
+    hovered_offset: Option<drift_core::OffsetId>,
     wall_owners: Option<std::rc::Rc<drift_core::Owners>>,
 }
 

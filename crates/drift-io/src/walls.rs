@@ -1,7 +1,8 @@
 //! Walls and property dimensions in `.drift` files: the `walls` and `property_dims` tables
 //! (additions at format 42, fixture `v42.1`). Older 42 builds pass over them and keep them
 //! when they save; the faces walls made are ordinary entities, so a file opens without
-//! regenerating anything.
+//! regenerating anything. From 44.1 a property dimension may show an offset's distance
+//! (`of: "distance"`, naming the `offset` instead of a `wall`; `crate::offsets`).
 //!
 //! What a wall made is written by key (`docs/walls-design.md` §2.3), as strings:
 //!
@@ -129,9 +130,12 @@ pub(crate) struct WallRecord {
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct PropertyDimRecord {
     id: String,
-    /// What it shows: `thickness`.
+    /// What it shows: a wall's `thickness`, or an offset's `distance` (44.1).
     of: String,
-    wall: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    wall: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    offset: Option<String>,
     seg: u16,
     along: f64,
     out: f64,
@@ -433,13 +437,15 @@ pub(crate) fn wall_record(doc: &Document, id: WallId, w: &Wall) -> WallRecord {
 
 #[cfg(not(feature = "demo"))]
 pub(crate) fn property_dim_record(id: PropertyDimId, d: &PropertyDim) -> PropertyDimRecord {
-    let (of, wall) = match d.target {
-        PropertyRef::WallThickness(w) => ("thickness", w),
+    let (of, wall, offset) = match d.target {
+        PropertyRef::WallThickness(w) => ("thickness", Some(w.to_string()), None),
+        PropertyRef::OffsetDistance(x) => ("distance", None, Some(x.to_string())),
     };
     PropertyDimRecord {
         id: id.to_string(),
         of: of.into(),
-        wall: wall.to_string(),
+        wall,
+        offset,
         seg: d.seg,
         along: d.along,
         out: d.out,
@@ -479,15 +485,14 @@ fn parse_poche(id: &str, r: PocheRecord) -> Result<FillStyle, LoadError> {
     })
 }
 
-/// Read the walls and property dimensions into `doc` (after its entities, paths and fills).
-/// What an older build could have left (a centreline deleted, a face deleted or redrawn, a
-/// tee on a wall that is gone) is left for the repair on opening; what only a hand edit
-/// could make (a face key naming a point, an entity made by two walls) is refused. Returns
-/// notes on what was left out.
-pub(crate) fn insert_all(
+/// Read the walls into `doc` (after its entities, paths and fills). What an older build
+/// could have left (a centreline deleted, a face deleted or redrawn, a tee on a wall that is
+/// gone) is left for the repair on opening; what only a hand edit could make (a face key
+/// naming a point, an entity made by two walls) is refused. Returns notes on what was left
+/// out.
+pub(crate) fn insert_walls(
     doc: &mut Document,
     walls: Vec<WallRecord>,
-    dims: Vec<PropertyDimRecord>,
 ) -> Result<Vec<String>, LoadError> {
     let mut notes = Vec::new();
     let mut seen: HashSet<EntityId> = HashSet::new();
@@ -601,21 +606,45 @@ pub(crate) fn insert_all(
         }
         doc.insert_wall(id, wall).map_err(LoadError::Document)?;
     }
+    Ok(notes)
+}
+
+/// Read the property dimensions into `doc` (after its walls and offsets). One whose wall or
+/// offset is gone is left out.
+pub(crate) fn insert_property_dims(
+    doc: &mut Document,
+    dims: Vec<PropertyDimRecord>,
+) -> Result<(), LoadError> {
     for r in dims {
         let id = PropertyDimId(parse_prefixed(&r.id, 'q')?);
         if doc.property_dim(id).is_some() {
             return Err(LoadError::DuplicateId(r.id));
         }
-        let wall = parse_wall_id(&r.wall)?;
+        let missing = |field| LoadError::MissingField {
+            id: r.id.clone(),
+            field,
+        };
         let target = match r.of.as_str() {
-            "thickness" => PropertyRef::WallThickness(wall),
+            "thickness" => {
+                let wall = parse_wall_id(r.wall.as_deref().ok_or_else(|| missing("wall"))?)?;
+                if doc.wall(wall).is_none() {
+                    continue;
+                }
+                PropertyRef::WallThickness(wall)
+            }
+            "distance" => {
+                let x = crate::offsets::parse_offset_id(
+                    r.offset.as_deref().ok_or_else(|| missing("offset"))?,
+                )?;
+                if doc.offset(x).is_none() {
+                    continue;
+                }
+                PropertyRef::OffsetDistance(x)
+            }
             other => return Err(LoadError::UnknownConstraint(format!("property {other}"))),
         };
         if !(r.along.is_finite() && r.out.is_finite()) {
             return Err(LoadError::NonFinite(r.id));
-        }
-        if doc.wall(wall).is_none() {
-            continue;
         }
         doc.insert_property_dim(
             id,
@@ -628,7 +657,7 @@ pub(crate) fn insert_all(
         )
         .map_err(LoadError::Document)?;
     }
-    Ok(notes)
+    Ok(())
 }
 
 #[cfg(test)]

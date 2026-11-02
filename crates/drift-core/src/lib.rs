@@ -46,7 +46,7 @@ pub use fonts::{EmbeddedFont, FontFile, FontSet};
 pub use glam::DVec2;
 pub use groups::{Group, GroupId};
 pub use layers::{Appearance, Layer, LayerId, LineType, LineWeight, Rgb};
-pub use offsets::Side;
+pub use offsets::{Offset, OffsetId, OffsetMade, PieceKey, PointKey, Side};
 pub use openings::{
     Hand, Opening, OpeningAt, OpeningId, OpeningMade, SegEnd, SizeSetId, Symbol, WallFace,
 };

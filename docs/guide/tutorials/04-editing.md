@@ -246,13 +246,22 @@ sharp corner back, right-click it and choose **Remove fillet** or **Remove chamf
 ## Offset and mirror
 
 - **Offset** (O): click a curve. Its whole connected chain is picked. Click the side to
-  offset to, or type the distance and press Enter. Corners rejoin. Offset lines stay
-  parallel to the original, and rounded corners stay tangent to them.
-- An offset has **one distance**. It shows as one dimension, on the curve you clicked;
-  double-click it and type a new value to move every side at once, or drag any side of the
-  offset (picked on its own, or with nothing picked). The drag goes in round steps that
-  suit the zoom and the drawing's units (1, 2 or 5 mm and so on, or fractions of an inch),
-  as a fillet's does; hold Alt to place it freely. Each offset keeps its own distance.
+  offset to, or type the distance and press Enter. Corners rejoin. Any kind of curve
+  offsets: lines, arcs, circles, ellipses, pen curves and chains that mix them.
+- An offset is **one object with one distance**. Its curves are made from the source and
+  **follow it**: move a corner of the shape you offset, or change a variable that drives it,
+  and the offset moves with it. The distance shows as one dimension, on the curve you
+  clicked; double-click it and type a new value (or an expression of your variables) to
+  move every piece at once, or drag any piece of the offset. The drag goes in round steps
+  that suit the zoom and the drawing's units (1, 2 or 5 mm and so on, or fractions of an
+  inch), as a fillet's does; hold Alt to place it freely. The Inspector shows the distance
+  too, with **Show distance** when the dimension was deleted.
+- Clicking a piece picks the whole offset. Its curves can't be trimmed, filleted, moved or
+  related on their own (the offset would only make them again): edit the source instead,
+  or **Detach** the offset (Inspector, or the palette) to turn it into plain curves that
+  keep their look and no longer follow. Copying, duplicating, mirroring or patterning an
+  offset together with its source gives an offset that follows the copy; an offset copied
+  without its source gives plain curves.
 - **Mirror** (M): pick the geometry first with **Select**, press M, and click the line to
   mirror about. The copies are held symmetric to the originals.
 

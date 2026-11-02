@@ -311,11 +311,22 @@ impl Editor {
             editor.solve(&[]);
         }
         let repaired = editor.repair_walls();
+        let offsets_repaired = editor.repair_offsets();
         editor.doc.commit("Load");
+        let mut notices = Vec::new();
         if repaired > 0 {
-            editor.out.notice = Some(format!(
+            notices.push(format!(
                 "Walls were repaired: {repaired} faces edited outside the wall were rebuilt"
             ));
+        }
+        if offsets_repaired > 0 {
+            notices.push(format!(
+                "Offsets were repaired: {offsets_repaired} curves edited outside the offset \
+                 were rebuilt"
+            ));
+        }
+        if !notices.is_empty() {
+            editor.out.notice = Some(notices.join(" · "));
         }
         editor.sync();
         editor

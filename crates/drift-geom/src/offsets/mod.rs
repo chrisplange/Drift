@@ -12,6 +12,11 @@ use drift_core::{DVec2, Document, EntityId, EntityKind, Shape, Side, tolerance};
 use crate::intersect::{self, intersect_unbounded};
 use crate::offset::{OffsetError, offset_curve};
 
+pub mod regen;
+#[cfg(test)]
+mod tests;
+pub use regen::{Report, rechain, regenerate, regenerate_some};
+
 /// A step along a curve's parameter, to tell which way it runs at a point.
 const PARAM_STEP: f64 = 1e-6;
 

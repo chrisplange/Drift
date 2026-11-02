@@ -184,11 +184,24 @@ pub(super) fn offset(s: &mut Session, a: &Value) -> Res {
     let id = args::entity_at(&s.editor.doc, a, "id")?;
     let distance = args::f64_(a, "distance")?;
     let side = args::vec2_at(a, "side")?;
-    let made = s
+    // The legacy form (plain curves with per-side dimensions), for the Drift script's walls.
+    if a.get("plain").and_then(Value::as_bool) == Some(true) {
+        let made = s
+            .editor
+            .offset_plain(id, distance, side)
+            .map_err(|e| e.to_string())?;
+        return Ok(json!({ "created": ids_json(&made) }));
+    }
+    let x = s
         .editor
         .offset(id, distance, side)
         .map_err(|e| e.to_string())?;
-    Ok(json!({ "created": ids_json(&made) }))
+    let made = s.editor.offset_curves(x);
+    Ok(json!({
+        "offset": x.to_string(),
+        "created": ids_json(&made),
+        "note": "offset (follows its source; Detach to edit the curves)",
+    }))
 }
 
 pub(super) fn trim(s: &mut Session, a: &Value) -> Res {

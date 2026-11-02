@@ -180,9 +180,13 @@ pub(super) fn render(s: &mut Session, a: &Value, image: &mut Option<Vec<u8>>) ->
     let ed = &s.editor;
     let doc = &ed.doc;
     let analysis = ed.analysis();
+    // (Walls' faces and offsets' pieces are generated from their source, never solver
+    // unknowns: nothing of their own can move.)
+    let generated = doc.generated_entities();
     let state = |id: EntityId| match analysis.definitions.get(&id) {
         Some(Definition::Over) => OVER,
         Some(Definition::Full) => FULL,
+        None if generated.contains(&id) => FULL,
         _ => UNDER,
     };
     let mut curves = Vec::new();

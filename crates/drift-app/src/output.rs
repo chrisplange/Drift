@@ -751,16 +751,28 @@ fn annotations(ed: &Editor, painter: &egui::Painter, s: &Space, d: &mut Drawing)
             annotations::paint_dimension(&recorder, &layout, AnnotationState::Normal, &colors);
         }
     }
-    // Walls' thickness dimensions, as on screen.
+    // Walls' thickness dimensions and offsets' distances, as on screen.
     for (_, q) in doc.property_dims().filter(|_| s.dimensions) {
-        let Some((c, at)) = drift_edit::walls::thickness_dimension(doc, q) else {
-            continue;
+        let layout = if let Some((c, at)) = drift_edit::walls::thickness_dimension(doc, q) {
+            if s.leaves_out(doc, &c.entities().collect::<Vec<_>>()) {
+                continue;
+            }
+            annotations::layout_dimension(painter, doc, None, &c, Some(at), &map)
+        } else if let Some(gap) = drift_edit::offsets::distance_dimension(doc, q) {
+            let pieces: Vec<_> = q
+                .target
+                .offset()
+                .and_then(|x| doc.offset(x))
+                .map(|o| o.made.curves.values().copied().collect())
+                .unwrap_or_default();
+            if s.leaves_out(doc, &pieces) {
+                continue;
+            }
+            annotations::layout_gap(painter, doc, &gap, &map)
+        } else {
+            None
         };
-        if s.leaves_out(doc, &c.entities().collect::<Vec<_>>()) {
-            continue;
-        }
-        if let Some(layout) = annotations::layout_dimension(painter, doc, None, &c, Some(at), &map)
-        {
+        if let Some(layout) = layout {
             annotations::paint_dimension(&recorder, &layout, AnnotationState::Normal, &colors);
         }
     }

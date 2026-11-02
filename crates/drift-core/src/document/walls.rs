@@ -1,6 +1,8 @@
-//! Walls, their property dimensions and their openings.
+//! Walls, their property dimensions and their openings; who owns what among walls and
+//! offsets.
 
 use super::*;
+use crate::PropertyRef;
 
 impl Document {
     pub fn walls(&self) -> impl Iterator<Item = (WallId, &Wall)> {
@@ -76,7 +78,7 @@ impl Document {
         let dims: Vec<PropertyDimId> = self
             .property_dims
             .iter()
-            .filter(|(_, d)| d.target.wall() == id)
+            .filter(|(_, d)| d.target.wall() == Some(id))
             .map(|(d, _)| *d)
             .collect();
         for d in dims {
@@ -84,10 +86,15 @@ impl Document {
         }
     }
 
-    /// Who owns which entity, path and fill among the walls' (built afresh: callers that ask
-    /// often cache it by revision).
+    /// Who owns which entity, path and fill among the walls' and the offsets' (built afresh:
+    /// callers that ask often cache it by revision).
     pub fn wall_owners(&self) -> Owners {
         let mut out = Owners::default();
+        for (&id, o) in self.offsets.iter() {
+            for e in o.made.entities() {
+                out.of.insert(e, Owner::Offset(id));
+            }
+        }
         for (&id, w) in self.walls.iter() {
             for e in w.made.entities() {
                 out.of.insert(e, Owner::Wall(id));
@@ -128,12 +135,14 @@ impl Document {
         out
     }
 
-    /// The entities walls (and the openings in them) generated: never solver unknowns.
+    /// The entities walls (and the openings in them) and offsets generated: never solver
+    /// unknowns.
     pub fn generated_entities(&self) -> std::collections::HashSet<EntityId> {
         self.walls
             .values()
             .flat_map(|w| w.made.entities())
             .chain(self.openings.values().flat_map(|o| o.made.entities()))
+            .chain(self.offsets.values().flat_map(|o| o.made.entities()))
             .collect()
     }
 
@@ -229,9 +238,13 @@ impl Document {
         id: PropertyDimId,
         dim: PropertyDim,
     ) -> Result<(), DocumentError> {
-        if !self.walls.contains_key(&dim.target.wall()) {
+        let has = match dim.target {
+            PropertyRef::WallThickness(w) => self.walls.contains_key(&w),
+            PropertyRef::OffsetDistance(x) => self.offsets.contains_key(&x),
+        };
+        if !has {
             return Err(DocumentError::BadName(
-                "a property dimension needs its wall".into(),
+                "a property dimension needs its wall or offset".into(),
             ));
         }
         if !(dim.along.is_finite() && dim.out.is_finite()) {

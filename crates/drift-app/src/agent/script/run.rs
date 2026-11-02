@@ -1468,7 +1468,7 @@ impl<'s> Runner<'s> {
         let before = self.constraint_ids();
         let v = self.exec(
             "offset",
-            json!({ "id": s(self.faces[faces[0]].pieces[0]), "distance": distance, "side": xy(side) }),
+            json!({ "id": s(self.faces[faces[0]].pieces[0]), "distance": distance, "side": xy(side), "plain": true }),
         )?;
         let made = ids(&v["created"])?;
         if made.len() != 4 {
@@ -1701,7 +1701,7 @@ impl<'s> Runner<'s> {
             let before = r.constraint_ids();
             let v = r.exec(
                 "offset",
-                json!({ "id": s(line), "distance": d, "side": xy(towards) }),
+                json!({ "id": s(line), "distance": d, "side": xy(towards), "plain": true }),
             )?;
             let made = ids(&v["created"])?;
             let [f] = made.as_slice() else {

@@ -286,9 +286,9 @@ mirror {axis line, keep_original (default true)}; linear_array {by, count}; circ
         },
         ToolSpec {
             name: "offset",
-            description: "Offset a curve and the chain it joins (e.g. a wall outline) by a distance towards `side`.",
+            description: "Offset a curve and the chain it joins (e.g. a wall outline) by a distance towards `side`. The result is one offset object (`offset`: its id) with one distance that follows its source; Detach it (in Drift) to edit its curves. `plain: true` is the legacy form: plain curves with a distance dimension per side, which relations can be put on (the Drift script's walls use it).",
             schema: object(
-                json!({ "id": id("A curve of the chain"), "distance": { "type": "number" }, "side": coord() }),
+                json!({ "id": id("A curve of the chain"), "distance": { "type": "number" }, "side": coord(), "plain": { "type": "boolean" } }),
                 &["id", "distance", "side"],
             ),
             read_only: false,

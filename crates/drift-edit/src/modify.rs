@@ -2182,13 +2182,63 @@ impl Editor {
         drift_geom::offsets::side_of(&self.doc, chain, side).sign()
     }
 
-    /// Offset the chain through curve `id` by `distance` towards `side`. Lines stay parallel
-    /// at the distance; arcs and circles share their centre. Ellipses and pen curves give
-    /// smooth pen curves along the offset (a copy: they don't follow later changes). With
-    /// more than one line, only one of the lines' distance dimensions is shown (the picked
-    /// curve's, if it is a line): they are one distance (see [`Editor::offset_family`]), and
-    /// changing it moves the whole offset.
+    /// Offset the chain through curve `id` by `distance` towards `side`: an offset record
+    /// (#247) whose pieces (lines, arcs, circles, pen curves) are made from the chain and
+    /// follow it, with one distance dimension on the picked curve. The offset is one object:
+    /// picking a piece picks it, Detach makes its pieces plain curves.
     pub fn offset(
+        &mut self,
+        id: EntityId,
+        distance: f64,
+        at: DVec2,
+    ) -> Result<drift_core::OffsetId, EditError> {
+        if !(distance > 0.0 && distance.is_finite()) {
+            return Err(invalid("the offset distance must be positive"));
+        }
+        let (chain, closed) = self.chain(id);
+        if chain.iter().any(|(c, _)| self.offset_of(*c).is_some()) {
+            return Err(invalid("Detach the offset first"));
+        }
+        let side = drift_geom::offsets::side_of(&self.doc, &chain, at);
+        // (Checked now, so an offset that can't be made is refused rather than made empty.)
+        self.offset_shapes(&chain, closed, side.sign() * distance)?;
+        let picked = chain.iter().position(|(c, _)| *c == id).unwrap_or(0);
+        // The dimension sits where the side was pointed at along the picked curve.
+        let along = match self.doc.shape(id) {
+            Some(shape @ Shape::Line { .. }) => drift_geom::param_of(&shape, at),
+            _ => 0.5,
+        };
+        let record =
+            drift_core::Offset::new(chain.iter().map(|(c, _)| *c).collect(), side, distance);
+        self.doc.begin();
+        let mut made = None;
+        let result = (|| -> Result<(), EditError> {
+            let x = self
+                .doc
+                .add_offset(record)
+                .map_err(|e| invalid(e.to_string()))?;
+            self.doc
+                .add_property_dim(drift_core::PropertyDim {
+                    target: drift_core::PropertyRef::OffsetDistance(x),
+                    seg: picked as u16,
+                    along,
+                    out: 0.0,
+                })
+                .map_err(|e| invalid(e.to_string()))?;
+            made = Some(x);
+            Ok(())
+        })();
+        self.finish(result, "Offset")?;
+        made.ok_or(EditError::Conflict)
+    }
+
+    /// The offset as it was made before #247: plain curves with per-side distance dimensions
+    /// (lines: Parallel and PointLineDistance each, one shown; arcs and circles share the
+    /// centre; ellipses and pen curves are fitted copies), one distance to change through
+    /// [`Editor::offset_family`]. Kept for the Drift script's `room … walls` and `wall …
+    /// thick`, which relate and dimension the pieces (`agent/script/run.rs`), until the
+    /// script builds real walls; everything else makes an [`Editor::offset`] record.
+    pub fn offset_plain(
         &mut self,
         id: EntityId,
         distance: f64,
@@ -2405,8 +2455,10 @@ impl Editor {
         };
         let on_axis =
             |p: DVec2| (p - pa).perp_dot(u).abs() <= intersect::tolerance(p.abs().max_element());
-        // (Walls' faces aren't mirrored: the walls are, and make them again.)
-        let generated = self.doc.generated_entities();
+        // (Walls' faces aren't mirrored: the walls are, and make them again. An offset whose
+        // source is mirrored too is mirrored as an offset; otherwise its pieces are plain.)
+        let picked: BTreeSet<EntityId> = ids.iter().copied().collect();
+        let (_, generated) = self.copied_as_records(&picked);
         let ids: Vec<EntityId> = ids
             .iter()
             .copied()
@@ -2490,6 +2542,7 @@ impl Editor {
             }
             self.copy_fills_onto(|e| images.get(&e).copied(), reflect);
             self.copy_walls_onto(&|e| images.get(&e).copied(), &reflect, true);
+            self.copy_offsets_onto(&|e| images.get(&e).copied(), true);
             self.copy_groups_onto(|e| images.get(&e).or_else(|| map.get(&e)).copied());
             // Block copies: a new copy on the far side. `mirror` flips the block's x before
             // the turn, so the image's turn is 2θ + 180° − angle for an axis at θ, and a
@@ -2544,8 +2597,10 @@ impl Editor {
         if copies == 0 {
             return Err(invalid("the count must be at least 2"));
         }
-        // (Walls' faces aren't copied: the walls are, and make them again.)
-        let generated = self.doc.generated_entities();
+        // (Walls' faces aren't copied: the walls are, and make them again; an offset whose
+        // source is patterned too is patterned as an offset, otherwise its pieces are plain.)
+        let picked: BTreeSet<EntityId> = ids.iter().copied().collect();
+        let (_, generated) = self.copied_as_records(&picked);
         let ids: Vec<EntityId> = ids
             .iter()
             .copied()
@@ -2633,6 +2688,7 @@ impl Editor {
                 }
                 self.copy_fills_onto(|e| map.get(&e).copied(), |p| transform(k, p));
                 self.copy_walls_onto(&|e| map.get(&e).copied(), &|p| transform(k, p), false);
+                self.copy_offsets_onto(&|e| map.get(&e).copied(), false);
                 self.copy_groups_onto(|e| map.get(&e).copied());
             }
             Ok(())
@@ -3483,161 +3539,6 @@ mod tests {
         assert_eq!(count(&ed, |c| matches!(c, Constraint::Fix { .. })), 0);
     }
 
-    /// A connected polyline through the points.
-    fn polyline(points: &[DVec2], closed: bool) -> (Editor, Vec<EntityId>) {
-        let mut ed = related();
-        ed.doc.begin();
-        let ps: Vec<EntityId> = points.iter().map(|p| ed.doc.add_point(*p)).collect();
-        let n = ps.len();
-        let segs = if closed { n } else { n - 1 };
-        let ids = (0..segs)
-            .map(|i| ed.doc.add_line(ps[i], ps[(i + 1) % n]).unwrap())
-            .collect();
-        ed.commit("Polyline");
-        (ed, ids)
-    }
-
-    /// #235: one variable holds an offset's distance; one of its dimensions shows; a value
-    /// typed into that one moves every side. A rounded corner's arc follows its lines.
-    #[test]
-    fn an_offset_is_one_distance_to_change() {
-        let (mut ed, ids) = polyline(
-            &[v(0.0, 0.0), v(40.0, 0.0), v(40.0, 30.0), v(0.0, 30.0)],
-            true,
-        );
-        let corner = ed.doc.defining_points([ids[1]]).into_iter().next().unwrap();
-        ed.fillet(corner, 5.0).unwrap();
-        let distance = 2.123_456_789_012_345;
-        let made = ed.offset(ids[0], distance, v(20.0, -5.0)).unwrap();
-        let dims: Vec<ConstraintId> = ed
-            .doc
-            .constraints()
-            .filter(|(_, c)| matches!(c, Constraint::PointLineDistance { .. }))
-            .map(|(id, _)| id)
-            .collect();
-        assert_eq!(dims.len(), 4, "one per line");
-        assert_eq!(ed.doc.variables().count(), 0, "nothing in Parameters");
-        let shown: Vec<ConstraintId> = dims
-            .iter()
-            .copied()
-            .filter(|d| {
-                ed.doc
-                    .shown(drift_core::AnnotationRef::Dimension(*d))
-                    .canvas
-            })
-            .collect();
-        assert_eq!(shown.len(), 1);
-        // The picked line's dimension is the one shown.
-        let Constraint::PointLineDistance { line, .. } = *ed.doc.constraint(shown[0]).unwrap()
-        else {
-            unreachable!()
-        };
-        assert_eq!(line, ids[0]);
-        // A new value moves every line, and the arc stays between them.
-        ed.set_dimension_text(shown[0], "3").unwrap();
-        for d in &dims {
-            assert_eq!(ed.doc.constraint(*d).unwrap().value(), Some(3.0));
-        }
-        let arc = made
-            .iter()
-            .find_map(|id| match ed.doc.shape(*id) {
-                Some(Shape::Arc { radius, .. }) => Some(radius),
-                _ => None,
-            })
-            .expect("the corner's arc");
-        assert!((arc - 8.0).abs() < 1e-6, "{arc}");
-        // One undo step; a second offset, inward, is a distance of its own: changing it
-        // leaves the first as it is.
-        ed.undo();
-        assert_eq!(ed.doc.constraint(dims[0]).unwrap().value(), Some(distance));
-        ed.offset(ids[0], 1.0, v(20.0, 5.0)).unwrap();
-        let inner: Vec<ConstraintId> = ed
-            .doc
-            .constraints()
-            .filter(|(id, c)| {
-                matches!(c, Constraint::PointLineDistance { .. }) && !dims.contains(id)
-            })
-            .map(|(id, _)| id)
-            .collect();
-        assert_eq!(ed.offset_family(inner[0]).len(), inner.len());
-        ed.set_dimension_text(inner[0], "1.5").unwrap();
-        assert_eq!(ed.doc.constraint(dims[0]).unwrap().value(), Some(distance));
-        ed.undo();
-        ed.undo();
-        assert_eq!(
-            ed.offset_family(dims[0]).len(),
-            4,
-            "the first offset is as it was"
-        );
-        assert!(
-            inner.iter().all(|d| ed.doc.constraint(*d).is_none()),
-            "the second is gone"
-        );
-    }
-
-    #[test]
-    fn offset_follows_a_chain_and_rejoins_corners() {
-        let (mut ed, ids) = polyline(&[v(0.0, 0.0), v(20.0, 0.0), v(20.0, 10.0)], false);
-        let (chain, closed) = ed.chain(ids[1]);
-        assert_eq!(chain.len(), 2);
-        assert!(!closed);
-        let new = ed.offset(ids[0], 2.0, v(10.0, 5.0)).unwrap();
-        assert_eq!(new.len(), 2);
-        let (a0, b0) = ends(&ed, new[0]);
-        let (a1, b1) = ends(&ed, new[1]);
-        assert!(
-            close(a0, v(0.0, 2.0)) && close(b0, v(18.0, 2.0)),
-            "{a0} {b0}"
-        );
-        assert!(
-            close(a1, v(18.0, 2.0)) && close(b1, v(18.0, 10.0)),
-            "{a1} {b1}"
-        );
-        assert!(ed.analysis().conflicts.is_empty());
-        // Closed rectangle, inwards.
-        let (mut ed, ids) = polyline(
-            &[v(0.0, 0.0), v(20.0, 0.0), v(20.0, 10.0), v(0.0, 10.0)],
-            true,
-        );
-        let new = ed.offset(ids[0], 1.0, v(10.0, 5.0)).unwrap();
-        assert_eq!(new.len(), 4);
-        let corners: BTreeSet<_> = new
-            .iter()
-            .flat_map(|l| {
-                let (a, b) = ends(&ed, *l);
-                [
-                    (a.x.round() as i64, a.y.round() as i64),
-                    (b.x.round() as i64, b.y.round() as i64),
-                ]
-            })
-            .collect();
-        assert_eq!(corners, BTreeSet::from([(1, 1), (19, 1), (19, 9), (1, 9)]));
-        // Every corner is shared: four distinct points.
-        let points: BTreeSet<EntityId> = ed.doc.defining_points(new.iter().copied());
-        assert_eq!(points.len(), 4);
-        assert!(ed.analysis().conflicts.is_empty());
-        // Too far.
-        assert!(ed.offset(ids[0], 6.0, v(10.0, 5.0)).is_err());
-    }
-
-    #[test]
-    fn offset_circles_share_their_centre() {
-        let mut ed = related();
-        ed.doc.begin();
-        let c = ed.doc.add_point(v(0.0, 0.0));
-        let circle = ed.doc.add_circle(c, 5.0).unwrap();
-        ed.commit("Circle");
-        let before = ed.doc.iter().count();
-        let out = ed.offset(circle, 2.0, v(10.0, 0.0)).unwrap();
-        assert!(matches!(ed.doc.get(out[0]).map(|e| e.kind),
-            Some(EntityKind::Circle { center, radius }) if center == c && (radius - 7.0).abs() < 1e-12));
-        // Just the circle: no stray end points on it (#74).
-        assert_eq!(ed.doc.iter().count(), before + 1);
-        let inner = ed.offset(circle, 2.0, v(1.0, 0.0)).unwrap();
-        assert!(matches!(ed.doc.get(inner[0]).map(|e| e.kind),
-            Some(EntityKind::Circle { radius, .. }) if (radius - 3.0).abs() < 1e-12));
-    }
-
     /// #260: a picked block copy is mirrored too: a new copy on the far side whose placement
     /// is the reflection of the original's. `mirror` flips the block's x before the turn,
     /// so the image turns by 2θ + 180° − angle about an axis at θ; a mirrored copy's image
@@ -3744,6 +3645,20 @@ mod tests {
             unreachable!()
         };
         assert_eq!(orig_a, copy_a);
+    }
+
+    /// A connected polyline through the points.
+    fn polyline(points: &[DVec2], closed: bool) -> (Editor, Vec<EntityId>) {
+        let mut ed = related();
+        ed.doc.begin();
+        let ps: Vec<EntityId> = points.iter().map(|p| ed.doc.add_point(*p)).collect();
+        let n = ps.len();
+        let segs = if closed { n } else { n - 1 };
+        let ids = (0..segs)
+            .map(|i| ed.doc.add_line(ps[i], ps[(i + 1) % n]).unwrap())
+            .collect();
+        ed.commit("Polyline");
+        (ed, ids)
     }
 
     #[test]
@@ -3921,16 +3836,6 @@ mod tests {
             .collect()
     }
 
-    /// An ellipse with semi-axes 20 and 10 about the origin.
-    fn with_ellipse() -> (Editor, EntityId) {
-        let mut ed = related();
-        ed.doc.begin();
-        let [c, m, n] = [v(0.0, 0.0), v(20.0, 0.0), v(0.0, 10.0)].map(|p| ed.doc.add_point(p));
-        let ellipse = ed.doc.add_ellipse(c, m, n).unwrap();
-        ed.commit("Ellipse");
-        (ed, ellipse)
-    }
-
     const ARCH: [DVec2; 4] = [
         DVec2::new(0.0, 0.0),
         DVec2::new(0.0, 20.0),
@@ -3989,6 +3894,16 @@ mod tests {
         ed.undo();
         ed.undo();
         assert_eq!(beziers(&ed), [ARCH]);
+    }
+
+    /// An ellipse with semi-axes 20 and 10 about the origin.
+    fn with_ellipse() -> (Editor, EntityId) {
+        let mut ed = related();
+        ed.doc.begin();
+        let [c, m, n] = [v(0.0, 0.0), v(20.0, 0.0), v(0.0, 10.0)].map(|p| ed.doc.add_point(p));
+        let ellipse = ed.doc.add_ellipse(c, m, n).unwrap();
+        ed.commit("Ellipse");
+        (ed, ellipse)
     }
 
     #[test]
@@ -4050,146 +3965,6 @@ mod tests {
             .collect();
         assert_eq!(arcs.len(), 2);
         assert!(arcs.iter().all(|s| (s - TAU / 2.0).abs() < 1e-9));
-    }
-
-    /// How far `p` is from the ellipse of `with_ellipse`.
-    fn off_ellipse(p: DVec2) -> f64 {
-        (0..20_000)
-            .map(|k| {
-                let a = TAU * f64::from(k) / 20_000.0;
-                v(20.0 * a.cos(), 10.0 * a.sin()).distance(p)
-            })
-            .fold(f64::INFINITY, f64::min)
-    }
-
-    #[test]
-    fn offset_follows_ellipses() {
-        // Outside: a closed, smooth run of pen curves 3 from the ellipse all round.
-        let (mut ed, ellipse) = with_ellipse();
-        let made = ed.offset(ellipse, 3.0, v(30.0, 0.0)).unwrap();
-        let curves = beziers(&ed);
-        assert_eq!(curves.len(), made.len());
-        assert!(curves.len() >= 4);
-        for c in &curves {
-            for k in 0..=8 {
-                let p = drift_core::shape::bezier_point(c, f64::from(k) / 8.0);
-                assert!((off_ellipse(p) - 3.0).abs() < 5e-3, "{}", off_ellipse(p));
-                assert!(p.length() > 10.0, "outside");
-            }
-        }
-        // Closed: every end is another's start; smooth at every join.
-        for c in &curves {
-            assert_eq!(
-                curves.iter().filter(|o| o[0].distance(c[3]) < 1e-9).count(),
-                1
-            );
-        }
-        assert_eq!(
-            count(&ed, |c| matches!(c, Constraint::Smooth { .. })),
-            curves.len()
-        );
-        // Inside works up to the tightest bend (10² / 20 = 5), then says why not.
-        let inner = ed.offset(ellipse, 4.0, v(0.0, 0.0)).unwrap();
-        let p = match ed.doc.shape(inner[0]) {
-            Some(Shape::Bezier { p }) => p[0],
-            _ => panic!("a pen curve"),
-        };
-        assert!((off_ellipse(p) - 4.0).abs() < 5e-3 && p.length() < 20.0);
-        let err = ed.offset(ellipse, 6.0, v(0.0, 0.0)).unwrap_err();
-        assert!(err.to_string().contains("tightest bend"), "{err}");
-        // One undo step each.
-        ed.undo();
-        ed.undo();
-        assert!(beziers(&ed).is_empty());
-    }
-
-    #[test]
-    fn offset_follows_pen_curves_and_mixed_paths() {
-        // A line running into an arch (a corner between them), then a line out of it.
-        let mut ed = related();
-        ed.doc.begin();
-        let [a, c1, c2, b] = ARCH.map(|p| ed.doc.add_point(p));
-        let arch = ed.doc.add_bezier(a, c1, c2, b).unwrap();
-        let start = ed.doc.add_point(v(-30.0, 0.0));
-        let end = ed.doc.add_point(v(70.0, 0.0));
-        let lead_in = ed.doc.add_line(start, a).unwrap();
-        ed.doc.add_line(b, end).unwrap();
-        ed.commit("Path");
-        let (chain, closed) = ed.chain(arch);
-        assert_eq!(chain.len(), 3);
-        assert!(!closed);
-        // Above the path (outside the arch): the corners open, so they're bridged.
-        let made = ed.offset(lead_in, 4.0, v(-20.0, 10.0)).unwrap();
-        let on_offset = |p: DVec2| {
-            let to_arch = drift_geom::nearest_on_bezier(&ARCH, p).0.distance(p);
-            let to_lines = if p.x < 0.0 || p.x > 40.0 {
-                p.y.abs()
-            } else {
-                f64::INFINITY
-            };
-            to_arch.min(to_lines)
-        };
-        let mut lines_made = 0;
-        let mut curves_made = 0;
-        for id in &made {
-            match ed.doc.shape(*id) {
-                Some(Shape::Line { a, b }) => {
-                    lines_made += 1;
-                    // The two offsets of the lines sit 4 above them.
-                    if (a.y - 4.0).abs() < 1e-6 && (b.y - 4.0).abs() < 1e-6 {
-                        assert!(a.x.min(b.x) < -20.0 || a.x.max(b.x) > 60.0);
-                    }
-                }
-                Some(Shape::Bezier { p }) => {
-                    curves_made += 1;
-                    for k in 0..=8 {
-                        let q = drift_core::shape::bezier_point(&p, f64::from(k) / 8.0);
-                        assert!((on_offset(q) - 4.0).abs() < 5e-3, "{}", on_offset(q));
-                    }
-                }
-                other => panic!("unexpected {other:?}"),
-            }
-        }
-        assert!(
-            curves_made >= 1 && lines_made >= 2,
-            "{curves_made} curves, {lines_made} lines"
-        );
-        // The result is one connected path: every piece's end meets the next piece's start.
-        let mut ends: Vec<DVec2> = Vec::new();
-        for id in &made {
-            match ed.doc.shape(*id) {
-                Some(Shape::Line { a, b }) => ends.extend([a, b]),
-                Some(Shape::Bezier { p }) => ends.extend([p[0], p[3]]),
-                _ => {}
-            }
-        }
-        let loose = ends
-            .iter()
-            .filter(|p| ends.iter().filter(|q| q.distance(**p) < 1e-6).count() == 1)
-            .count();
-        assert_eq!(loose, 2, "only the path's two ends are free");
-        // Below (inside the arch) the offsets cross and are cut where they meet.
-        ed.undo();
-        let made = ed.offset(lead_in, 2.0, v(-20.0, -10.0)).unwrap();
-        let mut ends: Vec<DVec2> = Vec::new();
-        for id in &made {
-            match ed.doc.shape(*id) {
-                Some(Shape::Line { a, b }) => ends.extend([a, b]),
-                Some(Shape::Bezier { p }) => ends.extend([p[0], p[3]]),
-                _ => {}
-            }
-        }
-        let loose = ends
-            .iter()
-            .filter(|p| ends.iter().filter(|q| q.distance(**p) < 1e-6).count() == 1)
-            .count();
-        assert_eq!(loose, 2);
-        // A lone arch offsets to curves ending square to its ends.
-        let (mut ed, arch) = with_arch();
-        ed.offset(arch, 5.0, v(20.0, 30.0)).unwrap();
-        let curves: Vec<[DVec2; 4]> = beziers(&ed).into_iter().filter(|p| *p != ARCH).collect();
-        assert!(curves.iter().any(|p| p[0].distance(v(-5.0, 0.0)) < 1e-6));
-        assert!(curves.iter().any(|p| p[3].distance(v(45.0, 0.0)) < 1e-6));
     }
 
     #[test]

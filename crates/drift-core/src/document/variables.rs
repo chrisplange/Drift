@@ -303,6 +303,24 @@ impl Document {
             self.touch_key(Key::Opening(id));
             self.openings.insert(id, o);
         }
+        // Offsets' distance expressions.
+        let offsets: Vec<(OffsetId, Offset)> = self
+            .offsets
+            .iter()
+            .filter_map(|(id, o)| {
+                let e = o.distance_expr.as_deref()?;
+                let renamed = rename(e);
+                (renamed != e).then(|| {
+                    let mut o = o.clone();
+                    o.distance_expr = Some(renamed);
+                    (*id, o)
+                })
+            })
+            .collect();
+        for (id, o) in offsets {
+            self.touch_key(Key::Offset(id));
+            self.offsets.insert(id, o);
+        }
         let variants: Vec<_> = self.variants.keys().copied().collect();
         for k in variants {
             let mut variant = self.variants[&k].clone();
